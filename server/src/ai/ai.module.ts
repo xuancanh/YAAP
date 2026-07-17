@@ -6,6 +6,7 @@
 import { Module } from '@nestjs/common';
 import { AiProviderFactory } from './providers.factory';
 import { AnthropicAiProvider } from './anthropic-ai.provider';
+import { OpenAiCompatProvider } from './openai-ai.provider';
 import { EchoAiProvider } from './echo-ai.provider';
 
 @Module({
@@ -14,6 +15,7 @@ import { EchoAiProvider } from './echo-ai.provider';
     // Built via factory: the constructor's injectable fetch function is a test
     // seam, not a DI dependency.
     { provide: AnthropicAiProvider, useFactory: () => new AnthropicAiProvider() },
+    { provide: OpenAiCompatProvider, useFactory: () => new OpenAiCompatProvider() },
     EchoAiProvider,
   ],
   exports: [AiProviderFactory],

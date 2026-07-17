@@ -154,6 +154,12 @@ export interface SearchResults {
   files: Array<{ path: string; size: number }>;
 }
 
+export const PROVIDER_COLORS: Record<string, string> = {
+  anthropic: '#d97757', 'anthropic-compatible': '#d97757',
+  openai: '#10a37f', deepseek: '#5c6cf2', kimi: '#8b5cf6',
+  glm: '#00b894', custom: '#94a3b8', echo: '#94a3b8',
+};
+
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
 
 export type TurnEvent =
@@ -213,6 +219,7 @@ export const api = {
   promote: (id: string, turnId: string) => send<{ task: string }>(`/api/chats/${id}/turns/${turnId}/promote`, 'POST'),
   rate: (id: string, turnId: string, rating: 'up' | 'down', note?: string) =>
     send<{ ok: boolean }>(`/api/chats/${id}/turns/${turnId}/rate`, 'POST', { rating, note }),
+  distill: (id: string) => send<{ ok: boolean; journal?: string; lesson?: string }>(`/api/chats/${id}/distill`, 'POST'),
   exportUrl: (id: string) => `/api/chats/${id}/export`,
 
   // agents

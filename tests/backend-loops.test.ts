@@ -1,0 +1,124 @@
+/** Cron matching, scheduled loop firing (FR-11.6), and brain distillation
+ *  appends (FR-11.4). */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { ConfigService } from '@nestjs/config';
+import { cronMatches } from '../server/src/chats/cron.util';
+import { LoopsService } from '../server/src/chats/loops.service';
+import { DistillService } from '../server/src/chats/distill.service';
+import { ChatsRepository } from '../server/src/chats/chats.repository';
+import { TurnLoopService } from '../server/src/chats/turn-loop.service';
+import { ChatLocks } from '../server/src/chats/chat-locks';
+import { ToolsService } from '../server/src/chats/tools.service';
+import { AgentsService } from '../server/src/agents/agents.service';
+import { WorkspacesService } from '../server/src/workspaces/workspaces.service';
+import { StorageService } from '../server/src/storage/storage.service';
+import { testDb, memStorage, ctxStub, skillsStub, ScriptedProvider } from './helpers';
+import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
+
+test('cronMatches: fields, steps, ranges, and junk expressions', () => {
+  const at = (min: number, hour: number, dow = 4) => {
+    const d = new Date(2026, 6, 16, hour, min); // 2026-07-16 is a Thursday (dow 4)
+    assert.equal(d.getDay(), dow);
+    return d;
+  };
+  assert.equal(cronMatches('0 4 * * *', at(0, 4)), true);
+  assert.equal(cronMatches('0 4 * * *', at(1, 4)), false);
+  assert.equal(cronMatches('*/15 * * * *', at(30, 9)), true);
+  assert.equal(cronMatches('*/15 * * * *', at(31, 9)), false);
+  assert.equal(cronMatches('0 9 * * 1-5', at(0, 9)), true);
+  assert.equal(cronMatches('0 9 * * 0,6', at(0, 9)), false);
+  assert.equal(cronMatches('on merge', new Date()), false);
+  assert.equal(cronMatches('* * * *', new Date()), false);
+});
+
+const loopRound: AiStreamEvent[] = [
+  { type: 'answer', text: 'Checked everything; all green.' },
+  { type: 'done' },
+];
+
+async function setup(rounds: AiStreamEvent[][]) {
+  const db = await testDb();
+  const { stub } = memStorage();
+  const agents = new AgentsService(db, stub);
+  const workspaces = new WorkspacesService(db, stub);
+  const repo = new ChatsRepository(db);
+  const provider = new ScriptedProvider(rounds);
+  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub);
+  const config = { get: (k: string) => (k === 'loopsEnabled' ? false : undefined) } as unknown as ConfigService;
+  const loops = new LoopsService(agents, workspaces, repo, turns, config);
+  const distill = new DistillService(repo, ctxStub(provider), agents);
+  return { db, stub: stub as unknown as StorageService, agents, workspaces, repo, turns, loops, distill, provider };
+}
+
+test('a matching loop fires a real turn and journals the run (FR-11.6)', async () => {
+  const { agents, workspaces, repo, loops, stub } = await setup([loopRound]);
+  await workspaces.list(); // ensure the default workspace
+  const agent = await agents.create({
+    name: 'Watchdog',
+    loops: [{ name: 'Nightly check', cron: '0 2 * * *' }],
+  });
+
+  const two = new Date(2026, 6, 16, 2, 0);
+  await loops.tick(two);
+  await new Promise((r) => setTimeout(r, 50)); // runLoop is fire-and-forget
+
+  const ws = (await workspaces.list())[0];
+  const sessions = await repo.listSessions(ws.id);
+  const loopSession = sessions.find((s) => s.name === 'Loop · Nightly check');
+  assert.ok(loopSession, 'loop session created');
+  assert.equal(loopSession!.agentId, agent.id);
+  assert.equal(loopSession!.permissionMode, 'auto');
+  const messages = await repo.listMessages(loopSession!.id);
+  assert.ok(messages.some((m) => m.role === 'assistant' && m.content.includes('all green')));
+
+  const journal = (await stub.get(`agents/${agent.id}/JOURNAL.md`))!.toString('utf8');
+  assert.match(journal, /Loop "Nightly check" ran\. Checked everything; all green\./);
+
+  // same minute again: no double fire
+  await loops.tick(two);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await repo.listTurns(loopSession!.id)).length, 1);
+});
+
+test('non-matching minute does not fire', async () => {
+  const { agents, workspaces, repo, loops } = await setup([loopRound]);
+  await workspaces.list();
+  await agents.create({ name: 'Idle', loops: [{ name: 'Never now', cron: '0 2 * * *' }] });
+  await loops.tick(new Date(2026, 6, 16, 3, 0));
+  await new Promise((r) => setTimeout(r, 30));
+  const ws = (await workspaces.list())[0];
+  assert.equal((await repo.listSessions(ws.id)).length, 0);
+});
+
+test('distill appends bounded journal + lesson entries to the brain (FR-11.4)', async () => {
+  const distillRound: AiStreamEvent[] = [
+    { type: 'answer', text: 'JOURNAL: Shipped the draft-flush change; tests green.\nLESSON: Always take the busy lock before rewriting history — a flush raced compaction.' },
+    { type: 'done' },
+  ];
+  const { agents, repo, distill, stub } = await setup([distillRound]);
+  const agent = await agents.create({ name: 'Atlas' });
+  const session = await repo.createSession({ workspaceId: 'ws1', agentId: agent.id, name: 'Draft persistence' });
+  await repo.appendMessage({ sessionId: session.id, turnId: 't1', role: 'user', content: 'fix drafts' });
+  await repo.appendMessage({ sessionId: session.id, turnId: 't1', role: 'assistant', content: 'done' });
+
+  const res = await distill.distill(session.id);
+  assert.equal(res.ok, true);
+  const journal = (await stub.get(`agents/${agent.id}/JOURNAL.md`))!.toString('utf8');
+  assert.match(journal, /Shipped the draft-flush change/);
+  const lessons = (await stub.get(`agents/${agent.id}/LESSONS.md`))!.toString('utf8');
+  assert.match(lessons, /## \d{4}-\d{2}-\d{2} {2}Draft persistence/);
+  assert.match(lessons, /busy lock before rewriting history/);
+});
+
+test('brain appends stay size-bounded (NFR-4)', async () => {
+  const { agents, stub } = await setup([]);
+  const agent = await agents.create({ name: 'Chatty' });
+  for (let i = 0; i < 80; i++) {
+    await agents.appendJournal(agent.id, `entry ${i} ${'x'.repeat(1900)}`);
+  }
+  const journal = (await stub.get(`agents/${agent.id}/JOURNAL.md`))!.toString('utf8');
+  assert.ok(journal.length <= 100_000 + 200, `journal is ${journal.length} bytes`);
+  assert.match(journal, /entry 79/); // newest kept
+  assert.doesNotMatch(journal, /entry 1 /); // oldest trimmed
+});

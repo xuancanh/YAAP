@@ -77,6 +77,28 @@ export class AgentsService {
     return { ok: true };
   }
 
+  /** Size-bounded append to a brain file (FR-11.4): the append is capped and
+   *  the file keeps only its newest tail once it outgrows the bound. */
+  private async appendBrainFile(agentId: string, file: string, entry: string, header: string): Promise<void> {
+    const APPEND_CAP = 2_000;
+    const FILE_CAP = 100_000;
+    const KEEP = 80_000;
+    const key = agentFileKey(agentId, file);
+    const existing = await this.storage.get(key).catch(() => null);
+    let text = existing ? existing.toString('utf8') : header;
+    text = `${text.trimEnd()}\n\n${entry.slice(0, APPEND_CAP).trim()}\n`;
+    if (text.length > FILE_CAP) text = `${header}(older entries trimmed)\n\n…${text.slice(text.length - KEEP)}`;
+    await this.storage.put(key, Buffer.from(text, 'utf8'), 'text/markdown');
+  }
+
+  async appendJournal(agentId: string, entry: string): Promise<void> {
+    await this.appendBrainFile(agentId, 'JOURNAL.md', entry, '# JOURNAL.md\n');
+  }
+
+  async appendLessons(agentId: string, entry: string): Promise<void> {
+    await this.appendBrainFile(agentId, 'LESSONS.md', entry, '# LESSONS.md\n');
+  }
+
   /** Chats owned + 👍/👎 totals across this agent's sessions (agent home). */
   async stats(id: string) {
     await this.get(id);

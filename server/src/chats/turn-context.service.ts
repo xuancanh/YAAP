@@ -39,7 +39,8 @@ export class TurnContextService {
 
   async build(session: ChatSession): Promise<TurnContext> {
     const type = session.agentTypeId ? await this.agentTypes.resolve(session.agentTypeId) : undefined;
-    const provider = this.providers.resolve(type?.provider ?? 'echo');
+    const providerName = type?.provider ?? 'echo';
+    const provider = this.providers.resolve(providerName);
 
     const parts: string[] = [];
     if (type?.persona) parts.push(type.persona);
@@ -63,7 +64,7 @@ export class TurnContextService {
       provider,
       model: session.model || type?.model || '',
       apiKey: type?.apiKey ?? undefined,
-      baseUrl: type?.baseUrl ?? undefined,
+      baseUrl: type?.baseUrl ?? this.providers.defaultBaseUrl(providerName),
       system: parts.join('\n\n'),
       maxToolRounds: this.config.get<number>('maxToolRounds') ?? 24,
     };

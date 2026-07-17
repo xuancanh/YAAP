@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
-import { api } from '../lib/api';
+import { api, PROVIDER_COLORS } from '../lib/api';
 
 const PANE_META: Record<string, [string, string]> = {
   providers: ['Providers & agent types', 'Reusable presets: provider, default model, API key, and persona. A type with no key falls back to the Echo dev provider.'],
@@ -35,7 +35,7 @@ function ProvidersPane() {
       {app.agentTypes.map((t) => (
         <div key={t.id} style={card}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
-            <span style={{ width: 9, height: 9, borderRadius: '50%', background: t.provider === 'anthropic' ? '#d97757' : '#94a3b8', flex: 'none' }} />
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: PROVIDER_COLORS[t.provider] ?? '#94a3b8', flex: 'none' }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 14, fontWeight: 600 }}>{t.name}</span>
@@ -60,7 +60,12 @@ function ProvidersPane() {
           <div style={{ display: 'flex', gap: 8 }}>
             <select value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 11px', color: 'var(--text)', fontSize: 13, outline: 'none' }}>
               <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="kimi">Kimi</option>
+              <option value="glm">GLM</option>
               <option value="anthropic-compatible">Anthropic-compatible</option>
+              <option value="custom">Custom (OpenAI-compatible)</option>
               <option value="echo">Echo (dev)</option>
             </select>
             <button onClick={async () => {

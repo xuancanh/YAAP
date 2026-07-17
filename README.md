@@ -79,5 +79,12 @@ meter, per-agent file brains with rich previews, agent directory + home
 (charter, loops, ratings, mini apps, AGENT.json export), the agent market
 with capability-review hiring, and six settings panes backed by the API.
 
-Next up: more provider adapters (OpenAI et al.), MCP tool discovery (§10.3),
-scheduled loops actually firing (FR-11.6), and brain distillation (FR-11.4).
+Providers: Anthropic (+anthropic-compatible) and the OpenAI-compatible
+family — OpenAI, DeepSeek, Kimi, GLM, and custom gateways — all through one
+provider-neutral streaming loop. Scheduled agent loops fire on their cron
+(FR-11.6) in a dedicated per-loop chat and journal each run; conversations
+distill into size-bounded LESSONS/JOURNAL brain appends via /api/chats/:id/
+distill or the Distill button (FR-11.4).
+
+Next up: MCP tool discovery (§10.3), Gemini/Bedrock native adapters, and
+attachments beyond workspace files (drag-and-drop uploads).

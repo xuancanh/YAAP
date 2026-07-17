@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type LiveItem, type LiveTool } from '../store';
-import type { ChatMessage, ChatTurn } from '../lib/api';
+import { api, PROVIDER_COLORS, type ChatMessage, type ChatTurn } from '../lib/api';
 
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 5, borderRadius: 6, display: 'flex' };
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -322,7 +322,7 @@ export function ChatView() {
           )}
           <div style={{ position: 'relative' }}>
             <button onClick={() => setModelPop(!modelPop)} style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '6px 10px', color: 'var(--text)', cursor: 'pointer', fontSize: 12.5 }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: type?.provider === 'anthropic' ? '#d97757' : type ? '#10a37f' : '#94a3b8' }} />
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: type ? (PROVIDER_COLORS[type.provider] ?? '#94a3b8') : '#94a3b8' }} />
               {app.width >= 900 && <span style={{ fontWeight: 500 }}>{s.model || type?.model || 'echo (dev)'}</span>}
               <I d={P.chevD} size={12} />
             </button>
@@ -333,7 +333,7 @@ export function ChatView() {
                 {app.agentTypes.map((t) => (
                   <div key={t.id} onClick={() => { void app.patchSession(s.id, { agentTypeId: t.id, model: t.model }); setModelPop(false); }}
                     style={{ display: 'flex', alignItems: 'center', gap: 9, padding: 8, borderRadius: 8, cursor: 'pointer', fontSize: 12.5, background: t.id === s.agentTypeId ? 'var(--panel-2)' : 'none' }}>
-                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: t.provider === 'anthropic' ? '#d97757' : '#94a3b8' }} />
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: PROVIDER_COLORS[t.provider] ?? '#94a3b8' }} />
                     <span style={{ flex: 1 }}>{t.name}</span>
                     <span style={{ fontSize: 11, color: 'var(--text-faint)', ...mono }}>{t.model}</span>
                     {t.id === s.agentTypeId && <I d={P.check} size={14} stroke="var(--accent)" sw={2.5} />}
@@ -353,6 +353,18 @@ export function ChatView() {
               </div>
             )}
           </div>
+          {s.agentId && (
+            <button
+              title="Distill this conversation into the agent's brain"
+              onClick={async () => {
+                app.showToast('Distilling…');
+                const res = await api.distill(s.id).catch(() => ({ ok: false as const }));
+                app.showToast(res.ok ? 'Distilled to the agent\u2019s journal' : 'Nothing to distill yet');
+              }}
+              style={{ display: 'flex', alignItems: 'center', gap: 7, border: '1px solid var(--border)', borderRadius: 9, padding: '6px 10px', background: 'var(--panel-2)', color: 'var(--text)', cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }}>
+              <I d={P.brain} size={14} stroke="var(--accent)" />Distill
+            </button>
+          )}
           <button onClick={() => void app.patchSession(s.id, { permissionMode: ask ? 'auto' : 'ask' })} title="Permission mode"
             style={{ display: 'flex', alignItems: 'center', gap: 7, border: `1px solid ${ask ? 'var(--border)' : 'var(--green)'}`, borderRadius: 9, padding: '6px 10px', background: ask ? 'var(--panel-2)' : 'color-mix(in oklab,var(--green) 14%,transparent)', color: ask ? 'var(--text)' : 'var(--green)', cursor: 'pointer', fontSize: 12.5, fontWeight: 600 }}>
             <I d={ask ? P.warn : P.bolt} size={14} />{ask ? 'Ask' : 'Auto'}

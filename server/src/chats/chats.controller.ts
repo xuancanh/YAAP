@@ -12,6 +12,7 @@ import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Min } from 'clas
 import { ChatsService } from './chats.service';
 import { TurnLoopService, ApprovalDecision } from './turn-loop.service';
 import { CompactionService } from './compaction.service';
+import { DistillService } from './distill.service';
 
 class CreateChatDto {
   @IsString() workspaceId!: string;
@@ -57,6 +58,7 @@ export class ChatsController {
     private readonly chats: ChatsService,
     private readonly turns: TurnLoopService,
     private readonly compaction: CompactionService,
+    private readonly distillSvc: DistillService,
   ) {}
 
   @Get()
@@ -95,6 +97,12 @@ export class ChatsController {
     }
     res.end();
     void this.compaction.maybeAutoCompact(id);
+  }
+
+  /** Distill this chat's work into the owning agent's brain (FR-11.4). */
+  @Post(':id/distill')
+  distill(@Param('id') id: string) {
+    return this.distillSvc.distill(id);
   }
 
   /** Resolve a paused Ask-mode tool approval (§4). */

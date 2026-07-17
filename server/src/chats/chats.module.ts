@@ -12,6 +12,8 @@ import { TurnContextService } from './turn-context.service';
 import { ToolsService } from './tools.service';
 import { ChatLocks } from './chat-locks';
 import { CompactionService } from './compaction.service';
+import { LoopsService } from './loops.service';
+import { DistillService } from './distill.service';
 import { AiModule } from '../ai/ai.module';
 import { AgentTypesModule } from '../agent-types/agent-types.module';
 import { AgentsModule } from '../agents/agents.module';
@@ -21,7 +23,7 @@ import { SkillsModule } from '../skills/skills.module';
 @Module({
   imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule],
   controllers: [ChatsController],
-  providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService],
+  providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService],
   exports: [ChatsService],
 })
 export class ChatsModule {}
