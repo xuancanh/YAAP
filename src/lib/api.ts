@@ -231,6 +231,7 @@ export const api = {
   agentFiles: (id: string) => get<FileEntry[]>(`/api/agents/${id}/files`),
   agentPreview: (id: string, path: string) => get<FilePreview>(`/api/agents/${id}/preview?path=${enc(path)}`),
   agentExportUrl: (id: string) => `/api/agents/${id}/export`,
+  importAgent: (profile: Record<string, unknown>) => send<Agent>('/api/agents/import', 'POST', profile),
 
   // agent types / providers
   agentTypes: () => get<AgentType[]>('/api/agent-types'),

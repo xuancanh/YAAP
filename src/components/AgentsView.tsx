@@ -1,9 +1,62 @@
 /** Agents section: the directory grid and the per-agent home page
  *  (charter, file brain, loops, ratings, mini apps). */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
 import { api, type Agent } from '../lib/api';
+
+interface PendingImport {
+  profile: Record<string, unknown>;
+  name: string;
+  loops: Array<{ name: string; cron: string }>;
+}
+
+/** FR-11.7: imported loops enable immediately, so review them first. */
+function ImportReviewModal({ pending, onClose }: { pending: PendingImport; onClose: () => void }) {
+  const app = useApp();
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', backdropFilter: 'blur(2px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 480, maxWidth: '100%', background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'var(--shadow)', animation: 'pop .16s' }}>
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border-soft)' }}>
+          <div style={{ fontSize: 17, fontWeight: 700 }}>Review before importing {pending.name}</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 2 }}>AGENT.json · profile, charter{pending.loops.length ? ` and ${pending.loops.length} loop(s)` : ''}</div>
+        </div>
+        <div style={{ padding: '18px 24px' }}>
+          {pending.loops.length > 0 ? (
+            <div style={{ padding: '13px 15px', border: '1px solid var(--amber)', borderRadius: 11, background: 'color-mix(in oklab,var(--amber) 12%,transparent)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--amber)', marginBottom: 8 }}>
+                <I d={P.warn} size={15} />Scheduled loops enable immediately on import
+              </div>
+              {pending.loops.map((l) => (
+                <div key={l.name} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 12, color: 'var(--text-dim)', padding: '3px 0' }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--amber)', flex: 'none' }} />
+                  <span style={{ flex: 1 }}>{l.name}</span>
+                  <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-faint)' }}>{l.cron}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>No scheduled loops in this profile.</div>
+          )}
+        </div>
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border-soft)', display: 'flex', gap: 10 }}>
+          <button onClick={onClose} style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+          <button onClick={async () => {
+            try {
+              const agent = await api.importAgent(pending.profile);
+              await app.refreshAgents();
+              app.setSelectedAgent(agent.id);
+              app.showToast(`Imported ${agent.name}`);
+            } catch (err) {
+              app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'import failed');
+            }
+            onClose();
+          }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Approve & import</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function AgentCard({ a }: { a: Agent }) {
   const app = useApp();
@@ -46,6 +99,22 @@ function AgentCard({ a }: { a: Agent }) {
 
 export function AgentsDirectory() {
   const app = useApp();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState<PendingImport | null>(null);
+
+  const onPickFile = async (file: File) => {
+    try {
+      const profile = JSON.parse(await file.text()) as Record<string, unknown>;
+      setPending({
+        profile,
+        name: typeof profile.name === 'string' ? profile.name : 'agent',
+        loops: Array.isArray(profile.loops) ? (profile.loops as Array<{ name: string; cron: string }>) : [],
+      });
+    } catch {
+      app.showToast('Not a valid AGENT.json file');
+    }
+  };
+
   return (
     <div style={{ flex: 1, overflowY: 'auto' }}>
       <div style={{ maxWidth: 980, margin: '0 auto', padding: '30px 28px 60px' }}>
@@ -54,9 +123,16 @@ export function AgentsDirectory() {
             <div style={{ fontSize: 23, fontWeight: 700, letterSpacing: '-.4px' }}>Your agents</div>
             <div style={{ color: 'var(--text-dim)', fontSize: 13.5, marginTop: 4 }}>Durable identities with their own charter, isolated file brain, and scheduled work.</div>
           </div>
-          <button onClick={() => app.go('market')} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 15px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-            <I d={P.market} size={15} />Hire an agent
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input ref={fileRef} type="file" accept=".json,application/json" style={{ display: 'none' }}
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) void onPickFile(f); e.target.value = ''; }} />
+            <button onClick={() => fileRef.current?.click()} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 10, padding: '9px 15px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              <I d={P.download} size={15} style={{ transform: 'rotate(180deg)' }} />Import AGENT.json
+            </button>
+            <button onClick={() => app.go('market')} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 10, padding: '9px 15px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              <I d={P.market} size={15} />Hire an agent
+            </button>
+          </div>
         </div>
         {app.agents.length === 0 && (
           <div style={{ marginTop: 40, textAlign: 'center', color: 'var(--text-faint)', fontSize: 13.5 }}>No agents yet — hire one from the Market or create one via the API.</div>
@@ -65,6 +141,7 @@ export function AgentsDirectory() {
           {app.agents.map((a) => <AgentCard key={a.id} a={a} />)}
         </div>
       </div>
+      {pending && <ImportReviewModal pending={pending} onClose={() => setPending(null)} />}
     </div>
   );
 }

@@ -42,6 +42,7 @@ export class AgentsController {
   @Delete(':id') remove(@Param('id') id: string) { return this.agents.remove(id); }
   @Post(':id/feedback') feedback(@Param('id') id: string, @Body() dto: FeedbackDto) { return this.agents.addFeedback(id, dto); }
   @Get(':id/stats') stats(@Param('id') id: string) { return this.agents.stats(id); }
+  @Post('import') importJson(@Body() body: Record<string, unknown>) { return this.agents.importJson(body); }
 
   @Get(':id/export')
   @Header('Content-Disposition', 'attachment; filename="AGENT.json"')

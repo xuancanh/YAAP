@@ -9,6 +9,19 @@ import { api, PROVIDER_COLORS, type ChatMessage, type ChatTurn } from '../lib/ap
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 5, borderRadius: 6, display: 'flex' };
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 
+/** FR-5.3: parse the QUICK_REPLIES protocol line out of a reply. */
+function parseQuickReplies(content: string): { text: string; replies: string[] } {
+  const m = /\n?QUICK_REPLIES:\s*(\[[\s\S]*?\])\s*$/.exec(content);
+  if (!m) return { text: content, replies: [] };
+  try {
+    const parsed = JSON.parse(m[1]) as unknown;
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((x) => typeof x === 'string')) {
+      return { text: content.slice(0, m.index).trimEnd(), replies: (parsed as string[]).slice(0, 4) };
+    }
+  } catch { /* malformed: show raw */ }
+  return { text: content, replies: [] };
+}
+
 /** Substantial HTML/SVG in a reply surfaces an artifact chip (FR-5.2). */
 function detectArtifact(content: string): { title: string; src: string } | null {
   const fence = /```(?:html|svg)\n([\s\S]{200,}?)```/.exec(content);
@@ -128,6 +141,23 @@ export function ChatView() {
   const [menu, setMenu] = useState<null | { kind: 'slash' | 'mention'; filter: string }>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const uploadFiles = async (files: FileList | File[]) => {
+    for (const file of Array.from(files).slice(0, 8)) {
+      if (file.size > 5_000_000) { app.showToast(`${file.name} is too large (5MB max)`); continue; }
+      const b64 = btoa(new Uint8Array(await file.arrayBuffer()).reduce((acc, b) => acc + String.fromCharCode(b), ''));
+      const path = `uploads/${file.name.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
+      try {
+        await api.wsPutFile(app.workspaceId, path, b64, file.type || undefined);
+        app.addAttachment(path, file.type.startsWith('image/') ? 'image' : 'text');
+        await app.refreshFiles();
+      } catch {
+        app.showToast(`upload of ${file.name} failed`);
+      }
+    }
+  };
   const s = app.current;
   const agent = app.agents.find((a) => a.id === s?.agentId);
 
@@ -248,13 +278,15 @@ export function ChatView() {
     } else if (m.role === 'tool') {
       rows.push(<ToolCard key={m.id} t={{ kind: 'tool', id: m.id, name: m.toolName ?? 'tool', input: {}, status: m.content.startsWith('Denied') ? 'denied' : 'done', result: m.content }} />);
     } else {
-      const art = detectArtifact(m.content);
+      const { text: bodyText, replies } = parseQuickReplies(m.content);
+      const art = detectArtifact(bodyText);
       const isLast = lastMsgOfTurn.get(m.turnId) === m.id;
+      const isNewest = m.id === app.transcript.messages.filter((x) => x.role === 'assistant').at(-1)?.id;
       rows.push(
         <div key={m.id} style={{ display: 'flex', gap: 12, margin: '16px 0', animation: 'msgIn .2s ease' }}>
           <div style={{ width: 28, height: 28, borderRadius: 8, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2, fontSize: 14 }}>{agent?.emoji ?? '💬'}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{m.content}</div>
+            <div style={{ lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{bodyText}</div>
             {art && (
               <div onClick={() => app.openArtifact(art.title, art.src)} style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 11, border: '1px solid var(--border)', borderRadius: 11, padding: '11px 14px', cursor: 'pointer', background: 'var(--panel)', maxWidth: '100%' }}>
                 <div style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>
@@ -265,6 +297,13 @@ export function ChatView() {
                   <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>HTML · sandboxed · network-denied</div>
                 </div>
                 <I d={P.external} size={16} stroke="var(--text-faint)" style={{ flex: 'none', marginLeft: 8 }} />
+              </div>
+            )}
+            {isNewest && replies.length > 0 && !app.streaming && (
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                {replies.map((q) => (
+                  <button key={q} onClick={() => void app.send(q)} style={{ background: 'var(--panel)', border: '1px solid var(--accent-dim)', color: 'var(--accent-hi)', borderRadius: 20, padding: '6px 14px', fontSize: 12.5, cursor: 'pointer', fontWeight: 500 }}>{q}</button>
+                ))}
               </div>
             )}
             {isLast && <AssistantFooter turn={turnById.get(m.turnId)} />}
@@ -392,7 +431,13 @@ export function ChatView() {
               ))}
             </div>
           )}
-          <div style={{ position: 'relative', border: `1px solid ${menu ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 14, background: 'var(--panel)', boxShadow: 'var(--shadow)' }}>
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); void uploadFiles(e.dataTransfer.files); }}
+            style={{ position: 'relative', border: `1px solid ${dragOver ? 'var(--green)' : menu ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 14, background: 'var(--panel)', boxShadow: 'var(--shadow)' }}>
+            <input ref={fileRef} type="file" multiple style={{ display: 'none' }}
+              onChange={(e) => { if (e.target.files) void uploadFiles(e.target.files); e.target.value = ''; }} />
             {menu && suggestions.length > 0 && (
               <div style={{ position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, width: 340, maxWidth: '100%', background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow)', overflow: 'hidden', zIndex: 30, animation: 'msgIn .12s' }}>
                 <div style={{ padding: '7px 12px', fontSize: 10.5, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', borderBottom: '1px solid var(--border-soft)' }}>
@@ -438,7 +483,7 @@ export function ChatView() {
               style={{ width: '100%', resize: 'none', border: 'none', outline: 'none', background: 'none', color: 'var(--text)', fontSize: 14, lineHeight: 1.5, padding: '14px 15px 8px', maxHeight: 200 }}
             />
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 11px 10px' }}>
-              <button onClick={() => { app.setDraft(`${draft}@`); detectMenu(`${draft}@`); inputRef.current?.focus(); }} title="Attach a workspace file" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 6, borderRadius: 7, display: 'flex' }}><I d={P.attach} size={17} /></button>
+              <button onClick={() => fileRef.current?.click()} title="Attach a file (or drop it here)" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 6, borderRadius: 7, display: 'flex' }}><I d={P.attach} size={17} /></button>
               <button onClick={() => { app.setDraft('/'); detectMenu('/'); inputRef.current?.focus(); }} title="Slash command" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 6, borderRadius: 7, display: 'flex' }}><I d={P.slash} size={16} /></button>
               <button onClick={() => { app.setDraft(`${draft}@`); detectMenu(`${draft}@`); inputRef.current?.focus(); }} title="Mention file" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 6, borderRadius: 7, display: 'flex' }}><I d={P.at} size={16} /></button>
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 9 }}>

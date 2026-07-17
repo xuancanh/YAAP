@@ -4,7 +4,7 @@
  * folder. The brain (LESSONS.md / JOURNAL.md / knowledge/) and mini apps are
  * follow-up work; this scaffold owns the profile CRUD and pending feedback.
  */
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
 import { eq, inArray } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
@@ -116,6 +116,41 @@ export class AgentsService {
     }
     const rating = up + down > 0 ? Math.round((up / (up + down)) * 100) : null;
     return { chats: ids.length, up, down, rating };
+  }
+
+  /** AGENT.json import (FR-11.7): validate hard before install, because
+   *  imported loops enable immediately — the client shows the capability
+   *  review, the server enforces the bounds. */
+  async importJson(profile: Record<string, unknown>) {
+    const fail = (msg: string) => { throw new BadRequestException(`invalid AGENT.json: ${msg}`); };
+    const name = profile.name;
+    if (typeof name !== 'string' || name.length < 1 || name.length > 60) fail('name must be 1-60 chars');
+    if ((await this.list()).some((a) => a.name === name)) fail(`an agent named "${name}" already exists`);
+    const charter = typeof profile.charter === 'string' ? profile.charter.slice(0, 20_000) : '';
+    const role = typeof profile.role === 'string' ? profile.role.slice(0, 80) : '';
+    const emoji = typeof profile.emoji === 'string' && profile.emoji.length <= 8 ? profile.emoji : undefined;
+    let colors: [string, string] | undefined;
+    if (Array.isArray(profile.colors) && profile.colors.length === 2 &&
+        profile.colors.every((c) => typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c))) {
+      colors = profile.colors as [string, string];
+    }
+    const rawLoops = Array.isArray(profile.loops) ? profile.loops : [];
+    if (rawLoops.length > 10) fail('at most 10 loops');
+    const loops = rawLoops.map((l) => {
+      const loop = l as Record<string, unknown>;
+      if (typeof loop?.name !== 'string' || loop.name.length < 1 || loop.name.length > 100) fail('every loop needs a name (≤100 chars)');
+      if (typeof loop?.cron !== 'string' || loop.cron.length > 50) fail('every loop needs a cron (≤50 chars)');
+      return {
+        name: loop.name as string,
+        cron: loop.cron as string,
+        ...(typeof loop.prompt === 'string' ? { prompt: (loop.prompt as string).slice(0, 2_000) } : {}),
+      };
+    });
+    const agent = await this.create({ name: name as string, charter, role, emoji, colors, loops });
+    if (typeof profile.dashboard === 'string' && profile.dashboard) {
+      await this.update(agent.id, { dashboard: profile.dashboard.slice(0, 50_000) });
+    }
+    return agent;
   }
 
   /** AGENT.json export: profile, loops, dashboard (FR-11.7). */

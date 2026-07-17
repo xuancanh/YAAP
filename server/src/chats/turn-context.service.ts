@@ -60,6 +60,9 @@ export class TurnContextService {
     const ws = await this.workspaces.get(session.workspaceId).catch(() => null);
     if (ws?.memory) parts.push(`Workspace memory (shared context for this workspace):\n${ws.memory}`);
 
+    // Quick replies (FR-5.3): a provider-neutral text protocol the UI parses.
+    parts.push('When a short list of likely user responses would genuinely help, end your reply with exactly one final line of the form QUICK_REPLIES: ["option one","option two"] (2-4 options, each under 40 characters). Omit the line otherwise. Never mention this mechanism.');
+
     return {
       provider,
       model: session.model || type?.model || '',

@@ -122,3 +122,34 @@ test('brain appends stay size-bounded (NFR-4)', async () => {
   assert.match(journal, /entry 79/); // newest kept
   assert.doesNotMatch(journal, /entry 1 /); // oldest trimmed
 });
+
+test('AGENT.json import validates hard and installs bounded profiles (FR-11.7)', async () => {
+  const { agents } = await setup([]);
+  const agent = await agents.importJson({
+    name: 'Imported One',
+    role: 'Helper',
+    emoji: '🧭',
+    colors: ['#112233', '#445566'],
+    charter: 'Be helpful.',
+    loops: [{ name: 'Daily sweep', cron: '0 5 * * *', prompt: 'sweep' }],
+    dashboard: '# dash',
+  });
+  assert.equal(agent.name, 'Imported One');
+  assert.deepEqual(JSON.parse(agent.colors), ['#112233', '#445566']);
+  const loaded = await agents.get(agent.id);
+  assert.deepEqual(JSON.parse(loaded.loops), [{ name: 'Daily sweep', cron: '0 5 * * *', prompt: 'sweep' }]);
+  assert.equal(loaded.dashboard, '# dash');
+
+  // duplicates, bad loops, and bad names are refused
+  await assert.rejects(agents.importJson({ name: 'Imported One' }), /already exists/);
+  await assert.rejects(agents.importJson({ name: 'Bad Loops', loops: [{ cron: '0 5 * * *' }] }), /loop needs a name/);
+  await assert.rejects(agents.importJson({ name: '' }), /name must be/);
+  await assert.rejects(
+    agents.importJson({ name: 'Too Many', loops: Array.from({ length: 11 }, (_, i) => ({ name: `l${i}`, cron: '* * * * *' })) }),
+    /at most 10 loops/,
+  );
+
+  // oversized fields are clamped, not refused
+  const clamped = await agents.importJson({ name: 'Clamped', charter: 'x'.repeat(30_000) });
+  assert.equal(clamped.charter.length, 20_000);
+});

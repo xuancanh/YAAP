@@ -92,5 +92,12 @@ tools are offered to chats as `mcp_<server>_<tool>`, always pausing for
 approval in Ask mode (the server behind an MCP call is opaque, so it gates
 like a mutation).
 
-Next up: Gemini/Bedrock native adapters and drag-and-drop file uploads for
-attachments.
+Composer attachments accept drag-and-drop and file-picker uploads (stored
+under uploads/ in the workspace file store); assistants can offer one-tap
+quick replies (FR-5.3, a provider-neutral QUICK_REPLIES protocol line the UI
+parses); AGENT.json round-trips — export from the agent home, import on the
+directory page behind a loop-review modal with server-side validation
+(FR-11.7).
+
+Next up: Gemini/Bedrock native adapters, image attachments as real vision
+inputs, and archive/restore UI.
