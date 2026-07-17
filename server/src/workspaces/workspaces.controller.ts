@@ -1,6 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { IsOptional, IsString } from 'class-validator';
 import { WorkspacesService } from './workspaces.service';
+import { StorageService } from '../storage/storage.service';
+import { workspaceFileKey, workspacePrefix, relativePath } from '../storage/storage.keys';
 
 class CreateWorkspaceDto {
   @IsString() name!: string;
@@ -13,12 +16,62 @@ class UpdateWorkspaceDto {
   @IsOptional() @IsString() memory?: string;
 }
 
+class PutFileDto {
+  @IsString() path!: string;
+  /** File content, base64-encoded (works for text and binary alike). */
+  @IsString() contentBase64!: string;
+  @IsOptional() @IsString() contentType?: string;
+}
+
 @Controller('workspaces')
 export class WorkspacesController {
-  constructor(private readonly workspaces: WorkspacesService) {}
+  constructor(
+    private readonly workspaces: WorkspacesService,
+    private readonly storage: StorageService,
+  ) {}
 
   @Get() list() { return this.workspaces.list(); }
   @Post() create(@Body() dto: CreateWorkspaceDto) { return this.workspaces.create(dto); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateWorkspaceDto) { return this.workspaces.update(id, dto); }
   @Delete(':id') remove(@Param('id') id: string) { return this.workspaces.remove(id); }
+
+  // ---- workspace files (S3-compatible object storage) ----
+
+  @Get(':id/files')
+  async listFiles(@Param('id') id: string) {
+    await this.workspaces.get(id);
+    const objects = await this.storage.list(workspacePrefix(id));
+    return objects.map((o) => ({ path: relativePath(id, o.key), size: o.size, lastModified: o.lastModified }));
+  }
+
+  @Post(':id/files')
+  async putFile(@Param('id') id: string, @Body() dto: PutFileDto) {
+    await this.workspaces.get(id);
+    const key = this.key(id, dto.path);
+    await this.storage.put(key, Buffer.from(dto.contentBase64, 'base64'), dto.contentType);
+    return { ok: true, path: dto.path };
+  }
+
+  @Get(':id/file')
+  async getFile(@Param('id') id: string, @Query('path') path: string, @Res() res: Response) {
+    await this.workspaces.get(id);
+    const body = await this.storage.get(this.key(id, path ?? ''));
+    if (body === null) throw new NotFoundException(`file ${path}`);
+    res.type('application/octet-stream').send(body);
+  }
+
+  @Delete(':id/file')
+  async deleteFile(@Param('id') id: string, @Query('path') path: string) {
+    await this.workspaces.get(id);
+    await this.storage.delete(this.key(id, path ?? ''));
+    return { ok: true };
+  }
+
+  private key(id: string, path: string): string {
+    try {
+      return workspaceFileKey(id, path);
+    } catch (err) {
+      throw new BadRequestException(err instanceof Error ? err.message : 'invalid path');
+    }
+  }
 }

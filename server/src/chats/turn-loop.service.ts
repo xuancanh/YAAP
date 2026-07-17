@@ -50,7 +50,7 @@ export class TurnLoopService {
   }
 
   async *run(sessionId: string, input: { text: string; attachments?: unknown[] }): AsyncGenerator<TurnEvent> {
-    const session = this.repo.getSession(sessionId);
+    const session = await this.repo.getSession(sessionId);
     if (!session) throw new NotFoundException(`chat ${sessionId}`);
     if (this.busy.has(sessionId)) throw new ConflictException('chat is busy');
     if (session.tokenCeiling > 0 && session.tokensIn + session.tokensOut >= session.tokenCeiling) {
@@ -61,15 +61,15 @@ export class TurnLoopService {
     const ctl = new AbortController();
     this.aborts.set(sessionId, ctl);
 
-    const turn = this.repo.createTurn(sessionId, { ...input, model: session.model });
-    this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'user', content: input.text });
+    const turn = await this.repo.createTurn(sessionId, { ...input, model: session.model });
+    await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'user', content: input.text });
     yield { type: 'turn', turnId: turn.id };
 
     let answer = '';
     let tokensIn = 0;
     let tokensOut = 0;
     try {
-      const messages = this.buildHistory(session.id, session.compactSummary, session.compactCutoff);
+      const messages = await this.buildHistory(session.id, session.compactSummary, session.compactCutoff);
       for await (const ev of this.ai.stream({
         model: session.model,
         messages,
@@ -85,18 +85,18 @@ export class TurnLoopService {
         }
         yield ev;
       }
-      if (answer) this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'assistant', content: answer });
-      this.repo.updateTurn(turn.id, {
+      if (answer) await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'assistant', content: answer });
+      await this.repo.updateTurn(turn.id, {
         status: ctl.signal.aborted ? 'stopped' : 'done',
         tokensIn, tokensOut,
       });
-      this.repo.updateSession(sessionId, {
+      await this.repo.updateSession(sessionId, {
         tokensIn: session.tokensIn + tokensIn,
         tokensOut: session.tokensOut + tokensOut,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.repo.updateTurn(turn.id, { status: 'error', error: message, tokensIn, tokensOut });
+      await this.repo.updateTurn(turn.id, { status: 'error', error: message, tokensIn, tokensOut });
       yield { type: 'error', message };
     } finally {
       this.busy.delete(sessionId);
@@ -104,9 +104,9 @@ export class TurnLoopService {
     }
   }
 
-  private buildHistory(sessionId: string, compactSummary: string, compactCutoff: string | null): AiMessage[] {
+  private async buildHistory(sessionId: string, compactSummary: string, compactCutoff: string | null): Promise<AiMessage[]> {
     const cutoffSeq = compactCutoff === null ? null : Number(compactCutoff);
-    const rows = this.repo.providerHistory(sessionId, Number.isNaN(cutoffSeq as number) ? null : cutoffSeq);
+    const rows = await this.repo.providerHistory(sessionId, Number.isNaN(cutoffSeq as number) ? null : cutoffSeq);
     const history: AiMessage[] = rows.map((m) => ({
       role: m.role as 'user' | 'assistant',
       content: m.content,

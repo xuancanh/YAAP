@@ -16,16 +16,16 @@ export class AgentsService {
   constructor(@Inject(DRIZZLE_DB) private readonly db: DrizzleDb) {}
 
   list() {
-    return this.db.select().from(agents).all();
+    return this.db.select().from(agents);
   }
 
-  get(id: string) {
-    const found = this.db.select().from(agents).where(eq(agents.id, id)).get();
-    if (!found) throw new NotFoundException(`agent ${id}`);
-    return found;
+  async get(id: string) {
+    const rows = await this.db.select().from(agents).where(eq(agents.id, id)).limit(1);
+    if (!rows[0]) throw new NotFoundException(`agent ${id}`);
+    return rows[0];
   }
 
-  create(input: { name: string; charter?: string; provider?: string; model?: string; homeDir?: string }) {
+  async create(input: { name: string; charter?: string; provider?: string; model?: string; homeDir?: string }) {
     const row = {
       id: newId(),
       name: input.name,
@@ -38,37 +38,37 @@ export class AgentsService {
       pendingFeedback: '[]',
       createdAt: nowIso(),
     };
-    this.db.insert(agents).values(row).run();
+    await this.db.insert(agents).values(row);
     return row;
   }
 
-  update(id: string, patch: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string }>) {
-    this.get(id);
-    this.db.update(agents).set(patch).where(eq(agents.id, id)).run();
+  async update(id: string, patch: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string }>) {
+    await this.get(id);
+    await this.db.update(agents).set(patch).where(eq(agents.id, id));
     return this.get(id);
   }
 
-  remove(id: string) {
-    this.db.delete(agents).where(eq(agents.id, id)).run();
+  async remove(id: string) {
+    await this.db.delete(agents).where(eq(agents.id, id));
     return { ok: true };
   }
 
   /** Record a 👍/👎 on a turn owned by this agent; surfaced to the model on
    *  its next reply, then cleared (FR-6.5). */
-  addFeedback(id: string, feedback: { rating: 'up' | 'down'; note?: string; turnId: string }) {
-    const agent = this.get(id);
+  async addFeedback(id: string, feedback: { rating: 'up' | 'down'; note?: string; turnId: string }) {
+    const agent = await this.get(id);
     const pending = JSON.parse(agent.pendingFeedback) as unknown[];
     pending.push({ ...feedback, at: nowIso() });
-    this.db.update(agents).set({ pendingFeedback: JSON.stringify(pending) }).where(eq(agents.id, id)).run();
+    await this.db.update(agents).set({ pendingFeedback: JSON.stringify(pending) }).where(eq(agents.id, id));
     return { ok: true };
   }
 
   /** Drain pending feedback for injection into the agent's next turn. */
-  takeFeedback(id: string): unknown[] {
-    const agent = this.get(id);
+  async takeFeedback(id: string): Promise<unknown[]> {
+    const agent = await this.get(id);
     const pending = JSON.parse(agent.pendingFeedback) as unknown[];
     if (pending.length > 0) {
-      this.db.update(agents).set({ pendingFeedback: '[]' }).where(eq(agents.id, id)).run();
+      await this.db.update(agents).set({ pendingFeedback: '[]' }).where(eq(agents.id, id));
     }
     return pending;
   }

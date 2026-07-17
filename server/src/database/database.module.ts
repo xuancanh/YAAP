@@ -1,33 +1,31 @@
 /**
  * DatabaseModule — bootstraps a single Drizzle ORM connection for the process.
  *
- * SQLite (better-sqlite3) at DATA_DIR/app.sqlite by default; migrations run on
- * every boot and are idempotent (see migrator.ts). Global so repositories in
- * any feature module can inject DRIZZLE_DB without re-importing this module.
+ * Postgres (node-postgres Pool) via DATABASE_URL; migrations run on every
+ * boot and are idempotent (see migrator.ts). Global so repositories in any
+ * feature module can inject DRIZZLE_DB without re-importing this module.
+ *
+ * Tests use PGlite (in-memory Postgres) through the same Drizzle pg dialect
+ * and the same migrator, so repository code has exactly one query path.
  */
 import { Module, Global, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
-import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { Pool } from 'pg';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from './schema';
-import { runSqliteMigrations } from './migrator';
+import { runPgMigrations } from './migrator';
 import { DRIZZLE_DB } from './database.constants';
 
-export type DrizzleDb = BetterSQLite3Database<typeof schema>;
+export type DrizzleDb = NodePgDatabase<typeof schema>;
 
 const drizzleProvider = {
   provide: DRIZZLE_DB,
   inject: [ConfigService],
-  useFactory: (config: ConfigService): DrizzleDb => {
-    const appDbPath = config.get<string>('appDbPath')!;
-    mkdirSync(dirname(appDbPath), { recursive: true });
-    const sqlite = new Database(appDbPath);
-    sqlite.pragma('journal_mode = WAL');
-    runSqliteMigrations(sqlite, new Logger('DatabaseModule'));
-    return drizzle(sqlite, { schema });
+  useFactory: async (config: ConfigService): Promise<DrizzleDb> => {
+    const pool = new Pool({ connectionString: config.get<string>('databaseUrl')! });
+    await runPgMigrations(pool, new Logger('DatabaseModule'));
+    return drizzle(pool, { schema });
   },
 };
 

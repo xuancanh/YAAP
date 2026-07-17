@@ -1,8 +1,9 @@
 /**
  * AppModule — root NestJS module wiring every feature module together.
  *
- *  ConfigModule (global)   — dotenv-free typed config factory
- *  DatabaseModule (global) — Drizzle + SQLite, boot-time idempotent migrations
+ *  ConfigModule (global)   — typed config factory (env)
+ *  DatabaseModule (global) — Drizzle + Postgres, boot-time idempotent migrations
+ *  StorageModule (global)  — S3-compatible object storage for workspace files
  *
  *  StatusModule      → GET  /api/status
  *  WorkspacesModule  → CRUD /api/workspaces        (scoping + memory, §12)
@@ -16,6 +17,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import configuration from './config/configuration';
 import { DatabaseModule } from './database/database.module';
+import { StorageModule } from './storage/storage.module';
 import { StatusModule } from './status/status.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { AgentTypesModule } from './agent-types/agent-types.module';
@@ -26,6 +28,7 @@ import { ChatsModule } from './chats/chats.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
     DatabaseModule,
+    StorageModule,
     StatusModule,
     WorkspacesModule,
     AgentTypesModule,

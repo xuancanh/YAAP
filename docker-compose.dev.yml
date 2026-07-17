@@ -1,0 +1,32 @@
+# Local dev dependencies: Postgres + MinIO (S3-compatible object storage).
+# Ports are offset (5433 / 9100) to avoid colliding with default installs.
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#   npm run dev
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: yaamchat
+      POSTGRES_PASSWORD: yaamchat
+      POSTGRES_DB: yaamchat
+    ports:
+      - '5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ':9101'
+    environment:
+      MINIO_ROOT_USER: yaamchat
+      MINIO_ROOT_PASSWORD: yaamchat-secret
+    ports:
+      - '9100:9000'
+      - '9101:9101'
+    volumes:
+      - miniodata:/data
+
+volumes:
+  pgdata:
+  miniodata:

@@ -18,11 +18,12 @@ const redact = ({ apiKey, ...rest }: AgentTypeRow) => ({ ...rest, hasApiKey: !!a
 export class AgentTypesService {
   constructor(@Inject(DRIZZLE_DB) private readonly db: DrizzleDb) {}
 
-  list() {
-    return this.db.select().from(agentTypes).all().map(redact);
+  async list() {
+    const rows = await this.db.select().from(agentTypes);
+    return rows.map(redact);
   }
 
-  create(input: { name: string; provider: string; model: string; models?: string[]; baseUrl?: string; apiKey?: string; persona?: string }) {
+  async create(input: { name: string; provider: string; model: string; models?: string[]; baseUrl?: string; apiKey?: string; persona?: string }) {
     const row = {
       id: newId(),
       name: input.name,
@@ -35,27 +36,28 @@ export class AgentTypesService {
       enabled: 1,
       createdAt: nowIso(),
     };
-    this.db.insert(agentTypes).values(row).run();
+    await this.db.insert(agentTypes).values(row);
     return redact(row);
   }
 
-  update(id: string, patch: Partial<{ name: string; provider: string; model: string; models: string[]; baseUrl: string; apiKey: string; persona: string; enabled: boolean }>) {
-    const found = this.db.select().from(agentTypes).where(eq(agentTypes.id, id)).get();
+  async update(id: string, patch: Partial<{ name: string; provider: string; model: string; models: string[]; baseUrl: string; apiKey: string; persona: string; enabled: boolean }>) {
+    const found = await this.resolve(id);
     if (!found) throw new NotFoundException(`agent type ${id}`);
     const set: Record<string, unknown> = { ...patch };
     if (patch.models) set.models = JSON.stringify(patch.models);
     if (patch.enabled !== undefined) set.enabled = patch.enabled ? 1 : 0;
-    this.db.update(agentTypes).set(set).where(eq(agentTypes.id, id)).run();
-    return redact(this.db.select().from(agentTypes).where(eq(agentTypes.id, id)).get()!);
+    await this.db.update(agentTypes).set(set).where(eq(agentTypes.id, id));
+    return redact((await this.resolve(id))!);
   }
 
-  remove(id: string) {
-    this.db.delete(agentTypes).where(eq(agentTypes.id, id)).run();
+  async remove(id: string) {
+    await this.db.delete(agentTypes).where(eq(agentTypes.id, id));
     return { ok: true };
   }
 
   /** Server-internal: full row including the API key, for request-time use. */
-  resolve(id: string): AgentTypeRow | undefined {
-    return this.db.select().from(agentTypes).where(eq(agentTypes.id, id)).get();
+  async resolve(id: string): Promise<AgentTypeRow | undefined> {
+    const rows = await this.db.select().from(agentTypes).where(eq(agentTypes.id, id)).limit(1);
+    return rows[0];
   }
 }

@@ -4,7 +4,7 @@
  * the services above it.
  */
 import { Injectable, Inject } from '@nestjs/common';
-import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, isNotNull } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { chatMessages, chatSessions, chatTurns } from '../database/schema';
@@ -19,20 +19,18 @@ export class ChatsRepository {
   constructor(@Inject(DRIZZLE_DB) private readonly db: DrizzleDb) {}
 
   // ---- sessions ----
-  listSessions(workspaceId: string, opts: { archived?: boolean } = {}): ChatSession[] {
-    const archived = opts.archived
-      ? sql`${chatSessions.archivedAt} IS NOT NULL`
-      : isNull(chatSessions.archivedAt);
+  async listSessions(workspaceId: string, opts: { archived?: boolean } = {}): Promise<ChatSession[]> {
+    const archived = opts.archived ? isNotNull(chatSessions.archivedAt) : isNull(chatSessions.archivedAt);
     return this.db.select().from(chatSessions)
-      .where(and(eq(chatSessions.workspaceId, workspaceId), archived))
-      .all();
+      .where(and(eq(chatSessions.workspaceId, workspaceId), archived));
   }
 
-  getSession(id: string): ChatSession | undefined {
-    return this.db.select().from(chatSessions).where(eq(chatSessions.id, id)).get();
+  async getSession(id: string): Promise<ChatSession | undefined> {
+    const rows = await this.db.select().from(chatSessions).where(eq(chatSessions.id, id)).limit(1);
+    return rows[0];
   }
 
-  createSession(input: Partial<ChatSession> & { workspaceId: string }): ChatSession {
+  async createSession(input: Partial<ChatSession> & { workspaceId: string }): Promise<ChatSession> {
     const now = nowIso();
     const row: ChatSession = {
       id: newId(),
@@ -59,31 +57,31 @@ export class ChatsRepository {
       createdAt: now,
       updatedAt: now,
     };
-    this.db.insert(chatSessions).values(row).run();
+    await this.db.insert(chatSessions).values(row);
     return row;
   }
 
-  updateSession(id: string, patch: Partial<ChatSession>): void {
-    this.db.update(chatSessions)
+  async updateSession(id: string, patch: Partial<ChatSession>): Promise<void> {
+    await this.db.update(chatSessions)
       .set({ ...patch, updatedAt: nowIso() })
-      .where(eq(chatSessions.id, id)).run();
+      .where(eq(chatSessions.id, id));
   }
 
-  deleteSession(id: string): void {
-    this.db.delete(chatMessages).where(eq(chatMessages.sessionId, id)).run();
-    this.db.delete(chatTurns).where(eq(chatTurns.sessionId, id)).run();
-    this.db.delete(chatSessions).where(eq(chatSessions.id, id)).run();
+  async deleteSession(id: string): Promise<void> {
+    await this.db.delete(chatMessages).where(eq(chatMessages.sessionId, id));
+    await this.db.delete(chatTurns).where(eq(chatTurns.sessionId, id));
+    await this.db.delete(chatSessions).where(eq(chatSessions.id, id));
   }
 
   // ---- turns ----
-  createTurn(sessionId: string, input: { text: string; attachments?: unknown[]; model?: string }): ChatTurn {
-    const last = this.db.select({ seq: chatTurns.seq }).from(chatTurns)
+  async createTurn(sessionId: string, input: { text: string; attachments?: unknown[]; model?: string }): Promise<ChatTurn> {
+    const last = await this.db.select({ seq: chatTurns.seq }).from(chatTurns)
       .where(eq(chatTurns.sessionId, sessionId))
-      .orderBy(asc(chatTurns.seq)).all().at(-1);
+      .orderBy(desc(chatTurns.seq)).limit(1);
     const row: ChatTurn = {
       id: newId(),
       sessionId,
-      seq: (last?.seq ?? -1) + 1,
+      seq: (last[0]?.seq ?? -1) + 1,
       input: input.text,
       attachments: JSON.stringify(input.attachments ?? []),
       model: input.model ?? '',
@@ -97,57 +95,57 @@ export class ChatsRepository {
       error: null,
       createdAt: nowIso(),
     };
-    this.db.insert(chatTurns).values(row).run();
+    await this.db.insert(chatTurns).values(row);
     return row;
   }
 
-  updateTurn(id: string, patch: Partial<ChatTurn>): void {
-    this.db.update(chatTurns).set(patch).where(eq(chatTurns.id, id)).run();
+  async updateTurn(id: string, patch: Partial<ChatTurn>): Promise<void> {
+    await this.db.update(chatTurns).set(patch).where(eq(chatTurns.id, id));
   }
 
-  listTurns(sessionId: string): ChatTurn[] {
+  async listTurns(sessionId: string): Promise<ChatTurn[]> {
     return this.db.select().from(chatTurns)
       .where(eq(chatTurns.sessionId, sessionId))
-      .orderBy(asc(chatTurns.seq)).all();
+      .orderBy(asc(chatTurns.seq));
   }
 
   // ---- transcript ----
-  appendMessage(m: { sessionId: string; turnId: string; role: string; content: string; toolName?: string }): ChatMessage {
-    const last = this.db.select({ seq: chatMessages.seq }).from(chatMessages)
+  async appendMessage(m: { sessionId: string; turnId: string; role: string; content: string; toolName?: string }): Promise<ChatMessage> {
+    const last = await this.db.select({ seq: chatMessages.seq }).from(chatMessages)
       .where(eq(chatMessages.sessionId, m.sessionId))
-      .orderBy(asc(chatMessages.seq)).all().at(-1);
+      .orderBy(desc(chatMessages.seq)).limit(1);
     const row: ChatMessage = {
       id: newId(),
       sessionId: m.sessionId,
       turnId: m.turnId,
-      seq: (last?.seq ?? -1) + 1,
+      seq: (last[0]?.seq ?? -1) + 1,
       role: m.role,
       content: m.content,
       toolName: m.toolName ?? null,
       createdAt: nowIso(),
     };
-    this.db.insert(chatMessages).values(row).run();
+    await this.db.insert(chatMessages).values(row);
     return row;
   }
 
-  listMessages(sessionId: string): ChatMessage[] {
+  async listMessages(sessionId: string): Promise<ChatMessage[]> {
     return this.db.select().from(chatMessages)
       .where(eq(chatMessages.sessionId, sessionId))
-      .orderBy(asc(chatMessages.seq)).all();
+      .orderBy(asc(chatMessages.seq));
   }
 
-  clearMessages(sessionId: string): void {
-    this.db.delete(chatMessages).where(eq(chatMessages.sessionId, sessionId)).run();
+  async clearMessages(sessionId: string): Promise<void> {
+    await this.db.delete(chatMessages).where(eq(chatMessages.sessionId, sessionId));
   }
 
   /** Rows that rebuild provider history: user + assistant only (tool and
    *  thinking are excluded — FR-8.1), and only past the compaction cutoff
    *  sequence when one is set (FR-7.4). */
-  providerHistory(sessionId: string, cutoffSeq: number | null): ChatMessage[] {
+  async providerHistory(sessionId: string, cutoffSeq: number | null): Promise<ChatMessage[]> {
     const past = cutoffSeq === null ? undefined : gt(chatMessages.seq, cutoffSeq);
-    return this.db.select().from(chatMessages)
+    const rows = await this.db.select().from(chatMessages)
       .where(and(eq(chatMessages.sessionId, sessionId), past))
-      .orderBy(asc(chatMessages.seq)).all()
-      .filter((m) => m.role === 'user' || m.role === 'assistant');
+      .orderBy(asc(chatMessages.seq));
+    return rows.filter((m) => m.role === 'user' || m.role === 'assistant');
   }
 }

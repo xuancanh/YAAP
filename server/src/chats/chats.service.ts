@@ -14,8 +14,8 @@ export class ChatsService {
     return this.repo.listSessions(workspaceId, { archived });
   }
 
-  get(id: string): ChatSession {
-    const s = this.repo.getSession(id);
+  async get(id: string): Promise<ChatSession> {
+    const s = await this.repo.getSession(id);
     if (!s) throw new NotFoundException(`chat ${id}`);
     return s;
   }
@@ -24,52 +24,55 @@ export class ChatsService {
     return this.repo.createSession(input);
   }
 
-  update(id: string, patch: Partial<Pick<ChatSession, 'name' | 'draft' | 'permissionMode' | 'thinkingEffort' | 'model' | 'agentTypeId' | 'tokenCeiling' | 'cwd'>> & { pinned?: boolean; tags?: string[] }) {
-    this.get(id);
+  async update(id: string, patch: Partial<Pick<ChatSession, 'name' | 'draft' | 'permissionMode' | 'thinkingEffort' | 'model' | 'agentTypeId' | 'tokenCeiling' | 'cwd'>> & { pinned?: boolean; tags?: string[] }) {
+    await this.get(id);
     const set: Record<string, unknown> = { ...patch };
     if (patch.pinned !== undefined) set.pinned = patch.pinned ? 1 : 0;
     if (patch.tags !== undefined) set.tags = JSON.stringify(patch.tags);
-    this.repo.updateSession(id, set);
+    await this.repo.updateSession(id, set);
     return this.get(id);
   }
 
-  archive(id: string) {
-    this.get(id);
-    this.repo.updateSession(id, { archivedAt: new Date().toISOString() });
+  async archive(id: string) {
+    await this.get(id);
+    await this.repo.updateSession(id, { archivedAt: new Date().toISOString() });
     return this.get(id);
   }
 
-  restore(id: string) {
-    this.get(id);
-    this.repo.updateSession(id, { archivedAt: null });
+  async restore(id: string) {
+    await this.get(id);
+    await this.repo.updateSession(id, { archivedAt: null });
     return this.get(id);
   }
 
-  remove(id: string) {
-    this.get(id);
-    this.repo.deleteSession(id);
+  async remove(id: string) {
+    await this.get(id);
+    await this.repo.deleteSession(id);
     return { ok: true };
   }
 
-  transcript(id: string) {
-    this.get(id);
-    return { messages: this.repo.listMessages(id), turns: this.repo.listTurns(id) };
+  async transcript(id: string) {
+    await this.get(id);
+    return {
+      messages: await this.repo.listMessages(id),
+      turns: await this.repo.listTurns(id),
+    };
   }
 
   /** /clear — wipe transcript and private context (FR-2.4). */
-  clear(id: string) {
-    this.get(id);
-    this.repo.clearMessages(id);
-    this.repo.updateSession(id, { compactSummary: '', compactCutoff: null });
+  async clear(id: string) {
+    await this.get(id);
+    await this.repo.clearMessages(id);
+    await this.repo.updateSession(id, { compactSummary: '', compactCutoff: null });
     return { ok: true };
   }
 
   /** /export — the conversation as markdown (FR-6.7). */
-  exportMarkdown(id: string): string {
-    const s = this.get(id);
+  async exportMarkdown(id: string): Promise<string> {
+    const s = await this.get(id);
     const title = s.name || s.autoTitle || 'Conversation';
     const lines = [`# ${title}`, ''];
-    for (const m of this.repo.listMessages(id)) {
+    for (const m of await this.repo.listMessages(id)) {
       if (m.role === 'thinking') continue;
       const who = m.role === 'user' ? 'User' : m.role === 'tool' ? `Tool (${m.toolName ?? '?'})` : 'Assistant';
       lines.push(`## ${who}`, '', m.content, '');
@@ -77,9 +80,9 @@ export class ChatsService {
     return lines.join('\n');
   }
 
-  rateTurn(sessionId: string, turnId: string, rating: 'up' | 'down', note?: string) {
-    this.get(sessionId);
-    this.repo.updateTurn(turnId, { rating, ratingNote: note ?? null });
+  async rateTurn(sessionId: string, turnId: string, rating: 'up' | 'down', note?: string) {
+    await this.get(sessionId);
+    await this.repo.updateTurn(turnId, { rating, ratingNote: note ?? null });
     return { ok: true };
   }
 }

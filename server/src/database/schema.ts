@@ -16,14 +16,13 @@
  *                      tool + thinking rows are excluded when provider history
  *                      is rebuilt (FR-8.1)
  *
- * SQLite-first (better-sqlite3). Timestamps are ISO-8601 strings; booleans are
- * 0/1 integers; structured fields are JSON strings — matching the reference
- * app's conventions so a Postgres twin table set can be added the same way
- * later if needed.
+ * Postgres-only. Timestamps are ISO-8601 strings; booleans are 0/1 integers;
+ * structured fields are JSON strings — matching the reference app's column
+ * conventions.
  */
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { pgTable, text, integer } from 'drizzle-orm/pg-core';
 
-export const workspaces = sqliteTable('workspaces', {
+export const workspaces = pgTable('workspaces', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   color: text('color').notNull().default('#F5C451'),
@@ -32,7 +31,7 @@ export const workspaces = sqliteTable('workspaces', {
   createdAt: text('createdAt').notNull(),
 });
 
-export const agents = sqliteTable('agents', {
+export const agents = pgTable('agents', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   /** User-written charter: who this agent is and how it should act (FR-11.1). */
@@ -50,7 +49,7 @@ export const agents = sqliteTable('agents', {
   createdAt: text('createdAt').notNull(),
 });
 
-export const agentTypes = sqliteTable('agent_types', {
+export const agentTypes = pgTable('agent_types', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   provider: text('provider').notNull(),
@@ -66,7 +65,7 @@ export const agentTypes = sqliteTable('agent_types', {
   createdAt: text('createdAt').notNull(),
 });
 
-export const chatSessions = sqliteTable('chat_sessions', {
+export const chatSessions = pgTable('chat_sessions', {
   id: text('id').primaryKey(),
   workspaceId: text('workspaceId').notNull(),
   agentId: text('agentId'),
@@ -101,7 +100,7 @@ export const chatSessions = sqliteTable('chat_sessions', {
   updatedAt: text('updatedAt').notNull(),
 });
 
-export const chatTurns = sqliteTable('chat_turns', {
+export const chatTurns = pgTable('chat_turns', {
   id: text('id').primaryKey(),
   sessionId: text('sessionId').notNull(),
   /** Monotonic position within the session. */
@@ -126,7 +125,7 @@ export const chatTurns = sqliteTable('chat_turns', {
   createdAt: text('createdAt').notNull(),
 });
 
-export const chatMessages = sqliteTable('chat_messages', {
+export const chatMessages = pgTable('chat_messages', {
   id: text('id').primaryKey(),
   sessionId: text('sessionId').notNull(),
   turnId: text('turnId').notNull(),

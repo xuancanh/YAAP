@@ -7,35 +7,39 @@ desktop app's chat feature and rebuilt as a client/server web app.
 - Requirements: [`docs/chat-requirements.md`](docs/chat-requirements.md)
   (FR-numbered; the source of truth for scope).
 - Stack and layout follow `smart-knowledge-app`: **NestJS** backend
-  (`server/`), **React 19 + Vite** frontend (`src/`), **Drizzle ORM + SQLite**
-  (`better-sqlite3`), tests on `node:test` via `tsx`.
+  (`server/`), **React 19 + Vite** frontend (`src/`), **Drizzle ORM +
+  Postgres**, **S3-compatible object storage** for workspace files (MinIO in
+  dev), tests on `node:test` via `tsx` against **PGlite** (in-memory Postgres).
 
 ## Quick start
 
 ```bash
 npm install
+docker compose -f docker-compose.dev.yml up -d   # Postgres :5433 + MinIO :9100
 npm run dev        # NestJS API on :8790 + Vite frontend on :5175 (proxies /api)
-npm test           # backend tests (in-memory SQLite, no server boot)
+npm test           # backend tests (PGlite in-memory Postgres, no server boot)
 npm run build      # server (tsc) + frontend (vite) production build
 ```
 
-The SQLite database is created at `./data/app.sqlite` on first boot
-(`DATA_DIR` overrides; see `.env.example`).
+Config defaults match the compose file; override via env (see `.env.example`).
+Migrations are idempotent and run on every boot. The S3 bucket is auto-created
+on boot when the store allows it (MinIO does; on AWS pre-create it).
 
 ## Layout
 
 ```
 server/src/
   config/        typed env configuration
-  database/      Drizzle schema + idempotent boot migrations (SQLite)
+  database/      Drizzle schema + idempotent boot migrations (Postgres)
   status/        GET /api/status
-  workspaces/    scoping partitions + durable workspace memory (§12)
+  workspaces/    scoping partitions, durable memory (§12) + S3-backed files
+  storage/       S3-compatible object storage (workspace-scoped keys)
   agent-types/   provider/model/persona presets (§9); API keys never leave the server
   agents/        durable agent identities: charter, feedback, dashboard (§11)
   chats/         sessions, transcript, and the SSE streaming turn loop (§1–§8)
   ai/            provider-neutral streaming interface (NFR-1) + Echo dev provider
 src/             React frontend (placeholder shell; real design lands later)
-tests/           node:test suites run with tsx against in-memory SQLite
+tests/           node:test suites run with tsx against PGlite (in-memory Postgres)
 scripts/dev.mjs  parallel server + Vite dev runner
 ```
 

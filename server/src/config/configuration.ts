@@ -1,20 +1,28 @@
 /**
  * Typed configuration factory (loaded once by @nestjs/config).
  *
- * All runtime knobs come from the environment; DATA_DIR defaults to ./data so
- * a bare `npm run dev` works with zero setup (SQLite file is created there).
+ * All runtime knobs come from the environment. Defaults target the local dev
+ * stack in docker-compose.dev.yml (Postgres + MinIO), so `docker compose -f
+ * docker-compose.dev.yml up -d && npm run dev` works with zero further setup.
  */
-import { resolve } from 'node:path';
-
-export default () => {
-  const dataDir = resolve(process.env.DATA_DIR || './data');
-  return {
-    port: parseInt(process.env.PORT || '8790', 10),
-    dataDir,
-    appDbPath: process.env.APP_DB_PATH || resolve(dataDir, 'app.sqlite'),
-    /** Default per-chat token ceiling (FR-7.1). 0 = unlimited. */
-    defaultTokenCeiling: parseInt(process.env.DEFAULT_TOKEN_CEILING || '200000', 10),
-    /** Max tool rounds inside a single turn (FR-3.1). */
-    maxToolRounds: parseInt(process.env.MAX_TOOL_ROUNDS || '24', 10),
-  };
-};
+export default () => ({
+  port: parseInt(process.env.PORT || '8790', 10),
+  /** Postgres connection string (the only supported database). */
+  databaseUrl:
+    process.env.DATABASE_URL ||
+    'postgres://yaamchat:yaamchat@localhost:5433/yaamchat',
+  /** S3-compatible object storage for workspace files (MinIO in dev). */
+  s3: {
+    endpoint: process.env.S3_ENDPOINT || 'http://localhost:9100',
+    region: process.env.S3_REGION || 'us-east-1',
+    bucket: process.env.S3_BUCKET || 'yaam-chat',
+    accessKeyId: process.env.S3_ACCESS_KEY_ID || 'yaamchat',
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || 'yaamchat-secret',
+    /** Path-style URLs; required by MinIO and most S3-compatibles. */
+    forcePathStyle: (process.env.S3_FORCE_PATH_STYLE || 'true') === 'true',
+  },
+  /** Default per-chat token ceiling (FR-7.1). 0 = unlimited. */
+  defaultTokenCeiling: parseInt(process.env.DEFAULT_TOKEN_CEILING || '200000', 10),
+  /** Max tool rounds inside a single turn (FR-3.1). */
+  maxToolRounds: parseInt(process.env.MAX_TOOL_ROUNDS || '24', 10),
+});
