@@ -16,9 +16,10 @@ import { AiModule } from '../ai/ai.module';
 import { AgentTypesModule } from '../agent-types/agent-types.module';
 import { AgentsModule } from '../agents/agents.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
+import { SkillsModule } from '../skills/skills.module';
 
 @Module({
-  imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule],
+  imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule],
   controllers: [ChatsController],
   providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService],
   exports: [ChatsService],

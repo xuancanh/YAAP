@@ -12,9 +12,30 @@ import { Injectable } from '@nestjs/common';
 import { StorageService } from '../storage/storage.service';
 import { workspaceFileKey, workspacePrefix, relativePath } from '../storage/storage.keys';
 import { AiToolSpec } from '../ai/ai-provider.interface';
+import { validateSlides, renderSlidesHtml } from './slides.util';
 
 const READ_CAP = 50_000;
 const HTTP_CAP = 20_000;
+const SEARCH_FILE_CAP = 200_000;
+const SEARCH_MAX_FILES = 200;
+const SEARCH_MAX_HITS = 40;
+const FETCH_CAP = 30_000;
+
+/** Crude but dependency-free HTML → readable text: drop script/style, strip
+ *  tags, collapse whitespace. Good enough for research fetches. */
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(br|\/p|\/div|\/li|\/h[1-6]|\/tr)[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n\s*\n+/g, '\n\n')
+    .trim();
+}
 
 interface ChatTool extends AiToolSpec {
   readOnly: boolean;
@@ -111,6 +132,118 @@ export class ToolsService {
           const path = str(input, 'path');
           await this.storage.delete(workspaceFileKey(ws, path));
           return `deleted ${path}`;
+        },
+      },
+      {
+        name: 'fs_search',
+        description: 'Search text file contents in the workspace file store. Returns matching lines as "path:line: text".',
+        inputSchema: {
+          type: 'object',
+          properties: { query: { type: 'string', description: 'Case-insensitive substring to find' } },
+          required: ['query'],
+        },
+        readOnly: true,
+        execute: async (ws, input) => {
+          const query = str(input, 'query').toLowerCase();
+          const objects = (await this.storage.list(workspacePrefix(ws))).slice(0, SEARCH_MAX_FILES);
+          const hits: string[] = [];
+          for (const obj of objects) {
+            if (obj.size > SEARCH_FILE_CAP) continue;
+            const body = await this.storage.get(obj.key);
+            if (!body || body.includes(0)) continue; // skip binary
+            const path = relativePath(ws, obj.key);
+            const lines = body.toString('utf8').split('\n');
+            for (let i = 0; i < lines.length && hits.length < SEARCH_MAX_HITS; i++) {
+              if (lines[i].toLowerCase().includes(query)) {
+                hits.push(`${path}:${i + 1}: ${lines[i].trim().slice(0, 200)}`);
+              }
+            }
+            if (hits.length >= SEARCH_MAX_HITS) break;
+          }
+          return hits.length > 0 ? hits.join('\n') : `no matches for "${input.query}"`;
+        },
+      },
+      {
+        name: 'web_search',
+        description: 'Search the web. Returns result titles, URLs and snippets. Follow up with web_fetch to read a result.',
+        inputSchema: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+          required: ['query'],
+        },
+        readOnly: true,
+        execute: async (_ws, input) => {
+          const query = str(input, 'query');
+          const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
+            headers: { 'user-agent': 'Mozilla/5.0 (yaam-chat research tool)' },
+            signal: AbortSignal.timeout(15_000),
+          });
+          if (!res.ok) return `search failed: ${res.status} ${res.statusText}`;
+          const html = await res.text();
+          const results: string[] = [];
+          const re = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:class="result__snippet"[^>]*>([\s\S]*?)<\/a>)?/g;
+          for (let m = re.exec(html); m && results.length < 8; m = re.exec(html)) {
+            let url = m[1];
+            const redirect = /uddg=([^&]+)/.exec(url);
+            if (redirect) url = decodeURIComponent(redirect[1]);
+            results.push(`${htmlToText(m[2])}\n  ${url}${m[3] ? `\n  ${htmlToText(m[3]).slice(0, 200)}` : ''}`);
+          }
+          return results.length > 0 ? results.join('\n\n') : 'no results (the search backend may be rate-limiting; try a different query)';
+        },
+      },
+      {
+        name: 'web_fetch',
+        description: 'Fetch a public web page and return its readable text content (HTML is stripped).',
+        inputSchema: {
+          type: 'object',
+          properties: { url: { type: 'string' } },
+          required: ['url'],
+        },
+        readOnly: true,
+        execute: async (_ws, input) => {
+          const url = assertPublicUrl(str(input, 'url'));
+          const res = await fetch(url, {
+            headers: { 'user-agent': 'Mozilla/5.0 (yaam-chat research tool)' },
+            signal: AbortSignal.timeout(20_000),
+            redirect: 'follow',
+          });
+          if (!res.ok) return `fetch failed: ${res.status} ${res.statusText}`;
+          const raw = await res.text();
+          const type = res.headers.get('content-type') ?? '';
+          const text = type.includes('html') ? htmlToText(raw) : raw;
+          return text.length > FETCH_CAP ? `${text.slice(0, FETCH_CAP)}\n…(truncated)` : text;
+        },
+      },
+      {
+        name: 'slides_create',
+        description: 'Create a self-contained HTML slide deck in the workspace file store. Slides: [{ title, bullets?, notes? }]. Arrow keys navigate; "n" toggles notes.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Target path, e.g. slides/quarterly-review.html' },
+            title: { type: 'string' },
+            slides: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string' },
+                  bullets: { type: 'array', items: { type: 'string' } },
+                  notes: { type: 'string' },
+                },
+                required: ['title'],
+              },
+            },
+          },
+          required: ['path', 'title', 'slides'],
+        },
+        readOnly: false,
+        execute: async (ws, input) => {
+          const path = str(input, 'path');
+          const { title, slides } = validateSlides(input.title, input.slides);
+          const html = renderSlidesHtml(title, slides);
+          await this.storage.put(workspaceFileKey(ws, path), Buffer.from(html, 'utf8'), 'text/html');
+          return `created a ${slides.length}-slide deck "${title}" at ${path} (${Buffer.byteLength(html)} bytes)`;
         },
       },
       {

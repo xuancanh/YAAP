@@ -6,6 +6,7 @@ import { runPgMigrations, Queryable } from '../server/src/database/migrator';
 import type { DrizzleDb } from '../server/src/database/database.module';
 import type { StorageService } from '../server/src/storage/storage.service';
 import type { TurnContextService, TurnContext } from '../server/src/chats/turn-context.service';
+import type { SkillsService } from '../server/src/skills/skills.service';
 import { AiProvider, AiRequest, AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 
 /** Adapt PGlite to the migrator's pg-Pool-shaped interface: `exec` for
@@ -51,6 +52,15 @@ export function ctxStub(provider: AiProvider, overrides: Partial<TurnContext> = 
   return {
     build: async () => ({ provider, model: 'test-model', system: '', maxToolRounds: 24, ...overrides }),
   } as unknown as TurnContextService;
+}
+
+/** SkillsService stub offering no skills (turn-loop tests that don't care). */
+export function skillsStub(): SkillsService {
+  return {
+    toolSpecs: async () => [],
+    resolveTool: async () => undefined,
+    invocation: () => '',
+  } as unknown as SkillsService;
 }
 
 /** Provider that plays one scripted event list per stream() call (per round). */

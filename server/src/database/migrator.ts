@@ -122,6 +122,25 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0002-skills',
+    up: async (db) => {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS skills (
+          "id" TEXT PRIMARY KEY,
+          "workspaceId" TEXT,
+          "name" TEXT NOT NULL,
+          "description" TEXT NOT NULL DEFAULT '',
+          "instructions" TEXT NOT NULL DEFAULT '',
+          "enabled" INTEGER NOT NULL DEFAULT 1,
+          "builtin" INTEGER NOT NULL DEFAULT 0,
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_scope_name
+          ON skills (COALESCE("workspaceId", ''), "name");
+      `);
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {

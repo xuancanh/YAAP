@@ -10,6 +10,8 @@
  *  AgentTypesModule  → CRUD /api/agent-types       (provider presets, §9)
  *  AgentsModule      → CRUD /api/agents            (durable agents, §11)
  *  ChatsModule       → CRUD /api/chats, SSE turns  (§1–§8)
+ *  SkillsModule      → CRUD /api/skills            (instruction packs, §10)
+ *  SearchModule      → GET  /api/search            (sessions/messages/files, FR-8.2)
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
@@ -23,6 +25,8 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
 import { AgentTypesModule } from './agent-types/agent-types.module';
 import { AgentsModule } from './agents/agents.module';
 import { ChatsModule } from './chats/chats.module';
+import { SkillsModule } from './skills/skills.module';
+import { SearchModule } from './search/search.module';
 
 @Module({
   imports: [
@@ -34,6 +38,8 @@ import { ChatsModule } from './chats/chats.module';
     AgentTypesModule,
     AgentsModule,
     ChatsModule,
+    SkillsModule,
+    SearchModule,
   ],
 })
 export class AppModule {}

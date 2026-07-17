@@ -36,7 +36,9 @@ server/src/
   storage/       S3-compatible object storage (workspace-scoped keys)
   agent-types/   provider/model/persona presets (§9); API keys never leave the server
   agents/        durable agent identities: charter, feedback, dashboard (§11)
-  chats/         sessions, transcript, and the SSE streaming turn loop (§1–§8)
+  chats/         sessions, transcript, the SSE tool-using turn loop (§1–§8)
+  skills/        instruction-pack skills offered as tools (§10); built-ins seeded
+  search/        GET /api/search — sessions, messages, files (FR-8.2)
   ai/            provider-neutral streaming interface (NFR-1) + Echo dev provider
 src/             React frontend (placeholder shell; real design lands later)
 tests/           node:test suites run with tsx against PGlite (in-memory Postgres)
@@ -59,7 +61,15 @@ structured turn records, `/clear`, markdown `/export`, ratings, and system
 context assembled from persona + agent charter + workspace memory + pending
 feedback.
 
+Also shipped: a **skills system** (global + workspace instruction packs
+offered to the model as `skill_*` tools; `deep-research`, `write-document`,
+and `create-slides` are seeded built-ins), **web_search / web_fetch /
+fs_search** research tools, a **slides_create** tool rendering self-contained
+HTML decks, workspace-wide **search** (`/api/search`), and **rich file
+previews** (`/api/workspaces/:id/preview` classifies markdown/html/image/pdf/
+text; HTML previews must render in a sandboxed, network-denied iframe).
+
 Next up (tracked against the requirements doc): more provider adapters
-(OpenAI et al.), attachments + @-mentions + slash autocomplete (§2), search
-(§8.2), skills/MCP (§10), the durable-agent brain/dashboard/loops (§11), and
-the real frontend.
+(OpenAI et al.), attachments + @-mentions + slash autocomplete (§2), MCP
+(§10.3), the durable-agent brain/dashboard/loops (§11), and the real
+frontend.

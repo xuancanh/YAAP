@@ -70,7 +70,44 @@ export const api = {
   compact: (chatId: string) =>
     fetch(`/api/chats/${chatId}/compact`, { method: 'POST' }).then((r) =>
       json<{ ok: boolean; reason?: string }>(r)),
+  skills: (workspaceId?: string) =>
+    fetch(`/api/skills${workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : ''}`)
+      .then((r) => json<Skill[]>(r)),
+  search: (workspaceId: string, q: string) =>
+    fetch(`/api/search?workspaceId=${encodeURIComponent(workspaceId)}&q=${encodeURIComponent(q)}`)
+      .then((r) => json<SearchResults>(r)),
+  preview: (workspaceId: string, path: string) =>
+    fetch(`/api/workspaces/${workspaceId}/preview?path=${encodeURIComponent(path)}`)
+      .then((r) => json<FilePreview>(r)),
 };
+
+export interface Skill {
+  id: string;
+  workspaceId: string | null;
+  name: string;
+  description: string;
+  instructions: string;
+  enabled: number;
+  builtin: number;
+}
+
+export interface SearchResults {
+  sessions: Array<{ id: string; name: string; autoTitle: string }>;
+  messages: Array<{ sessionId: string; messageId: string; turnId: string; role: string; snippet: string }>;
+  files: Array<{ path: string; size: number }>;
+}
+
+/** Rich preview descriptor. `html` kind must be rendered inside a sandboxed,
+ *  network-denied iframe (FR-13.1). */
+export interface FilePreview {
+  path: string;
+  kind: 'markdown' | 'html' | 'image' | 'pdf' | 'text' | 'binary';
+  size: number;
+  contentType: string;
+  text?: string;
+  truncated?: boolean;
+  base64?: string;
+}
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
 

@@ -1,7 +1,9 @@
-/** Workspace-file tools and the raw-HTTP guard (FR-3.3 first slice). */
+/** Workspace-file tools, search, slides, and the raw-HTTP guard (FR-3.3). */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ToolsService } from '../server/src/chats/tools.service';
+import { ToolsService, htmlToText } from '../server/src/chats/tools.service';
+import { validateSlides, renderSlidesHtml } from '../server/src/chats/slides.util';
+import { contentTypeFor, previewKindFor } from '../server/src/storage/preview.util';
 import { memStorage } from './helpers';
 
 function setup() {
@@ -52,4 +54,66 @@ test('http_request refuses private/internal hosts (SSRF guard)', async () => {
   ]) {
     await assert.rejects(tools.execute('ws1', 'http_request', { url }), /not allowed|are allowed|not a valid URL/);
   }
+});
+
+test('fs_search finds matching lines across workspace text files', async () => {
+  const { tools } = setup();
+  await tools.execute('ws1', 'fs_write', { path: 'a.md', content: 'alpha\nthe needle is here\nomega' });
+  await tools.execute('ws1', 'fs_write', { path: 'sub/b.txt', content: 'no match' });
+  await tools.execute('ws2', 'fs_write', { path: 'c.md', content: 'needle in another workspace' });
+
+  const out = await tools.execute('ws1', 'fs_search', { query: 'NEEDLE' });
+  assert.match(out, /a\.md:2: the needle is here/);
+  assert.ok(!out.includes('another workspace'), 'search stays inside the workspace');
+  assert.match(await tools.execute('ws1', 'fs_search', { query: 'zzz-nothing' }), /no matches/);
+});
+
+test('slides_create renders a bounded, escaped, self-contained deck', async () => {
+  const { tools, map } = setup();
+  const out = await tools.execute('ws1', 'slides_create', {
+    path: 'slides/demo.html',
+    title: 'Demo <deck>',
+    slides: [
+      { title: 'One', bullets: ['first <b>point</b>', 'second'] },
+      { title: 'Two', notes: 'speaker only' },
+    ],
+  });
+  assert.match(out, /2-slide deck/);
+  const html = map.get('workspaces/ws1/slides/demo.html')!.toString('utf8');
+  assert.ok(html.startsWith('<!doctype html>'));
+  assert.ok(html.includes('Demo &lt;deck&gt;'), 'title is escaped');
+  assert.ok(html.includes('first &lt;b&gt;point&lt;/b&gt;'), 'bullets are escaped');
+  assert.ok(html.includes('speaker only'));
+  assert.ok(!/src=|href=/.test(html), 'no external references (sandbox-safe)');
+
+  await assert.rejects(
+    tools.execute('ws1', 'slides_create', { path: 'x.html', title: 'T', slides: [] }),
+    /non-empty array/,
+  );
+  await assert.rejects(
+    tools.execute('ws1', 'slides_create', { path: 'x.html', title: 'T', slides: [{ notitle: true }] }),
+    /needs a "title"/,
+  );
+  assert.throws(() => validateSlides('T', Array.from({ length: 51 }, () => ({ title: 'x' }))), /at most 50/);
+  assert.ok(renderSlidesHtml('t', [{ title: 'only' }]).includes('only'));
+});
+
+test('htmlToText strips scripts, styles and tags into readable text', () => {
+  const text = htmlToText('<html><head><style>.x{}</style><script>evil()</script></head><body><h1>Title</h1><p>Para one.</p><ul><li>a</li><li>b</li></ul></body></html>');
+  assert.ok(!text.includes('evil'));
+  assert.ok(!text.includes('.x{}'));
+  assert.match(text, /Title/);
+  assert.match(text, /Para one\./);
+});
+
+test('preview classification maps extensions to renderers and content types', () => {
+  assert.equal(previewKindFor('docs/readme.md'), 'markdown');
+  assert.equal(previewKindFor('slides/deck.html'), 'html');
+  assert.equal(previewKindFor('img/logo.png'), 'image');
+  assert.equal(previewKindFor('paper.pdf'), 'pdf');
+  assert.equal(previewKindFor('src/main.ts'), 'text');
+  assert.equal(previewKindFor('blob.bin'), 'binary');
+  assert.equal(contentTypeFor('deck.html'), 'text/html');
+  assert.equal(contentTypeFor('readme.md'), 'text/markdown');
+  assert.equal(contentTypeFor('mystery.xyz'), 'application/octet-stream');
 });

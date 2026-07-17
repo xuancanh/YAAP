@@ -125,6 +125,21 @@ export const chatTurns = pgTable('chat_turns', {
   createdAt: text('createdAt').notNull(),
 });
 
+export const skills = pgTable('skills', {
+  id: text('id').primaryKey(),
+  /** null = global skill visible to every workspace (FR-10.1). */
+  workspaceId: text('workspaceId'),
+  /** Slug, also the slash-command / tool suffix: skill_<name> (FR-2.4/10.2). */
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  /** The instruction body loaded into the model when the skill is invoked. */
+  instructions: text('instructions').notNull().default(''),
+  enabled: integer('enabled').notNull().default(1),
+  /** Seeded built-ins are recreated on boot if deleted; user edits stick. */
+  builtin: integer('builtin').notNull().default(0),
+  createdAt: text('createdAt').notNull(),
+});
+
 export const chatMessages = pgTable('chat_messages', {
   id: text('id').primaryKey(),
   sessionId: text('sessionId').notNull(),

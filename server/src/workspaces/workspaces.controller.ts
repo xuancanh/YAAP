@@ -4,6 +4,11 @@ import { IsOptional, IsString } from 'class-validator';
 import { WorkspacesService } from './workspaces.service';
 import { StorageService } from '../storage/storage.service';
 import { workspaceFileKey, workspacePrefix, relativePath } from '../storage/storage.keys';
+import { contentTypeFor, previewKindFor } from '../storage/preview.util';
+
+/** Text previews are capped; the full file remains downloadable. */
+const PREVIEW_TEXT_CAP = 200_000;
+const PREVIEW_BINARY_CAP = 5_000_000;
 
 class CreateWorkspaceDto {
   @IsString() name!: string;
@@ -57,7 +62,27 @@ export class WorkspacesController {
     await this.workspaces.get(id);
     const body = await this.storage.get(this.key(id, path ?? ''));
     if (body === null) throw new NotFoundException(`file ${path}`);
-    res.type('application/octet-stream').send(body);
+    res.type(contentTypeFor(path ?? '')).send(body);
+  }
+
+  /** Rich preview descriptor: tells the frontend which renderer to use and
+   *  carries the content (text inline; images/pdf as base64). HTML must be
+   *  rendered in a sandboxed, network-denied iframe (FR-13.1). */
+  @Get(':id/preview')
+  async preview(@Param('id') id: string, @Query('path') path: string) {
+    await this.workspaces.get(id);
+    const body = await this.storage.get(this.key(id, path ?? ''));
+    if (body === null) throw new NotFoundException(`file ${path}`);
+    const kind = previewKindFor(path ?? '');
+    const base = { path, kind, size: body.length, contentType: contentTypeFor(path ?? '') };
+    if (kind === 'markdown' || kind === 'html' || kind === 'text') {
+      const text = body.toString('utf8');
+      return { ...base, text: text.slice(0, PREVIEW_TEXT_CAP), truncated: text.length > PREVIEW_TEXT_CAP };
+    }
+    if ((kind === 'image' || kind === 'pdf') && body.length <= PREVIEW_BINARY_CAP) {
+      return { ...base, base64: body.toString('base64') };
+    }
+    return base; // binary or too large: metadata only, use the file endpoint
   }
 
   @Delete(':id/file')

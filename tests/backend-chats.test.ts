@@ -11,13 +11,13 @@ import { TurnLoopService, TurnEvent } from '../server/src/chats/turn-loop.servic
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
 import { EchoAiProvider } from '../server/src/ai/echo-ai.provider';
-import { testDb, memStorage, ctxStub } from './helpers';
+import { testDb, memStorage, ctxStub, skillsStub } from './helpers';
 
 async function setup() {
   const repo = new ChatsRepository(await testDb());
   const chats = new ChatsService(repo);
   const tools = new ToolsService(memStorage().stub);
-  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(new EchoAiProvider()));
+  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(new EchoAiProvider()), skillsStub());
   return { repo, chats, turns };
 }
 

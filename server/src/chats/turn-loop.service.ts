@@ -25,6 +25,7 @@ import { ChatsRepository, ChatSession } from './chats.repository';
 import { ChatLocks } from './chat-locks';
 import { ToolsService } from './tools.service';
 import { TurnContextService } from './turn-context.service';
+import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
 import { AiMessage, AiStreamEvent, AiToolCall } from '../ai/ai-provider.interface';
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
@@ -64,6 +65,7 @@ export class TurnLoopService {
     private readonly locks: ChatLocks,
     private readonly tools: ToolsService,
     private readonly context: TurnContextService,
+    private readonly skills: SkillsService,
   ) {}
 
   /** Stop the in-flight turn for a chat; the partial turn is retained (FR-5.4). */
@@ -108,6 +110,8 @@ export class TurnLoopService {
       const ctx = await this.context.build(session);
       const history = await this.buildHistory(session.id, session.compactSummary, session.compactCutoff);
       const approvals = parseApprovals(session.approvals);
+      // Core tools + the workspace's enabled skills as tools (FR-10.2).
+      const toolSpecs = [...this.tools.specs(), ...await this.skills.toolSpecs(session.workspaceId)];
 
       for (let round = 0; ; round++) {
         let answer = '';
@@ -116,7 +120,7 @@ export class TurnLoopService {
           model: ctx.model,
           system: ctx.system,
           messages: history,
-          tools: this.tools.specs(),
+          tools: toolSpecs,
           thinkingEffort: session.thinkingEffort,
           apiKey: ctx.apiKey,
           baseUrl: ctx.baseUrl,
@@ -159,7 +163,7 @@ export class TurnLoopService {
             isError = true;
           } else {
             try {
-              output = await this.tools.execute(session.workspaceId, call.name, call.input);
+              output = await this.executeTool(session.workspaceId, call.name, call.input);
             } catch (err) {
               output = `tool error: ${err instanceof Error ? err.message : String(err)}`;
               isError = true;
@@ -198,6 +202,16 @@ export class TurnLoopService {
     }
   }
 
+  /** Route a call to a skill (returns its instructions) or a core tool. */
+  private async executeTool(workspaceId: string, name: string, input: Record<string, unknown>): Promise<string> {
+    if (name.startsWith(SKILL_TOOL_PREFIX)) {
+      const skill = await this.skills.resolveTool(workspaceId, name);
+      if (!skill) throw new Error(`unknown tool: ${name}`);
+      return this.skills.invocation(skill);
+    }
+    return this.tools.execute(workspaceId, name, input);
+  }
+
   /** Ask/Auto policy check (§4): what may run without asking, and whether a
    *  granted approval is eligible to be remembered. */
   private checkPolicy(
@@ -205,7 +219,8 @@ export class TurnLoopService {
     call: AiToolCall,
     approvals: { tools: string[]; exact: string[] },
   ): { verdict: 'auto' | 'read-only' | 'remembered' | 'ask'; remember: boolean } {
-    const readOnly = this.tools.isReadOnly(call.name);
+    // Skills only load instructions — side-effect free, always read-only.
+    const readOnly = call.name.startsWith(SKILL_TOOL_PREFIX) ? true : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
     if (session.permissionMode === 'auto') return { verdict: 'auto', remember: true };
     if (readOnly) return { verdict: 'read-only', remember: true };
