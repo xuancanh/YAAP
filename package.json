@@ -10,7 +10,7 @@
     "server:dev": "tsx watch server/src/main.ts",
     "build": "npm run server:build && tsc -b && vite build",
     "lint": "eslint .",
-    "test": "TSX_TSCONFIG_PATH=tests/tsconfig.json tsx --test tests/backend-chats.test.ts tests/backend-schema.test.ts tests/backend-storage-keys.test.ts",
+    "test": "TSX_TSCONFIG_PATH=tests/tsconfig.json tsx --test tests/backend-chats.test.ts tests/backend-schema.test.ts tests/backend-storage-keys.test.ts tests/backend-anthropic.test.ts tests/backend-tools.test.ts tests/backend-turn-loop.test.ts tests/backend-compaction.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

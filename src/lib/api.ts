@@ -61,12 +61,26 @@ export const api = {
     fetch(`/api/chats/${chatId}/transcript`).then((r) =>
       json<{ messages: ChatMessage[]; turns: unknown[] }>(r)),
   stop: (chatId: string) => fetch(`/api/chats/${chatId}/stop`, { method: 'POST' }),
+  approve: (chatId: string, callId: string, decision: ApprovalDecision) =>
+    fetch(`/api/chats/${chatId}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callId, decision }),
+    }).then((r) => json<{ resolved: boolean }>(r)),
+  compact: (chatId: string) =>
+    fetch(`/api/chats/${chatId}/compact`, { method: 'POST' }).then((r) =>
+      json<{ ok: boolean; reason?: string }>(r)),
 };
+
+export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
 
 export type TurnEvent =
   | { type: 'turn'; turnId: string }
   | { type: 'answer'; text: string }
   | { type: 'thinking'; text: string }
+  | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean }
+  | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown> }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   | { type: 'done' }
   | { type: 'error'; message: string };

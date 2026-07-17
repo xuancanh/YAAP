@@ -5,14 +5,25 @@
  * custom endpoints — FR-9.2) adapts to this one shape so the turn loop, the
  * transcript, and the UI never see provider-specific payloads. Streaming is an
  * async generator of events; thinking and answer are separate channels
- * (FR-3.2) and tool calls surface as complete, validated requests (partial /
- * malformed tool arguments must be refused by the adapter — FR-3.4).
+ * (FR-3.2) and tool calls surface only as complete, parsed requests —
+ * adapters must throw on truncated / malformed tool arguments so they are
+ * refused rather than executed (FR-3.4).
  */
+export interface AiToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
 export interface AiMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** Tool calls made by an assistant message (in-turn history). */
+  toolCalls?: AiToolCall[];
   /** Set on tool result messages so providers can correlate. */
   toolCallId?: string;
+  /** Tool result messages: the execution failed or was denied. */
+  isError?: boolean;
 }
 
 export interface AiToolSpec {
@@ -31,10 +42,17 @@ export type AiStreamEvent =
 
 export interface AiRequest {
   model: string;
+  /** System prompt (persona + workspace memory + agent charter, FR-3.6/§12). */
+  system?: string;
   messages: AiMessage[];
   tools?: AiToolSpec[];
   /** off | low | medium | high — only forwarded to models that support it (FR-9.4). */
   thinkingEffort?: string;
+  maxTokens?: number;
+  /** Resolved at request time from the chat's agent type; never persisted
+   *  into transcripts (FR-13.3). */
+  apiKey?: string;
+  baseUrl?: string;
   signal?: AbortSignal;
 }
 
@@ -42,5 +60,3 @@ export interface AiProvider {
   readonly name: string;
   stream(req: AiRequest): AsyncGenerator<AiStreamEvent>;
 }
-
-export const AI_PROVIDER = 'AI_PROVIDER';

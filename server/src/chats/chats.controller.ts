@@ -10,7 +10,8 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res } from '@
 import type { Response } from 'express';
 import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { ChatsService } from './chats.service';
-import { TurnLoopService } from './turn-loop.service';
+import { TurnLoopService, ApprovalDecision } from './turn-loop.service';
+import { CompactionService } from './compaction.service';
 
 class CreateChatDto {
   @IsString() workspaceId!: string;
@@ -45,11 +46,17 @@ class RateTurnDto {
   @IsOptional() @IsString() note?: string;
 }
 
+class ApproveDto {
+  @IsString() callId!: string;
+  @IsIn(['allow-once', 'allow-always', 'allow-tool', 'deny']) decision!: ApprovalDecision;
+}
+
 @Controller('chats')
 export class ChatsController {
   constructor(
     private readonly chats: ChatsService,
     private readonly turns: TurnLoopService,
+    private readonly compaction: CompactionService,
   ) {}
 
   @Get()
@@ -87,6 +94,19 @@ export class ChatsController {
       res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`);
     }
     res.end();
+    void this.compaction.maybeAutoCompact(id);
+  }
+
+  /** Resolve a paused Ask-mode tool approval (§4). */
+  @Post(':id/approve')
+  approve(@Param('id') id: string, @Body() dto: ApproveDto) {
+    return { resolved: this.turns.resolveApproval(id, dto.callId, dto.decision) };
+  }
+
+  /** /compact — distill private history into a summary (FR-7.3). */
+  @Post(':id/compact')
+  compact(@Param('id') id: string) {
+    return this.compaction.compact(id);
   }
 
   @Post(':id/stop')

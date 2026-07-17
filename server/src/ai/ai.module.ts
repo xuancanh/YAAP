@@ -1,16 +1,21 @@
 /**
- * AiModule — binds the provider-neutral AI_PROVIDER token.
- *
- * Currently the Echo development provider; real adapters (Anthropic first,
- * then the rest of FR-9.2) will be selected per-request from the chat's agent
- * type instead of a single static binding.
+ * AiModule — provider adapters behind the provider-neutral factory.
+ * The Echo development provider is the default when a chat has no agent type,
+ * so the app runs end to end without credentials.
  */
 import { Module } from '@nestjs/common';
-import { AI_PROVIDER } from './ai-provider.interface';
+import { AiProviderFactory } from './providers.factory';
+import { AnthropicAiProvider } from './anthropic-ai.provider';
 import { EchoAiProvider } from './echo-ai.provider';
 
 @Module({
-  providers: [{ provide: AI_PROVIDER, useClass: EchoAiProvider }],
-  exports: [AI_PROVIDER],
+  providers: [
+    AiProviderFactory,
+    // Built via factory: the constructor's injectable fetch function is a test
+    // seam, not a DI dependency.
+    { provide: AnthropicAiProvider, useFactory: () => new AnthropicAiProvider() },
+    EchoAiProvider,
+  ],
+  exports: [AiProviderFactory],
 })
 export class AiModule {}

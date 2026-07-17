@@ -1,0 +1,105 @@
+/** Compaction: summary + cutoff, history rebuild, transcript untouched (§7). */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { ConfigService } from '@nestjs/config';
+import { ChatsRepository } from '../server/src/chats/chats.repository';
+import { ChatsService } from '../server/src/chats/chats.service';
+import { CompactionService } from '../server/src/chats/compaction.service';
+import { ChatLocks } from '../server/src/chats/chat-locks';
+import { testDb, ctxStub, ScriptedProvider } from './helpers';
+import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
+
+const summaryRound: AiStreamEvent[] = [
+  { type: 'answer', text: 'Goal: test compaction. Key facts: everything works.' },
+  { type: 'done' },
+];
+
+function configStub(values: Record<string, unknown> = {}): ConfigService {
+  return { get: (k: string) => values[k] } as unknown as ConfigService;
+}
+
+async function setup() {
+  const repo = new ChatsRepository(await testDb());
+  const chats = new ChatsService(repo);
+  const provider = new ScriptedProvider([summaryRound, summaryRound]);
+  const compaction = new CompactionService(repo, new ChatLocks(), ctxStub(provider), configStub());
+  return { repo, chats, compaction, provider };
+}
+
+async function seedConversation(repo: ChatsRepository, sessionId: string, turns: number) {
+  for (let i = 0; i < turns; i++) {
+    await repo.appendMessage({ sessionId, turnId: `t${i}`, role: 'user', content: `question ${i}` });
+    await repo.appendMessage({ sessionId, turnId: `t${i}`, role: 'assistant', content: `answer ${i}` });
+  }
+}
+
+test('compact writes a bounded summary and a cutoff; history rebuilds past it (FR-7.3/7.4)', async () => {
+  const { repo, chats, compaction } = await setup();
+  const s = await chats.create({ workspaceId: 'ws1' });
+  await seedConversation(repo, s.id, 3);
+
+  const res = await compaction.compact(s.id);
+  assert.equal(res.ok, true);
+
+  const session = await chats.get(s.id);
+  assert.match(session.compactSummary, /Goal: test compaction/);
+  assert.ok(session.compactCutoff !== null);
+
+  // provider history past the cutoff is empty; the visible transcript is unchanged
+  const history = await repo.providerHistory(s.id, Number(session.compactCutoff));
+  assert.equal(history.length, 0);
+  assert.equal((await repo.listMessages(s.id)).length, 6);
+
+  // new messages after compaction are included again
+  await repo.appendMessage({ sessionId: s.id, turnId: 'tX', role: 'user', content: 'newer' });
+  const after = await repo.providerHistory(s.id, Number(session.compactCutoff));
+  assert.deepEqual(after.map((m) => m.content), ['newer']);
+});
+
+test('short conversations refuse to compact', async () => {
+  const { repo, chats, compaction } = await setup();
+  const s = await chats.create({ workspaceId: 'ws1' });
+  await seedConversation(repo, s.id, 1);
+  const res = await compaction.compact(s.id);
+  assert.equal(res.ok, false);
+  assert.match(res.reason!, /too short/);
+});
+
+test('auto-compaction only fires past the estimated token threshold', async () => {
+  const repo = new ChatsRepository(await testDb());
+  const chats = new ChatsService(repo);
+  const provider = new ScriptedProvider([summaryRound]);
+  const compaction = new CompactionService(
+    repo, new ChatLocks(), ctxStub(provider),
+    configStub({ compactionThresholdTokens: 10 }), // ~40 chars triggers
+  );
+  const s = await chats.create({ workspaceId: 'ws1' });
+  await seedConversation(repo, s.id, 3); // well past 40 chars
+
+  await compaction.maybeAutoCompact(s.id);
+  assert.match((await chats.get(s.id)).compactSummary, /Goal/);
+
+  // below threshold: untouched
+  const s2 = await chats.create({ workspaceId: 'ws1' });
+  const compaction2 = new CompactionService(
+    repo, new ChatLocks(), ctxStub(new ScriptedProvider([summaryRound])),
+    configStub({ compactionThresholdTokens: 999999 }),
+  );
+  await seedConversation(repo, s2.id, 3);
+  await compaction2.maybeAutoCompact(s2.id);
+  assert.equal((await chats.get(s2.id)).compactSummary, '');
+});
+
+test('compaction respects the shared busy lock (FR-7.5)', async () => {
+  const repo = new ChatsRepository(await testDb());
+  const chats = new ChatsService(repo);
+  const locks = new ChatLocks();
+  const compaction = new CompactionService(repo, locks, ctxStub(new ScriptedProvider([summaryRound])), configStub());
+  const s = await chats.create({ workspaceId: 'ws1' });
+  await seedConversation(repo, s.id, 3);
+
+  locks.tryAcquire(s.id); // simulate an in-flight turn
+  await assert.rejects(compaction.compact(s.id), /busy/);
+  locks.release(s.id);
+  assert.equal((await compaction.compact(s.id)).ok, true);
+});

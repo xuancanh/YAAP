@@ -2,21 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PGlite } from '@electric-sql/pglite';
-import { runPgMigrations, Queryable } from '../server/src/database/migrator';
+import { runPgMigrations } from '../server/src/database/migrator';
+import { pgliteQueryable } from './helpers';
 
 const silent = { log: () => {} };
-
-/** Adapt PGlite to the migrator's pg-Pool-shaped interface: `exec` for
- *  multi-statement DDL (simple protocol), `query` when params are bound. */
-export function pgliteQueryable(pg: PGlite): Queryable {
-  return {
-    query: async (sql: string, params?: unknown[]) => {
-      if (params && params.length > 0) return pg.query(sql, params);
-      const results = await pg.exec(sql);
-      return { rows: results.at(-1)?.rows ?? [] };
-    },
-  };
-}
 
 test('migrations run and are idempotent', async () => {
   const pg = new PGlite();

@@ -25,4 +25,6 @@ export default () => ({
   defaultTokenCeiling: parseInt(process.env.DEFAULT_TOKEN_CEILING || '200000', 10),
   /** Max tool rounds inside a single turn (FR-3.1). */
   maxToolRounds: parseInt(process.env.MAX_TOOL_ROUNDS || '24', 10),
+  /** Estimated provider-input tokens that trigger auto-compaction (FR-7.3). */
+  compactionThresholdTokens: parseInt(process.env.COMPACTION_THRESHOLD_TOKENS || '120000', 10),
 });

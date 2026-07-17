@@ -5,24 +5,19 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PGlite } from '@electric-sql/pglite';
-import { drizzle } from 'drizzle-orm/pglite';
-import * as schema from '../server/src/database/schema';
-import { runPgMigrations } from '../server/src/database/migrator';
-import type { DrizzleDb } from '../server/src/database/database.module';
 import { ChatsRepository } from '../server/src/chats/chats.repository';
 import { ChatsService } from '../server/src/chats/chats.service';
 import { TurnLoopService, TurnEvent } from '../server/src/chats/turn-loop.service';
+import { ChatLocks } from '../server/src/chats/chat-locks';
+import { ToolsService } from '../server/src/chats/tools.service';
 import { EchoAiProvider } from '../server/src/ai/echo-ai.provider';
-import { pgliteQueryable } from './backend-schema.test';
+import { testDb, memStorage, ctxStub } from './helpers';
 
 async function setup() {
-  const pg = new PGlite();
-  await runPgMigrations(pgliteQueryable(pg), { log: () => {} });
-  const db = drizzle(pg, { schema }) as unknown as DrizzleDb;
-  const repo = new ChatsRepository(db);
+  const repo = new ChatsRepository(await testDb());
   const chats = new ChatsService(repo);
-  const turns = new TurnLoopService(repo, new EchoAiProvider());
+  const tools = new ToolsService(memStorage().stub);
+  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(new EchoAiProvider()));
   return { repo, chats, turns };
 }
 
