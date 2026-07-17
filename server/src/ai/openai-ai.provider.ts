@@ -18,6 +18,7 @@ export const OPENAI_COMPAT_BASE_URLS: Record<string, string> = {
   deepseek: 'https://api.deepseek.com/v1',
   kimi: 'https://api.moonshot.ai/v1',
   glm: 'https://open.bigmodel.cn/api/paas/v4',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
   custom: '',
 };
 
@@ -27,8 +28,13 @@ interface OaiToolCallDelta {
   function?: { name?: string; arguments?: string };
 }
 
+type OaiUserPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
 type OaiMessage =
-  | { role: 'system' | 'user'; content: string }
+  | { role: 'system'; content: string }
+  | { role: 'user'; content: string | OaiUserPart[] }
   | { role: 'assistant'; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> }
   | { role: 'tool'; tool_call_id: string; content: string };
 
@@ -39,8 +45,16 @@ export function toOpenAiMessages(system: string | undefined, messages: AiMessage
   if (sys) out.push({ role: 'system', content: sys });
   for (const m of messages) {
     if (m.role === 'system') continue;
-    if (m.role === 'user') out.push({ role: 'user', content: m.content });
-    else if (m.role === 'assistant') {
+    if (m.role === 'user') {
+      if (m.images?.length) {
+        const parts: OaiUserPart[] = [];
+        if (m.content) parts.push({ type: 'text', text: m.content });
+        for (const img of m.images) parts.push({ type: 'image_url', image_url: { url: `data:${img.mediaType};base64,${img.dataBase64}` } });
+        out.push({ role: 'user', content: parts });
+      } else {
+        out.push({ role: 'user', content: m.content });
+      }
+    } else if (m.role === 'assistant') {
       const calls = (m.toolCalls ?? []).map((c) => ({
         id: c.id, type: 'function' as const, function: { name: c.name, arguments: JSON.stringify(c.input) },
       }));

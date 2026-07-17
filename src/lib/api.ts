@@ -157,7 +157,7 @@ export interface SearchResults {
 export const PROVIDER_COLORS: Record<string, string> = {
   anthropic: '#d97757', 'anthropic-compatible': '#d97757',
   openai: '#10a37f', deepseek: '#5c6cf2', kimi: '#8b5cf6',
-  glm: '#00b894', custom: '#94a3b8', echo: '#94a3b8',
+  glm: '#00b894', gemini: '#4285f4', custom: '#94a3b8', echo: '#94a3b8',
 };
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';

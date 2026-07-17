@@ -345,6 +345,9 @@ export function ChatView() {
             <button onClick={() => void app.patchSession(s.id, { pinned: s.pinned !== 1 })} title="Pin" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: s.pinned === 1 ? 'var(--amber)' : 'var(--text-faint)', flex: 'none' }}>
               <I d={P.pin} size={14} fill="currentColor" />
             </button>
+            <button onClick={() => void app.archiveChat(s.id)} title="Archive (retained; restore from the sidebar)" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: 'var(--text-faint)', flex: 'none' }}>
+              <I d={P.board} size={13} />
+            </button>
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>
             <span style={{ color: 'var(--text-dim)' }}>{agent?.name ?? 'Direct chat'}</span> · <span style={mono}>{s.cwd ?? 'workspace files'}</span>

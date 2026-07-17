@@ -15,9 +15,16 @@ export interface AiToolCall {
   input: Record<string, unknown>;
 }
 
+export interface AiImagePart {
+  mediaType: string;
+  dataBase64: string;
+}
+
 export interface AiMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** Image inputs on user messages (vision, FR-2.2). */
+  images?: AiImagePart[];
   /** Tool calls made by an assistant message (in-turn history). */
   toolCalls?: AiToolCall[];
   /** Set on tool result messages so providers can correlate. */

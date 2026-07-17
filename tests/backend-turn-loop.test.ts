@@ -140,3 +140,20 @@ test('concurrent turn on the same chat is refused by the busy lock (FR-7.5)', as
   turns.stop(s.id);
   await collect(gen);
 });
+
+test('image attachments become vision parts on the user message (FR-2.2)', async () => {
+  const { chats, turns, provider, map } = await setup([finalRound]);
+  map.set('workspaces/ws1/uploads/shot.png', Buffer.from([137, 80, 78, 71, 0, 1, 2]));
+  map.set('workspaces/ws1/notes.md', Buffer.from('plain text note'));
+  const s = await chats.create({ workspaceId: 'ws1' });
+
+  await collect(turns.run(s.id, {
+    text: 'look at this',
+    attachments: [{ path: 'uploads/shot.png', kind: 'image' }, { path: 'notes.md', kind: 'text' }],
+  }));
+
+  const lastUser = provider.requests[0].messages.filter((m) => m.role === 'user').at(-1)!;
+  assert.equal(lastUser.images?.length, 1);
+  assert.equal(lastUser.images![0].mediaType, 'image/png');
+  assert.match(lastUser.content, /plain text note/);
+});

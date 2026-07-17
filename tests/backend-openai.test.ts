@@ -95,3 +95,12 @@ test('history mapping: system folding, assistant tool_calls, tool results', () =
   assert.equal(toolMsg.role, 'tool');
   assert.equal(toolMsg.tool_call_id, 'c1');
 });
+
+test('user images map to data-URI image_url parts (vision, FR-2.2)', () => {
+  const mapped = toOpenAiMessages(undefined, [
+    { role: 'user', content: 'describe', images: [{ mediaType: 'image/jpeg', dataBase64: 'aGk=' }] },
+  ]);
+  const parts = (mapped[0] as { content: Array<{ type: string; image_url?: { url: string } }> }).content;
+  assert.deepEqual(parts.map((p) => p.type), ['text', 'image_url']);
+  assert.equal(parts[1].image_url?.url, 'data:image/jpeg;base64,aGk=');
+});

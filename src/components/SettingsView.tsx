@@ -64,6 +64,7 @@ function ProvidersPane() {
               <option value="deepseek">DeepSeek</option>
               <option value="kimi">Kimi</option>
               <option value="glm">GLM</option>
+              <option value="gemini">Gemini</option>
               <option value="anthropic-compatible">Anthropic-compatible</option>
               <option value="custom">Custom (OpenAI-compatible)</option>
               <option value="echo">Echo (dev)</option>

@@ -3,7 +3,7 @@
  * to a streaming adapter. `anthropic-compatible` reuses the Anthropic adapter
  * with the type's baseUrl; OpenAI, DeepSeek, Kimi, GLM, and custom endpoints
  * share the OpenAI-compatible adapter with per-provider default base URLs.
- * Remaining FR-9.2 providers (Gemini native, Bedrock) still to come.
+ * Gemini rides its OpenAI-compatible endpoint; Bedrock (SigV4) still to come.
  */
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { AiProvider } from './ai-provider.interface';
@@ -28,6 +28,7 @@ export class AiProviderFactory {
       case 'deepseek':
       case 'kimi':
       case 'glm':
+      case 'gemini':
       case 'custom':
       case 'openai-compatible':
         return this.openai;

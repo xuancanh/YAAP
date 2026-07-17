@@ -41,6 +41,7 @@ interface Store {
   refreshWorkspaces: () => Promise<void>;
   agents: Agent[]; agentStats: Record<string, AgentStats>; refreshAgents: () => Promise<void>;
   sessions: ChatSession[]; refreshSessions: () => Promise<void>;
+  archived: ChatSession[]; archiveChat: (id: string) => Promise<void>; restoreChat: (id: string) => Promise<void>;
   agentTypes: AgentType[]; refreshAgentTypes: () => Promise<void>;
   skills: Skill[]; refreshSkills: () => Promise<void>;
   mcp: McpServer[]; setMcp: (v: McpServer[]) => void; refreshMcp: () => Promise<void>;
@@ -120,6 +121,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentStats, setAgentStats] = useState<Record<string, AgentStats>>({});
   const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [archived, setArchived] = useState<ChatSession[]>([]);
   const [agentTypes, setAgentTypes] = useState<AgentType[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [mcp, setMcp] = useState<McpServer[]>([]);
@@ -187,6 +189,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshSessions = useCallback(async () => {
     if (!workspaceId) return;
     setSessions(await api.chats(workspaceId));
+    setArchived(await fetch(`/api/chats?workspaceId=${encodeURIComponent(workspaceId)}&archived=true`).then((r) => r.json() as Promise<ChatSession[]>).catch(() => []));
   }, [workspaceId]);
 
   const refreshAgentTypes = useCallback(async () => setAgentTypes(await api.agentTypes()), []);
@@ -388,6 +391,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const removeQueued = useCallback((id: number) => setQueue((q) => q.filter((x) => x.id !== id)), []);
 
+  const archiveChat = useCallback(async (id: string) => {
+    await fetch(`/api/chats/${id}/archive`, { method: 'POST' });
+    await refreshSessions();
+    showToast('Chat archived — restore it from the Archived group');
+  }, [refreshSessions, showToast]);
+
+  const restoreChat = useCallback(async (id: string) => {
+    await fetch(`/api/chats/${id}/restore`, { method: 'POST' });
+    await refreshSessions();
+    showToast('Chat restored');
+  }, [refreshSessions, showToast]);
+
   // ---- turn management ----
   const retry = useCallback(async () => {
     const id = currentIdRef.current;
@@ -482,7 +497,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     width, stacked, mediumDock, theme, toggleTheme, section, go,
     mobileChatOpen, setMobileChatOpen, mobileDetail, setMobileDetail, toast, showToast,
     workspaces, workspaceId, pickWorkspace, refreshWorkspaces,
-    agents, agentStats, refreshAgents, sessions, refreshSessions,
+    agents, agentStats, refreshAgents, sessions, refreshSessions, archived, archiveChat, restoreChat,
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, setMcp, refreshMcp,
     market, refreshMarket, settings, saveSettings,
     currentId, openSession, current, transcript, refreshTranscript, patchSession, newChat,

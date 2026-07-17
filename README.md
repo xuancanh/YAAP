@@ -99,5 +99,11 @@ parses); AGENT.json round-trips — export from the agent home, import on the
 directory page behind a loop-review modal with server-side validation
 (FR-11.7).
 
-Next up: Gemini/Bedrock native adapters, image attachments as real vision
-inputs, and archive/restore UI.
+Image attachments are real vision inputs: uploaded/mentioned images become
+base64 image blocks (Anthropic) or data-URI image_url parts (OpenAI family)
+on the user message, bounded to 4 images ≤3MB each. Gemini is supported via
+its OpenAI-compatible endpoint. Chats archive from the header and restore
+from the sidebar's Archived group (FR-1.4).
+
+Next up: a native Bedrock (SigV4) adapter is the one remaining FR-9.2
+provider.

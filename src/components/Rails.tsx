@@ -149,6 +149,21 @@ export function ChatsRail() {
             </div>
           );
         })}
+        {app.archived.length > 0 && (
+          <div style={{ marginTop: 12, borderTop: '1px solid var(--border-soft)', paddingTop: 8 }}>
+            <div onClick={() => setCollapsed((c) => ({ ...c, __arch: !c.__arch }))} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: 8, borderRadius: 9, cursor: 'pointer', color: 'var(--text-faint)' }}>
+              <span style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>Archived</span>
+              <span style={{ fontSize: 10.5, background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px' }}>{app.archived.length}</span>
+              <I d={P.chevD} size={12} style={{ transform: collapsed.__arch ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
+            </div>
+            {collapsed.__arch && app.archived.map((s) => (
+              <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 9, margin: '2px 0' }}>
+                <span style={{ flex: 1, fontSize: 12.5, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name || s.autoTitle || 'Chat'}</span>
+                <button onClick={() => void app.restoreChat(s.id)} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '3px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Restore</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </>
   );

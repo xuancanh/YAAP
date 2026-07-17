@@ -100,3 +100,13 @@ test('history mapping: tool calls and merged tool results', () => {
   assert.deepEqual(resultBlocks.map((b) => b.tool_use_id), ['a', 'b']);
   assert.equal(resultBlocks[1].is_error, true);
 });
+
+test('user images map to base64 image blocks (vision, FR-2.2)', () => {
+  const mapped = toAnthropicMessages([
+    { role: 'user', content: 'what is this?', images: [{ mediaType: 'image/png', dataBase64: 'aGk=' }] },
+  ]);
+  const blocks = mapped[0].content as Array<{ type: string; source?: { media_type: string; data: string } }>;
+  assert.deepEqual(blocks.map((b) => b.type), ['image', 'text']);
+  assert.equal(blocks[0].source?.media_type, 'image/png');
+  assert.equal(blocks[0].source?.data, 'aGk=');
+});

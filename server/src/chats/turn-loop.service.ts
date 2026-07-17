@@ -29,7 +29,8 @@ import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
 import { McpService, MCP_TOOL_PREFIX } from '../mcp/mcp.module';
 import { StorageService } from '../storage/storage.service';
 import { workspaceFileKey } from '../storage/storage.keys';
-import { AiMessage, AiStreamEvent, AiToolCall } from '../ai/ai-provider.interface';
+import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall } from '../ai/ai-provider.interface';
+import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
 
@@ -118,12 +119,16 @@ export class TurnLoopService {
     try {
       const ctx = await this.context.build(session);
       const history = await this.buildHistory(session.id, session.compactSummary, session.compactCutoff);
-      // Attachments: inject workspace-file contents into the provider input
-      // (descriptors persist on the turn; the transcript stays clean, FR-2.2).
-      const attachedText = await this.loadAttachments(session.workspaceId, input.attachments);
-      if (attachedText && history.length > 0) {
+      // Attachments: inject workspace-file contents into the provider input —
+      // text inline, images as vision parts (descriptors persist on the turn;
+      // the transcript stays clean, FR-2.2).
+      const attached = await this.loadAttachments(session.workspaceId, input.attachments);
+      if (history.length > 0 && (attached.text || attached.images.length > 0)) {
         const lastMsg = history[history.length - 1];
-        if (lastMsg.role === 'user') lastMsg.content = `${lastMsg.content}\n\n${attachedText}`;
+        if (lastMsg.role === 'user') {
+          if (attached.text) lastMsg.content = `${lastMsg.content}\n\n${attached.text}`;
+          if (attached.images.length > 0) lastMsg.images = attached.images;
+        }
       }
       const approvals = parseApprovals(session.approvals);
       // Core tools + the workspace's enabled skills (FR-10.2) + tools
@@ -223,22 +228,28 @@ export class TurnLoopService {
     }
   }
 
-  /** Read attached workspace files (by path) into a bounded text block. */
-  private async loadAttachments(workspaceId: string, attachments?: unknown[]): Promise<string> {
-    if (!attachments?.length) return '';
+  /** Read attached workspace files: text inline (bounded), images as vision
+   *  parts (bounded count + size). */
+  private async loadAttachments(workspaceId: string, attachments?: unknown[]): Promise<{ text: string; images: AiImagePart[] }> {
     const parts: string[] = [];
-    for (const a of attachments.slice(0, 8)) {
+    const images: AiImagePart[] = [];
+    for (const a of (attachments ?? []).slice(0, 8)) {
       const att = a as { path?: string; name?: string };
       const path = att.path ?? att.name;
       if (typeof path !== 'string' || !path) continue;
       try {
         const body = await this.storage.get(workspaceFileKey(workspaceId, path));
-        if (body && !body.includes(0)) {
+        if (!body) continue;
+        if (previewKindFor(path) === 'image') {
+          if (images.length < 4 && body.length <= 3_000_000) {
+            images.push({ mediaType: contentTypeFor(path), dataBase64: body.toString('base64') });
+          }
+        } else if (!body.includes(0)) {
           parts.push(`<attached-file path="${path}">\n${body.toString('utf8').slice(0, 30_000)}\n</attached-file>`);
         }
       } catch { /* invalid path: skip the attachment rather than fail the turn */ }
     }
-    return parts.join('\n\n');
+    return { text: parts.join('\n\n'), images };
   }
 
   /** Route a call to a skill (returns its instructions), an MCP server, or a

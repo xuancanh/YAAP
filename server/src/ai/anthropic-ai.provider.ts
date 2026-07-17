@@ -20,6 +20,7 @@ const EFFORT_BUDGET: Record<string, number> = { low: 2048, medium: 8192, high: 1
 
 type AnthropicContentBlock =
   | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
 
@@ -36,7 +37,15 @@ export function toAnthropicMessages(messages: AiMessage[]): AnthropicMessage[] {
   for (const m of messages) {
     if (m.role === 'system') continue;
     if (m.role === 'user') {
-      out.push({ role: 'user', content: m.content });
+      if (m.images?.length) {
+        const content: AnthropicContentBlock[] = m.images.map((img) => ({
+          type: 'image' as const, source: { type: 'base64' as const, media_type: img.mediaType, data: img.dataBase64 },
+        }));
+        if (m.content) content.push({ type: 'text', text: m.content });
+        out.push({ role: 'user', content });
+      } else {
+        out.push({ role: 'user', content: m.content });
+      }
     } else if (m.role === 'assistant') {
       const content: AnthropicContentBlock[] = [];
       if (m.content) content.push({ type: 'text', text: m.content });
