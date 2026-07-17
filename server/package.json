@@ -1,0 +1,5 @@
+{
+  "name": "@yaam-chat/server",
+  "private": true,
+  "type": "commonjs"
+}
