@@ -8,6 +8,7 @@ import type { StorageService } from '../server/src/storage/storage.service';
 import type { TurnContextService, TurnContext } from '../server/src/chats/turn-context.service';
 import type { SkillsService } from '../server/src/skills/skills.service';
 import type { AgentsService } from '../server/src/agents/agents.service';
+import type { McpService } from '../server/src/mcp/mcp.module';
 import { AiProvider, AiRequest, AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 
 /** Adapt PGlite to the migrator's pg-Pool-shaped interface: `exec` for
@@ -62,6 +63,14 @@ export function skillsStub(): SkillsService {
     resolveTool: async () => undefined,
     invocation: () => '',
   } as unknown as SkillsService;
+}
+
+/** McpService stub offering no servers. */
+export function mcpStub(): McpService {
+  return {
+    toolSpecs: async () => [],
+    execute: async (name: string) => { throw new Error(`unknown tool: ${name}`); },
+  } as unknown as McpService;
 }
 
 /** AgentsService stub for ChatsService tests (feedback recording is a no-op). */

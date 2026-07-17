@@ -93,7 +93,12 @@ function McpPane() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {app.mcp.map((m) => {
-        const tools = (() => { try { return JSON.parse(m.tools) as string[]; } catch { return []; } })();
+        const tools = (() => {
+          try {
+            const parsed = JSON.parse(m.tools) as Array<string | { name: string }>;
+            return parsed.map((t) => (typeof t === 'string' ? t : t.name));
+          } catch { return []; }
+        })();
         return (
           <div key={m.id} style={card}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
@@ -107,6 +112,17 @@ function McpPane() {
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3, ...mono }}>{m.url}</div>
               </div>
+              <button title="Discover tools" onClick={async () => {
+                try {
+                  const res = await api.discoverMcp(m.id);
+                  await app.refreshMcp();
+                  app.showToast(`Discovered ${res.tools.length} tool(s) from ${m.name}`);
+                } catch (err) {
+                  app.showToast(err instanceof Error ? err.message.slice(0, 120) : 'discovery failed');
+                }
+              }} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 10px', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <I d={P.retry} size={12} />Discover
+              </button>
               <Toggle on={m.enabled === 1} onClick={async () => {
                 const updated = await api.updateMcp(m.id, { enabled: m.enabled !== 1 });
                 app.setMcp(app.mcp.map((x) => (x.id === m.id ? { ...x, enabled: updated.enabled as number } : x)));
@@ -130,7 +146,7 @@ function McpPane() {
           setForm({ name: '', url: '' });
         }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>Add</button>
       </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-faint)', padding: '0 4px' }}>Tool discovery from these servers lands in a follow-up; entries and toggles persist now.</div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-faint)', padding: '0 4px' }}>HTTP(S) MCP servers (Streamable HTTP transport). Discovered tools are offered to chats as mcp_* and always pause for approval in Ask mode.</div>
     </div>
   );
 }

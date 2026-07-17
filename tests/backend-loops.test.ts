@@ -13,7 +13,7 @@ import { ToolsService } from '../server/src/chats/tools.service';
 import { AgentsService } from '../server/src/agents/agents.service';
 import { WorkspacesService } from '../server/src/workspaces/workspaces.service';
 import { StorageService } from '../server/src/storage/storage.service';
-import { testDb, memStorage, ctxStub, skillsStub, ScriptedProvider } from './helpers';
+import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 
 test('cronMatches: fields, steps, ranges, and junk expressions', () => {
@@ -44,7 +44,7 @@ async function setup(rounds: AiStreamEvent[][]) {
   const workspaces = new WorkspacesService(db, stub);
   const repo = new ChatsRepository(db);
   const provider = new ScriptedProvider(rounds);
-  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub);
+  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub());
   const config = { get: (k: string) => (k === 'loopsEnabled' ? false : undefined) } as unknown as ConfigService;
   const loops = new LoopsService(agents, workspaces, repo, turns, config);
   const distill = new DistillService(repo, ctxStub(provider), agents);

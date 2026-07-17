@@ -26,6 +26,7 @@ import { ChatLocks } from './chat-locks';
 import { ToolsService } from './tools.service';
 import { TurnContextService } from './turn-context.service';
 import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
+import { McpService, MCP_TOOL_PREFIX } from '../mcp/mcp.module';
 import { StorageService } from '../storage/storage.service';
 import { workspaceFileKey } from '../storage/storage.keys';
 import { AiMessage, AiStreamEvent, AiToolCall } from '../ai/ai-provider.interface';
@@ -69,6 +70,7 @@ export class TurnLoopService {
     private readonly context: TurnContextService,
     private readonly skills: SkillsService,
     private readonly storage: StorageService,
+    private readonly mcp: McpService,
   ) {}
 
   /** Stop the in-flight turn for a chat; the partial turn is retained (FR-5.4). */
@@ -124,8 +126,13 @@ export class TurnLoopService {
         if (lastMsg.role === 'user') lastMsg.content = `${lastMsg.content}\n\n${attachedText}`;
       }
       const approvals = parseApprovals(session.approvals);
-      // Core tools + the workspace's enabled skills as tools (FR-10.2).
-      const toolSpecs = [...this.tools.specs(), ...await this.skills.toolSpecs(session.workspaceId)];
+      // Core tools + the workspace's enabled skills (FR-10.2) + tools
+      // discovered from enabled MCP servers (FR-10.3).
+      const toolSpecs = [
+        ...this.tools.specs(),
+        ...await this.skills.toolSpecs(session.workspaceId),
+        ...await this.mcp.toolSpecs(),
+      ];
 
       for (let round = 0; ; round++) {
         let answer = '';
@@ -234,13 +241,15 @@ export class TurnLoopService {
     return parts.join('\n\n');
   }
 
-  /** Route a call to a skill (returns its instructions) or a core tool. */
+  /** Route a call to a skill (returns its instructions), an MCP server, or a
+   *  core tool. */
   private async executeTool(workspaceId: string, name: string, input: Record<string, unknown>): Promise<string> {
     if (name.startsWith(SKILL_TOOL_PREFIX)) {
       const skill = await this.skills.resolveTool(workspaceId, name);
       if (!skill) throw new Error(`unknown tool: ${name}`);
       return this.skills.invocation(skill);
     }
+    if (name.startsWith(MCP_TOOL_PREFIX)) return this.mcp.execute(name, input);
     return this.tools.execute(workspaceId, name, input);
   }
 
@@ -252,7 +261,11 @@ export class TurnLoopService {
     approvals: { tools: string[]; exact: string[] },
   ): { verdict: 'auto' | 'read-only' | 'remembered' | 'ask'; remember: boolean } {
     // Skills only load instructions — side-effect free, always read-only.
-    const readOnly = call.name.startsWith(SKILL_TOOL_PREFIX) ? true : this.tools.isReadOnly(call.name);
+    // MCP calls are never auto-run in Ask mode (FR-4.2): the server behind
+    // them is opaque, so they gate like mutations.
+    const readOnly = call.name.startsWith(SKILL_TOOL_PREFIX) ? true
+      : call.name.startsWith(MCP_TOOL_PREFIX) ? false
+        : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
     if (session.permissionMode === 'auto') return { verdict: 'auto', remember: true };
     if (readOnly) return { verdict: 'read-only', remember: true };

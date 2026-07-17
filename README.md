@@ -86,5 +86,11 @@ provider-neutral streaming loop. Scheduled agent loops fire on their cron
 distill into size-bounded LESSONS/JOURNAL brain appends via /api/chats/:id/
 distill or the Distill button (FR-11.4).
 
-Next up: MCP tool discovery (§10.3), Gemini/Bedrock native adapters, and
-attachments beyond workspace files (drag-and-drop uploads).
+MCP (§10.3): HTTP(S) MCP servers over the Streamable HTTP transport —
+configure in Settings, Discover caches the tool list, and enabled servers'
+tools are offered to chats as `mcp_<server>_<tool>`, always pausing for
+approval in Ask mode (the server behind an MCP call is opaque, so it gates
+like a mutation).
+
+Next up: Gemini/Bedrock native adapters and drag-and-drop file uploads for
+attachments.
