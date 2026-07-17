@@ -1,78 +1,76 @@
-/**
- * Placeholder shell — the real frontend design arrives later. This proves the
- * full round trip: workspace bootstrap → create chat → send a message → SSE
- * stream renders token by token.
- */
-import { useEffect, useRef, useState } from 'react';
-import { api, sendTurn, type ChatMessage, type ChatSession, type Workspace } from './lib/api';
+/** Layout composition per the design comp: activity bar · secondary panel ·
+ *  main pane · artifact panel, with the stacked mobile variant. */
+import { useState } from 'react';
+import { AppProvider, useApp } from './store';
+import { ActivityBar, BottomNav, Toast } from './components/Shell';
+import { WorkspacePill, ChatsRail, AgentsRail, FilesRail, MarketRail, SettingsRail, SecondaryHeader } from './components/Rails';
+import { ChatView } from './components/ChatView';
+import { FilesView } from './components/FilesView';
+import { AgentsDirectory, AgentHome } from './components/AgentsView';
+import { MarketView, HireModal } from './components/MarketView';
+import { SettingsView } from './components/SettingsView';
+import { ArtifactPanel } from './components/ArtifactPanel';
 
-export default function App() {
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [chat, setChat] = useState<ChatSession | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [streaming, setStreaming] = useState('');
-  const [input, setInput] = useState('');
-  const busy = useRef(false);
+function Layout() {
+  const app = useApp();
+  const [marketCat, setMarketCat] = useState('All');
+  const [settingsPane, setSettingsPane] = useState('providers');
 
-  useEffect(() => {
-    api.workspaces().then(async (ws) => {
-      setWorkspace(ws[0]);
-      const chats = await api.chats(ws[0].id);
-      const first = chats[0] ?? (await api.createChat(ws[0].id, 'First chat'));
-      setChat(first);
-      const t = await api.transcript(first.id);
-      setMessages(t.messages);
-    }).catch(() => setWorkspace(null));
-  }, []);
+  const sec = app.section;
+  const detailActive =
+    (sec === 'chats' && app.mobileChatOpen) ||
+    (sec === 'files' && !!app.currentFile) ||
+    (sec === 'settings' && app.mobileDetail) ||
+    (sec === 'agents' && !!app.selectedAgent);
+  const showSecondary = app.stacked ? !detailActive : true;
+  const showMain = app.stacked ? !showSecondary : true;
 
-  const send = async () => {
-    if (!chat || !input.trim() || busy.current) return;
-    busy.current = true;
-    const text = input.trim();
-    setInput('');
-    try {
-      await sendTurn(chat.id, text, (ev) => {
-        if (ev.type === 'answer') setStreaming((s) => s + ev.text);
-      });
-      const t = await api.transcript(chat.id);
-      setMessages(t.messages);
-    } finally {
-      setStreaming('');
-      busy.current = false;
-    }
-  };
+  const secTitle =
+    sec === 'chats' ? 'Conversations'
+      : sec === 'files' ? 'Files'
+        : sec === 'agents' ? 'Your agents'
+          : sec === 'market' ? 'Categories' : 'Settings';
+
+  const fileAgent = app.fileTarget?.kind === 'agent' ? app.agents.find((a) => a.id === app.fileTarget!.id) : null;
 
   return (
-    <div className="shell">
-      <header>
-        <h1>YAAM Chat</h1>
-        <span className="meta">{workspace ? `workspace: ${workspace.name}` : 'API offline'}</span>
-      </header>
-      <main>
-        {messages.map((m) => (
-          <div key={m.id} className={`msg msg-${m.role}`}>
-            <b>{m.role}</b>
-            <p>{m.content}</p>
-          </div>
-        ))}
-        {streaming && (
-          <div className="msg msg-assistant">
-            <b>assistant</b>
-            <p>{streaming}</p>
-          </div>
-        )}
-      </main>
-      <footer>
-        <textarea
-          value={input}
-          placeholder={chat ? 'Message…' : 'Connecting…'}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); }
-          }}
-        />
-        <button onClick={() => void send()} disabled={!chat}>Send</button>
-      </footer>
+    <div data-theme={app.theme} style={{ height: '100vh', display: 'flex', position: 'relative', background: 'var(--bg)', color: 'var(--text)', fontSize: 14, overflow: 'hidden', paddingBottom: app.stacked ? 58 : 0 }}>
+      {!app.stacked && <ActivityBar />}
+
+      {showSecondary && (
+        <aside style={{ width: app.stacked ? '100%' : app.mediumDock ? 250 : 292, flex: 'none', background: 'var(--panel)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          {(sec === 'chats' || sec === 'settings') && <WorkspacePill />}
+          {sec !== 'files' && <SecondaryHeader title={fileAgent && sec === ('files' as string) ? `${fileAgent.name} · isolated fs` : secTitle} />}
+          {sec === 'chats' && <ChatsRail />}
+          {sec === 'agents' && <AgentsRail />}
+          {sec === 'files' && <FilesRail />}
+          {sec === 'market' && <MarketRail cat={marketCat} setCat={setMarketCat} />}
+          {sec === 'settings' && <SettingsRail pane={settingsPane} setPane={setSettingsPane} />}
+        </aside>
+      )}
+
+      {showMain && (
+        <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          {sec === 'chats' && <ChatView />}
+          {sec === 'files' && <FilesView />}
+          {sec === 'agents' && (app.selectedAgent ? <AgentHome /> : <AgentsDirectory />)}
+          {sec === 'market' && <MarketView cat={marketCat} setCat={setMarketCat} />}
+          {sec === 'settings' && <SettingsView pane={settingsPane} />}
+        </main>
+      )}
+
+      <ArtifactPanel />
+      {app.stacked && <BottomNav />}
+      <HireModal />
+      <Toast />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AppProvider>
+      <Layout />
+    </AppProvider>
   );
 }

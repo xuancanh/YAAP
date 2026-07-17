@@ -34,6 +34,10 @@ export const workspaces = pgTable('workspaces', {
 export const agents = pgTable('agents', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
+  /** Avatar emoji + gradient color pair (JSON [from,to]) for the UI. */
+  emoji: text('emoji').notNull().default('\u{1F916}'),
+  colors: text('colors').notNull().default('["#8b8cf0","#5cc2f2"]'),
+  role: text('role').notNull().default(''),
   /** User-written charter: who this agent is and how it should act (FR-11.1). */
   charter: text('charter').notNull().default(''),
   provider: text('provider').notNull().default('anthropic'),
@@ -138,6 +142,22 @@ export const skills = pgTable('skills', {
   /** Seeded built-ins are recreated on boot if deleted; user edits stick. */
   builtin: integer('builtin').notNull().default(0),
   createdAt: text('createdAt').notNull(),
+});
+
+export const mcpServers = pgTable('mcp_servers', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  url: text('url').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  /** JSON array of tool names (informational until the MCP client lands). */
+  tools: text('tools').notNull().default('[]'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** App-wide key/value settings: defaultPermissionMode, defaultAgentTypeId, … */
+export const appSettings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
 });
 
 export const chatMessages = pgTable('chat_messages', {

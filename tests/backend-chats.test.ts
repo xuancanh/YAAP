@@ -11,13 +11,14 @@ import { TurnLoopService, TurnEvent } from '../server/src/chats/turn-loop.servic
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
 import { EchoAiProvider } from '../server/src/ai/echo-ai.provider';
-import { testDb, memStorage, ctxStub, skillsStub } from './helpers';
+import { testDb, memStorage, ctxStub, skillsStub, agentsStub } from './helpers';
 
 async function setup() {
   const repo = new ChatsRepository(await testDb());
-  const chats = new ChatsService(repo);
-  const tools = new ToolsService(memStorage().stub);
-  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(new EchoAiProvider()), skillsStub());
+  const chats = new ChatsService(repo, agentsStub());
+  const storageStub = memStorage().stub;
+  const tools = new ToolsService(storageStub);
+  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(new EchoAiProvider()), skillsStub(), storageStub);
   return { repo, chats, turns };
 }
 
@@ -116,4 +117,39 @@ test('stop aborts an in-flight turn and retains the partial (FR-5.4)', async () 
   assert.equal(turn.status, 'stopped');
   const messages = await repo.listMessages(s.id);
   assert.equal(messages.at(-1)?.role, 'assistant');
+});
+
+test('fork copies the transcript and leaves the original intact (FR-6.3)', async () => {
+  const { chats, turns, repo } = await setup();
+  const s = await chats.create({ workspaceId: 'ws1', name: 'Original' });
+  await collect(turns.run(s.id, { text: 'first message' }));
+
+  const forked = await chats.fork(s.id);
+  assert.match(forked.name, /^Fork · Original/);
+  assert.deepEqual(JSON.parse(forked.tags), ['fork']);
+  assert.equal((await repo.listMessages(forked.id)).length, (await repo.listMessages(s.id)).length);
+  assert.equal((await repo.listTurns(forked.id)).length, 1);
+  // original untouched
+  assert.equal((await chats.get(s.id)).name, 'Original');
+});
+
+test('truncateFrom drops a turn and everything after it (FR-6.1/6.2)', async () => {
+  const { chats, turns, repo } = await setup();
+  const s = await chats.create({ workspaceId: 'ws1' });
+  await collect(turns.run(s.id, { text: 'keep me' }));
+  await collect(turns.run(s.id, { text: 'edit me' }));
+
+  const [, second] = await repo.listTurns(s.id);
+  const res = await chats.truncateFrom(s.id, second.id);
+  assert.equal(res.input, 'edit me');
+  assert.equal((await repo.listTurns(s.id)).length, 1);
+  const roles = (await repo.listMessages(s.id)).map((m) => m.role);
+  assert.deepEqual(roles, ['user', 'assistant']);
+});
+
+test('auto-title is set from the first message of an unnamed chat (FR-1.3)', async () => {
+  const { chats, turns } = await setup();
+  const s = await chats.create({ workspaceId: 'ws1' });
+  await collect(turns.run(s.id, { text: 'Where does draft text persist across restarts?' }));
+  assert.equal((await chats.get(s.id)).autoTitle, 'Where does draft text persist across restarts?');
 });

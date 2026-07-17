@@ -40,7 +40,8 @@ server/src/
   skills/        instruction-pack skills offered as tools (§10); built-ins seeded
   search/        GET /api/search — sessions, messages, files (FR-8.2)
   ai/            provider-neutral streaming interface (NFR-1) + Echo dev provider
-src/             React frontend (placeholder shell; real design lands later)
+src/             React frontend: full design port (chats, agents, files,
+                 market, settings, artifact panel; dark/light, responsive)
 tests/           node:test suites run with tsx against PGlite (in-memory Postgres)
 scripts/dev.mjs  parallel server + Vite dev runner
 ```
@@ -69,7 +70,14 @@ HTML decks, workspace-wide **search** (`/api/search`), and **rich file
 previews** (`/api/workspaces/:id/preview` classifies markdown/html/image/pdf/
 text; HTML previews must render in a sandboxed, network-denied iframe).
 
-Next up (tracked against the requirements doc): more provider adapters
-(OpenAI et al.), attachments + @-mentions + slash autocomplete (§2), MCP
-(§10.3), the durable-agent brain/dashboard/loops (§11), and the real
-frontend.
+The frontend implements the design comp in `design/`: activity-bar shell,
+workspace-scoped chat list grouped by agent, streaming chat with thinking
+blocks, tool cards + inline Ask/Auto approvals, artifact side panel
+(sandboxed, network-denied), slash + @-mention menus with attachments,
+message queueing, retry / edit-and-resend / fork / promote / ratings, token
+meter, per-agent file brains with rich previews, agent directory + home
+(charter, loops, ratings, mini apps, AGENT.json export), the agent market
+with capability-review hiring, and six settings panes backed by the API.
+
+Next up: more provider adapters (OpenAI et al.), MCP tool discovery (§10.3),
+scheduled loops actually firing (FR-11.6), and brain distillation (FR-11.4).

@@ -8,13 +8,8 @@
  */
 const SEGMENT = /^[A-Za-z0-9._-]+$/;
 
-export function workspacePrefix(workspaceId: string): string {
-  return `workspaces/${workspaceId}/`;
-}
-
-/** Validate a user-supplied relative path and scope it under the workspace
- *  prefix. Throws on traversal or malformed segments. */
-export function workspaceFileKey(workspaceId: string, path: string): string {
+/** Validate a user-supplied relative path: no traversal, printable segments. */
+function cleanSegments(path: string): string {
   const segments = path.split('/').filter((s) => s.length > 0);
   if (segments.length === 0) throw new Error('empty path');
   for (const seg of segments) {
@@ -22,10 +17,32 @@ export function workspaceFileKey(workspaceId: string, path: string): string {
       throw new Error(`invalid path segment: ${seg}`);
     }
   }
-  return workspacePrefix(workspaceId) + segments.join('/');
+  return segments.join('/');
+}
+
+export function workspacePrefix(workspaceId: string): string {
+  return `workspaces/${workspaceId}/`;
+}
+
+/** Scope a user-supplied relative path under the workspace prefix. */
+export function workspaceFileKey(workspaceId: string, path: string): string {
+  return workspacePrefix(workspaceId) + cleanSegments(path);
 }
 
 /** The workspace-relative path of a full object key. */
 export function relativePath(workspaceId: string, key: string): string {
   return key.slice(workspacePrefix(workspaceId).length);
+}
+
+/** Durable-agent file brains live under their own prefix (FR-11.3). */
+export function agentPrefix(agentId: string): string {
+  return `agents/${agentId}/`;
+}
+
+export function agentFileKey(agentId: string, path: string): string {
+  return agentPrefix(agentId) + cleanSegments(path);
+}
+
+export function agentRelativePath(agentId: string, key: string): string {
+  return key.slice(agentPrefix(agentId).length);
 }

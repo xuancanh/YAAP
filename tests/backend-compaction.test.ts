@@ -6,7 +6,7 @@ import { ChatsRepository } from '../server/src/chats/chats.repository';
 import { ChatsService } from '../server/src/chats/chats.service';
 import { CompactionService } from '../server/src/chats/compaction.service';
 import { ChatLocks } from '../server/src/chats/chat-locks';
-import { testDb, ctxStub, ScriptedProvider } from './helpers';
+import { testDb, ctxStub, agentsStub, ScriptedProvider } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 
 const summaryRound: AiStreamEvent[] = [
@@ -20,7 +20,7 @@ function configStub(values: Record<string, unknown> = {}): ConfigService {
 
 async function setup() {
   const repo = new ChatsRepository(await testDb());
-  const chats = new ChatsService(repo);
+  const chats = new ChatsService(repo, agentsStub());
   const provider = new ScriptedProvider([summaryRound, summaryRound]);
   const compaction = new CompactionService(repo, new ChatLocks(), ctxStub(provider), configStub());
   return { repo, chats, compaction, provider };
@@ -67,7 +67,7 @@ test('short conversations refuse to compact', async () => {
 
 test('auto-compaction only fires past the estimated token threshold', async () => {
   const repo = new ChatsRepository(await testDb());
-  const chats = new ChatsService(repo);
+  const chats = new ChatsService(repo, agentsStub());
   const provider = new ScriptedProvider([summaryRound]);
   const compaction = new CompactionService(
     repo, new ChatLocks(), ctxStub(provider),
@@ -92,7 +92,7 @@ test('auto-compaction only fires past the estimated token threshold', async () =
 
 test('compaction respects the shared busy lock (FR-7.5)', async () => {
   const repo = new ChatsRepository(await testDb());
-  const chats = new ChatsService(repo);
+  const chats = new ChatsService(repo, agentsStub());
   const locks = new ChatLocks();
   const compaction = new CompactionService(repo, locks, ctxStub(new ScriptedProvider([summaryRound])), configStub());
   const s = await chats.create({ workspaceId: 'ws1' });

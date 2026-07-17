@@ -114,6 +114,24 @@ export class ChatsController {
     return { stopped: this.turns.stop(id) };
   }
 
+  /** Fork into a new session, optionally branching at a turn (FR-6.3). */
+  @Post(':id/fork')
+  fork(@Param('id') id: string, @Body() body: { turnId?: string }) {
+    return this.chats.fork(id, body?.turnId);
+  }
+
+  /** Edit & resend / retry: drop a turn and everything after it (FR-6.1/6.2). */
+  @Post(':id/truncate')
+  truncate(@Param('id') id: string, @Body() body: { turnId: string }) {
+    return this.chats.truncateFrom(id, body.turnId);
+  }
+
+  /** Promote a turn to a board task (FR-6.4). */
+  @Post(':id/turns/:turnId/promote')
+  promote(@Param('id') id: string, @Param('turnId') turnId: string) {
+    return this.chats.promoteTurn(id, turnId);
+  }
+
   @Post(':id/turns/:turnId/rate')
   rate(@Param('id') id: string, @Param('turnId') turnId: string, @Body() dto: RateTurnDto) {
     return this.chats.rateTurn(id, turnId, dto.rating, dto.note);

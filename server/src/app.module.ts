@@ -12,6 +12,9 @@
  *  ChatsModule       → CRUD /api/chats, SSE turns  (§1–§8)
  *  SkillsModule      → CRUD /api/skills            (instruction packs, §10)
  *  SearchModule      → GET  /api/search            (sessions/messages/files, FR-8.2)
+ *  MarketModule      → GET  /api/market, hire       (agent registry, FR-11.7)
+ *  McpModule         → CRUD /api/mcp                (server config, FR-10.3)
+ *  SettingsModule    → GET/PUT /api/settings        (app-wide defaults)
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
@@ -27,6 +30,9 @@ import { AgentsModule } from './agents/agents.module';
 import { ChatsModule } from './chats/chats.module';
 import { SkillsModule } from './skills/skills.module';
 import { SearchModule } from './search/search.module';
+import { MarketModule } from './market/market.module';
+import { McpModule } from './mcp/mcp.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -40,6 +46,9 @@ import { SearchModule } from './search/search.module';
     ChatsModule,
     SkillsModule,
     SearchModule,
+    MarketModule,
+    McpModule,
+    SettingsModule,
   ],
 })
 export class AppModule {}

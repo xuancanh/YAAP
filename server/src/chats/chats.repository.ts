@@ -4,7 +4,7 @@
  * the services above it.
  */
 import { Injectable, Inject } from '@nestjs/common';
-import { and, asc, desc, eq, gt, isNull, isNotNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNull, isNotNull } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { chatMessages, chatSessions, chatTurns } from '../database/schema';
@@ -107,6 +107,44 @@ export class ChatsRepository {
     return this.db.select().from(chatTurns)
       .where(eq(chatTurns.sessionId, sessionId))
       .orderBy(asc(chatTurns.seq));
+  }
+
+  async getTurn(id: string): Promise<ChatTurn | undefined> {
+    const rows = await this.db.select().from(chatTurns).where(eq(chatTurns.id, id)).limit(1);
+    return rows[0];
+  }
+
+  /** Edit & resend / retry support: drop everything from a turn onward
+   *  (the turn records and their transcript rows). */
+  async truncateFromTurn(sessionId: string, turnSeq: number): Promise<void> {
+    const doomed = await this.db.select({ id: chatTurns.id }).from(chatTurns)
+      .where(and(eq(chatTurns.sessionId, sessionId), gte(chatTurns.seq, turnSeq)));
+    const ids = doomed.map((r) => r.id);
+    if (ids.length > 0) {
+      await this.db.delete(chatMessages)
+        .where(and(eq(chatMessages.sessionId, sessionId), inArray(chatMessages.turnId, ids)));
+      await this.db.delete(chatTurns)
+        .where(and(eq(chatTurns.sessionId, sessionId), gte(chatTurns.seq, turnSeq)));
+    }
+  }
+
+  /** Fork support: copy turns/messages (optionally up to a turn seq) into a
+   *  new session with fresh row ids. */
+  async copyInto(sourceId: string, targetId: string, upToTurnSeq: number | null): Promise<void> {
+    const turns = (await this.listTurns(sourceId))
+      .filter((t) => upToTurnSeq === null || t.seq <= upToTurnSeq);
+    const turnIdMap = new Map<string, string>();
+    for (const t of turns) {
+      const nid = newId();
+      turnIdMap.set(t.id, nid);
+      await this.db.insert(chatTurns).values({ ...t, id: nid, sessionId: targetId });
+    }
+    const messages = (await this.listMessages(sourceId)).filter((m) => turnIdMap.has(m.turnId));
+    for (const m of messages) {
+      await this.db.insert(chatMessages).values({
+        ...m, id: newId(), sessionId: targetId, turnId: turnIdMap.get(m.turnId)!,
+      });
+    }
   }
 
   // ---- transcript ----

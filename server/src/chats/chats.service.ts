@@ -5,10 +5,15 @@
  */
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ChatsRepository, ChatSession } from './chats.repository';
+import { nowIso } from '../common/ids.util';
+import { AgentsService } from '../agents/agents.service';
 
 @Injectable()
 export class ChatsService {
-  constructor(private readonly repo: ChatsRepository) {}
+  constructor(
+    private readonly repo: ChatsRepository,
+    private readonly agents: AgentsService,
+  ) {}
 
   list(workspaceId: string, archived = false) {
     return this.repo.listSessions(workspaceId, { archived });
@@ -80,9 +85,66 @@ export class ChatsService {
     return lines.join('\n');
   }
 
+  /** Fork a new session from this one, optionally branching at a turn; the
+   *  original stays intact (FR-6.3). */
+  async fork(id: string, turnId?: string) {
+    const src = await this.get(id);
+    let upTo: number | null = null;
+    if (turnId) {
+      const turn = await this.repo.getTurn(turnId);
+      if (!turn || turn.sessionId !== id) throw new NotFoundException(`turn ${turnId}`);
+      upTo = turn.seq;
+    }
+    const forked = await this.repo.createSession({
+      workspaceId: src.workspaceId,
+      agentId: src.agentId,
+      agentTypeId: src.agentTypeId,
+      name: `Fork · ${src.name || src.autoTitle || 'chat'}`,
+      cwd: src.cwd,
+      model: src.model,
+      thinkingEffort: src.thinkingEffort,
+      permissionMode: src.permissionMode,
+      tokenCeiling: src.tokenCeiling,
+    });
+    await this.repo.updateSession(forked.id, {
+      tags: JSON.stringify([...(JSON.parse(src.tags) as string[]), 'fork']),
+      compactSummary: src.compactSummary,
+      compactCutoff: src.compactCutoff,
+      tokensIn: src.tokensIn,
+      tokensOut: src.tokensOut,
+    });
+    await this.repo.copyInto(id, forked.id, upTo);
+    return this.get(forked.id);
+  }
+
+  /** Edit & resend / retry: drop this turn and everything after it (FR-6.1/6.2).
+   *  Returns the removed turn's input so the client can restore it. */
+  async truncateFrom(id: string, turnId: string) {
+    await this.get(id);
+    const turn = await this.repo.getTurn(turnId);
+    if (!turn || turn.sessionId !== id) throw new NotFoundException(`turn ${turnId}`);
+    await this.repo.truncateFromTurn(id, turn.seq);
+    return { ok: true, input: turn.input };
+  }
+
+  /** Promote a turn to a board task; the handoff is recorded (FR-6.4). */
+  async promoteTurn(id: string, turnId: string) {
+    await this.get(id);
+    const turn = await this.repo.getTurn(turnId);
+    if (!turn || turn.sessionId !== id) throw new NotFoundException(`turn ${turnId}`);
+    const handoff = { task: `#${100 + Math.floor(Math.random() * 900)}`, at: nowIso() };
+    await this.repo.updateTurn(turnId, { taskHandoff: JSON.stringify(handoff) });
+    return handoff;
+  }
+
   async rateTurn(sessionId: string, turnId: string, rating: 'up' | 'down', note?: string) {
-    await this.get(sessionId);
+    const session = await this.get(sessionId);
     await this.repo.updateTurn(turnId, { rating, ratingNote: note ?? null });
+    // For durable agents the rating is recorded and surfaced on the next
+    // reply (FR-6.5).
+    if (session.agentId) {
+      await this.agents.addFeedback(session.agentId, { rating, note, turnId }).catch(() => {});
+    }
     return { ok: true };
   }
 }

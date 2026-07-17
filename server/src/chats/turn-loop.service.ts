@@ -26,6 +26,8 @@ import { ChatLocks } from './chat-locks';
 import { ToolsService } from './tools.service';
 import { TurnContextService } from './turn-context.service';
 import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
+import { StorageService } from '../storage/storage.service';
+import { workspaceFileKey } from '../storage/storage.keys';
 import { AiMessage, AiStreamEvent, AiToolCall } from '../ai/ai-provider.interface';
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
@@ -66,6 +68,7 @@ export class TurnLoopService {
     private readonly tools: ToolsService,
     private readonly context: TurnContextService,
     private readonly skills: SkillsService,
+    private readonly storage: StorageService,
   ) {}
 
   /** Stop the in-flight turn for a chat; the partial turn is retained (FR-5.4). */
@@ -101,6 +104,10 @@ export class TurnLoopService {
 
     const turn = await this.repo.createTurn(sessionId, { ...input, model: session.model });
     await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'user', content: input.text });
+    // Auto-title from the first message when the chat is unnamed (FR-1.3).
+    if (!session.name && !session.autoTitle) {
+      await this.repo.updateSession(sessionId, { autoTitle: input.text.replace(/\s+/g, ' ').slice(0, 64) });
+    }
     yield { type: 'turn', turnId: turn.id };
 
     let tokensIn = 0;
@@ -109,6 +116,13 @@ export class TurnLoopService {
     try {
       const ctx = await this.context.build(session);
       const history = await this.buildHistory(session.id, session.compactSummary, session.compactCutoff);
+      // Attachments: inject workspace-file contents into the provider input
+      // (descriptors persist on the turn; the transcript stays clean, FR-2.2).
+      const attachedText = await this.loadAttachments(session.workspaceId, input.attachments);
+      if (attachedText && history.length > 0) {
+        const lastMsg = history[history.length - 1];
+        if (lastMsg.role === 'user') lastMsg.content = `${lastMsg.content}\n\n${attachedText}`;
+      }
       const approvals = parseApprovals(session.approvals);
       // Core tools + the workspace's enabled skills as tools (FR-10.2).
       const toolSpecs = [...this.tools.specs(), ...await this.skills.toolSpecs(session.workspaceId)];
@@ -200,6 +214,24 @@ export class TurnLoopService {
       this.locks.release(sessionId);
       this.aborts.delete(sessionId);
     }
+  }
+
+  /** Read attached workspace files (by path) into a bounded text block. */
+  private async loadAttachments(workspaceId: string, attachments?: unknown[]): Promise<string> {
+    if (!attachments?.length) return '';
+    const parts: string[] = [];
+    for (const a of attachments.slice(0, 8)) {
+      const att = a as { path?: string; name?: string };
+      const path = att.path ?? att.name;
+      if (typeof path !== 'string' || !path) continue;
+      try {
+        const body = await this.storage.get(workspaceFileKey(workspaceId, path));
+        if (body && !body.includes(0)) {
+          parts.push(`<attached-file path="${path}">\n${body.toString('utf8').slice(0, 30_000)}\n</attached-file>`);
+        }
+      } catch { /* invalid path: skip the attachment rather than fail the turn */ }
+    }
+    return parts.join('\n\n');
   }
 
   /** Route a call to a skill (returns its instructions) or a core tool. */

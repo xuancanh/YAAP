@@ -141,6 +141,34 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '0003-ui-design',
+    up: async (db) => {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS mcp_servers (
+          "id" TEXT PRIMARY KEY,
+          "name" TEXT NOT NULL,
+          "url" TEXT NOT NULL,
+          "enabled" INTEGER NOT NULL DEFAULT 1,
+          "tools" TEXT NOT NULL DEFAULT '[]',
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS app_settings (
+          "key" TEXT PRIMARY KEY,
+          "value" TEXT NOT NULL
+        );
+      `);
+      if (!(await hasColumn(db, 'agents', 'emoji'))) {
+        await db.query(`ALTER TABLE agents ADD COLUMN "emoji" TEXT NOT NULL DEFAULT '\u{1F916}'`);
+      }
+      if (!(await hasColumn(db, 'agents', 'colors'))) {
+        await db.query(`ALTER TABLE agents ADD COLUMN "colors" TEXT NOT NULL DEFAULT '["#8b8cf0","#5cc2f2"]'`);
+      }
+      if (!(await hasColumn(db, 'agents', 'role'))) {
+        await db.query(`ALTER TABLE agents ADD COLUMN "role" TEXT NOT NULL DEFAULT ''`);
+      }
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {
