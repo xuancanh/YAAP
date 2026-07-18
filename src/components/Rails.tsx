@@ -1,6 +1,6 @@
 /** Secondary panel: workspace pill, the combined Home rail (agents → their
  *  chats + their folder, YAAM-style), market categories, and settings nav. */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
 import { api, type ChatSession } from '../lib/api';
@@ -155,10 +155,7 @@ function AgentGroup({ id, name, emoji, avatar, items, count, isAgent }: {
 }) {
   const app = useApp();
   const [open, setOpen] = useState(true);
-  const [fsOpen, setFsOpen] = useState(false);
   const agentActive = isAgent && app.selectedAgent === id && app.homeView === 'agent';
-  const fsTarget = isAgent ? { kind: 'agent' as const, id } : { kind: 'workspace' as const, id: app.workspaceId };
-  const fsLoaded = app.fileTarget?.kind === fsTarget.kind && app.fileTarget.id === fsTarget.id;
 
   return (
     <div style={{ marginTop: 4 }}>
@@ -181,21 +178,7 @@ function AgentGroup({ id, name, emoji, avatar, items, count, isAgent }: {
         <div style={{ paddingLeft: 10, borderLeft: '1px solid var(--border-soft)', marginLeft: 19 }}>
           {items.map((s) => <SessionRow key={s.id} s={s} />)}
           {items.length === 0 && <div style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--text-faint)' }}>No conversations.</div>}
-          {/* agents keep their folder on the home page's Files tab; only the
-              shared workspace fs is browsable inline here */}
-          {!isAgent && (<>
-            <div onClick={() => {
-              const next = !(fsOpen && fsLoaded);
-              setFsOpen(next);
-              if (next) { app.setFileTarget(fsTarget); app.setCurrentFile(null); }
-            }} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 10px', borderRadius: 8, cursor: 'pointer', margin: '1px 0', color: 'var(--text-dim)' }}>
-              <I d={P.chevD} size={11} stroke="var(--text-faint)" style={{ transform: fsOpen && fsLoaded ? 'rotate(0deg)' : 'rotate(-90deg)', flex: 'none' }} />
-              <I d={P.folder} size={13} style={{ flex: 'none' }} />
-              <span style={{ fontSize: 12, fontWeight: 500 }}>Files</span>
-              <span style={{ fontSize: 10, color: 'var(--text-faint)', fontFamily: 'var(--mono)', marginLeft: 'auto' }}>shared</span>
-            </div>
-            {fsOpen && fsLoaded && <FileTree indent={26} />}
-          </>)}
+
         </div>
       )}
     </div>
@@ -263,6 +246,23 @@ export function HomeRail() {
         )}
       </div>
     </>
+  );
+}
+
+/** The Workspace tab's rail: the shared file store tree. */
+export function WorkspaceRail() {
+  const app = useApp();
+  useEffect(() => {
+    if (app.fileTarget?.kind !== 'workspace' && app.workspaceId) {
+      app.setFileTarget({ kind: 'workspace', id: app.workspaceId });
+      app.setCurrentFile(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.workspaceId, app.fileTarget?.kind]);
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
+      <FileTree indent={8} />
+    </div>
   );
 }
 

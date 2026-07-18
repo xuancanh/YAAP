@@ -33,6 +33,8 @@ export interface Agent {
   provider: string;
   model: string;
   homeDir: string | null;
+  /** Assigned workspace folder, mounted into its chats as shared/. */
+  workspaceFolder: string;
   dashboard: string;
   loops: string; // JSON array of { name, cron }
   apps: string; // JSON array of AgentApp
@@ -312,10 +314,12 @@ export const api = {
     send<AgentTask>(`/api/agents/${id}/tasks/${taskId}`, 'PATCH', patch),
   deleteAgentTask: (id: string, taskId: string) => send<{ ok: boolean }>(`/api/agents/${id}/tasks/${taskId}`, 'DELETE'),
   agentStats: (id: string) => get<AgentStats>(`/api/agents/${id}/stats`),
-  agentFiles: (id: string) => get<FileEntry[]>(`/api/agents/${id}/files`),
+  agentFiles: (id: string, workspaceId?: string) =>
+    get<FileEntry[]>(`/api/agents/${id}/files${workspaceId ? `?workspaceId=${enc(workspaceId)}` : ''}`),
   putAgentFile: (id: string, path: string, contentBase64: string, contentType?: string) =>
     send<{ ok: boolean }>(`/api/agents/${id}/files`, 'POST', { path, contentBase64, contentType }),
-  agentPreview: (id: string, path: string) => get<FilePreview>(`/api/agents/${id}/preview?path=${enc(path)}`),
+  agentPreview: (id: string, path: string, workspaceId?: string) =>
+    get<FilePreview>(`/api/agents/${id}/preview?path=${enc(path)}${workspaceId ? `&workspaceId=${enc(workspaceId)}` : ''}`),
   agentExportUrl: (id: string) => `/api/agents/${id}/export`,
   importAgent: (profile: Record<string, unknown>) => send<Agent>('/api/agents/import', 'POST', profile),
 

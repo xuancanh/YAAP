@@ -57,6 +57,10 @@ export const agents = pgTable('agents', {
   /** JSON array of self-built mini apps: { id, name, description, html,
    *  updatedAt } — rendered only in a network-blocked sandbox (FR-13.1). */
   apps: text('apps').notNull().default('[]'),
+  /** Optional workspace folder assignment: a path inside the chat's
+   *  workspace store, mounted into agent chats as shared/ alongside the
+   *  agent's own working folder. Empty = no shared mount. */
+  workspaceFolder: text('workspaceFolder').notNull().default(''),
   /** JSON array of self-built HTTP tools: { id, name, slug, description,
    *  method, url, body, enabled, ... } — proposed by the agent, activated
    *  only by user approval, executed through the SSRF guard. */

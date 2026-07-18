@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { AppProvider, useApp } from './store';
 import { ActivityBar, BottomNav, Toast } from './components/Shell';
-import { WorkspacePill, HomeRail, MarketRail, SettingsRail, SecondaryHeader } from './components/Rails';
+import { WorkspacePill, HomeRail, WorkspaceRail, MarketRail, SettingsRail, SecondaryHeader } from './components/Rails';
 import { ChatView } from './components/ChatView';
 import { FilesView } from './components/FilesView';
 import { AgentsDirectory, AgentHome, NewAgentDialog } from './components/AgentsView';
@@ -18,12 +18,12 @@ function Layout() {
 
   const sec = app.section;
   const detailActive =
-    (sec === 'home' && app.mobileChatOpen) ||
+    ((sec === 'home' || sec === 'workspace') && app.mobileChatOpen) ||
     (sec === 'settings' && app.mobileDetail);
   const showSecondary = app.stacked ? !detailActive : true;
   const showMain = app.stacked ? !showSecondary : true;
 
-  const secTitle = sec === 'home' ? 'Agents & chats' : sec === 'market' ? 'Categories' : 'Settings';
+  const secTitle = sec === 'home' ? 'Agents & chats' : sec === 'workspace' ? 'Shared files' : sec === 'market' ? 'Categories' : 'Settings';
   const hasSecondary = sec !== 'overview'; // the fleet overview is full-width
 
   return (
@@ -32,9 +32,10 @@ function Layout() {
 
       {showSecondary && hasSecondary && (
         <aside style={{ width: app.stacked ? '100%' : app.mediumDock ? 250 : 292, flex: 'none', background: 'var(--panel)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          {(sec === 'home' || sec === 'settings') && <WorkspacePill />}
+          {(sec === 'home' || sec === 'workspace' || sec === 'settings') && <WorkspacePill />}
           <SecondaryHeader title={secTitle} />
           {sec === 'home' && <HomeRail />}
+          {sec === 'workspace' && <WorkspaceRail />}
           {sec === 'market' && <MarketRail cat={marketCat} setCat={setMarketCat} />}
           {sec === 'settings' && <SettingsRail pane={settingsPane} setPane={setSettingsPane} />}
         </aside>
@@ -46,6 +47,7 @@ function Layout() {
           {sec === 'home' && app.homeView === 'file' && <FilesView />}
           {sec === 'home' && app.homeView === 'agent' && (app.selectedAgent ? <AgentHome /> : <AgentsDirectory />)}
           {sec === 'overview' && <AgentsDirectory />}
+          {sec === 'workspace' && <FilesView />}
           {sec === 'market' && <MarketView cat={marketCat} setCat={setMarketCat} />}
           {sec === 'settings' && <SettingsView pane={settingsPane} />}
         </main>

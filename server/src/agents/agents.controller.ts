@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Delete, Get, Header, NotFoundExc
 import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 import { AgentsService } from './agents.service';
 import { StorageService } from '../storage/storage.service';
-import { agentFileKey, agentPrefix, agentRelativePath } from '../storage/storage.keys';
+import { agentFileKey, agentPrefix, agentRelativePath, workspaceFileKey } from '../storage/storage.keys';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 
 class CreateAgentDto {
@@ -29,6 +29,8 @@ class UpdateAgentDto {
   @IsOptional() @IsString() colors?: string;
   /** JSON array of loops — validated server-side (≤10, bounded fields). */
   @IsOptional() @IsString() loops?: string;
+  /** Assigned workspace folder, mounted into the agent's chats as shared/. */
+  @IsOptional() @IsString() workspaceFolder?: string;
 }
 
 class CreateTaskDto {
@@ -91,10 +93,20 @@ export class AgentsController {
   // ---- file brain (FR-11.3): same S3 store, agent-scoped prefix ----
 
   @Get(':id/files')
-  async listFiles(@Param('id') id: string) {
-    await this.agents.get(id);
+  async listFiles(@Param('id') id: string, @Query('workspaceId') workspaceId?: string) {
+    const agent = await this.agents.get(id);
     const objects = await this.storage.list(agentPrefix(id));
-    return objects.map((o) => ({ path: agentRelativePath(id, o.key), size: o.size, lastModified: o.lastModified }));
+    const out = objects.map((o) => ({ path: agentRelativePath(id, o.key), size: o.size, lastModified: o.lastModified }));
+    // the assigned workspace folder appears under shared/ (same view the
+    // agent's own fs tools have)
+    const folder = agent.workspaceFolder?.trim();
+    if (folder && workspaceId) {
+      const prefix = `${workspaceFileKey(workspaceId, folder)}/`;
+      for (const o of await this.storage.list(prefix)) {
+        out.push({ path: `shared/${o.key.slice(prefix.length)}`, size: o.size, lastModified: o.lastModified });
+      }
+    }
+    return out;
   }
 
   @Post(':id/files')
@@ -105,9 +117,8 @@ export class AgentsController {
   }
 
   @Get(':id/preview')
-  async preview(@Param('id') id: string, @Query('path') path: string) {
-    await this.agents.get(id);
-    const body = await this.storage.get(this.key(id, path ?? ''));
+  async preview(@Param('id') id: string, @Query('path') path: string, @Query('workspaceId') workspaceId?: string) {
+    const body = await this.storage.get(await this.resolveKey(id, path ?? '', workspaceId));
     if (body === null) throw new NotFoundException(`file ${path}`);
     const kind = previewKindFor(path ?? '');
     const base = { path, kind, size: body.length, contentType: contentTypeFor(path ?? '') };
@@ -131,5 +142,19 @@ export class AgentsController {
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : 'invalid path');
     }
+  }
+
+  /** shared/<rest> resolves into the agent's assigned workspace folder. */
+  private async resolveKey(id: string, path: string, workspaceId?: string): Promise<string> {
+    const agent = await this.agents.get(id);
+    const folder = agent.workspaceFolder?.trim();
+    if (folder && workspaceId && path.startsWith('shared/')) {
+      try {
+        return workspaceFileKey(workspaceId, `${folder}/${path.slice('shared/'.length)}`);
+      } catch (err) {
+        throw new BadRequestException(err instanceof Error ? err.message : 'invalid path');
+      }
+    }
+    return this.key(id, path);
   }
 }

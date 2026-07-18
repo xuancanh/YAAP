@@ -109,9 +109,15 @@ export class AgentsService {
     }
   }
 
-  async update(id: string, patch: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string }>) {
+  async update(id: string, patch: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string }>) {
     await this.get(id);
     if (patch.loops !== undefined) patch.loops = validateLoopsJson(patch.loops);
+    if (patch.workspaceFolder !== undefined) {
+      const folder = patch.workspaceFolder.trim().replace(/^\/+|\/+$/g, '');
+      // reuse the storage-key validation as the safety boundary
+      if (folder) agentFileKey('probe', folder);
+      patch.workspaceFolder = folder;
+    }
     await this.db.update(agents).set(patch).where(eq(agents.id, id));
     return this.get(id);
   }

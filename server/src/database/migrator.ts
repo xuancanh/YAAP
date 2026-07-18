@@ -253,6 +253,14 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0010-agent-workspace-folder',
+    up: async (db) => {
+      if (!(await hasColumn(db, 'agents', 'workspaceFolder'))) {
+        await db.query(`ALTER TABLE agents ADD COLUMN "workspaceFolder" TEXT NOT NULL DEFAULT ''`);
+      }
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {

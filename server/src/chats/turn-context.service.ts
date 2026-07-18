@@ -56,6 +56,9 @@ export class TurnContextService {
         parts.push('You grow: when multi-step work goes well (especially after positive feedback), capture the reusable procedure with draft_skill so future conversations can repeat it. Drafts activate only after the user approves them.');
         parts.push('You are one of several durable agents. When work clearly belongs to a colleague (their charter, not yours), delegate it with delegate_task instead of doing it badly yourself.');
         parts.push('Your fs_* tools operate on your own private working folder (it also holds your LESSONS.md, JOURNAL.md and knowledge/; .checkpoints/ is read-only rollback history). Organize it however serves your work.');
+        if (agent.workspaceFolder?.trim()) {
+          parts.push(`You are also assigned the workspace folder "${agent.workspaceFolder.trim()}", mounted at shared/ — files there are shared with the user and other assignees; read and write them via shared/<path>.`);
+        }
         parts.push('When the user asks for the same kind of external lookup repeatedly, build it once with save_tool (a parameterized HTTP tool); it becomes callable after the user approves it.');
         const feedback = await this.agents.takeFeedback(agent.id);
         if (feedback.length > 0) {

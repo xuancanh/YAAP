@@ -117,3 +117,34 @@ test('preview classification maps extensions to renderers and content types', ()
   assert.equal(contentTypeFor('readme.md'), 'text/markdown');
   assert.equal(contentTypeFor('mystery.xyz'), 'application/octet-stream');
 });
+
+test('agent roots with an assigned workspace folder see it as shared/ (read, write, list, isolation)', async () => {
+  const { stub, map } = memStorage();
+  const tools = new ToolsService(stub);
+  map.set('workspaces/ws1/projects/site/index.html', Buffer.from('<h1>hi</h1>'));
+  map.set('workspaces/ws1/private/secret.md', Buffer.from('not mounted'));
+  map.set('agents/agA/notes.md', Buffer.from('own file'));
+  const root = { kind: 'agent' as const, id: 'agA', shared: { workspaceId: 'ws1', folder: 'projects/site' } };
+
+  // list shows both worlds; the unassigned part of the workspace does not exist
+  const listing = await tools.execute(root, 'fs_list', {});
+  assert.match(listing, /notes\.md/);
+  assert.match(listing, /shared\/index\.html/);
+  assert.doesNotMatch(listing, /secret/);
+
+  // read + write through the mount land in the workspace folder
+  assert.equal(await tools.execute(root, 'fs_read', { path: 'shared/index.html' }), '<h1>hi</h1>');
+  await tools.execute(root, 'fs_write', { path: 'shared/notes/todo.md', content: 'shared note' });
+  assert.equal(map.get('workspaces/ws1/projects/site/notes/todo.md')!.toString(), 'shared note');
+
+  // escaping the mount is refused by key validation
+  await assert.rejects(tools.execute(root, 'fs_read', { path: 'shared/../private/secret.md' }), /invalid path/);
+
+  // search spans both roots with mapped paths
+  const found = await tools.execute(root, 'fs_search', { query: 'shared note' });
+  assert.match(found, /shared\/notes\/todo\.md/);
+
+  // without an assignment there is no shared/ at all
+  const bare = { kind: 'agent' as const, id: 'agA' };
+  assert.match(await tools.execute(bare, 'fs_read', { path: 'shared/index.html' }), /file not found/);
+});

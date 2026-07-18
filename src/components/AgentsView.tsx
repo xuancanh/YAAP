@@ -475,17 +475,19 @@ function AgentFilesTab({ a }: { a: Agent }) {
   const [preview, setPreview] = useState<FilePreview | null>(null);
 
   useEffect(() => {
-    void api.agentFiles(a.id).then((f) => {
+    void api.agentFiles(a.id, app.workspaceId || undefined).then((f) => {
       setFiles(f.sort((x, y) => x.path.localeCompare(y.path)));
       setSel((cur) => (cur && f.some((e) => e.path === cur) ? cur : f[0]?.path ?? null));
     }).catch(() => setFiles([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [a.id]);
   useEffect(() => {
     setPreview(null);
-    if (sel) void api.agentPreview(a.id, sel).then(setPreview).catch(() => setPreview(null));
+    if (sel) void api.agentPreview(a.id, sel, app.workspaceId || undefined).then(setPreview).catch(() => setPreview(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [a.id, sel]);
 
-  const glyph = (p: string) => p.endsWith('.md') ? '📄' : p.endsWith('.html') ? '🧩' : p.match(/\.(png|jpg|jpeg|gif|svg|webp)$/) ? '🖼️' : '📄';
+  const glyph = (p: string) => p.startsWith('shared/') ? '🔗' : p.endsWith('.md') ? '📄' : p.endsWith('.html') ? '🧩' : p.match(/\.(png|jpg|jpeg|gif|svg|webp)$/) ? '🖼️' : '📄';
   return (
     <div style={{ marginTop: 18 }}>
       <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : '230px 1fr', gap: 12, alignItems: 'start' }}>
@@ -610,6 +612,35 @@ function SkillsToolsTab({ a }: { a: Agent }) {
           {tools.length === 0 && <div style={{ padding: '10px 10px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>None yet — ask for the same lookup twice and {a.name} will offer to build it as a tool.</div>}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Assign a workspace folder: the agent sees it as shared/ next to its own
+ *  working folder, in every workspace it chats in. */
+function SharedFolderCard({ a }: { a: Agent }) {
+  const app = useApp();
+  const [value, setValue] = useState(a.workspaceFolder ?? '');
+  useEffect(() => { setValue(a.workspaceFolder ?? ''); }, [a.id, a.workspaceFolder]);
+  return (
+    <div style={{ ...card, padding: '16px 18px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={label}>Assigned workspace folder</span>
+        <button onClick={async () => {
+          try {
+            await api.updateAgent(a.id, { workspaceFolder: value.trim() });
+            await app.refreshAgents();
+            app.showToast(value.trim() ? `Assigned ${value.trim()} — mounted as shared/` : 'Assignment cleared');
+          } catch (err) {
+            app.showToast(err instanceof Error ? err.message.slice(0, 120) : 'invalid folder');
+          }
+        }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Save</button>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 9, lineHeight: 1.5 }}>
+        A folder in the shared workspace store this agent may work in, mounted as <span style={{ fontFamily: 'var(--mono)' }}>shared/</span> beside its own folder. Leave empty for no access to workspace files.
+      </div>
+      <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="e.g. projects/website"
+        style={{ width: '100%', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '9px 12px', color: 'var(--text)', fontSize: 13, fontFamily: 'var(--mono)', outline: 'none' }} />
     </div>
   );
 }
@@ -859,6 +890,8 @@ export function AgentHome() {
                 <div style={{ lineHeight: 1.65, color: 'var(--text-dim)', fontSize: 13.5, whiteSpace: 'pre-wrap' }}>{a.charter || 'No charter yet — click Edit to define who this agent is.'}</div>
               )}
             </div>
+
+            <SharedFolderCard a={a} />
 
             <div style={{ ...card, padding: '16px 18px' }}>
               <div style={{ ...label, marginBottom: 12 }}>Ratings</div>

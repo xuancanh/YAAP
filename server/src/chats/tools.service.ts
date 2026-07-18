@@ -39,11 +39,32 @@ export function htmlToText(html: string): string {
 
 /** Where a chat's file tools operate: a durable agent works in its own
  *  working folder (agents/<id>/, which includes its brain files); direct
- *  chats use the shared workspace store. */
-export interface FileRoot { kind: 'workspace' | 'agent'; id: string }
+ *  chats use the shared workspace store. An agent may additionally have a
+ *  workspace folder assigned, mounted under the virtual shared/ prefix. */
+export interface FileRoot {
+  kind: 'workspace' | 'agent';
+  id: string;
+  /** Assigned workspace folder, visible to the agent as shared/… */
+  shared?: { workspaceId: string; folder: string };
+}
+
+const SHARED_PREFIX = 'shared/';
 
 export function fileRootKey(root: FileRoot, path: string): string {
+  if (root.kind === 'agent' && root.shared && (path === 'shared' || path.startsWith(SHARED_PREFIX))) {
+    const rest = path === 'shared' ? '' : path.slice(SHARED_PREFIX.length);
+    const full = [root.shared.folder, rest].filter(Boolean).join('/');
+    return full ? workspaceFileKey(root.shared.workspaceId, full) : workspacePrefix(root.shared.workspaceId);
+  }
   return root.kind === 'agent' ? agentFileKey(root.id, path) : workspaceFileKey(root.id, path);
+}
+
+/** The storage prefix of an agent's shared mount, or null. */
+function sharedPrefix(root: FileRoot): string | null {
+  if (root.kind !== 'agent' || !root.shared) return null;
+  return root.shared.folder
+    ? `${workspaceFileKey(root.shared.workspaceId, root.shared.folder)}/`
+    : workspacePrefix(root.shared.workspaceId);
 }
 function rootPrefix(root: FileRoot): string {
   return root.kind === 'agent' ? agentPrefix(root.id) : workspacePrefix(root.id);
@@ -108,12 +129,9 @@ export class ToolsService {
         inputSchema: { type: 'object', properties: { prefix: { type: 'string', description: 'Optional path prefix filter' } } },
         readOnly: true,
         execute: async (root, input) => {
-          const prefix = typeof input.prefix === 'string' && input.prefix.length > 0
-            ? fileRootKey(root, input.prefix)
-            : rootPrefix(root);
-          const objects = await this.storage.list(prefix);
-          if (objects.length === 0) return '(no files)';
-          return objects.map((o) => `${rootRelative(root, o.key)} (${o.size} bytes)`).join('\n');
+          const rows = await this.listRoot(root, typeof input.prefix === 'string' ? input.prefix : '');
+          if (rows.length === 0) return '(no files)';
+          return rows.map((o) => `${o.path} (${o.size} bytes)`).join('\n');
         },
       },
       {
@@ -169,13 +187,13 @@ export class ToolsService {
         readOnly: true,
         execute: async (root, input) => {
           const query = str(input, 'query').toLowerCase();
-          const objects = (await this.storage.list(rootPrefix(root))).slice(0, SEARCH_MAX_FILES);
+          const rows = (await this.listRoot(root, '')).slice(0, SEARCH_MAX_FILES);
           const hits: string[] = [];
-          for (const obj of objects) {
+          for (const obj of rows) {
             if (obj.size > SEARCH_FILE_CAP) continue;
             const body = await this.storage.get(obj.key);
             if (!body || body.includes(0)) continue; // skip binary
-            const path = rootRelative(root, obj.key);
+            const path = obj.path;
             const lines = body.toString('utf8').split('\n');
             for (let i = 0; i < lines.length && hits.length < SEARCH_MAX_HITS; i++) {
               if (lines[i].toLowerCase().includes(query)) {
@@ -302,6 +320,28 @@ export class ToolsService {
         },
       },
     ];
+  }
+
+  /** All files visible from a root: its own store plus, for agents with an
+   *  assigned workspace folder, that folder mapped under shared/. */
+  private async listRoot(root: FileRoot, prefixFilter: string): Promise<Array<{ path: string; size: number; key: string }>> {
+    const out: Array<{ path: string; size: number; key: string }> = [];
+    if (!prefixFilter.startsWith(SHARED_PREFIX) && prefixFilter !== 'shared') {
+      const prefix = prefixFilter ? fileRootKey(root, prefixFilter) : rootPrefix(root);
+      for (const o of await this.storage.list(prefix)) {
+        out.push({ path: rootRelative(root, o.key), size: o.size, key: o.key });
+      }
+    }
+    const shared = sharedPrefix(root);
+    if (shared) {
+      const wanted = prefixFilter.startsWith(SHARED_PREFIX) || prefixFilter === 'shared'
+        ? fileRootKey(root, prefixFilter) : shared;
+      for (const o of await this.storage.list(typeof wanted === 'string' ? wanted : shared)) {
+        if (!o.key.startsWith(shared)) continue;
+        out.push({ path: `${SHARED_PREFIX}${o.key.slice(shared.length)}`, size: o.size, key: o.key });
+      }
+    }
+    return out;
   }
 
   specs(): AiToolSpec[] {

@@ -247,9 +247,7 @@ export class TurnLoopService {
       // Attachments: inject workspace-file contents into the provider input —
       // text inline, images as vision parts (descriptors persist on the turn;
       // the transcript stays clean, FR-2.2).
-      const fileRoot: FileRoot = session.agentId
-        ? { kind: 'agent', id: session.agentId }
-        : { kind: 'workspace', id: session.workspaceId };
+      const fileRoot = await this.fileRootFor(session);
       const attached = await this.loadAttachments(fileRoot, input.attachments);
       if (history.length > 0 && (attached.text || attached.images.length > 0)) {
         const lastMsg = history[history.length - 1];
@@ -482,10 +480,19 @@ export class TurnLoopService {
         }
       }
     }
-    const root: FileRoot = session.agentId
-      ? { kind: 'agent', id: session.agentId }
-      : { kind: 'workspace', id: session.workspaceId };
-    return this.tools.execute(root, name, input);
+    return this.tools.execute(await this.fileRootFor(session), name, input);
+  }
+
+  /** The file root of a chat: the agent's working folder (plus its assigned
+   *  workspace folder mounted as shared/), or the workspace store. */
+  private async fileRootFor(session: ChatSession): Promise<FileRoot> {
+    if (!session.agentId) return { kind: 'workspace', id: session.workspaceId };
+    const agent = await this.agents.get(session.agentId).catch(() => null);
+    const folder = (agent?.workspaceFolder ?? '').trim().replace(/^\/+|\/+$/g, '');
+    return {
+      kind: 'agent', id: session.agentId,
+      ...(agent && folder ? { shared: { workspaceId: session.workspaceId, folder } } : {}),
+    };
   }
 
   /** Ask/Auto policy check (§4): what may run without asking, and whether a
