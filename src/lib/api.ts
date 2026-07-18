@@ -8,7 +8,19 @@ export interface Workspace {
   name: string;
   color: string;
   memory: string;
+  /** Consented user profile: only user-approved lines land here. */
+  profile: string;
+  /** JSON array of ProfileProposal awaiting review. */
+  profilePending: string;
   createdAt: string;
+}
+
+export interface ProfileProposal {
+  id: string;
+  entry: string;
+  agentName: string;
+  sessionId: string;
+  at: string;
 }
 
 export interface Agent {
@@ -217,8 +229,10 @@ export const api = {
   // workspaces + workspace files
   workspaces: () => get<Workspace[]>('/api/workspaces'),
   createWorkspace: (name: string, color?: string) => send<Workspace>('/api/workspaces', 'POST', { name, color }),
-  updateWorkspace: (id: string, patch: Partial<Pick<Workspace, 'name' | 'color' | 'memory'>>) =>
+  updateWorkspace: (id: string, patch: Partial<Pick<Workspace, 'name' | 'color' | 'memory' | 'profile'>>) =>
     send<Workspace>(`/api/workspaces/${id}`, 'PATCH', patch),
+  resolveProfileProposal: (id: string, proposalId: string, approve: boolean) =>
+    send<Workspace>(`/api/workspaces/${id}/profile/${approve ? 'approve' : 'reject'}`, 'POST', { proposalId }),
   wsFiles: (id: string) => get<FileEntry[]>(`/api/workspaces/${id}/files`),
   wsPreview: (id: string, path: string) => get<FilePreview>(`/api/workspaces/${id}/preview?path=${enc(path)}`),
   wsPutFile: (id: string, path: string, contentBase64: string, contentType?: string) =>

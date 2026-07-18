@@ -14,7 +14,7 @@ import { ArtifactPanel } from './components/ArtifactPanel';
 function Layout() {
   const app = useApp();
   const [marketCat, setMarketCat] = useState('All');
-  const [settingsPane, setSettingsPane] = useState('providers');
+  const [settingsPane, setSettingsPane] = useState(() => new URLSearchParams(window.location.search).get('pane') ?? 'providers');
 
   const sec = app.section;
   const detailActive =

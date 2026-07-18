@@ -14,6 +14,7 @@ import { AgentsService } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { ChatsRepository } from './chats.repository';
 import { TurnLoopService } from './turn-loop.service';
+import { DistillService } from './distill.service';
 import { cronMatches } from './cron.util';
 
 interface LoopDef { name: string; cron: string; prompt?: string; enabled?: boolean }
@@ -30,6 +31,7 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     private readonly workspaces: WorkspacesService,
     private readonly repo: ChatsRepository,
     private readonly turns: TurnLoopService,
+    private readonly distill: DistillService,
     private readonly config: ConfigService,
   ) {}
 
@@ -43,6 +45,13 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
   }
 
   async tick(now: Date): Promise<void> {
+    // auto-distillation (roadmap phase 1): every 10 minutes, distill agent
+    // sessions that went idle with undistilled work.
+    if (now.getMinutes() % 10 === 0) {
+      await this.distillSweep(now).catch((err) => {
+        this.logger.warn(`distill sweep failed: ${err instanceof Error ? err.message : err}`);
+      });
+    }
     const stamp = now.toISOString().slice(0, 16); // minute resolution
     for (const agent of await this.agents.list()) {
       let loops: LoopDef[];
@@ -58,6 +67,23 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
         });
       }
     }
+  }
+
+  /** Distill idle, changed agent sessions into their agents' brains. */
+  async distillSweep(now: Date, idleMinutes = 60): Promise<number> {
+    const idleBefore = new Date(now.getTime() - idleMinutes * 60_000).toISOString();
+    const sessions = await this.repo.sessionsNeedingDistill(idleBefore);
+    let distilled = 0;
+    for (const s of sessions.slice(0, 5)) { // bounded per sweep
+      try {
+        const res = await this.distill.distill(s.id);
+        if (res.ok) distilled++;
+      } catch (err) {
+        this.logger.warn(`auto-distill of ${s.id} failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    if (distilled > 0) this.logger.log(`auto-distilled ${distilled} idle session(s)`);
+    return distilled;
   }
 
   /** Run one loop turn in the agent's dedicated loop session. */

@@ -7,7 +7,7 @@ import { ChatsService } from '../server/src/chats/chats.service';
 import { TurnLoopService, TurnEvent } from '../server/src/chats/turn-loop.service';
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
-import { testDb, memStorage, ctxStub, agentsStub, mcpStub, ScriptedProvider } from './helpers';
+import { testDb, memStorage, ctxStub, agentsStub, mcpStub, ScriptedProvider, wsStub } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 
 test('built-ins seed once and survive re-seeding; user edits stick', async () => {
@@ -66,7 +66,7 @@ test('the turn loop offers skills as tools and invoking one returns its instruct
   ];
   const finalRound: AiStreamEvent[] = [{ type: 'answer', text: 'done' }, { type: 'done' }];
   const provider = new ScriptedProvider([skillRound, finalRound]);
-  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(memStorage().stub), ctxStub(provider), skills, memStorage().stub, mcpStub(), agentsStub());
+  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(memStorage().stub), ctxStub(provider), skills, memStorage().stub, mcpStub(), agentsStub(), wsStub());
 
   const s = await chats.create({ workspaceId: 'ws1' });
   const events: TurnEvent[] = [];

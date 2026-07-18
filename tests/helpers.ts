@@ -8,6 +8,7 @@ import type { StorageService } from '../server/src/storage/storage.service';
 import type { TurnContextService, TurnContext } from '../server/src/chats/turn-context.service';
 import type { SkillsService } from '../server/src/skills/skills.service';
 import type { AgentsService } from '../server/src/agents/agents.service';
+import type { WorkspacesService } from '../server/src/workspaces/workspaces.service';
 import type { McpService } from '../server/src/mcp/mcp.module';
 import { AiProvider, AiRequest, AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 
@@ -73,6 +74,21 @@ export function mcpStub(): McpService {
   } as unknown as McpService;
 }
 
+/** WorkspacesService stub for TurnLoopService tests; records profile
+ *  proposals so tests can assert on the consent flow. */
+export function wsStub(): WorkspacesService & { proposals: unknown[] } {
+  const proposals: unknown[] = [];
+  const stub = {
+    proposals,
+    get: async (id: string) => ({ id, name: 'ws', color: '#fff', memory: '', profile: '', profilePending: '[]', createdAt: '' }),
+    addProfileProposal: async (_id: string, input: unknown) => {
+      proposals.push(input);
+      return 'Proposed. The user will review it before it enters the profile; do not assume it is remembered yet.';
+    },
+  };
+  return stub as unknown as WorkspacesService & { proposals: unknown[] };
+}
+
 /** AgentsService stub for ChatsService / TurnLoopService tests; records
  *  self-maintenance tool calls so tests can assert on them. */
 export function agentsStub(): AgentsService & { calls: Array<{ method: string; args: unknown[] }> } {
@@ -80,6 +96,7 @@ export function agentsStub(): AgentsService & { calls: Array<{ method: string; a
   const stub = {
     calls,
     addFeedback: async () => ({ ok: true }),
+    get: async (id: string) => ({ id, name: 'Stub Agent' }),
     updateDashboard: async (...args: unknown[]) => { calls.push({ method: 'updateDashboard', args }); return 'Dashboard updated.'; },
     saveApp: async (...args: unknown[]) => { calls.push({ method: 'saveApp', args }); return 'Mini app saved.'; },
     tasksForModel: async (...args: unknown[]) => { calls.push({ method: 'tasksForModel', args }); return 'The board is empty.'; },

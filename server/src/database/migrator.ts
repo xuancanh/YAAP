@@ -196,6 +196,23 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '0006-recall-profile',
+    up: async (db) => {
+      // full-text recall over the transcript (search_history tool)
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_messages_fts ON chat_messages
+        USING GIN (to_tsvector('english', "content"))`);
+      if (!(await hasColumn(db, 'chat_sessions', 'distilledAt'))) {
+        await db.query(`ALTER TABLE chat_sessions ADD COLUMN "distilledAt" TEXT`);
+      }
+      if (!(await hasColumn(db, 'workspaces', 'profile'))) {
+        await db.query(`ALTER TABLE workspaces ADD COLUMN "profile" TEXT NOT NULL DEFAULT ''`);
+      }
+      if (!(await hasColumn(db, 'workspaces', 'profilePending'))) {
+        await db.query(`ALTER TABLE workspaces ADD COLUMN "profilePending" TEXT NOT NULL DEFAULT '[]'`);
+      }
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {

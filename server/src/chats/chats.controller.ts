@@ -70,7 +70,14 @@ export class ChatsController {
   @Get(':id') get(@Param('id') id: string) { return this.chats.get(id); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateChatDto) { return this.chats.update(id, dto); }
   @Delete(':id') remove(@Param('id') id: string) { return this.chats.remove(id); }
-  @Post(':id/archive') archive(@Param('id') id: string) { return this.chats.archive(id); }
+  @Post(':id/archive')
+  async archive(@Param('id') id: string) {
+    const res = await this.chats.archive(id);
+    // archiving an agent chat distills it into the brain (fire-and-forget)
+    const session = await this.chats.get(id).catch(() => null);
+    if (session?.agentId) void this.distillSvc.distill(id).catch(() => {});
+    return res;
+  }
   @Post(':id/restore') restore(@Param('id') id: string) { return this.chats.restore(id); }
   @Get(':id/transcript') transcript(@Param('id') id: string) { return this.chats.transcript(id); }
   @Post(':id/clear') clear(@Param('id') id: string) { return this.chats.clear(id); }

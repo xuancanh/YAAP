@@ -4,7 +4,7 @@
  * the services above it.
  */
 import { Injectable, Inject } from '@nestjs/common';
-import { and, asc, desc, eq, gt, gte, inArray, isNull, isNotNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNull, isNotNull, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { chatMessages, chatSessions, chatTurns } from '../database/schema';
@@ -54,6 +54,7 @@ export class ChatsRepository {
       compactCutoff: null,
       tokensIn: 0,
       tokensOut: 0,
+      distilledAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -185,5 +186,44 @@ export class ChatsRepository {
       .where(and(eq(chatMessages.sessionId, sessionId), past))
       .orderBy(asc(chatMessages.seq));
     return rows.filter((m) => m.role === 'user' || m.role === 'assistant');
+  }
+
+  /** Sessions whose transcript changed since the last distillation and have
+   *  been idle since `idleBefore` (auto-distillation sweep). Loop sessions
+   *  journal themselves, so they are excluded. */
+  async sessionsNeedingDistill(idleBefore: string): Promise<ChatSession[]> {
+    const rows = await this.db.select().from(chatSessions)
+      .where(and(isNotNull(chatSessions.agentId), isNull(chatSessions.archivedAt)));
+    return rows.filter((s) => s.updatedAt < idleBefore
+      && (!s.distilledAt || s.distilledAt < s.updatedAt)
+      && !s.name.startsWith('Loop · '));
+  }
+
+  /** Sets only distilledAt — deliberately not via updateSession, which bumps
+   *  updatedAt and would make the sweep re-distill forever. */
+  async markDistilled(sessionId: string): Promise<void> {
+    await this.db.update(chatSessions).set({ distilledAt: nowIso() }).where(eq(chatSessions.id, sessionId));
+  }
+
+  /** Full-text recall over an agent's transcripts (search_history tool):
+   *  user/assistant rows of the agent's sessions, ranked newest-first. */
+  async searchAgentMessages(agentId: string, query: string, limit = 8): Promise<Array<{
+    sessionId: string; sessionName: string; role: string; content: string; createdAt: string;
+  }>> {
+    const q = query.trim().slice(0, 200);
+    if (!q) return [];
+    const res = await this.db.execute(sql`
+      SELECT m."sessionId" AS "sessionId",
+             COALESCE(NULLIF(s."name", ''), NULLIF(s."autoTitle", ''), 'untitled') AS "sessionName",
+             m."role" AS "role", m."content" AS "content", m."createdAt" AS "createdAt"
+      FROM chat_messages m
+      JOIN chat_sessions s ON s."id" = m."sessionId"
+      WHERE s."agentId" = ${agentId}
+        AND m."role" IN ('user', 'assistant')
+        AND to_tsvector('english', m."content") @@ plainto_tsquery('english', ${q})
+      ORDER BY m."createdAt" DESC
+      LIMIT ${limit}
+    `);
+    return res.rows as Array<{ sessionId: string; sessionName: string; role: string; content: string; createdAt: string }>;
   }
 }

@@ -45,10 +45,10 @@ async function setup(rounds: AiStreamEvent[][]) {
   const workspaces = new WorkspacesService(db, stub);
   const repo = new ChatsRepository(db);
   const provider = new ScriptedProvider(rounds);
-  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub(), agents);
+  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub(), agents, workspaces);
   const config = { get: (k: string) => (k === 'loopsEnabled' ? false : undefined) } as unknown as ConfigService;
-  const loops = new LoopsService(agents, workspaces, repo, turns, config);
   const distill = new DistillService(repo, ctxStub(provider), agents);
+  const loops = new LoopsService(agents, workspaces, repo, turns, distill, config);
   return { db, stub: stub as unknown as StorageService, agents, workspaces, repo, turns, loops, distill, provider };
 }
 
@@ -237,4 +237,73 @@ test('disabled loops do not fire (§11 schedule editor)', async () => {
   await new Promise((r) => setTimeout(r, 30));
   const ws = (await workspaces.list())[0];
   assert.equal((await repo.listSessions(ws.id)).length, 0);
+});
+
+test('full-text recall: searchAgentMessages is scoped to the agent (phase 1)', async () => {
+  const { agents, repo } = await setup([]);
+  const a = await agents.create({ name: 'Recall' });
+  const other = await agents.create({ name: 'Other' });
+  const s1 = await repo.createSession({ workspaceId: 'ws1', agentId: a.id, name: 'deploy talk' });
+  const s2 = await repo.createSession({ workspaceId: 'ws1', agentId: other.id });
+  await repo.appendMessage({ sessionId: s1.id, turnId: 't1', role: 'user', content: 'we decided to rotate the staging keys on Friday' });
+  await repo.appendMessage({ sessionId: s1.id, turnId: 't1', role: 'tool', content: 'rotate rotate rotate', toolName: 'x' });
+  await repo.appendMessage({ sessionId: s2.id, turnId: 't2', role: 'user', content: 'rotate the other agent keys' });
+
+  const hits = await repo.searchAgentMessages(a.id, 'rotate staging keys');
+  assert.equal(hits.length, 1); // tool rows and other agents excluded
+  assert.equal(hits[0].sessionName, 'deploy talk');
+  assert.match(hits[0].content, /staging keys on Friday/);
+  assert.equal((await repo.searchAgentMessages(a.id, '')).length, 0);
+});
+
+test('profile proposals: agents propose, only user approval lands (phase 1)', async () => {
+  const { workspaces } = await setup([]);
+  const ws = (await workspaces.list())[0];
+
+  const msg = await workspaces.addProfileProposal(ws.id, { entry: 'Prefers concise answers.', agentName: 'Sentinel' });
+  assert.match(msg, /review/);
+  await workspaces.addProfileProposal(ws.id, { entry: 'Prefers concise answers.' }); // dup: no second proposal
+  let loaded = await workspaces.get(ws.id);
+  const pending = JSON.parse(loaded.profilePending) as Array<{ id: string; entry: string }>;
+  assert.equal(pending.length, 1);
+  assert.equal(loaded.profile, '');
+
+  await workspaces.resolveProfileProposal(ws.id, pending[0].id, true);
+  loaded = await workspaces.get(ws.id);
+  assert.match(loaded.profile, /Prefers concise answers/);
+  assert.equal(JSON.parse(loaded.profilePending).length, 0);
+
+  // rejection discards without touching the profile
+  await workspaces.addProfileProposal(ws.id, { entry: 'Lives on Mars.' });
+  const p2 = (JSON.parse((await workspaces.get(ws.id)).profilePending) as Array<{ id: string }>)[0];
+  await workspaces.resolveProfileProposal(ws.id, p2.id, false);
+  loaded = await workspaces.get(ws.id);
+  assert.ok(!loaded.profile.includes('Mars'));
+  await assert.rejects(workspaces.resolveProfileProposal(ws.id, 'nope', true), /proposal nope/);
+});
+
+test('auto-distillation sweep distills idle changed sessions exactly once (phase 1)', async () => {
+  const distillRound: AiStreamEvent[] = [
+    { type: 'answer', text: 'JOURNAL: Helped plan the key rotation.\nLESSON: none' },
+    { type: 'done' },
+  ];
+  const { agents, repo, loops, stub } = await setup([distillRound]);
+  const a = await agents.create({ name: 'Sweeper' });
+  const s = await repo.createSession({ workspaceId: 'ws1', agentId: a.id, name: 'rotation planning' });
+  await repo.appendMessage({ sessionId: s.id, turnId: 't1', role: 'user', content: 'plan the rotation' });
+  await repo.appendMessage({ sessionId: s.id, turnId: 't1', role: 'assistant', content: 'planned.' });
+  // loop sessions and fresh sessions are skipped
+  await repo.createSession({ workspaceId: 'ws1', agentId: a.id, name: 'Loop · Nightly' });
+
+  // session is fresh: nothing to distill yet
+  assert.equal(await loops.distillSweep(new Date()), 0);
+
+  // an hour later it is idle: distilled once
+  const later = new Date(Date.now() + 2 * 60 * 60_000);
+  assert.equal(await loops.distillSweep(later), 1);
+  const journal = (await stub.get(`agents/${a.id}/JOURNAL.md`))!.toString('utf8');
+  assert.match(journal, /Helped plan the key rotation/);
+
+  // unchanged since: not distilled again
+  assert.equal(await loops.distillSweep(later), 0);
 });

@@ -19,6 +19,11 @@ class UpdateWorkspaceDto {
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsString() color?: string;
   @IsOptional() @IsString() memory?: string;
+  @IsOptional() @IsString() profile?: string;
+}
+
+class ResolveProposalDto {
+  @IsString() proposalId!: string;
 }
 
 class PutFileDto {
@@ -39,6 +44,17 @@ export class WorkspacesController {
   @Post() create(@Body() dto: CreateWorkspaceDto) { return this.workspaces.create(dto); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateWorkspaceDto) { return this.workspaces.update(id, dto); }
   @Delete(':id') remove(@Param('id') id: string) { return this.workspaces.remove(id); }
+
+  // ---- consented user profile: agents propose, the user decides ----
+  @Post(':id/profile/approve')
+  approveProposal(@Param('id') id: string, @Body() dto: ResolveProposalDto) {
+    return this.workspaces.resolveProfileProposal(id, dto.proposalId, true);
+  }
+
+  @Post(':id/profile/reject')
+  rejectProposal(@Param('id') id: string, @Body() dto: ResolveProposalDto) {
+    return this.workspaces.resolveProfileProposal(id, dto.proposalId, false);
+  }
 
   // ---- workspace files (S3-compatible object storage) ----
 

@@ -9,7 +9,7 @@ import { ChatsService } from '../server/src/chats/chats.service';
 import { TurnLoopService, TurnEvent } from '../server/src/chats/turn-loop.service';
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
-import { testDb, memStorage, ctxStub, skillsStub, agentsStub, ScriptedProvider } from './helpers';
+import { testDb, memStorage, ctxStub, skillsStub, agentsStub, ScriptedProvider, wsStub } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 
 /** A tiny in-memory MCP server speaking Streamable HTTP JSON-RPC. */
@@ -107,7 +107,7 @@ test('turn loop offers MCP tools and gates them behind approval in Ask mode (FR-
   const finalRound: AiStreamEvent[] = [{ type: 'answer', text: 'paged.' }, { type: 'done' }];
   const provider = new ScriptedProvider([mcpRound, finalRound]);
   const { stub } = memStorage();
-  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcp, agentsStub());
+  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcp, agentsStub(), wsStub());
 
   const s = await chats.create({ workspaceId: 'ws1' }); // ask mode default
   let paused = false;

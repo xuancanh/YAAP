@@ -28,6 +28,12 @@ export const workspaces = pgTable('workspaces', {
   color: text('color').notNull().default('#F5C451'),
   /** Durable workspace chat memory, injected as shared context (FR-12.1). */
   memory: text('memory').notNull().default(''),
+  /** The consented user profile: what agents know about the user. Only the
+   *  user writes this directly; agents propose entries into profilePending. */
+  profile: text('profile').notNull().default(''),
+  /** JSON array of pending profile proposals awaiting user review:
+   *  { id, entry, agentName, sessionId, at }. */
+  profilePending: text('profilePending').notNull().default('[]'),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -121,6 +127,9 @@ export const chatSessions = pgTable('chat_sessions', {
   compactCutoff: text('compactCutoff'),
   tokensIn: integer('tokensIn').notNull().default(0),
   tokensOut: integer('tokensOut').notNull().default(0),
+  /** When this session was last distilled into the agent brain; the idle
+   *  sweep skips sessions whose transcript has not changed since. */
+  distilledAt: text('distilledAt'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });

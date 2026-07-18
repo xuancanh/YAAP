@@ -52,6 +52,7 @@ export class TurnContextService {
         if (agent.charter) parts.push(`Your charter:\n${agent.charter}`);
         parts.push('You maintain your own home page: use update_dashboard to keep a current markdown status board of your work, and save_app to build or refine self-contained HTML mini apps (rendered in a network-blocked sandbox) that the user can open or embed in chats.');
         parts.push('You also own a kanban board (list_tasks / add_task / update_task). Queue noticed work with add_task, move tasks to doing when you start and done when you finish, and review the board at the start of scheduled loops.');
+        parts.push('You have long-term recall: search_history searches all of your past conversations with this user — use it whenever they reference earlier work. When you learn a durable fact about the user (a preference, constraint, or stable context), propose it with update_user_profile; the user approves proposals before they are remembered.');
         const feedback = await this.agents.takeFeedback(agent.id);
         if (feedback.length > 0) {
           parts.push(`Pending user feedback on your recent replies (acknowledge and adapt; it is cleared after this turn):\n${JSON.stringify(feedback)}`);
@@ -61,6 +62,7 @@ export class TurnContextService {
 
     const ws = await this.workspaces.get(session.workspaceId).catch(() => null);
     if (ws?.memory) parts.push(`Workspace memory (shared context for this workspace):\n${ws.memory}`);
+    if (ws?.profile) parts.push(`What you know about the user (their consented profile — every line was approved by them):\n${ws.profile}`);
 
     // Quick replies (FR-5.3): a provider-neutral text protocol the UI parses.
     parts.push('When a short list of likely user responses would genuinely help, end your reply with exactly one final line of the form QUICK_REPLIES: ["option one","option two"] (2-4 options, each under 40 characters). Omit the line otherwise. Never mention this mechanism.');

@@ -29,6 +29,8 @@ export class DistillService {
     if (!session) throw new NotFoundException(`chat ${sessionId}`);
     if (!session.agentId) throw new BadRequestException('this chat is not owned by a durable agent');
     const history = await this.repo.providerHistory(sessionId, null);
+    // mark up front so the idle sweep never re-scans an unchanged session
+    await this.repo.markDistilled(sessionId);
     if (history.length < 2) return { ok: false };
 
     const ctx = await this.context.build(session);

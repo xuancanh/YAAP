@@ -6,7 +6,7 @@ import { ChatsService } from '../server/src/chats/chats.service';
 import { TurnLoopService, TurnEvent } from '../server/src/chats/turn-loop.service';
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
-import { testDb, memStorage, ctxStub, skillsStub, agentsStub, mcpStub, ScriptedProvider } from './helpers';
+import { testDb, memStorage, ctxStub, skillsStub, agentsStub, mcpStub, ScriptedProvider, wsStub } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 
 const writeRound: AiStreamEvent[] = [
@@ -28,8 +28,9 @@ async function setup(rounds: AiStreamEvent[][]) {
   const tools = new ToolsService(stub);
   const provider = new ScriptedProvider(rounds);
   const agents = agentsStub();
-  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(provider), skillsStub(), stub, mcpStub(), agents);
-  return { repo, chats, turns, provider, map, agents };
+  const ws = wsStub();
+  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(provider), skillsStub(), stub, mcpStub(), agents, ws);
+  return { repo, chats, turns, provider, map, agents, ws };
 }
 
 async function collect(gen: AsyncGenerator<TurnEvent>, onEvent?: (ev: TurnEvent) => void): Promise<TurnEvent[]> {
@@ -192,4 +193,26 @@ test('image attachments become vision parts on the user message (FR-2.2)', async
   assert.equal(lastUser.images?.length, 1);
   assert.equal(lastUser.images![0].mediaType, 'image/png');
   assert.match(lastUser.content, /plain text note/);
+});
+
+test('recall + profile tools: search_history and update_user_profile auto-run in ask mode (phase 1)', async () => {
+  const round: AiStreamEvent[] = [
+    { type: 'tool_call', id: 'h1', name: 'search_history', input: { query: 'staging keys' } },
+    { type: 'tool_call', id: 'p1', name: 'update_user_profile', input: { entry: 'Prefers Friday deploys.' } },
+    { type: 'done' },
+  ];
+  const { chats, turns, ws, repo } = await setup([round, finalRound]);
+  const s = await chats.create({ workspaceId: 'ws1', agentId: 'ag1' });
+  const old = await repo.createSession({ workspaceId: 'ws1', agentId: 'ag1', name: 'earlier' });
+  await repo.appendMessage({ sessionId: old.id, turnId: 't0', role: 'assistant', content: 'the staging keys rotate on Friday' });
+
+  const events = await collect(turns.run(s.id, { text: 'when do we rotate?' }));
+  assert.ok(!events.some((e) => e.type === 'approval_required'), 'both tools auto-ran in ask mode');
+  const search = events.find((e) => e.type === 'tool_result' && e.name === 'search_history');
+  assert.ok(search && !search.isError);
+  assert.match(search.output, /staging keys rotate on Friday/);
+  const profile = events.find((e) => e.type === 'tool_result' && e.name === 'update_user_profile');
+  assert.ok(profile && !profile.isError);
+  assert.match(profile.output, /review/);
+  assert.equal((ws.proposals[0] as { entry: string }).entry, 'Prefers Friday deploys.');
 });

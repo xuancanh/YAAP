@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
-import { api, PROVIDER_COLORS } from '../lib/api';
+import { api, PROVIDER_COLORS, type ProfileProposal, type Workspace } from '../lib/api';
 
 const PANE_META: Record<string, [string, string]> = {
   providers: ['Providers & agent types', 'Reusable presets: provider, default model, API key, and persona. A type with no key falls back to the Echo dev provider.'],
@@ -251,6 +251,52 @@ function MemoryPane() {
       <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 11 }}>Injected as shared context for every chat in this workspace.</div>
       <textarea value={value} onChange={(e) => setValue(e.target.value)}
         style={{ width: '100%', minHeight: 180, resize: 'vertical', background: 'var(--code)', border: '1px solid var(--border)', borderRadius: 10, padding: '13px 15px', color: 'var(--text-dim)', fontSize: 12.5, ...mono, lineHeight: 1.6, outline: 'none' }} />
+      <ProfileSection ws={ws} />
+    </div>
+  );
+}
+
+/** The consented user profile: agents propose entries with
+ *  update_user_profile; nothing is remembered until it is approved here. */
+function ProfileSection({ ws }: { ws: Workspace }) {
+  const app = useApp();
+  const pending = (() => { try { return JSON.parse(ws.profilePending) as ProfileProposal[]; } catch { return []; } })();
+  const [profile, setProfile] = useState(ws.profile);
+  useEffect(() => { setProfile(ws.profile); }, [ws.id, ws.profile]);
+
+  const resolve = async (proposalId: string, approve: boolean) => {
+    await api.resolveProfileProposal(ws.id, proposalId, approve);
+    await app.refreshWorkspaces();
+    app.showToast(approve ? 'Added to your profile' : 'Proposal rejected');
+  };
+
+  return (
+    <div style={{ marginTop: 22, borderTop: '1px solid var(--border-soft)', paddingTop: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 5 }}>
+        <span style={{ fontSize: 14, fontWeight: 600 }}>What agents know about you</span>
+        <button onClick={async () => { await api.updateWorkspace(ws.id, { profile }); await app.refreshWorkspaces(); app.showToast('Profile saved'); }}
+          style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Save</button>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 11 }}>
+        Your consented profile. Agents propose entries; only what you approve below (or write here yourself) is remembered.
+      </div>
+      <textarea value={profile} onChange={(e) => setProfile(e.target.value)} placeholder="- Prefers concise answers"
+        style={{ width: '100%', minHeight: 110, resize: 'vertical', background: 'var(--code)', border: '1px solid var(--border)', borderRadius: 10, padding: '13px 15px', color: 'var(--text-dim)', fontSize: 12.5, ...mono, lineHeight: 1.6, outline: 'none' }} />
+      {pending.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--amber)', marginBottom: 8 }}>Pending proposals · {pending.length}</div>
+          {pending.map((p) => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', border: '1px solid var(--border-soft)', borderRadius: 10, marginBottom: 7, background: 'var(--panel-2)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>{p.entry}</div>
+                <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 2 }}>proposed by {p.agentName || 'an agent'} · {p.at.slice(0, 10)}</div>
+              </div>
+              <button onClick={() => void resolve(p.id, true)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '5px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Approve</button>
+              <button onClick={() => void resolve(p.id, false)} style={{ background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '5px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Reject</button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

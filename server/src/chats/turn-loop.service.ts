@@ -29,6 +29,7 @@ import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
 import { McpService, MCP_TOOL_PREFIX } from '../mcp/mcp.module';
 import { StorageService } from '../storage/storage.service';
 import { AgentsService } from '../agents/agents.service';
+import { WorkspacesService } from '../workspaces/workspaces.service';
 import { workspaceFileKey } from '../storage/storage.keys';
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
@@ -110,10 +111,30 @@ const AGENT_TOOLS: AiToolSpec[] = [
       required: ['id'],
     },
   },
+  {
+    name: 'search_history',
+    description: 'Full-text search across all of your past conversations with the user. Use it when the user refers to something discussed before, or to recall earlier decisions, names, and context.',
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Keywords to search for (plain words, not operators).' } },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'update_user_profile',
+    description: 'Propose one durable fact about the user (a preference, constraint, or piece of stable context) for their consented profile. The user reviews every proposal before it is remembered; propose sparingly and only things worth keeping across all future conversations.',
+    inputSchema: {
+      type: 'object',
+      properties: { entry: { type: 'string', description: 'One self-contained sentence, under 500 characters.' } },
+      required: ['entry'],
+    },
+  },
 ];
 const AGENT_TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
-/** Agent tools that only read state; they auto-run even in Ask mode. */
-const AGENT_READONLY_TOOLS = new Set(['list_tasks']);
+/** Agent tools that auto-run even in Ask mode: pure reads, plus
+ *  update_user_profile — it only queues a proposal, and the durable write is
+ *  gated on explicit user approval in the profile UI. */
+const AGENT_READONLY_TOOLS = new Set(['list_tasks', 'search_history', 'update_user_profile']);
 
 const exactKey = (call: AiToolCall): string =>
   `${call.name}:${createHash('sha256').update(JSON.stringify(call.input)).digest('hex').slice(0, 16)}`;
@@ -134,6 +155,7 @@ export class TurnLoopService {
     private readonly storage: StorageService,
     private readonly mcp: McpService,
     private readonly agents: AgentsService,
+    private readonly workspaces: WorkspacesService,
   ) {}
 
   /** Stop the in-flight turn for a chat; the partial turn is retained (FR-5.4). */
@@ -338,6 +360,21 @@ export class TurnLoopService {
           });
         case 'list_tasks':
           return this.agents.tasksForModel(agentId);
+        case 'search_history': {
+          const hits = await this.repo.searchAgentMessages(agentId, String(input.query ?? ''));
+          if (hits.length === 0) return 'No past conversation matches that query.';
+          return hits.map((h) =>
+            `[${h.createdAt.slice(0, 10)} · ${h.sessionName}] ${h.role}: ${h.content.replace(/\s+/g, ' ').slice(0, 300)}`,
+          ).join('\n');
+        }
+        case 'update_user_profile': {
+          const agent = await this.agents.get(agentId).catch(() => null);
+          return this.workspaces.addProfileProposal(session.workspaceId, {
+            entry: String(input.entry ?? ''),
+            agentName: agent?.name,
+            sessionId: session.id,
+          });
+        }
         case 'add_task': {
           const task = await this.agents.addTask(agentId, {
             title: String(input.title ?? ''),
