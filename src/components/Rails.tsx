@@ -245,12 +245,6 @@ export function HomeRail() {
         </div>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
-        <div onClick={() => { app.setSelectedAgent(null); app.setHomeView('agent'); app.setMobileChatOpen(true); }}
-          style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 9, cursor: 'pointer', color: 'var(--text-dim)', background: app.homeView === 'agent' && !app.selectedAgent ? 'var(--accent-dim)' : 'none' }}>
-          <I d={P.bot} size={15} style={{ flex: 'none' }} />
-          <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600 }}>All agents</span>
-          <span style={{ fontSize: 10.5, color: 'var(--text-faint)', background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px' }}>{app.agents.length}</span>
-        </div>
         {groups.map((g) => <AgentGroup key={g.id} {...g} />)}
         {app.archived.length > 0 && (
           <div style={{ marginTop: 12, borderTop: '1px solid var(--border-soft)', paddingTop: 8 }}>

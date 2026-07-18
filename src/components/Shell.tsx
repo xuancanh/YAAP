@@ -3,7 +3,8 @@ import { I, P } from '../lib/icons';
 import { useApp, type Section } from '../store';
 
 const NAV: Array<{ id: Section; label: string; icon: string[] }> = [
-  { id: 'home', label: 'Home', icon: P.chat },
+  { id: 'overview', label: 'Home', icon: P.bot },
+  { id: 'home', label: 'Chat', icon: P.chat },
   { id: 'market', label: 'Market', icon: P.market },
 ];
 

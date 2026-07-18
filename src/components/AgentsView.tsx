@@ -671,7 +671,7 @@ export function AgentHome() {
   return (
     <div style={{ flex: 1, overflowY: 'auto' }}>
       <div style={{ maxWidth: 920, margin: '0 auto', padding: '24px 26px 60px' }}>
-        <button onClick={() => { app.setSelectedAgent(null); app.setHomeView('agent'); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 12.5, cursor: 'pointer', padding: 0, marginBottom: 16 }}>
+        <button onClick={() => { app.setSelectedAgent(null); app.go('overview'); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 12.5, cursor: 'pointer', padding: 0, marginBottom: 16 }}>
           <I d={P.chevL} size={14} />All agents
         </button>
 
@@ -883,6 +883,7 @@ export function AgentHome() {
                   await app.refreshAgents();
                   await app.refreshSessions();
                   app.setSelectedAgent(null);
+                  app.go('overview');
                   app.showToast(`Deleted ${a.name}`);
                 }} style={{ background: 'none', border: '1px solid var(--red)', color: 'var(--red)', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Delete agent</button>
               </div>

@@ -10,7 +10,7 @@ import {
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision,
 } from './lib/api';
 
-export type Section = 'home' | 'market' | 'settings';
+export type Section = 'home' | 'overview' | 'market' | 'settings';
 /** What the main pane shows while in the Home section: a conversation, an
  *  agent's home page (or the directory when no agent is selected), or a file
  *  preview — all reachable from the one combined rail, YAAM-style. */
@@ -120,8 +120,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // legacy deep links (?section=chats|agents|files) land in Home with the
   // matching main view — used by headless screenshot verification too.
   const [section, setSection] = useState<Section>(() => {
-    const q = new URLSearchParams(window.location.search).get('section');
-    return q === 'market' || q === 'settings' ? q : 'home';
+    const p = new URLSearchParams(window.location.search);
+    const q = p.get('section');
+    if (q === 'market' || q === 'settings' || q === 'overview') return q;
+    // legacy: ?section=agents without a specific agent is the fleet overview
+    if (q === 'agents' && !p.get('agent')) return 'overview';
+    if (q === 'chats' || q === 'files' || (q === 'agents' && p.get('agent'))) return 'home';
+    return 'overview'; // the fleet overview is the landing page
   });
   const [homeView, setHomeView] = useState<HomeView>(() => {
     const q = new URLSearchParams(window.location.search).get('section');
