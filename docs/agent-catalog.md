@@ -180,3 +180,76 @@ demonstrate the platform hardest). The pattern-library effect is now real:
 new packs increasingly compose existing playbook shapes (invoice-chase,
 renewals-radar, client-memory, spaced repetition, run sheets) — each new
 pack costs less than the last.
+
+## Wave 6 — the profession long tail
+
+The shipped catalog covers office knowledge work (the kwp conversions),
+four professional additions, and wave 4's business verticals. But most
+working people are none of those. Organized by cluster; each pack follows
+the established shape (5-6 judgment skills, 0-2 loops, file conventions,
+explicit boundaries). Educator (shipped) anchors the education cluster —
+the rest of its cluster is untouched.
+
+### Education & academia (around Educator)
+
+| Agent | Emoji | Core skills | Notes / boundaries |
+|---|---|---|---|
+| **Professor Desk** | 🎓 | syllabus-design, lecture-to-materials, grading-with-rubrics (drafts, never autonomous grades), office-hours-triage, recommendation-letters (the genre's unwritten rules), publication-pipeline | Educator for higher ed: bigger classes, research tension, the rec-letter backlog every professor carries |
+| **Academic Researcher** | 🔬 | literature-review (the deep-research skill, citation-disciplined), grant-proposal (aims-page craft), paper-drafting (IMRaD structure), peer-review-response (the point-by-point rebuttal letter), conference-pipeline, collaboration-tracker | grad students through PIs; never fabricates citations — every reference verified via web_search or flagged unverified |
+| **Tutor Studio** | 📐 | student-files (progress per tutee), session-plans, parent-updates, scheduling-and-billing (Freelancer's ladder at tutoring scale), diagnostic-assessments | the business side Educator lacks; solo tutors are freelancers with pedagogy |
+| **School Leader** | 🏫 | staff-comms, observation-feedback (growth-framed), parent-escalations, timetabling-constraints, policy-drafting, incident-documentation | head teachers / principals; incident docs carry the same initials-only privacy rule as Educator |
+
+### Media & words
+
+| Agent | Emoji | Core skills | Notes / boundaries |
+|---|---|---|---|
+| **Journalist Desk** | 📰 | pitch-craft, interview-prep (question ladders, on/off-record hygiene), fact-check-protocol (every claim sourced or cut), foia-requests, story-structure (nut graf discipline), source-tracker | source-tracker is confidentiality-critical: roles not names in files unless the user insists |
+| **Technical Writer** | 📘 | docs-audit, api-reference-style, tutorial-design (the reader is stuck at step 3), release-notes, style-guide-keeper (Deck & Doc's house-style pattern, docs-flavored), information-architecture | complements Engineer; the profession's craft is empathy for the confused reader |
+| **Translator Desk** | 🌐 | glossary-keeper (the terminology memory that makes translations consistent), translation-workflow (segment, draft, revise cold), localization-notes (what doesn't translate and why), client-brief-intake, cat-free-qa (consistency checks over the file set) | human translator's assistant, not a translation engine; rates/invoicing reuse Freelancer patterns |
+| **Podcaster** | 🎙️ | episode-pipeline (kanban: idea → recorded → edited → published), guest-booking (outreach + prep packets), show-notes-and-chapters, sponsorship-tracker, repurpose-clips | overlaps Creator Studio but audio-first workflows differ enough to earn the slot |
+
+### Care & community
+
+| Agent | Emoji | Core skills | Notes / boundaries |
+|---|---|---|---|
+| **Clergy Desk** | ⛪ | sermon-prep (exegesis structure, illustration files), pastoral-care-tracker (visits, follow-ups — strictest confidentiality in the catalog), service-planning, volunteer-rotas, newsletter, occasional-services (weddings/funerals prep) | faith-neutral scaffolding, user's tradition supplies content; care notes are roles-and-initials only |
+| **Social Services Desk** | 🤲 | case-notes-structure (objective-language discipline), resource-directory (local services, researched and dated), appointment-coordination, report-drafting, self-care-guard (caseload burnout radar) | admin/organization only — never case judgment, never risk assessment; those are professional decisions |
+| **Librarian Desk** | 📚 | collection-development (selection criteria, weeding), program-planning (story time to author nights — Event Planner patterns), reference-interview (the question behind the question), catalog-notes, community-outreach | public + school librarians; reuses event and research patterns heavily |
+
+### Field & facility
+
+| Agent | Emoji | Core skills | Notes / boundaries |
+|---|---|---|---|
+| **Host Desk (BnB)** | 🛏️ | listing-optimizer, guest-comms (the message sequence: booking → checkin → mid-stay → review ask), turnover-checklist (the cleaner's runbook), seasonal-pricing-research, review-responses, house-manual | short-term rental hosts; turnover loop after each checkout; Landlord Ledger's sibling |
+| **Farm & Smallholding** | 🌾 | season-calendar (sowing/harvest by region, loop-driven), field-or-flock-records, input-tracker (feed, seed, fuel costs), market-day-prep, compliance-paperwork-organizer | hobby farms to small commercial; compliance is organize-and-remind, never regulatory advice |
+| **Fleet & Logistics** | 🚚 | vehicle-files (Car Keeper × N, service loops), driver-scheduling, route-day-sheets, delivery-exception-log, cost-per-mile-tracker | small courier/trade fleets; the renewals-radar pattern at fleet scale |
+| **Interior Designer** | 🛋️ | client-brief-intake (lifestyle before aesthetics), concept-boards (markdown + image files), sourcing-tracker (item, supplier, lead time, budget line), project-schedule (trades sequencing), install-day-runsheet | the trades-sequencing knowledge is the moat; budget patterns from Event Planner |
+
+### Client-practice professionals
+
+| Agent | Emoji | Core skills | Notes / boundaries |
+|---|---|---|---|
+| **Paralegal Desk** | 📋 | document-organization (matter files, exhibit indexing), deadline-computation (court-rules aware, always attorney-verified), cite-checking, client-intake-summaries, discovery-log | supports a lawyer, never *is* one: everything ships marked "for attorney review"; complements Counsel |
+| **Tax Season Desk** | 🧮 | client-document-checklist (per return type), missing-docs-chase (the ladder, tax-season register), workpaper-organization, deadline-radar (filing calendar loop), client-comms | for preparers/bookkeepers — organizes the season, never gives tax positions; Bookkeeper's busy-season sibling |
+| **Insurance Agent Desk** | 🛡️ | client-policy-files, renewal-radar (the book of business as loops), coverage-review-prep (questions, not recommendations), claims-support-organizer, referral-tracker | organize and prepare only — coverage recommendations stay with the licensed agent using it |
+| **Agency Recruiter** | 🎯 | role-intake (the real spec behind the job ad), candidate-pipeline (kanban per role), boolean-search-craft, screen-notes-structure, client-updates, placement-aftercare | agency-side twin of People Partner's in-house recruiting; candidate notes carry bias-hygiene rules |
+| **Executive Coach** | 🧭 | engagement-files (goals, session logs, homework), session-prep (themes from the log), 360-synthesis (patterns from feedback the client shares), progress-reviews, boundary-keeper | coaching ≠ therapy, and the charter says where the line is (persistent distress → licensed professional) |
+
+### Explicitly out of catalog (and why)
+
+- **Clinical anything** (doctor, nurse, pharmacist, physio, therapist
+  *content*): agents organize the practice (Practice Admin), never touch
+  clinical judgment. No pack will generate clinical content.
+- **Licensed financial advisor**: recommendations are regulated;
+  Bookkeeper/Money Mate stay on the bookkeeping side of the line.
+- **Law practice content**: Counsel and Paralegal Desk prepare *for*
+  qualified review; no pack renders legal opinions.
+- **Anything whose work product is a safety certification** (structural
+  engineer sign-offs, gas certification, aviation): assistance risk
+  outweighs value.
+
+Cluster note: the pattern library now covers most of what these need —
+client-memory, pipeline-on-kanban, renewals-radar, chase-ladder,
+run-sheets, session-logs, roles-not-names privacy. Wave 6 packs are
+mostly *recombination plus domain judgment*, which is exactly when a
+catalog can scale without dropping quality.
