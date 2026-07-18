@@ -1,34 +1,39 @@
-# Deployment model: free single-user OSS, and a multi-tenant cloud
+# Deployment model: free desktop app, paid multi-tenant cloud
 
-Two distributions of the same codebase. The research behind docs/roadmap.md
-showed that self-hosting is the #1 pain point of OpenClaw/Hermes users, and
-security of exposed instances is the #1 disaster. So: the open-source build
-stays radically simple and safe for one person on one machine, and the cloud
-build adds login, tenancy, and hard isolation without forking the code.
+Two distributions of the same codebase, both proprietary (no source
+release). The research behind docs/roadmap.md showed that self-hosting is
+the #1 pain point of OpenClaw/Hermes users and exposed instances are the #1
+disaster, so we do not ship a self-hosted server at all: single users get a
+free desktop app where everything runs inside the app process, and remote /
+multi-device use is the paid cloud.
 
-## 1. Free and open source, single user
+## 1. Free desktop app, single user
 
-Target: `docker compose up` and nothing else. No accounts, no keys except the
-model provider's.
+Target: download, open, chat. No Docker, no daemons, no accounts; the only
+credential is a model provider key (or platform-metered access later).
 
-- **Packaging.** One compose file: app (API + built frontend served by Nest),
-  Postgres, MinIO. All state in two named volumes. `latest` and pinned tags.
-- **Bind local by default.** The app listens on 127.0.0.1 unless
-  `BIND_PUBLIC=true` is set, and when it is set without auth configured the
-  server refuses to boot with an explanatory error. This single decision
-  avoids the "thousands of exposed gateways" failure OpenClaw had: unsafe
-  exposure must be a double opt-in, never a setup wizard default.
-- **Optional single-user lock.** `AUTH_PASSWORD=<secret>` enables a login
-  page + signed session cookie. That is the entire single-user auth story:
-  no user table, no roles. Recommended (and required, see above) when
-  binding beyond localhost; reverse-proxy TLS documented but not our job.
-- **Licensing.** Core stays permissive (Apache-2.0). Everything in this repo
-  runs in single-user mode with zero feature flags removed; the cloud layer
-  (billing, org admin) lives outside the OSS tree, not as crippled stubs
-  inside it.
-- **Escape hatch.** AGENT.json export and the S3/Postgres data layout are
-  documented so a cloud user can move to self-hosted and back. Portability
-  is the trust story that makes a hosted default acceptable.
+- **Packaging.** Tauri shell (same stack as YAAM) wrapping the built
+  frontend, with the Nest API embedded as a local process bound to
+  127.0.0.1 on a random port with a per-launch auth token. Nothing listens
+  for the outside world, ever: remote access is what the cloud is for.
+  macOS / Windows / Linux builds, auto-update.
+- **Zero-dependency storage.** The two infrastructure services swap for
+  embedded drivers behind the existing interfaces:
+  - Postgres → PGlite (embedded Postgres, WASM) through the same Drizzle
+    dialect and the same boot migrations — this is already the tested path
+    (the whole suite runs on PGlite today);
+  - S3 → a local-filesystem StorageService driver under the app data dir,
+    same key/prefix validation as the isolation boundary.
+  Data lives in the OS app-data folder; backup = copy the folder.
+- **Free, not open.** The desktop app is the free tier and the funnel: full
+  durable-agent feature set for one user on one machine. Loops run while
+  the app runs (the menu-bar/tray process keeps the scheduler alive);
+  always-on loops, channels, and multi-device sync are cloud capabilities,
+  which keeps the free/paid line a capability line rather than a crippled
+  feature line.
+- **Escape hatch.** AGENT.json export/import works in both directions
+  between desktop and cloud. Portability is the trust story: your agents
+  are yours even though the code is not open.
 
 ## 2. Cloud: remote access with login, multi-tenant
 
@@ -112,8 +117,8 @@ phase 4).
 
 ## 3. Sequencing
 
-1. Ship compose packaging + bind-local default + AUTH_PASSWORD (OSS story
-   complete; also the dogfooding platform).
+1. Ship the desktop build: Tauri shell, PGlite + filesystem storage drivers,
+   loopback-only embedded API (the free tier and the dogfooding platform).
 2. Introduce request-context tenancy + users table behind `MODE=cloud`,
    single-tenant-per-deploy first (a hosted instance per user is a valid
    v0 cloud with zero cross-tenant risk).
