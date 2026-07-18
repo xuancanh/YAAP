@@ -23,7 +23,17 @@ export interface Agent {
   homeDir: string | null;
   dashboard: string;
   loops: string; // JSON array of { name, cron }
+  apps: string; // JSON array of AgentApp
   createdAt: string;
+}
+
+/** A self-built mini app — rendered only in a network-blocked sandbox. */
+export interface AgentApp {
+  id: string;
+  name: string;
+  description: string;
+  html: string;
+  updatedAt: string;
 }
 
 export interface AgentStats {
@@ -224,9 +234,11 @@ export const api = {
 
   // agents
   agents: () => get<Agent[]>('/api/agents'),
-  createAgent: (input: { name: string; charter?: string; role?: string; emoji?: string }) =>
+  createAgent: (input: { name: string; charter?: string; role?: string; emoji?: string; colors?: [string, string]; provider?: string; model?: string }) =>
     send<Agent>('/api/agents', 'POST', input),
   updateAgent: (id: string, patch: Record<string, unknown>) => send<Agent>(`/api/agents/${id}`, 'PATCH', patch),
+  deleteAgent: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}`, 'DELETE'),
+  deleteAgentApp: (id: string, appId: string) => send<{ ok: boolean }>(`/api/agents/${id}/apps/${appId}`, 'DELETE'),
   agentStats: (id: string) => get<AgentStats>(`/api/agents/${id}/stats`),
   agentFiles: (id: string) => get<FileEntry[]>(`/api/agents/${id}/files`),
   agentPreview: (id: string, path: string) => get<FilePreview>(`/api/agents/${id}/preview?path=${enc(path)}`),

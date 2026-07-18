@@ -18,7 +18,7 @@ async function setup() {
   const chats = new ChatsService(repo, agentsStub());
   const storageStub = memStorage().stub;
   const tools = new ToolsService(storageStub);
-  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(new EchoAiProvider()), skillsStub(), storageStub, mcpStub());
+  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(new EchoAiProvider()), skillsStub(), storageStub, mcpStub(), agentsStub());
   return { repo, chats, turns };
 }
 

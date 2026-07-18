@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Delete, Get, Header, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 import { AgentsService } from './agents.service';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix, agentRelativePath } from '../storage/storage.keys';
@@ -11,6 +11,9 @@ class CreateAgentDto {
   @IsOptional() @IsString() provider?: string;
   @IsOptional() @IsString() model?: string;
   @IsOptional() @IsString() homeDir?: string;
+  @IsOptional() @IsString() emoji?: string;
+  @IsOptional() @IsString() role?: string;
+  @IsOptional() @IsArray() colors?: [string, string];
 }
 
 class UpdateAgentDto {
@@ -20,6 +23,10 @@ class UpdateAgentDto {
   @IsOptional() @IsString() model?: string;
   @IsOptional() @IsString() homeDir?: string;
   @IsOptional() @IsString() dashboard?: string;
+  @IsOptional() @IsString() emoji?: string;
+  @IsOptional() @IsString() role?: string;
+  /** JSON [from,to] gradient pair. */
+  @IsOptional() @IsString() colors?: string;
 }
 
 class FeedbackDto {
@@ -42,6 +49,8 @@ export class AgentsController {
   @Delete(':id') remove(@Param('id') id: string) { return this.agents.remove(id); }
   @Post(':id/feedback') feedback(@Param('id') id: string, @Body() dto: FeedbackDto) { return this.agents.addFeedback(id, dto); }
   @Get(':id/stats') stats(@Param('id') id: string) { return this.agents.stats(id); }
+  @Get(':id/apps') apps(@Param('id') id: string) { return this.agents.listApps(id); }
+  @Delete(':id/apps/:appId') deleteApp(@Param('id') id: string, @Param('appId') appId: string) { return this.agents.deleteApp(id, appId); }
   @Post('import') importJson(@Body() body: Record<string, unknown>) { return this.agents.importJson(body); }
 
   @Get(':id/export')

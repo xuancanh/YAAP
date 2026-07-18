@@ -48,6 +48,9 @@ export const agents = pgTable('agents', {
   dashboard: text('dashboard').notNull().default(''),
   /** JSON array of scheduled prompt loops (FR-11.6). */
   loops: text('loops').notNull().default('[]'),
+  /** JSON array of self-built mini apps: { id, name, description, html,
+   *  updatedAt } — rendered only in a network-blocked sandbox (FR-13.1). */
+  apps: text('apps').notNull().default('[]'),
   /** JSON array of pending 👍/👎 feedback since the agent's last turn (FR-6.5). */
   pendingFeedback: text('pendingFeedback').notNull().default('[]'),
   createdAt: text('createdAt').notNull(),

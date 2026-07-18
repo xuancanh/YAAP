@@ -107,7 +107,7 @@ test('turn loop offers MCP tools and gates them behind approval in Ask mode (FR-
   const finalRound: AiStreamEvent[] = [{ type: 'answer', text: 'paged.' }, { type: 'done' }];
   const provider = new ScriptedProvider([mcpRound, finalRound]);
   const { stub } = memStorage();
-  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcp);
+  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcp, agentsStub());
 
   const s = await chats.create({ workspaceId: 'ws1' }); // ask mode default
   let paused = false;

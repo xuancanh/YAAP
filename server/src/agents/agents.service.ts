@@ -13,6 +13,21 @@ import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix } from '../storage/storage.keys';
 
+/** A self-built mini app (FR-11.5): a self-contained HTML tool the agent
+ *  writes for itself via save_app. Rendered only in a network-blocked
+ *  sandboxed iframe (FR-13.1). */
+export interface AgentApp {
+  id: string;
+  name: string;
+  description: string;
+  html: string;
+  updatedAt: string;
+}
+
+const APP_LIMIT = 12;
+const APP_HTML_CAP = 300_000;
+const DASHBOARD_CAP = 50_000;
+
 @Injectable()
 export class AgentsService {
   constructor(
@@ -43,6 +58,7 @@ export class AgentsService {
       model: input.model ?? '',
       homeDir: input.homeDir ?? `agents/${id}`,
       dashboard: '',
+      apps: '[]',
       loops: JSON.stringify(input.loops ?? []),
       pendingFeedback: '[]',
       createdAt: nowIso(),
@@ -65,10 +81,53 @@ export class AgentsService {
     }
   }
 
-  async update(id: string, patch: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string }>) {
+  async update(id: string, patch: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string }>) {
     await this.get(id);
     await this.db.update(agents).set(patch).where(eq(agents.id, id));
     return this.get(id);
+  }
+
+  // ---- self-maintenance tools (§11): the agent keeps its own home page ----
+
+  /** update_dashboard: full-markdown replacement of the agent's home page. */
+  async updateDashboard(id: string, markdown: string): Promise<string> {
+    await this.update(id, { dashboard: markdown.slice(0, DASHBOARD_CAP) });
+    return 'Dashboard updated.';
+  }
+
+  async listApps(id: string): Promise<AgentApp[]> {
+    const a = await this.get(id);
+    try { return JSON.parse(a.apps) as AgentApp[]; } catch { return []; }
+  }
+
+  /** save_app: create or update (by name) a self-contained HTML mini app. */
+  async saveApp(id: string, input: { name: string; description?: string; html: string }): Promise<string> {
+    const name = (input.name ?? '').trim().slice(0, 60);
+    if (!name) throw new BadRequestException('app name is required');
+    if (typeof input.html !== 'string' || !input.html.trim()) throw new BadRequestException('app html is required');
+    if (input.html.length > APP_HTML_CAP) throw new BadRequestException(`app html exceeds ${APP_HTML_CAP} bytes`);
+    const apps = await this.listApps(id);
+    const existing = apps.find((x) => x.name === name);
+    if (existing) {
+      existing.html = input.html;
+      existing.description = input.description ?? existing.description;
+      existing.updatedAt = nowIso();
+    } else {
+      if (apps.length >= APP_LIMIT) {
+        throw new BadRequestException(`app limit (${APP_LIMIT}) reached — delete or update an existing app`);
+      }
+      apps.push({ id: newId(), name, description: input.description ?? '', html: input.html, updatedAt: nowIso() });
+    }
+    await this.db.update(agents).set({ apps: JSON.stringify(apps) }).where(eq(agents.id, id));
+    return `Mini app "${name}" saved (${apps.length}/${APP_LIMIT}). It appears on your home page; the user can open it or embed it in a chat.`;
+  }
+
+  async deleteApp(id: string, appId: string) {
+    const apps = await this.listApps(id);
+    const next = apps.filter((x) => x.id !== appId);
+    if (next.length === apps.length) throw new NotFoundException(`app ${appId}`);
+    await this.db.update(agents).set({ apps: JSON.stringify(next) }).where(eq(agents.id, id));
+    return { ok: true };
   }
 
   async remove(id: string) {
@@ -148,18 +207,29 @@ export class AgentsService {
     });
     const agent = await this.create({ name: name as string, charter, role, emoji, colors, loops });
     if (typeof profile.dashboard === 'string' && profile.dashboard) {
-      await this.update(agent.id, { dashboard: profile.dashboard.slice(0, 50_000) });
+      await this.update(agent.id, { dashboard: profile.dashboard.slice(0, DASHBOARD_CAP) });
     }
-    return agent;
+    if (Array.isArray(profile.apps)) {
+      for (const raw of profile.apps.slice(0, APP_LIMIT)) {
+        const app = raw as Record<string, unknown>;
+        if (typeof app?.name !== 'string' || typeof app?.html !== 'string') continue;
+        await this.saveApp(agent.id, {
+          name: app.name,
+          description: typeof app.description === 'string' ? app.description.slice(0, 300) : undefined,
+          html: app.html.slice(0, APP_HTML_CAP),
+        }).catch(() => {});
+      }
+    }
+    return this.get(agent.id);
   }
 
-  /** AGENT.json export: profile, loops, dashboard (FR-11.7). */
+  /** AGENT.json export: profile, loops, dashboard, mini apps (FR-11.7). */
   async exportJson(id: string) {
     const a = await this.get(id);
     return {
       name: a.name, emoji: a.emoji, colors: JSON.parse(a.colors), role: a.role,
       charter: a.charter, provider: a.provider, model: a.model,
-      loops: JSON.parse(a.loops), dashboard: a.dashboard,
+      loops: JSON.parse(a.loops), dashboard: a.dashboard, apps: await this.listApps(id),
     };
   }
 

@@ -66,7 +66,7 @@ test('the turn loop offers skills as tools and invoking one returns its instruct
   ];
   const finalRound: AiStreamEvent[] = [{ type: 'answer', text: 'done' }, { type: 'done' }];
   const provider = new ScriptedProvider([skillRound, finalRound]);
-  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(memStorage().stub), ctxStub(provider), skills, memStorage().stub, mcpStub());
+  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(memStorage().stub), ctxStub(provider), skills, memStorage().stub, mcpStub(), agentsStub());
 
   const s = await chats.create({ workspaceId: 'ws1' });
   const events: TurnEvent[] = [];

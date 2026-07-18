@@ -6,11 +6,15 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   api, sendTurn,
-  type Agent, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
+  type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision,
 } from './lib/api';
 
-export type Section = 'chats' | 'agents' | 'files' | 'market' | 'settings';
+export type Section = 'home' | 'market' | 'settings';
+/** What the main pane shows while in the Home section: a conversation, an
+ *  agent's home page (or the directory when no agent is selected), or a file
+ *  preview — all reachable from the one combined rail, YAAM-style. */
+export type HomeView = 'chat' | 'agent' | 'file';
 
 export interface LiveTool {
   kind: 'tool';
@@ -32,6 +36,7 @@ interface Store {
   width: number; stacked: boolean; mediumDock: boolean;
   theme: string; toggleTheme: () => void;
   section: Section; go: (s: Section) => void;
+  homeView: HomeView; setHomeView: (v: HomeView) => void;
   mobileChatOpen: boolean; setMobileChatOpen: (v: boolean) => void;
   mobileDetail: boolean; setMobileDetail: (v: boolean) => void;
   toast: string | null; showToast: (msg: string) => void;
@@ -54,7 +59,7 @@ interface Store {
   transcript: { messages: ChatMessage[]; turns: ChatTurn[] };
   refreshTranscript: () => Promise<void>;
   patchSession: (id: string, patch: Record<string, unknown>) => Promise<void>;
-  newChat: (agentId?: string | null) => Promise<void>;
+  newChat: (agentId?: string | null) => Promise<string>;
   streaming: boolean; live: LiveItem[];
   send: (text: string) => Promise<void>;
   stopTurn: () => void;
@@ -72,9 +77,13 @@ interface Store {
   fileTarget: FileTarget | null; setFileTarget: (t: FileTarget) => void;
   fileList: FileEntry[]; refreshFiles: () => Promise<void>;
   currentFile: string | null; setCurrentFile: (p: string | null) => void;
+  openFile: (target: FileTarget, path: string | null) => void;
 
   // agents section
   selectedAgent: string | null; setSelectedAgent: (id: string | null) => void;
+  openAgent: (id: string) => void;
+  newAgentOpen: boolean; setNewAgentOpen: (v: boolean) => void;
+  embedApp: (agentId: string, miniApp: AgentApp) => Promise<void>;
 
   // artifact panel
   artifact: { title: string; src: string } | null;
@@ -107,9 +116,15 @@ export const gradPair = (pair: [string, string]): string => `linear-gradient(140
 export function AppProvider({ children }: { children: ReactNode }) {
   const [width, setWidth] = useState(window.innerWidth);
   const [theme, setTheme] = useState(localStorage.getItem('yaam-theme') || 'dark');
+  // legacy deep links (?section=chats|agents|files) land in Home with the
+  // matching main view — used by headless screenshot verification too.
   const [section, setSection] = useState<Section>(() => {
     const q = new URLSearchParams(window.location.search).get('section');
-    return (['chats', 'agents', 'files', 'market', 'settings'] as const).includes(q as Section) ? (q as Section) : 'chats';
+    return q === 'market' || q === 'settings' ? q : 'home';
+  });
+  const [homeView, setHomeView] = useState<HomeView>(() => {
+    const q = new URLSearchParams(window.location.search).get('section');
+    return q === 'agents' ? 'agent' : q === 'files' ? 'file' : 'chat';
   });
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [mobileDetail, setMobileDetail] = useState(false);
@@ -139,7 +154,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [fileTarget, setFileTarget] = useState<FileTarget | null>(null);
   const [fileList, setFileList] = useState<FileEntry[]>([]);
   const [currentFile, setCurrentFile] = useState<string | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(() => new URLSearchParams(window.location.search).get('agent'));
+  const [newAgentOpen, setNewAgentOpen] = useState(false);
   const [artifact, setArtifact] = useState<{ title: string; src: string } | null>(null);
   const [hireId, setHireId] = useState<string | null>(null);
 
@@ -234,8 +250,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const openSession = useCallback((id: string) => {
     setCurrentId(id);
-    setSection('chats');
+    setSection('home');
+    setHomeView('chat');
     setMobileChatOpen(true);
+    setArtifact(null);
+  }, []);
+
+  const openAgent = useCallback((id: string) => {
+    setSection('home');
+    setHomeView('agent');
+    setSelectedAgent(id);
+    setMobileChatOpen(true); // stacked: the agent page is the detail pane
+    setArtifact(null);
+  }, []);
+
+  const openFile = useCallback((target: FileTarget, path: string | null) => {
+    setSection('home');
+    setHomeView('file');
+    setFileTarget(target);
+    setCurrentFile(path);
+    if (path) setMobileChatOpen(true);
     setArtifact(null);
   }, []);
 
@@ -251,6 +285,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     await refreshSessions();
     openSession(created.id);
+    return created.id;
   }, [workspaceId, settings, refreshSessions, openSession]);
 
   const pickWorkspace = useCallback((id: string) => {
@@ -467,8 +502,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMobileChatOpen(false);
     setMobileDetail(false);
     setArtifact(null);
-    if (s === 'agents' && stacked) setSelectedAgent(null);
-  }, [stacked]);
+  }, []);
 
   const saveSettings = useCallback(async (patch: Record<string, string>) => {
     setSettings(await api.putSettings(patch));
@@ -476,6 +510,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const openArtifact = useCallback((title: string, src: string) => setArtifact({ title, src }), []);
   const closeArtifact = useCallback(() => setArtifact(null), []);
+
+  /** Open a mini app beside the agent's most recent conversation (creating
+   *  one when the agent has none) — the YAAM "embed in chat" flow. */
+  const embedApp = useCallback(async (agentId: string, miniApp: AgentApp) => {
+    const latest = sessions.filter((s) => s.agentId === agentId)
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0];
+    const id = latest?.id ?? await newChat(agentId);
+    openSession(id);
+    setArtifact({ title: miniApp.name, src: miniApp.html });
+  }, [sessions, newChat, openSession]);
 
   const confirmHire = useCallback(async () => {
     if (!hireId) return;
@@ -485,16 +529,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setHireId(null);
       await refreshMarket();
       await refreshAgents();
-      setSection('agents');
-      setSelectedAgent(res.agent.id);
+      openAgent(res.agent.id);
       showToast(`Hired ${item?.name ?? 'agent'} — ${item?.loops.length ? `${item.loops.length} loop(s) enabled` : 'ready to chat'}`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'hire failed');
     }
-  }, [hireId, market, refreshMarket, refreshAgents, showToast]);
+  }, [hireId, market, refreshMarket, refreshAgents, openAgent, showToast]);
 
   const store: Store = {
-    width, stacked, mediumDock, theme, toggleTheme, section, go,
+    width, stacked, mediumDock, theme, toggleTheme, section, go, homeView, setHomeView,
     mobileChatOpen, setMobileChatOpen, mobileDetail, setMobileDetail, toast, showToast,
     workspaces, workspaceId, pickWorkspace, refreshWorkspaces,
     agents, agentStats, refreshAgents, sessions, refreshSessions, archived, archiveChat, restoreChat,
@@ -504,8 +547,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     streaming, live, send, stopTurn, approve, queue, removeQueued,
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
     retry, editResend, fork, promote, rate,
-    fileTarget, setFileTarget, fileList, refreshFiles, currentFile, setCurrentFile,
-    selectedAgent, setSelectedAgent, artifact, openArtifact, closeArtifact,
+    fileTarget, setFileTarget, fileList, refreshFiles, currentFile, setCurrentFile, openFile,
+    selectedAgent, setSelectedAgent, openAgent, newAgentOpen, setNewAgentOpen, embedApp,
+    artifact, openArtifact, closeArtifact,
     hireId, setHireId, confirmHire,
   };
 

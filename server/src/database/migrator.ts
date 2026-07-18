@@ -169,6 +169,14 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0004-agent-apps',
+    up: async (db) => {
+      if (!(await hasColumn(db, 'agents', 'apps'))) {
+        await db.query(`ALTER TABLE agents ADD COLUMN "apps" TEXT NOT NULL DEFAULT '[]'`);
+      }
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {

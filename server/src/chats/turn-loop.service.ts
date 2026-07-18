@@ -28,8 +28,9 @@ import { TurnContextService } from './turn-context.service';
 import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
 import { McpService, MCP_TOOL_PREFIX } from '../mcp/mcp.module';
 import { StorageService } from '../storage/storage.service';
+import { AgentsService } from '../agents/agents.service';
 import { workspaceFileKey } from '../storage/storage.keys';
-import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall } from '../ai/ai-provider.interface';
+import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
@@ -50,9 +51,36 @@ interface ToolRecord {
 }
 
 /** Tools that modify the agent/chat configuration itself can never receive a
- *  blanket "always allow tool" grant (FR-4.5). None are registered yet; MCP
- *  and self-modification tools must be added here as they land. */
-const SELF_MOD_TOOLS = new Set<string>();
+ *  blanket "always allow tool" grant (FR-4.5). */
+const SELF_MOD_TOOLS = new Set<string>(['update_dashboard', 'save_app']);
+
+/** Self-maintenance tools, offered only in chats owned by a durable agent
+ *  (§11): the agent keeps its own home page and builds mini apps for it. */
+const AGENT_TOOLS: AiToolSpec[] = [
+  {
+    name: 'update_dashboard',
+    description: 'Replace your home-page dashboard with new markdown. The user sees it when they open your agent page — keep it a current, scannable status board of your work.',
+    inputSchema: {
+      type: 'object',
+      properties: { markdown: { type: 'string', description: 'The full new dashboard content (markdown).' } },
+      required: ['markdown'],
+    },
+  },
+  {
+    name: 'save_app',
+    description: 'Create or update (same name replaces) one of your mini apps: a single self-contained HTML file shown on your home page and embeddable into chats. It runs in a sandboxed iframe with no network access, so inline all CSS/JS.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Short app name (also the update key).' },
+        description: { type: 'string', description: 'One line on what the app does.' },
+        html: { type: 'string', description: 'The complete self-contained HTML document.' },
+      },
+      required: ['name', 'html'],
+    },
+  },
+];
+const AGENT_TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
 
 const exactKey = (call: AiToolCall): string =>
   `${call.name}:${createHash('sha256').update(JSON.stringify(call.input)).digest('hex').slice(0, 16)}`;
@@ -72,6 +100,7 @@ export class TurnLoopService {
     private readonly skills: SkillsService,
     private readonly storage: StorageService,
     private readonly mcp: McpService,
+    private readonly agents: AgentsService,
   ) {}
 
   /** Stop the in-flight turn for a chat; the partial turn is retained (FR-5.4). */
@@ -135,6 +164,7 @@ export class TurnLoopService {
       // discovered from enabled MCP servers (FR-10.3).
       const toolSpecs = [
         ...this.tools.specs(),
+        ...(session.agentId ? AGENT_TOOLS : []),
         ...await this.skills.toolSpecs(session.workspaceId),
         ...await this.mcp.toolSpecs(),
       ];
@@ -189,7 +219,7 @@ export class TurnLoopService {
             isError = true;
           } else {
             try {
-              output = await this.executeTool(session.workspaceId, call.name, call.input);
+              output = await this.executeTool(session, call.name, call.input);
             } catch (err) {
               output = `tool error: ${err instanceof Error ? err.message : String(err)}`;
               isError = true;
@@ -252,16 +282,25 @@ export class TurnLoopService {
     return { text: parts.join('\n\n'), images };
   }
 
-  /** Route a call to a skill (returns its instructions), an MCP server, or a
-   *  core tool. */
-  private async executeTool(workspaceId: string, name: string, input: Record<string, unknown>): Promise<string> {
+  /** Route a call to a skill (returns its instructions), an MCP server, an
+   *  agent self-maintenance tool, or a core tool. */
+  private async executeTool(session: ChatSession, name: string, input: Record<string, unknown>): Promise<string> {
     if (name.startsWith(SKILL_TOOL_PREFIX)) {
-      const skill = await this.skills.resolveTool(workspaceId, name);
+      const skill = await this.skills.resolveTool(session.workspaceId, name);
       if (!skill) throw new Error(`unknown tool: ${name}`);
       return this.skills.invocation(skill);
     }
     if (name.startsWith(MCP_TOOL_PREFIX)) return this.mcp.execute(name, input);
-    return this.tools.execute(workspaceId, name, input);
+    if (AGENT_TOOL_NAMES.has(name)) {
+      if (!session.agentId) throw new Error(`${name} is only available in chats owned by a durable agent`);
+      if (name === 'update_dashboard') return this.agents.updateDashboard(session.agentId, String(input.markdown ?? ''));
+      return this.agents.saveApp(session.agentId, {
+        name: String(input.name ?? ''),
+        description: typeof input.description === 'string' ? input.description : undefined,
+        html: String(input.html ?? ''),
+      });
+    }
+    return this.tools.execute(session.workspaceId, name, input);
   }
 
   /** Ask/Auto policy check (§4): what may run without asking, and whether a
@@ -276,7 +315,8 @@ export class TurnLoopService {
     // them is opaque, so they gate like mutations.
     const readOnly = call.name.startsWith(SKILL_TOOL_PREFIX) ? true
       : call.name.startsWith(MCP_TOOL_PREFIX) ? false
-        : this.tools.isReadOnly(call.name);
+        : AGENT_TOOL_NAMES.has(call.name) ? (session.agentId ? false : undefined)
+          : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
     if (session.permissionMode === 'auto') return { verdict: 'auto', remember: true };
     if (readOnly) return { verdict: 'read-only', remember: true };

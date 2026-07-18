@@ -27,8 +27,9 @@ async function setup(rounds: AiStreamEvent[][]) {
   const { stub, map } = memStorage();
   const tools = new ToolsService(stub);
   const provider = new ScriptedProvider(rounds);
-  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(provider), skillsStub(), stub, mcpStub());
-  return { repo, chats, turns, provider, map };
+  const agents = agentsStub();
+  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(provider), skillsStub(), stub, mcpStub(), agents);
+  return { repo, chats, turns, provider, map, agents };
 }
 
 async function collect(gen: AsyncGenerator<TurnEvent>, onEvent?: (ev: TurnEvent) => void): Promise<TurnEvent[]> {
@@ -139,6 +140,41 @@ test('concurrent turn on the same chat is refused by the busy lock (FR-7.5)', as
   await assert.rejects(collect(turns.run(s.id, { text: 'second' })), /busy/);
   turns.stop(s.id);
   await collect(gen);
+});
+
+test('agent chats offer self-maintenance tools; save_app gates in ask mode and is never blanket-allowed (§11)', async () => {
+  const appRound: AiStreamEvent[] = [
+    { type: 'tool_call', id: 'a1', name: 'save_app', input: { name: 'Tracker', html: '<html>x</html>' } },
+    { type: 'done' },
+  ];
+  const { chats, turns, provider, agents } = await setup([appRound, finalRound]);
+  const s = await chats.create({ workspaceId: 'ws1', agentId: 'ag1' });
+
+  let paused = 0;
+  await collect(turns.run(s.id, { text: 'build me a tracker' }), (ev) => {
+    if (ev.type === 'approval_required') {
+      paused++;
+      assert.equal(ev.tool, 'save_app');
+      turns.resolveApproval(s.id, ev.callId, 'allow-tool');
+    }
+  });
+
+  assert.equal(paused, 1, 'save_app paused for approval in ask mode');
+  const toolNames = (provider.requests[0].tools ?? []).map((t) => t.name);
+  assert.ok(toolNames.includes('save_app') && toolNames.includes('update_dashboard'));
+  assert.deepEqual(agents.calls.map((c) => c.method), ['saveApp']);
+  assert.equal(agents.calls[0].args[0], 'ag1');
+  // SELF_MOD tools never receive a blanket allow-tool grant (FR-4.5)
+  const approvals = JSON.parse((await chats.get(s.id)).approvals) as { tools?: string[] };
+  assert.ok(!(approvals.tools ?? []).includes('save_app'));
+});
+
+test('agent tools are absent from chats without a durable agent (§11)', async () => {
+  const { chats, turns, provider } = await setup([finalRound]);
+  const s = await chats.create({ workspaceId: 'ws1' });
+  await collect(turns.run(s.id, { text: 'hello' }));
+  const toolNames = (provider.requests[0].tools ?? []).map((t) => t.name);
+  assert.ok(!toolNames.includes('save_app') && !toolNames.includes('update_dashboard'));
 });
 
 test('image attachments become vision parts on the user message (FR-2.2)', async () => {

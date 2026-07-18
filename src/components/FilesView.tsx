@@ -46,7 +46,7 @@ export function FilesView() {
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <header style={{ flex: 'none', borderBottom: '1px solid var(--border)', padding: '11px 16px', display: 'flex', alignItems: 'center', gap: 11, background: 'var(--panel)' }}>
         {app.stacked && (
-          <button onClick={() => app.setCurrentFile(null)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: 4, display: 'flex' }}>
+          <button onClick={() => { app.setCurrentFile(null); app.setMobileChatOpen(false); }} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: 4, display: 'flex' }}>
             <I d={P.chevL} size={20} />
           </button>
         )}
@@ -65,7 +65,7 @@ export function FilesView() {
             </button>
           )}
           {target?.kind === 'workspace' && (
-            <button onClick={() => { app.addAttachment(path); app.go('chats'); app.setMobileChatOpen(true); app.showToast(`Attached ${name} to composer`); }}
+            <button onClick={() => { app.addAttachment(path); app.setHomeView('chat'); app.setMobileChatOpen(true); app.showToast(`Attached ${name} to composer`); }}
               style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
               <I d={P.attach} size={13} />Attach to chat
             </button>

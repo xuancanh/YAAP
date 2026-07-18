@@ -1,5 +1,5 @@
-/** Secondary panel: workspace pill, chats list grouped by agent, agents rail,
- *  market categories, settings nav, and the agent-fs picker. */
+/** Secondary panel: workspace pill, the combined Home rail (agents → their
+ *  chats + their folder, YAAM-style), market categories, and settings nav. */
 import { useMemo, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
@@ -75,16 +75,16 @@ export function WorkspacePill() {
 function SessionRow({ s }: { s: ChatSession }) {
   const app = useApp();
   const tags = JSON.parse(s.tags) as string[];
-  const active = s.id === app.currentId;
+  const active = s.id === app.currentId && app.homeView === 'chat';
   return (
-    <div onClick={() => app.openSession(s.id)} style={{ padding: '8px 10px', borderRadius: 9, cursor: 'pointer', margin: '2px 0', background: active ? 'var(--accent-dim)' : 'none' }}>
+    <div onClick={() => app.openSession(s.id)} style={{ padding: '7px 10px', borderRadius: 9, cursor: 'pointer', margin: '1px 0', background: active ? 'var(--accent-dim)' : 'none' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         {s.pinned === 1 && <I d={P.pin} size={11} fill="var(--amber)" style={{ flex: 'none' }} />}
         <span style={{ flex: 1, fontSize: 12.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name || s.autoTitle || 'New chat'}</span>
         <span style={{ fontSize: 10, color: 'var(--text-faint)', flex: 'none' }}>{timeAgo(s.updatedAt)}</span>
       </div>
       {tags.length > 0 && (
-        <div style={{ display: 'flex', gap: 5, marginTop: 6, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 5, marginTop: 5, flexWrap: 'wrap' }}>
           {tags.map((t) => <span key={t} style={{ fontSize: 10, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '1px 6px' }}>{t}</span>)}
         </div>
       )}
@@ -92,26 +92,131 @@ function SessionRow({ s }: { s: ChatSession }) {
   );
 }
 
-export function ChatsRail() {
+const fileGlyph = (name: string, isFolder: boolean) =>
+  isFolder ? '📁' : name.endsWith('.md') ? '📄' : name.endsWith('.json') ? '⚙️' : name.endsWith('.html') ? '🧩' : name.match(/\.(png|jpg|jpeg|gif|svg|webp)$/) ? '🖼️' : '📄';
+
+/** The file tree for whichever fs (workspace or one agent) is currently
+ *  loaded in the store — the rail keeps a single fs open, accordion-style. */
+function FileTree({ indent }: { indent: number }) {
+  const app = useApp();
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({ knowledge: true, uploads: true });
+
+  const rows = useMemo(() => {
+    const folders = new Set<string>();
+    for (const f of app.fileList) {
+      const parts = f.path.split('/');
+      for (let i = 1; i < parts.length; i++) folders.add(parts.slice(0, i).join('/'));
+    }
+    const out: Array<{ path: string; name: string; depth: number; isFolder: boolean; parent: string | null }> = [];
+    for (const folder of [...folders].sort()) {
+      const depth = folder.split('/').length - 1;
+      out.push({ path: folder, name: folder.split('/').pop() + '/', depth, isFolder: true, parent: depth === 0 ? null : folder.split('/').slice(0, -1).join('/') });
+    }
+    for (const f of app.fileList) {
+      const parts = f.path.split('/');
+      const depth = parts.length - 1;
+      out.push({ path: f.path, name: parts[parts.length - 1], depth, isFolder: false, parent: depth === 0 ? null : parts.slice(0, -1).join('/') });
+    }
+    out.sort((a, b) => a.path.localeCompare(b.path));
+    return out.filter((n) => {
+      let p = n.parent;
+      while (p) {
+        if (!expanded[p]) return false;
+        p = p.includes('/') ? p.split('/').slice(0, -1).join('/') : null;
+      }
+      return true;
+    });
+  }, [app.fileList, expanded]);
+
+  if (app.fileList.length === 0) {
+    return <div style={{ padding: '4px 10px 6px', paddingLeft: indent, fontSize: 11.5, color: 'var(--text-faint)' }}>No files yet.</div>;
+  }
+  return (
+    <>
+      {rows.map((n) => (
+        <div key={n.path}
+          onClick={() => n.isFolder ? setExpanded((e) => ({ ...e, [n.path]: !e[n.path] })) : app.openFile(app.fileTarget!, n.path)}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', paddingLeft: indent + n.depth * 13, borderRadius: 7, cursor: 'pointer', background: !n.isFolder && n.path === app.currentFile && app.homeView === 'file' ? 'var(--accent-dim)' : 'none' }}>
+          {n.isFolder
+            ? <I d={P.chevD} size={11} stroke="var(--text-faint)" style={{ transform: expanded[n.path] ? 'rotate(0deg)' : 'rotate(-90deg)', flex: 'none' }} />
+            : <span style={{ width: 11, flex: 'none' }} />}
+          <span style={{ flex: 'none', fontSize: 11.5 }}>{fileGlyph(n.name, n.isFolder)}</span>
+          <span style={{ flex: 1, fontSize: 12, fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: n.path === app.currentFile && app.homeView === 'file' ? 'var(--accent-hi)' : 'var(--text-dim)' }}>{n.name}</span>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** One root in the combined rail — everything about a single agent: identity
+ *  row (opens the agent home), its conversations, and its isolated folder. */
+function AgentGroup({ id, name, emoji, avatar, items, count, isAgent }: {
+  id: string; name: string; emoji: string; avatar: string; items: ChatSession[]; count: number; isAgent: boolean;
+}) {
+  const app = useApp();
+  const [open, setOpen] = useState(true);
+  const [fsOpen, setFsOpen] = useState(false);
+  const agentActive = isAgent && app.selectedAgent === id && app.homeView === 'agent';
+  const fsTarget = isAgent ? { kind: 'agent' as const, id } : { kind: 'workspace' as const, id: app.workspaceId };
+  const fsLoaded = app.fileTarget?.kind === fsTarget.kind && app.fileTarget.id === fsTarget.id;
+
+  return (
+    <div style={{ marginTop: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 9, cursor: 'pointer', background: agentActive ? 'var(--accent-dim)' : 'none' }}
+        onClick={() => { if (isAgent) app.openAgent(id); else setOpen(!open); }}>
+        <div style={{ width: 24, height: 24, borderRadius: 7, background: avatar, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 12.5 }}>{emoji}</div>
+        <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+        <span style={{ fontSize: 10.5, color: 'var(--text-faint)', background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px' }}>{count}</span>
+        <button onClick={(e) => { e.stopPropagation(); void app.newChat(isAgent ? id : null); }} title="New chat" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' }}>
+          <I d={P.plus} size={14} />
+        </button>
+        <button onClick={(e) => { e.stopPropagation(); setOpen(!open); }} title={open ? 'Collapse' : 'Expand'} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' }}>
+          <I d={P.chevD} size={12} style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
+        </button>
+      </div>
+      {open && (
+        <div style={{ paddingLeft: 10, borderLeft: '1px solid var(--border-soft)', marginLeft: 19 }}>
+          {items.map((s) => <SessionRow key={s.id} s={s} />)}
+          {items.length === 0 && <div style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--text-faint)' }}>No conversations.</div>}
+          <div onClick={() => {
+            const next = !(fsOpen && fsLoaded);
+            setFsOpen(next);
+            if (next) { app.setFileTarget(fsTarget); app.setCurrentFile(null); }
+          }} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 10px', borderRadius: 8, cursor: 'pointer', margin: '1px 0', color: 'var(--text-dim)' }}>
+            <I d={P.chevD} size={11} stroke="var(--text-faint)" style={{ transform: fsOpen && fsLoaded ? 'rotate(0deg)' : 'rotate(-90deg)', flex: 'none' }} />
+            <I d={P.folder} size={13} style={{ flex: 'none' }} />
+            <span style={{ fontSize: 12, fontWeight: 500 }}>Files</span>
+            <span style={{ fontSize: 10, color: 'var(--text-faint)', fontFamily: 'var(--mono)', marginLeft: 'auto' }}>{isAgent ? 'isolated' : 'shared'}</span>
+          </div>
+          {fsOpen && fsLoaded && <FileTree indent={26} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The Home rail: one tree combining agents, their chats, and their folders,
+ *  plus workspace-level chats/files and the archive — the YAAM layout. */
+export function HomeRail() {
   const app = useApp();
   const [search, setSearch] = useState('');
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [archOpen, setArchOpen] = useState(false);
   const q = search.toLowerCase();
 
   const groups = useMemo(() => {
     const match = (s: ChatSession) => !q || (s.name || s.autoTitle).toLowerCase().includes(q) || s.tags.toLowerCase().includes(q);
     const byPin = (a: ChatSession, b: ChatSession) => (b.pinned - a.pinned) || (a.updatedAt < b.updatedAt ? 1 : -1);
-    const out: Array<{ id: string; name: string; emoji: string; avatar: string; count: number; items: ChatSession[] }> = [];
+    const out: Array<{ id: string; name: string; emoji: string; avatar: string; count: number; items: ChatSession[]; isAgent: boolean }> = [];
     for (const a of app.agents) {
       const all = app.sessions.filter((s) => s.agentId === a.id);
       const items = all.filter(match).sort(byPin);
-      if (q && items.length === 0) continue;
-      out.push({ id: a.id, name: a.name, emoji: a.emoji, avatar: grad(a.colors), count: all.length, items });
+      if (q && items.length === 0 && !a.name.toLowerCase().includes(q)) continue;
+      out.push({ id: a.id, name: a.name, emoji: a.emoji, avatar: grad(a.colors), count: all.length, items, isAgent: true });
     }
     const direct = app.sessions.filter((s) => !s.agentId);
     const items = direct.filter(match).sort(byPin);
-    if (direct.length > 0 && !(q && items.length === 0)) {
-      out.push({ id: '__d', name: 'Direct chats', emoji: '💬', avatar: 'var(--panel-2)', count: direct.length, items });
+    if (!(q && items.length === 0)) {
+      out.push({ id: '__ws', name: 'Workspace', emoji: '🗂️', avatar: 'var(--panel-2)', count: direct.length, items, isAgent: false });
     }
     return out;
   }, [app.agents, app.sessions, q]);
@@ -123,40 +228,31 @@ export function ChatsRail() {
           <I d={P.search} size={14} stroke="var(--text-faint)" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search conversations" style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13, minWidth: 0 }} />
         </div>
-        <button onClick={() => void app.newChat(null)} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-          <I d={P.plus} size={15} sw={2.2} />New chat
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => void app.newChat(app.selectedAgent)} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            <I d={P.plus} size={15} sw={2.2} />New chat
+          </button>
+          <button onClick={() => app.setNewAgentOpen(true)} title="Create a durable agent" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 9, padding: '9px 12px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            <I d={P.bot} size={15} />New agent
+          </button>
+        </div>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
-        {groups.map((g) => {
-          const open = collapsed[g.id] !== true;
-          return (
-            <div key={g.id} style={{ marginTop: 4 }}>
-              <div onClick={() => setCollapsed((c) => ({ ...c, [g.id]: !c[g.id] }))} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: 8, borderRadius: 9, cursor: 'pointer' }}>
-                <div style={{ width: 22, height: 22, borderRadius: 7, background: g.avatar, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 12 }}>{g.emoji}</div>
-                <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
-                <span style={{ fontSize: 10.5, color: 'var(--text-faint)', background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px' }}>{g.count}</span>
-                <button onClick={(e) => { e.stopPropagation(); void app.newChat(g.id === '__d' ? null : g.id); }} title="New chat" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' }}>
-                  <I d={P.plus} size={14} />
-                </button>
-                <I d={P.chevD} size={12} stroke="var(--text-faint)" style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', flex: 'none' }} />
-              </div>
-              {open && (
-                <div style={{ paddingLeft: 12, borderLeft: '1px solid var(--border-soft)', marginLeft: 18 }}>
-                  {g.items.map((s) => <SessionRow key={s.id} s={s} />)}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        <div onClick={() => { app.setSelectedAgent(null); app.setHomeView('agent'); app.setMobileChatOpen(true); }}
+          style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 9, cursor: 'pointer', color: 'var(--text-dim)', background: app.homeView === 'agent' && !app.selectedAgent ? 'var(--accent-dim)' : 'none' }}>
+          <I d={P.bot} size={15} style={{ flex: 'none' }} />
+          <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600 }}>All agents</span>
+          <span style={{ fontSize: 10.5, color: 'var(--text-faint)', background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px' }}>{app.agents.length}</span>
+        </div>
+        {groups.map((g) => <AgentGroup key={g.id} {...g} />)}
         {app.archived.length > 0 && (
           <div style={{ marginTop: 12, borderTop: '1px solid var(--border-soft)', paddingTop: 8 }}>
-            <div onClick={() => setCollapsed((c) => ({ ...c, __arch: !c.__arch }))} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: 8, borderRadius: 9, cursor: 'pointer', color: 'var(--text-faint)' }}>
+            <div onClick={() => setArchOpen(!archOpen)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: 8, borderRadius: 9, cursor: 'pointer', color: 'var(--text-faint)' }}>
               <span style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>Archived</span>
               <span style={{ fontSize: 10.5, background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px' }}>{app.archived.length}</span>
-              <I d={P.chevD} size={12} style={{ transform: collapsed.__arch ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
+              <I d={P.chevD} size={12} style={{ transform: archOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
             </div>
-            {collapsed.__arch && app.archived.map((s) => (
+            {archOpen && app.archived.map((s) => (
               <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 9, margin: '2px 0' }}>
                 <span style={{ flex: 1, fontSize: 12.5, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name || s.autoTitle || 'Chat'}</span>
                 <button onClick={() => void app.restoreChat(s.id)} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '3px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Restore</button>
@@ -164,141 +260,6 @@ export function ChatsRail() {
             ))}
           </div>
         )}
-      </div>
-    </>
-  );
-}
-
-export function AgentsRail() {
-  const app = useApp();
-  const [search, setSearch] = useState('');
-  const q = search.toLowerCase();
-  const list = app.agents.filter((a) => !q || a.name.toLowerCase().includes(q) || a.role.toLowerCase().includes(q));
-  return (
-    <>
-      <div style={{ padding: '0 12px 10px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 9, padding: '7px 10px', marginBottom: 10 }}>
-          <I d={P.search} size={14} stroke="var(--text-faint)" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search agents" style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13, minWidth: 0 }} />
-        </div>
-        <button onClick={() => app.go('market')} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 9, padding: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-          <I d={P.market} size={15} />Hire from Market
-        </button>
-      </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
-        {list.map((a) => {
-          const count = app.sessions.filter((s) => s.agentId === a.id).length;
-          return (
-            <div key={a.id} onClick={() => app.setSelectedAgent(a.id)} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '8px 9px', borderRadius: 10, cursor: 'pointer', margin: '2px 0', background: a.id === app.selectedAgent ? 'var(--accent-dim)' : 'none' }}>
-              <div style={{ width: 30, height: 30, borderRadius: 9, background: grad(a.colors), display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 15, position: 'relative' }}>
-                {a.emoji}
-                <span style={{ position: 'absolute', right: -2, bottom: -2, width: 9, height: 9, borderRadius: '50%', background: 'var(--green)', border: '2px solid var(--panel)' }} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.role || 'Durable agent'} · {count} chats</div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
-  );
-}
-
-export function FilesRail() {
-  const app = useApp();
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({ knowledge: true });
-  const target = app.fileTarget;
-  const ws = app.workspaces.find((w) => w.id === app.workspaceId);
-  const agent = target?.kind === 'agent' ? app.agents.find((a) => a.id === target.id) : null;
-
-  // build a tree: folders derived from paths
-  const rows = useMemo(() => {
-    const folders = new Set<string>();
-    for (const f of app.fileList) {
-      const parts = f.path.split('/');
-      for (let i = 1; i < parts.length; i++) folders.add(parts.slice(0, i).join('/'));
-    }
-    const out: Array<{ path: string; name: string; depth: number; isFolder: boolean; parent: string | null }> = [];
-    const sortedFolders = [...folders].sort();
-    for (const folder of sortedFolders) {
-      const depth = folder.split('/').length - 1;
-      const parent = depth === 0 ? null : folder.split('/').slice(0, -1).join('/');
-      out.push({ path: folder, name: folder.split('/').pop() + '/', depth, isFolder: true, parent });
-    }
-    for (const f of [...app.fileList].sort((a, b) => a.path.localeCompare(b.path))) {
-      const parts = f.path.split('/');
-      const depth = parts.length - 1;
-      const parent = depth === 0 ? null : parts.slice(0, -1).join('/');
-      out.push({ path: f.path, name: parts[parts.length - 1], depth, isFolder: false, parent });
-    }
-    out.sort((a, b) => a.path.localeCompare(b.path));
-    const visible = out.filter((n) => {
-      let p = n.parent;
-      while (p) {
-        if (!expanded[p]) return false;
-        p = p.includes('/') ? p.split('/').slice(0, -1).join('/') : null;
-      }
-      return true;
-    });
-    return visible;
-  }, [app.fileList, expanded]);
-
-  const glyph = (name: string, isFolder: boolean) => isFolder ? '📁' : name.endsWith('.md') ? '📄' : name.endsWith('.json') ? '⚙️' : name.endsWith('.html') ? '🧩' : name.match(/\.(png|jpg|jpeg|gif|svg|webp)$/) ? '🖼️' : '📄';
-
-  return (
-    <>
-      <div style={{ padding: '12px 12px 8px', position: 'relative' }}>
-        <button onClick={() => setPickerOpen(!pickerOpen)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '7px 10px', color: 'var(--text)', cursor: 'pointer' }}>
-          <div style={{ width: 26, height: 26, borderRadius: 8, background: agent ? grad(agent.colors) : 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 14 }}>{agent ? agent.emoji : '🗂️'}</div>
-          <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-            <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent ? agent.name : (ws?.name ?? 'Workspace')}</div>
-            <div style={{ fontSize: 10.5, color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>{agent ? 'isolated fs' : 'workspace fs'}</div>
-          </div>
-          <I d={P.upDown} size={13} stroke="var(--text-faint)" style={{ flex: 'none' }} />
-        </button>
-        {pickerOpen && (
-          <div style={{ position: 'absolute', top: 'calc(100% - 2px)', left: 12, right: 12, background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow)', zIndex: 50, padding: 6, animation: 'msgIn .12s' }}>
-            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '6px 8px 4px' }}>Filesystems · isolated</div>
-            <div onClick={() => { app.setFileTarget({ kind: 'workspace', id: app.workspaceId }); app.setCurrentFile(null); setPickerOpen(false); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px', borderRadius: 9, cursor: 'pointer', margin: '1px 0', background: target?.kind === 'workspace' ? 'var(--panel-2)' : 'none' }}>
-              <div style={{ width: 24, height: 24, borderRadius: 7, background: 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 13 }}>🗂️</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 500 }}>{ws?.name ?? 'Workspace'}</div>
-                <div style={{ fontSize: 10.5, color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>workspaces/{app.workspaceId.slice(0, 8)}</div>
-              </div>
-              {target?.kind === 'workspace' && <I d={P.check} size={14} stroke="var(--accent)" sw={2.5} />}
-            </div>
-            {app.agents.map((a) => (
-              <div key={a.id} onClick={() => { app.setFileTarget({ kind: 'agent', id: a.id }); app.setCurrentFile(null); setPickerOpen(false); }}
-                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 8px', borderRadius: 9, cursor: 'pointer', margin: '1px 0', background: target?.kind === 'agent' && target.id === a.id ? 'var(--panel-2)' : 'none' }}>
-                <div style={{ width: 24, height: 24, borderRadius: 7, background: grad(a.colors), display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 13 }}>{a.emoji}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 500 }}>{a.name}</div>
-                  <div style={{ fontSize: 10.5, color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>agents/{a.id.slice(0, 8)}</div>
-                </div>
-                {target?.kind === 'agent' && target.id === a.id && <I d={P.check} size={14} stroke="var(--accent)" sw={2.5} />}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      <div style={sectionLabel}>{agent ? `${agent.name} · isolated fs` : 'Workspace files'}</div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
-        {rows.length === 0 && <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-faint)' }}>No files yet.</div>}
-        {rows.map((n) => (
-          <div key={n.path}
-            onClick={() => n.isFolder ? setExpanded((e) => ({ ...e, [n.path]: !e[n.path] })) : app.setCurrentFile(n.path)}
-            style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 8px', paddingLeft: 8 + n.depth * 14, borderRadius: 7, cursor: 'pointer', background: n.path === app.currentFile ? 'var(--accent-dim)' : 'none' }}>
-            {n.isFolder
-              ? <I d={P.chevD} size={12} stroke="var(--text-faint)" style={{ transform: expanded[n.path] ? 'rotate(0deg)' : 'rotate(-90deg)', flex: 'none' }} />
-              : <span style={{ width: 12, flex: 'none' }} />}
-            <span style={{ flex: 'none', fontSize: 12 }}>{glyph(n.name, n.isFolder)}</span>
-            <span style={{ flex: 1, fontSize: 12.5, fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: n.path === app.currentFile ? 'var(--accent-hi)' : 'var(--text-dim)' }}>{n.name}</span>
-          </div>
-        ))}
       </div>
     </>
   );

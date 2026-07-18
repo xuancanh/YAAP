@@ -50,6 +50,7 @@ export class TurnContextService {
       if (agent) {
         parts.push(`You are the durable agent "${agent.name}".`);
         if (agent.charter) parts.push(`Your charter:\n${agent.charter}`);
+        parts.push('You maintain your own home page: use update_dashboard to keep a current markdown status board of your work, and save_app to build or refine self-contained HTML mini apps (rendered in a network-blocked sandbox) that the user can open or embed in chats.');
         const feedback = await this.agents.takeFeedback(agent.id);
         if (feedback.length > 0) {
           parts.push(`Pending user feedback on your recent replies (acknowledge and adapt; it is cleared after this turn):\n${JSON.stringify(feedback)}`);

@@ -73,9 +73,17 @@ export function mcpStub(): McpService {
   } as unknown as McpService;
 }
 
-/** AgentsService stub for ChatsService tests (feedback recording is a no-op). */
-export function agentsStub(): AgentsService {
-  return { addFeedback: async () => ({ ok: true }) } as unknown as AgentsService;
+/** AgentsService stub for ChatsService / TurnLoopService tests; records
+ *  self-maintenance tool calls so tests can assert on them. */
+export function agentsStub(): AgentsService & { calls: Array<{ method: string; args: unknown[] }> } {
+  const calls: Array<{ method: string; args: unknown[] }> = [];
+  const stub = {
+    calls,
+    addFeedback: async () => ({ ok: true }),
+    updateDashboard: async (...args: unknown[]) => { calls.push({ method: 'updateDashboard', args }); return 'Dashboard updated.'; },
+    saveApp: async (...args: unknown[]) => { calls.push({ method: 'saveApp', args }); return 'Mini app saved.'; },
+  };
+  return stub as unknown as AgentsService & { calls: Array<{ method: string; args: unknown[] }> };
 }
 
 /** Provider that plays one scripted event list per stream() call (per round). */

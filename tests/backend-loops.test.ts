@@ -44,7 +44,7 @@ async function setup(rounds: AiStreamEvent[][]) {
   const workspaces = new WorkspacesService(db, stub);
   const repo = new ChatsRepository(db);
   const provider = new ScriptedProvider(rounds);
-  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub());
+  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub(), agents);
   const config = { get: (k: string) => (k === 'loopsEnabled' ? false : undefined) } as unknown as ConfigService;
   const loops = new LoopsService(agents, workspaces, repo, turns, config);
   const distill = new DistillService(repo, ctxStub(provider), agents);
@@ -152,4 +152,32 @@ test('AGENT.json import validates hard and installs bounded profiles (FR-11.7)',
   // oversized fields are clamped, not refused
   const clamped = await agents.importJson({ name: 'Clamped', charter: 'x'.repeat(30_000) });
   assert.equal(clamped.charter.length, 20_000);
+});
+
+test('mini apps: save_app upserts by name, enforces caps, delete removes (§11)', async () => {
+  const { agents } = await setup([]);
+  const a = await agents.create({ name: 'Appy' });
+  await agents.saveApp(a.id, { name: 'Tracker', html: '<html>1</html>' });
+  await agents.saveApp(a.id, { name: 'Tracker', html: '<html>2</html>', description: 'a tracker' });
+  const apps = await agents.listApps(a.id);
+  assert.equal(apps.length, 1); // same name updated in place
+  assert.equal(apps[0].html, '<html>2</html>');
+  assert.equal(apps[0].description, 'a tracker');
+
+  await assert.rejects(agents.saveApp(a.id, { name: '', html: '<html/>' }), /name is required/);
+  await assert.rejects(agents.saveApp(a.id, { name: 'Huge', html: 'x'.repeat(300_001) }), /exceeds/);
+
+  // dashboard replacement is clamped and stored
+  await agents.updateDashboard(a.id, '# Status\nAll green');
+  assert.match((await agents.get(a.id)).dashboard, /All green/);
+
+  await agents.deleteApp(a.id, apps[0].id);
+  assert.equal((await agents.listApps(a.id)).length, 0);
+  await assert.rejects(agents.deleteApp(a.id, 'nope'), /app nope/);
+
+  // apps round-trip through AGENT.json export/import
+  await agents.saveApp(a.id, { name: 'Notes', html: '<html>n</html>' });
+  const profile = await agents.exportJson(a.id);
+  const copy = await agents.importJson({ ...profile, name: 'Appy Copy' });
+  assert.equal((await agents.listApps(copy.id))[0].name, 'Notes');
 });
