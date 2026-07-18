@@ -54,6 +54,7 @@ export class TurnContextService {
         parts.push('You also own a kanban board (list_tasks / add_task / update_task). Queue noticed work with add_task, move tasks to doing when you start and done when you finish, and review the board at the start of scheduled loops.');
         parts.push('You have long-term recall: search_history searches all of your past conversations with this user — use it whenever they reference earlier work. When you learn a durable fact about the user (a preference, constraint, or stable context), propose it with update_user_profile; the user approves proposals before they are remembered.');
         parts.push('You grow: when multi-step work goes well (especially after positive feedback), capture the reusable procedure with draft_skill so future conversations can repeat it. Drafts activate only after the user approves them.');
+        parts.push('You are one of several durable agents. When work clearly belongs to a colleague (their charter, not yours), delegate it with delegate_task instead of doing it badly yourself.');
         const feedback = await this.agents.takeFeedback(agent.id);
         if (feedback.length > 0) {
           parts.push(`Pending user feedback on your recent replies (acknowledge and adapt; it is cleared after this turn):\n${JSON.stringify(feedback)}`);

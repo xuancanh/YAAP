@@ -371,3 +371,36 @@ test('brain checkpoints: daily snapshot before the first change, pruned to 14 da
   assert.equal(cp!.toString('utf8'), before, 'checkpoint holds the pre-change content, once per day');
   assert.doesNotMatch(cp!.toString('utf8'), /first entry/, 'second append did not overwrite the checkpoint');
 });
+
+test('delegate_task hands work to a colleague agent board + inbox; gated in ask mode (phase 5)', async () => {
+  const delegateRound: AiStreamEvent[] = [
+    { type: 'tool_call', id: 'd1', name: 'delegate_task', input: { agent: 'ledger', title: 'Reconcile July invoices', note: 'Numbers from the sweep.' } },
+    { type: 'done' },
+  ];
+  const finalRound: AiStreamEvent[] = [{ type: 'answer', text: 'delegated.' }, { type: 'done' }];
+  const { agents, repo, turns } = await setup([delegateRound, finalRound]);
+  const from = await agents.create({ name: 'Sentinel' });
+  const to = await agents.create({ name: 'Ledger' });
+  const session = await repo.createSession({ workspaceId: 'ws1', agentId: from.id, name: 'sweep' });
+
+  let paused = false;
+  for await (const ev of turns.run(session.id, { text: 'hand the invoices to ledger' })) {
+    if (ev.type === 'approval_required') {
+      paused = true;
+      assert.equal(ev.tool, 'delegate_task');
+      turns.resolveApproval(session.id, ev.callId, 'allow-once');
+    }
+  }
+  assert.ok(paused, 'delegation is a mutation: it pauses in ask mode');
+
+  const tasks = await agents.listTasks(to.id);
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].origin, 'agent');
+  assert.match(tasks[0].title, /Reconcile July invoices/);
+  assert.match(tasks[0].note, /Delegated by Sentinel/);
+  assert.equal((await agents.listTasks(from.id)).length, 0, 'the task lands on the target board only');
+
+  const events = await agents.listEvents(to.id);
+  assert.match(events[0].title, /Sentinel delegated/);
+  assert.deepEqual(await agents.unreadEventCounts(), { [to.id]: 1 });
+});

@@ -112,6 +112,19 @@ const AGENT_TOOLS: AiToolSpec[] = [
     },
   },
   {
+    name: 'delegate_task',
+    description: 'Hand a task to another durable agent by putting it on their kanban board. Use when work belongs to a colleague agent (their charter covers it); they will see it on their board and in their activity feed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent: { type: 'string', description: 'The name of the agent to delegate to.' },
+        title: { type: 'string', description: 'Short imperative task title.' },
+        note: { type: 'string', description: 'Context the other agent needs to do the work.' },
+      },
+      required: ['agent', 'title'],
+    },
+  },
+  {
     name: 'search_history',
     description: 'Full-text search across all of your past conversations with the user. Use it when the user refers to something discussed before, or to recall earlier decisions, names, and context.',
     inputSchema: {
@@ -373,6 +386,26 @@ export class TurnLoopService {
           });
         case 'list_tasks':
           return this.agents.tasksForModel(agentId);
+        case 'delegate_task': {
+          const me = await this.agents.get(agentId).catch(() => null);
+          const targetName = String(input.agent ?? '').trim();
+          const all = await this.agents.list();
+          const target = all.find((a) => a.name.toLowerCase() === targetName.toLowerCase());
+          if (!target) throw new Error(`no agent named "${targetName}" — known agents: ${all.map((a) => a.name).join(', ')}`);
+          const task = await this.agents.addTask(target.id, {
+            title: String(input.title ?? ''),
+            note: `Delegated by ${me?.name ?? 'an agent'}.${typeof input.note === 'string' && input.note ? ` ${input.note}` : ''}`,
+            origin: 'agent',
+            sessionId: session.id,
+          });
+          await this.agents.addEvent(target.id, {
+            kind: 'info',
+            title: `${me?.name ?? 'An agent'} delegated: ${task.title}`,
+            body: typeof input.note === 'string' ? input.note.slice(0, 300) : '',
+            sessionId: session.id,
+          }).catch(() => {});
+          return `Task [${task.id.slice(0, 8)}] added to ${target.name}'s board.`;
+        }
         case 'search_history': {
           const hits = await this.repo.searchAgentMessages(agentId, String(input.query ?? ''));
           if (hits.length === 0) return 'No past conversation matches that query.';
