@@ -63,6 +63,7 @@ export function skillsStub(): SkillsService {
     toolSpecs: async () => [],
     resolveTool: async () => undefined,
     invocation: () => '',
+    draftSkill: async () => 'Skill "stub" drafted. The user reviews and approves it before it becomes available; do not assume you can call it yet.',
   } as unknown as SkillsService;
 }
 

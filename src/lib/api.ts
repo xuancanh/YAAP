@@ -151,6 +151,9 @@ export interface Skill {
   instructions: string;
   enabled: number;
   builtin: number;
+  /** 1 = agent-drafted, awaiting user approval. */
+  draft: number;
+  proposedBy: string;
 }
 
 export interface McpServer {
@@ -290,6 +293,8 @@ export const api = {
   deleteAgentTask: (id: string, taskId: string) => send<{ ok: boolean }>(`/api/agents/${id}/tasks/${taskId}`, 'DELETE'),
   agentStats: (id: string) => get<AgentStats>(`/api/agents/${id}/stats`),
   agentFiles: (id: string) => get<FileEntry[]>(`/api/agents/${id}/files`),
+  putAgentFile: (id: string, path: string, contentBase64: string, contentType?: string) =>
+    send<{ ok: boolean }>(`/api/agents/${id}/files`, 'POST', { path, contentBase64, contentType }),
   agentPreview: (id: string, path: string) => get<FilePreview>(`/api/agents/${id}/preview?path=${enc(path)}`),
   agentExportUrl: (id: string) => `/api/agents/${id}/export`,
   importAgent: (profile: Record<string, unknown>) => send<Agent>('/api/agents/import', 'POST', profile),
@@ -303,6 +308,8 @@ export const api = {
   skills: (workspaceId?: string) => get<Skill[]>(`/api/skills${workspaceId ? `?workspaceId=${enc(workspaceId)}` : ''}`),
   updateSkill: (id: string, patch: { enabled?: boolean; instructions?: string; description?: string }) =>
     send<Skill>(`/api/skills/${id}`, 'PATCH', patch),
+  resolveSkillDraft: (id: string, approve: boolean) =>
+    send<Skill | { ok: boolean }>(`/api/skills/${id}/${approve ? 'approve' : 'reject'}`, 'POST'),
   mcp: () => get<McpServer[]>('/api/mcp'),
   createMcp: (name: string, url: string) => send<McpServer>('/api/mcp', 'POST', { name, url }),
   updateMcp: (id: string, patch: { enabled?: boolean }) => send<McpServer>(`/api/mcp/${id}`, 'PATCH', patch),

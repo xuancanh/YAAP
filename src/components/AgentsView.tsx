@@ -486,6 +486,14 @@ function AgentFilesTab({ a }: { a: Agent }) {
             {preview?.kind === 'html' && preview.text && (
               <button onClick={() => app.openArtifact(sel!.split('/').pop()!, preview.text!)} style={{ marginLeft: 'auto', background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '4px 11px', fontSize: 11, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Open preview</button>
             )}
+            {sel?.startsWith('.checkpoints/') && preview?.text !== undefined && (
+              <button title="Copy this snapshot back over the live file" onClick={async () => {
+                const target = sel.split('/').slice(2).join('/');
+                if (!target || !window.confirm(`Restore ${target} to this ${sel.split('/')[1]} snapshot? The live file is overwritten.`)) return;
+                await api.putAgentFile(a.id, target, btoa(unescape(encodeURIComponent(preview.text!))), 'text/markdown');
+                app.showToast(`Restored ${target}`);
+              }} style={{ marginLeft: 'auto', background: 'var(--panel)', border: '1px solid var(--amber)', color: 'var(--amber)', borderRadius: 7, padding: '4px 11px', fontSize: 11, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Restore this version</button>
+            )}
           </div>
           <div style={{ flex: 1, overflow: 'auto', background: 'var(--code)' }}>
             {sel && preview === null && <div style={{ padding: 16, fontSize: 12.5, color: 'var(--text-faint)' }}>Loading…</div>}

@@ -218,10 +218,27 @@ export class AgentsService {
     const KEEP = 80_000;
     const key = agentFileKey(agentId, file);
     const existing = await this.storage.get(key).catch(() => null);
+    if (existing) await this.checkpointBrainFile(agentId, file, existing).catch(() => {});
     let text = existing ? existing.toString('utf8') : header;
     text = `${text.trimEnd()}\n\n${entry.slice(0, APPEND_CAP).trim()}\n`;
     if (text.length > FILE_CAP) text = `${header}(older entries trimmed)\n\n…${text.slice(text.length - KEEP)}`;
     await this.storage.put(key, Buffer.from(text, 'utf8'), 'text/markdown');
+  }
+
+  /** Brain checkpoints (phase 3): before the first change of a day, snapshot
+   *  the file to .checkpoints/<date>/<file> so growth is never a one-way
+   *  door. The newest 14 days are kept; restore = copy a checkpoint back. */
+  private async checkpointBrainFile(agentId: string, file: string, current: Buffer): Promise<void> {
+    const date = nowIso().slice(0, 10);
+    const cpKey = agentFileKey(agentId, `.checkpoints/${date}/${file}`);
+    if ((await this.storage.get(cpKey).catch(() => null)) !== null) return; // one per day
+    await this.storage.put(cpKey, current, 'text/markdown');
+    // prune: keep the newest 14 checkpoint days
+    const all = await this.storage.list(`${agentPrefix(agentId)}.checkpoints/`).catch(() => []);
+    const days = [...new Set(all.map((o) => o.key.split('/.checkpoints/')[1]?.split('/')[0]).filter(Boolean))].sort();
+    for (const old of days.slice(0, Math.max(0, days.length - 14))) {
+      await this.storage.deletePrefix(`${agentPrefix(agentId)}.checkpoints/${old}/`).catch(() => {});
+    }
   }
 
   async appendJournal(agentId: string, entry: string): Promise<void> {

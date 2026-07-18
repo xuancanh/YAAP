@@ -231,6 +231,17 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '0008-skill-drafts',
+    up: async (db) => {
+      if (!(await hasColumn(db, 'skills', 'draft'))) {
+        await db.query(`ALTER TABLE skills ADD COLUMN "draft" INTEGER NOT NULL DEFAULT 0`);
+      }
+      if (!(await hasColumn(db, 'skills', 'proposedBy'))) {
+        await db.query(`ALTER TABLE skills ADD COLUMN "proposedBy" TEXT NOT NULL DEFAULT ''`);
+      }
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {

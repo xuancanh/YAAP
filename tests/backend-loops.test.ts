@@ -356,3 +356,18 @@ test('a budget-stopped loop surfaces a loop_error event instead of burning silen
   await assert.rejects(agents.update(agent.id, { loops: JSON.stringify([{ name: 'x', cron: '* * * * *', budgetTokens: -5 }]) }), /budgetTokens/);
   await assert.rejects(agents.update(agent.id, { loops: '{not json' }), /not valid JSON/);
 });
+
+test('brain checkpoints: daily snapshot before the first change, pruned to 14 days (phase 3)', async () => {
+  const { agents, stub } = await setup([]);
+  const a = await agents.create({ name: 'Keeper' });
+  const before = (await stub.get(`agents/${a.id}/JOURNAL.md`))!.toString('utf8');
+
+  await agents.appendJournal(a.id, 'first entry of the day');
+  await agents.appendJournal(a.id, 'second entry of the day');
+
+  const date = new Date().toISOString().slice(0, 10);
+  const cp = await stub.get(`agents/${a.id}/.checkpoints/${date}/JOURNAL.md`);
+  assert.ok(cp, 'checkpoint written before the first change');
+  assert.equal(cp!.toString('utf8'), before, 'checkpoint holds the pre-change content, once per day');
+  assert.doesNotMatch(cp!.toString('utf8'), /first entry/, 'second append did not overwrite the checkpoint');
+});

@@ -121,6 +121,19 @@ const AGENT_TOOLS: AiToolSpec[] = [
     },
   },
   {
+    name: 'draft_skill',
+    description: 'After completing multi-step work the user was happy with, capture the reusable procedure as a skill draft: a named, step-by-step instruction pack. The user reviews and approves drafts before they become callable; draft sparingly, only genuinely reusable procedures.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Short kebab-case skill name, e.g. weekly-dependency-audit.' },
+        description: { type: 'string', description: 'One line on when to use this skill.' },
+        instructions: { type: 'string', description: 'The complete step-by-step procedure, written for your future self.' },
+      },
+      required: ['name', 'instructions'],
+    },
+  },
+  {
     name: 'update_user_profile',
     description: 'Propose one durable fact about the user (a preference, constraint, or piece of stable context) for their consented profile. The user reviews every proposal before it is remembered; propose sparingly and only things worth keeping across all future conversations.',
     inputSchema: {
@@ -134,7 +147,7 @@ const AGENT_TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
 /** Agent tools that auto-run even in Ask mode: pure reads, plus
  *  update_user_profile — it only queues a proposal, and the durable write is
  *  gated on explicit user approval in the profile UI. */
-const AGENT_READONLY_TOOLS = new Set(['list_tasks', 'search_history', 'update_user_profile']);
+const AGENT_READONLY_TOOLS = new Set(['list_tasks', 'search_history', 'update_user_profile', 'draft_skill']);
 
 const exactKey = (call: AiToolCall): string =>
   `${call.name}:${createHash('sha256').update(JSON.stringify(call.input)).digest('hex').slice(0, 16)}`;
@@ -366,6 +379,16 @@ export class TurnLoopService {
           return hits.map((h) =>
             `[${h.createdAt.slice(0, 10)} · ${h.sessionName}] ${h.role}: ${h.content.replace(/\s+/g, ' ').slice(0, 300)}`,
           ).join('\n');
+        }
+        case 'draft_skill': {
+          const agent = await this.agents.get(agentId).catch(() => null);
+          return this.skills.draftSkill({
+            name: String(input.name ?? ''),
+            description: typeof input.description === 'string' ? input.description : undefined,
+            instructions: String(input.instructions ?? ''),
+            workspaceId: session.workspaceId,
+            proposedBy: agent?.name ?? 'agent',
+          });
         }
         case 'update_user_profile': {
           const agent = await this.agents.get(agentId).catch(() => null);

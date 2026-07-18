@@ -154,9 +154,34 @@ function McpPane() {
 
 function SkillsPane() {
   const app = useApp();
+  const drafts = app.skills.filter((s) => s.draft === 1);
+  const live = app.skills.filter((s) => s.draft !== 1);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {app.skills.map((s) => (
+      {drafts.length > 0 && (
+        <div style={{ ...card, borderColor: 'var(--amber)' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--amber)', marginBottom: 4 }}>Skill drafts · {drafts.length}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 10 }}>
+            Captured by agents from work that went well. A draft only becomes callable after you approve it.
+          </div>
+          {drafts.map((s) => (
+            <div key={s.id} style={{ padding: '10px 12px', border: '1px solid var(--border-soft)', borderRadius: 10, marginBottom: 8, background: 'var(--panel-2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, ...mono }}>/{s.name}</span>
+                <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>drafted by {s.proposedBy || 'an agent'}</span>
+                <span style={{ flex: 1 }} />
+                <button onClick={async () => { await api.resolveSkillDraft(s.id, true); await app.refreshSkills(); app.showToast(`Skill /${s.name} approved`); }}
+                  style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
+                <button onClick={async () => { await api.resolveSkillDraft(s.id, false); await app.refreshSkills(); app.showToast('Draft rejected'); }}
+                  style={{ background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Reject</button>
+              </div>
+              {s.description && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 5 }}>{s.description}</div>}
+              <pre style={{ margin: '8px 0 0', padding: '9px 11px', background: 'var(--code)', borderRadius: 8, fontSize: 11, ...mono, lineHeight: 1.55, color: 'var(--text-dim)', whiteSpace: 'pre-wrap', maxHeight: 140, overflowY: 'auto' }}>{s.instructions}</pre>
+            </div>
+          ))}
+        </div>
+      )}
+      {live.map((s) => (
         <div key={s.id} style={card}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
             <div style={{ flex: 1, minWidth: 0 }}>

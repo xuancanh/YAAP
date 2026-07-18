@@ -186,6 +186,11 @@ export const skills = pgTable('skills', {
   enabled: integer('enabled').notNull().default(1),
   /** Seeded built-ins are recreated on boot if deleted; user edits stick. */
   builtin: integer('builtin').notNull().default(0),
+  /** 1 = drafted by an agent from experience, awaiting user approval
+   *  (roadmap phase 3). Drafts are never offered as tools. */
+  draft: integer('draft').notNull().default(0),
+  /** Name of the agent that drafted this skill, for provenance. */
+  proposedBy: text('proposedBy').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 

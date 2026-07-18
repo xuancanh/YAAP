@@ -24,4 +24,7 @@ export class SkillsController {
   @Post() create(@Body() dto: CreateSkillDto) { return this.skills.create(dto); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateSkillDto) { return this.skills.update(id, dto); }
   @Delete(':id') remove(@Param('id') id: string) { return this.skills.remove(id); }
+  /** Phase 3: agent-drafted skills go live only on user approval. */
+  @Post(':id/approve') approveDraft(@Param('id') id: string) { return this.skills.resolveDraft(id, true); }
+  @Post(':id/reject') rejectDraft(@Param('id') id: string) { return this.skills.resolveDraft(id, false); }
 }

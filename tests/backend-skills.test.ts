@@ -80,3 +80,36 @@ test('the turn loop offers skills as tools and invoking one returns its instruct
   assert.ok(result && !result.isError);
   assert.match(result.output, /Always greet with a haiku/);
 });
+
+test('skill drafts: invisible until approved; rejection deletes (phase 3)', async () => {
+  const skills = new SkillsService(await testDb());
+  const msg = await skills.draftSkill({
+    name: 'Weekly Dependency Audit!!',
+    description: 'Audit deps weekly',
+    instructions: '1. Run the audit.\n2. File tasks for criticals.',
+    workspaceId: 'ws1',
+    proposedBy: 'Sentinel',
+  });
+  assert.match(msg, /drafted/);
+  const draft = (await skills.list('ws1')).find((s) => s.draft === 1)!;
+  assert.equal(draft.name, 'weekly-dependency-audit'); // slugified
+  assert.equal(draft.proposedBy, 'Sentinel');
+
+  // drafts are never offered or resolvable as tools
+  assert.ok(!(await skills.toolSpecs('ws1')).some((t) => t.name.includes('weekly_dependency_audit')));
+  assert.equal(await skills.resolveTool('ws1', 'skill_weekly_dependency_audit'), undefined);
+
+  // approval makes it live
+  await skills.resolveDraft(draft.id, true);
+  assert.ok((await skills.toolSpecs('ws1')).some((t) => t.name === 'skill_weekly_dependency_audit'));
+
+  // a rejected draft disappears
+  await skills.draftSkill({ name: 'bad-idea', instructions: 'x', workspaceId: 'ws1', proposedBy: 'Muse' });
+  const bad = (await skills.list('ws1')).find((s) => s.name === 'bad-idea')!;
+  await skills.resolveDraft(bad.id, false);
+  assert.ok(!(await skills.list('ws1')).some((s) => s.name === 'bad-idea'));
+
+  // duplicates and junk names are refused
+  await assert.rejects(skills.create({ name: 'weekly-dependency-audit', instructions: 'x', workspaceId: 'ws1' }), /already exists/);
+  await assert.rejects(skills.draftSkill({ name: '!!!', instructions: 'x', workspaceId: 'ws1', proposedBy: 'a' }), /valid slug/);
+});
