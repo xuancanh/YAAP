@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useApp, grad } from '../store';
 import type { Agent, AgentApp } from '../lib/api';
 import { AppViewer } from './AgentsView';
+import { CapReviewModal, pendingCaps } from './AppHost';
 
 function parseApps(a: Agent): AgentApp[] {
   try { return JSON.parse(a.apps) as AgentApp[]; } catch { return []; }
@@ -18,7 +19,8 @@ function ago(iso: string): string {
 
 export function AppsGallery() {
   const app = useApp();
-  const [openApp, setOpenApp] = useState<AgentApp | null>(null);
+  const [openApp, setOpenApp] = useState<{ agentId: string; app: AgentApp } | null>(null);
+  const [review, setReview] = useState<{ agentId: string; app: AgentApp } | null>(null);
   const groups = app.agents
     .map((a) => ({ agent: a, apps: parseApps(a) }))
     .filter((g) => g.apps.length > 0);
@@ -43,9 +45,22 @@ export function AppsGallery() {
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
               {apps.map((x) => (
-                <div key={x.id} onClick={() => setOpenApp(x)} style={{ border: '1px solid var(--border)', borderRadius: 13, background: 'var(--panel)', padding: '13px 15px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div key={x.id} onClick={() => setOpenApp({ agentId: agent.id, app: x })} style={{ border: '1px solid var(--border)', borderRadius: 13, background: 'var(--panel)', padding: '13px 15px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{x.name}</span>
                   <span style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.45, minHeight: 16 }}>{x.description || 'no description'}</span>
+                  {(x.capabilities ?? []).length > 0 && (
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {(x.capabilities ?? []).map((c) => (
+                        <span key={c} style={{ fontSize: 9, fontFamily: 'var(--mono)', borderRadius: 5, padding: '1px 6px', border: '1px solid var(--border-soft)', color: (x.approved ?? []).includes(c) ? 'var(--green)' : 'var(--text-faint)' }}>{c}</span>
+                      ))}
+                      {pendingCaps(x).length > 0 && (
+                        <button onClick={(e) => { e.stopPropagation(); setReview({ agentId: agent.id, app: x }); }}
+                          style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--amber)', border: '1px solid var(--amber)', background: 'none', borderRadius: 5, padding: '1px 7px', cursor: 'pointer' }}>
+                          review {pendingCaps(x).length}
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
                     <span style={{ fontSize: 9.5, color: 'var(--text-faint)', flex: 1, fontFamily: 'var(--mono)' }}>updated {ago(x.updatedAt)}</span>
                     <button title={`Open beside ${agent.name}'s latest conversation`} onClick={(e) => { e.stopPropagation(); void app.embedApp(agent.id, x); }}
@@ -66,7 +81,8 @@ export function AppsGallery() {
           </div>
         )}
       </div>
-      {openApp && <AppViewer miniApp={openApp} onClose={() => setOpenApp(null)} />}
+      {openApp && <AppViewer agentId={openApp.agentId} miniApp={openApp.app} onClose={() => setOpenApp(null)} />}
+      {review && <CapReviewModal agentId={review.agentId} miniApp={review.app} onClose={() => setReview(null)} />}
     </div>
   );
 }

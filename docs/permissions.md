@@ -31,20 +31,26 @@ small enough for a general user to actually make.
 The gates apply differently per class because the risk lives in different
 places:
 
-### Mini apps (save_app) — risk at *render* time
-A mini app is inert HTML. It cannot call tools, read other agents' data, or
-touch the network: the sandbox (`allow-scripts` iframe, opaque origin, no
-network) is the permission model, enforced by the renderer rather than by
-review. Therefore:
-- Creation: free. Activation: **none needed** — saving is enough, because
-  the artifact cannot act; it can only display when the user opens it.
-- The user still sees every app on the home page and can delete any.
-- The invariant that makes this safe: **apps must never gain ambient
-  capabilities**. The day an app can call a tool or fetch a URL, it moves to
-  the skill/tool review class (below) with a per-app capability manifest.
-- Residual risk: social engineering inside the rendered page (an app that
-  *asks the user* to do something harmful). Mitigation is provenance
-  labeling ("built by <agent>, sandboxed, no network") on every surface.
+### Mini apps (save_app) — risk at *render* time, plus the bridge
+A mini app is HTML in a sandbox (`allow-scripts` iframe, opaque origin, no
+network). It may additionally request **bridge capabilities** through a
+per-app manifest — the full design lives in `docs/miniapp-capabilities.md`;
+the shape mirrors the three gates:
+- Creation: free, any manifest. Free-tier caps (`storage`, `chat.compose`)
+  activate at save — they add persistence/convenience, not reach.
+- Activation: elevated caps (`files.read`, `files.write`, `tasks.read`,
+  `tasks.write`, `agent.ask`) park until the user reviews them,
+  per-capability, on the app card. **Editing an app re-parks its elevated
+  grants** (same rule as custom tools).
+- Execution: mutating caps confirm on first use in host chrome (never
+  inside the iframe); the server re-verifies every grant per call. Writes
+  are jailed to the app's own folder (no brain poisoning); app-originated
+  turns are Ask-mode channel turns with gated tools auto-denied.
+- The invariant: **no ambient capabilities, and no raw network, ever** —
+  everything reaches the world through the reviewed, scoped bridge.
+- Residual risk: social engineering inside the rendered page. Mitigation is
+  provenance labeling ("built by <agent>, sandboxed, no network") on every
+  surface.
 
 ### Skills (draft_skill) — risk at *instruction* time
 A skill is text the model will later follow, so it is a persistent prompt:

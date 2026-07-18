@@ -24,7 +24,19 @@ export interface AgentApp {
   description: string;
   html: string;
   updatedAt: string;
+  /** Capability manifest requested via save_app (docs/miniapp-capabilities.md). */
+  capabilities?: string[];
+  /** Subset of `capabilities` the user has activated. Free-tier caps are
+   *  granted at save; elevated ones park here only after explicit review. */
+  approved?: string[];
 }
+
+/** The full capability vocabulary; unknown names are rejected at save. */
+export const APP_CAPABILITIES = [
+  'storage', 'chat.compose', 'files.read', 'files.write', 'tasks.read', 'tasks.write', 'agent.ask',
+] as const;
+/** Caps that activate silently — they add persistence/convenience, not reach. */
+export const APP_FREE_CAPS = new Set<string>(['storage', 'chat.compose']);
 
 const APP_LIMIT = 12;
 const APP_HTML_CAP = 300_000;
@@ -293,26 +305,52 @@ export class AgentsService {
     try { return JSON.parse(a.apps) as AgentApp[]; } catch { return []; }
   }
 
-  /** save_app: create or update (by name) a self-contained HTML mini app. */
-  async saveApp(id: string, input: { name: string; description?: string; html: string }): Promise<string> {
+  /** save_app: create or update (by name) a self-contained HTML mini app.
+   *  Any edit re-parks elevated capability grants (what the user approved is
+   *  what runs — same rule as custom-tool edits). */
+  async saveApp(id: string, input: { name: string; description?: string; html: string; capabilities?: string[] }): Promise<string> {
     const name = (input.name ?? '').trim().slice(0, 60);
     if (!name) throw new BadRequestException('app name is required');
     if (typeof input.html !== 'string' || !input.html.trim()) throw new BadRequestException('app html is required');
     if (input.html.length > APP_HTML_CAP) throw new BadRequestException(`app html exceeds ${APP_HTML_CAP} bytes`);
+    const caps = [...new Set(input.capabilities ?? [])];
+    const unknown = caps.filter((c) => !(APP_CAPABILITIES as readonly string[]).includes(c));
+    if (unknown.length > 0) {
+      throw new BadRequestException(`unknown capabilities: ${unknown.join(', ')} (valid: ${APP_CAPABILITIES.join(', ')})`);
+    }
+    const freeGrants = caps.filter((c) => APP_FREE_CAPS.has(c));
     const apps = await this.listApps(id);
     const existing = apps.find((x) => x.name === name);
     if (existing) {
       existing.html = input.html;
       existing.description = input.description ?? existing.description;
+      existing.capabilities = caps;
+      existing.approved = freeGrants; // elevated grants re-park on every edit
       existing.updatedAt = nowIso();
     } else {
       if (apps.length >= APP_LIMIT) {
         throw new BadRequestException(`app limit (${APP_LIMIT}) reached — delete or update an existing app`);
       }
-      apps.push({ id: newId(), name, description: input.description ?? '', html: input.html, updatedAt: nowIso() });
+      apps.push({ id: newId(), name, description: input.description ?? '', html: input.html, capabilities: caps, approved: freeGrants, updatedAt: nowIso() });
     }
     await this.db.update(agents).set({ apps: JSON.stringify(apps) }).where(eq(agents.id, id));
-    return `Mini app "${name}" saved (${apps.length}/${APP_LIMIT}). It appears on your home page; the user can open it or embed it in a chat.`;
+    const parked = caps.filter((c) => !APP_FREE_CAPS.has(c));
+    return `Mini app "${name}" saved (${apps.length}/${APP_LIMIT}). It appears on your home page; the user can open it or embed it in a chat.`
+      + (parked.length > 0 ? ` Elevated capabilities (${parked.join(', ')}) are parked until the user reviews them on the app card.` : '');
+  }
+
+  /** Activate reviewed capabilities for one app (must be requested ones). */
+  async approveAppCaps(id: string, appId: string, capabilities: string[]) {
+    const apps = await this.listApps(id);
+    const entry = apps.find((x) => x.id === appId);
+    if (!entry) throw new NotFoundException(`app ${appId}`);
+    const requested = new Set(entry.capabilities ?? []);
+    const bad = capabilities.filter((c) => !requested.has(c));
+    if (bad.length > 0) throw new BadRequestException(`not requested by this app: ${bad.join(', ')}`);
+    const free = (entry.capabilities ?? []).filter((c) => APP_FREE_CAPS.has(c));
+    entry.approved = [...new Set([...free, ...capabilities])];
+    await this.db.update(agents).set({ apps: JSON.stringify(apps) }).where(eq(agents.id, id));
+    return entry;
   }
 
   async deleteApp(id: string, appId: string) {

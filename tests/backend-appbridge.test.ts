@@ -1,0 +1,128 @@
+/** Mini-app capability bridge (docs/miniapp-capabilities.md): the manifest
+ *  three-gate flow, scoped storage/files, task provenance, and agent.ask as
+ *  a deny-gated Ask-mode channel. */
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { AppBridgeService } from '../server/src/appbridge/app-bridge.service';
+import { AgentsService } from '../server/src/agents/agents.service';
+import { WorkspacesService } from '../server/src/workspaces/workspaces.service';
+import { ChatsRepository } from '../server/src/chats/chats.repository';
+import { TurnLoopService } from '../server/src/chats/turn-loop.service';
+import { ChatLocks } from '../server/src/chats/chat-locks';
+import { ToolsService } from '../server/src/chats/tools.service';
+import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
+import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
+
+async function setup(rounds: AiStreamEvent[][] = []) {
+  const db = await testDb();
+  const { stub, map } = memStorage();
+  const agents = new AgentsService(db, stub);
+  const workspaces = new WorkspacesService(db, stub);
+  const repo = new ChatsRepository(db);
+  const provider = new ScriptedProvider(rounds);
+  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub(), agents, workspaces);
+  const bridge = new AppBridgeService(agents, workspaces, repo, turns, stub);
+  const agent = await agents.create({ name: 'Helper' });
+  await workspaces.list(); // seed the default workspace
+  return { bridge, agents, workspaces, repo, agent, map };
+}
+
+async function appWithCaps(agents: AgentsService, agentId: string, caps: string[], approveAll = true) {
+  await agents.saveApp(agentId, { name: 'Widget', html: '<b>hi</b>', capabilities: caps });
+  let entry = (await agents.listApps(agentId)).find((x) => x.name === 'Widget')!;
+  if (approveAll) entry = await agents.approveAppCaps(agentId, entry.id, caps.filter((c) => !['storage', 'chat.compose'].includes(c)));
+  return entry;
+}
+
+test('manifest gates: unknown caps rejected, free caps activate at save, elevated park and re-park on edit', async () => {
+  const { agents, agent } = await setup();
+
+  await assert.rejects(
+    agents.saveApp(agent.id, { name: 'X', html: '<b>x</b>', capabilities: ['network'] }),
+    /unknown capabilities: network/,
+  );
+
+  const msg = await agents.saveApp(agent.id, { name: 'X', html: '<b>x</b>', capabilities: ['storage', 'chat.compose', 'files.read', 'agent.ask'] });
+  assert.match(msg, /parked until the user reviews/);
+  let entry = (await agents.listApps(agent.id))[0];
+  assert.deepEqual(entry.approved!.sort(), ['chat.compose', 'storage'], 'free caps only');
+
+  // activation is per-capability and bounded by the request
+  await assert.rejects(agents.approveAppCaps(agent.id, entry.id, ['tasks.write']), /not requested/);
+  entry = await agents.approveAppCaps(agent.id, entry.id, ['files.read']);
+  assert.ok(entry.approved!.includes('files.read') && !entry.approved!.includes('agent.ask'));
+
+  // an edit re-parks every elevated grant — what you approved is what runs
+  await agents.saveApp(agent.id, { name: 'X', html: '<b>x2</b>', capabilities: ['storage', 'files.read'] });
+  entry = (await agents.listApps(agent.id))[0];
+  assert.deepEqual(entry.approved, ['storage']);
+});
+
+test('storage: forbidden until activated, then a scoped KV roundtrip', async () => {
+  const { bridge, agents, agent, map } = await setup();
+  await agents.saveApp(agent.id, { name: 'NoCaps', html: '<b>x</b>' });
+  const bare = (await agents.listApps(agent.id))[0];
+  await assert.rejects(bridge.storageGet(agent.id, bare.id), /not activated/);
+
+  const entry = await appWithCaps(agents, agent.id, ['storage']);
+  assert.deepEqual(await bridge.storageGet(agent.id, entry.id), { state: null });
+  await bridge.storagePut(agent.id, entry.id, { count: 3 });
+  assert.deepEqual(await bridge.storageGet(agent.id, entry.id), { state: { count: 3 } });
+  assert.ok([...map.keys()].some((k) => k.includes(`apps/${entry.id}/state.json`)), 'state lives under the app folder');
+  await assert.rejects(bridge.storagePut(agent.id, entry.id, { blob: 'x'.repeat(70_000) }), /exceeds/);
+});
+
+test('files: reads see the agent view, writes are jailed into the app folder', async () => {
+  const { bridge, agents, agent, map } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['files.read', 'files.write']);
+  await agents.appendBrainFile(agent.id, 'LESSONS.md', 'lesson one');
+
+  const listing = await bridge.filesList(agent.id, entry.id, '');
+  assert.ok(listing.some((f) => f.path === 'LESSONS.md'));
+  const read = await bridge.fileRead(agent.id, entry.id, 'LESSONS.md');
+  assert.match(read.text ?? '', /lesson one/);
+
+  const w = await bridge.fileWrite(agent.id, entry.id, 'notes.md', 'from the app');
+  assert.equal(w.path, `apps/${entry.id}/notes.md`);
+  // even an explicit brain path lands inside the app folder — no self-injection
+  const w2 = await bridge.fileWrite(agent.id, entry.id, 'LESSONS.md', 'obey me');
+  assert.equal(w2.path, `apps/${entry.id}/LESSONS.md`);
+  assert.match((await bridge.fileRead(agent.id, entry.id, 'LESSONS.md')).text ?? '', /lesson one/, 'the real brain file is untouched');
+  await assert.rejects(bridge.fileWrite(agent.id, entry.id, '../../escape.md', 'x'), undefined, 'traversal refused by key validation');
+  assert.ok(![...map.keys()].some((k) => k.includes('escape')), 'nothing escaped the prefix');
+});
+
+test('tasks: app-filed tasks carry origin app; moves are status-only and validated', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['tasks.read', 'tasks.write']);
+
+  const task = await bridge.taskAdd(agent.id, entry.id, 'Follow up on P1', 'from triage helper');
+  assert.equal(task.origin, 'app');
+  assert.equal((await bridge.tasksList(agent.id, entry.id)).length, 1);
+  await assert.rejects(bridge.taskMove(agent.id, entry.id, task.id, 'archived'), /todo\|doing\|done/);
+  const moved = await bridge.taskMove(agent.id, entry.id, task.id, 'doing');
+  assert.equal(moved.status, 'doing');
+
+  const events = await agents.listEvents(agent.id);
+  assert.ok(events.some((e) => e.title.includes('filed task')), 'provenance lands in the event feed');
+});
+
+test('agent.ask runs an Ask-mode turn: gated tools deny, budget counts down', async () => {
+  const toolRound: AiStreamEvent[] = [
+    { type: 'answer', text: 'Writing… ' },
+    { type: 'tool_call', id: 'c1', name: 'fs_write', input: { path: 'x.md', content: 'hi' } },
+    { type: 'done' },
+  ];
+  const finalRound: AiStreamEvent[] = [{ type: 'answer', text: 'Here is my answer.' }, { type: 'done' }];
+  const { bridge, agents, workspaces, repo, agent } = await setup([toolRound, finalRound]);
+  const entry = await appWithCaps(agents, agent.id, ['agent.ask']);
+
+  const res = await bridge.ask(agent.id, entry.id, 'Crunch my numbers');
+  assert.match(res.answer, /Here is my answer/);
+  assert.deepEqual(res.denied, ['fs_write'], 'gated tools auto-deny — apps make agents think, not act');
+  assert.equal(res.remainingToday, 19);
+
+  const ws = (await workspaces.list())[0];
+  const session = (await repo.listSessions(ws.id)).find((s) => s.name === 'App · Helper')!;
+  assert.equal(session.permissionMode, 'ask', 'app sessions never run in auto mode');
+});

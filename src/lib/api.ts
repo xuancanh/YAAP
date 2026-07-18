@@ -76,6 +76,9 @@ export interface AgentApp {
   description: string;
   html: string;
   updatedAt: string;
+  /** Capability manifest (docs/miniapp-capabilities.md); approved ⊆ capabilities. */
+  capabilities?: string[];
+  approved?: string[];
 }
 
 export interface AgentStats {
@@ -304,6 +307,28 @@ export const api = {
   updateAgent: (id: string, patch: Record<string, unknown>) => send<Agent>(`/api/agents/${id}`, 'PATCH', patch),
   deleteAgent: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}`, 'DELETE'),
   deleteAgentApp: (id: string, appId: string) => send<{ ok: boolean }>(`/api/agents/${id}/apps/${appId}`, 'DELETE'),
+  // mini-app capability bridge (docs/miniapp-capabilities.md)
+  approveAppCaps: (id: string, appId: string, capabilities: string[]) =>
+    send<AgentApp>(`/api/agents/${id}/apps/${appId}/approve`, 'POST', { capabilities }),
+  appStorageGet: (id: string, appId: string) => get<{ state: unknown }>(`/api/agents/${id}/apps/${appId}/storage`),
+  appStoragePut: (id: string, appId: string, state: unknown) =>
+    send<{ ok: boolean }>(`/api/agents/${id}/apps/${appId}/storage`, 'PUT', { state }),
+  appFilesList: (id: string, appId: string, prefix: string, workspaceId?: string) =>
+    get<Array<{ path: string; size: number; lastModified?: string }>>(
+      `/api/agents/${id}/apps/${appId}/files?prefix=${encodeURIComponent(prefix)}${workspaceId ? `&workspaceId=${workspaceId}` : ''}`),
+  appFileRead: (id: string, appId: string, path: string, workspaceId?: string) =>
+    get<{ path: string; kind: string; size: number; text?: string; base64?: string }>(
+      `/api/agents/${id}/apps/${appId}/file?path=${encodeURIComponent(path)}${workspaceId ? `&workspaceId=${workspaceId}` : ''}`),
+  appFileWrite: (id: string, appId: string, path: string, content: string) =>
+    send<{ ok: boolean; path: string }>(`/api/agents/${id}/apps/${appId}/files`, 'PUT', { path, content }),
+  appTasksList: (id: string, appId: string) => get<AgentTask[]>(`/api/agents/${id}/apps/${appId}/tasks`),
+  appTaskAdd: (id: string, appId: string, title: string, note?: string) =>
+    send<AgentTask>(`/api/agents/${id}/apps/${appId}/tasks`, 'POST', { title, note }),
+  appTaskMove: (id: string, appId: string, taskId: string, status: string) =>
+    send<AgentTask>(`/api/agents/${id}/apps/${appId}/tasks/${taskId}`, 'PATCH', { status }),
+  appAsk: (id: string, appId: string, prompt: string, workspaceId?: string) =>
+    send<{ answer: string; denied: string[]; remainingToday: number; sessionId: string }>(
+      `/api/agents/${id}/apps/${appId}/ask`, 'POST', { prompt, workspaceId }),
   agentEvents: (id: string) => get<AgentEvent[]>(`/api/agents/${id}/events`),
   markAgentEventsRead: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}/events/read`, 'POST'),
   unreadAgentEvents: () => get<Record<string, number>>('/api/agents/events/unread'),

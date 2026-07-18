@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
+import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
 import { api, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentTask, type FileEntry, type FilePreview, type Skill } from '../lib/api';
 import { Markdown } from '../lib/md';
 import { nextFire, untilLabel } from '../lib/cron';
@@ -269,20 +270,23 @@ export function AgentsDirectory() {
 }
 
 /** Full-screen sandboxed viewer for one mini app — same trust model as chat
- *  artifacts: opaque origin, allow-scripts only, no network (FR-13.1). */
-export function AppViewer({ miniApp, onClose }: { miniApp: AgentApp; onClose: () => void }) {
+ *  artifacts: opaque origin, allow-scripts only, no network (FR-13.1); the
+ *  window.yaam bridge (AppHost) adds only what the manifest granted. */
+export function AppViewer({ agentId, miniApp, onClose }: { agentId: string; miniApp: AgentApp; onClose: () => void }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 90, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '4vh 4vw' }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%', maxWidth: 1100, background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow)' }}>
         <div style={{ height: 42, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 14px', borderBottom: '1px solid var(--border)' }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>{miniApp.name}</span>
           {miniApp.description && <span style={{ fontSize: 11, color: 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{miniApp.description}</span>}
-          <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 'auto', flexShrink: 0, fontFamily: 'var(--mono)' }}>sandboxed · no network · updated {ago(miniApp.updatedAt)}</span>
+          <span style={{ fontSize: 10, color: 'var(--text-faint)', marginLeft: 'auto', flexShrink: 0, fontFamily: 'var(--mono)' }}>
+            {(miniApp.approved ?? []).length > 0 ? `caps: ${(miniApp.approved ?? []).join(' ')} · ` : ''}sandboxed · no network · updated {ago(miniApp.updatedAt)}
+          </span>
           <button onClick={onClose} title="Close" style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: 4, display: 'flex', flexShrink: 0 }}>
             <I d={P.x} size={14} />
           </button>
         </div>
-        <iframe title={miniApp.name} sandbox="allow-scripts" srcDoc={miniApp.html} style={{ flex: 1, width: '100%', border: 'none', background: '#fff' }} />
+        <AppHost agentId={agentId} miniApp={miniApp} />
       </div>
     </div>
   );
@@ -653,6 +657,7 @@ export function AgentHome() {
   const a = app.agents.find((x) => x.id === app.selectedAgent);
   const [tab, setTab] = useState<HomeTab>('Dashboard');
   const [openApp, setOpenApp] = useState<AgentApp | null>(null);
+  const [reviewApp, setReviewApp] = useState<AgentApp | null>(null);
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [chatQuery, setChatQuery] = useState('');
@@ -833,6 +838,19 @@ export function AgentHome() {
                       </button>
                     </div>
                     <span style={{ fontSize: 11, color: 'var(--text-dim)', lineHeight: 1.45, minHeight: 16 }}>{x.description || 'no description'}</span>
+                    {(x.capabilities ?? []).length > 0 && (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {(x.capabilities ?? []).map((c) => (
+                          <span key={c} style={{ fontSize: 9, fontFamily: 'var(--mono)', borderRadius: 5, padding: '1px 6px', border: '1px solid var(--border-soft)', color: (x.approved ?? []).includes(c) ? 'var(--green)' : 'var(--text-faint)' }}>{c}</span>
+                        ))}
+                        {pendingCaps(x).length > 0 && (
+                          <button onClick={(e) => { e.stopPropagation(); setReviewApp(x); }}
+                            style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--amber)', border: '1px solid var(--amber)', background: 'none', borderRadius: 5, padding: '1px 7px', cursor: 'pointer' }}>
+                            review {pendingCaps(x).length}
+                          </button>
+                        )}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
                       <span style={{ fontSize: 9.5, color: 'var(--text-faint)', flex: 1, fontFamily: 'var(--mono)' }}>updated {ago(x.updatedAt)}</span>
                       <button title="Open beside this agent's latest conversation" onClick={(e) => { e.stopPropagation(); void app.embedApp(a.id, x); }}
@@ -924,7 +942,8 @@ export function AgentHome() {
           </div>
         )}
       </div>
-      {openApp && <AppViewer miniApp={openApp} onClose={() => setOpenApp(null)} />}
+      {openApp && <AppViewer agentId={a.id} miniApp={openApp} onClose={() => setOpenApp(null)} />}
+      {reviewApp && <CapReviewModal agentId={a.id} miniApp={reviewApp} onClose={() => setReviewApp(null)} />}
     </div>
   );
 }

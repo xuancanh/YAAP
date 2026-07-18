@@ -35,6 +35,7 @@ import { MarketModule } from './market/market.module';
 import { McpModule } from './mcp/mcp.module';
 import { SettingsModule } from './settings/settings.module';
 import { ChannelsModule } from './channels/channels.module';
+import { AppBridgeModule } from './appbridge/app-bridge.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { ChannelsModule } from './channels/channels.module';
     McpModule,
     SettingsModule,
     ChannelsModule,
+    AppBridgeModule,
   ],
 })
 export class AppModule {}

@@ -87,9 +87,11 @@ interface Store {
   embedApp: (agentId: string, miniApp: AgentApp) => Promise<void>;
 
   // artifact panel
-  artifact: { title: string; src: string } | null;
+  artifact: { title: string; src: string; appCtx?: { agentId: string; miniApp: AgentApp } } | null;
   openArtifact: (title: string, src: string) => void;
   closeArtifact: () => void;
+  /** chat.compose bridge op: open the agent's latest chat, prefill the box. */
+  composeInChat: (agentId: string, text: string) => Promise<void>;
 
   // hire modal
   hireId: string | null; setHireId: (id: string | null) => void;
@@ -164,7 +166,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [currentFile, setCurrentFile] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(() => new URLSearchParams(window.location.search).get('agent'));
   const [newAgentOpen, setNewAgentOpen] = useState(false);
-  const [artifact, setArtifact] = useState<{ title: string; src: string } | null>(null);
+  const [artifact, setArtifact] = useState<{ title: string; src: string; appCtx?: { agentId: string; miniApp: AgentApp } } | null>(null);
   const [hireId, setHireId] = useState<string | null>(null);
 
   const currentIdRef = useRef<string | null>(null);
@@ -539,7 +541,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0];
     const id = latest?.id ?? await newChat(agentId);
     openSession(id);
-    setArtifact({ title: miniApp.name, src: miniApp.html });
+    setArtifact({ title: miniApp.name, src: miniApp.html, appCtx: { agentId, miniApp } });
+  }, [sessions, newChat, openSession]);
+
+  /** chat.compose: land the user in the agent's chat with the text staged —
+   *  they read it and press send themselves (free-tier bridge capability). */
+  const composeInChat = useCallback(async (agentId: string, text: string) => {
+    const latest = sessions.filter((s) => s.agentId === agentId)
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0];
+    const id = latest?.id ?? await newChat(agentId);
+    // don't re-open the current session: that would close the embedded app
+    if (currentIdRef.current !== id) openSession(id);
+    setDrafts((d) => ({ ...d, [id]: text }));
   }, [sessions, newChat, openSession]);
 
   const confirmHire = useCallback(async () => {
@@ -569,7 +582,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
     retry, editResend, fork, promote, rate,
     fileTarget, setFileTarget, fileList, refreshFiles, currentFile, setCurrentFile, openFile,
-    selectedAgent, setSelectedAgent, openAgent, newAgentOpen, setNewAgentOpen, embedApp,
+    selectedAgent, setSelectedAgent, openAgent, newAgentOpen, setNewAgentOpen, embedApp, composeInChat,
     artifact, openArtifact, closeArtifact,
     hireId, setHireId, confirmHire,
   };
