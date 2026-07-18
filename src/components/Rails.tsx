@@ -297,6 +297,7 @@ export const SETTINGS_PANES = [
   { id: 'permissions', label: 'Permissions', icon: P.shield },
   { id: 'context', label: 'Context & budget', icon: P.context },
   { id: 'memory', label: 'Workspace memory', icon: P.memoryIcon },
+  { id: 'channels', label: 'Channels', icon: P.chat },
 ];
 
 export function SettingsRail({ pane, setPane }: { pane: string; setPane: (p: string) => void }) {

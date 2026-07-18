@@ -27,6 +27,8 @@ export default () => ({
   maxToolRounds: parseInt(process.env.MAX_TOOL_ROUNDS || '24', 10),
   /** Scheduled agent loops master switch (FR-11.6). */
   loopsEnabled: (process.env.LOOPS_ENABLED || 'true') === 'true',
+  /** Telegram bot token (phase 4). Empty = channel disabled. */
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   /** Estimated provider-input tokens that trigger auto-compaction (FR-7.3). */
   compactionThresholdTokens: parseInt(process.env.COMPACTION_THRESHOLD_TOKENS || '120000', 10),
 });

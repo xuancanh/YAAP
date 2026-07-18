@@ -12,6 +12,8 @@ import { appSettings } from '../database/schema';
 
 const ALLOWED_KEYS = new Set([
   'defaultPermissionMode', 'defaultAgentTypeId', 'defaultTokenCeiling', 'compactionThresholdTokens', 'theme',
+  // Telegram channel (roadmap phase 4): the paired chat and its target agent
+  'telegramChatId', 'telegramDefaultAgentId',
 ]);
 
 @Injectable()

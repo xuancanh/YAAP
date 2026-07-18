@@ -12,6 +12,7 @@ const PANE_META: Record<string, [string, string]> = {
   permissions: ['Permissions', 'Default permission mode for new chats and remembered approvals.'],
   context: ['Context & budget', 'Token ceiling and automatic compaction threshold.'],
   memory: ['Workspace memory', 'Durable chat memory injected as shared context for this workspace.'],
+  channels: ['Channels', 'Talk to your agents where you already are — Telegram first, paired to you alone.'],
 };
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 13, background: 'var(--panel)', padding: '15px 17px' };
@@ -326,6 +327,63 @@ function ProfileSection({ ws }: { ws: Workspace }) {
   );
 }
 
+/** Telegram channel (phase 4): pairing-code flow + default agent pick. */
+function ChannelsPane() {
+  const app = useApp();
+  const [status, setStatus] = useState<{ configured: boolean; paired: boolean; defaultAgentId: string } | null>(null);
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const refresh = () => void api.telegramStatus().then(setStatus).catch(() => setStatus(null));
+  useEffect(refresh, []);
+
+  if (!status) return <div style={{ ...card, fontSize: 12.5, color: 'var(--text-dim)' }}>Loading channel status…</div>;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: status.configured ? (status.paired ? 'var(--green)' : 'var(--amber)') : 'var(--text-faint)' }} />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Telegram</span>
+          <span style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>
+            {status.configured ? (status.paired ? 'paired' : 'not paired') : 'not configured'}
+          </span>
+        </div>
+        {!status.configured && (
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+            Create a bot with @BotFather and start the server with <span style={{ fontFamily: 'var(--mono)' }}>TELEGRAM_BOT_TOKEN=…</span> to enable this channel.
+            The bot answers no one until it is paired to you.
+          </div>
+        )}
+        {status.configured && !status.paired && (
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+            {pairCode ? (
+              <>Send this to your bot within 10 minutes: <span style={{ fontFamily: 'var(--mono)', fontSize: 14, color: 'var(--text)', background: 'var(--code)', border: '1px solid var(--border)', borderRadius: 7, padding: '3px 9px' }}>/pair {pairCode}</span></>
+            ) : (
+              <button onClick={async () => setPairCode((await api.telegramPairCode()).code)}
+                style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 15px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>Generate pairing code</button>
+            )}
+          </div>
+        )}
+        {status.paired && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 220, fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.55 }}>
+              Messages go to the default agent below in an Ask-mode conversation — approval-gated tools never run from the phone.
+            </div>
+            <select value={status.defaultAgentId} onChange={async (e) => { await app.saveSettings({ telegramDefaultAgentId: e.target.value }); refresh(); }}
+              style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', fontSize: 12.5, padding: '7px 10px', outline: 'none' }}>
+              <option value="">Pick a default agent…</option>
+              {app.agents.map((a) => <option key={a.id} value={a.id}>{a.emoji} {a.name}</option>)}
+            </select>
+            <button onClick={async () => { await api.telegramUnpair(); setPairCode(null); refresh(); app.showToast('Telegram unpaired'); }}
+              style={{ background: 'none', border: '1px solid var(--red)', color: 'var(--red)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Unpair</button>
+          </div>
+        )}
+      </div>
+      <div style={{ ...card, fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+        More channels (email, web push) follow the same shape: outbound-only connections, paired to a single owner, and never a backdoor around tool approvals.
+      </div>
+    </div>
+  );
+}
+
 export function SettingsView({ pane }: { pane: string }) {
   const app = useApp();
   const [title, sub] = PANE_META[pane] ?? PANE_META.providers;
@@ -346,6 +404,7 @@ export function SettingsView({ pane }: { pane: string }) {
           {pane === 'permissions' && <PermissionsPane />}
           {pane === 'context' && <ContextPane />}
           {pane === 'memory' && <MemoryPane />}
+          {pane === 'channels' && <ChannelsPane />}
         </div>
       </div>
     </div>

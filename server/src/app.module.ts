@@ -15,6 +15,7 @@
  *  MarketModule      → GET  /api/market, hire       (agent registry, FR-11.7)
  *  McpModule         → CRUD /api/mcp                (server config, FR-10.3)
  *  SettingsModule    → GET/PUT /api/settings        (app-wide defaults)
+ *  ChannelsModule    → /api/channels/telegram        (presence, phase 4)
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
@@ -33,6 +34,7 @@ import { SearchModule } from './search/search.module';
 import { MarketModule } from './market/market.module';
 import { McpModule } from './mcp/mcp.module';
 import { SettingsModule } from './settings/settings.module';
+import { ChannelsModule } from './channels/channels.module';
 
 @Module({
   imports: [
@@ -49,6 +51,7 @@ import { SettingsModule } from './settings/settings.module';
     MarketModule,
     McpModule,
     SettingsModule,
+    ChannelsModule,
   ],
 })
 export class AppModule {}

@@ -316,6 +316,10 @@ export const api = {
   discoverMcp: (id: string) => send<{ tools: Array<{ name: string; description?: string }> }>(`/api/mcp/${id}/discover`, 'POST'),
   market: () => get<MarketItem[]>('/api/market'),
   hire: (id: string) => send<{ ok: boolean; agent: Agent }>(`/api/market/${id}/hire`, 'POST'),
+  // channels (phase 4)
+  telegramStatus: () => get<{ configured: boolean; paired: boolean; defaultAgentId: string }>('/api/channels/telegram/status'),
+  telegramPairCode: () => send<{ code: string; expiresInSeconds: number }>('/api/channels/telegram/pair-code', 'POST'),
+  telegramUnpair: () => send<{ ok: boolean }>('/api/channels/telegram/unpair', 'POST'),
   settings: () => get<Record<string, string>>('/api/settings'),
   putSettings: (patch: Record<string, string>) => send<Record<string, string>>('/api/settings', 'PUT', patch),
   search: (workspaceId: string, q: string) =>

@@ -25,6 +25,6 @@ import { McpModule } from '../mcp/mcp.module';
   imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule],
   controllers: [ChatsController],
   providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService],
-  exports: [ChatsService],
+  exports: [ChatsService, ChatsRepository, TurnLoopService],
 })
 export class ChatsModule {}
