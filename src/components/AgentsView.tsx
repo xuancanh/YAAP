@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
-import { api, type Agent, type AgentApp } from '../lib/api';
+import { api, type Agent, type AgentApp, type AgentTask, type FileEntry, type FilePreview } from '../lib/api';
 import { Markdown } from '../lib/md';
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 14, background: 'var(--panel)' };
@@ -280,7 +280,225 @@ function ConversationRow({ s, onOpen }: { s: { id: string; name: string; autoTit
   );
 }
 
-const TABS = ['Dashboard', 'Mini apps', 'Chats', 'Memory', 'Settings'] as const;
+const ORIGIN_BADGE: Record<AgentTask['origin'], string> = { user: 'you', agent: 'self', promote: 'chat', loop: 'loop' };
+const COLS: Array<{ id: AgentTask['status']; label: string }> = [
+  { id: 'todo', label: 'To do' },
+  { id: 'doing', label: 'In progress' },
+  { id: 'done', label: 'Done' },
+];
+
+/** The agent's own kanban board: drag between columns (or use the arrows),
+ *  quick-add into To do. The agent works the same board via list_tasks /
+ *  add_task / update_task, so loops and chats land here too. */
+function TasksBoard({ a, tasks, reload }: { a: Agent; tasks: AgentTask[]; reload: () => void }) {
+  const app = useApp();
+  const [title, setTitle] = useState('');
+  const dragId = useRef<string | null>(null);
+
+  const move = async (taskId: string, status: AgentTask['status']) => {
+    await api.updateAgentTask(a.id, taskId, { status });
+    reload();
+  };
+  const add = async () => {
+    if (!title.trim()) return;
+    await api.addAgentTask(a.id, { title: title.trim() });
+    setTitle('');
+    reload();
+  };
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void add(); }}
+          placeholder={`Add a task for ${a.name}…`}
+          style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '9px 12px', color: 'var(--text)', fontSize: 13, outline: 'none' }} />
+        <button onClick={() => void add()} disabled={!title.trim()} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: title.trim() ? 'pointer' : 'default', opacity: title.trim() ? 1 : 0.5 }}>Add</button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : 'repeat(3,1fr)', gap: 12, alignItems: 'start' }}>
+        {COLS.map((col, ci) => {
+          const items = tasks.filter((t) => t.status === col.id).sort((x, y) => (x.updatedAt < y.updatedAt ? 1 : -1));
+          return (
+            <div key={col.id}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => { if (dragId.current) void move(dragId.current, col.id); dragId.current = null; }}
+              style={{ ...card, background: 'var(--panel-2)', padding: '10px 10px 12px', minHeight: 120 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 4px 8px' }}>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: col.id === 'done' ? 'var(--green)' : col.id === 'doing' ? 'var(--amber)' : 'var(--text-faint)', flex: 'none' }} />
+                <span style={{ ...label }}>{col.label}</span>
+                <span style={{ fontSize: 10.5, color: 'var(--text-faint)', marginLeft: 'auto' }}>{items.length}</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {items.map((t) => (
+                  <div key={t.id} draggable onDragStart={() => { dragId.current = t.id; }}
+                    style={{ ...card, padding: '10px 12px', cursor: 'grab' }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.45, textDecoration: t.status === 'done' ? 'line-through' : 'none', color: t.status === 'done' ? 'var(--text-dim)' : 'var(--text)' }}>{t.title}</div>
+                    {t.note && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 3, lineHeight: 1.45, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{t.note}</div>}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                      <span style={{ fontSize: 9.5, fontFamily: 'var(--mono)', color: 'var(--text-faint)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '1px 6px' }}>{ORIGIN_BADGE[t.origin] ?? t.origin}</span>
+                      {t.sessionId && (
+                        <button onClick={() => app.openSession(t.sessionId!)} title="Open the source conversation" style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', fontSize: 10.5, cursor: 'pointer', padding: 0 }}>from chat</button>
+                      )}
+                      <span style={{ flex: 1 }} />
+                      {ci > 0 && (
+                        <button onClick={() => void move(t.id, COLS[ci - 1].id)} title={`Move to ${COLS[ci - 1].label}`} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' }}>
+                          <I d={P.chevL} size={13} />
+                        </button>
+                      )}
+                      {ci < COLS.length - 1 && (
+                        <button onClick={() => void move(t.id, COLS[ci + 1].id)} title={`Move to ${COLS[ci + 1].label}`} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' }}>
+                          <I d={P.chevL} size={13} style={{ transform: 'rotate(180deg)' }} />
+                        </button>
+                      )}
+                      <button onClick={async () => { await api.deleteAgentTask(a.id, t.id); reload(); }} title="Delete task" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' }}>
+                        <I d={P.x} size={11} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {items.length === 0 && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', padding: '6px 4px' }}>Nothing here.</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 12, lineHeight: 1.5 }}>
+        {a.name} works this board too: it queues work with <span style={{ fontFamily: 'var(--mono)' }}>add_task</span> and moves cards with <span style={{ fontFamily: 'var(--mono)' }}>update_task</span> — including during scheduled loops. Promoting a chat turn drops it into To do.
+      </div>
+    </div>
+  );
+}
+
+interface Loop { name: string; cron: string; prompt?: string; enabled?: boolean }
+
+/** Schedule editor: the agent's recurring loops (cron + prompt), each firing a
+ *  real auto-mode turn in its "Loop · name" conversation. */
+function ScheduleTab({ a }: { a: Agent }) {
+  const app = useApp();
+  const [name, setName] = useState('');
+  const [cron, setCron] = useState('0 9 * * *');
+  const [prompt, setPrompt] = useState('');
+  const loops = (() => { try { return JSON.parse(a.loops) as Loop[]; } catch { return []; } })();
+
+  const save = async (next: Loop[]) => {
+    try {
+      await api.updateAgent(a.id, { loops: JSON.stringify(next) });
+      await app.refreshAgents();
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'saving loops failed');
+    }
+  };
+
+  const field: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 11px', color: 'var(--text)', fontSize: 12.5, outline: 'none' };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
+      <div style={{ ...card, padding: '14px 16px' }}>
+        <div style={{ ...label, marginBottom: 10 }}>Add a loop</div>
+        <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : '1fr 150px', gap: 8 }}>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Loop name, e.g. Morning sweep" style={field} />
+          <input value={cron} onChange={(e) => setCron(e.target.value)} placeholder="0 9 * * *" style={{ ...field, fontFamily: 'var(--mono)' }} />
+        </div>
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Prompt for each run (optional — defaults to 'follow your charter and do this loop's work')"
+          style={{ ...field, width: '100%', minHeight: 56, resize: 'vertical', marginTop: 8, lineHeight: 1.5 }} />
+        <div style={{ display: 'flex', alignItems: 'center', marginTop: 10 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>5-field cron · runs land in the "Loop · {name.trim() || 'name'}" conversation in auto mode</span>
+          <button disabled={!name.trim() || !cron.trim() || loops.length >= 10} onClick={async () => {
+            await save([...loops, { name: name.trim(), cron: cron.trim(), ...(prompt.trim() ? { prompt: prompt.trim() } : {}) }]);
+            setName(''); setPrompt('');
+            app.showToast('Loop added — it fires on the next matching minute');
+          }} style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 15px', fontSize: 12.5, fontWeight: 600, cursor: name.trim() && cron.trim() ? 'pointer' : 'default', opacity: name.trim() && cron.trim() && loops.length < 10 ? 1 : 0.5 }}>Add loop</button>
+        </div>
+      </div>
+
+      <div style={{ ...card, padding: '6px 8px' }}>
+        {loops.length === 0 && <div style={{ padding: '12px 10px', fontSize: 12.5, color: 'var(--text-dim)' }}>No loops yet — schedule recurring work above, or import an agent profile that ships some.</div>}
+        {loops.map((l, i) => (
+          <div key={`${l.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 10px', borderTop: i > 0 ? '1px solid var(--border-soft)' : 'none' }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: l.enabled === false ? 'var(--text-faint)' : 'var(--green)', flex: 'none' }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, textDecoration: l.enabled === false ? 'line-through' : 'none', color: l.enabled === false ? 'var(--text-dim)' : 'var(--text)' }}>{l.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {l.cron}{l.prompt ? ` · ${l.prompt.replace(/\s+/g, ' ').slice(0, 60)}` : ''}
+              </div>
+            </div>
+            <button onClick={() => void save(loops.map((x, xi) => (xi === i ? { ...x, enabled: x.enabled === false ? undefined : false } as Loop : x)))}
+              style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '4px 11px', fontSize: 11, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>
+              {l.enabled === false ? 'Resume' : 'Pause'}
+            </button>
+            <button onClick={() => { if (window.confirm(`Remove the loop "${l.name}"?`)) void save(loops.filter((_, xi) => xi !== i)); }}
+              title="Remove loop" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 3, display: 'flex', flex: 'none' }}>
+              <I d={P.x} size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The agent's isolated folder as a tab: file list + rich preview. The brain
+ *  (LESSONS.md / JOURNAL.md / knowledge/) lives here. */
+function AgentFilesTab({ a }: { a: Agent }) {
+  const app = useApp();
+  const [files, setFiles] = useState<FileEntry[]>([]);
+  const [sel, setSel] = useState<string | null>('LESSONS.md');
+  const [preview, setPreview] = useState<FilePreview | null>(null);
+
+  useEffect(() => {
+    void api.agentFiles(a.id).then((f) => {
+      setFiles(f.sort((x, y) => x.path.localeCompare(y.path)));
+      setSel((cur) => (cur && f.some((e) => e.path === cur) ? cur : f[0]?.path ?? null));
+    }).catch(() => setFiles([]));
+  }, [a.id]);
+  useEffect(() => {
+    setPreview(null);
+    if (sel) void api.agentPreview(a.id, sel).then(setPreview).catch(() => setPreview(null));
+  }, [a.id, sel]);
+
+  const glyph = (p: string) => p.endsWith('.md') ? '📄' : p.endsWith('.html') ? '🧩' : p.match(/\.(png|jpg|jpeg|gif|svg|webp)$/) ? '🖼️' : '📄';
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : '230px 1fr', gap: 12, alignItems: 'start' }}>
+        <div style={{ ...card, padding: '6px 6px', maxHeight: 480, overflowY: 'auto' }}>
+          {files.map((f) => (
+            <div key={f.path} onClick={() => setSel(f.path)}
+              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 9px', borderRadius: 8, cursor: 'pointer', background: f.path === sel ? 'var(--accent-dim)' : 'none' }}>
+              <span style={{ fontSize: 12, flex: 'none' }}>{glyph(f.path)}</span>
+              <span style={{ flex: 1, fontSize: 12, fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: f.path === sel ? 'var(--accent-hi)' : 'var(--text-dim)' }}>{f.path}</span>
+              <span style={{ fontSize: 9.5, color: 'var(--text-faint)', flex: 'none' }}>{(f.size / 1024).toFixed(1)}K</span>
+            </div>
+          ))}
+          {files.length === 0 && <div style={{ padding: '10px 10px', fontSize: 12, color: 'var(--text-faint)' }}>No files yet.</div>}
+        </div>
+        <div style={{ ...card, overflow: 'hidden', height: 480, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 9, padding: '9px 13px', borderBottom: '1px solid var(--border-soft)', background: 'var(--panel-2)' }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sel ?? 'no file selected'}</span>
+            {preview?.kind === 'html' && preview.text && (
+              <button onClick={() => app.openArtifact(sel!.split('/').pop()!, preview.text!)} style={{ marginLeft: 'auto', background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '4px 11px', fontSize: 11, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Open preview</button>
+            )}
+          </div>
+          <div style={{ flex: 1, overflow: 'auto', background: 'var(--code)' }}>
+            {sel && preview === null && <div style={{ padding: 16, fontSize: 12.5, color: 'var(--text-faint)' }}>Loading…</div>}
+            {preview?.kind === 'image' && preview.base64 && (
+              <div style={{ padding: 16 }}><img src={`data:${preview.contentType};base64,${preview.base64}`} alt={sel ?? ''} style={{ maxWidth: '100%', borderRadius: 8 }} /></div>
+            )}
+            {preview?.kind === 'html' && preview.text && (
+              <iframe title={sel ?? 'preview'} sandbox="allow-scripts" srcDoc={preview.text} style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />
+            )}
+            {(preview?.kind === 'markdown' || preview?.kind === 'text') && (
+              <pre style={{ margin: 0, padding: '14px 16px', fontFamily: 'var(--mono)', fontSize: 12, lineHeight: 1.65, color: 'var(--text-dim)', whiteSpace: 'pre-wrap' }}>{preview.text}{preview.truncated ? '\n…(truncated)' : ''}</pre>
+            )}
+            {preview?.kind === 'binary' && <div style={{ padding: 16, fontSize: 12.5, color: 'var(--text-faint)' }}>Binary file · {preview.size} bytes</div>}
+          </div>
+        </div>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 10 }}>
+        Isolated fs — only {a.name}'s conversations read and write here. <span style={{ fontFamily: 'var(--mono)' }}>LESSONS.md</span> and <span style={{ fontFamily: 'var(--mono)' }}>JOURNAL.md</span> are its memory; distillation appends to them.
+      </div>
+    </div>
+  );
+}
+
+const TABS = ['Dashboard', 'Tasks', 'Schedule', 'Mini apps', 'Chats', 'Files', 'Settings'] as const;
 type HomeTab = (typeof TABS)[number];
 
 export function AgentHome() {
@@ -288,42 +506,49 @@ export function AgentHome() {
   const a = app.agents.find((x) => x.id === app.selectedAgent);
   const [tab, setTab] = useState<HomeTab>('Dashboard');
   const [openApp, setOpenApp] = useState<AgentApp | null>(null);
-  const [brain, setBrain] = useState<{ lessons: string; journal: string } | null>(null);
+  const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [chatQuery, setChatQuery] = useState('');
   const [editingCharter, setEditingCharter] = useState(false);
   const [charterDraft, setCharterDraft] = useState('');
   const stats = a ? app.agentStats[a.id] : undefined;
+  const agentId = a?.id;
 
-  const refreshBrain = (id: string) => {
-    void Promise.all([
-      api.agentPreview(id, 'LESSONS.md').then((p) => p.text ?? '').catch(() => ''),
-      api.agentPreview(id, 'JOURNAL.md').then((p) => p.text ?? '').catch(() => ''),
-    ]).then(([lessons, journal]) => setBrain({ lessons, journal }));
-  };
+  // ?tab= deep link (screenshot verification); consumed on the first open
+  const urlTab = useRef<HomeTab | null>((() => {
+    const q = new URLSearchParams(window.location.search).get('tab');
+    return TABS.includes(q as HomeTab) ? (q as HomeTab) : null;
+  })());
   useEffect(() => {
-    setBrain(null);
-    setTab('Dashboard');
+    if (!agentId) return; // agents not loaded yet — keep the deep link intact
+    setTab(urlTab.current ?? 'Dashboard');
+    urlTab.current = null;
     setEditingCharter(false);
-  }, [a?.id]);
+    setChatQuery('');
+  }, [agentId]);
   useEffect(() => {
-    if (tab === 'Memory' && brain === null && a) refreshBrain(a.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, a?.id]);
+    if (agentId) void api.agentTasks(agentId).then(setTasks).catch(() => setTasks([]));
+    else setTasks([]);
+  }, [agentId]);
 
   if (!a) return null;
+  const reloadTasks = () => void api.agentTasks(a.id).then(setTasks).catch(() => {});
   const apps = parseApps(a);
-  const loops = (() => { try { return JSON.parse(a.loops) as Array<{ name: string; cron: string }>; } catch { return []; } })();
+  const loops = (() => { try { return JSON.parse(a.loops) as Loop[]; } catch { return []; } })();
+  const activeLoops = loops.filter((l) => l.enabled !== false);
+  const openTasks = tasks.filter((t) => t.status !== 'done');
   const conversations = app.sessions
     .filter((s) => s.agentId === a.id)
     .sort((x, y) => (x.updatedAt < y.updatedAt ? 1 : -1));
   const filteredChats = chatQuery.trim()
     ? conversations.filter((c) => (c.name || c.autoTitle).toLowerCase().includes(chatQuery.trim().toLowerCase()))
     : conversations;
-  const counts: Partial<Record<HomeTab, number>> = { 'Mini apps': apps.length, Chats: conversations.length };
+  const counts: Partial<Record<HomeTab, number>> = {
+    Tasks: openTasks.length, Schedule: activeLoops.length, 'Mini apps': apps.length, Chats: conversations.length,
+  };
 
   return (
     <div style={{ flex: 1, overflowY: 'auto' }}>
-      <div style={{ maxWidth: 880, margin: '0 auto', padding: '24px 26px 60px' }}>
+      <div style={{ maxWidth: 920, margin: '0 auto', padding: '24px 26px 60px' }}>
         <button onClick={() => { app.setSelectedAgent(null); app.setHomeView('agent'); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 12.5, cursor: 'pointer', padding: 0, marginBottom: 16 }}>
           <I d={P.chevL} size={14} />All agents
         </button>
@@ -359,13 +584,26 @@ export function AgentHome() {
               marginBottom: -1,
             }}>
               {t}
-              {counts[t] ? <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>{counts[t]}</span> : null}
+              {counts[t] ? <span style={{ marginLeft: 6, fontSize: 10, color: t === 'Tasks' ? 'var(--amber)' : 'var(--text-faint)' }}>{counts[t]}</span> : null}
             </button>
           ))}
         </div>
 
         {tab === 'Dashboard' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {[
+                { v: String(openTasks.length), l: 'open tasks', go: 'Tasks' as HomeTab },
+                { v: String(activeLoops.length), l: 'active loops', go: 'Schedule' as HomeTab },
+                { v: String(apps.length), l: 'mini apps', go: 'Mini apps' as HomeTab },
+                { v: String(conversations.length), l: 'conversations', go: 'Chats' as HomeTab },
+              ].map((c) => (
+                <button key={c.l} onClick={() => setTab(c.go)} style={{ ...card, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                  <span style={{ fontSize: 17, fontWeight: 700 }}>{c.v}</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{c.l}</span>
+                </button>
+              ))}
+            </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
                 <span style={label}>Dashboard</span>
@@ -392,6 +630,10 @@ export function AgentHome() {
             )}
           </div>
         )}
+
+        {tab === 'Tasks' && <TasksBoard a={a} tasks={tasks} reload={reloadTasks} />}
+        {tab === 'Schedule' && <ScheduleTab a={a} />}
+        {tab === 'Files' && <AgentFilesTab a={a} />}
 
         {tab === 'Mini apps' && (
           <div style={{ marginTop: 18 }}>
@@ -453,35 +695,6 @@ export function AgentHome() {
           </div>
         )}
 
-        {tab === 'Memory' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button onClick={() => app.openFile({ kind: 'agent', id: a.id }, 'LESSONS.md')} style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', fontSize: 11.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
-                Open in files<I d={P.external} size={12} />
-              </button>
-              <button onClick={() => refreshBrain(a.id)} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '4px 12px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Refresh</button>
-            </div>
-            {(['lessons', 'journal'] as const).map((k) => (
-              <div key={k}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
-                  <span style={label}>{k === 'lessons' ? 'Lessons' : 'Journal'}</span>
-                  <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
-                    {k === 'lessons' ? 'corrections and learnings (distill, your 👎 notes)' : 'episodic log distilled after conversations'}
-                  </span>
-                </div>
-                <div style={{ ...card, maxHeight: 380, overflowY: 'auto' }}>
-                  <pre style={{ margin: 0, padding: 16, fontFamily: 'var(--mono)', fontSize: 12, lineHeight: 1.65, color: 'var(--text-dim)', whiteSpace: 'pre-wrap' }}>
-                    {brain === null ? 'loading…' : brain[k].trim() || (k === 'lessons' ? 'No lessons yet — they accumulate from feedback and distillation.' : 'No journal entries yet — the agent reflects after conversations.')}
-                  </pre>
-                </div>
-              </div>
-            ))}
-            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-              The file brain lives in this agent's isolated fs — <span style={{ fontFamily: 'var(--mono)' }}>LESSONS.md · JOURNAL.md · knowledge/</span> — browsable from its Files folder in the rail.
-            </span>
-          </div>
-        )}
-
         {tab === 'Settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
             <div style={{ ...card, padding: '16px 18px' }}>
@@ -504,23 +717,6 @@ export function AgentHome() {
             </div>
 
             <div style={{ ...card, padding: '16px 18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={label}>Scheduled loops</span>
-                <span style={{ fontSize: 11, color: 'var(--green)' }}>{loops.length} configured</span>
-              </div>
-              {loops.length === 0 && <div style={{ fontSize: 12.5, color: 'var(--text-faint)', padding: '8px 0' }}>No loops — scheduled prompts land in a "Loop · name" conversation.</div>}
-              {loops.map((l) => (
-                <div key={l.name} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '9px 0', borderTop: '1px solid var(--border-soft)' }}>
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', flex: 'none' }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{l.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--mono)' }}>{l.cron}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ ...card, padding: '16px 18px' }}>
               <div style={{ ...label, marginBottom: 12 }}>Ratings</div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 16 }}>
                 <div>
@@ -536,7 +732,7 @@ export function AgentHome() {
             <div style={{ ...card, padding: '16px 18px', borderColor: 'color-mix(in oklab,var(--red) 40%,var(--border))' }}>
               <div style={{ ...label, marginBottom: 8, color: 'var(--red)' }}>Danger zone</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                <span style={{ flex: 1, fontSize: 12.5, color: 'var(--text-dim)', minWidth: 200 }}>Deleting removes the agent, its file brain, and its mini apps. Conversations stay in the workspace.</span>
+                <span style={{ flex: 1, fontSize: 12.5, color: 'var(--text-dim)', minWidth: 200 }}>Deleting removes the agent, its file brain, tasks, and mini apps. Conversations stay in the workspace.</span>
                 <button onClick={async () => {
                   if (!window.confirm(`Delete ${a.name}? Its file brain and mini apps are removed permanently.`)) return;
                   await api.deleteAgent(a.id);

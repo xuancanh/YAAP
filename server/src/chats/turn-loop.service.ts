@@ -79,8 +79,41 @@ const AGENT_TOOLS: AiToolSpec[] = [
       required: ['name', 'html'],
     },
   },
+  {
+    name: 'list_tasks',
+    description: 'Read your kanban board: every task with its short id, status (todo/doing/done), and title. Check it at the start of scheduled loops.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'add_task',
+    description: 'Add a task to your kanban board (status starts at todo). Use it to queue work you notice but are not doing right now.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short imperative task title.' },
+        note: { type: 'string', description: 'Optional detail or acceptance criteria.' },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'update_task',
+    description: 'Update one of your tasks by the short id from list_tasks: move it between todo/doing/done or refine its title/note. Move a task to doing when you start it and done when you finish.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The short task id shown by list_tasks.' },
+        status: { type: 'string', enum: ['todo', 'doing', 'done'] },
+        title: { type: 'string' },
+        note: { type: 'string' },
+      },
+      required: ['id'],
+    },
+  },
 ];
 const AGENT_TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
+/** Agent tools that only read state; they auto-run even in Ask mode. */
+const AGENT_READONLY_TOOLS = new Set(['list_tasks']);
 
 const exactKey = (call: AiToolCall): string =>
   `${call.name}:${createHash('sha256').update(JSON.stringify(call.input)).digest('hex').slice(0, 16)}`;
@@ -293,12 +326,35 @@ export class TurnLoopService {
     if (name.startsWith(MCP_TOOL_PREFIX)) return this.mcp.execute(name, input);
     if (AGENT_TOOL_NAMES.has(name)) {
       if (!session.agentId) throw new Error(`${name} is only available in chats owned by a durable agent`);
-      if (name === 'update_dashboard') return this.agents.updateDashboard(session.agentId, String(input.markdown ?? ''));
-      return this.agents.saveApp(session.agentId, {
-        name: String(input.name ?? ''),
-        description: typeof input.description === 'string' ? input.description : undefined,
-        html: String(input.html ?? ''),
-      });
+      const agentId = session.agentId;
+      switch (name) {
+        case 'update_dashboard':
+          return this.agents.updateDashboard(agentId, String(input.markdown ?? ''));
+        case 'save_app':
+          return this.agents.saveApp(agentId, {
+            name: String(input.name ?? ''),
+            description: typeof input.description === 'string' ? input.description : undefined,
+            html: String(input.html ?? ''),
+          });
+        case 'list_tasks':
+          return this.agents.tasksForModel(agentId);
+        case 'add_task': {
+          const task = await this.agents.addTask(agentId, {
+            title: String(input.title ?? ''),
+            note: typeof input.note === 'string' ? input.note : undefined,
+            origin: 'agent',
+          });
+          return `Task [${task.id.slice(0, 8)}] added to todo: ${task.title}`;
+        }
+        default: {
+          const task = await this.agents.updateTaskByPrefix(agentId, String(input.id ?? ''), {
+            status: typeof input.status === 'string' ? input.status : undefined,
+            title: typeof input.title === 'string' ? input.title : undefined,
+            note: typeof input.note === 'string' ? input.note : undefined,
+          });
+          return `Task [${task.id.slice(0, 8)}] is now (${task.status}) ${task.title}`;
+        }
+      }
     }
     return this.tools.execute(session.workspaceId, name, input);
   }
@@ -315,7 +371,7 @@ export class TurnLoopService {
     // them is opaque, so they gate like mutations.
     const readOnly = call.name.startsWith(SKILL_TOOL_PREFIX) ? true
       : call.name.startsWith(MCP_TOOL_PREFIX) ? false
-        : AGENT_TOOL_NAMES.has(call.name) ? (session.agentId ? false : undefined)
+        : AGENT_TOOL_NAMES.has(call.name) ? (session.agentId ? AGENT_READONLY_TOOLS.has(call.name) : undefined)
           : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
     if (session.permissionMode === 'auto') return { verdict: 'auto', remember: true };

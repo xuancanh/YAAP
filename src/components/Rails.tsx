@@ -178,17 +178,21 @@ function AgentGroup({ id, name, emoji, avatar, items, count, isAgent }: {
         <div style={{ paddingLeft: 10, borderLeft: '1px solid var(--border-soft)', marginLeft: 19 }}>
           {items.map((s) => <SessionRow key={s.id} s={s} />)}
           {items.length === 0 && <div style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--text-faint)' }}>No conversations.</div>}
-          <div onClick={() => {
-            const next = !(fsOpen && fsLoaded);
-            setFsOpen(next);
-            if (next) { app.setFileTarget(fsTarget); app.setCurrentFile(null); }
-          }} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 10px', borderRadius: 8, cursor: 'pointer', margin: '1px 0', color: 'var(--text-dim)' }}>
-            <I d={P.chevD} size={11} stroke="var(--text-faint)" style={{ transform: fsOpen && fsLoaded ? 'rotate(0deg)' : 'rotate(-90deg)', flex: 'none' }} />
-            <I d={P.folder} size={13} style={{ flex: 'none' }} />
-            <span style={{ fontSize: 12, fontWeight: 500 }}>Files</span>
-            <span style={{ fontSize: 10, color: 'var(--text-faint)', fontFamily: 'var(--mono)', marginLeft: 'auto' }}>{isAgent ? 'isolated' : 'shared'}</span>
-          </div>
-          {fsOpen && fsLoaded && <FileTree indent={26} />}
+          {/* agents keep their folder on the home page's Files tab; only the
+              shared workspace fs is browsable inline here */}
+          {!isAgent && (<>
+            <div onClick={() => {
+              const next = !(fsOpen && fsLoaded);
+              setFsOpen(next);
+              if (next) { app.setFileTarget(fsTarget); app.setCurrentFile(null); }
+            }} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 10px', borderRadius: 8, cursor: 'pointer', margin: '1px 0', color: 'var(--text-dim)' }}>
+              <I d={P.chevD} size={11} stroke="var(--text-faint)" style={{ transform: fsOpen && fsLoaded ? 'rotate(0deg)' : 'rotate(-90deg)', flex: 'none' }} />
+              <I d={P.folder} size={13} style={{ flex: 'none' }} />
+              <span style={{ fontSize: 12, fontWeight: 500 }}>Files</span>
+              <span style={{ fontSize: 10, color: 'var(--text-faint)', fontFamily: 'var(--mono)', marginLeft: 'auto' }}>shared</span>
+            </div>
+            {fsOpen && fsLoaded && <FileTree indent={26} />}
+          </>)}
         </div>
       )}
     </div>

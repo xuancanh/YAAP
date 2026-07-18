@@ -27,6 +27,19 @@ export interface Agent {
   createdAt: string;
 }
 
+/** One card on an agent's kanban board. */
+export interface AgentTask {
+  id: string;
+  agentId: string;
+  title: string;
+  note: string;
+  status: 'todo' | 'doing' | 'done';
+  origin: 'user' | 'agent' | 'promote' | 'loop';
+  sessionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** A self-built mini app — rendered only in a network-blocked sandbox. */
 export interface AgentApp {
   id: string;
@@ -239,6 +252,11 @@ export const api = {
   updateAgent: (id: string, patch: Record<string, unknown>) => send<Agent>(`/api/agents/${id}`, 'PATCH', patch),
   deleteAgent: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}`, 'DELETE'),
   deleteAgentApp: (id: string, appId: string) => send<{ ok: boolean }>(`/api/agents/${id}/apps/${appId}`, 'DELETE'),
+  agentTasks: (id: string) => get<AgentTask[]>(`/api/agents/${id}/tasks`),
+  addAgentTask: (id: string, input: { title: string; note?: string }) => send<AgentTask>(`/api/agents/${id}/tasks`, 'POST', input),
+  updateAgentTask: (id: string, taskId: string, patch: { title?: string; note?: string; status?: string }) =>
+    send<AgentTask>(`/api/agents/${id}/tasks/${taskId}`, 'PATCH', patch),
+  deleteAgentTask: (id: string, taskId: string) => send<{ ok: boolean }>(`/api/agents/${id}/tasks/${taskId}`, 'DELETE'),
   agentStats: (id: string) => get<AgentStats>(`/api/agents/${id}/stats`),
   agentFiles: (id: string) => get<FileEntry[]>(`/api/agents/${id}/files`),
   agentPreview: (id: string, path: string) => get<FilePreview>(`/api/agents/${id}/preview?path=${enc(path)}`),

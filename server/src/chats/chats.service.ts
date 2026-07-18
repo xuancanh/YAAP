@@ -3,7 +3,7 @@
  * are not the turn loop: rename/pin/tags/archive, drafts, permission mode,
  * /clear, and markdown export (FR-6.7).
  */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ChatsRepository, ChatSession } from './chats.repository';
 import { nowIso } from '../common/ids.util';
 import { AgentsService } from '../agents/agents.service';
@@ -127,12 +127,19 @@ export class ChatsService {
     return { ok: true, input: turn.input };
   }
 
-  /** Promote a turn to a board task; the handoff is recorded (FR-6.4). */
+  /** Promote a turn onto the owning agent's kanban board (FR-6.4). */
   async promoteTurn(id: string, turnId: string) {
-    await this.get(id);
+    const session = await this.get(id);
     const turn = await this.repo.getTurn(turnId);
     if (!turn || turn.sessionId !== id) throw new NotFoundException(`turn ${turnId}`);
-    const handoff = { task: `#${100 + Math.floor(Math.random() * 900)}`, at: nowIso() };
+    if (!session.agentId) throw new BadRequestException('only chats owned by a durable agent can promote turns to its board');
+    const task = await this.agents.addTask(session.agentId, {
+      title: turn.input.replace(/\s+/g, ' ').slice(0, 120),
+      note: `Promoted from the chat "${session.name || session.autoTitle || 'untitled'}".`,
+      origin: 'promote',
+      sessionId: id,
+    });
+    const handoff = { task: `[${task.id.slice(0, 8)}] ${task.title}`.slice(0, 140), taskId: task.id, at: nowIso() };
     await this.repo.updateTurn(turnId, { taskHandoff: JSON.stringify(handoff) });
     return handoff;
   }

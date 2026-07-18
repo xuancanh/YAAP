@@ -82,6 +82,15 @@ export function agentsStub(): AgentsService & { calls: Array<{ method: string; a
     addFeedback: async () => ({ ok: true }),
     updateDashboard: async (...args: unknown[]) => { calls.push({ method: 'updateDashboard', args }); return 'Dashboard updated.'; },
     saveApp: async (...args: unknown[]) => { calls.push({ method: 'saveApp', args }); return 'Mini app saved.'; },
+    tasksForModel: async (...args: unknown[]) => { calls.push({ method: 'tasksForModel', args }); return 'The board is empty.'; },
+    addTask: async (...args: unknown[]) => {
+      calls.push({ method: 'addTask', args });
+      return { id: 'task00000000', title: (args[1] as { title: string }).title, status: 'todo' };
+    },
+    updateTaskByPrefix: async (...args: unknown[]) => {
+      calls.push({ method: 'updateTaskByPrefix', args });
+      return { id: 'task00000000', title: 't', status: (args[2] as { status?: string }).status ?? 'todo' };
+    },
   };
   return stub as unknown as AgentsService & { calls: Array<{ method: string; args: unknown[] }> };
 }

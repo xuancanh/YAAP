@@ -104,7 +104,9 @@ function AssistantFooter({ turn }: { turn?: ChatTurn }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginTop: 12, color: 'var(--text-faint)' }}>
         <button onClick={() => void app.retry()} title="Retry" style={ghostBtn}><I d={P.retry} size={14} /></button>
         <button onClick={() => void app.fork(turn.id)} title="Fork" style={ghostBtn}><I d={P.forkIcon} size={14} /></button>
-        <button onClick={() => void app.promote(turn.id)} title="Promote to board task" style={ghostBtn}><I d={P.board} size={14} /></button>
+        {app.current?.agentId && (
+          <button onClick={() => void app.promote(turn.id)} title="Promote to this agent's task board" style={ghostBtn}><I d={P.board} size={14} /></button>
+        )}
         <div style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 5px' }} />
         <button onClick={() => void app.rate(turn.id, 'up')} title="Good reply" style={{ ...ghostBtn, color: turn.rating === 'up' ? 'var(--green)' : undefined }}>
           <I d={P.thumbUp} size={14} sw={1.8} fill={turn.rating === 'up' ? 'var(--green)' : 'none'} />

@@ -16,7 +16,7 @@ import { ChatsRepository } from './chats.repository';
 import { TurnLoopService } from './turn-loop.service';
 import { cronMatches } from './cron.util';
 
-interface LoopDef { name: string; cron: string; prompt?: string }
+interface LoopDef { name: string; cron: string; prompt?: string; enabled?: boolean }
 
 @Injectable()
 export class LoopsService implements OnModuleInit, OnModuleDestroy {
@@ -48,6 +48,7 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
       let loops: LoopDef[];
       try { loops = JSON.parse(agent.loops) as LoopDef[]; } catch { continue; }
       for (const loop of loops) {
+        if (loop?.enabled === false) continue; // paused in the schedule editor
         if (!loop?.cron || !cronMatches(loop.cron, now)) continue;
         const key = `${agent.id}:${loop.name}`;
         if (this.lastRun.get(key) === stamp) continue;

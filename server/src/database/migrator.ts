@@ -177,6 +177,25 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0005-agent-tasks',
+    up: async (db) => {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS agent_tasks (
+          "id" TEXT PRIMARY KEY,
+          "agentId" TEXT NOT NULL,
+          "title" TEXT NOT NULL,
+          "note" TEXT NOT NULL DEFAULT '',
+          "status" TEXT NOT NULL DEFAULT 'todo',
+          "origin" TEXT NOT NULL DEFAULT 'user',
+          "sessionId" TEXT,
+          "createdAt" TEXT NOT NULL,
+          "updatedAt" TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_tasks_agent ON agent_tasks ("agentId", "status");
+      `);
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {

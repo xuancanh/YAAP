@@ -56,6 +56,24 @@ export const agents = pgTable('agents', {
   createdAt: text('createdAt').notNull(),
 });
 
+/** Per-agent kanban board (§11): the agent's own work queue. Tasks arrive
+ *  from the user, from promoted chat turns, or from the agent itself
+ *  (add_task) — often during scheduled loops. */
+export const agentTasks = pgTable('agent_tasks', {
+  id: text('id').primaryKey(),
+  agentId: text('agentId').notNull(),
+  title: text('title').notNull(),
+  note: text('note').notNull().default(''),
+  /** todo | doing | done. */
+  status: text('status').notNull().default('todo'),
+  /** user | agent | promote | loop — where the task came from. */
+  origin: text('origin').notNull().default('user'),
+  /** Chat session the task was promoted from, when origin = promote. */
+  sessionId: text('sessionId'),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+});
+
 export const agentTypes = pgTable('agent_types', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),

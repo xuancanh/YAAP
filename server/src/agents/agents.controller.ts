@@ -27,6 +27,19 @@ class UpdateAgentDto {
   @IsOptional() @IsString() role?: string;
   /** JSON [from,to] gradient pair. */
   @IsOptional() @IsString() colors?: string;
+  /** JSON array of loops — validated server-side (≤10, bounded fields). */
+  @IsOptional() @IsString() loops?: string;
+}
+
+class CreateTaskDto {
+  @IsString() title!: string;
+  @IsOptional() @IsString() note?: string;
+}
+
+class UpdateTaskDto {
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() note?: string;
+  @IsOptional() @IsIn(['todo', 'doing', 'done']) status?: string;
 }
 
 class FeedbackDto {
@@ -51,6 +64,14 @@ export class AgentsController {
   @Get(':id/stats') stats(@Param('id') id: string) { return this.agents.stats(id); }
   @Get(':id/apps') apps(@Param('id') id: string) { return this.agents.listApps(id); }
   @Delete(':id/apps/:appId') deleteApp(@Param('id') id: string, @Param('appId') appId: string) { return this.agents.deleteApp(id, appId); }
+
+  // ---- the agent's kanban board (§11) ----
+  @Get(':id/tasks') tasks(@Param('id') id: string) { return this.agents.listTasks(id); }
+  @Post(':id/tasks') addTask(@Param('id') id: string, @Body() dto: CreateTaskDto) { return this.agents.addTask(id, dto); }
+  @Patch(':id/tasks/:taskId') updateTask(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: UpdateTaskDto) {
+    return this.agents.updateTask(id, taskId, dto);
+  }
+  @Delete(':id/tasks/:taskId') deleteTask(@Param('id') id: string, @Param('taskId') taskId: string) { return this.agents.deleteTask(id, taskId); }
   @Post('import') importJson(@Body() body: Record<string, unknown>) { return this.agents.importJson(body); }
 
   @Get(':id/export')

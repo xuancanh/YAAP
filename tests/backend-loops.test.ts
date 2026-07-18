@@ -7,6 +7,7 @@ import { cronMatches } from '../server/src/chats/cron.util';
 import { LoopsService } from '../server/src/chats/loops.service';
 import { DistillService } from '../server/src/chats/distill.service';
 import { ChatsRepository } from '../server/src/chats/chats.repository';
+import { ChatsService } from '../server/src/chats/chats.service';
 import { TurnLoopService } from '../server/src/chats/turn-loop.service';
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
@@ -180,4 +181,60 @@ test('mini apps: save_app upserts by name, enforces caps, delete removes (§11)'
   const profile = await agents.exportJson(a.id);
   const copy = await agents.importJson({ ...profile, name: 'Appy Copy' });
   assert.equal((await agents.listApps(copy.id))[0].name, 'Notes');
+});
+
+test('agent kanban: task CRUD, prefix updates, and bounds (§11)', async () => {
+  const { agents } = await setup([]);
+  const a = await agents.create({ name: 'Planner' });
+
+  const t1 = await agents.addTask(a.id, { title: 'Rotate staging keys', note: 'before Friday' });
+  await agents.addTask(a.id, { title: 'Audit MCP perms', origin: 'agent' });
+  assert.equal((await agents.listTasks(a.id)).length, 2);
+  assert.equal(t1.status, 'todo');
+
+  // move by full id and by the 8-char prefix the model sees
+  await agents.updateTask(a.id, t1.id, { status: 'doing' });
+  const moved = await agents.updateTaskByPrefix(a.id, t1.id.slice(0, 8), { status: 'done' });
+  assert.equal(moved.status, 'done');
+
+  await assert.rejects(agents.addTask(a.id, { title: '   ' }), /title is required/);
+  await assert.rejects(agents.updateTask(a.id, t1.id, { status: 'blocked' }), /status must be/);
+  await assert.rejects(agents.updateTaskByPrefix(a.id, 'zzz', { status: 'done' }), /matches 0 tasks/);
+
+  const board = await agents.tasksForModel(a.id);
+  assert.match(board, /\(done\) Rotate staging keys/);
+  assert.match(board, /\(todo\) Audit MCP perms/);
+
+  await agents.deleteTask(a.id, t1.id);
+  assert.equal((await agents.listTasks(a.id)).length, 1);
+});
+
+test('promoted turns land on the owning agent board; agent-less chats refuse (FR-6.4)', async () => {
+  const { db, agents, repo } = await setup([]);
+  const chats = new ChatsService(repo, agents);
+  const a = await agents.create({ name: 'Owner' });
+  const s = await repo.createSession({ workspaceId: 'ws1', agentId: a.id, name: 'planning' });
+  const turn = await repo.createTurn(s.id, { text: 'please rotate the staging keys tomorrow' });
+
+  const handoff = await chats.promoteTurn(s.id, turn.id);
+  const tasks = await agents.listTasks(a.id);
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].origin, 'promote');
+  assert.equal(tasks[0].sessionId, s.id);
+  assert.match(handoff.task, /rotate the staging keys/);
+
+  const direct = await repo.createSession({ workspaceId: 'ws1', name: 'no agent' });
+  const t2 = await repo.createTurn(direct.id, { text: 'x' });
+  await assert.rejects(chats.promoteTurn(direct.id, t2.id), /durable agent/);
+  void db;
+});
+
+test('disabled loops do not fire (§11 schedule editor)', async () => {
+  const { agents, workspaces, repo, loops } = await setup([loopRound]);
+  await workspaces.list();
+  await agents.create({ name: 'Paused', loops: [{ name: 'Off duty', cron: '0 2 * * *', enabled: false }] });
+  await loops.tick(new Date(2026, 6, 16, 2, 0));
+  await new Promise((r) => setTimeout(r, 30));
+  const ws = (await workspaces.list())[0];
+  assert.equal((await repo.listSessions(ws.id)).length, 0);
 });
