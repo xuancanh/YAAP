@@ -65,6 +65,11 @@ export class AgentsController {
   @Get(':id/apps') apps(@Param('id') id: string) { return this.agents.listApps(id); }
   @Delete(':id/apps/:appId') deleteApp(@Param('id') id: string, @Param('appId') appId: string) { return this.agents.deleteApp(id, appId); }
 
+  // ---- the agent inbox: proactive-work notifications (phase 2) ----
+  @Get('events/unread') unreadEvents() { return this.agents.unreadEventCounts(); }
+  @Get(':id/events') events(@Param('id') id: string) { return this.agents.listEvents(id); }
+  @Post(':id/events/read') markEventsRead(@Param('id') id: string) { return this.agents.markEventsRead(id); }
+
   // ---- the agent's kanban board (§11) ----
   @Get(':id/tasks') tasks(@Param('id') id: string) { return this.agents.listTasks(id); }
   @Post(':id/tasks') addTask(@Param('id') id: string, @Body() dto: CreateTaskDto) { return this.agents.addTask(id, dto); }

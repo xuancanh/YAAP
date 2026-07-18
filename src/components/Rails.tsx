@@ -166,6 +166,9 @@ function AgentGroup({ id, name, emoji, avatar, items, count, isAgent }: {
         onClick={() => { if (isAgent) app.openAgent(id); else setOpen(!open); }}>
         <div style={{ width: 24, height: 24, borderRadius: 7, background: avatar, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 12.5 }}>{emoji}</div>
         <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+        {isAgent && (app.unread[id] ?? 0) > 0 && (
+          <span title="Unread activity from loops and proactive work" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px' }}>{app.unread[id]}</span>
+        )}
         <span style={{ fontSize: 10.5, color: 'var(--text-faint)', background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px' }}>{count}</span>
         <button onClick={(e) => { e.stopPropagation(); void app.newChat(isAgent ? id : null); }} title="New chat" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' }}>
           <I d={P.plus} size={14} />

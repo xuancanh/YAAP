@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
-import { api, type Agent, type AgentApp, type AgentTask, type FileEntry, type FilePreview } from '../lib/api';
+import { api, type Agent, type AgentApp, type AgentEvent, type AgentTask, type FileEntry, type FilePreview } from '../lib/api';
 import { Markdown } from '../lib/md';
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 14, background: 'var(--panel)' };
@@ -368,7 +368,7 @@ function TasksBoard({ a, tasks, reload }: { a: Agent; tasks: AgentTask[]; reload
   );
 }
 
-interface Loop { name: string; cron: string; prompt?: string; enabled?: boolean }
+interface Loop { name: string; cron: string; prompt?: string; enabled?: boolean; model?: string; budgetTokens?: number }
 
 /** Schedule editor: the agent's recurring loops (cron + prompt), each firing a
  *  real auto-mode turn in its "Loop · name" conversation. */
@@ -377,6 +377,8 @@ function ScheduleTab({ a }: { a: Agent }) {
   const [name, setName] = useState('');
   const [cron, setCron] = useState('0 9 * * *');
   const [prompt, setPrompt] = useState('');
+  const [model, setModel] = useState('');
+  const [budget, setBudget] = useState('');
   const loops = (() => { try { return JSON.parse(a.loops) as Loop[]; } catch { return []; } })();
 
   const save = async (next: Loop[]) => {
@@ -399,11 +401,20 @@ function ScheduleTab({ a }: { a: Agent }) {
         </div>
         <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Prompt for each run (optional — defaults to 'follow your charter and do this loop's work')"
           style={{ ...field, width: '100%', minHeight: 56, resize: 'vertical', marginTop: 8, lineHeight: 1.5 }} />
+        <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : '1fr 1fr', gap: 8, marginTop: 8 }}>
+          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Model override (optional — a cheap model keeps heartbeats near-free)" style={{ ...field, fontFamily: 'var(--mono)' }} />
+          <input value={budget} onChange={(e) => setBudget(e.target.value.replace(/[^0-9]/g, ''))} placeholder="Token budget (optional — hard stop, surfaces in Activity)" style={{ ...field, fontFamily: 'var(--mono)' }} />
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', marginTop: 10 }}>
           <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>5-field cron · runs land in the "Loop · {name.trim() || 'name'}" conversation in auto mode</span>
           <button disabled={!name.trim() || !cron.trim() || loops.length >= 10} onClick={async () => {
-            await save([...loops, { name: name.trim(), cron: cron.trim(), ...(prompt.trim() ? { prompt: prompt.trim() } : {}) }]);
-            setName(''); setPrompt('');
+            await save([...loops, {
+              name: name.trim(), cron: cron.trim(),
+              ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+              ...(model.trim() ? { model: model.trim() } : {}),
+              ...(budget && parseInt(budget, 10) > 0 ? { budgetTokens: parseInt(budget, 10) } : {}),
+            }]);
+            setName(''); setPrompt(''); setModel(''); setBudget('');
             app.showToast('Loop added — it fires on the next matching minute');
           }} style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 15px', fontSize: 12.5, fontWeight: 600, cursor: name.trim() && cron.trim() ? 'pointer' : 'default', opacity: name.trim() && cron.trim() && loops.length < 10 ? 1 : 0.5 }}>Add loop</button>
         </div>
@@ -417,7 +428,7 @@ function ScheduleTab({ a }: { a: Agent }) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, textDecoration: l.enabled === false ? 'line-through' : 'none', color: l.enabled === false ? 'var(--text-dim)' : 'var(--text)' }}>{l.name}</div>
               <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {l.cron}{l.prompt ? ` · ${l.prompt.replace(/\s+/g, ' ').slice(0, 60)}` : ''}
+                {l.cron}{l.model ? ` · ${l.model}` : ''}{l.budgetTokens ? ` · ≤${(l.budgetTokens / 1000).toFixed(0)}k tok` : ''}{l.prompt ? ` · ${l.prompt.replace(/\s+/g, ' ').slice(0, 50)}` : ''}
               </div>
             </div>
             <button onClick={() => void save(loops.map((x, xi) => (xi === i ? { ...x, enabled: x.enabled === false ? undefined : false } as Loop : x)))}
@@ -507,6 +518,7 @@ export function AgentHome() {
   const [tab, setTab] = useState<HomeTab>('Dashboard');
   const [openApp, setOpenApp] = useState<AgentApp | null>(null);
   const [tasks, setTasks] = useState<AgentTask[]>([]);
+  const [events, setEvents] = useState<AgentEvent[]>([]);
   const [chatQuery, setChatQuery] = useState('');
   const [editingCharter, setEditingCharter] = useState(false);
   const [charterDraft, setCharterDraft] = useState('');
@@ -526,8 +538,13 @@ export function AgentHome() {
     setChatQuery('');
   }, [agentId]);
   useEffect(() => {
-    if (agentId) void api.agentTasks(agentId).then(setTasks).catch(() => setTasks([]));
-    else setTasks([]);
+    if (agentId) {
+      void api.agentTasks(agentId).then(setTasks).catch(() => setTasks([]));
+      void api.agentEvents(agentId).then(setEvents).catch(() => setEvents([]));
+    } else {
+      setTasks([]);
+      setEvents([]);
+    }
   }, [agentId]);
 
   if (!a) return null;
@@ -560,7 +577,7 @@ export function AgentHome() {
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-.3px' }}>{a.name}</div>
             <div style={{ color: 'var(--text-dim)', fontSize: 12.5, marginTop: 2 }}>
               {a.role || 'Durable agent'}
-              <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-faint)', fontSize: 11.5 }}> · {a.model || a.provider} · {stats?.rating !== null && stats?.rating !== undefined ? `${stats.rating}% approval` : 'unrated'}</span>
+              <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-faint)', fontSize: 11.5 }}> · {a.model || a.provider} · {stats?.rating !== null && stats?.rating !== undefined ? `${stats.rating}% approval` : 'unrated'} · {(((stats?.tokensIn ?? 0) + (stats?.tokensOut ?? 0)) / 1000).toFixed(1)}k tokens</span>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -620,6 +637,27 @@ export function AgentHome() {
                 )}
               </div>
             </div>
+            {events.length > 0 && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
+                  <span style={label}>Activity</span>
+                  <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>proactive work is never silent — every loop run and failure lands here</span>
+                </div>
+                <div style={{ ...card, padding: '6px 8px' }}>
+                  {events.slice(0, 6).map((ev) => (
+                    <div key={ev.id} onClick={() => ev.sessionId && app.openSession(ev.sessionId)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, cursor: ev.sessionId ? 'pointer' : 'default' }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: ev.kind === 'loop_error' ? 'var(--red)' : 'var(--green)', flex: 'none' }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</div>
+                        {ev.body && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.body}</div>}
+                      </div>
+                      <span style={{ fontSize: 9.5, color: 'var(--text-faint)', flex: 'none', fontFamily: 'var(--mono)' }}>{ago(ev.createdAt)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {conversations.length > 0 && (
               <div>
                 <div style={{ ...label, marginBottom: 8 }}>Recent conversations</div>

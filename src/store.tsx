@@ -45,6 +45,7 @@ interface Store {
   workspaces: Workspace[]; workspaceId: string; pickWorkspace: (id: string) => void;
   refreshWorkspaces: () => Promise<void>;
   agents: Agent[]; agentStats: Record<string, AgentStats>; refreshAgents: () => Promise<void>;
+  unread: Record<string, number>;
   sessions: ChatSession[]; refreshSessions: () => Promise<void>;
   archived: ChatSession[]; archiveChat: (id: string) => Promise<void>; restoreChat: (id: string) => Promise<void>;
   agentTypes: AgentType[]; refreshAgentTypes: () => Promise<void>;
@@ -135,6 +136,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [workspaceId, setWorkspaceId] = useState('');
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentStats, setAgentStats] = useState<Record<string, AgentStats>>({});
+  const [unread, setUnread] = useState<Record<string, number>>({});
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [archived, setArchived] = useState<ChatSession[]>([]);
   const [agentTypes, setAgentTypes] = useState<AgentType[]>([]);
@@ -167,6 +169,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const stacked = width < 820;
   const mediumDock = !stacked && width < 1120;
 
+  // proactive-work badges: poll unread activity counts (phase 2)
+  useEffect(() => {
+    const t = setInterval(() => { api.unreadAgentEvents().then(setUnread).catch(() => {}); }, 60_000);
+    return () => clearInterval(t);
+  }, []);
+
   useEffect(() => {
     const onResize = () => setWidth(window.innerWidth);
     window.addEventListener('resize', onResize);
@@ -198,8 +206,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const list = await api.agents();
     setAgents(list);
     const stats: Record<string, AgentStats> = {};
-    await Promise.all(list.map(async (a) => { stats[a.id] = await api.agentStats(a.id).catch(() => ({ chats: 0, up: 0, down: 0, rating: null })); }));
+    await Promise.all(list.map(async (a) => {
+      stats[a.id] = await api.agentStats(a.id).catch(() => ({ chats: 0, up: 0, down: 0, rating: null, tokensIn: 0, tokensOut: 0 }));
+    }));
     setAgentStats(stats);
+    setUnread(await api.unreadAgentEvents().catch(() => ({})));
   }, []);
 
   const refreshSessions = useCallback(async () => {
@@ -262,6 +273,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSelectedAgent(id);
     setMobileChatOpen(true); // stacked: the agent page is the detail pane
     setArtifact(null);
+    // opening the home page acknowledges the agent's proactive activity
+    void api.markAgentEventsRead(id)
+      .then(() => setUnread((u) => ({ ...u, [id]: 0 })))
+      .catch(() => {});
   }, []);
 
   const openFile = useCallback((target: FileTarget, path: string | null) => {
@@ -540,7 +555,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView, setHomeView,
     mobileChatOpen, setMobileChatOpen, mobileDetail, setMobileDetail, toast, showToast,
     workspaces, workspaceId, pickWorkspace, refreshWorkspaces,
-    agents, agentStats, refreshAgents, sessions, refreshSessions, archived, archiveChat, restoreChat,
+    agents, agentStats, refreshAgents, unread, sessions, refreshSessions, archived, archiveChat, restoreChat,
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, setMcp, refreshMcp,
     market, refreshMarket, settings, saveSettings,
     currentId, openSession, current, transcript, refreshTranscript, patchSession, newChat,

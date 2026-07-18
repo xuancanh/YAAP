@@ -307,3 +307,52 @@ test('auto-distillation sweep distills idle changed sessions exactly once (phase
   // unchanged since: not distilled again
   assert.equal(await loops.distillSweep(later), 0);
 });
+
+test('loop runs land in the agent inbox; budgets and model overrides apply (phase 2)', async () => {
+  const { agents, workspaces, repo, loops } = await setup([loopRound, loopRound]);
+  await workspaces.list();
+  const agent = await agents.create({
+    name: 'Heartbeat',
+    loops: [{ name: 'Pulse', cron: '*/5 * * * *', model: 'tiny-model', budgetTokens: 5000 }],
+  });
+
+  await loops.tick(new Date(2026, 6, 16, 2, 5));
+  await new Promise((r) => setTimeout(r, 60));
+
+  const ws = (await workspaces.list())[0];
+  const session = (await repo.listSessions(ws.id)).find((s) => s.name === 'Loop · Pulse')!;
+  assert.equal(session.model, 'tiny-model', 'per-loop model override applied to the loop session');
+  assert.equal(session.tokenCeiling, 5000, 'per-loop budget became the session ceiling');
+
+  const events = await agents.listEvents(agent.id);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].kind, 'loop_run');
+  assert.match(events[0].title, /Loop "Pulse" ran/);
+  assert.equal(events[0].sessionId, session.id);
+
+  // unread badge counts, then acknowledged
+  assert.deepEqual(await agents.unreadEventCounts(), { [agent.id]: 1 });
+  await agents.markEventsRead(agent.id);
+  assert.deepEqual(await agents.unreadEventCounts(), {});
+});
+
+test('a budget-stopped loop surfaces a loop_error event instead of burning silently (phase 2)', async () => {
+  const { agents, workspaces, repo, loops } = await setup([loopRound]);
+  await workspaces.list();
+  const agent = await agents.create({ name: 'Broke', loops: [{ name: 'Tick', cron: '* * * * *', budgetTokens: 100 }] });
+  const ws = (await workspaces.list())[0];
+  // pre-create the loop session already over budget
+  const session = await repo.createSession({ workspaceId: ws.id, agentId: agent.id, name: 'Loop · Tick', permissionMode: 'auto' });
+  await repo.updateSession(session.id, { tokensIn: 90, tokensOut: 20, tokenCeiling: 100 });
+
+  await loops.tick(new Date(2026, 6, 16, 3, 1));
+  await new Promise((r) => setTimeout(r, 60));
+
+  const events = await agents.listEvents(agent.id);
+  assert.equal(events[0].kind, 'loop_error');
+  assert.match(events[0].body, /Budget reached/);
+
+  // loops JSON validation rejects malformed budget/model
+  await assert.rejects(agents.update(agent.id, { loops: JSON.stringify([{ name: 'x', cron: '* * * * *', budgetTokens: -5 }]) }), /budgetTokens/);
+  await assert.rejects(agents.update(agent.id, { loops: '{not json' }), /not valid JSON/);
+});

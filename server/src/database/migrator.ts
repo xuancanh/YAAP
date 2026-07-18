@@ -213,6 +213,24 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0007-agent-events',
+    up: async (db) => {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS agent_events (
+          "id" TEXT PRIMARY KEY,
+          "agentId" TEXT NOT NULL,
+          "kind" TEXT NOT NULL DEFAULT 'loop_run',
+          "title" TEXT NOT NULL,
+          "body" TEXT NOT NULL DEFAULT '',
+          "sessionId" TEXT,
+          "readAt" TEXT,
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_events_agent ON agent_events ("agentId", "createdAt");
+      `);
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {

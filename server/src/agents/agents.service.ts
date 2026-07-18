@@ -5,10 +5,10 @@
  * follow-up work; this scaffold owns the profile CRUD and pending feedback.
  */
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { agents, agentTasks, chatSessions, chatTurns } from '../database/schema';
+import { agents, agentEvents, agentTasks, chatSessions, chatTurns } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix } from '../storage/storage.keys';
@@ -232,23 +232,67 @@ export class AgentsService {
     await this.appendBrainFile(agentId, 'LESSONS.md', entry, '# LESSONS.md\n');
   }
 
-  /** Chats owned + 👍/👎 totals across this agent's sessions (agent home). */
+  /** Chats owned, 👍/👎 totals, and token spend across this agent's
+   *  sessions (agent home + cost visibility, roadmap phase 2). */
   async stats(id: string) {
     await this.get(id);
     const sessions = await this.db.select({ id: chatSessions.id }).from(chatSessions)
       .where(eq(chatSessions.agentId, id));
     const ids = sessions.map((s) => s.id);
-    let up = 0; let down = 0;
+    let up = 0; let down = 0; let tokensIn = 0; let tokensOut = 0;
     if (ids.length > 0) {
-      const turns = await this.db.select({ rating: chatTurns.rating }).from(chatTurns)
-        .where(inArray(chatTurns.sessionId, ids));
+      const turns = await this.db.select({ rating: chatTurns.rating, tokensIn: chatTurns.tokensIn, tokensOut: chatTurns.tokensOut })
+        .from(chatTurns).where(inArray(chatTurns.sessionId, ids));
       for (const t of turns) {
         if (t.rating === 'up') up++;
         if (t.rating === 'down') down++;
+        tokensIn += t.tokensIn;
+        tokensOut += t.tokensOut;
       }
     }
     const rating = up + down > 0 ? Math.round((up / (up + down)) * 100) : null;
-    return { chats: ids.length, up, down, rating };
+    return { chats: ids.length, up, down, rating, tokensIn, tokensOut };
+  }
+
+  // ---- the agent inbox (roadmap phase 2): unattended work is never silent ----
+
+  async addEvent(agentId: string, input: { kind: string; title: string; body?: string; sessionId?: string }) {
+    const row = {
+      id: newId(), agentId,
+      kind: input.kind, title: input.title.slice(0, 200),
+      body: (input.body ?? '').slice(0, 1_000),
+      sessionId: input.sessionId ?? null,
+      readAt: null, createdAt: nowIso(),
+    };
+    await this.db.insert(agentEvents).values(row);
+    // keep the inbox bounded: retain the newest 200 events per agent
+    const all = await this.db.select({ id: agentEvents.id, createdAt: agentEvents.createdAt })
+      .from(agentEvents).where(eq(agentEvents.agentId, agentId));
+    if (all.length > 200) {
+      const doomed = all.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)).slice(0, all.length - 200).map((e) => e.id);
+      await this.db.delete(agentEvents).where(inArray(agentEvents.id, doomed));
+    }
+    return row;
+  }
+
+  async listEvents(agentId: string, limit = 50) {
+    const rows = await this.db.select().from(agentEvents).where(eq(agentEvents.agentId, agentId));
+    return rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, limit);
+  }
+
+  /** Unread event counts for every agent (rail badges), one query. */
+  async unreadEventCounts(): Promise<Record<string, number>> {
+    const rows = await this.db.select({ agentId: agentEvents.agentId })
+      .from(agentEvents).where(isNull(agentEvents.readAt));
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.agentId] = (out[r.agentId] ?? 0) + 1;
+    return out;
+  }
+
+  async markEventsRead(agentId: string) {
+    await this.db.update(agentEvents).set({ readAt: nowIso() })
+      .where(and(eq(agentEvents.agentId, agentId), isNull(agentEvents.readAt)));
+    return { ok: true };
   }
 
   /** AGENT.json import (FR-11.7): validate hard before install, because
@@ -341,11 +385,15 @@ function validateLoopsJson(raw: string): string {
     const loop = l as Record<string, unknown>;
     if (typeof loop?.name !== 'string' || loop.name.length < 1 || loop.name.length > 100) fail('every loop needs a name (≤100 chars)');
     if (typeof loop?.cron !== 'string' || loop.cron.length > 50) fail('every loop needs a cron (≤50 chars)');
+    if (loop.model !== undefined && (typeof loop.model !== 'string' || loop.model.length > 100)) fail('loop model must be a string (≤100 chars)');
+    if (loop.budgetTokens !== undefined && (typeof loop.budgetTokens !== 'number' || loop.budgetTokens < 0 || loop.budgetTokens > 10_000_000)) fail('budgetTokens must be 0..10000000');
     return {
       name: loop.name as string,
       cron: loop.cron as string,
       ...(typeof loop.prompt === 'string' ? { prompt: (loop.prompt as string).slice(0, 2_000) } : {}),
       ...(loop.enabled === false ? { enabled: false } : {}),
+      ...(typeof loop.model === 'string' && loop.model ? { model: loop.model } : {}),
+      ...(typeof loop.budgetTokens === 'number' && loop.budgetTokens > 0 ? { budgetTokens: loop.budgetTokens } : {}),
     };
   });
   return JSON.stringify(out);

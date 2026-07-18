@@ -17,7 +17,7 @@ import { TurnLoopService } from './turn-loop.service';
 import { DistillService } from './distill.service';
 import { cronMatches } from './cron.util';
 
-interface LoopDef { name: string; cron: string; prompt?: string; enabled?: boolean }
+interface LoopDef { name: string; cron: string; prompt?: string; enabled?: boolean; model?: string; budgetTokens?: number }
 
 @Injectable()
 export class LoopsService implements OnModuleInit, OnModuleDestroy {
@@ -86,21 +86,48 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     return distilled;
   }
 
-  /** Run one loop turn in the agent's dedicated loop session. */
+  /** Run one loop turn in the agent's dedicated loop session. Per-loop model
+   *  override and token budget (roadmap phase 2) apply to that session: a
+   *  cheap model can heartbeat for pennies, and a budget-hit surfaces in the
+   *  agent's activity feed instead of burning tokens silently. */
   async runLoop(agentId: string, agentName: string, loop: LoopDef): Promise<void> {
     const ws = (await this.workspaces.list())[0];
     if (!ws) return;
     const name = `Loop · ${loop.name}`;
     const existing = (await this.repo.listSessions(ws.id)).find((s) => s.agentId === agentId && s.name === name);
     const session = existing ?? await this.repo.createSession({ workspaceId: ws.id, agentId, name, permissionMode: 'auto' });
+    const wanted: Record<string, unknown> = {};
+    if ((loop.model ?? '') !== session.model) wanted.model = loop.model ?? '';
+    if (loop.budgetTokens && loop.budgetTokens !== session.tokenCeiling) wanted.tokenCeiling = loop.budgetTokens;
+    if (Object.keys(wanted).length > 0) await this.repo.updateSession(session.id, wanted);
 
     const prompt = loop.prompt
-      ?? `Scheduled loop firing: "${loop.name}". Follow your charter and complete this loop's work now using your tools. Be concise; if there is nothing to do, say so in one line.`;
+      ?? `Scheduled loop firing: "${loop.name}". Check your kanban board and your charter, complete this loop's work now using your tools, and keep your dashboard current. Be concise; if there is nothing to do, say so in one line.`;
 
     let answer = '';
-    for await (const ev of this.turns.run(session.id, { text: prompt })) {
-      if (ev.type === 'answer') answer += ev.text;
+    try {
+      for await (const ev of this.turns.run(session.id, { text: prompt })) {
+        if (ev.type === 'answer') answer += ev.text;
+        if (ev.type === 'error') throw new Error(ev.message);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.agents.addEvent(agentId, {
+        kind: 'loop_error',
+        title: `Loop "${loop.name}" failed`,
+        body: /token ceiling/.test(message)
+          ? `Budget reached (${loop.budgetTokens ?? session.tokenCeiling} tokens). Raise the loop budget or clear its conversation.`
+          : message,
+        sessionId: session.id,
+      }).catch(() => {});
+      throw err;
     }
+    await this.agents.addEvent(agentId, {
+      kind: 'loop_run',
+      title: `Loop "${loop.name}" ran`,
+      body: answer.replace(/\s+/g, ' ').slice(0, 300),
+      sessionId: session.id,
+    }).catch(() => {});
     await this.agents.appendJournal(agentId,
       `${new Date().toISOString().slice(0, 10)}  Loop "${loop.name}" ran. ${answer.replace(/\s+/g, ' ').slice(0, 200)}`);
     this.logger.log(`loop "${loop.name}" ran for ${agentName}`);

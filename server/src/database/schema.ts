@@ -80,6 +80,21 @@ export const agentTasks = pgTable('agent_tasks', {
   updatedAt: text('updatedAt').notNull(),
 });
 
+/** The agent inbox (roadmap phase 2): proactive work lands here as
+ *  notifications — loop runs, failures, budget stops — so nothing the agent
+ *  does unattended is silent. */
+export const agentEvents = pgTable('agent_events', {
+  id: text('id').primaryKey(),
+  agentId: text('agentId').notNull(),
+  /** loop_run | loop_error | info. */
+  kind: text('kind').notNull().default('loop_run'),
+  title: text('title').notNull(),
+  body: text('body').notNull().default(''),
+  sessionId: text('sessionId'),
+  readAt: text('readAt'),
+  createdAt: text('createdAt').notNull(),
+});
+
 export const agentTypes = pgTable('agent_types', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),

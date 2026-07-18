@@ -66,6 +66,20 @@ export interface AgentStats {
   up: number;
   down: number;
   rating: number | null;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+/** One entry in the agent's activity feed (proactive work is never silent). */
+export interface AgentEvent {
+  id: string;
+  agentId: string;
+  kind: 'loop_run' | 'loop_error' | 'info';
+  title: string;
+  body: string;
+  sessionId: string | null;
+  readAt: string | null;
+  createdAt: string;
 }
 
 export interface AgentType {
@@ -266,6 +280,9 @@ export const api = {
   updateAgent: (id: string, patch: Record<string, unknown>) => send<Agent>(`/api/agents/${id}`, 'PATCH', patch),
   deleteAgent: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}`, 'DELETE'),
   deleteAgentApp: (id: string, appId: string) => send<{ ok: boolean }>(`/api/agents/${id}/apps/${appId}`, 'DELETE'),
+  agentEvents: (id: string) => get<AgentEvent[]>(`/api/agents/${id}/events`),
+  markAgentEventsRead: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}/events/read`, 'POST'),
+  unreadAgentEvents: () => get<Record<string, number>>('/api/agents/events/unread'),
   agentTasks: (id: string) => get<AgentTask[]>(`/api/agents/${id}/tasks`),
   addAgentTask: (id: string, input: { title: string; note?: string }) => send<AgentTask>(`/api/agents/${id}/tasks`, 'POST', input),
   updateAgentTask: (id: string, taskId: string, patch: { title?: string; note?: string; status?: string }) =>
