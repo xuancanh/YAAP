@@ -113,3 +113,17 @@ test('skill drafts: invisible until approved; rejection deletes (phase 3)', asyn
   await assert.rejects(skills.create({ name: 'weekly-dependency-audit', instructions: 'x', workspaceId: 'ws1' }), /already exists/);
   await assert.rejects(skills.draftSkill({ name: '!!!', instructions: 'x', workspaceId: 'ws1', proposedBy: 'a' }), /valid slug/);
 });
+
+test('agent-scoped skills are private to their agent (working-folder model)', async () => {
+  const skills = new SkillsService(await testDb());
+  await skills.draftSkill({ name: 'my-private-move', instructions: 'do it my way', workspaceId: 'ws1', proposedBy: 'Sentinel', agentId: 'agA' });
+  const draft = (await skills.list('ws1', 'agA')).find((s) => s.name === 'my-private-move')!;
+  await skills.resolveDraft(draft.id, true);
+
+  // visible + callable only with the owning agent's scope
+  assert.ok((await skills.toolSpecs('ws1', 'agA')).some((t) => t.name === 'skill_my_private_move'));
+  assert.ok(!(await skills.toolSpecs('ws1')).some((t) => t.name === 'skill_my_private_move'));
+  assert.ok(!(await skills.toolSpecs('ws1', 'agB')).some((t) => t.name === 'skill_my_private_move'));
+  assert.equal(await skills.resolveTool('ws1', 'skill_my_private_move', 'agB'), undefined);
+  assert.equal((await skills.resolveTool('ws1', 'skill_my_private_move', 'agA'))?.name, 'my-private-move');
+});

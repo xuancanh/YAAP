@@ -404,3 +404,64 @@ test('delegate_task hands work to a colleague agent board + inbox; gated in ask 
   assert.match(events[0].title, /Sentinel delegated/);
   assert.deepEqual(await agents.unreadEventCounts(), { [to.id]: 1 });
 });
+
+test('agent chats operate on the agent working folder; checkpoints are write-protected', async () => {
+  const writeRound: AiStreamEvent[] = [
+    { type: 'tool_call', id: 'w1', name: 'fs_write', input: { path: 'notes/plan.md', content: 'the plan' } },
+    { type: 'tool_call', id: 'w2', name: 'fs_write', input: { path: '.checkpoints/2026-01-01/LESSONS.md', content: 'tamper' } },
+    { type: 'done' },
+  ];
+  const finalRound: AiStreamEvent[] = [{ type: 'answer', text: 'done' }, { type: 'done' }];
+  const { agents, repo, turns, stub } = await setup([writeRound, finalRound]);
+  const a = await agents.create({ name: 'Homey' });
+  const s = await repo.createSession({ workspaceId: 'ws1', agentId: a.id, permissionMode: 'auto' });
+
+  const events: Array<{ type: string; name?: string; output?: string; isError?: boolean }> = [];
+  for await (const ev of turns.run(s.id, { text: 'write the plan' })) events.push(ev as never);
+
+  // file landed in the agent's own folder, not the workspace store
+  assert.ok(await stub.get(`agents/${a.id}/notes/plan.md`), 'wrote inside the agent working folder');
+  assert.equal(await stub.get('workspaces/ws1/notes/plan.md'), null);
+  // the rollback history refused the write
+  const tamper = events.find((e) => e.type === 'tool_result' && e.output?.includes('rollback'));
+  assert.ok(tamper?.isError, 'checkpoint writes are refused');
+});
+
+test('save_tool: proposed inert, host must be literal, runs through the SSRF guard once approved', async () => {
+  const { agents } = await setup([]);
+  const a = await agents.create({ name: 'Toolsmith' });
+
+  await assert.rejects(
+    agents.saveCustomTool(a.id, { name: 'evil', url: 'https://{host}/steal?q={q}' }),
+    /host must be literal/,
+  );
+  await assert.rejects(
+    agents.saveCustomTool(a.id, { name: 'inside', url: 'http://192.168.1.1/admin?q={q}' }),
+    /private\/internal/,
+  );
+
+  const msg = await agents.saveCustomTool(a.id, {
+    name: 'City Weather', description: 'Current weather by city',
+    url: 'https://api.example.com/v1/weather?q={city}',
+  });
+  assert.match(msg, /review and enable/);
+  let tools = await agents.listCustomTools(a.id);
+  assert.equal(tools[0].enabled, false, 'proposed tools are inert');
+  assert.deepEqual(tools[0].params, ['city']);
+  assert.equal((await agents.customToolSpecs(a.id)).length, 0, 'disabled tools are not offered');
+
+  await agents.resolveCustomTool(a.id, tools[0].id, true);
+  const specs = await agents.customToolSpecs(a.id);
+  assert.equal(specs[0].name, 'tool_city_weather');
+  assert.deepEqual(specs[0].inputSchema.required, ['city']);
+
+  // re-saving the same slug replaces and drops back to disabled (re-approval)
+  await agents.saveCustomTool(a.id, { name: 'City Weather', url: 'https://api.example.com/v2/weather?q={city}' });
+  tools = await agents.listCustomTools(a.id);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0].enabled, false, 'replaced tools need re-approval');
+
+  // rejection removes it
+  await agents.resolveCustomTool(a.id, tools[0].id, false);
+  assert.equal((await agents.listCustomTools(a.id)).length, 0);
+});

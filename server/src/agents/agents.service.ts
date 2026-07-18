@@ -12,6 +12,8 @@ import { agents, agentEvents, agentTasks, chatSessions, chatTurns } from '../dat
 import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix } from '../storage/storage.keys';
+import { assertPublicUrl } from '../chats/tools.service';
+import { AiToolSpec } from '../ai/ai-provider.interface';
 
 /** A self-built mini app (FR-11.5): a self-contained HTML tool the agent
  *  writes for itself via save_app. Rendered only in a network-blocked
@@ -27,6 +29,28 @@ export interface AgentApp {
 const APP_LIMIT = 12;
 const APP_HTML_CAP = 300_000;
 const DASHBOARD_CAP = 50_000;
+
+/** A self-built HTTP tool (roadmap: agents build tools from user requests).
+ *  Proposed by the agent, inert until the user approves it, executed through
+ *  the same SSRF guard as http_request. {param} placeholders in url/body are
+ *  filled from the tool call's arguments. */
+export interface AgentCustomTool {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  method: 'GET' | 'POST';
+  url: string;
+  body?: string;
+  params: string[];
+  enabled: boolean;
+  proposedAt: string;
+  approvedAt?: string;
+}
+
+export const CUSTOM_TOOL_PREFIX = 'tool_';
+const TOOL_LIMIT = 12;
+const PARAM_RE = /\{([a-z0-9_]+)\}/g;
 
 export type TaskStatus = 'todo' | 'doing' | 'done';
 const TASK_STATUSES: TaskStatus[] = ['todo', 'doing', 'done'];
@@ -158,6 +182,96 @@ export class AgentsService {
       .slice(0, 100)
       .map((t) => `[${t.id.slice(0, 8)}] (${t.status}) ${t.title}${t.note ? ` — ${t.note.slice(0, 120)}` : ''}`);
     return lines.join('\n');
+  }
+
+  // ---- self-built HTTP tools: proposed by the agent, user-activated ----
+
+  async listCustomTools(id: string): Promise<AgentCustomTool[]> {
+    const a = await this.get(id);
+    try { return JSON.parse(a.tools) as AgentCustomTool[]; } catch { return []; }
+  }
+
+  /** save_tool: the agent turns a recurring user request into a callable
+   *  HTTP tool. It lands disabled — the user reviews destination and shape
+   *  before it can ever run. Same name replaces (re-approval required). */
+  async saveCustomTool(id: string, input: { name: string; description?: string; method?: string; url: string; body?: string }): Promise<string> {
+    const name = (input.name ?? '').trim().slice(0, 60);
+    if (!name) throw new BadRequestException('tool name is required');
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!slug) throw new BadRequestException('could not derive a slug from that tool name');
+    const method = (input.method ?? 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'POST') throw new BadRequestException('method must be GET or POST');
+    const url = (input.url ?? '').trim().slice(0, 500);
+    const body = typeof input.body === 'string' ? input.body.slice(0, 2_000) : undefined;
+    // the host must be literal: a {param} in the authority would let the
+    // approved destination be swapped at call time
+    if (url.split('/').slice(0, 3).join('/').includes('{')) {
+      throw new BadRequestException('the URL host must be literal — placeholders are only allowed in the path and query');
+    }
+    assertPublicUrl(url.replace(PARAM_RE, 'x'));
+    const params = [...new Set([...`${url} ${body ?? ''}`.matchAll(PARAM_RE)].map((m) => m[1]))];
+    const tools = await this.listCustomTools(id);
+    const existing = tools.find((t) => t.slug === slug);
+    const row: AgentCustomTool = {
+      id: existing?.id ?? newId(), name, slug,
+      description: (input.description ?? '').slice(0, 300),
+      method, url, ...(body ? { body } : {}), params,
+      enabled: false, proposedAt: nowIso(),
+    };
+    const next = existing ? tools.map((t) => (t.slug === slug ? row : t)) : [...tools, row];
+    if (!existing && next.length > TOOL_LIMIT) {
+      throw new BadRequestException(`tool limit (${TOOL_LIMIT}) reached — delete one first`);
+    }
+    await this.db.update(agents).set({ tools: JSON.stringify(next) }).where(eq(agents.id, id));
+    return `Tool "${name}" proposed${existing ? ' (replaces the previous version, which is disabled until re-approved)' : ''}. The user must review and enable it before you can call it.`;
+  }
+
+  async resolveCustomTool(id: string, toolId: string, approve: boolean) {
+    const tools = await this.listCustomTools(id);
+    const tool = tools.find((t) => t.id === toolId);
+    if (!tool) throw new NotFoundException(`tool ${toolId}`);
+    const next = approve
+      ? tools.map((t) => (t.id === toolId ? { ...t, enabled: true, approvedAt: nowIso() } : t))
+      : tools.filter((t) => t.id !== toolId);
+    await this.db.update(agents).set({ tools: JSON.stringify(next) }).where(eq(agents.id, id));
+    return { ok: true };
+  }
+
+  /** Enabled custom tools as provider tool specs. */
+  async customToolSpecs(id: string): Promise<AiToolSpec[]> {
+    const tools = await this.listCustomTools(id);
+    return tools.filter((t) => t.enabled).map((t) => ({
+      name: CUSTOM_TOOL_PREFIX + t.slug,
+      description: `[Your tool · user-approved] ${t.description || t.name}. ${t.method} ${t.url}`,
+      inputSchema: {
+        type: 'object',
+        properties: Object.fromEntries(t.params.map((param) => [param, { type: 'string' }])),
+        required: t.params,
+      },
+    }));
+  }
+
+  /** Execute an approved custom tool: substitute params, re-check the SSRF
+   *  guard on the resolved URL, cap the response. */
+  async executeCustomTool(id: string, toolName: string, input: Record<string, unknown>): Promise<string> {
+    const slug = toolName.slice(CUSTOM_TOOL_PREFIX.length);
+    const tool = (await this.listCustomTools(id)).find((t) => t.slug === slug && t.enabled);
+    if (!tool) throw new Error(`unknown tool: ${toolName}`);
+    const fill = (template: string, encode: boolean) => template.replace(PARAM_RE, (_m, param: string) => {
+      const v = input[param];
+      if (typeof v !== 'string') throw new Error(`missing argument "${param}"`);
+      return encode ? encodeURIComponent(v.slice(0, 500)) : v.slice(0, 2_000);
+    });
+    const url = assertPublicUrl(fill(tool.url, true));
+    const res = await fetch(url, {
+      method: tool.method,
+      headers: tool.method === 'POST' ? { 'content-type': 'application/json' } : undefined,
+      body: tool.method === 'POST' && tool.body ? fill(tool.body, false) : undefined,
+      signal: AbortSignal.timeout(20_000),
+      redirect: 'follow',
+    });
+    const text = await res.text();
+    return `${res.status} ${res.statusText}\n${text.length > 8_000 ? `${text.slice(0, 8_000)}\n…(truncated)` : text}`;
   }
 
   // ---- self-maintenance tools (§11): the agent keeps its own home page ----

@@ -52,6 +52,21 @@ export interface AgentTask {
   updatedAt: string;
 }
 
+/** A self-built HTTP tool: inert until user-approved, SSRF-guarded. */
+export interface AgentCustomTool {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  method: 'GET' | 'POST';
+  url: string;
+  body?: string;
+  params: string[];
+  enabled: boolean;
+  proposedAt: string;
+  approvedAt?: string;
+}
+
 /** A self-built mini app — rendered only in a network-blocked sandbox. */
 export interface AgentApp {
   id: string;
@@ -154,6 +169,8 @@ export interface Skill {
   /** 1 = agent-drafted, awaiting user approval. */
   draft: number;
   proposedBy: string;
+  /** Set = private self-built skill of that agent. */
+  agentId: string | null;
 }
 
 export interface McpServer {
@@ -286,6 +303,9 @@ export const api = {
   agentEvents: (id: string) => get<AgentEvent[]>(`/api/agents/${id}/events`),
   markAgentEventsRead: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}/events/read`, 'POST'),
   unreadAgentEvents: () => get<Record<string, number>>('/api/agents/events/unread'),
+  agentCustomTools: (id: string) => get<AgentCustomTool[]>(`/api/agents/${id}/tools`),
+  approveAgentTool: (id: string, toolId: string) => send<{ ok: boolean }>(`/api/agents/${id}/tools/${toolId}/approve`, 'POST'),
+  deleteAgentTool: (id: string, toolId: string) => send<{ ok: boolean }>(`/api/agents/${id}/tools/${toolId}`, 'DELETE'),
   agentTasks: (id: string) => get<AgentTask[]>(`/api/agents/${id}/tasks`),
   addAgentTask: (id: string, input: { title: string; note?: string }) => send<AgentTask>(`/api/agents/${id}/tasks`, 'POST', input),
   updateAgentTask: (id: string, taskId: string, patch: { title?: string; note?: string; status?: string }) =>
@@ -305,7 +325,8 @@ export const api = {
     send<AgentType>('/api/agent-types', 'POST', input),
 
   // skills / mcp / market / settings / search
-  skills: (workspaceId?: string) => get<Skill[]>(`/api/skills${workspaceId ? `?workspaceId=${enc(workspaceId)}` : ''}`),
+  skills: (workspaceId?: string, agentId?: string) =>
+    get<Skill[]>(`/api/skills?${workspaceId ? `workspaceId=${enc(workspaceId)}` : ''}${agentId ? `&agentId=${enc(agentId)}` : ''}`),
   updateSkill: (id: string, patch: { enabled?: boolean; instructions?: string; description?: string }) =>
     send<Skill>(`/api/skills/${id}`, 'PATCH', patch),
   resolveSkillDraft: (id: string, approve: boolean) =>

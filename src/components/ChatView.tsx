@@ -152,7 +152,8 @@ export function ChatView() {
       const b64 = btoa(new Uint8Array(await file.arrayBuffer()).reduce((acc, b) => acc + String.fromCharCode(b), ''));
       const path = `uploads/${file.name.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
       try {
-        await api.wsPutFile(app.workspaceId, path, b64, file.type || undefined);
+        if (app.current?.agentId) await api.putAgentFile(app.current.agentId, path, b64, file.type || undefined);
+        else await api.wsPutFile(app.workspaceId, path, b64, file.type || undefined);
         app.addAttachment(path, file.type.startsWith('image/') ? 'image' : 'text');
         await app.refreshFiles();
       } catch {

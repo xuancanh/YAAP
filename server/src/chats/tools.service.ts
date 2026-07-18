@@ -10,7 +10,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { StorageService } from '../storage/storage.service';
-import { workspaceFileKey, workspacePrefix, relativePath } from '../storage/storage.keys';
+import { workspaceFileKey, workspacePrefix, relativePath, agentFileKey, agentPrefix, agentRelativePath } from '../storage/storage.keys';
 import { AiToolSpec } from '../ai/ai-provider.interface';
 import { validateSlides, renderSlidesHtml } from './slides.util';
 
@@ -37,9 +37,31 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
+/** Where a chat's file tools operate: a durable agent works in its own
+ *  working folder (agents/<id>/, which includes its brain files); direct
+ *  chats use the shared workspace store. */
+export interface FileRoot { kind: 'workspace' | 'agent'; id: string }
+
+export function fileRootKey(root: FileRoot, path: string): string {
+  return root.kind === 'agent' ? agentFileKey(root.id, path) : workspaceFileKey(root.id, path);
+}
+function rootPrefix(root: FileRoot): string {
+  return root.kind === 'agent' ? agentPrefix(root.id) : workspacePrefix(root.id);
+}
+function rootRelative(root: FileRoot, key: string): string {
+  return root.kind === 'agent' ? agentRelativePath(root.id, key) : relativePath(root.id, key);
+}
+/** Checkpoints are the rollback safety net; the agent must not be able to
+ *  erase its own history (phase 3 invariant). */
+function assertMutablePath(root: FileRoot, path: string): void {
+  if (root.kind === 'agent' && path.replace(/^\/+/, '').startsWith('.checkpoints/')) {
+    throw new Error('the .checkpoints/ folder is read-only — it is your rollback history');
+  }
+}
+
 interface ChatTool extends AiToolSpec {
   readOnly: boolean;
-  execute(workspaceId: string, input: Record<string, unknown>): Promise<string>;
+  execute(root: FileRoot, input: Record<string, unknown>): Promise<string>;
 }
 
 function str(input: Record<string, unknown>, key: string, required = true): string {
@@ -82,25 +104,25 @@ export class ToolsService {
     this.tools = [
       {
         name: 'fs_list',
-        description: 'List files in the workspace file store. Returns one "path (size bytes)" per line.',
+        description: 'List files in your file store (your own working folder when you are a durable agent). Returns one "path (size bytes)" per line.',
         inputSchema: { type: 'object', properties: { prefix: { type: 'string', description: 'Optional path prefix filter' } } },
         readOnly: true,
-        execute: async (ws, input) => {
+        execute: async (root, input) => {
           const prefix = typeof input.prefix === 'string' && input.prefix.length > 0
-            ? workspaceFileKey(ws, input.prefix)
-            : workspacePrefix(ws);
+            ? fileRootKey(root, input.prefix)
+            : rootPrefix(root);
           const objects = await this.storage.list(prefix);
           if (objects.length === 0) return '(no files)';
-          return objects.map((o) => `${relativePath(ws, o.key)} (${o.size} bytes)`).join('\n');
+          return objects.map((o) => `${rootRelative(root, o.key)} (${o.size} bytes)`).join('\n');
         },
       },
       {
         name: 'fs_read',
-        description: 'Read a text file from the workspace file store.',
+        description: 'Read a text file from your file store.',
         inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
         readOnly: true,
-        execute: async (ws, input) => {
-          const body = await this.storage.get(workspaceFileKey(ws, str(input, 'path')));
+        execute: async (root, input) => {
+          const body = await this.storage.get(fileRootKey(root, str(input, 'path')));
           if (body === null) return `file not found: ${input.path}`;
           const text = body.toString('utf8');
           return text.length > READ_CAP ? `${text.slice(0, READ_CAP)}\n…(truncated)` : text;
@@ -108,50 +130,52 @@ export class ToolsService {
       },
       {
         name: 'fs_write',
-        description: 'Write (create or overwrite) a text file in the workspace file store.',
+        description: 'Write (create or overwrite) a text file in your file store.',
         inputSchema: {
           type: 'object',
           properties: { path: { type: 'string' }, content: { type: 'string' } },
           required: ['path', 'content'],
         },
         readOnly: false,
-        execute: async (ws, input) => {
+        execute: async (root, input) => {
           const path = str(input, 'path');
+          assertMutablePath(root, path);
           const content = typeof input.content === 'string' ? input.content : null;
           if (content === null) throw new Error('invalid arguments: "content" must be a string');
-          await this.storage.put(workspaceFileKey(ws, path), Buffer.from(content, 'utf8'), 'text/plain');
+          await this.storage.put(fileRootKey(root, path), Buffer.from(content, 'utf8'), 'text/plain');
           return `wrote ${Buffer.byteLength(content)} bytes to ${path}`;
         },
       },
       {
         name: 'fs_delete',
-        description: 'Delete a file from the workspace file store.',
+        description: 'Delete a file from your file store.',
         inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
         readOnly: false,
-        execute: async (ws, input) => {
+        execute: async (root, input) => {
           const path = str(input, 'path');
-          await this.storage.delete(workspaceFileKey(ws, path));
+          assertMutablePath(root, path);
+          await this.storage.delete(fileRootKey(root, path));
           return `deleted ${path}`;
         },
       },
       {
         name: 'fs_search',
-        description: 'Search text file contents in the workspace file store. Returns matching lines as "path:line: text".',
+        description: 'Search text file contents in your file store. Returns matching lines as "path:line: text".',
         inputSchema: {
           type: 'object',
           properties: { query: { type: 'string', description: 'Case-insensitive substring to find' } },
           required: ['query'],
         },
         readOnly: true,
-        execute: async (ws, input) => {
+        execute: async (root, input) => {
           const query = str(input, 'query').toLowerCase();
-          const objects = (await this.storage.list(workspacePrefix(ws))).slice(0, SEARCH_MAX_FILES);
+          const objects = (await this.storage.list(rootPrefix(root))).slice(0, SEARCH_MAX_FILES);
           const hits: string[] = [];
           for (const obj of objects) {
             if (obj.size > SEARCH_FILE_CAP) continue;
             const body = await this.storage.get(obj.key);
             if (!body || body.includes(0)) continue; // skip binary
-            const path = relativePath(ws, obj.key);
+            const path = rootRelative(root, obj.key);
             const lines = body.toString('utf8').split('\n');
             for (let i = 0; i < lines.length && hits.length < SEARCH_MAX_HITS; i++) {
               if (lines[i].toLowerCase().includes(query)) {
@@ -172,7 +196,7 @@ export class ToolsService {
           required: ['query'],
         },
         readOnly: true,
-        execute: async (_ws, input) => {
+        execute: async (_root, input) => {
           const query = str(input, 'query');
           const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
             headers: { 'user-agent': 'Mozilla/5.0 (yaam-chat research tool)' },
@@ -200,7 +224,7 @@ export class ToolsService {
           required: ['url'],
         },
         readOnly: true,
-        execute: async (_ws, input) => {
+        execute: async (_root, input) => {
           const url = assertPublicUrl(str(input, 'url'));
           const res = await fetch(url, {
             headers: { 'user-agent': 'Mozilla/5.0 (yaam-chat research tool)' },
@@ -216,7 +240,7 @@ export class ToolsService {
       },
       {
         name: 'slides_create',
-        description: 'Create a self-contained HTML slide deck in the workspace file store. Slides: [{ title, bullets?, notes? }]. Arrow keys navigate; "n" toggles notes.',
+        description: 'Create a self-contained HTML slide deck in your file store. Slides: [{ title, bullets?, notes? }]. Arrow keys navigate; "n" toggles notes.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -238,11 +262,12 @@ export class ToolsService {
           required: ['path', 'title', 'slides'],
         },
         readOnly: false,
-        execute: async (ws, input) => {
+        execute: async (root, input) => {
           const path = str(input, 'path');
+          assertMutablePath(root, path);
           const { title, slides } = validateSlides(input.title, input.slides);
           const html = renderSlidesHtml(title, slides);
-          await this.storage.put(workspaceFileKey(ws, path), Buffer.from(html, 'utf8'), 'text/html');
+          await this.storage.put(fileRootKey(root, path), Buffer.from(html, 'utf8'), 'text/html');
           return `created a ${slides.length}-slide deck "${title}" at ${path} (${Buffer.byteLength(html)} bytes)`;
         },
       },
@@ -260,7 +285,7 @@ export class ToolsService {
           required: ['url'],
         },
         readOnly: false,
-        execute: async (_ws, input) => {
+        execute: async (_root, input) => {
           const url = assertPublicUrl(str(input, 'url'));
           const method = (str(input, 'method', false) || 'GET').toUpperCase();
           const headers = (input.headers && typeof input.headers === 'object' ? input.headers : {}) as Record<string, string>;
@@ -288,9 +313,12 @@ export class ToolsService {
     return this.tools.find((t) => t.name === name)?.readOnly;
   }
 
-  async execute(workspaceId: string, name: string, input: Record<string, unknown>): Promise<string> {
+  /** A bare string is a workspace id (test convenience + back-compat). */
+  async execute(root: FileRoot | string, name: string, input: Record<string, unknown>): Promise<string> {
     const tool = this.tools.find((t) => t.name === name);
     if (!tool) throw new Error(`unknown tool: ${name}`);
-    return tool.execute(workspaceId, input);
+    return tool.execute(typeof root === 'string' ? { kind: 'workspace', id: root } : root, input);
   }
 }
+
+export { assertPublicUrl };

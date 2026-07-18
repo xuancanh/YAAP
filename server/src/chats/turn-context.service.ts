@@ -55,6 +55,8 @@ export class TurnContextService {
         parts.push('You have long-term recall: search_history searches all of your past conversations with this user — use it whenever they reference earlier work. When you learn a durable fact about the user (a preference, constraint, or stable context), propose it with update_user_profile; the user approves proposals before they are remembered.');
         parts.push('You grow: when multi-step work goes well (especially after positive feedback), capture the reusable procedure with draft_skill so future conversations can repeat it. Drafts activate only after the user approves them.');
         parts.push('You are one of several durable agents. When work clearly belongs to a colleague (their charter, not yours), delegate it with delegate_task instead of doing it badly yourself.');
+        parts.push('Your fs_* tools operate on your own private working folder (it also holds your LESSONS.md, JOURNAL.md and knowledge/; .checkpoints/ is read-only rollback history). Organize it however serves your work.');
+        parts.push('When the user asks for the same kind of external lookup repeatedly, build it once with save_tool (a parameterized HTTP tool); it becomes callable after the user approves it.');
         const feedback = await this.agents.takeFeedback(agent.id);
         if (feedback.length > 0) {
           parts.push(`Pending user feedback on your recent replies (acknowledge and adapt; it is cleared after this turn):\n${JSON.stringify(feedback)}`);

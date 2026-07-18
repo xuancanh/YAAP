@@ -40,12 +40,16 @@ export class SkillsService implements OnModuleInit {
     }
   }
 
-  /** All skills visible to a workspace (global + workspace-scoped). */
-  async list(workspaceId?: string): Promise<SkillRow[]> {
-    const scope = workspaceId
+  /** Skills visible in a scope: global + workspace-scoped, plus one agent's
+   *  private self-built skills when agentId is given. Agent-owned skills are
+   *  never visible outside their agent. */
+  async list(workspaceId?: string, agentId?: string): Promise<SkillRow[]> {
+    const shared = workspaceId
       ? or(isNull(skills.workspaceId), eq(skills.workspaceId, workspaceId))
       : isNull(skills.workspaceId);
-    return this.db.select().from(skills).where(scope);
+    const rows = await this.db.select().from(skills)
+      .where(agentId ? or(and(shared, isNull(skills.agentId)), eq(skills.agentId, agentId)) : and(shared, isNull(skills.agentId)));
+    return rows;
   }
 
   async get(id: string): Promise<SkillRow> {
@@ -54,11 +58,11 @@ export class SkillsService implements OnModuleInit {
     return rows[0];
   }
 
-  async create(input: { name: string; description?: string; instructions: string; workspaceId?: string; draft?: boolean; proposedBy?: string }): Promise<SkillRow> {
+  async create(input: { name: string; description?: string; instructions: string; workspaceId?: string; draft?: boolean; proposedBy?: string; agentId?: string }): Promise<SkillRow> {
     if (!NAME_RE.test(input.name)) {
       throw new ConflictException('skill name must be a lowercase slug (a-z, 0-9, dashes)');
     }
-    if ((await this.list(input.workspaceId)).some((s) => s.name === input.name)) {
+    if ((await this.list(input.workspaceId, input.agentId)).some((s) => s.name === input.name)) {
       throw new ConflictException(`a skill named "${input.name}" already exists`);
     }
     const row: SkillRow = {
@@ -72,6 +76,7 @@ export class SkillsService implements OnModuleInit {
       builtin: 0,
       draft: input.draft ? 1 : 0,
       proposedBy: input.proposedBy ?? '',
+      agentId: input.agentId ?? null,
       createdAt: nowIso(),
     };
     await this.db.insert(skills).values(row);
@@ -80,11 +85,11 @@ export class SkillsService implements OnModuleInit {
 
   /** Agent-drafted skill from experience (draft_skill tool). The draft is
    *  invisible to the model until the user approves it. */
-  async draftSkill(input: { name: string; description?: string; instructions: string; workspaceId: string; proposedBy: string }): Promise<string> {
+  async draftSkill(input: { name: string; description?: string; instructions: string; workspaceId: string; proposedBy: string; agentId?: string }): Promise<string> {
     const name = input.name.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
     if (!NAME_RE.test(name)) throw new Error('could not derive a valid slug from that skill name');
     if (!input.instructions?.trim()) throw new Error('skill instructions are required');
-    const drafts = (await this.list(input.workspaceId)).filter((s) => s.draft === 1);
+    const drafts = (await this.list(input.workspaceId, input.agentId)).filter((s) => s.draft === 1);
     if (drafts.length >= 10) return 'Draft queue is full; the user has pending skill drafts to review first.';
     await this.create({
       name,
@@ -93,6 +98,8 @@ export class SkillsService implements OnModuleInit {
       workspaceId: input.workspaceId,
       draft: true,
       proposedBy: input.proposedBy,
+      // self-built skills are private to their agent
+      agentId: input.agentId,
     });
     return `Skill "${name}" drafted. The user reviews and approves it before it becomes available; do not assume you can call it yet.`;
   }
@@ -122,8 +129,8 @@ export class SkillsService implements OnModuleInit {
   // ---- turn-loop integration (FR-10.2) ----
 
   /** Enabled skills of a workspace as tool specs for the provider request. */
-  async toolSpecs(workspaceId: string): Promise<AiToolSpec[]> {
-    const rows = await this.list(workspaceId);
+  async toolSpecs(workspaceId: string, agentId?: string): Promise<AiToolSpec[]> {
+    const rows = await this.list(workspaceId, agentId);
     return rows.filter((s) => s.enabled === 1 && s.draft !== 1).map((s) => ({
       name: SKILL_TOOL_PREFIX + s.name.replace(/-/g, '_'),
       description: `Skill: ${s.description || s.name}. Call with no arguments to load its step-by-step instructions, then follow them.`,
@@ -132,10 +139,10 @@ export class SkillsService implements OnModuleInit {
   }
 
   /** True when a tool name addresses a skill visible to the workspace. */
-  async resolveTool(workspaceId: string, toolName: string): Promise<SkillRow | undefined> {
+  async resolveTool(workspaceId: string, toolName: string, agentId?: string): Promise<SkillRow | undefined> {
     if (!toolName.startsWith(SKILL_TOOL_PREFIX)) return undefined;
     const slug = toolName.slice(SKILL_TOOL_PREFIX.length).replace(/_/g, '-');
-    const rows = await this.list(workspaceId);
+    const rows = await this.list(workspaceId, agentId);
     return rows.find((s) => s.name === slug && s.enabled === 1 && s.draft !== 1);
   }
 

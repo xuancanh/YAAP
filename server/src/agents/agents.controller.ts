@@ -70,6 +70,11 @@ export class AgentsController {
   @Get(':id/events') events(@Param('id') id: string) { return this.agents.listEvents(id); }
   @Post(':id/events/read') markEventsRead(@Param('id') id: string) { return this.agents.markEventsRead(id); }
 
+  // ---- self-built HTTP tools: proposed by the agent, user-activated ----
+  @Get(':id/tools') customTools(@Param('id') id: string) { return this.agents.listCustomTools(id); }
+  @Post(':id/tools/:toolId/approve') approveTool(@Param('id') id: string, @Param('toolId') toolId: string) { return this.agents.resolveCustomTool(id, toolId, true); }
+  @Delete(':id/tools/:toolId') deleteTool(@Param('id') id: string, @Param('toolId') toolId: string) { return this.agents.resolveCustomTool(id, toolId, false); }
+
   // ---- the agent's kanban board (§11) ----
   @Get(':id/tasks') tasks(@Param('id') id: string) { return this.agents.listTasks(id); }
   @Post(':id/tasks') addTask(@Param('id') id: string, @Body() dto: CreateTaskDto) { return this.agents.addTask(id, dto); }

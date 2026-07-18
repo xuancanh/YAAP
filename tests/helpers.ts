@@ -109,6 +109,9 @@ export function agentsStub(): AgentsService & { calls: Array<{ method: string; a
       calls.push({ method: 'updateTaskByPrefix', args });
       return { id: 'task00000000', title: 't', status: (args[2] as { status?: string }).status ?? 'todo' };
     },
+    customToolSpecs: async () => [],
+    saveCustomTool: async (...args: unknown[]) => { calls.push({ method: 'saveCustomTool', args }); return 'Tool proposed.'; },
+    executeCustomTool: async () => { throw new Error('unknown tool'); },
   };
   return stub as unknown as AgentsService & { calls: Array<{ method: string; args: unknown[] }> };
 }

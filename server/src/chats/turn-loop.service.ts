@@ -23,14 +23,14 @@ import { Injectable, ConflictException, ForbiddenException, NotFoundException } 
 import { createHash } from 'node:crypto';
 import { ChatsRepository, ChatSession } from './chats.repository';
 import { ChatLocks } from './chat-locks';
-import { ToolsService } from './tools.service';
+import { ToolsService, FileRoot, fileRootKey } from './tools.service';
 import { TurnContextService } from './turn-context.service';
 import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
 import { McpService, MCP_TOOL_PREFIX } from '../mcp/mcp.module';
 import { StorageService } from '../storage/storage.service';
-import { AgentsService } from '../agents/agents.service';
+import { AgentsService, CUSTOM_TOOL_PREFIX } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
-import { workspaceFileKey } from '../storage/storage.keys';
+
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 
@@ -112,6 +112,21 @@ const AGENT_TOOLS: AiToolSpec[] = [
     },
   },
   {
+    name: 'save_tool',
+    description: 'Turn a recurring user request into a reusable HTTP tool: give it a name, a description, and a GET/POST URL template with {param} placeholders in the path/query (the host must be literal). The tool is inert until the user reviews and enables it; then it appears as tool_<name> in future turns.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Short tool name, e.g. city-weather.' },
+        description: { type: 'string', description: 'One line on what it does and when to use it.' },
+        method: { type: 'string', enum: ['GET', 'POST'] },
+        url: { type: 'string', description: 'URL template, e.g. https://api.example.com/v1/weather?q={city}' },
+        body: { type: 'string', description: 'POST body template, may contain {param} placeholders.' },
+      },
+      required: ['name', 'url'],
+    },
+  },
+  {
     name: 'delegate_task',
     description: 'Hand a task to another durable agent by putting it on their kanban board. Use when work belongs to a colleague agent (their charter covers it); they will see it on their board and in their activity feed.',
     inputSchema: {
@@ -160,7 +175,7 @@ const AGENT_TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
 /** Agent tools that auto-run even in Ask mode: pure reads, plus
  *  update_user_profile — it only queues a proposal, and the durable write is
  *  gated on explicit user approval in the profile UI. */
-const AGENT_READONLY_TOOLS = new Set(['list_tasks', 'search_history', 'update_user_profile', 'draft_skill']);
+const AGENT_READONLY_TOOLS = new Set(['list_tasks', 'search_history', 'update_user_profile', 'draft_skill', 'save_tool']);
 
 const exactKey = (call: AiToolCall): string =>
   `${call.name}:${createHash('sha256').update(JSON.stringify(call.input)).digest('hex').slice(0, 16)}`;
@@ -232,7 +247,10 @@ export class TurnLoopService {
       // Attachments: inject workspace-file contents into the provider input —
       // text inline, images as vision parts (descriptors persist on the turn;
       // the transcript stays clean, FR-2.2).
-      const attached = await this.loadAttachments(session.workspaceId, input.attachments);
+      const fileRoot: FileRoot = session.agentId
+        ? { kind: 'agent', id: session.agentId }
+        : { kind: 'workspace', id: session.workspaceId };
+      const attached = await this.loadAttachments(fileRoot, input.attachments);
       if (history.length > 0 && (attached.text || attached.images.length > 0)) {
         const lastMsg = history[history.length - 1];
         if (lastMsg.role === 'user') {
@@ -246,7 +264,8 @@ export class TurnLoopService {
       const toolSpecs = [
         ...this.tools.specs(),
         ...(session.agentId ? AGENT_TOOLS : []),
-        ...await this.skills.toolSpecs(session.workspaceId),
+        ...(session.agentId ? await this.agents.customToolSpecs(session.agentId) : []),
+        ...await this.skills.toolSpecs(session.workspaceId, session.agentId ?? undefined),
         ...await this.mcp.toolSpecs(),
       ];
 
@@ -341,7 +360,7 @@ export class TurnLoopService {
 
   /** Read attached workspace files: text inline (bounded), images as vision
    *  parts (bounded count + size). */
-  private async loadAttachments(workspaceId: string, attachments?: unknown[]): Promise<{ text: string; images: AiImagePart[] }> {
+  private async loadAttachments(root: FileRoot, attachments?: unknown[]): Promise<{ text: string; images: AiImagePart[] }> {
     const parts: string[] = [];
     const images: AiImagePart[] = [];
     for (const a of (attachments ?? []).slice(0, 8)) {
@@ -349,7 +368,7 @@ export class TurnLoopService {
       const path = att.path ?? att.name;
       if (typeof path !== 'string' || !path) continue;
       try {
-        const body = await this.storage.get(workspaceFileKey(workspaceId, path));
+        const body = await this.storage.get(fileRootKey(root, path));
         if (!body) continue;
         if (previewKindFor(path) === 'image') {
           if (images.length < 4 && body.length <= 3_000_000) {
@@ -367,11 +386,15 @@ export class TurnLoopService {
    *  agent self-maintenance tool, or a core tool. */
   private async executeTool(session: ChatSession, name: string, input: Record<string, unknown>): Promise<string> {
     if (name.startsWith(SKILL_TOOL_PREFIX)) {
-      const skill = await this.skills.resolveTool(session.workspaceId, name);
+      const skill = await this.skills.resolveTool(session.workspaceId, name, session.agentId ?? undefined);
       if (!skill) throw new Error(`unknown tool: ${name}`);
       return this.skills.invocation(skill);
     }
     if (name.startsWith(MCP_TOOL_PREFIX)) return this.mcp.execute(name, input);
+    if (name.startsWith(CUSTOM_TOOL_PREFIX)) {
+      if (!session.agentId) throw new Error(`unknown tool: ${name}`);
+      return this.agents.executeCustomTool(session.agentId, name, input);
+    }
     if (AGENT_TOOL_NAMES.has(name)) {
       if (!session.agentId) throw new Error(`${name} is only available in chats owned by a durable agent`);
       const agentId = session.agentId;
@@ -413,6 +436,15 @@ export class TurnLoopService {
             `[${h.createdAt.slice(0, 10)} · ${h.sessionName}] ${h.role}: ${h.content.replace(/\s+/g, ' ').slice(0, 300)}`,
           ).join('\n');
         }
+        case 'save_tool': {
+          return this.agents.saveCustomTool(agentId, {
+            name: String(input.name ?? ''),
+            description: typeof input.description === 'string' ? input.description : undefined,
+            method: typeof input.method === 'string' ? input.method : undefined,
+            url: String(input.url ?? ''),
+            body: typeof input.body === 'string' ? input.body : undefined,
+          });
+        }
         case 'draft_skill': {
           const agent = await this.agents.get(agentId).catch(() => null);
           return this.skills.draftSkill({
@@ -421,6 +453,7 @@ export class TurnLoopService {
             instructions: String(input.instructions ?? ''),
             workspaceId: session.workspaceId,
             proposedBy: agent?.name ?? 'agent',
+            agentId,
           });
         }
         case 'update_user_profile': {
@@ -449,7 +482,10 @@ export class TurnLoopService {
         }
       }
     }
-    return this.tools.execute(session.workspaceId, name, input);
+    const root: FileRoot = session.agentId
+      ? { kind: 'agent', id: session.agentId }
+      : { kind: 'workspace', id: session.workspaceId };
+    return this.tools.execute(root, name, input);
   }
 
   /** Ask/Auto policy check (§4): what may run without asking, and whether a
@@ -464,8 +500,9 @@ export class TurnLoopService {
     // them is opaque, so they gate like mutations.
     const readOnly = call.name.startsWith(SKILL_TOOL_PREFIX) ? true
       : call.name.startsWith(MCP_TOOL_PREFIX) ? false
-        : AGENT_TOOL_NAMES.has(call.name) ? (session.agentId ? AGENT_READONLY_TOOLS.has(call.name) : undefined)
-          : this.tools.isReadOnly(call.name);
+        : call.name.startsWith(CUSTOM_TOOL_PREFIX) ? (session.agentId ? false : undefined)
+          : AGENT_TOOL_NAMES.has(call.name) ? (session.agentId ? AGENT_READONLY_TOOLS.has(call.name) : undefined)
+            : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
     if (session.permissionMode === 'auto') return { verdict: 'auto', remember: true };
     if (readOnly) return { verdict: 'read-only', remember: true };

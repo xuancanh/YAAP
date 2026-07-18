@@ -242,6 +242,17 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0009-agent-scope',
+    up: async (db) => {
+      if (!(await hasColumn(db, 'skills', 'agentId'))) {
+        await db.query(`ALTER TABLE skills ADD COLUMN "agentId" TEXT`);
+      }
+      if (!(await hasColumn(db, 'agents', 'tools'))) {
+        await db.query(`ALTER TABLE agents ADD COLUMN "tools" TEXT NOT NULL DEFAULT '[]'`);
+      }
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {

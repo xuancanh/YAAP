@@ -57,6 +57,10 @@ export const agents = pgTable('agents', {
   /** JSON array of self-built mini apps: { id, name, description, html,
    *  updatedAt } — rendered only in a network-blocked sandbox (FR-13.1). */
   apps: text('apps').notNull().default('[]'),
+  /** JSON array of self-built HTTP tools: { id, name, slug, description,
+   *  method, url, body, enabled, ... } — proposed by the agent, activated
+   *  only by user approval, executed through the SSRF guard. */
+  tools: text('tools').notNull().default('[]'),
   /** JSON array of pending 👍/👎 feedback since the agent's last turn (FR-6.5). */
   pendingFeedback: text('pendingFeedback').notNull().default('[]'),
   createdAt: text('createdAt').notNull(),
@@ -191,6 +195,8 @@ export const skills = pgTable('skills', {
   draft: integer('draft').notNull().default(0),
   /** Name of the agent that drafted this skill, for provenance. */
   proposedBy: text('proposedBy').notNull().default(''),
+  /** Set = private to this agent (its self-built skills); null = shared. */
+  agentId: text('agentId'),
   createdAt: text('createdAt').notNull(),
 });
 

@@ -19,7 +19,7 @@ class UpdateSkillDto {
 export class SkillsController {
   constructor(private readonly skills: SkillsService) {}
 
-  @Get() list(@Query('workspaceId') workspaceId?: string) { return this.skills.list(workspaceId); }
+  @Get() list(@Query('workspaceId') workspaceId?: string, @Query('agentId') agentId?: string) { return this.skills.list(workspaceId, agentId); }
   @Get(':id') get(@Param('id') id: string) { return this.skills.get(id); }
   @Post() create(@Body() dto: CreateSkillDto) { return this.skills.create(dto); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateSkillDto) { return this.skills.update(id, dto); }

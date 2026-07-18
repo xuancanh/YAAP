@@ -4,8 +4,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
-import { api, type Agent, type AgentApp, type AgentEvent, type AgentTask, type FileEntry, type FilePreview } from '../lib/api';
+import { api, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentTask, type FileEntry, type FilePreview, type Skill } from '../lib/api';
 import { Markdown } from '../lib/md';
+import { nextFire, untilLabel } from '../lib/cron';
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 14, background: 'var(--panel)' };
 const label: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.6px', textTransform: 'uppercase', color: 'var(--text-faint)' };
@@ -157,40 +158,59 @@ export function NewAgentDialog() {
   );
 }
 
-function AgentCard({ a }: { a: Agent }) {
+/** Fleet row: what one agent is doing right now — current/next task, next
+ *  scheduled loop, latest activity — with one-click ways in. */
+function FleetRow({ a }: { a: Agent }) {
   const app = useApp();
   const stats = app.agentStats[a.id];
-  const count = app.sessions.filter((s) => s.agentId === a.id).length;
+  const unread = app.unread[a.id] ?? 0;
+  const [tasks, setTasks] = useState<AgentTask[]>([]);
+  const [latest, setLatest] = useState<AgentEvent | null>(null);
+  useEffect(() => {
+    void api.agentTasks(a.id).then(setTasks).catch(() => setTasks([]));
+    void api.agentEvents(a.id).then((ev) => setLatest(ev[0] ?? null)).catch(() => setLatest(null));
+  }, [a.id]);
+
+  const doing = tasks.filter((t) => t.status === 'doing').sort((x, y) => (x.updatedAt < y.updatedAt ? 1 : -1));
+  const todo = tasks.filter((t) => t.status === 'todo').sort((x, y) => (x.createdAt < y.createdAt ? -1 : 1));
+  const loops = (() => { try { return (JSON.parse(a.loops) as Loop[]).filter((l) => l.enabled !== false); } catch { return []; } })();
+  const upcoming = loops
+    .map((l) => ({ l, at: l.cron ? nextFire(l.cron) : null }))
+    .filter((x): x is { l: Loop; at: Date } => x.at !== null)
+    .sort((x, y) => x.at.getTime() - y.at.getTime())[0];
+  const working = doing.length > 0;
+
+  const cell = (labelText: string, value: React.ReactNode) => (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 3 }}>{labelText}</div>
+      <div style={{ fontSize: 12.5, color: 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
+    </div>
+  );
+
   return (
-    <div onClick={() => app.openAgent(a.id)} style={{ border: '1px solid var(--border)', borderRadius: 16, background: 'var(--panel)', padding: 18, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div onClick={() => app.openAgent(a.id)} style={{ border: '1px solid var(--border)', borderRadius: 16, background: 'var(--panel)', padding: '16px 18px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 13 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
-        <div style={{ width: 46, height: 46, borderRadius: 13, background: grad(a.colors), display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 22, position: 'relative' }}>
+        <div style={{ width: 42, height: 42, borderRadius: 12, background: grad(a.colors), display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 20, position: 'relative' }}>
           {a.emoji}
-          <span style={{ position: 'absolute', right: -2, bottom: -2, width: 11, height: 11, borderRadius: '50%', background: 'var(--green)', border: '2px solid var(--panel)' }} />
+          <span style={{ position: 'absolute', right: -2, bottom: -2, width: 11, height: 11, borderRadius: '50%', background: working ? 'var(--amber)' : 'var(--green)', border: '2px solid var(--panel)' }} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: '-.2px' }}>{a.name}</div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>{a.role || 'Durable agent'}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 15.5, fontWeight: 700, letterSpacing: '-.2px' }}>{a.name}</span>
+            <span style={{ fontSize: 11, fontWeight: 600, color: working ? 'var(--amber)' : 'var(--text-faint)' }}>{working ? 'working' : 'idle'}</span>
+            {unread > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px' }}>{unread} new</span>}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.role || 'Durable agent'}</div>
         </div>
-        <span style={{ fontSize: 11, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 7, padding: '3px 8px', fontFamily: 'var(--mono)' }}>{a.model || a.provider}</span>
-      </div>
-      <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.55, minHeight: 32, overflow: 'hidden' }}>{a.charter.split('\n')[0].slice(0, 120)}</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 18, paddingTop: 12, borderTop: '1px solid var(--border-soft)' }}>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>{count}</div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>chats</div>
-        </div>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>{parseApps(a).length}</div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>mini apps</div>
-        </div>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--green)' }}>{stats?.rating !== null && stats?.rating !== undefined ? `${stats.rating}%` : '—'}</div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>approval</div>
-        </div>
-        <button onClick={(e) => { e.stopPropagation(); void app.newChat(a.id); }} style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '7px 13px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7 }}>
-          <I d={P.chat} size={14} />New chat
+        <span style={{ fontSize: 11.5, color: 'var(--green)', fontWeight: 600, flex: 'none' }}>{stats?.rating !== null && stats?.rating !== undefined ? `${stats.rating}%` : ''}</span>
+        <button onClick={(e) => { e.stopPropagation(); void app.newChat(a.id); }} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <I d={P.chat} size={13} />Chat
         </button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : '1fr 1fr 1fr', gap: 12, paddingTop: 12, borderTop: '1px solid var(--border-soft)' }}>
+        {cell('Now', doing[0] ? doing[0].title : latest ? `${latest.title} · ${ago(latest.createdAt)}` : 'nothing in progress')}
+        {cell('Next task', todo[0] ? `${todo[0].title}${todo.length > 1 ? `  (+${todo.length - 1} queued)` : ''}` : 'board is clear')}
+        {cell('Next loop', upcoming ? `${upcoming.l.name} · ${untilLabel(upcoming.at)}` : loops.length > 0 ? `${loops.length} scheduled` : 'no schedule')}
       </div>
     </div>
   );
@@ -220,7 +240,7 @@ export function AgentsDirectory() {
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
           <div>
             <div style={{ fontSize: 23, fontWeight: 700, letterSpacing: '-.4px' }}>Your agents</div>
-            <div style={{ color: 'var(--text-dim)', fontSize: 13.5, marginTop: 4 }}>Durable identities with their own charter, isolated file brain, and scheduled work.</div>
+            <div style={{ color: 'var(--text-dim)', fontSize: 13.5, marginTop: 4 }}>What everyone is doing right now — current work, queued tasks, and the next scheduled run.</div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <input ref={fileRef} type="file" accept=".json,application/json" style={{ display: 'none' }}
@@ -239,8 +259,8 @@ export function AgentsDirectory() {
         {app.agents.length === 0 && (
           <div style={{ marginTop: 40, textAlign: 'center', color: 'var(--text-faint)', fontSize: 13.5 }}>No agents yet — create one, or hire from the Market.</div>
         )}
-        <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : 'repeat(2,1fr)', gap: 16, marginTop: 22 }}>
-          {app.agents.map((a) => <AgentCard key={a.id} a={a} />)}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 22 }}>
+          {app.agents.map((a) => <FleetRow key={a.id} a={a} />)}
         </div>
       </div>
       {pending && <ImportReviewModal pending={pending} onClose={() => setPending(null)} />}
@@ -511,13 +531,90 @@ function AgentFilesTab({ a }: { a: Agent }) {
         </div>
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 10 }}>
-        Isolated fs — only {a.name}'s conversations read and write here. <span style={{ fontFamily: 'var(--mono)' }}>LESSONS.md</span> and <span style={{ fontFamily: 'var(--mono)' }}>JOURNAL.md</span> are its memory; distillation appends to them.
+        {a.name}'s working folder — its file tools, uploads, and attachments all operate here. <span style={{ fontFamily: 'var(--mono)' }}>LESSONS.md</span> and <span style={{ fontFamily: 'var(--mono)' }}>JOURNAL.md</span> are its memory; <span style={{ fontFamily: 'var(--mono)' }}>.checkpoints/</span> is read-only rollback history.
       </div>
     </div>
   );
 }
 
-const TABS = ['Dashboard', 'Tasks', 'Schedule', 'Mini apps', 'Chats', 'Files', 'Settings'] as const;
+/** What this agent taught itself: private skills (from draft_skill) and
+ *  self-built HTTP tools (from save_tool). Creation is free; activation is
+ *  the user's call, always. */
+function SkillsToolsTab({ a }: { a: Agent }) {
+  const app = useApp();
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [tools, setTools] = useState<AgentCustomTool[]>([]);
+  const refresh = (id: string) => {
+    void api.skills(app.workspaceId || undefined, id).then((all) => setSkills(all.filter((s) => s.agentId === id))).catch(() => setSkills([]));
+    void api.agentCustomTools(id).then(setTools).catch(() => setTools([]));
+  };
+  useEffect(() => { refresh(a.id); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [a.id]);
+
+  const pill = (text: string, color: string) => (
+    <span style={{ fontSize: 10, fontWeight: 700, color, border: `1px solid ${color}`, borderRadius: 6, padding: '1px 7px' }}>{text}</span>
+  );
+  const btn = (label: string, onClick: () => void, primary = false, danger = false): React.ReactNode => (
+    <button onClick={onClick} style={{
+      background: primary ? 'var(--accent)' : 'none', color: primary ? '#fff' : danger ? 'var(--red)' : 'var(--text-dim)',
+      border: primary ? 'none' : `1px solid ${danger ? 'var(--red)' : 'var(--border)'}`,
+      borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', flex: 'none',
+    }}>{label}</button>
+  );
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
+      <div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
+          <span style={label}>Self-built skills · {skills.length}</span>
+          <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>procedures {a.name} captured from work that went well (draft_skill)</span>
+        </div>
+        <div style={{ ...card, padding: '6px 8px' }}>
+          {skills.map((s) => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderBottom: '1px solid var(--border-soft)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, fontFamily: 'var(--mono)' }}>/{s.name}</span>
+                  {s.draft === 1 ? pill('awaiting your approval', 'var(--amber)') : pill('active', 'var(--green)')}
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.description || s.instructions.slice(0, 90)}</div>
+              </div>
+              {s.draft === 1 && btn('Approve', async () => { await api.resolveSkillDraft(s.id, true); refresh(a.id); app.showToast(`Skill /${s.name} approved`); }, true)}
+              {s.draft === 1 && btn('Reject', async () => { await api.resolveSkillDraft(s.id, false); refresh(a.id); }, false, true)}
+              {s.draft !== 1 && btn('Remove', async () => { if (window.confirm(`Remove /${s.name}?`)) { await api.resolveSkillDraft(s.id, false).catch(async () => { await fetch(`/api/skills/${s.id}`, { method: 'DELETE' }); }); refresh(a.id); } }, false, true)}
+            </div>
+          ))}
+          {skills.length === 0 && <div style={{ padding: '10px 10px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>None yet — when work goes well, {a.name} drafts the procedure and you approve it here.</div>}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
+          <span style={label}>Self-built tools · {tools.length}/12</span>
+          <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>HTTP tools built from your requests (save_tool) — inert until you enable them, SSRF-guarded, approval-gated per call in Ask mode</span>
+        </div>
+        <div style={{ ...card, padding: '6px 8px' }}>
+          {tools.map((t) => (
+            <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderBottom: '1px solid var(--border-soft)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, fontFamily: 'var(--mono)' }}>tool_{t.slug}</span>
+                  {t.enabled ? pill('enabled', 'var(--green)') : pill('review the URL, then enable', 'var(--amber)')}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>{t.description || t.name}</div>
+                <div style={{ fontSize: 10.5, color: 'var(--text-faint)', fontFamily: 'var(--mono)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.method} {t.url}</div>
+              </div>
+              {!t.enabled && btn('Enable', async () => { await api.approveAgentTool(a.id, t.id); refresh(a.id); app.showToast(`tool_${t.slug} enabled`); }, true)}
+              {btn(t.enabled ? 'Revoke' : 'Reject', async () => { await api.deleteAgentTool(a.id, t.id); refresh(a.id); }, false, true)}
+            </div>
+          ))}
+          {tools.length === 0 && <div style={{ padding: '10px 10px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>None yet — ask for the same lookup twice and {a.name} will offer to build it as a tool.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const TABS = ['Dashboard', 'Tasks', 'Schedule', 'Mini apps', 'Skills & tools', 'Chats', 'Files', 'Settings'] as const;
 type HomeTab = (typeof TABS)[number];
 
 export function AgentHome() {
@@ -679,6 +776,7 @@ export function AgentHome() {
 
         {tab === 'Tasks' && <TasksBoard a={a} tasks={tasks} reload={reloadTasks} />}
         {tab === 'Schedule' && <ScheduleTab a={a} />}
+        {tab === 'Skills & tools' && <SkillsToolsTab a={a} />}
         {tab === 'Files' && <AgentFilesTab a={a} />}
 
         {tab === 'Mini apps' && (
