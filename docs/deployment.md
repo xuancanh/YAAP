@@ -3,9 +3,16 @@
 Two distributions of the same codebase, both proprietary (no source
 release). The research behind docs/roadmap.md showed that self-hosting is
 the #1 pain point of OpenClaw/Hermes users and exposed instances are the #1
-disaster, so we do not ship a self-hosted server at all: single users get a
-free desktop app where everything runs inside the app process, and remote /
-multi-device use is the paid cloud.
+disaster, so we do not ship a self-hosted server at all. The split is about
+who manages the machine:
+
+- **Desktop (free)**: your device, your data, everything inside one app
+  process. The agent works while the app runs.
+- **Cloud (paid)**: no device to manage at all. Agents live in our
+  infrastructure and are simply *always there* — loops fire at 3am with the
+  laptop closed, channels answer from anywhere, nothing to install, update,
+  back up, or keep awake. The cloud is not remote access to a machine; it is
+  the machine-less experience.
 
 ## 1. Free desktop app, single user
 
@@ -26,18 +33,20 @@ credential is a model provider key (or platform-metered access later).
     same key/prefix validation as the isolation boundary.
   Data lives in the OS app-data folder; backup = copy the folder.
 - **Free, not open.** The desktop app is the free tier and the funnel: full
-  durable-agent feature set for one user on one machine. Loops run while
-  the app runs (the menu-bar/tray process keeps the scheduler alive);
-  always-on loops, channels, and multi-device sync are cloud capabilities,
-  which keeps the free/paid line a capability line rather than a crippled
-  feature line.
+  durable-agent feature set, but bounded by the device — loops run while
+  the app (or its tray process) runs, and the agent sleeps when the laptop
+  does. That physical limit *is* the upgrade story: the cloud sells the
+  removal of the device, not the return of removed features.
 - **Escape hatch.** AGENT.json export/import works in both directions
   between desktop and cloud. Portability is the trust story: your agents
   are yours even though the code is not open.
 
-## 2. Cloud: remote access with login, multi-tenant
+## 2. Cloud: the full machine-less experience, multi-tenant
 
-Target: the same binaries, `MODE=cloud`, behind our infrastructure.
+Target: the same binaries, `MODE=cloud`, behind our infrastructure. The
+product promise is "agents with no device to manage": always-on loops and
+heartbeats, channels that answer around the clock, zero setup or upgrades,
+and durable state that outlives any laptop.
 
 ### Identity
 
