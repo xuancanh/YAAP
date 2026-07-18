@@ -7,6 +7,7 @@ import { WorkspacePill, HomeRail, WorkspaceRail, MarketRail, SettingsRail, Secon
 import { ChatView } from './components/ChatView';
 import { FilesView } from './components/FilesView';
 import { AgentsDirectory, AgentHome, NewAgentDialog } from './components/AgentsView';
+import { AppsGallery } from './components/AppsView';
 import { MarketView, HireModal } from './components/MarketView';
 import { SettingsView } from './components/SettingsView';
 import { ArtifactPanel } from './components/ArtifactPanel';
@@ -24,7 +25,7 @@ function Layout() {
   const showMain = app.stacked ? !showSecondary : true;
 
   const secTitle = sec === 'home' ? 'Agents & chats' : sec === 'workspace' ? 'Shared files' : sec === 'market' ? 'Categories' : 'Settings';
-  const hasSecondary = sec !== 'overview'; // the fleet overview is full-width
+  const hasSecondary = sec !== 'overview' && sec !== 'apps'; // fleet overview + apps gallery are full-width
 
   return (
     <div data-theme={app.theme} style={{ height: '100vh', display: 'flex', position: 'relative', background: 'var(--bg)', color: 'var(--text)', fontSize: 14, overflow: 'hidden', paddingBottom: app.stacked ? 58 : 0 }}>
@@ -47,6 +48,7 @@ function Layout() {
           {sec === 'home' && app.homeView === 'file' && <FilesView />}
           {sec === 'home' && app.homeView === 'agent' && (app.selectedAgent ? <AgentHome /> : <AgentsDirectory />)}
           {sec === 'overview' && <AgentsDirectory />}
+          {sec === 'apps' && <AppsGallery />}
           {sec === 'workspace' && <FilesView />}
           {sec === 'market' && <MarketView cat={marketCat} setCat={setMarketCat} />}
           {sec === 'settings' && <SettingsView pane={settingsPane} />}

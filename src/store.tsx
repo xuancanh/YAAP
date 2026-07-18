@@ -10,7 +10,7 @@ import {
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision,
 } from './lib/api';
 
-export type Section = 'home' | 'overview' | 'workspace' | 'market' | 'settings';
+export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 'settings';
 /** What the main pane shows while in the Home section: a conversation, an
  *  agent's home page (or the directory when no agent is selected), or a file
  *  preview — all reachable from the one combined rail, YAAM-style. */
@@ -122,7 +122,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [section, setSection] = useState<Section>(() => {
     const p = new URLSearchParams(window.location.search);
     const q = p.get('section');
-    if (q === 'market' || q === 'settings' || q === 'overview' || q === 'workspace') return q;
+    if (q === 'market' || q === 'settings' || q === 'overview' || q === 'workspace' || q === 'apps') return q;
     // legacy: ?section=agents without a specific agent is the fleet overview
     if (q === 'agents' && !p.get('agent')) return 'overview';
     if (q === 'files') return 'workspace';

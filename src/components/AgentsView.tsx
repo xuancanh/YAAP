@@ -270,7 +270,7 @@ export function AgentsDirectory() {
 
 /** Full-screen sandboxed viewer for one mini app — same trust model as chat
  *  artifacts: opaque origin, allow-scripts only, no network (FR-13.1). */
-function AppViewer({ miniApp, onClose }: { miniApp: AgentApp; onClose: () => void }) {
+export function AppViewer({ miniApp, onClose }: { miniApp: AgentApp; onClose: () => void }) {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', zIndex: 90, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '4vh 4vw' }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%', maxWidth: 1100, background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow)' }}>

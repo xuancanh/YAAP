@@ -268,7 +268,7 @@ export function WorkspaceRail() {
 
 export function MarketRail({ cat, setCat }: { cat: string; setCat: (c: string) => void }) {
   const app = useApp();
-  const cats = ['All', 'Security', 'DevOps', 'Productivity', 'Design'];
+  const cats = ['All', ...Array.from(new Set(app.market.map((m) => m.cat)))];
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '2px 8px 12px' }}>
       {cats.map((c) => (

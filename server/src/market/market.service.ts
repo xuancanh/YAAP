@@ -9,10 +9,9 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { AgentsService } from '../agents/agents.service';
 import { SkillsService } from '../skills/skills.service';
-import { MARKET_CATALOG } from './market.catalog';
 import { PROFESSION_PACKS } from './profession-packs.generated';
 
-const CATALOG = [...PROFESSION_PACKS, ...MARKET_CATALOG];
+const CATALOG = PROFESSION_PACKS;
 
 @Injectable()
 export class MarketService {
