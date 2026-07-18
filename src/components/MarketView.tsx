@@ -7,7 +7,7 @@ export function MarketView({ cat, setCat }: { cat: string; setCat: (c: string) =
   const app = useApp();
   const [search, setSearch] = useState('');
   const q = search.toLowerCase();
-  const cats = ['All', 'Security', 'DevOps', 'Productivity', 'Design'];
+  const cats = ['All', ...Array.from(new Set(app.market.map((m) => m.cat)))];
   const items = app.market.filter((m) => (cat === 'All' || m.cat === cat) && (!q || m.name.toLowerCase().includes(q) || m.role.toLowerCase().includes(q)));
 
   return (
@@ -99,6 +99,24 @@ export function HireModal() {
               </div>
             ))}
           </div>
+          {(item.skills?.length ?? 0) > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 11 }}>
+                Bundled skills · {item.skills!.length}
+              </div>
+              <div style={{ maxHeight: 210, overflowY: 'auto', border: '1px solid var(--border-soft)', borderRadius: 10, background: 'var(--panel-2)' }}>
+                {item.skills!.map((s) => (
+                  <div key={s.name} style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-soft)' }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--mono)' }}>/{s.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{s.description}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 7 }}>
+                Skills install private to this agent — read, edit, or remove them any time in its Skills &amp; tools tab.
+              </div>
+            </div>
+          )}
           {item.loops.length > 0 && (
             <div style={{ marginTop: 18, padding: '13px 15px', border: '1px solid var(--amber)', borderRadius: 11, background: 'color-mix(in oklab,var(--amber) 12%,transparent)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--amber)', marginBottom: 8 }}>

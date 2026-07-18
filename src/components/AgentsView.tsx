@@ -567,8 +567,8 @@ function SkillsToolsTab({ a }: { a: Agent }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
       <div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
-          <span style={label}>Self-built skills · {skills.length}</span>
-          <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>procedures {a.name} captured from work that went well (draft_skill)</span>
+          <span style={label}>Skills · {skills.length}</span>
+          <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>installed with {a.name} or captured from work that went well (draft_skill)</span>
         </div>
         <div style={{ ...card, padding: '6px 8px' }}>
           {skills.map((s) => (

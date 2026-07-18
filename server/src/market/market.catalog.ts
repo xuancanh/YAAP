@@ -13,6 +13,14 @@ export interface MarketCapability {
 export interface MarketLoop {
   name: string;
   cron: string;
+  prompt?: string;
+}
+
+/** A skill bundled with a profession pack; installed agent-private on hire. */
+export interface MarketSkill {
+  name: string;
+  description: string;
+  instructions: string;
 }
 
 export interface MarketItem {
@@ -25,13 +33,15 @@ export interface MarketItem {
   verified: boolean;
   stars: string;
   installs: string;
-  cat: 'Security' | 'DevOps' | 'Productivity' | 'Design';
+  cat: string;
   price: 'free' | 'metered';
   tagline: string;
   caps: string[];
   capsFull: MarketCapability[];
   loops: MarketLoop[];
   charter: string;
+  /** Present on profession packs: skills installed (agent-private) on hire. */
+  skills?: MarketSkill[];
 }
 
 export const MARKET_CATALOG: MarketItem[] = [

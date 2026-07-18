@@ -200,6 +200,8 @@ export interface MarketItem {
   capsFull: Array<{ name: string; desc: string; icon: string }>;
   loops: Array<{ name: string; cron: string }>;
   hired: boolean;
+  /** Profession packs: skills installed (agent-private) on hire. */
+  skills?: Array<{ name: string; description: string }>;
 }
 
 export interface FileEntry {
