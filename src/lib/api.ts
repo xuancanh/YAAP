@@ -362,6 +362,8 @@ export const api = {
     send<Skill>(`/api/skills/${id}`, 'PATCH', patch),
   resolveSkillDraft: (id: string, approve: boolean) =>
     send<Skill | { ok: boolean }>(`/api/skills/${id}/${approve ? 'approve' : 'reject'}`, 'POST'),
+  promoteSkill: (id: string, workspaceId?: string) =>
+    send<Skill>(`/api/skills/${id}/promote`, 'POST', workspaceId ? { workspaceId } : {}),
   mcp: () => get<McpServer[]>('/api/mcp'),
   createMcp: (name: string, url: string) => send<McpServer>('/api/mcp', 'POST', { name, url }),
   updateMcp: (id: string, patch: { enabled?: boolean }) => send<McpServer>(`/api/mcp/${id}`, 'PATCH', patch),

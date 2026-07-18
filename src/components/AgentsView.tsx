@@ -546,9 +546,47 @@ function AgentFilesTab({ a }: { a: Agent }) {
 /** What this agent taught itself: private skills (from draft_skill) and
  *  self-built HTTP tools (from save_tool). Creation is free; activation is
  *  the user's call, always. */
+/** Permissions §5: promotion widens blast radius, so the user re-reviews the
+ *  full instructions — the real artifact, not a summary — before sharing. */
+function PromoteSkillModal({ a, skill, onDone, onClose }: { a: Agent; skill: Skill; onDone: () => void; onClose: () => void }) {
+  const app = useApp();
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', backdropFilter: 'blur(2px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 560, maxWidth: '100%', maxHeight: '86vh', display: 'flex', flexDirection: 'column', background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'var(--shadow)', animation: 'pop .16s' }}>
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border-soft)', flex: 'none' }}>
+          <div style={{ fontSize: 17, fontWeight: 700 }}>Share /{skill.name} with the workspace</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 2 }}>
+            Now private to {a.name} · after sharing, every agent {app.workspaceId ? 'in this workspace' : 'everywhere'} can load it
+          </div>
+        </div>
+        <div style={{ padding: '16px 24px', overflow: 'auto' }}>
+          {skill.description && <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginBottom: 10 }}>{skill.description}</div>}
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6 }}>Full instructions — review what you are sharing</div>
+          <pre style={{ margin: 0, padding: '12px 14px', background: 'var(--code)', border: '1px solid var(--border-soft)', borderRadius: 10, fontFamily: 'var(--mono)', fontSize: 11.5, lineHeight: 1.6, color: 'var(--text-dim)', whiteSpace: 'pre-wrap' }}>{skill.instructions}</pre>
+          {skill.proposedBy && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>Drafted by {a.name} ({skill.proposedBy})</div>}
+        </div>
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border-soft)', display: 'flex', gap: 10, flex: 'none' }}>
+          <button onClick={onClose} style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+          <button onClick={async () => {
+            try {
+              await api.promoteSkill(skill.id, app.workspaceId || undefined);
+              app.showToast(`/${skill.name} is now shared`);
+              onDone();
+            } catch (err) {
+              app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'promotion failed');
+            }
+            onClose();
+          }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Approve & share</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SkillsToolsTab({ a }: { a: Agent }) {
   const app = useApp();
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [promoting, setPromoting] = useState<Skill | null>(null);
   const [tools, setTools] = useState<AgentCustomTool[]>([]);
   const refresh = (id: string) => {
     void api.skills(app.workspaceId || undefined, id).then((all) => setSkills(all.filter((s) => s.agentId === id))).catch(() => setSkills([]));
@@ -586,12 +624,14 @@ function SkillsToolsTab({ a }: { a: Agent }) {
               </div>
               {s.draft === 1 && btn('Approve', async () => { await api.resolveSkillDraft(s.id, true); refresh(a.id); app.showToast(`Skill /${s.name} approved`); }, true)}
               {s.draft === 1 && btn('Reject', async () => { await api.resolveSkillDraft(s.id, false); refresh(a.id); }, false, true)}
+              {s.draft !== 1 && btn('Share', () => setPromoting(s))}
               {s.draft !== 1 && btn('Remove', async () => { if (window.confirm(`Remove /${s.name}?`)) { await api.resolveSkillDraft(s.id, false).catch(async () => { await fetch(`/api/skills/${s.id}`, { method: 'DELETE' }); }); refresh(a.id); } }, false, true)}
             </div>
           ))}
           {skills.length === 0 && <div style={{ padding: '10px 10px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>None yet — when work goes well, {a.name} drafts the procedure and you approve it here.</div>}
         </div>
       </div>
+      {promoting && <PromoteSkillModal a={a} skill={promoting} onDone={() => refresh(a.id)} onClose={() => setPromoting(null)} />}
 
       <div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>

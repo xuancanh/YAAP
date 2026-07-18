@@ -104,6 +104,22 @@ export class SkillsService implements OnModuleInit {
     return `Skill "${name}" drafted. The user reviews and approves it before it becomes available; do not assume you can call it yet.`;
   }
 
+  /** Promotion (permissions §5): an agent-private skill becomes shared —
+   *  workspace-shared when a target workspace is given, else it keeps its
+   *  stored scope. Widening blast radius requires the user's re-review of the
+   *  full instructions client-side; here we enforce the scope rules. */
+  async promote(id: string, workspaceId?: string): Promise<SkillRow> {
+    const skill = await this.get(id);
+    if (!skill.agentId) throw new ConflictException('skill is already shared');
+    if (skill.draft === 1) throw new ConflictException('approve the draft before promoting it');
+    const target = workspaceId ?? skill.workspaceId ?? undefined;
+    if ((await this.list(target)).some((s) => s.name === skill.name)) {
+      throw new ConflictException(`a shared skill named "${skill.name}" already exists in that scope`);
+    }
+    await this.db.update(skills).set({ agentId: null, workspaceId: target ?? null }).where(eq(skills.id, id));
+    return this.get(id);
+  }
+
   /** User approval: the draft becomes a live skill. Rejection deletes it. */
   async resolveDraft(id: string, approve: boolean): Promise<SkillRow | { ok: boolean }> {
     const skill = await this.get(id);

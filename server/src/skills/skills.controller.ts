@@ -9,6 +9,10 @@ class CreateSkillDto {
   @IsOptional() @IsString() workspaceId?: string;
 }
 
+class PromoteSkillDto {
+  @IsOptional() @IsString() workspaceId?: string;
+}
+
 class UpdateSkillDto {
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsString() instructions?: string;
@@ -27,4 +31,6 @@ export class SkillsController {
   /** Phase 3: agent-drafted skills go live only on user approval. */
   @Post(':id/approve') approveDraft(@Param('id') id: string) { return this.skills.resolveDraft(id, true); }
   @Post(':id/reject') rejectDraft(@Param('id') id: string) { return this.skills.resolveDraft(id, false); }
+  /** Permissions §5: agent-private → workspace-shared, after the user re-reviews. */
+  @Post(':id/promote') promote(@Param('id') id: string, @Body() dto: PromoteSkillDto) { return this.skills.promote(id, dto.workspaceId); }
 }

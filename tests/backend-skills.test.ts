@@ -53,6 +53,38 @@ test('invalid skill names are rejected', async () => {
   await assert.rejects(skills.create({ name: 'Bad Name!', instructions: 'x' }), /lowercase slug/);
 });
 
+test('promotion: agent-private skill becomes workspace-shared (permissions §5)', async () => {
+  const skills = new SkillsService(await testDb());
+  const priv = await skills.create({ name: 'client-memory', instructions: 'keep per-client files', agentId: 'ag1' });
+
+  // private: invisible to the workspace, visible to its agent
+  assert.ok(!(await skills.list('ws1')).some((s) => s.name === 'client-memory'));
+  assert.ok((await skills.list('ws1', 'ag1')).some((s) => s.name === 'client-memory'));
+
+  const shared = await skills.promote(priv.id, 'ws1');
+  assert.equal(shared.agentId, null);
+  assert.equal(shared.workspaceId, 'ws1');
+  // now every agent in ws1 sees it; other workspaces do not
+  assert.ok((await skills.list('ws1', 'ag2')).some((s) => s.name === 'client-memory'));
+  assert.ok(!(await skills.list('ws2')).some((s) => s.name === 'client-memory'));
+
+  // re-promoting a shared skill is refused
+  await assert.rejects(skills.promote(shared.id, 'ws1'), /already shared/);
+});
+
+test('promotion guards: drafts and name collisions are refused', async () => {
+  const skills = new SkillsService(await testDb());
+  const draft = await skills.create({ name: 'half-baked', instructions: 'not yet approved by anyone', agentId: 'ag1', draft: true, proposedBy: 'ag1' });
+  await assert.rejects(skills.promote(draft.id, 'ws1'), /draft/);
+
+  await skills.create({ name: 'run-sheet', instructions: 'the shared one', workspaceId: 'ws1' });
+  const clash = await skills.create({ name: 'run-sheet', instructions: 'the private one', agentId: 'ag1' });
+  await assert.rejects(skills.promote(clash.id, 'ws1'), /already exists/);
+  // still promotable into a scope without the collision
+  const shared = await skills.promote(clash.id, 'ws2');
+  assert.equal(shared.workspaceId, 'ws2');
+});
+
 test('the turn loop offers skills as tools and invoking one returns its instructions (FR-10.2)', async () => {
   const db = await testDb();
   const skills = new SkillsService(db);
