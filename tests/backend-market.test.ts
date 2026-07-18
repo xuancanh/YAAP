@@ -6,6 +6,7 @@ import { MarketService } from '../server/src/market/market.service';
 import { AgentsService } from '../server/src/agents/agents.service';
 import { SkillsService } from '../server/src/skills/skills.service';
 import { PROFESSION_PACKS } from '../server/src/market/profession-packs.generated';
+import { AUTHORED_PACKS } from '../server/src/market/authored-packs.generated';
 import { testDb, memStorage } from './helpers';
 
 async function setup() {
@@ -28,10 +29,28 @@ test('the catalog carries the profession packs, with skill bodies stripped from 
     assert.ok(!('instructions' in s), 'instructions must not ship to the client');
   }
   // every generated pack has at least one skill and a charter
-  for (const p of PROFESSION_PACKS) {
+  for (const p of [...PROFESSION_PACKS, ...AUTHORED_PACKS]) {
     assert.ok(p.skills!.length > 0, `${p.id} has skills`);
     assert.ok(p.charter.length > 100, `${p.id} has a charter`);
   }
+  // ids and names stay unique across both generated catalogs
+  const all = [...PROFESSION_PACKS, ...AUTHORED_PACKS];
+  assert.equal(new Set(all.map((p) => p.id)).size, all.length, 'unique ids');
+  assert.equal(new Set(all.map((p) => p.name)).size, all.length, 'unique names');
+});
+
+test('hiring an authored casual pack installs its skills and loops', async () => {
+  const { market, skills } = await setup();
+  const { agent } = await market.hire('pack-trip-planner');
+  assert.equal(agent.name, 'Trip Planner');
+  const own = (await skills.list(undefined, agent.id)).filter((s) => s.agentId === agent.id);
+  const names = own.map((s) => s.name);
+  assert.ok(names.includes('itinerary-builder') && names.includes('packing-list'), `installed: ${names.join(',')}`);
+
+  const { agent: lifeAdmin } = await market.hire('pack-life-admin');
+  const loops = JSON.parse(lifeAdmin.loops) as Array<{ name: string; cron: string; prompt?: string }>;
+  assert.equal(loops.length, 2);
+  assert.match(loops[0].prompt ?? '', /daily-briefing/);
 });
 
 test('hiring a pack installs its skills private to the hired agent', async () => {

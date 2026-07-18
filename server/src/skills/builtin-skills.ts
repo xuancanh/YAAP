@@ -51,4 +51,28 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
 4. Call slides_create with { path: "slides/<kebab-case-name>.html", title, slides: [{ title, bullets, notes? }] }. The tool renders a self-contained HTML deck (arrow keys navigate).
 5. Reply in chat with the deck path and a one-line description of the narrative arc.`,
   },
+  {
+    name: 'make-spreadsheet',
+    description: 'Build a calculation-checked data table as CSV plus a readable markdown view in workspace files',
+    instructions: `You are building a spreadsheet-style deliverable without spreadsheet software. Follow this process.
+
+1. Pin down the columns, the grain (one row = one what?), and any derived columns (totals, deltas, percentages) from the request; ask only if genuinely ambiguous.
+2. Gather the data: read referenced workspace files with fs_list / fs_read, or take pasted data from chat. Never invent numbers - leave a cell blank and note it instead.
+3. Compute derived values yourself, digit by digit, and re-check every sum and percentage once before writing anything.
+4. Save two files with fs_write:
+   - data/<kebab-case-name>.csv - plain CSV, header row first, no thousands separators
+   - data/<kebab-case-name>.md - the same table in markdown with a short "How to read this" note and any caveats
+5. Reply in chat with the two paths, the row count, and the one number the user most likely cares about.`,
+  },
+  {
+    name: 'design-polish',
+    description: 'Apply a coherent visual theme to an HTML artifact, slide deck, or mini app',
+    instructions: `You are restyling an HTML deliverable (artifact, deck, or mini app). Follow this process.
+
+1. Read the current file with fs_read (or take the HTML from the conversation). Identify its purpose and audience before touching style.
+2. Pick one deliberate direction and commit: a 2-3 color palette (background, text, one accent), one display font pairing from system/web-safe stacks, and a consistent spacing scale. Never sprinkle six accent colors.
+3. Apply the theme with inline CSS or a single <style> block - the result must stay one self-contained file with no external fonts, scripts, or images.
+4. Sweep for the usual defects: contrast under WCAG AA, unaligned edges, inconsistent border radii, orphaned font sizes, walls of text that need whitespace.
+5. Save with fs_write (same path unless asked otherwise, so the original is replaced predictably) and reply with one sentence naming the direction you chose.`,
+  },
 ];
