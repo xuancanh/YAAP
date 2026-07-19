@@ -19,7 +19,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Go-to-market",
+  "cat": "Workplace",
   "price": "free",
   "tagline": "Create content, plan campaigns, and analyze performance across marketing channels. Maintain brand voice consistency, track competitors, and report on what's working.",
   "caps": [
@@ -102,7 +102,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Go-to-market",
+  "cat": "Workplace",
   "price": "free",
   "tagline": "Prospect, craft outreach, and build deal strategy faster. Prep for calls, manage your pipeline, and write personalized messaging that moves deals forward.",
   "caps": [
@@ -196,7 +196,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Go-to-market",
+  "cat": "Workplace",
   "price": "free",
   "tagline": "Triage tickets, draft responses, escalate issues, and build your knowledge base. Research customer context and turn resolved issues into self-service content.",
   "caps": [
@@ -264,7 +264,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Legal & Finance",
   "price": "free",
   "tagline": "Streamline finance and accounting workflows, from journal entries and reconciliation to financial statements and variance analysis. Speed up audit prep, month-end close, and keeping your books clean.",
   "caps": [
@@ -347,7 +347,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Legal & Finance",
   "price": "free",
   "tagline": "Speed up contract review, NDA triage, and compliance workflows for in-house legal teams. Draft legal briefs, organize precedent research, and manage institutional knowledge.",
   "caps": [
@@ -435,7 +435,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Workplace",
   "price": "free",
   "tagline": "Streamline people operations — recruiting, onboarding, performance reviews, compensation analysis, and policy guidance. Maintain compliance and keep your team running smoothly.",
   "caps": [
@@ -523,7 +523,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Workplace",
   "price": "free",
   "tagline": "Optimize business operations — vendor management, process documentation, change management, capacity planning, and compliance tracking. Keep your organization running efficiently.",
   "caps": [
@@ -611,7 +611,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Small Business",
   "price": "free",
   "tagline": "Pre-built small business workflows (including payroll planning, month-end close, weekly briefs, and growth campaigns) using your QuickBooks, PayPal, HubSpot, Docusign, Gsuite, O365, Canva, and other c",
   "caps": [
@@ -820,7 +820,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Product",
+  "cat": "Product & Engineering",
   "price": "free",
   "tagline": "Write feature specs, plan roadmaps, and synthesize user research faster. Keep stakeholders updated and stay ahead of the competitive landscape.",
   "caps": [
@@ -903,7 +903,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Product",
+  "cat": "Product & Engineering",
   "price": "free",
   "tagline": "Accelerate design workflows — critique, design system management, UX writing, accessibility audits, research synthesis, and dev handoff. From exploration to pixel-perfect specs.",
   "caps": [
@@ -981,7 +981,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Technical",
+  "cat": "Product & Engineering",
   "price": "free",
   "tagline": "Write SQL, explore datasets, and generate insights faster. Build visualizations and dashboards, and turn raw data into clear stories for stakeholders.",
   "caps": [
@@ -1074,7 +1074,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Technical",
+  "cat": "Product & Engineering",
   "price": "free",
   "tagline": "Streamline engineering workflows — standups, code review, architecture decisions, incident response, and technical documentation. Works with your existing tools or standalone.",
   "caps": [
@@ -1167,7 +1167,7 @@ export const PROFESSION_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Technical",
+  "cat": "Workplace",
   "price": "free",
   "tagline": "Search across all of your company's tools in one place. Find anything across email, chat, documents, and wikis without switching between apps.",
   "caps": [

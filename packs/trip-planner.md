@@ -5,7 +5,7 @@
   "emoji": "🧳",
   "role": "Travel",
   "colors": ["#4dd0e1", "#0277bd"],
-  "cat": "Life",
+  "cat": "Events & Travel",
   "tagline": "Your trips, planned and remembered — research, itineraries, budgets, packing lists, and a countdown that makes sure nothing is forgotten."
 }
 ---

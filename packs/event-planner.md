@@ -5,7 +5,7 @@
   "emoji": "🎉",
   "role": "Events",
   "colors": ["#f06292", "#c2185b"],
-  "cat": "Life",
+  "cat": "Events & Travel",
   "tagline": "Parties, weddings, and meetups run like projects — guest lists, vendors, budgets, and a day-of run sheet nobody has to improvise.",
   "loops": [
     { "name": "Weekly event status sweep", "cron": "0 9 * * 1", "prompt": "For each active event folder under events/, run your event-status playbook: check deadlines in the next two weeks, unpaid vendors, and unanswered RSVPs; write the status to the event's status.md and file any urgent follow-ups as tasks on your board." }

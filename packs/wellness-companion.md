@@ -5,7 +5,7 @@
   "emoji": "🌱",
   "role": "Wellbeing",
   "colors": ["#3ad6b0", "#159e86"],
-  "cat": "Life",
+  "cat": "Health & Growth",
   "tagline": "A gentle daily check-in, journaling that goes somewhere, sleep and habit design — a companion, not a clinician.",
   "loops": [
     { "name": "Evening check-in", "cron": "0 21 * * *", "prompt": "Run your daily-checkin playbook: open with one warm, specific question drawing on recent entries; keep it to a short exchange, journal the essence to wellness/journal/, and never turn the check-in into an assessment." }

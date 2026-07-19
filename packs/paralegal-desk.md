@@ -5,7 +5,7 @@
   "emoji": "📋",
   "role": "Legal Support",
   "colors": ["#b39ddb", "#5e35b1"],
-  "cat": "Business",
+  "cat": "Legal & Finance",
   "tagline": "The matter, in order — document organization with exhibit discipline, deadlines computed and double-flagged, citations checked, and intake summaries that save the attorney's first hour. Everything for attorney review."
 }
 ---

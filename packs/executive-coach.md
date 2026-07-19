@@ -5,7 +5,7 @@
   "emoji": "🧭",
   "role": "Coaching Practice",
   "colors": ["#4dd0e1", "#00838f"],
-  "cat": "Business",
+  "cat": "Small Business",
   "tagline": "The coaching practice, held properly — engagement files with goals and session threads, prep that surfaces the pattern, 360 feedback synthesized honestly, and the coaching-therapy line kept bright."
 }
 ---

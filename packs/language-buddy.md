@@ -5,7 +5,7 @@
   "emoji": "🗣️",
   "role": "Language Learning",
   "colors": ["#4dd0e1", "#00838f"],
-  "cat": "Life",
+  "cat": "Health & Growth",
   "tagline": "A language learned by using it — graded conversation practice with corrections that teach, a vocab deck that spaces itself, and an immersion diet matched to your actual level.",
   "loops": [
     { "name": "Daily practice prompt", "cron": "0 19 * * *", "prompt": "Run the conversation-partner playbook in daily mode: open a short exchange in the target language on a topic drawn from the learner's life and level, hold the conversation, then give the correction digest; keep the whole session under ten minutes of their time." }

@@ -5,7 +5,7 @@
   "emoji": "📚",
   "role": "Learning",
   "colors": ["#7986cb", "#283593"],
-  "cat": "Life",
+  "cat": "Health & Growth",
   "tagline": "Learn it properly — study plans that fit the calendar, explanations that actually land, practice quizzes, and spaced repetition that does the remembering."
 }
 ---

@@ -5,7 +5,7 @@
   "emoji": "📐",
   "role": "Tutoring",
   "colors": ["#7986cb", "#283593"],
-  "cat": "Business",
+  "cat": "Education",
   "tagline": "The tutoring practice, run properly — per-student progress files, session plans that build, parent updates that earn renewals, and the billing side handled."
 }
 ---

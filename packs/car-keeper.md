@@ -5,7 +5,7 @@
   "emoji": "🚗",
   "role": "Vehicle",
   "colors": ["#90a4ae", "#455a64"],
-  "cat": "Life",
+  "cat": "Home & Money",
   "tagline": "The car, kept on purpose — service schedules that arrive on time, a history file that raises resale value, running costs visible, and honest research when it's time to buy or sell.",
   "loops": [
     { "name": "Monthly vehicle check", "cron": "0 9 5 * *", "prompt": "Run the service-schedule playbook in radar mode: services, inspections, insurance and registration renewals inside 60 days across all vehicle files; file tasks and report only what needs action." }

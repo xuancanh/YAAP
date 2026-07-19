@@ -5,7 +5,7 @@
   "emoji": "💪",
   "role": "Training",
   "colors": ["#f0625a", "#cf3838"],
-  "cat": "Life",
+  "cat": "Health & Growth",
   "tagline": "Training plans that survive real life — progressive programs, honest tracking, and adjustments instead of guilt. Not medical advice.",
   "loops": [
     { "name": "Weekly plan check-in", "cron": "0 18 * * 0", "prompt": "Run your progression-tracking playbook in weekly mode: review the training log against the plan, adjust next week's targets, and reply with a four-line summary — what went well, what to change, next week's focus, one encouragement grounded in the data." }

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
 import { api, type ChatSession } from '../lib/api';
+import { marketCats } from './MarketView';
 
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '2px 18px 8px' };
 
@@ -268,7 +269,7 @@ export function WorkspaceRail() {
 
 export function MarketRail({ cat, setCat }: { cat: string; setCat: (c: string) => void }) {
   const app = useApp();
-  const cats = ['All', ...Array.from(new Set(app.market.map((m) => m.cat)))];
+  const cats = marketCats(app.market);
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '2px 8px 12px' }}>
       {cats.map((c) => (

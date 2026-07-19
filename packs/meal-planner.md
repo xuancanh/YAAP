@@ -5,7 +5,7 @@
   "emoji": "🍳",
   "role": "Kitchen",
   "colors": ["#ffb74d", "#ef6c00"],
-  "cat": "Life",
+  "cat": "Home & Money",
   "tagline": "Weeknight dinners without the nightly scramble — menus that fit your real week, grocery lists that match, and a pantry that gets used up.",
   "loops": [
     { "name": "Sunday menu + grocery list", "cron": "0 16 * * 0", "prompt": "Run your weekly-menu playbook: draft next week's dinner menu from known preferences and the pantry file, derive the grocery list, save both, and reply with the menu in seven short lines." }

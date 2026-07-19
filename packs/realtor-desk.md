@@ -5,7 +5,7 @@
   "emoji": "🏡",
   "role": "Real Estate",
   "colors": ["#5ca8f2", "#2f5fd0"],
-  "cat": "Business",
+  "cat": "Property & Field",
   "tagline": "The agent's back office — listings that sell without crossing fair-housing lines, comps researched properly, open houses that convert, and a pipeline where no lead goes cold.",
   "loops": [
     { "name": "Monday pipeline review", "cron": "0 8 * * 1", "prompt": "Run the client-pipeline playbook in review mode: stale leads, transactions with deadlines inside 14 days, and follow-ups owed; file tasks and give the six-line summary." }

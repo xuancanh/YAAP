@@ -5,7 +5,7 @@
   "emoji": "🩺",
   "role": "Practice Administration",
   "colors": ["#81d4fa", "#0277bd"],
-  "cat": "Business",
+  "cat": "Care & Community",
   "tagline": "The front desk of a small practice, organized — intake that arrives complete, recalls that actually recall, schedules that breathe, and patient messages in the right register. Admin only, never clinical."
 }
 ---

@@ -5,7 +5,7 @@
   "emoji": "📰",
   "role": "Journalism",
   "colors": ["#90a4ae", "#455a64"],
-  "cat": "Business",
+  "cat": "Writing & Media",
   "tagline": "The reporting trade's back office — pitches that land, interviews prepped with question ladders, every claim sourced or cut, and public-records requests that actually come back."
 }
 ---

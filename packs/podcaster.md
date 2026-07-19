@@ -5,7 +5,7 @@
   "emoji": "🎙️",
   "role": "Podcasting",
   "colors": ["#f0625a", "#cf3838"],
-  "cat": "Business",
+  "cat": "Writing & Media",
   "tagline": "The show, run like a show — an episode pipeline from idea to published, guests booked and prepped properly, show notes that serve listeners and search, and sponsorships tracked to the read.",
   "loops": [
     { "name": "Weekly show review", "cron": "0 10 * * 2", "prompt": "Run the episode-pipeline playbook in review mode: episodes by stage against the release calendar, guest bookings needing confirmation or prep packets, and sponsorship deliverables due; six lines in chat." }

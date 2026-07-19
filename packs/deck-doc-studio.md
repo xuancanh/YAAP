@@ -5,7 +5,7 @@
   "emoji": "🎬",
   "role": "Documents & Design",
   "colors": ["#4dd0e1", "#00838f"],
-  "cat": "Craft",
+  "cat": "Workplace",
   "tagline": "Deliverables that look intentional — decks with a narrative spine, documents with structure, one-pagers that fit on one page, and a house style that stays consistent."
 }
 ---

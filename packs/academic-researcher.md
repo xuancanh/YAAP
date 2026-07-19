@@ -5,7 +5,7 @@
   "emoji": "🔬",
   "role": "Research",
   "colors": ["#4dd0e1", "#00838f"],
-  "cat": "Business",
+  "cat": "Education",
   "tagline": "From literature review to camera-ready — citation-disciplined lit reviews, grant proposals with a real aims page, and rebuttal letters that win over Reviewer 2."
 }
 ---

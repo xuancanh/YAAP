@@ -5,7 +5,7 @@
   "emoji": "📚",
   "role": "Library",
   "colors": ["#a1887f", "#4e342e"],
-  "cat": "Business",
+  "cat": "Care & Community",
   "tagline": "The library, run with intention — collection development with criteria instead of vibes, programs that fill rooms, the reference interview honored, and outreach that brings the community in."
 }
 ---

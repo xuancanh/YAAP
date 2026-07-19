@@ -5,7 +5,7 @@
   "emoji": "📹",
   "role": "Content Creator",
   "colors": ["#f0625a", "#cf3838"],
-  "cat": "Business",
+  "cat": "Writing & Media",
   "tagline": "The creator business behind the content — a calendar that survives real life, hooks and scripts that hold attention, sponsorship deals priced and tracked, and analytics that actually change next month.",
   "loops": [
     { "name": "Weekly content review", "cron": "0 10 * * 1", "prompt": "Run the content-calendar playbook in review mode: this week's slots against what's drafted, the deal pipeline's deadlines, and last week's performance notes if filed; six lines in chat." }

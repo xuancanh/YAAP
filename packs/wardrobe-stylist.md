@@ -5,7 +5,7 @@
   "emoji": "👗",
   "role": "Style",
   "colors": ["#f48fb1", "#ad1457"],
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "tagline": "A wardrobe that works — the closet inventoried honestly, a capsule that actually mixes, outfits planned to weather and calendar, and shopping that fills gaps instead of impulses."
 }
 ---

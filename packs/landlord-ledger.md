@@ -5,7 +5,7 @@
   "emoji": "🔑",
   "role": "Rental Property",
   "colors": ["#8bc34a", "#33691e"],
-  "cat": "Business",
+  "cat": "Property & Field",
   "tagline": "Small-portfolio landlording, run properly — lease renewals that never ambush, rent tracked to the day, maintenance triaged, and tenant messages that are firm, fair, and on the record.",
   "loops": [
     { "name": "Monthly portfolio sweep", "cron": "0 9 2 * *", "prompt": "Run the lease-renewal-radar and rent-ledger playbooks in sweep mode: renewals inside 90 days, rent not yet marked received for last month, inspections or certificates due; file tasks and report only what needs action." }

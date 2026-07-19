@@ -5,7 +5,7 @@
   "emoji": "🌐",
   "role": "Translation",
   "colors": ["#4dd0e1", "#00838f"],
-  "cat": "Business",
+  "cat": "Writing & Media",
   "tagline": "The professional translator's workbench — terminology that stays consistent across years of work, a draft-and-revise workflow with a cold eye, and the localization judgment machines don't have."
 }
 ---

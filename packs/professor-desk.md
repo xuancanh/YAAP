@@ -5,7 +5,7 @@
   "emoji": "🎓",
   "role": "Higher Education",
   "colors": ["#b39ddb", "#5e35b1"],
-  "cat": "Business",
+  "cat": "Education",
   "tagline": "The teaching-and-service side of academia, handled — syllabi that prevent disputes, grading with consistent rubrics, the rec-letter backlog cleared, and office hours that scale."
 }
 ---

@@ -5,7 +5,7 @@
   "emoji": "📦",
   "role": "Moving",
   "colors": ["#a1887f", "#4e342e"],
-  "cat": "Life",
+  "cat": "Home & Money",
   "tagline": "Moving house without the meltdown — the T-8-weeks protocol, the address-change list every institution forgets, box-level inventory, and a moving day that runs on a sheet.",
   "loops": [
     { "name": "Weekly move countdown", "cron": "0 9 * * 6", "prompt": "If a move is active (moving/timeline.md exists and the date is ahead), run the moving-timeline playbook in countdown mode: check this week's phase items against what's done, file tasks for the gaps, and report the top three in chat. If no active move, reply nothing is active and do nothing else." }

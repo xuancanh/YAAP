@@ -5,7 +5,7 @@
   "emoji": "🚚",
   "role": "Small Fleet",
   "colors": ["#90a4ae", "#455a64"],
-  "cat": "Business",
+  "cat": "Property & Field",
   "tagline": "The small fleet, kept moving — every vehicle's schedule radared, drivers rostered legally, route day-sheets that survive the road, and the cost-per-mile that prices every job.",
   "loops": [
     { "name": "Fleet radar", "cron": "0 7 * * 1", "prompt": "Run the vehicle-files playbook in radar mode across the fleet: services, inspections, and document renewals inside 45 days, defect reports open, and this week's roster conflicts; file tasks and report the top five." }

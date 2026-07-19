@@ -5,7 +5,7 @@
   "emoji": "🎨",
   "role": "Creative Practice",
   "colors": ["#f48fb1", "#ad1457"],
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "tagline": "A creative practice that actually practices — writing projects with momentum, deliberate practice plans for any craft, and prompts when the well runs dry."
 }
 ---

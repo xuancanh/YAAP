@@ -5,7 +5,7 @@
   "emoji": "🤝",
   "role": "Nonprofit",
   "colors": ["#3ad6b0", "#159e86"],
-  "cat": "Business",
+  "cat": "Care & Community",
   "tagline": "Mission work with an operations spine — grants found and drafted, donors thanked within 48 hours, volunteers coordinated, and board reports that take an evening, not a week.",
   "loops": [
     { "name": "Grant deadline radar", "cron": "0 9 * * 4", "prompt": "Run the grant-pipeline playbook in radar mode: deadlines inside 45 days, reports due to funders, and stalled applications; file tasks and report only what needs action." }

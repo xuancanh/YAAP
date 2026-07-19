@@ -5,7 +5,7 @@
   "emoji": "🐾",
   "role": "Pet Care",
   "colors": ["#ffd54f", "#f57f17"],
-  "cat": "Home",
+  "cat": "Family & Care",
   "tagline": "Everything the pet needs, remembered — vet schedules and records, training plans that stick, and a health log the vet will thank you for."
 }
 ---

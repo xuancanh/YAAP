@@ -5,7 +5,7 @@
   "emoji": "🔧",
   "role": "Home Projects",
   "colors": ["#a1887f", "#4e342e"],
-  "cat": "Home",
+  "cat": "Home & Money",
   "tagline": "The house, maintained on purpose — renovation projects run on the board, seasonal maintenance that arrives on schedule, and plants that stay alive.",
   "loops": [
     { "name": "Seasonal maintenance check", "cron": "0 10 1 */3 *", "prompt": "Run your maintenance-schedule playbook for the season just starting: pull the season's checklist from maintenance.md, file tasks for what applies, and summarize the top three in chat." }

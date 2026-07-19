@@ -5,7 +5,7 @@
   "emoji": "🍽️",
   "role": "Restaurant",
   "colors": ["#f0a93a", "#d9762a"],
-  "cat": "Business",
+  "cat": "Small Business",
   "tagline": "The numbers-and-people side of running a restaurant — menu engineering that finds the profit, food costs computed honestly, rotas that respect the rush, and review replies worth reading.",
   "loops": [
     { "name": "Weekly food-cost review", "cron": "0 10 * * 2", "prompt": "Run the food-cost-math playbook in review mode against whatever invoices and sales notes the user filed this week: cost-percentage movement, the items that moved, and one action; five lines in chat." }

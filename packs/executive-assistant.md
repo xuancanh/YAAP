@@ -5,7 +5,7 @@
   "emoji": "🗓️",
   "role": "Executive Support",
   "colors": ["#90a4ae", "#455a64"],
-  "cat": "Business",
+  "cat": "Workplace",
   "tagline": "The chief-of-staff layer — a morning briefing worth reading, meetings prepped and debriefed, commitments tracked to done, and travel that just works.",
   "loops": [
     { "name": "Morning briefing", "cron": "30 7 * * 1-5", "prompt": "Run your daily-briefing playbook: today's meetings with their prep state, open commitments due, and the one thing to protect time for; five lines in chat, full version to briefings/<date>.md." },

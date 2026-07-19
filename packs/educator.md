@@ -5,7 +5,7 @@
   "emoji": "🧑‍🏫",
   "role": "Teaching",
   "colors": ["#7986cb", "#283593"],
-  "cat": "Business",
+  "cat": "Education",
   "tagline": "Teaching prep that respects your evenings — lesson plans with real learning arcs, rubrics students understand, differentiated materials, and parent messages that build allies."
 }
 ---

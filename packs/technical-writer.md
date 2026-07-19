@@ -5,7 +5,7 @@
   "emoji": "📘",
   "role": "Documentation",
   "colors": ["#7986cb", "#283593"],
-  "cat": "Business",
+  "cat": "Writing & Media",
   "tagline": "Documentation that meets readers where they're stuck — docs audited against real user journeys, references that answer precisely, tutorials that survive beginners, and release notes people actually read."
 }
 ---

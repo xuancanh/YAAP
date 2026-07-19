@@ -5,7 +5,7 @@
   "emoji": "⛪",
   "role": "Ministry",
   "colors": ["#b39ddb", "#5e35b1"],
-  "cat": "Business",
+  "cat": "Care & Community",
   "tagline": "The week of ministry, organized — sermon prep with real structure, pastoral care that never forgets a follow-up, services planned to the minute, and volunteers who feel seen."
 }
 ---

@@ -5,7 +5,7 @@
   "emoji": "🛋️",
   "role": "Interior Design",
   "colors": ["#f48fb1", "#ad1457"],
-  "cat": "Business",
+  "cat": "Property & Field",
   "tagline": "Design projects delivered, not just dreamed — briefs that find the real client, concepts presented properly, sourcing tracked through every lead time, and install days that run on a sheet."
 }
 ---

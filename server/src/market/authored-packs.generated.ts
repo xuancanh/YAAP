@@ -18,7 +18,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Education",
   "price": "free",
   "tagline": "From literature review to camera-ready — citation-disciplined lit reviews, grant proposals with a real aims page, and rebuttal letters that win over Reviewer 2.",
   "caps": [
@@ -86,7 +86,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Small Business",
   "price": "free",
   "tagline": "The desk that fills roles — intake that finds the real spec, candidate pipelines per role, search craft that works, screen notes with bias hygiene built in, and clients updated before they ask.",
   "caps": [
@@ -149,7 +149,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Home & Money",
   "price": "free",
   "tagline": "The car, kept on purpose — service schedules that arrive on time, a history file that raises resale value, running costs visible, and honest research when it's time to buy or sell.",
   "caps": [
@@ -223,7 +223,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Care & Community",
   "price": "free",
   "tagline": "The week of ministry, organized — sermon prep with real structure, pastoral care that never forgets a follow-up, services planned to the minute, and volunteers who feel seen.",
   "caps": [
@@ -291,7 +291,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "price": "free",
   "tagline": "The collection, catalogued like it deserves — condition-graded inventory, valuation research with dates and sources, a want list that hunts, and the documentation insurers actually accept.",
   "caps": [
@@ -354,7 +354,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Education",
   "price": "free",
   "tagline": "Courses that teach and sell — curriculum designed backwards from learner outcomes, cohorts run without chaos, launches sequenced properly, and testimonials harvested while the win is warm.",
   "caps": [
@@ -422,7 +422,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "price": "free",
   "tagline": "A creative practice that actually practices — writing projects with momentum, deliberate practice plans for any craft, and prompts when the well runs dry.",
   "caps": [
@@ -480,7 +480,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Writing & Media",
   "price": "free",
   "tagline": "The creator business behind the content — a calendar that survives real life, hooks and scripts that hold attention, sponsorship deals priced and tracked, and analytics that actually change next month",
   "caps": [
@@ -549,7 +549,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Craft",
+  "cat": "Workplace",
   "price": "free",
   "tagline": "Deliverables that look intentional — decks with a narrative spine, documents with structure, one-pagers that fit on one page, and a house style that stays consistent.",
   "caps": [
@@ -612,7 +612,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Small Business",
   "price": "free",
   "tagline": "The online shop, run like a shop — listings that convert, reviews managed, reorder points that prevent stockouts, and season planning that starts early enough to matter.",
   "caps": [
@@ -686,7 +686,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Education",
   "price": "free",
   "tagline": "Teaching prep that respects your evenings — lesson plans with real learning arcs, rubrics students understand, differentiated materials, and parent messages that build allies.",
   "caps": [
@@ -754,7 +754,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Home",
+  "cat": "Family & Care",
   "price": "free",
   "tagline": "Caring for an aging parent without drowning — the care team in one file, appointments coordinated across providers, the family kept honestly in sync, and the caregiver's own oxygen mask remembered.",
   "caps": [
@@ -822,7 +822,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Events & Travel",
   "price": "free",
   "tagline": "Parties, weddings, and meetups run like projects — guest lists, vendors, budgets, and a day-of run sheet nobody has to improvise.",
   "caps": [
@@ -906,7 +906,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Workplace",
   "price": "free",
   "tagline": "The chief-of-staff layer — a morning briefing worth reading, meetings prepped and debriefed, commitments tracked to done, and travel that just works.",
   "caps": [
@@ -985,7 +985,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Small Business",
   "price": "free",
   "tagline": "The coaching practice, held properly — engagement files with goals and session threads, prep that surfaces the pattern, 360 feedback synthesized honestly, and the coaching-therapy line kept bright.",
   "caps": [
@@ -1048,7 +1048,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Home",
+  "cat": "Family & Care",
   "price": "free",
   "tagline": "The family's operating system — one calendar picture, a chores rota that survives arguments, school admin handled, and no birthday ever forgotten.",
   "caps": [
@@ -1122,7 +1122,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Property & Field",
   "price": "free",
   "tagline": "The holding, run on a calendar instead of a panic — season work that arrives on time, field and flock records that compound, input costs visible, and market days prepped to sell out.",
   "caps": [
@@ -1191,7 +1191,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Health & Growth",
   "price": "free",
   "tagline": "Training plans that survive real life — progressive programs, honest tracking, and adjustments instead of guilt. Not medical advice.",
   "caps": [
@@ -1260,7 +1260,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Property & Field",
   "price": "free",
   "tagline": "The small fleet, kept moving — every vehicle's schedule radared, drivers rostered legally, route day-sheets that survive the road, and the cost-per-mile that prices every job.",
   "caps": [
@@ -1329,7 +1329,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Small Business",
   "price": "free",
   "tagline": "The business side of working for yourself — proposals that win, scopes that protect, invoices that get chased, and a client memory that compounds.",
   "caps": [
@@ -1403,7 +1403,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "price": "free",
   "tagline": "The campaign, remembered and prepped — a world bible that never forgets an NPC, session prep built on strong starts and situations, encounters balanced honestly, and recaps that keep the table's story",
   "caps": [
@@ -1471,7 +1471,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "price": "free",
   "tagline": "Family history done like a historian — a research log where every fact has a source, archive strategies per country and era, the questions to ask elders while you still can, and brick walls attacked m",
   "caps": [
@@ -1539,7 +1539,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Home",
+  "cat": "Events & Travel",
   "price": "free",
   "tagline": "Never scramble for a gift again — ideas captured all year, occasions remembered with lead time, and research that finds the thing they'll actually love.",
   "caps": [
@@ -1603,7 +1603,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Home",
+  "cat": "Home & Money",
   "price": "free",
   "tagline": "The house, maintained on purpose — renovation projects run on the board, seasonal maintenance that arrives on schedule, and plants that stay alive.",
   "caps": [
@@ -1672,7 +1672,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Property & Field",
   "price": "free",
   "tagline": "The rental that runs itself — listings tuned honestly, the guest message sequence that earns five stars, turnovers on a runbook, and pricing that follows the season instead of guessing it.",
   "caps": [
@@ -1741,7 +1741,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Legal & Finance",
   "price": "free",
   "tagline": "The book of business, worked properly — client policy files in order, renewals radared across the whole book, review meetings prepped with questions, and claims supported through the maze. Organizatio",
   "caps": [
@@ -1810,7 +1810,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Property & Field",
   "price": "free",
   "tagline": "Design projects delivered, not just dreamed — briefs that find the real client, concepts presented properly, sourcing tracked through every lead time, and install days that run on a sheet.",
   "caps": [
@@ -1873,7 +1873,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Health & Growth",
   "price": "free",
   "tagline": "The search, run like a pipeline — tailored resumes, a kanban of every application, interview prep with receipts, and follow-ups that don't fall through.",
   "caps": [
@@ -1941,7 +1941,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Writing & Media",
   "price": "free",
   "tagline": "The reporting trade's back office — pitches that land, interviews prepped with question ladders, every claim sourced or cut, and public-records requests that actually come back.",
   "caps": [
@@ -2004,7 +2004,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Property & Field",
   "price": "free",
   "tagline": "Small-portfolio landlording, run properly — lease renewals that never ambush, rent tracked to the day, maintenance triaged, and tenant messages that are firm, fair, and on the record.",
   "caps": [
@@ -2078,7 +2078,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Health & Growth",
   "price": "free",
   "tagline": "A language learned by using it — graded conversation practice with corrections that teach, a vocab deck that spaces itself, and an immersion diet matched to your actual level.",
   "caps": [
@@ -2152,7 +2152,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Care & Community",
   "price": "free",
   "tagline": "The library, run with intention — collection development with criteria instead of vibes, programs that fill rooms, the reference interview honored, and outreach that brings the community in.",
   "caps": [
@@ -2215,7 +2215,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Home & Money",
   "price": "free",
   "tagline": "The paperwork side of being alive, handled — daily briefings, renewal tracking, appointment prep, and errands batched so they actually happen.",
   "caps": [
@@ -2294,7 +2294,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Home & Money",
   "price": "free",
   "tagline": "Weeknight dinners without the nightly scramble — menus that fit your real week, grocery lists that match, and a pantry that gets used up.",
   "caps": [
@@ -2373,7 +2373,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Home & Money",
   "price": "free",
   "tagline": "A clear-eyed view of household money — budgets that survive contact with reality, subscription audits, bill calendars, and savings goals. Never investment advice.",
   "caps": [
@@ -2452,7 +2452,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Home & Money",
   "price": "free",
   "tagline": "Moving house without the meltdown — the T-8-weeks protocol, the address-change list every institution forgets, box-level inventory, and a moving day that runs on a sheet.",
   "caps": [
@@ -2526,7 +2526,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Family & Care",
   "price": "free",
   "tagline": "The logistics of the first years, carried for you — registry research, feeding and sleep logs that show patterns, the appointment trail, and a milestone memory that writes itself. Never medical advice",
   "caps": [
@@ -2594,7 +2594,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Care & Community",
   "price": "free",
   "tagline": "Mission work with an operations spine — grants found and drafted, donors thanked within 48 hours, volunteers coordinated, and board reports that take an evening, not a week.",
   "caps": [
@@ -2668,7 +2668,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Legal & Finance",
   "price": "free",
   "tagline": "The matter, in order — document organization with exhibit discipline, deadlines computed and double-flagged, citations checked, and intake summaries that save the attorney's first hour. Everything for",
   "caps": [
@@ -2731,7 +2731,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Home",
+  "cat": "Family & Care",
   "price": "free",
   "tagline": "Everything the pet needs, remembered — vet schedules and records, training plans that stick, and a health log the vet will thank you for.",
   "caps": [
@@ -2789,7 +2789,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Writing & Media",
   "price": "free",
   "tagline": "The show, run like a show — an episode pipeline from idea to published, guests booked and prepped properly, show notes that serve listeners and search, and sponsorships tracked to the read.",
   "caps": [
@@ -2858,7 +2858,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Care & Community",
   "price": "free",
   "tagline": "The front desk of a small practice, organized — intake that arrives complete, recalls that actually recall, schedules that breathe, and patient messages in the right register. Admin only, never clinic",
   "caps": [
@@ -2926,7 +2926,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Education",
   "price": "free",
   "tagline": "The teaching-and-service side of academia, handled — syllabi that prevent disputes, grading with consistent rubrics, the rec-letter backlog cleared, and office hours that scale.",
   "caps": [
@@ -2994,7 +2994,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "price": "free",
   "tagline": "A reading life with a memory — the list that never loses a recommendation, spoiler-safe companionship mid-book, and book-club questions that start real conversations.",
   "caps": [
@@ -3057,7 +3057,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Property & Field",
   "price": "free",
   "tagline": "The agent's back office — listings that sell without crossing fair-housing lines, comps researched properly, open houses that convert, and a pipeline where no lead goes cold.",
   "caps": [
@@ -3131,7 +3131,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Small Business",
   "price": "free",
   "tagline": "The numbers-and-people side of running a restaurant — menu engineering that finds the profit, food costs computed honestly, rotas that respect the rush, and review replies worth reading.",
   "caps": [
@@ -3205,7 +3205,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Education",
   "price": "free",
   "tagline": "Leading a school without drowning in it — staff comms that land, observation feedback that grows teachers, escalations handled fairly, and the paper trail that protects everyone.",
   "caps": [
@@ -3273,7 +3273,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Care & Community",
   "price": "free",
   "tagline": "The admin side of care work, lightened — objective case-note structure, a resource directory that's actually current, coordination across services, and the caseload's weight made visible.",
   "caps": [
@@ -3336,7 +3336,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Health & Growth",
   "price": "free",
   "tagline": "Learn it properly — study plans that fit the calendar, explanations that actually land, practice quizzes, and spaced repetition that does the remembering.",
   "caps": [
@@ -3404,7 +3404,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Legal & Finance",
   "price": "free",
   "tagline": "The season, survived on systems — per-client document checklists, the missing-docs chase that runs itself, workpapers organized for review, and the filing calendar radared. Organization only, never ta",
   "caps": [
@@ -3473,7 +3473,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Writing & Media",
   "price": "free",
   "tagline": "Documentation that meets readers where they're stuck — docs audited against real user journeys, references that answer precisely, tutorials that survive beginners, and release notes people actually re",
   "caps": [
@@ -3536,7 +3536,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Property & Field",
   "price": "free",
   "tagline": "The paperwork side of the trade, off your evenings — quotes with honest margins, job cards that keep crews moving, materials lists that arrive complete, and invoices that get paid.",
   "caps": [
@@ -3605,7 +3605,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Writing & Media",
   "price": "free",
   "tagline": "The professional translator's workbench — terminology that stays consistent across years of work, a draft-and-revise workflow with a cold eye, and the localization judgment machines don't have.",
   "caps": [
@@ -3668,7 +3668,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Events & Travel",
   "price": "free",
   "tagline": "Your trips, planned and remembered — research, itineraries, budgets, packing lists, and a countdown that makes sure nothing is forgotten.",
   "caps": [
@@ -3741,7 +3741,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Business",
+  "cat": "Education",
   "price": "free",
   "tagline": "The tutoring practice, run properly — per-student progress files, session plans that build, parent updates that earn renewals, and the billing side handled.",
   "caps": [
@@ -3809,7 +3809,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "price": "free",
   "tagline": "A wardrobe that works — the closet inventoried honestly, a capsule that actually mixes, outfits planned to weather and calendar, and shopping that fills gaps instead of impulses.",
   "caps": [
@@ -3872,7 +3872,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Events & Travel",
   "price": "free",
   "tagline": "The wedding, planned like it matters and run like a project — the twelve-month timeline, vendor contracts tracked, the seating politics solved, and a day that runs without the couple noticing the mach",
   "caps": [
@@ -3951,7 +3951,7 @@ export const AUTHORED_PACKS = [
   "verified": true,
   "stars": "5.0",
   "installs": "curated pack",
-  "cat": "Life",
+  "cat": "Health & Growth",
   "price": "free",
   "tagline": "A gentle daily check-in, journaling that goes somewhere, sleep and habit design — a companion, not a clinician.",
   "caps": [

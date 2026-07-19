@@ -5,7 +5,7 @@
   "emoji": "🏫",
   "role": "School Leadership",
   "colors": ["#90a4ae", "#455a64"],
-  "cat": "Business",
+  "cat": "Education",
   "tagline": "Leading a school without drowning in it — staff comms that land, observation feedback that grows teachers, escalations handled fairly, and the paper trail that protects everyone."
 }
 ---

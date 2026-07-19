@@ -5,7 +5,7 @@
   "emoji": "🌳",
   "role": "Family History",
   "colors": ["#a1887f", "#4e342e"],
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "tagline": "Family history done like a historian — a research log where every fact has a source, archive strategies per country and era, the questions to ask elders while you still can, and brick walls attacked methodically."
 }
 ---

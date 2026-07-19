@@ -5,7 +5,7 @@
   "emoji": "🧾",
   "role": "Freelance Business",
   "colors": ["#8bc34a", "#33691e"],
-  "cat": "Business",
+  "cat": "Small Business",
   "tagline": "The business side of working for yourself — proposals that win, scopes that protect, invoices that get chased, and a client memory that compounds.",
   "loops": [
     { "name": "Monday desk review", "cron": "0 9 * * 1", "prompt": "Run your invoice-tracker playbook in review mode plus a pipeline glance: unpaid invoices with aging, proposals awaiting answers, and this week's client deadlines; six lines in chat." }

@@ -3,11 +3,25 @@ import { useState } from 'react';
 import { I, P, CAP_ICON } from '../lib/icons';
 import { useApp, gradPair } from '../store';
 
+/** Rail chip order: professional clusters first, then personal life; anything
+ *  the catalog adds beyond this list appends at the end. */
+const CAT_ORDER = [
+  'Workplace', 'Product & Engineering', 'Education', 'Legal & Finance', 'Writing & Media',
+  'Care & Community', 'Property & Field', 'Small Business',
+  'Family & Care', 'Home & Money', 'Health & Growth', 'Events & Travel', 'Hobbies & Leisure',
+];
+
+/** Category list for the market rails, in canonical order, 'All' first. */
+export function marketCats(market: Array<{ cat: string }>): string[] {
+  const found = Array.from(new Set(market.map((m) => m.cat)));
+  return ['All', ...CAT_ORDER.filter((c) => found.includes(c)), ...found.filter((c) => !CAT_ORDER.includes(c))];
+}
+
 export function MarketView({ cat, setCat }: { cat: string; setCat: (c: string) => void }) {
   const app = useApp();
   const [search, setSearch] = useState('');
   const q = search.toLowerCase();
-  const cats = ['All', ...Array.from(new Set(app.market.map((m) => m.cat)))];
+  const cats = marketCats(app.market);
   const items = app.market.filter((m) => (cat === 'All' || m.cat === cat) && (!q || m.name.toLowerCase().includes(q) || m.role.toLowerCase().includes(q)));
 
   return (

@@ -5,7 +5,7 @@
   "emoji": "🍼",
   "role": "New Parenthood",
   "colors": ["#81d4fa", "#0277bd"],
-  "cat": "Life",
+  "cat": "Family & Care",
   "tagline": "The logistics of the first years, carried for you — registry research, feeding and sleep logs that show patterns, the appointment trail, and a milestone memory that writes itself. Never medical advice."
 }
 ---

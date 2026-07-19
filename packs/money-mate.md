@@ -5,7 +5,7 @@
   "emoji": "💸",
   "role": "Household Money",
   "colors": ["#8bc34a", "#33691e"],
-  "cat": "Life",
+  "cat": "Home & Money",
   "tagline": "A clear-eyed view of household money — budgets that survive contact with reality, subscription audits, bill calendars, and savings goals. Never investment advice.",
   "loops": [
     { "name": "Monthly money review", "cron": "0 9 1 * *", "prompt": "Run your spending-review playbook for last month using whatever data files the user has shared; write the review to money/reviews/<month>.md and lead the summary with the single biggest finding." }

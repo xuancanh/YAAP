@@ -5,7 +5,7 @@
   "emoji": "🧓",
   "role": "Caring for Parents",
   "colors": ["#81d4fa", "#0277bd"],
-  "cat": "Home",
+  "cat": "Family & Care",
   "tagline": "Caring for an aging parent without drowning — the care team in one file, appointments coordinated across providers, the family kept honestly in sync, and the caregiver's own oxygen mask remembered."
 }
 ---

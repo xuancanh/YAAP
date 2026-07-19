@@ -5,7 +5,7 @@
   "emoji": "🛠️",
   "role": "Trades",
   "colors": ["#90a4ae", "#455a64"],
-  "cat": "Business",
+  "cat": "Property & Field",
   "tagline": "The paperwork side of the trade, off your evenings — quotes with honest margins, job cards that keep crews moving, materials lists that arrive complete, and invoices that get paid.",
   "loops": [
     { "name": "Friday jobs review", "cron": "0 16 * * 5", "prompt": "Run the job-cards playbook in review mode: jobs by stage, anything stalled on materials or decisions, unpaid invoices past due, and next week's schedule conflicts; six lines in chat." }

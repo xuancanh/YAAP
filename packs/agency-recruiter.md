@@ -5,7 +5,7 @@
   "emoji": "🎯",
   "role": "Recruitment",
   "colors": ["#f0a93a", "#d9762a"],
-  "cat": "Business",
+  "cat": "Small Business",
   "tagline": "The desk that fills roles — intake that finds the real spec, candidate pipelines per role, search craft that works, screen notes with bias hygiene built in, and clients updated before they ask."
 }
 ---

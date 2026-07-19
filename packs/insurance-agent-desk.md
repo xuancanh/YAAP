@@ -5,7 +5,7 @@
   "emoji": "🛡️",
   "role": "Insurance Agency",
   "colors": ["#5ca8f2", "#2f5fd0"],
-  "cat": "Business",
+  "cat": "Legal & Finance",
   "tagline": "The book of business, worked properly — client policy files in order, renewals radared across the whole book, review meetings prepped with questions, and claims supported through the maze. Organization only; the licensed agent advises.",
   "loops": [
     { "name": "Renewal radar", "cron": "0 8 * * 1", "prompt": "Run the renewal-radar playbook: policies renewing inside 60 days across the book with their review states, claims needing follow-up, and referral thank-yous owed; file tasks and report the top five." }

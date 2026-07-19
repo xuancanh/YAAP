@@ -5,7 +5,7 @@
   "emoji": "🎁",
   "role": "Occasions",
   "colors": ["#f06292", "#c2185b"],
-  "cat": "Home",
+  "cat": "Events & Travel",
   "tagline": "Never scramble for a gift again — ideas captured all year, occasions remembered with lead time, and research that finds the thing they'll actually love.",
   "loops": [
     { "name": "Occasions lookahead", "cron": "0 9 * * 1", "prompt": "Run your occasion-radar playbook: scan occasions.md for anything inside its lead window, trigger idea research for those without a chosen gift, and report only occasions needing action — silence when nothing is due." }

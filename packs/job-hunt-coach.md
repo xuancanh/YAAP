@@ -5,7 +5,7 @@
   "emoji": "🧑‍🎓",
   "role": "Career",
   "colors": ["#5ca8f2", "#2f5fd0"],
-  "cat": "Life",
+  "cat": "Health & Growth",
   "tagline": "The search, run like a pipeline — tailored resumes, a kanban of every application, interview prep with receipts, and follow-ups that don't fall through."
 }
 ---

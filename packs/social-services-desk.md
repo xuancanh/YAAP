@@ -5,7 +5,7 @@
   "emoji": "🤲",
   "role": "Social Work Support",
   "colors": ["#3ad6b0", "#159e86"],
-  "cat": "Business",
+  "cat": "Care & Community",
   "tagline": "The admin side of care work, lightened — objective case-note structure, a resource directory that's actually current, coordination across services, and the caseload's weight made visible."
 }
 ---

@@ -5,7 +5,7 @@
   "emoji": "💍",
   "role": "Wedding",
   "colors": ["#f48fb1", "#ad1457"],
-  "cat": "Life",
+  "cat": "Events & Travel",
   "tagline": "The wedding, planned like it matters and run like a project — the twelve-month timeline, vendor contracts tracked, the seating politics solved, and a day that runs without the couple noticing the machinery.",
   "loops": [
     { "name": "Weekly wedding sweep", "cron": "0 10 * * 1", "prompt": "Run the wedding-timeline playbook in sweep mode: check the current phase's items, vendor payment deadlines inside 30 days, and RSVP state; file tasks for gaps and report the top three in chat." }

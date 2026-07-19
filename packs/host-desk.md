@@ -5,7 +5,7 @@
   "emoji": "🛏️",
   "role": "Short-Term Rental",
   "colors": ["#4dd0e1", "#0277bd"],
-  "cat": "Business",
+  "cat": "Property & Field",
   "tagline": "The rental that runs itself — listings tuned honestly, the guest message sequence that earns five stars, turnovers on a runbook, and pricing that follows the season instead of guessing it.",
   "loops": [
     { "name": "Weekly host review", "cron": "0 9 * * 4", "prompt": "Run the host-desk review: upcoming check-ins and check-outs this week with their message and turnover states, reviews awaiting response, and the pricing calendar's next gaps; six lines in chat." }

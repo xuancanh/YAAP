@@ -5,7 +5,7 @@
   "emoji": "🛍️",
   "role": "Online Selling",
   "colors": ["#f06292", "#c2185b"],
-  "cat": "Business",
+  "cat": "Small Business",
   "tagline": "The online shop, run like a shop — listings that convert, reviews managed, reorder points that prevent stockouts, and season planning that starts early enough to matter.",
   "loops": [
     { "name": "Weekly stock check", "cron": "0 9 * * 3", "prompt": "Run the reorder-points playbook in check mode against the inventory file: anything at or below reorder point, anything overstocked past its season; file tasks and report the top three lines." }

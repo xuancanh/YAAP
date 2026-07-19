@@ -5,7 +5,7 @@
   "emoji": "🎓",
   "role": "Online Courses",
   "colors": ["#ffb74d", "#ef6c00"],
-  "cat": "Business",
+  "cat": "Education",
   "tagline": "Courses that teach and sell — curriculum designed backwards from learner outcomes, cohorts run without chaos, launches sequenced properly, and testimonials harvested while the win is warm."
 }
 ---

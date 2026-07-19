@@ -253,3 +253,40 @@ client-memory, pipeline-on-kanban, renewals-radar, chase-ladder,
 run-sheets, session-logs, roles-not-names privacy. Wave 6 packs are
 mostly *recombination plus domain judgment*, which is exactly when a
 catalog can scale without dropping quality.
+
+## Category taxonomy (2026-07 rework)
+
+"Business" had swollen to 37 of 71 packs, which makes a filter useless. The
+catalog now uses thirteen categories sized 4-8, professional first then
+personal, in the canonical rail order (CAT_ORDER in MarketView.tsx):
+
+- **Workplace** — the office suite: EA, Ops, People, Support, Research
+  Desk, Marketer, Sales, Deck & Doc Studio.
+- **Product & Engineering** — Engineer, Data Analyst, Product Manager,
+  Design Partner.
+- **Education** — Educator, Professor Desk, School Leader, Academic
+  Researcher, Tutor Studio, Course Creator.
+- **Legal & Finance** — Counsel, Paralegal, Tax Season, Bookkeeper,
+  Insurance Agent.
+- **Writing & Media** — Journalist, Technical Writer, Translator,
+  Podcaster, Creator Studio.
+- **Care & Community** — Clergy, Social Services, Librarian, Nonprofit,
+  Practice Admin.
+- **Property & Field** — Realtor, Landlord, Host, Interior Designer,
+  Trades Contractor, Farm, Fleet.
+- **Small Business** — Shopkeeper, Ecommerce, Restaurant, Freelancer,
+  Agency Recruiter, Executive Coach (running your own shop or practice).
+- **Family & Care** — Family Organizer, Pet Companion, New Parent, Elder
+  Care.
+- **Home & Money** — Home & Garden, Meal Planner, Car Keeper, Moving,
+  Life Admin, Money Mate.
+- **Health & Growth** — Fitness, Wellness, Study Buddy, Language Buddy,
+  Job Hunt.
+- **Events & Travel** — Trip, Event, Wedding, Gift Concierge.
+- **Hobbies & Leisure** — Reading Club, Creative Muse, Game Master,
+  Collector's Vault, Genealogy, Wardrobe Stylist.
+
+Assignment rule when a pack straddles: the buyer's identity wins over the
+task ("Technical Writer" is a writing profession, not engineering; "Course
+Creator" sells education, not media). New packs pick from this list; a new
+category needs at least three packs to earn a rail chip.

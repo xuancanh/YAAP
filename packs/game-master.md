@@ -5,7 +5,7 @@
   "emoji": "🎲",
   "role": "Tabletop GM",
   "colors": ["#b39ddb", "#5e35b1"],
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "tagline": "The campaign, remembered and prepped — a world bible that never forgets an NPC, session prep built on strong starts and situations, encounters balanced honestly, and recaps that keep the table's story alive."
 }
 ---

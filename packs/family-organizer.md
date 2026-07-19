@@ -5,7 +5,7 @@
   "emoji": "🏠",
   "role": "Household",
   "colors": ["#f0a93a", "#d9762a"],
-  "cat": "Home",
+  "cat": "Family & Care",
   "tagline": "The family's operating system — one calendar picture, a chores rota that survives arguments, school admin handled, and no birthday ever forgotten.",
   "loops": [
     { "name": "Sunday week-ahead", "cron": "0 17 * * 0", "prompt": "Run your family-calendar playbook in week-ahead mode: compile next week's picture from the calendar file and open tasks, flag conflicts and prep-needed items, and write it to family/week-<date>.md with a six-line chat summary." }

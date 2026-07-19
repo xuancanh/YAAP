@@ -31,43 +31,43 @@ Work out of your own folder: keep durable outputs (briefs, reports, trackers, te
 const PACKS = [
   {
     dir: 'marketing', id: 'pro-marketing', name: 'Marketer', emoji: '📣', role: 'Marketing',
-    colors: ['#f06292', '#c2185b'], cat: 'Go-to-market',
+    colors: ['#f06292', '#c2185b'], cat: 'Workplace',
     charter: 'You are Marketer, a hands-on marketing partner: content, campaigns, brand voice, SEO, and performance reporting.',
   },
   {
     dir: 'sales', id: 'pro-sales', name: 'Sales Partner', emoji: '🤝', role: 'Sales',
-    colors: ['#5ca8f2', '#2f5fd0'], cat: 'Go-to-market',
+    colors: ['#5ca8f2', '#2f5fd0'], cat: 'Workplace',
     charter: 'You are Sales Partner: account research, call prep and summaries, outreach drafts, pipeline and forecast reviews.',
     loops: [{ name: 'Daily sales briefing', cron: '0 8 * * 1-5', prompt: 'Run your daily-briefing skill: review the working folder for pipeline and account notes, then write today’s briefing to briefings/<date>.md and summarize the top 3 actions.' }],
   },
   {
     dir: 'customer-support', id: 'pro-support', name: 'Support Desk', emoji: '🎧', role: 'Customer Support',
-    colors: ['#3ad6b0', '#159e86'], cat: 'Go-to-market',
+    colors: ['#3ad6b0', '#159e86'], cat: 'Workplace',
     charter: 'You are Support Desk: triage tickets, draft empathetic responses, handle escalations, and turn resolved issues into KB articles.',
   },
   {
     dir: 'finance', id: 'pro-finance', name: 'Bookkeeper', emoji: '💰', role: 'Finance & Accounting',
-    colors: ['#8bc34a', '#33691e'], cat: 'Business',
+    colors: ['#8bc34a', '#33691e'], cat: 'Legal & Finance',
     charter: 'You are Bookkeeper, a finance and accounting assistant: journal entries, reconciliations, close management, variance analysis, and audit support. You prepare and explain; a human accountant approves.',
   },
   {
     dir: 'legal', id: 'pro-legal', name: 'Counsel', emoji: '⚖️', role: 'Legal',
-    colors: ['#b39ddb', '#5e35b1'], cat: 'Business',
+    colors: ['#b39ddb', '#5e35b1'], cat: 'Legal & Finance',
     charter: 'You are Counsel, a legal operations assistant: contract review, NDA triage, compliance checks, and risk assessments. You are not a lawyer and never give legal advice; you prepare analysis for qualified review.',
   },
   {
     dir: 'human-resources', id: 'pro-hr', name: 'People Partner', emoji: '🧑‍💼', role: 'Human Resources',
-    colors: ['#ffb74d', '#ef6c00'], cat: 'Business',
+    colors: ['#ffb74d', '#ef6c00'], cat: 'Workplace',
     charter: 'You are People Partner: recruiting pipelines, interview prep, offers, onboarding, comp analysis, and performance cycles. Treat all people data as confidential and keep it inside the working folder.',
   },
   {
     dir: 'operations', id: 'pro-operations', name: 'Ops Manager', emoji: '⚙️', role: 'Operations',
-    colors: ['#90a4ae', '#455a64'], cat: 'Business',
+    colors: ['#90a4ae', '#455a64'], cat: 'Workplace',
     charter: 'You are Ops Manager: process docs, runbooks, change requests, capacity plans, vendor reviews, and status reports.',
   },
   {
     dir: 'small-business', id: 'pro-smb', name: 'Shopkeeper', emoji: '🏪', role: 'Small Business',
-    colors: ['#ffd54f', '#f57f17'], cat: 'Business',
+    colors: ['#ffd54f', '#f57f17'], cat: 'Small Business',
     charter: 'You are Shopkeeper, an all-in-one copilot for a small business owner: sales, invoices, cash flow, customers, hiring, and month-end, all without assuming a big-company stack.',
     loops: [
       { name: 'Monday brief', cron: '0 8 * * 1', prompt: 'Run your monday-brief skill against the working folder and write the week’s brief to briefs/<date>-monday.md.' },
@@ -76,27 +76,27 @@ const PACKS = [
   },
   {
     dir: 'product-management', id: 'pro-product', name: 'Product Manager', emoji: '🧭', role: 'Product',
-    colors: ['#4dd0e1', '#00838f'], cat: 'Product',
+    colors: ['#4dd0e1', '#00838f'], cat: 'Product & Engineering',
     charter: 'You are Product Manager: specs, roadmaps, sprint planning, metrics reviews, research synthesis, and stakeholder updates.',
   },
   {
     dir: 'design', id: 'pro-design', name: 'Design Partner', emoji: '🎨', role: 'Design',
-    colors: ['#f48fb1', '#ad1457'], cat: 'Product',
+    colors: ['#f48fb1', '#ad1457'], cat: 'Product & Engineering',
     charter: 'You are Design Partner: design critique, accessibility review, UX copy, research synthesis, and design-system upkeep.',
   },
   {
     dir: 'data', id: 'pro-data', name: 'Data Analyst', emoji: '📊', role: 'Data & Analytics',
-    colors: ['#7986cb', '#283593'], cat: 'Technical',
+    colors: ['#7986cb', '#283593'], cat: 'Product & Engineering',
     charter: 'You are Data Analyst: explore datasets, write and explain SQL, run statistical analysis, validate data, and build visualizations and dashboards from files the user shares.',
   },
   {
     dir: 'engineering', id: 'pro-engineering', name: 'Engineer', emoji: '🛠️', role: 'Engineering',
-    colors: ['#a1887f', '#4e342e'], cat: 'Technical',
+    colors: ['#a1887f', '#4e342e'], cat: 'Product & Engineering',
     charter: 'You are Engineer: code review, architecture and system design, debugging, testing strategy, incident response, and docs.',
   },
   {
     dir: 'enterprise-search', id: 'pro-research', name: 'Research Desk', emoji: '🔎', role: 'Research',
-    colors: ['#81d4fa', '#0277bd'], cat: 'Technical',
+    colors: ['#81d4fa', '#0277bd'], cat: 'Workplace',
     charter: 'You are Research Desk: multi-source search strategy, source management, knowledge synthesis, and digest writing over the user’s files and the web.',
   },
 ];

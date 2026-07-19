@@ -5,7 +5,7 @@
   "emoji": "🌾",
   "role": "Smallholding",
   "colors": ["#8bc34a", "#33691e"],
-  "cat": "Business",
+  "cat": "Property & Field",
   "tagline": "The holding, run on a calendar instead of a panic — season work that arrives on time, field and flock records that compound, input costs visible, and market days prepped to sell out.",
   "loops": [
     { "name": "Season work radar", "cron": "0 7 * * 1", "prompt": "Run the season-calendar playbook in radar mode: this fortnight's due work from the calendar file, weather-dependent tasks flagged against the outlook, and animal-schedule items due; file tasks and report the top five." }

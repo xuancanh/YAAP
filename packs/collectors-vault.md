@@ -5,7 +5,7 @@
   "emoji": "🗃️",
   "role": "Collecting",
   "colors": ["#ffd54f", "#f57f17"],
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "tagline": "The collection, catalogued like it deserves — condition-graded inventory, valuation research with dates and sources, a want list that hunts, and the documentation insurers actually accept."
 }
 ---

@@ -5,7 +5,7 @@
   "emoji": "🧮",
   "role": "Tax Practice Support",
   "colors": ["#8bc34a", "#33691e"],
-  "cat": "Business",
+  "cat": "Legal & Finance",
   "tagline": "The season, survived on systems — per-client document checklists, the missing-docs chase that runs itself, workpapers organized for review, and the filing calendar radared. Organization only, never tax positions.",
   "loops": [
     { "name": "Season radar", "cron": "0 8 * * 1-5", "prompt": "During filing season, run the deadline-radar playbook: filings due inside 21 days by client, returns blocked on missing documents with days-waiting, and extension candidates; file tasks and report the top five. Off-season, check quarterly dates only and stay brief." }

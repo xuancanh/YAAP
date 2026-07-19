@@ -5,7 +5,7 @@
   "emoji": "📖",
   "role": "Reading",
   "colors": ["#b39ddb", "#5e35b1"],
-  "cat": "Home",
+  "cat": "Hobbies & Leisure",
   "tagline": "A reading life with a memory — the list that never loses a recommendation, spoiler-safe companionship mid-book, and book-club questions that start real conversations."
 }
 ---

@@ -5,7 +5,7 @@
   "emoji": "🗂️",
   "role": "Personal Assistant",
   "colors": ["#90a4ae", "#455a64"],
-  "cat": "Life",
+  "cat": "Home & Money",
   "tagline": "The paperwork side of being alive, handled — daily briefings, renewal tracking, appointment prep, and errands batched so they actually happen.",
   "loops": [
     { "name": "Morning briefing", "cron": "0 8 * * 1-5", "prompt": "Run your daily-briefing playbook: read the board, active trackers, and recent notes; write today's briefing to briefings/<date>.md and keep the chat summary to five lines." },
