@@ -178,6 +178,21 @@ export interface Skill {
   agentId: string | null;
 }
 
+export interface Connection {
+  id: string;
+  provider: string;
+  accountEmail: string;
+  scopes: string[];
+  createdAt: string;
+  grants: Array<{ agentId: string; level: string }>;
+}
+
+export interface ConnectionProvider {
+  provider: string;
+  configured: boolean;
+  redirectUri: string;
+}
+
 export interface McpServer {
   id: string;
   name: string;
@@ -364,6 +379,14 @@ export const api = {
     send<Skill | { ok: boolean }>(`/api/skills/${id}/${approve ? 'approve' : 'reject'}`, 'POST'),
   promoteSkill: (id: string, workspaceId?: string) =>
     send<Skill>(`/api/skills/${id}/promote`, 'POST', workspaceId ? { workspaceId } : {}),
+  // external service connections (docs/integrations.md)
+  connections: () => get<Connection[]>('/api/connections'),
+  connectionProviders: () => get<ConnectionProvider[]>('/api/connections/providers'),
+  connectionTools: () => get<Array<{ name: string; description: string; level: string }>>('/api/connections/tools'),
+  connectStart: (provider: string) => get<{ url: string }>(`/api/connections/${provider}/start`),
+  removeConnection: (id: string) => send<{ ok: boolean }>(`/api/connections/${id}`, 'DELETE'),
+  grantConnection: (id: string, agentId: string) => send<{ ok: boolean }>(`/api/connections/${id}/grants`, 'POST', { agentId, level: 'read' }),
+  revokeConnectionGrant: (id: string, agentId: string) => send<{ ok: boolean }>(`/api/connections/${id}/grants/${agentId}`, 'DELETE'),
   mcp: () => get<McpServer[]>('/api/mcp'),
   createMcp: (name: string, url: string) => send<McpServer>('/api/mcp', 'POST', { name, url }),
   updateMcp: (id: string, patch: { enabled?: boolean }) => send<McpServer>(`/api/mcp/${id}`, 'PATCH', patch),

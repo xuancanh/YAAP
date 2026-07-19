@@ -214,6 +214,33 @@ export const mcpServers = pgTable('mcp_servers', {
   createdAt: text('createdAt').notNull(),
 });
 
+/** External service connections (docs/integrations.md): user-level OAuth
+ *  links to providers (google first). Tokens are sealed via secretbox and
+ *  never leave the server. */
+export const connections = pgTable('connections', {
+  id: text('id').primaryKey(),
+  provider: text('provider').notNull(),
+  accountEmail: text('accountEmail').notNull().default(''),
+  /** JSON array of granted OAuth scopes (grows via incremental auth). */
+  scopes: text('scopes').notNull().default('[]'),
+  accessToken: text('accessToken').notNull().default(''),
+  refreshToken: text('refreshToken').notNull().default(''),
+  /** ISO expiry of the current access token. */
+  expiresAt: text('expiresAt').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** Per-agent activation grants for a connection: the connection is creation;
+ *  a grant is explicit activation (three-gate model, docs/permissions.md). */
+export const connectionGrants = pgTable('connection_grants', {
+  id: text('id').primaryKey(),
+  connectionId: text('connectionId').notNull(),
+  agentId: text('agentId').notNull(),
+  /** read | write — write tools ship later; read is today's tier. */
+  level: text('level').notNull().default('read'),
+  createdAt: text('createdAt').notNull(),
+});
+
 /** App-wide key/value settings: defaultPermissionMode, defaultAgentTypeId, … */
 export const appSettings = pgTable('app_settings', {
   key: text('key').primaryKey(),

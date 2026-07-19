@@ -36,6 +36,7 @@ import { McpModule } from './mcp/mcp.module';
 import { SettingsModule } from './settings/settings.module';
 import { ChannelsModule } from './channels/channels.module';
 import { AppBridgeModule } from './appbridge/app-bridge.module';
+import { ConnectionsModule } from './connections/connections.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { AppBridgeModule } from './appbridge/app-bridge.module';
     SettingsModule,
     ChannelsModule,
     AppBridgeModule,
+    ConnectionsModule,
   ],
 })
 export class AppModule {}

@@ -261,6 +261,30 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0011-connections',
+    up: async (db) => {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS connections (
+          "id" TEXT PRIMARY KEY,
+          "provider" TEXT NOT NULL,
+          "accountEmail" TEXT NOT NULL DEFAULT '',
+          "scopes" TEXT NOT NULL DEFAULT '[]',
+          "accessToken" TEXT NOT NULL DEFAULT '',
+          "refreshToken" TEXT NOT NULL DEFAULT '',
+          "expiresAt" TEXT NOT NULL DEFAULT '',
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS connection_grants (
+          "id" TEXT PRIMARY KEY,
+          "connectionId" TEXT NOT NULL,
+          "agentId" TEXT NOT NULL,
+          "level" TEXT NOT NULL DEFAULT 'read',
+          "createdAt" TEXT NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {

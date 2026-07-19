@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
-import { api, PROVIDER_COLORS, type ProfileProposal, type Workspace } from '../lib/api';
+import { api, PROVIDER_COLORS, type Connection, type ConnectionProvider, type ProfileProposal, type Workspace } from '../lib/api';
 
 const PANE_META: Record<string, [string, string]> = {
   providers: ['Providers & agent types', 'Reusable presets: provider, default model, API key, and persona. A type with no key falls back to the Echo dev provider.'],
@@ -13,6 +13,7 @@ const PANE_META: Record<string, [string, string]> = {
   context: ['Context & budget', 'Token ceiling and automatic compaction threshold.'],
   memory: ['Workspace memory', 'Durable chat memory injected as shared context for this workspace.'],
   channels: ['Channels', 'Talk to your agents where you already are — Telegram first, paired to you alone.'],
+  connections: ['Connections', 'Link external services (Google Calendar first). Connecting grants nothing — you approve access per agent.'],
 };
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 13, background: 'var(--panel)', padding: '15px 17px' };
@@ -384,6 +385,94 @@ function ChannelsPane() {
   );
 }
 
+/** Connections (docs/integrations.md): user-level OAuth links to external
+ *  services. Connecting grants nothing to any agent — per-agent grants live
+ *  on each agent's Skills & tools tab (activation gate). */
+function ConnectionsPane() {
+  const app = useApp();
+  const [providers, setProviders] = useState<ConnectionProvider[]>([]);
+  const [conns, setConns] = useState<Connection[]>([]);
+  const refresh = () => {
+    void api.connectionProviders().then(setProviders).catch(() => setProviders([]));
+    void api.connections().then(setConns).catch(() => setConns([]));
+  };
+  useEffect(refresh, []);
+
+  const connect = async () => {
+    try {
+      const { url } = await api.connectStart('google');
+      const popup = window.open(url, 'yaam-connect', 'width=520,height=680');
+      const before = conns.length;
+      const poll = setInterval(async () => {
+        const now = await api.connections().catch(() => null);
+        if (now && (now.length > before || popup?.closed)) {
+          clearInterval(poll);
+          setConns(now);
+          if (now.length > before) app.showToast('Google Calendar connected');
+        }
+      }, 2500);
+      setTimeout(() => clearInterval(poll), 180_000);
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'connect failed');
+    }
+  };
+
+  const google = providers.find((p) => p.provider === 'google');
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {conns.map((c) => (
+        <div key={c.id} style={card}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
+            <span style={{ fontSize: 20, flex: 'none' }}>📅</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Google Calendar</span>
+                <span style={{ fontSize: 10, color: 'var(--green)', border: '1px solid var(--green)', borderRadius: 5, padding: '1px 6px' }}>connected</span>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3, ...mono }}>{c.accountEmail}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 4 }}>
+                Can read your calendar. Cannot create or edit events, and cannot see email or files.
+                {' '}{c.grants.length === 0 ? 'No agents have access yet — grant it per agent on their Skills & tools tab.' : `Granted to ${c.grants.length} agent(s).`}
+              </div>
+            </div>
+            <button onClick={async () => {
+              if (!window.confirm(`Disconnect ${c.accountEmail}? Agent grants are removed and the token is revoked.`)) return;
+              await api.removeConnection(c.id);
+              refresh();
+            }} style={{ background: 'none', border: '1px solid var(--red)', color: 'var(--red)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Disconnect</button>
+          </div>
+        </div>
+      ))}
+      <div style={card}>
+        {google?.configured ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
+            <span style={{ fontSize: 20, flex: 'none' }}>📅</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Google Calendar</div>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3 }}>Read-only to start — write access is a separate, later grant. You approve which agents can use it.</div>
+            </div>
+            <button onClick={connect} style={{ background: 'var(--accent)', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 16px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flex: 'none' }}>Connect</button>
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Google Calendar — not configured</div>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.65 }}>
+              Self-hosted setups bring their own OAuth client: create one in your Google Cloud project
+              (APIs &amp; Services → Credentials → OAuth client, type &quot;Web application&quot;), add the redirect URI below,
+              then set <span style={mono}>GOOGLE_CLIENT_ID</span> and <span style={mono}>GOOGLE_CLIENT_SECRET</span> in the server environment and restart.
+            </div>
+            {google && <div style={{ fontSize: 11.5, marginTop: 8, padding: '7px 10px', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 8, ...mono }}>{google.redirectUri}</div>}
+          </div>
+        )}
+      </div>
+      <div style={{ ...card, fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+        Connections are yours, not your agents&apos;. Tokens stay on the server, sealed at rest, and are never shown to agents or the model —
+        agents get a handful of reviewed calendar tools, and only after you grant them per agent.
+      </div>
+    </div>
+  );
+}
+
 export function SettingsView({ pane }: { pane: string }) {
   const app = useApp();
   const [title, sub] = PANE_META[pane] ?? PANE_META.providers;
@@ -405,6 +494,7 @@ export function SettingsView({ pane }: { pane: string }) {
           {pane === 'context' && <ContextPane />}
           {pane === 'memory' && <MemoryPane />}
           {pane === 'channels' && <ChannelsPane />}
+          {pane === 'connections' && <ConnectionsPane />}
         </div>
       </div>
     </div>

@@ -29,6 +29,14 @@ export default () => ({
   loopsEnabled: (process.env.LOOPS_ENABLED || 'true') === 'true',
   /** Telegram bot token (phase 4). Empty = channel disabled. */
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  /** Where the API is reachable from a browser — the OAuth redirect base
+   *  (register <publicBaseUrl>/api/connections/google/callback in the
+   *  Google client). Dev default is the API port, not the Vite port. */
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || 'http://localhost:8790',
+  /** Google OAuth client (docs/integrations.md §3a — BYO client for
+   *  self-hosted). Empty = the google provider shows as unconfigured. */
+  googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
   /** Estimated provider-input tokens that trigger auto-compaction (FR-7.3). */
   compactionThresholdTokens: parseInt(process.env.COMPACTION_THRESHOLD_TOKENS || '120000', 10),
 });

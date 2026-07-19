@@ -19,7 +19,7 @@
  * unparseable arguments, and unknown tool names return an error result to the
  * model instead of executing.
  */
-import { Injectable, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, ConflictException, ForbiddenException, NotFoundException, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { ChatsRepository, ChatSession } from './chats.repository';
 import { ChatLocks } from './chat-locks';
@@ -30,6 +30,7 @@ import { McpService, MCP_TOOL_PREFIX } from '../mcp/mcp.module';
 import { StorageService } from '../storage/storage.service';
 import { AgentsService, CUSTOM_TOOL_PREFIX } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { ConnectionsService } from '../connections/connections.module';
 
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
@@ -198,6 +199,8 @@ export class TurnLoopService {
     private readonly mcp: McpService,
     private readonly agents: AgentsService,
     private readonly workspaces: WorkspacesService,
+    /** Optional so test constructors without connections keep working. */
+    @Optional() private readonly connections?: ConnectionsService,
   ) {}
 
   /** Stop the in-flight turn for a chat; the partial turn is retained (FR-5.4). */
@@ -266,6 +269,8 @@ export class TurnLoopService {
         ...(session.agentId ? await this.agents.customToolSpecs(session.agentId) : []),
         ...await this.skills.toolSpecs(session.workspaceId, session.agentId ?? undefined),
         ...await this.mcp.toolSpecs(),
+        // Connection tools appear only for agents the user granted (activation gate).
+        ...(session.agentId && this.connections ? await this.connections.toolSpecs(session.agentId) : []),
       ];
 
       for (let round = 0; ; round++) {
@@ -390,6 +395,7 @@ export class TurnLoopService {
       return this.skills.invocation(skill);
     }
     if (name.startsWith(MCP_TOOL_PREFIX)) return this.mcp.execute(name, input);
+    if (this.connections?.owns(name)) return this.connections.execute(session.agentId ?? undefined, name, input);
     if (name.startsWith(CUSTOM_TOOL_PREFIX)) {
       if (!session.agentId) throw new Error(`unknown tool: ${name}`);
       return this.agents.executeCustomTool(session.agentId, name, input);
@@ -511,7 +517,8 @@ export class TurnLoopService {
       : call.name.startsWith(MCP_TOOL_PREFIX) ? false
         : call.name.startsWith(CUSTOM_TOOL_PREFIX) ? (session.agentId ? false : undefined)
           : AGENT_TOOL_NAMES.has(call.name) ? (session.agentId ? AGENT_READONLY_TOOLS.has(call.name) : undefined)
-            : this.tools.isReadOnly(call.name);
+            : this.connections?.owns(call.name) ? this.connections.isReadOnly(call.name)
+              : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
     if (session.permissionMode === 'auto') return { verdict: 'auto', remember: true };
     if (readOnly) return { verdict: 'read-only', remember: true };

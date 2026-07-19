@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
-import { api, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentTask, type FileEntry, type FilePreview, type Skill } from '../lib/api';
+import { api, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentTask, type Connection, type FileEntry, type FilePreview, type Skill } from '../lib/api';
 import { Markdown } from '../lib/md';
 import { nextFire, untilLabel } from '../lib/cron';
 
@@ -583,14 +583,61 @@ function PromoteSkillModal({ a, skill, onDone, onClose }: { a: Agent; skill: Ski
   );
 }
 
+/** Activation review for a connection grant (docs/integrations.md §5): show
+ *  the literal tools the agent gains — the real artifact, not a summary. */
+function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Connection; onDone: () => void; onClose: () => void }) {
+  const app = useApp();
+  const [tools, setTools] = useState<Array<{ name: string; description: string; level: string }>>([]);
+  useEffect(() => { void api.connectionTools().then(setTools).catch(() => setTools([])); }, []);
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', backdropFilter: 'blur(2px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 540, maxWidth: '100%', maxHeight: '86vh', display: 'flex', flexDirection: 'column', background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'var(--shadow)', animation: 'pop .16s' }}>
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border-soft)', flex: 'none' }}>
+          <div style={{ fontSize: 17, fontWeight: 700 }}>Give {a.name} access to your calendar?</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 2 }}>Google Calendar · {conn.accountEmail} · read-only</div>
+        </div>
+        <div style={{ padding: '16px 24px', overflow: 'auto' }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Exactly these tools, nothing else</div>
+          {tools.filter((t) => t.level === 'read').map((t) => (
+            <div key={t.name} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-soft)' }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--mono)' }}>{t.name}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2 }}>{t.description}</div>
+            </div>
+          ))}
+          <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 10, lineHeight: 1.6 }}>
+            {a.name} never sees your Google token — the server runs these tools and returns results only.
+            Revoking the grant is one click and immediate.
+          </div>
+        </div>
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border-soft)', display: 'flex', gap: 10, flex: 'none' }}>
+          <button onClick={onClose} style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+          <button onClick={async () => {
+            try {
+              await api.grantConnection(conn.id, a.id);
+              app.showToast(`${a.name} can now read the calendar`);
+              onDone();
+            } catch (err) {
+              app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'grant failed');
+            }
+            onClose();
+          }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Approve &amp; grant</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SkillsToolsTab({ a }: { a: Agent }) {
   const app = useApp();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [promoting, setPromoting] = useState<Skill | null>(null);
   const [tools, setTools] = useState<AgentCustomTool[]>([]);
+  const [conns, setConns] = useState<Connection[]>([]);
+  const [granting, setGranting] = useState<Connection | null>(null);
   const refresh = (id: string) => {
     void api.skills(app.workspaceId || undefined, id).then((all) => setSkills(all.filter((s) => s.agentId === id))).catch(() => setSkills([]));
     void api.agentCustomTools(id).then(setTools).catch(() => setTools([]));
+    void api.connections().then(setConns).catch(() => setConns([]));
   };
   useEffect(() => { refresh(a.id); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [a.id]);
 
@@ -656,6 +703,34 @@ function SkillsToolsTab({ a }: { a: Agent }) {
           {tools.length === 0 && <div style={{ padding: '10px 10px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>None yet — ask for the same lookup twice and {a.name} will offer to build it as a tool.</div>}
         </div>
       </div>
+
+      <div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
+          <span style={label}>Connections</span>
+          <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>your connected services — access is granted per agent, and {a.name} has none until you say so</span>
+        </div>
+        <div style={{ ...card, padding: '6px 8px' }}>
+          {conns.map((c) => {
+            const granted = c.grants.some((g) => g.agentId === a.id);
+            return (
+              <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderBottom: '1px solid var(--border-soft)' }}>
+                <span style={{ fontSize: 16, flex: 'none' }}>📅</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Google Calendar</span>
+                    {granted ? pill('read access', 'var(--green)') : pill('no access', 'var(--text-faint)')}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2, fontFamily: 'var(--mono)' }}>{c.accountEmail}</div>
+                </div>
+                {!granted && btn('Grant…', () => setGranting(c), true)}
+                {granted && btn('Revoke', async () => { await api.revokeConnectionGrant(c.id, a.id); refresh(a.id); app.showToast(`${a.name} lost calendar access`); }, false, true)}
+              </div>
+            );
+          })}
+          {conns.length === 0 && <div style={{ padding: '10px 10px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>No services connected yet — link Google Calendar under Settings → Connections, then grant it here.</div>}
+        </div>
+      </div>
+      {granting && <GrantConnectionModal a={a} conn={granting} onDone={() => refresh(a.id)} onClose={() => setGranting(null)} />}
     </div>
   );
 }
