@@ -22,6 +22,12 @@ export const GOOGLE_WRITE_SCOPES = ['https://www.googleapis.com/auth/calendar.ev
  *  draft-and-send covers the chase-ladder use case without restricted-read
  *  verification (docs/integrations.md §3a). */
 export const GOOGLE_GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.compose'];
+/** The drive tier: read the user's Drive, plus drive.file so exports can
+ *  create Docs/Sheets — the app can only modify files it created itself. */
+export const GOOGLE_DRIVE_SCOPES = [
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/drive.file',
+];
 
 export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -42,11 +48,20 @@ export function hasGmailScopes(scopes: string[]): boolean {
   return GOOGLE_GMAIL_SCOPES.every((s) => scopes.includes(s));
 }
 
+/** Does this connection's consented scope set cover drive tools? */
+export function hasDriveScopes(scopes: string[]): boolean {
+  return GOOGLE_DRIVE_SCOPES.every((s) => scopes.includes(s));
+}
+
 /** What the service must provide for tools to reach Google. */
 export interface GoogleHttp {
   googleGet(conn: ConnectionRow, url: string): Promise<unknown>;
   googlePost(conn: ConnectionRow, url: string, body: unknown): Promise<unknown>;
   googlePatch(conn: ConnectionRow, url: string, body: unknown): Promise<unknown>;
+  /** Raw text body (bounded) — for Drive file/export downloads. */
+  googleGetText(conn: ConnectionRow, url: string, maxBytes: number): Promise<string>;
+  /** Multipart upload (metadata JSON + media) — for Drive create-with-convert. */
+  googleUpload(conn: ConnectionRow, url: string, metadata: unknown, mediaType: string, media: string): Promise<unknown>;
 }
 
 /** Per-call context the service resolves (provenance stamping). */
@@ -54,7 +69,7 @@ export interface ToolContext {
   agentName: string;
 }
 
-export type ConnectionService = 'calendar' | 'gmail';
+export type ConnectionService = 'calendar' | 'gmail' | 'drive';
 
 export interface ConnectionTool extends AiToolSpec {
   /** The service this tool belongs to — grants are per-service. */
@@ -347,5 +362,128 @@ export const GMAIL_TOOLS: ConnectionTool[] = [
   },
 ];
 
+// ---- drive (read/search over the user's Drive; exports create real
+// Docs/Sheets via drive.file, so the app can never touch files it did not
+// create itself) ----
+
+const DRIVE_FILES_URL = 'https://www.googleapis.com/drive/v3/files';
+const DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink';
+const DRIVE_READ_MAX_BYTES = 200_000;
+
+/** Google-native docs export to text; everything else downloads raw. */
+const EXPORTABLE: Record<string, string> = {
+  'application/vnd.google-apps.document': 'text/plain',
+  'application/vnd.google-apps.spreadsheet': 'text/csv',
+  'application/vnd.google-apps.presentation': 'text/plain',
+};
+
+function fmtFile(f: Record<string, unknown>): string {
+  const kind = String(f.mimeType ?? '').replace('application/vnd.google-apps.', 'google-');
+  return `${String(f.name ?? '(unnamed)')} · ${kind} · modified ${String(f.modifiedTime ?? '?').slice(0, 10)} · id:${String(f.id ?? '?')}`;
+}
+
+export const DRIVE_TOOLS: ConnectionTool[] = [
+  {
+    name: 'drive_search',
+    description: "Search the user's connected Google Drive by name and content. Read-only; returns names, types, and file ids for drive_read.",
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Search text (matched against file names and full text)' } },
+      required: ['query'],
+    },
+    service: 'drive',
+    level: 'read',
+    readOnly: true,
+    execute: async (conn, input, http) => {
+      const q = String(input.query ?? '').trim();
+      if (!q) throw new Error('invalid arguments: "query" must be a non-empty string');
+      const escaped = q.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const params = new URLSearchParams({
+        q: `(name contains '${escaped}' or fullText contains '${escaped}') and trashed = false`,
+        fields: 'files(id,name,mimeType,modifiedTime)',
+        pageSize: '20',
+        orderBy: 'modifiedTime desc',
+      });
+      const res = await http.googleGet(conn, `${DRIVE_FILES_URL}?${params}`) as { files?: Array<Record<string, unknown>> };
+      const lines = (res.files ?? []).map(fmtFile);
+      return frameExternal('drive', lines.length ? lines.join('\n') : `No files matching "${q}".`);
+    },
+  },
+  {
+    name: 'drive_read',
+    description: 'Read a file from the user\'s connected Google Drive by file id (from drive_search). Google Docs/Sheets/Slides convert to text/CSV; other text files download directly. Read-only, bounded to ~200KB.',
+    inputSchema: {
+      type: 'object',
+      properties: { fileId: { type: 'string', description: 'The Drive file id' } },
+      required: ['fileId'],
+    },
+    service: 'drive',
+    level: 'read',
+    readOnly: true,
+    execute: async (conn, input, http) => {
+      const fileId = String(input.fileId ?? '').trim();
+      if (!fileId || !/^[\w-]+$/.test(fileId)) throw new Error('invalid arguments: "fileId" is required');
+      const meta = await http.googleGet(conn, `${DRIVE_FILES_URL}/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size`) as Record<string, unknown>;
+      const mime = String(meta.mimeType ?? '');
+      const exportMime = EXPORTABLE[mime];
+      const url = exportMime
+        ? `${DRIVE_FILES_URL}/${encodeURIComponent(fileId)}/export?mimeType=${encodeURIComponent(exportMime)}`
+        : `${DRIVE_FILES_URL}/${encodeURIComponent(fileId)}?alt=media`;
+      const text = await http.googleGetText(conn, url, DRIVE_READ_MAX_BYTES);
+      return frameExternal('drive file', `${String(meta.name ?? fileId)} (${mime}):\n${text}`);
+    },
+  },
+  {
+    name: 'drive_export_doc',
+    description: "Create a Google Doc in the user's Drive from markdown — the export path for written deliverables. Mutating — requires the write grant and per-call approval in Ask mode.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Document title' },
+        markdown: { type: 'string', description: 'Document body as markdown' },
+      },
+      required: ['title', 'markdown'],
+    },
+    service: 'drive',
+    level: 'write',
+    readOnly: false,
+    execute: async (conn, input, http) => {
+      const title = String(input.title ?? '').trim();
+      const markdown = String(input.markdown ?? '');
+      if (!title) throw new Error('invalid arguments: "title" is required');
+      if (!markdown.trim()) throw new Error('invalid arguments: "markdown" is required');
+      const res = await http.googleUpload(conn, DRIVE_UPLOAD_URL,
+        { name: title, mimeType: 'application/vnd.google-apps.document' },
+        'text/markdown', markdown) as { id?: string; webViewLink?: string };
+      return `Google Doc created: "${title}" (id ${String(res.id ?? '?')})${res.webViewLink ? `\nlink: ${res.webViewLink}` : ''}`;
+    },
+  },
+  {
+    name: 'drive_export_sheet',
+    description: "Create a Google Sheet in the user's Drive from CSV — the export path for spreadsheet deliverables. Mutating — requires the write grant and per-call approval in Ask mode.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Spreadsheet title' },
+        csv: { type: 'string', description: 'Sheet contents as CSV (first row becomes the header row)' },
+      },
+      required: ['title', 'csv'],
+    },
+    service: 'drive',
+    level: 'write',
+    readOnly: false,
+    execute: async (conn, input, http) => {
+      const title = String(input.title ?? '').trim();
+      const csv = String(input.csv ?? '');
+      if (!title) throw new Error('invalid arguments: "title" is required');
+      if (!csv.trim()) throw new Error('invalid arguments: "csv" is required');
+      const res = await http.googleUpload(conn, DRIVE_UPLOAD_URL,
+        { name: title, mimeType: 'application/vnd.google-apps.spreadsheet' },
+        'text/csv', csv) as { id?: string; webViewLink?: string };
+      return `Google Sheet created: "${title}" (id ${String(res.id ?? '?')})${res.webViewLink ? `\nlink: ${res.webViewLink}` : ''}`;
+    },
+  },
+];
+
 /** Every connection tool, all services. */
-export const CONNECTION_TOOLS: ConnectionTool[] = [...GCAL_TOOLS, ...GMAIL_TOOLS];
+export const CONNECTION_TOOLS: ConnectionTool[] = [...GCAL_TOOLS, ...GMAIL_TOOLS, ...DRIVE_TOOLS];

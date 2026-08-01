@@ -398,23 +398,27 @@ function ConnectionsPane() {
   };
   useEffect(refresh, []);
 
-  const connect = async (tier: 'read' | 'write' | 'gmail' = 'read') => {
+  const connect = async (tier: 'read' | 'write' | 'gmail' | 'drive' = 'read') => {
     try {
       const { url } = await api.connectStart('google', tier);
       const popup = window.open(url, 'yaam-connect', 'width=520,height=680');
       const before = conns.length;
-      const writableBefore = conns.filter((c) => c.writeCapable).length;
-      const gmailBefore = conns.filter((c) => c.gmailCapable).length;
+      const capableBefore = {
+        write: conns.filter((c) => c.writeCapable).length,
+        gmail: conns.filter((c) => c.gmailCapable).length,
+        drive: conns.filter((c) => c.driveCapable).length,
+      };
       const poll = setInterval(async () => {
         const now = await api.connections().catch(() => null);
         if (!now) return;
-        const done = tier === 'write' ? now.filter((c) => c.writeCapable).length > writableBefore
-          : tier === 'gmail' ? now.filter((c) => c.gmailCapable).length > gmailBefore
-            : now.length > before;
+        const done = tier === 'write' ? now.filter((c) => c.writeCapable).length > capableBefore.write
+          : tier === 'gmail' ? now.filter((c) => c.gmailCapable).length > capableBefore.gmail
+            : tier === 'drive' ? now.filter((c) => c.driveCapable).length > capableBefore.drive
+              : now.length > before;
         if (done || popup?.closed) {
           clearInterval(poll);
           setConns(now);
-          if (done) app.showToast(tier === 'write' ? 'Calendar write access enabled' : tier === 'gmail' ? 'Gmail enabled' : 'Google Calendar connected');
+          if (done) app.showToast(tier === 'write' ? 'Calendar write access enabled' : tier === 'gmail' ? 'Gmail enabled' : tier === 'drive' ? 'Drive enabled' : 'Google Calendar connected');
         }
       }, 2500);
       setTimeout(() => clearInterval(poll), 180_000);
@@ -440,7 +444,7 @@ function ConnectionsPane() {
                 {[
                   c.writeCapable ? 'Calendar: read + write (writes approval-gated per agent).' : 'Calendar: read-only.',
                   c.gmailCapable ? 'Gmail: draft + send (sending confirms every time; no read access).' : 'Gmail: off.',
-                  'Cannot see files.',
+                  c.driveCapable ? 'Drive: read + export (exports can only create new Docs/Sheets).' : 'Drive: off.',
                 ].join(' ')}
                 {' '}{c.grants.length === 0 ? 'No agents have access yet — grant it per agent on their Skills & tools tab.' : `Granted to ${new Set(c.grants.map((g) => g.agentId)).size} agent(s).`}
               </div>
@@ -450,6 +454,9 @@ function ConnectionsPane() {
             )}
             {!c.gmailCapable && (
               <button onClick={() => connect('gmail')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable Gmail…</button>
+            )}
+            {!c.driveCapable && (
+              <button onClick={() => connect('drive')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable Drive…</button>
             )}
             <button onClick={async () => {
               if (!window.confirm(`Disconnect ${c.accountEmail}? Agent grants are removed and the token is revoked.`)) return;

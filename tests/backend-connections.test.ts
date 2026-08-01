@@ -12,6 +12,7 @@ import type { StorageService } from '../server/src/storage/storage.service';
 
 const WRITE_SCOPES = '["https://www.googleapis.com/auth/calendar.readonly","https://www.googleapis.com/auth/calendar.events"]';
 const GMAIL_SCOPES = '["https://www.googleapis.com/auth/calendar.readonly","https://www.googleapis.com/auth/gmail.compose"]';
+const DRIVE_SCOPES = '["https://www.googleapis.com/auth/drive.readonly","https://www.googleapis.com/auth/drive.file"]';
 
 const configStub = {
   get: (key: string) => ({
@@ -319,6 +320,78 @@ test('gmail_draft and gmail_send build RFC 2822 mail and hit the right endpoints
   assert.match(out2, /Email sent/);
   assert.match(sent[1].url, /gmail\/v1\/users\/me\/messages\/send/);
   assert.ok((JSON.parse(sent[1].body) as { raw?: string }).raw, 'send posts the raw message directly');
+});
+
+test('drive tier: scoped grants gate read vs export tools (M3)', async () => {
+  const { db, svc } = await service();
+  const driveUrl = new URL(svc.startGoogleAuth('drive').url);
+  assert.match(driveUrl.searchParams.get('scope')!, /drive\.readonly/);
+  assert.match(driveUrl.searchParams.get('scope')!, /drive\.file/);
+  assert.doesNotMatch(driveUrl.searchParams.get('scope')!, /calendar|gmail/);
+
+  await insertConnection(db); // calendar-only consent
+  await assert.rejects(svc.setGrant('conn1', 'agent1', 'drive', 'read'), /no Drive consent/);
+
+  await db.delete(connections);
+  await insertConnection(db, { scopes: DRIVE_SCOPES });
+  await svc.setGrant('conn1', 'agent1', 'drive', 'read');
+  assert.deepEqual((await svc.toolSpecs('agent1')).map((s) => s.name).sort(), ['drive_read', 'drive_search']);
+  await assert.rejects(svc.execute('agent1', 'drive_export_doc', { title: 't', markdown: 'x' }), /no write grant/);
+
+  await svc.setGrant('conn1', 'agent1', 'drive', 'write');
+  assert.deepEqual((await svc.toolSpecs('agent1')).map((s) => s.name).sort(),
+    ['drive_export_doc', 'drive_export_sheet', 'drive_read', 'drive_search']);
+  assert.equal((await svc.list())[0].driveCapable, true);
+});
+
+test('drive_search and drive_read hit the right endpoints; Google Docs export to text (M3)', async () => {
+  const { db, svc } = await service();
+  await insertConnection(db, { scopes: DRIVE_SCOPES });
+  await svc.setGrant('conn1', 'agent1', 'drive', 'read');
+  const calls: string[] = [];
+  svc.fetchImpl = (async (url: RequestInfo | URL) => {
+    const u = String(url);
+    calls.push(u);
+    if (u.includes('/export')) return { ok: true, status: 200, text: async () => 'Quarterly report body', json: async () => ({}) } as unknown as Response;
+    if (u.includes('fields=id,name,mimeType,size')) {
+      return jsonResponse({ id: 'f1', name: 'Q3 Report', mimeType: 'application/vnd.google-apps.document' });
+    }
+    return jsonResponse({ files: [{ id: 'f1', name: 'Q3 Report', mimeType: 'application/vnd.google-apps.document', modifiedTime: '2026-07-30T10:00:00Z' }] });
+  }) as typeof fetch;
+
+  const found = await svc.execute('agent1', 'drive_search', { query: "Ann's Q3" });
+  assert.match(found, /^External drive content/);
+  assert.match(found, /Q3 Report.*id:f1/);
+  // single quotes in the query are escaped inside the Drive q expression
+  assert.match(decodeURIComponent(calls[0]).replace(/\+/g, ' '), /name contains 'Ann\\'s Q3'/);
+
+  const read = await svc.execute('agent1', 'drive_read', { fileId: 'f1' });
+  assert.match(read, /Quarterly report body/);
+  assert.match(calls.at(-1)!, /files\/f1\/export\?mimeType=text%2Fplain/);
+});
+
+test('drive_export_doc uploads multipart markdown that converts to a Google Doc (M3)', async () => {
+  const { db, svc } = await service();
+  await insertConnection(db, { scopes: DRIVE_SCOPES });
+  await svc.setGrant('conn1', 'agent1', 'drive', 'write');
+  let sent: { url: string; contentType: string; body: string } | null = null;
+  svc.fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    sent = {
+      url: String(url),
+      contentType: String((init?.headers as Record<string, string>)?.['content-type'] ?? ''),
+      body: init?.body ? String(init.body) : '',
+    };
+    return jsonResponse({ id: 'doc1', name: 'Plan', webViewLink: 'https://docs.google.com/d/doc1' });
+  }) as typeof fetch;
+
+  const out = await svc.execute('agent1', 'drive_export_doc', { title: 'Plan', markdown: '# Plan\n- step one' });
+  assert.match(out, /Google Doc created/);
+  assert.match(out, /docs\.google\.com/);
+  assert.match(sent!.url, /upload\/drive\/v3\/files\?uploadType=multipart/);
+  assert.match(sent!.contentType, /multipart\/related; boundary=/);
+  assert.match(sent!.body, /"mimeType":"application\/vnd\.google-apps\.document"/);
+  assert.match(sent!.body, /Content-Type: text\/markdown/);
+  assert.match(sent!.body, /# Plan/);
 });
 
 test('action_pending inbox events: approve executes, dismiss does not (M1)', async () => {

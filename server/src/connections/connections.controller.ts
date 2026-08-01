@@ -7,7 +7,7 @@ import type { ConnectionService as ServiceName } from './connections.tools';
 
 class GrantDto {
   @IsString() agentId!: string;
-  @IsIn(['calendar', 'gmail']) service!: 'calendar' | 'gmail';
+  @IsIn(['calendar', 'gmail', 'drive']) service!: 'calendar' | 'gmail' | 'drive';
   @IsIn(['read', 'write']) level!: 'read' | 'write';
 }
 
@@ -22,7 +22,7 @@ export class ConnectionsController {
   /** tier=read on first connect; write/gmail are incremental re-consents. */
   @Get('google/start')
   start(@Query('tier') tier?: string) {
-    if (tier && !['read', 'write', 'gmail'].includes(tier)) throw new BadRequestException('tier must be read, write, or gmail');
+    if (tier && !['read', 'write', 'gmail', 'drive'].includes(tier)) throw new BadRequestException('tier must be read, write, gmail, or drive');
     return this.svc.startGoogleAuth((tier as ScopeTier) ?? 'read');
   }
 
@@ -46,7 +46,7 @@ export class ConnectionsController {
   @Delete(':id') remove(@Param('id') id: string) { return this.svc.remove(id); }
   @Post(':id/grants') grant(@Param('id') id: string, @Body() dto: GrantDto) { return this.svc.setGrant(id, dto.agentId, dto.service, dto.level); }
   @Delete(':id/grants/:agentId') revoke(@Param('id') id: string, @Param('agentId') agentId: string, @Query('service') service?: string) {
-    if (service && !['calendar', 'gmail'].includes(service)) throw new BadRequestException('service must be calendar or gmail');
+    if (service && !['calendar', 'gmail', 'drive'].includes(service)) throw new BadRequestException('service must be calendar, gmail, or drive');
     return this.svc.revokeGrant(id, agentId, service as ServiceName | undefined);
   }
 }

@@ -186,11 +186,12 @@ export interface Connection {
   scopes: string[];
   writeCapable: boolean;
   gmailCapable: boolean;
+  driveCapable: boolean;
   createdAt: string;
   grants: Array<{ agentId: string; service: string; level: string }>;
 }
 
-export type ConnectionServiceName = 'calendar' | 'gmail';
+export type ConnectionServiceName = 'calendar' | 'gmail' | 'drive';
 
 export interface ConnectionProvider {
   provider: string;
@@ -390,7 +391,7 @@ export const api = {
   connections: () => get<Connection[]>('/api/connections'),
   connectionProviders: () => get<ConnectionProvider[]>('/api/connections/providers'),
   connectionTools: () => get<Array<{ name: string; description: string; service: string; level: string }>>('/api/connections/tools'),
-  connectStart: (provider: string, tier: 'read' | 'write' | 'gmail' = 'read') => get<{ url: string }>(`/api/connections/${provider}/start?tier=${tier}`),
+  connectStart: (provider: string, tier: 'read' | 'write' | 'gmail' | 'drive' = 'read') => get<{ url: string }>(`/api/connections/${provider}/start?tier=${tier}`),
   removeConnection: (id: string) => send<{ ok: boolean }>(`/api/connections/${id}`, 'DELETE'),
   grantConnection: (id: string, agentId: string, service: ConnectionServiceName, level: 'read' | 'write' = 'read') =>
     send<{ ok: boolean }>(`/api/connections/${id}/grants`, 'POST', { agentId, service, level }),

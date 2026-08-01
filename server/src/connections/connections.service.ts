@@ -25,15 +25,15 @@ import { seal, open } from '../common/secretbox';
 import { AiToolSpec } from '../ai/ai-provider.interface';
 import {
   CONNECTION_TOOLS, ConnectionRow, ConnectionService as ServiceName, GOOGLE_AUTH_URL,
-  GOOGLE_BASE_SCOPES, GOOGLE_GMAIL_SCOPES, GOOGLE_READ_SCOPES, GOOGLE_REVOKE_URL,
-  GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL, GOOGLE_WRITE_SCOPES,
-  GoogleHttp, hasGmailScopes, hasWriteScopes,
+  GOOGLE_BASE_SCOPES, GOOGLE_DRIVE_SCOPES, GOOGLE_GMAIL_SCOPES, GOOGLE_READ_SCOPES,
+  GOOGLE_REVOKE_URL, GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL, GOOGLE_WRITE_SCOPES,
+  GoogleHttp, hasDriveScopes, hasGmailScopes, hasWriteScopes,
 } from './connections.tools';
 
 type GrantRow = typeof connectionGrants.$inferSelect;
 
 export type GrantLevel = 'read' | 'write';
-export type ScopeTier = 'read' | 'write' | 'gmail';
+export type ScopeTier = 'read' | 'write' | 'gmail' | 'drive';
 
 export interface ConnectionInfo {
   id: string;
@@ -44,6 +44,8 @@ export interface ConnectionInfo {
   writeCapable: boolean;
   /** Whether the consented scopes cover gmail draft/send tools. */
   gmailCapable: boolean;
+  /** Whether the consented scopes cover drive read + export tools. */
+  driveCapable: boolean;
   createdAt: string;
   grants: Array<{ agentId: string; service: string; level: string }>;
 }
@@ -84,6 +86,7 @@ export class ConnectionsService implements GoogleHttp {
         scopes,
         writeCapable: hasWriteScopes(scopes),
         gmailCapable: hasGmailScopes(scopes),
+        driveCapable: hasDriveScopes(scopes),
         createdAt: r.createdAt,
         grants: grants.filter((g) => g.connectionId === r.id).map((g) => ({ agentId: g.agentId, service: g.service, level: g.level })),
       };
@@ -103,7 +106,8 @@ export class ConnectionsService implements GoogleHttp {
     for (const [s, at] of this.pendingStates) if (Date.now() - at > 600_000) this.pendingStates.delete(s);
     const scopes = tier === 'write' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_WRITE_SCOPES]
       : tier === 'gmail' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_GMAIL_SCOPES]
-        : [...GOOGLE_BASE_SCOPES, ...GOOGLE_READ_SCOPES];
+        : tier === 'drive' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_DRIVE_SCOPES]
+          : [...GOOGLE_BASE_SCOPES, ...GOOGLE_READ_SCOPES];
     const url = `${GOOGLE_AUTH_URL}?${new URLSearchParams({
       client_id: g.clientId,
       redirect_uri: g.redirectUri,
@@ -188,6 +192,9 @@ export class ConnectionsService implements GoogleHttp {
         throw new ConflictException('this connection has no Gmail consent — enable Gmail in Settings → Connections first');
       }
       if (level !== 'write') throw new ConflictException('gmail tools are all write-level — grant level must be write');
+    }
+    if (service === 'drive' && !hasDriveScopes(scopes)) {
+      throw new ConflictException('this connection has no Drive consent — enable Drive in Settings → Connections first');
     }
     const existing = (await this.db.select().from(connectionGrants)
       .where(and(eq(connectionGrants.connectionId, connectionId), eq(connectionGrants.agentId, agentId), eq(connectionGrants.service, service)))).at(0);
@@ -309,6 +316,39 @@ export class ConnectionsService implements GoogleHttp {
 
   async googlePost(conn: ConnectionRow, url: string, body: unknown): Promise<unknown> {
     return this.googleSend(conn, url, 'POST', body);
+  }
+
+  async googleGetText(conn: ConnectionRow, url: string, maxBytes: number): Promise<string> {
+    const token = await this.accessToken(conn);
+    const res = await this.fetchImpl(url, { headers: { authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`google api error ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const text = await res.text();
+    if (text.includes('\u0000')) throw new Error('file is binary — only text files and Google Docs/Sheets/Slides can be read');
+    return text.length > maxBytes ? `${text.slice(0, maxBytes)}\n[truncated at ${maxBytes} bytes]` : text;
+  }
+
+  async googleUpload(conn: ConnectionRow, url: string, metadata: unknown, mediaType: string, media: string): Promise<unknown> {
+    const token = await this.accessToken(conn);
+    const boundary = `yaam-${randomBytes(12).toString('hex')}`;
+    const body = [
+      `--${boundary}`,
+      'Content-Type: application/json; charset=UTF-8',
+      '',
+      JSON.stringify(metadata),
+      `--${boundary}`,
+      `Content-Type: ${mediaType}; charset=UTF-8`,
+      '',
+      media,
+      `--${boundary}--`,
+      '',
+    ].join('\r\n');
+    const res = await this.fetchImpl(url, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/related; boundary=${boundary}` },
+      body,
+    });
+    if (!res.ok) throw new Error(`google api error ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    return res.json();
   }
 
   async googlePatch(conn: ConnectionRow, url: string, body: unknown): Promise<unknown> {

@@ -38,7 +38,8 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
 3. Write the document in markdown: one H1 title, H2 sections, short paragraphs, bullet lists where enumerating, tables only for genuinely tabular facts. No filler prose.
 4. Where the workspace has relevant files, read them with fs_list / fs_read and incorporate accurate details rather than inventing them.
 5. Save the result to documents/<kebab-case-name>.md using fs_write. If the file already exists, read it first and preserve anything the user added.
-6. Reply in chat with a 2-3 sentence summary and the saved path. Do not paste the whole document into the chat.`,
+6. If you have the drive_export_doc tool (the user granted Drive export), offer to also export the document as a Google Doc; export only if they say yes or asked for it up front.
+7. Reply in chat with a 2-3 sentence summary and the saved path. Do not paste the whole document into the chat.`,
   },
   {
     name: 'create-slides',
@@ -62,7 +63,8 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
 4. Save two files with fs_write:
    - data/<kebab-case-name>.csv - plain CSV, header row first, no thousands separators
    - data/<kebab-case-name>.md - the same table in markdown with a short "How to read this" note and any caveats
-5. Reply in chat with the two paths, the row count, and the one number the user most likely cares about.`,
+5. If you have the drive_export_sheet tool (the user granted Drive export), offer to also export the CSV as a Google Sheet; export only if they say yes or asked for it up front.
+6. Reply in chat with the two paths, the row count, and the one number the user most likely cares about.`,
   },
   {
     name: 'design-polish',
