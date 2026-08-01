@@ -3,10 +3,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ConfigService } from '@nestjs/config';
-import { ConnectionsService } from '../server/src/connections/connections.module';
+import { ConnectionsService } from '../server/src/connections/connections.service';
+import { AgentsService } from '../server/src/agents/agents.service';
 import { seal, open } from '../server/src/common/secretbox';
-import { connections } from '../server/src/database/schema';
-import { testDb } from './helpers';
+import { agentEvents, connections } from '../server/src/database/schema';
+import { memStorage, testDb } from './helpers';
+import type { StorageService } from '../server/src/storage/storage.service';
+
+const WRITE_SCOPES = '["https://www.googleapis.com/auth/calendar.readonly","https://www.googleapis.com/auth/calendar.events"]';
 
 const configStub = {
   get: (key: string) => ({
@@ -146,6 +150,144 @@ test('OAuth callback rejects unknown state; happy path upserts by account', asyn
   assert.ok(!('accessToken' in conn));
   const rows = await db.select().from(connections);
   assert.equal(open(rows[0].refreshToken), 'rt');
+});
+
+test('write tier: consent URL requests calendar.events incrementally', () => {
+  const db = null as never; // startGoogleAuth never touches the db
+  const svc = new ConnectionsService(db, configStub);
+  const read = new URL(svc.startGoogleAuth('read').url);
+  assert.match(read.searchParams.get('scope')!, /calendar\.readonly/);
+  assert.doesNotMatch(read.searchParams.get('scope')!, /calendar\.events/);
+  const write = new URL(svc.startGoogleAuth('write').url);
+  assert.match(write.searchParams.get('scope')!, /calendar\.events/);
+  // incremental auth keeps prior consents without re-listing them
+  assert.equal(write.searchParams.get('include_granted_scopes'), 'true');
+});
+
+test('write grant is refused until the connection holds write scopes', async () => {
+  const { db, svc } = await service();
+  await insertConnection(db); // readonly scopes only
+  await assert.rejects(svc.setGrant('conn1', 'agent1', 'write'), /read-only consent/);
+
+  await db.delete(connections);
+  await insertConnection(db, {
+    scopes: '["https://www.googleapis.com/auth/calendar.readonly","https://www.googleapis.com/auth/calendar.events"]',
+  });
+  await svc.setGrant('conn1', 'agent1', 'write');
+  const listed = await svc.list();
+  assert.equal(listed[0].writeCapable, true);
+  assert.deepEqual(listed[0].grants, [{ agentId: 'agent1', level: 'write' }]);
+  // a write grant exposes the read tools plus the write tools
+  const specs = await svc.toolSpecs('agent1');
+  assert.deepEqual(specs.map((s) => s.name).sort(), ['gcal_create_event', 'gcal_freebusy', 'gcal_search', 'gcal_upcoming', 'gcal_update_event']);
+});
+
+test('re-consent upgrade merges scopes instead of replacing them', async () => {
+  const { db, svc } = await service();
+  await insertConnection(db); // existing readonly connection for user@example.com
+  const { url } = svc.startGoogleAuth('write');
+  const state = new URL(url).searchParams.get('state')!;
+  svc.fetchImpl = (async (u: RequestInfo | URL) => {
+    if (String(u).includes('oauth2.googleapis.com/token')) {
+      return jsonResponse({ access_token: 'at2', expires_in: 3600, scope: 'openid https://www.googleapis.com/auth/calendar.events' });
+    }
+    return jsonResponse({ email: 'user@example.com' });
+  }) as typeof fetch;
+  const conn = await svc.handleGoogleCallback('code', state);
+  assert.ok(conn.scopes.includes('https://www.googleapis.com/auth/calendar.readonly'));
+  assert.ok(conn.scopes.includes('https://www.googleapis.com/auth/calendar.events'));
+  assert.equal(conn.writeCapable, true);
+  // no refresh token in the upgrade response: the original one is kept
+  const rows = await db.select().from(connections);
+  assert.equal(open(rows[0].refreshToken), 'refresh-token');
+});
+
+test('write tools appear only under a write grant; execute enforces the level', async () => {
+  const { db, svc } = await service();
+  await insertConnection(db, { scopes: WRITE_SCOPES });
+
+  await svc.setGrant('conn1', 'agent1', 'read');
+  const readSpecs = (await svc.toolSpecs('agent1')).map((s) => s.name);
+  assert.ok(!readSpecs.includes('gcal_create_event'));
+  await assert.rejects(svc.execute('agent1', 'gcal_create_event', { title: 'x', start: '2026-08-05' }), /no write grant/);
+
+  await svc.setGrant('conn1', 'agent1', 'write');
+  const writeSpecs = (await svc.toolSpecs('agent1')).map((s) => s.name).sort();
+  assert.deepEqual(writeSpecs, ['gcal_create_event', 'gcal_freebusy', 'gcal_search', 'gcal_upcoming', 'gcal_update_event']);
+  // write tools are mutation-class for the approval policy
+  assert.equal(svc.isReadOnly('gcal_create_event'), false);
+  assert.equal(svc.isReadOnly('gcal_upcoming'), true);
+});
+
+test('gcal_create_event posts to Google with a provenance stamp', async () => {
+  const { db, svc } = await service();
+  await insertConnection(db, { scopes: WRITE_SCOPES });
+  await svc.setGrant('conn1', 'agent1', 'write');
+  let sent: { url: string; method?: string; body?: string } | null = null;
+  svc.fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    sent = { url: String(url), method: init?.method, body: init?.body ? String(init.body) : undefined };
+    return jsonResponse({ id: 'evt42', summary: 'Dentist', start: { date: '2026-08-05' }, end: { date: '2026-08-05' }, htmlLink: 'https://cal/evt42' });
+  }) as typeof fetch;
+
+  const out = await svc.execute('agent1', 'gcal_create_event', { title: 'Dentist', start: '2026-08-05' });
+  assert.match(out, /Event created/);
+  assert.match(out, /id: evt42/);
+  assert.ok(sent, 'request went out');
+  assert.equal(sent!.method, 'POST');
+  assert.match(sent!.url, /calendars\/primary\/events/);
+  const body = JSON.parse(sent!.body!) as { summary: string; description: string; start: { date: string }; end: { date: string } };
+  assert.equal(body.summary, 'Dentist');
+  assert.match(body.description, /\[created by an agent via yaam\]/);
+  assert.deepEqual(body.start, { date: '2026-08-05' });
+});
+
+test('gcal_update_event patches only the provided fields', async () => {
+  const { db, svc } = await service();
+  await insertConnection(db, { scopes: WRITE_SCOPES });
+  await svc.setGrant('conn1', 'agent1', 'write');
+  let sent: { url: string; method?: string; body?: string } | null = null;
+  svc.fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    sent = { url: String(url), method: init?.method, body: init?.body ? String(init.body) : undefined };
+    return jsonResponse({ id: 'evt42', summary: 'Dentist (moved)', start: { dateTime: '2026-08-06T10:00:00+02:00' }, end: { dateTime: '2026-08-06T11:00:00+02:00' } });
+  }) as typeof fetch;
+
+  await assert.rejects(svc.execute('agent1', 'gcal_update_event', { eventId: 'evt42' }), /at least one field/);
+  const out = await svc.execute('agent1', 'gcal_update_event', { eventId: 'evt42', title: 'Dentist (moved)' });
+  assert.match(out, /Event updated/);
+  assert.equal(sent!.method, 'PATCH');
+  assert.match(sent!.url, /events\/evt42$/);
+  const body = JSON.parse(sent!.body!) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(body).sort(), ['summary']);
+});
+
+test('action_pending inbox events: approve executes, dismiss does not (M1)', async () => {
+  const db = await testDb();
+  const agentsSvc = new AgentsService(db, memStorage().stub as unknown as StorageService);
+  const pending = await agentsSvc.addEvent('agent1', {
+    kind: 'action_pending', title: 'Needs your approval: gcal_create_event',
+    payload: JSON.stringify({ tool: 'gcal_create_event', input: { title: 'Dentist', start: '2026-08-05' } }),
+  });
+
+  const ran: Array<{ tool: string; input: Record<string, unknown> }> = [];
+  const res = await agentsSvc.resolveActionEvent('agent1', pending.id, true, async (_agentId, tool, input) => {
+    ran.push({ tool, input });
+    return 'Event created: ...';
+  });
+  assert.equal(res.status, 'done');
+  assert.deepEqual(ran, [{ tool: 'gcal_create_event', input: { title: 'Dentist', start: '2026-08-05' } }]);
+  const [row] = await db.select().from(agentEvents);
+  assert.equal(row.kind, 'action_done');
+  // resolved events cannot run twice
+  await assert.rejects(agentsSvc.resolveActionEvent('agent1', pending.id, true, async () => 'x'), /not awaiting approval/);
+
+  const dismissed = await agentsSvc.addEvent('agent1', {
+    kind: 'action_pending', title: 't', payload: JSON.stringify({ tool: 'gcal_create_event', input: {} }),
+  });
+  const res2 = await agentsSvc.resolveActionEvent('agent1', dismissed.id, false, async () => { throw new Error('must not run'); });
+  assert.equal(res2.status, 'dismissed');
+  // wrong agent id cannot resolve someone else's event
+  const other = await agentsSvc.addEvent('agent1', { kind: 'action_pending', title: 't', payload: '{"tool":"x"}' });
+  await assert.rejects(agentsSvc.resolveActionEvent('agent2', other.id, true, async () => 'x'), /event/);
 });
 
 test('remove revokes at the provider and deletes grants', async () => {

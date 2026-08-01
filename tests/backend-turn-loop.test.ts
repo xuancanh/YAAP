@@ -8,6 +8,10 @@ import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
 import { testDb, memStorage, ctxStub, skillsStub, agentsStub, mcpStub, ScriptedProvider, wsStub } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
+import { ConnectionsService } from '../server/src/connections/connections.service';
+import { connections, connectionGrants } from '../server/src/database/schema';
+import type { ConfigService } from '@nestjs/config';
+import { seal } from '../server/src/common/secretbox';
 
 const writeRound: AiStreamEvent[] = [
   { type: 'answer', text: 'Writing the file. ' },
@@ -130,6 +134,69 @@ test('unknown tools are never executed (FR-3.4)', async () => {
   const result = events.find((e) => e.type === 'tool_result');
   assert.ok(result?.isError);
   assert.match(result!.output, /unknown tool/);
+});
+
+test('loop-origin turns queue connection mutations for approval instead of executing (M1)', async () => {
+  const db = await testDb();
+  const repo = new ChatsRepository(db);
+  const { stub } = memStorage();
+  const tools = new ToolsService(stub);
+  const provider = new ScriptedProvider([
+    [
+      { type: 'tool_call', id: 'g1', name: 'gcal_create_event', input: { title: 'Renewal call', start: '2026-08-10' } },
+      { type: 'done' },
+    ],
+    finalRound,
+  ]);
+  const agents = agentsStub();
+  const connConfig = { get: (key: string) => ({ googleClientId: 'c', googleClientSecret: 's', publicBaseUrl: 'http://localhost:8790' })[key] } as unknown as ConfigService;
+  const conns = new ConnectionsService(db, connConfig);
+  conns.fetchImpl = (async () => { throw new Error('network must never be touched by a queued call'); }) as typeof fetch;
+  await db.insert(connections).values({
+    id: 'conn1', provider: 'google', accountEmail: 'u@example.com',
+    scopes: '["https://www.googleapis.com/auth/calendar.readonly","https://www.googleapis.com/auth/calendar.events"]',
+    accessToken: seal('t'), refreshToken: seal('r'),
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(), createdAt: new Date().toISOString(),
+  });
+  await db.insert(connectionGrants).values({ id: 'g1', connectionId: 'conn1', agentId: 'ag1', level: 'write', createdAt: new Date().toISOString() });
+
+  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(provider), skillsStub(), stub, mcpStub(), agents, wsStub(), conns);
+  const s = await repo.createSession({ workspaceId: 'ws1', agentId: 'ag1', name: 'Loop · renewals', permissionMode: 'auto' });
+
+  const events = await collect(turns.run(s.id, { text: 'check renewals', origin: 'loop' }));
+
+  // even in Auto mode, the mutation did not execute — it queued
+  const result = events.find((e) => e.type === 'tool_result');
+  assert.ok(result && !result.isError);
+  assert.match(result!.output, /Queued for the user's approval/);
+  const evCall = agents.calls.find((c) => c.method === 'addEvent');
+  assert.ok(evCall, 'an inbox event was created');
+  const evInput = evCall!.args[1] as { kind: string; payload: string };
+  assert.equal(evInput.kind, 'action_pending');
+  assert.deepEqual(JSON.parse(evInput.payload), { tool: 'gcal_create_event', input: { title: 'Renewal call', start: '2026-08-10' } });
+  const [turn] = await repo.listTurns(s.id);
+  const records = JSON.parse(turn.toolCalls) as Array<{ approved: string }>;
+  assert.equal(records[0].approved, 'queued');
+
+  // the same call in a user-originated Auto turn executes for real
+  let hit = '';
+  conns.fetchImpl = (async (url: RequestInfo | URL) => {
+    hit = String(url);
+    return { ok: true, status: 200, json: async () => ({ id: 'e1', summary: 'Renewal call', start: { date: '2026-08-10' }, end: { date: '2026-08-10' } }), text: async () => '' } as unknown as Response;
+  }) as typeof fetch;
+  const provider2 = new ScriptedProvider([
+    [
+      { type: 'tool_call', id: 'g2', name: 'gcal_create_event', input: { title: 'Renewal call', start: '2026-08-10' } },
+      { type: 'done' },
+    ],
+    finalRound,
+  ]);
+  const turns2 = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(provider2), skillsStub(), stub, mcpStub(), agents, wsStub(), conns);
+  const events2 = await collect(turns2.run(s.id, { text: 'yes, book it' }));
+  const result2 = events2.find((e) => e.type === 'tool_result');
+  assert.ok(result2 && !result2.isError);
+  assert.match(result2!.output, /Event created/);
+  assert.match(hit, /calendars\/primary\/events/);
 });
 
 test('concurrent turn on the same chat is refused by the busy lock (FR-7.5)', async () => {

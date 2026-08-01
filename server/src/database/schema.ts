@@ -94,10 +94,15 @@ export const agentTasks = pgTable('agent_tasks', {
 export const agentEvents = pgTable('agent_events', {
   id: text('id').primaryKey(),
   agentId: text('agentId').notNull(),
-  /** loop_run | loop_error | info. */
+  /** loop_run | loop_error | info | action_pending | action_done |
+   *  action_failed | action_dismissed. */
   kind: text('kind').notNull().default('loop_run'),
   title: text('title').notNull(),
   body: text('body').notNull().default(''),
+  /** JSON {tool, input} for action_pending events — the queued call the
+   *  user can approve from the inbox (background turns never mutate
+   *  external services silently, docs/integrations.md §5). */
+  payload: text('payload').notNull().default(''),
   sessionId: text('sessionId'),
   readAt: text('readAt'),
   createdAt: text('createdAt').notNull(),

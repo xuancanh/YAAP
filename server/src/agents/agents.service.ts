@@ -431,11 +431,12 @@ export class AgentsService {
 
   // ---- the agent inbox (roadmap phase 2): unattended work is never silent ----
 
-  async addEvent(agentId: string, input: { kind: string; title: string; body?: string; sessionId?: string }) {
+  async addEvent(agentId: string, input: { kind: string; title: string; body?: string; sessionId?: string; payload?: string }) {
     const row = {
       id: newId(), agentId,
       kind: input.kind, title: input.title.slice(0, 200),
       body: (input.body ?? '').slice(0, 1_000),
+      payload: input.payload ?? '',
       sessionId: input.sessionId ?? null,
       readAt: null, createdAt: nowIso(),
     };
@@ -468,6 +469,40 @@ export class AgentsService {
     await this.db.update(agentEvents).set({ readAt: nowIso() })
       .where(and(eq(agentEvents.agentId, agentId), isNull(agentEvents.readAt)));
     return { ok: true };
+  }
+
+  /** Resolve an action_pending inbox event: a mutating call a background
+   *  turn queued instead of executing (docs/integrations.md §5). The caller
+   *  supplies the executor so this module stays decoupled from the tool
+   *  owner (the controller wires in ConnectionsService.execute). */
+  async resolveActionEvent(
+    agentId: string,
+    eventId: string,
+    approve: boolean,
+    executor: (agentId: string, tool: string, input: Record<string, unknown>) => Promise<string>,
+  ): Promise<{ ok: boolean; status: 'done' | 'failed' | 'dismissed'; result?: string; error?: string }> {
+    const ev = (await this.db.select().from(agentEvents).where(eq(agentEvents.id, eventId))).at(0);
+    if (!ev || ev.agentId !== agentId) throw new NotFoundException(`event ${eventId}`);
+    if (ev.kind !== 'action_pending') throw new BadRequestException('event is not awaiting approval');
+    if (!approve) {
+      await this.db.update(agentEvents).set({ kind: 'action_dismissed', readAt: nowIso() }).where(eq(agentEvents.id, eventId));
+      return { ok: true, status: 'dismissed' };
+    }
+    const payload = JSON.parse(ev.payload || '{}') as { tool?: string; input?: Record<string, unknown> };
+    if (!payload.tool) throw new BadRequestException('event has no runnable payload');
+    try {
+      const result = await executor(agentId, payload.tool, payload.input ?? {});
+      await this.db.update(agentEvents)
+        .set({ kind: 'action_done', body: `${ev.body}\n→ ${result}`.slice(0, 1_000), readAt: nowIso() })
+        .where(eq(agentEvents.id, eventId));
+      return { ok: true, status: 'done', result: result.slice(0, 500) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.db.update(agentEvents)
+        .set({ kind: 'action_failed', body: `${ev.body}\n→ failed: ${message}`.slice(0, 1_000), readAt: nowIso() })
+        .where(eq(agentEvents.id, eventId));
+      return { ok: false, status: 'failed', error: message.slice(0, 300) };
+    }
   }
 
   /** AGENT.json import (FR-11.7): validate hard before install, because

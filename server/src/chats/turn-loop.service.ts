@@ -30,7 +30,7 @@ import { McpService, MCP_TOOL_PREFIX } from '../mcp/mcp.module';
 import { StorageService } from '../storage/storage.service';
 import { AgentsService, CUSTOM_TOOL_PREFIX } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
-import { ConnectionsService } from '../connections/connections.module';
+import { ConnectionsService } from '../connections/connections.service';
 
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
@@ -48,7 +48,7 @@ interface ToolRecord {
   tool: string;
   input: Record<string, unknown>;
   result: string;
-  approved: 'auto' | 'read-only' | 'remembered' | ApprovalDecision;
+  approved: 'auto' | 'read-only' | 'remembered' | 'queued' | ApprovalDecision;
   isError: boolean;
 }
 
@@ -223,7 +223,7 @@ export class TurnLoopService {
     return true;
   }
 
-  async *run(sessionId: string, input: { text: string; attachments?: unknown[] }): AsyncGenerator<TurnEvent> {
+  async *run(sessionId: string, input: { text: string; attachments?: unknown[]; origin?: 'user' | 'loop' }): AsyncGenerator<TurnEvent> {
     const session = await this.repo.getSession(sessionId);
     if (!session) throw new NotFoundException(`chat ${sessionId}`);
     if (session.tokenCeiling > 0 && session.tokensIn + session.tokensOut >= session.tokenCeiling) {
@@ -299,6 +299,26 @@ export class TurnLoopService {
 
         for (const call of calls) {
           if (ctl.signal.aborted) break;
+          // Loop turns are background turns: outward-facing (connection)
+          // mutations queue as pending approvals in the agent inbox, never
+          // silently execute — even in Auto mode (docs/integrations.md §5).
+          if (input.origin === 'loop' && session.agentId
+            && this.connections?.owns(call.name) && this.connections.isReadOnly(call.name) === false) {
+            const summary = JSON.stringify(call.input).slice(0, 280);
+            await this.agents.addEvent(session.agentId, {
+              kind: 'action_pending',
+              title: `Needs your approval: ${call.name}`,
+              body: summary,
+              sessionId: session.id,
+              payload: JSON.stringify({ tool: call.name, input: call.input }),
+            });
+            const output = `Queued for the user's approval: ${call.name} was recorded in the user's inbox and will run only if they approve it. Do not retry — tell the user what you queued and why.`;
+            await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
+            history.push({ role: 'tool', content: output, toolCallId: call.id, isError: false });
+            toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'queued', isError: false });
+            yield { type: 'tool_result', id: call.id, name: call.name, output, isError: false };
+            continue;
+          }
           const { verdict, remember } = this.checkPolicy(session, call, approvals);
           let decision: ToolRecord['approved'] = verdict === 'ask' ? 'deny' : verdict;
           if (verdict === 'ask') {

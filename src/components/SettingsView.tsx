@@ -398,17 +398,22 @@ function ConnectionsPane() {
   };
   useEffect(refresh, []);
 
-  const connect = async () => {
+  const connect = async (tier: 'read' | 'write' = 'read') => {
     try {
-      const { url } = await api.connectStart('google');
+      const { url } = await api.connectStart('google', tier);
       const popup = window.open(url, 'yaam-connect', 'width=520,height=680');
       const before = conns.length;
+      const writableBefore = conns.filter((c) => c.writeCapable).length;
       const poll = setInterval(async () => {
         const now = await api.connections().catch(() => null);
-        if (now && (now.length > before || popup?.closed)) {
+        if (!now) return;
+        const done = tier === 'write'
+          ? now.filter((c) => c.writeCapable).length > writableBefore
+          : now.length > before;
+        if (done || popup?.closed) {
           clearInterval(poll);
           setConns(now);
-          if (now.length > before) app.showToast('Google Calendar connected');
+          if (done) app.showToast(tier === 'write' ? 'Write access enabled' : 'Google Calendar connected');
         }
       }, 2500);
       setTimeout(() => clearInterval(poll), 180_000);
@@ -431,10 +436,15 @@ function ConnectionsPane() {
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3, ...mono }}>{c.accountEmail}</div>
               <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 4 }}>
-                Can read your calendar. Cannot create or edit events, and cannot see email or files.
+                {c.writeCapable
+                  ? 'Can read your calendar and create or edit events (write tools are approval-gated per agent). Cannot see email or files.'
+                  : 'Can read your calendar. Cannot create or edit events, and cannot see email or files.'}
                 {' '}{c.grants.length === 0 ? 'No agents have access yet — grant it per agent on their Skills & tools tab.' : `Granted to ${c.grants.length} agent(s).`}
               </div>
             </div>
+            {!c.writeCapable && (
+              <button onClick={() => connect('write')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable write…</button>
+            )}
             <button onClick={async () => {
               if (!window.confirm(`Disconnect ${c.accountEmail}? Agent grants are removed and the token is revoked.`)) return;
               await api.removeConnection(c.id);
@@ -451,7 +461,7 @@ function ConnectionsPane() {
               <div style={{ fontSize: 14, fontWeight: 600 }}>Google Calendar</div>
               <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3 }}>Read-only to start — write access is a separate, later grant. You approve which agents can use it.</div>
             </div>
-            <button onClick={connect} style={{ background: 'var(--accent)', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 16px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flex: 'none' }}>Connect</button>
+            <button onClick={() => connect()} style={{ background: 'var(--accent)', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 16px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flex: 'none' }}>Connect</button>
           </div>
         ) : (
           <div>

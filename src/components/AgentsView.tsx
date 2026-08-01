@@ -588,22 +588,35 @@ function PromoteSkillModal({ a, skill, onDone, onClose }: { a: Agent; skill: Ski
 function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Connection; onDone: () => void; onClose: () => void }) {
   const app = useApp();
   const [tools, setTools] = useState<Array<{ name: string; description: string; level: string }>>([]);
+  const [withWrite, setWithWrite] = useState(false);
   useEffect(() => { void api.connectionTools().then(setTools).catch(() => setTools([])); }, []);
+  const writeTools = tools.filter((t) => t.level === 'write');
+  const writeOffered = conn.writeCapable && writeTools.length > 0;
+  const toolRow = (t: { name: string; description: string }) => (
+    <div key={t.name} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-soft)' }}>
+      <div style={{ fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--mono)' }}>{t.name}</div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2 }}>{t.description}</div>
+    </div>
+  );
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', backdropFilter: 'blur(2px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: 540, maxWidth: '100%', maxHeight: '86vh', display: 'flex', flexDirection: 'column', background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'var(--shadow)', animation: 'pop .16s' }}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border-soft)', flex: 'none' }}>
           <div style={{ fontSize: 17, fontWeight: 700 }}>Give {a.name} access to your calendar?</div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 2 }}>Google Calendar · {conn.accountEmail} · read-only</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 2 }}>Google Calendar · {conn.accountEmail} · {withWrite ? 'read + write' : 'read-only'}</div>
         </div>
         <div style={{ padding: '16px 24px', overflow: 'auto' }}>
           <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Exactly these tools, nothing else</div>
-          {tools.filter((t) => t.level === 'read').map((t) => (
-            <div key={t.name} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-soft)' }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--mono)' }}>{t.name}</div>
-              <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2 }}>{t.description}</div>
+          {tools.filter((t) => t.level === 'read').map(toolRow)}
+          {writeOffered && (
+            <div style={{ marginTop: 14 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
+                <input type="checkbox" checked={withWrite} onChange={(e) => setWithWrite(e.target.checked)} />
+                Also allow write tools — each call still needs your approval in Ask mode
+              </label>
+              <div style={{ opacity: withWrite ? 1 : 0.45 }}>{writeTools.map(toolRow)}</div>
             </div>
-          ))}
+          )}
           <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 10, lineHeight: 1.6 }}>
             {a.name} never sees your Google token — the server runs these tools and returns results only.
             Revoking the grant is one click and immediate.
@@ -613,8 +626,8 @@ function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Co
           <button onClick={onClose} style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
           <button onClick={async () => {
             try {
-              await api.grantConnection(conn.id, a.id);
-              app.showToast(`${a.name} can now read the calendar`);
+              await api.grantConnection(conn.id, a.id, withWrite ? 'write' : 'read');
+              app.showToast(withWrite ? `${a.name} can now read and write the calendar` : `${a.name} can now read the calendar`);
               onDone();
             } catch (err) {
               app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'grant failed');
@@ -711,14 +724,15 @@ function SkillsToolsTab({ a }: { a: Agent }) {
         </div>
         <div style={{ ...card, padding: '6px 8px' }}>
           {conns.map((c) => {
-            const granted = c.grants.some((g) => g.agentId === a.id);
+            const grant = c.grants.find((g) => g.agentId === a.id);
+            const granted = !!grant;
             return (
               <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderBottom: '1px solid var(--border-soft)' }}>
                 <span style={{ fontSize: 16, flex: 'none' }}>📅</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <span style={{ fontSize: 13, fontWeight: 600 }}>Google Calendar</span>
-                    {granted ? pill('read access', 'var(--green)') : pill('no access', 'var(--text-faint)')}
+                    {granted ? pill(grant.level === 'write' ? 'read + write access' : 'read access', 'var(--green)') : pill('no access', 'var(--text-faint)')}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2, fontFamily: 'var(--mono)' }}>{c.accountEmail}</div>
                 </div>
@@ -805,6 +819,16 @@ export function AgentHome() {
 
   if (!a) return null;
   const reloadTasks = () => void api.agentTasks(a.id).then(setTasks).catch(() => {});
+  const reloadEvents = () => void api.agentEvents(a.id).then(setEvents).catch(() => {});
+  const actOnEvent = async (ev: AgentEvent, decision: 'approve' | 'dismiss') => {
+    try {
+      const res = await api.actOnAgentEvent(a.id, ev.id, decision);
+      app.showToast(decision === 'dismiss' ? 'Dismissed' : res.ok ? 'Approved — action ran' : `Action failed: ${res.error ?? 'unknown error'}`);
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'action failed');
+    }
+    reloadEvents();
+  };
   const apps = parseApps(a);
   const loops = (() => { try { return JSON.parse(a.loops) as Loop[]; } catch { return []; } })();
   const activeLoops = loops.filter((l) => l.enabled !== false);
@@ -903,11 +927,17 @@ export function AgentHome() {
                   {events.slice(0, 6).map((ev) => (
                     <div key={ev.id} onClick={() => ev.sessionId && app.openSession(ev.sessionId)}
                       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, cursor: ev.sessionId ? 'pointer' : 'default' }}>
-                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: ev.kind === 'loop_error' ? 'var(--red)' : 'var(--green)', flex: 'none' }} />
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: ev.kind === 'loop_error' || ev.kind === 'action_failed' ? 'var(--red)' : ev.kind === 'action_pending' ? 'var(--amber)' : 'var(--green)', flex: 'none' }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</div>
                         {ev.body && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.body}</div>}
                       </div>
+                      {ev.kind === 'action_pending' && (
+                        <span style={{ display: 'flex', gap: 6, flex: 'none' }} onClick={(e) => e.stopPropagation()}>
+                          <button onClick={() => void actOnEvent(ev, 'approve')} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
+                          <button onClick={() => void actOnEvent(ev, 'dismiss')} style={{ background: 'none', color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Dismiss</button>
+                        </span>
+                      )}
                       <span style={{ fontSize: 9.5, color: 'var(--text-faint)', flex: 'none', fontFamily: 'var(--mono)' }}>{ago(ev.createdAt)}</span>
                     </div>
                   ))}

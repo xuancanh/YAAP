@@ -1,6 +1,7 @@
 import { BadRequestException, Body, Controller, Delete, Get, Header, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
 import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 import { AgentsService } from './agents.service';
+import { ConnectionsService } from '../connections/connections.service';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix, agentRelativePath, workspaceFileKey } from '../storage/storage.keys';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
@@ -50,11 +51,16 @@ class FeedbackDto {
   @IsString() turnId!: string;
 }
 
+class ActOnEventDto {
+  @IsIn(['approve', 'dismiss']) decision!: 'approve' | 'dismiss';
+}
+
 @Controller('agents')
 export class AgentsController {
   constructor(
     private readonly agents: AgentsService,
     private readonly storage: StorageService,
+    private readonly connections: ConnectionsService,
   ) {}
 
   @Get() list() { return this.agents.list(); }
@@ -71,6 +77,14 @@ export class AgentsController {
   @Get('events/unread') unreadEvents() { return this.agents.unreadEventCounts(); }
   @Get(':id/events') events(@Param('id') id: string) { return this.agents.listEvents(id); }
   @Post(':id/events/read') markEventsRead(@Param('id') id: string) { return this.agents.markEventsRead(id); }
+  /** Approve or dismiss a queued background action (action_pending event).
+   *  Approval executes the queued connection tool through the same grant
+   *  checks a live turn would apply. */
+  @Post(':id/events/:eventId/act')
+  actOnEvent(@Param('id') id: string, @Param('eventId') eventId: string, @Body() dto: ActOnEventDto) {
+    return this.agents.resolveActionEvent(id, eventId, dto.decision === 'approve',
+      (agentId, tool, input) => this.connections.execute(agentId, tool, input));
+  }
 
   // ---- self-built HTTP tools: proposed by the agent, user-activated ----
   @Get(':id/tools') customTools(@Param('id') id: string) { return this.agents.listCustomTools(id); }

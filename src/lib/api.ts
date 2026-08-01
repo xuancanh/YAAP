@@ -94,9 +94,10 @@ export interface AgentStats {
 export interface AgentEvent {
   id: string;
   agentId: string;
-  kind: 'loop_run' | 'loop_error' | 'info';
+  kind: 'loop_run' | 'loop_error' | 'info' | 'action_pending' | 'action_done' | 'action_failed' | 'action_dismissed';
   title: string;
   body: string;
+  payload: string;
   sessionId: string | null;
   readAt: string | null;
   createdAt: string;
@@ -183,6 +184,7 @@ export interface Connection {
   provider: string;
   accountEmail: string;
   scopes: string[];
+  writeCapable: boolean;
   createdAt: string;
   grants: Array<{ agentId: string; level: string }>;
 }
@@ -346,6 +348,8 @@ export const api = {
       `/api/agents/${id}/apps/${appId}/ask`, 'POST', { prompt, workspaceId }),
   agentEvents: (id: string) => get<AgentEvent[]>(`/api/agents/${id}/events`),
   markAgentEventsRead: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}/events/read`, 'POST'),
+  actOnAgentEvent: (id: string, eventId: string, decision: 'approve' | 'dismiss') =>
+    send<{ ok: boolean; status: string; result?: string; error?: string }>(`/api/agents/${id}/events/${eventId}/act`, 'POST', { decision }),
   unreadAgentEvents: () => get<Record<string, number>>('/api/agents/events/unread'),
   agentCustomTools: (id: string) => get<AgentCustomTool[]>(`/api/agents/${id}/tools`),
   approveAgentTool: (id: string, toolId: string) => send<{ ok: boolean }>(`/api/agents/${id}/tools/${toolId}/approve`, 'POST'),
@@ -383,9 +387,9 @@ export const api = {
   connections: () => get<Connection[]>('/api/connections'),
   connectionProviders: () => get<ConnectionProvider[]>('/api/connections/providers'),
   connectionTools: () => get<Array<{ name: string; description: string; level: string }>>('/api/connections/tools'),
-  connectStart: (provider: string) => get<{ url: string }>(`/api/connections/${provider}/start`),
+  connectStart: (provider: string, tier: 'read' | 'write' = 'read') => get<{ url: string }>(`/api/connections/${provider}/start?tier=${tier}`),
   removeConnection: (id: string) => send<{ ok: boolean }>(`/api/connections/${id}`, 'DELETE'),
-  grantConnection: (id: string, agentId: string) => send<{ ok: boolean }>(`/api/connections/${id}/grants`, 'POST', { agentId, level: 'read' }),
+  grantConnection: (id: string, agentId: string, level: 'read' | 'write' = 'read') => send<{ ok: boolean }>(`/api/connections/${id}/grants`, 'POST', { agentId, level }),
   revokeConnectionGrant: (id: string, agentId: string) => send<{ ok: boolean }>(`/api/connections/${id}/grants/${agentId}`, 'DELETE'),
   mcp: () => get<McpServer[]>('/api/mcp'),
   createMcp: (name: string, url: string) => send<McpServer>('/api/mcp', 'POST', { name, url }),

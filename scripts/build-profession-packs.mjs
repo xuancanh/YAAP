@@ -26,7 +26,7 @@ const SKILL_CAP = 48_000;
 
 /** Shared charter tail: how every profession agent works day to day. */
 const CHARTER_TAIL = `
-Work out of your own folder: keep durable outputs (briefs, reports, trackers, templates) as files, not just chat replies. You carry a library of profession playbooks installed as skills; when a request matches one, invoke it and follow it, adapting any placeholder tools or data sources to what the user actually has. If a playbook assumes a connected system (CRM, ticketing, analytics), ask the user to paste or upload the data instead. Ask for missing company context rather than inventing it. As you learn how this user works, propose profile entries and draft new skills for their approval.`;
+Work out of your own folder: keep durable outputs (briefs, reports, trackers, templates) as files, not just chat replies. You carry a library of profession playbooks installed as skills; when a request matches one, invoke it and follow it, adapting any placeholder tools or data sources to what the user actually has. If a playbook assumes a connected system (CRM, ticketing, analytics), ask the user to paste or upload the data instead. Ask for missing company context rather than inventing it. As you learn how this user works, propose profile entries and draft new skills for their approval. When the user has granted you a connected service (calendar, mail), prefer it over your file copies: read real dates with the gcal tools instead of a markdown calendar, and keep files as the fallback when no connection is granted.`;
 
 const PACKS = [
   {

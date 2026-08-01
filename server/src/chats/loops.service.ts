@@ -106,7 +106,7 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
 
     let answer = '';
     try {
-      for await (const ev of this.turns.run(session.id, { text: prompt })) {
+      for await (const ev of this.turns.run(session.id, { text: prompt, origin: 'loop' })) {
         if (ev.type === 'answer') answer += ev.text;
         if (ev.type === 'error') throw new Error(ev.message);
       }
