@@ -848,6 +848,15 @@ export function AgentHome() {
     setEditingCharter(false);
     setChatQuery('');
   }, [agentId]);
+  // In-app deep link (e.g. the chat's "needs a grant" hint): one-shot tab
+  // request from the store, works even when this agent page is already open.
+  useEffect(() => {
+    if (app.agentTabRequest && TABS.includes(app.agentTabRequest as HomeTab)) {
+      setTab(app.agentTabRequest as HomeTab);
+      app.setAgentTabRequest(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.agentTabRequest]);
   useEffect(() => {
     if (agentId) {
       void api.agentTasks(agentId).then(setTasks).catch(() => setTasks([]));

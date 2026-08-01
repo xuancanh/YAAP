@@ -70,6 +70,25 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
       {t.result !== undefined && t.status !== 'pending' && t.status !== 'running' && (
         <pre style={{ margin: 0, padding: '12px 14px', borderTop: '1px solid var(--border-soft)', background: 'var(--code)', ...mono, fontSize: 12, lineHeight: 1.6, color: 'var(--text-dim)', overflowX: 'auto', whiteSpace: 'pre', maxHeight: 260, overflowY: 'auto' }}>{t.result}</pre>
       )}
+      <NeedsGrantHint result={t.result} />
+    </div>
+  );
+}
+
+/** Connect at the moment of need (docs/integrations.md §4, entry point 2):
+ *  a connection tool refused for lack of a grant gets an inline path to the
+ *  agent's Skills & tools tab, where grants live. */
+function NeedsGrantHint({ result }: { result?: string }) {
+  const app = useApp();
+  const agentId = app.sessions.find((s) => s.id === app.currentId)?.agentId;
+  if (!agentId || typeof result !== 'string' || !/no (connection|write) grant/.test(result)) return null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', borderTop: '1px solid var(--border-soft)' }}>
+      <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>This agent needs a connection grant from you.</span>
+      <button onClick={() => app.openAgent(agentId, 'Skills & tools')}
+        style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>
+        Open Skills &amp; tools
+      </button>
     </div>
   );
 }

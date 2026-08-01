@@ -82,7 +82,9 @@ interface Store {
 
   // agents section
   selectedAgent: string | null; setSelectedAgent: (id: string | null) => void;
-  openAgent: (id: string) => void;
+  openAgent: (id: string, tab?: string) => void;
+  /** One-shot tab request consumed by AgentHome (deep-link from chat). */
+  agentTabRequest: string | null; setAgentTabRequest: (v: string | null) => void;
   newAgentOpen: boolean; setNewAgentOpen: (v: boolean) => void;
   embedApp: (agentId: string, miniApp: AgentApp) => Promise<void>;
 
@@ -165,6 +167,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [fileList, setFileList] = useState<FileEntry[]>([]);
   const [currentFile, setCurrentFile] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(() => new URLSearchParams(window.location.search).get('agent'));
+  const [agentTabRequest, setAgentTabRequest] = useState<string | null>(null);
   const [newAgentOpen, setNewAgentOpen] = useState(false);
   const [artifact, setArtifact] = useState<{ title: string; src: string; appCtx?: { agentId: string; miniApp: AgentApp } } | null>(null);
   const [hireId, setHireId] = useState<string | null>(null);
@@ -275,10 +278,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setArtifact(null);
   }, []);
 
-  const openAgent = useCallback((id: string) => {
+  const openAgent = useCallback((id: string, tab?: string) => {
     setSection('home');
     setHomeView('agent');
     setSelectedAgent(id);
+    if (tab) setAgentTabRequest(tab);
     setMobileChatOpen(true); // stacked: the agent page is the detail pane
     setArtifact(null);
     // opening the home page acknowledges the agent's proactive activity
@@ -582,7 +586,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
     retry, editResend, fork, promote, rate,
     fileTarget, setFileTarget, fileList, refreshFiles, currentFile, setCurrentFile, openFile,
-    selectedAgent, setSelectedAgent, openAgent, newAgentOpen, setNewAgentOpen, embedApp, composeInChat,
+    selectedAgent, setSelectedAgent, openAgent, agentTabRequest, setAgentTabRequest, newAgentOpen, setNewAgentOpen, embedApp, composeInChat,
     artifact, openArtifact, closeArtifact,
     hireId, setHireId, confirmHire,
   };
