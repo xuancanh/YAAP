@@ -293,6 +293,14 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0013-grant-service',
+    up: async (db) => {
+      if (!(await hasColumn(db, 'connection_grants', 'service'))) {
+        await db.query(`ALTER TABLE connection_grants ADD COLUMN "service" TEXT NOT NULL DEFAULT 'calendar'`);
+      }
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {

@@ -185,9 +185,12 @@ export interface Connection {
   accountEmail: string;
   scopes: string[];
   writeCapable: boolean;
+  gmailCapable: boolean;
   createdAt: string;
-  grants: Array<{ agentId: string; level: string }>;
+  grants: Array<{ agentId: string; service: string; level: string }>;
 }
+
+export type ConnectionServiceName = 'calendar' | 'gmail';
 
 export interface ConnectionProvider {
   provider: string;
@@ -386,11 +389,13 @@ export const api = {
   // external service connections (docs/integrations.md)
   connections: () => get<Connection[]>('/api/connections'),
   connectionProviders: () => get<ConnectionProvider[]>('/api/connections/providers'),
-  connectionTools: () => get<Array<{ name: string; description: string; level: string }>>('/api/connections/tools'),
-  connectStart: (provider: string, tier: 'read' | 'write' = 'read') => get<{ url: string }>(`/api/connections/${provider}/start?tier=${tier}`),
+  connectionTools: () => get<Array<{ name: string; description: string; service: string; level: string }>>('/api/connections/tools'),
+  connectStart: (provider: string, tier: 'read' | 'write' | 'gmail' = 'read') => get<{ url: string }>(`/api/connections/${provider}/start?tier=${tier}`),
   removeConnection: (id: string) => send<{ ok: boolean }>(`/api/connections/${id}`, 'DELETE'),
-  grantConnection: (id: string, agentId: string, level: 'read' | 'write' = 'read') => send<{ ok: boolean }>(`/api/connections/${id}/grants`, 'POST', { agentId, level }),
-  revokeConnectionGrant: (id: string, agentId: string) => send<{ ok: boolean }>(`/api/connections/${id}/grants/${agentId}`, 'DELETE'),
+  grantConnection: (id: string, agentId: string, service: ConnectionServiceName, level: 'read' | 'write' = 'read') =>
+    send<{ ok: boolean }>(`/api/connections/${id}/grants`, 'POST', { agentId, service, level }),
+  revokeConnectionGrant: (id: string, agentId: string, service?: ConnectionServiceName) =>
+    send<{ ok: boolean }>(`/api/connections/${id}/grants/${agentId}${service ? `?service=${service}` : ''}`, 'DELETE'),
   mcp: () => get<McpServer[]>('/api/mcp'),
   createMcp: (name: string, url: string) => send<McpServer>('/api/mcp', 'POST', { name, url }),
   updateMcp: (id: string, patch: { enabled?: boolean }) => send<McpServer>(`/api/mcp/${id}`, 'PATCH', patch),

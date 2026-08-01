@@ -3,9 +3,11 @@ import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query,
 import { IsIn, IsString } from 'class-validator';
 import type { Response } from 'express';
 import { ConnectionsService, ScopeTier } from './connections.service';
+import type { ConnectionService as ServiceName } from './connections.tools';
 
 class GrantDto {
   @IsString() agentId!: string;
+  @IsIn(['calendar', 'gmail']) service!: 'calendar' | 'gmail';
   @IsIn(['read', 'write']) level!: 'read' | 'write';
 }
 
@@ -17,10 +19,10 @@ export class ConnectionsController {
   @Get('providers') providers() { return this.svc.providers(); }
   @Get('tools') tools() { return this.svc.toolCatalog(); }
 
-  /** tier=read on first connect; tier=write is the incremental re-consent. */
+  /** tier=read on first connect; write/gmail are incremental re-consents. */
   @Get('google/start')
   start(@Query('tier') tier?: string) {
-    if (tier && tier !== 'read' && tier !== 'write') throw new BadRequestException('tier must be read or write');
+    if (tier && !['read', 'write', 'gmail'].includes(tier)) throw new BadRequestException('tier must be read, write, or gmail');
     return this.svc.startGoogleAuth((tier as ScopeTier) ?? 'read');
   }
 
@@ -42,6 +44,9 @@ export class ConnectionsController {
   }
 
   @Delete(':id') remove(@Param('id') id: string) { return this.svc.remove(id); }
-  @Post(':id/grants') grant(@Param('id') id: string, @Body() dto: GrantDto) { return this.svc.setGrant(id, dto.agentId, dto.level); }
-  @Delete(':id/grants/:agentId') revoke(@Param('id') id: string, @Param('agentId') agentId: string) { return this.svc.revokeGrant(id, agentId); }
+  @Post(':id/grants') grant(@Param('id') id: string, @Body() dto: GrantDto) { return this.svc.setGrant(id, dto.agentId, dto.service, dto.level); }
+  @Delete(':id/grants/:agentId') revoke(@Param('id') id: string, @Param('agentId') agentId: string, @Query('service') service?: string) {
+    if (service && !['calendar', 'gmail'].includes(service)) throw new BadRequestException('service must be calendar or gmail');
+    return this.svc.revokeGrant(id, agentId, service as ServiceName | undefined);
+  }
 }

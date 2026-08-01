@@ -11,6 +11,7 @@ import { memStorage, testDb } from './helpers';
 import type { StorageService } from '../server/src/storage/storage.service';
 
 const WRITE_SCOPES = '["https://www.googleapis.com/auth/calendar.readonly","https://www.googleapis.com/auth/calendar.events"]';
+const GMAIL_SCOPES = '["https://www.googleapis.com/auth/calendar.readonly","https://www.googleapis.com/auth/gmail.compose"]';
 
 const configStub = {
   get: (key: string) => ({
@@ -63,7 +64,7 @@ test('grants gate the tool surface: none → grant → revoke (activation gate)'
 
   assert.deepEqual(await svc.toolSpecs('agent1'), []);
 
-  await svc.setGrant('conn1', 'agent1', 'read');
+  await svc.setGrant('conn1', 'agent1', 'calendar', 'read');
   const specs = await svc.toolSpecs('agent1');
   assert.deepEqual(specs.map((s) => s.name).sort(), ['gcal_freebusy', 'gcal_search', 'gcal_upcoming']);
   // the grant is per-agent, not ambient
@@ -83,7 +84,7 @@ test('execute refuses without a grant and for non-agent sessions', async () => {
 test('gcal_upcoming formats events and frames them as external content', async () => {
   const { db, svc } = await service();
   await insertConnection(db);
-  await svc.setGrant('conn1', 'agent1', 'read');
+  await svc.setGrant('conn1', 'agent1', 'calendar', 'read');
   const calls: string[] = [];
   svc.fetchImpl = (async (url: RequestInfo | URL) => {
     calls.push(String(url));
@@ -108,7 +109,7 @@ test('gcal_upcoming formats events and frames them as external content', async (
 test('expired access token refreshes once and the new token is stored sealed', async () => {
   const { db, svc } = await service();
   await insertConnection(db, { expiresAt: new Date(Date.now() - 1000).toISOString() });
-  await svc.setGrant('conn1', 'agent1', 'read');
+  await svc.setGrant('conn1', 'agent1', 'calendar', 'read');
   const calls: Array<{ url: string; body?: string }> = [];
   svc.fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
     const u = String(url);
@@ -167,16 +168,16 @@ test('write tier: consent URL requests calendar.events incrementally', () => {
 test('write grant is refused until the connection holds write scopes', async () => {
   const { db, svc } = await service();
   await insertConnection(db); // readonly scopes only
-  await assert.rejects(svc.setGrant('conn1', 'agent1', 'write'), /read-only consent/);
+  await assert.rejects(svc.setGrant('conn1', 'agent1', 'calendar', 'write'), /read-only consent/);
 
   await db.delete(connections);
   await insertConnection(db, {
     scopes: '["https://www.googleapis.com/auth/calendar.readonly","https://www.googleapis.com/auth/calendar.events"]',
   });
-  await svc.setGrant('conn1', 'agent1', 'write');
+  await svc.setGrant('conn1', 'agent1', 'calendar', 'write');
   const listed = await svc.list();
   assert.equal(listed[0].writeCapable, true);
-  assert.deepEqual(listed[0].grants, [{ agentId: 'agent1', level: 'write' }]);
+  assert.deepEqual(listed[0].grants, [{ agentId: 'agent1', service: 'calendar', level: 'write' }]);
   // a write grant exposes the read tools plus the write tools
   const specs = await svc.toolSpecs('agent1');
   assert.deepEqual(specs.map((s) => s.name).sort(), ['gcal_create_event', 'gcal_freebusy', 'gcal_search', 'gcal_upcoming', 'gcal_update_event']);
@@ -206,12 +207,12 @@ test('write tools appear only under a write grant; execute enforces the level', 
   const { db, svc } = await service();
   await insertConnection(db, { scopes: WRITE_SCOPES });
 
-  await svc.setGrant('conn1', 'agent1', 'read');
+  await svc.setGrant('conn1', 'agent1', 'calendar', 'read');
   const readSpecs = (await svc.toolSpecs('agent1')).map((s) => s.name);
   assert.ok(!readSpecs.includes('gcal_create_event'));
   await assert.rejects(svc.execute('agent1', 'gcal_create_event', { title: 'x', start: '2026-08-05' }), /no write grant/);
 
-  await svc.setGrant('conn1', 'agent1', 'write');
+  await svc.setGrant('conn1', 'agent1', 'calendar', 'write');
   const writeSpecs = (await svc.toolSpecs('agent1')).map((s) => s.name).sort();
   assert.deepEqual(writeSpecs, ['gcal_create_event', 'gcal_freebusy', 'gcal_search', 'gcal_upcoming', 'gcal_update_event']);
   // write tools are mutation-class for the approval policy
@@ -222,7 +223,7 @@ test('write tools appear only under a write grant; execute enforces the level', 
 test('gcal_create_event posts to Google with a provenance stamp', async () => {
   const { db, svc } = await service();
   await insertConnection(db, { scopes: WRITE_SCOPES });
-  await svc.setGrant('conn1', 'agent1', 'write');
+  await svc.setGrant('conn1', 'agent1', 'calendar', 'write');
   let sent: { url: string; method?: string; body?: string } | null = null;
   svc.fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
     sent = { url: String(url), method: init?.method, body: init?.body ? String(init.body) : undefined };
@@ -244,7 +245,7 @@ test('gcal_create_event posts to Google with a provenance stamp', async () => {
 test('gcal_update_event patches only the provided fields', async () => {
   const { db, svc } = await service();
   await insertConnection(db, { scopes: WRITE_SCOPES });
-  await svc.setGrant('conn1', 'agent1', 'write');
+  await svc.setGrant('conn1', 'agent1', 'calendar', 'write');
   let sent: { url: string; method?: string; body?: string } | null = null;
   svc.fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
     sent = { url: String(url), method: init?.method, body: init?.body ? String(init.body) : undefined };
@@ -258,6 +259,66 @@ test('gcal_update_event patches only the provided fields', async () => {
   assert.match(sent!.url, /events\/evt42$/);
   const body = JSON.parse(sent!.body!) as Record<string, unknown>;
   assert.deepEqual(Object.keys(body).sort(), ['summary']);
+});
+
+test('gmail tier: consent URL requests gmail.compose; gmail grants are service-scoped (M2)', async () => {
+  const { db, svc } = await service();
+  const gmailUrl = new URL(svc.startGoogleAuth('gmail').url);
+  assert.match(gmailUrl.searchParams.get('scope')!, /gmail\.compose/);
+  assert.doesNotMatch(gmailUrl.searchParams.get('scope')!, /calendar/);
+
+  // no gmail consent yet → gmail grant refused
+  await insertConnection(db);
+  await assert.rejects(svc.setGrant('conn1', 'agent1', 'gmail', 'write'), /no Gmail consent/);
+
+  await db.delete(connections);
+  await insertConnection(db, { scopes: GMAIL_SCOPES });
+  await assert.rejects(svc.setGrant('conn1', 'agent1', 'gmail', 'read'), /write-level/);
+  await svc.setGrant('conn1', 'agent1', 'gmail', 'write');
+
+  // gmail grant alone exposes only the gmail tools, not calendar
+  const specs = (await svc.toolSpecs('agent1')).map((s) => s.name).sort();
+  assert.deepEqual(specs, ['gmail_draft', 'gmail_send']);
+  await assert.rejects(svc.execute('agent1', 'gcal_upcoming', {}), /no connection grant/);
+  // a calendar grant on top exposes both services
+  await svc.setGrant('conn1', 'agent1', 'calendar', 'read');
+  assert.equal((await svc.toolSpecs('agent1')).length, 5);
+  // revoking just gmail keeps calendar
+  await svc.revokeGrant('conn1', 'agent1', 'gmail');
+  assert.deepEqual((await svc.toolSpecs('agent1')).map((s) => s.name).sort(), ['gcal_freebusy', 'gcal_search', 'gcal_upcoming']);
+  // gmail_send is the confirm-always class; drafts are not
+  assert.equal(svc.isConfirmAlways('gmail_send'), true);
+  assert.equal(svc.isConfirmAlways('gmail_draft'), false);
+});
+
+test('gmail_draft and gmail_send build RFC 2822 mail and hit the right endpoints (M2)', async () => {
+  const { db, svc } = await service();
+  await insertConnection(db, { scopes: GMAIL_SCOPES });
+  await svc.setGrant('conn1', 'agent1', 'gmail', 'write');
+  const sent: Array<{ url: string; body: string }> = [];
+  svc.fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    sent.push({ url: String(url), body: init?.body ? String(init.body) : '' });
+    return jsonResponse({ id: 'm1' });
+  }) as typeof fetch;
+
+  await assert.rejects(svc.execute('agent1', 'gmail_draft', { subject: 's', body: 'b' }), /"to" requires at least one recipient/);
+  await assert.rejects(svc.execute('agent1', 'gmail_draft', { to: 'not-an-email', subject: 's', body: 'b' }), /not a valid email/);
+  await assert.rejects(svc.execute('agent1', 'gmail_draft', { to: 'a@b.co', subject: '', body: 'b' }), /"subject" is required/);
+
+  const out = await svc.execute('agent1', 'gmail_draft', { to: 'a@b.co', cc: 'c@d.co', subject: 'Rent reminder', body: 'Hello Ann,\nrent is due.' });
+  assert.match(out, /Draft created/);
+  assert.match(sent[0].url, /gmail\/v1\/users\/me\/drafts/);
+  const raw = (JSON.parse(sent[0].body) as { message: { raw: string } }).message.raw;
+  const mime = Buffer.from(raw, 'base64url').toString('utf8');
+  assert.match(mime, /To: a@b\.co\r\n/);
+  assert.match(mime, /Cc: c@d\.co\r\n/);
+  assert.match(mime, /Subject: Rent reminder\r\n/);
+  assert.match(Buffer.from(mime.split('\r\n\r\n')[1], 'base64').toString('utf8'), /Hello Ann/);
+
+  const out2 = await svc.execute('agent1', 'gmail_send', { to: 'a@b.co', subject: 'Go', body: 'now' });
+  assert.match(out2, /Email sent/);
+  assert.match(sent[1].url, /gmail\/v1\/users\/me\/messages\/send/);
+  assert.ok((JSON.parse(sent[1].body) as { raw?: string }).raw, 'send posts the raw message directly');
 });
 
 test('action_pending inbox events: approve executes, dismiss does not (M1)', async () => {
@@ -293,7 +354,7 @@ test('action_pending inbox events: approve executes, dismiss does not (M1)', asy
 test('remove revokes at the provider and deletes grants', async () => {
   const { db, svc } = await service();
   await insertConnection(db);
-  await svc.setGrant('conn1', 'agent1', 'read');
+  await svc.setGrant('conn1', 'agent1', 'calendar', 'read');
   let revoked = '';
   svc.fetchImpl = (async (url: RequestInfo | URL) => {
     revoked = String(url);

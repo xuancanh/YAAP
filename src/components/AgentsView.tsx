@@ -587,11 +587,14 @@ function PromoteSkillModal({ a, skill, onDone, onClose }: { a: Agent; skill: Ski
  *  the literal tools the agent gains — the real artifact, not a summary. */
 function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Connection; onDone: () => void; onClose: () => void }) {
   const app = useApp();
-  const [tools, setTools] = useState<Array<{ name: string; description: string; level: string }>>([]);
+  const [tools, setTools] = useState<Array<{ name: string; description: string; service: string; level: string }>>([]);
   const [withWrite, setWithWrite] = useState(false);
+  const [withGmail, setWithGmail] = useState(false);
   useEffect(() => { void api.connectionTools().then(setTools).catch(() => setTools([])); }, []);
-  const writeTools = tools.filter((t) => t.level === 'write');
+  const writeTools = tools.filter((t) => t.service === 'calendar' && t.level === 'write');
+  const gmailTools = tools.filter((t) => t.service === 'gmail');
   const writeOffered = conn.writeCapable && writeTools.length > 0;
+  const gmailOffered = conn.gmailCapable && gmailTools.length > 0;
   const toolRow = (t: { name: string; description: string }) => (
     <div key={t.name} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-soft)' }}>
       <div style={{ fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--mono)' }}>{t.name}</div>
@@ -602,19 +605,30 @@ function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Co
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', backdropFilter: 'blur(2px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: 540, maxWidth: '100%', maxHeight: '86vh', display: 'flex', flexDirection: 'column', background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'var(--shadow)', animation: 'pop .16s' }}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border-soft)', flex: 'none' }}>
-          <div style={{ fontSize: 17, fontWeight: 700 }}>Give {a.name} access to your calendar?</div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 2 }}>Google Calendar · {conn.accountEmail} · {withWrite ? 'read + write' : 'read-only'}</div>
+          <div style={{ fontSize: 17, fontWeight: 700 }}>Give {a.name} access to your Google account?</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 2 }}>
+            Google · {conn.accountEmail} · calendar {withWrite ? 'read + write' : 'read-only'}{withGmail ? ' · gmail draft/send' : ''}
+          </div>
         </div>
         <div style={{ padding: '16px 24px', overflow: 'auto' }}>
           <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 8 }}>Exactly these tools, nothing else</div>
-          {tools.filter((t) => t.level === 'read').map(toolRow)}
+          {tools.filter((t) => t.service === 'calendar' && t.level === 'read').map(toolRow)}
           {writeOffered && (
             <div style={{ marginTop: 14 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
                 <input type="checkbox" checked={withWrite} onChange={(e) => setWithWrite(e.target.checked)} />
-                Also allow write tools — each call still needs your approval in Ask mode
+                Also allow calendar write tools — each call still needs your approval in Ask mode
               </label>
               <div style={{ opacity: withWrite ? 1 : 0.45 }}>{writeTools.map(toolRow)}</div>
+            </div>
+          )}
+          {gmailOffered && (
+            <div style={{ marginTop: 14 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
+                <input type="checkbox" checked={withGmail} onChange={(e) => setWithGmail(e.target.checked)} />
+                Also allow Gmail draft + send — sending confirms with you every time, even in Auto mode
+              </label>
+              <div style={{ opacity: withGmail ? 1 : 0.45 }}>{gmailTools.map(toolRow)}</div>
             </div>
           )}
           <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 10, lineHeight: 1.6 }}>
@@ -626,8 +640,9 @@ function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Co
           <button onClick={onClose} style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
           <button onClick={async () => {
             try {
-              await api.grantConnection(conn.id, a.id, withWrite ? 'write' : 'read');
-              app.showToast(withWrite ? `${a.name} can now read and write the calendar` : `${a.name} can now read the calendar`);
+              await api.grantConnection(conn.id, a.id, 'calendar', withWrite ? 'write' : 'read');
+              if (withGmail) await api.grantConnection(conn.id, a.id, 'gmail', 'write');
+              app.showToast(`${a.name} can now ${withWrite ? 'read and write' : 'read'} the calendar${withGmail ? ' and draft/send email' : ''}`);
               onDone();
             } catch (err) {
               app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'grant failed');
@@ -724,20 +739,24 @@ function SkillsToolsTab({ a }: { a: Agent }) {
         </div>
         <div style={{ ...card, padding: '6px 8px' }}>
           {conns.map((c) => {
-            const grant = c.grants.find((g) => g.agentId === a.id);
-            const granted = !!grant;
+            const mine = c.grants.filter((g) => g.agentId === a.id);
+            const cal = mine.find((g) => g.service === 'calendar');
+            const gmail = mine.find((g) => g.service === 'gmail');
+            const granted = mine.length > 0;
             return (
               <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderBottom: '1px solid var(--border-soft)' }}>
                 <span style={{ fontSize: 16, flex: 'none' }}>📅</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>Google Calendar</span>
-                    {granted ? pill(grant.level === 'write' ? 'read + write access' : 'read access', 'var(--green)') : pill('no access', 'var(--text-faint)')}
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Google</span>
+                    {cal && pill(cal.level === 'write' ? 'calendar read + write' : 'calendar read', 'var(--green)')}
+                    {gmail && pill('gmail draft/send', 'var(--green)')}
+                    {!granted && pill('no access', 'var(--text-faint)')}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2, fontFamily: 'var(--mono)' }}>{c.accountEmail}</div>
                 </div>
                 {!granted && btn('Grant…', () => setGranting(c), true)}
-                {granted && btn('Revoke', async () => { await api.revokeConnectionGrant(c.id, a.id); refresh(a.id); app.showToast(`${a.name} lost calendar access`); }, false, true)}
+                {granted && btn('Revoke', async () => { await api.revokeConnectionGrant(c.id, a.id); refresh(a.id); app.showToast(`${a.name} lost Google access`); }, false, true)}
               </div>
             );
           })}

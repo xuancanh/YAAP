@@ -18,6 +18,10 @@ export const GOOGLE_BASE_SCOPES = [
 export const GOOGLE_READ_SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 /** The write tier, added via incremental re-consent, never on first connect. */
 export const GOOGLE_WRITE_SCOPES = ['https://www.googleapis.com/auth/calendar.events'];
+/** The gmail tier: manage drafts and send. Deliberately no read scope —
+ *  draft-and-send covers the chase-ladder use case without restricted-read
+ *  verification (docs/integrations.md §3a). */
+export const GOOGLE_GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.compose'];
 
 export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -25,10 +29,17 @@ export const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 export const GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo';
 const GCAL_EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
 const GCAL_FREEBUSY_URL = 'https://www.googleapis.com/calendar/v3/freeBusy';
+const GMAIL_DRAFTS_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/drafts';
+const GMAIL_SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
 
 /** Does this connection's consented scope set cover write-tier tools? */
 export function hasWriteScopes(scopes: string[]): boolean {
   return GOOGLE_WRITE_SCOPES.every((s) => scopes.includes(s));
+}
+
+/** Does this connection's consented scope set cover gmail tools? */
+export function hasGmailScopes(scopes: string[]): boolean {
+  return GOOGLE_GMAIL_SCOPES.every((s) => scopes.includes(s));
 }
 
 /** What the service must provide for tools to reach Google. */
@@ -43,10 +54,17 @@ export interface ToolContext {
   agentName: string;
 }
 
+export type ConnectionService = 'calendar' | 'gmail';
+
 export interface ConnectionTool extends AiToolSpec {
+  /** The service this tool belongs to — grants are per-service. */
+  service: ConnectionService;
   /** Grant level required to see/run this tool. */
   level: 'read' | 'write';
   readOnly: boolean;
+  /** Confirm in host chrome on every call, even in Auto mode — for actions
+   *  that leave the account in the user's name (docs/integrations.md §5). */
+  confirmAlways?: boolean;
   execute(conn: ConnectionRow, input: Record<string, unknown>, http: GoogleHttp, ctx: ToolContext): Promise<string>;
 }
 
@@ -76,6 +94,7 @@ export const GCAL_TOOLS: ConnectionTool[] = [
       type: 'object',
       properties: { days: { type: 'number', description: 'How many days ahead to look (default 7, max 60)' } },
     },
+    service: 'calendar',
     level: 'read',
     readOnly: true,
     execute: async (conn, input, http) => {
@@ -97,6 +116,7 @@ export const GCAL_TOOLS: ConnectionTool[] = [
       properties: { query: { type: 'string', description: 'Free-text search over event fields' } },
       required: ['query'],
     },
+    service: 'calendar',
     level: 'read',
     readOnly: true,
     execute: async (conn, input, http) => {
@@ -122,6 +142,7 @@ export const GCAL_TOOLS: ConnectionTool[] = [
       },
       required: ['from'],
     },
+    service: 'calendar',
     level: 'read',
     readOnly: true,
     execute: async (conn, input, http) => {
@@ -158,6 +179,7 @@ export const GCAL_TOOLS: ConnectionTool[] = [
       },
       required: ['title', 'start'],
     },
+    service: 'calendar',
     level: 'write',
     readOnly: false,
     execute: async (conn, input, http, ctx) => {
@@ -182,6 +204,7 @@ export const GCAL_TOOLS: ConnectionTool[] = [
       },
       required: ['eventId'],
     },
+    service: 'calendar',
     level: 'write',
     readOnly: false,
     execute: async (conn, input, http, ctx) => {
@@ -238,3 +261,91 @@ function eventBody(input: Record<string, unknown>, ctx: ToolContext, partial = f
   }
   return body;
 }
+
+// ---- gmail (draft-first: gmail_draft is the workhorse; gmail_send is
+// confirm-always because sending in the user's name is outward-facing and
+// irreversible, docs/integrations.md §5) ----
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function parseRecipients(value: unknown, field: string, required: boolean): string[] {
+  const list = (typeof value === 'string' ? value.split(',') : [])
+    .map((s) => s.trim()).filter(Boolean);
+  if (required && list.length === 0) throw new Error(`invalid arguments: "${field}" requires at least one recipient`);
+  for (const addr of list) {
+    if (!EMAIL_RE.test(addr)) throw new Error(`invalid arguments: "${addr}" is not a valid email address`);
+  }
+  return list;
+}
+
+/** RFC 2047 encoded-word for non-ASCII header values. */
+function headerValue(text: string): string {
+  if (/^[\x20-\x7e]*$/.test(text)) return text;
+  return `=?UTF-8?B?${Buffer.from(text, 'utf8').toString('base64')}?=`;
+}
+
+/** Build the base64url RFC 2822 message Gmail's API expects. No bcc by
+ *  design: a curated verb set can refuse silent recipients outright. */
+export function buildMime(input: Record<string, unknown>): string {
+  const to = parseRecipients(input.to, 'to', true);
+  const cc = parseRecipients(input.cc, 'cc', false);
+  const subject = String(input.subject ?? '').trim();
+  if (!subject) throw new Error('invalid arguments: "subject" is required');
+  const body = String(input.body ?? '');
+  if (!body.trim()) throw new Error('invalid arguments: "body" is required');
+  const lines = [
+    `To: ${to.join(', ')}`,
+    ...(cc.length ? [`Cc: ${cc.join(', ')}`] : []),
+    `Subject: ${headerValue(subject)}`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=utf-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    Buffer.from(body, 'utf8').toString('base64'),
+  ];
+  return Buffer.from(lines.join('\r\n'), 'utf8').toString('base64url');
+}
+
+const MAIL_INPUT_SCHEMA = {
+  type: 'object',
+  properties: {
+    to: { type: 'string', description: 'Recipient email address(es), comma-separated' },
+    subject: { type: 'string', description: 'Subject line' },
+    body: { type: 'string', description: 'Plain-text message body' },
+    cc: { type: 'string', description: 'Optional cc address(es), comma-separated' },
+  },
+  required: ['to', 'subject', 'body'],
+};
+
+export const GMAIL_TOOLS: ConnectionTool[] = [
+  {
+    name: 'gmail_draft',
+    description: "Create a draft in the user's real Gmail Drafts folder for them to review and send. This is the default way to prepare email — prefer it over gmail_send unless the user gave a standing instruction to send.",
+    inputSchema: MAIL_INPUT_SCHEMA,
+    service: 'gmail',
+    level: 'write',
+    readOnly: false,
+    execute: async (conn, input, http) => {
+      const raw = buildMime(input);
+      const res = await http.googlePost(conn, GMAIL_DRAFTS_URL, { message: { raw } }) as { id?: string };
+      return `Draft created in the user's Gmail Drafts folder (draft id ${String(res.id ?? '?')}). The user can review and send it from Gmail, or ask you to send it.`;
+    },
+  },
+  {
+    name: 'gmail_send',
+    description: "Send an email from the user's Gmail address. Outward-facing and irreversible: every call requires the user's explicit confirmation, even in Auto mode. Prefer gmail_draft unless the user asked you to send.",
+    inputSchema: MAIL_INPUT_SCHEMA,
+    service: 'gmail',
+    level: 'write',
+    readOnly: false,
+    confirmAlways: true,
+    execute: async (conn, input, http) => {
+      const raw = buildMime(input);
+      const res = await http.googlePost(conn, GMAIL_SEND_URL, { raw }) as { id?: string };
+      return `Email sent (message id ${String(res.id ?? '?')}).`;
+    },
+  },
+];
+
+/** Every connection tool, all services. */
+export const CONNECTION_TOOLS: ConnectionTool[] = [...GCAL_TOOLS, ...GMAIL_TOOLS];

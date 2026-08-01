@@ -241,7 +241,10 @@ export const connectionGrants = pgTable('connection_grants', {
   id: text('id').primaryKey(),
   connectionId: text('connectionId').notNull(),
   agentId: text('agentId').notNull(),
-  /** read | write — write tools ship later; read is today's tier. */
+  /** Which service on the connection this grant covers: calendar | gmail.
+   *  Grants are per-service so calendar access never implies mail access. */
+  service: text('service').notNull().default('calendar'),
+  /** read | write. All gmail tools are write-level (draft/send mutate). */
   level: text('level').notNull().default('read'),
   createdAt: text('createdAt').notNull(),
 });

@@ -7,9 +7,11 @@
  * policy = execution). Tokens are sealed at rest (secretbox) and never
  * leave the server; list() redacts them.
  *
- * Scopes grow via Google incremental auth: first connect is read-only;
- * the write tier (calendar.events) is a separate re-consent, and a 'write'
- * grant is only accepted once the connection actually holds those scopes.
+ * Scopes grow via Google incremental auth: first connect is calendar
+ * read-only; the calendar write tier (calendar.events) and the gmail tier
+ * (gmail.compose, draft + send, deliberately no read) are separate
+ * re-consents. Grants are per-service — a grant is only accepted once the
+ * connection actually holds that service's scopes.
  */
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -22,25 +24,28 @@ import { newId, nowIso } from '../common/ids.util';
 import { seal, open } from '../common/secretbox';
 import { AiToolSpec } from '../ai/ai-provider.interface';
 import {
-  ConnectionRow, GCAL_TOOLS, GOOGLE_AUTH_URL, GOOGLE_BASE_SCOPES, GOOGLE_READ_SCOPES,
-  GOOGLE_REVOKE_URL, GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL, GOOGLE_WRITE_SCOPES,
-  GoogleHttp, hasWriteScopes,
+  CONNECTION_TOOLS, ConnectionRow, ConnectionService as ServiceName, GOOGLE_AUTH_URL,
+  GOOGLE_BASE_SCOPES, GOOGLE_GMAIL_SCOPES, GOOGLE_READ_SCOPES, GOOGLE_REVOKE_URL,
+  GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL, GOOGLE_WRITE_SCOPES,
+  GoogleHttp, hasGmailScopes, hasWriteScopes,
 } from './connections.tools';
 
 type GrantRow = typeof connectionGrants.$inferSelect;
 
 export type GrantLevel = 'read' | 'write';
-export type ScopeTier = 'read' | 'write';
+export type ScopeTier = 'read' | 'write' | 'gmail';
 
 export interface ConnectionInfo {
   id: string;
   provider: string;
   accountEmail: string;
   scopes: string[];
-  /** Whether the consented scopes cover write-tier tools. */
+  /** Whether the consented scopes cover calendar write-tier tools. */
   writeCapable: boolean;
+  /** Whether the consented scopes cover gmail draft/send tools. */
+  gmailCapable: boolean;
   createdAt: string;
-  grants: Array<{ agentId: string; level: string }>;
+  grants: Array<{ agentId: string; service: string; level: string }>;
 }
 
 @Injectable()
@@ -78,8 +83,9 @@ export class ConnectionsService implements GoogleHttp {
         accountEmail: r.accountEmail,
         scopes,
         writeCapable: hasWriteScopes(scopes),
+        gmailCapable: hasGmailScopes(scopes),
         createdAt: r.createdAt,
-        grants: grants.filter((g) => g.connectionId === r.id).map((g) => ({ agentId: g.agentId, level: g.level })),
+        grants: grants.filter((g) => g.connectionId === r.id).map((g) => ({ agentId: g.agentId, service: g.service, level: g.level })),
       };
     });
   }
@@ -95,9 +101,9 @@ export class ConnectionsService implements GoogleHttp {
     const state = randomBytes(16).toString('base64url');
     this.pendingStates.set(state, Date.now());
     for (const [s, at] of this.pendingStates) if (Date.now() - at > 600_000) this.pendingStates.delete(s);
-    const scopes = tier === 'write'
-      ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_WRITE_SCOPES]
-      : [...GOOGLE_BASE_SCOPES, ...GOOGLE_READ_SCOPES];
+    const scopes = tier === 'write' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_WRITE_SCOPES]
+      : tier === 'gmail' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_GMAIL_SCOPES]
+        : [...GOOGLE_BASE_SCOPES, ...GOOGLE_READ_SCOPES];
     const url = `${GOOGLE_AUTH_URL}?${new URLSearchParams({
       client_id: g.clientId,
       redirect_uri: g.redirectUri,
@@ -170,75 +176,102 @@ export class ConnectionsService implements GoogleHttp {
 
   // ---- grants (activation gate) ----
 
-  async setGrant(connectionId: string, agentId: string, level: GrantLevel): Promise<{ ok: boolean }> {
+  async setGrant(connectionId: string, agentId: string, service: ServiceName, level: GrantLevel): Promise<{ ok: boolean }> {
     const row = (await this.db.select().from(connections).where(eq(connections.id, connectionId))).at(0);
     if (!row) throw new NotFoundException(`connection ${connectionId}`);
-    if (level === 'write' && !hasWriteScopes(JSON.parse(row.scopes) as string[])) {
+    const scopes = JSON.parse(row.scopes) as string[];
+    if (service === 'calendar' && level === 'write' && !hasWriteScopes(scopes)) {
       throw new ConflictException('this connection has read-only consent — enable write access in Settings → Connections first');
     }
+    if (service === 'gmail') {
+      if (!hasGmailScopes(scopes)) {
+        throw new ConflictException('this connection has no Gmail consent — enable Gmail in Settings → Connections first');
+      }
+      if (level !== 'write') throw new ConflictException('gmail tools are all write-level — grant level must be write');
+    }
     const existing = (await this.db.select().from(connectionGrants)
-      .where(and(eq(connectionGrants.connectionId, connectionId), eq(connectionGrants.agentId, agentId)))).at(0);
+      .where(and(eq(connectionGrants.connectionId, connectionId), eq(connectionGrants.agentId, agentId), eq(connectionGrants.service, service)))).at(0);
     if (existing) {
       await this.db.update(connectionGrants).set({ level }).where(eq(connectionGrants.id, existing.id));
     } else {
-      await this.db.insert(connectionGrants).values({ id: newId(), connectionId, agentId, level, createdAt: nowIso() });
+      await this.db.insert(connectionGrants).values({ id: newId(), connectionId, agentId, service, level, createdAt: nowIso() });
     }
     return { ok: true };
   }
 
-  async revokeGrant(connectionId: string, agentId: string): Promise<{ ok: boolean }> {
+  /** Revoke one service's grant, or every grant this agent holds on the
+   *  connection when no service is given. */
+  async revokeGrant(connectionId: string, agentId: string, service?: ServiceName): Promise<{ ok: boolean }> {
     await this.db.delete(connectionGrants)
-      .where(and(eq(connectionGrants.connectionId, connectionId), eq(connectionGrants.agentId, agentId)));
+      .where(and(
+        eq(connectionGrants.connectionId, connectionId),
+        eq(connectionGrants.agentId, agentId),
+        ...(service ? [eq(connectionGrants.service, service)] : []),
+      ));
     return { ok: true };
   }
 
-  /** The literal tools an agent would gain per grant level — shown in the
-   *  activation review (permissions: approve the real artifact). */
-  toolCatalog(): Array<{ name: string; description: string; level: string }> {
-    return GCAL_TOOLS.map((t) => ({ name: t.name, description: t.description ?? '', level: t.level }));
+  /** The literal tools an agent would gain per service and grant level —
+   *  shown in the activation review (permissions: approve the real artifact). */
+  toolCatalog(): Array<{ name: string; description: string; service: string; level: string }> {
+    return CONNECTION_TOOLS.map((t) => ({ name: t.name, description: t.description ?? '', service: t.service, level: t.level }));
   }
 
   // ---- turn-loop integration ----
 
-  /** Connection tools visible to one agent: only where a grant exists, and
-   *  only the tools that grant's level covers (write implies read). */
+  /** Connection tools visible to one agent: only services with a grant, and
+   *  within a service only the tools its level covers (write implies read). */
   async toolSpecs(agentId: string): Promise<AiToolSpec[]> {
     const granted = await this.grantedConnection(agentId);
     if (!granted) return [];
-    return GCAL_TOOLS
-      .filter((t) => t.level === 'read' || granted.level === 'write')
+    return CONNECTION_TOOLS
+      .filter((t) => {
+        const level = granted.levels[t.service];
+        return level !== undefined && (t.level === 'read' || level === 'write');
+      })
       .map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
   }
 
   /** undefined = not a connection tool. */
   isReadOnly(name: string): boolean | undefined {
-    return GCAL_TOOLS.find((t) => t.name === name)?.readOnly;
+    return CONNECTION_TOOLS.find((t) => t.name === name)?.readOnly;
+  }
+
+  /** Tools that confirm in host chrome on every call, even in Auto mode. */
+  isConfirmAlways(name: string): boolean {
+    return CONNECTION_TOOLS.find((t) => t.name === name)?.confirmAlways === true;
   }
 
   owns(name: string): boolean {
-    return GCAL_TOOLS.some((t) => t.name === name);
+    return CONNECTION_TOOLS.some((t) => t.name === name);
   }
 
   async execute(agentId: string | undefined, name: string, input: Record<string, unknown>): Promise<string> {
-    const tool = GCAL_TOOLS.find((t) => t.name === name);
+    const tool = CONNECTION_TOOLS.find((t) => t.name === name);
     if (!tool) throw new Error(`unknown tool: ${name}`);
     if (!agentId) throw new Error('connection tools are available to durable agents with a granted connection only');
     const granted = await this.grantedConnection(agentId);
-    if (!granted) throw new Error('no connection grant: the user has not granted this agent access to a connected calendar');
-    if (tool.level === 'write' && granted.level !== 'write') {
+    const level = granted?.levels[tool.service];
+    if (!granted || level === undefined) {
+      throw new Error(`no connection grant: the user has not granted this agent ${tool.service} access — grants live on the agent's Skills & tools tab`);
+    }
+    if (tool.level === 'write' && level !== 'write') {
       throw new Error(`no write grant: the user granted read access only — ${name} needs a write grant on the agent's Skills & tools tab`);
     }
     const agent = (await this.db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId))).at(0);
     return tool.execute(granted.conn, input, this, { agentName: agent?.name ?? 'an agent' });
   }
 
-  private async grantedConnection(agentId: string): Promise<{ conn: ConnectionRow; level: GrantLevel } | undefined> {
+  private async grantedConnection(agentId: string): Promise<{ conn: ConnectionRow; levels: Partial<Record<ServiceName, GrantLevel>> } | undefined> {
     const grants: GrantRow[] = await this.db.select().from(connectionGrants).where(eq(connectionGrants.agentId, agentId));
-    for (const g of grants) {
-      const row = (await this.db.select().from(connections).where(eq(connections.id, g.connectionId))).at(0);
-      if (row?.provider === 'google') return { conn: row, level: g.level === 'write' ? 'write' : 'read' };
+    if (grants.length === 0) return undefined;
+    const row = (await this.db.select().from(connections).where(eq(connections.id, grants[0].connectionId))).at(0);
+    if (row?.provider !== 'google') return undefined;
+    const levels: Partial<Record<ServiceName, GrantLevel>> = {};
+    for (const g of grants.filter((g) => g.connectionId === row.id)) {
+      levels[g.service as ServiceName] = g.level === 'write' ? 'write' : 'read';
     }
-    return undefined;
+    return { conn: row, levels };
   }
 
   // ---- Google HTTP with refresh ----

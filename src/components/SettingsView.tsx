@@ -398,22 +398,23 @@ function ConnectionsPane() {
   };
   useEffect(refresh, []);
 
-  const connect = async (tier: 'read' | 'write' = 'read') => {
+  const connect = async (tier: 'read' | 'write' | 'gmail' = 'read') => {
     try {
       const { url } = await api.connectStart('google', tier);
       const popup = window.open(url, 'yaam-connect', 'width=520,height=680');
       const before = conns.length;
       const writableBefore = conns.filter((c) => c.writeCapable).length;
+      const gmailBefore = conns.filter((c) => c.gmailCapable).length;
       const poll = setInterval(async () => {
         const now = await api.connections().catch(() => null);
         if (!now) return;
-        const done = tier === 'write'
-          ? now.filter((c) => c.writeCapable).length > writableBefore
-          : now.length > before;
+        const done = tier === 'write' ? now.filter((c) => c.writeCapable).length > writableBefore
+          : tier === 'gmail' ? now.filter((c) => c.gmailCapable).length > gmailBefore
+            : now.length > before;
         if (done || popup?.closed) {
           clearInterval(poll);
           setConns(now);
-          if (done) app.showToast(tier === 'write' ? 'Write access enabled' : 'Google Calendar connected');
+          if (done) app.showToast(tier === 'write' ? 'Calendar write access enabled' : tier === 'gmail' ? 'Gmail enabled' : 'Google Calendar connected');
         }
       }, 2500);
       setTimeout(() => clearInterval(poll), 180_000);
@@ -431,19 +432,24 @@ function ConnectionsPane() {
             <span style={{ fontSize: 20, flex: 'none' }}>📅</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Google Calendar</span>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Google</span>
                 <span style={{ fontSize: 10, color: 'var(--green)', border: '1px solid var(--green)', borderRadius: 5, padding: '1px 6px' }}>connected</span>
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3, ...mono }}>{c.accountEmail}</div>
               <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 4 }}>
-                {c.writeCapable
-                  ? 'Can read your calendar and create or edit events (write tools are approval-gated per agent). Cannot see email or files.'
-                  : 'Can read your calendar. Cannot create or edit events, and cannot see email or files.'}
-                {' '}{c.grants.length === 0 ? 'No agents have access yet — grant it per agent on their Skills & tools tab.' : `Granted to ${c.grants.length} agent(s).`}
+                {[
+                  c.writeCapable ? 'Calendar: read + write (writes approval-gated per agent).' : 'Calendar: read-only.',
+                  c.gmailCapable ? 'Gmail: draft + send (sending confirms every time; no read access).' : 'Gmail: off.',
+                  'Cannot see files.',
+                ].join(' ')}
+                {' '}{c.grants.length === 0 ? 'No agents have access yet — grant it per agent on their Skills & tools tab.' : `Granted to ${new Set(c.grants.map((g) => g.agentId)).size} agent(s).`}
               </div>
             </div>
             {!c.writeCapable && (
               <button onClick={() => connect('write')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable write…</button>
+            )}
+            {!c.gmailCapable && (
+              <button onClick={() => connect('gmail')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable Gmail…</button>
             )}
             <button onClick={async () => {
               if (!window.confirm(`Disconnect ${c.accountEmail}? Agent grants are removed and the token is revoked.`)) return;

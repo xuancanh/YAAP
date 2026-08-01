@@ -540,6 +540,12 @@ export class TurnLoopService {
             : this.connections?.owns(call.name) ? this.connections.isReadOnly(call.name)
               : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
+    // Confirm-always tools (gmail_send) are outward-facing and irreversible:
+    // they pause in host chrome on every call — Auto mode and remembered
+    // approvals never apply (docs/integrations.md §5).
+    if (this.connections?.owns(call.name) && this.connections.isConfirmAlways(call.name)) {
+      return { verdict: 'ask', remember: false };
+    }
     if (session.permissionMode === 'auto') return { verdict: 'auto', remember: true };
     if (readOnly) return { verdict: 'read-only', remember: true };
     if (approvals.tools.includes(call.name) || approvals.exact.includes(exactKey(call))) {

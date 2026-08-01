@@ -199,6 +199,54 @@ test('loop-origin turns queue connection mutations for approval instead of execu
   assert.match(hit, /calendars\/primary\/events/);
 });
 
+test('gmail_send pauses even in Auto mode and allow-always is never remembered (M2)', async () => {
+  const db = await testDb();
+  const repo = new ChatsRepository(db);
+  const { stub } = memStorage();
+  const tools = new ToolsService(stub);
+  const agents = agentsStub();
+  const connConfig = { get: (key: string) => ({ googleClientId: 'c', googleClientSecret: 's', publicBaseUrl: 'http://localhost:8790' })[key] } as unknown as ConfigService;
+  const conns = new ConnectionsService(db, connConfig);
+  await db.insert(connections).values({
+    id: 'conn1', provider: 'google', accountEmail: 'u@example.com',
+    scopes: '["https://www.googleapis.com/auth/gmail.compose"]',
+    accessToken: seal('t'), refreshToken: seal('r'),
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(), createdAt: new Date().toISOString(),
+  });
+  await db.insert(connectionGrants).values({ id: 'g1', connectionId: 'conn1', agentId: 'ag1', service: 'gmail', level: 'write', createdAt: new Date().toISOString() });
+  let sends = 0;
+  conns.fetchImpl = (async () => {
+    sends++;
+    return { ok: true, status: 200, json: async () => ({ id: 'm1' }), text: async () => '' } as unknown as Response;
+  }) as typeof fetch;
+
+  const sendRound: AiStreamEvent[] = [
+    { type: 'tool_call', id: 's1', name: 'gmail_send', input: { to: 'a@b.co', subject: 'Go', body: 'now' } },
+    { type: 'done' },
+  ];
+  const s = await repo.createSession({ workspaceId: 'ws1', agentId: 'ag1', name: 'chat', permissionMode: 'auto' });
+
+  const turns1 = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(new ScriptedProvider([sendRound, finalRound])), skillsStub(), stub, mcpStub(), agents, wsStub(), conns);
+  let pauses = 0;
+  await collect(turns1.run(s.id, { text: 'send it' }), (ev) => {
+    if (ev.type === 'approval_required') { pauses++; assert.equal(ev.tool, 'gmail_send'); turns1.resolveApproval(s.id, ev.callId, 'allow-always'); }
+  });
+  assert.equal(pauses, 1, 'auto mode still paused for gmail_send');
+  assert.equal(sends, 1, 'approved send executed');
+  // allow-always was NOT remembered for a confirm-always tool
+  const approvals = JSON.parse((await repo.getSession(s.id))!.approvals || '{}') as { exact?: string[]; tools?: string[] };
+  assert.equal(approvals.exact?.length ?? 0, 0);
+  assert.equal(approvals.tools?.length ?? 0, 0);
+
+  // an identical call in a fresh turn pauses again
+  const turns2 = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(new ScriptedProvider([sendRound, finalRound])), skillsStub(), stub, mcpStub(), agents, wsStub(), conns);
+  await collect(turns2.run(s.id, { text: 'again' }), (ev) => {
+    if (ev.type === 'approval_required') { pauses++; turns2.resolveApproval(s.id, ev.callId, 'deny'); }
+  });
+  assert.equal(pauses, 2);
+  assert.equal(sends, 1, 'denied send did not execute');
+});
+
 test('concurrent turn on the same chat is refused by the busy lock (FR-7.5)', async () => {
   const { chats, turns } = await setup([writeRound, finalRound]);
   const s = await chats.create({ workspaceId: 'ws1' });
