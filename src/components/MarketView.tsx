@@ -1,6 +1,8 @@
-/** Agent Market: registry cards + the capability-review hire modal (FR-11.7). */
-import { useState } from 'react';
+/** Agent Market: registry cards + the capability-review hire modal (FR-11.7),
+ *  plus the Connectors department (docs/integrations.md §4a). */
+import { useEffect, useState } from 'react';
 import { I, P, CAP_ICON } from '../lib/icons';
+import { api, type Connection, type ConnectorEntry } from '../lib/api';
 import { useApp, gradPair } from '../store';
 
 /** Rail chip order: professional clusters first, then personal life; anything
@@ -20,6 +22,7 @@ export function marketCats(market: Array<{ cat: string }>): string[] {
 export function MarketView({ cat, setCat }: { cat: string; setCat: (c: string) => void }) {
   const app = useApp();
   const [search, setSearch] = useState('');
+  const [dept, setDept] = useState<'agents' | 'connectors'>('agents');
   const q = search.toLowerCase();
   const cats = marketCats(app.market);
   const items = app.market.filter((m) => (cat === 'All' || m.cat === cat) && (!q || m.name.toLowerCase().includes(q) || m.role.toLowerCase().includes(q)));
@@ -27,10 +30,21 @@ export function MarketView({ cat, setCat }: { cat: string; setCat: (c: string) =
   return (
     <div style={{ flex: 1, overflowY: 'auto' }}>
       <div style={{ maxWidth: 980, margin: '0 auto', padding: '30px 28px 60px' }}>
-        <div style={{ fontSize: 23, fontWeight: 700, letterSpacing: '-.4px' }}>Agent Market</div>
+        <div style={{ fontSize: 23, fontWeight: 700, letterSpacing: '-.4px' }}>Market</div>
         <div style={{ color: 'var(--text-dim)', fontSize: 13.5, marginTop: 4, maxWidth: 560 }}>
-          Hire durable agents from the registry. Each install runs a capability review first — imported loops enable immediately.
+          {dept === 'agents'
+            ? 'Hire durable agents from the registry. Each install runs a capability review first — imported loops enable immediately.'
+            : 'Connect the services your agents work with. Connecting grants nothing to any agent — access stays a per-agent grant.'}
         </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+          {(['agents', 'connectors'] as const).map((d) => (
+            <div key={d} onClick={() => setDept(d)} style={{ padding: '7px 18px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: `1px solid ${d === dept ? 'var(--accent)' : 'var(--border)'}`, background: d === dept ? 'var(--accent-dim)' : 'var(--panel)', color: d === dept ? 'var(--accent-hi)' : 'var(--text-dim)' }}>
+              {d === 'agents' ? 'Agents' : 'Connectors'}
+            </div>
+          ))}
+        </div>
+        {dept === 'connectors' && <ConnectorsDept />}
+        {dept === 'agents' && <>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 9, padding: '8px 11px', flex: 1, minWidth: 200 }}>
             <I d={P.search} size={15} stroke="var(--text-faint)" />
@@ -78,8 +92,143 @@ export function MarketView({ cat, setCat }: { cat: string; setCat: (c: string) =
             </div>
           ))}
         </div>
+        </>}
       </div>
     </div>
+  );
+}
+
+/** The Connectors department: curated directory of native integrations and
+ *  vendor-run remote MCP servers, one-click connect, trust tiers shown. */
+function ConnectorsDept() {
+  const app = useApp();
+  const [entries, setEntries] = useState<ConnectorEntry[]>([]);
+  const [conns, setConns] = useState<Connection[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const refresh = () => {
+    void api.marketConnectors().then(setEntries).catch(() => setEntries([]));
+    void api.connections().then(setConns).catch(() => setConns([]));
+    void app.refreshMcp().catch(() => {});
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(refresh, []);
+
+  const google = conns.find((c) => c.provider === 'google');
+  const nativeConnected = (e: ConnectorEntry): boolean => {
+    if (!google) return false;
+    if (e.nativeTier === 'gmail') return google.gmailCapable;
+    if (e.nativeTier === 'drive') return google.driveCapable;
+    return true; // calendar read comes with the base connect
+  };
+  const mcpFor = (e: ConnectorEntry) => app.mcp.find((s) => s.url === e.url);
+
+  /** Native connect: same popup flow as Settings → Connections. */
+  const connectNative = async (e: ConnectorEntry) => {
+    setBusy(e.id);
+    try {
+      const { url } = await api.connectStart('google', e.nativeTier ?? 'read');
+      const popup = window.open(url, 'yaam-connect', 'width=520,height=680');
+      const poll = setInterval(async () => {
+        const now = await api.connections().catch(() => null);
+        if (!now) return;
+        const g = now.find((c) => c.provider === 'google');
+        const done = g && (e.nativeTier === 'gmail' ? g.gmailCapable : e.nativeTier === 'drive' ? g.driveCapable : true);
+        if (done || popup?.closed) {
+          clearInterval(poll);
+          setConns(now);
+          setBusy(null);
+          if (done) app.showToast(`${e.name} connected — grant it per agent on their Skills & tools tab`);
+        }
+      }, 2500);
+      setTimeout(() => { clearInterval(poll); setBusy(null); }, 180_000);
+    } catch (err) {
+      setBusy(null);
+      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'connect failed');
+    }
+  };
+
+  /** MCP connect: add the server, discover; on auth challenge run OAuth. */
+  const connectMcp = async (e: ConnectorEntry) => {
+    setBusy(e.id);
+    try {
+      const server = mcpFor(e) ?? await api.createMcp(e.name, e.url!);
+      await app.refreshMcp();
+      try {
+        await api.discoverMcp(server.id);
+        await app.refreshMcp();
+        app.showToast(`${e.name} connected`);
+        setBusy(null);
+        return;
+      } catch { /* likely needs authorization */ }
+      const { url } = await api.mcpOauthStart(server.id);
+      const popup = window.open(url, 'yaam-connect', 'width=520,height=680');
+      const poll = setInterval(async () => {
+        const done = await api.discoverMcp(server.id).then(() => true).catch(() => false);
+        if (done || popup?.closed) {
+          clearInterval(poll);
+          await app.refreshMcp();
+          setBusy(null);
+          if (done) app.showToast(`${e.name} connected`);
+        }
+      }, 3000);
+      setTimeout(() => { clearInterval(poll); setBusy(null); }, 180_000);
+    } catch (err) {
+      setBusy(null);
+      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'connect failed');
+    }
+  };
+
+  const card = (e: ConnectorEntry) => {
+    const server = e.kind === 'mcp' ? mcpFor(e) : undefined;
+    const liveTools = server ? (JSON.parse(server.tools || '[]') as Array<{ name: string }>).map((t) => t.name) : [];
+    const connected = e.kind === 'native' ? nativeConnected(e) : !!server && (liveTools.length > 0 || server.authStatus === 'connected');
+    const tools = liveTools.length > 0 ? liveTools : e.tools;
+    return (
+      <div key={e.id} style={{ border: '1px solid var(--border)', borderRadius: 16, background: 'var(--panel)', padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 42, height: 42, borderRadius: 12, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 21 }}>{e.emoji}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+              <span style={{ fontSize: 15.5, fontWeight: 700 }}>{e.name}</span>
+              <span style={{ fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: e.tier === 'verified' ? 'var(--blue)' : 'var(--amber)', border: `1px solid ${e.tier === 'verified' ? 'var(--blue)' : 'var(--amber)'}`, borderRadius: 5, padding: '1px 6px' }}>{e.tier}</span>
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{e.vendor}{e.kind === 'mcp' ? ' · remote MCP' : ' · native'}</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.55 }}>{e.desc}</div>
+        {e.tier === 'community' && (
+          <div style={{ fontSize: 11, color: 'var(--amber)' }}>Runs code by {e.vendor}, not by the service vendor — it sits in the token path.</div>
+        )}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {tools.slice(0, 6).map((t) => <span key={t} style={{ fontSize: 10.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px', fontFamily: 'var(--mono)' }}>{t}</span>)}
+          {tools.length > 6 && <span style={{ fontSize: 10.5, color: 'var(--text-faint)', padding: '2px 4px' }}>+{tools.length - 6} more</span>}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 11, borderTop: '1px solid var(--border-soft)' }}>
+          <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{e.kind === 'mcp' ? 'Tools always ask before running' : 'Per-agent grants, per-call approvals'}</span>
+          {connected ? (
+            <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--green)', fontWeight: 600 }}>
+              <I d={P.check} size={14} sw={2.4} />Connected
+            </span>
+          ) : (
+            <button disabled={busy === e.id} onClick={() => void (e.kind === 'native' ? connectNative(e) : connectMcp(e))}
+              style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '7px 16px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', opacity: busy === e.id ? 0.6 : 1 }}>
+              {busy === e.id ? 'Connecting…' : 'Connect'}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : 'repeat(2,1fr)', gap: 16, marginTop: 18 }}>
+        {entries.map(card)}
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 16, lineHeight: 1.6 }}>
+        Something missing? Add any MCP server by URL under Settings → MCP servers — the directory is convenience, never gatekeeping.
+      </div>
+    </>
   );
 }
 

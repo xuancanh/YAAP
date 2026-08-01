@@ -216,6 +216,16 @@ export const mcpServers = pgTable('mcp_servers', {
   enabled: integer('enabled').notNull().default(1),
   /** JSON array of tool names (informational until the MCP client lands). */
   tools: text('tools').notNull().default('[]'),
+  /** OAuth 2.1 state (MCP authorization spec): tokens sealed via secretbox;
+   *  endpoints + client credentials cached from RFC 9728/8414 discovery so
+   *  refresh never rediscovers. Empty = server needs no auth (or not yet
+   *  connected). */
+  authAccessToken: text('authAccessToken').notNull().default(''),
+  authRefreshToken: text('authRefreshToken').notNull().default(''),
+  authExpiresAt: text('authExpiresAt').notNull().default(''),
+  authTokenUrl: text('authTokenUrl').notNull().default(''),
+  authClientId: text('authClientId').notNull().default(''),
+  authClientSecret: text('authClientSecret').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 

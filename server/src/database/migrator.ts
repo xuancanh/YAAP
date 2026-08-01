@@ -301,6 +301,16 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0014-mcp-oauth',
+    up: async (db) => {
+      for (const col of ['authAccessToken', 'authRefreshToken', 'authExpiresAt', 'authTokenUrl', 'authClientId', 'authClientSecret']) {
+        if (!(await hasColumn(db, 'mcp_servers', col))) {
+          await db.query(`ALTER TABLE mcp_servers ADD COLUMN "${col}" TEXT NOT NULL DEFAULT ''`);
+        }
+      }
+    },
+  },
 ];
 
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {

@@ -20,6 +20,15 @@ interface JsonRpcResponse {
 
 const PROTOCOL_VERSION = '2025-03-26';
 
+/** The server answered 401: OAuth is required (MCP authorization spec).
+ *  Carries the WWW-Authenticate header so discovery can start from its
+ *  resource_metadata hint (RFC 9728). */
+export class McpAuthRequiredError extends Error {
+  constructor(readonly serverUrl: string, readonly wwwAuthenticate: string) {
+    super('mcp server requires authorization — connect it from the Market or Settings');
+  }
+}
+
 export class McpHttpClient {
   private sessionId: string | null = null;
   private initialized = false;
@@ -28,6 +37,8 @@ export class McpHttpClient {
   constructor(
     private readonly url: string,
     private readonly fetchFn: typeof fetch = fetch,
+    /** Resolves the bearer token for this server, or null when none. */
+    private readonly getToken: () => Promise<string | null> = async () => null,
   ) {
     if (!/^https?:\/\//.test(url)) {
       throw new Error('only http(s) MCP servers are supported (stdio needs a local runner)');
@@ -36,12 +47,14 @@ export class McpHttpClient {
 
   private async rpc(method: string, params: Record<string, unknown>, notification = false): Promise<Record<string, unknown>> {
     const id = notification ? undefined : this.nextId++;
+    const token = await this.getToken();
     const res = await this.fetchFn(this.url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
         'mcp-protocol-version': PROTOCOL_VERSION,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
         ...(this.sessionId ? { 'mcp-session-id': this.sessionId } : {}),
       },
       body: JSON.stringify({ jsonrpc: '2.0', ...(id !== undefined ? { id } : {}), method, params }),
@@ -49,6 +62,9 @@ export class McpHttpClient {
     });
     const sid = res.headers.get('mcp-session-id');
     if (sid) this.sessionId = sid;
+    if (res.status === 401) {
+      throw new McpAuthRequiredError(this.url, res.headers.get('www-authenticate') ?? '');
+    }
     if (res.status === 202 || notification) return {};
     if (!res.ok) throw new Error(`mcp ${method} failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
 

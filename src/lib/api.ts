@@ -205,6 +205,23 @@ export interface McpServer {
   url: string;
   enabled: number;
   tools: string;
+  /** 'connected' when the server holds OAuth tokens; 'none' otherwise. */
+  authStatus?: 'connected' | 'none';
+}
+
+/** One entry in the curated connectors directory (docs/integrations.md §4a). */
+export interface ConnectorEntry {
+  id: string;
+  name: string;
+  vendor: string;
+  emoji: string;
+  tier: 'verified' | 'community';
+  cat: string;
+  desc: string;
+  kind: 'mcp' | 'native';
+  url?: string;
+  nativeTier?: 'read' | 'gmail' | 'drive';
+  tools: string[];
 }
 
 export interface MarketItem {
@@ -401,6 +418,8 @@ export const api = {
   createMcp: (name: string, url: string) => send<McpServer>('/api/mcp', 'POST', { name, url }),
   updateMcp: (id: string, patch: { enabled?: boolean }) => send<McpServer>(`/api/mcp/${id}`, 'PATCH', patch),
   discoverMcp: (id: string) => send<{ tools: Array<{ name: string; description?: string }> }>(`/api/mcp/${id}/discover`, 'POST'),
+  mcpOauthStart: (id: string) => get<{ url: string }>(`/api/mcp/${id}/oauth/start`),
+  marketConnectors: () => get<ConnectorEntry[]>('/api/market/connectors'),
   market: () => get<MarketItem[]>('/api/market'),
   hire: (id: string) => send<{ ok: boolean; agent: Agent }>(`/api/market/${id}/hire`, 'POST'),
   // channels (phase 4)
