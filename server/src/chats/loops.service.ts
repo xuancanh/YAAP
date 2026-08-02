@@ -7,6 +7,10 @@
  *
  * Disabled when LOOPS_ENABLED=false (and never started in tests, which
  * construct services directly).
+ *
+ * Cron expressions are matched in SERVER-LOCAL time (see cron.util.ts):
+ * a loop fires by the host's wall clock, including across DST changes.
+ * Keep the host in the timezone you want loops to follow (TZ env var).
  */
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -64,19 +68,26 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
       });
     }
     const stamp = now.toISOString().slice(0, 16); // minute resolution
+    const live = new Set<string>(); // agentId:loopName keys that still exist
     for (const agent of await this.agents.list()) {
       let loops: LoopDef[];
       try { loops = JSON.parse(agent.loops) as LoopDef[]; } catch { continue; }
       for (const loop of loops) {
-        if (loop?.enabled === false) continue; // paused in the schedule editor
-        if (!loop?.cron || !cronMatches(loop.cron, now)) continue;
+        if (loop?.enabled === false || !loop?.cron) continue; // paused in the schedule editor, or trigger-less
         const key = `${agent.id}:${loop.name}`;
+        live.add(key);
+        if (!cronMatches(loop.cron, now)) continue;
         if (this.lastRun.get(key) === stamp) continue;
         this.lastRun.set(key, stamp);
         void this.runLoop(agent.id, agent.name, loop).catch((err) => {
           this.logger.warn(`loop "${loop.name}" for ${agent.name} failed: ${err instanceof Error ? err.message : err}`);
         });
       }
+    }
+    // Prune stamps of deleted agents/loops so the map cannot grow forever
+    // (and a re-added loop is not suppressed by a stale same-minute stamp).
+    for (const key of [...this.lastRun.keys()]) {
+      if (!live.has(key)) this.lastRun.delete(key);
     }
   }
 
@@ -111,6 +122,11 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     if ((loop.model ?? '') !== session.model) wanted.model = loop.model ?? '';
     if (loop.budgetTokens && loop.budgetTokens !== session.tokenCeiling) wanted.tokenCeiling = loop.budgetTokens;
     if (Object.keys(wanted).length > 0) await this.repo.updateSession(session.id, wanted);
+
+    // The loop chat still busy (a previous run overrunning its period, or a
+    // user turn in it) is not a failure: skip silently. Journaling a
+    // loop_error every period would bury real failures in noise.
+    if (this.turns.isBusy(session.id)) return;
 
     const prompt = loop.prompt
       ?? `Scheduled loop firing: "${loop.name}". Check your kanban board and your charter, complete this loop's work now using your tools, and keep your dashboard current. Be concise; if there is nothing to do, say so in one line.`;

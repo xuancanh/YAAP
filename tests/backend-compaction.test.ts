@@ -99,6 +99,27 @@ test('auto-compaction only fires past the estimated token threshold', async () =
   assert.equal((await chats.get(s2.id)).compactSummary, '');
 });
 
+test('auto-compaction estimate includes the system-prompt + tool-schema overhead', async () => {
+  const repo = new ChatsRepository(await testDb());
+  const chats = new ChatsService(repo, agentsStub());
+  const provider = new ScriptedProvider([summaryRound, summaryRound]);
+  // 1000 tokens ≈ 4000 chars: history alone (~50 chars) stays under, but
+  // history + the per-round overhead the turn loop measured (system prompt +
+  // tool-spec JSON, 4000 chars here) crosses it.
+  const compaction = new CompactionService(
+    repo, new ChatLocks(), ctxStub(provider),
+    configStub({ compactionThresholdTokens: 1000 }),
+  );
+  const s = await chats.create({ workspaceId: 'ws1' });
+  await seedConversation(repo, s.id, 3);
+
+  await compaction.maybeAutoCompact(s.id); // no overhead passed: under threshold
+  assert.equal((await chats.get(s.id)).compactSummary, '');
+
+  await compaction.maybeAutoCompact(s.id, 4000);
+  assert.match((await chats.get(s.id)).compactSummary, /Goal/);
+});
+
 test('compaction respects the shared busy lock (FR-7.5)', async () => {
   const repo = new ChatsRepository(await testDb());
   const chats = new ChatsService(repo, agentsStub());

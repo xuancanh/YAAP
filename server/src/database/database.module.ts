@@ -8,7 +8,7 @@
  * Tests use PGlite (in-memory Postgres) through the same Drizzle pg dialect
  * and the same migrator, so repository code has exactly one query path.
  */
-import { Module, Global, Logger } from '@nestjs/common';
+import { Module, Global, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -18,6 +18,11 @@ import { runPgMigrations } from './migrator';
 import { DRIZZLE_DB } from './database.constants';
 
 export type DrizzleDb = NodePgDatabase<typeof schema>;
+
+/** The one pool behind DRIZZLE_DB, kept module-scoped so the module class
+ *  can drain it on shutdown (the factory-local pool is otherwise
+ *  unreachable once the provider resolves). */
+let pgPool: Pool | null = null;
 
 const drizzleProvider = {
   provide: DRIZZLE_DB,
@@ -35,6 +40,7 @@ const drizzleProvider = {
       // Server-side kill for runaway queries (default: no limit).
       statement_timeout: 30000,
     });
+    pgPool = pool;
     // node-postgres emits 'error' on idle-client failures (DB restart,
     // network blip); without a listener the EventEmitter throws and kills
     // the process.
@@ -59,4 +65,13 @@ const drizzleProvider = {
   providers: [drizzleProvider],
   exports: [DRIZZLE_DB],
 })
-export class DatabaseModule {}
+export class DatabaseModule implements OnApplicationShutdown {
+  /** Drain the pool on shutdown. onApplicationShutdown runs after every
+   *  provider's onModuleDestroy (e.g. TurnLoopService aborting in-flight
+   *  turns), so those turns can still write their final turn/session state
+   *  before the pool goes away. */
+  async onApplicationShutdown(): Promise<void> {
+    await pgPool?.end();
+    pgPool = null;
+  }
+}

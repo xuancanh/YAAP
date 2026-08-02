@@ -19,10 +19,11 @@
  * unparseable arguments, and unknown tool names return an error result to the
  * model instead of executing.
  */
-import { Injectable, ConflictException, ForbiddenException, NotFoundException, Optional } from '@nestjs/common';
+import { Injectable, ConflictException, ForbiddenException, NotFoundException, OnModuleDestroy, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { ChatsRepository, ChatSession } from './chats.repository';
 import { ChatLocks } from './chat-locks';
+import { CompactionService } from './compaction.service';
 import { ToolsService, FileRoot, fileRootKey } from './tools.service';
 import { TurnContextService } from './turn-context.service';
 import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
@@ -187,7 +188,7 @@ const exactKey = (call: AiToolCall): string =>
 const APPROVAL_TTL_MS = 10 * 60_000;
 
 @Injectable()
-export class TurnLoopService {
+export class TurnLoopService implements OnModuleDestroy {
   /** Abort registry keyed by chat id (FR-8.3 / FR-5.4). */
   private readonly aborts = new Map<string, AbortController>();
   /** Pending Ask-mode approvals keyed by `${sessionId}:${callId}`. */
@@ -205,7 +206,16 @@ export class TurnLoopService {
     private readonly workspaces: WorkspacesService,
     /** Optional so test constructors without connections keep working. */
     @Optional() private readonly connections?: ConnectionsService,
+    /** Optional so test constructors without compaction keep working. */
+    @Optional() private readonly compaction?: CompactionService,
   ) {}
+
+  /** Graceful shutdown: abort every in-flight turn through the same path as
+   *  /stop, so providers stop streaming and turns settle as 'stopped' before
+   *  the module graph (and the pg pool) tears down under them. */
+  onModuleDestroy(): void {
+    for (const sessionId of [...this.aborts.keys()]) this.stop(sessionId);
+  }
 
   /** Stop the in-flight turn for a chat; the partial turn is retained (FR-5.4). */
   stop(sessionId: string): boolean {
@@ -248,6 +258,7 @@ export class TurnLoopService {
 
     let tokensIn = 0;
     let tokensOut = 0;
+    let overheadChars = 0;
     const toolRecords: ToolRecord[] = [];
     try {
       const ctx = await this.context.build(session);
@@ -276,6 +287,11 @@ export class TurnLoopService {
         // Connection tools appear only for agents the user granted (activation gate).
         ...(session.agentId && this.connections ? await this.connections.toolSpecs(session.agentId) : []),
       ];
+      // Per-round overhead every provider call also carries: the resolved
+      // system prompt plus the full tool-spec JSON (tens of KB once MCP
+      // servers are enabled). Fed into the auto-compaction estimate below so
+      // it fires before the provider's real context limit, not after.
+      overheadChars = ctx.system.length + JSON.stringify(toolSpecs).length;
 
       for (let round = 0; ; round++) {
         let answer = '';
@@ -393,6 +409,12 @@ export class TurnLoopService {
     } finally {
       this.locks.release(sessionId);
       this.aborts.delete(sessionId);
+      // Post-turn auto-compaction with the real per-round overhead. It cannot
+      // run mid-turn — compaction shares this busy lock (FR-7.5) — so the
+      // estimate must be pessimistic enough to fire before the NEXT turn
+      // starts. Loop turns rely on this path (no controller around them);
+      // for user turns it races the controller's call and the loser skips.
+      if (this.compaction) void this.compaction.maybeAutoCompact(sessionId, overheadChars);
     }
   }
 

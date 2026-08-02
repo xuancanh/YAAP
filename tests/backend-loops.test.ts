@@ -49,11 +49,12 @@ async function setup(rounds: AiStreamEvent[][]) {
   const workspaces = new WorkspacesService(db, stub);
   const repo = new ChatsRepository(db);
   const provider = new ScriptedProvider(rounds);
-  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub(), agents, workspaces);
+  const locks = new ChatLocks();
+  const turns = new TurnLoopService(repo, locks, new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub(), agents, workspaces);
   const config = { get: (k: string) => (k === 'loopsEnabled' ? false : undefined) } as unknown as ConfigService;
   const distill = new DistillService(repo, ctxStub(provider), agents);
   const loops = new LoopsService(agents, workspaces, repo, turns, distill, config);
-  return { db, stub: stub as unknown as StorageService, agents, workspaces, repo, turns, loops, distill, provider };
+  return { db, stub: stub as unknown as StorageService, agents, workspaces, repo, turns, loops, distill, provider, locks };
 }
 
 test('a matching loop fires a real turn and journals the run (FR-11.6)', async () => {
@@ -372,6 +373,47 @@ test('a budget-stopped loop surfaces a loop_error event instead of burning silen
   await assert.rejects(agents.update(agent.id, { loops: '{not json' }), /not valid JSON/);
 });
 
+test('a loop firing while its chat is busy skips silently — no spurious loop_error', async () => {
+  const { agents, workspaces, repo, loops, locks } = await setup([loopRound]);
+  await workspaces.list();
+  const agent = await agents.create({ name: 'Occupied', loops: [{ name: 'Tick', cron: '* * * * *' }] });
+  const ws = (await workspaces.list())[0];
+  const session = await repo.createSession({ workspaceId: ws.id, agentId: agent.id, name: 'Loop · Tick', permissionMode: 'auto' });
+
+  locks.tryAcquire(session.id); // a previous run (or user turn) is still in flight
+  try {
+    await loops.tick(new Date(2026, 6, 16, 3, 5));
+    await new Promise((r) => setTimeout(r, 60));
+    assert.equal((await repo.listTurns(session.id)).length, 0, 'no turn started while busy');
+    assert.equal((await agents.listEvents(agent.id)).length, 0, 'a busy skip journals nothing');
+  } finally {
+    locks.release(session.id);
+  }
+});
+
+test('lastRun stamps of removed loops are pruned, so a re-added loop refires in the same minute', async () => {
+  const { agents, workspaces, repo, loops } = await setup([loopRound, loopRound]);
+  await workspaces.list();
+  const agent = await agents.create({ name: 'Flicker', loops: [{ name: 'Blink', cron: '* * * * *' }] });
+  const at = new Date(2026, 6, 16, 3, 5);
+
+  await loops.tick(at);
+  await new Promise((r) => setTimeout(r, 60));
+  const ws = (await workspaces.list())[0];
+  const session = (await repo.listSessions(ws.id)).find((s) => s.name === 'Loop · Blink')!;
+  assert.equal((await repo.listTurns(session.id)).length, 1);
+
+  // remove the loop and tick: the stale stamp is pruned from lastRun
+  await agents.update(agent.id, { loops: '[]' });
+  await loops.tick(at);
+
+  // re-add within the same minute: fires again instead of being suppressed
+  await agents.update(agent.id, { loops: JSON.stringify([{ name: 'Blink', cron: '* * * * *' }]) });
+  await loops.tick(at);
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal((await repo.listTurns(session.id)).length, 2);
+});
+
 test('brain checkpoints: daily snapshot before the first change, pruned to 14 days (phase 3)', async () => {
   const { agents, stub } = await setup([]);
   const a = await agents.create({ name: 'Keeper' });
@@ -479,4 +521,23 @@ test('save_tool: proposed inert, host must be literal, runs through the SSRF gua
   // rejection removes it
   await agents.resolveCustomTool(a.id, tools[0].id, false);
   assert.equal((await agents.listCustomTools(a.id)).length, 0);
+});
+
+test('addEvent trims the inbox to the newest 200 events, SQL-side', async () => {
+  const { agents } = await setup([]);
+  const a = await agents.create({ name: 'Noisy' });
+  for (let i = 0; i < 205; i++) await agents.addEvent(a.id, { kind: 'info', title: `event ${i}` });
+
+  const kept = await agents.listEvents(a.id, 300);
+  assert.equal(kept.length, 200);
+  assert.ok(kept.some((e) => e.title === 'event 204'), 'the newest event survives the trim');
+});
+
+test('concurrent brain-file appends serialize per agent — no entry is lost', async () => {
+  const { agents, stub } = await setup([]);
+  const a = await agents.create({ name: 'Scribe' });
+  await Promise.all(Array.from({ length: 10 }, (_, i) => agents.appendJournal(a.id, `concurrent entry ${i}`)));
+
+  const journal = (await stub.get(`agents/${a.id}/JOURNAL.md`))!.toString('utf8');
+  for (let i = 0; i < 10; i++) assert.ok(journal.includes(`concurrent entry ${i}`), `entry ${i} retained`);
 });

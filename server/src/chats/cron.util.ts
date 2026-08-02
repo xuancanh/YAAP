@@ -4,6 +4,11 @@
  * comma lists, ranges (a-b), and steps (*\/n). Anything unparsable (e.g. the
  * design's "on merge" event loops) simply never matches — event triggers are
  * a different mechanism.
+ *
+ * Matching is in SERVER-LOCAL time (Date.getHours() & friends): a loop fires
+ * by the host's wall clock, including across DST changes — there is no
+ * per-loop timezone. Keep the host in the timezone you want loops to follow
+ * (TZ env var).
  */
 function matchField(field: string, value: number): boolean {
   for (const part of field.split(',')) {
