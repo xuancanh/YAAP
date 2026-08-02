@@ -5,9 +5,23 @@ import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
 import { api, type ChatSession } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
-import { marketCats } from './MarketView';
 
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '2px 18px 8px' };
+
+/** Rail chip order: professional clusters first, then personal life; anything
+ *  the catalog adds beyond this list appends at the end. */
+const CAT_ORDER = [
+  'Workplace', 'Product & Engineering', 'Education', 'Legal & Finance', 'Writing & Media',
+  'Care & Community', 'Property & Field', 'Small Business',
+  'Family & Care', 'Home & Money', 'Health & Growth', 'Events & Travel', 'Hobbies & Leisure',
+];
+
+/** Category list for the market rails, in canonical order, 'All' first. Lives
+ *  here (not in MarketView) so the rail doesn't pull the lazy view's chunk. */
+export function marketCats(market: Array<{ cat: string }>): string[] {
+  const found = Array.from(new Set(market.map((m) => m.cat)));
+  return ['All', ...CAT_ORDER.filter((c) => found.includes(c)), ...found.filter((c) => !CAT_ORDER.includes(c))];
+}
 
 function timeAgo(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -26,6 +40,7 @@ export function WorkspacePill() {
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
+  const [creating, setCreating] = useState(false);
   const ws = app.workspaces.find((w) => w.id === app.workspaceId);
   if (!ws) return null;
   return (
@@ -53,12 +68,16 @@ export function WorkspacePill() {
           ))}
           {adding ? (
             <div style={{ display: 'flex', gap: 6, padding: '8px 9px', borderTop: '1px solid var(--border-soft)', marginTop: 4 }}>
-              <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
+              <input autoFocus value={name} onChange={(e) => setName(e.target.value)} disabled={creating}
                 onKeyDown={async (e) => {
-                  if (e.key === 'Enter' && name.trim()) {
+                  if (e.key !== 'Enter' || e.nativeEvent.isComposing || !name.trim() || creating) return;
+                  setCreating(true);
+                  try {
                     await api.createWorkspace(name.trim());
                     await app.refreshWorkspaces();
                     setName(''); setAdding(false);
+                  } finally {
+                    setCreating(false);
                   }
                 }}
                 placeholder="Workspace name" style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '5px 8px', color: 'var(--text)', fontSize: 12.5, outline: 'none' }} />

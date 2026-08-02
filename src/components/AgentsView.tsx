@@ -592,6 +592,7 @@ function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Co
   const [withGmail, setWithGmail] = useState(false);
   const [withDrive, setWithDrive] = useState(false);
   const [withDriveExport, setWithDriveExport] = useState(false);
+  const [busy, setBusy] = useState(false);
   useEffect(() => { void api.connectionTools().then(setTools).catch(() => setTools([])); }, []);
   const writeTools = tools.filter((t) => t.service === 'calendar' && t.level === 'write');
   const gmailTools = tools.filter((t) => t.service === 'gmail');
@@ -657,7 +658,9 @@ function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Co
         </div>
         <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border-soft)', display: 'flex', gap: 10, flex: 'none' }}>
           <button onClick={onClose} style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
-          <button onClick={async () => {
+          <button disabled={busy} onClick={async () => {
+            if (busy) return;
+            setBusy(true);
             try {
               await api.grantConnection(conn.id, a.id, 'calendar', withWrite ? 'write' : 'read');
               if (withGmail) await api.grantConnection(conn.id, a.id, 'gmail', 'write');
@@ -668,7 +671,7 @@ function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Co
               app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'grant failed');
             }
             onClose();
-          }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Approve &amp; grant</button>
+          }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', fontSize: 13, fontWeight: 700, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>{busy ? 'Granting…' : 'Approve & grant'}</button>
         </div>
       </div>
     </div>

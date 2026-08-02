@@ -1,16 +1,25 @@
 /** Layout composition per the design comp: activity bar · secondary panel ·
  *  main pane · artifact panel, with the stacked mobile variant. */
-import { Component, useState, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useState, type ReactNode } from 'react';
 import { AppProvider, useApp } from './store';
 import { ActivityBar, BottomNav, Toast } from './components/Shell';
 import { WorkspacePill, HomeRail, WorkspaceRail, MarketRail, SettingsRail, SecondaryHeader } from './components/Rails';
 import { ChatView } from './components/ChatView';
 import { FilesView } from './components/FilesView';
-import { AgentsDirectory, AgentHome, NewAgentDialog } from './components/AgentsView';
 import { AppsGallery } from './components/AppsView';
-import { MarketView, HireModal } from './components/MarketView';
-import { SettingsView } from './components/SettingsView';
 import { ArtifactPanel } from './components/ArtifactPanel';
+
+/** Heavyweight views load on demand; ChatView stays eager (the hot path). */
+const AgentsDirectory = lazy(() => import('./components/AgentsView').then((m) => ({ default: m.AgentsDirectory })));
+const AgentHome = lazy(() => import('./components/AgentsView').then((m) => ({ default: m.AgentHome })));
+const NewAgentDialog = lazy(() => import('./components/AgentsView').then((m) => ({ default: m.NewAgentDialog })));
+const MarketView = lazy(() => import('./components/MarketView').then((m) => ({ default: m.MarketView })));
+const HireModal = lazy(() => import('./components/MarketView').then((m) => ({ default: m.HireModal })));
+const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
+
+const viewFallback = (
+  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-faint)', fontSize: 13 }}>Loading…</div>
+);
 
 function Layout() {
   const app = useApp();
@@ -46,19 +55,19 @@ function Layout() {
         <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
           {sec === 'home' && app.homeView === 'chat' && <ChatView />}
           {sec === 'home' && app.homeView === 'file' && <FilesView />}
-          {sec === 'home' && app.homeView === 'agent' && (app.selectedAgent ? <AgentHome /> : <AgentsDirectory />)}
-          {sec === 'overview' && <AgentsDirectory />}
+          {sec === 'home' && app.homeView === 'agent' && <Suspense fallback={viewFallback}>{app.selectedAgent ? <AgentHome /> : <AgentsDirectory />}</Suspense>}
+          {sec === 'overview' && <Suspense fallback={viewFallback}><AgentsDirectory /></Suspense>}
           {sec === 'apps' && <AppsGallery />}
           {sec === 'workspace' && <FilesView />}
-          {sec === 'market' && <MarketView cat={marketCat} setCat={setMarketCat} />}
-          {sec === 'settings' && <SettingsView pane={settingsPane} />}
+          {sec === 'market' && <Suspense fallback={viewFallback}><MarketView cat={marketCat} setCat={setMarketCat} /></Suspense>}
+          {sec === 'settings' && <Suspense fallback={viewFallback}><SettingsView pane={settingsPane} /></Suspense>}
         </main>
       )}
 
       <ArtifactPanel />
       {app.stacked && <BottomNav />}
-      <HireModal />
-      <NewAgentDialog />
+      <Suspense fallback={null}><HireModal /></Suspense>
+      <Suspense fallback={null}><NewAgentDialog /></Suspense>
       <Toast />
     </div>
   );

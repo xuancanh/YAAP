@@ -1,23 +1,10 @@
 /** Agent Market: registry cards + the capability-review hire modal (FR-11.7),
  *  plus the Connectors department (docs/integrations.md §4a). */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { I, P, CAP_ICON } from '../lib/icons';
 import { api, type Connection, type ConnectorEntry } from '../lib/api';
 import { useApp, gradPair } from '../store';
-
-/** Rail chip order: professional clusters first, then personal life; anything
- *  the catalog adds beyond this list appends at the end. */
-const CAT_ORDER = [
-  'Workplace', 'Product & Engineering', 'Education', 'Legal & Finance', 'Writing & Media',
-  'Care & Community', 'Property & Field', 'Small Business',
-  'Family & Care', 'Home & Money', 'Health & Growth', 'Events & Travel', 'Hobbies & Leisure',
-];
-
-/** Category list for the market rails, in canonical order, 'All' first. */
-export function marketCats(market: Array<{ cat: string }>): string[] {
-  const found = Array.from(new Set(market.map((m) => m.cat)));
-  return ['All', ...CAT_ORDER.filter((c) => found.includes(c)), ...found.filter((c) => !CAT_ORDER.includes(c))];
-}
+import { marketCats } from './Rails';
 
 export function MarketView({ cat, setCat }: { cat: string; setCat: (c: string) => void }) {
   const app = useApp();
@@ -105,6 +92,14 @@ function ConnectorsDept() {
   const [entries, setEntries] = useState<ConnectorEntry[]>([]);
   const [conns, setConns] = useState<Connection[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopPolling = () => {
+    if (pollRef.current !== null) { clearInterval(pollRef.current); pollRef.current = null; }
+    if (pollTimeoutRef.current !== null) { clearTimeout(pollTimeoutRef.current); pollTimeoutRef.current = null; }
+  };
+  // OAuth popup pollers must not outlive the component (dept switch / nav away)
+  useEffect(() => stopPolling, []);
   const refresh = () => {
     void api.marketConnectors().then(setEntries).catch(() => setEntries([]));
     void api.connections().then(setConns).catch(() => setConns([]));
@@ -128,19 +123,20 @@ function ConnectorsDept() {
     try {
       const { url } = await api.connectStart('google', e.nativeTier ?? 'read');
       const popup = window.open(url, 'yaam-connect', 'width=520,height=680');
-      const poll = setInterval(async () => {
+      stopPolling();
+      pollRef.current = setInterval(async () => {
         const now = await api.connections().catch(() => null);
         if (!now) return;
         const g = now.find((c) => c.provider === 'google');
         const done = g && (e.nativeTier === 'gmail' ? g.gmailCapable : e.nativeTier === 'drive' ? g.driveCapable : true);
         if (done || popup?.closed) {
-          clearInterval(poll);
+          stopPolling();
           setConns(now);
           setBusy(null);
           if (done) app.showToast(`${e.name} connected — grant it per agent on their Skills & tools tab`);
         }
       }, 2500);
-      setTimeout(() => { clearInterval(poll); setBusy(null); }, 180_000);
+      pollTimeoutRef.current = setTimeout(() => { stopPolling(); setBusy(null); }, 180_000);
     } catch (err) {
       setBusy(null);
       app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'connect failed');
@@ -162,16 +158,17 @@ function ConnectorsDept() {
       } catch { /* likely needs authorization */ }
       const { url } = await api.mcpOauthStart(server.id);
       const popup = window.open(url, 'yaam-connect', 'width=520,height=680');
-      const poll = setInterval(async () => {
+      stopPolling();
+      pollRef.current = setInterval(async () => {
         const done = await api.discoverMcp(server.id).then(() => true).catch(() => false);
         if (done || popup?.closed) {
-          clearInterval(poll);
+          stopPolling();
           await app.refreshMcp();
           setBusy(null);
           if (done) app.showToast(`${e.name} connected`);
         }
       }, 3000);
-      setTimeout(() => { clearInterval(poll); setBusy(null); }, 180_000);
+      pollTimeoutRef.current = setTimeout(() => { stopPolling(); setBusy(null); }, 180_000);
     } catch (err) {
       setBusy(null);
       app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'connect failed');
@@ -234,6 +231,7 @@ function ConnectorsDept() {
 
 export function HireModal() {
   const app = useApp();
+  const [busy, setBusy] = useState(false);
   const item = app.market.find((m) => m.id === app.hireId);
   if (!item) return null;
   return (
@@ -298,7 +296,11 @@ export function HireModal() {
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>Runs under your active workspace credentials.</span>
           <button onClick={() => app.setHireId(null)} style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
-          <button onClick={() => void app.confirmHire()} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Approve & hire</button>
+          <button disabled={busy} onClick={async () => {
+            if (busy) return;
+            setBusy(true);
+            try { await app.confirmHire(); } finally { setBusy(false); }
+          }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '9px 18px', fontSize: 13, fontWeight: 700, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>{busy ? 'Hiring…' : 'Approve & hire'}</button>
         </div>
       </div>
     </div>

@@ -1,10 +1,12 @@
 /** Apps gallery: every mini app your agents have built (save_app), across
  *  the whole fleet — open full-screen or embed beside the agent's chat. */
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { useApp, grad } from '../store';
 import type { Agent, AgentApp } from '../lib/api';
-import { AppViewer } from './AgentsView';
 import { CapReviewModal, pendingCaps } from './AppHost';
+
+/** Lazy so the eager gallery doesn't pull the whole AgentsView chunk in. */
+const AppViewer = lazy(() => import('./AgentsView').then((m) => ({ default: m.AppViewer })));
 
 function parseApps(a: Agent): AgentApp[] {
   try { return JSON.parse(a.apps) as AgentApp[]; } catch { return []; }
@@ -81,7 +83,7 @@ export function AppsGallery() {
           </div>
         )}
       </div>
-      {openApp && <AppViewer agentId={openApp.agentId} miniApp={openApp.app} onClose={() => setOpenApp(null)} />}
+      {openApp && <Suspense fallback={null}><AppViewer agentId={openApp.agentId} miniApp={openApp.app} onClose={() => setOpenApp(null)} /></Suspense>}
       {review && <CapReviewModal agentId={review.agentId} miniApp={review.app} onClose={() => setReview(null)} />}
     </div>
   );

@@ -4,7 +4,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type LiveItem, type LiveTool } from '../store';
-import { api, PROVIDER_COLORS, type Agent, type ChatMessage, type ChatTurn } from '../lib/api';
+import { api, PROVIDER_COLORS, type Agent, type ApprovalDecision, type ChatMessage, type ChatTurn } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 5, borderRadius: 6, display: 'flex' };
@@ -34,6 +34,8 @@ function detectArtifact(content: string): { title: string; src: string } | null 
 
 function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
   const app = useApp();
+  const [deciding, setDeciding] = useState(false);
+  const decide = (d: ApprovalDecision) => { if (deciding) return; setDeciding(true); app.approve(t.id, d); };
   const border = t.status === 'pending' ? 'var(--amber)' : t.status === 'denied' ? 'var(--red)' : 'var(--border)';
   const map: Record<string, [string, string]> = {
     pending: ['var(--amber)', 'Needs approval'], running: ['var(--green)', 'Running'],
@@ -60,11 +62,11 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
           <div style={{ fontSize: 12, color: 'var(--amber)', display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10, fontWeight: 500 }}>
             <I d={P.warn} size={14} />This tool needs approval — approve to run {t.name}
           </div>
-          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
-            <button onClick={() => app.approve(t.id, 'allow-once')} style={{ background: 'var(--green)', color: '#04140d', border: 'none', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Allow once</button>
-            <button onClick={() => app.approve(t.id, 'allow-always')} style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Allow always</button>
-            <button onClick={() => app.approve(t.id, 'allow-tool')} style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Always allow {t.name}</button>
-            <button onClick={() => app.approve(t.id, 'deny')} style={{ background: 'none', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', marginLeft: 'auto' }}>Deny</button>
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', opacity: deciding ? 0.55 : 1 }}>
+            <button disabled={deciding} onClick={() => decide('allow-once')} style={{ background: 'var(--green)', color: '#04140d', border: 'none', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Allow once</button>
+            <button disabled={deciding} onClick={() => decide('allow-always')} style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Allow always</button>
+            <button disabled={deciding} onClick={() => decide('allow-tool')} style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Always allow {t.name}</button>
+            <button disabled={deciding} onClick={() => decide('deny')} style={{ background: 'none', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', marginLeft: 'auto' }}>Deny</button>
           </div>
         </div>
       )}
@@ -114,7 +116,13 @@ function Thinking({ text, streaming }: { text: string; streaming: boolean }) {
 
 function AssistantFooter({ turn }: { turn?: ChatTurn }) {
   const app = useApp();
+  const [busy, setBusy] = useState(false);
   if (!turn) return null;
+  const run = (fn: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    void fn().finally(() => setBusy(false));
+  };
   const usage = turn.tokensIn + turn.tokensOut > 0
     ? `${turn.tokensIn >= 1000 ? `${(turn.tokensIn / 1000).toFixed(1)}k` : turn.tokensIn} in · ${turn.tokensOut >= 1000 ? `${(turn.tokensOut / 1000).toFixed(1)}k` : turn.tokensOut} out`
     : '';
@@ -122,16 +130,16 @@ function AssistantFooter({ turn }: { turn?: ChatTurn }) {
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginTop: 12, color: 'var(--text-faint)' }}>
-        <button onClick={() => void app.retry()} title="Retry" style={ghostBtn}><I d={P.retry} size={14} /></button>
-        <button onClick={() => void app.fork(turn.id)} title="Fork" style={ghostBtn}><I d={P.forkIcon} size={14} /></button>
+        <button disabled={busy} onClick={() => run(() => app.retry())} title="Retry" style={{ ...ghostBtn, opacity: busy ? 0.5 : 1 }}><I d={P.retry} size={14} /></button>
+        <button disabled={busy} onClick={() => run(() => app.fork(turn.id))} title="Fork" style={{ ...ghostBtn, opacity: busy ? 0.5 : 1 }}><I d={P.forkIcon} size={14} /></button>
         {app.current?.agentId && (
-          <button onClick={() => void app.promote(turn.id)} title="Promote to this agent's task board" style={ghostBtn}><I d={P.board} size={14} /></button>
+          <button disabled={busy} onClick={() => run(() => app.promote(turn.id))} title="Promote to this agent's task board" style={{ ...ghostBtn, opacity: busy ? 0.5 : 1 }}><I d={P.board} size={14} /></button>
         )}
         <div style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 5px' }} />
-        <button onClick={() => void app.rate(turn.id, 'up')} title="Good reply" style={{ ...ghostBtn, color: turn.rating === 'up' ? 'var(--green)' : undefined }}>
+        <button disabled={busy} onClick={() => run(() => app.rate(turn.id, 'up'))} title="Good reply" style={{ ...ghostBtn, opacity: busy ? 0.5 : 1, color: turn.rating === 'up' ? 'var(--green)' : undefined }}>
           <I d={P.thumbUp} size={14} sw={1.8} fill={turn.rating === 'up' ? 'var(--green)' : 'none'} />
         </button>
-        <button onClick={() => void app.rate(turn.id, 'down')} title="Bad reply" style={{ ...ghostBtn, color: turn.rating === 'down' ? 'var(--red)' : undefined }}>
+        <button disabled={busy} onClick={() => run(() => app.rate(turn.id, 'down'))} title="Bad reply" style={{ ...ghostBtn, opacity: busy ? 0.5 : 1, color: turn.rating === 'down' ? 'var(--red)' : undefined }}>
           <I d={P.thumbDown} size={14} sw={1.8} fill={turn.rating === 'down' ? 'var(--red)' : 'none'} />
         </button>
         {usage && <span style={{ marginLeft: 'auto', fontSize: 11, ...mono, color: 'var(--text-faint)' }}>{usage}</span>}
@@ -226,6 +234,7 @@ export function ChatView() {
   const [modelPop, setModelPop] = useState(false);
   const [menu, setMenu] = useState<null | { kind: 'slash' | 'mention'; filter: string }>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true); // autoscroll only while the user is near the bottom
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -249,6 +258,7 @@ export function ChatView() {
   const agent = app.agents.find((a) => a.id === s?.agentId);
 
   useEffect(() => {
+    if (!stickRef.current) return;
     requestAnimationFrame(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; });
   }, [app.transcript, app.live]);
 
@@ -459,7 +469,7 @@ export function ChatView() {
         </div>
       </header>
 
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '22px 0 8px' }}>
+      <div ref={scrollRef} onScroll={(e) => { const el = e.currentTarget; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} style={{ flex: 1, overflowY: 'auto', padding: '22px 0 8px' }}>
         <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 20px' }}>
           {rows}
           {liveRows}
@@ -524,7 +534,7 @@ export function ChatView() {
               }}
               onKeyDown={(e) => {
                 if (menu && e.key === 'Escape') { e.preventDefault(); setMenu(null); return; }
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); doSend(); }
               }}
               placeholder={app.streaming ? 'Queue a follow-up while streaming…' : `Message ${agent?.name ?? 'YAAM'}  ·  / for commands  ·  @ to attach`}
               rows={1}
