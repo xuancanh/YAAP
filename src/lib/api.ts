@@ -432,7 +432,7 @@ export const api = {
   // external service connections (docs/integrations.md)
   connections: () => get<Connection[]>('/api/connections'),
   connectionProviders: () => get<ConnectionProvider[]>('/api/connections/providers'),
-  connectionTools: () => get<Array<{ name: string; description: string; service: string; level: string }>>('/api/connections/tools'),
+  connectionTools: () => get<Array<{ name: string; description: string; provider: string; service: string; level: string }>>('/api/connections/tools'),
   connectStart: (provider: string, tier: 'read' | 'write' | 'gmail' | 'drive' = 'read') => get<{ url: string }>(`/api/connections/${provider}/start?tier=${tier}`),
   removeConnection: (id: string) => send<{ ok: boolean }>(`/api/connections/${id}`, 'DELETE'),
   grantConnection: (id: string, agentId: string, service: ConnectionServiceName, level: 'read' | 'write' = 'read') =>

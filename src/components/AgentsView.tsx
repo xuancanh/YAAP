@@ -583,17 +583,26 @@ function PromoteSkillModal({ a, skill, onDone, onClose }: { a: Agent; skill: Ski
   );
 }
 
+/** Per-provider display strings shared by the grant modal and connections row. */
+const CONN_DISPLAY: Record<string, { emoji: string; label: string; mail: string; mailPill: string; drive: string; drivePill: string }> = {
+  google: { emoji: '📅', label: 'Google', mail: 'Gmail', mailPill: 'gmail draft/send', drive: 'Drive', drivePill: 'drive' },
+  microsoft: { emoji: '💼', label: 'Microsoft', mail: 'Mail', mailPill: 'mail draft/send', drive: 'OneDrive', drivePill: 'onedrive' },
+};
+const connDisplay = (provider: string) => CONN_DISPLAY[provider] ?? CONN_DISPLAY.google;
+
 /** Activation review for a connection grant (docs/integrations.md §5): show
  *  the literal tools the agent gains — the real artifact, not a summary. */
 function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Connection; onDone: () => void; onClose: () => void }) {
   const app = useApp();
-  const [tools, setTools] = useState<Array<{ name: string; description: string; service: string; level: string }>>([]);
+  const d = connDisplay(conn.provider);
+  const [allTools, setAllTools] = useState<Array<{ name: string; description: string; provider: string; service: string; level: string }>>([]);
   const [withWrite, setWithWrite] = useState(false);
   const [withGmail, setWithGmail] = useState(false);
   const [withDrive, setWithDrive] = useState(false);
   const [withDriveExport, setWithDriveExport] = useState(false);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { void api.connectionTools().then(setTools).catch(() => setTools([])); }, []);
+  useEffect(() => { void api.connectionTools().then(setAllTools).catch(() => setAllTools([])); }, []);
+  const tools = allTools.filter((t) => t.provider === conn.provider);
   const writeTools = tools.filter((t) => t.service === 'calendar' && t.level === 'write');
   const gmailTools = tools.filter((t) => t.service === 'gmail');
   const driveReadTools = tools.filter((t) => t.service === 'drive' && t.level === 'read');
@@ -611,9 +620,9 @@ function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Co
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', backdropFilter: 'blur(2px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: 540, maxWidth: '100%', maxHeight: '86vh', display: 'flex', flexDirection: 'column', background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'var(--shadow)', animation: 'pop .16s' }}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border-soft)', flex: 'none' }}>
-          <div style={{ fontSize: 17, fontWeight: 700 }}>Give {a.name} access to your Google account?</div>
+          <div style={{ fontSize: 17, fontWeight: 700 }}>Give {a.name} access to your {d.label} account?</div>
           <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 2 }}>
-            Google · {conn.accountEmail} · calendar {withWrite ? 'read + write' : 'read-only'}{withGmail ? ' · gmail draft/send' : ''}{withDrive ? ` · drive ${withDriveExport ? 'read + export' : 'read'}` : ''}
+            {d.label} · {conn.accountEmail} · calendar {withWrite ? 'read + write' : 'read-only'}{withGmail ? ` · ${d.mail.toLowerCase()} draft/send` : ''}{withDrive ? ` · ${d.drive.toLowerCase()} ${withDriveExport ? 'read + export' : 'read'}` : ''}
           </div>
         </div>
         <div style={{ padding: '16px 24px', overflow: 'auto' }}>
@@ -632,7 +641,7 @@ function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Co
             <div style={{ marginTop: 14 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
                 <input type="checkbox" checked={withGmail} onChange={(e) => setWithGmail(e.target.checked)} />
-                Also allow Gmail draft + send — sending confirms with you every time, even in Auto mode
+                Also allow {d.mail} draft + send — sending confirms with you every time, even in Auto mode
               </label>
               <div style={{ opacity: withGmail ? 1 : 0.45 }}>{gmailTools.map(toolRow)}</div>
             </div>
@@ -641,18 +650,18 @@ function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Co
             <div style={{ marginTop: 14 }}>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
                 <input type="checkbox" checked={withDrive} onChange={(e) => { setWithDrive(e.target.checked); if (!e.target.checked) setWithDriveExport(false); }} />
-                Also allow Drive read — search and read your files
+                Also allow {d.drive} read — search and read your files
               </label>
               <div style={{ opacity: withDrive ? 1 : 0.45 }}>{driveReadTools.map(toolRow)}</div>
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, cursor: withDrive ? 'pointer' : 'default', opacity: withDrive ? 1 : 0.45, marginTop: 8 }}>
                 <input type="checkbox" disabled={!withDrive} checked={withDriveExport} onChange={(e) => setWithDriveExport(e.target.checked)} />
-                Also allow exports — creates new Docs/Sheets only, never edits existing files
+                Also allow exports — creates new {conn.provider === 'microsoft' ? 'Word/Excel files' : 'Docs/Sheets'} only, never edits existing files
               </label>
               <div style={{ opacity: withDriveExport ? 1 : 0.45 }}>{driveWriteTools.map(toolRow)}</div>
             </div>
           )}
           <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 10, lineHeight: 1.6 }}>
-            {a.name} never sees your Google token — the server runs these tools and returns results only.
+            {a.name} never sees your {d.label} token — the server runs these tools and returns results only.
             Revoking the grant is one click and immediate.
           </div>
         </div>
@@ -665,7 +674,7 @@ function GrantConnectionModal({ a, conn, onDone, onClose }: { a: Agent; conn: Co
               await api.grantConnection(conn.id, a.id, 'calendar', withWrite ? 'write' : 'read');
               if (withGmail) await api.grantConnection(conn.id, a.id, 'gmail', 'write');
               if (withDrive) await api.grantConnection(conn.id, a.id, 'drive', withDriveExport ? 'write' : 'read');
-              app.showToast(`${a.name} can now ${withWrite ? 'read and write' : 'read'} the calendar${withGmail ? ', draft/send email' : ''}${withDrive ? ', use Drive' : ''}`);
+              app.showToast(`${a.name} can now ${withWrite ? 'read and write' : 'read'} the calendar${withGmail ? ', draft/send email' : ''}${withDrive ? `, use ${d.drive}` : ''}`);
               onDone();
             } catch (err) {
               app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'grant failed');
@@ -767,25 +776,26 @@ function SkillsToolsTab({ a }: { a: Agent }) {
             const gmail = mine.find((g) => g.service === 'gmail');
             const drive = mine.find((g) => g.service === 'drive');
             const granted = mine.length > 0;
+            const d = connDisplay(c.provider);
             return (
               <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderBottom: '1px solid var(--border-soft)' }}>
-                <span style={{ fontSize: 16, flex: 'none' }}>📅</span>
+                <span style={{ fontSize: 16, flex: 'none' }}>{d.emoji}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>Google</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{d.label}</span>
                     {cal && pill(cal.level === 'write' ? 'calendar read + write' : 'calendar read', 'var(--green)')}
-                    {gmail && pill('gmail draft/send', 'var(--green)')}
-                    {drive && pill(drive.level === 'write' ? 'drive read + export' : 'drive read', 'var(--green)')}
+                    {gmail && pill(d.mailPill, 'var(--green)')}
+                    {drive && pill(drive.level === 'write' ? `${d.drivePill} read + export` : `${d.drivePill} read`, 'var(--green)')}
                     {!granted && pill('no access', 'var(--text-faint)')}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 2, fontFamily: 'var(--mono)' }}>{c.accountEmail}</div>
                 </div>
                 {!granted && btn('Grant…', () => setGranting(c), true)}
-                {granted && btn('Revoke', async () => { await api.revokeConnectionGrant(c.id, a.id); refresh(a.id); app.showToast(`${a.name} lost Google access`); }, false, true)}
+                {granted && btn('Revoke', async () => { await api.revokeConnectionGrant(c.id, a.id); refresh(a.id); app.showToast(`${a.name} lost ${d.label} access`); }, false, true)}
               </div>
             );
           })}
-          {conns.length === 0 && <div style={{ padding: '10px 10px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>No services connected yet — link Google Calendar under Settings → Connections, then grant it here.</div>}
+          {conns.length === 0 && <div style={{ padding: '10px 10px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>No services connected yet — link a Google or Microsoft account under Settings → Connections, then grant it here.</div>}
         </div>
       </div>
       {granting && <GrantConnectionModal a={a} conn={granting} onDone={() => refresh(a.id)} onClose={() => setGranting(null)} />}

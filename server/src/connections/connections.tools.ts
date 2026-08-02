@@ -29,6 +29,19 @@ export const GOOGLE_DRIVE_SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
 ];
 
+/** Microsoft Graph scope tiers (one OAuth app covers Outlook + OneDrive).
+ *  Same tier shape as Google: connect read-only, upgrade incrementally. */
+export const MS_BASE_SCOPES = ['openid', 'email', 'offline_access', 'User.Read'];
+export const MS_READ_SCOPES = ['Calendars.Read'];
+export const MS_WRITE_SCOPES = ['Calendars.ReadWrite'];
+export const MS_MAIL_SCOPES = ['Mail.ReadWrite', 'Mail.Send'];
+export const MS_DRIVE_SCOPES = ['Files.ReadWrite'];
+
+export const MS_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize';
+export const MS_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
+export const MS_USERINFO_URL = 'https://graph.microsoft.com/v1.0/me';
+const GRAPH = 'https://graph.microsoft.com/v1.0';
+
 export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const GOOGLE_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
@@ -70,8 +83,23 @@ export interface ToolContext {
 }
 
 export type ConnectionService = 'calendar' | 'gmail' | 'drive';
+export type ConnectionProvider = 'google' | 'microsoft';
+
+/** Capability flags a connection's consented scopes cover, per provider. */
+export function capabilitiesFor(provider: ConnectionProvider, scopes: string[]): { writeCapable: boolean; gmailCapable: boolean; driveCapable: boolean } {
+  if (provider === 'microsoft') {
+    return {
+      writeCapable: MS_WRITE_SCOPES.every((s) => scopes.includes(s)),
+      gmailCapable: MS_MAIL_SCOPES.every((s) => scopes.includes(s)),
+      driveCapable: MS_DRIVE_SCOPES.every((s) => scopes.includes(s)),
+    };
+  }
+  return { writeCapable: hasWriteScopes(scopes), gmailCapable: hasGmailScopes(scopes), driveCapable: hasDriveScopes(scopes) };
+}
 
 export interface ConnectionTool extends AiToolSpec {
+  /** The provider whose connection this tool runs against. */
+  provider: ConnectionProvider;
   /** The service this tool belongs to — grants are per-service. */
   service: ConnectionService;
   /** Grant level required to see/run this tool. */
@@ -109,6 +137,7 @@ export const GCAL_TOOLS: ConnectionTool[] = [
       type: 'object',
       properties: { days: { type: 'number', description: 'How many days ahead to look (default 7, max 60)' } },
     },
+    provider: 'google',
     service: 'calendar',
     level: 'read',
     readOnly: true,
@@ -131,6 +160,7 @@ export const GCAL_TOOLS: ConnectionTool[] = [
       properties: { query: { type: 'string', description: 'Free-text search over event fields' } },
       required: ['query'],
     },
+    provider: 'google',
     service: 'calendar',
     level: 'read',
     readOnly: true,
@@ -157,6 +187,7 @@ export const GCAL_TOOLS: ConnectionTool[] = [
       },
       required: ['from'],
     },
+    provider: 'google',
     service: 'calendar',
     level: 'read',
     readOnly: true,
@@ -194,6 +225,7 @@ export const GCAL_TOOLS: ConnectionTool[] = [
       },
       required: ['title', 'start'],
     },
+    provider: 'google',
     service: 'calendar',
     level: 'write',
     readOnly: false,
@@ -219,6 +251,7 @@ export const GCAL_TOOLS: ConnectionTool[] = [
       },
       required: ['eventId'],
     },
+    provider: 'google',
     service: 'calendar',
     level: 'write',
     readOnly: false,
@@ -337,6 +370,7 @@ export const GMAIL_TOOLS: ConnectionTool[] = [
     name: 'gmail_draft',
     description: "Create a draft in the user's real Gmail Drafts folder for them to review and send. This is the default way to prepare email — prefer it over gmail_send unless the user gave a standing instruction to send.",
     inputSchema: MAIL_INPUT_SCHEMA,
+    provider: 'google',
     service: 'gmail',
     level: 'write',
     readOnly: false,
@@ -350,6 +384,7 @@ export const GMAIL_TOOLS: ConnectionTool[] = [
     name: 'gmail_send',
     description: "Send an email from the user's Gmail address. Outward-facing and irreversible: every call requires the user's explicit confirmation, even in Auto mode. Prefer gmail_draft unless the user asked you to send.",
     inputSchema: MAIL_INPUT_SCHEMA,
+    provider: 'google',
     service: 'gmail',
     level: 'write',
     readOnly: false,
@@ -391,6 +426,7 @@ export const DRIVE_TOOLS: ConnectionTool[] = [
       properties: { query: { type: 'string', description: 'Search text (matched against file names and full text)' } },
       required: ['query'],
     },
+    provider: 'google',
     service: 'drive',
     level: 'read',
     readOnly: true,
@@ -417,6 +453,7 @@ export const DRIVE_TOOLS: ConnectionTool[] = [
       properties: { fileId: { type: 'string', description: 'The Drive file id' } },
       required: ['fileId'],
     },
+    provider: 'google',
     service: 'drive',
     level: 'read',
     readOnly: true,
@@ -444,6 +481,7 @@ export const DRIVE_TOOLS: ConnectionTool[] = [
       },
       required: ['title', 'markdown'],
     },
+    provider: 'google',
     service: 'drive',
     level: 'write',
     readOnly: false,
@@ -469,6 +507,7 @@ export const DRIVE_TOOLS: ConnectionTool[] = [
       },
       required: ['title', 'csv'],
     },
+    provider: 'google',
     service: 'drive',
     level: 'write',
     readOnly: false,
@@ -485,5 +524,255 @@ export const DRIVE_TOOLS: ConnectionTool[] = [
   },
 ];
 
-/** Every connection tool, all services. */
-export const CONNECTION_TOOLS: ConnectionTool[] = [...GCAL_TOOLS, ...GMAIL_TOOLS, ...DRIVE_TOOLS];
+// ---- microsoft graph (Outlook Calendar + Mail, OneDrive) — the same
+// curated verb shapes as the Google tools, one grant model, one approval
+// policy. Mail keeps the draft-first discipline; sending confirms always. ----
+
+function fmtGraphEvent(e: Record<string, unknown>): string {
+  const start = (e.start as Record<string, string>) ?? {};
+  const end = (e.end as Record<string, string>) ?? {};
+  const when = e.isAllDay
+    ? `${String(start.dateTime ?? '?').slice(0, 10)} (all day)`
+    : `${String(start.dateTime ?? '?').slice(0, 16).replace('T', ' ')} → ${String(end.dateTime ?? '').slice(11, 16)}`;
+  const parts = [when, (e.subject as string) || '(no title)'];
+  const loc = (e.location as { displayName?: string })?.displayName;
+  if (loc) parts.push(loc);
+  if (e.id) parts.push(`id:${String(e.id)}`);
+  return parts.join(' · ');
+}
+
+/** Graph event resource from tool input, with the provenance stamp. */
+function graphEventBody(input: Record<string, unknown>, ctx: ToolContext, partial = false): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  const tz = typeof input.timezone === 'string' && input.timezone ? input.timezone : 'UTC';
+  if (typeof input.title === 'string' && input.title) body.subject = input.title;
+  if (typeof input.location === 'string' && input.location) body.location = { displayName: input.location };
+  const stamp = `[created by ${ctx.agentName} via yaam]`;
+  if (typeof input.description === 'string' && input.description) {
+    body.body = { contentType: 'text', content: `${input.description}\n\n${stamp}` };
+  } else if (!partial) {
+    body.body = { contentType: 'text', content: stamp };
+  }
+  if (typeof input.start === 'string' && input.start) {
+    if (!DATE_ONLY.test(input.start) && Number.isNaN(Date.parse(input.start))) {
+      throw new Error('invalid arguments: "start" must be an ISO datetime or YYYY-MM-DD');
+    }
+    const end = typeof input.end === 'string' && input.end ? input.end : '';
+    if (DATE_ONLY.test(input.start)) {
+      body.isAllDay = true;
+      body.start = { dateTime: `${input.start}T00:00:00`, timeZone: tz };
+      const endDate = end && DATE_ONLY.test(end) ? end : input.start;
+      const next = new Date(Date.parse(`${endDate}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+      body.end = { dateTime: `${next}T00:00:00`, timeZone: tz };
+    } else {
+      body.start = { dateTime: input.start, timeZone: tz };
+      const endIso = end || new Date(Date.parse(input.start) + 3_600_000).toISOString();
+      if (Number.isNaN(Date.parse(endIso))) throw new Error('invalid arguments: "end" must be an ISO datetime or YYYY-MM-DD');
+      body.end = { dateTime: endIso, timeZone: tz };
+    }
+  } else if (!partial) {
+    throw new Error('invalid arguments: "start" is required');
+  }
+  return body;
+}
+
+/** Graph message resource shared by draft and send. */
+function graphMessage(input: Record<string, unknown>): Record<string, unknown> {
+  const to = parseRecipients(input.to, 'to', true);
+  const cc = parseRecipients(input.cc, 'cc', false);
+  const subject = String(input.subject ?? '').trim();
+  if (!subject) throw new Error('invalid arguments: "subject" is required');
+  const bodyText = String(input.body ?? '');
+  if (!bodyText.trim()) throw new Error('invalid arguments: "body" is required');
+  return {
+    subject,
+    body: { contentType: 'text', content: bodyText },
+    toRecipients: to.map((a) => ({ emailAddress: { address: a } })),
+    ...(cc.length ? { ccRecipients: cc.map((a) => ({ emailAddress: { address: a } })) } : {}),
+  };
+}
+
+const MS_EVENT_FIELDS = '$select=id,subject,start,end,location,isAllDay';
+
+export const MS_TOOLS: ConnectionTool[] = [
+  {
+    name: 'mscal_upcoming',
+    description: "List upcoming events from the user's connected Outlook Calendar. Read-only.",
+    inputSchema: {
+      type: 'object',
+      properties: { days: { type: 'number', description: 'How many days ahead to look (default 7, max 60)' } },
+    },
+    provider: 'microsoft', service: 'calendar', level: 'read', readOnly: true,
+    execute: async (conn, input, http) => {
+      const days = Math.min(Math.max(Number(input.days) || 7, 1), 60);
+      const from = new Date().toISOString();
+      const to = new Date(Date.now() + days * 86_400_000).toISOString();
+      const res = await http.googleGet(conn, `${GRAPH}/me/calendarView?startDateTime=${from}&endDateTime=${to}&$orderby=start/dateTime&$top=50&${MS_EVENT_FIELDS}`) as { value?: Array<Record<string, unknown>> };
+      const lines = (res.value ?? []).map(fmtGraphEvent);
+      return frameExternal('calendar', lines.length ? lines.join('\n') : `No events in the next ${days} day(s).`);
+    },
+  },
+  {
+    name: 'mscal_search',
+    description: "Search the user's connected Outlook Calendar by title text (next 365 days). Read-only.",
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Text matched against event subjects' } },
+      required: ['query'],
+    },
+    provider: 'microsoft', service: 'calendar', level: 'read', readOnly: true,
+    execute: async (conn, input, http) => {
+      const q = String(input.query ?? '').trim();
+      if (!q) throw new Error('invalid arguments: "query" must be a non-empty string');
+      const from = new Date(Date.now() - 30 * 86_400_000).toISOString();
+      const to = new Date(Date.now() + 365 * 86_400_000).toISOString();
+      const filter = encodeURIComponent(`contains(subject,'${q.replace(/'/g, "''")}')`);
+      const res = await http.googleGet(conn, `${GRAPH}/me/calendarView?startDateTime=${from}&endDateTime=${to}&$filter=${filter}&$top=25&${MS_EVENT_FIELDS}`) as { value?: Array<Record<string, unknown>> };
+      const lines = (res.value ?? []).map(fmtGraphEvent);
+      return frameExternal('calendar', lines.length ? lines.join('\n') : `No events matching "${q}".`);
+    },
+  },
+  {
+    name: 'mscal_create_event',
+    description: "Create an event on the user's connected Outlook Calendar. Mutating — requires the write grant and per-call approval in Ask mode.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Event title' },
+        start: { type: 'string', description: 'Start: ISO datetime (2026-08-03T14:00:00) or YYYY-MM-DD for all-day' },
+        end: { type: 'string', description: 'End, same format (default: 1 hour after start / same day)' },
+        description: { type: 'string', description: 'Optional event description' },
+        location: { type: 'string', description: 'Optional location' },
+        timezone: { type: 'string', description: 'IANA timezone for the datetimes (default UTC)' },
+      },
+      required: ['title', 'start'],
+    },
+    provider: 'microsoft', service: 'calendar', level: 'write', readOnly: false,
+    execute: async (conn, input, http, ctx) => {
+      const created = await http.googlePost(conn, `${GRAPH}/me/events`, graphEventBody(input, ctx)) as Record<string, unknown>;
+      return `Event created: ${fmtGraphEvent(created)}${created.webLink ? `\nlink: ${String(created.webLink)}` : ''}`;
+    },
+  },
+  {
+    name: 'mscal_update_event',
+    description: "Update an existing Outlook Calendar event by id (from mscal_search or mscal_upcoming). Only the fields provided change. Mutating — requires the write grant and per-call approval in Ask mode.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        eventId: { type: 'string', description: 'The event id' },
+        title: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' },
+        description: { type: 'string' }, location: { type: 'string' }, timezone: { type: 'string' },
+      },
+      required: ['eventId'],
+    },
+    provider: 'microsoft', service: 'calendar', level: 'write', readOnly: false,
+    execute: async (conn, input, http, ctx) => {
+      const eventId = String(input.eventId ?? '').trim();
+      if (!eventId || !/^[\w=.-]+$/.test(eventId)) throw new Error('invalid arguments: "eventId" is required');
+      const body = graphEventBody(input, ctx, true);
+      if (Object.keys(body).length === 0) throw new Error('invalid arguments: provide at least one field to change');
+      const updated = await http.googlePatch(conn, `${GRAPH}/me/events/${encodeURIComponent(eventId)}`, body) as Record<string, unknown>;
+      return `Event updated: ${fmtGraphEvent(updated)}`;
+    },
+  },
+  {
+    name: 'msmail_draft',
+    description: "Create a draft in the user's real Outlook Drafts folder for them to review and send. This is the default way to prepare email — prefer it over msmail_send unless the user gave a standing instruction to send.",
+    inputSchema: MAIL_INPUT_SCHEMA,
+    provider: 'microsoft', service: 'gmail', level: 'write', readOnly: false,
+    execute: async (conn, input, http) => {
+      const res = await http.googlePost(conn, `${GRAPH}/me/messages`, graphMessage(input)) as { id?: string };
+      return `Draft created in the user's Outlook Drafts folder (id ${String(res.id ?? '?')}). The user can review and send it from Outlook, or ask you to send it.`;
+    },
+  },
+  {
+    name: 'msmail_send',
+    description: "Send an email from the user's Outlook address. Outward-facing and irreversible: every call requires the user's explicit confirmation, even in Auto mode. Prefer msmail_draft unless the user asked you to send.",
+    inputSchema: MAIL_INPUT_SCHEMA,
+    provider: 'microsoft', service: 'gmail', level: 'write', readOnly: false, confirmAlways: true,
+    execute: async (conn, input, http) => {
+      await http.googlePost(conn, `${GRAPH}/me/sendMail`, { message: graphMessage(input), saveToSentItems: true });
+      return 'Email sent.';
+    },
+  },
+  {
+    name: 'msdrive_search',
+    description: "Search the user's connected OneDrive by file name and content. Read-only; returns names and ids for msdrive_read.",
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Search text' } },
+      required: ['query'],
+    },
+    provider: 'microsoft', service: 'drive', level: 'read', readOnly: true,
+    execute: async (conn, input, http) => {
+      const q = String(input.query ?? '').trim();
+      if (!q) throw new Error('invalid arguments: "query" must be a non-empty string');
+      const res = await http.googleGet(conn, `${GRAPH}/me/drive/root/search(q='${encodeURIComponent(q.replace(/'/g, "''"))}')?$top=20&$select=id,name,lastModifiedDateTime,file,folder`) as { value?: Array<Record<string, unknown>> };
+      const lines = (res.value ?? []).map((f) =>
+        `${String(f.name ?? '(unnamed)')} · ${f.folder ? 'folder' : String((f.file as { mimeType?: string })?.mimeType ?? 'file')} · modified ${String(f.lastModifiedDateTime ?? '?').slice(0, 10)} · id:${String(f.id ?? '?')}`);
+      return frameExternal('drive', lines.length ? lines.join('\n') : `No files matching "${q}".`);
+    },
+  },
+  {
+    name: 'msdrive_read',
+    description: 'Read a text file from the user\'s connected OneDrive by item id (from msdrive_search). Read-only, bounded to ~200KB; binary and Office formats are not converted.',
+    inputSchema: {
+      type: 'object',
+      properties: { fileId: { type: 'string', description: 'The OneDrive item id' } },
+      required: ['fileId'],
+    },
+    provider: 'microsoft', service: 'drive', level: 'read', readOnly: true,
+    execute: async (conn, input, http) => {
+      const fileId = String(input.fileId ?? '').trim();
+      if (!fileId || !/^[\w!.-]+$/.test(fileId)) throw new Error('invalid arguments: "fileId" is required');
+      const meta = await http.googleGet(conn, `${GRAPH}/me/drive/items/${encodeURIComponent(fileId)}?$select=id,name,file`) as Record<string, unknown>;
+      const text = await http.googleGetText(conn, `${GRAPH}/me/drive/items/${encodeURIComponent(fileId)}/content`, 200_000);
+      return frameExternal('drive file', `${String(meta.name ?? fileId)}:\n${text}`);
+    },
+  },
+  {
+    name: 'msdrive_export_doc',
+    description: "Save a markdown document into the user's OneDrive (under /yaam) — the export path for written deliverables. Mutating — requires the write grant and per-call approval in Ask mode.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'File name without extension' },
+        markdown: { type: 'string', description: 'Document body as markdown' },
+      },
+      required: ['title', 'markdown'],
+    },
+    provider: 'microsoft', service: 'drive', level: 'write', readOnly: false,
+    execute: async (conn, input, http) => {
+      const title = String(input.title ?? '').trim().replace(/[\\/:*?"<>|]/g, '-');
+      const markdown = String(input.markdown ?? '');
+      if (!title) throw new Error('invalid arguments: "title" is required');
+      if (!markdown.trim()) throw new Error('invalid arguments: "markdown" is required');
+      const res = await http.googleUpload(conn, `${GRAPH}/me/drive/root:/yaam/${encodeURIComponent(title)}.md:/content`, null, 'text/markdown', markdown) as { id?: string; webUrl?: string };
+      return `Saved to OneDrive: /yaam/${title}.md (id ${String(res.id ?? '?')})${res.webUrl ? `\nlink: ${res.webUrl}` : ''}`;
+    },
+  },
+  {
+    name: 'msdrive_export_sheet',
+    description: "Save CSV data into the user's OneDrive (under /yaam, opens in Excel) — the export path for spreadsheet deliverables. Mutating — requires the write grant and per-call approval in Ask mode.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'File name without extension' },
+        csv: { type: 'string', description: 'Sheet contents as CSV (first row becomes the header row)' },
+      },
+      required: ['title', 'csv'],
+    },
+    provider: 'microsoft', service: 'drive', level: 'write', readOnly: false,
+    execute: async (conn, input, http) => {
+      const title = String(input.title ?? '').trim().replace(/[\\/:*?"<>|]/g, '-');
+      const csv = String(input.csv ?? '');
+      if (!title) throw new Error('invalid arguments: "title" is required');
+      if (!csv.trim()) throw new Error('invalid arguments: "csv" is required');
+      const res = await http.googleUpload(conn, `${GRAPH}/me/drive/root:/yaam/${encodeURIComponent(title)}.csv:/content`, null, 'text/csv', csv) as { id?: string; webUrl?: string };
+      return `Saved to OneDrive: /yaam/${title}.csv (id ${String(res.id ?? '?')})${res.webUrl ? `\nlink: ${res.webUrl}` : ''}`;
+    },
+  },
+];
+
+/** Every connection tool, all providers and services. */
+export const CONNECTION_TOOLS: ConnectionTool[] = [...GCAL_TOOLS, ...GMAIL_TOOLS, ...DRIVE_TOOLS, ...MS_TOOLS];

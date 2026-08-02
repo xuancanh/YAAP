@@ -385,6 +385,25 @@ function ChannelsPane() {
   );
 }
 
+/** Per-provider display strings: same pane renders Google and Microsoft cards. */
+const PROV_DISPLAY: Record<'google' | 'microsoft', {
+  emoji: string; label: string; mail: string; drive: string;
+  connectTitle: string; setupHint: string; envId: string; envSecret: string;
+}> = {
+  google: {
+    emoji: '📅', label: 'Google', mail: 'Gmail', drive: 'Drive',
+    connectTitle: 'Google (Calendar, Gmail, Drive)',
+    setupHint: 'create an OAuth client in Google Cloud Console (APIs & Services → Credentials, type "Web application")',
+    envId: 'GOOGLE_CLIENT_ID', envSecret: 'GOOGLE_CLIENT_SECRET',
+  },
+  microsoft: {
+    emoji: '💼', label: 'Microsoft', mail: 'Mail', drive: 'OneDrive',
+    connectTitle: 'Microsoft (Calendar, Outlook Mail, OneDrive)',
+    setupHint: 'register an app in the Microsoft Entra admin center (App registrations, "Web" platform, any-tenant + personal accounts)',
+    envId: 'MS_CLIENT_ID', envSecret: 'MS_CLIENT_SECRET',
+  },
+};
+
 /** Connections (docs/integrations.md): user-level OAuth links to external
  *  services. Connecting grants nothing to any agent — per-agent grants live
  *  on each agent's Skills & tools tab (activation gate). */
@@ -398,27 +417,29 @@ function ConnectionsPane() {
   };
   useEffect(refresh, []);
 
-  const connect = async (tier: 'read' | 'write' | 'gmail' | 'drive' = 'read') => {
+  const connect = async (provider: 'google' | 'microsoft', tier: 'read' | 'write' | 'gmail' | 'drive' = 'read') => {
+    const d = PROV_DISPLAY[provider];
     try {
-      const { url } = await api.connectStart('google', tier);
+      const { url } = await api.connectStart(provider, tier);
       const popup = window.open(url, 'yaam-connect', 'width=520,height=680');
-      const before = conns.length;
+      const mine = (list: Connection[]) => list.filter((c) => c.provider === provider);
+      const before = mine(conns).length;
       const capableBefore = {
-        write: conns.filter((c) => c.writeCapable).length,
-        gmail: conns.filter((c) => c.gmailCapable).length,
-        drive: conns.filter((c) => c.driveCapable).length,
+        write: mine(conns).filter((c) => c.writeCapable).length,
+        gmail: mine(conns).filter((c) => c.gmailCapable).length,
+        drive: mine(conns).filter((c) => c.driveCapable).length,
       };
       const poll = setInterval(async () => {
         const now = await api.connections().catch(() => null);
         if (!now) return;
-        const done = tier === 'write' ? now.filter((c) => c.writeCapable).length > capableBefore.write
-          : tier === 'gmail' ? now.filter((c) => c.gmailCapable).length > capableBefore.gmail
-            : tier === 'drive' ? now.filter((c) => c.driveCapable).length > capableBefore.drive
-              : now.length > before;
+        const done = tier === 'write' ? mine(now).filter((c) => c.writeCapable).length > capableBefore.write
+          : tier === 'gmail' ? mine(now).filter((c) => c.gmailCapable).length > capableBefore.gmail
+            : tier === 'drive' ? mine(now).filter((c) => c.driveCapable).length > capableBefore.drive
+              : mine(now).length > before;
         if (done || popup?.closed) {
           clearInterval(poll);
           setConns(now);
-          if (done) app.showToast(tier === 'write' ? 'Calendar write access enabled' : tier === 'gmail' ? 'Gmail enabled' : tier === 'drive' ? 'Drive enabled' : 'Google Calendar connected');
+          if (done) app.showToast(tier === 'write' ? 'Calendar write access enabled' : tier === 'gmail' ? `${d.mail} enabled` : tier === 'drive' ? `${d.drive} enabled` : `${d.label} connected`);
         }
       }, 2500);
       setTimeout(() => clearInterval(poll), 180_000);
@@ -427,36 +448,38 @@ function ConnectionsPane() {
     }
   };
 
-  const google = providers.find((p) => p.provider === 'google');
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {conns.map((c) => (
+      {conns.map((c) => {
+        const provider = (c.provider === 'microsoft' ? 'microsoft' : 'google') as 'google' | 'microsoft';
+        const d = PROV_DISPLAY[provider];
+        return (
         <div key={c.id} style={card}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
-            <span style={{ fontSize: 20, flex: 'none' }}>📅</span>
+            <span style={{ fontSize: 20, flex: 'none' }}>{d.emoji}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Google</span>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>{d.label}</span>
                 <span style={{ fontSize: 10, color: 'var(--green)', border: '1px solid var(--green)', borderRadius: 5, padding: '1px 6px' }}>connected</span>
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3, ...mono }}>{c.accountEmail}</div>
               <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 4 }}>
                 {[
                   c.writeCapable ? 'Calendar: read + write (writes approval-gated per agent).' : 'Calendar: read-only.',
-                  c.gmailCapable ? 'Gmail: draft + send (sending confirms every time; no read access).' : 'Gmail: off.',
-                  c.driveCapable ? 'Drive: read + export (exports can only create new Docs/Sheets).' : 'Drive: off.',
+                  c.gmailCapable ? `${d.mail}: draft + send (sending confirms every time; no read access).` : `${d.mail}: off.`,
+                  c.driveCapable ? `${d.drive}: read + export.` : `${d.drive}: off.`,
                 ].join(' ')}
                 {' '}{c.grants.length === 0 ? 'No agents have access yet — grant it per agent on their Skills & tools tab.' : `Granted to ${new Set(c.grants.map((g) => g.agentId)).size} agent(s).`}
               </div>
             </div>
             {!c.writeCapable && (
-              <button onClick={() => connect('write')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable write…</button>
+              <button onClick={() => connect(provider, 'write')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable write…</button>
             )}
             {!c.gmailCapable && (
-              <button onClick={() => connect('gmail')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable Gmail…</button>
+              <button onClick={() => connect(provider, 'gmail')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable {d.mail}…</button>
             )}
             {!c.driveCapable && (
-              <button onClick={() => connect('drive')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable Drive…</button>
+              <button onClick={() => connect(provider, 'drive')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable {d.drive}…</button>
             )}
             <button onClick={async () => {
               if (!window.confirm(`Disconnect ${c.accountEmail}? Agent grants are removed and the token is revoked.`)) return;
@@ -465,29 +488,35 @@ function ConnectionsPane() {
             }} style={{ background: 'none', border: '1px solid var(--red)', color: 'var(--red)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Disconnect</button>
           </div>
         </div>
-      ))}
-      <div style={card}>
-        {google?.configured ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
-            <span style={{ fontSize: 20, flex: 'none' }}>📅</span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 600 }}>Google Calendar</div>
-              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3 }}>Read-only to start — write access is a separate, later grant. You approve which agents can use it.</div>
+        );
+      })}
+      {providers.filter((p) => !conns.some((c) => c.provider === p.provider)).map((p) => {
+        const provider = (p.provider === 'microsoft' ? 'microsoft' : 'google') as 'google' | 'microsoft';
+        const d = PROV_DISPLAY[provider];
+        return (
+        <div key={p.provider} style={card}>
+          {p.configured ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
+              <span style={{ fontSize: 20, flex: 'none' }}>{d.emoji}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{d.connectTitle}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3 }}>Calendar read-only to start — write, {d.mail}, and {d.drive} are separate upgrades. You approve which agents can use it.</div>
+              </div>
+              <button onClick={() => connect(provider)} style={{ background: 'var(--accent)', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 16px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flex: 'none' }}>Connect</button>
             </div>
-            <button onClick={() => connect()} style={{ background: 'var(--accent)', border: 'none', color: '#fff', borderRadius: 8, padding: '8px 16px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', flex: 'none' }}>Connect</button>
-          </div>
-        ) : (
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 600 }}>Google Calendar — not configured</div>
-            <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.65 }}>
-              Self-hosted setups bring their own OAuth client: create one in your Google Cloud project
-              (APIs &amp; Services → Credentials → OAuth client, type &quot;Web application&quot;), add the redirect URI below,
-              then set <span style={mono}>GOOGLE_CLIENT_ID</span> and <span style={mono}>GOOGLE_CLIENT_SECRET</span> in the server environment and restart.
+          ) : (
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{d.connectTitle} — not configured</div>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.65 }}>
+                Self-hosted setups bring their own OAuth client: {d.setupHint}, add the redirect URI below,
+                then set <span style={mono}>{d.envId}</span> and <span style={mono}>{d.envSecret}</span> in the server environment and restart.
+              </div>
+              <div style={{ fontSize: 11.5, marginTop: 8, padding: '7px 10px', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 8, ...mono }}>{p.redirectUri}</div>
             </div>
-            {google && <div style={{ fontSize: 11.5, marginTop: 8, padding: '7px 10px', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 8, ...mono }}>{google.redirectUri}</div>}
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+        );
+      })}
       <div style={{ ...card, fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.6 }}>
         Connections are yours, not your agents&apos;. Tokens stay on the server, sealed at rest, and are never shown to agents or the model —
         agents get a handful of reviewed calendar tools, and only after you grant them per agent.

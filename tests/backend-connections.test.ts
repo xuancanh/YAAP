@@ -14,10 +14,14 @@ const WRITE_SCOPES = '["https://www.googleapis.com/auth/calendar.readonly","http
 const GMAIL_SCOPES = '["https://www.googleapis.com/auth/calendar.readonly","https://www.googleapis.com/auth/gmail.compose"]';
 const DRIVE_SCOPES = '["https://www.googleapis.com/auth/drive.readonly","https://www.googleapis.com/auth/drive.file"]';
 
+const MS_SCOPES = '["openid","email","offline_access","User.Read","Calendars.Read","Calendars.ReadWrite","Mail.ReadWrite","Mail.Send"]';
+
 const configStub = {
   get: (key: string) => ({
     googleClientId: 'test-client',
     googleClientSecret: 'test-secret',
+    msClientId: 'ms-client',
+    msClientSecret: 'ms-secret',
     publicBaseUrl: 'http://localhost:8790',
   })[key],
 } as unknown as ConfigService;
@@ -270,7 +274,7 @@ test('gmail tier: consent URL requests gmail.compose; gmail grants are service-s
 
   // no gmail consent yet → gmail grant refused
   await insertConnection(db);
-  await assert.rejects(svc.setGrant('conn1', 'agent1', 'gmail', 'write'), /no Gmail consent/);
+  await assert.rejects(svc.setGrant('conn1', 'agent1', 'gmail', 'write'), /no mail consent/);
 
   await db.delete(connections);
   await insertConnection(db, { scopes: GMAIL_SCOPES });
@@ -422,6 +426,97 @@ test('action_pending inbox events: approve executes, dismiss does not (M1)', asy
   // wrong agent id cannot resolve someone else's event
   const other = await agentsSvc.addEvent('agent1', { kind: 'action_pending', title: 't', payload: '{"tool":"x"}' });
   await assert.rejects(agentsSvc.resolveActionEvent('agent2', other.id, true, async () => 'x'), /event/);
+});
+
+test('microsoft tiers: consent URLs hit login.microsoftonline.com with per-tier Graph scopes (stretch)', () => {
+  const db = null as never; // startAuth never touches the db
+  const svc = new ConnectionsService(db, configStub);
+  const read = new URL(svc.startAuth('microsoft', 'read').url);
+  assert.match(read.origin + read.pathname, /login\.microsoftonline\.com\/common\/oauth2\/v2\.0\/authorize/);
+  assert.equal(read.searchParams.get('client_id'), 'ms-client');
+  assert.match(read.searchParams.get('scope')!, /Calendars\.Read\b/);
+  assert.doesNotMatch(read.searchParams.get('scope')!, /Calendars\.ReadWrite/);
+  assert.match(read.searchParams.get('redirect_uri')!, /\/api\/connections\/microsoft\/callback$/);
+  const mail = new URL(svc.startAuth('microsoft', 'gmail').url);
+  assert.match(mail.searchParams.get('scope')!, /Mail\.Send/);
+  const drive = new URL(svc.startAuth('microsoft', 'drive').url);
+  assert.match(drive.searchParams.get('scope')!, /Files\.ReadWrite/);
+});
+
+test('microsoft callback exchanges at the MS token endpoint and resolves email from Graph /me', async () => {
+  const { db, svc } = await service();
+  const { url } = svc.startAuth('microsoft', 'read');
+  const state = new URL(url).searchParams.get('state')!;
+  const calls: string[] = [];
+  svc.fetchImpl = (async (u: RequestInfo | URL) => {
+    calls.push(String(u));
+    if (String(u).includes('login.microsoftonline.com')) {
+      return jsonResponse({ access_token: 'ms-at', refresh_token: 'ms-rt', expires_in: 3600, scope: 'openid email offline_access User.Read Calendars.Read' });
+    }
+    return jsonResponse({ mail: null, userPrincipalName: 'user@outlook.com' });
+  }) as typeof fetch;
+  const conn = await svc.handleCallback('microsoft', 'code', state);
+  assert.equal(conn.provider, 'microsoft');
+  assert.equal(conn.accountEmail, 'user@outlook.com');
+  assert.match(calls[0], /login\.microsoftonline\.com\/common\/oauth2\/v2\.0\/token/);
+  assert.match(calls[1], /graph\.microsoft\.com\/v1\.0\/me/);
+  const rows = await db.select().from(connections);
+  assert.equal(open(rows[0].accessToken), 'ms-at');
+  // a google state cannot complete a microsoft callback
+  const gState = new URL(svc.startGoogleAuth('read').url).searchParams.get('state')!;
+  await assert.rejects(svc.handleCallback('microsoft', 'code', gState), /state/);
+});
+
+test('grants are provider-scoped: a microsoft grant exposes only ms tools, alongside google (stretch)', async () => {
+  const { db, svc } = await service();
+  await insertConnection(db, { scopes: WRITE_SCOPES }); // google conn1
+  await insertConnection(db, { id: 'conn2', provider: 'microsoft', accountEmail: 'user@outlook.com', scopes: MS_SCOPES });
+
+  await svc.setGrant('conn2', 'agent1', 'calendar', 'read');
+  assert.deepEqual((await svc.toolSpecs('agent1')).map((s) => s.name).sort(), ['mscal_search', 'mscal_upcoming']);
+  await assert.rejects(svc.execute('agent1', 'gcal_upcoming', {}), /no connection grant/);
+
+  // both providers granted at once: each tool runs against its own connection
+  await svc.setGrant('conn1', 'agent1', 'calendar', 'write');
+  const names = (await svc.toolSpecs('agent1')).map((s) => s.name).sort();
+  assert.deepEqual(names, ['gcal_create_event', 'gcal_freebusy', 'gcal_search', 'gcal_upcoming', 'gcal_update_event', 'mscal_search', 'mscal_upcoming']);
+
+  // ms write/mail grants gate the mutating graph tools
+  await svc.setGrant('conn2', 'agent1', 'calendar', 'write');
+  await svc.setGrant('conn2', 'agent1', 'gmail', 'write');
+  const ms = (await svc.toolSpecs('agent1')).map((s) => s.name).filter((n) => n.startsWith('ms')).sort();
+  assert.deepEqual(ms, ['mscal_create_event', 'mscal_search', 'mscal_upcoming', 'mscal_update_event', 'msmail_draft', 'msmail_send']);
+  // outlook send is the confirm-always class, drafts are not
+  assert.equal(svc.isConfirmAlways('msmail_send'), true);
+  assert.equal(svc.isConfirmAlways('msmail_draft'), false);
+});
+
+test('mscal_create_event posts to Graph with the provenance stamp; msmail_send hits sendMail (stretch)', async () => {
+  const { db, svc } = await service();
+  await insertConnection(db, { id: 'conn2', provider: 'microsoft', accountEmail: 'user@outlook.com', scopes: MS_SCOPES });
+  await svc.setGrant('conn2', 'agent1', 'calendar', 'write');
+  await svc.setGrant('conn2', 'agent1', 'gmail', 'write');
+  const sent: Array<{ url: string; method?: string; body?: string }> = [];
+  svc.fetchImpl = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    sent.push({ url: String(url), method: init?.method, body: init?.body ? String(init.body) : undefined });
+    return jsonResponse({ id: 'ev1', subject: 'Dentist', isAllDay: true, start: { dateTime: '2026-08-05T00:00:00' }, end: { dateTime: '2026-08-06T00:00:00' } });
+  }) as typeof fetch;
+
+  const out = await svc.execute('agent1', 'mscal_create_event', { title: 'Dentist', start: '2026-08-05' });
+  assert.match(out, /Event created/);
+  assert.equal(sent[0].method, 'POST');
+  assert.match(sent[0].url, /graph\.microsoft\.com\/v1\.0\/me\/events/);
+  const body = JSON.parse(sent[0].body!) as { subject: string; isAllDay: boolean; body: { content: string } };
+  assert.equal(body.subject, 'Dentist');
+  assert.equal(body.isAllDay, true);
+  assert.match(body.body.content, /\[created by an agent via yaam\]/);
+
+  const out2 = await svc.execute('agent1', 'msmail_send', { to: 'a@b.co', subject: 'Go', body: 'now' });
+  assert.match(out2, /Email sent/);
+  assert.match(sent[1].url, /graph\.microsoft\.com\/v1\.0\/me\/sendMail/);
+  const mail = JSON.parse(sent[1].body!) as { message: { toRecipients: Array<{ emailAddress: { address: string } }> }; saveToSentItems: boolean };
+  assert.equal(mail.message.toRecipients[0].emailAddress.address, 'a@b.co');
+  assert.equal(mail.saveToSentItems, true);
 });
 
 test('remove revokes at the provider and deletes grants', async () => {

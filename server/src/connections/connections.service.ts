@@ -24,16 +24,74 @@ import { newId, nowIso } from '../common/ids.util';
 import { seal, open } from '../common/secretbox';
 import { AiToolSpec } from '../ai/ai-provider.interface';
 import {
-  CONNECTION_TOOLS, ConnectionRow, ConnectionService as ServiceName, GOOGLE_AUTH_URL,
-  GOOGLE_BASE_SCOPES, GOOGLE_DRIVE_SCOPES, GOOGLE_GMAIL_SCOPES, GOOGLE_READ_SCOPES,
-  GOOGLE_REVOKE_URL, GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL, GOOGLE_WRITE_SCOPES,
-  GoogleHttp, hasDriveScopes, hasGmailScopes, hasWriteScopes,
+  CONNECTION_TOOLS, ConnectionRow, ConnectionProvider as ProviderName,
+  ConnectionService as ServiceName, GOOGLE_AUTH_URL, GOOGLE_BASE_SCOPES,
+  GOOGLE_DRIVE_SCOPES, GOOGLE_GMAIL_SCOPES, GOOGLE_READ_SCOPES, GOOGLE_REVOKE_URL,
+  GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL, GOOGLE_WRITE_SCOPES,
+  MS_AUTH_URL, MS_BASE_SCOPES, MS_DRIVE_SCOPES, MS_MAIL_SCOPES, MS_READ_SCOPES,
+  MS_TOKEN_URL, MS_USERINFO_URL, MS_WRITE_SCOPES,
+  GoogleHttp, capabilitiesFor,
 } from './connections.tools';
 
 type GrantRow = typeof connectionGrants.$inferSelect;
 
 export type GrantLevel = 'read' | 'write';
 export type ScopeTier = 'read' | 'write' | 'gmail' | 'drive';
+
+/** Per-provider OAuth shape: endpoints, tier scopes, account resolution. */
+interface ProviderMeta {
+  authUrl: string;
+  tokenUrl: string;
+  revokeUrl?: string;
+  userinfoUrl: string;
+  emailFrom: (info: Record<string, unknown>) => string;
+  tierScopes: (tier: ScopeTier) => string[];
+  extraAuthParams: Record<string, string>;
+  configKeys: { id: string; secret: string };
+  configHint: string;
+}
+
+const PROVIDERS: Record<ProviderName, ProviderMeta> = {
+  google: {
+    authUrl: GOOGLE_AUTH_URL,
+    tokenUrl: GOOGLE_TOKEN_URL,
+    revokeUrl: GOOGLE_REVOKE_URL,
+    userinfoUrl: GOOGLE_USERINFO_URL,
+    emailFrom: (info) => String(info.email ?? ''),
+    tierScopes: (tier) => tier === 'write' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_WRITE_SCOPES]
+      : tier === 'gmail' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_GMAIL_SCOPES]
+        : tier === 'drive' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_DRIVE_SCOPES]
+          : [...GOOGLE_BASE_SCOPES, ...GOOGLE_READ_SCOPES],
+    // Incremental auth: Google unions these scopes with prior consents,
+    // so a write upgrade keeps calendar.readonly without re-listing it.
+    extraAuthParams: { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true' },
+    configKeys: { id: 'googleClientId', secret: 'googleClientSecret' },
+    configHint: 'set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET',
+  },
+  microsoft: {
+    authUrl: MS_AUTH_URL,
+    tokenUrl: MS_TOKEN_URL,
+    userinfoUrl: MS_USERINFO_URL,
+    emailFrom: (info) => String(info.mail ?? info.userPrincipalName ?? ''),
+    // Graph consent is cumulative per app+user; each tier requests base +
+    // its own scopes and the stored set merges on callback.
+    tierScopes: (tier) => tier === 'write' ? [...MS_BASE_SCOPES, ...MS_WRITE_SCOPES]
+      : tier === 'gmail' ? [...MS_BASE_SCOPES, ...MS_MAIL_SCOPES]
+        : tier === 'drive' ? [...MS_BASE_SCOPES, ...MS_DRIVE_SCOPES]
+          : [...MS_BASE_SCOPES, ...MS_READ_SCOPES],
+    extraAuthParams: { prompt: 'select_account' },
+    configKeys: { id: 'msClientId', secret: 'msClientSecret' },
+    configHint: 'set MS_CLIENT_ID and MS_CLIENT_SECRET',
+  },
+};
+
+export function isProviderName(v: string): v is ProviderName {
+  return v === 'google' || v === 'microsoft';
+}
+
+/** Outbound provider API calls time out so a stalled-but-open connection
+ *  cannot hang a turn (and the chat busy lock) forever. */
+const HTTP_TIMEOUT_MS = 30_000;
 
 export interface ConnectionInfo {
   id: string;
@@ -52,8 +110,8 @@ export interface ConnectionInfo {
 
 @Injectable()
 export class ConnectionsService implements GoogleHttp {
-  /** Pending OAuth states: nonce → createdAt (10-minute window). */
-  private readonly pendingStates = new Map<string, number>();
+  /** Pending OAuth states: nonce → provider + createdAt (10-minute window). */
+  private readonly pendingStates = new Map<string, { provider: ProviderName; at: number }>();
   /** Test seam. */
   fetchImpl: typeof fetch = fetch;
 
@@ -62,16 +120,19 @@ export class ConnectionsService implements GoogleHttp {
     private readonly config: ConfigService,
   ) {}
 
-  private google(): { clientId: string; clientSecret: string; redirectUri: string } {
-    const clientId = this.config.get<string>('googleClientId') ?? '';
-    const clientSecret = this.config.get<string>('googleClientSecret') ?? '';
+  private oauthClient(provider: ProviderName): { clientId: string; clientSecret: string; redirectUri: string } {
+    const meta = PROVIDERS[provider];
+    const clientId = this.config.get<string>(meta.configKeys.id) ?? '';
+    const clientSecret = this.config.get<string>(meta.configKeys.secret) ?? '';
     const base = this.config.get<string>('publicBaseUrl') ?? 'http://localhost:8790';
-    return { clientId, clientSecret, redirectUri: `${base}/api/connections/google/callback` };
+    return { clientId, clientSecret, redirectUri: `${base}/api/connections/${provider}/callback` };
   }
 
   providers(): Array<{ provider: string; configured: boolean; redirectUri: string }> {
-    const g = this.google();
-    return [{ provider: 'google', configured: !!(g.clientId && g.clientSecret), redirectUri: g.redirectUri }];
+    return (Object.keys(PROVIDERS) as ProviderName[]).map((p) => {
+      const c = this.oauthClient(p);
+      return { provider: p, configured: !!(c.clientId && c.clientSecret), redirectUri: c.redirectUri };
+    });
   }
 
   async list(): Promise<ConnectionInfo[]> {
@@ -79,90 +140,98 @@ export class ConnectionsService implements GoogleHttp {
     const grants = await this.db.select().from(connectionGrants);
     return rows.map((r) => {
       const scopes = JSON.parse(r.scopes) as string[];
+      const caps = capabilitiesFor(r.provider as ProviderName, scopes);
       return {
         id: r.id,
         provider: r.provider,
         accountEmail: r.accountEmail,
         scopes,
-        writeCapable: hasWriteScopes(scopes),
-        gmailCapable: hasGmailScopes(scopes),
-        driveCapable: hasDriveScopes(scopes),
+        ...caps,
         createdAt: r.createdAt,
         grants: grants.filter((g) => g.connectionId === r.id).map((g) => ({ agentId: g.agentId, service: g.service, level: g.level })),
       };
     });
   }
 
-  /** Build the Google consent URL; the client opens it in a popup.
-   *  tier 'read' is the first connect; tier 'write' is the incremental
-   *  re-consent that adds calendar.events on top of existing grants. */
-  startGoogleAuth(tier: ScopeTier = 'read'): { url: string } {
-    const g = this.google();
-    if (!g.clientId || !g.clientSecret) {
-      throw new ConflictException('Google OAuth is not configured — set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET');
+  /** Build a provider consent URL; the client opens it in a popup. tier
+   *  'read' is the first connect; the other tiers are incremental
+   *  re-consents layered onto the same connection. */
+  startAuth(provider: ProviderName, tier: ScopeTier = 'read'): { url: string } {
+    const meta = PROVIDERS[provider];
+    const c = this.oauthClient(provider);
+    if (!c.clientId || !c.clientSecret) {
+      throw new ConflictException(`${provider} OAuth is not configured — ${meta.configHint}`);
     }
     const state = randomBytes(16).toString('base64url');
-    this.pendingStates.set(state, Date.now());
-    for (const [s, at] of this.pendingStates) if (Date.now() - at > 600_000) this.pendingStates.delete(s);
-    const scopes = tier === 'write' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_WRITE_SCOPES]
-      : tier === 'gmail' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_GMAIL_SCOPES]
-        : tier === 'drive' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_DRIVE_SCOPES]
-          : [...GOOGLE_BASE_SCOPES, ...GOOGLE_READ_SCOPES];
-    const url = `${GOOGLE_AUTH_URL}?${new URLSearchParams({
-      client_id: g.clientId,
-      redirect_uri: g.redirectUri,
+    this.pendingStates.set(state, { provider, at: Date.now() });
+    for (const [s, p] of this.pendingStates) if (Date.now() - p.at > 600_000) this.pendingStates.delete(s);
+    const url = `${meta.authUrl}?${new URLSearchParams({
+      client_id: c.clientId,
+      redirect_uri: c.redirectUri,
       response_type: 'code',
-      scope: scopes.join(' '),
-      access_type: 'offline',
-      prompt: 'consent',
-      // Incremental auth: Google unions these scopes with prior consents,
-      // so a write upgrade keeps calendar.readonly without re-listing it.
-      include_granted_scopes: 'true',
+      scope: meta.tierScopes(tier).join(' '),
+      ...meta.extraAuthParams,
       state,
     })}`;
     return { url };
   }
 
-  /** OAuth callback: exchange the code, resolve the account, upsert.
-   *  On re-consent the token response's scope string is the union of all
-   *  grants, so the stored scopes upgrade automatically. */
-  async handleGoogleCallback(code: string, state: string): Promise<ConnectionInfo> {
-    if (!this.pendingStates.delete(state)) throw new ConflictException('unknown or expired OAuth state');
-    const g = this.google();
-    const tokenRes = await this.fetchImpl(GOOGLE_TOKEN_URL, {
+  /** Back-compat alias (older tests/clients). */
+  startGoogleAuth(tier: ScopeTier = 'read'): { url: string } {
+    return this.startAuth('google', tier);
+  }
+
+  /** OAuth callback: exchange the code, resolve the account, upsert. Stored
+   *  scopes merge with prior consents, so re-consent upgrades in place. */
+  async handleCallback(provider: ProviderName, code: string, state: string): Promise<ConnectionInfo> {
+    const pending = this.pendingStates.get(state);
+    if (!pending || pending.provider !== provider) throw new ConflictException('unknown or expired OAuth state');
+    this.pendingStates.delete(state);
+    const meta = PROVIDERS[provider];
+    const c = this.oauthClient(provider);
+    const tokenRes = await this.fetchImpl(meta.tokenUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        code, client_id: g.clientId, client_secret: g.clientSecret,
-        redirect_uri: g.redirectUri, grant_type: 'authorization_code',
+        code, client_id: c.clientId, client_secret: c.clientSecret,
+        redirect_uri: c.redirectUri, grant_type: 'authorization_code',
       }),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     if (!tokenRes.ok) throw new ConflictException(`token exchange failed: ${tokenRes.status} ${(await tokenRes.text()).slice(0, 200)}`);
     const tok = await tokenRes.json() as { access_token: string; refresh_token?: string; expires_in?: number; scope?: string };
 
-    const infoRes = await this.fetchImpl(GOOGLE_USERINFO_URL, { headers: { authorization: `Bearer ${tok.access_token}` } });
-    const info = infoRes.ok ? await infoRes.json() as { email?: string } : {};
-    const email = info.email ?? '';
+    const infoRes = await this.fetchImpl(meta.userinfoUrl, {
+      headers: { authorization: `Bearer ${tok.access_token}` },
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    const info = infoRes.ok ? await infoRes.json() as Record<string, unknown> : {};
+    const email = meta.emailFrom(info);
 
     const existing = (await this.db.select().from(connections)
-      .where(and(eq(connections.provider, 'google'), eq(connections.accountEmail, email)))).at(0);
+      .where(and(eq(connections.provider, provider), eq(connections.accountEmail, email)))).at(0);
     const returned = (tok.scope ?? '').split(' ').filter(Boolean);
     const prior = existing ? (JSON.parse(existing.scopes) as string[]) : [];
-    const scopes = [...new Set([...prior, ...(returned.length ? returned : [...GOOGLE_BASE_SCOPES, ...GOOGLE_READ_SCOPES])])];
+    const scopes = [...new Set([...prior, ...(returned.length ? returned : meta.tierScopes('read'))])];
     const row: ConnectionRow = {
       id: existing?.id ?? newId(),
-      provider: 'google',
+      provider,
       accountEmail: email,
       scopes: JSON.stringify(scopes),
       accessToken: seal(tok.access_token),
-      // Google only returns a refresh token on first consent; keep the old one.
+      // Providers only return a refresh token on first consent; keep the old one.
       refreshToken: tok.refresh_token ? seal(tok.refresh_token) : (existing?.refreshToken ?? ''),
       expiresAt: new Date(Date.now() + (tok.expires_in ?? 3600) * 1000).toISOString(),
       createdAt: existing?.createdAt ?? nowIso(),
     };
     if (existing) await this.db.update(connections).set(row).where(eq(connections.id, existing.id));
     else await this.db.insert(connections).values(row);
-    return (await this.list()).find((c) => c.id === row.id)!;
+    return (await this.list()).find((c2) => c2.id === row.id)!;
+  }
+
+  /** Back-compat alias (older tests/clients). */
+  handleGoogleCallback(code: string, state: string): Promise<ConnectionInfo> {
+    return this.handleCallback('google', code, state);
   }
 
   /** Disconnect: best-effort revoke at the provider, then delete row + grants. */
@@ -170,8 +239,12 @@ export class ConnectionsService implements GoogleHttp {
     const row = (await this.db.select().from(connections).where(eq(connections.id, id))).at(0);
     if (!row) throw new NotFoundException(`connection ${id}`);
     const token = row.refreshToken || row.accessToken;
-    if (token) {
-      await this.fetchImpl(`${GOOGLE_REVOKE_URL}?token=${encodeURIComponent(open(token))}`, { method: 'POST' }).catch(() => undefined);
+    const revokeUrl = PROVIDERS[row.provider as ProviderName]?.revokeUrl;
+    if (token && revokeUrl) {
+      await this.fetchImpl(`${revokeUrl}?token=${encodeURIComponent(open(token))}`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+      }).catch(() => undefined);
     }
     await this.db.delete(connectionGrants).where(eq(connectionGrants.connectionId, id));
     await this.db.delete(connections).where(eq(connections.id, id));
@@ -183,17 +256,17 @@ export class ConnectionsService implements GoogleHttp {
   async setGrant(connectionId: string, agentId: string, service: ServiceName, level: GrantLevel): Promise<{ ok: boolean }> {
     const row = (await this.db.select().from(connections).where(eq(connections.id, connectionId))).at(0);
     if (!row) throw new NotFoundException(`connection ${connectionId}`);
-    const scopes = JSON.parse(row.scopes) as string[];
-    if (service === 'calendar' && level === 'write' && !hasWriteScopes(scopes)) {
+    const caps = capabilitiesFor(row.provider as ProviderName, JSON.parse(row.scopes) as string[]);
+    if (service === 'calendar' && level === 'write' && !caps.writeCapable) {
       throw new ConflictException('this connection has read-only consent — enable write access in Settings → Connections first');
     }
     if (service === 'gmail') {
-      if (!hasGmailScopes(scopes)) {
-        throw new ConflictException('this connection has no Gmail consent — enable Gmail in Settings → Connections first');
+      if (!caps.gmailCapable) {
+        throw new ConflictException('this connection has no mail consent — enable it in Settings → Connections first');
       }
-      if (level !== 'write') throw new ConflictException('gmail tools are all write-level — grant level must be write');
+      if (level !== 'write') throw new ConflictException('mail tools are all write-level — grant level must be write');
     }
-    if (service === 'drive' && !hasDriveScopes(scopes)) {
+    if (service === 'drive' && !caps.driveCapable) {
       throw new ConflictException('this connection has no Drive consent — enable Drive in Settings → Connections first');
     }
     const existing = (await this.db.select().from(connectionGrants)
@@ -218,22 +291,23 @@ export class ConnectionsService implements GoogleHttp {
     return { ok: true };
   }
 
-  /** The literal tools an agent would gain per service and grant level —
-   *  shown in the activation review (permissions: approve the real artifact). */
-  toolCatalog(): Array<{ name: string; description: string; service: string; level: string }> {
-    return CONNECTION_TOOLS.map((t) => ({ name: t.name, description: t.description ?? '', service: t.service, level: t.level }));
+  /** The literal tools an agent would gain per provider, service, and grant
+   *  level — shown in the activation review (permissions: approve the real
+   *  artifact). */
+  toolCatalog(): Array<{ name: string; description: string; provider: string; service: string; level: string }> {
+    return CONNECTION_TOOLS.map((t) => ({ name: t.name, description: t.description ?? '', provider: t.provider, service: t.service, level: t.level }));
   }
 
   // ---- turn-loop integration ----
 
-  /** Connection tools visible to one agent: only services with a grant, and
-   *  within a service only the tools its level covers (write implies read). */
+  /** Connection tools visible to one agent: only providers + services with a
+   *  grant, and within a service only the tools its level covers (write
+   *  implies read). */
   async toolSpecs(agentId: string): Promise<AiToolSpec[]> {
-    const granted = await this.grantedConnection(agentId);
-    if (!granted) return [];
+    const granted = await this.grantedConnections(agentId);
     return CONNECTION_TOOLS
       .filter((t) => {
-        const level = granted.levels[t.service];
+        const level = granted[t.provider]?.levels[t.service];
         return level !== undefined && (t.level === 'read' || level === 'write');
       })
       .map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
@@ -257,10 +331,10 @@ export class ConnectionsService implements GoogleHttp {
     const tool = CONNECTION_TOOLS.find((t) => t.name === name);
     if (!tool) throw new Error(`unknown tool: ${name}`);
     if (!agentId) throw new Error('connection tools are available to durable agents with a granted connection only');
-    const granted = await this.grantedConnection(agentId);
+    const granted = (await this.grantedConnections(agentId))[tool.provider];
     const level = granted?.levels[tool.service];
     if (!granted || level === undefined) {
-      throw new Error(`no connection grant: the user has not granted this agent ${tool.service} access — grants live on the agent's Skills & tools tab`);
+      throw new Error(`no connection grant: the user has not granted this agent ${tool.service} access on ${tool.provider} — grants live on the agent's Skills & tools tab`);
     }
     if (tool.level === 'write' && level !== 'write') {
       throw new Error(`no write grant: the user granted read access only — ${name} needs a write grant on the agent's Skills & tools tab`);
@@ -269,16 +343,19 @@ export class ConnectionsService implements GoogleHttp {
     return tool.execute(granted.conn, input, this, { agentName: agent?.name ?? 'an agent' });
   }
 
-  private async grantedConnection(agentId: string): Promise<{ conn: ConnectionRow; levels: Partial<Record<ServiceName, GrantLevel>> } | undefined> {
+  /** All connections this agent may use, keyed by provider, with per-service
+   *  grant levels. An agent can hold grants on google and microsoft at once. */
+  private async grantedConnections(agentId: string): Promise<Partial<Record<ProviderName, { conn: ConnectionRow; levels: Partial<Record<ServiceName, GrantLevel>> }>>> {
     const grants: GrantRow[] = await this.db.select().from(connectionGrants).where(eq(connectionGrants.agentId, agentId));
-    if (grants.length === 0) return undefined;
-    const row = (await this.db.select().from(connections).where(eq(connections.id, grants[0].connectionId))).at(0);
-    if (row?.provider !== 'google') return undefined;
-    const levels: Partial<Record<ServiceName, GrantLevel>> = {};
-    for (const g of grants.filter((g) => g.connectionId === row.id)) {
-      levels[g.service as ServiceName] = g.level === 'write' ? 'write' : 'read';
+    if (grants.length === 0) return {};
+    const out: Partial<Record<ProviderName, { conn: ConnectionRow; levels: Partial<Record<ServiceName, GrantLevel>> }>> = {};
+    for (const g of grants) {
+      const row = (await this.db.select().from(connections).where(eq(connections.id, g.connectionId))).at(0);
+      if (!row || !isProviderName(row.provider)) continue;
+      const entry = out[row.provider] ?? (out[row.provider] = { conn: row, levels: {} });
+      if (entry.conn.id === row.id) entry.levels[g.service as ServiceName] = g.level === 'write' ? 'write' : 'read';
     }
-    return { conn: row, levels };
+    return out;
   }
 
   // ---- Google HTTP with refresh ----
@@ -287,20 +364,27 @@ export class ConnectionsService implements GoogleHttp {
     const fresh = conn.expiresAt && new Date(conn.expiresAt).getTime() - Date.now() > 60_000;
     if (fresh && conn.accessToken) return open(conn.accessToken);
     if (!conn.refreshToken) throw new Error('connection has no refresh token — reconnect the account in Settings');
-    const g = this.google();
-    const res = await this.fetchImpl(GOOGLE_TOKEN_URL, {
+    const provider = isProviderName(conn.provider) ? conn.provider : 'google';
+    const c = this.oauthClient(provider);
+    const res = await this.fetchImpl(PROVIDERS[provider].tokenUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        refresh_token: open(conn.refreshToken), client_id: g.clientId,
-        client_secret: g.clientSecret, grant_type: 'refresh_token',
+        refresh_token: open(conn.refreshToken), client_id: c.clientId,
+        client_secret: c.clientSecret, grant_type: 'refresh_token',
       }),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`token refresh failed (${res.status}) — reconnect the account in Settings`);
-    const tok = await res.json() as { access_token: string; expires_in?: number };
+    const tok = await res.json() as { access_token: string; refresh_token?: string; expires_in?: number };
     const expiresAt = new Date(Date.now() + (tok.expires_in ?? 3600) * 1000).toISOString();
     await this.db.update(connections)
-      .set({ accessToken: seal(tok.access_token), expiresAt })
+      .set({
+        accessToken: seal(tok.access_token),
+        // Microsoft rotates refresh tokens on use; keep the newest.
+        ...(tok.refresh_token ? { refreshToken: seal(tok.refresh_token) } : {}),
+        expiresAt,
+      })
       .where(eq(connections.id, conn.id));
     conn.accessToken = seal(tok.access_token);
     conn.expiresAt = expiresAt;
@@ -309,7 +393,10 @@ export class ConnectionsService implements GoogleHttp {
 
   async googleGet(conn: ConnectionRow, url: string): Promise<unknown> {
     const token = await this.accessToken(conn);
-    const res = await this.fetchImpl(url, { headers: { authorization: `Bearer ${token}` } });
+    const res = await this.fetchImpl(url, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`google api error ${res.status}: ${(await res.text()).slice(0, 300)}`);
     return res.json();
   }
@@ -320,7 +407,10 @@ export class ConnectionsService implements GoogleHttp {
 
   async googleGetText(conn: ConnectionRow, url: string, maxBytes: number): Promise<string> {
     const token = await this.accessToken(conn);
-    const res = await this.fetchImpl(url, { headers: { authorization: `Bearer ${token}` } });
+    const res = await this.fetchImpl(url, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`google api error ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const text = await res.text();
     if (text.includes('\u0000')) throw new Error('file is binary — only text files and Google Docs/Sheets/Slides can be read');
@@ -329,6 +419,17 @@ export class ConnectionsService implements GoogleHttp {
 
   async googleUpload(conn: ConnectionRow, url: string, metadata: unknown, mediaType: string, media: string): Promise<unknown> {
     const token = await this.accessToken(conn);
+    // No metadata part = a plain content upload (OneDrive simple upload).
+    if (metadata === null) {
+      const res = await this.fetchImpl(url, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${token}`, 'content-type': mediaType },
+        body: media,
+        signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+      });
+      if (!res.ok) throw new Error(`api error ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      return res.json();
+    }
     const boundary = `yaam-${randomBytes(12).toString('hex')}`;
     const body = [
       `--${boundary}`,
@@ -346,6 +447,7 @@ export class ConnectionsService implements GoogleHttp {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/related; boundary=${boundary}` },
       body,
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`google api error ${res.status}: ${(await res.text()).slice(0, 300)}`);
     return res.json();
@@ -361,6 +463,7 @@ export class ConnectionsService implements GoogleHttp {
       method,
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`google api error ${res.status}: ${(await res.text()).slice(0, 300)}`);
     return res.json();
