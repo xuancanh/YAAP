@@ -1,6 +1,8 @@
 # Shared accounts across the product suite: one domain package, one front door, no new microservice
 
-Status: review + plan. Spans five repos (`smart-knowledge-app`,
+Status: **phases 0 and 1 shipped** in `knowledge-loom-ee` (commit `81d6723`);
+phases 2–5 remain planned. One design claim in §5 was wrong and is corrected
+below where it appears. Spans five repos (`smart-knowledge-app`,
 `grove-server`, `knowledge-loom-ee`, `knowledge-loom-landing`,
 `knowledge-loom-admin`) plus `yaam-chat`. The question asked was whether
 account management, payment, and other shared functions should be refactored
@@ -136,7 +138,7 @@ Supabase, and no new service on the request path.**
 
 ## 5. The plan
 
-### Phase 0 — Reconcile identity *(urgent, independent of the rest)*
+### Phase 0 — Reconcile identity *(done)*
 Introduce a canonical account id and stop minting `em:` rows as if they were
 accounts. Concretely: keep the pre-signup record, but mark it **pending** and
 unverified; on first authenticated request, link the verified email from the
@@ -147,8 +149,15 @@ as an **incident to log and quarantine**, not a cue to invent an identity from
 
 This is a few days and it stops the silent under-delivery of paid plans.
 
-### Phase 1 — `@loom/accounts`
-A package owning the account domain, mounted like any other extension:
+### Phase 1 — the account domain *(done, in-repo rather than as a package)*
+
+*(shipped as: `server/src/extensions/accounts/` inside `knowledge-loom-ee`,
+not a separate `@loom/accounts` package. Every consumer today — billing,
+usage, admin — lives in that one repo, so publishing it would have added a
+release cycle without a second consumer to justify it. Extraction stays easy:
+the service takes only a `ConfigService` and talks to `EeDb`.)*
+
+The account domain, mounted like any other extension:
 
 - `accounts` — id, primary email, name, status, createdAt
 - `account_identities` — (provider, subject) → accountId, so Supabase is *an*
@@ -157,12 +166,35 @@ A package owning the account domain, mounted like any other extension:
 - `entitlements` — plan, seats, status, source, valid-through, per account
 - `AccountsService` for other modules to inject; `AccountsModule` to mount
 
-`AuthStrategy` implementations keep returning a subject; the guard resolves
-subject → accountId once per request and `@CurrentUser()` starts meaning
-"account", not "whatever the IdP called them". `ee_subscriptions` moves behind
-this rather than being read directly.
+**Correction — the guard must not do this.** The plan said the guard should
+resolve subject → accountId and `@CurrentUser()` should start meaning
+"account". Reading the core disproved it: `ApiAuthGuard` puts the strategy's
+return value on `request.userId`, and that value **is the data-partition key**
+for every note, space, and Grove row (`scopeFor(userId, spaceId)`). Remapping
+it would orphan all application data behind a migration across every table in
+two products.
 
-### Phase 2 — Billing onto accounts
+So the split is: **the subject stays the data-scope key; the account owns only
+entitlements and billing.** Different questions, different keys. Callers that
+need entitlements resolve `subject → account` at that boundary — one extra
+indexed lookup, cached on the quota path. This also means the core needed no
+change at all, which is why phase 1 landed without touching
+`smart-knowledge-app`.
+
+Two ordering hazards, both found while building and both covered by tests:
+a quota check only ever sees the subject, so it can link an identity *before*
+the first request carrying a verified email — a later verified email must
+still be able to claim the pending account. And signups must stay visible to
+staff: the admin customers view became account-centric rather than
+subscription-only, since a pending account has no subscription row.
+
+### Phase 2 — Billing onto accounts *(partly done)*
+
+*(done already: the Stripe webhook no longer invents an identity from
+`customer_details.email` — it resolves by session metadata, then by linked
+Stripe customer, and otherwise logs and quarantines the session. `signup`
+moved out of billing into accounts. Still to do: keying Stripe customers on
+accounts from the start, and moving `plans.ts` into the shared domain.)*
 Stripe customers and subscriptions key on `accountId`, never on an email
 string. Webhooks resolve by `stripe_customer_id → account_identities` with
 metadata as a cross-check. `signup` moves out of the billing controller into
@@ -234,15 +266,31 @@ makes every phase after it easier to land safely.
 A reasonable first cut is **Phase 0 + Phase 1**: stop losing paid plans, then
 give the suite an account to hang everything else on.
 
-## 8. Where this lives in code
+## 8. What shipped, and what it cost
+
+Phases 0 and 1 are one commit in `knowledge-loom-ee`: `ee_accounts` +
+`ee_account_identities`, an `AccountsService` that resolves and reconciles,
+signup creating a pending account instead of an entitlement row, quotas and
+the subscription endpoint reading the account, the Stripe webhook quarantining
+what it cannot attribute, and the admin console showing accounts rather than
+only subscriptions. 35 tests pass, 8 of them new and all on the reconciliation
+paths — including the merge that prefers a paid row over a free one, which is
+the exact failure that started this.
+
+No change to `smart-knowledge-app` or `grove-server` was needed, which is the
+strongest evidence that the seams they already had were the right ones.
+
+## 9. Where this lives in code
 
 - `smart-knowledge-app/server/src/auth/` — `AuthStrategy`, `ApiAuthGuard`,
   `AuthModule.forRoot`; the seam every product already uses
 - `smart-knowledge-app/src/lib/extensions.ts` — the frontend auth adapter seam
 - `grove-server/src/grove.module.ts` — the reference consumer
 - `knowledge-loom-ee/server/src/main.ts` — the composition root
-- `knowledge-loom-ee/server/src/extensions/billing/` — `signup` and the `em:`
-  identity mint (Phase 0), `plans.ts` (moves in Phase 2)
+- `knowledge-loom-ee/server/src/extensions/accounts/accounts.service.ts` —
+  the account domain, resolution, and subscription reconciliation
+- `knowledge-loom-ee/server/src/extensions/billing/` — `signup` now creates a
+  pending account; `plans.ts` moves in Phase 2
 - `knowledge-loom-ee/server/src/extensions/auth/supabase-auth.strategy.ts` —
   becomes one identity provider among several
 - `knowledge-loom-ee/server/src/extensions/db/ee-db.ts` — where the accounts
