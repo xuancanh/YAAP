@@ -23,8 +23,15 @@ const drizzleProvider = {
   provide: DRIZZLE_DB,
   inject: [ConfigService],
   useFactory: async (config: ConfigService): Promise<DrizzleDb> => {
+    const logger = new Logger('DatabaseModule');
     const pool = new Pool({ connectionString: config.get<string>('databaseUrl')! });
-    await runPgMigrations(pool, new Logger('DatabaseModule'));
+    // node-postgres emits 'error' on idle-client failures (DB restart,
+    // network blip); without a listener the EventEmitter throws and kills
+    // the process.
+    pool.on('error', (err) => {
+      logger.error(`idle pg client error: ${err.message}`);
+    });
+    await runPgMigrations(pool, logger);
     return drizzle(pool, { schema });
   },
 };

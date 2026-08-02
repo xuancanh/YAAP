@@ -92,6 +92,17 @@ test('non-matching minute does not fire', async () => {
   assert.equal((await repo.listSessions(ws.id)).length, 0);
 });
 
+test('a tick that hits a DB error is logged and swallowed, not an unhandled rejection', async () => {
+  const { workspaces, repo, turns, distill } = await setup([]);
+  const failingAgents = {
+    list: async () => { throw new Error('connection terminated'); },
+  } as unknown as AgentsService;
+  const config = { get: () => false } as unknown as ConfigService;
+  const loops = new LoopsService(failingAgents, workspaces, repo, turns, distill, config);
+  // 3:05 avoids the 10-minute distill sweep; the failure is agents.list().
+  await loops.tick(new Date(2026, 6, 16, 3, 5)); // resolves instead of rejecting
+});
+
 test('distill appends bounded journal + lesson entries to the brain (FR-11.4)', async () => {
   const distillRound: AiStreamEvent[] = [
     { type: 'answer', text: 'JOURNAL: Shipped the draft-flush change; tests green.\nLESSON: Always take the busy lock before rewriting history — a flush raced compaction.' },

@@ -323,4 +323,10 @@ export async function runPgMigrations(db: Queryable, logger: { log: (msg: string
     await db.query('INSERT INTO __migrations ("id", "appliedAt") VALUES ($1, $2)', [m.id, new Date().toISOString()]);
     logger.log(`applied migration ${m.id}`);
   }
+  // Data repair on every boot (not a tracked migration): turns are created
+  // 'running' and finalized in-process, so a crash mid-turn orphans them.
+  // Reap them to 'error' so they stop rendering as live.
+  const reaped = await db.query(`UPDATE chat_turns SET "status" = 'error' WHERE "status" = 'running'`);
+  const reapedCount = (reaped as { rowCount?: number }).rowCount ?? 0;
+  if (reapedCount > 0) logger.log(`reaped ${reapedCount} orphaned running turn(s)`);
 }

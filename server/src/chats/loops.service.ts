@@ -44,7 +44,18 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.timer);
   }
 
+  /** The interval fire-and-forgets tick, so a rejection here (e.g. the DB
+   *  dropping under agents.list()) must be caught — an unhandled rejection
+   *  terminates Node ≥15. Per-loop failures are already isolated below. */
   async tick(now: Date): Promise<void> {
+    try {
+      await this.tickInner(now);
+    } catch (err) {
+      this.logger.warn(`tick failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  private async tickInner(now: Date): Promise<void> {
     // auto-distillation (roadmap phase 1): every 10 minutes, distill agent
     // sessions that went idle with undistilled work.
     if (now.getMinutes() % 10 === 0) {
