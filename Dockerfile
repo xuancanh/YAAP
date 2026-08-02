@@ -21,7 +21,7 @@
 # is not needed at runtime.
 
 # ---- build stage: full toolchain, compiles server (tsc) + frontend (vite) ----
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -33,7 +33,7 @@ COPY server ./server
 RUN npm run build
 
 # ---- runtime stage: production deps + compiled output only ----
-FROM node:22-alpine AS runtime
+FROM node:26-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY package.json package-lock.json ./
