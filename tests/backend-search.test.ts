@@ -41,3 +41,19 @@ test('empty query returns nothing; ILIKE wildcards are escaped', async () => {
   const none = await search.search('ws1', '10_%');
   assert.equal(none.messages.length, 0);
 });
+
+test('message search is full-text: multi-word queries AND via tsvector', async () => {
+  const { repo, search } = await setup();
+  const s = await repo.createSession({ workspaceId: 'ws1', name: 'fts' });
+  await repo.appendMessage({ sessionId: s.id, turnId: 't1', role: 'assistant', content: 'Deploy the kubernetes cluster with three nodes.' });
+  await repo.appendMessage({ sessionId: s.id, turnId: 't1', role: 'assistant', content: 'kubernetes mentioned alone, nothing else relevant' });
+
+  // tsvector semantics: both words present but not adjacent — a substring
+  // ILIKE over the phrase would miss this message entirely
+  const res = await search.search('ws1', 'kubernetes nodes');
+  assert.equal(res.messages.length, 1);
+  assert.match(res.messages[0].snippet, /Deploy the kubernetes cluster/);
+
+  // a word absent from the transcript knocks the match out
+  assert.equal((await search.search('ws1', 'kubernetes nonexistentword')).messages.length, 0);
+});

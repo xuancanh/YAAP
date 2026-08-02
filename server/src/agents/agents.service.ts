@@ -5,7 +5,7 @@
  * follow-up work; this scaffold owns the profile CRUD and pending feedback.
  */
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { agents, agentEvents, agentTasks, chatSessions, chatTurns } from '../database/schema';
@@ -366,9 +366,26 @@ export class AgentsService {
     return { ok: true };
   }
 
+  /** Per-agent append queues: a brain-file append is get-modify-put against
+   *  storage with no concurrency control, so two distills racing the same
+   *  agent would lose an entry. Queued (not rejected, unlike ChatLocks) —
+   *  an append must never be dropped. */
+  private readonly brainAppends = new Map<string, Promise<void>>();
+
   /** Size-bounded append to a brain file (FR-11.4): the append is capped and
    *  the file keeps only its newest tail once it outgrows the bound. */
   private async appendBrainFile(agentId: string, file: string, entry: string, header: string): Promise<void> {
+    const prev = this.brainAppends.get(agentId) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(() => this.writeBrainFile(agentId, file, entry, header));
+    this.brainAppends.set(agentId, next);
+    try {
+      await next;
+    } finally {
+      if (this.brainAppends.get(agentId) === next) this.brainAppends.delete(agentId);
+    }
+  }
+
+  private async writeBrainFile(agentId: string, file: string, entry: string, header: string): Promise<void> {
     const APPEND_CAP = 2_000;
     const FILE_CAP = 100_000;
     const KEEP = 80_000;
@@ -439,13 +456,18 @@ export class AgentsService {
       readAt: null, createdAt: nowIso(),
     };
     await this.db.insert(agentEvents).values(row);
-    // keep the inbox bounded: retain the newest 200 events per agent
-    const all = await this.db.select({ id: agentEvents.id, createdAt: agentEvents.createdAt })
-      .from(agentEvents).where(eq(agentEvents.agentId, agentId));
-    if (all.length > 200) {
-      const doomed = all.sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1)).slice(0, all.length - 200).map((e) => e.id);
-      await this.db.delete(agentEvents).where(inArray(agentEvents.id, doomed));
-    }
+    // keep the inbox bounded: retain the newest 200 events per agent,
+    // SQL-side so every insert doesn't re-read the whole inbox
+    await this.db.execute(sql`
+      DELETE FROM agent_events
+      WHERE "agentId" = ${agentId}
+        AND "id" NOT IN (
+          SELECT "id" FROM agent_events
+          WHERE "agentId" = ${agentId}
+          ORDER BY "createdAt" DESC
+          LIMIT 200
+        )
+    `);
     return row;
   }
 

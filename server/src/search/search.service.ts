@@ -1,14 +1,15 @@
 /**
- * SearchService — workspace-wide search (FR-8.2): chat sessions by name,
- * transcript messages by content (Postgres ILIKE; an index/FTS upgrade can
- * land behind this same API), and workspace files by name. Results are
- * bounded and snippeted around the first match.
+ * SearchService — workspace-wide search (FR-8.2): chat sessions by name
+ * (ILIKE — substring semantics the session list depends on), transcript
+ * messages by content (Postgres FTS via the 0006 GIN tsvector index), and
+ * workspace files by name. Results are bounded and snippeted around the
+ * first match.
  */
 import { Injectable, Inject } from '@nestjs/common';
-import { and, eq, ilike, inArray, or } from 'drizzle-orm';
+import { and, eq, ilike, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { chatMessages, chatSessions } from '../database/schema';
+import { chatSessions } from '../database/schema';
 import { StorageService } from '../storage/storage.service';
 import { workspacePrefix, relativePath } from '../storage/storage.keys';
 
@@ -51,16 +52,24 @@ export class SearchService {
       ))
       .limit(MAX_SESSIONS);
 
-    const wsSessionIds = (await this.db.select({ id: chatSessions.id }).from(chatSessions)
-      .where(eq(chatSessions.workspaceId, workspaceId))).map((r) => r.id);
-
-    const messages = wsSessionIds.length === 0 ? [] : (await this.db.select().from(chatMessages)
-      .where(and(inArray(chatMessages.sessionId, wsSessionIds), ilike(chatMessages.content, like)))
-      .limit(MAX_MESSAGES))
-      .map((m) => ({
-        sessionId: m.sessionId, messageId: m.id, turnId: m.turnId, role: m.role,
-        snippet: snippetAround(m.content, q),
-      }));
+    // Full-text over message content (same pattern as
+    // ChatsRepository.searchAgentMessages — hits the GIN tsvector index);
+    // the join also folds the workspace scoping into the one query.
+    const hits = await this.db.execute(sql`
+      SELECT m."id" AS "messageId", m."sessionId" AS "sessionId", m."turnId" AS "turnId",
+             m."role" AS "role", m."content" AS "content"
+      FROM chat_messages m
+      JOIN chat_sessions s ON s."id" = m."sessionId"
+      WHERE s."workspaceId" = ${workspaceId}
+        AND to_tsvector('english', m."content") @@ plainto_tsquery('english', ${q.slice(0, 200)})
+      LIMIT ${MAX_MESSAGES}
+    `);
+    const messages = (hits.rows as Array<{
+      messageId: string; sessionId: string; turnId: string; role: string; content: string;
+    }>).map((m) => ({
+      sessionId: m.sessionId, messageId: m.messageId, turnId: m.turnId, role: m.role,
+      snippet: snippetAround(m.content, q),
+    }));
 
     const files = (await this.storage.list(workspacePrefix(workspaceId)))
       .map((o) => ({ path: relativePath(workspaceId, o.key), size: o.size }))

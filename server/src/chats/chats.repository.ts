@@ -4,7 +4,7 @@
  * the services above it.
  */
 import { Injectable, Inject } from '@nestjs/common';
-import { and, asc, desc, eq, gt, gte, inArray, isNull, isNotNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, inArray, isNull, isNotNull, lt, notLike, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { chatMessages, chatSessions, chatTurns } from '../database/schema';
@@ -84,13 +84,12 @@ export class ChatsRepository {
 
   // ---- turns ----
   async createTurn(sessionId: string, input: { text: string; attachments?: unknown[]; model?: string }): Promise<ChatTurn> {
-    const last = await this.db.select({ seq: chatTurns.seq }).from(chatTurns)
-      .where(eq(chatTurns.sessionId, sessionId))
-      .orderBy(desc(chatTurns.seq)).limit(1);
-    const row: ChatTurn = {
+    // seq is allocated by a subquery in the same statement — a read-max-then-
+    // insert pair is two round-trips and races when the busy lock is absent.
+    const rows = await this.db.insert(chatTurns).values({
       id: newId(),
       sessionId,
-      seq: (last[0]?.seq ?? -1) + 1,
+      seq: sql`(SELECT COALESCE(MAX("seq"), -1) + 1 FROM chat_turns WHERE "sessionId" = ${sessionId})`,
       input: input.text,
       attachments: JSON.stringify(input.attachments ?? []),
       model: input.model ?? '',
@@ -103,9 +102,8 @@ export class ChatsRepository {
       taskHandoff: null,
       error: null,
       createdAt: nowIso(),
-    };
-    await this.db.insert(chatTurns).values(row);
-    return row;
+    }).returning();
+    return rows[0];
   }
 
   async updateTurn(id: string, patch: Partial<ChatTurn>): Promise<void> {
@@ -211,21 +209,18 @@ export class ChatsRepository {
 
   // ---- transcript ----
   async appendMessage(m: { sessionId: string; turnId: string; role: string; content: string; toolName?: string }): Promise<ChatMessage> {
-    const last = await this.db.select({ seq: chatMessages.seq }).from(chatMessages)
-      .where(eq(chatMessages.sessionId, m.sessionId))
-      .orderBy(desc(chatMessages.seq)).limit(1);
-    const row: ChatMessage = {
+    // Same single-statement seq allocation as createTurn.
+    const rows = await this.db.insert(chatMessages).values({
       id: newId(),
       sessionId: m.sessionId,
       turnId: m.turnId,
-      seq: (last[0]?.seq ?? -1) + 1,
+      seq: sql`(SELECT COALESCE(MAX("seq"), -1) + 1 FROM chat_messages WHERE "sessionId" = ${m.sessionId})`,
       role: m.role,
       content: m.content,
       toolName: m.toolName ?? null,
       createdAt: nowIso(),
-    };
-    await this.db.insert(chatMessages).values(row);
-    return row;
+    }).returning();
+    return rows[0];
   }
 
   async listMessages(sessionId: string): Promise<ChatMessage[]> {
@@ -243,21 +238,29 @@ export class ChatsRepository {
    *  sequence when one is set (FR-7.4). */
   async providerHistory(sessionId: string, cutoffSeq: number | null): Promise<ChatMessage[]> {
     const past = cutoffSeq === null ? undefined : gt(chatMessages.seq, cutoffSeq);
-    const rows = await this.db.select().from(chatMessages)
-      .where(and(eq(chatMessages.sessionId, sessionId), past))
+    return this.db.select().from(chatMessages)
+      .where(and(
+        eq(chatMessages.sessionId, sessionId),
+        inArray(chatMessages.role, ['user', 'assistant']),
+        past,
+      ))
       .orderBy(asc(chatMessages.seq));
-    return rows.filter((m) => m.role === 'user' || m.role === 'assistant');
   }
 
   /** Sessions whose transcript changed since the last distillation and have
    *  been idle since `idleBefore` (auto-distillation sweep). Loop sessions
    *  journal themselves, so they are excluded. */
   async sessionsNeedingDistill(idleBefore: string): Promise<ChatSession[]> {
-    const rows = await this.db.select().from(chatSessions)
-      .where(and(isNotNull(chatSessions.agentId), isNull(chatSessions.archivedAt)));
-    return rows.filter((s) => s.updatedAt < idleBefore
-      && (!s.distilledAt || s.distilledAt < s.updatedAt)
-      && !s.name.startsWith('Loop · '));
+    // ISO-8601 text timestamps compare lexicographically, so the whole
+    // filter lives in SQL instead of loading every agent session.
+    return this.db.select().from(chatSessions)
+      .where(and(
+        isNotNull(chatSessions.agentId),
+        isNull(chatSessions.archivedAt),
+        lt(chatSessions.updatedAt, idleBefore),
+        or(isNull(chatSessions.distilledAt), lt(chatSessions.distilledAt, chatSessions.updatedAt)),
+        notLike(chatSessions.name, 'Loop · %'),
+      ));
   }
 
   /** Sets only distilledAt — deliberately not via updateSession, which bumps

@@ -5,7 +5,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { eq } from 'drizzle-orm';
 import { ChatsRepository } from '../server/src/chats/chats.repository';
+import { chatSessions } from '../server/src/database/schema';
 import { ChatsService } from '../server/src/chats/chats.service';
 import { ChatsController } from '../server/src/chats/chats.controller';
 import { TurnLoopService, TurnEvent } from '../server/src/chats/turn-loop.service';
@@ -89,6 +91,9 @@ test('provider history excludes tool and thinking rows (FR-8.1)', async () => {
   await repo.appendMessage({ sessionId: s.id, turnId: 't1', role: 'assistant', content: 'a' });
   const history = await repo.providerHistory(s.id, null);
   assert.deepEqual(history.map((m) => m.role), ['user', 'assistant']);
+  // full message rows in transcript order, not projections
+  assert.deepEqual(history.map((m) => m.seq), [0, 3]);
+  assert.ok(history.every((m) => m.id && m.sessionId === s.id && typeof m.content === 'string' && !!m.createdAt));
 });
 
 test('/clear wipes transcript and compaction state; /export renders markdown', async () => {
@@ -206,4 +211,45 @@ test('auto-title is set from the first message of an unnamed chat (FR-1.3)', asy
   const s = await chats.create({ workspaceId: 'ws1' });
   await collect(turns.run(s.id, { text: 'Where does draft text persist across restarts?' }));
   assert.equal((await chats.get(s.id)).autoTitle, 'Where does draft text persist across restarts?');
+});
+
+test('turn and message seq allocate in the insert statement itself', async () => {
+  const { repo, chats } = await setup();
+  const s = await chats.create({ workspaceId: 'ws1' });
+  const t1 = await repo.createTurn(s.id, { text: 'one' });
+  const t2 = await repo.createTurn(s.id, { text: 'two' });
+  assert.equal(t1.seq, 0);
+  assert.equal(t2.seq, 1);
+  // the returned rows keep the full turn shape (defaults included)
+  assert.equal(t1.input, 'one');
+  assert.equal(t1.status, 'running');
+  assert.equal(t1.sessionId, s.id);
+
+  // concurrent appends still land on distinct, gap-free seqs
+  const msgs = await Promise.all(Array.from({ length: 5 }, (_, i) =>
+    repo.appendMessage({ sessionId: s.id, turnId: t1.id, role: 'user', content: `m${i}` })));
+  assert.deepEqual(msgs.map((m) => m.seq).sort((a, b) => a - b), [0, 1, 2, 3, 4]);
+});
+
+test('sessionsNeedingDistill keeps only idle, undistilled, non-loop agent sessions', async () => {
+  const db = await testDb();
+  const repo = new ChatsRepository(db);
+  const idle = '2026-01-01T00:00:00.000Z';
+  const cutoff = '2026-01-02T00:00:00.000Z';
+  const mk = async (patch: Partial<typeof chatSessions.$inferSelect>) => {
+    const s = await repo.createSession({ workspaceId: 'ws1', agentId: 'agent1', name: 'chat' });
+    await db.update(chatSessions).set({ updatedAt: idle, ...patch }).where(eq(chatSessions.id, s.id));
+    return s.id;
+  };
+  const neverDistilled = await mk({ distilledAt: null });
+  const stale = await mk({ distilledAt: '2025-12-31T00:00:00.000Z' });
+  await mk({ distilledAt: idle });                     // already distilled past the last change
+  await mk({ updatedAt: '2026-02-01T00:00:00.000Z' }); // not idle yet
+  await mk({ name: 'Loop · Nightly' });                // loop sessions journal themselves
+  await mk({ archivedAt: idle });                      // archived
+  const noAgent = await repo.createSession({ workspaceId: 'ws1' });
+  await db.update(chatSessions).set({ updatedAt: idle }).where(eq(chatSessions.id, noAgent.id));
+
+  const ids = (await repo.sessionsNeedingDistill(cutoff)).map((s) => s.id).sort();
+  assert.deepEqual(ids, [neverDistilled, stale].sort());
 });
