@@ -11,6 +11,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { AiMessage, AiProvider, AiRequest, AiStreamEvent } from './ai-provider.interface';
+import { streamSignal } from './provider-timeout';
 
 /** Default endpoints per provider name; an agent type's baseUrl overrides. */
 export const OPENAI_COMPAT_BASE_URLS: Record<string, string> = {
@@ -93,6 +94,7 @@ export class OpenAiCompatProvider implements AiProvider {
     // extras are rejected loudly by strict providers, so send only when set.
     if (req.thinkingEffort && req.thinkingEffort !== 'off') body.reasoning_effort = req.thinkingEffort;
 
+    const signal = streamSignal(req.signal);
     const res = await this.fetchFn(`${base}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -100,7 +102,7 @@ export class OpenAiCompatProvider implements AiProvider {
         authorization: `Bearer ${req.apiKey ?? ''}`,
       },
       body: JSON.stringify(body),
-      signal: req.signal,
+      signal,
     });
     if (!res.ok || !res.body) {
       throw new Error(`openai-compatible ${res.status}: ${(await res.text()).slice(0, 300)}`);
@@ -115,7 +117,7 @@ export class OpenAiCompatProvider implements AiProvider {
     let buffer = '';
     try {
       for (;;) {
-        if (req.signal?.aborted) return;
+        if (signal.aborted) return;
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });

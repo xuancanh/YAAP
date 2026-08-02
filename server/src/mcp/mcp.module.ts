@@ -96,6 +96,7 @@ export class McpService {
         ...(row.authClientSecret ? { client_secret: open(row.authClientSecret) } : {}),
         resource: row.url,
       }),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok) throw new Error(`mcp token refresh failed (${res.status}) — reconnect the server`);
     const tok = await res.json() as { access_token: string; refresh_token?: string; expires_in?: number };

@@ -14,6 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import { ChatsRepository } from './chats.repository';
 import { ChatLocks } from './chat-locks';
 import { TurnContextService } from './turn-context.service';
+import { streamSignal } from '../ai/provider-timeout';
 
 const SUMMARY_CAP = 8_000;
 const MIN_MESSAGES = 4;
@@ -52,6 +53,7 @@ export class CompactionService {
         messages: [{ role: 'user', content: `${prior}Conversation:\n\n${transcript}` }],
         apiKey: ctx.apiKey,
         baseUrl: ctx.baseUrl,
+        signal: streamSignal(),
       })) {
         if (ev.type === 'answer') summary += ev.text;
       }

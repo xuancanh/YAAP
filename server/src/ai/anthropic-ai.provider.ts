@@ -15,6 +15,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { AiMessage, AiProvider, AiRequest, AiStreamEvent } from './ai-provider.interface';
+import { streamSignal } from './provider-timeout';
 
 const EFFORT_BUDGET: Record<string, number> = { low: 2048, medium: 8192, high: 16384 };
 
@@ -96,6 +97,7 @@ export class AnthropicAiProvider implements AiProvider {
       body.max_tokens = Math.max(req.maxTokens ?? 8192, budget + 4096);
     }
 
+    const signal = streamSignal(req.signal);
     const res = await this.fetchFn(`${base}/v1/messages`, {
       method: 'POST',
       headers: {
@@ -104,7 +106,7 @@ export class AnthropicAiProvider implements AiProvider {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify(body),
-      signal: req.signal,
+      signal,
     });
     if (!res.ok || !res.body) {
       throw new Error(`anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
@@ -115,7 +117,7 @@ export class AnthropicAiProvider implements AiProvider {
     // Per-index accumulator for streamed tool_use input JSON.
     const toolBlocks = new Map<number, { id: string; name: string; json: string }>();
 
-    for await (const data of sseData(res.body, req.signal)) {
+    for await (const data of sseData(res.body, signal)) {
       let ev: Record<string, unknown>;
       try {
         ev = JSON.parse(data) as Record<string, unknown>;

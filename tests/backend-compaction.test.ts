@@ -56,6 +56,15 @@ test('compact writes a bounded summary and a cutoff; history rebuilds past it (F
   assert.deepEqual(after.map((m) => m.content), ['newer']);
 });
 
+test('compaction streams with a timeout signal so a stalled provider cannot hang it', async () => {
+  const { repo, chats, compaction, provider } = await setup();
+  const s = await chats.create({ workspaceId: 'ws1' });
+  await seedConversation(repo, s.id, 3);
+
+  await compaction.compact(s.id);
+  assert.ok(provider.requests[0].signal instanceof AbortSignal);
+});
+
 test('short conversations refuse to compact', async () => {
   const { repo, chats, compaction } = await setup();
   const s = await chats.create({ workspaceId: 'ws1' });

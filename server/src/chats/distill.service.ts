@@ -8,6 +8,7 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { ChatsRepository } from './chats.repository';
 import { TurnContextService } from './turn-context.service';
 import { AgentsService } from '../agents/agents.service';
+import { streamSignal } from '../ai/provider-timeout';
 
 const DISTILL_SYSTEM = `You distill completed work into an agent's file brain. From the conversation, output exactly this format:
 
@@ -42,6 +43,7 @@ export class DistillService {
       messages: [{ role: 'user', content: `Conversation:\n\n${transcript}` }],
       apiKey: ctx.apiKey,
       baseUrl: ctx.baseUrl,
+      signal: streamSignal(),
     })) {
       if (ev.type === 'answer') out += ev.text;
     }
