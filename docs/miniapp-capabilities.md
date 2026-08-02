@@ -1,9 +1,11 @@
 # Mini app capabilities: what apps need and how we hand it to them
 
-Status: design. Companion to `docs/permissions.md`, which reserved the move:
-"the day an app can call a tool or fetch a URL, it moves to the skill/tool
-review class with a per-app capability manifest." This document designs that
-manifest and the runtime behind it.
+Status: **shipped** (§7 v1–v3), and this document is the design of record for
+what runs. Companion to `docs/permissions.md`, which reserved the move: "the
+day an app can call a tool or fetch a URL, it moves to the skill/tool review
+class with a per-app capability manifest." This document designs that manifest
+and the runtime behind it; `docs/miniapp-roadmap.md` reviews what landed and
+designs what comes next (model calls, file promotion, databases, connections).
 
 ## 1. Where we are, and why it is not enough
 
@@ -51,9 +53,13 @@ app can be adversarial even when the agent is honest. Four attacks matter:
    capability needs is rendered by the host (our chrome), outside the frame,
    naming the app and the exact operation.
 4. **Nagging / resource abuse.** Unlimited calls, unbounded storage, turn
-   spam. Everything is quota'd and rate-limited per app. A denied confirm is
-   not a "no" an app has to respect, so denials are counted too: three, and
-   the app loses the confirm channel until it is reopened.
+   spam. A denied confirm is not a "no" an app has to respect, so denials are
+   counted: three, and the app loses the confirm channel until it is
+   reopened. Turn spam is capped (`agent.ask`, 20/day). **Call rates are
+   not yet capped** — `storage.set`, `files.read`, and `tasks.add` accept
+   unbounded call volume today; sizes are capped, frequency is not. This
+   paragraph claimed otherwise for months. Step 1 of
+   `docs/miniapp-roadmap.md` §8 closes it.
 
 ## 3. The capability inventory
 
@@ -202,7 +208,9 @@ itself can never reach these endpoints directly — everything funnels
 through the parent window, which is the choke point for confirms, rate
 limits, and provenance logging (bridge calls append to the agent's event
 feed: "Ticket helper read reports/ (12 files) · added task 'P1: checkout
-down'").
+down'"). As shipped, only **writes** log — `files.write` and `tasks.add`
+emit events; reads are silent, so a granted `files.read` leaves no trace of
+what it walked. Also on the roadmap's step 1.
 
 App-facing surface, all promises:
 
@@ -223,12 +231,17 @@ feature-detect and degrade to static rendering.
 
 ## 7. Shipping order
 
-1. **v1 — state and sight**: bridge + `storage`, `chat.compose`,
+v1–v3 all shipped; the sequel is `docs/miniapp-roadmap.md`. Execution confirms
+landed as `window.confirm` rather than the tool-approval card described in §5
+— host-rendered and unspoofable, but unable to show a payload.
+
+1. **v1 — state and sight** *(shipped)*: bridge + `storage`, `chat.compose`,
    `files.read`, `tasks.read`; manifest field on save_app; review modal;
    capability chips. This alone turns snapshots into live dashboards and
    dead buttons into drafted messages, at almost no new risk.
-2. **v2 — hands, carefully**: `files.write` (own folder), `tasks.write`
-   with provenance badges and execution confirms.
-3. **v3 — voice**: `agent.ask` as a budgeted Ask-mode channel.
-4. **Later, maybe**: `tools.invoke` after the secrets vault; app-to-app
-   never.
+2. **v2 — hands, carefully** *(shipped)*: `files.write` (own folder),
+   `tasks.write` with provenance badges and execution confirms.
+3. **v3 — voice** *(shipped)*: `agent.ask` as a budgeted Ask-mode channel.
+4. **Later**: superseded — `tools.invoke` stays refused, but connections get
+   fixed-shape read views and propose-to-mutate instead
+   (`docs/miniapp-roadmap.md` §6). App-to-app still never.
