@@ -91,7 +91,10 @@ export class ChatsController {
   async sendTurn(@Param('id') id: string, @Body() dto: SendTurnDto, @Res() res: Response) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      // no-transform stops proxies (Cloudflare, CDNs) from recompressing the
+      // stream; X-Accel-Buffering stops nginx/tunnel hops from batching SSE.
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
       Connection: 'keep-alive',
     });
     // A client disconnect mid-turn (e.g. while paused on an approval) must

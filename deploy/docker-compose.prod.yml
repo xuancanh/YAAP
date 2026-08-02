@@ -1,0 +1,43 @@
+# docker-compose for a hosted environment (staging or prod) on the VPS.
+# Deploy one copy per environment (e.g. /opt/yaam-chat-prod/docker-compose.yml)
+# each with its own .env — see docs/environments.md for the full runbook.
+#
+# The API image is built by CI and pushed to GHCR. The tunnel that exposes the
+# API to Cloudflare (cloudflared) runs at host level (cloudflared service
+# install), not in compose, so it survives stack restarts; see
+# docs/environments.md §First-time setup.
+
+services:
+  api:
+    image: ghcr.io/xuancanh/yaam-chat:latest
+    restart: unless-stopped
+    env_file: .env
+    # Bound to localhost only: traffic arrives through the cloudflared tunnel,
+    # never directly from the internet.
+    ports:
+      - "127.0.0.1:8790:8790"
+    environment:
+      # Compose-network Postgres; per-env credentials come from .env
+      # (POSTGRES_PASSWORD) — DATABASE_URL is assembled here.
+      DATABASE_URL: postgres://yaamchat:${POSTGRES_PASSWORD}@postgres:5432/yaamchat
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: yaamchat
+      POSTGRES_DB: yaamchat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yaamchat"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  pgdata:

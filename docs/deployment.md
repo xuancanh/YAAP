@@ -1,5 +1,9 @@
 # Deployment model: free desktop app, paid multi-tenant cloud
 
+> **Operational runbook:** this document is the long-term strategy. For the
+> dev/staging/prod environments running today (Workers SPA, VPS API + tunnel,
+> R2 buckets, secrets checklist), see **docs/environments.md**.
+
 Two distributions of the same codebase, both proprietary (no source
 release). The research behind docs/roadmap.md showed that self-hosting is
 the #1 pain point of OpenClaw/Hermes users and exposed instances are the #1

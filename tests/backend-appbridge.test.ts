@@ -12,6 +12,8 @@ import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
 import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
+import { RateLimiter } from '../server/src/appbridge/bridge-limits';
+import { agentFileKey } from '../server/src/storage/storage.keys';
 
 async function setup(rounds: AiStreamEvent[][] = []) {
   const db = await testDb();
@@ -125,4 +127,43 @@ test('agent.ask runs an Ask-mode turn: gated tools deny, budget counts down', as
   const ws = (await workspaces.list())[0];
   const session = (await repo.listSessions(ws.id)).find((s) => s.name === 'App · Helper')!;
   assert.equal(session.permissionMode, 'ask', 'app sessions never run in auto mode');
+});
+
+// ---- roadmap step 1: the truth pass (docs/miniapp-roadmap.md §1, §8) ----
+
+test('rate limits are real: bursts pass, a sustained loop is cut off, classes are independent', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['storage', 'tasks.read', 'tasks.write']);
+
+  // reads are generous — opening a dashboard is legitimately a burst
+  for (let i = 0; i < 150; i++) await bridge.tasksList(agent.id, entry.id);
+  await assert.rejects(bridge.tasksList(agent.id, entry.id), /too fast/, 'the 151st read in a minute is refused');
+
+  // writes bill to their own class, unaffected by the read flood above
+  const task = await bridge.taskAdd(agent.id, entry.id, 'still allowed');
+  assert.ok(task.id, 'write class has its own ceiling');
+  assert.equal(bridge.limiter.remaining(entry.id, 'read'), 0);
+  assert.ok(bridge.limiter.remaining(entry.id, 'write') > 0);
+
+  // and the window slides: a minute later the app is forgiven
+  const later = new RateLimiter(() => Date.now() + 61_000);
+  assert.equal(later.allow(entry.id, 'tasks.list'), true);
+});
+
+test('reads leave provenance: first read logs, then every 25th, and it names what was read', async () => {
+  const { bridge, agents, agent, map } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['files.read']);
+  map.set(agentFileKey(agent.id, 'reports/weekly.md'), Buffer.from('# week'));
+
+  await bridge.fileRead(agent.id, entry.id, 'reports/weekly.md');
+  let events = await agents.listEvents(agent.id);
+  assert.ok(events.some((e) => e.title.includes('read reports/weekly.md')), 'the very first read is visible');
+
+  // a granted files.read used to walk the whole folder in silence
+  const before = (await agents.listEvents(agent.id)).length;
+  for (let i = 0; i < 23; i++) await bridge.fileRead(agent.id, entry.id, 'reports/weekly.md');
+  assert.equal((await agents.listEvents(agent.id)).length, before, 'the feed is not one line per read');
+  await bridge.fileRead(agent.id, entry.id, 'reports/weekly.md'); // the 25th
+  events = await agents.listEvents(agent.id);
+  assert.ok(events.some((e) => /25 reads so far/.test(e.title)), 'a runaway reader resurfaces');
 });

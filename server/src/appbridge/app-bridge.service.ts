@@ -12,7 +12,7 @@
  *  - app-originated turns are channel turns: Ask mode, approval-gated tools
  *    auto-denied, budgeted per app per day.
  */
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { AgentsService, AgentApp } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { ChatsRepository } from '../chats/chats.repository';
@@ -20,6 +20,7 @@ import { TurnLoopService } from '../chats/turn-loop.service';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix, agentRelativePath, workspaceFileKey } from '../storage/storage.keys';
 import { previewKindFor } from '../storage/preview.util';
+import { RateLimiter, ReadTally } from './bridge-limits';
 
 const STATE_CAP = 64_000;
 const FILE_WRITE_CAP = 300_000;
@@ -32,6 +33,10 @@ export class AppBridgeService {
   /** Ask budget, per app per UTC day. In-memory: a restart refills the tank,
    *  which errs on the forgiving side for a per-day nag limit. */
   private askUsage = new Map<string, { day: string; used: number }>();
+  /** Frequency caps — sizes were always capped, call rates were not. */
+  readonly limiter = new RateLimiter();
+  /** Read provenance, logged on a curve so the feed stays readable. */
+  private readonly reads = new ReadTally();
 
   constructor(
     private readonly agents: AgentsService,
@@ -41,14 +46,26 @@ export class AppBridgeService {
     private readonly storage: StorageService,
   ) {}
 
-  /** Load the app entry and verify the capability is activated. */
-  private async requireCap(agentId: string, appId: string, cap: string): Promise<AgentApp> {
+  /** Load the app entry, verify the capability is activated, and bill the
+   *  call against the app's rate ceiling for that op class. Every bridge
+   *  entry point goes through here — that is what makes the limit real
+   *  rather than a claim in a doc. */
+  private async requireCap(agentId: string, appId: string, cap: string, op: string): Promise<AgentApp> {
     const entry = (await this.agents.listApps(agentId)).find((x) => x.id === appId);
     if (!entry) throw new NotFoundException(`app ${appId}`);
     if (!(entry.approved ?? []).includes(cap)) {
       throw new ForbiddenException(`capability "${cap}" is not activated for this app`);
     }
+    if (!this.limiter.allow(appId, op)) {
+      throw new HttpException(`app "${entry.name}" is calling ${op} too fast — slow down`, HttpStatus.TOO_MANY_REQUESTS);
+    }
     return entry;
+  }
+
+  /** Append a read to the provenance feed, on the tally's curve. */
+  private async noteRead(agentId: string, entry: AgentApp, what: string) {
+    const line = this.reads.record(entry.id, entry.name, what);
+    if (line) await this.agents.addEvent(agentId, { kind: 'info', title: line }).catch(() => {});
   }
 
   approve(agentId: string, appId: string, capabilities: string[]) {
@@ -58,14 +75,14 @@ export class AppBridgeService {
   // ---- storage: app-private KV state ----
 
   async storageGet(agentId: string, appId: string) {
-    await this.requireCap(agentId, appId, 'storage');
+    await this.requireCap(agentId, appId, 'storage', 'storage.get');
     const body = await this.storage.get(agentFileKey(agentId, `apps/${appId}/state.json`));
     if (!body) return { state: null };
     try { return { state: JSON.parse(body.toString('utf8')) as unknown }; } catch { return { state: null }; }
   }
 
   async storagePut(agentId: string, appId: string, state: unknown) {
-    await this.requireCap(agentId, appId, 'storage');
+    await this.requireCap(agentId, appId, 'storage', 'storage.set');
     const json = JSON.stringify(state ?? null);
     if (json.length > STATE_CAP) throw new BadRequestException(`state exceeds ${STATE_CAP} bytes`);
     await this.storage.put(agentFileKey(agentId, `apps/${appId}/state.json`), Buffer.from(json), 'application/json');
@@ -75,7 +92,7 @@ export class AppBridgeService {
   // ---- files: the agent's own view, read-only + own-folder writes ----
 
   async filesList(agentId: string, appId: string, prefix: string, workspaceId?: string) {
-    await this.requireCap(agentId, appId, 'files.read');
+    const entry = await this.requireCap(agentId, appId, 'files.read', 'files.list');
     const agent = await this.agents.get(agentId);
     const out: Array<{ path: string; size: number; lastModified?: string }> = [];
     for (const o of await this.storage.list(agentPrefix(agentId))) {
@@ -89,11 +106,13 @@ export class AppBridgeService {
       }
     }
     const p = prefix.replace(/^\/+/, '');
-    return out.filter((f) => !p || f.path.startsWith(p));
+    const hits = out.filter((f) => !p || f.path.startsWith(p));
+    await this.noteRead(agentId, entry, `${p || 'the whole folder'} (${hits.length} files)`);
+    return hits;
   }
 
   async fileRead(agentId: string, appId: string, path: string, workspaceId?: string) {
-    await this.requireCap(agentId, appId, 'files.read');
+    const entry = await this.requireCap(agentId, appId, 'files.read', 'files.read');
     const agent = await this.agents.get(agentId);
     const clean = path.replace(/^\/+/, '');
     let key: string;
@@ -107,6 +126,7 @@ export class AppBridgeService {
     }
     const body = await this.storage.get(key);
     if (body === null) throw new NotFoundException(`file ${clean}`);
+    await this.noteRead(agentId, entry, clean);
     const kind = previewKindFor(clean);
     if (kind === 'markdown' || kind === 'html' || kind === 'text') {
       return { path: clean, kind, size: body.length, text: body.toString('utf8').slice(0, READ_CAP) };
@@ -115,7 +135,7 @@ export class AppBridgeService {
   }
 
   async fileWrite(agentId: string, appId: string, path: string, content: string) {
-    const entry = await this.requireCap(agentId, appId, 'files.write');
+    const entry = await this.requireCap(agentId, appId, 'files.write', 'files.write');
     const clean = path.replace(/^\/+/, '');
     if (!clean) throw new BadRequestException('path is required');
     if (typeof content !== 'string' || content.length > FILE_WRITE_CAP) {
@@ -132,19 +152,19 @@ export class AppBridgeService {
   // ---- tasks: the agent's kanban ----
 
   async tasksList(agentId: string, appId: string) {
-    await this.requireCap(agentId, appId, 'tasks.read');
+    await this.requireCap(agentId, appId, 'tasks.read', 'tasks.list');
     return this.agents.listTasks(agentId);
   }
 
   async taskAdd(agentId: string, appId: string, title: string, note?: string) {
-    const entry = await this.requireCap(agentId, appId, 'tasks.write');
+    const entry = await this.requireCap(agentId, appId, 'tasks.write', 'tasks.add');
     const task = await this.agents.addTask(agentId, { title, note, origin: 'app' });
     await this.agents.addEvent(agentId, { kind: 'info', title: `App "${entry.name}" filed task: ${task.title}` }).catch(() => {});
     return task;
   }
 
   async taskMove(agentId: string, appId: string, taskId: string, status: string) {
-    await this.requireCap(agentId, appId, 'tasks.write');
+    await this.requireCap(agentId, appId, 'tasks.write', 'tasks.move');
     if (!['todo', 'doing', 'done'].includes(status)) throw new BadRequestException('status must be todo|doing|done');
     // status moves only — apps never retitle or annotate someone else's task
     return this.agents.updateTask(agentId, taskId, { status });
@@ -153,7 +173,7 @@ export class AppBridgeService {
   // ---- agent.ask: a budgeted Ask-mode channel turn ----
 
   async ask(agentId: string, appId: string, prompt: string, workspaceId?: string) {
-    const entry = await this.requireCap(agentId, appId, 'agent.ask');
+    const entry = await this.requireCap(agentId, appId, 'agent.ask', 'agent.ask');
     const text = prompt.trim().slice(0, ASK_PROMPT_CAP);
     if (!text) throw new BadRequestException('prompt is required');
 

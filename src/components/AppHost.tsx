@@ -42,6 +42,18 @@ interface Msg { __yaam: true; id: number; op: string; args: Record<string, unkno
  *  for this mount. Generous for honest mis-clicks, fatal to a nag loop. */
 const MAX_DENIALS = 3;
 
+/** What the confirm card says: a verb the user can weigh, and the actual
+ *  payload — the whole reason this replaced window.confirm. */
+function describe(m: Msg): { verb: string; payload: string } {
+  const s = (k: string, cap: number) => String(m.args[k] ?? '').slice(0, cap);
+  switch (m.op) {
+    case 'agent.ask': return { verb: 'ask the agent a question', payload: s('prompt', 1_000) };
+    case 'tasks.add': return { verb: 'file a task on the board', payload: s('title', 200) + (m.args.note ? `\n\n${s('note', 500)}` : '') };
+    case 'tasks.move': return { verb: 'move a task on the board', payload: `task ${s('id', 40)} → ${s('status', 20)}` };
+    default: return { verb: m.op, payload: JSON.stringify(m.args).slice(0, 800) };
+  }
+}
+
 export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp: AgentApp; style?: React.CSSProperties }) {
   const app = useApp();
   const frame = useRef<HTMLIFrameElement>(null);
@@ -54,6 +66,11 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
   const denials = useRef(0);
   const stable = useRef({ miniApp, app });
   stable.current = { miniApp, app };
+  // Execution confirms render here, in our chrome. This was window.confirm,
+  // which is unspoofable but cannot show what is actually being approved —
+  // and "allow the agent to be asked something" is not a decision anyone can
+  // make from the operation name alone.
+  const [confirmReq, setConfirmReq] = useState<{ verb: string; payload: string; resolve: (ok: boolean) => void } | null>(null);
 
   useEffect(() => {
     const onMessage = async (e: MessageEvent) => {
@@ -79,10 +96,10 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
           if (denials.current >= MAX_DENIALS) {
             throw new Error('denied — this app asked too many times and is cut off until you reopen it');
           }
-          const what = m.op === 'agent.ask'
-            ? `ask the agent:\n\n"${String(m.args.prompt ?? '').slice(0, 400)}"`
-            : m.op === 'tasks.add' ? `file a task: "${String(m.args.title ?? '').slice(0, 120)}"` : 'move a task on the board';
-          if (!window.confirm(`Mini app "${ma.name}" wants to ${what}\n\nAllow? (allowed for this app until you close it)`)) {
+          const { verb, payload } = describe(m);
+          const ok = await new Promise<boolean>((resolve) => setConfirmReq({ verb, payload, resolve }));
+          setConfirmReq(null);
+          if (!ok) {
             denials.current++;
             if (denials.current >= MAX_DENIALS) st.showToast(`"${ma.name}" kept asking after you said no — further requests are blocked`);
             throw new Error('denied by the user');
@@ -115,8 +132,29 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
   }, [agentId]);
 
   return (
-    <iframe ref={frame} title={miniApp.name} sandbox="allow-scripts" srcDoc={CSP_META + SHIM + miniApp.html}
-      style={{ flex: 1, width: '100%', border: 'none', background: '#fff', ...style }} />
+    <>
+      <iframe ref={frame} title={miniApp.name} sandbox="allow-scripts" srcDoc={CSP_META + SHIM + miniApp.html}
+        style={{ flex: 1, width: '100%', border: 'none', background: '#fff', ...style }} />
+      {confirmReq && (
+        <div style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', backdropFilter: 'blur(2px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ width: 460, maxWidth: '100%', background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 16, boxShadow: 'var(--shadow)', animation: 'pop .16s' }}>
+            <div style={{ padding: '18px 22px 12px', borderBottom: '1px solid var(--border-soft)' }}>
+              <div style={{ fontSize: 15.5, fontWeight: 700 }}>Mini app wants to {confirmReq.verb}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3 }}>
+                Requested by “{miniApp.name}”, built by its agent. Allowing remembers this until you close the app.
+              </div>
+            </div>
+            <pre style={{ margin: 0, padding: '14px 22px', maxHeight: 260, overflow: 'auto', fontSize: 12, fontFamily: 'var(--mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'var(--text)' }}>
+              {confirmReq.payload || '(no details)'}
+            </pre>
+            <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border-soft)', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => confirmReq.resolve(false)} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '8px 15px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>Deny</button>
+              <button onClick={() => confirmReq.resolve(true)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 17px', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>Allow</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

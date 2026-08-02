@@ -1,0 +1,81 @@
+name: Deploy Prod
+
+# Deploys on version tags (v*) or on manual dispatch.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Never cancel an in-flight prod deploy.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # The frontend talks to the API on the same origin at /api
+      # (src/lib/api.ts) — no VITE_API_URL or other build-time env is needed.
+      - run: npm run build
+
+      # wrangler.toml is maintained separately at infra/cloudflare/wrangler.toml.
+      # Required environment-scoped secrets (GitHub env "prod"):
+      #   CLOUDFLARE_API_TOKEN   — API token with Workers/Pages edit rights
+      #   CLOUDFLARE_ACCOUNT_ID  — Cloudflare account ID
+      - name: Deploy frontend to Cloudflare
+        uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65 # v3.14.1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --env production -c infra/cloudflare/wrangler.toml
+
+  deploy-api:
+    # SKELETON — not a working deploy yet. Fills in once a prod host exists.
+    # Requires (GitHub env "prod"):
+    #   vars.PROD_HOST        — hostname/IP of the production server
+    #   secrets.PROD_SSH_KEY  — private key for the deploy user
+    # Optionally vars.PROD_SSH_USER (defaults to "deploy") and
+    # vars.PROD_APP_DIR (defaults to /opt/yaam-chat).
+    if: ${{ vars.PROD_HOST != '' }}
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Pull and restart API container over SSH
+        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
+        with:
+          host: ${{ vars.PROD_HOST }}
+          username: ${{ vars.PROD_SSH_USER || 'deploy' }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            set -e
+            cd ${{ vars.PROD_APP_DIR || '/opt/yaam-chat' }}
+            docker compose pull
+            docker compose up -d
+
+  release:
+    # Only tags get a GitHub Release; manual dispatch skips this job.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # needed to create the release
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        with:
+          generate_release_notes: true

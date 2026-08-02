@@ -1,0 +1,34 @@
+# Cloudflare Worker: SPA static assets + thin /api proxy.
+#
+# The React build (../../dist, from `npm run build`) is served from Workers
+# Static Assets with SPA fallback; worker.js proxies /api/* (including SSE
+# streams) to the container-hosted API origin behind cloudflared.
+#
+# Deploy:
+#   npx wrangler deploy --config infra/cloudflare/wrangler.toml --env staging
+#   npx wrangler deploy --config infra/cloudflare/wrangler.toml --env prod
+# Auth in CI comes from env vars:
+#   CLOUDFLARE_API_TOKEN   (scoped: Workers Scripts:Edit on this account)
+#   CLOUDFLARE_ACCOUNT_ID
+# API_ORIGIN per env is a plain var below — point it at the tunnel hostname.
+# Full runbook: docs/environments.md
+
+name = "yaam-chat"
+compatibility_date = "2026-04-13"
+main = "worker.js"
+# Send /api/* to the worker script first so it never hits asset lookup;
+# everything else serves from static assets with SPA fallback.
+run_worker_first = ["/api/*"]
+
+[assets]
+directory = "../../dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[env.staging]
+name = "yaam-chat-staging"
+vars = { API_ORIGIN = "https://api-staging.example.com" }
+
+[env.prod]
+name = "yaam-chat"
+vars = { API_ORIGIN = "https://api.example.com" }
