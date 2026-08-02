@@ -7,11 +7,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ChatsRepository } from '../server/src/chats/chats.repository';
 import { ChatsService } from '../server/src/chats/chats.service';
+import { ChatsController } from '../server/src/chats/chats.controller';
 import { TurnLoopService, TurnEvent } from '../server/src/chats/turn-loop.service';
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
 import { EchoAiProvider } from '../server/src/ai/echo-ai.provider';
 import { testDb, memStorage, ctxStub, skillsStub, agentsStub, mcpStub, wsStub } from './helpers';
+import type { Response } from 'express';
 
 async function setup() {
   const repo = new ChatsRepository(await testDb());
@@ -102,6 +104,26 @@ test('/clear wipes transcript and compaction state; /export renders markdown', a
   await chats.clear(s.id);
   assert.equal((await repo.listMessages(s.id)).length, 0);
   assert.equal((await chats.get(s.id)).compactSummary, '');
+});
+
+test('export endpoint awaits the markdown and sends the string, not a Promise', async () => {
+  const { chats, turns } = await setup();
+  const s = await chats.create({ workspaceId: 'ws1', name: 'Doc chat' });
+  await collect(turns.run(s.id, { text: 'export me' }));
+
+  const controller = new ChatsController(chats, turns, {} as never, {} as never);
+  let sent: unknown;
+  let contentType = '';
+  const res = {
+    type(t: string) { contentType = t; return this; },
+    send(body: unknown) { sent = body; return this; },
+  };
+  await controller.export(s.id, res as unknown as Response);
+
+  assert.equal(contentType, 'text/markdown');
+  assert.equal(typeof sent, 'string');
+  assert.ok((sent as string).startsWith('# Doc chat'));
+  assert.ok((sent as string).includes('export me'));
 });
 
 test('stop aborts an in-flight turn and retains the partial (FR-5.4)', async () => {

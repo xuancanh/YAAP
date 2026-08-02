@@ -83,8 +83,8 @@ export class ChatsController {
   @Post(':id/clear') clear(@Param('id') id: string) { return this.chats.clear(id); }
 
   @Get(':id/export')
-  export(@Param('id') id: string, @Res() res: Response) {
-    res.type('text/markdown').send(this.chats.exportMarkdown(id));
+  async export(@Param('id') id: string, @Res() res: Response) {
+    res.type('text/markdown').send(await this.chats.exportMarkdown(id));
   }
 
   @Post(':id/turns')
@@ -94,15 +94,30 @@ export class ChatsController {
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
     });
+    // A client disconnect mid-turn (e.g. while paused on an approval) must
+    // abort the turn through the same path as /stop, otherwise the busy lock
+    // and the pending approval resolver leak until restart.
+    let finished = false;
+    res.on('close', () => { if (!finished) this.turns.stop(id); });
+    // A dead socket must never crash the process with an unhandled error.
+    res.on('error', () => {});
+    // SSE keepalive: idle-timeout proxies kill the connection during long
+    // thinking pauses, tool runs, or approval waits, so ping while quiet.
+    const keepalive = setInterval(() => {
+      if (!res.writableEnded) res.write(': ping\n\n');
+    }, 15_000);
     try {
       for await (const ev of this.turns.run(id, dto)) {
         res.write(`data: ${JSON.stringify(ev)}\n\n`);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`);
+      if (!res.writableEnded) res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`);
+    } finally {
+      finished = true;
+      clearInterval(keepalive);
+      if (!res.writableEnded) res.end();
     }
-    res.end();
     void this.compaction.maybeAutoCompact(id);
   }
 

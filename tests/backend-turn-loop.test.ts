@@ -247,6 +247,41 @@ test('gmail_send pauses even in Auto mode and allow-always is never remembered (
   assert.equal(sends, 1, 'denied send did not execute');
 });
 
+test('stop during an approval wait persists the turn as stopped, not error (FR-5.4)', async () => {
+  const { repo, chats, turns } = await setup([writeRound, finalRound]);
+  const s = await chats.create({ workspaceId: 'ws1' });
+
+  const events = await collect(turns.run(s.id, { text: 'write hello' }), (ev) => {
+    if (ev.type === 'approval_required') turns.stop(s.id);
+  });
+
+  const [turn] = await repo.listTurns(s.id);
+  assert.equal(turn.status, 'stopped');
+  // the orphaned approval resolved as deny and did not linger
+  assert.equal(turns.resolveApproval(s.id, 'c1', 'allow-once'), false);
+  assert.ok(events.some((e) => e.type === 'approval_required'));
+
+  // the busy lock was released: a follow-up turn runs normally
+  await collect(turns.run(s.id, { text: 'again' }), (ev) => {
+    if (ev.type === 'approval_required') turns.resolveApproval(s.id, ev.callId, 'allow-once');
+  });
+  const [, turn2] = await repo.listTurns(s.id);
+  assert.equal(turn2.status, 'done');
+});
+
+test('token ceiling is enforced across rounds, not only at turn start (FR-2.6)', async () => {
+  const { chats, turns, provider } = await setup([writeRound, finalRound]);
+  const s = await chats.create({ workspaceId: 'ws1', tokenCeiling: 8 });
+  await chats.update(s.id, { permissionMode: 'auto' });
+
+  const events = await collect(turns.run(s.id, { text: 'go' }));
+
+  // round 1 usage (5 in + 5 out = 10) crossed the ceiling: no second round
+  assert.equal(provider.requests.length, 1);
+  const err = events.find((e) => e.type === 'error');
+  assert.ok(err && 'message' in err && /token ceiling/.test(err.message));
+});
+
 test('concurrent turn on the same chat is refused by the busy lock (FR-7.5)', async () => {
   const { chats, turns } = await setup([writeRound, finalRound]);
   const s = await chats.create({ workspaceId: 'ws1' });

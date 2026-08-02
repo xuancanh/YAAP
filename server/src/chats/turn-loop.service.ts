@@ -182,6 +182,10 @@ const AGENT_READONLY_TOOLS = new Set(['list_tasks', 'search_history', 'update_us
 const exactKey = (call: AiToolCall): string =>
   `${call.name}:${createHash('sha256').update(JSON.stringify(call.input)).digest('hex').slice(0, 16)}`;
 
+/** Pending approvals auto-deny after this long, so an orphaned approval
+ *  (dead client, lost UI) cannot park a turn — and the chat lock — forever. */
+const APPROVAL_TTL_MS = 10 * 60_000;
+
 @Injectable()
 export class TurnLoopService {
   /** Abort registry keyed by chat id (FR-8.3 / FR-5.4). */
@@ -295,6 +299,12 @@ export class TurnLoopService {
 
         if (answer) await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'assistant', content: answer });
         if (calls.length === 0 || ctl.signal.aborted) break;
+        // The ceiling is re-checked per round, not only at turn start:
+        // cumulative usage across rounds can blow past it mid-turn.
+        if (session.tokenCeiling > 0 && session.tokensIn + tokensIn + session.tokensOut + tokensOut >= session.tokenCeiling) {
+          yield { type: 'error', message: 'token ceiling reached' };
+          break;
+        }
         history.push({ role: 'assistant', content: answer, toolCalls: calls });
 
         for (const call of calls) {
@@ -355,6 +365,10 @@ export class TurnLoopService {
           yield { type: 'tool_result', id: call.id, name: call.name, output: output.slice(0, 500), isError };
         }
 
+        // An abort during a tool run or approval wait must end the turn here
+        // as 'stopped' — starting another round would fetch with an aborted
+        // signal and mis-record the turn as 'error'.
+        if (ctl.signal.aborted) break;
         if (round + 1 >= ctx.maxToolRounds) {
           yield { type: 'error', message: `tool round limit (${ctx.maxToolRounds}) reached` };
           break;
@@ -557,13 +571,19 @@ export class TurnLoopService {
   private awaitDecision(sessionId: string, callId: string, signal: AbortSignal): Promise<ApprovalDecision> {
     return new Promise<ApprovalDecision>((resolve) => {
       const key = `${sessionId}:${callId}`;
-      const onAbort = () => { this.pending.delete(key); resolve('deny'); };
-      signal.addEventListener('abort', onAbort, { once: true });
-      this.pending.set(key, (d) => {
+      const settle = (d: ApprovalDecision) => {
+        clearTimeout(ttl);
         signal.removeEventListener('abort', onAbort);
         this.pending.delete(key);
         resolve(d);
-      });
+      };
+      const onAbort = () => settle('deny');
+      // Second layer behind the abort listener: an orphaned approval (dead
+      // client that never triggered a close, lost UI) auto-denies on TTL.
+      const ttl = setTimeout(() => settle('deny'), APPROVAL_TTL_MS);
+      ttl.unref?.();
+      signal.addEventListener('abort', onAbort, { once: true });
+      this.pending.set(key, settle);
     });
   }
 
