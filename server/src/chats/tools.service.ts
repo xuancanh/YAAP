@@ -12,6 +12,7 @@ import { Injectable } from '@nestjs/common';
 import { StorageService } from '../storage/storage.service';
 import { workspaceFileKey, workspacePrefix, relativePath, agentFileKey, agentPrefix, agentRelativePath } from '../storage/storage.keys';
 import { AiToolSpec } from '../ai/ai-provider.interface';
+import { fetchPublic } from '../common/url-guard';
 import { validateSlides, renderSlidesHtml } from './slides.util';
 
 const READ_CAP = 50_000;
@@ -90,31 +91,6 @@ function str(input: Record<string, unknown>, key: string, required = true): stri
   if (typeof v === 'string' && v.length > 0) return v;
   if (!required && (v === undefined || v === null)) return '';
   throw new Error(`invalid arguments: "${key}" must be a non-empty string`);
-}
-
-/** Reject obviously internal targets so the model cannot probe the host's
- *  network through the raw HTTP tool (basic SSRF guard; a full allowlist is
- *  follow-up policy work). */
-function assertPublicUrl(raw: string): URL {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error('invalid arguments: "url" is not a valid URL');
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error('only http/https URLs are allowed');
-  }
-  const host = url.hostname.toLowerCase();
-  if (
-    host === 'localhost' || host === '0.0.0.0' || host.endsWith('.local') ||
-    /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) ||
-    /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-    host === '::1' || host === '[::1]'
-  ) {
-    throw new Error('requests to private/internal hosts are not allowed');
-  }
-  return url;
 }
 
 @Injectable()
@@ -243,11 +219,9 @@ export class ToolsService {
         },
         readOnly: true,
         execute: async (_root, input) => {
-          const url = assertPublicUrl(str(input, 'url'));
-          const res = await fetch(url, {
+          const res = await fetchPublic(str(input, 'url'), {
             headers: { 'user-agent': 'Mozilla/5.0 (yaam-chat research tool)' },
             signal: AbortSignal.timeout(20_000),
-            redirect: 'follow',
           });
           if (!res.ok) return `fetch failed: ${res.status} ${res.statusText}`;
           const raw = await res.text();
@@ -304,15 +278,13 @@ export class ToolsService {
         },
         readOnly: false,
         execute: async (_root, input) => {
-          const url = assertPublicUrl(str(input, 'url'));
           const method = (str(input, 'method', false) || 'GET').toUpperCase();
           const headers = (input.headers && typeof input.headers === 'object' ? input.headers : {}) as Record<string, string>;
-          const res = await fetch(url, {
+          const res = await fetchPublic(str(input, 'url'), {
             method,
             headers,
             body: typeof input.body === 'string' && method !== 'GET' && method !== 'HEAD' ? input.body : undefined,
             signal: AbortSignal.timeout(30_000),
-            redirect: 'follow',
           });
           const text = await res.text();
           const capped = text.length > HTTP_CAP ? `${text.slice(0, HTTP_CAP)}\n…(truncated)` : text;
@@ -360,5 +332,3 @@ export class ToolsService {
     return tool.execute(typeof root === 'string' ? { kind: 'workspace', id: root } : root, input);
   }
 }
-
-export { assertPublicUrl };

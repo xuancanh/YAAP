@@ -5,7 +5,7 @@
  * the Ask/Auto policy like every other mutation-class tool (FR-4.2).
  */
 import { Module } from '@nestjs/common';
-import { Body, ConflictException, Controller, Delete, Get, Inject, Injectable, NotFoundException, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, BadRequestException, ConflictException, Controller, Delete, Get, Inject, Injectable, NotFoundException, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import { IsBoolean, IsOptional, IsString } from 'class-validator';
 import { ConfigService } from '@nestjs/config';
 import { eq } from 'drizzle-orm';
@@ -16,12 +16,16 @@ import type { DrizzleDb } from '../database/database.module';
 import { mcpServers } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { seal, open } from '../common/secretbox';
+import { assertPublicUrl } from '../common/url-guard';
 import { McpAuthRequiredError, McpHttpClient, McpToolDef } from './mcp-client';
 import { discoverAuth, pkcePair, registerClient } from './mcp-oauth';
 import { AiToolSpec } from '../ai/ai-provider.interface';
 
 export const MCP_TOOL_PREFIX = 'mcp_';
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+/** Escape interpolated values in the small OAuth callback page. */
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 type McpRow = typeof mcpServers.$inferSelect;
 
@@ -181,11 +185,22 @@ export class McpService {
     return (await this.db.select().from(mcpServers).where(eq(mcpServers.id, pending.serverId)))[0];
   }
 
+  /** Server URLs are contacted server-side (discover, tool calls, OAuth), so
+   *  they must pass the SSRF guard before being stored or used. */
+  private async assertServerUrl(url: string): Promise<void> {
+    try {
+      await assertPublicUrl(url);
+    } catch (err) {
+      throw new BadRequestException(err instanceof Error ? err.message : 'invalid url');
+    }
+  }
+
   /** Connect and cache the server's tool list on its row (shown in Settings
    *  and offered to chats without a per-turn network call). */
   async discover(id: string): Promise<{ tools: McpToolDef[] }> {
     const rows = await this.db.select().from(mcpServers).where(eq(mcpServers.id, id)).limit(1);
     if (!rows[0]) throw new NotFoundException(`mcp server ${id}`);
+    await this.assertServerUrl(rows[0].url);
     this.clients.delete(id);
     const tools = await this.client(rows[0]).listTools();
     await this.db.update(mcpServers)
@@ -231,6 +246,7 @@ export class McpService {
   }
 
   async create(input: { name: string; url: string; tools?: string[] }) {
+    await this.assertServerUrl(input.url);
     const row = {
       id: newId(), name: input.name, url: input.url, enabled: 1,
       tools: JSON.stringify(input.tools ?? []), createdAt: nowIso(),
@@ -243,6 +259,7 @@ export class McpService {
     this.clients.delete(id);
     const rows = await this.db.select().from(mcpServers).where(eq(mcpServers.id, id)).limit(1);
     if (!rows[0]) throw new NotFoundException(`mcp server ${id}`);
+    if (patch.url) await this.assertServerUrl(patch.url);
     const set: Record<string, unknown> = { ...patch };
     if (patch.enabled !== undefined) set.enabled = patch.enabled ? 1 : 0;
     if (patch.tools !== undefined) set.tools = JSON.stringify(patch.tools);
@@ -294,9 +311,9 @@ export class McpController {
     }
     try {
       const server = await this.mcp.oauthCallback(code, state);
-      res.send(page('Connected', `${server.name} is authorized. You can close this window and return to yaam.`));
+      res.send(page('Connected', `${escapeHtml(server.name)} is authorized. You can close this window and return to yaam.`));
     } catch (err) {
-      res.status(400).send(page('Connection failed', err instanceof Error ? err.message : 'unknown error'));
+      res.status(400).send(page('Connection failed', escapeHtml(err instanceof Error ? err.message : 'unknown error')));
     }
   }
 

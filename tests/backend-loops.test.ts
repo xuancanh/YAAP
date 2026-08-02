@@ -16,6 +16,10 @@ import { WorkspacesService } from '../server/src/workspaces/workspaces.service';
 import { StorageService } from '../server/src/storage/storage.service';
 import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
+import { setAddressLookup } from '../server/src/common/url-guard';
+
+// offline test run: every hostname "resolves" to a public address
+setAddressLookup(async () => [{ address: '93.184.216.34', family: 4 }]);
 
 test('cronMatches: fields, steps, ranges, and junk expressions', () => {
   const at = (min: number, hour: number, dow = 4) => {

@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ToolsService, htmlToText } from '../server/src/chats/tools.service';
+import { assertPublicUrl, setAddressLookup } from '../server/src/common/url-guard';
 import { validateSlides, renderSlidesHtml } from '../server/src/chats/slides.util';
 import { contentTypeFor, previewKindFor } from '../server/src/storage/preview.util';
 import { memStorage } from './helpers';
@@ -49,10 +50,70 @@ test('http_request refuses private/internal hosts (SSRF guard)', async () => {
     'http://192.168.1.1/x',
     'http://172.16.0.1/x',
     'http://169.254.169.254/latest/meta-data',
+    'http://0.0.0.0/x',
+    'http://0x7f000001/x',
+    'http://100.64.0.1/x',
+    'http://198.18.0.1/x',
+    'http://224.0.0.1/x',
+    'http://[::1]/x',
+    'http://[::]/x',
+    'http://[::ffff:127.0.0.1]/x',
+    'http://[fe80::1]/x',
+    'http://[fd00::1]/x',
     'ftp://example.com/x',
     'not a url',
   ]) {
     await assert.rejects(tools.execute('ws1', 'http_request', { url }), /not allowed|are allowed|not a valid URL/);
+  }
+});
+
+test('the guard refuses hostnames that resolve to a private address (rebinding)', async () => {
+  setAddressLookup(async (host) => [{ address: host.startsWith('v6.') ? 'fe80::1' : '10.9.9.9', family: 4 }]);
+  await assert.rejects(assertPublicUrl('https://sneaky.example.com/x'), /private\/internal/);
+  await assert.rejects(assertPublicUrl('https://v6.example.com/x'), /private\/internal/);
+
+  setAddressLookup(async () => [{ address: '93.184.216.34', family: 4 }]);
+  const url = await assertPublicUrl('https://ok.example.com/x');
+  assert.equal(url.hostname, 'ok.example.com');
+
+  setAddressLookup(async () => [{ address: '93.184.216.34', family: 4 }, { address: '::ffff:127.0.0.1', family: 6 }]);
+  await assert.rejects(assertPublicUrl('https://mixed.example.com/x'), /private\/internal/, 'any private answer poisons the host');
+
+  setAddressLookup(null);
+});
+
+test('web_fetch re-validates every redirect hop against the SSRF guard', async () => {
+  const { tools } = setup();
+  setAddressLookup(async () => [{ address: '93.184.216.34', family: 4 }]);
+  const original = globalThis.fetch;
+  const fetched: string[] = [];
+  globalThis.fetch = (async (url: RequestInfo | URL) => {
+    const u = String(url);
+    fetched.push(u);
+    if (u === 'https://public.example.com/start') {
+      return new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/latest/meta-data' } });
+    }
+    if (u === 'https://public.example.com/hop') {
+      return new Response(null, { status: 302, headers: { location: '/final' } });
+    }
+    return new Response('<p>hello</p>', { status: 200, headers: { 'content-type': 'text/html' } });
+  }) as unknown as typeof fetch;
+  try {
+    // a public page redirecting to cloud metadata is refused before the fetch
+    await assert.rejects(
+      tools.execute('ws1', 'web_fetch', { url: 'https://public.example.com/start' }),
+      /private\/internal/,
+    );
+    assert.deepEqual(fetched, ['https://public.example.com/start'], 'the private hop is never fetched');
+
+    // a redirect chain that stays public still works
+    fetched.length = 0;
+    const out = await tools.execute('ws1', 'web_fetch', { url: 'https://public.example.com/hop' });
+    assert.equal(out, 'hello');
+    assert.deepEqual(fetched, ['https://public.example.com/hop', 'https://public.example.com/final']);
+  } finally {
+    globalThis.fetch = original;
+    setAddressLookup(null);
   }
 });
 

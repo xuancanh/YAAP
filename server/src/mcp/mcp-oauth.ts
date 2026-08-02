@@ -6,6 +6,7 @@
  * injectable fetch so the whole chain is testable offline.
  */
 import { createHash, randomBytes } from 'node:crypto';
+import { assertPublicUrl } from '../common/url-guard';
 
 export interface AuthServerMeta {
   authorizationEndpoint: string;
@@ -15,6 +16,9 @@ export interface AuthServerMeta {
 
 async function getJson(fetchFn: typeof fetch, url: string): Promise<Record<string, unknown> | null> {
   try {
+    // every candidate here is server-derived (metadata hints, well-knowns of
+    // a server-named host) — refuse internal targets before fetching
+    await assertPublicUrl(url);
     const res = await fetchFn(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
     if (!res.ok) return null;
     return await res.json() as Record<string, unknown>;
@@ -47,11 +51,17 @@ export async function discoverAuth(serverUrl: string, wwwAuthenticate: string, f
   for (const url of [...wellKnown(asUrl, 'oauth-authorization-server'), ...wellKnown(asUrl, 'openid-configuration')]) {
     const meta = await getJson(fetchFn, url);
     if (meta?.authorization_endpoint && meta?.token_endpoint) {
-      return {
+      const endpoints: AuthServerMeta = {
         authorizationEndpoint: String(meta.authorization_endpoint),
         tokenEndpoint: String(meta.token_endpoint),
         registrationEndpoint: meta.registration_endpoint ? String(meta.registration_endpoint) : undefined,
       };
+      // the endpoints come from the server's own metadata — they could point
+      // anywhere; the browser is sent to one and we POST credentials to others
+      await assertPublicUrl(endpoints.authorizationEndpoint);
+      await assertPublicUrl(endpoints.tokenEndpoint);
+      if (endpoints.registrationEndpoint) await assertPublicUrl(endpoints.registrationEndpoint);
+      return endpoints;
     }
   }
   throw new Error(`could not discover OAuth endpoints for ${serverUrl} — the server may not support the MCP authorization spec`);
@@ -65,6 +75,7 @@ export async function registerClient(
 ): Promise<{ clientId: string; clientSecret: string } | null> {
   if (!registrationEndpoint) return null;
   try {
+    await assertPublicUrl(registrationEndpoint);
     const res = await fetchFn(registrationEndpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

@@ -5,8 +5,13 @@ import assert from 'node:assert/strict';
 import type { ConfigService } from '@nestjs/config';
 import { McpAuthRequiredError, McpHttpClient } from '../server/src/mcp/mcp-client';
 import { McpService } from '../server/src/mcp/mcp.module';
+import { discoverAuth } from '../server/src/mcp/mcp-oauth';
+import { setAddressLookup } from '../server/src/common/url-guard';
 import { mcpServers } from '../server/src/database/schema';
 import { open } from '../server/src/common/secretbox';
+
+// offline test run: every hostname "resolves" to a public address
+setAddressLookup(async () => [{ address: '93.184.216.34', family: 4 }]);
 
 const mcpConfigStub = {
   get: (key: string) => ({ publicBaseUrl: 'http://localhost:8790' })[key],
@@ -72,6 +77,40 @@ test('client parses SSE-framed responses and surfaces JSON-RPC errors', async ()
 
 test('stdio URLs are rejected', () => {
   assert.throws(() => new McpHttpClient('stdio://mcp-fs'), /only http\(s\)/);
+});
+
+test('create/update refuse private server URLs (SSRF guard)', async () => {
+  const db = await testDb();
+  const mcp = new McpService(db, mcpConfigStub);
+  for (const url of [
+    'http://169.254.169.254/mcp',
+    'http://10.0.0.5/mcp',
+    'http://[::ffff:127.0.0.1]/mcp',
+    'http://[fe80::1]/mcp',
+    'http://localhost:8790/mcp',
+  ]) {
+    await assert.rejects(mcp.create({ name: 'bad', url }), /private\/internal/);
+  }
+  const server = await mcp.create({ name: 'good', url: 'https://mcp.example.com/mcp' });
+  await assert.rejects(mcp.update(server.id, { url: 'http://192.168.1.1/mcp' }), /private\/internal/);
+  assert.equal((await mcp.listPublic())[0].url, 'https://mcp.example.com/mcp', 'rejected update leaves the URL unchanged');
+});
+
+test('OAuth discovery refuses metadata pointing at internal targets', async () => {
+  const fetchImpl = (async (url: RequestInfo | URL) => {
+    const u = String(url);
+    if (u.includes('oauth-protected-resource')) {
+      return new Response(JSON.stringify({ authorization_servers: ['https://auth.example.com'] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      authorization_endpoint: 'https://auth.example.com/authorize',
+      token_endpoint: 'http://169.254.169.254/token',
+    }), { status: 200 });
+  }) as unknown as typeof fetch;
+  await assert.rejects(
+    discoverAuth('https://mcp.example.com/mcp', '', fetchImpl),
+    /private\/internal/,
+  );
 });
 
 test('discover caches tools on the row; specs and routing use the cache', async () => {

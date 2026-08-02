@@ -12,7 +12,7 @@ import { agents, agentEvents, agentTasks, chatSessions, chatTurns } from '../dat
 import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix } from '../storage/storage.keys';
-import { assertPublicUrl } from '../chats/tools.service';
+import { assertPublicUrl, fetchPublic } from '../common/url-guard';
 import { AiToolSpec } from '../ai/ai-provider.interface';
 
 /** A self-built mini app (FR-11.5): a self-contained HTML tool the agent
@@ -226,7 +226,7 @@ export class AgentsService {
     if (url.split('/').slice(0, 3).join('/').includes('{')) {
       throw new BadRequestException('the URL host must be literal — placeholders are only allowed in the path and query');
     }
-    assertPublicUrl(url.replace(PARAM_RE, 'x'));
+    await assertPublicUrl(url.replace(PARAM_RE, 'x'));
     const params = [...new Set([...`${url} ${body ?? ''}`.matchAll(PARAM_RE)].map((m) => m[1]))];
     const tools = await this.listCustomTools(id);
     const existing = tools.find((t) => t.slug === slug);
@@ -280,13 +280,11 @@ export class AgentsService {
       if (typeof v !== 'string') throw new Error(`missing argument "${param}"`);
       return encode ? encodeURIComponent(v.slice(0, 500)) : v.slice(0, 2_000);
     });
-    const url = assertPublicUrl(fill(tool.url, true));
-    const res = await fetch(url, {
+    const res = await fetchPublic(fill(tool.url, true), {
       method: tool.method,
       headers: tool.method === 'POST' ? { 'content-type': 'application/json' } : undefined,
       body: tool.method === 'POST' && tool.body ? fill(tool.body, false) : undefined,
       signal: AbortSignal.timeout(20_000),
-      redirect: 'follow',
     });
     const text = await res.text();
     return `${res.status} ${res.statusText}\n${text.length > 8_000 ? `${text.slice(0, 8_000)}\n…(truncated)` : text}`;
