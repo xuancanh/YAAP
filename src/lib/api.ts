@@ -399,6 +399,8 @@ export const api = {
   appAsk: (id: string, appId: string, prompt: string, workspaceId?: string) =>
     send<{ answer: string; denied: string[]; remainingToday: number; sessionId: string }>(
       `/api/agents/${id}/apps/${appId}/ask`, 'POST', { prompt, workspaceId }),
+  appLlmComplete: (id: string, appId: string, prompt: string, schema?: unknown, maxTokens?: number) =>
+    send<AppLlmResult>(`/api/agents/${id}/apps/${appId}/llm`, 'POST', { prompt, schema, maxTokens }),
   agentEvents: (id: string) => get<AgentEvent[]>(`/api/agents/${id}/events`),
   markAgentEventsRead: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}/events/read`, 'POST'),
   actOnAgentEvent: (id: string, eventId: string, decision: 'approve' | 'dismiss') =>
@@ -467,6 +469,56 @@ export const api = {
   search: (workspaceId: string, q: string) =>
     get<SearchResults>(`/api/search?workspaceId=${enc(workspaceId)}&q=${enc(q)}`),
 };
+
+export interface AppLlmResult {
+  text: string;
+  data?: unknown;
+  parseError?: string;
+  remainingTokensToday: number;
+}
+
+/** Stream a mini app's model call, relaying chunks as they arrive. The frame
+ *  has no network of its own — the host page runs this and forwards. */
+export async function appLlmStream(
+  agentId: string,
+  appId: string,
+  prompt: string,
+  onChunk: (text: string) => void,
+  maxTokens?: number,
+): Promise<AppLlmResult> {
+  const res = await fetch(`/api/agents/${agentId}/apps/${appId}/llm/stream`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, maxTokens }),
+  });
+  if (!res.ok || !res.body) throw new Error(`${res.status} ${await res.text()}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: AppLlmResult = { text: '', remainingTokensToday: 0 };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split('\n\n');
+    buffer = events.pop() ?? '';
+    for (const chunk of events) {
+      const data = chunk.split('\n').filter((l) => l.startsWith('data: ')).map((l) => l.slice(6)).join('\n');
+      if (!data) continue;
+      try {
+        const ev = JSON.parse(data) as
+          { type: 'chunk'; text: string } | { type: 'done'; result: AppLlmResult } | { type: 'error'; message: string };
+        if (ev.type === 'chunk') onChunk(ev.text);
+        else if (ev.type === 'done') result = ev.result;
+        else throw new Error(ev.message);
+      } catch (err) {
+        if (err instanceof SyntaxError) continue; // one bad frame must not kill the stream
+        throw err;
+      }
+    }
+  }
+  return result;
+}
 
 /** Send a message and consume the SSE turn stream. */
 export async function sendTurn(

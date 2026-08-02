@@ -34,6 +34,10 @@ export interface AgentApp {
 /** The full capability vocabulary; unknown names are rejected at save. */
 export const APP_CAPABILITIES = [
   'storage', 'chat.compose', 'files.read', 'files.write', 'tasks.read', 'tasks.write', 'agent.ask',
+  // docs/miniapp-roadmap.md: act two — a tool-free model call, structured
+  // data, connection-backed reads with propose-to-mutate, and the sandboxed
+  // code runner. All elevated; none of them widen an app past its agent.
+  'llm', 'data', 'connections', 'compute',
 ] as const;
 /** Caps that activate silently — they add persistence/convenience, not reach. */
 export const APP_FREE_CAPS = new Set<string>(['storage', 'chat.compose']);

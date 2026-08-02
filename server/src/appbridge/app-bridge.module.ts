@@ -5,15 +5,23 @@
  * host page (AppHost), and the grant is re-verified here on each request —
  * the client-side checks are UX, this is the boundary.
  */
-import { Body, Controller, Get, Module, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, Module, Param, Patch, Post, Put, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { AppBridgeService } from './app-bridge.service';
+import { AppLlmService } from './app-llm.service';
 import { AgentsModule } from '../agents/agents.module';
 import { ChatsModule } from '../chats/chats.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
+import { AiModule } from '../ai/ai.module';
+import { AgentTypesModule } from '../agent-types/agent-types.module';
+import { SettingsModule } from '../settings/settings.module';
 
 @Controller('agents/:id/apps/:appId')
 export class AppBridgeController {
-  constructor(private readonly bridge: AppBridgeService) {}
+  constructor(
+    private readonly bridge: AppBridgeService,
+    private readonly llm: AppLlmService,
+  ) {}
 
   @Post('approve')
   approve(@Param('id') id: string, @Param('appId') appId: string, @Body() body: { capabilities: string[] }) {
@@ -73,11 +81,44 @@ export class AppBridgeController {
   ask(@Param('id') id: string, @Param('appId') appId: string, @Body() body: { prompt: string; workspaceId?: string }) {
     return this.bridge.ask(id, appId, body.prompt ?? '', body.workspaceId);
   }
+
+  @Post('llm')
+  complete(
+    @Param('id') id: string, @Param('appId') appId: string,
+    @Body() body: { prompt: string; schema?: unknown; maxTokens?: number },
+  ) {
+    return this.llm.complete(id, appId, body.prompt ?? '', { schema: body.schema, maxTokens: body.maxTokens });
+  }
+
+  /** Streamed completion. The host page consumes this and relays chunks into
+   *  the frame over postMessage — the frame itself still has no network. */
+  @Post('llm/stream')
+  async completeStream(
+    @Param('id') id: string, @Param('appId') appId: string,
+    @Body() body: { prompt: string; maxTokens?: number }, @Res() res: Response,
+  ) {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+      Connection: 'keep-alive',
+    });
+    res.on('error', () => {});
+    try {
+      for await (const ev of this.llm.stream(id, appId, body.prompt ?? '', { maxTokens: body.maxTokens })) {
+        res.write(`data: ${JSON.stringify(ev)}\n\n`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.write(`data: ${JSON.stringify({ type: 'error', message })}\n\n`);
+    }
+    res.end();
+  }
 }
 
 @Module({
-  imports: [AgentsModule, ChatsModule, WorkspacesModule],
+  imports: [AgentsModule, ChatsModule, WorkspacesModule, AiModule, AgentTypesModule, SettingsModule],
   controllers: [AppBridgeController],
-  providers: [AppBridgeService],
+  providers: [AppBridgeService, AppLlmService],
 })
 export class AppBridgeModule {}

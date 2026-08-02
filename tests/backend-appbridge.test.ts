@@ -14,6 +14,10 @@ import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } fr
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import { RateLimiter } from '../server/src/appbridge/bridge-limits';
 import { agentFileKey } from '../server/src/storage/storage.keys';
+import { AppLlmService, LLM_TOKENS_PER_DAY } from '../server/src/appbridge/app-llm.service';
+import { AiProviderFactory } from '../server/src/ai/providers.factory';
+import { AgentTypesService } from '../server/src/agent-types/agent-types.service';
+import { SettingsService } from '../server/src/settings/settings.module';
 
 async function setup(rounds: AiStreamEvent[][] = []) {
   const db = await testDb();
@@ -166,4 +170,79 @@ test('reads leave provenance: first read logs, then every 25th, and it names wha
   await bridge.fileRead(agent.id, entry.id, 'reports/weekly.md'); // the 25th
   events = await agents.listEvents(agent.id);
   assert.ok(events.some((e) => /25 reads so far/.test(e.title)), 'a runaway reader resurfaces');
+});
+
+// ---- roadmap step 2: llm.* — a model call that is not an agent turn ----
+
+function llmSetup(bridge: AppBridgeService, rounds: AiStreamEvent[][]) {
+  const provider = new ScriptedProvider(rounds);
+  const providers = { resolve: () => provider, defaultBaseUrl: () => undefined } as unknown as AiProviderFactory;
+  const types = { list: async () => [], resolve: async () => undefined } as unknown as AgentTypesService;
+  const settings = { all: async () => ({}) } as unknown as SettingsService;
+  return { llm: new AppLlmService(bridge, providers, types, settings), provider };
+}
+
+test('llm.complete carries no agent context and no tools — it is a text function, not an agent', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['llm']);
+  const { llm, provider } = llmSetup(bridge, [[{ type: 'answer', text: 'positive' }, { type: 'done' }]]);
+
+  const res = await llm.complete(agent.id, entry.id, 'Classify: "great product"');
+  assert.equal(res.text, 'positive');
+
+  const req = provider.requests[0];
+  assert.equal(req.tools, undefined, 'no tools: an app can never reach the agent\'s authority this way');
+  assert.equal(req.messages.length, 1, 'no conversation history');
+  assert.doesNotMatch(req.system ?? '', /charter|Helper|kanban/, 'the agent\'s own instructions never leak in');
+  assert.ok(res.remainingTokensToday < LLM_TOKENS_PER_DAY, 'the call is billed');
+});
+
+test('llm.complete parses schema output, reports unparseable output instead of pretending', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['llm']);
+  // models fence JSON even when told not to — that must still parse
+  const { llm } = llmSetup(bridge, [
+    [{ type: 'answer', text: '```json\n{"tag":"food","amount":12}\n```' }, { type: 'done' }],
+    [{ type: 'answer', text: 'sorry, I cannot' }, { type: 'done' }],
+  ]);
+  const schema = { type: 'object', properties: { tag: { type: 'string' } } };
+
+  const ok = await llm.complete(agent.id, entry.id, 'extract', { schema });
+  assert.deepEqual(ok.data, { tag: 'food', amount: 12 });
+  assert.equal(ok.parseError, undefined);
+
+  // schema compliance is prompt-level, not provider-enforced; say so honestly
+  const bad = await llm.complete(agent.id, entry.id, 'extract', { schema });
+  assert.equal(bad.data, undefined);
+  assert.ok(bad.parseError, 'a non-JSON answer surfaces as a parse error, not a silent undefined');
+});
+
+test('llm is gated by activation and billed against the rate ceiling like every other op', async () => {
+  const { bridge, agents, agent } = await setup();
+  await agents.saveApp(agent.id, { name: 'Widget', html: '<b>x</b>', capabilities: ['llm'] });
+  const entry = (await agents.listApps(agent.id))[0];
+  const { llm } = llmSetup(bridge, [[{ type: 'answer', text: 'hi' }, { type: 'done' }]]);
+
+  await assert.rejects(llm.complete(agent.id, entry.id, 'x'), /not activated/, 'llm parks for review like any elevated cap');
+
+  await agents.approveAppCaps(agent.id, entry.id, ['llm']);
+  for (let i = 0; i < 30; i++) await llm.complete(agent.id, entry.id, 'x');
+  await assert.rejects(llm.complete(agent.id, entry.id, 'x'), /too fast/, 'model calls have their own, tighter ceiling');
+});
+
+test('llm.stream yields chunks and finishes with the billed result', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['llm']);
+  const { llm } = llmSetup(bridge, [[
+    { type: 'answer', text: 'Once ' }, { type: 'answer', text: 'upon a time' }, { type: 'done' },
+  ]]);
+
+  const chunks: string[] = [];
+  let final = '';
+  for await (const ev of llm.stream(agent.id, entry.id, 'tell a story')) {
+    if (ev.type === 'chunk') chunks.push(ev.text);
+    else final = ev.result.text;
+  }
+  assert.deepEqual(chunks, ['Once ', 'upon a time']);
+  assert.equal(final, 'Once upon a time');
 });

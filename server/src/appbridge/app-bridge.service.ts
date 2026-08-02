@@ -48,9 +48,10 @@ export class AppBridgeService {
 
   /** Load the app entry, verify the capability is activated, and bill the
    *  call against the app's rate ceiling for that op class. Every bridge
-   *  entry point goes through here — that is what makes the limit real
-   *  rather than a claim in a doc. */
-  private async requireCap(agentId: string, appId: string, cap: string, op: string): Promise<AgentApp> {
+   *  entry point goes through here — including the collaborator services
+   *  (llm, data, connections, compute), which is what makes one gate the
+   *  whole boundary rather than each surface re-implementing it. */
+  async gate(agentId: string, appId: string, cap: string, op: string): Promise<AgentApp> {
     const entry = (await this.agents.listApps(agentId)).find((x) => x.id === appId);
     if (!entry) throw new NotFoundException(`app ${appId}`);
     if (!(entry.approved ?? []).includes(cap)) {
@@ -75,14 +76,14 @@ export class AppBridgeService {
   // ---- storage: app-private KV state ----
 
   async storageGet(agentId: string, appId: string) {
-    await this.requireCap(agentId, appId, 'storage', 'storage.get');
+    await this.gate(agentId, appId, 'storage', 'storage.get');
     const body = await this.storage.get(agentFileKey(agentId, `apps/${appId}/state.json`));
     if (!body) return { state: null };
     try { return { state: JSON.parse(body.toString('utf8')) as unknown }; } catch { return { state: null }; }
   }
 
   async storagePut(agentId: string, appId: string, state: unknown) {
-    await this.requireCap(agentId, appId, 'storage', 'storage.set');
+    await this.gate(agentId, appId, 'storage', 'storage.set');
     const json = JSON.stringify(state ?? null);
     if (json.length > STATE_CAP) throw new BadRequestException(`state exceeds ${STATE_CAP} bytes`);
     await this.storage.put(agentFileKey(agentId, `apps/${appId}/state.json`), Buffer.from(json), 'application/json');
@@ -92,7 +93,7 @@ export class AppBridgeService {
   // ---- files: the agent's own view, read-only + own-folder writes ----
 
   async filesList(agentId: string, appId: string, prefix: string, workspaceId?: string) {
-    const entry = await this.requireCap(agentId, appId, 'files.read', 'files.list');
+    const entry = await this.gate(agentId, appId, 'files.read', 'files.list');
     const agent = await this.agents.get(agentId);
     const out: Array<{ path: string; size: number; lastModified?: string }> = [];
     for (const o of await this.storage.list(agentPrefix(agentId))) {
@@ -112,7 +113,7 @@ export class AppBridgeService {
   }
 
   async fileRead(agentId: string, appId: string, path: string, workspaceId?: string) {
-    const entry = await this.requireCap(agentId, appId, 'files.read', 'files.read');
+    const entry = await this.gate(agentId, appId, 'files.read', 'files.read');
     const agent = await this.agents.get(agentId);
     const clean = path.replace(/^\/+/, '');
     let key: string;
@@ -135,7 +136,7 @@ export class AppBridgeService {
   }
 
   async fileWrite(agentId: string, appId: string, path: string, content: string) {
-    const entry = await this.requireCap(agentId, appId, 'files.write', 'files.write');
+    const entry = await this.gate(agentId, appId, 'files.write', 'files.write');
     const clean = path.replace(/^\/+/, '');
     if (!clean) throw new BadRequestException('path is required');
     if (typeof content !== 'string' || content.length > FILE_WRITE_CAP) {
@@ -152,19 +153,19 @@ export class AppBridgeService {
   // ---- tasks: the agent's kanban ----
 
   async tasksList(agentId: string, appId: string) {
-    await this.requireCap(agentId, appId, 'tasks.read', 'tasks.list');
+    await this.gate(agentId, appId, 'tasks.read', 'tasks.list');
     return this.agents.listTasks(agentId);
   }
 
   async taskAdd(agentId: string, appId: string, title: string, note?: string) {
-    const entry = await this.requireCap(agentId, appId, 'tasks.write', 'tasks.add');
+    const entry = await this.gate(agentId, appId, 'tasks.write', 'tasks.add');
     const task = await this.agents.addTask(agentId, { title, note, origin: 'app' });
     await this.agents.addEvent(agentId, { kind: 'info', title: `App "${entry.name}" filed task: ${task.title}` }).catch(() => {});
     return task;
   }
 
   async taskMove(agentId: string, appId: string, taskId: string, status: string) {
-    await this.requireCap(agentId, appId, 'tasks.write', 'tasks.move');
+    await this.gate(agentId, appId, 'tasks.write', 'tasks.move');
     if (!['todo', 'doing', 'done'].includes(status)) throw new BadRequestException('status must be todo|doing|done');
     // status moves only — apps never retitle or annotate someone else's task
     return this.agents.updateTask(agentId, taskId, { status });
@@ -173,7 +174,7 @@ export class AppBridgeService {
   // ---- agent.ask: a budgeted Ask-mode channel turn ----
 
   async ask(agentId: string, appId: string, prompt: string, workspaceId?: string) {
-    const entry = await this.requireCap(agentId, appId, 'agent.ask', 'agent.ask');
+    const entry = await this.gate(agentId, appId, 'agent.ask', 'agent.ask');
     const text = prompt.trim().slice(0, ASK_PROMPT_CAP);
     if (!text) throw new BadRequestException('prompt is required');
 

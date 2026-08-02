@@ -5,17 +5,22 @@
  *  and forwarding to the scoped server endpoints, which re-verify every
  *  grant. The iframe stays opaque-origin with no network of its own. */
 import { useEffect, useRef, useState } from 'react';
-import { api, type AgentApp } from '../lib/api';
+import { api, appLlmStream, type AgentApp } from '../lib/api';
 import { CSP_META } from '../lib/sandbox';
 import { useApp } from '../store';
 
 /** Injected before the app's own HTML; defines the promise-based RPC. */
-const SHIM = `<script>window.yaam=(()=>{let q=0;const p={};addEventListener('message',e=>{const m=e.data;if(m&&m.__yaam&&p[m.id]){const{ok,er}=p[m.id];delete p[m.id];m.error?er(new Error(m.error)):ok(m.result)}});const c=(op,args)=>new Promise((ok,er)=>{const id=++q;p[id]={ok,er};parent.postMessage({__yaam:true,id,op,args:args||{}},'*')});return{
+const SHIM = `<script>window.yaam=(()=>{let q=0;const p={},s={};addEventListener('message',e=>{const m=e.data;if(!m||!m.__yaam)return;if(m.chunk!==undefined){const f=s[m.id];if(f)f(m.chunk);return}if(p[m.id]){const{ok,er}=p[m.id];delete p[m.id];delete s[m.id];m.error?er(new Error(m.error)):ok(m.result)}});const c=(op,args,onChunk)=>new Promise((ok,er)=>{const id=++q;p[id]={ok,er};if(onChunk)s[id]=onChunk;parent.postMessage({__yaam:true,id,op,args:args||{}},'*')});return{
 storage:{get:()=>c('storage.get'),set:(state)=>c('storage.set',{state})},
-files:{list:(prefix)=>c('files.list',{prefix}),read:(path)=>c('files.read',{path}),write:(path,content)=>c('files.write',{path,content})},
+files:{list:(prefix)=>c('files.list',{prefix}),read:(path)=>c('files.read',{path}),write:(path,content)=>c('files.write',{path,content}),propose:(path,content)=>c('files.propose',{path,content}),watch:(prefix,since)=>c('files.watch',{prefix,since})},
 tasks:{list:()=>c('tasks.list'),add:(t)=>c('tasks.add',t),move:(id,status)=>c('tasks.move',{id,status})},
 chat:{compose:(text)=>c('chat.compose',{text})},
 agent:{ask:(prompt)=>c('agent.ask',{prompt})},
+llm:{complete:(prompt,opts)=>c('llm.complete',Object.assign({prompt},opts||{})),stream:(prompt,onChunk,opts)=>c('llm.stream',Object.assign({prompt},opts||{}),onChunk)},
+data:{put:(collection,row)=>c('data.put',{collection,row}),query:(collection,q)=>c('data.query',Object.assign({collection},q||{})),remove:(collection,id)=>c('data.delete',{collection,id})},
+sql:{engine:()=>c('sql.engine')},
+connections:{list:()=>c('connections.list'),read:(service,op,params)=>c('connections.read',{service,op,params:params||{}}),propose:(service,op,payload)=>c('connections.propose',{service,op,payload:payload||{}})},
+compute:{run:(language,code,files)=>c('compute.run',{language,code,files})},
 ui:{theme:()=>c('ui.theme'),toast:(text)=>c('ui.toast',{text})}
 }})();</script>`;
 
@@ -28,6 +33,12 @@ export const CAP_INFO: Record<string, { label: string; desc: string; free?: bool
   'tasks.read': { label: 'tasks.read', desc: "See the agent's kanban board" },
   'tasks.write': { label: 'tasks.write', desc: 'File new tasks and move task status', confirm: true },
   'agent.ask': { label: 'agent.ask', desc: 'Ask the agent questions (Ask mode, tools denied, 20 turns/day)', confirm: true },
+  // act two (docs/miniapp-roadmap.md). llm is cost-risk, not agency-risk —
+  // no tools, no agent context — so it activates without a per-call confirm.
+  'llm': { label: 'llm', desc: 'Use the model directly for its own text work (no tools, daily token budget)' },
+  'data': { label: 'data', desc: 'Keep structured rows it can query (its own namespace)' },
+  'connections': { label: 'connections', desc: "Read your connected calendar and mail through the agent's grant; changes need your approval", confirm: true },
+  'compute': { label: 'compute', desc: 'Run code in the sandboxed runner (no network, scratch files only)', confirm: true },
 };
 
 /** Elevated caps requested but not yet activated by the user. */
@@ -38,9 +49,18 @@ export function pendingCaps(a: AgentApp): string[] {
 
 interface Msg { __yaam: true; id: number; op: string; args: Record<string, unknown> }
 
+const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
+
 /** Consecutive-ish denials tolerated before an app loses the confirm channel
  *  for this mount. Generous for honest mis-clicks, fatal to a nag loop. */
 const MAX_DENIALS = 3;
+
+/** Ops that confirm on first use per app, then remember for this mount. */
+const CONFIRM_ONCE = new Set(['tasks.add', 'tasks.move', 'agent.ask', 'compute.run']);
+/** Ops that confirm *every* time, because the payload is the decision: a
+ *  file leaving the app's folder, or a change to your real calendar/mail.
+ *  Remembering these would be remembering "yes to whatever it sends next". */
+const CONFIRM_ALWAYS = new Set(['files.propose', 'connections.propose']);
 
 /** What the confirm card says: a verb the user can weigh, and the actual
  *  payload — the whole reason this replaced window.confirm. */
@@ -50,6 +70,9 @@ function describe(m: Msg): { verb: string; payload: string } {
     case 'agent.ask': return { verb: 'ask the agent a question', payload: s('prompt', 1_000) };
     case 'tasks.add': return { verb: 'file a task on the board', payload: s('title', 200) + (m.args.note ? `\n\n${s('note', 500)}` : '') };
     case 'tasks.move': return { verb: 'move a task on the board', payload: `task ${s('id', 40)} → ${s('status', 20)}` };
+    case 'files.propose': return { verb: `save ${s('path', 120)} into the agent's folder`, payload: s('content', 4_000) };
+    case 'connections.propose': return { verb: `change your connected ${s('service', 40)}`, payload: JSON.stringify(m.args.payload ?? {}, null, 2).slice(0, 2_000) };
+    case 'compute.run': return { verb: `run ${s('language', 20)} in the sandbox`, payload: s('code', 4_000) };
     default: return { verb: m.op, payload: JSON.stringify(m.args).slice(0, 800) };
   }
 }
@@ -70,7 +93,7 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
   // which is unspoofable but cannot show what is actually being approved —
   // and "allow the agent to be asked something" is not a decision anyone can
   // make from the operation name alone.
-  const [confirmReq, setConfirmReq] = useState<{ verb: string; payload: string; resolve: (ok: boolean) => void } | null>(null);
+  const [confirmReq, setConfirmReq] = useState<{ verb: string; payload: string; always: boolean; resolve: (ok: boolean) => void } | null>(null);
 
   useEffect(() => {
     const onMessage = async (e: MessageEvent) => {
@@ -85,26 +108,33 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
         'files.list': 'files.read', 'files.read': 'files.read', 'files.write': 'files.write',
         'tasks.list': 'tasks.read', 'tasks.add': 'tasks.write', 'tasks.move': 'tasks.write',
         'chat.compose': 'chat.compose', 'agent.ask': 'agent.ask',
+        'files.propose': 'files.write', 'files.watch': 'files.read',
+        'llm.complete': 'llm', 'llm.stream': 'llm',
+        'data.put': 'data', 'data.query': 'data', 'data.delete': 'data', 'sql.engine': 'data',
+        'connections.list': 'connections', 'connections.read': 'connections', 'connections.propose': 'connections',
+        'compute.run': 'compute',
       } as Record<string, string>)[m.op];
 
       try {
         if (cap && !(ma.approved ?? []).includes(cap)) {
           throw new Error(`capability "${cap}" is not activated for this app — the user can review it on the app card`);
         }
-        // mutating caps confirm on first use per app, in our chrome
-        if (cap && CAP_INFO[cap]?.confirm && !remembered.current.has(cap)) {
+        // mutating ops confirm in our chrome — once per app, or every time
+        // when the payload itself is what the user is approving
+        const always = CONFIRM_ALWAYS.has(m.op);
+        if ((always || CONFIRM_ONCE.has(m.op)) && (always || !remembered.current.has(m.op))) {
           if (denials.current >= MAX_DENIALS) {
             throw new Error('denied — this app asked too many times and is cut off until you reopen it');
           }
           const { verb, payload } = describe(m);
-          const ok = await new Promise<boolean>((resolve) => setConfirmReq({ verb, payload, resolve }));
+          const ok = await new Promise<boolean>((resolve) => setConfirmReq({ verb, payload, always, resolve }));
           setConfirmReq(null);
           if (!ok) {
             denials.current++;
             if (denials.current >= MAX_DENIALS) st.showToast(`"${ma.name}" kept asking after you said no — further requests are blocked`);
             throw new Error('denied by the user');
           }
-          remembered.current.add(cap);
+          if (!always) remembered.current.add(m.op);
         }
 
         const ws = st.workspaceId || undefined;
@@ -119,6 +149,14 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
           case 'tasks.move': return reply(await api.appTaskMove(agentId, ma.id, String(m.args.id ?? ''), String(m.args.status ?? '')));
           case 'chat.compose': { await st.composeInChat(agentId, String(m.args.text ?? '')); return reply({ ok: true }); }
           case 'agent.ask': return reply(await api.appAsk(agentId, ma.id, String(m.args.prompt ?? ''), ws));
+          case 'llm.complete':
+            return reply(await api.appLlmComplete(agentId, ma.id, String(m.args.prompt ?? ''), m.args.schema, num(m.args.maxTokens)));
+          case 'llm.stream': {
+            // the frame has no network; the host streams and relays chunks
+            const relay = (text: string) =>
+              frame.current?.contentWindow?.postMessage({ __yaam: true, id: m.id, chunk: text }, '*');
+            return reply(await appLlmStream(agentId, ma.id, String(m.args.prompt ?? ''), relay, num(m.args.maxTokens)));
+          }
           case 'ui.theme': return reply({ theme: st.theme });
           case 'ui.toast': { st.showToast(String(m.args.text ?? '').slice(0, 120)); return reply({ ok: true }); }
           default: return reply(undefined, `unknown operation: ${m.op}`);
@@ -141,7 +179,9 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
             <div style={{ padding: '18px 22px 12px', borderBottom: '1px solid var(--border-soft)' }}>
               <div style={{ fontSize: 15.5, fontWeight: 700 }}>Mini app wants to {confirmReq.verb}</div>
               <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3 }}>
-                Requested by “{miniApp.name}”, built by its agent. Allowing remembers this until you close the app.
+                Requested by “{miniApp.name}”, built by its agent. {confirmReq.always
+                  ? 'This one is asked every time — you are approving this exact payload, not a standing permission.'
+                  : 'Allowing remembers this until you close the app.'}
               </div>
             </div>
             <pre style={{ margin: 0, padding: '14px 22px', maxHeight: 260, overflow: 'auto', fontSize: 12, fontFamily: 'var(--mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'var(--text)' }}>
