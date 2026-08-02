@@ -31,6 +31,10 @@ export type LiveItem =
 
 export interface FileTarget { kind: 'workspace' | 'agent'; id: string }
 
+/** A message staged while a turn streams: drained afterwards for the session
+ *  it was written in, with its attachments (FR: nothing is silently dropped). */
+export interface QueuedMessage { id: number; sessionId: string; text: string; attachments: Array<{ path: string; kind: string }> }
+
 interface Store {
   // layout
   width: number; stacked: boolean; mediumDock: boolean;
@@ -65,7 +69,7 @@ interface Store {
   send: (text: string) => Promise<void>;
   stopTurn: () => void;
   approve: (callId: string, decision: ApprovalDecision) => void;
-  queue: Array<{ id: number; text: string }>; removeQueued: (id: number) => void;
+  queue: QueuedMessage[]; removeQueued: (id: number) => void;
   drafts: Record<string, string>; setDraft: (v: string) => void;
   attachments: Array<{ id: number; path: string; kind: string }>;
   addAttachment: (path: string, kind?: string) => void;
@@ -159,7 +163,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [transcript, setTranscript] = useState<{ messages: ChatMessage[]; turns: ChatTurn[] }>({ messages: [], turns: [] });
   const [streaming, setStreaming] = useState(false);
   const [live, setLive] = useState<LiveItem[]>([]);
-  const [queue, setQueue] = useState<Array<{ id: number; text: string }>>([]);
+  const [queue, setQueue] = useState<QueuedMessage[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [attachments, setAttachments] = useState<Array<{ id: number; path: string; kind: string }>>([]);
 
@@ -176,6 +180,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   currentIdRef.current = currentId;
   const queueRef = useRef(queue);
   queueRef.current = queue;
+  // per-turn fetch abort + rAF-buffered stream text (one setLive per frame)
+  const abortRef = useRef<AbortController | null>(null);
+  const streamBuf = useRef<{ kind: 'thinking' | 'answer'; text: string } | null>(null);
+  const streamRaf = useRef(0);
 
   const stacked = width < 820;
   const mediumDock = !stacked && width < 1120;
@@ -256,6 +264,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // leaving the session: stop reading the old stream and drop its live rows
+    abortRef.current?.abort();
+    if (streamRaf.current) { cancelAnimationFrame(streamRaf.current); streamRaf.current = 0; }
+    streamBuf.current = null;
     setLive([]);
     void refreshTranscript();
     // hydrate the draft from the server copy once per session switch (FR-2.1)
@@ -342,30 +354,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const runTurn = useCallback(async (id: string, text: string, atts: Array<{ path: string; kind: string }>) => {
     setStreaming(true);
     setLive([]);
-    const patch = (fn: (items: LiveItem[]) => LiveItem[]) => setLive(fn);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    // live rows belong to the session the turn runs in: after a chat switch
+    // the stream keeps draining server-side but must not patch the view.
+    const current = () => currentIdRef.current === id;
+    const patch = (fn: (items: LiveItem[]) => LiveItem[]) => { if (current()) setLive(fn); };
+    // token text is buffered and flushed to state once per animation frame
+    const applyBuf = () => {
+      const buf = streamBuf.current;
+      streamBuf.current = null;
+      if (!buf || !current()) return;
+      setLive((items) => {
+        const last = items[items.length - 1];
+        if (buf.kind === 'thinking') {
+          if (last?.kind === 'thinking') return [...items.slice(0, -1), { ...last, text: last.text + buf.text }];
+          return [...items, { kind: 'thinking', text: buf.text, streaming: true }];
+        }
+        if (last?.kind === 'answer') return [...items.slice(0, -1), { ...last, text: last.text + buf.text }];
+        return [...items.map((i) => (i.kind === 'thinking' ? { ...i, streaming: false } : i)), { kind: 'answer', text: buf.text, streaming: true }];
+      });
+    };
+    const scheduleFlush = () => {
+      if (streamRaf.current) return;
+      streamRaf.current = requestAnimationFrame(() => { streamRaf.current = 0; applyBuf(); });
+    };
     try {
       await sendTurn(id, text, atts, (ev) => {
-        if (ev.type === 'thinking') {
-          patch((items) => {
-            const last = items[items.length - 1];
-            if (last?.kind === 'thinking') return [...items.slice(0, -1), { ...last, text: last.text + ev.text }];
-            return [...items, { kind: 'thinking', text: ev.text, streaming: true }];
-          });
-        } else if (ev.type === 'answer') {
-          patch((items) => {
-            const last = items[items.length - 1];
-            if (last?.kind === 'answer') return [...items.slice(0, -1), { ...last, text: last.text + ev.text }];
-            return [...items.map((i) => (i.kind === 'thinking' ? { ...i, streaming: false } : i)), { kind: 'answer', text: ev.text, streaming: true }];
-          });
+        if (ev.type === 'thinking' || ev.type === 'answer') {
+          if (streamBuf.current && streamBuf.current.kind !== ev.type) applyBuf();
+          if (streamBuf.current) streamBuf.current.text += ev.text;
+          else streamBuf.current = { kind: ev.type, text: ev.text };
+          scheduleFlush();
         } else if (ev.type === 'tool_call') {
+          applyBuf(); // flush pending token text first so row order is kept
           patch((items) => [...items.map((i) => ({ ...i, streaming: false } as LiveItem)), { kind: 'tool', id: ev.id, name: ev.name, input: ev.input, status: 'running' }]);
         } else if (ev.type === 'approval_required') {
+          applyBuf();
           patch((items) => {
             const found = items.some((i) => i.kind === 'tool' && i.id === ev.callId);
             if (found) return items.map((i) => (i.kind === 'tool' && i.id === ev.callId ? { ...i, status: 'pending' as const } : i));
             return [...items, { kind: 'tool', id: ev.callId, name: ev.tool, input: ev.input, status: 'pending' }];
           });
         } else if (ev.type === 'tool_result') {
+          applyBuf();
           patch((items) => items.map((i) => (
             i.kind === 'tool' && i.id === ev.id
               ? { ...i, status: ev.isError ? (ev.output.includes('Denied') ? 'denied' : 'error') : 'done', result: ev.output }
@@ -374,10 +406,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         } else if (ev.type === 'error') {
           showToast(ev.message);
         }
-      });
+      }, ctrl.signal);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'turn failed');
+      if (!(err instanceof Error && err.name === 'AbortError')) showToast(err instanceof Error ? err.message : 'turn failed');
     }
+    if (streamRaf.current) { cancelAnimationFrame(streamRaf.current); streamRaf.current = 0; }
+    streamBuf.current = null;
+    if (abortRef.current === ctrl) abortRef.current = null;
     setStreaming(false);
     setLive([]);
     await refreshTranscript();
@@ -385,7 +420,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const next = queueRef.current[0];
     if (next) {
       setQueue((q) => q.slice(1));
-      setTimeout(() => { void runTurnRef.current?.(id, next.text, []); }, 300);
+      setTimeout(() => { void runTurnRef.current?.(next.sessionId, next.text, next.attachments); }, 300);
     }
   }, [refreshTranscript, refreshSessions, showToast]);
   const runTurnRef = useRef<typeof runTurn>(runTurn);
@@ -419,7 +454,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (skill) {
         setDraft('');
         const prompt = `Use the ${skill.name} skill${rest.length ? ` for: ${rest.join(' ')}` : ''}.`;
-        if (streaming) { setQueue((q) => [...q, { id: Date.now(), text: prompt }]); return; }
+        if (streaming) { setQueue((q) => [...q, { id: Date.now(), sessionId: id, text: prompt, attachments: [] }]); return; }
         await runTurn(id, prompt, []);
         return;
       }
@@ -430,8 +465,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (streaming) {
-      setQueue((q) => [...q, { id: Date.now(), text: trimmed }]);
+      // queue with the composer attachments so continuation drops nothing
+      setQueue((q) => [...q, { id: Date.now(), sessionId: id, text: trimmed, attachments: attachments.map((a) => ({ path: a.path, kind: a.kind })) }]);
       setDraft('');
+      clearAttachments();
       return;
     }
     const atts = attachments.map((a) => ({ path: a.path, kind: a.kind }));
@@ -443,6 +480,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const stopTurn = useCallback(() => {
     const id = currentIdRef.current;
     if (id) void api.stop(id);
+    abortRef.current?.abort(); // also stop reading the SSE body locally
     showToast('Turn stopped — partial output kept');
   }, [showToast]);
 
@@ -574,7 +612,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [hireId, market, refreshMarket, refreshAgents, openAgent, showToast]);
 
-  const store: Store = {
+  const store: Store = useMemo(() => ({
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView, setHomeView,
     mobileChatOpen, setMobileChatOpen, mobileDetail, setMobileDetail, toast, showToast,
     workspaces, workspaceId, pickWorkspace, refreshWorkspaces,
@@ -589,7 +627,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectedAgent, setSelectedAgent, openAgent, agentTabRequest, setAgentTabRequest, newAgentOpen, setNewAgentOpen, embedApp, composeInChat,
     artifact, openArtifact, closeArtifact,
     hireId, setHireId, confirmHire,
-  };
+  }), [
+    width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
+    mobileChatOpen, mobileDetail, toast, showToast,
+    workspaces, workspaceId, pickWorkspace, refreshWorkspaces,
+    agents, agentStats, refreshAgents, unread, sessions, refreshSessions, archived, archiveChat, restoreChat,
+    agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, refreshMcp,
+    market, refreshMarket, settings, saveSettings,
+    currentId, openSession, current, transcript, refreshTranscript, patchSession, newChat,
+    streaming, live, send, stopTurn, approve, queue, removeQueued,
+    drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
+    retry, editResend, fork, promote, rate,
+    fileTarget, fileList, refreshFiles, currentFile, openFile,
+    selectedAgent, openAgent, agentTabRequest, newAgentOpen, embedApp, composeInChat,
+    artifact, openArtifact, closeArtifact,
+    hireId, confirmHire,
+  ]);
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;
 }

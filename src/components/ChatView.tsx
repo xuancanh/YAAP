@@ -1,10 +1,11 @@
 /** The chat main pane: header (pin, token meter, model/effort popover,
  *  Ask/Auto), transcript (user/assistant/thinking/tool/system rows, inline
  *  approvals, artifact chips), queue, and the composer with slash/@ menus. */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type LiveItem, type LiveTool } from '../store';
-import { api, PROVIDER_COLORS, type ChatMessage, type ChatTurn } from '../lib/api';
+import { api, PROVIDER_COLORS, type Agent, type ChatMessage, type ChatTurn } from '../lib/api';
+import { safeJsonParse } from '../lib/util';
 
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 5, borderRadius: 6, display: 'flex' };
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -117,7 +118,7 @@ function AssistantFooter({ turn }: { turn?: ChatTurn }) {
   const usage = turn.tokensIn + turn.tokensOut > 0
     ? `${turn.tokensIn >= 1000 ? `${(turn.tokensIn / 1000).toFixed(1)}k` : turn.tokensIn} in · ${turn.tokensOut >= 1000 ? `${(turn.tokensOut / 1000).toFixed(1)}k` : turn.tokensOut} out`
     : '';
-  const handoff = turn.taskHandoff ? (JSON.parse(turn.taskHandoff) as { task: string }) : null;
+  const handoff = safeJsonParse<{ task: string } | null>(turn.taskHandoff, null);
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginTop: 12, color: 'var(--text-faint)' }}>
@@ -155,6 +156,70 @@ function SystemDivider({ text }: { text: string }) {
     </div>
   );
 }
+
+/** Transcript rows are memoized so a streaming frame doesn't re-render and
+ *  re-parse every earlier message; props stay referentially stable. */
+const UserRow = memo(function UserRow({ m, turn, onEditResend, onFork }: {
+  m: ChatMessage; turn?: ChatTurn;
+  onEditResend: (turnId: string) => void; onFork: (turnId: string) => void;
+}) {
+  const atts = safeJsonParse<Array<{ path?: string; name?: string }>>(turn?.attachments, []);
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '16px 0', animation: 'msgIn .2s ease' }}>
+      <div style={{ maxWidth: '80%' }}>
+        {atts.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginBottom: 6, flexWrap: 'wrap' }}>
+            {atts.map((a, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', fontSize: 11.5, color: 'var(--text-dim)', ...mono }}>▤ {(a.path ?? a.name ?? '').split('/').pop()}</div>
+            ))}
+          </div>
+        )}
+        <div style={{ background: 'var(--user)', border: '1px solid var(--border-soft)', borderRadius: '14px 14px 4px 14px', padding: '11px 15px', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{m.content}</div>
+        <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end', marginTop: 5 }}>
+          <button onClick={() => onEditResend(m.turnId)} title="Edit & resend" style={ghostBtn}><I d={P.edit} size={13} /></button>
+          <button onClick={() => onFork(m.turnId)} title="Fork" style={ghostBtn}><I d={P.forkIcon} size={13} /></button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const AssistantRow = memo(function AssistantRow({ m, turn, agent, isNewest, isLast, streaming, onOpenArtifact, onQuickReply }: {
+  m: ChatMessage; turn?: ChatTurn; agent?: Agent;
+  isNewest: boolean; isLast: boolean; streaming: boolean;
+  onOpenArtifact: (title: string, src: string) => void; onQuickReply: (text: string) => void;
+}) {
+  const { text: bodyText, replies } = parseQuickReplies(m.content);
+  const art = detectArtifact(bodyText);
+  return (
+    <div style={{ display: 'flex', gap: 12, margin: '16px 0', animation: 'msgIn .2s ease' }}>
+      <div style={{ width: 28, height: 28, borderRadius: 8, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2, fontSize: 14 }}>{agent?.emoji ?? '💬'}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{bodyText}</div>
+        {art && (
+          <div onClick={() => onOpenArtifact(art.title, art.src)} style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 11, border: '1px solid var(--border)', borderRadius: 11, padding: '11px 14px', cursor: 'pointer', background: 'var(--panel)', maxWidth: '100%' }}>
+            <div style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>
+              <I d={P.panel} size={17} stroke="var(--accent-hi)" />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{art.title}</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>HTML · sandboxed · network-denied</div>
+            </div>
+            <I d={P.external} size={16} stroke="var(--text-faint)" style={{ flex: 'none', marginLeft: 8 }} />
+          </div>
+        )}
+        {isNewest && replies.length > 0 && !streaming && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            {replies.map((q) => (
+              <button key={q} onClick={() => onQuickReply(q)} style={{ background: 'var(--panel)', border: '1px solid var(--accent-dim)', color: 'var(--accent-hi)', borderRadius: 20, padding: '6px 14px', fontSize: 12.5, cursor: 'pointer', fontWeight: 500 }}>{q}</button>
+            ))}
+          </div>
+        )}
+        {isLast && <AssistantFooter turn={turn} />}
+      </div>
+    </div>
+  );
+});
 
 export function ChatView() {
   const app = useApp();
@@ -195,6 +260,10 @@ export function ChatView() {
     for (const m of app.transcript.messages) if (m.role === 'assistant') last.set(m.turnId, m.id);
     return last;
   }, [app.transcript.messages]);
+  const newestAssistantId = useMemo(
+    () => app.transcript.messages.filter((x) => x.role === 'assistant').at(-1)?.id,
+    [app.transcript.messages],
+  );
 
   const cutoffSeq = s?.compactCutoff ? Number(s.compactCutoff) : null;
 
@@ -275,62 +344,16 @@ export function ChatView() {
   const renderMsg = (m: ChatMessage) => {
     if (!dividerPlaced && cutoffSeq !== null && m.seq > cutoffSeq) pushDivider();
     if (m.role === 'user') {
-      const turn = turnById.get(m.turnId);
-      const atts = turn ? (JSON.parse(turn.attachments) as Array<{ path?: string; name?: string }>) : [];
-      rows.push(
-        <div key={m.id} style={{ display: 'flex', justifyContent: 'flex-end', margin: '16px 0', animation: 'msgIn .2s ease' }}>
-          <div style={{ maxWidth: '80%' }}>
-            {atts.length > 0 && (
-              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginBottom: 6, flexWrap: 'wrap' }}>
-                {atts.map((a, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', fontSize: 11.5, color: 'var(--text-dim)', ...mono }}>▤ {(a.path ?? a.name ?? '').split('/').pop()}</div>
-                ))}
-              </div>
-            )}
-            <div style={{ background: 'var(--user)', border: '1px solid var(--border-soft)', borderRadius: '14px 14px 4px 14px', padding: '11px 15px', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{m.content}</div>
-            <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end', marginTop: 5 }}>
-              <button onClick={() => void app.editResend(m.turnId)} title="Edit & resend" style={ghostBtn}><I d={P.edit} size={13} /></button>
-              <button onClick={() => void app.fork(m.turnId)} title="Fork" style={ghostBtn}><I d={P.forkIcon} size={13} /></button>
-            </div>
-          </div>
-        </div>,
-      );
+      rows.push(<UserRow key={m.id} m={m} turn={turnById.get(m.turnId)} onEditResend={app.editResend} onFork={app.fork} />);
     } else if (m.role === 'thinking') {
       rows.push(<Thinking key={m.id} text={m.content} streaming={false} />);
     } else if (m.role === 'tool') {
       rows.push(<ToolCard key={m.id} t={{ kind: 'tool', id: m.id, name: m.toolName ?? 'tool', input: {}, status: m.content.startsWith('Denied') ? 'denied' : 'done', result: m.content }} />);
     } else {
-      const { text: bodyText, replies } = parseQuickReplies(m.content);
-      const art = detectArtifact(bodyText);
-      const isLast = lastMsgOfTurn.get(m.turnId) === m.id;
-      const isNewest = m.id === app.transcript.messages.filter((x) => x.role === 'assistant').at(-1)?.id;
       rows.push(
-        <div key={m.id} style={{ display: 'flex', gap: 12, margin: '16px 0', animation: 'msgIn .2s ease' }}>
-          <div style={{ width: 28, height: 28, borderRadius: 8, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2, fontSize: 14 }}>{agent?.emoji ?? '💬'}</div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{bodyText}</div>
-            {art && (
-              <div onClick={() => app.openArtifact(art.title, art.src)} style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 11, border: '1px solid var(--border)', borderRadius: 11, padding: '11px 14px', cursor: 'pointer', background: 'var(--panel)', maxWidth: '100%' }}>
-                <div style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>
-                  <I d={P.panel} size={17} stroke="var(--accent-hi)" />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{art.title}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>HTML · sandboxed · network-denied</div>
-                </div>
-                <I d={P.external} size={16} stroke="var(--text-faint)" style={{ flex: 'none', marginLeft: 8 }} />
-              </div>
-            )}
-            {isNewest && replies.length > 0 && !app.streaming && (
-              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-                {replies.map((q) => (
-                  <button key={q} onClick={() => void app.send(q)} style={{ background: 'var(--panel)', border: '1px solid var(--accent-dim)', color: 'var(--accent-hi)', borderRadius: 20, padding: '6px 14px', fontSize: 12.5, cursor: 'pointer', fontWeight: 500 }}>{q}</button>
-                ))}
-              </div>
-            )}
-            {isLast && <AssistantFooter turn={turnById.get(m.turnId)} />}
-          </div>
-        </div>,
+        <AssistantRow key={m.id} m={m} turn={turnById.get(m.turnId)} agent={agent}
+          isNewest={m.id === newestAssistantId} isLast={lastMsgOfTurn.get(m.turnId) === m.id}
+          streaming={app.streaming} onOpenArtifact={app.openArtifact} onQuickReply={app.send} />,
       );
     }
   };

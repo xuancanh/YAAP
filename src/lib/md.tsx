@@ -4,7 +4,7 @@
  * markup. Supports headings, lists, checkboxes, code fences, inline code,
  * bold/italic, links, and paragraphs — enough for a status board.
  */
-import type { ReactNode } from 'react';
+import { memo, type ReactNode } from 'react';
 
 function inline(text: string, keyBase: string): ReactNode[] {
   const out: ReactNode[] = [];
@@ -33,7 +33,7 @@ function inline(text: string, keyBase: string): ReactNode[] {
   return out;
 }
 
-export function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   const blocks: ReactNode[] = [];
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   let i = 0;
@@ -82,4 +82,4 @@ export function Markdown({ text }: { text: string }) {
   }
 
   return <div>{blocks}</div>;
-}
+});

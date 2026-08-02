@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
 import { api, type ChatSession } from '../lib/api';
+import { safeJsonParse } from '../lib/util';
 import { marketCats } from './MarketView';
 
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '2px 18px 8px' };
@@ -75,7 +76,7 @@ export function WorkspacePill() {
 
 function SessionRow({ s }: { s: ChatSession }) {
   const app = useApp();
-  const tags = JSON.parse(s.tags) as string[];
+  const tags = safeJsonParse<string[]>(s.tags, []);
   const active = s.id === app.currentId && app.homeView === 'chat';
   return (
     <div onClick={() => app.openSession(s.id)} style={{ padding: '7px 10px', borderRadius: 9, cursor: 'pointer', margin: '1px 0', background: active ? 'var(--accent-dim)' : 'none' }}>

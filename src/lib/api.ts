@@ -445,11 +445,13 @@ export async function sendTurn(
   text: string,
   attachments: Array<{ path: string; kind: string }>,
   onEvent: (ev: TurnEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch(`/api/chats/${chatId}/turns`, {
     method: 'POST',
     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, attachments }),
+    signal,
   });
   if (!res.ok || !res.body) throw new Error(`${res.status} ${await res.text()}`);
   const reader = res.body.getReader();
@@ -462,8 +464,17 @@ export async function sendTurn(
     const events = buffer.split('\n\n');
     buffer = events.pop() ?? '';
     for (const chunk of events) {
-      const line = chunk.split('\n').find((l) => l.startsWith('data: '));
-      if (line) onEvent(JSON.parse(line.slice(6)) as TurnEvent);
+      // an event's payload may span several data: lines (SSE spec)
+      const data = chunk.split('\n')
+        .filter((l) => l.startsWith('data: '))
+        .map((l) => l.slice(6))
+        .join('\n');
+      if (!data) continue;
+      try {
+        onEvent(JSON.parse(data) as TurnEvent);
+      } catch {
+        // one malformed event must not kill the whole stream
+      }
     }
   }
 }

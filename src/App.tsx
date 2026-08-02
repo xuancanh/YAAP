@@ -1,6 +1,6 @@
 /** Layout composition per the design comp: activity bar · secondary panel ·
  *  main pane · artifact panel, with the stacked mobile variant. */
-import { useState } from 'react';
+import { Component, useState, type ReactNode } from 'react';
 import { AppProvider, useApp } from './store';
 import { ActivityBar, BottomNav, Toast } from './components/Shell';
 import { WorkspacePill, HomeRail, WorkspaceRail, MarketRail, SettingsRail, SecondaryHeader } from './components/Rails';
@@ -64,10 +64,37 @@ function Layout() {
   );
 }
 
+/** Last line of defense: a render error anywhere below shows a recoverable
+ *  panel instead of a white screen (the store above it stays alive). */
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    const { error } = this.state;
+    if (error) {
+      return (
+        <div data-theme={localStorage.getItem('yaam-theme') || 'dark'} style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', color: 'var(--text)', fontSize: 14 }}>
+          <div style={{ maxWidth: 420, textAlign: 'center', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 14, padding: '28px 32px', boxShadow: 'var(--shadow)' }}>
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Something went wrong</div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-dim)', fontFamily: 'var(--mono)', wordBreak: 'break-word', marginBottom: 18 }}>{error.message}</div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+              <button onClick={() => this.setState({ error: null })} style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Try again</button>
+              <button onClick={() => window.location.reload()} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Reload app</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   return (
     <AppProvider>
-      <Layout />
+      <ErrorBoundary>
+        <Layout />
+      </ErrorBoundary>
     </AppProvider>
   );
 }
