@@ -83,3 +83,21 @@ test('pack loops install with their prompts and enable on hire', async () => {
   assert.equal(loops[0].cron, '0 8 * * 1-5');
   assert.match(loops[0].prompt ?? '', /daily-briefing/);
 });
+
+test('the hire review can read the real skill bodies, not just their names', async () => {
+  const { market } = await setup();
+  // list() still strips bodies (they would bloat every catalog fetch)…
+  const listed = (await market.list()).find((m) => m.id === 'pro-marketing')!;
+  assert.ok(!('instructions' in listed.skills![0]));
+  // …and the review endpoint serves them in full, so the gate shows the real
+  // artifact (docs/permissions.md) rather than a summary.
+  const bodies = market.packSkills('pro-marketing');
+  assert.equal(bodies.length, listed.skills!.length);
+  for (const s of bodies) {
+    assert.ok(s.name && s.description !== undefined);
+    assert.ok(s.instructions.length > 200, `${s.name} body served in full`);
+  }
+  const brand = bodies.find((s) => s.name === 'brand-review')!;
+  assert.ok(brand, 'named skill present');
+  assert.throws(() => market.packSkills('no-such-pack'), /market item/);
+});

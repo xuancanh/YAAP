@@ -28,6 +28,18 @@ export class MarketService {
     }));
   }
 
+  /** The full instruction text of a pack's bundled skills. The hire review is
+   *  their activation gate, and a gate that shows only names is not a review
+   *  (docs/permissions.md: show the real artifact, not a summary). Fetched on
+   *  demand so the catalog listing stays small. */
+  packSkills(id: string) {
+    const item = CATALOG.find((m) => m.id === id);
+    if (!item) throw new NotFoundException(`market item ${id}`);
+    return (item.skills ?? []).map((s) => ({
+      name: s.name, description: s.description, instructions: s.instructions,
+    }));
+  }
+
   async hire(id: string) {
     const item = CATALOG.find((m) => m.id === id);
     if (!item) throw new NotFoundException(`market item ${id}`);

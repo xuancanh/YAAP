@@ -6,6 +6,7 @@
  *  grant. The iframe stays opaque-origin with no network of its own. */
 import { useEffect, useRef, useState } from 'react';
 import { api, type AgentApp } from '../lib/api';
+import { CSP_META } from '../lib/sandbox';
 import { useApp } from '../store';
 
 /** Injected before the app's own HTML; defines the promise-based RPC. */
@@ -37,11 +38,20 @@ export function pendingCaps(a: AgentApp): string[] {
 
 interface Msg { __yaam: true; id: number; op: string; args: Record<string, unknown> }
 
+/** Consecutive-ish denials tolerated before an app loses the confirm channel
+ *  for this mount. Generous for honest mis-clicks, fatal to a nag loop. */
+const MAX_DENIALS = 3;
+
 export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp: AgentApp; style?: React.CSSProperties }) {
   const app = useApp();
   const frame = useRef<HTMLIFrameElement>(null);
   // approvals the user granted this render's confirms ("remember for this app")
   const remembered = useRef(new Set<string>());
+  // A denied confirm is not a "no" the app has to respect — it can loop and
+  // re-prompt until the user clicks Allow out of fatigue
+  // (docs/miniapp-capabilities.md, the nagging attack). Count denials and cut
+  // the app off after a few, instead of relaying an unbounded prompt stream.
+  const denials = useRef(0);
   const stable = useRef({ miniApp, app });
   stable.current = { miniApp, app };
 
@@ -66,10 +76,15 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
         }
         // mutating caps confirm on first use per app, in our chrome
         if (cap && CAP_INFO[cap]?.confirm && !remembered.current.has(cap)) {
+          if (denials.current >= MAX_DENIALS) {
+            throw new Error('denied — this app asked too many times and is cut off until you reopen it');
+          }
           const what = m.op === 'agent.ask'
             ? `ask the agent:\n\n"${String(m.args.prompt ?? '').slice(0, 400)}"`
             : m.op === 'tasks.add' ? `file a task: "${String(m.args.title ?? '').slice(0, 120)}"` : 'move a task on the board';
           if (!window.confirm(`Mini app "${ma.name}" wants to ${what}\n\nAllow? (allowed for this app until you close it)`)) {
+            denials.current++;
+            if (denials.current >= MAX_DENIALS) st.showToast(`"${ma.name}" kept asking after you said no — further requests are blocked`);
             throw new Error('denied by the user');
           }
           remembered.current.add(cap);
@@ -100,7 +115,7 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
   }, [agentId]);
 
   return (
-    <iframe ref={frame} title={miniApp.name} sandbox="allow-scripts" srcDoc={SHIM + miniApp.html}
+    <iframe ref={frame} title={miniApp.name} sandbox="allow-scripts" srcDoc={CSP_META + SHIM + miniApp.html}
       style={{ flex: 1, width: '100%', border: 'none', background: '#fff', ...style }} />
   );
 }

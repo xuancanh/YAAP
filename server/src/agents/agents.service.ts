@@ -275,15 +275,22 @@ export class AgentsService {
     const slug = toolName.slice(CUSTOM_TOOL_PREFIX.length);
     const tool = (await this.listCustomTools(id)).find((t) => t.slug === slug && t.enabled);
     if (!tool) throw new Error(`unknown tool: ${toolName}`);
-    const fill = (template: string, encode: boolean) => template.replace(PARAM_RE, (_m, param: string) => {
+    // Values are escaped for the syntax they land in. The body is sent as
+    // JSON, so a raw substitution would let a param close its string and add
+    // fields the user never approved ('","admin":true,"x":"'); JSON-escaping
+    // keeps it one string value. The host is already literal, so this bounds
+    // what a hostile argument can reshape inside an approved request.
+    const fill = (template: string, syntax: 'url' | 'json') => template.replace(PARAM_RE, (_m, param: string) => {
       const v = input[param];
       if (typeof v !== 'string') throw new Error(`missing argument "${param}"`);
-      return encode ? encodeURIComponent(v.slice(0, 500)) : v.slice(0, 2_000);
+      return syntax === 'url'
+        ? encodeURIComponent(v.slice(0, 500))
+        : JSON.stringify(v.slice(0, 2_000)).slice(1, -1);
     });
-    const res = await fetchPublic(fill(tool.url, true), {
+    const res = await fetchPublic(fill(tool.url, 'url'), {
       method: tool.method,
       headers: tool.method === 'POST' ? { 'content-type': 'application/json' } : undefined,
-      body: tool.method === 'POST' && tool.body ? fill(tool.body, false) : undefined,
+      body: tool.method === 'POST' && tool.body ? fill(tool.body, 'json') : undefined,
       signal: AbortSignal.timeout(20_000),
     });
     const text = await res.text();

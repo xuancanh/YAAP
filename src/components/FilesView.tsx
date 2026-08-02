@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
 import { api, type FilePreview } from '../lib/api';
+import { sealHtml } from '../lib/sandbox';
 
 export function FilesView() {
   const app = useApp();
@@ -78,11 +79,14 @@ export function FilesView() {
           <div style={{ padding: 22 }}><img src={`data:${preview.contentType};base64,${preview.base64}`} alt={name} style={{ maxWidth: '100%', borderRadius: 8 }} /></div>
         )}
         {preview?.kind === 'pdf' && preview.base64 && (
-          <iframe title={name} src={`data:application/pdf;base64,${preview.base64}`} style={{ width: '100%', height: '100%', border: 'none' }} />
+          // A data: URL is already opaque-origin, but the sandbox attribute is
+          // the invariant we state everywhere — no frame without it.
+          <iframe title={name} sandbox="allow-scripts" src={`data:application/pdf;base64,${preview.base64}`} style={{ width: '100%', height: '100%', border: 'none' }} />
         )}
         {preview?.kind === 'html' && preview.text && (
-          // Sandboxed, no network (FR-13.1): srcDoc + allow-scripts only.
-          <iframe title={name} sandbox="allow-scripts" srcDoc={preview.text} style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />
+          // Sandboxed, no network (FR-13.1): opaque origin from srcDoc +
+          // allow-scripts, and sealHtml's CSP is what actually denies fetch.
+          <iframe title={name} sandbox="allow-scripts" srcDoc={sealHtml(preview.text)} style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />
         )}
         {(preview?.kind === 'markdown' || preview?.kind === 'text') && (
           <pre style={{ margin: 0, padding: '20px 22px', fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.7, color: 'var(--text-dim)', whiteSpace: 'pre-wrap' }}>{preview.text}{preview.truncated ? '\n…(truncated)' : ''}</pre>

@@ -7,6 +7,7 @@ import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
 import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentTask, type Connection, type FileEntry, type FilePreview, type Skill } from '../lib/api';
 import { Markdown } from '../lib/md';
+import { sealHtml } from '../lib/sandbox';
 import { nextFire, untilLabel } from '../lib/cron';
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 14, background: 'var(--panel)' };
@@ -527,7 +528,7 @@ function AgentFilesTab({ a }: { a: Agent }) {
               <div style={{ padding: 16 }}><img src={`data:${preview.contentType};base64,${preview.base64}`} alt={sel ?? ''} style={{ maxWidth: '100%', borderRadius: 8 }} /></div>
             )}
             {preview?.kind === 'html' && preview.text && (
-              <iframe title={sel ?? 'preview'} sandbox="allow-scripts" srcDoc={preview.text} style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />
+              <iframe title={sel ?? 'preview'} sandbox="allow-scripts" srcDoc={sealHtml(preview.text)} style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />
             )}
             {(preview?.kind === 'markdown' || preview?.kind === 'text') && (
               <pre style={{ margin: 0, padding: '14px 16px', fontFamily: 'var(--mono)', fontSize: 12, lineHeight: 1.65, color: 'var(--text-dim)', whiteSpace: 'pre-wrap' }}>{preview.text}{preview.truncated ? '\n…(truncated)' : ''}</pre>

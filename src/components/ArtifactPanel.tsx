@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
 import { AppHost } from './AppHost';
+import { sealHtml } from '../lib/sandbox';
 
 export function ArtifactPanel() {
   const app = useApp();
@@ -40,7 +41,7 @@ export function ArtifactPanel() {
       {tab === 'preview' ? (
         art.appCtx
           ? <AppHost agentId={art.appCtx.agentId} miniApp={art.appCtx.miniApp} />
-          : <iframe title={art.title} sandbox="allow-scripts" srcDoc={art.src} style={{ flex: 1, width: '100%', border: 'none', background: '#fff' }} />
+          : <iframe title={art.title} sandbox="allow-scripts" srcDoc={sealHtml(art.src)} style={{ flex: 1, width: '100%', border: 'none', background: '#fff' }} />
       ) : (
         <pre style={{ flex: 1, margin: 0, padding: '14px 16px', overflow: 'auto', background: 'var(--code)', fontFamily: 'var(--mono)', fontSize: 11.5, lineHeight: 1.6, color: 'var(--text-dim)' }}>{art.src}</pre>
       )}

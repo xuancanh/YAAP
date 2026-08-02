@@ -454,6 +454,8 @@ export const api = {
   discoverMcp: (id: string) => send<{ tools: Array<{ name: string; description?: string }> }>(`/api/mcp/${id}/discover`, 'POST'),
   mcpOauthStart: (id: string) => get<{ url: string }>(`/api/mcp/${id}/oauth/start`),
   marketConnectors: () => get<ConnectorEntry[]>('/api/market/connectors'),
+  /** Full bundled-skill text, for the hire review (docs/permissions.md). */
+  marketPackSkills: (id: string) => get<Array<{ name: string; description: string; instructions: string }>>(`/api/market/${id}/skills`),
   market: () => get<MarketItem[]>('/api/market'),
   hire: (id: string) => send<{ ok: boolean; agent: Agent }>(`/api/market/${id}/hire`, 'POST', undefined, hireResultSchema),
   // channels (phase 4)

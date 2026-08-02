@@ -36,7 +36,11 @@ app can be adversarial even when the agent is honest. Four attacks matter:
    with a network path — so apps keep **no network, ever**. Every capability
    below is exfiltration-safe only because this stays true (and because
    `agent.ask`, the one indirect path to the outside, is gated like a
-   hostile channel — see §4.6).
+   hostile channel — see §4.6). What enforces it is a
+   `default-src 'none'` Content-Security-Policy injected into every frame
+   (`src/lib/sandbox.ts`), *not* the `sandbox="allow-scripts"` attribute —
+   an opaque-origin frame can still `fetch()` anywhere. That distinction
+   went unnoticed for months; see docs/code-execution.md §1.
 2. **Brain poisoning.** The agent's working folder holds its brain
    (`AGENT.md`, `LESSONS.md`, memory files). An app that can write there can
    plant instructions its agent will later read and obey — self-injection
@@ -47,7 +51,9 @@ app can be adversarial even when the agent is honest. Four attacks matter:
    capability needs is rendered by the host (our chrome), outside the frame,
    naming the app and the exact operation.
 4. **Nagging / resource abuse.** Unlimited calls, unbounded storage, turn
-   spam. Everything is quota'd and rate-limited per app.
+   spam. Everything is quota'd and rate-limited per app. A denied confirm is
+   not a "no" an app has to respect, so denials are counted too: three, and
+   the app loses the confirm channel until it is reopened.
 
 ## 3. The capability inventory
 

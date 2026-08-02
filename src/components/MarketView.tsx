@@ -232,6 +232,20 @@ function ConnectorsDept() {
 export function HireModal() {
   const app = useApp();
   const [busy, setBusy] = useState(false);
+  // The bundled skills become permanent instruction text inside this agent —
+  // a persistent prompt-injection channel if unread. The review has to show
+  // the real thing, so fetch the bodies when the modal opens.
+  const [bodies, setBodies] = useState<Record<string, string>>({});
+  const [openSkill, setOpenSkill] = useState<string | null>(null);
+  const hireId = app.hireId;
+  useEffect(() => {
+    setOpenSkill(null);
+    setBodies({});
+    if (!hireId) return;
+    void api.marketPackSkills(hireId)
+      .then((rows) => setBodies(Object.fromEntries(rows.map((r) => [r.name, r.instructions]))))
+      .catch(() => setBodies({}));
+  }, [hireId]);
   const item = app.market.find((m) => m.id === app.hireId);
   if (!item) return null;
   return (
@@ -268,13 +282,24 @@ export function HireModal() {
               <div style={{ maxHeight: 210, overflowY: 'auto', border: '1px solid var(--border-soft)', borderRadius: 10, background: 'var(--panel-2)' }}>
                 {item.skills!.map((s) => (
                   <div key={s.name} style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-soft)' }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--mono)' }}>/{s.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{s.description}</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--mono)', flex: 1, minWidth: 0 }}>/{s.name}</div>
+                      <button onClick={() => setOpenSkill(openSkill === s.name ? null : s.name)}
+                        style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', fontSize: 11, fontWeight: 600, cursor: 'pointer', padding: 0, flex: 'none' }}>
+                        {openSkill === s.name ? 'Hide text' : 'Read text'}
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1, ...(openSkill === s.name ? {} : { overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }) }}>{s.description}</div>
+                    {openSkill === s.name && (
+                      <pre style={{ margin: '7px 0 2px', padding: '9px 11px', background: 'var(--code)', border: '1px solid var(--border-soft)', borderRadius: 8, fontFamily: 'var(--mono)', fontSize: 11, lineHeight: 1.55, color: 'var(--text-dim)', whiteSpace: 'pre-wrap', maxHeight: 260, overflowY: 'auto' }}>
+                        {bodies[s.name] ?? 'Loading…'}
+                      </pre>
+                    )}
                   </div>
                 ))}
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 7 }}>
-                Skills install private to this agent — read, edit, or remove them any time in its Skills &amp; tools tab.
+                These become standing instructions inside {item.name} — read them before hiring. Skills install private to this agent; read, edit, or remove them any time in its Skills &amp; tools tab.
               </div>
             </div>
           )}

@@ -541,3 +541,40 @@ test('concurrent brain-file appends serialize per agent — no entry is lost', a
   const journal = (await stub.get(`agents/${a.id}/JOURNAL.md`))!.toString('utf8');
   for (let i = 0; i < 10; i++) assert.ok(journal.includes(`concurrent entry ${i}`), `entry ${i} retained`);
 });
+
+test('custom tool params cannot reshape the approved JSON body (injection)', async () => {
+  const { agents } = await setup([]);
+  const a = await agents.create({ name: 'Poster' });
+  await agents.saveCustomTool(a.id, {
+    name: 'Log Note', method: 'POST',
+    url: 'https://api.example.com/notes',
+    body: '{"note":"{text}","visibility":"private"}',
+  });
+  const [tool] = await agents.listCustomTools(a.id);
+  await agents.resolveCustomTool(a.id, tool.id, true);
+
+  const original = globalThis.fetch;
+  let sentBody = '';
+  globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    sentBody = init?.body ? String(init.body) : '';
+    return {
+      ok: true, status: 200, statusText: 'OK',
+      headers: new Headers(),
+      text: async () => '{}',
+    } as unknown as Response;
+  }) as typeof fetch;
+  try {
+    // a hostile argument tries to close its string and add fields the user
+    // never approved; JSON-escaping must keep it one inert string value
+    await agents.executeCustomTool(a.id, 'tool_log_note', {
+      text: 'hi","visibility":"public","admin":true,"x":"',
+    });
+  } finally {
+    globalThis.fetch = original;
+  }
+  const parsed = JSON.parse(sentBody) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(parsed).sort(), ['note', 'visibility']);
+  assert.equal(parsed.visibility, 'private', 'the approved field survived');
+  assert.equal(parsed.admin, undefined, 'no field was injected');
+  assert.match(String(parsed.note), /^hi",/, 'the payload stayed inside the string value');
+});
