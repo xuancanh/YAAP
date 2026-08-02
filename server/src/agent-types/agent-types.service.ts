@@ -1,7 +1,9 @@
 /**
  * AgentTypesService — reusable provider/model/persona presets (§9).
- * API keys are stored server-side and stripped from every response
- * (FR-13.3); clients only learn whether a key is set.
+ * API keys are stored server-side, sealed at rest via secretbox (AES-256-GCM
+ * when TOKEN_ENCRYPTION_KEY is set, marked plaintext otherwise), and stripped
+ * from every response (FR-13.3); clients only learn whether a key is set.
+ * resolve() hands consumers the opened plaintext, as before.
  */
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
@@ -9,6 +11,7 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { agentTypes } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
+import { seal, open } from '../common/secretbox';
 
 type AgentTypeRow = typeof agentTypes.$inferSelect;
 
@@ -31,7 +34,7 @@ export class AgentTypesService {
       model: input.model,
       models: JSON.stringify(input.models ?? []),
       baseUrl: input.baseUrl ?? null,
-      apiKey: input.apiKey ?? null,
+      apiKey: input.apiKey ? seal(input.apiKey) : null,
       persona: input.persona ?? '',
       enabled: 1,
       createdAt: nowIso(),
@@ -46,6 +49,10 @@ export class AgentTypesService {
     const set: Record<string, unknown> = { ...patch };
     if (patch.models) set.models = JSON.stringify(patch.models);
     if (patch.enabled !== undefined) set.enabled = patch.enabled ? 1 : 0;
+    // Seal keys at rest; re-sealing the (opened) existing key on any update
+    // lazily upgrades legacy plaintext/plain: rows.
+    if (patch.apiKey !== undefined) set.apiKey = patch.apiKey ? seal(patch.apiKey) : null;
+    else if (found.apiKey) set.apiKey = seal(found.apiKey);
     await this.db.update(agentTypes).set(set).where(eq(agentTypes.id, id));
     return redact((await this.resolve(id))!);
   }
@@ -55,9 +62,10 @@ export class AgentTypesService {
     return { ok: true };
   }
 
-  /** Server-internal: full row including the API key, for request-time use. */
+  /** Server-internal: full row with the API key opened to plaintext, for request-time use. */
   async resolve(id: string): Promise<AgentTypeRow | undefined> {
     const rows = await this.db.select().from(agentTypes).where(eq(agentTypes.id, id)).limit(1);
-    return rows[0];
+    const row = rows[0];
+    return row ? { ...row, apiKey: row.apiKey ? open(row.apiKey) : null } : undefined;
   }
 }
