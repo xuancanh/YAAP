@@ -41,7 +41,7 @@ jobs:
       #   CLOUDFLARE_API_TOKEN   — API token with Workers/Pages edit rights
       #   CLOUDFLARE_ACCOUNT_ID  — Cloudflare account ID
       - name: Deploy frontend to Cloudflare
-        uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65 # v3.14.1
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
