@@ -121,3 +121,24 @@ docker compose pull && docker compose up -d
 `deploy/docker-compose.prod.yml` is the canonical per-env compose file —
 API from GHCR (bound to localhost), Postgres 17 with a healthcheck and
 named volume, tunnel handled at host level.
+
+## GitHub repo setup notes
+
+Attempted via API on 2026-08-01 — **this repo is private on the Free plan**, so
+two features are gated:
+
+- **Rulesets / branch protection** on `main` (require PR + the `check` status
+  check) — API returns "Upgrade to GitHub Pro or make this repository public".
+  Until then the only protection is habit: open PRs, let CI go green.
+- **Environments API** (404) — creating `staging`/`prod` environments with
+  protection rules also needs Pro on a private repo. The deploy workflows
+  reference `environment: staging` / `environment: prod`; on the Free plan
+  GitHub auto-creates the environment on first workflow run, and you then add
+  the secrets below in repo Settings → Environments. Required-reviewers on
+  `prod` stays unavailable until Pro/public.
+
+Secrets to add (Settings → Environments → `<env>`): `CLOUDFLARE_API_TOKEN`,
+`CLOUDFLARE_ACCOUNT_ID`; vars: `STAGING_HOST`/`PROD_HOST` (+ `*_SSH_KEY`
+secrets when the VPS exists). Dependabot (`.github/dependabot.yml`) keeps the
+SHA-pinned actions and npm/docker deps fresh — enable it in
+Settings → Advanced security if not already on.
