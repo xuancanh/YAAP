@@ -1,0 +1,21 @@
+# Docker build context — keep the image build lean and secret-free.
+node_modules
+dist
+server/dist
+.git
+.github
+.tmp*
+tests
+web-tests
+docs
+# packs/ is compiled into server/src/market/*.generated.ts at build time;
+# not needed in the image
+packs
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+.DS_Store
+docker-compose.dev.yml
+Dockerfile
+.dockerignore

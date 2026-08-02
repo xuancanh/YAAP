@@ -134,3 +134,23 @@ phase 4).
 3. RLS + shared multi-tenant deploy + budgets/metering.
 4. Tier-1 sandboxes (browser tool) once phases 1-2 of the product roadmap
    ship.
+
+## 4. Container build (Dockerfile)
+
+The repo-root `Dockerfile` packages the cloud deployable: a multi-stage
+build (node:22-alpine) that compiles server (tsc) + frontend (vite) in one
+stage, then copies production `node_modules`, `server/dist`, and `dist/`
+into a clean runtime stage running as the `node` user on port 8790.
+
+```sh
+docker build -t yaam-chat .
+docker run -p 8790:8790 --env-file .env yaam-chat
+```
+
+With `NODE_ENV=production` (set in the image) the boot-time env validation
+(server/src/config/validation.ts) requires `DATABASE_URL` and the `S3_*`
+vars — see the Dockerfile header and `.env.example`. The API does not serve
+static files; publish `dist/` (also in the image at `/app/dist`) via a
+static host or reverse proxy that forwards `/api` to the container.
+`packs/` is compiled into `server/src/market/*.generated.ts`, so it is
+excluded from the build context (`.dockerignore`).

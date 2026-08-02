@@ -2,6 +2,18 @@
  * Typed fetch client for the yaam-chat API. The Vite dev server proxies /api
  * to the NestJS backend (see vite.config.ts).
  */
+import type { z } from 'zod';
+import {
+  looseParse,
+  chatSessionSchema,
+  chatSessionListSchema,
+  agentSchema,
+  agentListSchema,
+  fileEntryListSchema,
+  filePreviewSchema,
+  transcriptSchema,
+  hireResultSchema,
+} from './schemas';
 
 export interface Workspace {
   id: string;
@@ -299,13 +311,18 @@ export const authHeaders = (): Record<string, string> => {
   return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
-const get = <T,>(url: string) => fetch(url, { headers: authHeaders() }).then((r) => json<T>(r));
-const send = <T,>(url: string, method: string, body?: unknown) =>
+const get = <T,>(url: string, schema?: z.ZodType) =>
+  fetch(url, { headers: authHeaders() })
+    .then((r) => json<T>(r))
+    .then((v) => (schema ? looseParse(schema, v, `GET ${url}`) : v));
+const send = <T,>(url: string, method: string, body?: unknown, schema?: z.ZodType) =>
   fetch(url, {
     method,
     headers: body !== undefined ? { ...authHeaders(), 'Content-Type': 'application/json' } : authHeaders(),
     body: body !== undefined ? JSON.stringify(body) : undefined,
-  }).then((r) => json<T>(r));
+  })
+    .then((r) => json<T>(r))
+    .then((v) => (schema ? looseParse(schema, v, `${method} ${url}`) : v));
 
 const enc = encodeURIComponent;
 
@@ -319,25 +336,26 @@ export const api = {
     send<Workspace>(`/api/workspaces/${id}`, 'PATCH', patch),
   resolveProfileProposal: (id: string, proposalId: string, approve: boolean) =>
     send<Workspace>(`/api/workspaces/${id}/profile/${approve ? 'approve' : 'reject'}`, 'POST', { proposalId }),
-  wsFiles: (id: string) => get<FileEntry[]>(`/api/workspaces/${id}/files`),
-  wsPreview: (id: string, path: string) => get<FilePreview>(`/api/workspaces/${id}/preview?path=${enc(path)}`),
+  wsFiles: (id: string) => get<FileEntry[]>(`/api/workspaces/${id}/files`, fileEntryListSchema),
+  wsPreview: (id: string, path: string) =>
+    get<FilePreview>(`/api/workspaces/${id}/preview?path=${enc(path)}`, filePreviewSchema),
   wsPutFile: (id: string, path: string, contentBase64: string, contentType?: string) =>
     send<{ ok: boolean }>(`/api/workspaces/${id}/files`, 'POST', { path, contentBase64, contentType }),
 
   // chats
-  chats: (workspaceId: string) => get<ChatSession[]>(`/api/chats?workspaceId=${enc(workspaceId)}`),
-  chat: (id: string) => get<ChatSession>(`/api/chats/${id}`),
+  chats: (workspaceId: string) => get<ChatSession[]>(`/api/chats?workspaceId=${enc(workspaceId)}`, chatSessionListSchema),
+  chat: (id: string) => get<ChatSession>(`/api/chats/${id}`, chatSessionSchema),
   createChat: (input: { workspaceId: string; name?: string; agentId?: string; agentTypeId?: string; cwd?: string; tokenCeiling?: number }) =>
-    send<ChatSession>('/api/chats', 'POST', input),
-  updateChat: (id: string, patch: Record<string, unknown>) => send<ChatSession>(`/api/chats/${id}`, 'PATCH', patch),
+    send<ChatSession>('/api/chats', 'POST', input, chatSessionSchema),
+  updateChat: (id: string, patch: Record<string, unknown>) => send<ChatSession>(`/api/chats/${id}`, 'PATCH', patch, chatSessionSchema),
   deleteChat: (id: string) => send<{ ok: boolean }>(`/api/chats/${id}`, 'DELETE'),
-  transcript: (id: string) => get<{ messages: ChatMessage[]; turns: ChatTurn[] }>(`/api/chats/${id}/transcript`),
+  transcript: (id: string) => get<{ messages: ChatMessage[]; turns: ChatTurn[] }>(`/api/chats/${id}/transcript`, transcriptSchema),
   clear: (id: string) => send<{ ok: boolean }>(`/api/chats/${id}/clear`, 'POST'),
   compact: (id: string) => send<{ ok: boolean; reason?: string }>(`/api/chats/${id}/compact`, 'POST'),
   stop: (id: string) => send<{ stopped: boolean }>(`/api/chats/${id}/stop`, 'POST'),
   approve: (id: string, callId: string, decision: ApprovalDecision) =>
     send<{ resolved: boolean }>(`/api/chats/${id}/approve`, 'POST', { callId, decision }),
-  fork: (id: string, turnId?: string) => send<ChatSession>(`/api/chats/${id}/fork`, 'POST', { turnId }),
+  fork: (id: string, turnId?: string) => send<ChatSession>(`/api/chats/${id}/fork`, 'POST', { turnId }, chatSessionSchema),
   truncate: (id: string, turnId: string) => send<{ ok: boolean; input: string }>(`/api/chats/${id}/truncate`, 'POST', { turnId }),
   promote: (id: string, turnId: string) => send<{ task: string }>(`/api/chats/${id}/turns/${turnId}/promote`, 'POST'),
   rate: (id: string, turnId: string, rating: 'up' | 'down', note?: string) =>
@@ -346,10 +364,10 @@ export const api = {
   exportUrl: (id: string) => `/api/chats/${id}/export`,
 
   // agents
-  agents: () => get<Agent[]>('/api/agents'),
+  agents: () => get<Agent[]>('/api/agents', agentListSchema),
   createAgent: (input: { name: string; charter?: string; role?: string; emoji?: string; colors?: [string, string]; provider?: string; model?: string }) =>
-    send<Agent>('/api/agents', 'POST', input),
-  updateAgent: (id: string, patch: Record<string, unknown>) => send<Agent>(`/api/agents/${id}`, 'PATCH', patch),
+    send<Agent>('/api/agents', 'POST', input, agentSchema),
+  updateAgent: (id: string, patch: Record<string, unknown>) => send<Agent>(`/api/agents/${id}`, 'PATCH', patch, agentSchema),
   deleteAgent: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}`, 'DELETE'),
   deleteAgentApp: (id: string, appId: string) => send<{ ok: boolean }>(`/api/agents/${id}/apps/${appId}`, 'DELETE'),
   // mini-app capability bridge (docs/miniapp-capabilities.md)
@@ -389,13 +407,13 @@ export const api = {
   deleteAgentTask: (id: string, taskId: string) => send<{ ok: boolean }>(`/api/agents/${id}/tasks/${taskId}`, 'DELETE'),
   agentStats: (id: string) => get<AgentStats>(`/api/agents/${id}/stats`),
   agentFiles: (id: string, workspaceId?: string) =>
-    get<FileEntry[]>(`/api/agents/${id}/files${workspaceId ? `?workspaceId=${enc(workspaceId)}` : ''}`),
+    get<FileEntry[]>(`/api/agents/${id}/files${workspaceId ? `?workspaceId=${enc(workspaceId)}` : ''}`, fileEntryListSchema),
   putAgentFile: (id: string, path: string, contentBase64: string, contentType?: string) =>
     send<{ ok: boolean }>(`/api/agents/${id}/files`, 'POST', { path, contentBase64, contentType }),
   agentPreview: (id: string, path: string, workspaceId?: string) =>
-    get<FilePreview>(`/api/agents/${id}/preview?path=${enc(path)}${workspaceId ? `&workspaceId=${enc(workspaceId)}` : ''}`),
+    get<FilePreview>(`/api/agents/${id}/preview?path=${enc(path)}${workspaceId ? `&workspaceId=${enc(workspaceId)}` : ''}`, filePreviewSchema),
   agentExportUrl: (id: string) => `/api/agents/${id}/export`,
-  importAgent: (profile: Record<string, unknown>) => send<Agent>('/api/agents/import', 'POST', profile),
+  importAgent: (profile: Record<string, unknown>) => send<Agent>('/api/agents/import', 'POST', profile, agentSchema),
 
   // agent types / providers
   agentTypes: () => get<AgentType[]>('/api/agent-types'),
@@ -428,7 +446,7 @@ export const api = {
   mcpOauthStart: (id: string) => get<{ url: string }>(`/api/mcp/${id}/oauth/start`),
   marketConnectors: () => get<ConnectorEntry[]>('/api/market/connectors'),
   market: () => get<MarketItem[]>('/api/market'),
-  hire: (id: string) => send<{ ok: boolean; agent: Agent }>(`/api/market/${id}/hire`, 'POST'),
+  hire: (id: string) => send<{ ok: boolean; agent: Agent }>(`/api/market/${id}/hire`, 'POST', undefined, hireResultSchema),
   // channels (phase 4)
   telegramStatus: () => get<{ configured: boolean; paired: boolean; defaultAgentId: string }>('/api/channels/telegram/status'),
   telegramPairCode: () => send<{ code: string; expiresInSeconds: number }>('/api/channels/telegram/pair-code', 'POST'),
