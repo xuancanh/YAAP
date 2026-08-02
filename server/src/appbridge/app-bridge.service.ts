@@ -28,6 +28,11 @@ const READ_CAP = 200_000;
 const ASK_TURNS_PER_DAY = 20;
 const ASK_PROMPT_CAP = 4_000;
 
+/** Files the agent reads as instructions, plus rollback history. A promoted
+ *  app file may never land on any of these — see filePropose. */
+const PROTECTED_PATHS = new Set(['AGENT.md', 'LESSONS.md', 'JOURNAL.md', 'AGENT.json']);
+const PROTECTED_PREFIXES = new Set(['knowledge', '.checkpoints', 'apps', 'skills']);
+
 @Injectable()
 export class AppBridgeService {
   /** Ask budget, per app per UTC day. In-memory: a restart refills the tank,
@@ -112,7 +117,10 @@ export class AppBridgeService {
     return hits;
   }
 
-  async fileRead(agentId: string, appId: string, path: string, workspaceId?: string) {
+  /** `offset` pages past the preview cap: a CSV visualizer over a real export
+   *  needs more than the first 200 KB, and truncating in silence made every
+   *  such app quietly wrong. */
+  async fileRead(agentId: string, appId: string, path: string, workspaceId?: string, offset = 0) {
     const entry = await this.gate(agentId, appId, 'files.read', 'files.read');
     const agent = await this.agents.get(agentId);
     const clean = path.replace(/^\/+/, '');
@@ -130,7 +138,9 @@ export class AppBridgeService {
     await this.noteRead(agentId, entry, clean);
     const kind = previewKindFor(clean);
     if (kind === 'markdown' || kind === 'html' || kind === 'text') {
-      return { path: clean, kind, size: body.length, text: body.toString('utf8').slice(0, READ_CAP) };
+      const from = Math.max(0, Math.floor(offset));
+      const text = body.toString('utf8').slice(from, from + READ_CAP);
+      return { path: clean, kind, size: body.length, text, offset: from, eof: from + text.length >= body.length };
     }
     return { path: clean, kind, size: body.length, base64: body.length <= 2_000_000 ? body.toString('base64') : undefined };
   }
@@ -148,6 +158,54 @@ export class AppBridgeService {
     await this.storage.put(agentFileKey(agentId, scoped), Buffer.from(content, 'utf8'));
     await this.agents.addEvent(agentId, { kind: 'info', title: `App "${entry.name}" wrote ${scoped}` }).catch(() => {});
     return { ok: true, path: scoped };
+  }
+
+  /**
+   * files.propose — the promotion path out of the app's own folder
+   * (docs/miniapp-roadmap.md §4). Writes are jailed to apps/<appId>/ for good
+   * reason, but the consequence was that an app could never produce anything
+   * the user sees in the Files tab; the workaround was asking the agent, via
+   * chat.compose, to go move the file.
+   *
+   * The host renders the content for approval before calling this. That
+   * confirm is client-side by construction (the server cannot observe a
+   * click), so the boundary that actually matters is enforced here: the
+   * agent's instruction files are refused no matter what was approved. A user
+   * cannot click their way into letting an app rewrite the brain its agent
+   * reads and obeys — that is the self-injection hole, and it is not a
+   * decision worth offering.
+   */
+  async filePropose(agentId: string, appId: string, path: string, content: string) {
+    const entry = await this.gate(agentId, appId, 'files.write', 'files.propose');
+    const clean = path.replace(/^\/+/, '');
+    if (!clean) throw new BadRequestException('path is required');
+    if (typeof content !== 'string' || content.length > FILE_WRITE_CAP) {
+      throw new BadRequestException(`content must be a string of at most ${FILE_WRITE_CAP} bytes`);
+    }
+    const top = clean.split('/')[0];
+    if (PROTECTED_PATHS.has(clean) || PROTECTED_PREFIXES.has(top)) {
+      throw new ForbiddenException(
+        `"${clean}" is part of the agent's brain — apps may not author what an agent reads as instructions, approved or not`,
+      );
+    }
+    await this.storage.put(agentFileKey(agentId, clean), Buffer.from(content, 'utf8'));
+    await this.agents.addEvent(agentId, {
+      kind: 'info',
+      title: `App "${entry.name}" saved ${clean} to the agent's folder (you approved it)`,
+    }).catch(() => {});
+    return { ok: true, path: clean };
+  }
+
+  /**
+   * files.watch — has anything under `prefix` changed since `since`?
+   * Without it every dashboard freezes at open time, which was the whole
+   * reason files.read exists. Polled by the app; cheap because it only
+   * compares the listing's timestamps.
+   */
+  async filesWatch(agentId: string, appId: string, prefix: string, since?: string, workspaceId?: string) {
+    const files = await this.filesList(agentId, appId, prefix, workspaceId);
+    const latest = files.reduce((max, f) => (f.lastModified && f.lastModified > max ? f.lastModified : max), '');
+    return { latest, changed: !since || (!!latest && latest > since), count: files.length };
   }
 
   // ---- tasks: the agent's kanban ----

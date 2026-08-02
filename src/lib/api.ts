@@ -386,9 +386,14 @@ export const api = {
   appFilesList: (id: string, appId: string, prefix: string, workspaceId?: string) =>
     get<Array<{ path: string; size: number; lastModified?: string }>>(
       `/api/agents/${id}/apps/${appId}/files?prefix=${encodeURIComponent(prefix)}${workspaceId ? `&workspaceId=${workspaceId}` : ''}`),
-  appFileRead: (id: string, appId: string, path: string, workspaceId?: string) =>
-    get<{ path: string; kind: string; size: number; text?: string; base64?: string }>(
-      `/api/agents/${id}/apps/${appId}/file?path=${encodeURIComponent(path)}${workspaceId ? `&workspaceId=${workspaceId}` : ''}`),
+  appFileRead: (id: string, appId: string, path: string, workspaceId?: string, offset?: number) =>
+    get<{ path: string; kind: string; size: number; text?: string; base64?: string; offset?: number; eof?: boolean }>(
+      `/api/agents/${id}/apps/${appId}/file?path=${encodeURIComponent(path)}${workspaceId ? `&workspaceId=${workspaceId}` : ''}${offset ? `&offset=${offset}` : ''}`),
+  appFilePropose: (id: string, appId: string, path: string, content: string) =>
+    send<{ ok: boolean; path: string }>(`/api/agents/${id}/apps/${appId}/files/propose`, 'POST', { path, content }),
+  appFilesWatch: (id: string, appId: string, prefix: string, since?: string, workspaceId?: string) =>
+    get<{ latest: string; changed: boolean; count: number }>(
+      `/api/agents/${id}/apps/${appId}/files/watch?prefix=${encodeURIComponent(prefix)}${since ? `&since=${encodeURIComponent(since)}` : ''}${workspaceId ? `&workspaceId=${workspaceId}` : ''}`),
   appFileWrite: (id: string, appId: string, path: string, content: string) =>
     send<{ ok: boolean; path: string }>(`/api/agents/${id}/apps/${appId}/files`, 'PUT', { path, content }),
   appTasksList: (id: string, appId: string) => get<AgentTask[]>(`/api/agents/${id}/apps/${appId}/tasks`),

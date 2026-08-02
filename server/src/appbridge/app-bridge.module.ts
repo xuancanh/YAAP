@@ -50,8 +50,24 @@ export class AppBridgeController {
   fileRead(
     @Param('id') id: string, @Param('appId') appId: string,
     @Query('path') path: string, @Query('workspaceId') workspaceId?: string,
+    @Query('offset') offset?: string,
   ) {
-    return this.bridge.fileRead(id, appId, path ?? '', workspaceId);
+    return this.bridge.fileRead(id, appId, path ?? '', workspaceId, Number(offset ?? 0) || 0);
+  }
+
+  /** Promotion out of the app's own folder — approved in the host, and
+   *  refused here for anything the agent reads as instructions. */
+  @Post('files/propose')
+  filePropose(@Param('id') id: string, @Param('appId') appId: string, @Body() body: { path: string; content: string }) {
+    return this.bridge.filePropose(id, appId, body.path ?? '', body.content ?? '');
+  }
+
+  @Get('files/watch')
+  filesWatch(
+    @Param('id') id: string, @Param('appId') appId: string,
+    @Query('prefix') prefix?: string, @Query('since') since?: string, @Query('workspaceId') workspaceId?: string,
+  ) {
+    return this.bridge.filesWatch(id, appId, prefix ?? '', since, workspaceId);
   }
 
   @Put('files')

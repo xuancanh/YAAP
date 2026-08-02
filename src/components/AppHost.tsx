@@ -12,7 +12,7 @@ import { useApp } from '../store';
 /** Injected before the app's own HTML; defines the promise-based RPC. */
 const SHIM = `<script>window.yaam=(()=>{let q=0;const p={},s={};addEventListener('message',e=>{const m=e.data;if(!m||!m.__yaam)return;if(m.chunk!==undefined){const f=s[m.id];if(f)f(m.chunk);return}if(p[m.id]){const{ok,er}=p[m.id];delete p[m.id];delete s[m.id];m.error?er(new Error(m.error)):ok(m.result)}});const c=(op,args,onChunk)=>new Promise((ok,er)=>{const id=++q;p[id]={ok,er};if(onChunk)s[id]=onChunk;parent.postMessage({__yaam:true,id,op,args:args||{}},'*')});return{
 storage:{get:()=>c('storage.get'),set:(state)=>c('storage.set',{state})},
-files:{list:(prefix)=>c('files.list',{prefix}),read:(path)=>c('files.read',{path}),write:(path,content)=>c('files.write',{path,content}),propose:(path,content)=>c('files.propose',{path,content}),watch:(prefix,since)=>c('files.watch',{prefix,since})},
+files:{list:(prefix)=>c('files.list',{prefix}),read:(path,offset)=>c('files.read',{path,offset}),write:(path,content)=>c('files.write',{path,content}),propose:(path,content)=>c('files.propose',{path,content}),watch:(prefix,since)=>c('files.watch',{prefix,since})},
 tasks:{list:()=>c('tasks.list'),add:(t)=>c('tasks.add',t),move:(id,status)=>c('tasks.move',{id,status})},
 chat:{compose:(text)=>c('chat.compose',{text})},
 agent:{ask:(prompt)=>c('agent.ask',{prompt})},
@@ -142,7 +142,9 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
           case 'storage.get': return reply((await api.appStorageGet(agentId, ma.id)).state);
           case 'storage.set': return reply(await api.appStoragePut(agentId, ma.id, m.args.state));
           case 'files.list': return reply(await api.appFilesList(agentId, ma.id, String(m.args.prefix ?? ''), ws));
-          case 'files.read': return reply(await api.appFileRead(agentId, ma.id, String(m.args.path ?? ''), ws));
+          case 'files.read': return reply(await api.appFileRead(agentId, ma.id, String(m.args.path ?? ''), ws, num(m.args.offset)));
+          case 'files.propose': return reply(await api.appFilePropose(agentId, ma.id, String(m.args.path ?? ''), String(m.args.content ?? '')));
+          case 'files.watch': return reply(await api.appFilesWatch(agentId, ma.id, String(m.args.prefix ?? ''), typeof m.args.since === 'string' ? m.args.since : undefined, ws));
           case 'files.write': return reply(await api.appFileWrite(agentId, ma.id, String(m.args.path ?? ''), String(m.args.content ?? '')));
           case 'tasks.list': return reply(await api.appTasksList(agentId, ma.id));
           case 'tasks.add': return reply(await api.appTaskAdd(agentId, ma.id, String(m.args.title ?? ''), typeof m.args.note === 'string' ? m.args.note : undefined));
