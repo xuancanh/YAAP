@@ -26,3 +26,5 @@ jobs:
       - run: npm run build
       # Backend suites run on PGlite (in-memory Postgres) — no services needed.
       - run: npm test
+      # Frontend unit tests (vitest + jsdom, web-tests/).
+      - run: npm run test:web
