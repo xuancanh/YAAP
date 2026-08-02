@@ -41,6 +41,8 @@ export const OP_CLASS: Record<string, keyof typeof RATE_LIMITS> = {
   'connections.propose': 'write',
   'llm.complete': 'llm',
   'compute.run': 'llm',
+  'compute.status': 'read',
+  'connections.list': 'read',
 };
 
 const WINDOW_MS = 60_000;

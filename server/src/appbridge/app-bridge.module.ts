@@ -10,12 +10,16 @@ import type { Response } from 'express';
 import { AppBridgeService } from './app-bridge.service';
 import { AppLlmService } from './app-llm.service';
 import { AppDataService, type DataQuery } from './app-data.service';
+import { AppConnectionsService } from './app-connections.service';
+import { AppComputeService } from './app-compute.service';
 import { AgentsModule } from '../agents/agents.module';
 import { ChatsModule } from '../chats/chats.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { AiModule } from '../ai/ai.module';
 import { AgentTypesModule } from '../agent-types/agent-types.module';
 import { SettingsModule } from '../settings/settings.module';
+import { ConnectionsModule } from '../connections/connections.module';
+import { RunnerModule } from '../runner/runner.module';
 
 @Controller('agents/:id/apps/:appId')
 export class AppBridgeController {
@@ -23,6 +27,8 @@ export class AppBridgeController {
     private readonly bridge: AppBridgeService,
     private readonly llm: AppLlmService,
     private readonly data: AppDataService,
+    private readonly conns: AppConnectionsService,
+    private readonly compute: AppComputeService,
   ) {}
 
   @Post('approve')
@@ -132,6 +138,41 @@ export class AppBridgeController {
     return this.data.sqlEngine(id, appId);
   }
 
+  // connections: fixed shapes to read, proposals to write (roadmap §6)
+  @Get('connections')
+  connectionsList(@Param('id') id: string, @Param('appId') appId: string) {
+    return this.conns.list(id, appId);
+  }
+
+  @Post('connections/read')
+  connectionsRead(
+    @Param('id') id: string, @Param('appId') appId: string,
+    @Body() body: { provider: string; op: string; params?: Record<string, unknown> },
+  ) {
+    return this.conns.read(id, appId, body.provider ?? 'google', body.op ?? '', body.params ?? {});
+  }
+
+  @Post('connections/propose')
+  connectionsPropose(
+    @Param('id') id: string, @Param('appId') appId: string,
+    @Body() body: { provider: string; op: string; payload?: Record<string, unknown> },
+  ) {
+    return this.conns.propose(id, appId, body.provider ?? 'google', body.op ?? '', body.payload ?? {});
+  }
+
+  @Get('compute')
+  computeStatus(@Param('id') id: string, @Param('appId') appId: string) {
+    return this.compute.status(id, appId);
+  }
+
+  @Post('compute')
+  computeRun(
+    @Param('id') id: string, @Param('appId') appId: string,
+    @Body() body: { language: string; code: string; stdin?: string },
+  ) {
+    return this.compute.run(id, appId, body.language ?? '', body.code ?? '', body.stdin);
+  }
+
   @Post('llm')
   complete(
     @Param('id') id: string, @Param('appId') appId: string,
@@ -167,8 +208,8 @@ export class AppBridgeController {
 }
 
 @Module({
-  imports: [AgentsModule, ChatsModule, WorkspacesModule, AiModule, AgentTypesModule, SettingsModule],
+  imports: [AgentsModule, ChatsModule, WorkspacesModule, AiModule, AgentTypesModule, SettingsModule, ConnectionsModule, RunnerModule],
   controllers: [AppBridgeController],
-  providers: [AppBridgeService, AppLlmService, AppDataService],
+  providers: [AppBridgeService, AppLlmService, AppDataService, AppConnectionsService, AppComputeService],
 })
 export class AppBridgeModule {}

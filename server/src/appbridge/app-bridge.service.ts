@@ -68,6 +68,12 @@ export class AppBridgeService {
     return entry;
   }
 
+  /** Append a provenance line for a collaborator service (llm, data,
+   *  connections, compute). Bridge activity is never silent. */
+  async note(agentId: string, title: string, body?: string) {
+    await this.agents.addEvent(agentId, { kind: 'info', title, body }).catch(() => {});
+  }
+
   /** Append a read to the provenance feed, on the tally's curve. */
   private async noteRead(agentId: string, entry: AgentApp, what: string) {
     const line = this.reads.record(entry.id, entry.name, what);

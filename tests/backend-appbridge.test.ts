@@ -19,6 +19,10 @@ import { AiProviderFactory } from '../server/src/ai/providers.factory';
 import { AgentTypesService } from '../server/src/agent-types/agent-types.service';
 import { SettingsService } from '../server/src/settings/settings.module';
 import { AppDataService } from '../server/src/appbridge/app-data.service';
+import { AppConnectionsService } from '../server/src/appbridge/app-connections.service';
+import { AppComputeService } from '../server/src/appbridge/app-compute.service';
+import { ConnectionsService } from '../server/src/connections/connections.service';
+import { RunnerService } from '../server/src/runner/runner.service';
 
 async function setup(rounds: AiStreamEvent[][] = []) {
   const db = await testDb();
@@ -335,7 +339,7 @@ test('data is gated, namespaced per app, and collection names are validated', as
 });
 
 test('sql.engine ships the WASM as bytes, because the CSP forbids fetching it', async () => {
-  const { bridge, agents, agent, map, stub } = await setup();
+  const { bridge, agents, agent, stub } = await setup();
   const entry = await appWithCaps(agents, agent.id, ['data']);
   const data = new AppDataService(bridge, stub);
 
@@ -345,4 +349,88 @@ test('sql.engine ships the WASM as bytes, because the CSP forbids fetching it', 
   assert.ok(Buffer.from(eng.wasmBase64, 'base64').subarray(0, 4).equals(Buffer.from([0x00, 0x61, 0x73, 0x6d])),
     'real WebAssembly, magic header intact');
   assert.ok(eng.js.includes('wasmBinary'), 'and it accepts those bytes directly rather than a URL');
+});
+
+// ---- roadmap steps 5-6: connections by fixed shape, and the sandbox ----
+
+/** ConnectionsService stub: records what the bridge asked it to run, and
+ *  answers as if the agent held the grants it was constructed with. */
+function connectionsStub(grants: Array<{ agentId: string; service: string; level: string }>) {
+  const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
+  const stub = {
+    calls,
+    async list() { return [{ provider: 'google', accountEmail: 'user@example.com', grants }]; },
+    async execute(_agentId: string, name: string, input: Record<string, unknown>) {
+      calls.push({ name, input });
+      return `ran ${name}`;
+    },
+  } as unknown as ConnectionsService;
+  return { stub, calls };
+}
+
+test('connections: an app names an op, never a tool or a URL, and unknown params are dropped', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['connections']);
+  const { stub, calls } = connectionsStub([{ agentId: agent.id, service: 'calendar', level: 'write' }]);
+  const conns = new AppConnectionsService(bridge, stub);
+
+  const avail = await conns.list(agent.id, entry.id);
+  assert.deepEqual(avail[0].provider, 'google');
+  assert.ok(avail[0].ops.includes('calendar.upcoming') && avail[0].ops.includes('calendar.create'));
+  assert.ok(!JSON.stringify(avail).includes('user@example.com'), 'an app never learns whose calendar it is');
+
+  await conns.read(agent.id, entry.id, 'google', 'calendar.upcoming', { days: 7, url: 'https://evil.example/steal' });
+  assert.equal(calls[0].name, 'gcal_upcoming');
+  // this is the whole reason tools.invoke stayed refused: there must be no
+  // path from app input to a destination
+  assert.deepEqual(calls[0].input, { days: 7 }, 'undeclared params are dropped, never forwarded');
+
+  await assert.rejects(conns.read(agent.id, entry.id, 'google', 'gmail_send', {}), /unknown operation/);
+  await assert.rejects(conns.read(agent.id, entry.id, 'google', 'calendar.create', {}), /unknown operation/,
+    'a write op is not reachable through the read path');
+});
+
+test('connections: sending mail is not proposable from an app at all', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['connections']);
+  const { stub, calls } = connectionsStub([{ agentId: agent.id, service: 'gmail', level: 'write' }]);
+  const conns = new AppConnectionsService(bridge, stub);
+
+  await conns.propose(agent.id, entry.id, 'google', 'mail.draft', { to: 'a@b.c', subject: 'hi', body: 'x' });
+  assert.equal(calls[0].name, 'gmail_draft', 'apps prepare mail; people send it');
+  for (const op of ['mail.send', 'gmail_send']) {
+    await assert.rejects(conns.propose(agent.id, entry.id, 'google', op, { to: 'a@b.c' }), /unknown operation/);
+  }
+  const events = await agents.listEvents(agent.id);
+  assert.ok(events.some((e) => e.title.includes('you approved it')), 'a write through an app is on the record');
+});
+
+test('connections and compute stay inside the agent grant, and refuse honestly when absent', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['connections', 'compute']);
+
+  // the agent holds nothing → the app inherits nothing, even though activated
+  const { stub } = connectionsStub([]);
+  assert.deepEqual(await new AppConnectionsService(bridge, stub).list(agent.id, entry.id), []);
+
+  const compute = new AppComputeService(bridge, undefined);
+  await assert.rejects(compute.run(agent.id, entry.id, 'python', 'print(1)'), /runner is not configured/);
+  assert.equal((await compute.status(agent.id, entry.id)).backend, null);
+});
+
+test('compute.run hands code to the same sandbox the agent uses, and validates language', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['compute']);
+  const seen: Array<{ name: string; input: Record<string, unknown> }> = [];
+  const runner = {
+    status: () => ({ backend: 'local', languages: ['javascript', 'python'], detail: 'local OS sandbox' }),
+    async execute(name: string, input: Record<string, unknown>) { seen.push({ name, input }); return 'ok\n'; },
+  } as unknown as RunnerService;
+  const compute = new AppComputeService(bridge, runner);
+
+  const res = await compute.run(agent.id, entry.id, 'python', 'print(sum(range(10)))', 'a,b\n');
+  assert.equal(res.output, 'ok\n');
+  assert.equal(seen[0].name, 'run_python', 'no new sandbox — the one from docs/code-execution.md');
+  assert.equal(seen[0].input.stdin, 'a,b\n');
+  await assert.rejects(compute.run(agent.id, entry.id, 'ruby', 'puts 1'), /javascript.*python/);
 });

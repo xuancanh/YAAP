@@ -60,7 +60,10 @@ function matches(row: DataRow, where: Record<string, unknown>): boolean {
     if ('gte' in c) return (v as number) >= (c.gte as number);
     if ('lt' in c) return (v as number) < (c.lt as number);
     if ('lte' in c) return (v as number) <= (c.lte as number);
-    if ('contains' in c) return String(v ?? '').toLowerCase().includes(String(c.contains).toLowerCase());
+    // only meaningful on text; an object would stringify to [object Object]
+    if ('contains' in c) {
+      return typeof v === 'string' && v.toLowerCase().includes(String(c.contains).toLowerCase());
+    }
     if ('in' in c) return Array.isArray(c.in) && c.in.includes(v);
     throw new BadRequestException(`unsupported filter on "${field}": ${JSON.stringify(cond).slice(0, 80)}`);
   });

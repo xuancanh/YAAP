@@ -1,11 +1,17 @@
 # Mini apps, act two: model calls, live data, storage that scales, and the connected world
 
-Status: design. `docs/miniapp-capabilities.md` designed the bridge and it
-shipped — the shim, seven capabilities, the three-gate manifest, host-rendered
-review. This document reviews what actually landed, names where the code and
-the docs disagree, and lays out what apps need next: talking to a model
+Status: **shipped**. Every step in §8 landed; this document is now the design
+of record for what runs, with the review in §1 kept as the reasoning behind
+it. Deliberate departures from the original design are marked *(shipped as)*.
+
+`docs/miniapp-capabilities.md` designed act one — the shim, seven
+capabilities, the three-gate manifest, host-rendered review. This document
+started as a review of what actually landed there, named where the code and
+the docs disagreed, and designed what apps needed next: talking to a model
 directly, working with files they can hand back, holding more than 64 KB, and
-reaching the connections their agent already owns.
+reaching the connections their agent already owns. All of it is now built;
+§1 is preserved as written, because the gaps it found are the reason the rest
+of the document takes the shape it does.
 
 ## 1. What shipped, verified against code
 
@@ -23,7 +29,8 @@ So the capabilities doc's §7 shipping order (v1 "state and sight", v2 "hands",
 v3 "voice") is complete, and its "Status: design" header is wrong. Fixed
 alongside this document.
 
-Three gaps are not cosmetic:
+Three gaps were not cosmetic. All three are now closed (§8 step 1); the
+findings stay here because each was a claim believed for months:
 
 - **The quota claim is aspirational.** §2 threat 4 says "everything is
   quota'd and rate-limited per app." Only `agent.ask` is (20 turns/day).
@@ -31,16 +38,21 @@ Three gaps are not cosmetic:
   an app in a `while(true)` can hammer S3 and fill the board. This is the
   same failure shape as the CSP hole: an invariant stated in prose, believed
   because it was written down, never enforced in code. Worth naming as a
-  pattern, because it has now happened twice.
+  pattern, because it has now happened twice. *Now enforced* in
+  `bridge-limits.ts`, billed through the one gate every op passes.
 - **Reads leave no trace.** §6 promised the event feed would show bridge
   activity ("read reports/ (12 files)"). Only `files.write` and `tasks.add`
   emit events. An app with `files.read` can walk the entire agent folder and
   the user sees nothing, ever. Reads are the capability most likely to be
-  granted casually, so they are the ones most worth logging.
+  granted casually, so they are the ones most worth logging. *Now logged* on
+  a curve — the first read, then every 25th — so a walk of the folder is
+  visible without one feed line per file.
 - **Confirms are `window.confirm`.** Safe — browser chrome is outside the
   frame, so consent cannot be spoofed — but it cannot show a real payload,
   cannot offer per-scope "remember", and blocks the page. The design called
-  for the tool-approval card's shape.
+  for the tool-approval card's shape. *Now a card* that shows the payload,
+  splitting remember-once ops from the always-ask ones where the payload is
+  the decision.
 
 ## 2. What the threat model says about act two
 
@@ -88,8 +100,12 @@ for await (const chunk of yaam.llm.stream(prompt)) render(chunk);
   constrains output so apps get parsed objects, not prose to regex.
 - Budgeted in **tokens per app per day**, not turns — the natural unit for
   something an app calls in a loop — with the remaining budget readable via
-  `yaam.llm.budget()` so apps degrade gracefully instead of failing at 3 pm.
-- Vision accepted as base64 the app already holds from `files.read`.
+  every result's `remainingTokensToday` so apps degrade gracefully instead of
+  failing at 3 pm. *(shipped as: the budget rides on each result rather than a
+  separate `yaam.llm.budget()` call — one fewer round trip, same information.)*
+- Vision: not shipped. `files.read` already returns base64 for images, so this
+  is a provider-plumbing change, not a bridge one; deferred until an app wants
+  it.
 
 The risk class is **cost, not agency**. Being tool-free and context-free makes
 `llm.complete` strictly safer than the `agent.ask` we already ship: the worst
@@ -97,8 +113,11 @@ case is a token bill, and a per-day ceiling bounds it. It should therefore
 activate at a *lower* tier than `agent.ask` — activation-gated, no per-call
 confirm — and it is likely to become the most-used capability in the set.
 
-`agent.ask` keeps its place for anything needing the agent's own knowledge,
-and gains streaming so apps stop showing a spinner for twenty seconds.
+`agent.ask` keeps its place for anything needing the agent's own knowledge.
+*(shipped as: streaming landed on `llm.stream` only. `agent.ask` still returns
+one block at the end — it runs the full turn loop with approval waits inside
+it, so relaying it is a larger change than wrapping a provider stream, and the
+calls it serves are rarer.)*
 
 ## 4. Files: give apps a way to hand work back
 
@@ -110,8 +129,10 @@ file, which is a strange dance for "export this cleaned CSV."
 
 **`files.propose(path, content)`** — the promotion path, host-rendered:
 
-- The app submits a target path and content; the host shows a diff card
-  (new file, or a real diff against the existing one) naming the app.
+- The app submits a target path and content; the host shows the content in a
+  card naming the app. *(shipped as: the full proposed content, not a diff
+  against the existing file — a diff view is a rendering improvement over the
+  same approval, and the decision is the same either way.)*
 - On approval the **server** writes it, into the agent's folder proper, with
   an event recording which app proposed it. The app never gains write reach.
 - Refused for anything the agent treats as instructions (`AGENT.md`,
@@ -228,25 +249,29 @@ mounts — the per-mount memory is deliberate.
 Apps also do not get to *bypass* the agent: every capability here is a
 narrower view of something the agent can already do, never a new reach.
 
-## 8. Sequencing
+## 8. Sequencing — all shipped
 
-1. **Truth pass** — make the docs and the code agree. Per-app rate limits on
-   every bridge op; event-feed provenance for reads; the tool-approval card
-   replacing `window.confirm`; capability doc status corrected. This is small
-   and it closes the gap that produced two believed-but-unenforced invariants.
-2. **`llm.complete` / `llm.stream`** — biggest capability unlock per unit of
-   risk, and the one most apps actually want. Token budgets, schema output.
-3. **`files.propose` + `files.watch`** — apps hand work back, dashboards stop
-   lying. Range reads alongside.
-4. **Data** — SQLite-in-frame (engine over the bridge, per §5's CSP note),
-   then `yaam.data` collections when apps outgrow a blob.
-5. **`connections.*`** — read views first, then propose-to-mutate reusing the
-   existing approval cards.
-6. **`compute.run`** — apps reach the sandboxed runner for heavy work.
+1. **Truth pass** *(done)* — a sliding-window rate limit per app per op class
+   (reads 150/min, writes 40/min, model calls 30/min), read provenance on a
+   curve (the first read, then every 25th, so the feed stays readable), and a
+   confirm card that shows the payload instead of `window.confirm`.
+2. **`llm.complete` / `llm.stream`** *(done)* — tool-free, context-free, with
+   a per-app daily token budget and prompt-level schema output.
+3. **`files.propose` + `files.watch`** *(done)* — plus `offset` on reads.
+   Promotion refuses the agent's instruction files whatever was approved.
+4. **Data** *(done)* — `yaam.data` collections **and** `sql.engine()`
+   delivering sql.js as bytes. Shipped in the reverse of the order proposed
+   here: collections came first because they need no new dependency, and the
+   engine followed once the delivery mechanism the CSP forces was in place.
+5. **`connections.*`** *(done)* — read views and propose-to-mutate. *(shipped
+   as: no mail sending at all, see §6 — a narrowing, not an expansion.)*
+6. **`compute.run`** *(done)* — over the existing RunnerService, adding no new
+   sandbox and no new safety claims.
 
-Steps 2–6 are independent of each other and can be reordered by demand; step 1
-should precede all of them, because each one adds calls to a bridge whose
-rate-limit story is currently prose.
+One gate covers all of it: `AppBridgeService.gate()` re-derives the manifest
+grant and bills the rate ceiling for every op, including the ones the
+collaborator services (`llm`, `data`, `connections`, `compute`) own. Each
+surface re-implementing that check is how boundaries rot.
 
 ## 9. Where this lives in code
 
@@ -257,4 +282,9 @@ rate-limit story is currently prose.
 - `server/src/chats/turn-loop.service.ts` — `save_app` spec, tool gating
 - `server/src/connections/` — grants the `connections.*` views would read
 - `server/src/runner/` — the backend `compute.run` would target
-- `tests/backend-appbridge.test.ts`, `web-tests/sandbox.test.ts`
+- `server/src/appbridge/app-llm.service.ts` — `yaam.llm`, tool-free calls
+- `server/src/appbridge/app-data.service.ts` — collections + the SQLite engine
+- `server/src/appbridge/app-connections.service.ts` — the fixed-shape op table
+- `server/src/appbridge/app-compute.service.ts` — the runner, gated for apps
+- `server/src/appbridge/bridge-limits.ts` — rate classes and read provenance
+- `tests/backend-appbridge.test.ts` (20 cases), `web-tests/sandbox.test.ts`

@@ -19,8 +19,8 @@ agent:{ask:(prompt)=>c('agent.ask',{prompt})},
 llm:{complete:(prompt,opts)=>c('llm.complete',Object.assign({prompt},opts||{})),stream:(prompt,onChunk,opts)=>c('llm.stream',Object.assign({prompt},opts||{}),onChunk)},
 data:{put:(collection,row)=>c('data.put',{collection,row}),query:(collection,q)=>c('data.query',Object.assign({collection},q||{})),remove:(collection,id)=>c('data.delete',{collection,id})},
 sql:{engine:()=>c('sql.engine')},
-connections:{list:()=>c('connections.list'),read:(service,op,params)=>c('connections.read',{service,op,params:params||{}}),propose:(service,op,payload)=>c('connections.propose',{service,op,payload:payload||{}})},
-compute:{run:(language,code,files)=>c('compute.run',{language,code,files})},
+connections:{list:()=>c('connections.list'),read:(provider,op,params)=>c('connections.read',{provider,op,params:params||{}}),propose:(provider,op,payload)=>c('connections.propose',{provider,op,payload:payload||{}})},
+compute:{run:(language,code,stdin)=>c('compute.run',{language,code,stdin})},
 ui:{theme:()=>c('ui.theme'),toast:(text)=>c('ui.toast',{text})}
 }})();</script>`;
 
@@ -71,7 +71,7 @@ function describe(m: Msg): { verb: string; payload: string } {
     case 'tasks.add': return { verb: 'file a task on the board', payload: s('title', 200) + (m.args.note ? `\n\n${s('note', 500)}` : '') };
     case 'tasks.move': return { verb: 'move a task on the board', payload: `task ${s('id', 40)} → ${s('status', 20)}` };
     case 'files.propose': return { verb: `save ${s('path', 120)} into the agent's folder`, payload: s('content', 4_000) };
-    case 'connections.propose': return { verb: `change your connected ${s('service', 40)}`, payload: JSON.stringify(m.args.payload ?? {}, null, 2).slice(0, 2_000) };
+    case 'connections.propose': return { verb: `change your connected ${s('provider', 40)} (${s('op', 40)})`, payload: JSON.stringify(m.args.payload ?? {}, null, 2).slice(0, 2_000) };
     case 'compute.run': return { verb: `run ${s('language', 20)} in the sandbox`, payload: s('code', 4_000) };
     default: return { verb: m.op, payload: JSON.stringify(m.args).slice(0, 800) };
   }
@@ -166,6 +166,13 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
           }
           case 'data.delete': return reply(await api.appDataDelete(agentId, ma.id, String(m.args.collection ?? ''), String(m.args.id ?? '')));
           case 'sql.engine': return reply(await api.appSqlEngine(agentId, ma.id));
+          case 'connections.list': return reply(await api.appConnections(agentId, ma.id));
+          case 'connections.read':
+            return reply(await api.appConnRead(agentId, ma.id, String(m.args.provider ?? 'google'), String(m.args.op ?? ''), m.args.params));
+          case 'connections.propose':
+            return reply(await api.appConnPropose(agentId, ma.id, String(m.args.provider ?? 'google'), String(m.args.op ?? ''), m.args.payload));
+          case 'compute.run':
+            return reply(await api.appComputeRun(agentId, ma.id, String(m.args.language ?? ''), String(m.args.code ?? ''), typeof m.args.stdin === 'string' ? m.args.stdin : undefined));
           case 'ui.theme': return reply({ theme: st.theme });
           case 'ui.toast': { st.showToast(String(m.args.text ?? '').slice(0, 120)); return reply({ ok: true }); }
           default: return reply(undefined, `unknown operation: ${m.op}`);

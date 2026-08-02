@@ -55,11 +55,11 @@ app can be adversarial even when the agent is honest. Four attacks matter:
 4. **Nagging / resource abuse.** Unlimited calls, unbounded storage, turn
    spam. A denied confirm is not a "no" an app has to respect, so denials are
    counted: three, and the app loses the confirm channel until it is
-   reopened. Turn spam is capped (`agent.ask`, 20/day). **Call rates are
-   not yet capped** — `storage.set`, `files.read`, and `tasks.add` accept
-   unbounded call volume today; sizes are capped, frequency is not. This
-   paragraph claimed otherwise for months. Step 1 of
-   `docs/miniapp-roadmap.md` §8 closes it.
+   reopened. Turn spam is capped (`agent.ask`, 20/day), model spend by a
+   per-app daily token budget, and **call rates by a sliding window per op
+   class** (`server/src/appbridge/bridge-limits.ts`) billed through the single
+   gate every op passes. That last one was claimed here for months before it
+   was true; see `docs/miniapp-roadmap.md` §1 for why that kept happening.
 
 ## 3. The capability inventory
 
@@ -74,7 +74,11 @@ What a useful app actually needs, ordered by how often real apps want it:
 | `files.write` — write files into a scoped subfolder | intake form saving submissions for the agent to process | brain poisoning if unscoped |
 | `tasks.write` — add/update board tasks | triage helper files the ticket it prioritized | medium (feeds agent work queue) |
 | `agent.ask` — run a real turn against the agent | app asks the agent to crunch data and returns the answer | high — this is agency |
-| `tools.invoke` — call an already-user-approved custom HTTP tool | price checker calling the approved rates API | high — network by proxy |
+| `tools.invoke` — call an already-user-approved custom HTTP tool | price checker calling the approved rates API | high — network by proxy — **refused, permanently** |
+| `llm` — a plain model call, no tools, no agent context | tag 40 entries, extract fields from pasted text | cost, not agency |
+| `data` — queryable app-scoped collections, and SQLite in the frame | expense log with a year of rows | none beyond quota |
+| `connections` — fixed-shape reads of granted calendar/mail/drive; writes propose | agenda widget over the real calendar | high — mediated by the agent's grant |
+| `compute` — run code in the sandboxed runner | parse a 40 MB CSV without shipping pandas to the browser | inherits docs/code-execution.md |
 | UI conveniences: theme tokens, resize, toast, open a file preview | native look, deep links | none |
 
 Deliberately **not** offered, at any tier: raw network (`fetch`), reading
@@ -142,12 +146,19 @@ from a surface that cannot be trusted to approve anything. Same answer:
 Even so it stays behind activation review: "this app can consume your
 tokens and read what the agent answers" is a real grant.
 
-### 4.7 `tools.invoke` — defer
+### 4.7 `tools.invoke` — refused, and superseded
 Calling approved custom HTTP tools from an app is network-by-proxy: an
 approved GET with a `{query}` placeholder becomes an exfiltration channel
-the moment an app controls the parameters. Defer until tools have the
-secrets vault and per-tool egress review; when it comes, it is per-call
-execution-gated with the host confirm showing the substituted URL. Not v1.
+the moment an app controls the parameters. This was deferred pending a
+secrets vault and per-tool egress review; on reflection neither would fix it,
+because the defect is that the app can shape the request at all.
+
+What shipped instead is the inverse: `connections` gives apps **fixed-shape**
+operations over the same grants (`calendar.upcoming`, `mail.draft`, …), where
+the destination was never a parameter and undeclared arguments are dropped
+rather than forwarded. Apps get the useful half of the capability and cannot
+express the dangerous half. See `docs/miniapp-roadmap.md` §6; act-two
+capabilities are designed there rather than duplicated here.
 
 ## 5. The manifest, through the three gates
 
@@ -158,8 +169,9 @@ save_app(name, description, html, capabilities?: string[])
 ```
 
 with capabilities from: `storage`, `chat.compose`, `files.read`,
-`files.write`, `tasks.read`, `tasks.write`, `agent.ask`. Unknown names are
-rejected at save so the vocabulary stays reviewable.
+`files.write`, `tasks.read`, `tasks.write`, `agent.ask`, plus the act-two set
+`llm`, `data`, `connections`, `compute`. Unknown names are rejected at save so
+the vocabulary stays reviewable.
 
 - **Creation** stays free. Any agent may save any app requesting anything.
 - **Activation** splits by tier. `storage` + `chat.compose` (and no
@@ -170,9 +182,12 @@ rejected at save so the vocabulary stays reviewable.
   words. Approval is per-capability, not all-or-nothing. **Editing an app
   re-parks its elevated grants**, exactly like custom-tool edits — what you
   approved is what runs, and a benign v1 cannot smuggle a hostile v2.
-- **Execution**: mutating calls (`tasks.write`, `agent.ask`) confirm on
-  first use per app with host-rendered UI; reads and storage flow freely
-  once activated. All server-side enforcement — the shim's checks are UX,
+- **Execution**: mutating calls (`tasks.write`, `agent.ask`, `compute.run`)
+  confirm on first use per app with host-rendered UI; proposals
+  (`files.propose`, `connections.propose`) confirm *every* time, because
+  there the payload is the decision and remembering would mean saying yes to
+  whatever it sends next. Reads, storage, `data`, and `llm` flow freely once
+  activated. All server-side enforcement — the shim's checks are UX,
   the controller re-derives grants from the stored manifest on every call.
 
 Provenance stays on every surface: "built by <agent> · sandboxed · no
@@ -208,20 +223,31 @@ itself can never reach these endpoints directly — everything funnels
 through the parent window, which is the choke point for confirms, rate
 limits, and provenance logging (bridge calls append to the agent's event
 feed: "Ticket helper read reports/ (12 files) · added task 'P1: checkout
-down'"). As shipped, only **writes** log — `files.write` and `tasks.add`
-emit events; reads are silent, so a granted `files.read` leaves no trace of
-what it walked. Also on the roadmap's step 1.
+down'"). Writes log per call; reads log on a curve — the first, then every
+25th — so a walk of the folder is visible without one feed line per file.
 
 App-facing surface, all promises:
 
 ```js
 await yaam.storage.get();            await yaam.storage.set(obj);
 await yaam.files.list('reports/');   await yaam.files.read('reports/w.md');
+await yaam.files.read('big.csv', 200000);      // page past the preview cap
 await yaam.files.write('notes.md', text);      // lands in apps/<appId>/
+await yaam.files.propose('exports/clean.csv', text);  // user approves, agent folder
+await yaam.files.watch('reports/', lastSeen);  // has anything changed?
 await yaam.tasks.list();             await yaam.tasks.add({ title });
 yaam.chat.compose('Summarize this week');
 const answer = await yaam.agent.ask('Crunch the numbers in my state');
-yaam.ui.theme();  yaam.ui.toast(msg);  yaam.ui.openFile('reports/w.md');
+const out = await yaam.llm.complete(prompt, { schema });   // no tools, no agent
+await yaam.llm.stream(prompt, (chunk) => render(chunk));
+await yaam.data.put('entries', row);
+await yaam.data.query('entries', { where: { tag: 'food' }, order: ['date', 'desc'] });
+const { js, wasmBase64 } = await yaam.sql.engine();        // CSP: bytes, not a URL
+await yaam.connections.list();
+await yaam.connections.read('google', 'calendar.upcoming', { days: 7 });
+await yaam.connections.propose('google', 'mail.draft', { to, subject, body });
+await yaam.compute.run('python', code, stdin);
+yaam.ui.theme();  yaam.ui.toast(msg);
 ```
 
 The system prompt's `save_app` guidance grows a short contract: which
@@ -231,9 +257,9 @@ feature-detect and degrade to static rendering.
 
 ## 7. Shipping order
 
-v1–v3 all shipped; the sequel is `docs/miniapp-roadmap.md`. Execution confirms
-landed as `window.confirm` rather than the tool-approval card described in §5
-— host-rendered and unspoofable, but unable to show a payload.
+v1–v3 all shipped, and so is the sequel in `docs/miniapp-roadmap.md`
+(`llm`, `data`, `connections`, `compute`, file promotion, live reads).
+Execution confirms are now a host-rendered card showing the payload.
 
 1. **v1 — state and sight** *(shipped)*: bridge + `storage`, `chat.compose`,
    `files.read`, `tasks.read`; manifest field on save_app; review modal;

@@ -72,14 +72,14 @@ const AGENT_TOOLS: AiToolSpec[] = [
   },
   {
     name: 'save_app',
-    description: 'Create or update (same name replaces) one of your mini apps: a single self-contained HTML file shown on your home page and embeddable into chats. It runs in a sandboxed iframe with no network access, so inline all CSS/JS. Apps may request capabilities from the window.yaam bridge (all promise-based, feature-detect with `if (window.yaam)`): storage (get/set app-private state), chat.compose (prefill the chat box), files.read (list/read your working folder incl. shared/), files.write (write inside the app\'s own folder), tasks.read, tasks.write (add/move board tasks), agent.ask (ask you a question, Ask-mode, budgeted). storage and chat.compose activate immediately; the rest stay parked until the user reviews them on the app card, so request only what the app really uses.',
+    description: 'Create or update (same name replaces) one of your mini apps: a single self-contained HTML file shown on your home page and embeddable into chats. It runs in a sandboxed iframe with no network access, so inline all CSS/JS. Apps may request capabilities from the window.yaam bridge (all promise-based, feature-detect with `if (window.yaam)`): storage (app-private state), chat.compose (prefill the chat box), files.read (list/read your working folder incl. shared/, with files.watch to poll for changes), files.write (the app\'s own folder) and files.propose (save into your folder proper, user-approved per file), tasks.read, tasks.write, agent.ask (ask you a question, Ask-mode, budgeted), llm (a plain model call with optional JSON-schema output, no tools — prefer it over agent.ask for the app\'s own tagging/extraction/summary work), data (queryable collections for more rows than storage holds, plus yaam.sql for SQLite in the page), connections (fixed-shape reads of granted calendar/mail/drive, and proposals the user approves; sending mail is not available to apps), compute (run javascript/python in the sandboxed runner). storage and chat.compose activate immediately; the rest stay parked until the user reviews them on the app card, so request only what the app really uses.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Short app name (also the update key).' },
         description: { type: 'string', description: 'One line on what the app does.' },
         html: { type: 'string', description: 'The complete self-contained HTML document.' },
-        capabilities: { type: 'array', items: { type: 'string' }, description: 'Bridge capabilities the app uses: storage, chat.compose, files.read, files.write, tasks.read, tasks.write, agent.ask.' },
+        capabilities: { type: 'array', items: { type: 'string' }, description: 'Bridge capabilities the app uses: storage, chat.compose, files.read, files.write, tasks.read, tasks.write, agent.ask, llm, data, connections, compute.' },
       },
       required: ['name', 'html'],
     },

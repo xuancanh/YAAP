@@ -61,7 +61,7 @@ export class AppLlmService {
   /** Which model an app's calls run on: the user's default agent type, else
    *  the first enabled one, else Echo (so the app runs without keys). */
   private async resolveProvider(): Promise<{ provider: AiProvider; model: string; apiKey?: string; baseUrl?: string }> {
-    const settings = await this.settings.all().catch(() => ({}) as Record<string, string>);
+    const settings = await this.settings.all().catch((): Record<string, string> => ({}));
     const types = await this.agentTypes.list().catch(() => []);
     const pick = types.find((t) => t.id === settings.defaultAgentTypeId && t.enabled)
       ?? types.find((t) => t.enabled)
