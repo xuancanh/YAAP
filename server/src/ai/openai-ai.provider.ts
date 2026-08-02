@@ -12,6 +12,7 @@
 import { Injectable } from '@nestjs/common';
 import { AiMessage, AiProvider, AiRequest, AiStreamEvent } from './ai-provider.interface';
 import { streamSignal } from './provider-timeout';
+import { fetchWithRetry } from './provider-retry';
 
 /** Default endpoints per provider name; an agent type's baseUrl overrides. */
 export const OPENAI_COMPAT_BASE_URLS: Record<string, string> = {
@@ -95,7 +96,9 @@ export class OpenAiCompatProvider implements AiProvider {
     if (req.thinkingEffort && req.thinkingEffort !== 'off') body.reasoning_effort = req.thinkingEffort;
 
     const signal = streamSignal(req.signal);
-    const res = await this.fetchFn(`${base}/chat/completions`, {
+    // Retried pre-first-event only: on transient 429/5xx/network failures the
+    // request is re-issued (fetchWithRetry); once events stream, no retry.
+    const res = await fetchWithRetry(this.fetchFn, `${base}/chat/completions`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -103,7 +106,7 @@ export class OpenAiCompatProvider implements AiProvider {
       },
       body: JSON.stringify(body),
       signal,
-    });
+    }, signal);
     if (!res.ok || !res.body) {
       throw new Error(`openai-compatible ${res.status}: ${(await res.text()).slice(0, 300)}`);
     }

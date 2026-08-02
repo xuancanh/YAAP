@@ -79,6 +79,86 @@ test('stdio URLs are rejected', () => {
   assert.throws(() => new McpHttpClient('stdio://mcp-fs'), /only http\(s\)/);
 });
 
+/** A fake MCP server that can "restart": while dead it 404s any call bearing
+ *  the stale session id; a fresh initialize brings it back. */
+function restartingMcpServer(callResult = 'it worked') {
+  let dead = false;
+  const calls: string[] = [];
+  const fn = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    const req = JSON.parse(String(init?.body)) as { id?: number; method: string };
+    const sid = (init?.headers as Record<string, string>)['mcp-session-id'];
+    if (req.method === 'initialize') {
+      dead = false;
+      calls.push('initialize');
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { protocolVersion: '2025-03-26', capabilities: {} } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'mcp-session-id': `sess-${calls.length}` },
+      });
+    }
+    if (req.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    calls.push(req.method);
+    if (dead && sid) return new Response('session gone', { status: 404 });
+    const result = req.method === 'tools/list' ? { tools: [{ name: 'get-weather', description: 'Weather lookup' }] }
+      : { content: [{ type: 'text', text: callResult }] };
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: req.id, result }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof fetch;
+  return { fn, calls, kill: () => { dead = true; } };
+}
+
+test('client re-initializes and retries once when the server forgets the session (404)', async () => {
+  const { fn, calls, kill } = restartingMcpServer('pong');
+  const client = new McpHttpClient('https://mcp.example.com/mcp', fn);
+  const tools = await client.listTools();
+  assert.deepEqual(tools.map((t) => t.name), ['get-weather']);
+
+  kill(); // server restarted; the cached session id is now stale
+  assert.equal(await client.callTool('get-weather', {}), 'pong');
+  assert.deepEqual(calls, ['initialize', 'tools/list', 'tools/call', 'initialize', 'tools/call']);
+});
+
+test('client recovers from an initialize-required JSON-RPC error', async () => {
+  let needsInit = true;
+  const fn = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    const req = JSON.parse(String(init?.body)) as { id?: number; method: string };
+    if (req.method === 'initialize') {
+      needsInit = false;
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: {} }), {
+        status: 200, headers: { 'content-type': 'application/json', 'mcp-session-id': 'sess-1' },
+      });
+    }
+    if (req.method === 'notifications/initialized') return new Response(null, { status: 202 });
+    if (needsInit) {
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: req.id, error: { code: -32600, message: 'Server not initialized' } }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id: req.id, result: { content: [{ type: 'text', text: 'back' }] } }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    });
+  }) as unknown as typeof fetch;
+
+  const client = new McpHttpClient('https://mcp.example.com/mcp', fn);
+  await client.listTools();
+  needsInit = true; // restart, signalled in-band instead of a 404
+  assert.equal(await client.callTool('x', {}), 'back');
+});
+
+test('execute recovers transparently when the MCP server restarts', async () => {
+  const db = await testDb();
+  const mcp = new McpService(db, mcpConfigStub);
+  const { fn, kill } = restartingMcpServer('sunny, 21C');
+  mcp.clientFactory = (url) => new McpHttpClient(url, fn);
+
+  const server = await mcp.create({ name: 'Weather API', url: 'https://mcp.example.com/mcp' });
+  await mcp.discover(server.id);
+
+  kill(); // restart: the cached client holds a stale session, clients map untouched
+  assert.equal(await mcp.execute('mcp_weather_api_get_weather', { q: 'hanoi' }), 'sunny, 21C');
+});
+
 test('create/update refuse private server URLs (SSRF guard)', async () => {
   const db = await testDb();
   const mcp = new McpService(db, mcpConfigStub);

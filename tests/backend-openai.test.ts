@@ -104,3 +104,67 @@ test('user images map to data-URI image_url parts (vision, FR-2.2)', () => {
   assert.deepEqual(parts.map((p) => p.type), ['text', 'image_url']);
   assert.equal(parts[1].image_url?.url, 'data:image/jpeg;base64,aGk=');
 });
+
+function scriptedFetch(steps: Array<{ status: number; body: string } | { error: Error }>): { fn: typeof fetch; calls: number[] } {
+  const calls: number[] = [];
+  const fn = (async () => {
+    calls.push(1);
+    const step = steps[Math.min(calls.length - 1, steps.length - 1)];
+    if ('error' in step) throw step.error;
+    return new Response(step.body, { status: step.status });
+  }) as unknown as typeof fetch;
+  return { fn, calls };
+}
+
+test('transient 429 is retried once, then the stream succeeds (events yielded once)', async () => {
+  const stream = sse([{ choices: [{ delta: { content: 'ok' } }] }, '[DONE]']);
+  const { fn, calls } = scriptedFetch([{ status: 429, body: '{"error":"slow down"}' }, { status: 200, body: stream }]);
+  const provider = new OpenAiCompatProvider(fn);
+  const events = await collect(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }] }));
+  assert.equal(calls.length, 2);
+  assert.deepEqual(events.filter((e) => e.type === 'answer'), [{ type: 'answer', text: 'ok' }]);
+  assert.equal(events.at(-1)?.type, 'done');
+});
+
+test('transient 5xx is retried, then the stream succeeds', async () => {
+  const stream = sse([{ choices: [{ delta: { content: 'ok' } }] }, '[DONE]']);
+  const { fn, calls } = scriptedFetch([{ status: 503, body: '{"error":"overloaded"}' }, { status: 200, body: stream }]);
+  const provider = new OpenAiCompatProvider(fn);
+  const events = await collect(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }] }));
+  assert.equal(calls.length, 2);
+  assert.equal(events.at(-1)?.type, 'done');
+});
+
+test('persistent 429 fails after the retries are exhausted', async () => {
+  const { fn, calls } = scriptedFetch([{ status: 429, body: '{"error":"slow down"}' }]);
+  const provider = new OpenAiCompatProvider(fn);
+  await assert.rejects(
+    collect(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }] })),
+    /openai-compatible 429/,
+  );
+  assert.equal(calls.length, 3); // initial attempt + 2 retries
+});
+
+test('a 400 is permanent: no retry', async () => {
+  const { fn, calls } = scriptedFetch([{ status: 400, body: '{"error":"bad request"}' }]);
+  const provider = new OpenAiCompatProvider(fn);
+  await assert.rejects(
+    collect(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }] })),
+    /openai-compatible 400/,
+  );
+  assert.equal(calls.length, 1);
+});
+
+test('an abort during retry backoff stops the turn promptly', async () => {
+  const { fn, calls } = scriptedFetch([{ status: 429, body: '{"error":"slow down"}' }]);
+  const provider = new OpenAiCompatProvider(fn);
+  const controller = new AbortController();
+  const started = Date.now();
+  setTimeout(() => controller.abort(), 50);
+  await assert.rejects(
+    collect(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }], signal: controller.signal })),
+    (err: unknown) => err instanceof DOMException && err.name === 'AbortError',
+  );
+  assert.equal(calls.length, 1, 'no retry was issued after the abort');
+  assert.ok(Date.now() - started < 1_000, 'did not linger in the backoff sleep');
+});

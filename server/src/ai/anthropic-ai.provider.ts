@@ -16,6 +16,7 @@
 import { Injectable } from '@nestjs/common';
 import { AiMessage, AiProvider, AiRequest, AiStreamEvent } from './ai-provider.interface';
 import { streamSignal } from './provider-timeout';
+import { fetchWithRetry } from './provider-retry';
 
 const EFFORT_BUDGET: Record<string, number> = { low: 2048, medium: 8192, high: 16384 };
 
@@ -98,7 +99,9 @@ export class AnthropicAiProvider implements AiProvider {
     }
 
     const signal = streamSignal(req.signal);
-    const res = await this.fetchFn(`${base}/v1/messages`, {
+    // Retried pre-first-event only: on transient 429/5xx/network failures the
+    // request is re-issued (fetchWithRetry); once events stream, no retry.
+    const res = await fetchWithRetry(this.fetchFn, `${base}/v1/messages`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -107,7 +110,7 @@ export class AnthropicAiProvider implements AiProvider {
       },
       body: JSON.stringify(body),
       signal,
-    });
+    }, signal);
     if (!res.ok || !res.body) {
       throw new Error(`anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
     }

@@ -110,3 +110,75 @@ test('user images map to base64 image blocks (vision, FR-2.2)', () => {
   assert.equal(blocks[0].source?.media_type, 'image/png');
   assert.equal(blocks[0].source?.data, 'aGk=');
 });
+
+function scriptedFetch(steps: Array<{ status: number; body: string } | { error: Error }>): { fn: typeof fetch; calls: number[] } {
+  const calls: number[] = [];
+  const fn = (async () => {
+    calls.push(1);
+    const step = steps[Math.min(calls.length - 1, steps.length - 1)];
+    if ('error' in step) throw step.error;
+    return new Response(step.body, { status: step.status, headers: { 'content-type': 'text/event-stream' } });
+  }) as unknown as typeof fetch;
+  return { fn, calls };
+}
+
+test('transient 429 is retried once, then the stream succeeds (events yielded once)', async () => {
+  const stream = sse([
+    { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_stop' },
+  ]);
+  const { fn, calls } = scriptedFetch([{ status: 429, body: '{"error":{"message":"slow down"}}' }, { status: 200, body: stream }]);
+  const provider = new AnthropicAiProvider(fn);
+  const events = await collect(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }] }));
+  assert.equal(calls.length, 2);
+  assert.deepEqual(events.filter((e) => e.type === 'answer'), [{ type: 'answer', text: 'ok' }]);
+  assert.equal(events.at(-1)?.type, 'done');
+});
+
+test('transient network drop is retried, then the stream succeeds', async () => {
+  const stream = sse([
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } },
+    { type: 'message_stop' },
+  ]);
+  const { fn, calls } = scriptedFetch([{ error: new TypeError('fetch failed') }, { status: 200, body: stream }]);
+  const provider = new AnthropicAiProvider(fn);
+  const events = await collect(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }] }));
+  assert.equal(calls.length, 2);
+  assert.equal(events.at(-1)?.type, 'done');
+});
+
+test('persistent 429 fails after the retries are exhausted', async () => {
+  const { fn, calls } = scriptedFetch([{ status: 429, body: '{"error":{"message":"slow down"}}' }]);
+  const provider = new AnthropicAiProvider(fn);
+  await assert.rejects(
+    collect(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }] })),
+    /anthropic 429/,
+  );
+  assert.equal(calls.length, 3); // initial attempt + 2 retries
+});
+
+test('a 400 is permanent: no retry', async () => {
+  const { fn, calls } = scriptedFetch([{ status: 400, body: '{"error":{"message":"bad request"}}' }]);
+  const provider = new AnthropicAiProvider(fn);
+  await assert.rejects(
+    collect(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }] })),
+    /anthropic 400/,
+  );
+  assert.equal(calls.length, 1);
+});
+
+test('an abort during retry backoff stops the turn promptly', async () => {
+  const { fn, calls } = scriptedFetch([{ status: 429, body: '{"error":{"message":"slow down"}}' }]);
+  const provider = new AnthropicAiProvider(fn);
+  const controller = new AbortController();
+  const started = Date.now();
+  setTimeout(() => controller.abort(), 50);
+  await assert.rejects(
+    collect(provider.stream({ model: 'm', messages: [{ role: 'user', content: 'x' }], signal: controller.signal })),
+    (err: unknown) => err instanceof DOMException && err.name === 'AbortError',
+  );
+  assert.equal(calls.length, 1, 'no retry was issued after the abort');
+  assert.ok(Date.now() - started < 1_000, 'did not linger in the backoff sleep');
+});
