@@ -18,6 +18,7 @@ import { AppLlmService, LLM_TOKENS_PER_DAY } from '../server/src/appbridge/app-l
 import { AiProviderFactory } from '../server/src/ai/providers.factory';
 import { AgentTypesService } from '../server/src/agent-types/agent-types.service';
 import { SettingsService } from '../server/src/settings/settings.module';
+import { AppDataService } from '../server/src/appbridge/app-data.service';
 
 async function setup(rounds: AiStreamEvent[][] = []) {
   const db = await testDb();
@@ -30,7 +31,7 @@ async function setup(rounds: AiStreamEvent[][] = []) {
   const bridge = new AppBridgeService(agents, workspaces, repo, turns, stub);
   const agent = await agents.create({ name: 'Helper' });
   await workspaces.list(); // seed the default workspace
-  return { bridge, agents, workspaces, repo, agent, map };
+  return { bridge, agents, workspaces, repo, agent, map, stub };
 }
 
 async function appWithCaps(agents: AgentsService, agentId: string, caps: string[], approveAll = true) {
@@ -285,4 +286,63 @@ test('files.watch reports change since a timestamp, and reads page past the prev
   const tail = await bridge.fileRead(agent.id, entry.id, 'reports/big.txt', undefined, 200_000);
   assert.equal(tail.text!.length, 50_000);
   assert.equal(tail.eof, true);
+});
+
+// ---- roadmap step 4: structured data, and an engine the CSP can accept ----
+
+test('data collections: upsert by id, bounded query surface, unsupported filters refused', async () => {
+  const { bridge, agents, agent, map, stub } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['data']);
+  const data = new AppDataService(bridge, stub);
+
+  await data.put(agent.id, entry.id, 'entries', { id: 'a', tag: 'food', amount: 12, date: '2026-01-02' });
+  await data.put(agent.id, entry.id, 'entries', { id: 'b', tag: 'food', amount: 30, date: '2026-01-01' });
+  await data.put(agent.id, entry.id, 'entries', { id: 'c', tag: 'rent', amount: 900, date: '2026-01-03' });
+  await data.put(agent.id, entry.id, 'entries', { id: 'a', tag: 'food', amount: 15, date: '2026-01-02' });
+
+  const all = await data.query(agent.id, entry.id, 'entries');
+  assert.equal(all.total, 3, 'same id replaces rather than duplicates');
+
+  const food = await data.query(agent.id, entry.id, 'entries', { where: { tag: 'food' }, order: ['date', 'desc'] });
+  assert.deepEqual(food.rows.map((r) => r.id), ['a', 'b']);
+  assert.equal(food.rows[0].amount, 15, 'the upsert won');
+
+  const big = await data.query(agent.id, entry.id, 'entries', { where: { amount: { gt: 20 } } });
+  assert.deepEqual(big.rows.map((r) => r.id), ['b', 'c']);
+
+  // there is no SQL string here, so there is nothing to inject into — an
+  // unknown operator is an error, never a guess
+  await assert.rejects(
+    data.query(agent.id, entry.id, 'entries', { where: { tag: { regex: '.*' } } }),
+    /unsupported filter/,
+  );
+
+  // rows live in the app's own folder: the agent may read them as data
+  assert.ok([...map.keys()].some((k) => k.endsWith(`apps/${entry.id}/data/entries.json`)));
+  await data.remove(agent.id, entry.id, 'entries', 'c');
+  assert.equal((await data.query(agent.id, entry.id, 'entries')).total, 2);
+});
+
+test('data is gated, namespaced per app, and collection names are validated', async () => {
+  const { bridge, agents, agent, stub } = await setup();
+  await agents.saveApp(agent.id, { name: 'Widget', html: '<b>x</b>', capabilities: ['data'] });
+  const entry = (await agents.listApps(agent.id))[0];
+  const data = new AppDataService(bridge, stub);
+
+  await assert.rejects(data.query(agent.id, entry.id, 'entries'), /not activated/);
+  await agents.approveAppCaps(agent.id, entry.id, ['data']);
+  await assert.rejects(data.query(agent.id, entry.id, '../../escape'), /collection must be/);
+});
+
+test('sql.engine ships the WASM as bytes, because the CSP forbids fetching it', async () => {
+  const { bridge, agents, agent, map, stub } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['data']);
+  const data = new AppDataService(bridge, stub);
+
+  const eng = await data.sqlEngine(agent.id, entry.id);
+  assert.match(eng.js, /initSqlJs/, 'the glue an app evals');
+  // default-src 'none' blocks a .wasm URL; the bytes must come down the bridge
+  assert.ok(Buffer.from(eng.wasmBase64, 'base64').subarray(0, 4).equals(Buffer.from([0x00, 0x61, 0x73, 0x6d])),
+    'real WebAssembly, magic header intact');
+  assert.ok(eng.js.includes('wasmBinary'), 'and it accepts those bytes directly rather than a URL');
 });

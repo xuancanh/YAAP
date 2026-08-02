@@ -5,10 +5,11 @@
  * host page (AppHost), and the grant is re-verified here on each request —
  * the client-side checks are UX, this is the boundary.
  */
-import { Body, Controller, Get, Module, Param, Patch, Post, Put, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Module, Param, Patch, Post, Put, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { AppBridgeService } from './app-bridge.service';
 import { AppLlmService } from './app-llm.service';
+import { AppDataService, type DataQuery } from './app-data.service';
 import { AgentsModule } from '../agents/agents.module';
 import { ChatsModule } from '../chats/chats.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
@@ -21,6 +22,7 @@ export class AppBridgeController {
   constructor(
     private readonly bridge: AppBridgeService,
     private readonly llm: AppLlmService,
+    private readonly data: AppDataService,
   ) {}
 
   @Post('approve')
@@ -98,6 +100,38 @@ export class AppBridgeController {
     return this.bridge.ask(id, appId, body.prompt ?? '', body.workspaceId);
   }
 
+  @Post('data/:collection')
+  dataPut(
+    @Param('id') id: string, @Param('appId') appId: string,
+    @Param('collection') collection: string, @Body() body: { row: unknown },
+  ) {
+    return this.data.put(id, appId, collection, body.row);
+  }
+
+  /** POST, not GET: a query is a body, not a URL — and it keeps filter
+   *  objects out of logs and history. */
+  @Post('data/:collection/query')
+  dataQuery(
+    @Param('id') id: string, @Param('appId') appId: string,
+    @Param('collection') collection: string, @Body() body: DataQuery,
+  ) {
+    return this.data.query(id, appId, collection, body ?? {});
+  }
+
+  @Delete('data/:collection/:rowId')
+  dataDelete(
+    @Param('id') id: string, @Param('appId') appId: string,
+    @Param('collection') collection: string, @Param('rowId') rowId: string,
+  ) {
+    return this.data.remove(id, appId, collection, rowId);
+  }
+
+  /** The SQLite engine as bytes — the CSP forbids fetching a .wasm by URL. */
+  @Get('sql-engine')
+  sqlEngine(@Param('id') id: string, @Param('appId') appId: string) {
+    return this.data.sqlEngine(id, appId);
+  }
+
   @Post('llm')
   complete(
     @Param('id') id: string, @Param('appId') appId: string,
@@ -135,6 +169,6 @@ export class AppBridgeController {
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, AiModule, AgentTypesModule, SettingsModule],
   controllers: [AppBridgeController],
-  providers: [AppBridgeService, AppLlmService],
+  providers: [AppBridgeService, AppLlmService, AppDataService],
 })
 export class AppBridgeModule {}

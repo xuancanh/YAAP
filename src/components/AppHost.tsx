@@ -159,6 +159,13 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
               frame.current?.contentWindow?.postMessage({ __yaam: true, id: m.id, chunk: text }, '*');
             return reply(await appLlmStream(agentId, ma.id, String(m.args.prompt ?? ''), relay, num(m.args.maxTokens)));
           }
+          case 'data.put': return reply(await api.appDataPut(agentId, ma.id, String(m.args.collection ?? ''), m.args.row));
+          case 'data.query': {
+            const { collection, ...q } = m.args;
+            return reply(await api.appDataQuery(agentId, ma.id, String(collection ?? ''), q));
+          }
+          case 'data.delete': return reply(await api.appDataDelete(agentId, ma.id, String(m.args.collection ?? ''), String(m.args.id ?? '')));
+          case 'sql.engine': return reply(await api.appSqlEngine(agentId, ma.id));
           case 'ui.theme': return reply({ theme: st.theme });
           case 'ui.toast': { st.showToast(String(m.args.text ?? '').slice(0, 120)); return reply({ ok: true }); }
           default: return reply(undefined, `unknown operation: ${m.op}`);

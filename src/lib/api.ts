@@ -406,6 +406,15 @@ export const api = {
       `/api/agents/${id}/apps/${appId}/ask`, 'POST', { prompt, workspaceId }),
   appLlmComplete: (id: string, appId: string, prompt: string, schema?: unknown, maxTokens?: number) =>
     send<AppLlmResult>(`/api/agents/${id}/apps/${appId}/llm`, 'POST', { prompt, schema, maxTokens }),
+  appDataPut: (id: string, appId: string, collection: string, row: unknown) =>
+    send<{ ok: boolean; id: string; rows: number }>(`/api/agents/${id}/apps/${appId}/data/${collection}`, 'POST', { row }),
+  appDataQuery: (id: string, appId: string, collection: string, q: unknown) =>
+    send<{ rows: Array<Record<string, unknown>>; total: number; offset: number }>(
+      `/api/agents/${id}/apps/${appId}/data/${collection}/query`, 'POST', q),
+  appDataDelete: (id: string, appId: string, collection: string, rowId: string) =>
+    send<{ ok: boolean; rows: number }>(`/api/agents/${id}/apps/${appId}/data/${collection}/${rowId}`, 'DELETE'),
+  appSqlEngine: (id: string, appId: string) =>
+    get<{ js: string; wasmBase64: string }>(`/api/agents/${id}/apps/${appId}/sql-engine`),
   agentEvents: (id: string) => get<AgentEvent[]>(`/api/agents/${id}/events`),
   markAgentEventsRead: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}/events/read`, 'POST'),
   actOnAgentEvent: (id: string, eventId: string, decision: 'approve' | 'dismiss') =>
