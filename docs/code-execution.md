@@ -48,7 +48,24 @@ When agents need real tools — a shell, package installs, a headless browser �
 
 Full VMs — **gVisor** for syscall interception, **Firecracker** microVMs with 5-30ms snapshot-restore — are the right wall for the paid cloud tier where tenants share metal, and the wrong amount of machinery for a local desktop app. Hosted sandbox services (E2B, Riza, Daytona) trade our locality story for someone else's cloud; no, for the core — the free product's promise is that nothing leaves the machine.
 
-### 3d. The browser as a second runner
+### 3d. Cloudflare Sandboxes: buy, not build, for the cloud tier
+
+Evaluated August 2026. **Cloudflare's Sandbox SDK (`@cloudflare/sandbox`, GA April 2026)** is a container-per-sandbox platform on Cloudflare Containers, driven by a TypeScript API from a Worker, and it implements our Tier-1 spec almost clause for clause:
+
+- **Disposable workers with warm starts.** One isolated Linux container per sandbox, `sleepAfter` lifecycle, and backup/restore snapshot APIs so an agent's environment resumes without repeating setup.
+- **No credentials inside the sandbox — as a platform primitive.** Outbound Workers run *outside* the container and inject secrets into egress requests in flight (`outboundByHost`); the workload makes a plain request and never sees the token. This is exactly the "worker holds zero secrets" rule from deployment.md, except we do not have to build the proxy.
+- **Deny-by-default egress.** `allowedHosts` turns all egress into an allowlist (glob patterns), switchable per instance at runtime without restart; TLS interception uses a per-instance ephemeral CA whose key never enters the container. Same domain-fronting caveats as any domain filter, same as srt.
+- **The tool surface we want is already there.** `exec`, persistent Python/JS/TS code-interpreter contexts with rich outputs (png/svg charts, HTML tables, JSON) that map directly onto our artifact panel, file APIs with real-time watch events, background processes with preview URLs, git checkout, PTY terminals.
+- **Cost shape fits a paid tier.** Workers Paid ($5/mo) plus usage-based Containers pricing with active-CPU billing and included monthly allowances — per-execution cost, no idle fleet.
+
+What it does not do, and why it changes nothing about §5:
+
+- **It is not self-hostable and it is not local.** Sandboxes run on Cloudflare's edge; the local Docker mode is a dev harness, not a deployment target. Workspace data sent to a runner transits Cloudflare, and TLS interception means the platform sees decrypted egress. For the free local product — whose promise is that nothing leaves the machine — this is disqualifying, same as E2B/Riza above.
+- **It is Worker-shaped, not Nest-shaped.** The sandbox binding lives in a Durable Object; our server would front it with a thin authenticated Worker facade. Modest integration cost, but it exists.
+
+So the decision: **Tier 0.5 stays local WASM; when the paid cloud tier arrives, Cloudflare Sandboxes is the leading candidate to *be* Tier 1 there** — it replaces the "operate our own Firecracker/gVisor fleet" line item with a managed platform whose egress and credential model match what we were going to build anyway. The `run_js`/`run_python` tool contract in §5 is deliberately backend-agnostic so this swap is a service-module change, not a redesign.
+
+### 3e. The browser as a second runner
 
 The mini-app iframe (once CSP-sealed) is itself a code sandbox we already ship, and artifacts prove agents author useful HTML/JS today. A `render`-class runner — code that computes *in the user's browser tab* with results returned over the existing validated postMessage channel — costs nearly nothing to add and inherits the AppHost capability model. It is not a substitute for a server-side runner (no access to workspace files beyond granted caps, dies with the tab), but it is free compute with a boundary the browser vendors maintain.
 
@@ -75,7 +92,7 @@ This slots between today's Tier 0 and deployment.md's Tier 1 — call it **Tier 
 1. **Seal the existing sandbox first.** CSP meta tag in the AppHost/artifact/preview shims; `sandbox` attribute on the PDF frame; show pack skill bodies at hire; encode POST-body params in custom tools. Half a day, and it makes the documented invariants true.
 2. **`run_js` via quickjs-emscripten** behind the standard grant + Ask gates, approval card showing full code. This is the payoff step — most agent "I need to compute something" moments are JS-shaped and small.
 3. **`run_python` via Deno + Pyodide**, feature-flagged, same tool contract.
-4. **Tier 1 per deployment.md** — disposable OS-sandboxed workers (srt-style Seatbelt/bubblewrap locally, gVisor/Firecracker in cloud) with an egress proxy, unlocking shell + package installs. Sequenced after desktop packaging, as already planned.
+4. **Tier 1 per deployment.md** — disposable OS-sandboxed workers with an egress proxy, unlocking shell + package installs. Locally: srt-style Seatbelt/bubblewrap. In the paid cloud tier: Cloudflare Sandboxes (§3d) rather than a self-operated Firecracker/gVisor fleet. Sequenced after desktop packaging, as already planned.
 
 ## 7. Sources
 
@@ -85,3 +102,5 @@ This slots between today's Tier 0 and deployment.md's Tier 1 — call it **Tier 
 - [Deno permission model](https://docs.deno.com/runtime/fundamentals/security/) — deny-by-default I/O, `--allow-run` caveat
 - [Node.js vm docs](https://nodejs.org/api/vm.html) ("not a security mechanism") and the [vm2 January 2026 escape](https://www.endorlabs.com/learn/cve-2026-22709-critical-sandbox-escape-in-vm2-enables-arbitrary-code-execution)
 - [web.dev on sandboxed iframes](https://web.dev/articles/sandboxed-iframes) — why `allow-scripts` alone does not imply no-network
+- [Cloudflare Sandbox SDK](https://github.com/cloudflare/sandbox-sdk) + [Sandboxes product page](https://www.cloudflare.com/products/sandboxes/) — container-per-sandbox platform, GA April 2026
+- [Cloudflare changelog: credential injection + dynamic egress policies](https://developers.cloudflare.com/changelog/post/2026-04-13-sandbox-outbound-workers-tls-auth/) — outbound Workers, `allowedHosts`, per-instance TLS interception
