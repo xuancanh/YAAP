@@ -8,13 +8,30 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 
 export async function createApp(): Promise<INestApplication> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  app.enableCors({ origin: true });
+  // Composer attachments upload base64-in-JSON (≤5MB per file, one file per
+  // request ≈ 7MB on the wire) — the 100kb default would reject them; 25mb
+  // leaves headroom without opening the door to unbounded bodies.
+  app.use(json({ limit: '25mb' }));
+  app.use(urlencoded({ limit: '25mb', extended: true }));
+  const config = app.get(ConfigService);
+  // Only browser cross-origin calls need CORS: requests without an Origin
+  // header (curl, server-to-server, same-origin) always pass; production
+  // serves the SPA same-origin so the allowlist is the Vite dev origin.
+  const allowlist = (config.get<string>('corsOrigins') ?? '')
+    .split(',')
+    .map((o: string) => o.trim())
+    .filter(Boolean);
+  app.enableCors({
+    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) =>
+      cb(null, !origin || allowlist.includes(origin)),
+  });
   app.enableShutdownHooks();
   return app;
 }

@@ -32,6 +32,14 @@ export default () => ({
   /** AES-256-GCM key for sealing tokens at rest (common/secretbox.ts).
    *  Empty = tokens stored as "plain:" — AppModule logs a loud boot warning. */
   tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY || '',
+  /** Optional bearer token required on every /api route except GET /api/status
+   *  (common/auth.guard.ts). Empty = unauthenticated (single-user localhost
+   *  default) — AppModule logs a loud boot warning. */
+  apiToken: process.env.YAAM_API_TOKEN || '',
+  /** Comma-separated CORS origin allowlist (bootstrap.ts). Requests without
+   *  an Origin header (curl, server-to-server, same-origin) always pass;
+   *  production serves the SPA same-origin so no CORS is needed there. */
+  corsOrigins: process.env.YAAM_CORS_ORIGINS || 'http://localhost:5175,http://127.0.0.1:5175',
   /** Where the API is reachable from a browser — the OAuth redirect base
    *  (register <publicBaseUrl>/api/connections/google/callback in the
    *  Google client). Dev default is the API port, not the Vite port. */

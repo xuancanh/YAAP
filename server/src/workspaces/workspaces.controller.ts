@@ -10,6 +10,10 @@ import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 const PREVIEW_TEXT_CAP = 200_000;
 const PREVIEW_BINARY_CAP = 5_000_000;
 
+/** Content types a browser would execute when navigated to directly —
+ *  getFile serves these as attachments instead (preview.util.ts mime table). */
+const ACTIVE_CONTENT_TYPES = new Set(['text/html', 'image/svg+xml', 'application/xml']);
+
 class CreateWorkspaceDto {
   @IsString() name!: string;
   @IsOptional() @IsString() color?: string;
@@ -78,7 +82,16 @@ export class WorkspacesController {
     await this.workspaces.get(id);
     const body = await this.storage.get(this.key(id, path ?? ''));
     if (body === null) throw new NotFoundException(`file ${path}`);
-    res.type(contentTypeFor(path ?? '')).send(body);
+    const contentType = contentTypeFor(path ?? '');
+    // Agent-written files must never execute on the API/SPA origin: force a
+    // download for active content types and stop MIME sniffing for the rest.
+    // In-app previews use the JSON /preview endpoint + sandboxed iframes, so
+    // nothing legitimate navigates here for rendering.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (ACTIVE_CONTENT_TYPES.has(contentType)) {
+      res.setHeader('Content-Disposition', 'attachment');
+    }
+    res.type(contentType).send(body);
   }
 
   /** Rich preview descriptor: tells the frontend which renderer to use and

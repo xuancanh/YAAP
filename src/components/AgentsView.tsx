@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
-import { api, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentTask, type Connection, type FileEntry, type FilePreview, type Skill } from '../lib/api';
+import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentTask, type Connection, type FileEntry, type FilePreview, type Skill } from '../lib/api';
 import { Markdown } from '../lib/md';
 import { nextFire, untilLabel } from '../lib/cron';
 
@@ -720,7 +720,7 @@ function SkillsToolsTab({ a }: { a: Agent }) {
               {s.draft === 1 && btn('Approve', async () => { await api.resolveSkillDraft(s.id, true); refresh(a.id); app.showToast(`Skill /${s.name} approved`); }, true)}
               {s.draft === 1 && btn('Reject', async () => { await api.resolveSkillDraft(s.id, false); refresh(a.id); }, false, true)}
               {s.draft !== 1 && btn('Share', () => setPromoting(s))}
-              {s.draft !== 1 && btn('Remove', async () => { if (window.confirm(`Remove /${s.name}?`)) { await api.resolveSkillDraft(s.id, false).catch(async () => { await fetch(`/api/skills/${s.id}`, { method: 'DELETE' }); }); refresh(a.id); } }, false, true)}
+              {s.draft !== 1 && btn('Remove', async () => { if (window.confirm(`Remove /${s.name}?`)) { await api.resolveSkillDraft(s.id, false).catch(async () => { await fetch(`/api/skills/${s.id}`, { method: 'DELETE', headers: authHeaders() }); }); refresh(a.id); } }, false, true)}
             </div>
           ))}
           {skills.length === 0 && <div style={{ padding: '10px 10px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>None yet — when work goes well, {a.name} drafts the procedure and you approve it here.</div>}

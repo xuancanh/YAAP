@@ -30,6 +30,8 @@ const envSchema = z
     LOOPS_ENABLED: z.enum(['true', 'false']).optional(),
     TELEGRAM_BOT_TOKEN: z.string().optional(),
     TOKEN_ENCRYPTION_KEY: z.string().optional(),
+    YAAM_API_TOKEN: z.string().optional(),
+    YAAM_CORS_ORIGINS: z.string().optional(),
     PUBLIC_BASE_URL: z.string().optional(),
     GOOGLE_CLIENT_ID: z.string().optional(),
     GOOGLE_CLIENT_SECRET: z.string().optional(),

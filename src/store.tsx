@@ -5,7 +5,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  api, sendTurn,
+  api, sendTurn, authHeaders,
   type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision,
 } from './lib/api';
@@ -227,7 +227,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshSessions = useCallback(async () => {
     if (!workspaceId) return;
     setSessions(await api.chats(workspaceId));
-    setArchived(await fetch(`/api/chats?workspaceId=${encodeURIComponent(workspaceId)}&archived=true`).then((r) => r.json() as Promise<ChatSession[]>).catch(() => []));
+    setArchived(await fetch(`/api/chats?workspaceId=${encodeURIComponent(workspaceId)}&archived=true`, { headers: authHeaders() }).then((r) => r.json() as Promise<ChatSession[]>).catch(() => []));
   }, [workspaceId]);
 
   const refreshAgentTypes = useCallback(async () => setAgentTypes(await api.agentTypes()), []);
@@ -454,13 +454,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const removeQueued = useCallback((id: number) => setQueue((q) => q.filter((x) => x.id !== id)), []);
 
   const archiveChat = useCallback(async (id: string) => {
-    await fetch(`/api/chats/${id}/archive`, { method: 'POST' });
+    await fetch(`/api/chats/${id}/archive`, { method: 'POST', headers: authHeaders() });
     await refreshSessions();
     showToast('Chat archived — restore it from the Archived group');
   }, [refreshSessions, showToast]);
 
   const restoreChat = useCallback(async (id: string) => {
-    await fetch(`/api/chats/${id}/restore`, { method: 'POST' });
+    await fetch(`/api/chats/${id}/restore`, { method: 'POST', headers: authHeaders() });
     await refreshSessions();
     showToast('Chat restored');
   }, [refreshSessions, showToast]);

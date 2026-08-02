@@ -292,11 +292,18 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-const get = <T,>(url: string) => fetch(url).then((r) => json<T>(r));
+/** Power-user escape hatch matching YAAM_API_TOKEN on the server: set
+ *  localStorage key `yaam_api_token` to attach a bearer token to every call. */
+export const authHeaders = (): Record<string, string> => {
+  const token = localStorage.getItem('yaam_api_token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
+
+const get = <T,>(url: string) => fetch(url, { headers: authHeaders() }).then((r) => json<T>(r));
 const send = <T,>(url: string, method: string, body?: unknown) =>
   fetch(url, {
     method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers: body !== undefined ? { ...authHeaders(), 'Content-Type': 'application/json' } : authHeaders(),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   }).then((r) => json<T>(r));
 
@@ -441,7 +448,7 @@ export async function sendTurn(
 ): Promise<void> {
   const res = await fetch(`/api/chats/${chatId}/turns`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, attachments }),
   });
   if (!res.ok || !res.body) throw new Error(`${res.status} ${await res.text()}`);

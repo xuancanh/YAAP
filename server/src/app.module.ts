@@ -21,8 +21,10 @@
  */
 import { Logger, Module, OnModuleInit } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
 import configuration from './config/configuration';
 import { validateEnv } from './config/validation';
+import { AuthGuard } from './common/auth.guard';
 import { DatabaseModule } from './database/database.module';
 import { StorageModule } from './storage/storage.module';
 import { StatusModule } from './status/status.module';
@@ -58,6 +60,7 @@ import { ConnectionsModule } from './connections/connections.module';
     AppBridgeModule,
     ConnectionsModule,
   ],
+  providers: [{ provide: APP_GUARD, useClass: AuthGuard }],
 })
 export class AppModule implements OnModuleInit {
   private readonly logger = new Logger(AppModule.name);
@@ -65,11 +68,18 @@ export class AppModule implements OnModuleInit {
   constructor(private readonly config: ConfigService) {}
 
   /** Make the plain:-token fallback visible: secretbox silently stores tokens
-   *  unencrypted without a key, which hosted deployments must not miss. */
+   *  unencrypted without a key, which hosted deployments must not miss. Also
+   *  flag the unauthenticated default: without YAAM_API_TOKEN any website open
+   *  in the user's browser could call the API and spend LLM keys. */
   onModuleInit(): void {
     if (!this.config.get<string>('tokenEncryptionKey')) {
       this.logger.warn(
         'TOKEN_ENCRYPTION_KEY is not set — tokens at rest will be stored as "plain:" (unencrypted). Set TOKEN_ENCRYPTION_KEY for any hosted deployment.',
+      );
+    }
+    if (!this.config.get<string>('apiToken')) {
+      this.logger.warn(
+        'YAAM_API_TOKEN is not set — the API is unauthenticated (fine for single-user localhost). Set YAAM_API_TOKEN if the API is reachable beyond this machine.',
       );
     }
   }
