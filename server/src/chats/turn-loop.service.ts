@@ -25,6 +25,7 @@ import { ChatsRepository, ChatSession } from './chats.repository';
 import { ChatLocks } from './chat-locks';
 import { CompactionService } from './compaction.service';
 import { ToolsService, FileRoot, fileRootKey } from './tools.service';
+import { RunnerService } from '../runner/runner.service';
 import { TurnContextService } from './turn-context.service';
 import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
 import { McpService, MCP_TOOL_PREFIX } from '../mcp/mcp.module';
@@ -208,6 +209,8 @@ export class TurnLoopService implements OnModuleDestroy {
     @Optional() private readonly connections?: ConnectionsService,
     /** Optional so test constructors without compaction keep working. */
     @Optional() private readonly compaction?: CompactionService,
+    /** Optional so test constructors without a runner keep working. */
+    @Optional() private readonly runner?: RunnerService,
   ) {}
 
   /** Graceful shutdown: abort every in-flight turn through the same path as
@@ -286,6 +289,10 @@ export class TurnLoopService implements OnModuleDestroy {
         ...await this.mcp.toolSpecs(),
         // Connection tools appear only for agents the user granted (activation gate).
         ...(session.agentId && this.connections ? await this.connections.toolSpecs(session.agentId) : []),
+        // Code runner tools exist only when a sandbox backend is available
+        // (docs/code-execution.md §5); they are mutation-class, so Ask mode
+        // pauses on the full code.
+        ...(this.runner?.specs() ?? []),
       ];
       // Per-round overhead every provider call also carries: the resolved
       // system prompt plus the full tool-spec JSON (tens of KB once MCP
@@ -326,10 +333,12 @@ export class TurnLoopService implements OnModuleDestroy {
         for (const call of calls) {
           if (ctl.signal.aborted) break;
           // Loop turns are background turns: outward-facing (connection)
-          // mutations queue as pending approvals in the agent inbox, never
-          // silently execute — even in Auto mode (docs/integrations.md §5).
+          // mutations and code execution queue as pending approvals in the
+          // agent inbox, never silently execute — even in Auto mode
+          // (docs/integrations.md §5, docs/code-execution.md §5).
           if (input.origin === 'loop' && session.agentId
-            && this.connections?.owns(call.name) && this.connections.isReadOnly(call.name) === false) {
+            && ((this.connections?.owns(call.name) && this.connections.isReadOnly(call.name) === false)
+              || this.runner?.owns(call.name))) {
             const summary = JSON.stringify(call.input).slice(0, 280);
             await this.agents.addEvent(session.agentId, {
               kind: 'action_pending',
@@ -452,6 +461,7 @@ export class TurnLoopService implements OnModuleDestroy {
     }
     if (name.startsWith(MCP_TOOL_PREFIX)) return this.mcp.execute(name, input);
     if (this.connections?.owns(name)) return this.connections.execute(session.agentId ?? undefined, name, input);
+    if (this.runner?.owns(name)) return this.runner.execute(name, input);
     if (name.startsWith(CUSTOM_TOOL_PREFIX)) {
       if (!session.agentId) throw new Error(`unknown tool: ${name}`);
       return this.agents.executeCustomTool(session.agentId, name, input);
@@ -574,7 +584,8 @@ export class TurnLoopService implements OnModuleDestroy {
         : call.name.startsWith(CUSTOM_TOOL_PREFIX) ? (session.agentId ? false : undefined)
           : AGENT_TOOL_NAMES.has(call.name) ? (session.agentId ? AGENT_READONLY_TOOLS.has(call.name) : undefined)
             : this.connections?.owns(call.name) ? this.connections.isReadOnly(call.name)
-              : this.tools.isReadOnly(call.name);
+              : this.runner?.owns(call.name) ? this.runner.isReadOnly(call.name)
+                : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
     // Confirm-always tools (gmail_send) are outward-facing and irreversible:
     // they pause in host chrome on every call — Auto mode and remembered

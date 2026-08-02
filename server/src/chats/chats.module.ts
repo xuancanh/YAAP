@@ -21,9 +21,10 @@ import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { SkillsModule } from '../skills/skills.module';
 import { McpModule } from '../mcp/mcp.module';
 import { ConnectionsModule } from '../connections/connections.module';
+import { RunnerModule } from '../runner/runner.module';
 
 @Module({
-  imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule],
+  imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule],
   controllers: [ChatsController],
   providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService],
   exports: [ChatsService, ChatsRepository, TurnLoopService],

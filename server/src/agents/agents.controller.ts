@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Delete, Get, Header, NotFoundExc
 import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 import { AgentsService } from './agents.service';
 import { ConnectionsService } from '../connections/connections.service';
+import { RunnerService } from '../runner/runner.service';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix, agentRelativePath, workspaceFileKey } from '../storage/storage.keys';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
@@ -61,6 +62,7 @@ export class AgentsController {
     private readonly agents: AgentsService,
     private readonly storage: StorageService,
     private readonly connections: ConnectionsService,
+    private readonly runner: RunnerService,
   ) {}
 
   @Get() list() { return this.agents.list(); }
@@ -83,7 +85,9 @@ export class AgentsController {
   @Post(':id/events/:eventId/act')
   actOnEvent(@Param('id') id: string, @Param('eventId') eventId: string, @Body() dto: ActOnEventDto) {
     return this.agents.resolveActionEvent(id, eventId, dto.decision === 'approve',
-      (agentId, tool, input) => this.connections.execute(agentId, tool, input));
+      (agentId, tool, input) => this.runner.owns(tool)
+        ? this.runner.execute(tool, input)
+        : this.connections.execute(agentId, tool, input));
   }
 
   // ---- self-built HTTP tools: proposed by the agent, user-activated ----

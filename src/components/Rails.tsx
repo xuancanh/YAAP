@@ -314,6 +314,7 @@ export const SETTINGS_PANES = [
   { id: 'memory', label: 'Workspace memory', icon: P.memoryIcon },
   { id: 'channels', label: 'Channels', icon: P.chat },
   { id: 'connections', label: 'Connections', icon: P.globe },
+  { id: 'runner', label: 'Code runner', icon: P.shield },
 ];
 
 export function SettingsRail({ pane, setPane }: { pane: string; setPane: (p: string) => void }) {

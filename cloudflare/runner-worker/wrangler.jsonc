@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "yaam-runner",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-13",
+  "compatibility_flags": ["nodejs_compat"],
+  // One Durable Object namespace backs the Sandbox class; each run gets its
+  // own instance id, so containers are never shared between executions.
+  "durable_objects": {
+    "bindings": [{ "name": "Sandbox", "class_name": "RunnerSandbox" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RunnerSandbox"] }],
+  "containers": [
+    {
+      "class_name": "RunnerSandbox",
+      "image": "./Dockerfile",
+      "max_instances": 20,
+      "instance_type": "basic"
+    }
+  ],
+  "observability": { "enabled": true }
+}

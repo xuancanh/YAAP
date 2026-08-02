@@ -1,6 +1,6 @@
 # Running user and agent code safely: options, ladder, and what to fix first
 
-Research + design note, August 2026. Answers three questions: where code authored by users or agents actually executes today, what the credible sandboxing options are for adding a real code-execution capability, and in what order we should ship. Builds on the sandbox ladder sketched in docs/deployment.md §Tiers and the gate model in docs/permissions.md.
+Research + design note, August 2026; §5 updated when the runner shipped. Answers three questions: where code authored by users or agents actually executes today, what the credible sandboxing options are for adding a real code-execution capability, and in what order we should ship. Builds on the sandbox ladder sketched in docs/deployment.md §Tiers and the gate model in docs/permissions.md.
 
 ## 1. Where we stand: Tier 0 is real, with one hole
 
@@ -76,23 +76,36 @@ The mini-app iframe (once CSP-sealed) is itself a code sandbox we already ship, 
 - **Same-process JS execution of any kind**, per §3a — including for "just this one trusted transform."
 - **Persistent runner state.** Every execution starts from a fresh interpreter; anything worth keeping goes through `fs_write` where the existing approval and jailing apply. Persistence is how injected code outlives its injection.
 
-## 5. Recommended shape: `run_js` / `run_python` as brokered tools
+## 5. What shipped: `run_js` / `run_python` over two interchangeable backends
 
-A new `server/src/runner/` module, same Controller→Service pattern:
+Implemented August 2026 in `server/src/runner/` (Controller→Service, like every other module). We skipped the WASM Tier-0.5 step and went straight to OS-level isolation, because the OS primitives turned out to be *simpler* than embedding an interpreter — no native addon, no WASM build step, and the same guarantee for both languages at once.
 
-- `run_js`: quickjs-emscripten in the Nest process. Fresh runtime per call; 64 MB memory limit; 5 s interrupt budget; stdout/return value capped at 32 KB and framed as tool output. Host functions injected: none in v1. Mutation-class for the approval policy (it can compute anything, so Ask-gate it like a write).
-- `run_python`: Deno subprocess (`--allow-read=none --allow-net=none ...`) running Pyodide, stdin/stdout JSON protocol, killed at timeout. Feature-flagged off unless Deno is present.
-- Inputs are code + an explicit `stdin` string. No implicit access to files, chats, or connections — the agent pipes data in via the tool call, and what it pipes is visible in the approval card. **The approval card shows the code itself**, not a summary (docs/permissions.md: the real artifact).
-- Loop-origin calls queue as `action_pending`, reusing the M1 machinery unchanged.
+**The tool contract, identical on both backends:**
 
-This slots between today's Tier 0 and deployment.md's Tier 1 — call it **Tier 0.5: interpreter-in-WASM, in-process, deny-by-default** — and none of it is throwaway: the tool surface, approval UX, and provenance framing carry forward verbatim when Tier 1 swaps the backend for srt-style OS sandboxes or microVM workers.
+- `run_js` and `run_python` take `code`, an optional `stdin` string, and `timeout_seconds` (1-30, default 10). They return exit code, stdout, and stderr, each capped at 32 KB.
+- **No implicit access to anything.** The sandbox cannot read workspace files, chats, or connection tokens. Data reaches a program only through the `stdin` the agent passes — which is visible in the approval card alongside the full program, per docs/permissions.md ("show the real artifact").
+- **Always mutation-class.** `isReadOnly()` returns `false` for both, so Ask mode pauses on every call. There is no read-only code execution.
+- **Loop-origin calls queue**, reusing the M1 `action_pending` machinery unchanged: a background loop turn records the code in the agent's inbox instead of running it, even in Auto mode.
+- **Absent when unavailable.** With no backend, `specs()` returns `[]` — the tools do not exist rather than existing-and-failing. A model that hallucinates one gets a refusal naming why.
+
+**Backend A — local OS sandbox** (`RUNNER_BACKEND=local`, the default when available). The interpreter runs on this machine under the OS's own sandbox:
+
+- macOS: `sandbox-exec` with a generated Seatbelt profile — `(deny network*)`, `(deny file-write*)`, plus one `(allow file-write* (subpath <scratch>))`. The scratch path is JSON-quoted so a directory name cannot break out of the profile.
+- Linux: `bubblewrap` with `--ro-bind / /`, a fresh `/tmp` and `/dev`, the scratch dir bind-mounted read-write, and `--unshare-all` — no network namespace at all.
+- Every run gets a fresh `mkdtemp` scratch directory, removed in `finally`. `PATH`, `HOME`, and `TMPDIR` are rewritten so interpreters never reach outside it. A `SIGKILL` timer enforces the deadline.
+
+Verified by tests that run the real sandbox, not a stub: `fetch()` and direct-IP sockets both fail inside it, a write to `/tmp` is denied while a write to the scratch dir succeeds, and `while(true){}` dies at the deadline.
+
+**Backend B — Cloudflare Sandboxes** (`RUNNER_BACKEND=cloudflare`, the paid tier). `cloudflare/runner-worker/` is a small authenticated Worker facade: the server POSTs `{language, code, stdin, timeout_seconds}` with a bearer token, the Worker runs it in a Sandbox container and returns the same shape. `RunnerSandbox.allowedHosts = []` makes egress deny-by-default with nothing allowed, matching the local backend's no-network guarantee. One container per request id, destroyed after, so state never carries between runs. No credential injection is configured — if authenticated egress is ever needed, it belongs in an outbound handler that runs *outside* the container, never as a token passed in.
+
+`RUNNER_BACKEND=auto` (the default) prefers Cloudflare when `RUNNER_CF_URL`/`RUNNER_CF_TOKEN` are set — configuring it is an explicit act — and otherwise uses the local sandbox. `off` disables execution entirely. Selecting `cloudflare` without its URL and token fails at boot rather than silently dropping the tools. `GET /api/runner/status` reports the live backend, and Settings → Code runner shows it.
 
 ## 6. Sequencing
 
-1. **Seal the existing sandbox first.** CSP meta tag in the AppHost/artifact/preview shims; `sandbox` attribute on the PDF frame; show pack skill bodies at hire; encode POST-body params in custom tools. Half a day, and it makes the documented invariants true.
-2. **`run_js` via quickjs-emscripten** behind the standard grant + Ask gates, approval card showing full code. This is the payoff step — most agent "I need to compute something" moments are JS-shaped and small.
-3. **`run_python` via Deno + Pyodide**, feature-flagged, same tool contract.
-4. **Tier 1 per deployment.md** — disposable OS-sandboxed workers with an egress proxy, unlocking shell + package installs. Locally: srt-style Seatbelt/bubblewrap. In the paid cloud tier: Cloudflare Sandboxes (§3d) rather than a self-operated Firecracker/gVisor fleet. Sequenced after desktop packaging, as already planned.
+1. **Done — `run_js` / `run_python` on both backends** (§5): local Seatbelt/bubblewrap and Cloudflare Sandboxes behind one tool contract, mutation-class, loop-origin queuing, status endpoint and Settings pane.
+2. **Still open, and now the most urgent item: seal the existing iframe sandbox.** CSP meta tag in the AppHost/artifact/preview shims; `sandbox` attribute on the PDF frame; show pack skill bodies at hire; encode POST-body params in custom tools (§1). Half a day, and it makes the documented invariants true. This was sequenced first and remains unshipped — the runner does not depend on it, but the mini-app capability model does.
+3. **Package installs and a shell**, inside the sandbox only: an egress-allowlisted variant of each backend (`allowedHosts` on Cloudflare, a filtering proxy locally per srt) so `npm install` / `pip install` work without opening general network access.
+4. **Desktop story.** Tauri ships its own WebView; the local backend's Seatbelt/bubblewrap path works unchanged there, but the packaged app must locate an interpreter it does not control. Decide between bundling one and requiring the system's.
 
 ## 7. Sources
 

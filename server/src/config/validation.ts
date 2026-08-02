@@ -37,8 +37,20 @@ const envSchema = z
     GOOGLE_CLIENT_SECRET: z.string().optional(),
     MS_CLIENT_ID: z.string().optional(),
     MS_CLIENT_SECRET: z.string().optional(),
+    RUNNER_BACKEND: z.enum(['auto', 'local', 'cloudflare', 'off']).optional(),
+    RUNNER_CF_URL: z.string().optional(),
+    RUNNER_CF_TOKEN: z.string().optional(),
   })
   .superRefine((env, ctx) => {
+    // Selecting the cloudflare backend without its endpoint is a boot-time
+    // mistake, not a runtime surprise: the runner would silently vanish.
+    if (env.RUNNER_BACKEND === 'cloudflare' && !(env.RUNNER_CF_URL && env.RUNNER_CF_TOKEN)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['RUNNER_CF_URL'],
+        message: 'RUNNER_CF_URL and RUNNER_CF_TOKEN are required when RUNNER_BACKEND=cloudflare',
+      });
+    }
     if (env.NODE_ENV !== 'production') return;
     const required = [
       'DATABASE_URL',

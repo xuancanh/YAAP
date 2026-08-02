@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
-import { api, PROVIDER_COLORS, type Connection, type ConnectionProvider, type ProfileProposal, type Workspace } from '../lib/api';
+import { api, PROVIDER_COLORS, type Connection, type ConnectionProvider, type ProfileProposal, type RunnerStatus, type Workspace } from '../lib/api';
 
 const PANE_META: Record<string, [string, string]> = {
   providers: ['Providers & agent types', 'Reusable presets: provider, default model, API key, and persona. A type with no key falls back to the Echo dev provider.'],
@@ -14,6 +14,7 @@ const PANE_META: Record<string, [string, string]> = {
   memory: ['Workspace memory', 'Durable chat memory injected as shared context for this workspace.'],
   channels: ['Channels', 'Talk to your agents where you already are — Telegram first, paired to you alone.'],
   connections: ['Connections', 'Link external services (Google Calendar first). Connecting grants nothing — you approve access per agent.'],
+  runner: ['Code runner', 'Where run_js and run_python execute. Every run is disposable, offline, and approval-gated.'],
 };
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 13, background: 'var(--panel)', padding: '15px 17px' };
@@ -525,6 +526,54 @@ function ConnectionsPane() {
   );
 }
 
+/** Code runner (docs/code-execution.md): read-only status. The backend is an
+ *  environment decision, not a click-to-enable toggle — running code is the
+ *  operator's call, so it is configured where the server starts. */
+function RunnerPane() {
+  const [status, setStatus] = useState<RunnerStatus | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { void api.runnerStatus().then(setStatus).catch(() => setFailed(true)); }, []);
+
+  if (failed) return <div style={{ ...card, fontSize: 12.5, color: 'var(--text-dim)' }}>Could not read runner status.</div>;
+  if (!status) return <div style={{ ...card, fontSize: 12.5, color: 'var(--text-faint)' }}>Loading…</div>;
+
+  const live = status.backend !== null;
+  const label = status.backend === 'cloudflare' ? 'Cloudflare Sandboxes' : status.backend === 'local' ? 'Local OS sandbox' : 'Off';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 20, flex: 'none' }}>{status.backend === 'cloudflare' ? '☁️' : live ? '🧱' : '🚫'}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>{label}</span>
+              <span style={{ fontSize: 10, color: live ? 'var(--green)' : 'var(--text-faint)', border: `1px solid ${live ? 'var(--green)' : 'var(--border)'}`, borderRadius: 5, padding: '1px 6px' }}>
+                {live ? 'active' : 'no backend'}
+              </span>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3 }}>{status.detail}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 4 }}>
+              {live
+                ? `Tools offered: ${status.languages.map((l) => (l === 'python' ? 'run_python' : 'run_js')).join(', ')}. Each call pauses for your approval in Ask mode and shows the full program.`
+                : 'run_js and run_python are not offered to any agent while no backend is available.'}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style={{ ...card, fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+        Both backends give the same guarantee: <strong>no network, no filesystem beyond a scratch directory, a fresh
+        environment every run, and a hard time limit.</strong> Data reaches a program only through the <span style={mono}>stdin</span>
+        {' '}the agent passes, which you see in the approval card. Background loop turns never execute code — they queue it in the agent&apos;s inbox for you.
+      </div>
+      <div style={{ ...card, fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+        Configure with <span style={mono}>RUNNER_BACKEND</span> (<span style={mono}>auto</span> · <span style={mono}>local</span> · <span style={mono}>cloudflare</span> · <span style={mono}>off</span>).
+        The Cloudflare backend also needs <span style={mono}>RUNNER_CF_URL</span> and <span style={mono}>RUNNER_CF_TOKEN</span> — deploy <span style={mono}>cloudflare/runner-worker</span> and restart the server.
+        The local backend needs <span style={mono}>sandbox-exec</span> (macOS, built in) or <span style={mono}>bubblewrap</span> (Linux).
+      </div>
+    </div>
+  );
+}
+
 export function SettingsView({ pane }: { pane: string }) {
   const app = useApp();
   const [title, sub] = PANE_META[pane] ?? PANE_META.providers;
@@ -547,6 +596,7 @@ export function SettingsView({ pane }: { pane: string }) {
           {pane === 'memory' && <MemoryPane />}
           {pane === 'channels' && <ChannelsPane />}
           {pane === 'connections' && <ConnectionsPane />}
+          {pane === 'runner' && <RunnerPane />}
         </div>
       </div>
     </div>

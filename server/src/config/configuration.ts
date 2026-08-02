@@ -50,6 +50,14 @@ export default () => ({
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
   msClientId: process.env.MS_CLIENT_ID || '',
   msClientSecret: process.env.MS_CLIENT_SECRET || '',
+  /** Code runner backend (docs/code-execution.md §5-6): 'auto' picks
+   *  cloudflare when RUNNER_CF_* are set, else the local OS sandbox
+   *  (Seatbelt/bubblewrap), else the run tools do not exist. 'off' disables. */
+  runnerBackend: process.env.RUNNER_BACKEND || 'auto',
+  /** Base URL of the deployed cloudflare/runner-worker (paid tier). */
+  runnerCfUrl: process.env.RUNNER_CF_URL || '',
+  /** Shared bearer token the worker requires on every request. */
+  runnerCfToken: process.env.RUNNER_CF_TOKEN || '',
   /** Estimated provider-input tokens that trigger auto-compaction (FR-7.3). */
   compactionThresholdTokens: parseInt(process.env.COMPACTION_THRESHOLD_TOKENS || '120000', 10),
 });

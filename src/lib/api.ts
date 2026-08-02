@@ -221,6 +221,13 @@ export interface McpServer {
   authStatus?: 'connected' | 'none';
 }
 
+/** Which sandbox backend runs run_js / run_python (docs/code-execution.md). */
+export interface RunnerStatus {
+  backend: 'local' | 'cloudflare' | null;
+  languages: Array<'javascript' | 'python'>;
+  detail: string;
+}
+
 /** One entry in the curated connectors directory (docs/integrations.md §4a). */
 export interface ConnectorEntry {
   id: string;
@@ -439,6 +446,8 @@ export const api = {
     send<{ ok: boolean }>(`/api/connections/${id}/grants`, 'POST', { agentId, service, level }),
   revokeConnectionGrant: (id: string, agentId: string, service?: ConnectionServiceName) =>
     send<{ ok: boolean }>(`/api/connections/${id}/grants/${agentId}${service ? `?service=${service}` : ''}`, 'DELETE'),
+  // code runner (docs/code-execution.md) — read-only: the backend is env-configured
+  runnerStatus: () => get<RunnerStatus>('/api/runner/status'),
   mcp: () => get<McpServer[]>('/api/mcp'),
   createMcp: (name: string, url: string) => send<McpServer>('/api/mcp', 'POST', { name, url }),
   updateMcp: (id: string, patch: { enabled?: boolean }) => send<McpServer>(`/api/mcp/${id}`, 'PATCH', patch),

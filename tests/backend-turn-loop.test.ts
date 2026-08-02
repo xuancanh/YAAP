@@ -9,6 +9,7 @@ import { ToolsService } from '../server/src/chats/tools.service';
 import { testDb, memStorage, ctxStub, skillsStub, agentsStub, mcpStub, ScriptedProvider, wsStub } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import { ConnectionsService } from '../server/src/connections/connections.service';
+import { RunnerService } from '../server/src/runner/runner.service';
 import { connections, connectionGrants } from '../server/src/database/schema';
 import type { ConfigService } from '@nestjs/config';
 import { seal } from '../server/src/common/secretbox';
@@ -245,6 +246,72 @@ test('gmail_send pauses even in Auto mode and allow-always is never remembered (
   });
   assert.equal(pauses, 2);
   assert.equal(sends, 1, 'denied send did not execute');
+});
+
+test('run_js pauses in Auto mode and queues instead of running in a loop turn (Tier 1)', async () => {
+  const db = await testDb();
+  const repo = new ChatsRepository(db);
+  const { stub } = memStorage();
+  const tools = new ToolsService(stub);
+  const agents = agentsStub();
+  const runnerConfig = {
+    get: (key: string) => ({ runnerBackend: 'cloudflare', runnerCfUrl: 'https://r.test', runnerCfToken: 'tok' })[key],
+  } as unknown as ConfigService;
+  const runner = new RunnerService(runnerConfig);
+  let runs = 0;
+  runner.fetchImpl = (async () => {
+    runs++;
+    return { ok: true, status: 200, json: async () => ({ ok: true, exitCode: 0, stdout: '42\n', stderr: '' }), text: async () => '' } as unknown as Response;
+  }) as typeof fetch;
+
+  const codeRound: AiStreamEvent[] = [
+    { type: 'tool_call', id: 'r1', name: 'run_js', input: { code: 'console.log(6*7)' } },
+    { type: 'done' },
+  ];
+  const s = await repo.createSession({ workspaceId: 'ws1', agentId: 'ag1', name: 'chat', permissionMode: 'auto' });
+
+  // the tool is offered, and it is mutation-class: Auto mode still pauses
+  const turns1 = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(new ScriptedProvider([codeRound, finalRound])), skillsStub(), stub, mcpStub(), agents, wsStub(), undefined, undefined, runner);
+  let paused = 0;
+  const ev1 = await collect(turns1.run(s.id, { text: 'compute it' }), (ev) => {
+    if (ev.type === 'approval_required') { paused++; assert.equal(ev.tool, 'run_js'); turns1.resolveApproval(s.id, ev.callId, 'allow-once'); }
+  });
+  assert.equal(paused, 0, 'auto mode runs it after policy check');
+  assert.equal(runs, 1, 'the approved run reached the backend');
+  assert.match(ev1.find((e) => e.type === 'tool_result')!.output, /42/);
+
+  // a background loop turn must queue the same call, never execute it
+  const turns2 = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(new ScriptedProvider([codeRound, finalRound])), skillsStub(), stub, mcpStub(), agents, wsStub(), undefined, undefined, runner);
+  const ev2 = await collect(turns2.run(s.id, { text: 'nightly', origin: 'loop' }));
+  assert.equal(runs, 1, 'the loop turn did not execute code');
+  assert.match(ev2.find((e) => e.type === 'tool_result')!.output, /Queued for the user's approval/);
+  const queued = agents.calls.filter((c) => c.method === 'addEvent')
+    .map((c) => c.args[1] as { kind: string; payload?: string })
+    .find((a) => a.kind === 'action_pending' && a.payload?.includes('run_js'));
+  assert.ok(queued, 'an action_pending event carries the code for review');
+  assert.deepEqual(JSON.parse(queued!.payload!), { tool: 'run_js', input: { code: 'console.log(6*7)' } });
+});
+
+test('without a runner backend the run tools are not offered at all (Tier 1)', async () => {
+  const db = await testDb();
+  const repo = new ChatsRepository(db);
+  const { stub } = memStorage();
+  const tools = new ToolsService(stub);
+  const offRunner = new RunnerService({ get: (key: string) => ({ runnerBackend: 'off' })[key] } as unknown as ConfigService);
+  const provider = new ScriptedProvider([
+    [{ type: 'tool_call', id: 'r1', name: 'run_js', input: { code: 'x' } }, { type: 'done' }],
+    finalRound,
+  ]);
+  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(provider), skillsStub(), stub, mcpStub(), agentsStub(), wsStub(), undefined, undefined, offRunner);
+  const s = await repo.createSession({ workspaceId: 'ws1', agentId: 'ag1', name: 'chat', permissionMode: 'auto' });
+  assert.deepEqual(offRunner.specs(), [], 'the tools are absent from the spec list');
+  const events = await collect(turns.run(s.id, { text: 'go' }), (ev) => {
+    if (ev.type === 'approval_required') turns.resolveApproval(s.id, ev.callId, 'allow-once');
+  });
+  // a model that hallucinates the tool gets a refusal naming why, not an execution
+  const result = events.find((e) => e.type === 'tool_result');
+  assert.ok(result?.isError);
+  assert.match(result!.output, /code runner is not available/);
 });
 
 test('stop during an approval wait persists the turn as stopped, not error (FR-5.4)', async () => {

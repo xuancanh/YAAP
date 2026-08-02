@@ -41,6 +41,7 @@ import { SettingsModule } from './settings/settings.module';
 import { ChannelsModule } from './channels/channels.module';
 import { AppBridgeModule } from './appbridge/app-bridge.module';
 import { ConnectionsModule } from './connections/connections.module';
+import { RunnerModule } from './runner/runner.module';
 
 @Module({
   imports: [
@@ -60,6 +61,7 @@ import { ConnectionsModule } from './connections/connections.module';
     ChannelsModule,
     AppBridgeModule,
     ConnectionsModule,
+    RunnerModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },

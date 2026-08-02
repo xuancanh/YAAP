@@ -1,0 +1,19 @@
+{
+  "name": "yaam-runner-worker",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Cloudflare Sandboxes backend for yaam's run_js / run_python tools",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "^0.8.9"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260413.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.0.0"
+  }
+}
