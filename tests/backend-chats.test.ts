@@ -231,7 +231,7 @@ test('turn and message seq allocate in the insert statement itself', async () =>
   assert.deepEqual(msgs.map((m) => m.seq).sort((a, b) => a - b), [0, 1, 2, 3, 4]);
 });
 
-test('sessionsNeedingDistill keeps only idle, undistilled, non-loop agent sessions', async () => {
+test('sessionsNeedingDistill keeps idle undistilled agent sessions, and loops at most daily', async () => {
   const db = await testDb();
   const repo = new ChatsRepository(db);
   const idle = '2026-01-01T00:00:00.000Z';
@@ -245,11 +245,19 @@ test('sessionsNeedingDistill keeps only idle, undistilled, non-loop agent sessio
   const stale = await mk({ distilledAt: '2025-12-31T00:00:00.000Z' });
   await mk({ distilledAt: idle });                     // already distilled past the last change
   await mk({ updatedAt: '2026-02-01T00:00:00.000Z' }); // not idle yet
-  await mk({ name: 'Loop · Nightly' });                // loop sessions journal themselves
   await mk({ archivedAt: idle });                      // archived
   const noAgent = await repo.createSession({ workspaceId: 'ws1' });
   await db.update(chatSessions).set({ updatedAt: idle }).where(eq(chatSessions.id, noAgent.id));
 
-  const ids = (await repo.sessionsNeedingDistill(cutoff)).map((s) => s.id).sort();
-  assert.deepEqual(ids, [neverDistilled, stale].sort());
+  // Scheduled work is the proactive half of the product and used to leave no
+  // trace in the agent's own record, while the seeded JOURNAL.md promised it
+  // did (docs/agent-memory.md §4). Loop sessions now journal — but once a
+  // day, not once a run, or a hourly heartbeat would bury everything else.
+  const loopFresh = await mk({ name: 'Loop · Nightly', distilledAt: '2026-01-01T12:00:00.000Z' });
+  const loopStale = await mk({ name: 'Loop · Weekly', distilledAt: '2025-12-01T00:00:00.000Z' });
+  const loopBefore = '2026-01-01T00:00:00.000Z';
+
+  const ids = (await repo.sessionsNeedingDistill(cutoff, loopBefore)).map((s) => s.id).sort();
+  assert.deepEqual(ids, [neverDistilled, stale, loopStale].sort());
+  assert.ok(!ids.includes(loopFresh), 'a loop that journaled today does not journal again');
 });

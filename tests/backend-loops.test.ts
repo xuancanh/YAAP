@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import { cronMatches } from '../server/src/chats/cron.util';
 import { LoopsService } from '../server/src/chats/loops.service';
 import { DistillService } from '../server/src/chats/distill.service';
+import { AgentMemoryService } from '../server/src/agents/agent-memory.service';
 import { ChatsRepository } from '../server/src/chats/chats.repository';
 import { ChatsService } from '../server/src/chats/chats.service';
 import { TurnLoopService } from '../server/src/chats/turn-loop.service';
@@ -52,9 +53,10 @@ async function setup(rounds: AiStreamEvent[][]) {
   const locks = new ChatLocks();
   const turns = new TurnLoopService(repo, locks, new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub(), agents, workspaces);
   const config = { get: (k: string) => (k === 'loopsEnabled' ? false : undefined) } as unknown as ConfigService;
-  const distill = new DistillService(repo, ctxStub(provider), agents);
+  const memory = new AgentMemoryService(db, stub as unknown as StorageService);
+  const distill = new DistillService(repo, ctxStub(provider), agents, memory);
   const loops = new LoopsService(agents, workspaces, repo, turns, distill, config);
-  return { db, stub: stub as unknown as StorageService, agents, workspaces, repo, turns, loops, distill, provider, locks };
+  return { db, stub: stub as unknown as StorageService, agents, workspaces, repo, turns, loops, distill, memory, provider, locks };
 }
 
 test('a matching loop fires a real turn and journals the run (FR-11.6)', async () => {
@@ -124,7 +126,7 @@ test('distill appends bounded journal + lesson entries to the brain (FR-11.4)', 
   const journal = (await stub.get(`agents/${agent.id}/JOURNAL.md`))!.toString('utf8');
   assert.match(journal, /Shipped the draft-flush change/);
   const lessons = (await stub.get(`agents/${agent.id}/LESSONS.md`))!.toString('utf8');
-  assert.match(lessons, /## \d{4}-\d{2}-\d{2} {2}Draft persistence/);
+  assert.match(lessons, /## Active/);
   assert.match(lessons, /busy lock before rewriting history/);
 });
 

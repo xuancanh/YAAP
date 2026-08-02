@@ -259,6 +259,37 @@ export const connectionGrants = pgTable('connection_grants', {
   createdAt: text('createdAt').notNull(),
 });
 
+/**
+ * Durable agent lessons (docs/agent-memory.md): what distillation learned,
+ * as rows rather than prose in a file. LESSONS.md is regenerated from this
+ * table so the transparent file brain stays readable and editable, while the
+ * machine-readable side gains dedup, ranking, usage counts, and — the point
+ * of the exercise — provenance.
+ *
+ * `trusted` is derived from where the lesson came from, never from its text.
+ * App- and channel-originated sessions are untrusted surfaces by design, so
+ * what they teach is quarantined until a human promotes it: an injected
+ * lesson is an instruction that outlives every turn, which makes this the
+ * highest-value injection target in the product.
+ */
+export const agentLessons = pgTable('agent_lessons', {
+  id: text('id').primaryKey(),
+  agentId: text('agentId').notNull(),
+  text: text('text').notNull(),
+  /** chat | loop | channel | app | feedback — the surface it was learned on. */
+  sourceKind: text('sourceKind').notNull().default('chat'),
+  sourceSessionId: text('sourceSessionId'),
+  /** 0 = quarantined; never injected until the user promotes it. */
+  trusted: integer('trusted').notNull().default(1),
+  /** Pinned lessons rank first and never decay. */
+  pinned: integer('pinned').notNull().default(0),
+  /** Bumped when a duplicate is learned again — the recurrence signal that
+   *  makes "value" measurable instead of guessed. */
+  useCount: integer('useCount').notNull().default(1),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+});
+
 /** App-wide key/value settings: defaultPermissionMode, defaultAgentTypeId, … */
 export const appSettings = pgTable('app_settings', {
   key: text('key').primaryKey(),

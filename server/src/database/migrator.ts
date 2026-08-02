@@ -311,6 +311,32 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0015-agent-lessons',
+    up: async (db) => {
+      await db.query(`CREATE TABLE IF NOT EXISTS agent_lessons (
+        "id" TEXT PRIMARY KEY,
+        "agentId" TEXT NOT NULL,
+        "text" TEXT NOT NULL,
+        "sourceKind" TEXT NOT NULL DEFAULT 'chat',
+        "sourceSessionId" TEXT,
+        "trusted" INTEGER NOT NULL DEFAULT 1,
+        "pinned" INTEGER NOT NULL DEFAULT 0,
+        "useCount" INTEGER NOT NULL DEFAULT 1,
+        "createdAt" TEXT NOT NULL,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_lessons_agent ON agent_lessons ("agentId")`);
+      // Fuzzy matching serves two jobs: near-duplicate detection when a
+      // lesson is learned again, and a recall fallback when exact stems miss.
+      // Inspected before creating rather than wrapped in try/catch (see the
+      // header): PGlite has no pg_trgm, and swallowing the error would hide a
+      // genuine failure on a real Postgres that does. Absence is handled at
+      // runtime by AgentMemoryService, which falls back to exact matching.
+      const trgm = await db.query(`SELECT 1 FROM pg_available_extensions WHERE name = 'pg_trgm'`);
+      if (trgm.rows.length > 0) await db.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+    },
+  },
 ];
 
 /** Advisory-lock key serializing migration runs: two instances booting

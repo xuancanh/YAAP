@@ -1,12 +1,16 @@
 # Agent memory: nine mechanisms, one broken loop, and how to close it
 
-Status: review + plan. Durable agents in this codebase write lessons they
-never read. Everything else in this document follows from that: the machinery
-for learning is built, tested, and running on a timer, and the last link —
-putting what was learned back in front of the agent — was never connected.
-This reviews all nine memory mechanisms against the code, names what is wrong
-with each, and sequences the fixes so that closing the loop does not open a
-hole.
+Status: **shipped**. All six phases landed; the review in §1–§5 is preserved
+as written because it is the reasoning behind the design, and §6 now records
+what each phase actually became. Departures are marked *(shipped as)*.
+
+Durable agents in this codebase **wrote lessons they never read**. Everything
+else here follows from that: the machinery for learning was built, tested, and
+running on a timer, and the last link — putting what was learned back in front
+of the agent — had never been connected. Sections 1–5 are the review as
+written, in the present tense of the code as it then stood; they review all
+nine memory mechanisms, name what was wrong with each, and sequence the fixes
+so that closing the loop did not open a hole.
 
 ## 1. What exists today
 
@@ -162,7 +166,12 @@ every future turn, silently, forever. Three rules follow.
 
 ## 6. The plan
 
-### Phase 1 — Provenance and trust tiers *(prerequisite for everything)*
+*(shipped as: phases 1 and 3 landed together. Phase 1 needed somewhere to
+put provenance, and writing it into the flat file only to move it in phase 3
+would have been work done twice. The safety ordering that mattered —
+provenance before injection — held.)*
+
+### Phase 1 — Provenance and trust tiers *(done)*
 Record with every distillation: `sessionId`, `sessionKind`
 (`chat` | `loop` | `channel` | `app`), and a `trusted` flag derived from it.
 Only `chat` and `loop` are trusted. App and channel distillations are written
@@ -171,7 +180,7 @@ feed as "learned something from a mini app — review it?" and enter the pool
 only if the user says yes. Cost: small. Value: makes Phase 2 safe rather than
 dangerous.
 
-### Phase 2 — Close the loop with a bounded, ranked digest
+### Phase 2 — Close the loop with a bounded, ranked digest *(done)*
 Inject an **active lessons** block into the system prompt, beside workspace
 memory: the top N trusted lessons under a hard character budget (~3–4 KB, the
 same order as the profile). Ranking for v1 is recency plus a pin flag —
@@ -183,7 +192,7 @@ instructions from the user" framing the profile already uses.
 This single change is what turns six months of accumulated lessons from
 decoration into behavior.
 
-### Phase 3 — A real lesson store
+### Phase 3 — A real lesson store *(done)*
 Move lessons to a table (`agent_lessons`: id, agentId, text, tags, sourceKind,
 sourceSessionId, createdAt, lastUsedAt, useCount, pinned, trusted) and
 **regenerate `LESSONS.md` from it** on every write. The file stays exactly as
@@ -197,31 +206,45 @@ lessons for that agent): a repeat becomes `useCount++` and a timestamp bump
 rather than a second entry. That alone removes most of the growth pressure
 that the byte-cap trim exists to relieve.
 
-### Phase 4 — Consolidation and deliberate forgetting
-A periodic pass (weekly, same scheduler as the distill sweep) that merges
-clusters of related lessons into one better-written lesson, and decays entries
-that are old *and* unused *and* unpinned. Trim by value, not by age. Because
-Phase 3 gave every lesson a `useCount` and Phase 2 gave it a chance to be
-used, "value" is finally measurable.
+### Phase 4 — Consolidation and deliberate forgetting *(done, partly)*
+Trimming by value shipped: `consolidate()` runs on every write and keeps the
+top 300 by pinned, then recurrence, then recency — so a pinned lesson survives
+being old, which the byte-cap tail-trim could never do.
 
-### Phase 5 — Retrieval that survives paraphrase
-Two steps, cheapest first: add `pg_trgm` fuzzy matching as a fallback when
-`plainto_tsquery` returns nothing (a few lines, catches typos and near-misses
-immediately), then evaluate `pgvector` embeddings over lessons and messages
-for genuine semantic recall. With Phase 3's table in place, embeddings are a
-column and a nightly backfill rather than a re-architecture — which is the
-argument for doing the store before the retrieval, not after.
+*(shipped as: no LLM merge pass. Dedup-on-write collapses the repeats that
+drive most growth, and 300 rows is far from the pressure point, so a weekly
+model call to rewrite clusters would spend tokens on a problem nobody has
+yet. The hook is `consolidate()` when it does.)*
 
-### Phase 6 — Loose ends, each small
-- Route 👎 feedback straight into the lesson pool as a pinned, trusted lesson
-  instead of draining it into a single turn.
-- Let compaction hand its summary to distillation instead of running a second
-  pass over the same transcript.
-- Give loop sessions a rarer journal path (one rolled-up entry per day, not
-  per run), or fix the seed text that promises they journal.
-- Decide `knowledge/`: either a `write_note` tool for durable reference
-  material distinct from episodic lessons, or delete the folder and the prompt
-  line. Dead scaffolding teaches agents that the folder is meaningless.
+### Phase 5 — Retrieval that survives paraphrase *(done, step one)*
+`search_history` now falls back to substring matching on the query's longest
+words when the stem query returns nothing, so a miss degrades to partial
+recall instead of the silent zero-result an agent reads as "we never discussed
+that". `pg_trgm` is installed where available and powers near-duplicate
+detection on lesson writes.
+
+*(shipped as: the recall fallback is ILIKE rather than trigram similarity —
+it needs no extension, so it behaves identically on PGlite and Postgres.
+pgvector embeddings remain future work; with the phase-3 table in place they
+are a column and a backfill, which was the argument for building the store
+first.)*
+
+### Phase 6 — Loose ends *(done)*
+- 👎 **with a note** now becomes a pinned, trusted lesson as well as
+  shaping the next turn. *(shipped as: only when the user wrote a note — a
+  bare thumbs-down carries no content worth making permanent.)*
+- Loop sessions journal **once a day** instead of never, keeping the promise
+  the seeded JOURNAL.md makes without burying it under one entry per run.
+- `knowledge/` kept and given a purpose in the system prompt: durable
+  reference material (conventions, account names, recurring specs) as against
+  lessons, which are conclusions about doing the work. *(shipped as: prompt
+  guidance over the existing fs tools, not a new `write_note` tool — agents
+  could always write there; nothing told them when to.)*
+- **Not done:** handing compaction's summary to distillation. Both passes
+  exist and overlap, but compaction runs mid-session on live history while
+  distillation runs after idle on the whole transcript; sharing output means
+  reconciling two different cutoffs for a saving of one model call. Left
+  alone deliberately.
 
 ## 7. What we deliberately do not build
 
@@ -233,16 +256,18 @@ and "the agent remembers more" must never mean "every turn costs more
 forever." Embeddings before Phase 3 — the store is what makes them cheap to
 add and cheap to abandon. Memory that the user cannot see or delete.
 
-## 8. Sequencing
+## 8. What this changed
 
-Phase 1 must precede Phase 2; that is a safety constraint, not a preference.
-Phase 2 is the one that changes product behavior and should ship immediately
-after. Phase 3 unblocks 4 and 5 and can be done any time after 2. Phase 6 is
-independent throughout.
+Agents now use what they learn. A lesson distilled from a real conversation
+reaches the system prompt on the next turn, ranked and capped, framed as the
+agent's own past conclusion rather than as a user instruction. Lessons learned
+on untrusted surfaces are quarantined and surfaced for review instead. Every
+lesson is visible, pinnable, and deletable on the agent's **Memory** tab,
+because a memory nobody can inspect is one nobody can correct.
 
-A reasonable first cut is **1 + 2 together** — provenance, then the digest —
-which is a few days of work and is the difference between agents that
-accumulate memory and agents that use it.
+Verified by `tests/backend-memory.test.ts` (8 cases), including the one that
+would have caught the original defect: that the digest reaches `ctx.system` at
+all.
 
 ## 9. Where this lives in code
 
@@ -256,5 +281,10 @@ accumulate memory and agents that use it.
   active-lessons block belongs, beside workspace memory and the profile
 - `server/src/database/migrator.ts` — migration `0006-recall-profile` (FTS
   index); the lessons table lands as a new numbered migration
+- `server/src/agents/agent-memory.service.ts` — the store, digest, dedup,
+  consolidation, and LESSONS.md regeneration
+- `src/components/AgentsView.tsx` — the Memory tab (promote, pin, forget)
+- `tests/backend-memory.test.ts` — provenance, quarantine, dedup, budget,
+  and the prompt-injection check that closes the loop
 - `server/src/workspaces/workspaces.service.ts` — profile proposals, the
-  consent pattern quarantined lessons should copy
+  consent pattern quarantined lessons copy

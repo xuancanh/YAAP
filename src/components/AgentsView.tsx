@@ -1,11 +1,11 @@
 /** Agents: the directory grid, the create-agent dialog, and the per-agent
  *  home page — tabbed like YAAM: Dashboard (agent-maintained markdown),
  *  Mini apps (self-built, embeddable), Chats, Memory (file brain), Settings. */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
-import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentTask, type Connection, type FileEntry, type FilePreview, type Skill } from '../lib/api';
+import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentLesson, type AgentTask, type Connection, type FileEntry, type FilePreview, type Skill } from '../lib/api';
 import { Markdown } from '../lib/md';
 import { sealHtml } from '../lib/sandbox';
 import { nextFire, untilLabel } from '../lib/cron';
@@ -833,7 +833,81 @@ function SharedFolderCard({ a }: { a: Agent }) {
   );
 }
 
-const TABS = ['Dashboard', 'Tasks', 'Schedule', 'Mini apps', 'Skills & tools', 'Chats', 'Files', 'Settings'] as const;
+/** What the agent has learned (docs/agent-memory.md). Injected memory has to
+ *  be inspectable and revocable: a lesson silently shapes every future turn,
+ *  so a memory nobody can see is one nobody can correct. */
+function MemoryTab({ a }: { a: Agent }) {
+  const [rows, setRows] = useState<AgentLesson[]>([]);
+  const [busy, setBusy] = useState(false);
+  const reload = useCallback(() => { void api.agentLessons(a.id).then(setRows).catch(() => setRows([])); }, [a.id]);
+  useEffect(reload, [reload]);
+
+  const act = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); reload(); } finally { setBusy(false); } };
+  const active = rows.filter((r) => r.trusted === 1);
+  const pending = rows.filter((r) => r.trusted === 0);
+
+  const Row = ({ r }: { r: AgentLesson }) => (
+    <div style={{ ...card, padding: '11px 14px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, lineHeight: 1.5 }}>{r.text}</div>
+        <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 4, fontFamily: 'var(--mono)' }}>
+          {r.sourceKind}{r.useCount > 1 ? ` · learned ${r.useCount}×` : ''}{r.pinned ? ' · pinned' : ''} · {r.updatedAt.slice(0, 10)}
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {r.trusted === 0 && (
+          <button disabled={busy} onClick={() => void act(() => api.patchLesson(a.id, r.id, { trusted: true }))}
+            style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 11px', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>Promote</button>
+        )}
+        {r.trusted === 1 && (
+          <button disabled={busy} onClick={() => void act(() => api.patchLesson(a.id, r.id, { pinned: !r.pinned }))}
+            style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '5px 11px', fontSize: 11.5, cursor: 'pointer' }}>
+            {r.pinned ? 'Unpin' : 'Pin'}
+          </button>
+        )}
+        <button disabled={busy} onClick={() => void act(() => api.deleteLesson(a.id, r.id))}
+          style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '5px 11px', fontSize: 11.5, cursor: 'pointer' }}>Forget</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 10 }}>
+          <span style={label}>In every turn · {active.length}</span>
+          <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
+            distilled from completed work — the top entries go into {a.name}&rsquo;s prompt, within a size budget
+          </span>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {active.map((r) => <Row key={r.id} r={r} />)}
+          {active.length === 0 && (
+            <div style={{ ...card, padding: 14, fontSize: 12.5, color: 'var(--text-dim)' }}>
+              Nothing learned yet. Lessons appear here after conversations go idle and distill.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {pending.length > 0 && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 10 }}>
+            <span style={label}>Awaiting review · {pending.length}</span>
+            <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
+              learned from a mini app or a chat channel — never used until you promote it
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {pending.map((r) => <Row key={r.id} r={r} />)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TABS = ['Dashboard', 'Tasks', 'Schedule', 'Memory', 'Mini apps', 'Skills & tools', 'Chats', 'Files', 'Settings'] as const;
 type HomeTab = (typeof TABS)[number];
 
 export function AgentHome() {
@@ -1021,6 +1095,7 @@ export function AgentHome() {
 
         {tab === 'Tasks' && <TasksBoard a={a} tasks={tasks} reload={reloadTasks} />}
         {tab === 'Schedule' && <ScheduleTab a={a} />}
+        {tab === 'Memory' && <MemoryTab a={a} />}
         {tab === 'Skills & tools' && <SkillsToolsTab a={a} />}
         {tab === 'Files' && <AgentFilesTab a={a} />}
 

@@ -93,6 +93,22 @@ export interface AgentApp {
   approved?: string[];
 }
 
+/** One thing an agent learned (docs/agent-memory.md). `trusted: 0` means it
+ *  came from a mini app or a chat channel and is quarantined until promoted —
+ *  an injected lesson is an instruction that outlives every turn. */
+export interface AgentLesson {
+  id: string;
+  agentId: string;
+  text: string;
+  sourceKind: 'chat' | 'loop' | 'channel' | 'app' | 'feedback';
+  sourceSessionId: string | null;
+  trusted: number;
+  pinned: number;
+  useCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AgentStats {
   chats: number;
   up: number;
@@ -432,6 +448,11 @@ export const api = {
   appComputeRun: (id: string, appId: string, language: string, code: string, stdin?: string, timeoutSeconds?: number) =>
     send<{ language: string; output: string }>(
       `/api/agents/${id}/apps/${appId}/compute`, 'POST', { language, code, stdin, timeoutSeconds }),
+  agentLessons: (id: string) => get<AgentLesson[]>(`/api/agents/${id}/lessons`),
+  patchLesson: (id: string, lessonId: string, patch: { trusted?: boolean; pinned?: boolean }) =>
+    send<AgentLesson>(`/api/agents/${id}/lessons/${lessonId}`, 'PATCH', patch),
+  deleteLesson: (id: string, lessonId: string) =>
+    send<{ ok: boolean }>(`/api/agents/${id}/lessons/${lessonId}`, 'DELETE'),
   agentEvents: (id: string) => get<AgentEvent[]>(`/api/agents/${id}/events`),
   markAgentEventsRead: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}/events/read`, 'POST'),
   actOnAgentEvent: (id: string, eventId: string, decision: 'approve' | 'dismiss') =>

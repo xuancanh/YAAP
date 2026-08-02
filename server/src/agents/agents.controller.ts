@@ -1,6 +1,7 @@
 import { BadRequestException, Body, Controller, Delete, Get, Header, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
 import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 import { AgentsService } from './agents.service';
+import { AgentMemoryService } from './agent-memory.service';
 import { ConnectionsService } from '../connections/connections.service';
 import { RunnerService } from '../runner/runner.service';
 import { StorageService } from '../storage/storage.service';
@@ -63,6 +64,7 @@ export class AgentsController {
     private readonly storage: StorageService,
     private readonly connections: ConnectionsService,
     private readonly runner: RunnerService,
+    private readonly memory: AgentMemoryService,
   ) {}
 
   @Get() list() { return this.agents.list(); }
@@ -70,7 +72,36 @@ export class AgentsController {
   @Post() create(@Body() dto: CreateAgentDto) { return this.agents.create(dto); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateAgentDto) { return this.agents.update(id, dto); }
   @Delete(':id') remove(@Param('id') id: string) { return this.agents.remove(id); }
-  @Post(':id/feedback') feedback(@Param('id') id: string, @Body() dto: FeedbackDto) { return this.agents.addFeedback(id, dto); }
+  @Post(':id/feedback') async feedback(@Param('id') id: string, @Body() dto: FeedbackDto) {
+    const res = await this.agents.addFeedback(id, dto);
+    // A correction used to shape exactly one reply and then evaporate
+    // (takeFeedback drains on read), which made the most explicit "learn
+    // this" signal in the product the most ephemeral thing in it. A 👎 with
+    // a note is now also a pinned lesson.
+    if (dto.rating === 'down' && dto.note?.trim()) {
+      const { lesson } = await this.memory.record(id, `The user corrected me: ${dto.note.trim()}`, { source: 'feedback' });
+      await this.memory.update(id, lesson.id, { pinned: true });
+    }
+    return res;
+  }
+
+  // ---- memory (docs/agent-memory.md): visible, promotable, revocable ----
+
+  @Get(':id/lessons') lessons(@Param('id') id: string) { return this.memory.list(id); }
+
+  @Patch(':id/lessons/:lessonId')
+  patchLesson(
+    @Param('id') id: string, @Param('lessonId') lessonId: string,
+    @Body() body: { trusted?: boolean; pinned?: boolean },
+  ) {
+    return this.memory.update(id, lessonId, body);
+  }
+
+  /** A memory nobody can delete is one nobody can correct. */
+  @Delete(':id/lessons/:lessonId')
+  deleteLesson(@Param('id') id: string, @Param('lessonId') lessonId: string) {
+    return this.memory.remove(id, lessonId);
+  }
   @Get(':id/stats') stats(@Param('id') id: string) { return this.agents.stats(id); }
   @Get(':id/apps') apps(@Param('id') id: string) { return this.agents.listApps(id); }
   @Delete(':id/apps/:appId') deleteApp(@Param('id') id: string, @Param('appId') appId: string) { return this.agents.deleteApp(id, appId); }

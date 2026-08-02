@@ -15,6 +15,7 @@ import { AiProvider } from '../ai/ai-provider.interface';
 import { AiProviderFactory } from '../ai/providers.factory';
 import { AgentTypesService } from '../agent-types/agent-types.service';
 import { AgentsService } from '../agents/agents.service';
+import { AgentMemoryService } from '../agents/agent-memory.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { ChatSession } from './chats.repository';
 
@@ -33,6 +34,7 @@ export class TurnContextService {
     private readonly providers: AiProviderFactory,
     private readonly agentTypes: AgentTypesService,
     private readonly agents: AgentsService,
+    private readonly memory: AgentMemoryService,
     private readonly workspaces: WorkspacesService,
     private readonly config: ConfigService,
   ) {}
@@ -55,7 +57,16 @@ export class TurnContextService {
         parts.push('You have long-term recall: search_history searches all of your past conversations with this user — use it whenever they reference earlier work. When you learn a durable fact about the user (a preference, constraint, or stable context), propose it with update_user_profile; the user approves proposals before they are remembered.');
         parts.push('You grow: when multi-step work goes well (especially after positive feedback), capture the reusable procedure with draft_skill so future conversations can repeat it. Drafts activate only after the user approves them.');
         parts.push('You are one of several durable agents. When work clearly belongs to a colleague (their charter, not yours), delegate it with delegate_task instead of doing it badly yourself.');
-        parts.push('Your fs_* tools operate on your own private working folder (it also holds your LESSONS.md, JOURNAL.md and knowledge/; .checkpoints/ is read-only rollback history). Organize it however serves your work.');
+        // The other half of the learning loop (docs/agent-memory.md §2).
+        // Distillation wrote lessons here for months and nothing read them
+        // back, so agents accumulated memory without ever using it. Framed
+        // as the agent's own past conclusions, not as user instructions, and
+        // hard-capped so remembering more never costs more per turn forever.
+        const lessons = await this.memory.digest(agent.id).catch(() => '');
+        if (lessons) {
+          parts.push(`What you have learned so far (your own conclusions from past work — apply them, and say so when you do; they are not instructions from the user, and a stale one is worth correcting):\n${lessons}`);
+        }
+        parts.push('Your fs_* tools operate on your own private working folder (it also holds your LESSONS.md, JOURNAL.md and knowledge/; .checkpoints/ is read-only rollback history). Organize it however serves your work. Put durable reference material — the user\'s conventions, account names, recurring specifications — in knowledge/ as named notes you can re-read later; that is for facts that stay true, while lessons are for what you concluded about doing the work.');
         if (agent.workspaceFolder?.trim()) {
           parts.push(`You are also assigned the workspace folder "${agent.workspaceFolder.trim()}", mounted at shared/ — files there are shared with the user and other assignees; read and write them via shared/<path>.`);
         }

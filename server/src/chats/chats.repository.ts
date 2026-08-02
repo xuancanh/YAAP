@@ -250,7 +250,7 @@ export class ChatsRepository {
   /** Sessions whose transcript changed since the last distillation and have
    *  been idle since `idleBefore` (auto-distillation sweep). Loop sessions
    *  journal themselves, so they are excluded. */
-  async sessionsNeedingDistill(idleBefore: string): Promise<ChatSession[]> {
+  async sessionsNeedingDistill(idleBefore: string, loopBefore?: string): Promise<ChatSession[]> {
     // ISO-8601 text timestamps compare lexicographically, so the whole
     // filter lives in SQL instead of loading every agent session.
     return this.db.select().from(chatSessions)
@@ -259,7 +259,16 @@ export class ChatsRepository {
         isNull(chatSessions.archivedAt),
         lt(chatSessions.updatedAt, idleBefore),
         or(isNull(chatSessions.distilledAt), lt(chatSessions.distilledAt, chatSessions.updatedAt)),
-        notLike(chatSessions.name, 'Loop · %'),
+        // Loop sessions are long-lived and fire on a schedule, so distilling
+        // them like a chat would bury the journal under one entry per run.
+        // They were excluded outright, which meant scheduled work — the
+        // proactive half of the product — left no trace in the agent's own
+        // record, while the seeded JOURNAL.md promised it did. Included now,
+        // but at most once a day: a rolled-up entry rather than a firehose.
+        or(
+          notLike(chatSessions.name, 'Loop · %'),
+          or(isNull(chatSessions.distilledAt), lt(chatSessions.distilledAt, loopBefore ?? idleBefore)),
+        ),
       ));
   }
 
@@ -288,6 +297,29 @@ export class ChatsRepository {
       ORDER BY m."createdAt" DESC
       LIMIT ${limit}
     `);
-    return res.rows as Array<{ sessionId: string; sessionName: string; role: string; content: string; createdAt: string }>;
+    const hits = res.rows as Array<{ sessionId: string; sessionName: string; role: string; content: string; createdAt: string }>;
+    if (hits.length > 0) return hits;
+
+    // Stem matching misses paraphrase, which is exactly what "they referenced
+    // earlier work" looks like: "the invoice thing" never finds "billing
+    // dispute". Fall back to substring matching on the query's longest words
+    // — cheap, index-free, and better than the silent zero-result the agent
+    // currently reads as "we never discussed that" (docs/agent-memory.md §4).
+    const words = q.toLowerCase().split(/[^a-z0-9]+/i).filter((w) => w.length >= 4).slice(0, 4);
+    if (words.length === 0) return hits;
+    const like = sql.join(words.map((w) => sql`m."content" ILIKE ${'%' + w + '%'}`), sql` OR `);
+    const fuzzy = await this.db.execute(sql`
+      SELECT m."sessionId" AS "sessionId",
+             COALESCE(NULLIF(s."name", ''), NULLIF(s."autoTitle", ''), 'untitled') AS "sessionName",
+             m."role" AS "role", m."content" AS "content", m."createdAt" AS "createdAt"
+      FROM chat_messages m
+      JOIN chat_sessions s ON s."id" = m."sessionId"
+      WHERE s."agentId" = ${agentId}
+        AND m."role" IN ('user', 'assistant')
+        AND (${like})
+      ORDER BY m."createdAt" DESC
+      LIMIT ${limit}
+    `);
+    return fuzzy.rows as Array<{ sessionId: string; sessionName: string; role: string; content: string; createdAt: string }>;
   }
 }

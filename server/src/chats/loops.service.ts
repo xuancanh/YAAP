@@ -94,7 +94,9 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
   /** Distill idle, changed agent sessions into their agents' brains. */
   async distillSweep(now: Date, idleMinutes = 60): Promise<number> {
     const idleBefore = new Date(now.getTime() - idleMinutes * 60_000).toISOString();
-    const sessions = await this.repo.sessionsNeedingDistill(idleBefore);
+    // Loop sessions journal once a day, not once a run (see the repository).
+    const loopBefore = new Date(now.getTime() - 24 * 60 * 60_000).toISOString();
+    const sessions = await this.repo.sessionsNeedingDistill(idleBefore, loopBefore);
     let distilled = 0;
     for (const s of sessions.slice(0, 5)) { // bounded per sweep
       try {

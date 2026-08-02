@@ -8,6 +8,7 @@ import { Injectable, BadRequestException, NotFoundException } from '@nestjs/comm
 import { ChatsRepository } from './chats.repository';
 import { TurnContextService } from './turn-context.service';
 import { AgentsService } from '../agents/agents.service';
+import { AgentMemoryService, sourceForSession } from '../agents/agent-memory.service';
 import { streamSignal } from '../ai/provider-timeout';
 
 const DISTILL_SYSTEM = `You distill completed work into an agent's file brain. From the conversation, output exactly this format:
@@ -23,9 +24,10 @@ export class DistillService {
     private readonly repo: ChatsRepository,
     private readonly context: TurnContextService,
     private readonly agents: AgentsService,
+    private readonly memory: AgentMemoryService,
   ) {}
 
-  async distill(sessionId: string): Promise<{ ok: boolean; journal?: string; lesson?: string }> {
+  async distill(sessionId: string): Promise<{ ok: boolean; journal?: string; lesson?: string; quarantined?: boolean }> {
     const session = await this.repo.getSession(sessionId);
     if (!session) throw new NotFoundException(`chat ${sessionId}`);
     if (!session.agentId) throw new BadRequestException('this chat is not owned by a durable agent');
@@ -54,7 +56,25 @@ export class DistillService {
 
     const date = new Date().toISOString().slice(0, 10);
     if (journal) await this.agents.appendJournal(session.agentId, `${date}  ${journal}`);
-    if (lesson) await this.agents.appendLessons(session.agentId, `## ${date}  ${session.name || session.autoTitle || 'Distilled'}\n${lesson}`);
-    return { ok: Boolean(journal || lesson), journal, lesson };
+
+    // Provenance decides whether this can ever reach the prompt. A session
+    // driven by a mini app or a chat channel is untrusted input by the same
+    // reasoning that makes those surfaces Ask-mode with gated tools denied —
+    // and a lesson outlives every turn, so it is the more valuable target.
+    let quarantined = false;
+    if (lesson) {
+      const source = sourceForSession(session.name || '');
+      const res = await this.memory.record(session.agentId, lesson, { source, sessionId: sessionId });
+      quarantined = res.lesson.trusted === 0;
+      if (quarantined) {
+        await this.agents.addEvent(session.agentId, {
+          kind: 'info',
+          title: `Learned something from ${source === 'app' ? 'a mini app' : 'a chat channel'} — review before it is used`,
+          body: lesson,
+          sessionId,
+        }).catch(() => {});
+      }
+    }
+    return { ok: Boolean(journal || lesson), journal, lesson, quarantined };
   }
 }
