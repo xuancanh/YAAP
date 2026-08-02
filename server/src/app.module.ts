@@ -25,6 +25,8 @@ import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import configuration from './config/configuration';
 import { validateEnv } from './config/validation';
 import { AuthGuard } from './common/auth.guard';
+import { AUTH_STRATEGY } from './common/auth-strategy.interface';
+import { TokenAuthStrategy } from './common/token-auth.strategy';
 import { HttpLoggingInterceptor } from './common/http-logging.interceptor';
 import { DatabaseModule } from './database/database.module';
 import { StorageModule } from './storage/storage.module';
@@ -64,6 +66,10 @@ import { RunnerModule } from './runner/runner.module';
     RunnerModule,
   ],
   providers: [
+    // Identity is bound here and nowhere else: swapping this one provider
+    // replaces the app's auth model without touching a controller
+    // (docs/shared-accounts.md, phase 5).
+    { provide: AUTH_STRATEGY, useClass: TokenAuthStrategy },
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_INTERCEPTOR, useClass: HttpLoggingInterceptor },
   ],

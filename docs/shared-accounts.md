@@ -1,7 +1,8 @@
 # Shared accounts across the product suite: one domain package, one front door, no new microservice
 
-Status: **phases 0 and 1 shipped** in `knowledge-loom-ee` (commit `81d6723`);
-phases 2–5 remain planned. One design claim in §5 was wrong and is corrected
+Status: **phases 0, 1, 2 and the phase-5 seam shipped**; phase 3 (the front
+door) and phase 4 remain planned, and phase 3 needs product decisions this
+document does not make. One design claim in §5 was wrong and is corrected
 below where it appears. Spans five repos (`smart-knowledge-app`,
 `grove-server`, `knowledge-loom-ee`, `knowledge-loom-landing`,
 `knowledge-loom-admin`) plus `yaam-chat`. The question asked was whether
@@ -190,11 +191,20 @@ subscription-only, since a pending account has no subscription row.
 
 ### Phase 2 — Billing onto accounts *(partly done)*
 
-*(done already: the Stripe webhook no longer invents an identity from
+*(shipped: the Stripe webhook no longer invents an identity from
 `customer_details.email` — it resolves by session metadata, then by linked
 Stripe customer, and otherwise logs and quarantines the session. `signup`
-moved out of billing into accounts. Still to do: keying Stripe customers on
-accounts from the start, and moving `plans.ts` into the shared domain.)*
+moved out of billing into accounts. Checkout reuses the Stripe customer an
+account already has, instead of letting `customer_email` mint a fresh customer
+per checkout and scatter one person's invoices across records that never
+rejoin. Still open: moving `plans.ts` into the shared domain — cosmetic while
+every consumer lives in one repo.)*
+
+**Backfill.** Lazy reconciliation is correct but slow to finish: a dormant
+paid user stays split from their plan for as long as they stay dormant, which
+is the population least likely to notice. `npm run backfill-accounts`
+(`--dry-run` first) walks `ee_subscriptions` once and creates the accounts the
+lazy path would eventually create, under the same merge rules. Idempotent.
 Stripe customers and subscriptions key on `accountId`, never on an email
 string. Webhooks resolve by `stripe_customer_id → account_identities` with
 metadata as a cross-check. `signup` moves out of the billing controller into
@@ -223,7 +233,7 @@ product declares the entitlements it requires, and the existing
 `USAGE_SERVICE` quota seam reads from `@loom/accounts` instead of
 `ee_subscriptions`. This is mostly deletion.
 
-### Phase 5 — `yaam-chat`, deliberately last
+### Phase 5 — `yaam-chat`, deliberately last *(seam done; tenancy not started)*
 Two honest options:
 
 **(a) Leave it out.** It is positioned as single-user, self-hosted, run
@@ -237,6 +247,17 @@ Recommended: **(a) now, with the seam pre-built** — adopt the `AuthStrategy`
 interface and the `@CurrentUser()` shape so the boundary exists and the guard
 is swappable, but defer the data migration until there is a product reason to
 pay for it. Cheap insurance; the expensive part stays optional.
+
+*(shipped: `server/src/common/auth-strategy.interface.ts` and
+`token-auth.strategy.ts`. The guard now delegates and attaches
+`request.userId`; identity is bound in exactly one provider in `app.module.ts`.
+The interface is deliberately the same shape as the core's, so a strategy
+written for the suite drops in unchanged. Tenancy is **not** started and the
+seam does not imply it: every table here is workspace-scoped with no user
+column, so a strategy returning per-user subjects would authenticate people
+into the same shared data. The default strategy resolves everyone to
+`SINGLE_USER`, and a test asserts exactly that so nobody mistakes the seam for
+multi-tenancy.)*
 
 ### Alongside — fix distribution
 Replace `file:vendor/*.tgz` with a private registry (GitHub Packages) and real
@@ -297,5 +318,7 @@ strongest evidence that the seams they already had were the right ones.
   tables land
 - `knowledge-loom-landing/{login,signup,checkout}.html` — the mockup front door
 - `knowledge-loom-admin/admin.html` — the shared-token staff gate
-- `yaam-chat/server/src/common/auth.guard.ts` — the single-token guard that
-  would become an `AuthStrategy`
+- `knowledge-loom-ee/server/src/extensions/accounts/backfill.ts` +
+  `scripts/backfill-accounts.mjs` — the one-shot reconciliation
+- `yaam-chat/server/src/common/{auth-strategy.interface,token-auth.strategy,auth.guard}.ts`
+  — the swappable seam, still single-user

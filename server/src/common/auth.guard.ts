@@ -1,26 +1,29 @@
 /**
- * Optional bearer-token guard (YAAM_API_TOKEN). A pragmatic trust boundary for
- * a single-user self-hosted app: the API has no users, but any website open in
- * the user's browser could otherwise call it cross-origin and spend LLM keys.
+ * AuthGuard — delegates to whichever AuthStrategy is bound and attaches the
+ * resolved identity to `request.userId`.
  *
- * When the token is unset every request passes (single-user localhost default;
- * AppModule logs a boot warning). GET /api/status always stays open so
- * liveness probes work without credentials.
+ * The guard is provider-agnostic, mirroring the shape the rest of the product
+ * suite uses (docs/shared-accounts.md, phase 5): replacing the identity model
+ * means binding a different AUTH_STRATEGY, not editing anything here. The
+ * default binding is TokenAuthStrategy — one optional shared bearer token,
+ * the right trust boundary for a single-user self-hosted app.
  */
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { CanActivate, ExecutionContext, Inject, Injectable } from '@nestjs/common';
 import type { Request } from 'express';
+import { AUTH_STRATEGY, AuthStrategy } from './auth-strategy.interface';
+
+export interface AuthenticatedRequest extends Request {
+  userId: string;
+}
 
 @Injectable()
 export class AuthGuard implements CanActivate {
-  constructor(private readonly config: ConfigService) {}
+  constructor(@Inject(AUTH_STRATEGY) private readonly strategy: AuthStrategy) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const token = this.config.get<string>('apiToken');
-    if (!token) return true;
-    const req = context.switchToHttp().getRequest<Request>();
-    if (req.method === 'GET' && req.path === '/api/status') return true;
-    if (req.headers.authorization === `Bearer ${token}`) return true;
-    throw new UnauthorizedException('missing or invalid bearer token');
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    if (this.strategy.isPublic?.(request)) return true;
+    request.userId = this.strategy.authenticate(request);
+    return true;
   }
 }

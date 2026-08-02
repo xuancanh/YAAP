@@ -12,6 +12,7 @@ import { NestFactory, APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import type { AddressInfo } from 'node:net';
 import { AuthGuard } from '../server/src/common/auth.guard';
+import { TokenAuthStrategy } from '../server/src/common/token-auth.strategy';
 import { DRIZZLE_DB } from '../server/src/database/database.constants';
 import { StatusController } from '../server/src/status/status.controller';
 import { StatusService } from '../server/src/status/status.service';
@@ -32,11 +33,11 @@ function testModule(apiToken: string, db: { execute: () => Promise<unknown> }) {
       StatusService,
       { provide: DRIZZLE_DB, useValue: db },
       // Factory instead of useClass: tsx doesn't emit design:paramtypes, so
-      // AuthGuard's ConfigService wouldn't be injected by type; the factory
-      // hands the real guard a real ConfigService explicitly.
+      // the strategy's ConfigService wouldn't be injected by type; the factory
+      // wires the real guard to the real strategy explicitly.
       {
         provide: APP_GUARD,
-        useFactory: (config: ConfigService) => new AuthGuard(config),
+        useFactory: (config: ConfigService) => new AuthGuard(new TokenAuthStrategy(config)),
         inject: [ConfigService],
       },
     ],
