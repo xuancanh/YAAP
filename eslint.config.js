@@ -28,8 +28,46 @@ export default tseslint.config(
     },
   },
   {
+    extends: [js.configs.recommended, ...tseslint.configs.recommendedTypeChecked],
+    files: ['server/src/**/*.ts', 'tests/**/*.ts'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      globals: globals.node,
+      parserOptions: {
+        // Uses each file's nearest tsconfig (server/tsconfig.json,
+        // tests/tsconfig.json) for type information.
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      // Type-checked but too noisy for this codebase: drizzle/pg rows and
+      // test doubles rely on `as unknown as` casts that trip the whole
+      // no-unsafe-* family. Downgraded to warn so CI stays green; tighten
+      // incrementally.
+      '@typescript-eslint/no-unsafe-assignment': 'warn',
+      '@typescript-eslint/no-unsafe-member-access': 'warn',
+      '@typescript-eslint/no-unsafe-call': 'warn',
+      '@typescript-eslint/no-unsafe-return': 'warn',
+      '@typescript-eslint/no-unsafe-argument': 'warn',
+      // TODO: valuable rules currently violated mostly in test doubles and
+      // files under active WIP — kept visible at warn level; fix and promote
+      // back to error incrementally.
+      '@typescript-eslint/no-floating-promises': 'warn',
+      '@typescript-eslint/no-misused-promises': 'warn',
+      '@typescript-eslint/no-base-to-string': 'warn',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'warn',
+      '@typescript-eslint/no-redundant-type-constituents': 'warn',
+      '@typescript-eslint/restrict-template-expressions': 'warn',
+      '@typescript-eslint/prefer-promise-reject-errors': 'warn',
+      // Test doubles are intentionally `async` without awaits to match the
+      // service interfaces they stub.
+      '@typescript-eslint/require-await': 'off',
+    },
+  },
+  {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
-    files: ['server/src/**/*.ts', 'tests/**/*.ts', 'scripts/**/*.mjs'],
+    files: ['scripts/**/*.mjs'],
     languageOptions: {
       ecmaVersion: 2022,
       globals: globals.node,

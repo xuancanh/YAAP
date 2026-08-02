@@ -16,6 +16,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx eslint server/src src tests scripts
+      # Drift check: regenerate the authored market packs from packs/*.md and
+      # fail if the committed output is stale. profession-packs.generated.ts
+      # is not covered — it builds from an external knowledge-work-plugins
+      # checkout that CI doesn't have.
+      - run: |
+          npm run packs:build
+          git diff --exit-code server/src/market/
       - run: npm run build
       # Backend suites run on PGlite (in-memory Postgres) — no services needed.
       - run: npm test

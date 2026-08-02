@@ -21,10 +21,11 @@
  */
 import { Logger, Module, OnModuleInit } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import configuration from './config/configuration';
 import { validateEnv } from './config/validation';
 import { AuthGuard } from './common/auth.guard';
+import { HttpLoggingInterceptor } from './common/http-logging.interceptor';
 import { DatabaseModule } from './database/database.module';
 import { StorageModule } from './storage/storage.module';
 import { StatusModule } from './status/status.module';
@@ -60,7 +61,10 @@ import { ConnectionsModule } from './connections/connections.module';
     AppBridgeModule,
     ConnectionsModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: AuthGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: AuthGuard },
+    { provide: APP_INTERCEPTOR, useClass: HttpLoggingInterceptor },
+  ],
 })
 export class AppModule implements OnModuleInit {
   private readonly logger = new Logger(AppModule.name);
