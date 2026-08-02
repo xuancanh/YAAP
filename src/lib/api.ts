@@ -424,9 +424,14 @@ export const api = {
   appConnPropose: (id: string, appId: string, provider: string, op: string, payload: unknown) =>
     send<{ op: string; provider: string; text: string }>(
       `/api/agents/${id}/apps/${appId}/connections/propose`, 'POST', { provider, op, payload }),
-  appComputeRun: (id: string, appId: string, language: string, code: string, stdin?: string) =>
+  /** Which languages this server's runner offers — they differ by backend
+   *  (the local sandbox has python only if a python binary exists; Cloudflare
+   *  always has both), so apps feature-detect before offering a button. */
+  appComputeStatus: (id: string, appId: string) =>
+    get<RunnerStatus>(`/api/agents/${id}/apps/${appId}/compute`),
+  appComputeRun: (id: string, appId: string, language: string, code: string, stdin?: string, timeoutSeconds?: number) =>
     send<{ language: string; output: string }>(
-      `/api/agents/${id}/apps/${appId}/compute`, 'POST', { language, code, stdin }),
+      `/api/agents/${id}/apps/${appId}/compute`, 'POST', { language, code, stdin, timeoutSeconds }),
   agentEvents: (id: string) => get<AgentEvent[]>(`/api/agents/${id}/events`),
   markAgentEventsRead: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}/events/read`, 'POST'),
   actOnAgentEvent: (id: string, eventId: string, decision: 'approve' | 'dismiss') =>

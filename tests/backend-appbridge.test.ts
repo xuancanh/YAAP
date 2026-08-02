@@ -23,6 +23,7 @@ import { AppConnectionsService } from '../server/src/appbridge/app-connections.s
 import { AppComputeService } from '../server/src/appbridge/app-compute.service';
 import { ConnectionsService } from '../server/src/connections/connections.service';
 import { RunnerService } from '../server/src/runner/runner.service';
+import type { ConfigService } from '@nestjs/config';
 
 async function setup(rounds: AiStreamEvent[][] = []) {
   const db = await testDb();
@@ -433,4 +434,85 @@ test('compute.run hands code to the same sandbox the agent uses, and validates l
   assert.equal(seen[0].name, 'run_python', 'no new sandbox — the one from docs/code-execution.md');
   assert.equal(seen[0].input.stdin, 'a,b\n');
   await assert.rejects(compute.run(agent.id, entry.id, 'ruby', 'puts 1'), /javascript.*python/);
+});
+
+// ---- compute on the Cloudflare backend (docs/code-execution.md §3d) ----
+
+/** A RunnerService wired to the Cloudflare backend with the network stubbed:
+ *  proves the app → worker contract without a Workers Paid plan. */
+function cloudflareRunner(onRequest: (body: Record<string, unknown>) => unknown) {
+  const cfg = {
+    get: (key: string) => ({
+      runnerBackend: 'cloudflare', runnerCfUrl: 'https://runner.test/', runnerCfToken: 'secret',
+    } as Record<string, unknown>)[key],
+  } as unknown as ConfigService;
+  const svc = new RunnerService(cfg);
+  const seen: Array<{ url: string; auth: string | null; body: Record<string, unknown> }> = [];
+  svc.fetchImpl = (async (url: string, init: RequestInit) => {
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    seen.push({ url: String(url), auth: new Headers(init.headers).get('authorization'), body });
+    return new Response(JSON.stringify(onRequest(body)), { status: 200, headers: { 'content-type': 'application/json' } });
+  }) as unknown as typeof fetch;
+  return { svc, seen };
+}
+
+test('compute reaches the Cloudflare worker with the same contract the agent uses', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['compute']);
+  const { svc, seen } = cloudflareRunner(() => ({ ok: true, exitCode: 0, stdout: '55\n', stderr: '' }));
+  const compute = new AppComputeService(bridge, svc);
+
+  // apps feature-detect: the local sandbox may lack python, Cloudflare never does
+  const status = await compute.status(agent.id, entry.id);
+  assert.equal(status.backend, 'cloudflare');
+  assert.deepEqual(status.languages, ['javascript', 'python']);
+
+  const res = await compute.run(agent.id, entry.id, 'python', 'print(sum(range(11)))', 'ignored', 25);
+  assert.match(res.output, /exit code 0/);
+  assert.match(res.output, /55/);
+
+  assert.equal(seen[0].url, 'https://runner.test/run');
+  assert.equal(seen[0].auth, 'Bearer secret', 'the token never leaves the server; the container never sees one');
+  assert.deepEqual(seen[0].body, { language: 'python', code: 'print(sum(range(11)))', stdin: 'ignored', timeout_seconds: 25 },
+    'the app path sends exactly what the agent path sends');
+});
+
+test('a Cloudflare timeout surfaces as a kill, not as empty output', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['compute']);
+  // GNU timeout reports 124; the worker maps that to timedOut
+  const { svc } = cloudflareRunner(() => ({ ok: true, timedOut: true, exitCode: 124, stdout: '', stderr: '' }));
+  const compute = new AppComputeService(bridge, svc);
+
+  const res = await compute.run(agent.id, entry.id, 'javascript', 'while(true){}', undefined, 5);
+  assert.match(res.output, /killed: exceeded the 5s time limit/, 'a runaway app program reads as killed, not as "no output"');
+});
+
+test('stdin caps agree with the runner instead of truncating in silence', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['compute']);
+  const { svc, seen } = cloudflareRunner(() => ({ ok: true, exitCode: 0, stdout: 'ok', stderr: '' }));
+  const compute = new AppComputeService(bridge, svc);
+
+  // RunnerService slices stdin at 100 KB; a looser app-side cap would hand an
+  // app a truncation it could never observe
+  await assert.rejects(
+    compute.run(agent.id, entry.id, 'python', 'print(1)', 'x'.repeat(100_001)),
+    /at most 100000 bytes/,
+  );
+  await compute.run(agent.id, entry.id, 'python', 'print(1)', 'x'.repeat(100_000));
+  assert.equal(String(seen[0].body.stdin).length, 100_000, 'what is accepted arrives whole');
+});
+
+test('a worker refusal or HTTP error reaches the app as an error, never as output', async () => {
+  const { bridge, agents, agent } = await setup();
+  const entry = await appWithCaps(agents, agent.id, ['compute']);
+  const { svc } = cloudflareRunner(() => ({ ok: false, error: 'sandbox error: container failed to start' }));
+  const compute = new AppComputeService(bridge, svc);
+
+  await assert.rejects(
+    compute.run(agent.id, entry.id, 'python', 'print(1)'),
+    /container failed to start/,
+    'the app sees why, rather than an empty successful-looking result',
+  );
 });

@@ -21,7 +21,11 @@ import { RunnerService } from '../runner/runner.service';
 import { AppBridgeService } from './app-bridge.service';
 
 const CODE_CAP = 100_000;
-const STDIN_CAP = 1_000_000;
+/** Must match RunnerService's own stdin cap. It slices silently at 100 KB, so
+ *  a looser limit here would hand apps a truncation they never see — the
+ *  failure mode this codebase keeps finding in its own claims. Refuse loudly
+ *  instead, and let the app chunk or use compute to read a file it wrote. */
+const STDIN_CAP = 100_000;
 
 @Injectable()
 export class AppComputeService {
@@ -37,7 +41,7 @@ export class AppComputeService {
     return this.runner?.status() ?? { backend: null, languages: [], detail: 'the code runner is not configured' };
   }
 
-  async run(agentId: string, appId: string, language: string, code: string, stdin?: string) {
+  async run(agentId: string, appId: string, language: string, code: string, stdin?: string, timeoutSeconds?: number) {
     const entry = await this.bridge.gate(agentId, appId, 'compute', 'compute.run');
     if (!this.runner) throw new BadRequestException('the code runner is not configured on this server');
     if (typeof code !== 'string' || !code.trim()) throw new BadRequestException('code is required');
@@ -49,7 +53,10 @@ export class AppComputeService {
     const tool = language === 'python' ? 'run_python' : language === 'javascript' ? 'run_js' : null;
     if (!tool) throw new BadRequestException('language must be "javascript" or "python"');
 
-    const output = await this.runner.execute(tool, { code, stdin });
+    // On the Cloudflare backend this is the limit inside the container, not
+    // the round trip: container start happens before `timeout` runs, so a
+    // cold start does not eat the app's budget (it does add wall-clock).
+    const output = await this.runner.execute(tool, { code, stdin, timeout_seconds: timeoutSeconds });
     await this.bridge.note(agentId, `App "${entry.name}" ran ${language} in the sandbox`);
     return { language, output };
   }

@@ -168,9 +168,9 @@ export class AppBridgeController {
   @Post('compute')
   computeRun(
     @Param('id') id: string, @Param('appId') appId: string,
-    @Body() body: { language: string; code: string; stdin?: string },
+    @Body() body: { language: string; code: string; stdin?: string; timeoutSeconds?: number },
   ) {
-    return this.compute.run(id, appId, body.language ?? '', body.code ?? '', body.stdin);
+    return this.compute.run(id, appId, body.language ?? '', body.code ?? '', body.stdin, body.timeoutSeconds);
   }
 
   @Post('llm')

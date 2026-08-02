@@ -20,7 +20,7 @@ llm:{complete:(prompt,opts)=>c('llm.complete',Object.assign({prompt},opts||{})),
 data:{put:(collection,row)=>c('data.put',{collection,row}),query:(collection,q)=>c('data.query',Object.assign({collection},q||{})),remove:(collection,id)=>c('data.delete',{collection,id})},
 sql:{engine:()=>c('sql.engine')},
 connections:{list:()=>c('connections.list'),read:(provider,op,params)=>c('connections.read',{provider,op,params:params||{}}),propose:(provider,op,payload)=>c('connections.propose',{provider,op,payload:payload||{}})},
-compute:{run:(language,code,stdin)=>c('compute.run',{language,code,stdin})},
+compute:{status:()=>c('compute.status'),run:(language,code,stdin,timeoutSeconds)=>c('compute.run',{language,code,stdin,timeoutSeconds})},
 ui:{theme:()=>c('ui.theme'),toast:(text)=>c('ui.toast',{text})}
 }})();</script>`;
 
@@ -112,7 +112,7 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
         'llm.complete': 'llm', 'llm.stream': 'llm',
         'data.put': 'data', 'data.query': 'data', 'data.delete': 'data', 'sql.engine': 'data',
         'connections.list': 'connections', 'connections.read': 'connections', 'connections.propose': 'connections',
-        'compute.run': 'compute',
+        'compute.run': 'compute', 'compute.status': 'compute',
       } as Record<string, string>)[m.op];
 
       try {
@@ -171,8 +171,10 @@ export function AppHost({ agentId, miniApp, style }: { agentId: string; miniApp:
             return reply(await api.appConnRead(agentId, ma.id, String(m.args.provider ?? 'google'), String(m.args.op ?? ''), m.args.params));
           case 'connections.propose':
             return reply(await api.appConnPropose(agentId, ma.id, String(m.args.provider ?? 'google'), String(m.args.op ?? ''), m.args.payload));
+          case 'compute.status': return reply(await api.appComputeStatus(agentId, ma.id));
           case 'compute.run':
-            return reply(await api.appComputeRun(agentId, ma.id, String(m.args.language ?? ''), String(m.args.code ?? ''), typeof m.args.stdin === 'string' ? m.args.stdin : undefined));
+            return reply(await api.appComputeRun(agentId, ma.id, String(m.args.language ?? ''), String(m.args.code ?? ''),
+              typeof m.args.stdin === 'string' ? m.args.stdin : undefined, num(m.args.timeoutSeconds)));
           case 'ui.theme': return reply({ theme: st.theme });
           case 'ui.toast': { st.showToast(String(m.args.text ?? '').slice(0, 120)); return reply({ ok: true }); }
           default: return reply(undefined, `unknown operation: ${m.op}`);

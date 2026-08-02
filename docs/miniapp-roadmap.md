@@ -191,11 +191,40 @@ handles "hold 50k rows and pivot them" today — then **(b)** when apps need
 data the agent and multiple app versions share.
 
 For heavy compute, apps do not need a database at all; they need the runner we
-already ship. **`yaam.compute.run(language, code, files)`** hands work to the
-same sandboxed backend as `run_js`/`run_python` (`docs/code-execution.md`) —
-network-denied, scratch-only, time-capped. That is how an app gets pandas
-without us shipping pandas to the browser. It inherits the runner's existing
-safety properties rather than inventing new ones.
+already ship. **`yaam.compute.run(language, code, stdin, timeoutSeconds)`**
+hands work to the same sandboxed backend as `run_js`/`run_python`
+(`docs/code-execution.md`) — network-denied, scratch-only, time-capped. That is
+how an app gets pandas without us shipping pandas to the browser. It inherits
+the runner's existing safety properties rather than inventing new ones.
+
+**On the Cloudflare backend.** Apps route through `RunnerService`, so the
+paid backend needs no app-specific code: the same `{language, code, stdin,
+timeout_seconds}` body reaches the runner worker, the bearer token stays on
+our server, and the container never holds a credential. Three differences are
+worth knowing, because they leak into app behavior:
+
+- **Languages differ by backend.** The local sandbox offers python only when a
+  python binary exists; Cloudflare always offers both. Apps therefore call
+  `yaam.compute.status()` and hide the button rather than discovering it at
+  the point of failure — the same feature-detection discipline as
+  `if (window.yaam)`.
+- **The timeout is the program's, not the round trip's.** `timeout Ns` runs
+  *inside* the container, so a cold container start does not eat the app's
+  budget — but it does add real wall-clock, and one sandbox is created and
+  destroyed per call. An app polling `compute.run` in a loop pays that every
+  time; the rate limiter bills compute to the model-call class (30/min) partly
+  for this reason.
+- **Caps must agree across the hop.** The app-side stdin limit is exactly the
+  runner's 100 KB, so oversized input is refused loudly. It was 1 MB, which
+  meant a 500 KB payload was silently sliced somewhere the app could never
+  observe — the same silent-truncation failure this document was written to
+  stop repeating.
+
+None of this can be end-to-end verified here: it needs a Workers Paid plan and
+a deployed worker. What *is* verified is the contract — the app path is tested
+against a stubbed transport asserting the exact body, the auth header, the
+timeout mapping (GNU `timeout`'s exit 124 → "killed"), and that a worker
+refusal reaches the app as an error rather than as empty-looking output.
 
 ## 6. Integrations: fixed shapes to read, proposals to write
 
