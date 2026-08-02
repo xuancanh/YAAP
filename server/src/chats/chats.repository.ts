@@ -14,6 +14,10 @@ export type ChatSession = typeof chatSessions.$inferSelect;
 export type ChatTurn = typeof chatTurns.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 
+/** Transaction handle handed to db.transaction callbacks (node-postgres in
+ *  production, PGlite in tests — both implement the same Drizzle API). */
+type Tx = Parameters<Parameters<DrizzleDb['transaction']>[0]>[0];
+
 @Injectable()
 export class ChatsRepository {
   constructor(@Inject(DRIZZLE_DB) private readonly db: DrizzleDb) {}
@@ -68,10 +72,14 @@ export class ChatsRepository {
       .where(eq(chatSessions.id, id));
   }
 
+  /** Multi-delete in one transaction: a mid-sequence failure must not leave
+   *  orphaned turns/messages behind. */
   async deleteSession(id: string): Promise<void> {
-    await this.db.delete(chatMessages).where(eq(chatMessages.sessionId, id));
-    await this.db.delete(chatTurns).where(eq(chatTurns.sessionId, id));
-    await this.db.delete(chatSessions).where(eq(chatSessions.id, id));
+    await this.db.transaction(async (tx) => {
+      await tx.delete(chatMessages).where(eq(chatMessages.sessionId, id));
+      await tx.delete(chatTurns).where(eq(chatTurns.sessionId, id));
+      await tx.delete(chatSessions).where(eq(chatSessions.id, id));
+    });
   }
 
   // ---- turns ----
@@ -116,33 +124,86 @@ export class ChatsRepository {
   }
 
   /** Edit & resend / retry support: drop everything from a turn onward
-   *  (the turn records and their transcript rows). */
+   *  (the turn records and their transcript rows), atomically. */
   async truncateFromTurn(sessionId: string, turnSeq: number): Promise<void> {
-    const doomed = await this.db.select({ id: chatTurns.id }).from(chatTurns)
-      .where(and(eq(chatTurns.sessionId, sessionId), gte(chatTurns.seq, turnSeq)));
-    const ids = doomed.map((r) => r.id);
-    if (ids.length > 0) {
-      await this.db.delete(chatMessages)
-        .where(and(eq(chatMessages.sessionId, sessionId), inArray(chatMessages.turnId, ids)));
-      await this.db.delete(chatTurns)
+    await this.db.transaction(async (tx) => {
+      const doomed = await tx.select({ id: chatTurns.id }).from(chatTurns)
         .where(and(eq(chatTurns.sessionId, sessionId), gte(chatTurns.seq, turnSeq)));
-    }
+      const ids = doomed.map((r) => r.id);
+      if (ids.length > 0) {
+        await tx.delete(chatMessages)
+          .where(and(eq(chatMessages.sessionId, sessionId), inArray(chatMessages.turnId, ids)));
+        await tx.delete(chatTurns)
+          .where(and(eq(chatTurns.sessionId, sessionId), gte(chatTurns.seq, turnSeq)));
+      }
+    });
   }
 
   /** Fork support: copy turns/messages (optionally up to a turn seq) into a
    *  new session with fresh row ids. */
   async copyInto(sourceId: string, targetId: string, upToTurnSeq: number | null): Promise<void> {
-    const turns = (await this.listTurns(sourceId))
+    await this.db.transaction(async (tx) => {
+      await this.copyIntoTx(tx, sourceId, targetId, upToTurnSeq);
+    });
+  }
+
+  /** Fork a session row plus its transcript in one transaction, so a
+   *  mid-copy failure can't leave a half-populated fork behind. Carries over
+   *  the fields ChatsService.fork used to patch in separate writes. */
+  async forkSession(src: ChatSession, upToTurnSeq: number | null): Promise<ChatSession> {
+    return this.db.transaction(async (tx) => {
+      const now = nowIso();
+      const row: ChatSession = {
+        id: newId(),
+        workspaceId: src.workspaceId,
+        agentId: src.agentId,
+        agentTypeId: src.agentTypeId,
+        name: `Fork · ${src.name || src.autoTitle || 'chat'}`,
+        autoTitle: '',
+        cwd: src.cwd,
+        model: src.model,
+        thinkingEffort: src.thinkingEffort,
+        permissionMode: src.permissionMode,
+        approvals: '{}',
+        skillSourceIds: '[]',
+        pinned: 0,
+        tags: JSON.stringify([...(JSON.parse(src.tags) as string[]), 'fork']),
+        archivedAt: null,
+        draft: '',
+        tokenCeiling: src.tokenCeiling,
+        compactSummary: src.compactSummary,
+        compactCutoff: src.compactCutoff,
+        tokensIn: src.tokensIn,
+        tokensOut: src.tokensOut,
+        distilledAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await tx.insert(chatSessions).values(row);
+      await this.copyIntoTx(tx, src.id, row.id, upToTurnSeq);
+      return row;
+    });
+  }
+
+  /** The actual copy, on a transaction handle so callers can compose it with
+   *  their own writes (see forkSession). */
+  private async copyIntoTx(tx: Tx, sourceId: string, targetId: string, upToTurnSeq: number | null): Promise<void> {
+    const turns = (await tx.select().from(chatTurns)
+      .where(eq(chatTurns.sessionId, sourceId))
+      .orderBy(asc(chatTurns.seq)))
       .filter((t) => upToTurnSeq === null || t.seq <= upToTurnSeq);
     const turnIdMap = new Map<string, string>();
     for (const t of turns) {
       const nid = newId();
       turnIdMap.set(t.id, nid);
-      await this.db.insert(chatTurns).values({ ...t, id: nid, sessionId: targetId });
+      await tx.insert(chatTurns).values({ ...t, id: nid, sessionId: targetId });
     }
-    const messages = (await this.listMessages(sourceId)).filter((m) => turnIdMap.has(m.turnId));
+    const messages = (await tx.select().from(chatMessages)
+      .where(eq(chatMessages.sessionId, sourceId))
+      .orderBy(asc(chatMessages.seq)))
+      .filter((m) => turnIdMap.has(m.turnId));
     for (const m of messages) {
-      await this.db.insert(chatMessages).values({
+      await tx.insert(chatMessages).values({
         ...m, id: newId(), sessionId: targetId, turnId: turnIdMap.get(m.turnId)!,
       });
     }

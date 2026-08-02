@@ -155,6 +155,38 @@ test('fork copies the transcript and leaves the original intact (FR-6.3)', async
   assert.equal((await chats.get(s.id)).name, 'Original');
 });
 
+test('fork at a turn copies only up to that turn, with fresh row ids', async () => {
+  const { chats, turns, repo } = await setup();
+  const s = await chats.create({ workspaceId: 'ws1', name: 'Original' });
+  await collect(turns.run(s.id, { text: 'first' }));
+  await collect(turns.run(s.id, { text: 'second' }));
+  const [first] = await repo.listTurns(s.id);
+
+  const forked = await chats.fork(s.id, first.id);
+  const forkedTurns = await repo.listTurns(forked.id);
+  assert.equal(forkedTurns.length, 1);
+  assert.equal(forkedTurns[0].input, 'first');
+  assert.notEqual(forkedTurns[0].id, first.id);
+  const forkedMessages = await repo.listMessages(forked.id);
+  assert.equal(forkedMessages.length, 2);
+  assert.ok(forkedMessages.every((m) => m.turnId === forkedTurns[0].id));
+  // original untouched
+  assert.equal((await repo.listTurns(s.id)).length, 2);
+});
+
+test('deleting a session leaves no orphaned turns or messages', async () => {
+  const { chats, turns, repo } = await setup();
+  const s = await chats.create({ workspaceId: 'ws1' });
+  await collect(turns.run(s.id, { text: 'one' }));
+  await collect(turns.run(s.id, { text: 'two' }));
+  assert.equal((await repo.listTurns(s.id)).length, 2);
+
+  await chats.remove(s.id);
+  assert.equal(await repo.getSession(s.id), undefined);
+  assert.equal((await repo.listTurns(s.id)).length, 0);
+  assert.equal((await repo.listMessages(s.id)).length, 0);
+});
+
 test('truncateFrom drops a turn and everything after it (FR-6.1/6.2)', async () => {
   const { chats, turns, repo } = await setup();
   const s = await chats.create({ workspaceId: 'ws1' });

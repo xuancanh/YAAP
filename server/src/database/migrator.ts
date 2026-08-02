@@ -313,20 +313,34 @@ const MIGRATIONS: Migration[] = [
   },
 ];
 
+/** Advisory-lock key serializing migration runs: two instances booting
+ *  against the same database would otherwise both pass the hasColumn checks
+ *  and race the ALTERs (the second crashes boot). Held on one session, so
+ *  callers must pass a dedicated single connection (a pool client, PGlite),
+ *  never the pool itself — a pool would put lock/unlock on different
+ *  sessions. PGlite implements pg_advisory_lock too (single-connection, so
+ *  effectively uncontended). */
+const MIGRATION_LOCK_KEY = 727274;
+
 export async function runPgMigrations(db: Queryable, logger: { log: (msg: string) => void }): Promise<void> {
-  await db.query('CREATE TABLE IF NOT EXISTS __migrations ("id" TEXT PRIMARY KEY, "appliedAt" TEXT NOT NULL)');
-  const res = await db.query('SELECT "id" FROM __migrations');
-  const applied = new Set((res.rows as Array<{ id: string }>).map((r) => r.id));
-  for (const m of MIGRATIONS) {
-    if (applied.has(m.id)) continue;
-    await m.up(db);
-    await db.query('INSERT INTO __migrations ("id", "appliedAt") VALUES ($1, $2)', [m.id, new Date().toISOString()]);
-    logger.log(`applied migration ${m.id}`);
+  await db.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
+  try {
+    await db.query('CREATE TABLE IF NOT EXISTS __migrations ("id" TEXT PRIMARY KEY, "appliedAt" TEXT NOT NULL)');
+    const res = await db.query('SELECT "id" FROM __migrations');
+    const applied = new Set((res.rows as Array<{ id: string }>).map((r) => r.id));
+    for (const m of MIGRATIONS) {
+      if (applied.has(m.id)) continue;
+      await m.up(db);
+      await db.query('INSERT INTO __migrations ("id", "appliedAt") VALUES ($1, $2)', [m.id, new Date().toISOString()]);
+      logger.log(`applied migration ${m.id}`);
+    }
+    // Data repair on every boot (not a tracked migration): turns are created
+    // 'running' and finalized in-process, so a crash mid-turn orphans them.
+    // Reap them to 'error' so they stop rendering as live.
+    const reaped = await db.query(`UPDATE chat_turns SET "status" = 'error' WHERE "status" = 'running'`);
+    const reapedCount = (reaped as { rowCount?: number }).rowCount ?? 0;
+    if (reapedCount > 0) logger.log(`reaped ${reapedCount} orphaned running turn(s)`);
+  } finally {
+    await db.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]);
   }
-  // Data repair on every boot (not a tracked migration): turns are created
-  // 'running' and finalized in-process, so a crash mid-turn orphans them.
-  // Reap them to 'error' so they stop rendering as live.
-  const reaped = await db.query(`UPDATE chat_turns SET "status" = 'error' WHERE "status" = 'running'`);
-  const reapedCount = (reaped as { rowCount?: number }).rowCount ?? 0;
-  if (reapedCount > 0) logger.log(`reaped ${reapedCount} orphaned running turn(s)`);
 }

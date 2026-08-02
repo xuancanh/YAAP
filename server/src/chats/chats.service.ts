@@ -86,7 +86,8 @@ export class ChatsService {
   }
 
   /** Fork a new session from this one, optionally branching at a turn; the
-   *  original stays intact (FR-6.3). */
+   *  original stays intact (FR-6.3). The fork row and transcript copy commit
+   *  together (see repo.forkSession). */
   async fork(id: string, turnId?: string) {
     const src = await this.get(id);
     let upTo: number | null = null;
@@ -95,25 +96,7 @@ export class ChatsService {
       if (!turn || turn.sessionId !== id) throw new NotFoundException(`turn ${turnId}`);
       upTo = turn.seq;
     }
-    const forked = await this.repo.createSession({
-      workspaceId: src.workspaceId,
-      agentId: src.agentId,
-      agentTypeId: src.agentTypeId,
-      name: `Fork · ${src.name || src.autoTitle || 'chat'}`,
-      cwd: src.cwd,
-      model: src.model,
-      thinkingEffort: src.thinkingEffort,
-      permissionMode: src.permissionMode,
-      tokenCeiling: src.tokenCeiling,
-    });
-    await this.repo.updateSession(forked.id, {
-      tags: JSON.stringify([...(JSON.parse(src.tags) as string[]), 'fork']),
-      compactSummary: src.compactSummary,
-      compactCutoff: src.compactCutoff,
-      tokensIn: src.tokensIn,
-      tokensOut: src.tokensOut,
-    });
-    await this.repo.copyInto(id, forked.id, upTo);
+    const forked = await this.repo.forkSession(src, upTo);
     return this.get(forked.id);
   }
 
