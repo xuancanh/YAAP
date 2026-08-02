@@ -19,9 +19,10 @@
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
-import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { Logger, Module, OnModuleInit } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import configuration from './config/configuration';
+import { validateEnv } from './config/validation';
 import { DatabaseModule } from './database/database.module';
 import { StorageModule } from './storage/storage.module';
 import { StatusModule } from './status/status.module';
@@ -40,7 +41,7 @@ import { ConnectionsModule } from './connections/connections.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
+    ConfigModule.forRoot({ isGlobal: true, load: [configuration], validate: validateEnv }),
     DatabaseModule,
     StorageModule,
     StatusModule,
@@ -58,4 +59,18 @@ import { ConnectionsModule } from './connections/connections.module';
     ConnectionsModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements OnModuleInit {
+  private readonly logger = new Logger(AppModule.name);
+
+  constructor(private readonly config: ConfigService) {}
+
+  /** Make the plain:-token fallback visible: secretbox silently stores tokens
+   *  unencrypted without a key, which hosted deployments must not miss. */
+  onModuleInit(): void {
+    if (!this.config.get<string>('tokenEncryptionKey')) {
+      this.logger.warn(
+        'TOKEN_ENCRYPTION_KEY is not set — tokens at rest will be stored as "plain:" (unencrypted). Set TOKEN_ENCRYPTION_KEY for any hosted deployment.',
+      );
+    }
+  }
+}

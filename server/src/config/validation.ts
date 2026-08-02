@@ -1,0 +1,70 @@
+/**
+ * Fail-fast environment validation, wired via ConfigModule.forRoot's
+ * `validate` hook. Boot aborts with one aggregated error listing every
+ * invalid/missing variable instead of silently misbehaving later.
+ *
+ * Dev keeps the docker-compose.dev.yml defaults applied in configuration.ts;
+ * production must set DATABASE_URL and the S3_* vars explicitly — no silent
+ * fallback to dev credentials.
+ */
+import { z } from 'zod';
+
+/** Integer-valued env var (arrives as a string; must be all digits). */
+const intVar = (name: string) =>
+  z.string().regex(/^\d+$/, `${name} must be a non-negative integer`).optional();
+
+const envSchema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).optional(),
+    PORT: intVar('PORT'),
+    DATABASE_URL: z.string().min(1).optional(),
+    S3_ENDPOINT: z.string().min(1).optional(),
+    S3_REGION: z.string().min(1).optional(),
+    S3_BUCKET: z.string().min(1).optional(),
+    S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+    S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+    S3_FORCE_PATH_STYLE: z.enum(['true', 'false']).optional(),
+    DEFAULT_TOKEN_CEILING: intVar('DEFAULT_TOKEN_CEILING'),
+    MAX_TOOL_ROUNDS: intVar('MAX_TOOL_ROUNDS'),
+    COMPACTION_THRESHOLD_TOKENS: intVar('COMPACTION_THRESHOLD_TOKENS'),
+    LOOPS_ENABLED: z.enum(['true', 'false']).optional(),
+    TELEGRAM_BOT_TOKEN: z.string().optional(),
+    TOKEN_ENCRYPTION_KEY: z.string().optional(),
+    PUBLIC_BASE_URL: z.string().optional(),
+    GOOGLE_CLIENT_ID: z.string().optional(),
+    GOOGLE_CLIENT_SECRET: z.string().optional(),
+    MS_CLIENT_ID: z.string().optional(),
+    MS_CLIENT_SECRET: z.string().optional(),
+  })
+  .superRefine((env, ctx) => {
+    if (env.NODE_ENV !== 'production') return;
+    const required = [
+      'DATABASE_URL',
+      'S3_ENDPOINT',
+      'S3_BUCKET',
+      'S3_ACCESS_KEY_ID',
+      'S3_SECRET_ACCESS_KEY',
+    ] as const;
+    for (const name of required) {
+      if (!env[name]) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [name],
+          message: `${name} is required when NODE_ENV=production (no dev-credential fallback)`,
+        });
+      }
+    }
+  });
+
+/** ConfigModule `validate` hook: returns the raw env untouched on success
+ *  (defaults live in configuration.ts), throws an aggregated error on failure. */
+export function validateEnv(config: Record<string, unknown>): Record<string, unknown> {
+  const result = envSchema.safeParse(config);
+  if (!result.success) {
+    const lines = result.error.issues.map(
+      (issue) => `  ${issue.path.join('.') || '(root)'}: ${issue.message}`,
+    );
+    throw new Error(`Invalid environment configuration:\n${lines.join('\n')}`);
+  }
+  return config;
+}

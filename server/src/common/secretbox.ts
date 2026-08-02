@@ -1,9 +1,10 @@
 /**
  * secretbox — tiny AES-256-GCM sealing for tokens at rest.
  *
- * The key comes from TOKEN_ENCRYPTION_KEY (any string; hashed to 256 bits).
- * Without one we fall back to marked plaintext so local dev works with zero
- * setup, matching the agent-types apiKey precedent; hosted deployments must
+ * The key comes from TOKEN_ENCRYPTION_KEY (any string; hashed to 256 bits),
+ * mirrored into typed config as `tokenEncryptionKey`. Without one we fall
+ * back to marked plaintext so local dev works with zero setup (AppModule
+ * logs a loud boot warning), matching the agent-types apiKey precedent; hosted deployments must
  * set the key. Sealed values are self-describing ("sealed:<iv>:<tag>:<data>",
  * base64url), so rotating from plaintext to sealed just works on next write.
  */

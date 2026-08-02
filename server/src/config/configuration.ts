@@ -29,6 +29,9 @@ export default () => ({
   loopsEnabled: (process.env.LOOPS_ENABLED || 'true') === 'true',
   /** Telegram bot token (phase 4). Empty = channel disabled. */
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  /** AES-256-GCM key for sealing tokens at rest (common/secretbox.ts).
+   *  Empty = tokens stored as "plain:" — AppModule logs a loud boot warning. */
+  tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY || '',
   /** Where the API is reachable from a browser — the OAuth redirect base
    *  (register <publicBaseUrl>/api/connections/google/callback in the
    *  Google client). Dev default is the API port, not the Vite port. */
@@ -37,6 +40,8 @@ export default () => ({
    *  self-hosted). Empty = the google provider shows as unconfigured. */
   googleClientId: process.env.GOOGLE_CLIENT_ID || '',
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+  msClientId: process.env.MS_CLIENT_ID || '',
+  msClientSecret: process.env.MS_CLIENT_SECRET || '',
   /** Estimated provider-input tokens that trigger auto-compaction (FR-7.3). */
   compactionThresholdTokens: parseInt(process.env.COMPACTION_THRESHOLD_TOKENS || '120000', 10),
 });
