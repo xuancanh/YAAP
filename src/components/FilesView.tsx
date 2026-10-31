@@ -8,15 +8,25 @@ import { sealHtml } from '../lib/sandbox';
 export function FilesView() {
   const app = useApp();
   const [preview, setPreview] = useState<FilePreview | null>(null);
+  /** Voice notes (docs/voice.md): the transcript sidecar, when one exists. */
+  const [transcript, setTranscript] = useState<string | null>(null);
   const target = app.fileTarget;
   const path = app.currentFile;
   const agent = target?.kind === 'agent' ? app.agents.find((a) => a.id === target.id) : null;
 
   useEffect(() => {
     setPreview(null);
+    setTranscript(null);
     if (!target || !path) return;
-    const load = target.kind === 'workspace' ? api.wsPreview(target.id, path) : api.agentPreview(target.id, path);
-    void load.then(setPreview).catch(() => setPreview(null));
+    const previewOf = (p: string) => (target.kind === 'workspace' ? api.wsPreview(target.id, p) : api.agentPreview(target.id, p));
+    void previewOf(path).then((p) => {
+      setPreview(p);
+      if (p.kind === 'audio') {
+        void previewOf(`${path}.transcript.txt`)
+          .then((t) => setTranscript((t.text ?? '').replace(/^# duration: \d+s\n/, '').trim() || null))
+          .catch(() => setTranscript(null));
+      }
+    }).catch(() => setPreview(null));
   }, [target, path]);
 
   if (!path) {
@@ -41,7 +51,7 @@ export function FilesView() {
 
   const name = path.split('/').pop()!;
   const ext = name.split('.').pop() ?? '';
-  const glyph = preview?.kind === 'image' ? '🖼️' : preview?.kind === 'html' ? '🧩' : '📄';
+  const glyph = preview?.kind === 'image' ? '🖼️' : preview?.kind === 'html' ? '🧩' : preview?.kind === 'audio' ? '🎙️' : '📄';
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -77,6 +87,19 @@ export function FilesView() {
         {preview === null && <div style={{ padding: 22, fontSize: 13, color: 'var(--text-faint)' }}>Loading…</div>}
         {preview?.kind === 'image' && preview.base64 && (
           <div style={{ padding: 22 }}><img src={`data:${preview.contentType};base64,${preview.base64}`} alt={name} style={{ maxWidth: '100%', borderRadius: 8 }} /></div>
+        )}
+        {preview?.kind === 'audio' && (
+          <div style={{ padding: 22, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {preview.base64
+              ? <audio controls preload="metadata" src={`data:${preview.contentType};base64,${preview.base64}`} style={{ width: '100%', maxWidth: 520 }} />
+              : <div style={{ fontSize: 13, color: 'var(--text-faint)' }}>Audio file · {preview.size} bytes (too large to preview inline)</div>}
+            <div>
+              <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 6 }}>Transcript</div>
+              {transcript
+                ? <div style={{ fontSize: 13.5, lineHeight: 1.65, color: 'var(--text)', whiteSpace: 'pre-wrap', maxWidth: 720 }}>{transcript}</div>
+                : <div style={{ fontSize: 12.5, color: 'var(--text-faint)', fontStyle: 'italic' }}>No transcript — transcription was off or unavailable when this file was uploaded (docs/voice.md).</div>}
+            </div>
+          </div>
         )}
         {preview?.kind === 'pdf' && preview.base64 && (
           // A data: URL is already opaque-origin, but the sandbox attribute is

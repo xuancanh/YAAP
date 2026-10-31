@@ -15,11 +15,12 @@ export async function createApp(): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  // Composer attachments upload base64-in-JSON (≤5MB per file, one file per
-  // request ≈ 7MB on the wire) — the 100kb default would reject them; 25mb
-  // leaves headroom without opening the door to unbounded bodies.
-  app.use(json({ limit: '25mb' }));
-  app.use(urlencoded({ limit: '25mb', extended: true }));
+  // Composer attachments upload base64-in-JSON, one file per request: ≤5MB
+  // for files, ≤25MB for voice notes (docs/voice.md) ≈ 34MB on the wire —
+  // the 100kb default would reject them; 40mb leaves headroom without
+  // opening the door to unbounded bodies.
+  app.use(json({ limit: '40mb' }));
+  app.use(urlencoded({ limit: '40mb', extended: true }));
   const config = app.get(ConfigService);
   // Only browser cross-origin calls need CORS: requests without an Origin
   // header (curl, server-to-server, same-origin) always pass; production

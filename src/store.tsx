@@ -36,7 +36,16 @@ export interface FileTarget { kind: 'workspace' | 'agent'; id: string }
 
 /** A message staged while a turn streams: drained afterwards for the session
  *  it was written in, with its attachments (FR: nothing is silently dropped). */
-export interface QueuedMessage { id: number; sessionId: string; text: string; attachments: Array<{ path: string; kind: string }> }
+export interface QueuedMessage { id: number; sessionId: string; text: string; attachments: SentAttachment[] }
+/** The attachment descriptor persisted on a turn (the server reads files by path). */
+export interface SentAttachment { path: string; kind: string; transcript?: string | null; durationSeconds?: number | null }
+/** A composer attachment chip. kind 'audio' = voice note (docs/voice.md): the
+ *  transcript/duration are display-only — the server re-reads the sidecar. */
+export interface ComposerAttachment { id: number; path: string; kind: string; transcript?: string | null; durationSeconds?: number | null }
+const toSent = (a: ComposerAttachment): SentAttachment => ({
+  path: a.path, kind: a.kind,
+  ...(a.kind === 'audio' ? { transcript: a.transcript ?? null, durationSeconds: a.durationSeconds ?? null } : {}),
+});
 
 interface Store {
   // layout
@@ -76,8 +85,8 @@ interface Store {
   approve: (callId: string, decision: ApprovalDecision) => void;
   queue: QueuedMessage[]; removeQueued: (id: number) => void;
   drafts: Record<string, string>; setDraft: (v: string) => void;
-  attachments: Array<{ id: number; path: string; kind: string }>;
-  addAttachment: (path: string, kind?: string) => void;
+  attachments: ComposerAttachment[];
+  addAttachment: (path: string, kind?: string, extra?: Partial<Pick<ComposerAttachment, 'transcript' | 'durationSeconds'>>) => void;
   removeAttachment: (id: number) => void; clearAttachments: () => void;
   retry: () => Promise<void>; editResend: (turnId: string) => Promise<void>;
   fork: (turnId?: string) => Promise<void>; promote: (turnId: string) => Promise<void>;
@@ -171,7 +180,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [live, setLive] = useState<LiveItem[]>([]);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [attachments, setAttachments] = useState<Array<{ id: number; path: string; kind: string }>>([]);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
 
   const [fileTarget, setFileTarget] = useState<FileTarget | null>(null);
   const [fileList, setFileList] = useState<FileEntry[]>([]);
@@ -373,8 +382,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ---- attachments ----
-  const addAttachment = useCallback((path: string, kind = 'text') => {
-    setAttachments((a) => [...a, { id: Date.now() + Math.random(), path, kind }]);
+  const addAttachment = useCallback((path: string, kind = 'text', extra?: Partial<Pick<ComposerAttachment, 'transcript' | 'durationSeconds'>>) => {
+    setAttachments((a) => [...a, { id: Date.now() + Math.random(), path, kind, ...extra }]);
   }, []);
   const removeAttachment = useCallback((id: number) => setAttachments((a) => a.filter((x) => x.id !== id)), []);
   const clearAttachments = useCallback(() => setAttachments([]), []);
@@ -500,12 +509,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     if (streaming) {
       // queue with the composer attachments so continuation drops nothing
-      setQueue((q) => [...q, { id: Date.now(), sessionId: id, text: trimmed, attachments: attachments.map((a) => ({ path: a.path, kind: a.kind })) }]);
+      setQueue((q) => [...q, { id: Date.now(), sessionId: id, text: trimmed, attachments: attachments.map(toSent) }]);
       setDraft('');
       clearAttachments();
       return;
     }
-    const atts = attachments.map((a) => ({ path: a.path, kind: a.kind }));
+    const atts = attachments.map(toSent);
     setDraft('');
     clearAttachments();
     await runTurn(id, trimmed, atts);

@@ -7,6 +7,8 @@ import { useApp, grad, type LiveItem, type LiveTool } from '../store';
 import { api, PROVIDER_COLORS, type Agent, type ApprovalDecision, type ChatMessage, type ChatTurn, type ToolReview } from '../lib/api';
 import { safeJsonParse, workspaceSpend } from '../lib/util';
 import { fmtUsd, usdFor } from '../lib/pricing';
+import { MAX_AUDIO_BYTES, fmtDuration, isAudioFile, recorderAvailable, useVoiceRecorder, AUDIO_EXT_RE } from '../lib/voice';
+import { VoiceChip } from './VoiceChip';
 
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 5, borderRadius: 6, display: 'flex' };
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -191,15 +193,21 @@ const UserRow = memo(function UserRow({ m, turn, onEditResend, onFork }: {
   m: ChatMessage; turn?: ChatTurn;
   onEditResend: (turnId: string) => void; onFork: (turnId: string) => void;
 }) {
-  const atts = safeJsonParse<Array<{ path?: string; name?: string }>>(turn?.attachments, []);
+  const atts = safeJsonParse<Array<{ path?: string; name?: string; kind?: string; transcript?: string | null; durationSeconds?: number | null }>>(turn?.attachments, []);
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '16px 0', animation: 'msgIn .2s ease' }}>
       <div style={{ maxWidth: '80%' }}>
         {atts.length > 0 && (
           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginBottom: 6, flexWrap: 'wrap' }}>
-            {atts.map((a, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', fontSize: 11.5, color: 'var(--text-dim)', ...mono }}>▤ {(a.path ?? a.name ?? '').split('/').pop()}</div>
-            ))}
+            {atts.map((a, i) => {
+              const p = a.path ?? a.name ?? '';
+              if (a.kind === 'audio' || AUDIO_EXT_RE.test(p)) {
+                return <VoiceChip key={i} durationSeconds={a.durationSeconds} transcript={a.transcript} align="right" />;
+              }
+              return (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', fontSize: 11.5, color: 'var(--text-dim)', ...mono }}>▤ {p.split('/').pop()}</div>
+              );
+            })}
           </div>
         )}
         <div style={{ background: 'var(--user)', border: '1px solid var(--border-soft)', borderRadius: '14px 14px 4px 14px', padding: '11px 15px', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{m.content}</div>
@@ -212,9 +220,49 @@ const UserRow = memo(function UserRow({ m, turn, onEditResend, onFork }: {
   );
 });
 
-const AssistantRow = memo(function AssistantRow({ m, turn, agent, isNewest, isLast, streaming, onOpenArtifact, onQuickReply }: {
+/** Reply TTS (docs/voice.md): fetch → blob → Audio; one playing at a time. */
+function SpeakButton({ text, voice }: { text: string; voice?: string }) {
+  const [state, setState] = useState<'idle' | 'loading' | 'playing'>('idle');
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const urlRef = useRef<string | null>(null);
+  const release = () => {
+    audioRef.current?.pause();
+    audioRef.current = null;
+    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+    urlRef.current = null;
+    setState('idle');
+  };
+  useEffect(() => () => { audioRef.current?.pause(); if (urlRef.current) URL.revokeObjectURL(urlRef.current); }, []);
+  const toggle = async () => {
+    if (state !== 'idle') { release(); return; }
+    setState('loading');
+    try {
+      const blob = await api.tts(text, voice);
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      urlRef.current = url;
+      audioRef.current = audio;
+      audio.onended = release;
+      audio.onerror = release;
+      await audio.play();
+      setState('playing');
+    } catch {
+      release();
+    }
+  };
+  const title = state === 'playing' ? 'Stop' : state === 'loading' ? 'Loading audio…' : 'Read aloud';
+  return (
+    <button onClick={() => void toggle()} title={title} aria-label={title} style={{ ...ghostBtn, color: state === 'idle' ? 'var(--text-faint)' : 'var(--accent-hi)', minWidth: 28, minHeight: 28, alignItems: 'center', justifyContent: 'center' }}>
+      {state === 'playing' ? <I d={P.stopSquare} size={13} fill="currentColor" /> : <I d={P.speaker} size={14} style={state === 'loading' ? { animation: 'pulse 1s infinite' } : undefined} />}
+    </button>
+  );
+}
+
+const AssistantRow = memo(function AssistantRow({ m, turn, agent, isNewest, isLast, streaming, tts, ttsVoice, onOpenArtifact, onQuickReply }: {
   m: ChatMessage; turn?: ChatTurn; agent?: Agent;
   isNewest: boolean; isLast: boolean; streaming: boolean;
+  /** Settings → ttsEnabled: show the speaker button (docs/voice.md). */
+  tts: boolean; ttsVoice?: string;
   onOpenArtifact: (title: string, src: string) => void; onQuickReply: (text: string) => void;
 }) {
   const { text: bodyText, replies } = parseQuickReplies(m.content);
@@ -223,7 +271,10 @@ const AssistantRow = memo(function AssistantRow({ m, turn, agent, isNewest, isLa
     <div style={{ display: 'flex', gap: 12, margin: '16px 0', animation: 'msgIn .2s ease' }}>
       <div style={{ width: 28, height: 28, borderRadius: 8, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2, fontSize: 14 }}>{agent?.emoji ?? '💬'}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{bodyText}</div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{bodyText}</div>
+          {tts && bodyText.trim() && !(streaming && isNewest) && <SpeakButton text={bodyText} voice={ttsVoice} />}
+        </div>
         {art && (
           <div onClick={() => onOpenArtifact(art.title, art.src)} style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 11, border: '1px solid var(--border)', borderRadius: 11, padding: '11px 14px', cursor: 'pointer', background: 'var(--panel)', maxWidth: '100%' }}>
             <div style={{ width: 34, height: 34, borderRadius: 8, background: 'var(--accent-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>
@@ -259,20 +310,39 @@ export function ChatView() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
 
-  const uploadFiles = async (files: FileList | File[]) => {
+  /** Uploads composer files; audio (recorded or dropped) takes the voice-note
+   *  path: 25MB bound, server-side transcription, chip with the transcript. */
+  const uploadFiles = async (files: FileList | File[], durations: Map<File, number> = new Map()) => {
     for (const file of Array.from(files).slice(0, 8)) {
-      if (file.size > 5_000_000) { app.showToast(`${file.name} is too large (5MB max)`); continue; }
+      const audio = isAudioFile(file);
+      const limit = audio ? MAX_AUDIO_BYTES : 5_000_000;
+      if (file.size > limit) { app.showToast(`${file.name} is too large (${audio ? '25' : '5'}MB max)`); continue; }
       const b64 = btoa(new Uint8Array(await file.arrayBuffer()).reduce((acc, b) => acc + String.fromCharCode(b), ''));
       const path = `uploads/${file.name.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
+      const duration = durations.get(file);
       try {
-        if (app.current?.agentId) await api.putAgentFile(app.current.agentId, path, b64, file.type || undefined);
-        else await api.wsPutFile(app.workspaceId, path, b64, file.type || undefined);
-        app.addAttachment(path, file.type.startsWith('image/') ? 'image' : 'text');
+        const res = app.current?.agentId
+          ? await api.putAgentFile(app.current.agentId, path, b64, file.type || undefined, duration)
+          : await api.wsPutFile(app.workspaceId, path, b64, file.type || undefined, duration);
+        if (audio) {
+          app.addAttachment(path, 'audio', { transcript: res.transcript ?? null, durationSeconds: res.durationHint ?? duration ?? null });
+          if (res.transcript === null || res.transcript === undefined) app.showToast('Voice note attached — transcription unavailable (see docs/voice.md)');
+        } else {
+          app.addAttachment(path, file.type.startsWith('image/') ? 'image' : 'text');
+        }
         await app.refreshFiles();
       } catch {
         app.showToast(`upload of ${file.name} failed`);
       }
     }
+  };
+  // Voice notes (docs/voice.md): MediaRecorder → upload on stop. The button is
+  // hidden where MediaRecorder/getUserMedia are missing.
+  const canRecord = useMemo(() => recorderAvailable(), []);
+  const recorder = useVoiceRecorder(app.showToast);
+  const stopRecording = async () => {
+    const rec = await recorder.stop();
+    if (rec) await uploadFiles([rec.file], new Map([[rec.file, rec.durationSeconds]]));
   };
   const s = app.current;
   const agent = app.agents.find((a) => a.id === s?.agentId);
@@ -357,16 +427,18 @@ export function ChatView() {
       app.setDraft(`${key} `);
     } else {
       app.setDraft(draft.replace(/@([\w./-]*)$/, ''));
-      app.addAttachment(key, key.match(/\.(png|jpg|jpeg|gif|webp|svg)$/) ? 'image' : 'text');
+      app.addAttachment(key, key.match(/\.(png|jpg|jpeg|gif|webp|svg)$/) ? 'image' : AUDIO_EXT_RE.test(key) ? 'audio' : 'text');
       setMenu(null);
     }
     inputRef.current?.focus();
   };
 
+  // A voice note can go without typed text: the transcript is the message.
+  const canSend = !!draft.trim() || app.attachments.length > 0;
   const doSend = () => {
-    if (!draft.trim()) return;
+    if (!canSend) return;
     setMenu(null);
-    void app.send(draft);
+    void app.send(draft.trim() || (app.attachments.some((a) => a.kind === 'audio') ? 'Voice note.' : 'See the attached file.'));
     if (inputRef.current) inputRef.current.style.height = 'auto';
   };
 
@@ -395,7 +467,8 @@ export function ChatView() {
       rows.push(
         <AssistantRow key={m.id} m={m} turn={turnById.get(m.turnId)} agent={agent}
           isNewest={m.id === newestAssistantId} isLast={lastMsgOfTurn.get(m.turnId) === m.id}
-          streaming={app.streaming} onOpenArtifact={app.openArtifact} onQuickReply={app.send} />,
+          streaming={app.streaming} tts={app.settings.ttsEnabled === 'on'} ttsVoice={app.settings.ttsVoice || undefined}
+          onOpenArtifact={app.openArtifact} onQuickReply={app.send} />,
       );
     }
   };
@@ -560,10 +633,14 @@ export function ChatView() {
             {app.attachments.length > 0 && (
               <div style={{ display: 'flex', gap: 7, padding: '11px 13px 0', flexWrap: 'wrap' }}>
                 {app.attachments.map((a) => (
-                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', fontSize: 11.5, color: 'var(--text-dim)', ...mono }}>
-                    {a.kind === 'image' ? '▣' : '▤'} {a.path.split('/').pop()}
-                    <button onClick={() => app.removeAttachment(a.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 0, display: 'flex' }}><I d={P.x} size={12} /></button>
-                  </div>
+                  a.kind === 'audio' ? (
+                    <VoiceChip key={a.id} durationSeconds={a.durationSeconds} transcript={a.transcript} onRemove={() => app.removeAttachment(a.id)} />
+                  ) : (
+                    <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', fontSize: 11.5, color: 'var(--text-dim)', ...mono }}>
+                      {a.kind === 'image' ? '▣' : '▤'} {a.path.split('/').pop()}
+                      <button onClick={() => app.removeAttachment(a.id)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 0, display: 'flex' }}><I d={P.x} size={12} /></button>
+                    </div>
+                  )
                 ))}
               </div>
             )}
@@ -589,6 +666,19 @@ export function ChatView() {
               <button onClick={() => fileRef.current?.click()} title="Attach a file (or drop it here)" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 6, borderRadius: 7, display: 'flex' }}><I d={P.attach} size={17} /></button>
               <button onClick={() => { app.setDraft('/'); detectMenu('/'); inputRef.current?.focus(); }} title="Slash command" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 6, borderRadius: 7, display: 'flex' }}><I d={P.slash} size={16} /></button>
               <button onClick={() => { app.setDraft(`${draft}@`); detectMenu(`${draft}@`); inputRef.current?.focus(); }} title="Mention file" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 6, borderRadius: 7, display: 'flex' }}><I d={P.at} size={16} /></button>
+              {canRecord && !recorder.recording && (
+                <button onClick={() => void recorder.start()} title="Record a voice note" aria-label="Record a voice note" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 6, borderRadius: 7, display: 'flex', minWidth: 32, minHeight: 32, alignItems: 'center', justifyContent: 'center' }}><I d={P.mic} size={16} /></button>
+              )}
+              {recorder.recording && (
+                <div role="status" aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--panel-2)', border: '1px solid var(--red)', borderRadius: 9, padding: '3px 4px 3px 10px' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--red)', animation: 'pulse 1s infinite', flex: 'none' }} />
+                  <span style={{ ...mono, fontSize: 12.5, color: 'var(--text)', minWidth: 36 }}>{fmtDuration(recorder.elapsed)}</span>
+                  <button onClick={recorder.cancel} title="Discard recording" aria-label="Discard recording" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 6, display: 'flex', minWidth: 32, minHeight: 32, alignItems: 'center', justifyContent: 'center' }}><I d={P.x} size={14} /></button>
+                  <button onClick={() => void stopRecording()} title="Stop and attach" aria-label="Stop and attach voice note" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'var(--red)', color: '#fff', border: 'none', borderRadius: 7, padding: '0 12px', minWidth: 40, minHeight: 32, fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
+                    <I d={P.stopSquare} size={12} fill="currentColor" />Stop
+                  </button>
+                </div>
+              )}
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 9 }}>
                 <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{app.streaming ? 'Enter to queue' : 'Enter to send'}</span>
                 {app.streaming ? (
@@ -596,7 +686,7 @@ export function ChatView() {
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>Stop
                   </button>
                 ) : (
-                  <button onClick={doSend} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, background: draft.trim() ? 'var(--accent)' : 'var(--accent-dim)', color: '#fff', border: 'none', borderRadius: 10, cursor: draft.trim() ? 'pointer' : 'default' }}>
+                  <button onClick={doSend} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, background: canSend ? 'var(--accent)' : 'var(--accent-dim)', color: '#fff', border: 'none', borderRadius: 10, cursor: canSend ? 'pointer' : 'default' }}>
                     <I d={P.sendArrow} size={17} sw={2.2} />
                   </button>
                 )}

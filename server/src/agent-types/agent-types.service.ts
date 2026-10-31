@@ -62,6 +62,15 @@ export class AgentTypesService {
     return { ok: true };
   }
 
+  /** Server-internal: the opened key of the first enabled agent type of a
+   *  provider that has one (voice transcription/TTS borrow the OpenAI key
+   *  when no dedicated TRANSCRIPTION_API_KEY is set). Null when none. */
+  async resolveKeyForProvider(provider: string): Promise<string | null> {
+    const rows = await this.db.select().from(agentTypes).where(eq(agentTypes.provider, provider));
+    const row = rows.find((r) => r.apiKey && r.enabled === 1) ?? rows.find((r) => r.apiKey);
+    return row?.apiKey ? open(row.apiKey) : null;
+  }
+
   /** Server-internal: full row with the API key opened to plaintext, for request-time use. */
   async resolve(id: string): Promise<AgentTypeRow | undefined> {
     const rows = await this.db.select().from(agentTypes).where(eq(agentTypes.id, id)).limit(1);

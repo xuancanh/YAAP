@@ -64,6 +64,18 @@ export default () => ({
   /** Vulnerability-disclosure address shown by GET /api/security and Settings
    *  (docs/security.md §j). Empty = the UI shows the policy without a contact. */
   securityContact: process.env.SECURITY_CONTACT || '',
+  /** Voice notes (docs/voice.md): audio attachments transcribe on upload
+   *  through an OpenAI-compatible /audio/transcriptions endpoint; the same
+   *  base serves optional TTS via /audio/speech. 'off' disables both. */
+  transcriptionProvider: process.env.TRANSCRIPTION_PROVIDER || 'openai-compatible',
+  transcriptionBaseUrl: process.env.TRANSCRIPTION_BASE_URL || 'https://api.openai.com/v1',
+  /** gpt-4o-mini-transcribe: cheaper and more accurate than whisper-1 on
+   *  OpenAI; set whisper-1 (or e.g. whisper-large-v3 on Groq) for other
+   *  compatibles. */
+  transcriptionModel: process.env.TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe',
+  /** Empty = borrow the stored key of the OpenAI agent type (sealed at rest). */
+  transcriptionApiKey: process.env.TRANSCRIPTION_API_KEY || '',
+  ttsModel: process.env.TTS_MODEL || 'gpt-4o-mini-tts',
   /** Estimated provider-input tokens that trigger auto-compaction (FR-7.3). */
   compactionThresholdTokens: parseInt(process.env.COMPACTION_THRESHOLD_TOKENS || '120000', 10),
 });

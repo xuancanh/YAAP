@@ -249,6 +249,24 @@ function PermissionsPane() {
             style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '7px 11px', color: 'var(--text)', fontSize: 12.5, ...mono, outline: 'none' }} />
         </div>
       </div>
+      <div style={{ borderTop: '1px solid var(--border-soft)', marginTop: 15, paddingTop: 15 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Read replies aloud</div>
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>Shows a speaker button on assistant replies that plays them through the configured OpenAI-compatible speech endpoint (TRANSCRIPTION_* in .env; docs/voice.md). Voice notes transcribe on upload regardless.</div>
+          </div>
+          <button onClick={() => void app.saveSettings({ ttsEnabled: app.settings.ttsEnabled === 'on' ? 'off' : 'on' })}
+            style={{ background: app.settings.ttsEnabled === 'on' ? 'var(--accent-dim)' : 'var(--panel-2)', color: 'var(--text)', border: `1px solid ${app.settings.ttsEnabled === 'on' ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>
+            {app.settings.ttsEnabled === 'on' ? 'On' : 'Off'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Voice</span>
+          <input defaultValue={app.settings.ttsVoice ?? ''} placeholder="alloy"
+            onBlur={(e) => void app.saveSettings({ ttsVoice: e.target.value.trim() })}
+            style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '7px 11px', color: 'var(--text)', fontSize: 12.5, ...mono, outline: 'none' }} />
+        </div>
+      </div>
     </div>
   );
 }

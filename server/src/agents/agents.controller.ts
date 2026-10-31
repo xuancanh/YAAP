@@ -7,6 +7,7 @@ import { RunnerService } from '../runner/runner.service';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix, agentRelativePath, workspaceFileKey } from '../storage/storage.keys';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
+import { TranscriptionService, isAudioUpload } from '../voice/transcription.service';
 
 class CreateAgentDto {
   @IsString() name!: string;
@@ -65,6 +66,7 @@ export class AgentsController {
     private readonly connections: ConnectionsService,
     private readonly runner: RunnerService,
     private readonly memory: AgentMemoryService,
+    private readonly voice: TranscriptionService,
   ) {}
 
   @Get() list() { return this.agents.list(); }
@@ -159,10 +161,18 @@ export class AgentsController {
   }
 
   @Post(':id/files')
-  async putFile(@Param('id') id: string, @Body() body: { path: string; contentBase64: string; contentType?: string }) {
+  async putFile(@Param('id') id: string, @Body() body: { path: string; contentBase64: string; contentType?: string; durationSeconds?: number }) {
     await this.agents.get(id);
-    await this.storage.put(this.key(id, body.path), Buffer.from(body.contentBase64 ?? '', 'base64'), body.contentType);
-    return { ok: true, path: body.path };
+    const key = this.key(id, body.path);
+    const bytes = Buffer.from(body.contentBase64 ?? '', 'base64');
+    // Voice notes (docs/voice.md): same bounds + transcript sidecar as the workspace endpoint.
+    const audio = isAudioUpload(body.path, body.contentType);
+    if (audio) this.voice.assertAudioBounds(body.path, bytes, body.contentType);
+    await this.storage.put(key, bytes, body.contentType);
+    if (!audio) return { ok: true, path: body.path };
+    const duration = typeof body.durationSeconds === 'number' ? body.durationSeconds : undefined;
+    const { transcript, durationHint } = await this.voice.transcribeUpload(key, body.path, bytes, body.contentType, duration);
+    return { ok: true, path: body.path, transcript, durationHint };
   }
 
   @Get(':id/preview')

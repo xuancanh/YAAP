@@ -18,6 +18,7 @@
  *  ChannelsModule    → /api/channels/telegram        (presence, phase 4)
  *  UsageModule       → GET  /api/agents|workspaces/:id/usage (cost dashboard, phase 2)
  *  SecurityModule    → GET  /api/security            (threat model, docs/security.md)
+ *  VoiceModule       → /api/voice/status, /api/voice/tts (voice notes, docs/voice.md)
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
@@ -48,6 +49,7 @@ import { ConnectionsModule } from './connections/connections.module';
 import { RunnerModule } from './runner/runner.module';
 import { SecurityModule } from './security/security.module';
 import { UsageModule } from './usage/usage.module';
+import { VoiceModule } from './voice/voice.module';
 
 @Module({
   imports: [
@@ -70,6 +72,7 @@ import { UsageModule } from './usage/usage.module';
     RunnerModule,
     SecurityModule,
     UsageModule,
+    VoiceModule,
   ],
   providers: [
     // Identity is bound here and nowhere else: swapping this one provider

@@ -1,10 +1,11 @@
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { WorkspacesService } from './workspaces.service';
 import { StorageService } from '../storage/storage.service';
 import { workspaceFileKey, workspacePrefix, relativePath } from '../storage/storage.keys';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
+import { TranscriptionService, isAudioUpload } from '../voice/transcription.service';
 
 /** Text previews are capped; the full file remains downloadable. */
 const PREVIEW_TEXT_CAP = 200_000;
@@ -39,6 +40,8 @@ class PutFileDto {
   /** File content, base64-encoded (works for text and binary alike). */
   @IsString() contentBase64!: string;
   @IsOptional() @IsString() contentType?: string;
+  /** Voice notes: recorder-measured length, used when the transcriber reports none. */
+  @IsOptional() @IsNumber() @Min(0) durationSeconds?: number;
 }
 
 @Controller('workspaces')
@@ -46,6 +49,7 @@ export class WorkspacesController {
   constructor(
     private readonly workspaces: WorkspacesService,
     private readonly storage: StorageService,
+    private readonly voice: TranscriptionService,
   ) {}
 
   @Get() list() { return this.workspaces.list(); }
@@ -80,8 +84,15 @@ export class WorkspacesController {
   async putFile(@Param('id') id: string, @Body() dto: PutFileDto) {
     await this.workspaces.get(id);
     const key = this.key(id, dto.path);
-    await this.storage.put(key, Buffer.from(dto.contentBase64, 'base64'), dto.contentType);
-    return { ok: true, path: dto.path };
+    const body = Buffer.from(dto.contentBase64, 'base64');
+    // Voice notes (docs/voice.md): bound audio before it touches storage,
+    // then transcribe synchronously and keep the transcript as a sidecar.
+    const audio = isAudioUpload(dto.path, dto.contentType);
+    if (audio) this.voice.assertAudioBounds(dto.path, body, dto.contentType);
+    await this.storage.put(key, body, dto.contentType);
+    if (!audio) return { ok: true, path: dto.path };
+    const { transcript, durationHint } = await this.voice.transcribeUpload(key, dto.path, body, dto.contentType, dto.durationSeconds);
+    return { ok: true, path: dto.path, transcript, durationHint };
   }
 
   @Get(':id/file')
@@ -115,7 +126,7 @@ export class WorkspacesController {
       const text = body.toString('utf8');
       return { ...base, text: text.slice(0, PREVIEW_TEXT_CAP), truncated: text.length > PREVIEW_TEXT_CAP };
     }
-    if ((kind === 'image' || kind === 'pdf') && body.length <= PREVIEW_BINARY_CAP) {
+    if ((kind === 'image' || kind === 'pdf' || kind === 'audio') && body.length <= PREVIEW_BINARY_CAP) {
       return { ...base, base64: body.toString('base64') };
     }
     return base; // binary or too large: metadata only, use the file endpoint

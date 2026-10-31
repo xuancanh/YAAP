@@ -85,7 +85,7 @@ export const fileEntrySchema = z.object({
 
 export const filePreviewSchema = z.object({
   path: z.string(),
-  kind: z.enum(['markdown', 'html', 'image', 'pdf', 'text', 'binary']),
+  kind: z.enum(['markdown', 'html', 'image', 'pdf', 'audio', 'text', 'binary']),
   size: z.number(),
   contentType: z.string(),
   text: z.string().optional(),

@@ -336,13 +336,24 @@ export interface FileEntry {
 /** `html` previews must render inside a sandboxed iframe (FR-13.1). */
 export interface FilePreview {
   path: string;
-  kind: 'markdown' | 'html' | 'image' | 'pdf' | 'text' | 'binary';
+  kind: 'markdown' | 'html' | 'image' | 'pdf' | 'audio' | 'text' | 'binary';
   size: number;
   contentType: string;
   text?: string;
   truncated?: boolean;
   base64?: string;
 }
+
+/** Upload result; audio uploads (voice notes, docs/voice.md) also carry the
+ *  transcript (null when transcription is off/unavailable) and a duration. */
+export interface UploadResult {
+  ok: boolean;
+  path: string;
+  transcript?: string | null;
+  durationHint?: number | null;
+}
+
+export interface VoiceStatus { transcription: boolean; tts: boolean; model: string }
 
 export interface SearchResults {
   sessions: Array<{ id: string; name: string; autoTitle: string }>;
@@ -418,8 +429,8 @@ export const api = {
   wsFiles: (id: string) => get<FileEntry[]>(`/api/workspaces/${id}/files`, fileEntryListSchema),
   wsPreview: (id: string, path: string) =>
     get<FilePreview>(`/api/workspaces/${id}/preview?path=${enc(path)}`, filePreviewSchema),
-  wsPutFile: (id: string, path: string, contentBase64: string, contentType?: string) =>
-    send<{ ok: boolean }>(`/api/workspaces/${id}/files`, 'POST', { path, contentBase64, contentType }),
+  wsPutFile: (id: string, path: string, contentBase64: string, contentType?: string, durationSeconds?: number) =>
+    send<UploadResult>(`/api/workspaces/${id}/files`, 'POST', { path, contentBase64, contentType, durationSeconds }),
 
   // chats
   chats: (workspaceId: string) => get<ChatSession[]>(`/api/chats?workspaceId=${enc(workspaceId)}`, chatSessionListSchema),
@@ -525,8 +536,8 @@ export const api = {
   agentStats: (id: string) => get<AgentStats>(`/api/agents/${id}/stats`),
   agentFiles: (id: string, workspaceId?: string) =>
     get<FileEntry[]>(`/api/agents/${id}/files${workspaceId ? `?workspaceId=${enc(workspaceId)}` : ''}`, fileEntryListSchema),
-  putAgentFile: (id: string, path: string, contentBase64: string, contentType?: string) =>
-    send<{ ok: boolean }>(`/api/agents/${id}/files`, 'POST', { path, contentBase64, contentType }),
+  putAgentFile: (id: string, path: string, contentBase64: string, contentType?: string, durationSeconds?: number) =>
+    send<UploadResult>(`/api/agents/${id}/files`, 'POST', { path, contentBase64, contentType, durationSeconds }),
   agentPreview: (id: string, path: string, workspaceId?: string) =>
     get<FilePreview>(`/api/agents/${id}/preview?path=${enc(path)}${workspaceId ? `&workspaceId=${enc(workspaceId)}` : ''}`, filePreviewSchema),
   agentExportUrl: (id: string) => `/api/agents/${id}/export`,
@@ -574,6 +585,18 @@ export const api = {
   telegramUnpair: () => send<{ ok: boolean }>('/api/channels/telegram/unpair', 'POST'),
   settings: () => get<Record<string, string>>('/api/settings'),
   putSettings: (patch: Record<string, string>) => send<Record<string, string>>('/api/settings', 'PUT', patch),
+  // voice notes (docs/voice.md)
+  voiceStatus: () => get<VoiceStatus>('/api/voice/status'),
+  /** Reply TTS: resolves to an audio Blob (mp3) or throws when unavailable. */
+  tts: async (text: string, voice?: string): Promise<Blob> => {
+    const r = await fetch('/api/voice/tts', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: voice || undefined }),
+    });
+    if (!r.ok) throw new Error(`tts ${r.status}`);
+    return r.blob();
+  },
   search: (workspaceId: string, q: string) =>
     get<SearchResults>(`/api/search?workspaceId=${enc(workspaceId)}&q=${enc(q)}`),
 };

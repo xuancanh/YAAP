@@ -103,7 +103,11 @@ Image attachments are real vision inputs: uploaded/mentioned images become
 base64 image blocks (Anthropic) or data-URI image_url parts (OpenAI family)
 on the user message, bounded to 4 images ≤3MB each. Gemini is supported via
 its OpenAI-compatible endpoint. Chats archive from the header and restore
-from the sidebar's Archived group (FR-1.4).
+from the sidebar's Archived group (FR-1.4). Voice notes record in the
+composer (or drop an audio file) and transcribe on upload through an
+OpenAI-compatible `/audio/transcriptions` endpoint — the model reads the
+transcript, never the bytes — with optional read-aloud replies behind a
+setting (docs/voice.md).
 
 Proactivity controls (roadmap Phase 2, finished): per-workspace **quiet
 hours** with an interrupt policy (`queue` | `silent` | `allow-urgent`) — loops

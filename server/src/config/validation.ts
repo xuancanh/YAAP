@@ -42,6 +42,11 @@ const envSchema = z
     RUNNER_BACKEND: z.enum(['auto', 'local', 'cloudflare', 'off']).optional(),
     RUNNER_CF_URL: z.string().optional(),
     RUNNER_CF_TOKEN: z.string().optional(),
+    TRANSCRIPTION_PROVIDER: z.enum(['openai-compatible', 'off']).optional(),
+    TRANSCRIPTION_BASE_URL: z.string().optional(),
+    TRANSCRIPTION_MODEL: z.string().optional(),
+    TRANSCRIPTION_API_KEY: z.string().optional(),
+    TTS_MODEL: z.string().optional(),
   })
   .superRefine((env, ctx) => {
     // Selecting the cloudflare backend without its endpoint is a boot-time

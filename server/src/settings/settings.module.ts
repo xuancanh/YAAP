@@ -18,6 +18,8 @@ const ALLOWED_KEYS = new Set([
   'pricingOverrides',
   // Independent action reviewer (docs/permissions.md §6): 'on' | 'off', and a model override
   'actionReview', 'reviewModel',
+  // Voice notes (docs/voice.md): read replies aloud ('on' | 'off', default off) and the TTS voice name
+  'ttsEnabled', 'ttsVoice',
 ]);
 
 @Injectable()

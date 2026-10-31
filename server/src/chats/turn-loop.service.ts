@@ -25,6 +25,7 @@ import { ChatsRepository, ChatSession } from './chats.repository';
 import { ChatLocks } from './chat-locks';
 import { CompactionService } from './compaction.service';
 import { ToolsService, FileRoot, fileRootKey } from './tools.service';
+import { TranscriptionService, transcriptPathFor } from '../voice/transcription.service';
 import { RunnerService } from '../runner/runner.service';
 import { TurnContextService } from './turn-context.service';
 import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
@@ -518,9 +519,23 @@ export class TurnLoopService implements OnModuleDestroy {
       const path = att.path ?? att.name;
       if (typeof path !== 'string' || !path) continue;
       try {
-        const body = await this.storage.get(fileRootKey(root, path));
+        const key = fileRootKey(root, path);
+        const kind = previewKindFor(path);
+        if (kind === 'audio') {
+          // Voice notes (docs/voice.md): the model reads the transcript
+          // sidecar written at upload time, never the raw audio bytes.
+          const sidecar = await this.storage.get(transcriptPathFor(key));
+          if (sidecar) {
+            const { transcript } = TranscriptionService.parseTranscript(sidecar);
+            parts.push(`<attached-file path="${path}">\n[Voice note transcript]: ${transcript.slice(0, 30_000)}\n</attached-file>`);
+          } else if (await this.storage.get(key)) {
+            parts.push(`<attached-file path="${path}">\n[Voice note]: audio attached, transcription unavailable.\n</attached-file>`);
+          }
+          continue;
+        }
+        const body = await this.storage.get(key);
         if (!body) continue;
-        if (previewKindFor(path) === 'image') {
+        if (kind === 'image') {
           if (images.length < 4 && body.length <= 3_000_000) {
             images.push({ mediaType: contentTypeFor(path), dataBase64: body.toString('base64') });
           }

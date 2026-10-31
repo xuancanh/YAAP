@@ -135,7 +135,20 @@ Each turn records which skills it used; ratings attach to those skills;
 Skills page shows last used, use count, 👍/👎 rate; a 👎 on a skill turn
 produces a draft revision with a diff.
 
-### 11. Voice notes *(todo)*
+### 11. Voice notes *(done)*
+Shipped as: `server/src/voice/` (`TranscriptionService` + `VoiceModule`:
+`GET /api/voice/status`, `POST /api/voice/tts`), config
+`TRANSCRIPTION_PROVIDER|BASE_URL|MODEL|API_KEY` + `TTS_MODEL` (key falls back
+to the OpenAI agent type's sealed key via
+`AgentTypesService.resolveKeyForProvider`), audio detection + 25MB/type
+bounds and a synchronous 60s transcription in both file upload endpoints
+with a `<file>.transcript.txt` sidecar, `loadAttachments` rendering
+`[Voice note transcript]: …` (never raw bytes), the `audio` preview kind,
+settings `ttsEnabled`/`ttsVoice`, `src/lib/voice.ts` (`useVoiceRecorder`),
+`VoiceChip.tsx`, the composer mic/Stop UI and reply speaker button in
+`ChatView.tsx`, audio previews with transcript in `FilesView.tsx`, and
+docs/voice.md. Tests: `backend-voice`, `web-tests/voice-chip`.
+
 Audio attachments transcribe on upload through a configurable
 OpenAI-compatible transcription endpoint; the transcript becomes the
 attachment text; optional TTS on replies behind a setting.
