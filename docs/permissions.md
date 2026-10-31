@@ -137,3 +137,62 @@ the existing capability review on install (as AGENT.json does today), plus
 static checks (no secrets, literal hosts, size caps). Skill/tool provenance
 travels with the artifact. Installing an agent whose profile ships tools
 imports them **disabled**, always — the importing user activates each one.
+
+## 6. The independent reviewer
+
+The three gates are deterministic, and that is their strength and their
+limit: a remembered "always allow fs_write" or an Auto-mode chat lets a
+compromised input drive an approved tool anywhere within its class. Since
+October 2026 every hosted competitor ships a second reader for exactly this
+case (Grok Bot's Auto Review, Dots' out-of-band review, Duet's intent
+classifier that "runs outside the model so hidden page instructions cannot
+affect it"). Ours is `ActionReviewService` (`server/src/review/`).
+
+**When it runs.** Only for calls that would otherwise execute *without a
+fresh human decision*: verdict `auto` (Auto mode) or `remembered` (a per-tool
+or exact-input grant) on a tool that is not read-only. Read-only tools and
+skill loads are never reviewed; confirm-always tools already pause and are not
+reviewed twice; an Ask-mode pause is a human decision and needs no second
+reader. The deterministic gates stay the floor — the reviewer can only make
+things stricter.
+
+**What it does.** Two steps, in order:
+1. A deterministic sensitive-information pre-check over the serialized tool
+   input: API keys and tokens (vendor prefixes, `api_key=`), bearer tokens,
+   JWTs, private keys, card numbers (Luhn-checked), IBANs (mod-97), SSN-like
+   numbers, `password=` patterns. Any hit forces at least `ask` and is listed
+   on the verdict; no model can override it.
+2. One bounded (≤300 output tokens), tool-free call to a cheap reviewer model
+   — setting `reviewModel`, default the cheapest sibling of the chat's
+   provider (Anthropic → `claude-haiku-5-5`, OpenAI → `gpt-5-mini`,
+   DeepSeek → `deepseek-chat`, Gemini → `gemini-2.5-flash`, otherwise the
+   session model). It receives the user's request for this turn, the
+   compaction summary and recent user messages, the agent's charter, the most
+   recent tool results (as labelled untrusted content), and the proposed call
+   — never the agent's system prompt or tools, so content the agent read
+   cannot address it. It answers four questions: scope (within what the user
+   asked?), proportion (no broader or more destructive than needed?), leakage
+   (secrets or third-party personal data leaving to an external party?),
+   inducement (does it look instructed by content rather than the user?) and
+   returns strict JSON `{verdict: allow|ask|deny, reason}`. Unparseable
+   output or a provider error → `ask`. The reviewer's tokens count into the
+   turn's usage.
+
+**What the verdict does.**
+- `allow` → the call runs as before.
+- `ask` → the call is downgraded to an ordinary approval pause, even in Auto
+  mode, with the reviewer's reason on the card. The human decides.
+- `deny` → the call does not run; the model receives
+  `Denied by the action reviewer: <reason>` as an error result so it can
+  explain and adapt instead of retrying.
+- Loop-origin and channel-origin turns have nobody to answer a pause, so
+  `ask` becomes `deny` there, and the held action is recorded as an
+  `agent_events` row (`info`, "Action held by reviewer: <tool>") in the
+  agent inbox.
+
+**Where you see it.** The verdict (`review: {verdict, reason, sensitive,
+model}`) is stored on the tool call record of the turn, emitted on the
+`approval_required` / `tool_result` SSE events, and rendered as a one-line
+"Reviewed · allowed / held for you / denied" on the tool card. Settings →
+Permissions has the on/off switch (`actionReview`, default on) and the model
+override (`reviewModel`).

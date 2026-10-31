@@ -14,6 +14,8 @@ const ALLOWED_KEYS = new Set([
   'defaultPermissionMode', 'defaultAgentTypeId', 'defaultTokenCeiling', 'compactionThresholdTokens', 'theme',
   // Telegram channel (roadmap phase 4): the paired chat and its target agent
   'telegramChatId', 'telegramDefaultAgentId',
+  // Independent action reviewer (docs/permissions.md §6): 'on' | 'off', and a model override
+  'actionReview', 'reviewModel',
 ]);
 
 @Injectable()

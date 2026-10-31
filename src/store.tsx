@@ -7,7 +7,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import {
   api, sendTurn, authHeaders,
   type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
-  type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision,
+  type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision, type ToolReview,
 } from './lib/api';
 
 export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 'settings';
@@ -23,6 +23,8 @@ export interface LiveTool {
   input: Record<string, unknown>;
   status: 'running' | 'pending' | 'done' | 'denied' | 'error';
   result?: string;
+  /** Set when the independent reviewer looked at this call. */
+  review?: ToolReview;
 }
 export type LiveItem =
   | { kind: 'thinking'; text: string; streaming: boolean }
@@ -393,14 +395,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
           applyBuf();
           patch((items) => {
             const found = items.some((i) => i.kind === 'tool' && i.id === ev.callId);
-            if (found) return items.map((i) => (i.kind === 'tool' && i.id === ev.callId ? { ...i, status: 'pending' as const } : i));
-            return [...items, { kind: 'tool', id: ev.callId, name: ev.tool, input: ev.input, status: 'pending' }];
+            if (found) return items.map((i) => (i.kind === 'tool' && i.id === ev.callId ? { ...i, status: 'pending' as const, review: ev.review ?? i.review } : i));
+            return [...items, { kind: 'tool', id: ev.callId, name: ev.tool, input: ev.input, status: 'pending', review: ev.review }];
           });
         } else if (ev.type === 'tool_result') {
           applyBuf();
           patch((items) => items.map((i) => (
             i.kind === 'tool' && i.id === ev.id
-              ? { ...i, status: ev.isError ? (ev.output.includes('Denied') ? 'denied' : 'error') : 'done', result: ev.output }
+              ? { ...i, status: ev.isError ? (ev.output.includes('Denied') ? 'denied' : 'error') : 'done', result: ev.output, review: ev.review ?? i.review }
               : i
           )));
         } else if (ev.type === 'error') {

@@ -4,7 +4,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type LiveItem, type LiveTool } from '../store';
-import { api, PROVIDER_COLORS, type Agent, type ApprovalDecision, type ChatMessage, type ChatTurn } from '../lib/api';
+import { api, PROVIDER_COLORS, type Agent, type ApprovalDecision, type ChatMessage, type ChatTurn, type ToolReview } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 5, borderRadius: 6, display: 'flex' };
@@ -60,7 +60,7 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
       {t.status === 'pending' && (
         <div style={{ padding: '11px 13px', borderTop: '1px solid var(--border-soft)' }}>
           <div style={{ fontSize: 12, color: 'var(--amber)', display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10, fontWeight: 500 }}>
-            <I d={P.warn} size={14} />This tool needs approval — approve to run {t.name}
+            <I d={P.warn} size={14} />{t.review ? `The reviewer asked for your decision — ${t.review.reason}` : `This tool needs approval — approve to run ${t.name}`}
           </div>
           <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', opacity: deciding ? 0.55 : 1 }}>
             <button disabled={deciding} onClick={() => decide('allow-once')} style={{ background: 'var(--green)', color: '#04140d', border: 'none', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Allow once</button>
@@ -73,7 +73,26 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
       {t.result !== undefined && t.status !== 'pending' && t.status !== 'running' && (
         <pre style={{ margin: 0, padding: '12px 14px', borderTop: '1px solid var(--border-soft)', background: 'var(--code)', ...mono, fontSize: 12, lineHeight: 1.6, color: 'var(--text-dim)', overflowX: 'auto', whiteSpace: 'pre', maxHeight: 260, overflowY: 'auto' }}>{t.result}</pre>
       )}
+      <ReviewLine review={t.review} />
       <NeedsGrantHint result={t.result} />
+    </div>
+  );
+}
+
+/** The independent reviewer's one-line verdict (docs/permissions.md §6):
+ *  shown only on calls it actually looked at. */
+function ReviewLine({ review }: { review?: ToolReview }) {
+  if (!review) return null;
+  const color = review.verdict === 'allow' ? 'var(--text-faint)' : review.verdict === 'ask' ? 'var(--amber)' : 'var(--red)';
+  const label = review.verdict === 'allow' ? 'allowed' : review.verdict === 'ask' ? 'held for you' : 'denied';
+  return (
+    <div title={`${review.reason}${review.sensitive.length ? ` · found: ${review.sensitive.join(', ')}` : ''} · ${review.model}`}
+      style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '7px 13px', borderTop: '1px solid var(--border-soft)', fontSize: 11.5, color }}>
+      <I d={P.shield} size={12} stroke={color} />
+      <span style={{ fontWeight: 600 }}>Reviewed · {label}</span>
+      <span style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+        {review.verdict === 'allow' ? review.reason : review.sensitive.length ? `found ${review.sensitive.join(', ')}` : review.reason}
+      </span>
     </div>
   );
 }
@@ -347,6 +366,7 @@ export function ChatView() {
   // transcript rows with the compaction divider (FR-7.4: transcript unchanged)
   const rows: React.ReactNode[] = [];
   let dividerPlaced = cutoffSeq === null;
+  const toolSeq = new Map<string, number>();
   const pushDivider = () => {
     rows.push(<SystemDivider key="compact-divider" text="Context compacted — older turns distilled to a summary (visible transcript unchanged)" />);
     dividerPlaced = true;
@@ -358,7 +378,12 @@ export function ChatView() {
     } else if (m.role === 'thinking') {
       rows.push(<Thinking key={m.id} text={m.content} streaming={false} />);
     } else if (m.role === 'tool') {
-      rows.push(<ToolCard key={m.id} t={{ kind: 'tool', id: m.id, name: m.toolName ?? 'tool', input: {}, status: m.content.startsWith('Denied') ? 'denied' : 'done', result: m.content }} />);
+      // Persisted tool rows carry only the result; the reviewer's verdict
+      // lives on the turn's tool records, matched by position.
+      const idx = toolSeq.get(m.turnId) ?? 0;
+      toolSeq.set(m.turnId, idx + 1);
+      const record = safeJsonParse<Array<{ review?: ToolReview }>>(turnById.get(m.turnId)?.toolCalls ?? '', [])[idx];
+      rows.push(<ToolCard key={m.id} t={{ kind: 'tool', id: m.id, name: m.toolName ?? 'tool', input: {}, status: m.content.startsWith('Denied') ? 'denied' : 'done', result: m.content, review: record?.review }} />);
     } else {
       rows.push(
         <AssistantRow key={m.id} m={m} turn={turnById.get(m.turnId)} agent={agent}

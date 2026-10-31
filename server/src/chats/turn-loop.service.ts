@@ -33,6 +33,7 @@ import { StorageService } from '../storage/storage.service';
 import { AgentsService, CUSTOM_TOOL_PREFIX } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { ConnectionsService } from '../connections/connections.service';
+import { ActionReviewService, ReviewRecord } from '../review/action-review.service';
 
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
@@ -42,8 +43,8 @@ export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'd
 export type TurnEvent =
   | { type: 'turn'; turnId: string }
   | AiStreamEvent
-  | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean }
+  | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown>; review?: ReviewRecord }
+  | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ReviewRecord }
   | { type: 'error'; message: string };
 
 interface ToolRecord {
@@ -52,6 +53,8 @@ interface ToolRecord {
   result: string;
   approved: 'auto' | 'read-only' | 'remembered' | 'queued' | ApprovalDecision;
   isError: boolean;
+  /** Independent reviewer's verdict when the call was reviewed (docs/permissions.md §6). */
+  review?: ReviewRecord;
 }
 
 /** Tools that modify the agent/chat configuration itself can never receive a
@@ -211,6 +214,8 @@ export class TurnLoopService implements OnModuleDestroy {
     @Optional() private readonly compaction?: CompactionService,
     /** Optional so test constructors without a runner keep working. */
     @Optional() private readonly runner?: RunnerService,
+    /** Optional so test constructors without a reviewer keep working. */
+    @Optional() private readonly review?: ActionReviewService,
   ) {}
 
   /** Graceful shutdown: abort every in-flight turn through the same path as
@@ -354,15 +359,57 @@ export class TurnLoopService implements OnModuleDestroy {
             yield { type: 'tool_result', id: call.id, name: call.name, output, isError: false };
             continue;
           }
-          const { verdict, remember } = this.checkPolicy(session, call, approvals);
-          let decision: ToolRecord['approved'] = verdict === 'ask' ? 'deny' : verdict;
-          if (verdict === 'ask') {
+          const policy = this.checkPolicy(session, call, approvals);
+          let { verdict } = policy;
+          const { remember } = policy;
+          // Independent reviewer (docs/permissions.md §6): a mutating call that
+          // would run WITHOUT a fresh human decision — Auto mode, or a
+          // remembered approval — gets a second, tool-free read against what
+          // the user actually asked. Read-only tools and confirm-always tools
+          // (already pausing) are not reviewed.
+          let review: ReviewRecord | undefined;
+          let reviewDenial: string | undefined;
+          if ((verdict === 'auto' || verdict === 'remembered') && policy.readOnly === false && this.review
+            && (await this.review.config()).enabled) {
+            const agent = session.agentId ? await this.agents.get(session.agentId).catch(() => null) : null;
+            const r = await this.review.review({
+              userRequest: input.text,
+              conversationSummary: summarizeForReview(session.compactSummary, history),
+              agentCharter: (agent as { charter?: string } | null)?.charter || undefined,
+              recentContent: recentToolContent(history),
+              call: { name: call.name, input: call.input },
+              origin: input.origin ?? 'user',
+            }, { provider: ctx.provider, model: ctx.model, apiKey: ctx.apiKey, baseUrl: ctx.baseUrl, signal: ctl.signal });
+            tokensIn += r.usage.inputTokens; tokensOut += r.usage.outputTokens;
+            review = { verdict: r.verdict, reason: r.reason, sensitive: r.sensitive, model: r.model };
+            if (r.verdict !== 'allow') {
+              // Nobody is there to answer a background or channel turn: hold
+              // the action and leave a note in the agent inbox instead of
+              // pausing forever.
+              if (r.verdict === 'deny' || (input.origin ?? 'user') !== 'user') {
+                reviewDenial = `Denied by the action reviewer: ${r.reason} Do not retry the same call — explain to the user what you wanted to do and why, and let them decide.`;
+                if (session.agentId) {
+                  await this.agents.addEvent(session.agentId, {
+                    kind: 'info',
+                    title: `Action held by reviewer: ${call.name}`,
+                    body: `${r.reason}\n${JSON.stringify(call.input).slice(0, 240)}`,
+                    sessionId: session.id,
+                    payload: JSON.stringify({ tool: call.name, verdict: r.verdict, sensitive: r.sensitive }),
+                  }).catch(() => undefined);
+                }
+              } else {
+                verdict = 'ask';
+              }
+            }
+          }
+          let decision: ToolRecord['approved'] = verdict === 'ask' || reviewDenial ? 'deny' : verdict;
+          if (verdict === 'ask' && !reviewDenial) {
             // Register the resolver BEFORE yielding: the client may answer the
             // moment it sees the event, and the generator only resumes when the
             // consumer pulls again — approving into an unregistered slot would
             // deadlock the turn.
             const decided = this.awaitDecision(sessionId, call.id, ctl.signal);
-            yield { type: 'approval_required', callId: call.id, tool: call.name, input: call.input };
+            yield { type: 'approval_required', callId: call.id, tool: call.name, input: call.input, ...(review ? { review } : {}) };
             decision = await decided;
             if ((decision === 'allow-always' || decision === 'allow-tool') && remember) {
               if (decision === 'allow-always') approvals.exact.push(exactKey(call));
@@ -373,7 +420,10 @@ export class TurnLoopService implements OnModuleDestroy {
 
           let output: string;
           let isError = false;
-          if (decision === 'deny') {
+          if (reviewDenial) {
+            output = reviewDenial;
+            isError = true;
+          } else if (decision === 'deny') {
             output = 'Denied by user.';
             isError = true;
           } else {
@@ -386,8 +436,8 @@ export class TurnLoopService implements OnModuleDestroy {
           }
           await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
           history.push({ role: 'tool', content: output, toolCallId: call.id, isError });
-          toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: decision, isError });
-          yield { type: 'tool_result', id: call.id, name: call.name, output: output.slice(0, 500), isError };
+          toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: decision, isError, ...(review ? { review } : {}) });
+          yield { type: 'tool_result', id: call.id, name: call.name, output: output.slice(0, 500), isError, ...(review ? { review } : {}) };
         }
 
         // An abort during a tool run or approval wait must end the turn here
@@ -575,7 +625,7 @@ export class TurnLoopService implements OnModuleDestroy {
     session: ChatSession,
     call: AiToolCall,
     approvals: { tools: string[]; exact: string[] },
-  ): { verdict: 'auto' | 'read-only' | 'remembered' | 'ask'; remember: boolean } {
+  ): { verdict: 'auto' | 'read-only' | 'remembered' | 'ask'; remember: boolean; readOnly?: boolean } {
     // Skills only load instructions — side-effect free, always read-only.
     // MCP calls are never auto-run in Ask mode (FR-4.2): the server behind
     // them is opaque, so they gate like mutations.
@@ -593,12 +643,12 @@ export class TurnLoopService implements OnModuleDestroy {
     if (this.connections?.owns(call.name) && this.connections.isConfirmAlways(call.name)) {
       return { verdict: 'ask', remember: false };
     }
-    if (session.permissionMode === 'auto') return { verdict: 'auto', remember: true };
-    if (readOnly) return { verdict: 'read-only', remember: true };
+    if (session.permissionMode === 'auto') return { verdict: 'auto', remember: true, readOnly };
+    if (readOnly) return { verdict: 'read-only', remember: true, readOnly };
     if (approvals.tools.includes(call.name) || approvals.exact.includes(exactKey(call))) {
-      return { verdict: 'remembered', remember: true };
+      return { verdict: 'remembered', remember: true, readOnly };
     }
-    return { verdict: 'ask', remember: true };
+    return { verdict: 'ask', remember: true, readOnly };
   }
 
   private awaitDecision(sessionId: string, callId: string, signal: AbortSignal): Promise<ApprovalDecision> {
@@ -632,6 +682,20 @@ export class TurnLoopService implements OnModuleDestroy {
     }
     return history;
   }
+}
+
+/** What the reviewer gets as "the conversation": the compaction summary plus
+ *  the last few user messages, bounded. Never the system prompt. */
+function summarizeForReview(compactSummary: string, history: AiMessage[]): string {
+  const users = history.filter((m) => m.role === 'user').slice(-4, -1).map((m) => `- ${m.content.slice(0, 400)}`);
+  return [compactSummary ? compactSummary.slice(0, 2_000) : '', users.length ? `Earlier user messages:\n${users.join('\n')}` : ''].filter(Boolean).join('\n\n');
+}
+
+/** Untrusted content the agent read this turn — the material an injected
+ *  instruction would live in. Bounded to the most recent results. */
+function recentToolContent(history: AiMessage[]): string | undefined {
+  const results = history.filter((m) => m.role === 'tool').slice(-3).map((m) => m.content.slice(0, 1_000));
+  return results.length ? results.join('\n---\n') : undefined;
 }
 
 function parseApprovals(raw: string): { tools: string[]; exact: string[] } {

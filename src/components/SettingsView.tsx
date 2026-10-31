@@ -226,6 +226,24 @@ function PermissionsPane() {
       <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 12, display: 'flex', gap: 7, alignItems: 'center' }}>
         <I d={P.warn} size={13} stroke="var(--amber)" />Self-modification tools can never be blanket "always allow tool".
       </div>
+      <div style={{ borderTop: '1px solid var(--border-soft)', marginTop: 15, paddingTop: 15 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Independent action reviewer</div>
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>A second, tool-free model call checks every mutating action that would run without you (Auto mode, remembered approvals) against what you asked. Secrets in the input always hold the action.</div>
+          </div>
+          <button onClick={() => void app.saveSettings({ actionReview: (app.settings.actionReview ?? 'on') === 'off' ? 'on' : 'off' })}
+            style={{ background: (app.settings.actionReview ?? 'on') === 'off' ? 'var(--panel-2)' : 'var(--accent-dim)', color: 'var(--text)', border: `1px solid ${(app.settings.actionReview ?? 'on') === 'off' ? 'var(--border)' : 'var(--accent)'}`, borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>
+            {(app.settings.actionReview ?? 'on') === 'off' ? 'Off' : 'On'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>Reviewer model</span>
+          <input defaultValue={app.settings.reviewModel ?? ''} placeholder="cheapest model of the chat's provider"
+            onBlur={(e) => void app.saveSettings({ reviewModel: e.target.value.trim() })}
+            style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '7px 11px', color: 'var(--text)', fontSize: 12.5, ...mono, outline: 'none' }} />
+        </div>
+      </div>
     </div>
   );
 }

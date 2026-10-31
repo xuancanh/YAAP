@@ -45,7 +45,7 @@ loop, per day for 30 days) and in Settings → Usage. Telegram becomes
 two-way: unread inbox events for the default agent are delivered to the
 paired chat (respecting quiet hours), each with a link back to the session.
 
-### 2. Independent action review *(todo)*
+### 2. Independent action review *(done)*
 `ActionReviewService`: for every mutating tool call in Auto mode, and for
 remembered approvals in Ask mode, a second model call (cheap model, no
 tools, outside the turn) receives the user's original request, the
@@ -55,6 +55,12 @@ conversation summary and the proposed call, and returns
 Deterministic gates stay the floor: confirm-always tools still confirm. The
 reviewer's verdict and reason are recorded on the tool call and surfaced in
 the tool card. Off switch and model override in Settings.
+Shipped as: `server/src/review/` (`ActionReviewService`, `review-prompt.ts`),
+the hook in `turn-loop.service.ts` after `checkPolicy`, `review` on tool
+records and SSE events, the "Reviewed ·" line in `ChatView.tsx`, settings
+`actionReview`/`reviewModel` (Settings → Permissions), `docs/permissions.md`
+§6, `tests/backend-action-review.test.ts`. Loop and channel turns turn `ask`
+into `deny` plus an inbox event.
 
 ### 3. Threat model *(done)*
 `docs/security.md`: isolation model, trust tiers, approval taxonomy,

@@ -311,13 +311,16 @@ export const PROVIDER_COLORS: Record<string, string> = {
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
 
+/** Independent reviewer's verdict on a tool call (docs/permissions.md §6). */
+export interface ToolReview { verdict: 'allow' | 'ask' | 'deny'; reason: string; sensitive: string[]; model: string }
+
 export type TurnEvent =
   | { type: 'turn'; turnId: string }
   | { type: 'answer'; text: string }
   | { type: 'thinking'; text: string }
   | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean }
-  | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ToolReview }
+  | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown>; review?: ToolReview }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   | { type: 'done' }
   | { type: 'error'; message: string };
