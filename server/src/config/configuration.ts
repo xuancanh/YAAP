@@ -58,6 +58,9 @@ export default () => ({
   runnerCfUrl: process.env.RUNNER_CF_URL || '',
   /** Shared bearer token the worker requires on every request. */
   runnerCfToken: process.env.RUNNER_CF_TOKEN || '',
+  /** Vulnerability-disclosure address shown by GET /api/security and Settings
+   *  (docs/security.md §j). Empty = the UI shows the policy without a contact. */
+  securityContact: process.env.SECURITY_CONTACT || '',
   /** Estimated provider-input tokens that trigger auto-compaction (FR-7.3). */
   compactionThresholdTokens: parseInt(process.env.COMPACTION_THRESHOLD_TOKENS || '120000', 10),
 });

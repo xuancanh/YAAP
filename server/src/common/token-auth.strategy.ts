@@ -7,7 +7,8 @@
  * it cross-origin and spend LLM keys. When YAAM_API_TOKEN is unset every
  * request passes (single-user localhost default; AppModule logs a boot
  * warning). GET /api/status stays open so liveness probes work without
- * credentials.
+ * credentials, and GET /api/security so the disclosure policy is readable
+ * without one.
  */
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -19,7 +20,7 @@ export class TokenAuthStrategy implements AuthStrategy {
   constructor(private readonly config: ConfigService) {}
 
   isPublic(request: Request): boolean {
-    return request.method === 'GET' && request.path === '/api/status';
+    return request.method === 'GET' && (request.path === '/api/status' || request.path === '/api/security');
   }
 
   authenticate(request: Request): string {

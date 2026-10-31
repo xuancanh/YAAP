@@ -16,6 +16,7 @@
  *  McpModule         → CRUD /api/mcp                (server config, FR-10.3)
  *  SettingsModule    → GET/PUT /api/settings        (app-wide defaults)
  *  ChannelsModule    → /api/channels/telegram        (presence, phase 4)
+ *  SecurityModule    → GET  /api/security            (threat model, docs/security.md)
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
@@ -44,6 +45,7 @@ import { ChannelsModule } from './channels/channels.module';
 import { AppBridgeModule } from './appbridge/app-bridge.module';
 import { ConnectionsModule } from './connections/connections.module';
 import { RunnerModule } from './runner/runner.module';
+import { SecurityModule } from './security/security.module';
 
 @Module({
   imports: [
@@ -64,6 +66,7 @@ import { RunnerModule } from './runner/runner.module';
     AppBridgeModule,
     ConnectionsModule,
     RunnerModule,
+    SecurityModule,
   ],
   providers: [
     // Identity is bound here and nowhere else: swapping this one provider
