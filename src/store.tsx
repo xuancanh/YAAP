@@ -9,6 +9,7 @@ import {
   type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision, type ToolReview,
 } from './lib/api';
+import type { PriceTable } from './lib/pricing';
 
 export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 'settings';
 /** What the main pane shows while in the Home section: a conversation, an
@@ -59,6 +60,8 @@ interface Store {
   mcp: McpServer[]; setMcp: (v: McpServer[]) => void; refreshMcp: () => Promise<void>;
   market: MarketItem[]; refreshMarket: () => Promise<void>;
   settings: Record<string, string>; saveSettings: (patch: Record<string, string>) => Promise<void>;
+  /** Merged model price table (USD per million tokens) for live meters. */
+  pricing: PriceTable;
 
   // chat
   currentId: string | null; openSession: (id: string) => void;
@@ -160,6 +163,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [mcp, setMcp] = useState<McpServer[]>([]);
   const [market, setMarket] = useState<MarketItem[]>([]);
   const [settings, setSettings] = useState<Record<string, string>>({});
+  const [pricing, setPricing] = useState<PriceTable>({});
 
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<{ messages: ChatMessage[]; turns: ChatTurn[] }>({ messages: [], turns: [] });
@@ -578,7 +582,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const saveSettings = useCallback(async (patch: Record<string, string>) => {
     setSettings(await api.putSettings(patch));
+    // overrides change what every meter shows
+    if ('pricingOverrides' in patch) api.pricing().then((p) => setPricing(p.prices)).catch(() => {});
   }, []);
+  useEffect(() => { api.pricing().then((p) => setPricing(p.prices)).catch(() => {}); }, []);
 
   const openArtifact = useCallback((title: string, src: string) => setArtifact({ title, src }), []);
   const closeArtifact = useCallback(() => setArtifact(null), []);
@@ -625,7 +632,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     workspaces, workspaceId, pickWorkspace, refreshWorkspaces,
     agents, agentStats, refreshAgents, unread, sessions, refreshSessions, archived, archiveChat, restoreChat,
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, setMcp, refreshMcp,
-    market, refreshMarket, settings, saveSettings,
+    market, refreshMarket, settings, saveSettings, pricing,
     currentId, openSession, current, transcript, refreshTranscript, patchSession, newChat,
     streaming, live, send, stopTurn, approve, queue, removeQueued,
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
@@ -640,7 +647,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     workspaces, workspaceId, pickWorkspace, refreshWorkspaces,
     agents, agentStats, refreshAgents, unread, sessions, refreshSessions, archived, archiveChat, restoreChat,
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, refreshMcp,
-    market, refreshMarket, settings, saveSettings,
+    market, refreshMarket, settings, saveSettings, pricing,
     currentId, openSession, current, transcript, refreshTranscript, patchSession, newChat,
     streaming, live, send, stopTurn, approve, queue, removeQueued,
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,

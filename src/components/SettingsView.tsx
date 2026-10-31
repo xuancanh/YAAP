@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
-import { api, PROVIDER_COLORS, type Connection, type ConnectionProvider, type ProfileProposal, type QuietHours, type QuietPolicy, type RunnerStatus, type Workspace } from '../lib/api';
+import { api, PROVIDER_COLORS, type Connection, type ConnectionProvider, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RunnerStatus, type Workspace, type WorkspaceUsage } from '../lib/api';
 import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
+import { fmtUsd } from '../lib/pricing';
+import { UsageBars, UsageRows } from './UsageChart';
 
 const PANE_META: Record<string, [string, string]> = {
   providers: ['Providers & agent types', 'Reusable presets: provider, default model, API key, and persona. A type with no key falls back to the Echo dev provider.'],
@@ -14,6 +16,7 @@ const PANE_META: Record<string, [string, string]> = {
   context: ['Context & budget', 'Token ceiling and automatic compaction threshold.'],
   memory: ['Workspace memory', 'Durable chat memory injected as shared context for this workspace.'],
   workspace: ['Workspace', 'Quiet hours, the interrupt policy, and the monthly spend stop. Loops keep working; what changes is when you hear about it and how much it may cost.'],
+  usage: ['Usage', 'Tokens and dollars over the last 30 days — per agent, per loop, per day — and the price table behind the estimate.'],
   channels: ['Channels', 'Talk to your agents where you already are — Telegram first, paired to you alone.'],
   connections: ['Connections', 'Link external services (Google Calendar first). Connecting grants nothing — you approve access per agent.'],
   runner: ['Code runner', 'Where run_js and run_python execute. Every run is disposable, offline, and approval-gated.'],
@@ -489,6 +492,127 @@ function WorkspacePane() {
   );
 }
 
+/** Settings → Usage (roadmap phase 2.5): the workspace bill made visible
+ *  before it arrives, plus the override hatch for the price table. */
+function UsagePane() {
+  const app = useApp();
+  const ws = app.workspaces.find((w) => w.id === app.workspaceId);
+  const [days, setDays] = useState(30);
+  const [usage, setUsage] = useState<WorkspaceUsage | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [pricing, setPricing] = useState<PricingInfo | null>(null);
+  const [overrides, setOverrides] = useState(app.settings.pricingOverrides || '');
+  const [editing, setEditing] = useState(false);
+  const wsId = ws?.id;
+  useEffect(() => {
+    if (!wsId) return;
+    setFailed(false);
+    void api.workspaceUsage(wsId, days).then(setUsage).catch(() => { setUsage(null); setFailed(true); });
+  }, [wsId, days, app.settings.pricingOverrides]);
+  useEffect(() => { void api.pricing().then(setPricing).catch(() => setPricing(null)); }, [app.settings.pricingOverrides]);
+  useEffect(() => { setOverrides(app.settings.pricingOverrides || ''); }, [app.settings.pricingOverrides]);
+  if (!ws) return null;
+
+  const saveOverrides = async () => {
+    const text = overrides.trim();
+    if (text) {
+      try {
+        const parsed = JSON.parse(text) as Record<string, { input?: unknown; output?: unknown }>;
+        const bad = Object.entries(parsed).find(([, v]) => typeof v?.input !== 'number' || typeof v?.output !== 'number');
+        if (bad) { app.showToast(`"${bad[0]}" needs numeric input and output (USD per million tokens)`); return; }
+      } catch { app.showToast('Overrides must be JSON: { "model-id": { "input": 3, "output": 15 } }'); return; }
+    }
+    await app.saveSettings({ pricingOverrides: text });
+    setEditing(false);
+    app.showToast(text ? 'Price overrides saved' : 'Price overrides cleared');
+  };
+
+  const budget = usage?.budget ?? workspaceSpend(ws);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ width: 9, height: 9, borderRadius: 3, background: ws.color }} />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>{ws.name}</span>
+          <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>all agents, all conversations</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+            {[7, 30, 90].map((d) => (
+              <button key={d} onClick={() => setDays(d)} style={{ background: days === d ? 'var(--accent-dim)' : 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '4px 10px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>{d}d</button>
+            ))}
+          </div>
+        </div>
+        {failed && <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 12 }}>Could not load usage.</div>}
+        {usage && (
+          <>
+            <div style={{ display: 'flex', gap: 22, marginTop: 14, flexWrap: 'wrap' }}>
+              {[
+                ['Spent', fmtUsd(usage.totals.usd), `${usage.days} days, list prices`],
+                ['Tokens', fmtTokens(usage.totals.tokensIn + usage.totals.tokensOut), `${fmtTokens(usage.totals.tokensIn)} in · ${fmtTokens(usage.totals.tokensOut)} out`],
+                ['Turns', String(usage.totals.turns), 'completed, stopped, or failed'],
+                ['This month', `${fmtTokens(budget.spentTokens)}${budget.budgetTokens > 0 ? ` / ${fmtTokens(budget.budgetTokens)}` : ''}`, budget.budgetTokens > 0 ? (budget.over ? 'budget reached — loops paused' : 'of the workspace budget') : 'no budget set (Settings → Workspace)'],
+              ].map(([k, v, sub]) => (
+                <div key={k} style={{ minWidth: 120 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)' }}>{k}</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, marginTop: 2, ...mono, color: k === 'This month' && budget.over ? 'var(--red)' : 'var(--text)' }}>{v}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{sub}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 16 }}><UsageBars series={usage.series} height={80} /></div>
+            {usage.unpricedModels.length > 0 && (
+              <div style={{ fontSize: 11.5, color: 'var(--amber)', marginTop: 10, display: 'flex', gap: 7, alignItems: 'center' }}>
+                <I d={P.warn} size={13} stroke="var(--amber)" />Not in the price table (tokens counted, dollars not): {usage.unpricedModels.join(', ')}. Add them to the overrides below.
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {usage && (
+        <div style={card}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>By agent</div>
+          <UsageRows rows={usage.byAgent.map((a) => ({ key: a.agentId || 'direct', label: a.name, tokensIn: a.tokensIn, tokensOut: a.tokensOut, usd: a.usd, turns: a.turns }))} />
+          <div style={{ fontSize: 13, fontWeight: 600, margin: '16px 0 8px', paddingTop: 14, borderTop: '1px solid var(--border-soft)' }}>By kind</div>
+          <UsageRows rows={usage.byKind} onOpen={(id) => app.openSession(id)} />
+          <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 10 }}>Each loop is its own row across agents; open an agent’s home page for its own breakdown.</div>
+        </div>
+      )}
+
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 5 }}>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Price table</span>
+          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{pricing ? `${pricing.listed} models listed · ${pricing.overridden.length} overridden` : ''}</span>
+          {editing ? (
+            <button onClick={() => void saveOverrides()} style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Save</button>
+          ) : (
+            <button onClick={() => setEditing(true)} style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '5px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Edit overrides</button>
+          )}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 10, lineHeight: 1.55 }}>
+          {pricing?.note ?? 'List prices, Oct 2026 (USD per million tokens).'} Dollar figures everywhere are estimates at these rates — cache discounts and batch tiers are not modelled. Overrides win over the list; they also price models the list does not know.
+        </div>
+        {editing ? (
+          <textarea value={overrides} onChange={(e) => setOverrides(e.target.value)} placeholder={'{ "claude-sonnet-4-5": { "input": 3, "output": 15 } }'}
+            style={{ width: '100%', minHeight: 120, resize: 'vertical', background: 'var(--code)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 14px', color: 'var(--text-dim)', fontSize: 12, ...mono, lineHeight: 1.6, outline: 'none' }} />
+        ) : pricing && (
+          <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--border-soft)', borderRadius: 9 }}>
+            {Object.entries(pricing.prices).sort(([a], [b]) => a.localeCompare(b)).map(([model, price]) => (
+              <div key={model} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 70px 70px', gap: 8, padding: '5px 10px', fontSize: 11.5, ...mono, color: pricing.overridden.includes(model) ? 'var(--accent-hi)' : 'var(--text-dim)', borderBottom: '1px solid var(--border-soft)' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model}{pricing.overridden.includes(model) ? ' *' : ''}</span>
+                <span style={{ textAlign: 'right' }}>${price.input}</span>
+                <span style={{ textAlign: 'right' }}>${price.output}</span>
+              </div>
+            ))}
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 70px 70px', gap: 8, padding: '5px 10px', fontSize: 10, color: 'var(--text-faint)' }}>
+              <span>USD per million tokens</span><span style={{ textAlign: 'right' }}>input</span><span style={{ textAlign: 'right' }}>output</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Telegram channel (phase 4): pairing-code flow + default agent pick. */
 function ChannelsPane() {
   const app = useApp();
@@ -755,6 +879,7 @@ export function SettingsView({ pane }: { pane: string }) {
           {pane === 'context' && <ContextPane />}
           {pane === 'memory' && <MemoryPane />}
           {pane === 'workspace' && <WorkspacePane />}
+          {pane === 'usage' && <UsagePane />}
           {pane === 'channels' && <ChannelsPane />}
           {pane === 'connections' && <ConnectionsPane />}
           {pane === 'runner' && <RunnerPane />}

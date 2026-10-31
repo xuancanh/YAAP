@@ -6,6 +6,7 @@ import { I, P } from '../lib/icons';
 import { useApp, grad, type LiveItem, type LiveTool } from '../store';
 import { api, PROVIDER_COLORS, type Agent, type ApprovalDecision, type ChatMessage, type ChatTurn, type ToolReview } from '../lib/api';
 import { safeJsonParse, workspaceSpend } from '../lib/util';
+import { fmtUsd, usdFor } from '../lib/pricing';
 
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 5, borderRadius: 6, display: 'flex' };
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -313,6 +314,9 @@ export function ChatView() {
   const spend = workspaceSpend(app.workspaces.find((w) => w.id === s.workspaceId));
   const ask = s.permissionMode === 'ask';
   const type = app.agentTypes.find((t) => t.id === s.agentTypeId);
+  // Estimated spend for this chat at the model's list price (Settings → Usage
+  // overrides); null when the model is unknown to the table.
+  const chatUsd = usdFor(s.model || type?.model || agent?.model, s.tokensIn, s.tokensOut, app.pricing);
 
   const filesForMention = app.fileList;
 
@@ -445,7 +449,7 @@ export function ChatView() {
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 9 }}>
           {app.width >= 1000 && (
             <div title="Context usage" style={{ cursor: 'default', textAlign: 'right' }}>
-              <div style={{ fontSize: 10.5, color: 'var(--text-faint)', ...mono }}>{Math.round(tokens / 1000)}k / {s.tokenCeiling ? `${s.tokenCeiling / 1000}k` : '∞'}</div>
+              <div style={{ fontSize: 10.5, color: 'var(--text-faint)', ...mono }}>{Math.round(tokens / 1000)}k / {s.tokenCeiling ? `${s.tokenCeiling / 1000}k` : '∞'}{chatUsd !== null && tokens > 0 ? ` · ${fmtUsd(chatUsd)}` : ''}</div>
               <div style={{ width: 88, height: 5, background: 'var(--panel-2)', borderRadius: 3, marginTop: 3, overflow: 'hidden' }}>
                 <div style={{ height: '100%', width: `${pct}%`, background: tokenBarColor, borderRadius: 3, transition: 'width .5s' }} />
               </div>

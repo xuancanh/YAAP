@@ -5,6 +5,7 @@
 import type { z } from 'zod';
 import {
   looseParse,
+  usageReportSchema,
   chatSessionSchema,
   chatSessionListSchema,
   agentSchema,
@@ -39,6 +40,33 @@ export interface QuietHours { start: string; end: string; timezone: string; poli
 
 /** This month's spend against the workspace budget (GET /workspaces/:id/spend). */
 export interface SpendStatus { month: string; spentTokens: number; budgetTokens: number; over: boolean }
+
+// ---- cost dashboard (GET /agents/:id/usage, /workspaces/:id/usage) ----
+export interface UsageDay { day: string; tokensIn: number; tokensOut: number; usd: number }
+export interface UsageBucket {
+  key: string; label: string; kind: 'chat' | 'loop' | 'channel';
+  tokensIn: number; tokensOut: number; usd: number; turns: number; sessionId?: string;
+}
+export interface UsageReport {
+  days: number; from: string; to: string;
+  totals: { tokensIn: number; tokensOut: number; usd: number; turns: number };
+  series: UsageDay[];
+  byKind: UsageBucket[];
+  unpricedModels: string[];
+}
+export interface AgentUsage extends UsageReport { agentId: string }
+export interface WorkspaceUsage extends UsageReport {
+  workspaceId: string;
+  byAgent: Array<{ agentId: string; name: string; tokensIn: number; tokensOut: number; usd: number; turns: number }>;
+  budget: SpendStatus;
+}
+export interface PricingInfo {
+  prices: Record<string, { input: number; output: number }>;
+  overrides: Record<string, { input: number; output: number }>;
+  overridden: string[];
+  listed: number;
+  note: string;
+}
 
 export interface ProfileProposal {
   id: string;
@@ -382,6 +410,9 @@ export const api = {
   updateWorkspace: (id: string, patch: Partial<Pick<Workspace, 'name' | 'color' | 'memory' | 'profile' | 'quietHours' | 'spendBudgetTokens'>>) =>
     send<Workspace>(`/api/workspaces/${id}`, 'PATCH', patch),
   workspaceSpend: (id: string) => get<SpendStatus>(`/api/workspaces/${id}/spend`),
+  workspaceUsage: (id: string, days = 30) => get<WorkspaceUsage>(`/api/workspaces/${id}/usage?days=${days}`, usageReportSchema),
+  agentUsage: (id: string, days = 30) => get<AgentUsage>(`/api/agents/${id}/usage?days=${days}`, usageReportSchema),
+  pricing: () => get<PricingInfo>('/api/usage/pricing'),
   resolveProfileProposal: (id: string, proposalId: string, approve: boolean) =>
     send<Workspace>(`/api/workspaces/${id}/profile/${approve ? 'approve' : 'reject'}`, 'POST', { proposalId }),
   wsFiles: (id: string) => get<FileEntry[]>(`/api/workspaces/${id}/files`, fileEntryListSchema),

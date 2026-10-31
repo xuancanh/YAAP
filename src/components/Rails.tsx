@@ -313,6 +313,7 @@ export const SETTINGS_PANES = [
   { id: 'context', label: 'Context & budget', icon: P.context },
   { id: 'memory', label: 'Workspace memory', icon: P.memoryIcon },
   { id: 'workspace', label: 'Workspace', icon: P.clock },
+  { id: 'usage', label: 'Usage', icon: P.bolt },
   { id: 'channels', label: 'Channels', icon: P.chat },
   { id: 'connections', label: 'Connections', icon: P.globe },
   { id: 'runner', label: 'Code runner', icon: P.shield },

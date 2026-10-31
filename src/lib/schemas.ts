@@ -102,6 +102,18 @@ export const transcriptSchema = z.object({
   turns: z.array(chatTurnSchema),
 });
 
+/** Usage reports are iterated blindly into a chart — drift should warn. */
+export const usageReportSchema = z.object({
+  days: z.number(),
+  totals: z.object({ tokensIn: z.number(), tokensOut: z.number(), usd: z.number(), turns: z.number() }),
+  series: z.array(z.object({ day: z.string(), tokensIn: z.number(), tokensOut: z.number(), usd: z.number() })),
+  byKind: z.array(z.object({
+    key: z.string(), label: z.string(), kind: z.enum(['chat', 'loop', 'channel']),
+    tokensIn: z.number(), tokensOut: z.number(), usd: z.number(), turns: z.number(), sessionId: z.string().optional(),
+  })),
+  unpricedModels: z.array(z.string()),
+});
+
 export const hireResultSchema = z.object({
   ok: z.boolean(),
   agent: agentSchema,

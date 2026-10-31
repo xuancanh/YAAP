@@ -5,7 +5,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
-import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentLesson, type AgentTask, type Connection, type FileEntry, type FilePreview, type Skill } from '../lib/api';
+import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentLesson, type AgentTask, type AgentUsage, type Connection, type FileEntry, type FilePreview, type Skill } from '../lib/api';
+import { UsageBars, UsageRows } from './UsageChart';
+import { fmtUsd } from '../lib/pricing';
+import { fmtTokens } from '../lib/util';
 import { Markdown } from '../lib/md';
 import { sealHtml } from '../lib/sandbox';
 import { nextFire, untilLabel } from '../lib/cron';
@@ -918,6 +921,7 @@ export function AgentHome() {
   const [reviewApp, setReviewApp] = useState<AgentApp | null>(null);
   const [tasks, setTasks] = useState<AgentTask[]>([]);
   const [events, setEvents] = useState<AgentEvent[]>([]);
+  const [usage, setUsage] = useState<AgentUsage | null>(null);
   const [chatQuery, setChatQuery] = useState('');
   const [editingCharter, setEditingCharter] = useState(false);
   const [charterDraft, setCharterDraft] = useState('');
@@ -949,9 +953,11 @@ export function AgentHome() {
     if (agentId) {
       void api.agentTasks(agentId).then(setTasks).catch(() => setTasks([]));
       void api.agentEvents(agentId).then(setEvents).catch(() => setEvents([]));
+      void api.agentUsage(agentId, 30).then(setUsage).catch(() => setUsage(null));
     } else {
       setTasks([]);
       setEvents([]);
+      setUsage(null);
     }
   }, [agentId]);
 
@@ -995,7 +1001,7 @@ export function AgentHome() {
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-.3px' }}>{a.name}</div>
             <div style={{ color: 'var(--text-dim)', fontSize: 12.5, marginTop: 2 }}>
               {a.role || 'Durable agent'}
-              <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-faint)', fontSize: 11.5 }}> · {a.model || a.provider} · {stats?.rating !== null && stats?.rating !== undefined ? `${stats.rating}% approval` : 'unrated'} · {(((stats?.tokensIn ?? 0) + (stats?.tokensOut ?? 0)) / 1000).toFixed(1)}k tokens</span>
+              <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-faint)', fontSize: 11.5 }}> · {a.model || a.provider} · {stats?.rating !== null && stats?.rating !== undefined ? `${stats.rating}% approval` : 'unrated'} · {(((stats?.tokensIn ?? 0) + (stats?.tokensOut ?? 0)) / 1000).toFixed(1)}k tokens{usage && usage.totals.turns > 0 ? ` · ${fmtUsd(usage.totals.usd)} / 30d` : ''}</span>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1055,6 +1061,23 @@ export function AgentHome() {
                 )}
               </div>
             </div>
+            {usage && usage.totals.turns > 0 && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
+                  <span style={label}>Usage · 30 days</span>
+                  <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
+                    {fmtTokens(usage.totals.tokensIn + usage.totals.tokensOut)} tokens · {fmtUsd(usage.totals.usd)} at list prices
+                    {usage.unpricedModels.length > 0 ? ` · unpriced: ${usage.unpricedModels.join(', ')}` : ''}
+                  </span>
+                </div>
+                <div style={{ ...card, padding: '12px 14px' }}>
+                  <UsageBars series={usage.series} height={64} />
+                  <div style={{ marginTop: 10, borderTop: '1px solid var(--border-soft)', paddingTop: 8 }}>
+                    <UsageRows rows={usage.byKind} onOpen={(id) => app.openSession(id)} />
+                  </div>
+                </div>
+              </div>
+            )}
             {events.length > 0 && (
               <div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
@@ -1065,7 +1088,7 @@ export function AgentHome() {
                   {events.slice(0, 6).map((ev) => (
                     <div key={ev.id} onClick={() => ev.sessionId && app.openSession(ev.sessionId)}
                       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, cursor: ev.sessionId ? 'pointer' : 'default' }}>
-                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: ev.kind === 'loop_error' || ev.kind === 'action_failed' ? 'var(--red)' : ev.kind === 'action_pending' ? 'var(--amber)' : 'var(--green)', flex: 'none' }} />
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: ev.kind === 'loop_error' || ev.kind === 'action_failed' || ev.kind === 'budget_stop' ? 'var(--red)' : ev.kind === 'action_pending' ? 'var(--amber)' : 'var(--green)', flex: 'none' }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</div>
                         {ev.body && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.body}</div>}
