@@ -312,6 +312,7 @@ export const SETTINGS_PANES = [
   { id: 'permissions', label: 'Permissions', icon: P.shield },
   { id: 'context', label: 'Context & budget', icon: P.context },
   { id: 'memory', label: 'Workspace memory', icon: P.memoryIcon },
+  { id: 'workspace', label: 'Workspace', icon: P.clock },
   { id: 'channels', label: 'Channels', icon: P.chat },
   { id: 'connections', label: 'Connections', icon: P.globe },
   { id: 'runner', label: 'Code runner', icon: P.shield },

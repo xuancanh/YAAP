@@ -337,6 +337,58 @@ const MIGRATIONS: Migration[] = [
       if (trgm.rows.length > 0) await db.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
     },
   },
+  {
+    id: '0016-quiet-hours',
+    up: async (db) => {
+      if (!(await hasColumn(db, 'workspaces', 'quietHours'))) {
+        await db.query(`ALTER TABLE workspaces ADD COLUMN "quietHours" TEXT NOT NULL DEFAULT ''`);
+      }
+      if (!(await hasColumn(db, 'agent_events', 'deliverAfter'))) {
+        await db.query(`ALTER TABLE agent_events ADD COLUMN "deliverAfter" TEXT`);
+      }
+      if (!(await hasColumn(db, 'agent_events', 'silent'))) {
+        await db.query(`ALTER TABLE agent_events ADD COLUMN "silent" INTEGER NOT NULL DEFAULT 0`);
+      }
+      if (!(await hasColumn(db, 'agent_events', 'origin'))) {
+        await db.query(`ALTER TABLE agent_events ADD COLUMN "origin" TEXT NOT NULL DEFAULT ''`);
+      }
+    },
+  },
+  {
+    id: '0017-spend-budget',
+    up: async (db) => {
+      if (!(await hasColumn(db, 'workspaces', 'spendBudgetTokens'))) {
+        await db.query(`ALTER TABLE workspaces ADD COLUMN "spendBudgetTokens" INTEGER NOT NULL DEFAULT 0`);
+      }
+      if (!(await hasColumn(db, 'workspaces', 'spendMonth'))) {
+        await db.query(`ALTER TABLE workspaces ADD COLUMN "spendMonth" TEXT NOT NULL DEFAULT ''`);
+      }
+      if (!(await hasColumn(db, 'workspaces', 'spendTokens'))) {
+        await db.query(`ALTER TABLE workspaces ADD COLUMN "spendTokens" INTEGER NOT NULL DEFAULT 0`);
+      }
+    },
+  },
+  {
+    id: '0018-usage-index',
+    up: async (db) => {
+      // GET /api/agents/:id/usage walks an agent's sessions, then their turns
+      // (idx_turns_session covers the second hop); this covers the first.
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_sessions_agent ON chat_sessions ("agentId")`);
+    },
+  },
+  {
+    id: '0019-channel-delivery',
+    up: async (db) => {
+      if (!(await hasColumn(db, 'agent_events', 'channel'))) {
+        await db.query(`ALTER TABLE agent_events ADD COLUMN "channel" INTEGER NOT NULL DEFAULT 0`);
+      }
+      if (!(await hasColumn(db, 'agent_events', 'deliveredAt'))) {
+        await db.query(`ALTER TABLE agent_events ADD COLUMN "deliveredAt" TEXT`);
+      }
+      // The outbound sweep polls for undelivered rows every minute.
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_agent_events_undelivered ON agent_events ("deliveredAt") WHERE "deliveredAt" IS NULL`);
+    },
+  },
 ];
 
 /** Advisory-lock key serializing migration runs: two instances booting

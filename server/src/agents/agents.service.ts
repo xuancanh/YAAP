@@ -5,7 +5,7 @@
  * follow-up work; this scaffold owns the profile CRUD and pending feedback.
  */
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { agents, agentEvents, agentTasks, chatSessions, chatTurns } from '../database/schema';
@@ -457,7 +457,17 @@ export class AgentsService {
 
   // ---- the agent inbox (roadmap phase 2): unattended work is never silent ----
 
-  async addEvent(agentId: string, input: { kind: string; title: string; body?: string; sessionId?: string; payload?: string }) {
+  async addEvent(agentId: string, input: {
+    kind: string; title: string; body?: string; sessionId?: string; payload?: string;
+    /** Quiet-hours delivery (quiet-hours.ts deliveryFor): when channels may
+     *  push it, or never. The inbox is unaffected. */
+    deliverAfter?: string | null; silent?: boolean;
+    /** The turn surface that produced it; channel-originated events are
+     *  never echoed back to the channel. */
+    origin?: string;
+    /** Push to the paired channel even for a non-default agent. */
+    channel?: boolean;
+  }) {
     const row = {
       id: newId(), agentId,
       kind: input.kind, title: input.title.slice(0, 200),
@@ -465,6 +475,13 @@ export class AgentsService {
       payload: input.payload ?? '',
       sessionId: input.sessionId ?? null,
       readAt: null, createdAt: nowIso(),
+      deliverAfter: input.deliverAfter ?? null,
+      silent: input.silent ? 1 : 0,
+      origin: input.origin ?? '',
+      // Failures and budget stops are the alerts people pair a channel for;
+      // they travel regardless of which agent is the channel's default.
+      channel: (input.channel ?? (input.kind === 'loop_error' || input.kind === 'budget_stop')) ? 1 : 0,
+      deliveredAt: null,
     };
     await this.db.insert(agentEvents).values(row);
     // keep the inbox bounded: retain the newest 200 events per agent,
@@ -494,6 +511,27 @@ export class AgentsService {
     const out: Record<string, number> = {};
     for (const r of rows) out[r.agentId] = (out[r.agentId] ?? 0) + 1;
     return out;
+  }
+
+  /** Events a channel may push now: not yet delivered, not silent, past
+   *  their quiet-hours release, and not born on a channel turn (echoing those
+   *  back would loop). Oldest first so a batch reads chronologically. */
+  async undeliveredEvents(now: Date = new Date()) {
+    const nowIso = now.toISOString();
+    const rows = await this.db.select().from(agentEvents)
+      .where(and(
+        isNull(agentEvents.deliveredAt),
+        eq(agentEvents.silent, 0),
+        or(isNull(agentEvents.deliverAfter), lte(agentEvents.deliverAfter, nowIso)),
+      ));
+    return rows
+      .filter((r) => r.origin !== 'channel')
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+  }
+
+  async markEventsDelivered(ids: string[], at: Date = new Date()) {
+    if (ids.length === 0) return;
+    await this.db.update(agentEvents).set({ deliveredAt: at.toISOString() }).where(inArray(agentEvents.id, ids));
   }
 
   async markEventsRead(agentId: string) {

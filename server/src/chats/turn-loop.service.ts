@@ -32,6 +32,8 @@ import { McpService, MCP_TOOL_PREFIX } from '../mcp/mcp.module';
 import { StorageService } from '../storage/storage.service';
 import { AgentsService, CUSTOM_TOOL_PREFIX } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { deliveryFor } from '../workspaces/quiet-hours';
+import { spendStatus } from '../workspaces/spend.util';
 import { ConnectionsService } from '../connections/connections.service';
 import { ActionReviewService, ReviewRecord } from '../review/action-review.service';
 
@@ -40,11 +42,19 @@ import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
 
+/** Where a turn was started: the app, a scheduled loop, or a presence
+ *  channel (Telegram). Channels are untrusted surfaces (docs/agent-memory.md)
+ *  and their events are never echoed back to them. */
+export type TurnOrigin = 'user' | 'loop' | 'channel';
+
 export type TurnEvent =
   | { type: 'turn'; turnId: string }
   | AiStreamEvent
   | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown>; review?: ReviewRecord }
   | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ReviewRecord }
+  /** The workspace's monthly spend stop is reached (phase 2.5): user turns
+   *  still run, the client shows the badge; loop turns are refused instead. */
+  | { type: 'budget'; month: string; spentTokens: number; budgetTokens: number }
   | { type: 'error'; message: string };
 
 interface ToolRecord {
@@ -197,6 +207,10 @@ export class TurnLoopService implements OnModuleDestroy {
   private readonly aborts = new Map<string, AbortController>();
   /** Pending Ask-mode approvals keyed by `${sessionId}:${callId}`. */
   private readonly pending = new Map<string, (d: ApprovalDecision) => void>();
+  /** Origin of the turn in flight per chat, so tool executors deep in the
+   *  call tree can stamp the events they write without threading it through
+   *  every signature. */
+  private readonly turnOrigins = new Map<string, TurnOrigin>();
 
   constructor(
     private readonly repo: ChatsRepository,
@@ -245,13 +259,23 @@ export class TurnLoopService implements OnModuleDestroy {
     return true;
   }
 
-  async *run(sessionId: string, input: { text: string; attachments?: unknown[]; origin?: 'user' | 'loop' }): AsyncGenerator<TurnEvent> {
+  async *run(sessionId: string, input: { text: string; attachments?: unknown[]; origin?: TurnOrigin }): AsyncGenerator<TurnEvent> {
     const session = await this.repo.getSession(sessionId);
     if (!session) throw new NotFoundException(`chat ${sessionId}`);
     if (session.tokenCeiling > 0 && session.tokensIn + session.tokensOut >= session.tokenCeiling) {
       throw new ForbiddenException('token ceiling reached');
     }
+    // The workspace's monthly spend stop (phase 2.5). Background turns are
+    // refused outright before any model call; a person typing still gets
+    // their answer and a visible notice — the stop exists to catch unattended
+    // spend, not to lock the user out of their own chat. Tolerant of a
+    // missing row: tests and legacy sessions reference workspaces that do
+    // not exist, and a budget check must never be the thing that fails a turn.
+    const ws = await this.workspaces.get(session.workspaceId).catch(() => null);
+    const spend = spendStatus(ws);
+    if (spend.over && input.origin === 'loop') throw new ForbiddenException('workspace budget reached');
     if (!this.locks.tryAcquire(sessionId)) throw new ConflictException('chat is busy');
+    this.turnOrigins.set(sessionId, input.origin ?? 'user');
 
     const ctl = new AbortController();
     this.aborts.set(sessionId, ctl);
@@ -263,6 +287,7 @@ export class TurnLoopService implements OnModuleDestroy {
       await this.repo.updateSession(sessionId, { autoTitle: input.text.replace(/\s+/g, ' ').slice(0, 64) });
     }
     yield { type: 'turn', turnId: turn.id };
+    if (spend.over) yield { type: 'budget', ...spend };
 
     let tokensIn = 0;
     let tokensOut = 0;
@@ -351,6 +376,8 @@ export class TurnLoopService implements OnModuleDestroy {
               body: summary,
               sessionId: session.id,
               payload: JSON.stringify({ tool: call.name, input: call.input }),
+              origin: input.origin ?? 'user',
+              ...deliveryFor(ws, 'action_pending'),
             });
             const output = `Queued for the user's approval: ${call.name} was recorded in the user's inbox and will run only if they approve it. Do not retry — tell the user what you queued and why.`;
             await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
@@ -378,7 +405,7 @@ export class TurnLoopService implements OnModuleDestroy {
               agentCharter: (agent as { charter?: string } | null)?.charter || undefined,
               recentContent: recentToolContent(history),
               call: { name: call.name, input: call.input },
-              origin: input.origin ?? 'user',
+              origin: input.origin === 'loop' ? 'loop' : 'user',
             }, { provider: ctx.provider, model: ctx.model, apiKey: ctx.apiKey, baseUrl: ctx.baseUrl, signal: ctl.signal });
             tokensIn += r.usage.inputTokens; tokensOut += r.usage.outputTokens;
             review = { verdict: r.verdict, reason: r.reason, sensitive: r.sensitive, model: r.model };
@@ -466,6 +493,10 @@ export class TurnLoopService implements OnModuleDestroy {
       });
       yield { type: 'error', message };
     } finally {
+      // Every token the provider billed counts against the workspace month,
+      // whether the turn ended well, stopped, or errored.
+      if (ws && tokensIn + tokensOut > 0) await this.workspaces.addSpend(ws.id, tokensIn + tokensOut).catch(() => {});
+      this.turnOrigins.delete(sessionId);
       this.locks.release(sessionId);
       this.aborts.delete(sessionId);
       // Post-turn auto-compaction with the real per-round overhead. It cannot
@@ -543,11 +574,14 @@ export class TurnLoopService implements OnModuleDestroy {
             origin: 'agent',
             sessionId: session.id,
           });
+          const targetWs = await this.workspaces.get(session.workspaceId).catch(() => null);
           await this.agents.addEvent(target.id, {
             kind: 'info',
             title: `${me?.name ?? 'An agent'} delegated: ${task.title}`,
             body: typeof input.note === 'string' ? input.note.slice(0, 300) : '',
             sessionId: session.id,
+            origin: this.turnOrigins.get(session.id) ?? 'user',
+            ...deliveryFor(targetWs, 'info'),
           }).catch(() => {});
           return `Task [${task.id.slice(0, 8)}] added to ${target.name}'s board.`;
         }

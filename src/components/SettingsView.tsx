@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
-import { api, PROVIDER_COLORS, type Connection, type ConnectionProvider, type ProfileProposal, type RunnerStatus, type Workspace } from '../lib/api';
+import { api, PROVIDER_COLORS, type Connection, type ConnectionProvider, type ProfileProposal, type QuietHours, type QuietPolicy, type RunnerStatus, type Workspace } from '../lib/api';
+import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
 
 const PANE_META: Record<string, [string, string]> = {
   providers: ['Providers & agent types', 'Reusable presets: provider, default model, API key, and persona. A type with no key falls back to the Echo dev provider.'],
@@ -12,6 +13,7 @@ const PANE_META: Record<string, [string, string]> = {
   permissions: ['Permissions', 'Default permission mode for new chats and remembered approvals.'],
   context: ['Context & budget', 'Token ceiling and automatic compaction threshold.'],
   memory: ['Workspace memory', 'Durable chat memory injected as shared context for this workspace.'],
+  workspace: ['Workspace', 'Quiet hours, the interrupt policy, and the monthly spend stop. Loops keep working; what changes is when you hear about it and how much it may cost.'],
   channels: ['Channels', 'Talk to your agents where you already are — Telegram first, paired to you alone.'],
   connections: ['Connections', 'Link external services (Google Calendar first). Connecting grants nothing — you approve access per agent.'],
   runner: ['Code runner', 'Where run_js and run_python execute. Every run is disposable, offline, and approval-gated.'],
@@ -347,6 +349,146 @@ function ProfileSection({ ws }: { ws: Workspace }) {
   );
 }
 
+const inputStyle: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 10px', color: 'var(--text)', fontSize: 12.5, outline: 'none' };
+
+/** Every IANA zone the browser knows, with the browser's own zone first;
+ *  older engines without supportedValuesOf get a short useful list. */
+function timezoneOptions(current: string): string[] {
+  const own = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  let all: string[];
+  try {
+    all = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.('timeZone') ?? [];
+  } catch { all = []; }
+  if (all.length === 0) all = ['UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Los_Angeles', 'Asia/Tokyo', 'Asia/Singapore', 'Australia/Sydney'];
+  return [...new Set([own, current, ...all].filter(Boolean))];
+}
+
+const POLICIES: Array<{ key: QuietPolicy; label: string; desc: string }> = [
+  { key: 'queue', label: 'Queue', desc: 'Notifications wait until the window ends, then go out together.' },
+  { key: 'silent', label: 'Silent', desc: 'Events land in the inbox only — nothing is pushed to channels, even later.' },
+  { key: 'allow-urgent', label: 'Allow urgent', desc: 'Like Queue, but loop failures and budget stops come through immediately.' },
+];
+
+/** Settings → Workspace (roadmap phase 2.3 / 2.5): quiet hours + interrupt
+ *  policy, and the monthly hard spend stop. */
+function WorkspacePane() {
+  const app = useApp();
+  const ws = app.workspaces.find((w) => w.id === app.workspaceId);
+  const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const saved = safeJsonParse<QuietHours | null>(ws?.quietHours, null);
+  const [enabled, setEnabled] = useState(Boolean(saved));
+  const [q, setQ] = useState<QuietHours>(saved ?? { start: '22:00', end: '07:00', timezone: browserTz, policy: 'queue' });
+  const [budget, setBudget] = useState(String(ws?.spendBudgetTokens ?? 0));
+  useEffect(() => {
+    const cur = safeJsonParse<QuietHours | null>(ws?.quietHours, null);
+    setEnabled(Boolean(cur));
+    if (cur) setQ(cur);
+    setBudget(String(ws?.spendBudgetTokens ?? 0));
+  }, [ws?.id, ws?.quietHours, ws?.spendBudgetTokens]);
+  if (!ws) return null;
+
+  const spend = workspaceSpend(ws);
+  const pct = spend.budgetTokens > 0 ? Math.min(100, (spend.spentTokens / spend.budgetTokens) * 100) : 0;
+  const crossesMidnight = q.start > q.end;
+
+  const saveQuiet = async (next: { enabled: boolean; q: QuietHours }) => {
+    try {
+      await api.updateWorkspace(ws.id, { quietHours: next.enabled ? JSON.stringify(next.q) : '' });
+      await app.refreshWorkspaces();
+      app.showToast(next.enabled ? 'Quiet hours saved' : 'Quiet hours off');
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'save failed');
+    }
+  };
+  const saveBudget = async () => {
+    const n = parseInt(budget || '0', 10);
+    try {
+      await api.updateWorkspace(ws.id, { spendBudgetTokens: Number.isFinite(n) ? n : 0 });
+      await app.refreshWorkspaces();
+      app.showToast(n > 0 ? `Budget set to ${fmtTokens(n)} tokens / month` : 'Budget removed');
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'save failed');
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Quiet hours</div>
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>
+              Loops still run on schedule inside the window; their notifications are held or muted according to the policy.
+            </div>
+          </div>
+          <Toggle on={enabled} onClick={() => { const next = !enabled; setEnabled(next); void saveQuiet({ enabled: next, q }); }} />
+        </div>
+        {enabled && (
+          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <label style={{ fontSize: 11.5, color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                From
+                <input type="time" value={q.start} onChange={(e) => setQ({ ...q, start: e.target.value })} style={{ ...inputStyle, ...mono }} />
+              </label>
+              <label style={{ fontSize: 11.5, color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                Until
+                <input type="time" value={q.end} onChange={(e) => setQ({ ...q, end: e.target.value })} style={{ ...inputStyle, ...mono }} />
+              </label>
+              <label style={{ fontSize: 11.5, color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 200 }}>
+                Timezone
+                <select value={q.timezone} onChange={(e) => setQ({ ...q, timezone: e.target.value })} style={inputStyle}>
+                  {timezoneOptions(q.timezone).map((tz) => <option key={tz} value={tz}>{tz}{tz === browserTz ? ' (this device)' : ''}</option>)}
+                </select>
+              </label>
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>
+              {q.start === q.end ? 'Start and end must differ.' : `Quiet from ${q.start} to ${q.end}${crossesMidnight ? ' the next day' : ''}, ${q.timezone} time.`}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {POLICIES.map((pol) => (
+                <div key={pol.key} onClick={() => setQ({ ...q, policy: pol.key })}
+                  style={{ flex: 1, minWidth: 160, padding: '10px 12px', borderRadius: 10, cursor: 'pointer', border: `1px solid ${q.policy === pol.key ? 'var(--accent)' : 'var(--border)'}`, background: q.policy === pol.key ? 'var(--accent-dim)' : 'var(--panel-2)' }}>
+                  <div style={{ fontWeight: 600, fontSize: 12.5 }}>{pol.label}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2, lineHeight: 1.45 }}>{pol.desc}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex' }}>
+              <button disabled={q.start === q.end} onClick={() => void saveQuiet({ enabled: true, q })}
+                style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', opacity: q.start === q.end ? 0.5 : 1 }}>Save quiet hours</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>Monthly spend stop</div>
+        <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>
+          Every completed turn in this workspace counts toward one monthly token total. At the limit, scheduled loops are refused before any model call (one budget_stop notice per loop per day); you can still chat, with a warning. 0 = unlimited.
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
+          <input value={budget} onChange={(e) => setBudget(e.target.value.replace(/[^0-9]/g, ''))} onBlur={() => void saveBudget()}
+            style={{ ...inputStyle, ...mono, width: 140 }} />
+          <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>tokens per month</span>
+          <span style={{ marginLeft: 'auto', fontSize: 12, ...mono, color: spend.over ? 'var(--red)' : 'var(--text-dim)' }}>
+            {fmtTokens(spend.spentTokens)} used in {spend.month}{spend.budgetTokens > 0 ? ` / ${fmtTokens(spend.budgetTokens)}` : ''}
+          </span>
+        </div>
+        {spend.budgetTokens > 0 && (
+          <div style={{ height: 6, background: 'var(--panel-2)', borderRadius: 3, marginTop: 10, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${pct}%`, background: pct >= 100 ? 'var(--red)' : pct > 75 ? 'var(--amber)' : 'var(--accent)', borderRadius: 3 }} />
+          </div>
+        )}
+        {spend.over && (
+          <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 10, display: 'flex', gap: 7, alignItems: 'center' }}>
+            <I d={P.warn} size={13} stroke="var(--red)" />Budget reached — loops are paused until {spend.month} ends or the budget is raised.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Telegram channel (phase 4): pairing-code flow + default agent pick. */
 function ChannelsPane() {
   const app = useApp();
@@ -612,6 +754,7 @@ export function SettingsView({ pane }: { pane: string }) {
           {pane === 'permissions' && <PermissionsPane />}
           {pane === 'context' && <ContextPane />}
           {pane === 'memory' && <MemoryPane />}
+          {pane === 'workspace' && <WorkspacePane />}
           {pane === 'channels' && <ChannelsPane />}
           {pane === 'connections' && <ConnectionsPane />}
           {pane === 'runner' && <RunnerPane />}

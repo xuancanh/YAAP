@@ -11,6 +11,12 @@
  * Cron expressions are matched in SERVER-LOCAL time (see cron.util.ts):
  * a loop fires by the host's wall clock, including across DST changes.
  * Keep the host in the timezone you want loops to follow (TZ env var).
+ *
+ * Proactivity controls (roadmap phase 2.3/2.5): loops still fire inside the
+ * workspace's quiet hours, but the events they write defer their channel
+ * delivery (quiet-hours.ts); once the workspace's monthly spend stop is
+ * reached, a loop is refused before any model call and says so with one
+ * budget_stop event per loop per day — not one per tick.
  */
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -20,6 +26,8 @@ import { ChatsRepository } from './chats.repository';
 import { TurnLoopService } from './turn-loop.service';
 import { DistillService } from './distill.service';
 import { cronMatches } from './cron.util';
+import { deliveryFor } from '../workspaces/quiet-hours';
+import { spendStatus } from '../workspaces/spend.util';
 
 interface LoopDef { name: string; cron: string; prompt?: string; enabled?: boolean; model?: string; budgetTokens?: number }
 
@@ -130,6 +138,27 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     // loop_error every period would bury real failures in noise.
     if (this.turns.isBusy(session.id)) return;
 
+    const now = new Date();
+    const spend = spendStatus(ws, now);
+    if (spend.over) {
+      // Refused before the model is called. A 5-minute heartbeat would
+      // otherwise write 288 identical events a day, so one per loop per day.
+      const today = now.toISOString().slice(0, 10);
+      const already = (await this.agents.listEvents(agentId, 200))
+        .some((e) => e.kind === 'budget_stop' && e.sessionId === session.id && e.createdAt.startsWith(today));
+      if (!already) {
+        await this.agents.addEvent(agentId, {
+          kind: 'budget_stop',
+          title: `Loop "${loop.name}" skipped: workspace budget reached`,
+          body: `${ws.name} has used ${spend.spentTokens.toLocaleString('en-US')} of ${spend.budgetTokens.toLocaleString('en-US')} tokens this month. Loops stay paused until the month turns or the budget is raised in Settings → Workspace.`,
+          sessionId: session.id,
+          origin: 'loop',
+          ...deliveryFor(ws, 'budget_stop', now),
+        }).catch(() => {});
+      }
+      return;
+    }
+
     const prompt = loop.prompt
       ?? `Scheduled loop firing: "${loop.name}". Check your kanban board and your charter, complete this loop's work now using your tools, and keep your dashboard current. Be concise; if there is nothing to do, say so in one line.`;
 
@@ -148,6 +177,8 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
           ? `Budget reached (${loop.budgetTokens ?? session.tokenCeiling} tokens). Raise the loop budget or clear its conversation.`
           : message,
         sessionId: session.id,
+        origin: 'loop',
+        ...deliveryFor(ws, 'loop_error', new Date()),
       }).catch(() => {});
       throw err;
     }
@@ -156,6 +187,8 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
       title: `Loop "${loop.name}" ran`,
       body: answer.replace(/\s+/g, ' ').slice(0, 300),
       sessionId: session.id,
+      origin: 'loop',
+      ...deliveryFor(ws, 'loop_run', new Date()),
     }).catch(() => {});
     await this.agents.appendJournal(agentId,
       `${new Date().toISOString().slice(0, 10)}  Loop "${loop.name}" ran. ${answer.replace(/\s+/g, ' ').slice(0, 200)}`);

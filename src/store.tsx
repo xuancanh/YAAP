@@ -405,6 +405,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
               ? { ...i, status: ev.isError ? (ev.output.includes('Denied') ? 'denied' : 'error') : 'done', result: ev.output, review: ev.review ?? i.review }
               : i
           )));
+        } else if (ev.type === 'budget') {
+          // the header badge derives from the workspace row — refresh it so
+          // the stop shows without waiting for the next poll
+          void refreshWorkspaces().catch(() => {});
+          showToast(`Workspace budget reached (${Math.round(ev.spentTokens / 1000)}k of ${Math.round(ev.budgetTokens / 1000)}k tokens this month) — loops are paused`);
         } else if (ev.type === 'error') {
           showToast(ev.message);
         }
@@ -424,7 +429,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setQueue((q) => q.slice(1));
       setTimeout(() => { void runTurnRef.current?.(next.sessionId, next.text, next.attachments); }, 300);
     }
-  }, [refreshTranscript, refreshSessions, showToast]);
+  }, [refreshTranscript, refreshSessions, refreshWorkspaces, showToast]);
   const runTurnRef = useRef<typeof runTurn>(runTurn);
   runTurnRef.current = runTurn;
 

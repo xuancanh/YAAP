@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
-import { IsOptional, IsString } from 'class-validator';
+import { IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { WorkspacesService } from './workspaces.service';
 import { StorageService } from '../storage/storage.service';
 import { workspaceFileKey, workspacePrefix, relativePath } from '../storage/storage.keys';
@@ -24,6 +24,10 @@ class UpdateWorkspaceDto {
   @IsOptional() @IsString() color?: string;
   @IsOptional() @IsString() memory?: string;
   @IsOptional() @IsString() profile?: string;
+  /** Quiet hours JSON (see quiet-hours.ts) or '' to turn them off. */
+  @IsOptional() @IsString() quietHours?: string;
+  /** Monthly token budget for every agent in the workspace; 0 = unlimited. */
+  @IsOptional() @IsInt() @Min(0) spendBudgetTokens?: number;
 }
 
 class ResolveProposalDto {
@@ -48,6 +52,9 @@ export class WorkspacesController {
   @Post() create(@Body() dto: CreateWorkspaceDto) { return this.workspaces.create(dto); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateWorkspaceDto) { return this.workspaces.update(id, dto); }
   @Delete(':id') remove(@Param('id') id: string) { return this.workspaces.remove(id); }
+  /** This month's spend against the budget (the row carries the raw counter;
+   *  this applies the month boundary). */
+  @Get(':id/spend') spend(@Param('id') id: string) { return this.workspaces.spend(id); }
 
   // ---- consented user profile: agents propose, the user decides ----
   @Post(':id/profile/approve')

@@ -5,7 +5,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type LiveItem, type LiveTool } from '../store';
 import { api, PROVIDER_COLORS, type Agent, type ApprovalDecision, type ChatMessage, type ChatTurn, type ToolReview } from '../lib/api';
-import { safeJsonParse } from '../lib/util';
+import { safeJsonParse, workspaceSpend } from '../lib/util';
 
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 5, borderRadius: 6, display: 'flex' };
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -308,6 +308,9 @@ export function ChatView() {
   const pct = s.tokenCeiling ? Math.min(100, (tokens / s.tokenCeiling) * 100) : 0;
   const tokenBarColor = pct > 85 ? 'var(--red)' : pct > 60 ? 'var(--amber)' : 'var(--accent)';
   const capped = s.tokenCeiling > 0 && tokens >= s.tokenCeiling;
+  // Workspace-level monthly stop (phase 2.5): loops are paused server-side;
+  // the person can still type, so this warns instead of blocking.
+  const spend = workspaceSpend(app.workspaces.find((w) => w.id === s.workspaceId));
   const ask = s.permissionMode === 'ask';
   const type = app.agentTypes.find((t) => t.id === s.agentTypeId);
 
@@ -428,6 +431,12 @@ export function ChatView() {
             <button onClick={() => void app.archiveChat(s.id)} title="Archive (retained; restore from the sidebar)" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: 'var(--text-faint)', flex: 'none' }}>
               <I d={P.board} size={13} />
             </button>
+            {spend.over && (
+              <span title={`${spend.spentTokens.toLocaleString()} of ${spend.budgetTokens.toLocaleString()} tokens used this month. Scheduled loops are paused; raise the budget in Settings → Workspace.`}
+                style={{ fontSize: 10, fontWeight: 600, color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 5, padding: '1px 7px', whiteSpace: 'nowrap', flex: 'none' }}>
+                Workspace budget reached
+              </span>
+            )}
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>
             <span style={{ color: 'var(--text-dim)' }}>{agent?.name ?? 'Direct chat'}</span> · <span style={mono}>{s.cwd ?? 'workspace files'}</span>
@@ -503,6 +512,13 @@ export function ChatView() {
 
       <div style={{ flex: 'none', padding: '0 20px 18px' }}>
         <div style={{ maxWidth: 760, margin: '0 auto' }}>
+          {spend.over && (
+            <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--amber)', padding: '6px 10px', border: '1px solid color-mix(in oklab,var(--amber) 45%,var(--border))', borderRadius: 9, background: 'var(--panel-2)' }}>
+              <I d={P.warn} size={13} stroke="var(--amber)" />
+              <span style={{ flex: 1 }}>This workspace has reached its monthly token budget. You can still chat; scheduled loops stay paused until the month turns or the budget is raised.</span>
+              <button onClick={() => app.go('settings')} style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', fontSize: 12, cursor: 'pointer', padding: 0, fontWeight: 600 }}>Settings</button>
+            </div>
+          )}
           {app.queue.length > 0 && (
             <div style={{ marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
               {app.queue.map((qq) => (

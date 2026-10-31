@@ -580,3 +580,69 @@ test('custom tool params cannot reshape the approved JSON body (injection)', asy
   assert.equal(parsed.admin, undefined, 'no field was injected');
   assert.match(String(parsed.note), /^hi",/, 'the payload stayed inside the string value');
 });
+
+// ---- proactivity controls (roadmap phase 2.3 / 2.5) ----
+
+/** A quiet window around the current UTC minute, so the test is quiet
+ *  whenever it runs (crossing midnight when it has to). */
+function quietNow(policy: 'queue' | 'silent' | 'allow-urgent') {
+  const hhmm = (d: Date) => `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
+  const now = Date.now();
+  return JSON.stringify({ start: hhmm(new Date(now - 60 * 60_000)), end: hhmm(new Date(now + 60 * 60_000)), timezone: 'UTC', policy });
+}
+
+test('loops still run inside quiet hours; their events queue (deliverAfter) or go inbox-only (silent)', async () => {
+  const { agents, workspaces, repo, loops } = await setup([loopRound, loopRound]);
+  const ws = (await workspaces.list())[0];
+  await workspaces.update(ws.id, { quietHours: quietNow('queue') });
+  const agent = await agents.create({ name: 'Night owl', loops: [{ name: 'Hourly', cron: '* * * * *' }] });
+
+  await loops.tick(new Date(2026, 6, 16, 3, 5));
+  await new Promise((r) => setTimeout(r, 60));
+  const session = (await repo.listSessions(ws.id)).find((s) => s.name === 'Loop · Hourly')!;
+  assert.equal((await repo.listTurns(session.id)).length, 1, 'the loop ran — quiet hours gate notifications, not work');
+  let [ev] = await agents.listEvents(agent.id);
+  assert.equal(ev.kind, 'loop_run');
+  assert.equal(ev.silent, 0);
+  assert.ok(ev.deliverAfter && ev.deliverAfter > new Date().toISOString(), 'delivery deferred to the end of the window');
+  assert.equal(ev.origin, 'loop');
+  assert.equal((await agents.undeliveredEvents()).length, 0, 'nothing pushable yet');
+  assert.equal((await agents.undeliveredEvents(new Date(Date.now() + 2 * 60 * 60_000))).length, 1, 'pushable once the window ends');
+
+  await workspaces.update(ws.id, { quietHours: quietNow('silent') });
+  await loops.tick(new Date(2026, 6, 16, 3, 6));
+  await new Promise((r) => setTimeout(r, 60));
+  [ev] = await agents.listEvents(agent.id);
+  assert.equal(ev.silent, 1, 'silent policy: visible in the inbox, never pushed');
+  assert.equal(ev.deliverAfter, null);
+  assert.equal((await agents.undeliveredEvents(new Date(Date.now() + 2 * 60 * 60_000))).length, 1, 'the silent one is excluded even later');
+});
+
+test('workspace budget reached: loops are refused before the model and write one budget_stop per loop per day', async () => {
+  const { agents, workspaces, repo, loops, provider } = await setup([loopRound, loopRound]);
+  const ws = (await workspaces.list())[0];
+  await workspaces.update(ws.id, { spendBudgetTokens: 1_000 });
+  await workspaces.addSpend(ws.id, 1_000); // this month's counter sits at the budget
+  assert.equal((await workspaces.spend(ws.id)).over, true);
+  const agent = await agents.create({ name: 'Spender', loops: [{ name: 'Tick', cron: '* * * * *' }] });
+
+  await loops.tick(new Date(2026, 6, 16, 3, 5));
+  await new Promise((r) => setTimeout(r, 60));
+  await loops.tick(new Date(2026, 6, 16, 3, 6));
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.equal(provider.requests.length, 0, 'no model call was made');
+  const session = (await repo.listSessions(ws.id)).find((s) => s.name === 'Loop · Tick')!;
+  assert.equal((await repo.listTurns(session.id)).length, 0);
+  const events = await agents.listEvents(agent.id);
+  assert.equal(events.length, 1, 'one budget_stop for two ticks');
+  assert.equal(events[0].kind, 'budget_stop');
+  assert.match(events[0].title, /workspace budget reached/);
+  assert.equal(events[0].channel, 1, 'budget stops are flagged for channel delivery regardless of the default agent');
+
+  // raising the budget lets the next tick run again
+  await workspaces.update(ws.id, { spendBudgetTokens: 5_000 });
+  await loops.tick(new Date(2026, 6, 16, 3, 7));
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal((await repo.listTurns(session.id)).length, 1);
+});

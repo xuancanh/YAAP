@@ -24,8 +24,21 @@ export interface Workspace {
   profile: string;
   /** JSON array of ProfileProposal awaiting review. */
   profilePending: string;
+  /** Quiet hours JSON (QuietHours) or '' when off. */
+  quietHours: string;
+  /** Monthly token budget for the whole workspace; 0 = unlimited. */
+  spendBudgetTokens: number;
+  /** Running counter: 'YYYY-MM' it belongs to + tokens spent in it. */
+  spendMonth: string;
+  spendTokens: number;
   createdAt: string;
 }
+
+export type QuietPolicy = 'queue' | 'silent' | 'allow-urgent';
+export interface QuietHours { start: string; end: string; timezone: string; policy: QuietPolicy }
+
+/** This month's spend against the workspace budget (GET /workspaces/:id/spend). */
+export interface SpendStatus { month: string; spentTokens: number; budgetTokens: number; over: boolean }
 
 export interface ProfileProposal {
   id: string;
@@ -122,12 +135,18 @@ export interface AgentStats {
 export interface AgentEvent {
   id: string;
   agentId: string;
-  kind: 'loop_run' | 'loop_error' | 'info' | 'action_pending' | 'action_done' | 'action_failed' | 'action_dismissed';
+  kind: 'loop_run' | 'loop_error' | 'budget_stop' | 'info' | 'action_pending' | 'action_done' | 'action_failed' | 'action_dismissed';
   title: string;
   body: string;
   payload: string;
   sessionId: string | null;
   readAt: string | null;
+  /** Quiet hours: channels wait until then (null = now); silent = inbox-only. */
+  deliverAfter: string | null;
+  silent: number;
+  origin: string;
+  channel: number;
+  deliveredAt: string | null;
   createdAt: string;
 }
 
@@ -322,6 +341,8 @@ export type TurnEvent =
   | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ToolReview }
   | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown>; review?: ToolReview }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
+  /** The workspace's monthly spend stop is reached; the turn still runs. */
+  | { type: 'budget'; month: string; spentTokens: number; budgetTokens: number }
   | { type: 'done' }
   | { type: 'error'; message: string };
 
@@ -358,8 +379,9 @@ export const api = {
   // workspaces + workspace files
   workspaces: () => get<Workspace[]>('/api/workspaces'),
   createWorkspace: (name: string, color?: string) => send<Workspace>('/api/workspaces', 'POST', { name, color }),
-  updateWorkspace: (id: string, patch: Partial<Pick<Workspace, 'name' | 'color' | 'memory' | 'profile'>>) =>
+  updateWorkspace: (id: string, patch: Partial<Pick<Workspace, 'name' | 'color' | 'memory' | 'profile' | 'quietHours' | 'spendBudgetTokens'>>) =>
     send<Workspace>(`/api/workspaces/${id}`, 'PATCH', patch),
+  workspaceSpend: (id: string) => get<SpendStatus>(`/api/workspaces/${id}/spend`),
   resolveProfileProposal: (id: string, proposalId: string, approve: boolean) =>
     send<Workspace>(`/api/workspaces/${id}/profile/${approve ? 'approve' : 'reject'}`, 'POST', { proposalId }),
   wsFiles: (id: string) => get<FileEntry[]>(`/api/workspaces/${id}/files`, fileEntryListSchema),

@@ -34,6 +34,18 @@ export const workspaces = pgTable('workspaces', {
   /** JSON array of pending profile proposals awaiting user review:
    *  { id, entry, agentName, sessionId, at }. */
   profilePending: text('profilePending').notNull().default('[]'),
+  /** Quiet hours + interrupt policy (roadmap phase 2.3), JSON or '' when
+   *  off: { start: "22:00", end: "07:00", timezone: "Europe/Berlin",
+   *  policy: "queue" | "silent" | "allow-urgent" }. Loops still run inside
+   *  the window; only their notifications wait (see quiet-hours.ts). */
+  quietHours: text('quietHours').notNull().default(''),
+  /** Monthly hard spend stop in tokens (phase 2.5); 0 = unlimited. */
+  spendBudgetTokens: integer('spendBudgetTokens').notNull().default(0),
+  /** The month ('YYYY-MM', UTC) the running counter belongs to; a turn
+   *  landing in a new month resets the counter instead of carrying it. */
+  spendMonth: text('spendMonth').notNull().default(''),
+  /** tokensIn + tokensOut of every turn completed this month, all agents. */
+  spendTokens: integer('spendTokens').notNull().default(0),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -94,8 +106,8 @@ export const agentTasks = pgTable('agent_tasks', {
 export const agentEvents = pgTable('agent_events', {
   id: text('id').primaryKey(),
   agentId: text('agentId').notNull(),
-  /** loop_run | loop_error | info | action_pending | action_done |
-   *  action_failed | action_dismissed. */
+  /** loop_run | loop_error | budget_stop | info | action_pending |
+   *  action_done | action_failed | action_dismissed. */
   kind: text('kind').notNull().default('loop_run'),
   title: text('title').notNull(),
   body: text('body').notNull().default(''),
@@ -105,6 +117,19 @@ export const agentEvents = pgTable('agent_events', {
   payload: text('payload').notNull().default(''),
   sessionId: text('sessionId'),
   readAt: text('readAt'),
+  /** Quiet hours (policy queue): channels must not push this before then.
+   *  null = deliverable now. The inbox shows the event either way. */
+  deliverAfter: text('deliverAfter'),
+  /** 1 = created under policy silent: inbox-only, never pushed anywhere. */
+  silent: integer('silent').notNull().default(0),
+  /** user | loop | channel | system — the turn surface that produced it.
+   *  Channel-originated events are never pushed back to the channel. */
+  origin: text('origin').notNull().default(''),
+  /** 1 = push to the paired channel even when this is not its default agent
+   *  (urgent kinds: loop_error, budget_stop). */
+  channel: integer('channel').notNull().default(0),
+  /** When a channel delivered it (two-way Telegram); null = not yet. */
+  deliveredAt: text('deliveredAt'),
   createdAt: text('createdAt').notNull(),
 });
 

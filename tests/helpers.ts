@@ -81,7 +81,8 @@ export function wsStub(): WorkspacesService & { proposals: unknown[] } {
   const proposals: unknown[] = [];
   const stub = {
     proposals,
-    get: async (id: string) => ({ id, name: 'ws', color: '#fff', memory: '', profile: '', profilePending: '[]', createdAt: '' }),
+    get: async (id: string) => ({ id, name: 'ws', color: '#fff', memory: '', profile: '', profilePending: '[]', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, createdAt: '' }),
+    addSpend: async () => {},
     addProfileProposal: async (_id: string, input: unknown) => {
       proposals.push(input);
       return 'Proposed. The user will review it before it enters the profile; do not assume it is remembered yet.';

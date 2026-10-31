@@ -4,14 +4,16 @@
  * Workspace files live in S3-compatible object storage (see StorageService);
  * deleting a workspace also deletes its object prefix.
  */
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { workspaces } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
 import { workspacePrefix } from '../storage/storage.keys';
+import { validateQuietHours } from './quiet-hours';
+import { monthKey, spendStatus, SpendStatus } from './spend.util';
 
 export interface ProfileProposal {
   id: string;
@@ -38,7 +40,7 @@ export class WorkspacesService {
   async list() {
     const all = await this.db.select().from(workspaces);
     if (all.length > 0) return all;
-    const def = { id: newId(), name: 'Default', color: '#F5C451', memory: '', profile: '', profilePending: '[]', createdAt: nowIso() };
+    const def = { id: newId(), name: 'Default', color: '#F5C451', memory: '', profile: '', profilePending: '[]', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, createdAt: nowIso() };
     await this.db.insert(workspaces).values(def);
     return [def];
   }
@@ -57,17 +59,52 @@ export class WorkspacesService {
       memory: '',
       profile: '',
       profilePending: '[]',
+      quietHours: '',
+      spendBudgetTokens: 0,
+      spendMonth: '',
+      spendTokens: 0,
       createdAt: nowIso(),
     };
     await this.db.insert(workspaces).values(row);
     return row;
   }
 
-  async update(id: string, patch: Partial<{ name: string; color: string; memory: string; profile: string }>) {
+  async update(id: string, patch: Partial<{ name: string; color: string; memory: string; profile: string; quietHours: string; spendBudgetTokens: number }>) {
     await this.get(id);
     if (patch.profile !== undefined) patch.profile = patch.profile.slice(0, PROFILE_CAP);
+    if (patch.quietHours !== undefined && patch.quietHours.trim() !== '') {
+      // Stored normalized so every reader can trust the shape; '' turns it off.
+      try {
+        patch.quietHours = JSON.stringify(validateQuietHours(JSON.parse(patch.quietHours) as unknown));
+      } catch (err) {
+        throw new BadRequestException(err instanceof Error ? err.message : 'invalid quietHours');
+      }
+    }
+    if (patch.spendBudgetTokens !== undefined && (!Number.isInteger(patch.spendBudgetTokens) || patch.spendBudgetTokens < 0)) {
+      throw new BadRequestException('spendBudgetTokens must be a non-negative integer');
+    }
     await this.db.update(workspaces).set(patch).where(eq(workspaces.id, id));
     return this.get(id);
+  }
+
+  // ---- monthly spend stop (roadmap phase 2.5) ----
+
+  /** Add a completed turn's tokens to the month counter. One SQL statement:
+   *  concurrent turns must not lose each other's increments, and a new month
+   *  starts the counter over instead of carrying last month's total. */
+  async addSpend(id: string, tokens: number, now: Date = new Date()): Promise<void> {
+    if (tokens <= 0) return;
+    const month = monthKey(now);
+    await this.db.execute(sql`
+      UPDATE workspaces
+      SET "spendTokens" = CASE WHEN "spendMonth" = ${month} THEN "spendTokens" + ${tokens} ELSE ${tokens} END,
+          "spendMonth" = ${month}
+      WHERE "id" = ${id}
+    `);
+  }
+
+  async spend(id: string, now: Date = new Date()): Promise<SpendStatus> {
+    return spendStatus(await this.get(id), now);
   }
 
   // ---- consented user profile (roadmap phase 1) ----
