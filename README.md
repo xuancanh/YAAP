@@ -118,5 +118,12 @@ events for the paired default agent (plus every agent's failures and budget
 stops) are pushed to the paired chat within a minute, batched, each with a
 deep link back to the conversation, never echoing channel-born events back.
 
+Presence (roadmap Phase 4, `docs/channels.md`): every agent has an **email
+address** (`<slug>@EMAIL_DOMAIN`, inbound through an HMAC-signed webhook fed
+by `cloudflare/email-worker`, pairing by code, replies threaded back through
+Cloudflare Email Sending or Resend, optional inbox digest), **web push** with
+VAPID keys and a service worker, and a **manifest** so the UI installs as a
+PWA — inbox events reach the phone's lock screen, honouring quiet hours.
+
 Next up: a native Bedrock (SigV4) adapter is the one remaining FR-9.2
 provider.

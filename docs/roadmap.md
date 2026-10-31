@@ -204,20 +204,26 @@ Goal: perceived improvement over time, without self-evaluation autonomy.
 Goal: the agent stops living in a tab. Channels made OpenClaw; we need two
 or three good ones, not 29.
 
-1. **Email channel.** Each agent gets an address; inbound mail becomes a
-   turn in a dedicated conversation, replies go back out. Email is the
-   universal channel for general users and the easiest to host centrally.
+1. **Email channel.** *(shipped)* Each agent gets an address; inbound mail
+   becomes a turn in a dedicated conversation, replies go back out. Email is
+   the universal channel for general users and the easiest to host
+   centrally. Shipped as `<slug>@EMAIL_DOMAIN`, a signed webhook fed by
+   `cloudflare/email-worker`, pairing by code, threaded replies via
+   Cloudflare Email Sending or Resend, and an optional inbox digest
+   (`docs/channels.md`).
 2. **Telegram bridge.** *(shipped, two-way)* The best effort-to-reach ratio
    of the messenger channels (official bot API, no fragile reverse
    engineering, works on every platform). One bot, DM pairing with a code
    like OpenClaw/Hermes; inbox events are pushed back to the paired chat
    with deep links, honouring quiet hours.
-3. **Web push + PWA.** Notifications from Phase 2 reach the phone; the
-   existing responsive UI becomes installable.
-4. **Channel-aware identity and safety.** Unknown senders get a pairing
-   code; channel messages are marked as untrusted content in context
+3. **Web push + PWA.** *(shipped)* Notifications from Phase 2 reach the
+   phone; the existing responsive UI becomes installable. VAPID + aes128gcm
+   on node:crypto, `public/sw.js`, `manifest.webmanifest`, a per-device
+   toggle in Settings → Channels.
+4. **Channel-aware identity and safety.** *(shipped)* Unknown senders get a
+   pairing code; channel messages are marked as untrusted content in context
    (prompt-injection surface), and mutating tools stay in Ask mode for
-   channel-originated turns by default.
+   channel-originated turns by default. See `docs/security.md` §b/§e.
 
 ### Phase 5 — Depth and ecosystem
 

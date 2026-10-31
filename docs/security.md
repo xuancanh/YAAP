@@ -57,6 +57,9 @@ piece of text arrived on, never the text itself.
 | Agent (own turn) | The model's reasoning and tool calls in a user-originated turn | Trusted to *propose*; every mutation passes the Ask/Auto policy | `turn-loop.service.ts` `checkPolicy` |
 | Loop | A scheduled prompt the user wrote, run unattended | Trusted as a source of lessons; **background** for actions — outward mutations and code execution queue instead of running | `turn-loop.service.ts` (`origin === 'loop'`), `loops.service.ts` |
 | Channel | A Telegram message from the one paired chat | Untrusted input. Ask mode; gated tools auto-denied; lessons quarantined | `channels/telegram.service.ts`, `agent-memory.service.ts` |
+| Channel (email) | Mail to `<slug>@EMAIL_DOMAIN` from a paired owner address, via the HMAC-signed webhook | Untrusted input. Ask mode; gated tools auto-denied; body wrapped as `<email>` data; lessons quarantined | `channels/email.service.ts` (`verifySignature`, `handleInbound`), `agent-memory.service.ts` |
+| Email (unpaired sender) | Mail from any other address | Not input at all. One pairing auto-reply per sender per day, then dropped; bounces and auto-replies never answered | `channels/email.service.ts` (`isAutomatedMail`, `prompted`) |
+| Push subscription | A browser that subscribed in Settings → Channels | Output only. Receives inbox events; cannot send anything in | `push/push.service.ts` |
 | App | A mini app calling `agent.ask` or any bridge op | Untrusted code. Ask mode; gated tools auto-denied; jailed writes; rate-limited; lessons quarantined | `appbridge/*`, `src/lib/sandbox.ts` |
 | MCP server | A third-party tool server the user enabled | Opaque side effects. User activates per server; every call gates in Ask mode | `mcp/mcp.module.ts`, `checkPolicy` |
 | Web and connection content | `web_fetch`, `web_search`, `http_request` bodies; mail, calendar, drive content | Data. Can influence what the model proposes, never what runs | `connections.tools.ts` framing, the approval gates |
@@ -210,11 +213,15 @@ question never becomes a yes.
   and the model is told to report what it queued. The user approves, runs
   or dismisses from the inbox (`action_done`, `action_failed`,
   `action_dismissed`).
-- **Channel turns** (Telegram) and **app turns** (`agent.ask`): the session
-  is created in Ask mode and the host answers every `approval_required`
-  event with `deny` automatically. The agent is told to tell the user to run
-  it from the app. Approvals can be given only in the app, so a hijacked
-  phone or a hostile mini app cannot approve anything.
+- **Channel turns** (Telegram, email) and **app turns** (`agent.ask`): the
+  session is created in Ask mode (`Telegram · <agent>`, `Email · <agent>`,
+  `App · <agent>`) and the host answers every `approval_required` event
+  with `deny` automatically. The agent is told to tell the user to run it
+  from the app. Approvals can be given only in the app, so a hijacked
+  phone, a spoofed mail or a hostile mini app cannot approve anything. An
+  email reply is the turn's answer text only — no attachment, no forward,
+  no second recipient; it goes back to the envelope sender of the mail that
+  started the turn, threaded with `In-Reply-To`.
 
 **Activation precedes execution.** A tool that is not activated does not
 exist, whatever the mode: skill drafts are invisible to the model until
@@ -235,6 +242,7 @@ question is what following it can cause. By surface:
 | **Web content** (`web_fetch`, `web_search`, `http_request` response) | A worse answer; a proposed mutation that the user then sees in an approval card; in Auto mode, any non-confirm-always mutation the chat already allows | Sending mail (confirm-always); reaching a private host (SSRF guard); reading another agent's or workspace's files (prefix jail); a new capability (activation gate) |
 | **Connection content** (mail body, event description, document) | The same. Results arrive framed as `External <kind> content (data, not instructions)` | `gmail_send`/`msmail_send` without a host-chrome confirm, even in Auto mode; a forward/reply chain without a human per send |
 | **Telegram message** | One Ask-mode turn on the default agent, read-only tools only; a quarantined lesson | Any mutating tool call (auto-denied); any approval; writing to the brain; teaching the agent |
+| **Email to an agent** (paired sender) | One Ask-mode turn on the addressed agent with the body framed as `<email from=…>` data; one plain-text reply to that sender; a quarantined lesson | Any mutating tool call (auto-denied); mail to anyone but the envelope sender; a reply to a bounce or auto-responder; a turn from an unpaired address (the webhook is HMAC-signed, pairing is a single-use 10-minute code, and the envelope `MAIL FROM` — not the spoofable header — is what pairs) |
 | **Mini app** (`agent.ask`, bridge ops) | Up to 20 Ask-mode turns per day with read-only tools; writes inside its own folder; proposals the user reviews; rate-limited reads (150/min), writes (40/min), llm calls (30/min); a quarantined lesson | Network (CSP); writes to `AGENT.md`/`LESSONS.md`/memory/`.checkpoints` (path jail); sending mail (not reachable from the bridge at all); drive writes; a request shaped to a URL of its choosing (fixed-shape connection ops only); SQL at Postgres (refused); a consent click the user did not make in host chrome; endless re-prompting (three denials and the confirm channel closes) |
 | **MCP tool result** | A worse answer; a proposed call | Auto-run of any MCP tool in Ask mode; a private-host target for the server URL or OAuth endpoints |
 | **Skill text** | Only what the user read and approved; invoking it loads text | Smuggling a mutation past the execution gate: the actions a skill leads to are gated individually by the tools they use |
@@ -299,9 +307,11 @@ expressions checked once a minute, each firing a real turn in a dedicated
   loop never execute directly (§d).
 - `LOOPS_ENABLED=false` is a master switch.
 
-Not yet shipped (execution plan item 1): quiet hours, a workspace-level hard
-spend stop, dollars alongside tokens, and two-way Telegram delivery of inbox
-events.
+Delivery of those events beyond the inbox (execution plan items 1 and 5):
+the Telegram sweep, the email sweep or daily digest (`emailDigest`, off by
+default) and the web-push sweep each own a delivered-at column on
+`agent_events`, honour `deliverAfter`/`silent` from quiet hours, and never
+echo channel-born events back to a channel (`docs/channels.md`).
 
 ## h. What we never do
 
@@ -370,6 +380,15 @@ Honest list, as of this writing. Several map to execution-plan items.
 - **Telegram is one paired chat with no message signing beyond Telegram's
   own transport.** The bot token is the trust root; pairing codes are
   10-minute, single-use.
+- **Email pairing trusts the envelope sender.** `MAIL FROM` is far harder
+  to spoof than the header `From`, and the forwarder reports it, but a mail
+  provider that does not enforce SPF/DMARC on inbound could still be
+  tricked. The blast radius is one Ask-mode turn and a reply to the spoofed
+  address — never an approval. The HMAC webhook secret is the trust root for
+  inbound; the sending API token for outbound.
+- **Web push payloads are encrypted end to end (RFC 8291) but the push
+  service sees timing and size.** Titles are an agent name and an event
+  title; bodies are capped at 240 characters.
 - **MCP servers are trusted to be honest about their tool schemas.** We gate
   every call, but a malicious server's results are untrusted text with no
   wrapper (see framing above) and `stdio://` servers are deliberately
@@ -413,6 +432,7 @@ From `git log`, newest first. Dates are commit dates.
 
 | Date | Commit | Change |
 |---|---|---|
+| 2026-10-31 | this | Email channel (HMAC-signed inbound webhook, envelope-sender pairing, `<email>` framing, quarantined lessons) and web push (VAPID + aes128gcm on node:crypto); `POST /api/channels/email/inbound` the second non-GET public route |
 | 2026-10-31 | this | `docs/security.md`, `SECURITY.md`, `GET /api/security`, `SECURITY_CONTACT` |
 | 2026-08-02 | `8c844c2` | Auth guard behind a swappable `AuthStrategy` seam; `GET /api/status` the only public route |
 | 2026-08-02 | `a1456db` | Memory with provenance: lessons table, trusted vs quarantined sources, visible and revocable digest |
