@@ -194,6 +194,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const stacked = width < 820;
   const mediumDock = !stacked && width < 1120;
 
+  // Deep links from channel notifications: <app>/#/chat/<sessionId>. The
+  // session list may not have loaded yet, so the id waits in a ref and the
+  // session-pick effect below honours it once the list contains it.
+  const deepLink = useRef<string | null>(/^#\/chat\/([\w-]+)$/.exec(window.location.hash)?.[1] ?? null);
+  useEffect(() => {
+    const onHash = () => {
+      const id = /^#\/chat\/([\w-]+)$/.exec(window.location.hash)?.[1];
+      if (id) { deepLink.current = id; setSessions((list) => [...list]); } // nudge the pick effect
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
   // proactive-work badges: poll unread activity counts (phase 2)
   useEffect(() => {
     const t = setInterval(() => { api.unreadAgentEvents().then(setUnread).catch(() => {}); }, 60_000);
@@ -255,6 +268,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // pick a session when the workspace changes / sessions load
   useEffect(() => {
+    const wanted = deepLink.current;
+    if (wanted && sessions.some((s) => s.id === wanted)) {
+      deepLink.current = null;
+      setCurrentId(wanted);
+      setSection('home');
+      setHomeView('chat');
+      setMobileChatOpen(true);
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      return;
+    }
     if (!currentIdRef.current || !sessions.some((s) => s.id === currentIdRef.current)) {
       setCurrentId(sessions[0]?.id ?? null);
     }

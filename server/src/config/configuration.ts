@@ -29,6 +29,9 @@ export default () => ({
   loopsEnabled: (process.env.LOOPS_ENABLED || 'true') === 'true',
   /** Telegram bot token (phase 4). Empty = channel disabled. */
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  /** Where the SPA is reachable from a phone — channel notifications deep-link
+   *  to <publicAppUrl>/#/chat/<sessionId>. Dev default is the Vite port. */
+  publicAppUrl: process.env.PUBLIC_APP_URL || 'http://localhost:5175',
   /** AES-256-GCM key for sealing tokens at rest (common/secretbox.ts).
    *  Empty = tokens stored as "plain:" — AppModule logs a loud boot warning. */
   tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY || '',

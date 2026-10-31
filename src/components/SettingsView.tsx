@@ -652,6 +652,7 @@ function ChannelsPane() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 220, fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.55 }}>
               Messages go to the default agent below in an Ask-mode conversation — approval-gated tools never run from the phone.
+              Its inbox events (loop runs, failures, budget stops) are pushed back here within a minute, batched, each with a link to the conversation; quiet hours apply.
             </div>
             <select value={status.defaultAgentId} onChange={async (e) => { await app.saveSettings({ telegramDefaultAgentId: e.target.value }); refresh(); }}
               style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', fontSize: 12.5, padding: '7px 10px', outline: 'none' }}>

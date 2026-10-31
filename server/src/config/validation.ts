@@ -29,6 +29,7 @@ const envSchema = z
     COMPACTION_THRESHOLD_TOKENS: intVar('COMPACTION_THRESHOLD_TOKENS'),
     LOOPS_ENABLED: z.enum(['true', 'false']).optional(),
     TELEGRAM_BOT_TOKEN: z.string().optional(),
+    PUBLIC_APP_URL: z.string().optional(),
     SECURITY_CONTACT: z.string().optional(),
     TOKEN_ENCRYPTION_KEY: z.string().optional(),
     YAAM_API_TOKEN: z.string().optional(),

@@ -1,6 +1,13 @@
 /**
  * TelegramService — the first presence channel (roadmap phase 4): talk to
- * your agents from Telegram.
+ * your agents from Telegram, and hear from them there.
+ *
+ * Two-way (phase 2 finish): a minute sweep pushes undelivered inbox events
+ * — the paired default agent's, plus any event flagged `channel` (loop
+ * failures, budget stops from every agent) — to the paired chat, batched
+ * into one message with a deep link back to the conversation. Quiet hours
+ * are honoured through `deliverAfter`/`silent` on the event; events born on a
+ * channel turn are never echoed back (that would be a loop).
  *
  * Design constraints from the OpenClaw research:
  *  - Pairing, not open DMs: the bot answers unknown chats only with pairing
@@ -39,6 +46,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   private offset = 0;
   private running = false;
   private timer?: ReturnType<typeof setTimeout>;
+  private sweepTimer?: ReturnType<typeof setInterval>;
+  private sweeping = false;
   private pairCode: { code: string; expires: number } | null = null;
 
   constructor(
@@ -58,12 +67,16 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     if (!this.token) return;
     this.running = true;
     this.timer = setTimeout(() => { void this.pollLoop(); }, 1_000);
-    this.logger.log('Telegram channel enabled (long polling)');
+    // Outbound: same cadence as the loop tick, so a loop_run written at
+    // :00 reaches the phone by :01.
+    this.sweepTimer = setInterval(() => { void this.deliverSweep().catch(() => undefined); }, 60_000);
+    this.logger.log('Telegram channel enabled (long polling + outbound sweep)');
   }
 
   onModuleDestroy(): void {
     this.running = false;
     clearTimeout(this.timer);
+    clearInterval(this.sweepTimer);
   }
 
   // ---- pairing (Settings → Channels) ----
@@ -153,7 +166,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     let answer = '';
     const denied: string[] = [];
     try {
-      for await (const ev of this.turns.run(session.id, { text })) {
+      for await (const ev of this.turns.run(session.id, { text, origin: 'channel' })) {
         if (ev.type === 'answer') answer += ev.text;
         if (ev.type === 'approval_required') {
           denied.push(ev.tool);
@@ -168,6 +181,51 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       answer += `\n\n⚠ I skipped ${[...new Set(denied)].join(', ')} — approval-gated tools only run from the app. Open this conversation there to continue.`;
     }
     await this.send(chatId, answer.trim() || '(no reply)');
+  }
+
+  // ---- outbound: the agent inbox reaches the phone ----
+
+  /** Push every deliverable inbox event to the paired chat. Exposed for
+   *  tests; the interval calls it once a minute. Returns how many events
+   *  were delivered. */
+  async deliverSweep(now: Date = new Date()): Promise<number> {
+    if (!this.token || this.sweeping) return 0;
+    this.sweeping = true;
+    try {
+      const s = await this.settings.all();
+      const chatId = Number(s.telegramChatId ?? '');
+      if (!chatId) return 0;
+      const defaultAgentId = s.telegramDefaultAgentId ?? '';
+      const events = (await this.agents.undeliveredEvents(now))
+        .filter((e) => e.agentId === defaultAgentId || e.channel === 1);
+      if (events.length === 0) return 0;
+
+      const batch = events.slice(0, 20); // the rest goes next minute; one phone message, not a flood
+      const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
+      const base = (this.config.get<string>('publicAppUrl') ?? 'http://localhost:5175').replace(/\/+$/, '');
+      const text = batch.map((e) => {
+        const head = `${this.glyph(e.kind)} ${names.get(e.agentId) ?? 'Agent'} · ${e.title}`;
+        const body = e.body ? `\n${e.body.replace(/\s+/g, ' ').slice(0, 400)}` : '';
+        const link = e.sessionId ? `\n${base}/#/chat/${e.sessionId}` : '';
+        return head + body + link;
+      }).join('\n\n');
+      await this.send(chatId, text);
+      // Marked only after the send succeeded: a failed push retries next sweep.
+      await this.agents.markEventsDelivered(batch.map((e) => e.id), now);
+      return batch.length;
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
+  private glyph(kind: string): string {
+    switch (kind) {
+      case 'loop_error': case 'action_failed': return '❌';
+      case 'budget_stop': return '⛔';
+      case 'action_pending': return '⏸';
+      case 'loop_run': return '✅';
+      default: return 'ℹ️';
+    }
   }
 
   private async send(chatId: number, text: string): Promise<void> {

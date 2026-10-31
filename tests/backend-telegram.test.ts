@@ -1,5 +1,6 @@
 /** Telegram channel (phase 4): pairing lock, routing to the default agent,
- *  and the Ask-mode deny for approval-gated tools. */
+ *  the Ask-mode deny for approval-gated tools, and the outbound sweep that
+ *  pushes inbox events back to the paired chat (two-way, phase 2 finish). */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConfigService } from '@nestjs/config';
@@ -33,12 +34,12 @@ async function setup(rounds: AiStreamEvent[][]) {
   const repo = new ChatsRepository(db);
   const provider = new ScriptedProvider(rounds);
   const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub(), agents, workspaces);
-  const config = { get: (k: string) => (k === 'telegramBotToken' ? 'test-token' : undefined) } as unknown as ConfigService;
+  const config = { get: (k: string) => (k === 'telegramBotToken' ? 'test-token' : k === 'publicAppUrl' ? 'https://yaam.example/' : undefined) } as unknown as ConfigService;
   const tg = new TelegramService(config, settings, agents, workspaces, repo, turns);
   const { fn, sent } = fakeTelegram();
   tg.fetchFn = fn;
   await workspaces.list(); // default workspace
-  return { tg, sent, settings, agents, repo, workspaces, provider };
+  return { tg, sent, settings, agents, repo, workspaces, provider, turns };
 }
 
 const msg = (chatId: number, text: string) => ({ update_id: 1, message: { chat: { id: chatId }, text } });
@@ -94,4 +95,94 @@ test('paired messages run an Ask-mode turn for the default agent; gated tools de
   // /unpair closes the channel
   await tg.handleUpdate(msg(42, '/unpair'));
   assert.equal((await settings.all()).telegramChatId, '');
+});
+
+// ---- outbound delivery ----
+
+test('deliverSweep pushes the default agent\'s undelivered events in one batched message with deep links, then marks them delivered', async () => {
+  const { tg, sent, settings, agents, repo, workspaces } = await setup([]);
+  const agent = await agents.create({ name: 'Fieldy' });
+  const other = await agents.create({ name: 'Backstage' });
+  const ws = (await workspaces.list())[0];
+  const session = await repo.createSession({ workspaceId: ws.id, agentId: agent.id, name: 'Loop · Nightly' });
+
+  // not paired yet: nothing moves, nothing is marked
+  await agents.addEvent(agent.id, { kind: 'loop_run', title: 'Loop "Nightly" ran', body: 'All  green.', sessionId: session.id, origin: 'loop' });
+  assert.equal(await tg.deliverSweep(), 0);
+  assert.equal(sent.length, 0);
+
+  const { code } = tg.mintPairCode();
+  await tg.handleUpdate(msg(42, `/pair ${code}`));
+  await settings.put({ telegramDefaultAgentId: agent.id });
+  sent.length = 0;
+
+  await agents.addEvent(agent.id, { kind: 'info', title: 'Second thing', origin: 'loop' });
+  await agents.addEvent(other.id, { kind: 'info', title: 'Backstage chatter', origin: 'loop' }); // not the default agent, not flagged
+  await agents.addEvent(other.id, { kind: 'loop_error', title: 'Loop "Sync" failed', body: 'boom', origin: 'loop' }); // flagged: failures travel for every agent
+
+  assert.equal(await tg.deliverSweep(), 3);
+  assert.equal(sent.length, 1, 'one message for the whole batch');
+  assert.equal(sent[0].chat_id, 42);
+  const text = sent[0].text;
+  assert.match(text, /✅ Fieldy · Loop "Nightly" ran\nAll green\.\nhttps:\/\/yaam\.example\/#\/chat\// );
+  assert.ok(text.includes(`/#/chat/${session.id}`), 'deep link uses the configured public app URL without a double slash');
+  assert.match(text, /ℹ️ Fieldy · Second thing/);
+  assert.match(text, /❌ Backstage · Loop "Sync" failed\nboom/);
+  assert.doesNotMatch(text, /Backstage chatter/, 'another agent\'s ordinary events stay in its inbox');
+  assert.equal(text.indexOf('Nightly') < text.indexOf('Second thing'), true, 'oldest first');
+
+  const delivered = (await agents.listEvents(agent.id)).filter((e) => e.deliveredAt);
+  assert.equal(delivered.length, 2);
+  assert.equal((await agents.listEvents(other.id)).filter((e) => e.deliveredAt).length, 1);
+
+  // idempotent: a second sweep has nothing to push
+  assert.equal(await tg.deliverSweep(), 0);
+  assert.equal(sent.length, 1);
+});
+
+test('deliverSweep honours quiet hours (deliverAfter, silent) and never echoes channel-born events back', async () => {
+  const { tg, sent, settings, agents } = await setup([]);
+  const agent = await agents.create({ name: 'Fieldy' });
+  const { code } = tg.mintPairCode();
+  await tg.handleUpdate(msg(7, `/pair ${code}`));
+  await settings.put({ telegramDefaultAgentId: agent.id });
+  sent.length = 0;
+
+  const later = new Date(Date.now() + 60 * 60_000).toISOString();
+  await agents.addEvent(agent.id, { kind: 'loop_run', title: 'Queued until morning', origin: 'loop', deliverAfter: later });
+  await agents.addEvent(agent.id, { kind: 'loop_run', title: 'Inbox only', origin: 'loop', silent: true });
+  await agents.addEvent(agent.id, { kind: 'info', title: 'Born on the phone', origin: 'channel' });
+
+  assert.equal(await tg.deliverSweep(), 0, 'deferred, silent, and channel-origin events are all held back');
+  assert.equal(sent.length, 0);
+
+  // once the window has passed, only the queued one goes out
+  assert.equal(await tg.deliverSweep(new Date(Date.now() + 2 * 60 * 60_000)), 1);
+  assert.match(sent[0].text, /Queued until morning/);
+  assert.doesNotMatch(sent[0].text, /Inbox only|Born on the phone/);
+
+  // a failed push is not marked delivered, so it retries next sweep
+  await agents.addEvent(agent.id, { kind: 'info', title: 'Flaky network', origin: 'loop' });
+  const okFetch = tg.fetchFn;
+  tg.fetchFn = (async () => new Response(JSON.stringify({ ok: false, description: 'Too Many Requests' }), { status: 429 })) as unknown as typeof fetch;
+  await assert.rejects(tg.deliverSweep(), /Too Many Requests/);
+  tg.fetchFn = okFetch;
+  assert.equal(await tg.deliverSweep(), 1);
+  assert.match(sent.at(-1)!.text, /Flaky network/);
+});
+
+test('channel turns are stamped origin=channel so their events never loop back', async () => {
+  const { tg, settings, agents, repo, workspaces, turns } = await setup([[{ type: 'answer', text: 'hi' }, { type: 'done' }]]);
+  const agent = await agents.create({ name: 'Fieldy' });
+  const { code } = tg.mintPairCode();
+  await tg.handleUpdate(msg(9, `/pair ${code}`));
+  await settings.put({ telegramDefaultAgentId: agent.id });
+  // observe what the channel hands the turn loop
+  const seen: unknown[] = [];
+  const realRun = turns.run.bind(turns);
+  turns.run = ((id: string, input: { origin?: string }) => { seen.push(input.origin); return realRun(id, input as never); }) as typeof turns.run;
+  await tg.handleUpdate(msg(9, 'hello'));
+  assert.deepEqual(seen, ['channel']);
+  const ws = (await workspaces.list())[0];
+  assert.ok((await repo.listSessions(ws.id)).some((s) => s.name === 'Telegram · Fieldy'));
 });
