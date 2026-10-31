@@ -72,6 +72,17 @@ export type TaskStatus = 'todo' | 'doing' | 'done';
 const TASK_STATUSES: TaskStatus[] = ['todo', 'doing', 'done'];
 const TASK_LIMIT = 200;
 
+/** `Fieldy, the Scout!` → `fieldy-the-scout`; nothing usable → `agent`. */
+export function emailSlugify(name: string): string {
+  const slug = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/g, '');
+  return slug || 'agent';
+}
+
+/** Push channels that each own a delivered-at column on agent_events. */
+export type DeliveryChannel = 'telegram' | 'email' | 'push';
+const DELIVERY_COLUMNS = { telegram: 'deliveredAt', email: 'emailDeliveredAt', push: 'pushDeliveredAt' } as const;
+
 @Injectable()
 export class AgentsService {
   constructor(
@@ -105,11 +116,43 @@ export class AgentsService {
       apps: '[]',
       loops: JSON.stringify(input.loops ?? []),
       pendingFeedback: '[]',
+      emailSlug: await this.uniqueEmailSlug(input.name),
       createdAt: nowIso(),
     };
     await this.db.insert(agents).values(row);
     await this.seedBrain(row.id, row.name);
     return row;
+  }
+
+  // ---- email addresses (channels/email.service.ts) ----
+
+  /** A free `emailSlug` derived from `name`: lowercase ascii, dashes for
+   *  runs of anything else, '-2', '-3', … on collision. Never empty. */
+  async uniqueEmailSlug(name: string): Promise<string> {
+    const base = emailSlugify(name);
+    const taken = new Set((await this.db.select({ emailSlug: agents.emailSlug }).from(agents)).map((r) => r.emailSlug));
+    if (!taken.has(base)) return base;
+    for (let n = 2; ; n++) {
+      const candidate = `${base}-${n}`;
+      if (!taken.has(candidate)) return candidate;
+    }
+  }
+
+  /** Agents created before the email channel have no slug yet: assign one
+   *  to each, idempotently. Returns every agent with its slug. */
+  async ensureEmailSlugs() {
+    const rows = await this.db.select().from(agents);
+    for (const a of rows) {
+      if (a.emailSlug) continue;
+      a.emailSlug = await this.uniqueEmailSlug(a.name);
+      await this.db.update(agents).set({ emailSlug: a.emailSlug }).where(eq(agents.id, a.id));
+    }
+    return rows;
+  }
+
+  async findByEmailSlug(slug: string) {
+    const rows = await this.db.select().from(agents).where(eq(agents.emailSlug, slug)).limit(1);
+    return rows.at(0) ?? null;
   }
 
   /** Seed the transparent file brain (FR-11.3) so the fs view has structure
@@ -513,14 +556,18 @@ export class AgentsService {
     return out;
   }
 
-  /** Events a channel may push now: not yet delivered, not silent, past
-   *  their quiet-hours release, and not born on a channel turn (echoing those
-   *  back would loop). Oldest first so a batch reads chronologically. */
-  async undeliveredEvents(now: Date = new Date()) {
+  /** Events a channel may push now: not yet delivered on that channel, not
+   *  silent, past their quiet-hours release, and not born on a channel turn
+   *  (echoing those back would loop). Each channel owns a delivery column —
+   *  Telegram `deliveredAt`, email `emailDeliveredAt`, web push
+   *  `pushDeliveredAt` — so a phone push never hides an event from the
+   *  inbox digest. Oldest first so a batch reads chronologically. */
+  async undeliveredEvents(now: Date = new Date(), channel: DeliveryChannel = 'telegram') {
     const nowIso = now.toISOString();
+    const col = DELIVERY_COLUMNS[channel];
     const rows = await this.db.select().from(agentEvents)
       .where(and(
-        isNull(agentEvents.deliveredAt),
+        isNull(agentEvents[col]),
         eq(agentEvents.silent, 0),
         or(isNull(agentEvents.deliverAfter), lte(agentEvents.deliverAfter, nowIso)),
       ));
@@ -529,9 +576,10 @@ export class AgentsService {
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
   }
 
-  async markEventsDelivered(ids: string[], at: Date = new Date()) {
+  async markEventsDelivered(ids: string[], at: Date = new Date(), channel: DeliveryChannel = 'telegram') {
     if (ids.length === 0) return;
-    await this.db.update(agentEvents).set({ deliveredAt: at.toISOString() }).where(inArray(agentEvents.id, ids));
+    const col = DELIVERY_COLUMNS[channel];
+    await this.db.update(agentEvents).set({ [col]: at.toISOString() }).where(inArray(agentEvents.id, ids));
   }
 
   async markEventsRead(agentId: string) {

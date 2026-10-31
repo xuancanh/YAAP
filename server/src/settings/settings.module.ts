@@ -14,6 +14,10 @@ const ALLOWED_KEYS = new Set([
   'defaultPermissionMode', 'defaultAgentTypeId', 'defaultTokenCeiling', 'compactionThresholdTokens', 'theme',
   // Telegram channel (roadmap phase 4): the paired chat and its target agent
   'telegramChatId', 'telegramDefaultAgentId',
+  // Email channel (docs/channels.md): paired owner addresses (JSON array),
+  // the inbox digest mode immediate | daily | off, its hour (0-23) and the
+  // last day a daily digest went out
+  'emailOwnerAddresses', 'emailDigest', 'emailDigestHour', 'emailDigestLastDate',
   // Cost dashboard (roadmap phase 2.5): JSON { "<model>": { input, output } } USD/M tokens over ai/pricing.ts
   'pricingOverrides',
   // Independent action reviewer (docs/permissions.md §6): 'on' | 'off', and a model override

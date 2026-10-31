@@ -94,7 +94,22 @@ jar persists across sessions, no password fields are filled, egress through
 the SSRF guard. Viewable: every step's screenshot streams to the artifact
 panel as a live "Browser" tab, and the session ends with the turn.
 
-### 5. Email channel, web push, PWA *(todo)*
+### 5. Email channel, web push, PWA *(done)*
+Shipped as: migrations `0020`–`0021` (`agents.emailSlug` with a unique
+partial index, `agent_events.emailDeliveredAt`/`pushDeliveredAt`,
+`push_subscriptions`), `channels/email.service.ts` + `email-sender.ts`
+(Cloudflare Email Sending and Resend REST senders behind one `EmailSender`,
+`POST /api/channels/email/inbound` as a public HMAC-verified route,
+`status`/`pair-code`/`unpair`, `deliverSweep` with `emailDigest` =
+`immediate|daily|off`), `cloudflare/email-worker/` (Email Routing →
+postal-mime → signed JSON), `push/` (`web-push.ts` VAPID ES256 + RFC 8291
+aes128gcm on node:crypto — no dependency; `PushService` sweep; `GET
+/api/push/vapid-public-key`, `POST|DELETE /api/push/subscribe`), `npm run
+push:keys`, `public/sw.js` + `manifest.webmanifest` + icons, `src/lib/
+push.ts`, the Email and "Notifications on this device" cards in Settings →
+Channels, `AgentsService.undeliveredEvents/markEventsDelivered(…, channel)`,
+`docs/channels.md`, and `tests/backend-email` / `backend-push`.
+
 Each agent gets an inbound address (`<slug>@<EMAIL_DOMAIN>`); inbound mail
 arrives via a signed webhook (Cloudflare Email Worker in `cloudflare/`, or any
 JSON forwarder) and becomes an Ask-mode turn in `Email · <agent>`; replies

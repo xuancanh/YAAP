@@ -32,6 +32,7 @@ test('provenance follows the surface: app and channel lessons are quarantined, c
 
   assert.equal(sourceForSession('App · Atlas'), 'app');
   assert.equal(sourceForSession('Telegram · Atlas'), 'channel');
+  assert.equal(sourceForSession('Email · Atlas'), 'channel');
   assert.equal(sourceForSession('Loop · morning brief'), 'loop');
   assert.equal(sourceForSession('Invoice cleanup'), 'chat');
 

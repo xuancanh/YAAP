@@ -11,6 +11,7 @@
     "build": "npm run server:build && tsc -b && vite build",
     "lint": "eslint .",
     "packs:build": "node scripts/build-authored-packs.mjs",
+    "push:keys": "node scripts/push-keys.mjs",
     "test": "TSX_TSCONFIG_PATH=tests/tsconfig.json tsx --test tests/*.test.ts",
     "test:web": "vitest run",
     "preview": "vite preview"

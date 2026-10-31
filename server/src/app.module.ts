@@ -15,7 +15,8 @@
  *  MarketModule      → GET  /api/market, hire       (agent registry, FR-11.7)
  *  McpModule         → CRUD /api/mcp                (server config, FR-10.3)
  *  SettingsModule    → GET/PUT /api/settings        (app-wide defaults)
- *  ChannelsModule    → /api/channels/telegram        (presence, phase 4)
+ *  ChannelsModule    → /api/channels/telegram|email  (presence, phase 4)
+ *  PushModule        → /api/push                      (web push, phase 4.3)
  *  UsageModule       → GET  /api/agents|workspaces/:id/usage (cost dashboard, phase 2)
  *  SecurityModule    → GET  /api/security            (threat model, docs/security.md)
  *  VoiceModule       → /api/voice/status, /api/voice/tts (voice notes, docs/voice.md)
@@ -44,6 +45,7 @@ import { MarketModule } from './market/market.module';
 import { McpModule } from './mcp/mcp.module';
 import { SettingsModule } from './settings/settings.module';
 import { ChannelsModule } from './channels/channels.module';
+import { PushModule } from './push/push.module';
 import { AppBridgeModule } from './appbridge/app-bridge.module';
 import { ConnectionsModule } from './connections/connections.module';
 import { RunnerModule } from './runner/runner.module';
@@ -67,6 +69,7 @@ import { VoiceModule } from './voice/voice.module';
     McpModule,
     SettingsModule,
     ChannelsModule,
+    PushModule,
     AppBridgeModule,
     ConnectionsModule,
     RunnerModule,

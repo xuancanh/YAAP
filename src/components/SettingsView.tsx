@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
-import { api, PROVIDER_COLORS, type Connection, type ConnectionProvider, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RunnerStatus, type Workspace, type WorkspaceUsage } from '../lib/api';
+import { api, PROVIDER_COLORS, type Connection, type ConnectionProvider, type EmailStatus, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RunnerStatus, type Workspace, type WorkspaceUsage } from '../lib/api';
 import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
+import { currentSubscription, disablePush, enablePush, pushSupported } from '../lib/push';
 import { fmtUsd } from '../lib/pricing';
 import { UsageBars, UsageRows } from './UsageChart';
 
@@ -17,7 +18,7 @@ const PANE_META: Record<string, [string, string]> = {
   memory: ['Workspace memory', 'Durable chat memory injected as shared context for this workspace.'],
   workspace: ['Workspace', 'Quiet hours, the interrupt policy, and the monthly spend stop. Loops keep working; what changes is when you hear about it and how much it may cost.'],
   usage: ['Usage', 'Tokens and dollars over the last 30 days — per agent, per loop, per day — and the price table behind the estimate.'],
-  channels: ['Channels', 'Talk to your agents where you already are — Telegram first, paired to you alone.'],
+  channels: ['Channels', 'Talk to your agents where you already are — Telegram, email, and push to this device, paired to you alone.'],
   connections: ['Connections', 'Link external services (Google Calendar first). Connecting grants nothing — you approve access per agent.'],
   runner: ['Code runner', 'Where run_js and run_python execute. Every run is disposable, offline, and approval-gated.'],
 };
@@ -631,7 +632,9 @@ function UsagePane() {
   );
 }
 
-/** Telegram channel (phase 4): pairing-code flow + default agent pick. */
+/** Channels (phase 4): Telegram pairing + default agent, the email channel
+ *  (per-agent addresses, owner pairing, inbox digest) and web push for this
+ *  device. */
 function ChannelsPane() {
   const app = useApp();
   const [status, setStatus] = useState<{ configured: boolean; paired: boolean; defaultAgentId: string } | null>(null);
@@ -682,8 +685,130 @@ function ChannelsPane() {
           </div>
         )}
       </div>
+      <EmailCard />
+      <PushCard />
       <div style={{ ...card, fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.6 }}>
-        More channels (email, web push) follow the same shape: outbound-only connections, paired to a single owner, and never a backdoor around tool approvals.
+        Every channel follows the same shape: paired to a single owner, Ask-mode turns, and never a backdoor around tool approvals (docs/channels.md).
+      </div>
+    </div>
+  );
+}
+
+const smallBtn: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' };
+const selectStyle: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', fontSize: 12.5, padding: '7px 10px', outline: 'none' };
+
+/** Email channel: each agent's address, the owner pairing flow, and the
+ *  inbox digest mode. */
+function EmailCard() {
+  const app = useApp();
+  const [status, setStatus] = useState<EmailStatus | null>(null);
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const refresh = () => void api.emailStatus().then(setStatus).catch(() => setStatus(null));
+  useEffect(refresh, []);
+  if (!status) return null;
+  const paired = status.ownerAddresses.length > 0;
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: status.configured ? (paired ? 'var(--green)' : 'var(--amber)') : 'var(--text-faint)' }} />
+        <span style={{ fontSize: 14, fontWeight: 600 }}>Email</span>
+        <span style={{ fontSize: 11, color: 'var(--text-faint)', ...mono }}>
+          {status.configured ? `@${status.domain} · ${paired ? `${status.ownerAddresses.length} paired` : 'not paired'} · send: ${status.sendProvider}` : 'not configured'}
+        </span>
+      </div>
+      {!status.configured && (
+        <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+          Set <span style={mono}>EMAIL_DOMAIN</span> and <span style={mono}>EMAIL_INBOUND_SECRET</span>, deploy <span style={mono}>cloudflare/email-worker</span> (or any forwarder that POSTs signed JSON to <span style={mono}>/api/channels/email/inbound</span>), and pick a sending provider. Each agent then has an address.
+        </div>
+      )}
+      {status.configured && (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, margin: '6px 0 10px' }}>
+            {status.addresses.map((a) => (
+              <div key={a.agentId} style={{ display: 'flex', gap: 10, fontSize: 12.5, alignItems: 'baseline' }}>
+                <span style={{ minWidth: 120, color: 'var(--text-dim)' }}>{a.name}</span>
+                <span style={{ ...mono, color: 'var(--text)', userSelect: 'all' }}>{a.address}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6, marginBottom: 8 }}>
+            {paired
+              ? <>Mail from {status.ownerAddresses.map((a) => <span key={a} style={{ ...mono, color: 'var(--text)' }}>{a} </span>)} becomes an Ask-mode turn in <i>Email · agent</i>; the reply comes back in the thread. Approval-gated tools never run from mail.</>
+              : <>Nobody is paired yet. Send any mail to an agent address from your own mailbox, then generate a code here and reply with it. Unknown senders get one pairing note and are otherwise ignored.</>}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {pairCode ? (
+              <span style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>Reply to the agent's mail with this code within 10 minutes: <span style={{ ...mono, fontSize: 14, color: 'var(--text)', background: 'var(--code)', border: '1px solid var(--border)', borderRadius: 7, padding: '3px 9px' }}>{pairCode}</span></span>
+            ) : (
+              <button onClick={async () => setPairCode((await api.emailPairCode()).code)} style={{ ...smallBtn, background: 'var(--accent)', color: '#fff', border: 'none' }}>Generate pairing code</button>
+            )}
+            {status.ownerAddresses.map((a) => (
+              <button key={a} onClick={async () => { await api.emailUnpair(a); refresh(); app.showToast(`Unpaired ${a}`); }}
+                style={{ ...smallBtn, border: '1px solid var(--red)', color: 'var(--red)', background: 'none' }}>Unpair {a}</button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, flexWrap: 'wrap', fontSize: 12.5, color: 'var(--text-dim)' }}>
+            <span>Inbox by email:</span>
+            <select value={status.digest} onChange={async (e) => { await app.saveSettings({ emailDigest: e.target.value }); refresh(); }} style={selectStyle}>
+              <option value="off">off</option>
+              <option value="immediate">as it happens</option>
+              <option value="daily">daily digest</option>
+            </select>
+            {status.digest === 'daily' && (
+              <>
+                <span>at</span>
+                <select value={String(status.digestHour)} onChange={async (e) => { await app.saveSettings({ emailDigestHour: e.target.value }); refresh(); }} style={selectStyle}>
+                  {Array.from({ length: 24 }, (_, h) => <option key={h} value={String(h)}>{String(h).padStart(2, '0')}:00</option>)}
+                </select>
+                <span style={{ color: 'var(--text-faint)' }}>in your quiet-hours timezone (else UTC)</span>
+              </>
+            )}
+            {status.sendProvider === 'off' && status.digest !== 'off' && <span style={{ color: 'var(--amber)' }}>EMAIL_SEND_PROVIDER is off — nothing can go out.</span>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Web push for this browser: subscribe/unsubscribe against the VAPID key. */
+function PushCard() {
+  const app = useApp();
+  const [server, setServer] = useState<{ enabled: boolean; subscriptions: number } | null>(null);
+  const [on, setOn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const supported = pushSupported();
+  const refresh = () => {
+    void api.pushPublicKey().then(setServer).catch(() => setServer(null));
+    void currentSubscription().then((s) => setOn(Boolean(s))).catch(() => setOn(false));
+  };
+  useEffect(refresh, []);
+  const toggle = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (on) { await disablePush(); app.showToast('Notifications off on this device'); }
+      else { await enablePush(); app.showToast('Notifications on — inbox events reach this device'); }
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message : 'Push failed');
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  };
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: server?.enabled ? (on ? 'var(--green)' : 'var(--amber)') : 'var(--text-faint)' }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Notifications on this device</div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.55, marginTop: 2 }}>
+            {!supported && 'This browser cannot receive web push (on iPhone, install the app to the home screen first).'}
+            {supported && server && !server.enabled && <>The server has no VAPID keys — run <span style={mono}>npm run push:keys</span> and add them to .env.</>}
+            {supported && server?.enabled && <>Inbox events (loop runs, failures, budget stops) arrive as system notifications within a minute, each opening the conversation. Quiet hours apply. {server.subscriptions} device{server.subscriptions === 1 ? '' : 's'} subscribed.</>}
+          </div>
+        </div>
+        {supported && server?.enabled && <Toggle on={on} onClick={() => void toggle()} />}
       </div>
     </div>
   );

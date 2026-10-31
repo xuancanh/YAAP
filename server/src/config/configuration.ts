@@ -29,6 +29,26 @@ export default () => ({
   loopsEnabled: (process.env.LOOPS_ENABLED || 'true') === 'true',
   /** Telegram bot token (phase 4). Empty = channel disabled. */
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  /** Email channel (phase 4.1, channels/email.service.ts). Agents receive at
+   *  <emailSlug>@<emailDomain>; empty domain = channel disabled. */
+  emailDomain: process.env.EMAIL_DOMAIN || '',
+  /** HMAC-SHA256 key the inbound forwarder (cloudflare/email-worker) signs
+   *  each webhook body with (X-Yaam-Signature). Empty = inbound refused. */
+  emailInboundSecret: process.env.EMAIL_INBOUND_SECRET || '',
+  /** Outbound provider: cloudflare (Email Sending REST) | resend | off. */
+  emailSendProvider: process.env.EMAIL_SEND_PROVIDER || 'off',
+  /** API token for the chosen provider. */
+  emailSendToken: process.env.EMAIL_SEND_TOKEN || '',
+  /** Cloudflare account id — the Email Sending REST endpoint is per account. */
+  emailCfAccountId: process.env.EMAIL_CF_ACCOUNT_ID || '',
+  /** Display name on outbound mail ("<emailFromName> · <agent>"). */
+  emailFromName: process.env.EMAIL_FROM_NAME || 'YAAM',
+  /** Web push (phase 4.3, push/): VAPID key pair from `npm run push:keys`
+   *  (base64url, uncompressed P-256 public point + raw private scalar) and
+   *  the contact the push services may use. Empty public key = push off. */
+  vapidPublicKey: process.env.VAPID_PUBLIC_KEY || '',
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || '',
+  vapidSubject: process.env.VAPID_SUBJECT || 'mailto:admin@localhost',
   /** Where the SPA is reachable from a phone — channel notifications deep-link
    *  to <publicAppUrl>/#/chat/<sessionId>. Dev default is the Vite port. */
   publicAppUrl: process.env.PUBLIC_APP_URL || 'http://localhost:5175',

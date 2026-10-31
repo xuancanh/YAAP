@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "yaam-email",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-13",
+  "compatibility_flags": ["nodejs_compat"],
+  // Where the yaam API lives. The HMAC secret is a wrangler secret:
+  //   npx wrangler secret put YAAM_INBOUND_SECRET
+  "vars": { "YAAM_API_URL": "https://yaam.example.com" },
+  "observability": { "enabled": true }
+}
