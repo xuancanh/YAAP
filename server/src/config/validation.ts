@@ -42,6 +42,15 @@ const envSchema = z
     RUNNER_BACKEND: z.enum(['auto', 'local', 'cloudflare', 'off']).optional(),
     RUNNER_CF_URL: z.string().optional(),
     RUNNER_CF_TOKEN: z.string().optional(),
+    EMAIL_DOMAIN: z.string().regex(/^$|^[a-z0-9.-]+\.[a-z]{2,}$/i, 'EMAIL_DOMAIN must be a bare domain like agents.example.com').optional(),
+    EMAIL_INBOUND_SECRET: z.string().optional(),
+    EMAIL_SEND_PROVIDER: z.enum(['cloudflare', 'resend', 'off']).optional(),
+    EMAIL_SEND_TOKEN: z.string().optional(),
+    EMAIL_CF_ACCOUNT_ID: z.string().optional(),
+    EMAIL_FROM_NAME: z.string().optional(),
+    VAPID_PUBLIC_KEY: z.string().optional(),
+    VAPID_PRIVATE_KEY: z.string().optional(),
+    VAPID_SUBJECT: z.string().regex(/^$|^(mailto:|https:)/, 'VAPID_SUBJECT must be a mailto: or https: URL').optional(),
   })
   .superRefine((env, ctx) => {
     // Selecting the cloudflare backend without its endpoint is a boot-time
@@ -52,6 +61,18 @@ const envSchema = z
         path: ['RUNNER_CF_URL'],
         message: 'RUNNER_CF_URL and RUNNER_CF_TOKEN are required when RUNNER_BACKEND=cloudflare',
       });
+    }
+    if (env.EMAIL_DOMAIN && !env.EMAIL_INBOUND_SECRET) {
+      ctx.addIssue({ code: 'custom', path: ['EMAIL_INBOUND_SECRET'], message: 'EMAIL_INBOUND_SECRET is required when EMAIL_DOMAIN is set (the inbound webhook must be signed)' });
+    }
+    if (env.EMAIL_SEND_PROVIDER && env.EMAIL_SEND_PROVIDER !== 'off' && !env.EMAIL_SEND_TOKEN) {
+      ctx.addIssue({ code: 'custom', path: ['EMAIL_SEND_TOKEN'], message: `EMAIL_SEND_TOKEN is required when EMAIL_SEND_PROVIDER=${env.EMAIL_SEND_PROVIDER}` });
+    }
+    if (env.EMAIL_SEND_PROVIDER === 'cloudflare' && !env.EMAIL_CF_ACCOUNT_ID) {
+      ctx.addIssue({ code: 'custom', path: ['EMAIL_CF_ACCOUNT_ID'], message: 'EMAIL_CF_ACCOUNT_ID is required when EMAIL_SEND_PROVIDER=cloudflare' });
+    }
+    if (Boolean(env.VAPID_PUBLIC_KEY) !== Boolean(env.VAPID_PRIVATE_KEY)) {
+      ctx.addIssue({ code: 'custom', path: ['VAPID_PRIVATE_KEY'], message: 'VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must be set together (npm run push:keys)' });
     }
     if (env.NODE_ENV !== 'production') return;
     const required = [

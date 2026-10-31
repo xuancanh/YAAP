@@ -73,7 +73,7 @@ const newId = () => `les_${Math.random().toString(36).slice(2, 10)}${Date.now().
 export function sourceForSession(sessionName: string): LessonSource {
   if (sessionName.startsWith('Loop · ')) return 'loop';
   if (sessionName.startsWith('App · ')) return 'app';
-  if (sessionName.startsWith('Telegram · ')) return 'channel';
+  if (sessionName.startsWith('Telegram · ') || sessionName.startsWith('Email · ')) return 'channel';
   return 'chat';
 }
 

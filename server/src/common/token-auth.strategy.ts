@@ -7,8 +7,9 @@
  * it cross-origin and spend LLM keys. When YAAM_API_TOKEN is unset every
  * request passes (single-user localhost default; AppModule logs a boot
  * warning). GET /api/status stays open so liveness probes work without
- * credentials, and GET /api/security so the disclosure policy is readable
- * without one.
+ * credentials, GET /api/security so the disclosure policy is readable
+ * without one, and POST /api/channels/email/inbound which carries its own
+ * HMAC signature instead.
  */
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -20,7 +21,11 @@ export class TokenAuthStrategy implements AuthStrategy {
   constructor(private readonly config: ConfigService) {}
 
   isPublic(request: Request): boolean {
-    return request.method === 'GET' && (request.path === '/api/status' || request.path === '/api/security');
+    if (request.method === 'GET') return request.path === '/api/status' || request.path === '/api/security';
+    // The inbound-mail webhook authenticates itself with an HMAC over the
+    // body (channels/email.service.ts verifySignature), not the bearer token
+    // — the forwarder is a Cloudflare Worker, not the user's browser.
+    return request.method === 'POST' && request.path === '/api/channels/email/inbound';
   }
 
   authenticate(request: Request): string {

@@ -79,6 +79,10 @@ export const agents = pgTable('agents', {
   tools: text('tools').notNull().default('[]'),
   /** JSON array of pending 👍/👎 feedback since the agent's last turn (FR-6.5). */
   pendingFeedback: text('pendingFeedback').notNull().default('[]'),
+  /** Local part of the agent's inbound address, `<emailSlug>@EMAIL_DOMAIN`
+   *  (channels/email.service.ts). Derived from the name once, kept stable on
+   *  rename, unique across agents; '' until the email channel assigns it. */
+  emailSlug: text('emailSlug').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -130,6 +134,24 @@ export const agentEvents = pgTable('agent_events', {
   channel: integer('channel').notNull().default(0),
   /** When a channel delivered it (two-way Telegram); null = not yet. */
   deliveredAt: text('deliveredAt'),
+  /** The same, per channel: the email sweep/digest and the web-push sweep
+   *  each own a column so one channel's success never hides the event from
+   *  another (channels/email.service.ts, push/push.service.ts). */
+  emailDeliveredAt: text('emailDeliveredAt'),
+  pushDeliveredAt: text('pushDeliveredAt'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** Web Push subscriptions (roadmap phase 4.3): one row per browser that
+ *  turned on "Notifications on this device". Endpoint is the push service's
+ *  URL (unique); p256dh/auth are the client's RFC 8291 keys. A 404/410 from
+ *  the push service deletes the row. */
+export const pushSubscriptions = pgTable('push_subscriptions', {
+  id: text('id').primaryKey(),
+  endpoint: text('endpoint').notNull(),
+  p256dh: text('p256dh').notNull(),
+  auth: text('auth').notNull(),
+  userAgent: text('userAgent').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 

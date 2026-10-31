@@ -389,6 +389,38 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_agent_events_undelivered ON agent_events ("deliveredAt") WHERE "deliveredAt" IS NULL`);
     },
   },
+  {
+    id: '0020-email-channel',
+    up: async (db) => {
+      if (!(await hasColumn(db, 'agents', 'emailSlug'))) {
+        await db.query(`ALTER TABLE agents ADD COLUMN "emailSlug" TEXT NOT NULL DEFAULT ''`);
+      }
+      // Two agents must never share an address; '' (unassigned) is excluded.
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_email_slug ON agents ("emailSlug") WHERE "emailSlug" <> ''`);
+      if (!(await hasColumn(db, 'agent_events', 'emailDeliveredAt'))) {
+        await db.query(`ALTER TABLE agent_events ADD COLUMN "emailDeliveredAt" TEXT`);
+      }
+    },
+  },
+  {
+    id: '0021-web-push',
+    up: async (db) => {
+      if (!(await hasColumn(db, 'agent_events', 'pushDeliveredAt'))) {
+        await db.query(`ALTER TABLE agent_events ADD COLUMN "pushDeliveredAt" TEXT`);
+      }
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+          "id" TEXT PRIMARY KEY,
+          "endpoint" TEXT NOT NULL,
+          "p256dh" TEXT NOT NULL,
+          "auth" TEXT NOT NULL,
+          "userAgent" TEXT NOT NULL DEFAULT '',
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_push_subscriptions_endpoint ON push_subscriptions ("endpoint");
+      `);
+    },
+  },
 ];
 
 /** Advisory-lock key serializing migration runs: two instances booting

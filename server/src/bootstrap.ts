@@ -18,7 +18,9 @@ export async function createApp(): Promise<INestApplication> {
   // Composer attachments upload base64-in-JSON (≤5MB per file, one file per
   // request ≈ 7MB on the wire) — the 100kb default would reject them; 25mb
   // leaves headroom without opening the door to unbounded bodies.
-  app.use(json({ limit: '25mb' }));
+  // `verify` keeps the raw bytes on the request: the inbound-mail webhook
+  // checks an HMAC over the body as sent, not over a re-serialisation.
+  app.use(json({ limit: '25mb', verify: (req, _res, buf) => { (req as { rawBody?: Buffer }).rawBody = Buffer.from(buf); } }));
   app.use(urlencoded({ limit: '25mb', extended: true }));
   const config = app.get(ConfigService);
   // Only browser cross-origin calls need CORS: requests without an Origin

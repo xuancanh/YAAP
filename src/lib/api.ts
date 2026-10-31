@@ -76,9 +76,21 @@ export interface ProfileProposal {
   at: string;
 }
 
+export interface EmailStatus {
+  configured: boolean;
+  domain: string;
+  sendProvider: string;
+  ownerAddresses: string[];
+  digest: 'immediate' | 'daily' | 'off';
+  digestHour: number;
+  addresses: Array<{ agentId: string; name: string; address: string }>;
+}
+
 export interface Agent {
   id: string;
   name: string;
+  /** Local part of the agent's inbound email address (docs/channels.md). */
+  emailSlug?: string;
   emoji: string;
   colors: string; // JSON [from, to]
   role: string;
@@ -572,6 +584,13 @@ export const api = {
   telegramStatus: () => get<{ configured: boolean; paired: boolean; defaultAgentId: string }>('/api/channels/telegram/status'),
   telegramPairCode: () => send<{ code: string; expiresInSeconds: number }>('/api/channels/telegram/pair-code', 'POST'),
   telegramUnpair: () => send<{ ok: boolean }>('/api/channels/telegram/unpair', 'POST'),
+  // email channel + web push (docs/channels.md)
+  emailStatus: () => get<EmailStatus>('/api/channels/email/status'),
+  emailPairCode: () => send<{ code: string; expiresInSeconds: number }>('/api/channels/email/pair-code', 'POST'),
+  emailUnpair: (address?: string) => send<{ ok: boolean; ownerAddresses: string[] }>('/api/channels/email/unpair', 'POST', address ? { address } : {}),
+  pushPublicKey: () => get<{ enabled: boolean; publicKey: string; subscriptions: number }>('/api/push/vapid-public-key'),
+  pushSubscribe: (sub: unknown, userAgent: string) => send<{ ok: boolean; id: string }>('/api/push/subscribe', 'POST', { ...(sub as object), userAgent }),
+  pushUnsubscribe: (endpoint: string) => send<{ ok: boolean; removed: number }>('/api/push/subscribe', 'DELETE', { endpoint }),
   settings: () => get<Record<string, string>>('/api/settings'),
   putSettings: (patch: Record<string, string>) => send<Record<string, string>>('/api/settings', 'PUT', patch),
   search: (workspaceId: string, q: string) =>
