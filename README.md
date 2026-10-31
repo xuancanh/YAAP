@@ -105,5 +105,18 @@ on the user message, bounded to 4 images ≤3MB each. Gemini is supported via
 its OpenAI-compatible endpoint. Chats archive from the header and restore
 from the sidebar's Archived group (FR-1.4).
 
+Proactivity controls (roadmap Phase 2, finished): per-workspace **quiet
+hours** with an interrupt policy (`queue` | `silent` | `allow-urgent`) — loops
+still run inside the window, their notifications wait or stay inbox-only; a
+**monthly spend stop** (`spendBudgetTokens`) that refuses loop runs before the
+model is called (one `budget_stop` event per loop per day) while user turns
+keep working behind a "Workspace budget reached" badge; **cost in dollars**
+from a per-model list-price table (`server/src/ai/pricing.ts`, overridable in
+Settings → Usage) with 30-day per-agent/per-loop charts on the agent home and
+`GET /api/agents/:id/usage`; and **two-way Telegram** — undelivered inbox
+events for the paired default agent (plus every agent's failures and budget
+stops) are pushed to the paired chat within a minute, batched, each with a
+deep link back to the conversation, never echoing channel-born events back.
+
 Next up: a native Bedrock (SigV4) adapter is the one remaining FR-9.2
 provider.

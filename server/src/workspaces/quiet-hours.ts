@@ -63,8 +63,8 @@ export function validateQuietHours(input: unknown): QuietHours {
   if (q.start === q.end) throw new Error('quietHours.start and end must differ (an empty window is "off")');
   if (typeof q.timezone !== 'string' || !isValidTimezone(q.timezone)) throw new Error('quietHours.timezone must be an IANA zone');
   const policy = q.policy ?? 'queue';
-  if (!QUIET_POLICIES.includes(policy as QuietPolicy)) throw new Error(`quietHours.policy must be one of ${QUIET_POLICIES.join(', ')}`);
-  return { start: q.start, end: q.end, timezone: q.timezone, policy: policy as QuietPolicy };
+  if (!QUIET_POLICIES.includes(policy)) throw new Error(`quietHours.policy must be one of ${QUIET_POLICIES.join(', ')}`);
+  return { start: q.start, end: q.end, timezone: q.timezone, policy };
 }
 
 const toMinutes = (hhmm: string): number => {

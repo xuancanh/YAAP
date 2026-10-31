@@ -154,22 +154,30 @@ Goal: close the memory gap with Hermes. Everything else builds on this.
 
 Goal: the agent initiates. This is the viral feature; ours must be trustworthy.
 
-1. **Agent inbox / notifications.** Loop runs and agent-initiated findings
-   land in a notification feed (badge on the agent in the rail, browser push
-   later). Each item links to the "Loop · name" conversation. No silent work.
-2. **Heartbeat loops.** A loop flavor with a cheap default prompt ("check
-   your board, your watches, and your inbox; message the user only if
+1. **Agent inbox / notifications.** *(shipped)* Loop runs and agent-initiated
+   findings land in a notification feed (badge on the agent in the rail,
+   browser push later). Each item links to the "Loop · name" conversation.
+   No silent work. Events now also reach the paired Telegram chat (Phase 4.2).
+2. **Heartbeat loops.** *(shipped)* A loop flavor with a cheap default prompt
+   ("check your board, your watches, and your inbox; message the user only if
    something needs them") plus per-loop **token budget and model override**,
    so a 15-minute heartbeat can run on a small model for pennies while
    deep work uses the big one. (Directly answers pain point 2.)
-3. **Quiet hours and interrupt policy.** Per-workspace: when the agent may
-   notify, when it must queue. Proactive ≠ noisy.
-4. **Watches.** Lightweight triggers the agent can register with a tool
-   (`watch_url`, `watch_keyword` over web search) that feed heartbeat runs,
-   giving loops something real to check.
-5. **Cost dashboard.** Per-agent and per-loop token spend over time in the
-   agent's home page; workspace budget with hard stop + notification. Make
-   the invisible bill visible before it happens.
+3. **Quiet hours and interrupt policy.** *(shipped)* Per-workspace: when the
+   agent may notify, when it must queue. Proactive ≠ noisy. Shipped as
+   `workspaces.quietHours` (start/end/timezone/policy `queue | silent |
+   allow-urgent`): loops still run in the window; their events carry
+   `deliverAfter` or stay inbox-only.
+4. **Watches.** *(reframed)* Lightweight triggers the agent can register with
+   a tool (`watch_url`, `watch_keyword` over web search) that feed heartbeat
+   runs, giving loops something real to check. Superseded by event triggers
+   from connections (execution plan item 6).
+5. **Cost dashboard.** *(shipped)* Per-agent and per-loop token spend over
+   time in the agent's home page; workspace budget with hard stop +
+   notification. Make the invisible bill visible before it happens. Shipped
+   as `ai/pricing.ts` + `GET /api/agents/:id/usage` (per day, per loop, USD),
+   Settings → Usage, and the monthly `spendBudgetTokens` stop with
+   `budget_stop` events.
 
 ### Phase 3 — An agent that grows (the Hermes loop, human-gated)
 
@@ -199,9 +207,11 @@ or three good ones, not 29.
 1. **Email channel.** Each agent gets an address; inbound mail becomes a
    turn in a dedicated conversation, replies go back out. Email is the
    universal channel for general users and the easiest to host centrally.
-2. **Telegram bridge.** The best effort-to-reach ratio of the messenger
-   channels (official bot API, no fragile reverse engineering, works on
-   every platform). One bot, DM pairing with a code like OpenClaw/Hermes.
+2. **Telegram bridge.** *(shipped, two-way)* The best effort-to-reach ratio
+   of the messenger channels (official bot API, no fragile reverse
+   engineering, works on every platform). One bot, DM pairing with a code
+   like OpenClaw/Hermes; inbox events are pushed back to the paired chat
+   with deep links, honouring quiet hours.
 3. **Web push + PWA.** Notifications from Phase 2 reach the phone; the
    existing responsive UI becomes installable.
 4. **Channel-aware identity and safety.** Unknown senders get a pairing

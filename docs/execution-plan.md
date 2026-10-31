@@ -32,7 +32,19 @@ Status markers are updated as work lands.
 
 ## The items
 
-### 1. Finish Phase 2 — proactivity controls *(todo)*
+### 1. Finish Phase 2 — proactivity controls *(done)*
+Shipped as: migrations `0016`–`0019` (`workspaces.quietHours`,
+`spendBudgetTokens`/`spendMonth`/`spendTokens`; `agent_events.deliverAfter`,
+`silent`, `origin`, `channel`, `deliveredAt`), `workspaces/quiet-hours.ts` +
+`spend.util.ts`, the `budget` SSE notice and `budget_stop` events in
+`turn-loop.service.ts`/`loops.service.ts`, `ai/pricing.ts` + `usage/
+usage.module.ts` (`GET /api/agents|workspaces/:id/usage`, `/api/usage/
+pricing`, `pricingOverrides` setting), the `TelegramService.deliverSweep`
+minute sweep with `PUBLIC_APP_URL` deep links, and Settings → Workspace /
+Usage plus the agent-home usage chart. Tests: `backend-quiet-hours`,
+`backend-usage`, and the extended `backend-loops` / `backend-telegram`
+suites.
+
 Quiet hours and interrupt policy per workspace (`quietHours` JSON: start,
 end, timezone, policy `queue|silent|allow-urgent`); loops that fire inside
 quiet hours still run but their notifications queue until the window ends.
