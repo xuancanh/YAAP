@@ -249,6 +249,28 @@ removes the routes, the tools and the wakes. Every structural change is a row
 in the SHA-256 hash-chained `org_audit` table, verifiable with
 `GET /api/orgs/:id/audit/verify`.
 
+**Autonomous mode is a cap, not a blank cheque.** Since the company became
+the workspace (`docs/group-chat.md` §5, `workspaces.orgMode`), the owner may
+set a workspace to *autonomous*, and then the chief of staff's hire, reorg,
+scope-widening, budget-allocation and termination tools execute without an
+approval card. What bounds them is code in `OrgRuntimeService.execute`, not
+the chief's charter: reporting depth ≤ 3, at most 5 direct reports per
+member, members ≤ `orgAgentCap`, agent and project envelopes summing to at
+most the company envelope `orgMonthlyUsd` (an envelope of 0 refuses every
+allocation), a report's scopes never exceeding the chief's own holdings (the
+meet rule, unchanged), no connection, memory or lesson inheritance by a hired
+agent, and a required one-line `why`. Anything outside a cap is refused in
+the tool result with the exact reason and is **not** queued, so a refusal
+cannot be ratified later by another agent's message. Every executed action
+writes an `auto_*` row in the hash chain with the reason, an inbox event on
+the chief, a system line in `#company` and a line in the next brief. The
+company envelope itself, the agent cap, the mode and the chief are the
+owner's only (`PUT /api/workspaces/:id/org`); strategy, escalations and
+outward actions still come to a human; `POST /api/workspaces/:id/org/pause`
+and `COMPANIES_ENABLED=false` stop everything in either mode; and the
+budget reservation before every run — including the chief's own structure
+reviews — still hard-stops at 100%.
+
 ## d. The approval taxonomy as implemented
 
 Every tool call in a turn gets one verdict from `checkPolicy`
@@ -456,6 +478,11 @@ first and says why.
   ratings are the user's, attached to the turn.
 - **No silent background spend.** Loops have budgets enforced before the
   call, every run is an event, and the model used is visible on every turn.
+- **No agent-set caps on agents.** In autonomous organization mode the chief
+  of staff acts within depth, fan-out, member and envelope caps the owner
+  set; no tool can raise a cap, change the mode, pick the chief or widen
+  beyond the chief's own holdings, and a refused action is never queued for
+  later approval.
 - **No training on user data.** With bring-your-own keys we see no model
   traffic at all; this stays true when platform-metered access arrives.
 - **No credentials inside agent-authored artifacts.** Custom tools carry no
@@ -555,6 +582,7 @@ From `git log`, newest first. Dates are commit dates.
 
 | Date | Commit | Change |
 |---|---|---|
+| 2026-11-01 | this | Organization mode on the workspace (plan item 16): `workspaces.orgMode off/supervised/autonomous`, 1:1 `organizations` row, workspace-scoped API and kill switch, autonomous chief executing hire/reorg/scope/budget/terminate only within code-enforced caps (depth, fan-out, agent cap, company envelope, meet rule, no inheritance) with refusals never queued, `auto_*` audit rows with reason, `#company` announcements through the Announcer seam, board-event and daily structure reviews reserved against budgets (`docs/group-chat.md` §5) |
 | 2026-11-01 | shared | Shared workspaces (plan item 8, company phase D): invited members with roles acting inside the owner's account through `WorkspaceAccessGuard` (`X-Yaam-Workspace`, rebind + `checkRole`), hashed 7-day invite tokens bound to the invitee's verified address, per-member connection grants with initiator-based selection and no implicit cross-member use, approvals routed to the connection's owner as addressee-only inbox events (TTL-denied, invisible to others), lesson and profile audiences with default-deny `workspace_flow_rules` the owner alone writes, `<connection-content>` wrapping, attributed-not-authoritative messages in shared sessions, per-member channel pairings, `org_humans` with board/observer roles, `decidedBy` and human actors in the audit chain (`docs/shared-agents.md`) |
 | 2026-11-01 | this | Desktop computer control: paired outbound companion, hashed companion token on four routes (`CompanionGuard`), user-chosen narrow-only scopes, every `computer_*` tool Ask-gated in every mode with acting tools never remembered, loop/channel refusal, `computer_actions` audit, Pause/Disconnect/`COMPUTER_CONTROL_ENABLED` kill switches (`docs/computer-control.md`) |
 | 2026-11-01 | this | Autonomous company (plan item 14 A–C): atomic task claims, pre-call budget reservation with hard stop, approvals-only structural change, meet-rule scopes, charter drift detection, hash-chained `org_audit`, org kill switch and `COMPANIES_ENABLED` |

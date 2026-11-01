@@ -1,6 +1,7 @@
 # Group chat: channels, threads and agents that talk
 
-Status: **design, 1 November 2026** — execution-plan items 15 and 16.
+Status: **design, 1 November 2026** — execution-plan items 15 and 16; §5
+(organization mode) **shipped** 1 November 2026, see its status note.
 Supersedes the "group session that wakes nobody" in
 `docs/autonomous-company.md` §4 (see the revision note there).
 
@@ -114,6 +115,46 @@ quiet hours. Paired members can post into a channel from Telegram with
 `#slug text`.
 
 ## 5. Organization mode
+
+**Status: shipped as (1 November 2026, execution-plan item 16).** Migration
+`0028-org-mode` adds `workspaces.orgMode | chiefOfStaffAgentId |
+orgMonthlyUsd | orgAgentCap` and makes `organizations.workspaceId` unique
+among non-archived rows (duplicates keep the oldest, the rest are
+`status = archived`; workspaces that already had an org land in
+`supervised`). `OrgModeService` (`server/src/org/org-mode.service.ts`) behind
+`PUT /api/workspaces/:id/org { mode, chiefOfStaffAgentId?, monthlyUsd?,
+agentCap? }` creates the 1:1 org on first enable (named after the workspace),
+seats every agent — chief at the root, the rest under it, overflow one level
+down within depth 3 — writes `org_mode` audit and announces through the
+`Announcer` seam (`org-announcer.ts`: `announce(workspaceId, text)`, bound to
+`GroupChatService.ensureChannel('company') + postSystem` when item 15 lands;
+unbound it drops the line). `off` pauses the runtime and hides the panes,
+deleting nothing. `POST /api/workspaces/:id/org/pause | resume` is the kill
+switch; every `/api/orgs/:id/...` route has a thin alias under
+`/api/workspaces/:id/org/...` (`WorkspaceOrgController`) and the UI uses
+those. Autonomous mode is in `OrgRuntimeService.execute`: `org_hire_agent`,
+`org_reorg` (was `org_propose_reorg`), `org_set_scope` widening,
+`org_allocate_budget` (was `org_budget_request`) and `org_terminate_agent`
+execute at once when depth ≤ 3, fan-out ≤ 5, members < `orgAgentCap`, agent +
+project envelopes ≤ `orgMonthlyUsd` (an envelope of 0 refuses every
+allocation), scopes ⊆ the chief's holdings, and `why` is given; each refusal
+carries its reason and queues nothing; each execution writes an `auto_*`
+audit row with the reason, an inbox line on the chief, a `#company` line and
+a "## Autonomous actions" section in the next brief. The old tool names are
+accepted for one release. The chief's routine: `TriggerBus.emitOrgBoard`
+(task blocked, escalation, budget warning, new goal) coalesces into one
+structure review run per org (10-minute cooldown) in the `Org · <name> ·
+Chief review` session, plus one review a day at the brief hour;
+`org_review_structure` lists idle and overloaded members, unassigned goals,
+unowned and blocked tasks and headroom against every cap. UI: the Company
+section is gone; the Workspace rail shows Board, Goals, Org chart, Approvals
+(hidden in autonomous mode unless something is pending), Spend, Brief and
+Audit under the current workspace, Settings → Workspace has the
+"Organization" card (mode, chief, envelope, cap, pause/resume), the chief's
+agent home says "Chief of staff of <workspace>", and
+`#/ws/<id>/org/<pane>` deep-links a pane. Tests:
+`tests/backend-org-mode.test.ts`. Not done: the group log pane (replaced by
+`#company`, item 15); `channel_make_task` → board linkage is item 15's.
 
 `workspaces.orgMode` ∈ `off | supervised | autonomous`, plus
 `chiefOfStaffAgentId`, `orgMonthlyUsd`, `orgAgentCap` (default 12). Enabling

@@ -75,20 +75,27 @@ Playwright, incognito per turn, SSRF-guarded, password fields refused) streams
 every page it renders as a screenshot into the chat's Browser panel
 (`docs/browser-tool.md`).
 
-An **autonomous company** layer (`docs/autonomous-company.md`, phases A–C):
-organisations with a chief-of-staff agent and up to five specialists under
-it (depth ≤ 3), a shared task board with atomic claiming and four-field
-briefs, event-driven wakes (assignment, comment on an owned task, review
-request, approval decision — never a mention, no heartbeats), USD envelopes
-reserved before every run with an 80% warning and a 100% hard stop,
-circuit breakers (no-progress backoff, same-call loop detection, a
-three-round review cap that escalates to you), a hash-chained audit log, and
-a chief of staff whose `org_hire_agent` / `org_set_scope` (widening) /
-`org_propose_reorg` / `org_budget_request` calls produce approval cards you
-decide in the app — narrowing, assigning and reviewing it does alone. The
-Company section has the org chart, board, goals, approvals queue, spend
-tree, activity feed, group log and a daily brief you answer with
-"do 1, 3, skip 2". `COMPANIES_ENABLED=false` hides it all.
+**The workspace is the company** (`docs/group-chat.md` §5,
+`docs/autonomous-company.md`): switch a workspace into organization mode and
+every agent in it joins under a chief of staff — a shared task board with
+atomic claiming and four-field briefs, event-driven wakes (assignment,
+comment on an owned task, review request, approval decision — never a
+mention, no heartbeats), USD envelopes reserved before every run with an 80%
+warning and a 100% hard stop, circuit breakers (no-progress backoff,
+same-call loop detection, a three-round review cap that escalates to you)
+and a hash-chained audit log. In **supervised** mode the chief's
+`org_hire_agent` / `org_set_scope` (widening) / `org_reorg` /
+`org_allocate_budget` / `org_terminate_agent` calls produce approval cards
+you decide in the app or by answering the brief; in **autonomous** mode they
+execute at once within hard caps (depth ≤ 3, five direct reports, an agent
+cap, agent and project envelopes inside the company envelope, scopes never
+beyond the chief's own, nothing inherited) and are refused with the reason
+outside them — every action audited with the chief's reason, announced in
+`#company` and listed in the daily brief, and the chief reviews the
+structure when a task blocks or a goal lands and once a day. The Workspace
+rail shows the board, goals, org chart, approvals, spend, brief and audit;
+Settings → Workspace → Organization holds the mode, chief, envelope, cap and
+the pause button. `COMPANIES_ENABLED=false` hides it all.
 
 The frontend implements the design comp in `design/`: activity-bar shell,
 workspace-scoped chat list grouped by agent, streaming chat with thinking

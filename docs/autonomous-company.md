@@ -1,16 +1,31 @@
 # Build the company as a task board, not a chat room
 
 Status: **phases A–D shipped** (execution plan item 14, 1 November 2026;
-phase D with item 8, `docs/shared-agents.md`). The research below is the design input and
-is kept as written; what each phase became in code is noted at the head of
-§5. The module is `server/src/org/` (not `server/src/orgs/` as proposed),
-the tools are prefixed `org_` (`org_hire_agent`, `org_set_scope`,
-`org_assign`, `org_review`, `org_escalate`, `org_audit_query`, `org_report`,
-`org_propose_reorg`, `org_propose_strategy`, `org_budget_request`,
-`org_pause_agent`, `org_terminate_agent` for the chief; `org_task_update`,
-`org_task_comment`, `org_request_review`, `org_create_task`,
-`org_read_board`, `org_read_goal`, `org_message` for every member), the
-environment switch is `COMPANIES_ENABLED`, and the API is `/api/orgs`.
+phase D with item 8, `docs/shared-agents.md`); **folded into the workspace
+as organization mode** (item 16, `docs/group-chat.md` §5, 1 November 2026).
+The research below is the design input and is kept as written; what each
+phase became in code is noted at the head of §5. The module is
+`server/src/org/` (not `server/src/orgs/` as proposed), the tools are
+prefixed `org_` (`org_hire_agent`, `org_set_scope`, `org_assign`,
+`org_review`, `org_escalate`, `org_audit_query`, `org_report`, `org_reorg`
+(formerly `org_propose_reorg`), `org_propose_strategy`,
+`org_allocate_budget` (formerly `org_budget_request`), `org_pause_agent`,
+`org_terminate_agent`, `org_review_structure` for the chief;
+`org_task_update`, `org_task_comment`, `org_request_review`,
+`org_create_task`, `org_read_board`, `org_read_goal`, `org_message` for
+every member), the environment switch is `COMPANIES_ENABLED`, and the
+primary API is `/api/workspaces/:id/org/...` (`/api/orgs/...` stays as an
+alias). **Modes** (`workspaces.orgMode`): `off` (paused, panes hidden, data
+kept), `supervised` (this document's behaviour: structural changes are
+approvals), `autonomous` (the chief's hire / reorg / scope widening /
+budget allocation / termination execute at once **within caps** — depth ≤ 3,
+fan-out ≤ 5, members ≤ `orgAgentCap` (default 12), agent + project envelopes
+≤ `orgMonthlyUsd`, scopes ⊆ the chief's own, no inheritance — and are
+refused with the reason otherwise; each is audited as `auto_*` with the
+chief's `why`, announced in `#company` and listed in the brief; the chief
+also reviews the structure on board events and daily at the brief hour).
+Strategy, escalations and outward actions need the CEO in every mode; the
+kill switch and the budget hard-stop apply in every mode.
 
 *Research date: 31 October 2026. External facts come from the five notes in `research_notes/Autonomous AI company orchestration/` (Paperclip, hosted products, frameworks and papers, governance and economics, practice and UX). Competitor context for the single-agent products is in `reports/Personal agent competitor gap analysis.md` and is not repeated here. Our side comes from the README, `docs/execution-plan.md`, `docs/roadmap.md` §2, `docs/permissions.md`, `docs/agent-memory.md`, `docs/security.md`, `server/src/database/schema.ts`, `server/src/chats/turn-loop.service.ts`, `server/src/chats/loops.service.ts` and `git log`. Where a claim in the notes has no primary URL it is omitted or flagged in §7. This report is the design input for execution-plan item 14 and is written to be lifted into `docs/autonomous-company.md`.*
 

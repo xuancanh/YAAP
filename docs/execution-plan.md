@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–14 done** (31 Oct – 1 Nov 2026); **items 15–16 in progress** after the owner's correction that the company is the workspace and the group chat is a Slack-style channel (`docs/group-chat.md`).
+Status: **items 1–14 and 16 done** (31 Oct – 1 Nov 2026); **item 15 in progress** after the owner's correction that the company is the workspace and the group chat is a Slack-style channel (`docs/group-chat.md`).
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -388,9 +388,26 @@ check with rate caps, 3-round agent-to-agent cap per thread, channel folder,
 make-task from a message with status lines posting back, DMs in the same
 rail, workspace SSE, mention delivery through paired channels.
 
-### 16. Workspace is the company *(todo)*
+### 16. Workspace is the company *(done)*
 `docs/group-chat.md` §5: fold the organization object into the workspace
 (`orgMode off|supervised|autonomous`), Company panes under the workspace,
 `#company` announcements, autonomous chief of staff within caps (hire, reorg,
 scopes, budgets execute immediately and are audited and announced),
 supervised mode keeps approvals.
+
+*Shipped as (1 November 2026):* migration `0028-org-mode` (`workspaces.orgMode
+| chiefOfStaffAgentId | orgMonthlyUsd | orgAgentCap`, one live org per
+workspace), `OrgModeService` + `WorkspaceOrgController`
+(`PUT /api/workspaces/:id/org`, `/pause`, `/resume`, `/caps`, `/review`, and a
+thin alias of every `/api/orgs/:id/...` route), enrolment of every workspace
+agent under the chief, the `Announcer` seam for `#company` (one provider to
+bind when item 15 lands), autonomous execution of `org_hire_agent` /
+`org_reorg` / `org_set_scope` widening / `org_allocate_budget` /
+`org_terminate_agent` inside code-enforced caps with reasons on refusal and
+`auto_*` audit rows, inbox events, announcements and a brief section on
+execution, `org_review_structure` plus board-event (`TriggerBus.emitOrgBoard`)
+and daily chief reviews, the Company section replaced by workspace-scoped
+panes in the rail, the Settings → Workspace → Organization card, the
+"Chief of staff of <workspace>" badge, `#/ws/<id>/org/<pane>` deep links;
+`tests/backend-org-mode.test.ts` (10 tests). Old tool names are accepted for
+one release.
