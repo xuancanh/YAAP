@@ -945,3 +945,31 @@ seats (an agent and its history move together; channels stay with their
 workspace); `delegate_task` scopes by the delegating agent's workspace, not
 the session's; `GET /api/agents` without `?workspaceId=` still returns every
 agent of the account for admin and name-map callers.
+
+## Autonomous organization: closing the gaps (`docs/autonomous-org-first-principles.md`)
+
+### 27. Sensing and executable acceptance (C1, C3) *(in progress)*
+Metric sources bound to connections, webhooks or HTTP JSON with provenance;
+key results read their value only from their source; `done_when` checks run
+without a model.
+
+### 28. Action contract and the trust ledger (C2, C10) *(in progress)*
+Action classes, idempotency keys, staging, outbound rate limits, two-key
+execution for irreversible actions; per-member, per-class autonomy levels
+earned from the record and dropped on incidents. Replaces the
+supervised/autonomous switch as the unit of autonomy.
+
+### 29. Incidents, degradation and independent audit (C11, C9) *(in progress)*
+Incidents with containment and postmortems; provider and connection
+degradation modes; audit of the auditor, rotation, red-team runs.
+
+### 30. Experiments and the prediction ledger (C5, C7, C9 reconciliation) *(planned)*
+Changes as hypotheses with a metric, window and revert rule; forecasts
+scored for calibration; claimed versus measured reconciliation.
+
+### 31. Evals, the self-modification boundary, capacity and the owner's seat (C6, C8, C4, C12) *(planned)*
+Golden sets per role and gated rollout; the boundary as data; WIP limits,
+dependencies and deadline scheduling; decision defaults, delegated
+approvals and value accounting.
+
+### 32. SPA for items 27–31 *(planned)*
