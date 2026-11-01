@@ -38,6 +38,8 @@ import { deliveryFor } from '../workspaces/quiet-hours';
 import { spendStatus } from '../workspaces/spend.util';
 import { ConnectionsService } from '../connections/connections.service';
 import { ActionReviewService, ReviewRecord } from '../review/action-review.service';
+import { ComputerService } from '../computer/computer.service';
+import { REMEMBERABLE_COMPUTER_TOOLS, summarizeInput as summarizeComputerInput } from '../computer/computer-scopes';
 
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
@@ -60,6 +62,12 @@ export type TurnEvent =
   /** A browser tool rendered a page: the client shows the screenshot live
    *  in the artifact panel's Browser tab (docs/browser-tool.md §4). */
   | BrowserTurnEvent
+  /** A computer_* action settled on the paired companion (docs/computer-control.md):
+   *  feeds the live "Computer" tab. `screenshotPath` is a workspace file. */
+  | {
+    type: 'computer'; callId: string; tool: string; summary: string; status: 'ok' | 'error';
+    workspaceId: string; screenshotPath?: string; width?: number; height?: number; at: string;
+  }
   | { type: 'error'; message: string };
 
 interface ToolRecord {
@@ -253,6 +261,8 @@ export class TurnLoopService implements OnModuleDestroy {
     @Optional() private readonly review?: ActionReviewService,
     /** Optional so test constructors without a browser keep working. */
     @Optional() private readonly browser?: BrowserService,
+    /** Optional so test constructors without computer control keep working. */
+    @Optional() private readonly computer?: ComputerService,
   ) {}
 
   /** Graceful shutdown: abort every in-flight turn through the same path as
@@ -352,6 +362,9 @@ export class TurnLoopService implements OnModuleDestroy {
         // Browser tools exist only when a backend is available
         // (docs/browser-tool.md §2); browser_act is mutation-class.
         ...(this.browser?.specs() ?? []),
+        // Computer tools exist only while a companion is paired, unpaused and
+        // scoped for them (docs/computer-control.md §3); every one is Ask-gated.
+        ...(this.computer ? await this.computer.specs() : []),
       ];
       // Per-round overhead every provider call also carries: the resolved
       // system prompt plus the full tool-spec JSON (tens of KB once MCP
@@ -391,6 +404,30 @@ export class TurnLoopService implements OnModuleDestroy {
 
         for (const call of calls) {
           if (ctl.signal.aborted) break;
+          // Computer tools act on the user's own machine and run only from a
+          // turn the user started in the app. A loop or channel turn has
+          // nobody at the keyboard to approve, so the call is refused — not
+          // queued for later — and the refusal lands in the agent inbox
+          // (docs/computer-control.md §4).
+          if (this.computer?.owns(call.name) && (input.origin ?? 'user') !== 'user') {
+            const output = 'Refused: computer tools act on the user\'s own computer and only run from a conversation the user is having in the app right now — never from a scheduled loop or a channel. Do not retry; tell the user what you wanted to do and why.';
+            if (session.agentId) {
+              await this.agents.addEvent(session.agentId, {
+                kind: 'info',
+                title: `Computer action refused (${input.origin} turn): ${call.name}`,
+                body: summarizeComputerInput(call.name, call.input),
+                sessionId: session.id,
+                payload: JSON.stringify({ tool: call.name, origin: input.origin }),
+                origin: input.origin ?? 'user',
+                ...deliveryFor(ws, 'info'),
+              }).catch(() => undefined);
+            }
+            await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
+            history.push({ role: 'tool', content: output, toolCallId: call.id, isError: true });
+            toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'deny', isError: true });
+            yield { type: 'tool_result', id: call.id, name: call.name, output, isError: true };
+            continue;
+          }
           // Loop turns are background turns: outward-facing (connection)
           // mutations and code execution queue as pending approvals in the
           // agent inbox, never silently execute — even in Auto mode
@@ -491,8 +528,16 @@ export class TurnLoopService implements OnModuleDestroy {
               isError = true;
             }
           }
+          // A settled computer action: the screenshot rides along to the model
+          // as a vision part on this tool result (never persisted in the
+          // transcript — the file store holds it) and the client gets a
+          // `computer` event for the live tab.
+          const step = this.computer?.owns(call.name) ? this.computer.takeStep(session.id, call.id) : undefined;
           await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
-          history.push({ role: 'tool', content: output, toolCallId: call.id, isError });
+          history.push({
+            role: 'tool', content: output, toolCallId: call.id, isError,
+            ...(step?.imageBase64 ? { images: [{ mediaType: 'image/png', dataBase64: step.imageBase64 }] } : {}),
+          });
           // Browser steps stream before the tool_result so the panel shows
           // the page as the model receives it; the step is also recorded on
           // the tool record for the transcript view.
@@ -500,6 +545,13 @@ export class TurnLoopService implements OnModuleDestroy {
           for (const bev of this.browser?.takeEvents(session.id) ?? []) yield bev;
           toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: decision, isError, ...(review ? { review } : {}), ...(browserStep ? { browser: browserStep } : {}) });
           yield { type: 'tool_result', id: call.id, name: call.name, output: output.slice(0, 500), isError, ...(review ? { review } : {}) };
+          if (step && decision !== 'deny') {
+            yield {
+              type: 'computer', callId: call.id, tool: step.tool, summary: step.summary, status: step.status,
+              workspaceId: session.workspaceId, at: step.at,
+              ...(step.screenshotPath ? { screenshotPath: step.screenshotPath, width: step.width, height: step.height } : {}),
+            };
+          }
         }
 
         // An abort during a tool run or approval wait must end the turn here
@@ -599,6 +651,7 @@ export class TurnLoopService implements OnModuleDestroy {
     if (this.connections?.owns(name)) return this.connections.execute(session.agentId ?? undefined, name, input);
     if (this.runner?.owns(name)) return this.runner.execute(name, input);
     if (this.browser?.owns(name)) return this.browser.execute({ sessionId: session.id, fileRoot: await this.fileRootFor(session) }, name, input);
+    if (this.computer?.owns(name)) return this.computer.execute({ id: session.id, workspaceId: session.workspaceId }, name, input);
     if (name.startsWith(CUSTOM_TOOL_PREFIX)) {
       if (!session.agentId) throw new Error(`unknown tool: ${name}`);
       return this.agents.executeCustomTool(session.agentId, name, input);
@@ -737,8 +790,20 @@ export class TurnLoopService implements OnModuleDestroy {
             : this.connections?.owns(call.name) ? this.connections.isReadOnly(call.name)
               : this.runner?.owns(call.name) ? this.runner.isReadOnly(call.name)
                 : this.browser?.owns(call.name) ? this.browser.isReadOnly(call.name)
+                : this.computer?.owns(call.name) ? this.computer.isReadOnly(call.name)
                   : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
+    // Computer tools act on the user's own machine (docs/computer-control.md
+    // §4): Auto mode never applies. The observational ones (screenshot, move,
+    // scroll, list, read) may be remembered per chat; the acting ones —
+    // click, type, key, shell, write — ask on every call, like confirm-always.
+    if (this.computer?.owns(call.name)) {
+      if (!REMEMBERABLE_COMPUTER_TOOLS.has(call.name)) return { verdict: 'ask', remember: false, readOnly: false };
+      if (approvals.tools.includes(call.name) || approvals.exact.includes(exactKey(call))) {
+        return { verdict: 'remembered', remember: true, readOnly: false };
+      }
+      return { verdict: 'ask', remember: true, readOnly: false };
+    }
     // Confirm-always tools (gmail_send) are outward-facing and irreversible:
     // they pause in host chrome on every call — Auto mode and remembered
     // approvals never apply (docs/integrations.md §5).

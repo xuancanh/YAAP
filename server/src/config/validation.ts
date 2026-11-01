@@ -60,6 +60,7 @@ const envSchema = z
     BROWSER_CF_ACCOUNT_ID: z.string().optional(),
     BROWSER_CF_TOKEN: z.string().optional(),
     BROWSER_CHROMIUM_PATH: z.string().optional(),
+    COMPUTER_CONTROL_ENABLED: z.enum(['true', 'false']).optional(),
   })
   .superRefine((env, ctx) => {
     // Selecting the cloudflare backend without its endpoint is a boot-time

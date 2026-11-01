@@ -97,10 +97,14 @@ add capability tiers as we grow:
   filtering proxy (public internet only, same rules as assertPublicUrl,
   request/response size caps). Results come back as artifacts, never as
   direct storage writes.
-- **Tier 2 (much later): user-owned runners.** If "act on my machine" is
-  ever wanted, it is an explicitly paired local runner speaking outbound
-  WebSocket to the cloud (never an inbound port), with the same approval
-  model as MCP tools. This is the only path that touches user hardware.
+- **Tier 2: user-owned runners — shipped as desktop computer control**
+  (`docs/computer-control.md`, `companion/`). An explicitly paired local
+  companion speaking outbound long-poll to the API (never an inbound port),
+  scoped by the user at pairing (`screen`, `input`, `shell`, `files:<dir>`),
+  with a stricter approval model than MCP tools: every call pauses in every
+  mode, the acting tools can never be remembered, loop and channel turns are
+  refused. This is the only path that touches user hardware, and it touches
+  only the user's own.
 
 Prompt-injection posture (applies to both distributions): tool results and
 channel content are data, not instructions; mutating tools stay behind the

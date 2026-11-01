@@ -24,7 +24,7 @@ type AnthropicContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
+  | { type: 'tool_result'; tool_use_id: string; content: string | AnthropicContentBlock[]; is_error?: boolean };
 
 interface AnthropicMessage {
   role: 'user' | 'assistant';
@@ -54,10 +54,18 @@ export function toAnthropicMessages(messages: AiMessage[]): AnthropicMessage[] {
       for (const c of m.toolCalls ?? []) content.push({ type: 'tool_use', id: c.id, name: c.name, input: c.input });
       if (content.length > 0) out.push({ role: 'assistant', content });
     } else {
+      // A tool result may carry images (a computer_screenshot): Anthropic
+      // accepts image blocks inside tool_result content.
+      const content: string | AnthropicContentBlock[] = m.images?.length
+        ? [
+          ...(m.content ? [{ type: 'text' as const, text: m.content }] : []),
+          ...m.images.map((img) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: img.mediaType, data: img.dataBase64 } })),
+        ]
+        : m.content;
       const block: AnthropicContentBlock = {
         type: 'tool_result',
         tool_use_id: m.toolCallId ?? '',
-        content: m.content,
+        content,
         ...(m.isError ? { is_error: true } : {}),
       };
       const last = out.at(-1);

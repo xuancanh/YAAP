@@ -23,7 +23,8 @@ export interface AiImagePart {
 export interface AiMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
-  /** Image inputs on user messages (vision, FR-2.2). */
+  /** Image inputs on user messages (vision, FR-2.2), or on a tool result
+   *  that returned an image (computer_screenshot). */
   images?: AiImagePart[];
   /** Tool calls made by an assistant message (in-turn history). */
   toolCalls?: AiToolCall[];

@@ -105,6 +105,10 @@ export default () => ({
   /** Empty = borrow the stored key of the OpenAI agent type (sealed at rest). */
   transcriptionApiKey: process.env.TRANSCRIPTION_API_KEY || '',
   ttsModel: process.env.TTS_MODEL || 'gpt-4o-mini-tts',
+  /** Desktop computer control kill switch (docs/computer-control.md §6):
+   *  false hides every computer_* tool and refuses pairing and companion
+   *  traffic, whatever is paired. */
+  computerControlEnabled: (process.env.COMPUTER_CONTROL_ENABLED || 'true') === 'true',
   /** Estimated provider-input tokens that trigger auto-compaction (FR-7.3). */
   compactionThresholdTokens: parseInt(process.env.COMPACTION_THRESHOLD_TOKENS || '120000', 10),
 });

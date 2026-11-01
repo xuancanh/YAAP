@@ -35,6 +35,18 @@ export type LiveItem =
 
 export interface FileTarget { kind: 'workspace' | 'agent'; id: string }
 
+/** One settled action on the paired computer (the `computer` TurnEvent),
+ *  kept per session for the artifact panel's Computer tab. */
+export interface ComputerStep {
+  callId: string; tool: string; summary: string; status: 'ok' | 'error';
+  screenshotPath?: string; width?: number; height?: number; at: string;
+}
+export interface ComputerFeed { sessionId: string; workspaceId: string; steps: ComputerStep[] }
+
+/** What the artifact panel shows: generated HTML, an embedded mini app, or
+ *  the live view of the paired computer. */
+export interface ArtifactState { title: string; src: string; appCtx?: { agentId: string; miniApp: AgentApp } }
+
 /** A message staged while a turn streams: drained afterwards for the session
  *  it was written in, with its attachments (FR: nothing is silently dropped). */
 export interface QueuedMessage { id: number; sessionId: string; text: string; attachments: SentAttachment[] }
@@ -108,7 +120,7 @@ interface Store {
   embedApp: (agentId: string, miniApp: AgentApp) => Promise<void>;
 
   // artifact panel
-  artifact: { title: string; src: string; appCtx?: { agentId: string; miniApp: AgentApp } } | null;
+  artifact: ArtifactState | null;
   openArtifact: (title: string, src: string) => void;
   closeArtifact: () => void;
   /** Browser tool steps for the current chat (persisted turns + the live
@@ -116,6 +128,11 @@ interface Store {
   browserSteps: BrowserStep[];
   browserOpen: boolean;
   openBrowserPanel: () => void;
+  /** The paired computer's feed for the current session, and whether the
+   *  panel's Computer tab is showing it (docs/computer-control.md). */
+  computer: ComputerFeed | null;
+  computerOpen: boolean;
+  openComputerPanel: () => void;
   /** chat.compose bridge op: open the agent's latest chat, prefill the box. */
   composeInChat: (agentId: string, text: string) => Promise<void>;
 
@@ -197,6 +214,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [artifact, setArtifact] = useState<{ title: string; src: string; appCtx?: { agentId: string; miniApp: AgentApp } } | null>(null);
   const [liveBrowserSteps, setLiveBrowserSteps] = useState<BrowserStep[]>([]);
   const [browserOpen, setBrowserOpen] = useState(false);
+  const [computer, setComputer] = useState<ComputerFeed | null>(null);
+  const [computerOpen, setComputerOpen] = useState(false);
   const [hireId, setHireId] = useState<string | null>(null);
 
   const currentIdRef = useRef<string | null>(null);
@@ -459,6 +478,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             setLiveBrowserSteps((s) => [...s, { url: ev.url, title: ev.title, screenshotPath: ev.screenshotPath, step: ev.step }]);
             setBrowserOpen(true);
           }
+        } else if (ev.type === 'computer') {
+          // the paired computer acted: append to this session's feed and show
+          // the Computer tab, same mechanics as the browser
+          const step: ComputerStep = { callId: ev.callId, tool: ev.tool, summary: ev.summary, status: ev.status, screenshotPath: ev.screenshotPath, width: ev.width, height: ev.height, at: ev.at };
+          setComputer((c) => (c && c.sessionId === id ? { ...c, steps: [...c.steps.slice(-59), step] } : { sessionId: id, workspaceId: ev.workspaceId, steps: [step] }));
+          if (current()) setComputerOpen(true);
         } else if (ev.type === 'budget') {
           // the header badge derives from the workspace row — refresh it so
           // the stop shows without waiting for the next poll
@@ -641,7 +666,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { api.pricing().then((p) => setPricing(p.prices)).catch(() => {}); }, []);
 
   const openArtifact = useCallback((title: string, src: string) => setArtifact({ title, src }), []);
-  const closeArtifact = useCallback(() => { setArtifact(null); setBrowserOpen(false); }, []);
+  const closeArtifact = useCallback(() => { setArtifact(null); setBrowserOpen(false); setComputerOpen(false); }, []);
   const openBrowserPanel = useCallback(() => setBrowserOpen(true), []);
 
   // Browser steps: the transcript's tool records (every turn so far) plus the
@@ -657,6 +682,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const seen = new Set(persisted.map((s) => s.screenshotPath));
     return [...persisted, ...liveBrowserSteps.filter((s) => !seen.has(s.screenshotPath))];
   }, [transcript.turns, liveBrowserSteps]);
+  const openComputerPanel = useCallback(() => setComputerOpen(true), []);
 
   /** Open a mini app beside the agent's most recent conversation (creating
    *  one when the agent has none) — the YAAM "embed in chat" flow. */
@@ -709,6 +735,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectedAgent, setSelectedAgent, openAgent, agentTabRequest, setAgentTabRequest, newAgentOpen, setNewAgentOpen, embedApp, composeInChat,
     artifact, openArtifact, closeArtifact,
     browserSteps, browserOpen, openBrowserPanel,
+    computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
@@ -725,6 +752,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     selectedAgent, openAgent, agentTabRequest, newAgentOpen, embedApp, composeInChat,
     artifact, openArtifact, closeArtifact,
     browserSteps, browserOpen, openBrowserPanel,
+    computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
   ]);
 

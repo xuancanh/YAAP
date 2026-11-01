@@ -26,9 +26,10 @@ import { ConnectionsModule } from '../connections/connections.module';
 import { RunnerModule } from '../runner/runner.module';
 import { BrowserModule } from '../browser/browser.module';
 import { ActionReviewModule } from '../review/action-review.module';
+import { ComputerModule } from '../computer/computer.module';
 
 @Module({
-  imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, BrowserModule, ActionReviewModule],
+  imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, BrowserModule, ActionReviewModule, ComputerModule],
   controllers: [ChatsController, LoopsController, HooksController],
   providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService],
   exports: [ChatsService, ChatsRepository, TurnLoopService],

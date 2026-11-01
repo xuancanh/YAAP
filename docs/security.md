@@ -60,6 +60,7 @@ piece of text arrived on, never the text itself.
 | Channel (email) | Mail to `<slug>@EMAIL_DOMAIN` from a paired owner address, via the HMAC-signed webhook | Untrusted input. Ask mode; gated tools auto-denied; body wrapped as `<email>` data; lessons quarantined | `channels/email.service.ts` (`verifySignature`, `handleInbound`), `agent-memory.service.ts` |
 | Email (unpaired sender) | Mail from any other address | Not input at all. One pairing auto-reply per sender per day, then dropped; bounces and auto-replies never answered | `channels/email.service.ts` (`isAutomatedMail`, `prompted`) |
 | Push subscription | A browser that subscribed in Settings → Channels | Output only. Receives inbox events; cannot send anything in | `push/push.service.ts` |
+| Companion | The one `yaam-companion` process the user paired on their own machine (`docs/computer-control.md`) | Trusted to **act within the scopes the user typed at pairing**, and only on actions the user approved in the app. Authenticated by a hashed bearer on four routes; cannot reach any user route; scopes only narrow server-side; refused outright from loop/channel turns | `computer/computer.service.ts`, `computer/companion.guard.ts`, `checkPolicy` |
 | App | A mini app calling `agent.ask` or any bridge op | Untrusted code. Ask mode; gated tools auto-denied; jailed writes; rate-limited; lessons quarantined | `appbridge/*`, `src/lib/sandbox.ts` |
 | MCP server | A third-party tool server the user enabled | Opaque side effects. User activates per server; every call gates in Ask mode | `mcp/mcp.module.ts`, `checkPolicy` |
 | Web and connection content | `web_fetch`, `web_search`, `http_request` bodies; mail, calendar, drive content | Data. Can influence what the model proposes, never what runs | `connections.tools.ts` framing, the approval gates |
@@ -80,6 +81,21 @@ sandbox. The only `child_process` use in `server/src` is
 `runner/runner.service.ts`, and the only thing it spawns is an interpreter
 inside `sandbox-exec` or `bubblewrap`. There is no `eval`, `new Function`
 or `node:vm` anywhere in the server.
+
+**One paired hole in that wall, shaped by the user.** Desktop computer
+control (`docs/computer-control.md`) lets a user run `yaam-companion` on
+their own machine and give agents `computer_*` tools. The server still has
+no path *into* that machine: the companion connects outbound and long-polls
+for work, authenticated by a 256-bit token stored only as a sha256 and valid
+on exactly four routes. Scopes (`screen`, `input`, `shell`, `files:<dir>`)
+are chosen on the companion at pairing and can only be narrowed afterwards;
+every action is scope-checked on the server before queueing and again on the
+companion (realpath, no symlink escapes). Every computer tool is
+mutation-class and pauses in every mode; the acting ones (click, type, key,
+shell, write) can never be remembered; loop and channel turns are refused
+with an inbox note. Every action — including refusals — is a
+`computer_actions` audit row. Kill switches: `COMPUTER_CONTROL_ENABLED=false`,
+Disconnect (token revoked at once), Pause, and stopping the companion.
 
 **Object-storage prefixes are the file boundary.** Workspace files live
 under `workspaces/<id>/`, agent files under `agents/<id>/`
@@ -345,10 +361,16 @@ Grounded in `docs/competitor-gap-analysis.md` §(c), these are refusals, not
 backlog items. If a future change needs one of them, this document changes
 first and says why.
 
-- **No shared per-user computer across agents, and no host access.** Agents
-  have no shell and no filesystem; isolation is the architecture, not a
-  setting. If a browser tool lands it is per-run and credential-free, never
-  a persistent desktop. A sandbox backend never skips the Ask gate.
+- **No shared per-user computer, and no ambient host access.** Agents have
+  no shell and no filesystem of their own; isolation is the architecture,
+  not a setting. The one way to a real machine is the user's own, explicitly
+  paired companion (`docs/computer-control.md`): outbound-only, scoped by
+  the user at the keyboard, every action approved in the app with the
+  acting tools never auto-approvable, audited, revocable in one click. There
+  is no server-side computer, no computer shared between agents, no inbound
+  port, and no action from a loop or channel turn. If a browser tool lands it
+  is per-run and credential-free, never a persistent desktop. A sandbox
+  backend never skips the Ask gate.
 - **No autonomous memory writes without provenance.** Nothing enters the
   prompt from a surface the permission model distrusts without a human
   promoting it, and nothing enters the profile without a human approving
@@ -377,6 +399,14 @@ first and says why.
 ## i. Known gaps and limitations
 
 Honest list, as of this writing. Several map to execution-plan items.
+
+- **Computer control trusts the user's machine and the OS tools on it.**
+  `shell` is the user's shell with the user's permissions; `input` types into
+  whatever has focus; a screenshot is untrusted content the model reads. The
+  gates are the per-call approval, the scopes and the audit — not a sandbox.
+  Linux and Windows companion back-ends are implemented from documentation
+  and untested; the work queue is in-process and one companion per server
+  (`docs/computer-control.md` §7–8).
 
 - **Single-user auth is the default and the only shipped model.** Every
   request resolves to one identity (`SINGLE_USER`); tables are
@@ -458,6 +488,7 @@ From `git log`, newest first. Dates are commit dates.
 
 | Date | Commit | Change |
 |---|---|---|
+| 2026-11-01 | this | Desktop computer control: paired outbound companion, hashed companion token on four routes (`CompanionGuard`), user-chosen narrow-only scopes, every `computer_*` tool Ask-gated in every mode with acting tools never remembered, loop/channel refusal, `computer_actions` audit, Pause/Disconnect/`COMPUTER_CONTROL_ENABLED` kill switches (`docs/computer-control.md`) |
 | 2026-10-31 | this | Email channel (HMAC-signed inbound webhook, envelope-sender pairing, `<email>` framing, quarantined lessons) and web push (VAPID + aes128gcm on node:crypto); `POST /api/channels/email/inbound` the second non-GET public route |
 | 2026-10-31 | browser | Credential-free, viewable browser tool: Cloudflare Browser Rendering / local Playwright, incognito per turn, password-field refusal, SSRF guard on every request, `<page-content>` framing, `browser_act` mutation-class and loop-queued |
 | 2026-10-31 | this | `docs/security.md`, `SECURITY.md`, `GET /api/security`, `SECURITY_CONTACT` |

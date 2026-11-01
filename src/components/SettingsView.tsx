@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
 import { ImportSkillMdButton, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
-import { api, PROVIDER_COLORS, type BrowserStatus, type Connection, type ConnectionProvider, type EmailStatus, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RunnerStatus, type Workspace, type WorkspaceUsage } from '../lib/api';
+import { api, PROVIDER_COLORS, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RunnerStatus, type Workspace, type WorkspaceUsage } from '../lib/api';
 import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../lib/push';
 import { fmtUsd } from '../lib/pricing';
@@ -22,6 +22,7 @@ const PANE_META: Record<string, [string, string]> = {
   channels: ['Channels', 'Talk to your agents where you already are — Telegram, email, and push to this device, paired to you alone.'],
   connections: ['Connections', 'Link external services (Google Calendar first). Connecting grants nothing — you approve access per agent.'],
   runner: ['Code runner & browser', 'Where run_js / run_python execute and where browser_open / browser_act render. Both are disposable and approval-gated; the browser is credential-free and visible to you.'],
+  computer: ['Computer', 'Let agents act on your own computer through a paired companion you run. Every action is approved by you, scoped to what you granted, and recorded here.'],
 };
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 13, background: 'var(--panel)', padding: '15px 17px' };
@@ -1088,6 +1089,130 @@ function BrowserSection() {
   );
 }
 
+/** Desktop computer control (docs/computer-control.md): pair the companion,
+ *  see what it may do, pause or disconnect it, and read the audit trail. */
+function ComputerPane() {
+  const app = useApp();
+  const [status, setStatus] = useState<ComputerStatus | null>(null);
+  const [actions, setActions] = useState<ComputerAction[]>([]);
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const refresh = () => {
+    void api.computerStatus().then(setStatus).catch(() => setFailed(true));
+    void api.computerActions(50).then(setActions).catch(() => {});
+  };
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 5_000);
+    return () => clearInterval(t);
+  }, []);
+  const act = async (fn: () => Promise<ComputerStatus>, toast: string) => {
+    if (busy) return;
+    setBusy(true);
+    try { setStatus(await fn()); app.showToast(toast); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } finally { setBusy(false); refresh(); }
+  };
+  const btn = (danger = false): React.CSSProperties => ({
+    background: danger ? 'none' : 'var(--panel-2)', border: `1px solid ${danger ? 'var(--red)' : 'var(--border)'}`, color: danger ? 'var(--red)' : 'var(--text)',
+    borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none',
+  });
+
+  if (failed) return <div style={{ ...card, fontSize: 12.5, color: 'var(--text-dim)' }}>Could not read computer-control status.</div>;
+  if (!status) return <div style={{ ...card, fontSize: 12.5, color: 'var(--text-faint)' }}>Loading…</div>;
+  const r = status.runner;
+  const dot = !status.enabled ? 'var(--text-faint)' : !r ? 'var(--text-faint)' : r.paused ? 'var(--amber)' : r.online ? 'var(--green)' : 'var(--red)';
+  const state = !status.enabled ? 'disabled on this server' : !r ? 'not paired' : r.paused ? 'paused' : r.online ? 'connected' : 'paired · companion offline';
+  const scopeLabel = (s: string) => s === 'screen' ? 'see the screen' : s === 'input' ? 'use mouse & keyboard' : s === 'shell' ? 'run shell commands' : `files in ${s.slice('files:'.length)}`;
+  const statusColor: Record<string, string> = { ok: 'var(--green)', error: 'var(--red)', timeout: 'var(--red)', refused: 'var(--red)', queued: 'var(--amber)' };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ ...card, borderColor: 'var(--red)', background: 'color-mix(in srgb, var(--red) 7%, var(--panel))', fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+        <strong style={{ color: 'var(--text)' }}>This is the one place agents can reach your real machine.</strong> Nothing here runs without a click from you in this app:
+        every computer action pauses for approval, even in Auto mode and even if you said &quot;always allow&quot; to something else; shell commands and file writes can never be
+        auto-approved; scheduled loops and Telegram turns are refused outright. The companion connects outbound — nothing listens on your computer.
+      </div>
+
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot }} />
+          <span style={{ fontSize: 14, fontWeight: 600 }}>{r ? r.name : 'Companion'}</span>
+          <span style={{ fontSize: 11, color: 'var(--text-faint)', ...mono }}>{state}{r?.platform ? ` · ${r.platform}` : ''}</span>
+          {r && <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-faint)' }}>last seen {r.lastSeenAt ? new Date(r.lastSeenAt).toLocaleTimeString() : 'never'}</span>}
+        </div>
+        {!status.enabled && (
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+            The server was started with <span style={mono}>COMPUTER_CONTROL_ENABLED=false</span>. No computer tool exists for any agent and the companion is refused, whatever is paired.
+          </div>
+        )}
+        {status.enabled && !r && (
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.7 }}>
+            <div style={{ marginBottom: 8 }}>Install the companion on the computer you want agents to use, then pair it with a one-time code. You choose the scopes on that computer, at the keyboard; the server can only narrow them later.</div>
+            {pairCode ? (
+              <div style={{ background: 'var(--code)', border: '1px solid var(--border)', borderRadius: 9, padding: '10px 13px', ...mono, fontSize: 12.5, color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                npx yaam-companion pair {window.location.origin} {pairCode} --scopes screen,input,files:$HOME/Projects{'\n'}
+                <span style={{ color: 'var(--text-faint)' }}># add shell to let agents run commands · code valid 10 minutes · then: npx yaam-companion run</span>
+              </div>
+            ) : (
+              <button disabled={busy} onClick={async () => { try { setPairCode((await api.computerPairCode()).code); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } }}
+                style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 15px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>Generate pairing code</button>
+            )}
+          </div>
+        )}
+        {status.enabled && r && (
+          <>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+              {r.scopes.map((s) => (
+                <span key={s} style={{ fontSize: 11.5, color: 'var(--text)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 7, padding: '3px 9px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {scopeLabel(s)}
+                  {r.scopes.length > 1 && (
+                    <button title="Remove this scope (scopes can only be narrowed here)" disabled={busy}
+                      onClick={() => void act(() => api.computerNarrowScopes(r.scopes.filter((x) => x !== s)), `Scope removed: ${scopeLabel(s)}`)}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 0, display: 'flex' }}><I d={P.x} size={11} /></button>
+                  )}
+                </span>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 10, lineHeight: 1.5 }}>
+              Scopes were chosen on the companion when it paired. Removing one here is immediate; to add one, disconnect and pair again with the wider set.
+              {!r.online && !r.paused && <> The companion is not polling right now — start it with <span style={mono}>yaam-companion run</span>.</>}
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {r.paused
+                ? <button disabled={busy} onClick={() => void act(api.computerResume, 'Computer control resumed')} style={{ ...btn(), background: 'var(--accent-dim)', borderColor: 'var(--accent)' }}>Resume</button>
+                : <button disabled={busy} onClick={() => void act(api.computerPause, 'Computer control paused — pairing kept, every action refused')} style={btn()}>Pause</button>}
+              <button disabled={busy} onClick={() => { if (window.confirm('Disconnect the companion? Its token stops working immediately and any action in flight is refused.')) void act(api.computerDisconnect, 'Companion disconnected — token revoked'); }} style={{ ...btn(true), marginLeft: 'auto' }}>Disconnect</button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Recent actions</span>
+          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>last {actions.length} · every action, including refused ones</span>
+        </div>
+        {actions.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>Nothing yet.</div>}
+        {actions.map((a) => (
+          <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '6px 0', borderTop: '1px solid var(--border-soft)', fontSize: 12 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: statusColor[a.status] ?? 'var(--text-faint)', flex: 'none' }} />
+            <span style={{ color: 'var(--text-faint)', flex: 'none', ...mono, fontSize: 11 }}>{new Date(a.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+            <span style={{ ...mono, fontWeight: 600, flex: 'none' }}>{a.tool.replace(/^computer_/, '')}</span>
+            <span style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={a.resultSummary}>{a.inputSummary}</span>
+            <span style={{ color: statusColor[a.status] ?? 'var(--text-faint)', fontWeight: 600, flex: 'none', fontSize: 11 }}>{a.status}</span>
+            {a.sessionId && <button onClick={() => app.openSession(a.sessionId)} title="Open the conversation" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' }}><I d={P.external} size={12} /></button>}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ ...card, fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+        Kill switches, strongest first: <span style={mono}>COMPUTER_CONTROL_ENABLED=false</span> on the server (tools vanish, companion refused) · <strong>Disconnect</strong> (token revoked now) · <strong>Pause</strong> (pairing kept, actions refused) ·
+        and on the computer itself, stopping <span style={mono}>yaam-companion run</span>. Screenshots are saved as workspace files under <span style={mono}>computer/&lt;chat&gt;/</span>. See <span style={mono}>docs/computer-control.md</span>.
+      </div>
+    </div>
+  );
+}
+
 export function SettingsView({ pane }: { pane: string }) {
   const app = useApp();
   const [title, sub] = PANE_META[pane] ?? PANE_META.providers;
@@ -1113,6 +1238,7 @@ export function SettingsView({ pane }: { pane: string }) {
           {pane === 'channels' && <ChannelsPane />}
           {pane === 'connections' && <ConnectionsPane />}
           {pane === 'runner' && <RunnerPane />}
+          {pane === 'computer' && <ComputerPane />}
         </div>
       </div>
     </div>

@@ -363,6 +363,22 @@ export interface McpServer {
 }
 
 /** Which sandbox backend runs run_js / run_python (docs/code-execution.md). */
+// ---- desktop computer control (docs/computer-control.md) ----
+export interface ComputerRunner {
+  id: string; name: string; platform: string; scopes: string[]; paused: boolean;
+  pairedAt: string; lastSeenAt: string | null; online: boolean;
+}
+export interface ComputerStatus { enabled: boolean; runner: ComputerRunner | null; queued: number; pairCodeActive: boolean }
+export interface ComputerAction {
+  id: string; runnerId: string; sessionId: string; tool: string; inputSummary: string;
+  status: 'queued' | 'ok' | 'error' | 'timeout' | 'refused'; resultSummary: string; screenshotPath: string;
+  createdAt: string; completedAt: string | null;
+}
+/** Computer tools whose approval a chat may remember; the acting ones
+ *  (click, type, key, shell, write) ask on every call. Mirrors the server. */
+export const REMEMBERABLE_COMPUTER_TOOLS = new Set(['computer_screenshot', 'computer_move', 'computer_scroll', 'computer_list_dir', 'computer_read_file']);
+export const isComputerTool = (name: string): boolean => name.startsWith('computer_');
+
 export interface RunnerStatus {
   backend: 'local' | 'cloudflare' | null;
   languages: Array<'javascript' | 'python'>;
@@ -479,6 +495,11 @@ export type TurnEvent =
   | { type: 'budget'; month: string; spentTokens: number; budgetTokens: number }
   /** The browser tool rendered a page; show its screenshot live. */
   | ({ type: 'browser'; sessionId: string } & BrowserStep)
+  /** A computer_* action settled on the paired companion (docs/computer-control.md). */
+  | {
+    type: 'computer'; callId: string; tool: string; summary: string; status: 'ok' | 'error';
+    workspaceId: string; screenshotPath?: string; width?: number; height?: number; at: string;
+  }
   | { type: 'done' }
   | { type: 'error'; message: string };
 
@@ -684,6 +705,14 @@ export const api = {
   runnerStatus: () => get<RunnerStatus>('/api/runner/status'),
   // browser tool (docs/browser-tool.md) — read-only: the backend is env-configured
   browserStatus: () => get<BrowserStatus>('/api/browser/status'),
+  // desktop computer control (docs/computer-control.md)
+  computerStatus: () => get<ComputerStatus>('/api/computer/status'),
+  computerPairCode: () => send<{ code: string; expiresInSeconds: number }>('/api/computer/pair-code', 'POST'),
+  computerPause: () => send<ComputerStatus>('/api/computer/pause', 'POST'),
+  computerResume: () => send<ComputerStatus>('/api/computer/resume', 'POST'),
+  computerDisconnect: () => send<ComputerStatus>('/api/computer/disconnect', 'POST'),
+  computerNarrowScopes: (scopes: string[]) => send<ComputerStatus>('/api/computer/scopes', 'POST', { scopes }),
+  computerActions: (limit = 50) => get<ComputerAction[]>(`/api/computer/actions?limit=${limit}`),
   mcp: () => get<McpServer[]>('/api/mcp'),
   createMcp: (name: string, url: string) => send<McpServer>('/api/mcp', 'POST', { name, url }),
   updateMcp: (id: string, patch: { enabled?: boolean }) => send<McpServer>(`/api/mcp/${id}`, 'PATCH', patch),

@@ -142,5 +142,12 @@ Cloudflare Email Sending or Resend, optional inbox digest), **web push** with
 VAPID keys and a service worker, and a **manifest** so the UI installs as a
 PWA — inbox events reach the phone's lock screen, honouring quiet hours.
 
+Desktop computer control (`docs/computer-control.md`, `companion/`): a paired,
+outbound-only companion on the user's own machine gives agents `computer_*`
+tools (screenshot, click/type/key, shell, files in granted folders) behind
+user-chosen scopes — every action approved in the app, the acting tools never
+auto-approvable, loop and channel turns refused, every action audited in
+Settings → Computer with Pause / Disconnect and a server kill switch.
+
 Next up: a native Bedrock (SigV4) adapter is the one remaining FR-9.2
 provider.

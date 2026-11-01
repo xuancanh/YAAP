@@ -21,6 +21,7 @@
  *  PortabilityModule → AGENT.json v2 export/import, memory importers (plan item 9)
  *  SecurityModule    → GET  /api/security            (threat model, docs/security.md)
  *  VoiceModule       → /api/voice/status, /api/voice/tts (voice notes, docs/voice.md)
+ *  ComputerModule    → /api/computer                 (paired desktop companion, docs/computer-control.md)
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
@@ -55,6 +56,7 @@ import { SecurityModule } from './security/security.module';
 import { UsageModule } from './usage/usage.module';
 import { VoiceModule } from './voice/voice.module';
 import { PortabilityModule } from './portability/portability.module';
+import { ComputerModule } from './computer/computer.module';
 
 @Module({
   imports: [
@@ -81,6 +83,7 @@ import { PortabilityModule } from './portability/portability.module';
     UsageModule,
     VoiceModule,
     PortabilityModule,
+    ComputerModule,
   ],
   providers: [
     // Identity is bound here and nowhere else: swapping this one provider

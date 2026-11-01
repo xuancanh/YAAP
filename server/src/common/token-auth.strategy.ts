@@ -11,18 +11,36 @@
  * without one, POST /api/channels/email/inbound which carries its own
  * HMAC signature instead, and POST /api/hooks/:agentId/:loopName because
  * webhook senders carry a per-loop secret instead (docs/triggers.md).
+ *
+ * A second bearer kind exists for exactly four paths: the desktop companion
+ * (docs/computer-control.md) redeems a pairing code on POST /api/computer/pair
+ * and then speaks its own token to /work, /result/:id and /heartbeat, checked
+ * by `computer/companion.guard.ts`. Those paths — and only those — are
+ * public to the app token so the companion guard can take over; the user
+ * routes under /api/computer stay behind the app token.
  */
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
 import { AuthStrategy, SINGLE_USER } from './auth-strategy.interface';
 
+/** The companion's routes: code-protected pairing, then companion-token
+ *  routes guarded in the controller. Exported for the auth tests. */
+export function isCompanionRoute(method: string, path: string): boolean {
+  if (method === 'POST' && (path === '/api/computer/pair' || path === '/api/computer/heartbeat')) return true;
+  if (method === 'GET' && path === '/api/computer/work') return true;
+  return method === 'POST' && /^\/api\/computer\/result\/[A-Za-z0-9-]+$/.test(path);
+}
+
 @Injectable()
 export class TokenAuthStrategy implements AuthStrategy {
   constructor(private readonly config: ConfigService) {}
 
   isPublic(request: Request): boolean {
-    if (request.method === 'GET') return request.path === '/api/status' || request.path === '/api/security';
+    if (request.method === 'GET' && (request.path === '/api/status' || request.path === '/api/security')) return true;
+    // The desktop companion's four routes carry their own bearer kind
+    // (computer/companion.guard.ts); GET /api/computer/work is among them.
+    if (isCompanionRoute(request.method, request.path)) return true;
     if (request.method !== 'POST') return false;
     // The inbound-mail webhook authenticates itself with an HMAC over the
     // body (channels/email.service.ts verifySignature), not the bearer token

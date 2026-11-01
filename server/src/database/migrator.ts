@@ -479,6 +479,35 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_scope_agent_name ON skills (COALESCE("workspaceId", ''), COALESCE("agentId", ''), "name")`);
     },
   },
+  {
+    id: '0024-computer-control',
+    up: async (db) => {
+      await db.query(`CREATE TABLE IF NOT EXISTS computer_runners (
+        "id" TEXT PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "platform" TEXT NOT NULL DEFAULT '',
+        "scopes" TEXT NOT NULL DEFAULT '[]',
+        "tokenHash" TEXT NOT NULL,
+        "paused" INTEGER NOT NULL DEFAULT 0,
+        "pairedAt" TEXT NOT NULL,
+        "lastSeenAt" TEXT
+      )`);
+      await db.query(`CREATE TABLE IF NOT EXISTS computer_actions (
+        "id" TEXT PRIMARY KEY,
+        "runnerId" TEXT NOT NULL,
+        "sessionId" TEXT NOT NULL DEFAULT '',
+        "tool" TEXT NOT NULL,
+        "inputSummary" TEXT NOT NULL DEFAULT '',
+        "status" TEXT NOT NULL DEFAULT 'queued',
+        "resultSummary" TEXT NOT NULL DEFAULT '',
+        "screenshotPath" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL,
+        "completedAt" TEXT
+      )`);
+      // Settings → Computer lists the last 50 by time.
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_computer_actions_created ON computer_actions ("createdAt")`);
+    },
+  },
 ];
 
 /** Advisory-lock key serializing migration runs: two instances booting

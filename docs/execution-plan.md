@@ -233,14 +233,33 @@ capability review on install; install counts; ratings from the feedback we
 collect; remote registry URL configurable so self-hosted instances can pull
 from the hosted one.
 
-### 13. Desktop computer control *(todo)*
+### 13. Desktop computer control *(done)*
+Shipped as: migration `0024` (`computer_runners`, `computer_actions`),
+`server/src/computer/` (`ComputerService` — pairing codes, sha256 companion
+tokens, narrow-only scopes in `computer-scopes.ts`, the in-process work
+queue with deadlines, the audit rows; `CompanionGuard` as the second bearer
+kind on exactly `POST /pair`, `GET /work`, `POST /result/:id`, `POST
+/heartbeat`, listed public in `TokenAuthStrategy.isCompanionRoute`;
+`ComputerController` with `pair-code|status|pause|resume|disconnect|scopes|
+actions`), the `computer_*` branch of `turn-loop.service.ts` (`checkPolicy`:
+never Auto, acting tools never remembered; loop/channel origin refused with
+an `info` inbox event; the `computer` TurnEvent; screenshots as vision parts
+on tool results in both adapters), `COMPUTER_CONTROL_ENABLED`, the
+`companion/` CLI (`pair|run|status|unpair`, dependency-free; macOS
+`screencapture`/`osascript`/`cliclick`, Linux `xdotool`/`grim`/`scrot`,
+Windows PowerShell best effort; realpath file jail; 64 KB/300 s shell), the
+Settings → Computer pane, the artifact panel's Computer tab, red "This acts
+on your computer" approval banner, `docs/computer-control.md`, and
+`tests/backend-computer.test.ts` + `companion/test/scopes.test.ts`.
+
 A paired companion runner (`companion/`, Node CLI) on the user's machine that
 connects outbound to the API with a pairing code and exposes
 `computer_screenshot`, `computer_click`, `computer_type`, `computer_key`,
-`computer_shell`, `computer_read_file`, `computer_write_file` behind
-per-runner scopes (screen, input, shell, folders). Always Ask-gated, never
-from channel turns, with an audit row per action and a kill switch in
-Settings → Computer.
+`computer_move`, `computer_scroll`, `computer_shell`, `computer_read_file`,
+`computer_write_file`, `computer_list_dir` behind per-runner scopes (screen,
+input, shell, folders). Always Ask-gated, never from loop or channel turns,
+with an audit row per action and Pause / Disconnect kill switches in
+Settings → Computer plus a server env switch.
 
 ### 14. Autonomous company *(research running)*
 Designed after the second research thread lands. Expected shape:

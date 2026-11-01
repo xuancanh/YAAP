@@ -4,7 +4,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type LiveItem, type LiveTool } from '../store';
-import { api, PROVIDER_COLORS, type Agent, type ApprovalDecision, type ChatMessage, type ChatTurn, type ToolReview } from '../lib/api';
+import { api, PROVIDER_COLORS, isComputerTool, REMEMBERABLE_COMPUTER_TOOLS, type Agent, type ApprovalDecision, type ChatMessage, type ChatTurn, type ToolReview } from '../lib/api';
 import { safeJsonParse, workspaceSpend } from '../lib/util';
 import { fmtUsd, usdFor } from '../lib/pricing';
 import { MAX_AUDIO_BYTES, fmtDuration, isAudioFile, recorderAvailable, useVoiceRecorder, AUDIO_EXT_RE } from '../lib/voice';
@@ -45,7 +45,9 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
     done: ['var(--green)', 'Done'], denied: ['var(--red)', 'Denied'], error: ['var(--red)', 'Error'],
   };
   const [color, label] = map[t.status] ?? map.done;
-  const arg = typeof t.input?.path === 'string' ? t.input.path : typeof t.input?.url === 'string' ? t.input.url : typeof t.input?.query === 'string' ? t.input.query : '';
+  const computer = isComputerTool(t.name);
+  const arg = computer ? computerSummary(t.name, t.input) : typeof t.input?.path === 'string' ? t.input.path : typeof t.input?.url === 'string' ? t.input.url : typeof t.input?.query === 'string' ? t.input.query : '';
+  const canRemember = !computer || REMEMBERABLE_COMPUTER_TOOLS.has(t.name);
   return (
     <div style={{ margin: '12px 0', border: `1px solid ${border}`, borderRadius: 12, overflow: 'hidden', background: 'var(--panel)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 13px', background: 'var(--panel-2)' }}>
@@ -60,6 +62,17 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
         )}
         <span style={{ fontSize: 11, color, fontWeight: 600 }}>{label}</span>
       </div>
+      {computer && t.status === 'pending' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px', background: 'color-mix(in srgb, var(--red) 14%, transparent)', borderTop: '1px solid var(--red)', color: 'var(--red)', fontSize: 12, fontWeight: 600 }}>
+          <I d={P.window} size={14} stroke="var(--red)" />
+          This acts on your computer{t.name === 'computer_shell' || t.name === 'computer_write_file' ? ' — it can never be auto-approved' : ''}.
+        </div>
+      )}
+      {computer && t.status === 'pending' && (t.name === 'computer_type' || t.name === 'computer_shell' || t.name === 'computer_write_file') && (
+        <pre style={{ margin: 0, padding: '10px 13px', borderTop: '1px solid var(--border-soft)', background: 'var(--code)', ...mono, fontSize: 12, lineHeight: 1.55, color: 'var(--text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 220, overflowY: 'auto' }}>
+          {t.name === 'computer_shell' ? `$ ${String(t.input.command ?? '')}` : t.name === 'computer_type' ? String(t.input.text ?? '') : `${String(t.input.path ?? '')}\n\n${String(t.input.content ?? '')}`}
+        </pre>
+      )}
       {t.status === 'running' && (
         <div style={{ padding: '8px 13px', fontSize: 12, color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 8, borderTop: '1px solid var(--border-soft)' }}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', animation: 'pulse 1s infinite' }} />
@@ -69,12 +82,12 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
       {t.status === 'pending' && (
         <div style={{ padding: '11px 13px', borderTop: '1px solid var(--border-soft)' }}>
           <div style={{ fontSize: 12, color: 'var(--amber)', display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10, fontWeight: 500 }}>
-            <I d={P.warn} size={14} />{t.review ? `The reviewer asked for your decision — ${t.review.reason}` : `This tool needs approval — approve to run ${t.name}`}
+            <I d={P.warn} size={14} />{t.review ? `The reviewer asked for your decision — ${t.review.reason}` : computer ? `Approve to ${arg} on your computer` : `This tool needs approval — approve to run ${t.name}`}
           </div>
           <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', opacity: deciding ? 0.55 : 1 }}>
             <button disabled={deciding} onClick={() => decide('allow-once')} style={{ background: 'var(--green)', color: '#04140d', border: 'none', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Allow once</button>
-            <button disabled={deciding} onClick={() => decide('allow-always')} style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Allow always</button>
-            <button disabled={deciding} onClick={() => decide('allow-tool')} style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Always allow {t.name}</button>
+            {canRemember && <button disabled={deciding} onClick={() => decide('allow-always')} style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Allow always</button>}
+            {canRemember && <button disabled={deciding} onClick={() => decide('allow-tool')} style={{ background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>Always allow {t.name}</button>}
             <button disabled={deciding} onClick={() => decide('deny')} style={{ background: 'none', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', marginLeft: 'auto' }}>Deny</button>
           </div>
         </div>
@@ -86,6 +99,27 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
       <NeedsGrantHint result={t.result} />
     </div>
   );
+}
+
+/** One line describing a computer_* call for the card header and the
+ *  approval prompt — the target, never the typed text or file content (those
+ *  are shown in full in the card body while pending). Mirrors the server's
+ *  audit summary. */
+function computerSummary(name: string, input: Record<string, unknown>): string {
+  const s = (v: unknown) => String(v ?? '');
+  switch (name) {
+    case 'computer_screenshot': return 'take a screenshot';
+    case 'computer_click': return `click ${s(input.button ?? 'left')}${input.double ? ' ×2' : ''} at (${s(input.x)}, ${s(input.y)})`;
+    case 'computer_move': return `move the pointer to (${s(input.x)}, ${s(input.y)})`;
+    case 'computer_scroll': return `scroll (${s(input.dx)}, ${s(input.dy)}) at (${s(input.x)}, ${s(input.y)})`;
+    case 'computer_type': return `type ${s(input.text).length} characters`;
+    case 'computer_key': return `press ${s(input.combo)}`;
+    case 'computer_shell': return `run: ${s(input.command).slice(0, 120)}`;
+    case 'computer_read_file': return `read ${s(input.path)}`;
+    case 'computer_write_file': return `write ${s(input.path)} (${s(input.content).length} chars)`;
+    case 'computer_list_dir': return `list ${s(input.path)}`;
+    default: return name.replace(/^computer_/, '');
+  }
 }
 
 /** The independent reviewer's one-line verdict (docs/permissions.md §6):

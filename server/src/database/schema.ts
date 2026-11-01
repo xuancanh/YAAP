@@ -403,3 +403,41 @@ export const chatMessages = pgTable('chat_messages', {
   toolName: text('toolName'),
   createdAt: text('createdAt').notNull(),
 });
+
+/** Desktop computer control (docs/computer-control.md): the one paired
+ *  companion runner. Exactly one row at a time — pairing replaces it, and
+ *  Disconnect deletes it, which revokes the token (only its sha256 is here). */
+export const computerRunners = pgTable('computer_runners', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  /** darwin | linux | win32 as the companion reports it. */
+  platform: text('platform').notNull().default(''),
+  /** JSON string[] of scopes: screen, input, shell, files:<abs dir>. Chosen
+   *  on the companion at pair time; the server may only narrow it. */
+  scopes: text('scopes').notNull().default('[]'),
+  /** sha256 hex of the companion bearer token. */
+  tokenHash: text('tokenHash').notNull(),
+  /** 1 = paused: pairing kept, every action refused. */
+  paused: integer('paused').notNull().default(0),
+  pairedAt: text('pairedAt').notNull(),
+  lastSeenAt: text('lastSeenAt'),
+});
+
+/** Audit row per computer action — the record of everything an agent did
+ *  on the user's machine. Written when queued, updated when it settles. */
+export const computerActions = pgTable('computer_actions', {
+  id: text('id').primaryKey(),
+  runnerId: text('runnerId').notNull(),
+  sessionId: text('sessionId').notNull().default(''),
+  tool: text('tool').notNull(),
+  /** One line: the target, never typed text or file content. */
+  inputSummary: text('inputSummary').notNull().default(''),
+  /** queued | ok | error | timeout | refused */
+  status: text('status').notNull().default('queued'),
+  /** Bounded first lines of the result or the error message. */
+  resultSummary: text('resultSummary').notNull().default(''),
+  /** Workspace file path of the screenshot, when one was taken. */
+  screenshotPath: text('screenshotPath').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  completedAt: text('completedAt'),
+});
