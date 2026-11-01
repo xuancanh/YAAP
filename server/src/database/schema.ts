@@ -810,6 +810,71 @@ export const orgUnits = pgTable('org_units', {
   createdAt: text('createdAt').notNull(),
 }, (t) => [uniqueIndex('idx_org_units_lead').on(t.orgId, t.leadAgentId)]);
 
+/** A meeting (docs/company-vision.md §3, execution-plan item 19): a thread
+ *  in a unit channel with a facilitator, an agenda, a round cap, a budget and
+ *  the minutes as its required output. `kind` planning | standup |
+ *  weekly_review | retro | board | adhoc; `status` scheduled | running | done |
+ *  cancelled | postponed. `attendees` is JSON `[{ kind: agent|human, id }]`;
+ *  `minutes` is JSON `{ summary, decisions[], actions[], risks[], questions[] }`. */
+export const orgMeetings = pgTable('org_meetings', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  unitId: text('unitId'),
+  channelId: text('channelId'),
+  /** The agenda message: the thread the meeting is. */
+  threadRootId: text('threadRootId'),
+  kind: text('kind').notNull().default('adhoc'),
+  title: text('title').notNull().default(''),
+  agenda: text('agenda').notNull().default(''),
+  facilitatorAgentId: text('facilitatorAgentId'),
+  attendees: text('attendees').notNull().default('[]'),
+  status: text('status').notNull().default('scheduled'),
+  scheduledFor: text('scheduledFor'),
+  startedAt: text('startedAt'),
+  endedAt: text('endedAt'),
+  rounds: integer('rounds').notNull().default(0),
+  usd: real('usd').notNull().default(0),
+  minutes: text('minutes').notNull().default(''),
+  createdBy: text('createdBy').notNull().default('system'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** The decision log (docs/company-vision.md §6): what was decided, the
+ *  alternatives, the rationale, who decided, and what it came from
+ *  (`refType`/`refId`: meeting, approval, …). Linkable as `#decision:<id>`. */
+export const orgDecisions = pgTable('org_decisions', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  unitId: text('unitId'),
+  meetingId: text('meetingId'),
+  approvalId: text('approvalId'),
+  title: text('title').notNull(),
+  decision: text('decision').notNull().default(''),
+  alternatives: text('alternatives').notNull().default(''),
+  rationale: text('rationale').notNull().default(''),
+  decidedBy: text('decidedBy').notNull().default(''),
+  refType: text('refType').notNull().default(''),
+  refId: text('refId').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** A ritual's cadence per unit (docs/company-vision.md §3): a five-field
+ *  cron (server-local time, like loops), fired by the minute tick. */
+export const orgCadences = pgTable('org_cadences', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  unitId: text('unitId').notNull(),
+  kind: text('kind').notNull(),
+  cron: text('cron').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  lastRunAt: text('lastRunAt'),
+  nextRunAt: text('nextRunAt'),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_cadences_unit_kind').on(t.orgId, t.unitId, t.kind)]);
+
 export const orgProjects = pgTable('org_projects', {
   id: text('id').primaryKey(),
   accountId: text('accountId').notNull().default('single'),

@@ -36,6 +36,20 @@ export interface UnitChannels {
   postSystem(channelId: string, text: string): Promise<void>;
 }
 
+/**
+ * What meetings need from a channel (docs/group-chat.md §8, docs/company-
+ * vision.md §3): a meeting is a thread in a unit channel, so the runtime
+ * posts the agenda, the turns and the minutes through this seam and reads
+ * the thread back between rounds (human messages are injected, "stop" ends
+ * it). `wake: false` posts without computing a wake set — meeting turns must
+ * not start channel wakes of their own.
+ */
+export interface MeetingChannels {
+  channelInfo(channelId: string): Promise<{ id: string; slug: string; workspaceId: string; archivedAt: string | null }>;
+  postAs(channelId: string, input: { authorKind: 'agent' | 'system'; authorId?: string; text: string; threadRootId?: string | null; attachments?: Array<{ path: string; kind: string }>; runId?: string | null; wake?: boolean }): Promise<{ id: string; createdAt: string }>;
+  thread(channelId: string, rootId: string): Promise<Array<{ id: string; authorKind: string; authorId: string; text: string; createdAt: string }>>;
+}
+
 export const ORG_ANNOUNCER = Symbol('ORG_ANNOUNCER');
 
 /** Null-safe wrapper: without a bound Announcer, announcements are dropped
@@ -43,17 +57,23 @@ export const ORG_ANNOUNCER = Symbol('ORG_ANNOUNCER');
 @Injectable()
 export class OrgAnnouncer implements Announcer {
   private readonly logger = new Logger(OrgAnnouncer.name);
-  constructor(@Optional() @Inject(ORG_ANNOUNCER) private impl?: Announcer & Partial<UnitChannels>) {}
+  constructor(@Optional() @Inject(ORG_ANNOUNCER) private impl?: Announcer & Partial<UnitChannels> & Partial<MeetingChannels>) {}
 
   get bound(): boolean { return Boolean(this.impl); }
 
   /** Late binding by the group-chat module (see the header). */
-  bind(impl: Announcer & Partial<UnitChannels>): void { this.impl = impl; }
+  bind(impl: Announcer & Partial<UnitChannels> & Partial<MeetingChannels>): void { this.impl = impl; }
 
   /** The unit-channel operations, when the bound implementation offers them. */
   get channels(): UnitChannels | null {
     const i = this.impl;
     return i && i.ensureUnitChannel && i.companyChannel && i.channelMembers && i.addChannelMember && i.removeChannelMember && i.updateChannel && i.postSystem ? (i as UnitChannels) : null;
+  }
+
+  /** The meeting operations (docs/group-chat.md §8), when bound. */
+  get meetings(): (MeetingChannels & Pick<UnitChannels, 'channelMembers'>) | null {
+    const i = this.impl;
+    return i && i.channelInfo && i.postAs && i.thread && i.channelMembers ? (i as MeetingChannels & UnitChannels) : null;
   }
 
   async announce(workspaceId: string, text: string): Promise<void> {

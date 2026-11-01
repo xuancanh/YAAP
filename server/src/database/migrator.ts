@@ -1059,6 +1059,68 @@ const MIGRATIONS: Migration[] = [
     },
   },
   {
+    id: '0032-org-meetings',
+    up: async (db) => {
+      // Rituals (docs/company-vision.md §3, execution-plan item 19): meetings
+      // as channel threads with minutes, the decision log (§6) and the
+      // per-unit cadences. Idempotent; cadence defaults are inserted by
+      // OrgMeetingsService when a unit appears (and on the tick), not here.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_meetings (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "unitId" TEXT,
+        "channelId" TEXT,
+        "threadRootId" TEXT,
+        "kind" TEXT NOT NULL DEFAULT 'adhoc',
+        "title" TEXT NOT NULL DEFAULT '',
+        "agenda" TEXT NOT NULL DEFAULT '',
+        "facilitatorAgentId" TEXT,
+        "attendees" TEXT NOT NULL DEFAULT '[]',
+        "status" TEXT NOT NULL DEFAULT 'scheduled',
+        "scheduledFor" TEXT,
+        "startedAt" TEXT,
+        "endedAt" TEXT,
+        "rounds" INTEGER NOT NULL DEFAULT 0,
+        "usd" REAL NOT NULL DEFAULT 0,
+        "minutes" TEXT NOT NULL DEFAULT '',
+        "createdBy" TEXT NOT NULL DEFAULT 'system',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_meetings_org ON org_meetings ("orgId", "status")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_decisions (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "unitId" TEXT,
+        "meetingId" TEXT,
+        "approvalId" TEXT,
+        "title" TEXT NOT NULL,
+        "decision" TEXT NOT NULL DEFAULT '',
+        "alternatives" TEXT NOT NULL DEFAULT '',
+        "rationale" TEXT NOT NULL DEFAULT '',
+        "decidedBy" TEXT NOT NULL DEFAULT '',
+        "refType" TEXT NOT NULL DEFAULT '',
+        "refId" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_decisions_org ON org_decisions ("orgId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_cadences (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "unitId" TEXT NOT NULL,
+        "kind" TEXT NOT NULL,
+        "cron" TEXT NOT NULL,
+        "enabled" INTEGER NOT NULL DEFAULT 1,
+        "lastRunAt" TEXT,
+        "nextRunAt" TEXT,
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_cadences_unit_kind ON org_cadences ("orgId", "unitId", "kind")`);
+    },
+  },
+  {
     id: '0033-org-assurance',
     up: async (db) => {
       // Assurance (docs/company-vision.md §5, execution-plan item 20):

@@ -30,6 +30,8 @@ import { WorkspaceOrgController } from './workspace-org.controller';
 import { OrgSignalsService } from './org-signals.service';
 import { OrgSloService } from './org-slo.service';
 import { OrgAuditorService } from './org-auditor.service';
+import { OrgMeetingsService } from './org-meetings.service';
+import { OrgMeetingRuntime } from './org-meeting-runtime.service';
 
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
@@ -48,11 +50,15 @@ import { OrgAuditorService } from './org-auditor.service';
  * runtime runs the planning cascade and reads the org's tunables; it also
  * registers the org's reasons (open tasks, due check-ins) and the operating
  * profile on the gated heartbeat (docs/company-vision.md §13, item 21).
+ * Rituals (docs/company-vision.md §3, item 19): OrgMeetingsService and
+ * OrgMeetingRuntime run meetings as unit-channel threads through the
+ * `MeetingChannels` half of the seam; the group chat's `/meeting` command
+ * reaches the runtime because GroupChatModule imports this module.
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule],
   controllers: [OrgController, WorkspaceOrgController],
-  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController],
-  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime],
+  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime],
 })
 export class OrgModule {}

@@ -769,6 +769,18 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     return (this.estimateTokens.input * price.input + this.estimateTokens.output * price.output) / 1_000_000;
   }
 
+  /** The model a run of `agentId` is priced at: the agent's own, else the
+   *  model of one of its sessions. Shared with meetings (item 19). */
+  async modelFor(agentId: string, workspaceId: string): Promise<string> {
+    const agent = await this.agents.get(agentId).catch(() => null);
+    return agent?.model || await this.sessionModelFor(agentId, workspaceId);
+  }
+
+  /** USD for a turn's usage: the price table, else the Sonnet-class fallback. */
+  costUsd(model: string, tokensIn: number, tokensOut: number): number {
+    return usdFor(model, tokensIn, tokensOut) ?? (tokensIn * FALLBACK_PRICE.input + tokensOut * FALLBACK_PRICE.output) / 1_000_000;
+  }
+
   private async sessionModelFor(agentId: string, workspaceId: string): Promise<string> {
     const s = (await this.repo.listSessions(workspaceId)).find((x) => x.agentId === agentId && x.model);
     return s?.model ?? '';

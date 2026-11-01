@@ -11,13 +11,18 @@
  *  assurance (docs/company-vision.md §5): GET signals · POST signals/:signalId/ack | /resolve · GET pulse · GET|PATCH slo · GET audits · POST audit/run
  *  intent (docs/company-vision.md §1b–§2): GET|PUT vision · GET|PUT profile · GET|PUT tunables · GET intent?unitId= · POST goals/:goalId/checkin · GET goals/:goalId/checkins · GET why?taskId=|goalId= · POST plan · GET strategy
  *
+ *  meetings (docs/company-vision.md §3, item 19): GET /org/meetings?unitId=&status= · POST /org/meetings { kind, unitId?, agenda?, attendees? } (starts now)
+ *           GET /org/meetings/:meetingId · POST /org/meetings/:meetingId/cancel · GET /org/decisions?unitId= · GET /org/cadences · PATCH /org/cadences/:cadenceId { cron, enabled }
+ *
  * Everything else is a thin alias of `/api/orgs/:orgId/...` that resolves the
  * workspace's one org id and delegates to OrgController, so the two surfaces
  * cannot drift. `/api/orgs/...` keeps working.
  */
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Optional, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { OrgMeetingsService, MEETING_KINDS, type MeetingKind, type Attendee } from './org-meetings.service';
+import { OrgMeetingRuntime } from './org-meeting-runtime.service';
 import { ORG_MODES, type OrgMode } from '../workspaces/workspaces.service';
 import { OrgModeService, AUTONOMY_CAPS, MAX_ORG_AGENT_CAP } from './org-mode.service';
 import {
@@ -32,13 +37,32 @@ class OrgModeDto {
   @IsOptional() @IsInt() @Min(1) @Max(MAX_ORG_AGENT_CAP) agentCap?: number;
 }
 
+export class MeetingDto {
+  @IsIn(MEETING_KINDS as unknown as string[]) kind!: MeetingKind;
+  @IsOptional() @IsString() unitId?: string;
+  @IsOptional() @IsString() channelId?: string;
+  @IsOptional() @IsString() agenda?: string;
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsArray() attendees?: Attendee[];
+  @IsOptional() @IsString() facilitatorAgentId?: string;
+}
+
+export class CadenceDto {
+  @IsOptional() @IsString() cron?: string;
+  @IsOptional() @IsBoolean() enabled?: boolean;
+}
+
 @Controller('workspaces/:id/org')
 export class WorkspaceOrgController {
   constructor(
     private readonly mode: OrgModeService,
     private readonly orgs: OrgController,
     private readonly config: ConfigService,
+    @Optional() private readonly meetings?: OrgMeetingsService,
+    @Optional() private readonly meetingRuntime?: OrgMeetingRuntime,
   ) {}
+
+  private meetingsOr(): OrgMeetingsService { if (!this.meetings) throw new NotFoundException('meetings are not available'); return this.meetings; }
 
   private guard(): void { if (this.config.get<boolean>('companiesEnabled') === false) throw new NotFoundException('organizations are disabled (COMPANIES_ENABLED=false)'); }
   private oid(workspaceId: string): Promise<string> { this.guard(); return this.mode.orgIdOf(workspaceId); }
@@ -135,6 +159,22 @@ export class WorkspaceOrgController {
   @Patch('slo') async setSlo(@Param('id') id: string, @Body() dto: SloDto) { return this.orgs.setSlo(await this.oid(id), dto); }
   @Get('audits') async audits(@Param('id') id: string, @Query('limit') limit?: string) { return this.orgs.audits(await this.oid(id), limit); }
   @Post('audit/run') async runAudit(@Param('id') id: string) { return this.orgs.runAudit(await this.oid(id)); }
+
+  // ---- meetings, decisions, cadences (docs/company-vision.md §3, §6; item 19) ----
+  @Get('meetings') async meetingList(@Param('id') id: string, @Query('unitId') unitId?: string, @Query('status') status?: string) { return this.meetingsOr().list(await this.oid(id), { unitId: unitId || null, status: status || null }); }
+  @Post('meetings') async startMeeting(@Param('id') id: string, @Body() dto: MeetingDto) {
+    if (!this.meetingRuntime) throw new NotFoundException('meetings are not available');
+    const orgId = await this.oid(id);
+    return this.meetingRuntime.start(orgId, { ...dto, createdBy: this.orgs.actorName() });
+  }
+  @Get('meetings/:meetingId') async meeting(@Param('id') id: string, @Param('meetingId') meetingId: string) { return this.meetingsOr().get(await this.oid(id), meetingId); }
+  @Post('meetings/:meetingId/cancel') async cancelMeeting(@Param('id') id: string, @Param('meetingId') meetingId: string) { return this.meetingsOr().cancel(await this.oid(id), meetingId, this.orgs.actorName()); }
+  @Get('decisions') async decisions(@Param('id') id: string, @Query('unitId') unitId?: string) { return this.meetingsOr().decisions(await this.oid(id), { unitId: unitId || null }); }
+  @Get('cadences') async cadences(@Param('id') id: string) { const orgId = await this.oid(id); await this.meetingsOr().ensureCadenceDefaults(orgId); return this.meetingsOr().cadences(orgId); }
+  @Patch('cadences/:cadenceId') async updateCadence(@Param('id') id: string, @Param('cadenceId') cadenceId: string, @Body() dto: CadenceDto) {
+    if (dto.cron === undefined && dto.enabled === undefined) throw new BadRequestException('cron or enabled is required');
+    return this.meetingsOr().updateCadence(await this.oid(id), cadenceId, dto, this.orgs.actorName());
+  }
 
   /** Manual structure review (autonomous mode only): runs the chief now. */
   @Post('review') async reviewNow(@Param('id') id: string) { return { result: await this.orgs.reviewStructureNow(await this.oid(id)) }; }

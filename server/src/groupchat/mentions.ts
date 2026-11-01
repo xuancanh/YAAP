@@ -15,8 +15,10 @@ export interface MentionableMember {
 }
 
 /** `goal` entries (docs/group-chat.md §3) are `#goal:<id>` references
- *  resolved against the organization's goals; they notify nobody. */
-export interface Mention { kind: 'agent' | 'human' | 'goal'; id: string }
+ *  resolved against the organization's goals; `decision` entries (§8,
+ *  docs/company-vision.md §6) are `#decision:<id>` references into the
+ *  decision log. Neither notifies anybody. */
+export interface Mention { kind: 'agent' | 'human' | 'goal' | 'decision'; id: string }
 
 export function handleOf(name: string): string {
   return name.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -69,4 +71,22 @@ export function parseGoalRefs(text: string): string[] {
   const out: string[] = [];
   for (const m of text.matchAll(GOAL_REF_RE)) { const id = m[2].replace(/[.,;:!?]+$/, ''); if (id && !out.includes(id)) out.push(id); }
   return out;
+}
+
+/** `#decision:<id-or-prefix>` references (docs/group-chat.md §8): the raw
+ *  ids as written, deduplicated, in order; resolved against the decision log
+ *  in the service. */
+export const DECISION_REF_RE = /(^|[^\w#])#decision:([\w-]{4,})/g;
+
+export function parseDecisionRefs(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(DECISION_REF_RE)) { const id = m[2].replace(/[.,;:!?]+$/, ''); if (id && !out.includes(id)) out.push(id); }
+  return out;
+}
+
+/** The per-agent, per-channel session name (docs/group-chat.md §2):
+ *  `#<slug> · <agent>`. Shared by the channel runtime and meetings (§8) so
+ *  every turn an agent takes in a channel lands in one transcript. */
+export function channelSessionName(slug: string, agentName: string): string {
+  return `#${slug} · ${agentName}`;
 }

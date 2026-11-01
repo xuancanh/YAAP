@@ -47,6 +47,7 @@ import { actorId, currentAccountId, runWithViewer, type Viewer } from '../accoun
 import { newId } from '../common/ids.util';
 import type { AiToolSpec } from '../ai/ai-provider.interface';
 import { GroupChatService, type Channel, type ChannelMessage, type NamedMember } from './groupchat.service';
+import { channelSessionName } from './mentions';
 import { WorkspaceEventBus } from './workspace-events';
 
 export const CHAIN_ROUND_CAP = 3;
@@ -296,7 +297,7 @@ export class ChannelRuntimeService implements ToolProviderHook {
 
   /** The per-agent, per-channel session: `#<slug> · <agent>`, shared, tagged. */
   async channelSession(agent: { id: string; name: string }, c: Channel): Promise<ChatSession> {
-    const name = `#${c.slug} · ${agent.name}`;
+    const name = channelSessionName(c.slug, agent.name);
     const existing = (await this.repo.listSessions(c.workspaceId)).find((s) => s.agentId === agent.id && s.name === name);
     if (existing) return existing;
     const created = await this.repo.createSession({ workspaceId: c.workspaceId, agentId: agent.id, name, permissionMode: 'ask', shared: 1, initiatedBy: '' });

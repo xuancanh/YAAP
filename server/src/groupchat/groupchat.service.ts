@@ -26,7 +26,7 @@ import { ConfigService } from '@nestjs/config';
 import { and, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { agents, channelMembers, channelMessages, channelReads, channels, orgUnits, workspaces } from '../database/schema';
+import { agents, channelMembers, channelMessages, channelReads, channels, orgDecisions, organizations, orgUnits, workspaces } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
@@ -39,8 +39,10 @@ import { TriggerBus, type TaskStatusEvent } from '../chats/trigger-bus';
 import { OrgService } from '../org/org.service';
 import { OrgTasksService } from '../org/org-tasks.service';
 import { OrgAnnouncer } from '../org/org-announcer';
+import { OrgMeetingRuntime } from '../org/org-meeting-runtime.service';
+import { parseMeetingCommand } from '../org/org-meetings.service';
 import { WorkspaceEventBus } from './workspace-events';
-import { parseGoalRefs, parseMentions, slugify, type Mention, type MentionableMember } from './mentions';
+import { parseDecisionRefs, parseGoalRefs, parseMentions, slugify, type Mention, type MentionableMember } from './mentions';
 
 export type Channel = typeof channels.$inferSelect;
 export type ChannelMember = typeof channelMembers.$inferSelect;
@@ -66,6 +68,9 @@ export interface PostInput {
   authorId?: string;
   runId?: string | null;
   unprompted?: boolean;
+  /** false: persist and emit, but compute no wake set (meeting turns and
+   *  minutes, docs/group-chat.md §8). Default true. */
+  wake?: boolean;
 }
 
 export type PostedListener = (message: ChannelMessage, channel: Channel) => void;
@@ -91,6 +96,8 @@ export class GroupChatService {
     /** Optional: organization mode announces into `#company` through this
      *  seam (org-announcer.ts); binding here avoids a module cycle. */
     @Optional() announcer?: OrgAnnouncer,
+    /** Optional: `/meeting …` in a channel starts a meeting (docs/group-chat.md §8). */
+    @Optional() private readonly meetings?: OrgMeetingRuntime,
   ) {
     this.workspaces.onCreated(async (ws) => { await this.ensureGeneral(ws.id); });
     bus?.onTaskStatus((ev) => { void this.onTaskStatus(ev).catch(() => undefined); });
@@ -113,7 +120,25 @@ export class GroupChatService {
         if (patch.archived !== undefined) await this.archive(channelId, patch.archived, { system: true });
       },
       postSystem: async (channelId, text) => { await this.postSystem(channelId, text); },
+      // Meetings (docs/group-chat.md §8): a thread the runtime writes into
+      // and reads back; its posts never compute a wake set.
+      channelInfo: async (channelId) => { const c = await this.get(channelId); return { id: c.id, slug: c.slug, workspaceId: c.workspaceId, archivedAt: c.archivedAt }; },
+      postAs: async (channelId, input) => {
+        const m = await this.post(channelId, { text: input.text, threadRootId: input.threadRootId ?? null, attachments: input.attachments, authorKind: input.authorKind, authorId: input.authorId, runId: input.runId ?? null, wake: input.wake });
+        return { id: m.id, createdAt: m.createdAt };
+      },
+      thread: async (channelId, rootId) => (await this.messages(channelId, { thread: rootId })).messages.map((m) => ({ id: m.id, authorKind: m.authorKind, authorId: m.authorId, text: m.text, createdAt: m.createdAt })),
     });
+  }
+
+  /** A decision-log row by id or unambiguous prefix, from the workspace's
+   *  organization (`#decision:<id>` chips, docs/group-chat.md §8). */
+  async decision(workspaceId: string, idOrPrefix: string): Promise<typeof orgDecisions.$inferSelect> {
+    const orgIds = (await this.db.select({ id: organizations.id }).from(organizations).where(eq(organizations.workspaceId, workspaceId))).map((o) => o.id);
+    if (orgIds.length === 0) throw new NotFoundException(`decision ${idOrPrefix}`);
+    const rows = (await this.db.select().from(orgDecisions).where(inArray(orgDecisions.orgId, orgIds))).filter((d) => d.id === idOrPrefix || d.id.startsWith(idOrPrefix));
+    if (rows.length !== 1) throw new NotFoundException(`decision ${idOrPrefix}`);
+    return rows[0];
   }
 
   /** The unit whose channel this is (docs/group-chat.md §7), or null. */
@@ -437,7 +462,7 @@ export class GroupChatService {
       threadRootId = root.threadRootId ?? root.id; // replies to a reply stay in the root's thread
     }
     const mentions: Mention[] = input.authorKind === 'system' ? [] : parseMentions(text, await this.mentionables(c.id));
-    if (input.authorKind !== 'system') mentions.push(...await this.resolveGoalRefs(c.workspaceId, text));
+    if (input.authorKind !== 'system') mentions.push(...await this.resolveGoalRefs(c.workspaceId, text), ...await this.resolveDecisionRefs(c.workspaceId, text));
     const row: ChannelMessage = {
       accountId: currentAccountId(), id: newId(), channelId: c.id, threadRootId, authorKind: input.authorKind, authorId,
       text, attachments: JSON.stringify(attachments), mentions: JSON.stringify(mentions), taskId: null,
@@ -448,8 +473,35 @@ export class GroupChatService {
     if (input.authorKind === 'human') await this.markRead(c.id, row.id, authorId).catch(() => undefined);
     this.events.emit({ type: 'channel_message', workspaceId: c.workspaceId, channelId: c.id, message: row });
     if (input.authorKind !== 'system') await this.notifyHumans(c, row, mentions).catch(() => undefined);
+    // `/meeting …` by a person starts a meeting and wakes nobody else (§8).
+    if (input.authorKind === 'human' && parseMeetingCommand(text)) {
+      if (!this.meetings) await this.postSystem(c.id, 'Meetings need organization mode.', threadRootId).catch(() => undefined);
+      else {
+        try {
+          const m = await this.meetings.startFromSlash(c.workspaceId, c.id, authorId, text);
+          if (!m) await this.postSystem(c.id, 'Meetings need organization mode: enable it in Settings → Workspace → Organization.', threadRootId).catch(() => undefined);
+        } catch (err) {
+          await this.postSystem(c.id, `Could not start the meeting: ${err instanceof Error ? err.message : String(err)}`, threadRootId).catch(() => undefined);
+        }
+      }
+      return row;
+    }
+    if (input.wake === false) return row;
     for (const l of this.postedListeners) { try { l(row, c); } catch { /* listeners isolate their failures */ } }
     return row;
+  }
+
+  /** `#decision:<id>` → the decision-log row it names (full id or a prefix of
+   *  at least 4 characters matching exactly one decision). */
+  private async resolveDecisionRefs(workspaceId: string, text: string): Promise<Mention[]> {
+    const refs = parseDecisionRefs(text);
+    if (refs.length === 0) return [];
+    const out: Mention[] = [];
+    for (const ref of refs) {
+      const d = await this.decision(workspaceId, ref).catch(() => null);
+      if (d && !out.some((m) => m.id === d.id)) out.push({ kind: 'decision', id: d.id });
+    }
+    return out;
   }
 
   /** `#goal:<id>` → the organization goal it names (full id or a prefix of

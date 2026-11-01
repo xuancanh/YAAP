@@ -28,6 +28,7 @@ import { OrgAuditService } from './org-audit.service';
 import { OrgSignalsService } from './org-signals.service';
 import { OrgSloService } from './org-slo.service';
 import { OrgIntentService } from './org-intent.service';
+import { OrgMeetingsService } from './org-meetings.service';
 
 export interface BriefItem { n: number; approvalId: string; kind: string; summary: string }
 export interface Brief { orgId: string; at: string; text: string; items: BriefItem[] }
@@ -49,6 +50,8 @@ export class OrgBriefService {
     @Optional() private readonly slo?: OrgSloService,
     /** Optional: key results (docs/company-vision.md §2) for the "Key results" section. */
     @Optional() private readonly intent?: OrgIntentService,
+    /** Optional: questions raised in meetings (docs/company-vision.md §3, item 19). */
+    @Optional() private readonly meetings?: OrgMeetingsService,
   ) {}
 
   /** Compose (and, with deliver, write) the brief. Deterministic: no model call. */
@@ -162,6 +165,13 @@ export class OrgBriefService {
         lines.push(`- ${a.startedAt.slice(0, 16).replace('T', ' ')} by ${nameOf(a.auditorAgentId)}${a.singleModel ? ' (single-model audit)' : ''}${a.status !== 'done' ? ` — ${a.status}` : ''}: ${findings.length} finding(s), $${a.usd.toFixed(2)}${a.summary ? ` — ${a.summary.slice(0, 200)}` : ''}`);
         for (const f of findings.filter((x) => x.severity === 'critical').slice(0, 3)) lines.push(`  - critical: ${f.title}`);
       }
+    }
+
+    // 3d. Questions the company asked the CEO in its meetings (item 19).
+    const questions = this.meetings ? await this.meetings.openQuestions(orgId, 7).catch(() => []) : [];
+    if (questions.length > 0) {
+      lines.push('', '## Questions from meetings');
+      for (const q of questions.slice(0, 12)) lines.push(`- ${q.question} — ${nameOf(q.by)}, ${q.title} (${q.at.slice(0, 10)})`);
     }
 
     // 4. Pending approvals, numbered

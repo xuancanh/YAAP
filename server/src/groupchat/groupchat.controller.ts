@@ -9,6 +9,7 @@
  *   /api/workspaces/:id/chat/channels/:slug/read       move the read cursor
  *   /api/workspaces/:id/chat/channels/:slug/files      the channel folder
  *   /api/workspaces/:id/chat/goals/:goalId/messages    messages that reference #goal:<id> (§7)
+ *   /api/workspaces/:id/chat/decisions/:decisionId      the decision a #decision:<id> chip names (§8)
  *   /api/workspaces/:id/events                         workspace SSE (§4)
  *
  * `/chat/` sits in the path because `/api/workspaces/:id/channels` already
@@ -99,6 +100,12 @@ export class GroupChatController {
   @Get('chat/goals/:goalId/messages')
   goalMessages(@Param('id') id: string, @Param('goalId') goalId: string, @Query('limit') limit?: string) {
     return this.groupchat.goalMessages(id, goalId, limit ? Number(limit) : undefined);
+  }
+
+  /** The decision-log row a `#decision:<id>` reference names (docs/group-chat.md §8). */
+  @Get('chat/decisions/:decisionId')
+  decision(@Param('id') id: string, @Param('decisionId') decisionId: string) {
+    return this.groupchat.decision(id, decisionId);
   }
 
   @Patch('chat/channels/:slug')

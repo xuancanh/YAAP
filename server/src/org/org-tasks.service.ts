@@ -132,9 +132,17 @@ export class OrgTasksService {
     reviewerAgentId?: string | null; fileScope?: string[]; noProgressCount?: number; lastRunAt?: string | null; claimedBy?: string | null; claimedAt?: string | null; reviewRounds?: number;
     /** Move the task to another unit board (pins it there). */
     unitId?: string;
+    /** Change the owner without waking anyone or changing the status (the
+     *  standup's "blocked needs an owner" rule, docs/company-vision.md §3);
+     *  `assign` is the path that wakes. */
+    assigneeAgentId?: string | null;
   }, actor = 'user'): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     const set: Record<string, unknown> = { updatedAt: nowIso() };
+    if (patch.assigneeAgentId !== undefined) {
+      if (patch.assigneeAgentId) { const m = await this.org.member(orgId, patch.assigneeAgentId); if (!m || m.status !== 'active') throw new BadRequestException('assignee must be an active member of this organization'); }
+      set.assigneeAgentId = patch.assigneeAgentId;
+    }
     if (patch.unitId !== undefined && this.units) { set.unitId = (await this.units.get(orgId, patch.unitId)).id; set.unitExplicit = 1; }
     if (patch.title !== undefined) { const title = patch.title.trim().slice(0, 200); if (!title) throw new BadRequestException('title cannot be empty'); set.title = title; }
     if (patch.brief !== undefined) set.brief = JSON.stringify({ ...parseBrief(t.brief), ...parseBrief(patch.brief as Record<string, unknown>) });
