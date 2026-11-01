@@ -67,6 +67,26 @@ obey them next week, forever). Therefore:
 - Scope: self-built skills are **private to their agent**. Sharing a skill
   to the workspace (or the market) is a separate, explicit promotion, which
   is a second activation gate at a wider blast radius.
+- Import: an agentskills.io `SKILL.md` (`POST /api/skills/import`) goes
+  through a **scan step** before it is even a draft (`server/src/portability/
+  skill-md.ts`): size cap 64 KB; URLs counted and listed; instruction smells
+  ("ignore previous instructions", "do not tell the user", persona
+  overrides, sending credentials elsewhere); mentions of `.env`, keys,
+  passwords, `~/.ssh`; base64 blobs; `allowed-tools` naming tools we do not
+  have. Invisible/bidi unicode, an empty body, or oversize **block** the
+  import; everything else is a flag stored on the row (`skills.scanReport`)
+  and rendered verbatim on the draft card above the full body. The scan
+  flags, it does not decide — approval is still the user reading the text.
+  Skills arriving inside an AGENT.json land as drafts the same way. Export
+  is the mirror: `GET /api/skills/:id/skill.md`.
+- Revision: a skill records which turns loaded it (`chat_turns.skillsUsed`)
+  and how those turns were rated (`skill_outcomes`, aggregates on the
+  skill). After a 👎 the agent is told which skill was involved and may call
+  `revise_skill(skillId, instructions, reason)`. That is read-only class —
+  it only parks `skills.pendingRevision` — because the *activation* is the
+  user accepting the diff on the Skills page, which replaces the text and
+  keeps the previous version in `skills.history` (last 5). The live
+  instructions never change on the agent's say-so.
 
 ### HTTP tools (save_tool) — risk at *call* time, forever
 A custom tool reaches the outside world, so it is the most dangerous class

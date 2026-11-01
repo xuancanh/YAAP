@@ -18,6 +18,7 @@
  *  ChannelsModule    → /api/channels/telegram|email  (presence, phase 4)
  *  PushModule        → /api/push                      (web push, phase 4.3)
  *  UsageModule       → GET  /api/agents|workspaces/:id/usage (cost dashboard, phase 2)
+ *  PortabilityModule → AGENT.json v2 export/import, memory importers (plan item 9)
  *  SecurityModule    → GET  /api/security            (threat model, docs/security.md)
  *  VoiceModule       → /api/voice/status, /api/voice/tts (voice notes, docs/voice.md)
  *
@@ -52,6 +53,7 @@ import { RunnerModule } from './runner/runner.module';
 import { SecurityModule } from './security/security.module';
 import { UsageModule } from './usage/usage.module';
 import { VoiceModule } from './voice/voice.module';
+import { PortabilityModule } from './portability/portability.module';
 
 @Module({
   imports: [
@@ -76,6 +78,7 @@ import { VoiceModule } from './voice/voice.module';
     SecurityModule,
     UsageModule,
     VoiceModule,
+    PortabilityModule,
   ],
   providers: [
     // Identity is bound here and nowhere else: swapping this one provider

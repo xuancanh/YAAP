@@ -153,7 +153,7 @@ export interface AgentLesson {
   id: string;
   agentId: string;
   text: string;
-  sourceKind: 'chat' | 'loop' | 'channel' | 'app' | 'feedback';
+  sourceKind: 'chat' | 'loop' | 'channel' | 'app' | 'feedback' | 'import';
   sourceSessionId: string | null;
   trusted: number;
   pinned: number;
@@ -264,6 +264,61 @@ export interface Skill {
   proposedBy: string;
   /** Set = private self-built skill of that agent. */
   agentId: string | null;
+  /** JSON SkillScanReport from a SKILL.md import; '' otherwise. */
+  scanReport: string;
+  /** Outcome aggregates: turns that loaded the skill and how they were rated. */
+  useCount: number;
+  upCount: number;
+  downCount: number;
+  lastUsedAt: string | null;
+  /** JSON SkillRevision proposed by the agent after a 👎; '' when none. */
+  pendingRevision: string;
+  /** JSON array of the last 5 { instructions, replacedAt, reason }. */
+  history: string;
+  createdAt?: string;
+}
+
+/** Flags from the SKILL.md scan step (docs/permissions.md "Skills"). */
+export interface SkillScanFlag { kind: string; detail: string; severity: 'warn' | 'block' }
+export interface SkillScanReport { bytes: number; lines: number; urls: string[]; flags: SkillScanFlag[]; ok: boolean; scannedAt: string }
+export interface SkillRevision { instructions: string; reason: string; proposedAt: string; proposedBy: string }
+
+export function parseScanReport(s: Skill): SkillScanReport | null {
+  if (!s.scanReport) return null;
+  try { return JSON.parse(s.scanReport) as SkillScanReport; } catch { return null; }
+}
+export function parseRevision(s: Skill): SkillRevision | null {
+  if (!s.pendingRevision) return null;
+  try { return JSON.parse(s.pendingRevision) as SkillRevision; } catch { return null; }
+}
+
+/** AGENT.json v2 sections (formatVersion 2); v1 files have none of these. */
+export interface AgentJsonV2 {
+  formatVersion?: number;
+  name?: string;
+  loops?: Array<{ name: string; cron: string }>;
+  lessons?: Array<{ text: string; sourceKind: string; trusted: number; pinned: number; useCount: number; createdAt: string }>;
+  skills?: Array<{ name: string; description: string; instructions: string; enabled: number; draft: number }>;
+  tasks?: Array<{ title: string; note: string; status: string }>;
+  profile?: string;
+  [key: string]: unknown;
+}
+export interface AgentImportOptions {
+  trustLessons?: boolean; lessons?: boolean; skills?: boolean; tasks?: boolean; profile?: boolean; workspaceId?: string;
+}
+export interface AgentImportResult {
+  agent: Agent;
+  formatVersion: number;
+  summary: { lessons: { added: number; skipped: number; trusted: boolean }; skills: { added: number; skipped: number }; tasks: { added: number }; profileProposals: number };
+}
+
+export type MemoryImportFormat = 'claude-memory' | 'muse' | 'hermes' | 'openclaw';
+export interface MemoryImportSummary {
+  format: MemoryImportFormat;
+  lessons: { added: number; skipped: number; trusted: false };
+  profileProposals: { proposed: number; skipped: number; workspaceId: string | null };
+  charterSuggestion: { addendum: string; proposed: string } | null;
+  files: { used: string[]; ignored: string[] };
 }
 
 export interface Connection {
@@ -552,8 +607,14 @@ export const api = {
     send<UploadResult>(`/api/agents/${id}/files`, 'POST', { path, contentBase64, contentType, durationSeconds }),
   agentPreview: (id: string, path: string, workspaceId?: string) =>
     get<FilePreview>(`/api/agents/${id}/preview?path=${enc(path)}${workspaceId ? `&workspaceId=${enc(workspaceId)}` : ''}`, filePreviewSchema),
-  agentExportUrl: (id: string) => `/api/agents/${id}/export`,
-  importAgent: (profile: Record<string, unknown>) => send<Agent>('/api/agents/import', 'POST', profile, agentSchema),
+  agentExportUrl: (id: string, opts: { includeProfile?: boolean; workspaceId?: string } = {}) =>
+    `/api/agents/${id}/export${opts.includeProfile ? `?includeProfile=1${opts.workspaceId ? `&workspaceId=${enc(opts.workspaceId)}` : ''}` : ''}`,
+  /** AGENT.json v1/v2 → new agent; `options` are the review modal's ticks. */
+  importAgent: (profile: Record<string, unknown>, options: AgentImportOptions = {}) =>
+    send<AgentImportResult>('/api/agents/import', 'POST', { ...profile, options }),
+  /** Another assistant's memory → quarantined lessons / profile proposals / charter diff. */
+  importAgentMemory: (id: string, format: MemoryImportFormat, content: string | Record<string, string>, workspaceId?: string) =>
+    send<MemoryImportSummary>(`/api/agents/${id}/import/memory`, 'POST', { format, content, workspaceId }),
 
   // agent types / providers
   agentTypes: () => get<AgentType[]>('/api/agent-types'),
@@ -569,6 +630,12 @@ export const api = {
     send<Skill | { ok: boolean }>(`/api/skills/${id}/${approve ? 'approve' : 'reject'}`, 'POST'),
   promoteSkill: (id: string, workspaceId?: string) =>
     send<Skill>(`/api/skills/${id}/promote`, 'POST', workspaceId ? { workspaceId } : {}),
+  /** agentskills.io SKILL.md → scanned draft. */
+  importSkillMd: (content: string, scope: { workspaceId?: string; agentId?: string } = {}) =>
+    send<{ skill: Skill; scan: SkillScanReport }>('/api/skills/import', 'POST', { content, ...scope }),
+  skillMdUrl: (id: string) => `/api/skills/${id}/skill.md`,
+  resolveSkillRevision: (id: string, accept: boolean) =>
+    send<Skill>(`/api/skills/${id}/revision/${accept ? 'accept' : 'reject'}`, 'POST'),
   // external service connections (docs/integrations.md)
   connections: () => get<Connection[]>('/api/connections'),
   connectionProviders: () => get<ConnectionProvider[]>('/api/connections/providers'),

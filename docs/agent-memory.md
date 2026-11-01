@@ -256,7 +256,46 @@ and "the agent remembers more" must never mean "every turn costs more
 forever." Embeddings before Phase 3 — the store is what makes them cheap to
 add and cheap to abandon. Memory that the user cannot see or delete.
 
-## 8. What this changed
+## 8. Import
+
+*(execution-plan item 9)* Memory arrives from outside in two shapes: our own
+AGENT.json (now `formatVersion: 2`, carrying `lessons`, the agent's private
+`skills`, open `tasks`, and — only when exported with `?includeProfile=1` —
+the workspace `profile`), and other assistants' exports. The importers live
+in `server/src/portability/` (`POST /api/agents/:id/import/memory` with
+`{ format, content, workspaceId? }`, where `content` is one file's text or a
+`{ filename: text }` map; the UI reads the files client-side):
+
+| format | source files | mapping |
+|---|---|---|
+| `claude-memory` | the text users copy from Settings → Your Claude → Manage, or Claude's "write out your memories of me verbatim" reply; Claude has no file export, so we accept a JSON array of `{ topic?, text }` (or strings), a markdown bullet list, or the `[date] - text` lines Claude's own import prompt asks for | entries that read as facts about the user → profile proposals; the rest → lessons |
+| `muse` | `Soul.md`, `Identity.md`, `Memory.md` | Soul → charter addendum (shown as a diff, applied by the user); Identity → lessons; Memory → lessons / profile proposals |
+| `hermes` | `MEMORY.md`, `USER.md` | MEMORY → lessons; USER → profile proposals |
+| `openclaw` | `MEMORY.md`, `USER.md`, `SOUL.md` | as Hermes, plus SOUL → charter addendum |
+
+The rule is the one §3 set for apps and channels, applied to a wider mouth:
+**nothing imported becomes trusted memory without a human click.** Imported
+lessons carry `sourceKind: 'import'` and `trusted = 0` — a seventh source
+kind, untrusted like `app` and `channel` — and sit in "Awaiting review" until
+promoted; the AGENT.json modal has a "trust imported lessons" tick for the
+one case where that is right (an export you made yourself). Profile lines go
+through `addProfileProposal`, the consent queue the profile already had. A
+persona is never written into the charter by the importer; the user sees the
+proposed charter as a line diff and applies it. Imports dedup against every
+existing lesson regardless of tier, and against themselves, so importing the
+same export twice is a no-op. The summary the UI shows is
+`{ lessons, profileProposals, charterSuggestion, files }`.
+
+Skills come in through the same door with their own scan
+(`docs/permissions.md`, "Skills"): an agentskills.io `SKILL.md` lands as a
+draft with a `scanReport`, and an AGENT.json's skills land as drafts too.
+
+Verified by `tests/backend-portability.test.ts`: the v2 round-trip (lessons
+quarantined on import, trusted only when ticked; skills as drafts; tasks as
+todo; v1 files still import), each importer's mapping, that `importMemory`
+never creates a trusted row or touches the charter, and dedup.
+
+## 9. What this changed
 
 Agents now use what they learn. A lesson distilled from a real conversation
 reaches the system prompt on the next turn, ranked and capped, framed as the
@@ -269,7 +308,12 @@ Verified by `tests/backend-memory.test.ts` (8 cases), including the one that
 would have caught the original defect: that the digest reaches `ctx.system` at
 all.
 
-## 9. Where this lives in code
+## 10. Where this lives in code
+
+- `server/src/portability/` — `importers.ts` (format parsers, pure),
+  `portability.service.ts` (AGENT.json v2 export/import, `importMemory`),
+  `skill-md.ts` (SKILL.md parse/scan/render); `AgentMemoryService.importLessons`
+  is the only write path imports use
 
 - `server/src/chats/distill.service.ts` — the distillation prompt and parse
 - `server/src/chats/loops.service.ts` — `distillSweep`, the 10-minute timer

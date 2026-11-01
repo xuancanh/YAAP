@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Header, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
 import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 import { AgentsService } from './agents.service';
 import { AgentMemoryService } from './agent-memory.service';
@@ -135,11 +135,7 @@ export class AgentsController {
     return this.agents.updateTask(id, taskId, dto);
   }
   @Delete(':id/tasks/:taskId') deleteTask(@Param('id') id: string, @Param('taskId') taskId: string) { return this.agents.deleteTask(id, taskId); }
-  @Post('import') importJson(@Body() body: Record<string, unknown>) { return this.agents.importJson(body); }
-
-  @Get(':id/export')
-  @Header('Content-Disposition', 'attachment; filename="AGENT.json"')
-  exportJson(@Param('id') id: string) { return this.agents.exportJson(id); }
+  // AGENT.json export/import: PortabilityController (server/src/portability/).
 
   // ---- file brain (FR-11.3): same S3 store, agent-scoped prefix ----
 

@@ -6,16 +6,35 @@
  * their workspace (FR-10.1). Built-ins are seeded on boot: recreated when
  * missing, but user edits to them stick (matched by name).
  */
-import { Injectable, Inject, NotFoundException, OnModuleInit, ConflictException } from '@nestjs/common';
-import { and, eq, isNull, or } from 'drizzle-orm';
+import { Injectable, Inject, NotFoundException, OnModuleInit, ConflictException, BadRequestException } from '@nestjs/common';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { skills } from '../database/schema';
+import { skills, skillOutcomes } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { AiToolSpec } from '../ai/ai-provider.interface';
 import { BUILTIN_SKILLS } from './builtin-skills';
+import { parseSkillMd, renderSkillMd, scanSkillMd, ScanReport, SKILL_MD_SIZE_CAP } from '../portability/skill-md';
 
 export type SkillRow = typeof skills.$inferSelect;
+
+/** A revision the agent proposed after a 👎 on a turn that used the skill
+ *  (revise_skill). Parked until the user accepts or rejects it on the Skills
+ *  page, where it renders as a diff against the live instructions. */
+export interface PendingRevision {
+  instructions: string;
+  reason: string;
+  proposedAt: string;
+  proposedBy: string;
+}
+
+export interface SkillHistoryEntry {
+  instructions: string;
+  replacedAt: string;
+  reason: string;
+}
+
+const HISTORY_KEEP = 5;
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 export const SKILL_TOOL_PREFIX = 'skill_';
@@ -36,6 +55,7 @@ export class SkillsService implements OnModuleInit {
       await this.db.insert(skills).values({
         id: newId(), workspaceId: null, name: b.name, description: b.description,
         instructions: b.instructions, enabled: 1, builtin: 1, createdAt: nowIso(),
+        scanReport: '', useCount: 0, upCount: 0, downCount: 0, lastUsedAt: null, pendingRevision: '', history: '[]',
       });
     }
   }
@@ -58,7 +78,7 @@ export class SkillsService implements OnModuleInit {
     return rows[0];
   }
 
-  async create(input: { name: string; description?: string; instructions: string; workspaceId?: string; draft?: boolean; proposedBy?: string; agentId?: string }): Promise<SkillRow> {
+  async create(input: { name: string; description?: string; instructions: string; workspaceId?: string; draft?: boolean; proposedBy?: string; agentId?: string; scanReport?: ScanReport }): Promise<SkillRow> {
     if (!NAME_RE.test(input.name)) {
       throw new ConflictException('skill name must be a lowercase slug (a-z, 0-9, dashes)');
     }
@@ -77,10 +97,148 @@ export class SkillsService implements OnModuleInit {
       draft: input.draft ? 1 : 0,
       proposedBy: input.proposedBy ?? '',
       agentId: input.agentId ?? null,
+      scanReport: input.scanReport ? JSON.stringify(input.scanReport) : '',
+      useCount: 0, upCount: 0, downCount: 0, lastUsedAt: null,
+      pendingRevision: '', history: '[]',
       createdAt: nowIso(),
     };
     await this.db.insert(skills).values(row);
     return row;
+  }
+
+  // ---- agentskills.io SKILL.md (execution-plan item 9.3) ----
+
+  /**
+   * Import one SKILL.md. Parse → scan → draft. A blocking flag (oversize,
+   * invisible unicode, empty body) refuses the import outright; warnings
+   * travel with the row as `scanReport` so the review card can show them
+   * beside the body. Imported skills are always drafts: the open standard
+   * says what a skill *is*, not whether this user wants it.
+   */
+  async importSkillMd(input: { content: string; workspaceId?: string; agentId?: string; proposedBy?: string }): Promise<{ skill: SkillRow; scan: ScanReport }> {
+    if (typeof input.content !== 'string' || !input.content.trim()) throw new BadRequestException('SKILL.md content is required');
+    if (Buffer.byteLength(input.content, 'utf8') > SKILL_MD_SIZE_CAP * 4) {
+      // the scan reports the cap; this only stops a multi-megabyte paste from being parsed at all
+      throw new BadRequestException(`SKILL.md exceeds ${SKILL_MD_SIZE_CAP} bytes`);
+    }
+    let parsed;
+    try { parsed = parseSkillMd(input.content); } catch (err) {
+      throw new BadRequestException(`invalid SKILL.md: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const scan = scanSkillMd(input.content, parsed);
+    if (!scan.ok) {
+      throw new BadRequestException(`SKILL.md refused: ${scan.flags.filter((f) => f.severity === 'block').map((f) => f.detail).join('; ')}`);
+    }
+    const skill = await this.create({
+      name: parsed.name,
+      description: parsed.description.slice(0, 300),
+      instructions: parsed.body.slice(0, 20_000),
+      workspaceId: input.workspaceId,
+      agentId: input.agentId,
+      draft: true,
+      proposedBy: input.proposedBy ?? (parsed.metadata.author ? `import: ${parsed.metadata.author}` : 'import'),
+      scanReport: scan,
+    });
+    return { skill, scan };
+  }
+
+  /** Export one skill as a spec-conformant SKILL.md. */
+  async exportSkillMd(id: string): Promise<string> {
+    const s = await this.get(id);
+    return renderSkillMd({ name: s.name, description: s.description, instructions: s.instructions, proposedBy: s.proposedBy, createdAt: s.createdAt });
+  }
+
+  // ---- outcome tracking (execution-plan item 10) ----
+
+  /** A turn loaded these skills: bump useCount and lastUsedAt. */
+  async recordUse(skillIds: string[]): Promise<void> {
+    const ids = [...new Set(skillIds)];
+    if (ids.length === 0) return;
+    await this.db.update(skills)
+      .set({ useCount: sql`${skills.useCount} + 1`, lastUsedAt: nowIso() })
+      .where(inArray(skills.id, ids));
+  }
+
+  /**
+   * A rated turn had loaded these skills: one outcome row per (skill, turn),
+   * re-rating replaces instead of doubling, and the aggregate counters on the
+   * skill follow. Returns the skills touched so the caller can name them in
+   * the agent's pending feedback.
+   */
+  async recordOutcome(skillIds: string[], turnId: string, rating: 'up' | 'down', note?: string): Promise<SkillRow[]> {
+    const ids = [...new Set(skillIds)];
+    if (ids.length === 0) return [];
+    const rows = await this.db.select().from(skills).where(inArray(skills.id, ids));
+    for (const s of rows) {
+      const prev = (await this.db.select().from(skillOutcomes)
+        .where(and(eq(skillOutcomes.skillId, s.id), eq(skillOutcomes.turnId, turnId))).limit(1))[0];
+      if (prev && prev.rating === rating) {
+        await this.db.update(skillOutcomes).set({ note: note ?? prev.note }).where(eq(skillOutcomes.id, prev.id));
+        continue;
+      }
+      if (prev) {
+        await this.db.update(skillOutcomes).set({ rating, note: note ?? '' }).where(eq(skillOutcomes.id, prev.id));
+      } else {
+        await this.db.insert(skillOutcomes).values({ id: newId(), skillId: s.id, turnId, rating, note: note ?? '', createdAt: nowIso() });
+      }
+      const up = (rating === 'up' ? 1 : 0) - (prev?.rating === 'up' ? 1 : 0);
+      const down = (rating === 'down' ? 1 : 0) - (prev?.rating === 'down' ? 1 : 0);
+      await this.db.update(skills).set({
+        upCount: sql`GREATEST(0, ${skills.upCount} + ${up})`,
+        downCount: sql`GREATEST(0, ${skills.downCount} + ${down})`,
+      }).where(eq(skills.id, s.id));
+    }
+    return this.db.select().from(skills).where(inArray(skills.id, ids));
+  }
+
+  async outcomes(skillId: string) {
+    return this.db.select().from(skillOutcomes).where(eq(skillOutcomes.skillId, skillId));
+  }
+
+  /**
+   * revise_skill: the agent, told on its next turn that a 👎 landed on a
+   * turn which used this skill, proposes new instructions. Parked as a
+   * pending revision — the live text is untouched until the user accepts the
+   * diff. One pending revision per skill; a newer proposal replaces it.
+   * Scope is enforced here: an agent may only revise skills it can see.
+   */
+  async proposeRevision(input: { skillId: string; instructions: string; reason: string; workspaceId: string; agentId?: string; proposedBy: string }): Promise<string> {
+    const visible = await this.list(input.workspaceId, input.agentId);
+    const key = (input.skillId ?? '').trim();
+    const skill = key ? visible.find((s) => s.id === key || s.name === key || (key.length >= 8 && s.id.startsWith(key))) : undefined;
+    if (!skill) throw new Error(`unknown skill "${key}" — use the skill's name or id`);
+    if (skill.draft === 1) throw new Error('that skill is still a draft; the user has not approved it yet');
+    const instructions = (input.instructions ?? '').trim().slice(0, 20_000);
+    if (!instructions) throw new Error('revised instructions are required');
+    if (instructions === skill.instructions.trim()) return 'The proposed instructions are identical to the current ones; nothing to revise.';
+    const rev: PendingRevision = {
+      instructions,
+      reason: (input.reason ?? '').trim().slice(0, 1_000),
+      proposedAt: nowIso(),
+      proposedBy: input.proposedBy,
+    };
+    await this.db.update(skills).set({ pendingRevision: JSON.stringify(rev) }).where(eq(skills.id, skill.id));
+    return `Revision of "${skill.name}" proposed. The user sees it as a diff on the Skills page and decides; keep following the current instructions until they accept it.`;
+  }
+
+  /** Accept: the revision becomes the instructions and the old text goes to
+   *  history (last 5). Reject: the revision is dropped. */
+  async resolveRevision(id: string, accept: boolean): Promise<SkillRow> {
+    const skill = await this.get(id);
+    const rev = parseRevision(skill.pendingRevision);
+    if (!rev) throw new ConflictException('no pending revision');
+    if (!accept) {
+      await this.db.update(skills).set({ pendingRevision: '' }).where(eq(skills.id, id));
+      return this.get(id);
+    }
+    const history = parseHistory(skill.history);
+    history.unshift({ instructions: skill.instructions, replacedAt: nowIso(), reason: rev.reason });
+    await this.db.update(skills).set({
+      instructions: rev.instructions,
+      pendingRevision: '',
+      history: JSON.stringify(history.slice(0, HISTORY_KEEP)),
+    }).where(eq(skills.id, id));
+    return this.get(id);
   }
 
   /** Agent-drafted skill from experience (draft_skill tool). The draft is
@@ -166,4 +324,13 @@ export class SkillsService implements OnModuleInit {
   invocation(skill: SkillRow): string {
     return `Skill "${skill.name}" loaded. Follow these instructions now:\n\n${skill.instructions}`;
   }
+}
+
+export function parseRevision(raw: string): PendingRevision | null {
+  if (!raw) return null;
+  try { return JSON.parse(raw) as PendingRevision; } catch { return null; }
+}
+
+function parseHistory(raw: string): SkillHistoryEntry[] {
+  try { const v = JSON.parse(raw || '[]') as unknown; return Array.isArray(v) ? (v as SkillHistoryEntry[]) : []; } catch { return []; }
 }

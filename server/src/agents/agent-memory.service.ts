@@ -33,12 +33,15 @@ import { StorageService } from '../storage/storage.service';
 import { agentFileKey } from '../storage/storage.keys';
 
 /** Where a lesson was learned. Trust follows the surface, never the text. */
-export type LessonSource = 'chat' | 'loop' | 'channel' | 'app' | 'feedback';
+export type LessonSource = 'chat' | 'loop' | 'channel' | 'app' | 'feedback' | 'import';
+export const LESSON_SOURCES: readonly LessonSource[] = ['chat', 'loop', 'channel', 'app', 'feedback', 'import'];
 
 /** Surfaces whose conclusions may enter the prompt without a human. `app`
  *  and `channel` are the ones the permission model already treats as
  *  untrusted input; a lesson is an instruction that outlives every turn, so
- *  they get the same posture here. */
+ *  they get the same posture here. `import` — memory carried over from
+ *  another assistant or another AGENT.json — is text nobody here has read
+ *  yet, so it is quarantined too (docs/agent-memory.md §8). */
 const TRUSTED_SOURCES = new Set<LessonSource>(['chat', 'loop', 'feedback']);
 
 export interface LessonRow {
@@ -65,6 +68,8 @@ const DUPE_THRESHOLD = 0.55;
 const MAX_LESSONS = 300;
 
 const nowIso = () => new Date().toISOString();
+/** Dedup key for imports: case- and whitespace-insensitive. */
+const normalize = (t: string) => t.toLowerCase().replace(/\s+/g, ' ').trim();
 const newId = () => `les_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
 
 /** Session name → surface. The turn loop names these sessions, so the naming
@@ -127,6 +132,45 @@ export class AgentMemoryService {
     await this.consolidate(agentId);
     await this.regenerate(agentId);
     return { lesson: row, merged: false };
+  }
+
+  /**
+   * Bulk import (docs/agent-memory.md §8): rows from another assistant's
+   * export or an AGENT.json. Every row lands as `import` provenance; whether
+   * it is trusted is the caller's explicit choice (the UI's "trust imported
+   * lessons" tick), never the default. Dedup is against *all* existing
+   * lessons regardless of tier — importing the same export twice must not
+   * double the quarantine queue — and within the batch itself.
+   */
+  async importLessons(
+    agentId: string,
+    texts: string[],
+    opts: { trusted?: boolean; pinned?: string[] } = {},
+  ): Promise<{ added: number; skipped: number; ids: string[] }> {
+    const existing = new Set((await this.list(agentId)).map((r) => normalize(r.text)));
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    let skipped = 0;
+    for (const raw of texts) {
+      const body = raw.trim().slice(0, 2_000);
+      const key = normalize(body);
+      if (!key || existing.has(key) || seen.has(key)) { skipped++; continue; }
+      seen.add(key);
+      const [row] = await this.db.insert(agentLessons).values({
+        id: newId(), agentId, text: body,
+        sourceKind: 'import', sourceSessionId: null,
+        trusted: opts.trusted ? 1 : 0,
+        pinned: opts.pinned?.includes(raw) ? 1 : 0,
+        useCount: 1,
+        createdAt: nowIso(), updatedAt: nowIso(),
+      }).returning();
+      ids.push(row.id);
+    }
+    if (ids.length > 0) {
+      await this.consolidate(agentId);
+      await this.regenerate(agentId);
+    }
+    return { added: ids.length, skipped, ids };
   }
 
   /** Near-duplicate lookup. Uses pg_trgm where available and falls back to
@@ -252,7 +296,7 @@ export class AgentMemoryService {
       ? `## Active\n\n${trusted.map(fmt).join('\n')}\n`
       : '## Active\n\nNothing learned yet.\n';
     if (quarantined.length > 0) {
-      out += '\n## Awaiting review\n\nLearned from a mini app or a chat channel. '
+      out += '\n## Awaiting review\n\nLearned from a mini app, a chat channel, or an import. '
         + 'These are never injected until you promote them, because an app that could '
         + 'teach its agent could write its own instructions.\n\n'
         + `${quarantined.map(fmt).join('\n')}\n`;

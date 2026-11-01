@@ -5,7 +5,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
-import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentLesson, type AgentTask, type AgentUsage, type Connection, type FileEntry, type FilePreview, type Skill } from '../lib/api';
+import { ImportSkillMdButton, MemoryImportModal, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
+import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentJsonV2, type AgentLesson, type AgentTask, type AgentUsage, type Connection, type FileEntry, type FilePreview, type Skill } from '../lib/api';
 import { UsageBars, UsageRows } from './UsageChart';
 import { fmtUsd } from '../lib/pricing';
 import { fmtTokens } from '../lib/util';
@@ -29,22 +30,60 @@ function parseApps(a: Agent): AgentApp[] {
 }
 
 interface PendingImport {
-  profile: Record<string, unknown>;
+  profile: AgentJsonV2;
   name: string;
   loops: Array<{ name: string; cron: string }>;
 }
 
-/** FR-11.7: imported loops enable immediately, so review them first. */
+/** FR-11.7: imported loops enable immediately, so review them first. v2
+ *  files (execution-plan item 9) also carry lessons, skills, tasks and maybe
+ *  a profile; each section is a tick, lessons are quarantined unless the
+ *  user says otherwise, and skills always land as drafts. */
 function ImportReviewModal({ pending, onClose }: { pending: PendingImport; onClose: () => void }) {
   const app = useApp();
+  const v2 = (pending.profile.formatVersion ?? 1) >= 2;
+  const counts = {
+    lessons: Array.isArray(pending.profile.lessons) ? pending.profile.lessons.length : 0,
+    skills: Array.isArray(pending.profile.skills) ? pending.profile.skills.length : 0,
+    tasks: Array.isArray(pending.profile.tasks) ? pending.profile.tasks.length : 0,
+    profile: typeof pending.profile.profile === 'string' ? pending.profile.profile.split('\n').filter((l) => l.trim()).length : 0,
+  };
+  const [withLessons, setWithLessons] = useState(true);
+  const [trustLessons, setTrustLessons] = useState(false);
+  const [withSkills, setWithSkills] = useState(true);
+  const [withTasks, setWithTasks] = useState(true);
+  const [withProfile, setWithProfile] = useState(false);
+  const row = (on: boolean, set: (v: boolean) => void, n: number, text: React.ReactNode, sub: string) => (
+    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, fontSize: 12.5, cursor: n ? 'pointer' : 'default', opacity: n ? 1 : 0.5, padding: '5px 0' }}>
+      <input type="checkbox" disabled={!n} checked={on && n > 0} onChange={(e) => set(e.target.checked)} style={{ marginTop: 2 }} />
+      <span style={{ flex: 1 }}>
+        <span style={{ fontWeight: 600 }}>{n} {text}</span>
+        <span style={{ display: 'block', fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{sub}</span>
+      </span>
+    </label>
+  );
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', backdropFilter: 'blur(2px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 480, maxWidth: '100%', background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'var(--shadow)', animation: 'pop .16s' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 500, maxWidth: '100%', maxHeight: '90vh', overflowY: 'auto', background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 18, boxShadow: 'var(--shadow)', animation: 'pop .16s' }}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border-soft)' }}>
           <div style={{ fontSize: 17, fontWeight: 700 }}>Review before importing {pending.name}</div>
-          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 2 }}>AGENT.json · profile, charter{pending.loops.length ? ` and ${pending.loops.length} loop(s)` : ''}</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 2 }}>AGENT.json v{v2 ? 2 : 1} · identity, charter{pending.loops.length ? `, ${pending.loops.length} loop(s)` : ''}{v2 ? ', memory, skills, tasks' : ''}</div>
         </div>
         <div style={{ padding: '18px 24px' }}>
+          {v2 && (
+            <div style={{ marginBottom: 14 }}>
+              {row(withLessons, setWithLessons, counts.lessons, 'lessons', 'quarantined on arrival — promote them on the Memory tab')}
+              {withLessons && counts.lessons > 0 && (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 12, color: 'var(--amber)', cursor: 'pointer', padding: '2px 0 6px 24px' }}>
+                  <input type="checkbox" checked={trustLessons} onChange={(e) => setTrustLessons(e.target.checked)} />
+                  Trust imported lessons (they enter the prompt immediately — only for an export you made yourself)
+                </label>
+              )}
+              {row(withSkills, setWithSkills, counts.skills, 'skills', 'land as drafts — you approve each before it is callable')}
+              {row(withTasks, setWithTasks, counts.tasks, 'open tasks', 'added to the board as To do')}
+              {counts.profile > 0 && row(withProfile, setWithProfile, counts.profile, 'profile lines', 'proposed into this workspace\'s profile for your approval')}
+            </div>
+          )}
           {pending.loops.length > 0 ? (
             <div style={{ padding: '13px 15px', border: '1px solid var(--amber)', borderRadius: 11, background: 'color-mix(in oklab,var(--amber) 12%,transparent)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, fontWeight: 600, color: 'var(--amber)', marginBottom: 8 }}>
@@ -66,10 +105,16 @@ function ImportReviewModal({ pending, onClose }: { pending: PendingImport; onClo
           <button onClick={onClose} style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
           <button onClick={async () => {
             try {
-              const agent = await api.importAgent(pending.profile);
+              const res = await api.importAgent(pending.profile as Record<string, unknown>, {
+                lessons: withLessons, trustLessons: withLessons && trustLessons, skills: withSkills, tasks: withTasks,
+                profile: withProfile, workspaceId: app.workspaceId || undefined,
+              });
               await app.refreshAgents();
-              app.openAgent(agent.id);
-              app.showToast(`Imported ${agent.name}`);
+              if (withProfile) await app.refreshWorkspaces();
+              app.openAgent(res.agent.id);
+              const s = res.summary;
+              const bits = [s.lessons.added ? `${s.lessons.added} lesson${s.lessons.added === 1 ? '' : 's'}${s.lessons.trusted ? '' : ' quarantined'}` : '', s.skills.added ? `${s.skills.added} skill draft${s.skills.added === 1 ? '' : 's'}` : '', s.tasks.added ? `${s.tasks.added} task${s.tasks.added === 1 ? '' : 's'}` : '', s.profileProposals ? `${s.profileProposals} profile proposal${s.profileProposals === 1 ? '' : 's'}` : ''].filter(Boolean);
+              app.showToast(`Imported ${res.agent.name}${bits.length ? ` · ${bits.join(', ')}` : ''}`);
             } catch (err) {
               app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'import failed');
             }
@@ -228,7 +273,7 @@ export function AgentsDirectory() {
 
   const onPickFile = async (file: File) => {
     try {
-      const profile = JSON.parse(await file.text()) as Record<string, unknown>;
+      const profile = JSON.parse(await file.text()) as AgentJsonV2;
       setPending({
         profile,
         name: typeof profile.name === 'string' ? profile.name : 'agent',
@@ -719,24 +764,35 @@ function SkillsToolsTab({ a }: { a: Agent }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
       <div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8, flexWrap: 'wrap' }}>
           <span style={label}>Skills · {skills.length}</span>
-          <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>installed with {a.name} or captured from work that went well (draft_skill)</span>
+          <span style={{ fontSize: 10.5, color: 'var(--text-faint)', flex: 1 }}>installed with {a.name}, captured from work that went well (draft_skill), or imported as SKILL.md</span>
+          <ImportSkillMdButton compact scope={{ workspaceId: app.workspaceId || undefined, agentId: a.id }} onDone={() => refresh(a.id)} />
         </div>
         <div style={{ ...card, padding: '6px 8px' }}>
           {skills.map((s) => (
-            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderBottom: '1px solid var(--border-soft)' }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, fontFamily: 'var(--mono)' }}>/{s.name}</span>
-                  {s.draft === 1 ? pill('awaiting your approval', 'var(--amber)') : pill('active', 'var(--green)')}
+            <div key={s.id} style={{ padding: '9px 10px', borderBottom: '1px solid var(--border-soft)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, fontFamily: 'var(--mono)' }}>/{s.name}</span>
+                    {s.draft === 1 ? pill(s.scanReport ? 'imported · review the scan, then approve' : 'awaiting your approval', 'var(--amber)') : pill('active', 'var(--green)')}
+                    {s.pendingRevision && pill('revision pending', 'var(--amber)')}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.description || s.instructions.slice(0, 90)}</div>
+                  <div style={{ marginTop: 4 }}><SkillStats s={s} /></div>
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.description || s.instructions.slice(0, 90)}</div>
+                {s.draft === 1 && btn('Approve', async () => { await api.resolveSkillDraft(s.id, true); refresh(a.id); app.showToast(`Skill /${s.name} approved`); }, true)}
+                {s.draft === 1 && btn('Reject', async () => { await api.resolveSkillDraft(s.id, false); refresh(a.id); }, false, true)}
+                {s.draft !== 1 && <a href={api.skillMdUrl(s.id)} download title="Export as agentskills.io SKILL.md" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 12px', textDecoration: 'none', flex: 'none' }}>SKILL.md</a>}
+                {s.draft !== 1 && btn('Share', () => setPromoting(s))}
+                {s.draft !== 1 && btn('Remove', async () => { if (window.confirm(`Remove /${s.name}?`)) { await api.resolveSkillDraft(s.id, false).catch(async () => { await fetch(`/api/skills/${s.id}`, { method: 'DELETE', headers: authHeaders() }); }); refresh(a.id); } }, false, true)}
               </div>
-              {s.draft === 1 && btn('Approve', async () => { await api.resolveSkillDraft(s.id, true); refresh(a.id); app.showToast(`Skill /${s.name} approved`); }, true)}
-              {s.draft === 1 && btn('Reject', async () => { await api.resolveSkillDraft(s.id, false); refresh(a.id); }, false, true)}
-              {s.draft !== 1 && btn('Share', () => setPromoting(s))}
-              {s.draft !== 1 && btn('Remove', async () => { if (window.confirm(`Remove /${s.name}?`)) { await api.resolveSkillDraft(s.id, false).catch(async () => { await fetch(`/api/skills/${s.id}`, { method: 'DELETE', headers: authHeaders() }); }); refresh(a.id); } }, false, true)}
+              {s.draft === 1 && <ScanFlags s={s} />}
+              {s.draft === 1 && s.scanReport && (
+                <pre style={{ margin: '8px 0 0', padding: '9px 11px', background: 'var(--code)', borderRadius: 8, fontSize: 11, fontFamily: 'var(--mono)', lineHeight: 1.55, color: 'var(--text-dim)', whiteSpace: 'pre-wrap', maxHeight: 160, overflowY: 'auto' }}>{s.instructions}</pre>
+              )}
+              <RevisionCard s={s} onDone={() => refresh(a.id)} />
             </div>
           ))}
           {skills.length === 0 && <div style={{ padding: '10px 10px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>None yet — when work goes well, {a.name} drafts the procedure and you approve it here.</div>}
@@ -925,6 +981,7 @@ export function AgentHome() {
   const [chatQuery, setChatQuery] = useState('');
   const [editingCharter, setEditingCharter] = useState(false);
   const [charterDraft, setCharterDraft] = useState('');
+  const [importing, setImporting] = useState(false);
   const stats = a ? app.agentStats[a.id] : undefined;
   const agentId = a?.id;
 
@@ -1005,7 +1062,10 @@ export function AgentHome() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <a href={api.agentExportUrl(a.id)} download style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '8px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, textDecoration: 'none' }}>
+            <button onClick={() => setImporting(true)} title="Bring memory from Claude, Muse, Hermes or OpenClaw into this agent as proposals" style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '8px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7 }}>
+              <I d={P.download} size={14} style={{ transform: 'rotate(180deg)' }} />Import
+            </button>
+            <a href={api.agentExportUrl(a.id)} download title="AGENT.json v2: identity, loops, apps, lessons, skills, open tasks (no profile)" style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '8px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, textDecoration: 'none' }}>
               <I d={P.download} size={14} />Export
             </a>
             <button onClick={() => void app.newChat(a.id)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 15px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -1251,6 +1311,7 @@ export function AgentHome() {
       </div>
       {openApp && <AppViewer agentId={a.id} miniApp={openApp} onClose={() => setOpenApp(null)} />}
       {reviewApp && <CapReviewModal agentId={a.id} miniApp={reviewApp} onClose={() => setReviewApp(null)} />}
+      {importing && <MemoryImportModal a={a} onClose={() => setImporting(false)} />}
     </div>
   );
 }

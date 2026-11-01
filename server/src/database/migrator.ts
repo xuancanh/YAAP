@@ -421,6 +421,47 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '0022-portability-skill-outcomes',
+    up: async (db) => {
+      // Which skills a turn loaded, so a rating on the turn reaches them.
+      if (!(await hasColumn(db, 'chat_turns', 'skillsUsed'))) {
+        await db.query(`ALTER TABLE chat_turns ADD COLUMN "skillsUsed" TEXT NOT NULL DEFAULT '[]'`);
+      }
+      const skillCols: Array<[string, string]> = [
+        ['scanReport', `TEXT NOT NULL DEFAULT ''`],
+        ['useCount', 'INTEGER NOT NULL DEFAULT 0'],
+        ['upCount', 'INTEGER NOT NULL DEFAULT 0'],
+        ['downCount', 'INTEGER NOT NULL DEFAULT 0'],
+        ['lastUsedAt', 'TEXT'],
+        ['pendingRevision', `TEXT NOT NULL DEFAULT ''`],
+        ['history', `TEXT NOT NULL DEFAULT '[]'`],
+      ];
+      for (const [col, ddl] of skillCols) {
+        if (!(await hasColumn(db, 'skills', col))) {
+          await db.query(`ALTER TABLE skills ADD COLUMN "${col}" ${ddl}`);
+        }
+      }
+      await db.query(`CREATE TABLE IF NOT EXISTS skill_outcomes (
+        "id" TEXT PRIMARY KEY,
+        "skillId" TEXT NOT NULL,
+        "turnId" TEXT NOT NULL,
+        "rating" TEXT NOT NULL,
+        "note" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL
+      )`);
+      // One row per (skill, turn): re-rating a turn updates, never doubles.
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_outcomes_skill_turn ON skill_outcomes ("skillId", "turnId")`);
+      // Skill names are unique per *scope*, and since agent-private skills
+      // landed (0009) the scope includes the owning agent: two agents may
+      // each have their own "close-month" — SkillsService.list/create already
+      // reason that way, and an AGENT.json copy of an agent brings its
+      // private skills along. The 0002 index ignored agentId and made the
+      // copy fail; replace it.
+      await db.query('DROP INDEX IF EXISTS idx_skills_scope_name');
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_scope_agent_name ON skills (COALESCE("workspaceId", ''), COALESCE("agentId", ''), "name")`);
+    },
+  },
 ];
 
 /** Advisory-lock key serializing migration runs: two instances booting

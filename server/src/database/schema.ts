@@ -230,6 +230,9 @@ export const chatTurns = pgTable('chat_turns', {
   ratingNote: text('ratingNote'),
   /** Board-task handoff record, if promoted (FR-6.4). */
   taskHandoff: text('taskHandoff'),
+  /** JSON array of skill ids whose skill_* tool loaded in this turn, so a
+   *  rating on the turn can attach to the skills that shaped it. */
+  skillsUsed: text('skillsUsed').notNull().default('[]'),
   error: text('error'),
   createdAt: text('createdAt').notNull(),
 });
@@ -253,6 +256,34 @@ export const skills = pgTable('skills', {
   proposedBy: text('proposedBy').notNull().default(''),
   /** Set = private to this agent (its self-built skills); null = shared. */
   agentId: text('agentId'),
+  /** JSON ScanReport from a SKILL.md import ('' when not imported): size,
+   *  URLs, instruction smells, foreign allowed-tools. Shown on the draft
+   *  card before the user can enable the skill (docs/permissions.md). */
+  scanReport: text('scanReport').notNull().default(''),
+  /** Outcome aggregates (execution-plan item 10): turns that loaded the
+   *  skill, and how those turns were rated. */
+  useCount: integer('useCount').notNull().default(0),
+  upCount: integer('upCount').notNull().default(0),
+  downCount: integer('downCount').notNull().default(0),
+  lastUsedAt: text('lastUsedAt'),
+  /** JSON { instructions, reason, proposedAt, proposedBy } — a revision the
+   *  agent proposed after a 👎 (revise_skill); '' when none. Accepting
+   *  replaces `instructions`; the previous text goes to `history`. */
+  pendingRevision: text('pendingRevision').notNull().default(''),
+  /** JSON array of the last 5 { instructions, replacedAt, reason }. */
+  history: text('history').notNull().default('[]'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** One rating that landed on a turn which had loaded a skill: the raw rows
+ *  behind the aggregate counters on `skills`, one per (skill, turn). */
+export const skillOutcomes = pgTable('skill_outcomes', {
+  id: text('id').primaryKey(),
+  skillId: text('skillId').notNull(),
+  turnId: text('turnId').notNull(),
+  /** up | down. */
+  rating: text('rating').notNull(),
+  note: text('note').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -323,7 +354,9 @@ export const agentLessons = pgTable('agent_lessons', {
   id: text('id').primaryKey(),
   agentId: text('agentId').notNull(),
   text: text('text').notNull(),
-  /** chat | loop | channel | app | feedback — the surface it was learned on. */
+  /** chat | loop | channel | app | feedback | import — the surface it was
+   *  learned on. `import` rows arrive from another assistant's memory export
+   *  and are quarantined like app/channel ones. */
   sourceKind: text('sourceKind').notNull().default('chat'),
   sourceSessionId: text('sourceSessionId'),
   /** 0 = quarantined; never injected until the user promotes it. */
