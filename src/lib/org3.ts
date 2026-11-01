@@ -352,36 +352,6 @@ export function keyButtonLabel(r: Pick<ActionLogRow, 'status' | 'tool' | 'staged
   return `Approve — run ${r.tool} (my key)`;
 }
 
-/** A tool result that says the call was parked for the owner's key (the turn loop's `hold` text). */
-export function parseHeldToolResult(output: string | undefined): { kind: 'held' | 'staged'; cls: string | null; actionPrefix: string | null } | null {
-  if (!output) return null;
-  const held = /^Held for the owner's key: \S+ is an? ([a-z ]+?) action/.exec(output);
-  const staged = /^Staged, not sent: \S+ is an? ([a-z ]+?) action/.exec(output);
-  const m = held ?? staged;
-  if (!m) return null;
-  const id = /\(action ([0-9a-f-]{6,})\)/i.exec(output)?.[1] ?? null;
-  return { kind: held ? 'held' : 'staged', cls: m[1].trim().replace(/ /g, '_'), actionPrefix: id };
-}
-
-/** The class of a tool by name, when the registry fixes it (docs/actions-and-trust.md §1). Provider tools whose owner flag decides (org_, channel_, meeting_, mcp_) return null. */
-export function toolClassHint(tool: string): ActionClass | null {
-  const exact: Record<string, ActionClass> = {
-    fs_list: 'read', fs_read: 'read', fs_search: 'read', web_search: 'read', web_fetch: 'read', fs_write: 'internal_write', fs_delete: 'internal_write', slides_create: 'internal_write',
-    http_request: 'external_reversible', run_js: 'internal_write', run_python: 'internal_write', browser_open: 'read', browser_read: 'read', browser_screenshot: 'read', browser_act: 'external_reversible',
-    gcal_upcoming: 'read', gcal_search: 'read', gcal_freebusy: 'read', gcal_create_event: 'external_reversible', gcal_update_event: 'external_reversible',
-    gmail_draft: 'external_reversible', gmail_send: 'external_irreversible', drive_search: 'read', drive_read: 'read', drive_export_doc: 'external_reversible', drive_export_sheet: 'external_reversible',
-    mscal_upcoming: 'read', mscal_search: 'read', mscal_create_event: 'external_reversible', mscal_update_event: 'external_reversible', msmail_draft: 'external_reversible', msmail_send: 'external_irreversible',
-    msdrive_search: 'read', msdrive_read: 'read', msdrive_export_doc: 'external_reversible', msdrive_export_sheet: 'external_reversible', trust_status: 'read',
-    list_tasks: 'read', search_history: 'read', update_dashboard: 'internal_write', save_app: 'internal_write', add_task: 'internal_write', update_task: 'internal_write',
-  };
-  if (exact[tool]) return exact[tool];
-  if (/(?:^|_)(pay|payment|payout|charge|refund|transfer|invoice_send|purchase|buy|checkout|stripe_charge)(?:_|$)/.test(tool)) return 'money';
-  if (tool.startsWith('computer_')) return 'external_irreversible';
-  if (tool.startsWith('skill_')) return 'read';
-  if (tool.startsWith('tool_')) return 'external_reversible';
-  return null;
-}
-
 // ==== incidents and health (item 29, docs/incidents.md) ====
 
 export const INCIDENT_SEVERITY_COLOR: Record<IncidentSeverity, string> = { minor: 'var(--amber)', major: 'var(--red)', critical: '#b91c1c' };
@@ -589,29 +559,134 @@ export function groupGaps(gaps: ReconciliationGap[]): Array<{ kind: string; labe
   }));
 }
 
-// ==== the decision card's optional fields (item 31 lands them; rendered when present) ====
+// ==== the decision card (item 31, docs/owners-seat.md §1) ====
 
-export interface DecisionExtra { key: string; label: string; value: string }
+/** "in 3h 20m", "in 2d 4h", "12m overdue" — the time left to a deadline. */
+export function countdown(iso: string | null | undefined, now: Date = new Date()): { text: string; overdue: boolean; soon: boolean } | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso) - now.getTime();
+  if (!Number.isFinite(ms)) return null;
+  const m = Math.round(Math.abs(ms) / 60_000);
+  const span = m >= 2880 ? `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h` : m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+  return ms < 0 ? { text: `${span} overdue`, overdue: true, soon: false } : { text: `in ${span}`, overdue: false, soon: ms < 6 * 3_600_000 };
+}
+const utc = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+
+export interface DecisionExtra { key: string; label: string; value: string; tone?: 'amber' | 'red' }
 const EXTRA_FIELDS: Array<{ key: string; label: string }> = [
-  { key: 'recommendation', label: 'Recommendation' }, { key: 'alternatives', label: 'Alternatives' }, { key: 'reversibility', label: 'Reversibility' },
+  { key: 'recommendedAction', label: 'Recommended' }, { key: 'recommendation', label: 'Recommendation' }, { key: 'alternatives', label: 'Alternatives' }, { key: 'reversibility', label: 'Reversibility' },
   { key: 'confidence', label: 'Confidence' }, { key: 'deadline', label: 'Decide by' }, { key: 'defaultAction', label: 'If you do not answer' },
 ];
-/** The optional decision-card fields an object carries (top level or under `card`), as label/value rows. */
-export function decisionExtras(o: Record<string, unknown> | null | undefined, skip: string[] = []): DecisionExtra[] {
+/** The decision-card fields an object carries (top level or under `card`), as label/value rows:
+ *  JSON alternatives are listed, the deadline counts down, the default names its time. */
+export function decisionExtras(o: Record<string, unknown> | null | undefined, skip: string[] = [], now: Date = new Date()): DecisionExtra[] {
   if (!o) return [];
   const src = { ...(typeof o.card === 'object' && o.card ? o.card as Record<string, unknown> : {}), ...o };
+  const deadline = typeof src.deadline === 'string' && src.deadline ? src.deadline : null;
   const out: DecisionExtra[] = [];
   for (const f of EXTRA_FIELDS) {
     if (skip.includes(f.key)) continue;
-    const v = src[f.key];
-    if (v === undefined || v === null || v === '') continue;
+    let v = src[f.key];
+    if (typeof v === 'string' && /^\s*\[/.test(v)) v = safeJsonParse<unknown>(v, v);
+    if (v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0)) continue;
     let value: string;
+    let tone: DecisionExtra['tone'];
     if (f.key === 'confidence' && typeof v === 'number') value = v <= 1 ? pct(v) : `${v}%`;
     else if (Array.isArray(v)) value = v.map((x) => (typeof x === 'object' && x ? str((x as Record<string, unknown>).title ?? (x as Record<string, unknown>).option ?? JSON.stringify(x)) : String(x))).join(' · ');
     else if (typeof v === 'object') value = JSON.stringify(v);
     else value = String(v);
-    if (f.key === 'deadline' && /^\d{4}-\d{2}-\d{2}T/.test(value)) value = `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`;
-    out.push({ key: f.key, label: f.label, value });
+    if (f.key === 'deadline' && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+      const c = countdown(value, now);
+      value = `${utc(value)}${c ? ` (${c.text})` : ''}`;
+      if (c?.overdue) tone = 'red'; else if (c?.soon) tone = 'amber';
+    }
+    if (f.key === 'defaultAction') { value = `${value}${deadline ? ` at ${utc(deadline)}` : ''}`; tone = v === 'approve' ? 'amber' : undefined; }
+    if (f.key === 'reversibility' && v === 'irreversible') tone = 'red';
+    out.push({ key: f.key, label: f.label, value, ...(tone ? { tone } : {}) });
   }
   return out;
+}
+
+/** How a card was decided when not by the CEO's own hand (`decidedVia`). */
+export function decidedViaBadge(via: string | null | undefined, nameOf: (id: string) => string = (id) => id.slice(0, 8)): { label: string; title: string } | null {
+  if (!via) return null;
+  if (via === 'default') return { label: 'decided by default', title: 'Nobody answered by the deadline; the card\'s default action was applied' };
+  const m = /^delegate:(human|role):(.+)$/.exec(via);
+  if (m) return m[1] === 'human' ? { label: `decided by delegate ${nameOf(m[2])}`, title: 'A person you delegated this kind of card to decided it' } : { label: `decided by delegate (${m[2]})`, title: `The member titled "${m[2]}" decided it under your delegation (judged on another model family)` };
+  if (via.startsWith('delegate')) return { label: 'decided by delegate', title: via };
+  return { label: via, title: via };
+}
+
+// ==== the boundary and delegations (docs/boundary.md, docs/owners-seat.md §2) ====
+
+export const VERDICT_COLOR: Record<string, string> = { alone: 'var(--green)', experiment: 'var(--blue)', propose: 'var(--amber)', never: 'var(--red)' };
+export const VERDICT_LABEL_B: Record<string, string> = { alone: 'alone', experiment: 'through an experiment', propose: 'proposes a card', never: 'never' };
+/** Which boundary family a card of each approval kind stands for (for `delegable`). */
+const CARD_FAMILY: Record<string, string> = {
+  hire: 'hire', scope_widen: 'scope_widen', reorg: 'reorg', budget_raise: 'budget', terminate: 'terminate', tune: 'tunable', cadence: 'cadence', routing: 'routing', charter_change: 'charter',
+};
+export const DELEGABLE_KINDS = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'experiment', 'two_key', 'metric_source'];
+/** The delegation form's kinds: approval kinds and action classes, with the reason a kind can never be delegated. */
+export function delegationOptions(rules: Array<{ kind: string; match: string; reason: string; delegable: boolean; verdict: string }>): Array<{ kind: string; label: string; disabled: boolean; note: string }> {
+  const kinds = DELEGABLE_KINDS.map((k) => {
+    if (k === 'metric_source') return { kind: k, label: k, disabled: true, note: 'a metric source defines what counts as truth' };
+    if (k === 'two_key') return { kind: k, label: `${k} (prefer an action class)`, disabled: false, note: '' };
+    const fam = CARD_FAMILY[k];
+    const rows = fam ? rules.filter((r) => r.kind === fam && r.verdict !== 'never' && r.verdict !== 'alone') : [];
+    const blocked = rows.filter((r) => !r.delegable);
+    if (rows.length > 0 && blocked.length === rows.length) return { kind: k, label: k, disabled: true, note: blocked.map((r) => `${r.match}: ${r.reason}`).join('; ') };
+    return { kind: k, label: k, disabled: false, note: blocked.length ? `never for ${blocked.map((r) => r.match).join(', ')} — ${blocked[0].reason}` : '' };
+  });
+  const classes = ACTION_CLASSES.filter((c) => c !== 'read').map((c) => ({ kind: c, label: `${CLASS_LABEL[c]} (held actions${c === 'money' ? ' and any card that spends money' : ''})`, disabled: false, note: '' }));
+  return [...kinds, ...classes];
+}
+
+// ==== evals (docs/evals.md) ====
+
+/** A run's pass rate against the baseline, and its verdict. */
+export function evalRunText(r: { passRate: number | null; baselinePassRate: number | null; verdict: string; status?: string }): { text: string; color: string } {
+  const color = r.verdict === 'regress' ? 'var(--red)' : r.verdict === 'pass' ? 'var(--green)' : 'var(--text-dim)';
+  if (r.status === 'running') return { text: 'running…', color: 'var(--text-dim)' };
+  const delta = r.passRate !== null && r.baselinePassRate !== null ? Math.round((r.passRate - r.baselinePassRate) * 100) : null;
+  return { text: `${pct(r.passRate)} vs baseline ${pct(r.baselinePassRate)}${delta !== null ? ` (${delta >= 0 ? '+' : ''}${delta} pts)` : ''} — ${r.verdict === 'regress' ? 'regression, blocked' : r.verdict || r.status || '—'}`, color };
+}
+
+// ==== capacity (C4) ====
+
+/** A task's deadline badge: overdue in red, due within a day in amber. */
+export function dueBadge(dueAt: string | null | undefined, status: string, now: Date = new Date()): { label: string; color: string; title: string } | null {
+  if (!dueAt || status === 'done' || status === 'cancelled') return null;
+  const c = countdown(dueAt, now);
+  if (!c) return null;
+  return { label: c.overdue ? `overdue ${c.text.replace(' overdue', '')}` : `due ${c.text}`, color: c.overdue ? 'var(--red)' : Date.parse(dueAt) - now.getTime() < 86_400_000 ? 'var(--amber)' : 'var(--panel-2)', title: `Due ${utc(dueAt)}` };
+}
+/** The expected duration from history, or null when there is none. */
+export function expectedLabel(e: { runs: number | null; hours: number | null; samples: number; basis: string } | undefined): string | null {
+  if (!e || e.basis === 'none' || (e.runs === null && e.hours === null)) return null;
+  return `≈${e.runs !== null ? `${fmtNum(e.runs)} run${e.runs === 1 ? '' : 's'}` : ''}${e.runs !== null && e.hours !== null ? ', ' : ''}${e.hours !== null ? `${fmtNum(e.hours)}h` : ''}`;
+}
+/** A member's open work against the WIP limit. */
+export function wipLabel(m: { open: number; wip: number; atLimit: boolean; expectedHours: number | null }): { text: string; color: string } {
+  return { text: `${m.open}/${m.wip}${m.expectedHours !== null ? ` · ≈${fmtNum(m.expectedHours)}h` : ''}`, color: m.atLimit ? 'var(--red)' : m.open >= m.wip - 1 ? 'var(--amber)' : 'var(--text-dim)' };
+}
+
+// ==== value and outcomes (docs/owners-seat.md §4) ====
+
+export const fmtUsd2 = (v: number | null | undefined): string => (v === null || v === undefined || !Number.isFinite(v) ? '—' : `${v < 0 ? '−' : ''}$${Math.abs(v).toFixed(2)}`);
+/** Value realised against spend for an objective this month. */
+export function roiText(r: { valueUsd: number; spentUsd: number; roi: number | null }): { text: string; color: string } {
+  const color = r.roi === null ? 'var(--text-dim)' : r.roi >= 1 ? 'var(--green)' : r.roi > 0 ? 'var(--amber)' : 'var(--red)';
+  return { text: `${fmtUsd2(r.valueUsd)} realised · ${fmtUsd2(r.spentUsd)} spent${r.roi !== null ? ` · ${fmtNum(r.roi)}×` : r.spentUsd === 0 ? ' · no spend' : ''}`, color };
+}
+/** A key result's movement this week, signed, with the target. */
+export function movementText(k: { measured: boolean; movement7d: number | null; value: number | null; target: number | null }): string {
+  if (!k.measured) return 'self-reported — no measured movement';
+  const mv = k.movement7d ?? 0;
+  return `${mv > 0 ? '+' : ''}${fmtNum(mv)} this week · ${fmtNum(k.value)} of ${fmtNum(k.target)}`;
+}
+
+/** A member's golden-set role key: its title as a slug (the server's `roleKeyOf`). */
+export function roleKeyOf(m: { title?: string | null; agentId: string }): string {
+  const slug = (m.title ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  return slug || `agent-${m.agentId.slice(0, 8)}`;
 }

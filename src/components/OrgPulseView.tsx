@@ -201,7 +201,8 @@ function SignalsCard({ signals, onAck, onResolve }: { signals: OrgSignal[]; onAc
   const [ack, setAck] = useState<{ id: string; note: string } | null>(null);
   const groups = groupSignals(signals);
   const follow = (s: OrgSignal) => {
-    if (s.refType === 'task') { app.setOrgFocus({ kind: 'task', id: s.refId }); app.setOrgPane('board'); }
+    if (s.kind === 'no_outcome') { app.setOrgFocus({ kind: 'unit', id: s.refId }); app.setOrgPane('outcomes'); }
+    else if (s.refType === 'task') { app.setOrgFocus({ kind: 'task', id: s.refId }); app.setOrgPane('board'); }
     else if (s.refType === 'goal') { app.setOrgFocus({ kind: 'goal', id: s.refId }); app.setOrgUnitId(null); app.setOrgPane('vision'); }
     else if (s.refType === 'agent' || s.refType === 'member') app.openAgent(s.refId);
     else if (s.refType === 'unit') { const u = byId.get(s.refId); if (u) { app.setOrgUnitId(u.parentUnitId === null ? null : u.id); app.setOrgPane('board'); } }

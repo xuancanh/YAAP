@@ -22,13 +22,13 @@ export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 's
 /** The organization panes under the Workspace section (docs/group-chat.md
  *  §5: the workspace is the company; there is no separate Company section). */
 export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'ask' | 'plans' | 'replay' | 'capital' | 'playbooks' | 'mytasks'
-  | 'metrics' | 'incidents' | 'experiments';
-export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'ask', 'plans', 'replay', 'capital', 'playbooks', 'mytasks', 'metrics', 'incidents', 'experiments'];
+  | 'metrics' | 'incidents' | 'experiments' | 'outcomes' | 'evals';
+export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'ask', 'plans', 'replay', 'capital', 'playbooks', 'mytasks', 'metrics', 'incidents', 'experiments', 'outcomes', 'evals'];
 /** Something a pane should open or scroll to once loaded (a signal row's
  *  deep link, docs/company-vision.md §5): a task on the board, a goal on the
  *  vision page, a meeting thread, a plan, a playbook, a replay day (the id is
  *  the YYYY-MM-DD). Consumed by the pane. */
-export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'playbook' | 'replay' | 'source' | 'incident' | 'experiment' | 'action'; id: string }
+export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'playbook' | 'replay' | 'source' | 'incident' | 'experiment' | 'action' | 'unit'; id: string }
 const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
 /** What the main pane shows while in the Home section: a conversation, a
  *  group-chat channel, an agent's home page (or the directory when no agent
@@ -48,6 +48,9 @@ export interface LiveTool {
   /** The approval belongs to another member (the owner of the connection in
    *  use): this client can only wait for them (docs/shared-agents.md §3). */
   routedTo?: { memberAccountId: string; name: string };
+  /** The action contract (docs/actions-and-trust.md): the call's class, its
+   *  action_log row and whether it waits for the owner's key. */
+  actionClass?: string; actionId?: string; held?: 'held' | 'staged';
 }
 export type LiveItem =
   | { kind: 'thinking'; text: string; streaming: boolean }
@@ -724,7 +727,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           applyBuf();
           patch((items) => items.map((i) => (
             i.kind === 'tool' && i.id === ev.id
-              ? { ...i, status: ev.isError ? (ev.output.includes('Denied') ? 'denied' : 'error') : 'done', result: ev.output, review: ev.review ?? i.review }
+              ? { ...i, status: ev.isError ? (ev.output.includes('Denied') ? 'denied' : 'error') : 'done', result: ev.output, review: ev.review ?? i.review, actionClass: ev.actionClass, actionId: ev.actionId, held: ev.held }
               : i
           )));
         } else if (ev.type === 'browser') {

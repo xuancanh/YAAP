@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   actionCallText, actionDecisionLabel, auditorQuality, baselineVsCurrent, buildCheck, calibrationLabel, checkSummary, containedNow, containmentLabel, decisionExtras, degradedChatNote, describeCheck,
   effectLabel, experimentGroup, experimentHints, experimentProgress, groupGaps, headerError, healthStrip, heldReason, incidentTimeline, keyButtonLabel, LEVEL_LEGEND, normalizeSeries,
-  parseHeldToolResult, pendingSpotChecks, provenanceLabel, revertRuleLabel, sortIncidents, testSelector, toolClassHint, trustRows, verdictText, verificationBadge, lastRedTeam,
+  pendingSpotChecks, provenanceLabel, revertRuleLabel, sortIncidents, testSelector, trustRows, verdictText, verificationBadge, lastRedTeam,
 } from '../src/lib/org3';
 import type { ActionLogRow, OrgAuditRun, OrgExperiment, OrgHealth, OrgIncident, TaskCheckResult, TrustOverview } from '../src/lib/api';
 
@@ -124,18 +124,6 @@ describe('actions and trust (item 28)', () => {
     expect(keyButtonLabel(action({ status: 'staged' }))).toBe('Send the draft (my key)');
     expect(keyButtonLabel(action({ status: 'held', tool: 'http_request' }))).toBe('Approve — run http_request (my key)');
   });
-
-  it('reads a held tool result and classes tools by name', () => {
-    expect(parseHeldToolResult('Held for the owner\'s key: gmail_send is an external irreversible action and your trust level for it is 0. It was recorded (action 1a2b3c4d) and runs only if the owner approves.'))
-      .toEqual({ kind: 'held', cls: 'external_irreversible', actionPrefix: '1a2b3c4d' });
-    expect(parseHeldToolResult('Staged, not sent: gmail_send is an external irreversible action and x. It was prepared as gmail_draft (…) and will be sent only when the owner approves (action deadbeef).'))
-      .toMatchObject({ kind: 'staged', actionPrefix: 'deadbeef' });
-    expect(parseHeldToolResult('ok')).toBeNull();
-    expect(toolClassHint('gmail_send')).toBe('external_irreversible');
-    expect(toolClassHint('computer_click')).toBe('external_irreversible');
-    expect(toolClassHint('mcp_stripe_refund')).toBe('money');
-    expect(toolClassHint('org_create_task')).toBeNull();
-  });
 });
 
 describe('incidents and health (item 29)', () => {
@@ -234,9 +222,9 @@ describe('experiments, calibration, reconciliation (item 30)', () => {
     expect(groups[0].gaps[0].link).toEqual({ kind: 'task', id: 't1' });
     expect(groups[1].gaps[0].link).toEqual({ kind: 'goal', id: 'g1' });
     expect(groups[2].gaps[0].link).toBeNull();
-    expect(decisionExtras({ recommendation: 'Approve', confidence: 0.8, deadline: '2026-11-05T09:00:00Z', alternatives: [{ title: 'Wait' }, 'Hire'], other: 1 })).toEqual([
+    expect(decisionExtras({ recommendation: 'Approve', confidence: 0.8, deadline: '2026-11-05T09:00:00Z', alternatives: [{ title: 'Wait' }, 'Hire'], other: 1 }, [], new Date('2026-11-05T06:00:00Z'))).toEqual([
       { key: 'recommendation', label: 'Recommendation', value: 'Approve' }, { key: 'alternatives', label: 'Alternatives', value: 'Wait · Hire' },
-      { key: 'confidence', label: 'Confidence', value: '80%' }, { key: 'deadline', label: 'Decide by', value: '2026-11-05 09:00 UTC' },
+      { key: 'confidence', label: 'Confidence', value: '80%' }, { key: 'deadline', label: 'Decide by', value: '2026-11-05 09:00 UTC (in 3h 0m)', tone: 'amber' },
     ]);
     expect(decisionExtras({ card: { defaultAction: 'reject' } })).toEqual([{ key: 'defaultAction', label: 'If you do not answer', value: 'reject' }]);
     expect(decisionExtras({ recommendation: 'x' }, ['recommendation'])).toEqual([]);
@@ -251,5 +239,66 @@ describe('experiment changes in words', () => {
     expect(changeSummary('playbook', { apply: { playbookId: 'p1', title: 'Launch', action: 'retire' } })).toBe('retire playbook Launch');
     expect(changeSummary('cadence', { apply: { unitId: 'u', kind: 'standup', cron: null } })).toBe('standup cadence of u → off');
     expect(changeSummary('other', { description: 'new onboarding email' })).toBe('new onboarding email');
+  });
+});
+
+describe('item 31 on screen', () => {
+  it('renders the decision card from the approval row: JSON alternatives, countdown, the default with its time', async () => {
+    const { decisionExtras, countdown, decidedViaBadge } = await import('../src/lib/org3');
+    const now = new Date('2026-11-02T10:00:00Z');
+    const rows = decisionExtras({ recommendedAction: 'approve', alternatives: '["wait a week","hire cheaper"]', reversibility: 'irreversible', confidence: 0.6, deadline: '2026-11-02T08:00:00Z', defaultAction: 'deny' }, [], now);
+    expect(rows.map((r) => [r.key, r.value, r.tone])).toEqual([
+      ['recommendedAction', 'approve', undefined], ['alternatives', 'wait a week · hire cheaper', undefined], ['reversibility', 'irreversible', 'red'],
+      ['confidence', '60%', undefined], ['deadline', '2026-11-02 08:00 UTC (2h 0m overdue)', 'red'], ['defaultAction', 'deny at 2026-11-02 08:00 UTC', undefined],
+    ]);
+    expect(decisionExtras({ alternatives: '[]', defaultAction: '' })).toEqual([]);
+    expect(countdown('2026-11-05T12:00:00Z', now)?.text).toBe('in 3d 2h');
+    expect(countdown('2026-11-02T10:30:00Z', now)).toEqual({ text: 'in 30m', overdue: false, soon: true });
+    expect(decidedViaBadge('default')?.label).toBe('decided by default');
+    expect(decidedViaBadge('delegate:human:acc1', () => 'Dana')?.label).toBe('decided by delegate Dana');
+    expect(decidedViaBadge('delegate:role:controller')?.label).toBe('decided by delegate (controller)');
+    expect(decidedViaBadge('')).toBeNull();
+  });
+
+  it('offers delegable kinds and names why some never are', async () => {
+    const { delegationOptions } = await import('../src/lib/org3');
+    const rules = [
+      { kind: 'tunable', match: 'actions.*, trust.*, seat.*', verdict: 'propose', reason: 'the external-action floor', delegable: false },
+      { kind: 'tunable', match: 'incidents.*', verdict: 'propose', reason: 'safety floors', delegable: true },
+      { kind: 'budget', match: 'the company envelope', verdict: 'propose', reason: 'money beyond the envelope', delegable: false },
+    ];
+    const opts = delegationOptions(rules);
+    expect(opts.find((o) => o.kind === 'metric_source')).toMatchObject({ disabled: true, note: 'a metric source defines what counts as truth' });
+    expect(opts.find((o) => o.kind === 'budget_raise')).toMatchObject({ disabled: true });
+    expect(opts.find((o) => o.kind === 'tune')).toMatchObject({ disabled: false, note: expect.stringContaining('never for actions.*') });
+    expect(opts.find((o) => o.kind === 'hire')).toMatchObject({ disabled: false, note: '' });
+    expect(opts.some((o) => o.kind === 'money')).toBe(true);
+    expect(opts.some((o) => o.kind === 'read')).toBe(false);
+  });
+
+  it('words eval runs, deadlines, expected durations, WIP and value against spend', async () => {
+    const { evalRunText, dueBadge, expectedLabel, wipLabel, roiText, movementText } = await import('../src/lib/org3');
+    expect(evalRunText({ passRate: 0.6, baselinePassRate: 0.8, verdict: 'regress' })).toEqual({ text: '60% vs baseline 80% (-20 pts) — regression, blocked', color: 'var(--red)' });
+    expect(evalRunText({ passRate: 0.8, baselinePassRate: 0.8, verdict: 'pass' }).text).toBe('80% vs baseline 80% (+0 pts) — pass');
+    const now = new Date('2026-11-02T10:00:00Z');
+    expect(dueBadge('2026-11-02T09:00:00Z', 'todo', now)).toMatchObject({ label: 'overdue 1h 0m', color: 'var(--red)' });
+    expect(dueBadge('2026-11-02T20:00:00Z', 'todo', now)).toMatchObject({ label: 'due in 10h 0m', color: 'var(--amber)' });
+    expect(dueBadge('2026-11-02T09:00:00Z', 'done', now)).toBeNull();
+    expect(expectedLabel({ runs: 2, hours: 1.5, samples: 4, basis: 'class' })).toBe('≈2 runs, 1.5h');
+    expect(expectedLabel({ runs: null, hours: null, samples: 0, basis: 'none' })).toBeNull();
+    expect(wipLabel({ open: 3, wip: 3, atLimit: true, expectedHours: 6 })).toEqual({ text: '3/3 · ≈6h', color: 'var(--red)' });
+    expect(roiText({ valueUsd: 30, spentUsd: 10, roi: 3 })).toEqual({ text: '$30.00 realised · $10.00 spent · 3×', color: 'var(--green)' });
+    expect(roiText({ valueUsd: 0, spentUsd: 0, roi: null }).text).toBe('$0.00 realised · $0.00 spent · no spend');
+    expect(movementText({ measured: true, movement7d: 12, value: 450, target: 1000 })).toBe('+12 this week · 450 of 1000');
+    expect(movementText({ measured: false, movement7d: null, value: 3, target: 5 })).toBe('self-reported — no measured movement');
+  });
+});
+
+describe('golden-set roles', () => {
+  it('slugs a member title like the server', async () => {
+    const { roleKeyOf } = await import('../src/lib/org3');
+    expect(roleKeyOf({ title: 'Senior Writer', agentId: 'abcdef123456' })).toBe('senior-writer');
+    expect(roleKeyOf({ title: 'Éditeur', agentId: 'x' })).toBe('editeur');
+    expect(roleKeyOf({ title: '', agentId: 'abcdef123456' })).toBe('agent-abcdef12');
   });
 });

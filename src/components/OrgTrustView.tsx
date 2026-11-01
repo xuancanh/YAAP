@@ -212,12 +212,10 @@ export function HeldActionCard({ wsId, row, onDone }: { wsId: string; row: Actio
 /** The exact call behind a `two_key` approval card (the card's own buttons decide it). */
 export function ActionCallPreview({ wsId, actionId }: { wsId: string; actionId: string }) {
   const [row, setRow] = useState<ActionLogRow | null | undefined>(undefined);
-  useEffect(() => {
-    void Promise.all([api.workspaceActions(wsId, { status: 'held', limit: 200 }).catch((): ActionLogRow[] => []), api.workspaceActions(wsId, { status: 'staged', limit: 200 }).catch((): ActionLogRow[] => [])])
-      .then(([h, s]) => setRow([...h, ...s].find((r) => r.id === actionId) ?? null));
-  }, [wsId, actionId]);
+  useEffect(() => { void api.workspaceAction(wsId, actionId).then(setRow).catch(() => setRow(null)); }, [wsId, actionId]);
   if (row === undefined) return <div style={faint}>Loading the call…</div>;
-  if (row === null) return <div style={faint}>The action is no longer waiting (decided elsewhere).</div>;
+  if (row === null) return <div style={faint}>The action could not be loaded.</div>;
+  if (row.status !== 'held' && row.status !== 'staged') return <div style={faint}>Already decided: {row.status}.</div>;
   return (
     <div style={{ display: 'grid', gap: 4 }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><ClassPill cls={row.class} /><span style={{ fontSize: 12.5 }}>{heldReason(row)}</span></div>
@@ -227,16 +225,14 @@ export function ActionCallPreview({ wsId, actionId }: { wsId: string; actionId: 
   );
 }
 
-/** In a chat tool card: find the parked action by its id prefix and offer the key inline. */
-export function HeldInline({ wsId, prefix }: { wsId: string; prefix: string }) {
+/** In a chat tool card: the parked action (its id rides on the tool result) with the key inline. */
+export function HeldInline({ wsId, actionId }: { wsId: string; actionId: string }) {
   const [row, setRow] = useState<ActionLogRow | null | undefined>(undefined);
-  const load = useCallback(async () => {
-    const [h, s] = await Promise.all([api.workspaceActions(wsId, { status: 'held', limit: 200 }).catch((): ActionLogRow[] => []), api.workspaceActions(wsId, { status: 'staged', limit: 200 }).catch((): ActionLogRow[] => [])]);
-    setRow([...h, ...s].find((r) => r.id.startsWith(prefix)) ?? null);
-  }, [wsId, prefix]);
+  const load = useCallback(async () => { setRow(await api.workspaceAction(wsId, actionId).catch(() => null)); }, [wsId, actionId]);
   useEffect(() => { void load(); }, [load]);
   if (row === undefined) return <div style={{ ...faint, padding: '6px 0' }}>Loading the held action…</div>;
-  if (row === null) return <div style={{ ...faint, padding: '6px 0' }}>Already decided — see the agent's Trust tab for the record.</div>;
+  if (row === null) return <div style={{ ...faint, padding: '6px 0' }}>The action could not be loaded.</div>;
+  if (row.status !== 'held' && row.status !== 'staged') return <div style={{ ...faint, padding: '6px 0' }}>Decided: {row.status}{row.result ? ` — ${row.result.slice(0, 160)}` : ''}.</div>;
   return <HeldActionCard wsId={wsId} row={row} onDone={load} />;
 }
 

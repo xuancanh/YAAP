@@ -671,8 +671,8 @@ export interface SearchResults {
 }
 
 // ---- the company is the workspace (docs/group-chat.md §5, /api/workspaces/:id/org) ----
-export type OrgTaskStatus = 'backlog' | 'todo' | 'claimed' | 'in_progress' | 'in_review' | 'blocked' | 'done' | 'cancelled';
-export const ORG_TASK_STATUSES: OrgTaskStatus[] = ['backlog', 'todo', 'claimed', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'];
+export type OrgTaskStatus = 'backlog' | 'waiting' | 'todo' | 'claimed' | 'in_progress' | 'in_review' | 'blocked' | 'done' | 'cancelled';
+export const ORG_TASK_STATUSES: OrgTaskStatus[] = ['backlog', 'waiting', 'todo', 'claimed', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'];
 
 export interface Org {
   id: string; workspaceId: string; name: string; mission: string; ceoUserNote: string;
@@ -694,6 +694,8 @@ export interface OrgGoal {
   confidence: number | null; atRisk: number; atRiskReason: string; lastCheckInAt: string | null; checkInCadenceDays: number;
   /** Sensing (item 27): the metric source the value comes from, and when it was last measured. */
   metricSourceId?: string | null; lastMeasuredAt?: string | null;
+  /** Value accounting (item 31): USD per unit of movement toward the target, USD on achieving it, the CEO's note. */
+  valuePerUnit?: number | null; valueOnAchieve?: number | null; valueNote?: string;
 }
 /** Units (docs/group-chat.md §7): a board, a channel and a goal tracker per org level. */
 export interface OrgUnit {
@@ -722,6 +724,10 @@ export interface OrgTask {
    *  who accepted it (`check` | `review` | ''), and on board routes how a done
    *  task was verified. */
   checks?: string; acceptedBy?: string; verification?: 'check' | 'review' | 'none' | null;
+  /** Capacity (item 31): JSON task ids it waits on, its deadline; on board routes the unmet
+   *  dependencies (`waitingOn`) and the expected duration from history. */
+  dependsOn?: string; dueAt?: string | null; waitingOn?: string[];
+  expected?: { runs: number | null; hours: number | null; samples: number; basis: 'member' | 'class' | 'none' };
 }
 export interface OrgRun {
   id: string; orgId: string; taskId: string; agentId: string; sessionId: string | null; wakeReason: string;
@@ -733,6 +739,10 @@ export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' 
 export interface OrgApproval {
   id: string; orgId: string; kind: OrgApprovalKind; payload: string; requestedBy: string; recommendation: string;
   status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired'; decidedAt: string | null; decidedBy?: string; decisionNote: string; expiresAt: string | null; createdAt: string;
+  /** The decision card (item 31, docs/owners-seat.md §1): `alternatives` is JSON string[];
+   *  `defaultAction` is applied at `deadline` ('' = none); `decidedVia` is '' | default | delegate:<…>. */
+  recommendedAction?: 'approve' | 'deny' | 'modify' | ''; alternatives?: string; reversibility?: 'reversible' | 'costly' | 'irreversible' | '';
+  confidence?: number | null; deadline?: string | null; defaultAction?: 'approve' | 'deny' | ''; decidedVia?: string;
 }
 export interface OrgAuditRow { id: string; orgId: string; seq: number; actor: string; action: string; refType: string; refId: string; payload: string; prevHash: string; hash: string; createdAt: string }
 export interface OrgBrief { orgId: string; at: string; text: string; items: Array<{ n: number; approvalId: string; kind: string; summary: string }> }
@@ -965,7 +975,7 @@ export type TurnEvent =
   | { type: 'answer'; text: string }
   | { type: 'thinking'; text: string }
   | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }
-  | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ToolReview }
+  | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ToolReview; actionClass?: string; actionId?: string; held?: 'held' | 'staged' }
   | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown>; review?: ToolReview; routedTo?: { memberAccountId: string; name: string } }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   /** The workspace's monthly spend stop is reached; the turn still runs. */
@@ -1116,6 +1126,34 @@ export interface CalibrationRow { agentId: string; name: string; resolved: numbe
 export type GapKind = 'overclaim' | 'claimed_number' | 'claim_mismatch' | 'report_drift';
 export interface ReconciliationGap { kind: GapKind | string; refType: string; refId: string; title: string; detail: string; claimed?: number | string | null; measured?: number | null }
 export interface Reconciliation { at: string | null; gaps: ReconciliationGap[]; checked: { keyResults: number; tasks: number; brief: boolean } }
+
+// ---- the boundary, evals, capacity, the owner's seat (execution plan item 31; SPA item 32 part two) ----
+export type BoundaryVerdict = 'alone' | 'experiment' | 'propose' | 'never';
+/** GET …/org/boundary → { rules } (docs/boundary.md §2). */
+export interface BoundaryRule { id: string; kind: string; match: string; verdict: BoundaryVerdict; reason: string; everyone?: boolean; delegable: boolean }
+export type EvalCandidateKind = 'charter' | 'playbook' | 'model' | 'routing';
+export interface EvalCase {
+  id: string; orgId: string; roleKey: string; sourceTaskId: string | null; source: 'check' | 'review' | 'manual' | string; createdAt: string; retiredAt: string | null;
+  taskSnapshot: { title: string; brief: OrgTaskBrief; checks: TaskCheck[]; class: string; inputs: string[] } | null;
+  expected: { checks: TaskCheck[]; rubric: string } | null;
+}
+export interface EvalCaseResult { caseId: string; pass: boolean | null; detail: string; usd: number; gradedBy: 'check' | 'rubric' | 'none' | 'skipped' }
+export interface EvalRun {
+  id: string; orgId: string; roleKey: string; kind: 'candidate' | 'baseline'; candidate: { kind: EvalCandidateKind; ref: string; before: string | null; after: string } | null;
+  versionHash: string; cases: string[]; results: EvalCaseResult[]; passRate: number | null; baselinePassRate: number | null; baselineRunId: string | null;
+  verdict: 'pass' | 'regress' | 'inconclusive' | ''; usd: number; requestedBy: string; startedAt: string; endedAt: string | null; status: 'running' | 'done' | 'failed';
+}
+/** The eval result a gated card carries on its payload (`payload.eval`, docs/evals.md §3). */
+export interface CardEval { runId: string | null; verdict: string; passRate: number | null; baselinePassRate: number | null; roleKey?: string; summary?: string }
+export interface MemberCapacity { agentId: string; name: string; title: string; open: number; wip: number; atLimit: boolean; expectedHours: number | null; tasks: Array<{ id: string; title: string; status: string; dueAt: string | null }> }
+/** GET …/org/capacity */
+export interface OrgCapacity { wip: number; members: MemberCapacity[]; byClass: Record<string, { runs: number | null; hours: number | null; samples: number; basis: string }> }
+export interface OrgDelegation { id: string; orgId: string; kind: string; maxUsd: number | null; delegateType: 'human' | 'role'; delegateRef: string; createdBy: string; createdAt: string; revokedAt: string | null }
+export interface OutcomeRow {
+  objectiveId: string; title: string; unitId: string | null; valueUsd: number; spentUsd: number; roi: number | null;
+  keyResults: Array<{ goalId: string; title: string; measured: boolean; movement7d: number | null; value: number | null; target: number | null }>;
+}
+export interface ValueEvent { id: string; orgId: string; goalId: string; objectiveId: string | null; unitId: string | null; kind: 'movement' | 'achieved'; sampleId: string | null; fromValue: number | null; toValue: number | null; delta: number; valueUsd: number; at: string; createdAt: string }
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -1510,8 +1548,8 @@ export const api = {
     const qs = q.toString();
     return get<OrgTask[]>(`/api/workspaces/${wsId}/org/tasks${qs ? `?${qs}` : ''}`);
   },
-  addOrgTask: (wsId: string, body: { title: string; brief?: Partial<OrgTaskBrief>; projectId?: string | null; assigneeAgentId?: string | null; unitId?: string; checks?: TaskCheck[] }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks`, 'POST', body),
-  updateOrgTask: (wsId: string, taskId: string, patch: { title?: string; brief?: Partial<OrgTaskBrief>; status?: OrgTaskStatus; blockers?: string[] }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}`, 'PATCH', patch),
+  addOrgTask: (wsId: string, body: { title: string; brief?: Partial<OrgTaskBrief>; projectId?: string | null; assigneeAgentId?: string | null; unitId?: string; checks?: TaskCheck[]; dependsOn?: string[]; dueAt?: string | null }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks`, 'POST', body),
+  updateOrgTask: (wsId: string, taskId: string, patch: { title?: string; brief?: Partial<OrgTaskBrief>; status?: OrgTaskStatus; blockers?: string[]; dependsOn?: string[]; dueAt?: string | null }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}`, 'PATCH', patch),
   assignOrgTask: (wsId: string, taskId: string, agentId: string) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}/assign`, 'POST', { agentId }),
   commentOrgTask: (wsId: string, taskId: string, text: string) => send<OrgMessage>(`/api/workspaces/${wsId}/org/tasks/${taskId}/comment`, 'POST', { text }),
   orgTaskComments: (wsId: string, taskId: string) => get<OrgMessage[]>(`/api/workspaces/${wsId}/org/tasks/${taskId}/comments`),
@@ -1640,6 +1678,7 @@ export const api = {
     return get<ActionLogRow[]>(`/api/workspaces/${wsId}/actions${qs ? `?${qs}` : ''}`);
   },
   reportActionRevert: (wsId: string, actionId: string, note: string) => send<ActionLogRow>(`/api/workspaces/${wsId}/actions/${enc(actionId)}/revert-report`, 'POST', { note }),
+  workspaceAction: (wsId: string, actionId: string) => get<ActionLogRow>(`/api/workspaces/${wsId}/actions/${enc(actionId)}`),
   giveActionKey: (wsId: string, actionId: string, approve: boolean, note?: string) => send<{ status: ActionStatus; result: string }>(`/api/workspaces/${wsId}/actions/${enc(actionId)}/keys`, 'POST', { approve, note }),
   // incidents, health, audit independence (item 29, docs/incidents.md §6)
   orgIncidents: (wsId: string, status?: IncidentStatus) => get<OrgIncident[]>(`/api/workspaces/${wsId}/org/incidents${status ? `?status=${status}` : ''}`),
@@ -1656,9 +1695,23 @@ export const api = {
   proposeOrgExperiment: (wsId: string, body: ExperimentInput) => send<OrgExperiment>(`/api/workspaces/${wsId}/org/experiments`, 'POST', body),
   orgExperimentAction: (wsId: string, expId: string, action: 'start' | 'stop' | 'keep' | 'revert', note?: string) => send<OrgExperiment>(`/api/workspaces/${wsId}/org/experiments/${enc(expId)}/${action}`, 'POST', action === 'stop' ? { note: note ?? '' } : undefined),
   orgPredictions: (wsId: string, q: { agentId?: string; status?: string } = {}) => get<OrgPrediction[]>(`/api/workspaces/${wsId}/org/predictions?${new URLSearchParams(Object.entries(q).filter(([, v]) => Boolean(v)) as Array<[string, string]>).toString()}`),
-  orgCalibration: (wsId: string) => get<CalibrationRow[]>(`/api/workspaces/${wsId}/org/calibration`),
+  orgCalibration: (wsId: string) => get<{ bar: number; members: CalibrationRow[] }>(`/api/workspaces/${wsId}/org/calibration`),
   orgReconciliation: (wsId: string) => get<Reconciliation>(`/api/workspaces/${wsId}/org/reconciliation`),
   runOrgReconciliation: (wsId: string) => send<Reconciliation>(`/api/workspaces/${wsId}/org/reconciliation/run`, 'POST'),
+  // the boundary, evals, capacity, the owner's seat (item 31; docs/boundary.md, docs/evals.md, docs/owners-seat.md)
+  orgBoundary: (wsId: string) => get<{ rules: BoundaryRule[] }>(`/api/workspaces/${wsId}/org/boundary`),
+  orgEvalCases: (wsId: string, roleKey?: string) => get<EvalCase[]>(`/api/workspaces/${wsId}/org/evals/cases${roleKey ? `?roleKey=${enc(roleKey)}` : ''}`),
+  addOrgEvalCase: (wsId: string, body: { roleKey?: string; taskId?: string; title?: string; brief?: Partial<OrgTaskBrief>; checks?: TaskCheck[]; rubric?: string }) => send<EvalCase>(`/api/workspaces/${wsId}/org/evals/cases`, 'POST', body),
+  retireOrgEvalCase: (wsId: string, caseId: string) => send<EvalCase>(`/api/workspaces/${wsId}/org/evals/cases/${enc(caseId)}`, 'DELETE'),
+  runOrgEval: (wsId: string, body: { roleKey: string; candidate: { kind: EvalCandidateKind; ref?: string; after: string } }) => send<EvalRun>(`/api/workspaces/${wsId}/org/evals/run`, 'POST', body),
+  orgEvalRuns: (wsId: string, roleKey?: string) => get<EvalRun[]>(`/api/workspaces/${wsId}/org/evals/runs${roleKey ? `?roleKey=${enc(roleKey)}` : ''}`),
+  orgCapacity: (wsId: string) => get<OrgCapacity>(`/api/workspaces/${wsId}/org/capacity`),
+  orgDelegations: (wsId: string) => get<OrgDelegation[]>(`/api/workspaces/${wsId}/org/delegations`),
+  addOrgDelegation: (wsId: string, body: { kind: string; maxUsd?: number | null; delegateType: 'human' | 'role'; delegateRef: string }) => send<OrgDelegation>(`/api/workspaces/${wsId}/org/delegations`, 'POST', body),
+  revokeOrgDelegation: (wsId: string, delegationId: string) => send<OrgDelegation>(`/api/workspaces/${wsId}/org/delegations/${enc(delegationId)}`, 'DELETE'),
+  orgOutcomes: (wsId: string) => get<OutcomeRow[]>(`/api/workspaces/${wsId}/org/outcomes`),
+  orgValueEvents: (wsId: string, since?: string) => get<ValueEvent[]>(`/api/workspaces/${wsId}/org/value-events${since ? `?since=${enc(since)}` : ''}`),
+  setOrgGoalValue: (wsId: string, goalId: string, body: { valuePerUnit?: number | null; valueOnAchieve?: number | null; valueNote?: string }) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals/${enc(goalId)}/value`, 'PUT', body),
 };
 
 export interface AppLlmResult {

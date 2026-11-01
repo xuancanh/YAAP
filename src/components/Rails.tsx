@@ -351,6 +351,9 @@ export const ORG_PANES: Array<{ id: OrgPane; label: string; icon: string[] }> = 
   { id: 'metrics', label: 'Metrics', icon: P.sun },
   { id: 'incidents', label: 'Incidents', icon: P.warn },
   { id: 'experiments', label: 'Experiments', icon: P.retry },
+  // The owner's seat and evals (item 31).
+  { id: 'outcomes', label: 'Outcomes', icon: P.star },
+  { id: 'evals', label: 'Evals', icon: P.check },
   { id: 'chart', label: 'Org chart', icon: P.bot },
   { id: 'approvals', label: 'Approvals', icon: P.shield },
   { id: 'spend', label: 'Spend', icon: P.bolt },

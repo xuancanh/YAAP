@@ -10,14 +10,14 @@ import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react
 import { useApp } from '../store';
 import {
   api, ORG_TASK_STATUSES, type Agent, type ChannelMessage, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgGoalNode, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
-  type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type OrgUnitNode, type WorkspaceMember, type TaskCheck,
+  type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type OrgUnitNode, type WorkspaceMember, type TaskCheck, type OrgDelegation, type CardEval,
 } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
 import { UsageBars, UsageRows } from './UsageChart';
 import { I, P } from '../lib/icons';
 import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
-import { changeSummary, verificationBadge } from '../lib/org3';
+import { changeSummary, decidedViaBadge, dueBadge, expectedLabel, verificationBadge } from '../lib/org3';
 
 /** The CEO's-seat panes (docs/company-vision.md §8, items 18–20) load on demand. */
 const VisionPane = lazy(() => import('./OrgVisionView').then((m) => ({ default: m.VisionPane })));
@@ -42,10 +42,15 @@ const IncidentsPane = lazy(() => import('./OrgIncidentsView').then((m) => ({ def
 const ExperimentsPane = lazy(() => import('./OrgExperimentsView').then((m) => ({ default: m.ExperimentsPane })));
 const HeldActions = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.HeldActions })));
 const ActionCallPreview = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.ActionCallPreview })));
-const LAZY_PANES = new Set(['vision', 'pulse', 'meetings', 'decisions', 'ask', 'plans', 'replay', 'capital', 'playbooks', 'mytasks', 'metrics', 'incidents', 'experiments']);
+/** Evals, outcomes, capacity and the cards' eval line (item 31, SPA item 32 part two). */
+const EvalsPane = lazy(() => import('./OrgGovernanceView').then((m) => ({ default: m.EvalsPane })));
+const OutcomesPane = lazy(() => import('./OrgGovernanceView').then((m) => ({ default: m.OutcomesPane })));
+const CapacityStrip = lazy(() => import('./OrgGovernanceView').then((m) => ({ default: m.CapacityStrip })));
+const CardEvalLine = lazy(() => import('./OrgGovernanceView').then((m) => ({ default: m.CardEvalLine })));
+const LAZY_PANES = new Set(['vision', 'pulse', 'meetings', 'decisions', 'ask', 'plans', 'replay', 'capital', 'playbooks', 'mytasks', 'metrics', 'incidents', 'experiments', 'outcomes', 'evals']);
 
 const STATUS_COLOR: Record<OrgTaskStatus, string> = {
-  backlog: 'var(--text-faint)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
+  backlog: 'var(--text-faint)', waiting: 'var(--text-dim)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
 };
 
 export function OrganizationView() {
@@ -112,6 +117,8 @@ export function OrganizationView() {
             {view === 'metrics' && <MetricsPane org={org} />}
             {view === 'incidents' && <IncidentsPane org={org} />}
             {view === 'experiments' && <ExperimentsPane org={org} />}
+            {view === 'outcomes' && <OutcomesPane org={org} />}
+            {view === 'evals' && <EvalsPane org={org} />}
           </Suspense>
         )}
       </div>
@@ -369,7 +376,8 @@ function Board({ org }: { org: OrgDetail }) {
           })}
         </div>
       )}
-      {adding && <NewTask org={org} members={members} units={units} defaultUnitId={isCompany ? '' : current?.id ?? ''} onDone={() => { setAdding(false); void reload(); }} />}
+      <Suspense fallback={null}><CapacityStrip wsId={org.workspaceId} refreshKey={tasks.length} /></Suspense>
+      {adding && <NewTask org={org} members={members} units={units} tasks={tasks} defaultUnitId={isCompany ? '' : current?.id ?? ''} onDone={() => { setAdding(false); void reload(); }} />}
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols.length}, minmax(150px, 1fr))`, gap: 8, overflowX: 'auto' }}>
         {cols.map((s) => (
           <div key={s} style={{ background: 'var(--panel-2)', borderRadius: 10, padding: 8, minHeight: 120 }}>
@@ -391,6 +399,9 @@ function Board({ org }: { org: OrgDetail }) {
                     {t.status === 'in_review' && t.reviewerAgentId && <span style={pill()}>reviewer: {names.get(t.reviewerAgentId)?.name ?? '?'}</span>}
                     {(() => { const v = verificationBadge(t.verification); return v ? <span style={pill(v.color, '#fff')} title={v.title}>{v.label}</span> : null; })()}
                     {t.status !== 'done' && t.checks && t.checks !== '[]' && <span style={pill()} title="Executable checks run before review">checks</span>}
+                    {(() => { const d = dueBadge(t.dueAt, t.status); return d ? <span style={pill(d.color, d.color === 'var(--panel-2)' ? 'var(--text-dim)' : '#fff')} title={d.title}>{d.label}</span> : null; })()}
+                    {(t.waitingOn ?? []).map((id) => { const dep = tasks.find((x) => x.id === id); return <span key={id} style={pill()} title={`Waits on: ${dep?.title ?? id} (${dep?.status ?? 'unknown'})`}>⧗ {dep ? dep.title.slice(0, 18) : id.slice(0, 8)}</span>; })}
+                    {t.status !== 'done' && t.status !== 'cancelled' && expectedLabel(t.expected) && <span style={{ ...pill(), opacity: .8 }} title={`Expected from ${t.expected?.samples} finished task(s) (${t.expected?.basis})`}>{expectedLabel(t.expected)}</span>}
                   </div>
                 </div>
               );
@@ -403,7 +414,7 @@ function Board({ org }: { org: OrgDetail }) {
   );
 }
 
-function NewTask({ org, members, units, defaultUnitId, onDone }: { org: OrgDetail; members: OrgMember[]; units: Array<OrgUnitNode & { depth: number }>; defaultUnitId: string; onDone: () => void }) {
+function NewTask({ org, members, units, tasks, defaultUnitId, onDone }: { org: OrgDetail; members: OrgMember[]; units: Array<OrgUnitNode & { depth: number }>; tasks: OrgTask[]; defaultUnitId: string; onDone: () => void }) {
   const app = useApp();
   const names = useAgentNames();
   const [title, setTitle] = useState('');
@@ -413,8 +424,11 @@ function NewTask({ org, members, units, defaultUnitId, onDone }: { org: OrgDetai
   const [unitId, setUnitId] = useState(defaultUnitId);
   const [checks, setChecks] = useState<TaskCheck[]>([]);
   const [withChecks, setWithChecks] = useState(false);
+  const [deps, setDeps] = useState<string[]>([]);
+  const [due, setDue] = useState('');
+  const open = tasks.filter((t) => t.status !== 'done' && t.status !== 'cancelled');
   const save = async () => {
-    try { await api.addOrgTask(org.workspaceId, { title, brief, assigneeAgentId: assignee || null, projectId: projectId || null, unitId: unitId || undefined, ...(checks.length ? { checks } : {}) }); onDone(); }
+    try { await api.addOrgTask(org.workspaceId, { title, brief, assigneeAgentId: assignee || null, projectId: projectId || null, unitId: unitId || undefined, ...(checks.length ? { checks } : {}), ...(deps.length ? { dependsOn: deps } : {}), ...(due ? { dueAt: new Date(due).toISOString() } : {}) }); onDone(); }
     catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
   return (
@@ -427,6 +441,13 @@ function NewTask({ org, members, units, defaultUnitId, onDone }: { org: OrgDetai
         <select value={assignee} onChange={(e) => setAssignee(e.target.value)} style={input}><option value="">Backlog (chief triages)</option>{members.map((m) => <option key={m.id} value={m.agentId}>assign to {names.get(m.agentId)?.name ?? m.agentId.slice(0, 8)}</option>)}</select>
         <select value={projectId} onChange={(e) => setProjectId(e.target.value)} style={input}><option value="">No project</option>{org.projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}</select>
         {units.length > 1 && <select value={unitId} onChange={(e) => setUnitId(e.target.value)} style={input} title="Which unit's board; by default the one led by the assignee's manager"><option value="">Board: by assignee</option>{units.map((u) => <option key={u.id} value={u.id}>{'· '.repeat(u.depth)}{u.parentUnitId === null ? 'Company' : u.name}</option>)}</select>}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }}>Due <input type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} style={{ ...input, width: 'auto' }} aria-label="Due date" /></label>
+        <select value="" onChange={(e) => { const v = e.target.value; if (v && !deps.includes(v)) setDeps([...deps, v]); }} style={{ ...input, width: 'auto', flex: '1 1 160px' }} aria-label="Depends on" title="It waits (and cannot be claimed) until these are done">
+          <option value="">Depends on…</option>{open.filter((t) => !deps.includes(t.id)).map((t) => <option key={t.id} value={t.id}>{t.title.slice(0, 60)} ({t.status})</option>)}
+        </select>
+        {deps.map((d) => <span key={d} style={{ ...pill(), display: 'inline-flex', gap: 4 }}>⧗ {tasks.find((t) => t.id === d)?.title.slice(0, 24) ?? d.slice(0, 8)}<button aria-label="Remove dependency" onClick={() => setDeps(deps.filter((x) => x !== d))} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>×</button></span>)}
       </div>
       {withChecks ? <Suspense fallback={<div style={faint}>Loading…</div>}><ChecksBuilder wsId={org.workspaceId} value={checks} onChange={setChecks} /></Suspense>
         : <button style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', cursor: 'pointer', padding: 0, fontSize: 12, fontWeight: 600, justifySelf: 'start' }} onClick={() => setWithChecks(true)}>+ executable checks (accept without a model)</button>}
@@ -467,6 +488,13 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
         {why && <Suspense fallback={null}><WhyDrawer wsId={org.workspaceId} taskId={task.id} title={task.title} onClose={() => setWhy(false)} /></Suspense>}
         {related && <Suspense fallback={null}><RelatedDrawer wsId={org.workspaceId} ref={`task:${task.id}`} title={task.title} onClose={() => setRelated(false)} /></Suspense>}
         <div style={faint}>[{task.id.slice(0, 8)}] created by {task.createdBy} · {ago(task.createdAt)} · owner {task.assigneeAgentId ? names.get(task.assigneeAgentId)?.name : task.assigneeHumanId ? `🧑 ${app.nameOf(task.assigneeHumanId)}` : 'nobody'}{task.reviewerAgentId ? ` · reviewer ${names.get(task.reviewerAgentId)?.name}` : task.reviewerHumanId ? ` · reviewer 🧑 ${app.nameOf(task.reviewerHumanId)}` : ''}{task.claimedBy ? ' · claimed' : ''}{task.class ? ` · class ${task.class}` : ''}</div>
+        {(task.dueAt || (task.waitingOn ?? []).length > 0 || task.expected) && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {(() => { const d = dueBadge(task.dueAt, task.status); return d ? <span style={pill(d.color, d.color === 'var(--panel-2)' ? 'var(--text-dim)' : '#fff')} title={d.title}>{d.label}</span> : task.dueAt ? <span style={pill()}>due {task.dueAt.slice(0, 16).replace('T', ' ')}</span> : null; })()}
+            {(task.waitingOn ?? []).length > 0 && <span style={faint}>waiting on {(task.waitingOn ?? []).map((id) => <RefButton key={id} kind="task" id={id} label={`[${id.slice(0, 8)}]`} />)}</span>}
+            {expectedLabel(task.expected) && <span style={faint}>expected {expectedLabel(task.expected)} from history</span>}
+          </div>
+        )}
         <div style={card}>
           {(['outcome', 'context', 'constraints', 'done_when'] as const).map((k) => <div key={k} style={{ marginBottom: 6 }}><div style={{ ...faint, textTransform: 'uppercase', letterSpacing: '.4px', fontSize: 10.5 }}>{k.replace('_', ' ')}</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{brief[k] || <span style={faint}>—</span>}</div></div>)}
           {blockers.length > 0 && <div><div style={{ ...faint, textTransform: 'uppercase', fontSize: 10.5 }}>blockers</div>{blockers.map((b, i) => <div key={i} style={{ fontSize: 12.5, color: 'var(--red)' }}>■ {b}</div>)}</div>}
@@ -667,17 +695,24 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
   const [rows, setRows] = useState<OrgApproval[]>([]);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [history, setHistory] = useState(false);
-  const [humans, setHumans] = useState<{ me: HumanRole | null; board: string[] }>({ me: null, board: [] });
+  const [humans, setHumans] = useState<{ me: HumanRole | null; actorId: string; board: string[] }>({ me: null, actorId: '', board: [] });
+  const [delegations, setDelegations] = useState<OrgDelegation[]>([]);
   const refresh = useCallback(async () => {
     setRows(await api.orgApprovals(org.workspaceId).catch(() => []));
     const h = await api.orgHumans(org.workspaceId).catch(() => null);
-    if (h) setHumans({ me: h.me.role, board: h.humans.filter((x) => x.role === 'board').map((x) => x.memberAccountId) });
+    if (h) setHumans({ me: h.me.role, actorId: h.me.actorId, board: h.humans.filter((x) => x.role === 'board').map((x) => x.memberAccountId) });
+    setDelegations(await api.orgDelegations(org.workspaceId).catch((): OrgDelegation[] => []));
   }, [org.id]);
+  // A countdown on each card's deadline: re-render every minute.
+  const [, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick((n) => n + 1), 60_000); return () => clearInterval(t); }, []);
   useEffect(() => { void refresh(); }, [refresh]);
   const BOARD_KINDS = new Set(['hire', 'budget_raise', 'strategy']);
   /** Who may decide this card (docs/autonomous-company.md phase D). */
   const deciders = (kind: string) => (BOARD_KINDS.has(kind) && humans.board.length > 0 ? `CEO or board (${humans.board.map((b) => app.nameOf(b)).join(', ')})` : 'CEO only');
-  const mayDecide = (kind: string) => humans.me === 'ceo' || (humans.me === 'board' && BOARD_KINDS.has(kind));
+  /** A person a card's kind (or a held action's class) is delegated to may decide it too (docs/owners-seat.md §2); the server re-checks the amount and the boundary. */
+  const delegatedToMe = (a: OrgApproval, p: Record<string, unknown>) => delegations.some((d) => d.delegateType === 'human' && d.delegateRef === humans.actorId && (d.kind === a.kind || (a.kind === 'two_key' && d.kind === p.class)));
+  const mayDecide = (kind: string, a?: OrgApproval, p?: Record<string, unknown>) => humans.me === 'ceo' || (humans.me === 'board' && BOARD_KINDS.has(kind)) || (a && p ? delegatedToMe(a, p) : false);
   const decide = async (a: OrgApproval, d: 'approve' | 'reject' | 'revise') => {
     try { await api.decideOrgApproval(org.workspaceId, a.id, d, notes[a.id]); await refresh(); await reload(); await app.refreshAgents(); app.showToast(`${a.kind}: ${d}d`); }
     catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
@@ -704,12 +739,14 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
               {a.status === 'pending' && <span style={pill()} title="Who may decide this card">{deciders(a.kind)}</span>}
             </div>
             {a.recommendation && <div style={{ fontSize: 12.5, marginBottom: 6 }}><b>Chief:</b> {a.recommendation}</div>}
-            <DecisionExtras source={{ ...p, ...(a as unknown as Record<string, unknown>) }} skip={['recommendation']} />
+            <DecisionExtras source={{ ...p, ...(a as unknown as Record<string, unknown>) }} skip={a.status === 'pending' ? ['recommendation'] : ['recommendation', 'deadline', 'defaultAction']} />
             <ApprovalArtifact kind={a.kind} p={p} nm={nm} wsId={org.workspaceId} />
-            {a.status === 'pending' && !mayDecide(a.kind) && humans.me !== null && (
+            {(() => { const v = decidedViaBadge(a.decidedVia, (id) => app.nameOf(id)); return v ? <div style={{ marginTop: 6 }}><span style={pill('var(--blue)', '#fff')} title={v.title}>{v.label}</span></div> : null; })()}
+            {p.eval && typeof p.eval === 'object' ? <Suspense fallback={null}><CardEvalLine ev={p.eval as CardEval} /></Suspense> : null}
+            {a.status === 'pending' && !mayDecide(a.kind, a, p) && humans.me !== null && (
               <div style={{ ...faint, marginTop: 10 }}>{humans.me === 'observer' ? 'Observers read the company but decide nothing.' : `A ${a.kind} approval is the CEO's to decide.`}</div>
             )}
-            {a.status === 'pending' && mayDecide(a.kind) && (
+            {a.status === 'pending' && mayDecide(a.kind, a, p) && (
               <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                 <input value={notes[a.id] ?? ''} onChange={(e) => setNotes({ ...notes, [a.id]: e.target.value })} placeholder="Note to the chief (required for revise)" style={input} />
                 <button style={btn(true)} onClick={() => void decide(a, 'approve')}>{a.kind === 'two_key' ? (p.staged ? 'Send the draft (my key)' : 'Approve (my key)') : 'Approve'}</button>

@@ -227,9 +227,8 @@ function CalibrationCard({ wsId }: { wsId: string }) {
   const [bar, setBar] = useState(0.7);
   const [showOpen, setShowOpen] = useState(false);
   useEffect(() => {
-    void api.orgCalibration(wsId).then(setRows).catch(() => setRows([]));
+    void api.orgCalibration(wsId).then((c) => { setRows(c.members); setBar(c.bar); }).catch(() => setRows([]));
     void api.orgPredictions(wsId, { status: 'open' }).then(setOpen).catch(() => setOpen([]));
-    void api.orgTunables(wsId).then((t) => { const b = t.find((x) => x.key === 'trust.calibrationBar'); if (b) setBar(b.value); }).catch(() => undefined);
   }, [wsId]);
   return (
     <div style={{ ...card, marginBottom: 12 }}>

@@ -10,7 +10,7 @@ import { fmtUsd, usdFor } from '../lib/pricing';
 import { MAX_AUDIO_BYTES, fmtDuration, isAudioFile, recorderAvailable, useVoiceRecorder, AUDIO_EXT_RE } from '../lib/voice';
 import { VoiceChip } from './VoiceChip';
 import { Markdown, plainText } from '../lib/md';
-import { CLASS_COLOR, CLASS_LABEL, CLASS_SHORT, degradedChatNote, parseHeldToolResult, toolClassHint } from '../lib/org3';
+import { CLASS_COLOR, CLASS_LABEL, CLASS_SHORT, degradedChatNote } from '../lib/org3';
 
 /** The owner's key inline on a held tool card (item 28, SPA item 32). */
 const HeldInline = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.HeldInline })));
@@ -53,10 +53,10 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
   const computer = isComputerTool(t.name);
   const arg = computer ? computerSummary(t.name, t.input) : typeof t.input?.path === 'string' ? t.input.path : typeof t.input?.url === 'string' ? t.input.url : typeof t.input?.query === 'string' ? t.input.query : '';
   const canRemember = !computer || REMEMBERABLE_COMPUTER_TOOLS.has(t.name);
-  // The action contract (docs/actions-and-trust.md): the call's class, and a
-  // call parked for the owner's key (the turn returns "Held for the owner's key" / "Staged, not sent").
-  const held = t.status === 'done' ? parseHeldToolResult(t.result) : null;
-  const cls = held?.cls ?? toolClassHint(t.name);
+  // The action contract (docs/actions-and-trust.md): the class and action_log
+  // row the server put on the result, and whether it waits for the owner's key.
+  const held = t.held ?? null;
+  const cls = t.actionClass ?? null;
   const [keyOpen, setKeyOpen] = useState(false);
   const wsId = app.current?.workspaceId ?? app.workspaceId;
   return (
@@ -72,16 +72,16 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
           </button>
         )}
         {cls && cls !== 'read' && <span title={`${CLASS_LABEL[cls] ?? cls} action`} style={{ fontSize: 10, color: CLASS_COLOR[cls] ?? 'var(--text-dim)', border: `1px solid ${CLASS_COLOR[cls] ?? 'var(--border)'}`, borderRadius: 5, padding: '0 5px', whiteSpace: 'nowrap', flex: 'none' }}>{CLASS_SHORT[cls] ?? cls}</span>}
-        <span style={{ fontSize: 11, color: held ? 'var(--amber)' : color, fontWeight: 600 }}>{held ? (held.kind === 'staged' ? 'Staged' : 'Held') : label}</span>
+        <span style={{ fontSize: 11, color: held ? 'var(--amber)' : color, fontWeight: 600 }}>{held ? (held === 'staged' ? 'Staged' : 'Held') : label}</span>
       </div>
       {held && (
         <div style={{ padding: '9px 13px', borderTop: '1px solid var(--amber)', background: 'color-mix(in srgb, var(--amber) 10%, transparent)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--amber)', fontWeight: 600, flexWrap: 'wrap' }}>
             <I d={P.shield} size={13} stroke="var(--amber)" />
-            <span style={{ flex: 1, minWidth: 160 }}>{held.kind === 'staged' ? 'Staged as a draft — waiting for your key to send' : 'Held — waiting for your key'}</span>
-            {held.actionPrefix && wsId && <button onClick={() => setKeyOpen(!keyOpen)} aria-expanded={keyOpen} style={{ background: 'none', border: '1px solid var(--amber)', borderRadius: 7, color: 'var(--amber)', fontSize: 11.5, fontWeight: 600, padding: '3px 9px', cursor: 'pointer' }}>{keyOpen ? 'Close' : 'Review and decide'}</button>}
+            <span style={{ flex: 1, minWidth: 160 }}>{held === 'staged' ? 'Staged as a draft — waiting for your key to send' : 'Held — waiting for your key'}</span>
+            {t.actionId && wsId && <button onClick={() => setKeyOpen(!keyOpen)} aria-expanded={keyOpen} style={{ background: 'none', border: '1px solid var(--amber)', borderRadius: 7, color: 'var(--amber)', fontSize: 11.5, fontWeight: 600, padding: '3px 9px', cursor: 'pointer' }}>{keyOpen ? 'Close' : 'Review and decide'}</button>}
           </div>
-          {keyOpen && held.actionPrefix && wsId && <div style={{ marginTop: 8 }}><Suspense fallback={null}><HeldInline wsId={wsId} prefix={held.actionPrefix} /></Suspense></div>}
+          {keyOpen && t.actionId && wsId && <div style={{ marginTop: 8 }}><Suspense fallback={null}><HeldInline wsId={wsId} actionId={t.actionId} /></Suspense></div>}
         </div>
       )}
       {computer && t.status === 'pending' && (
@@ -542,8 +542,8 @@ export function ChatView() {
       // lives on the turn's tool records, matched by position.
       const idx = toolSeq.get(m.turnId) ?? 0;
       toolSeq.set(m.turnId, idx + 1);
-      const record = safeJsonParse<Array<{ review?: ToolReview }>>(turnById.get(m.turnId)?.toolCalls ?? '', [])[idx];
-      rows.push(<ToolCard key={m.id} t={{ kind: 'tool', id: m.id, name: m.toolName ?? 'tool', input: {}, status: m.content.startsWith('Denied') ? 'denied' : 'done', result: m.content, review: record?.review }} />);
+      const record = safeJsonParse<Array<{ review?: ToolReview; actionClass?: string; actionId?: string; held?: 'held' | 'staged' }>>(turnById.get(m.turnId)?.toolCalls ?? '', [])[idx];
+      rows.push(<ToolCard key={m.id} t={{ kind: 'tool', id: m.id, name: m.toolName ?? 'tool', input: {}, status: m.content.startsWith('Denied') ? 'denied' : 'done', result: m.content, review: record?.review, actionClass: record?.actionClass, actionId: record?.actionId, held: record?.held }} />);
     } else {
       rows.push(
         <AssistantRow key={m.id} m={m} turn={turnById.get(m.turnId)} agent={agent}

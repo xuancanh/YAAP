@@ -13,7 +13,7 @@ import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, 
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 const STATUS_COLOR: Record<OrgTaskStatus, string> = {
-  backlog: 'var(--text-faint)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
+  backlog: 'var(--text-faint)', waiting: 'var(--text-dim)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
 };
 
 // ---- the hire dialog ----

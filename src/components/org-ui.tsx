@@ -116,10 +116,10 @@ export function useFollowRef() {
   };
 }
 
-/** The decision card's optional fields — recommendation, alternatives,
- *  reversibility, confidence, deadline, default action — rendered when the
- *  card carries them (execution-plan item 31 adds them; nothing shows until
- *  then). `skip` drops fields the caller already shows. */
+/** The decision card (execution-plan item 31, docs/owners-seat.md §1):
+ *  recommended action, alternatives, reversibility, confidence, the deadline
+ *  with its countdown and the default applied at it — whichever the card
+ *  carries. `skip` drops fields the caller already shows. */
 export function DecisionExtras({ source, skip }: { source: Record<string, unknown> | null | undefined; skip?: string[] }) {
   const rows = decisionExtras(source, skip);
   if (rows.length === 0) return null;
@@ -128,7 +128,7 @@ export function DecisionExtras({ source, skip }: { source: Record<string, unknow
       {rows.map((r) => (
         <div key={r.key} style={{ display: 'contents' }}>
           <dt style={{ ...label, alignSelf: 'baseline' }}>{r.label}</dt>
-          <dd style={{ margin: 0, overflowWrap: 'anywhere', color: r.key === 'defaultAction' ? 'var(--amber)' : undefined }}>{r.value}</dd>
+          <dd style={{ margin: 0, overflowWrap: 'anywhere', color: r.tone === 'red' ? 'var(--red)' : r.tone === 'amber' ? 'var(--amber)' : undefined, fontWeight: r.key === 'recommendedAction' ? 600 : undefined }}>{r.value}</dd>
         </div>
       ))}
     </dl>
