@@ -3,7 +3,7 @@
 Status: **shipped, 1 November 2026** — execution-plan item 15 (§1–§4, §6:
 channels, wake rules, threads/files/tasks, delivery) and item 16 (§5,
 organization mode). Each section ends with a *Shipped as* note naming the
-code; `tests/backend-groupchat.test.ts` (12 tests) and
+code; `tests/backend-groupchat.test.ts` (13 tests) and
 `web-tests/channels.test.ts` cover it.
 Supersedes the "group session that wakes nobody" in
 `docs/autonomous-company.md` §4 (see the revision note there).
@@ -192,9 +192,12 @@ among non-archived rows (duplicates keep the oldest, the rest are
 agentCap? }` creates the 1:1 org on first enable (named after the workspace),
 seats every agent — chief at the root, the rest under it, overflow one level
 down within depth 3 — writes `org_mode` audit and announces through the
-`Announcer` seam (`org-announcer.ts`: `announce(workspaceId, text)`, bound to
-`GroupChatService.ensureChannel('company') + postSystem` when item 15 lands;
-unbound it drops the line). `off` pauses the runtime and hides the panes,
+`Announcer` seam (`org-announcer.ts`: `announce(workspaceId, text)`;
+`GroupChatService` binds itself into the exported `OrgAnnouncer` at boot —
+`ensureCompany` creates `#company` with every agent and person on the first
+announcement, then `postSystem` — so enabling a mode, every autonomous
+structural action and the kill switch land in `#company`; unbound it drops
+the line). `off` pauses the runtime and hides the panes,
 deleting nothing. `POST /api/workspaces/:id/org/pause | resume` is the kill
 switch; every `/api/orgs/:id/...` route has a thin alias under
 `/api/workspaces/:id/org/...` (`WorkspaceOrgController`) and the UI uses

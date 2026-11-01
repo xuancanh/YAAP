@@ -33,7 +33,15 @@ import { SettingsService } from '../server/src/settings/settings.module';
 import { SearchService } from '../server/src/search/search.service';
 import { TelegramService } from '../server/src/channels/telegram.service';
 import type { SharedService } from '../server/src/shared/shared.service';
-import { GroupChatService, GENERAL_SLUG } from '../server/src/groupchat/groupchat.service';
+import { GroupChatService, GENERAL_SLUG, COMPANY_SLUG } from '../server/src/groupchat/groupchat.service';
+import { OrgAuditService } from '../server/src/org/org-audit.service';
+import { OrgService } from '../server/src/org/org.service';
+import { OrgTasksService } from '../server/src/org/org-tasks.service';
+import { OrgApprovalsService } from '../server/src/org/org-approvals.service';
+import { OrgBriefService } from '../server/src/org/org-brief.service';
+import { OrgRuntimeService } from '../server/src/org/org-runtime.service';
+import { OrgModeService } from '../server/src/org/org-mode.service';
+import { OrgAnnouncer } from '../server/src/org/org-announcer';
 import { ChannelRuntimeService, PAUSED_LINE, BUDGET_LINE, UNPROMPTED_RATE_MS, agentRoundsSinceHuman, type RelevanceInput } from '../server/src/groupchat/channel-runtime.service';
 import { GroupChatController } from '../server/src/groupchat/groupchat.controller';
 import { WorkspaceEventBus, type WorkspaceEvent } from '../server/src/groupchat/workspace-events';
@@ -67,7 +75,6 @@ const say = (text: string): AiStreamEvent[] => [{ type: 'answer', text }];
 /** A minimal SharedService: one member, "bob", so wakes can run as a member
  *  and names resolve — without standing up accounts mode. */
 function sharedStub(workspaceId: string, owner: string): SharedService {
-  const bob: Viewer = { memberAccountId: 'bob', role: 'member', workspaceId, displayName: 'Bob' };
   return {
     hasMembers: async () => true,
     members: async () => [{ id: 'm1', workspaceId, memberAccountId: 'bob', role: 'member', displayName: 'Bob', email: 'bob@example.com', invitedBy: '', joinedAt: '', accountId: owner }],
@@ -580,4 +587,67 @@ test('a paired Telegram chat posts into a channel with `#slug text`; unknown cha
   // sanity: the channel row carries the folder the files tab lists
   assert.deepEqual(await s.groupchat.files(s.general.id), []);
   assert.equal((await s.db.select().from(channelMessages)).every((m) => m.accountId === 'single'), true);
+});
+
+// ---- 11. organization mode announces into #company (item 16 ↔ 15) ----
+
+test('enabling organization mode and an autonomous action announce into #company, which the group chat creates on first use', async () => {
+  const db = await testDb();
+  const { stub } = memStorage();
+  const bus = new TriggerBus();
+  const agents = new AgentsService(db, stub, bus);
+  const workspaces = new WorkspacesService(db, stub);
+  const repo = new ChatsRepository(db);
+  const provider = new ReplyProvider(() => say('ok'));
+  const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub(), agents, workspaces);
+  const config = { get: (k: string) => (k === 'companiesEnabled' ? true : k === 'loopsEnabled' ? false : undefined) } as unknown as ConfigService;
+  const announcer = new OrgAnnouncer(); // nothing bound yet: the org module alone
+  assert.equal(announcer.bound, false);
+  const audit = new OrgAuditService(db);
+  const org = new OrgService(db, agents, audit, bus);
+  const tasks = new OrgTasksService(db, org, audit, bus);
+  const approvals = new OrgApprovalsService(db, org, tasks, agents, audit, undefined, bus);
+  const brief = new OrgBriefService(db, org, tasks, approvals, audit, agents, workspaces);
+  const runtime = new OrgRuntimeService(db, org, tasks, approvals, audit, brief, turns, repo, agents, workspaces, config, announcer, bus);
+  const mode = new OrgModeService(org, workspaces, agents, runtime, approvals, audit, announcer);
+  // the group chat binds itself into the seam (what GroupChatModule does at boot)
+  const groupchat = new GroupChatService(db, workspaces, agents, stub, new WorkspaceEventBus(), config, undefined, bus, org, tasks, announcer);
+  assert.equal(announcer.bound, true);
+  const ws = (await workspaces.list())[0];
+  const chief = await agents.create({ name: 'Chief', charter: 'You run the company.' });
+  await agents.create({ name: 'Writer' });
+  assert.equal((await groupchat.list(ws.id)).some((c) => c.slug === COMPANY_SLUG), false, 'no #company before org mode');
+
+  await mode.setMode(ws.id, { mode: 'autonomous', chiefOfStaffAgentId: chief.id, monthlyUsd: 20, agentCap: 5 });
+  const company = await groupchat.bySlug(ws.id, COMPANY_SLUG);
+  assert.equal(company.slug, 'company');
+  const members = await groupchat.members(company.id);
+  assert.ok(members.some((m) => m.memberKind === 'agent' && m.memberId === chief.id), 'every agent is in #company');
+  assert.ok(members.some((m) => m.memberKind === 'human' && m.memberId === 'single'), 'and the owner');
+  let msgs = (await groupchat.messages(company.id)).messages;
+  assert.equal(msgs.length, 1);
+  assert.equal(msgs[0].authorKind, 'system');
+  assert.match(msgs[0].text, /^Organization mode is on \(autonomous\)\. Chief is chief of staff/);
+
+  // an autonomous structural action lands there too
+  const session = await repo.createSession({ workspaceId: ws.id, agentId: chief.id, name: 'chief chat' });
+  await runtime.execute(session, 'org_hire_agent', { templateOrPack: 'Marketer', title: 'Growth', why: 'Launch posts have no owner.' });
+  msgs = (await groupchat.messages(company.id)).messages;
+  assert.equal(msgs.length, 2);
+  assert.match(msgs[1].text, /^Hired: Marketer as Growth/);
+  // make-task now routes to the organisation board, linked both ways
+  const general = await groupchat.bySlug(ws.id, GENERAL_SLUG);
+  await groupchat.addMember(general.id, { kind: 'agent', id: chief.id });
+  const root = await groupchat.post(general.id, { text: 'Draft the launch plan', authorKind: 'human' });
+  const made = await groupchat.makeTask(general.id, root.id, { assigneeAgentId: chief.id, by: { kind: 'human', id: 'single' } });
+  assert.equal(made.kind, 'org');
+  const orgTask = await tasks.get((await org.byWorkspace(ws.id))!.id, made.task.id);
+  assert.equal(orgTask.channelId, general.id);
+  assert.equal(orgTask.messageId, root.id);
+  assert.equal(orgTask.assigneeAgentId, chief.id);
+  // switching mode off announces, again into the same channel
+  await mode.setMode(ws.id, { mode: 'off' });
+  msgs = (await groupchat.messages(company.id)).messages;
+  assert.match(msgs.at(-1)!.text, /Organization mode is off/);
+  assert.equal((await db.select().from(channels)).filter((c) => c.slug === 'company').length, 1, 'created once');
 });

@@ -38,6 +38,7 @@ import { SharedService } from '../shared/shared.service';
 import { TriggerBus, type TaskStatusEvent } from '../chats/trigger-bus';
 import { OrgService } from '../org/org.service';
 import { OrgTasksService } from '../org/org-tasks.service';
+import { OrgAnnouncer } from '../org/org-announcer';
 import { WorkspaceEventBus } from './workspace-events';
 import { parseMentions, slugify, type Mention, type MentionableMember } from './mentions';
 
@@ -46,6 +47,7 @@ export type ChannelMember = typeof channelMembers.$inferSelect;
 export type ChannelMessage = typeof channelMessages.$inferSelect;
 
 export const GENERAL_SLUG = 'general';
+export const COMPANY_SLUG = 'company';
 export const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const TEXT_CAP = 16_000;
 const PAGE_LIMIT = 50;
@@ -86,9 +88,26 @@ export class GroupChatService {
     /** Optional: organisation mode routes "make task" to the shared board. */
     @Optional() private readonly org?: OrgService,
     @Optional() private readonly orgTasks?: OrgTasksService,
+    /** Optional: organization mode announces into `#company` through this
+     *  seam (org-announcer.ts); binding here avoids a module cycle. */
+    @Optional() announcer?: OrgAnnouncer,
   ) {
     this.workspaces.onCreated(async (ws) => { await this.ensureGeneral(ws.id); });
     bus?.onTaskStatus((ev) => { void this.onTaskStatus(ev).catch(() => undefined); });
+    announcer?.bind({ announce: (workspaceId, text) => this.announceCompany(workspaceId, text) });
+  }
+
+  /** `#company` (docs/group-chat.md §1, §5): system announcements from
+   *  organization mode — hires, reorgs, budget events, mode changes, the
+   *  brief. Created on the first announcement (enabling org mode announces),
+   *  with every agent and every person in it. */
+  async announceCompany(workspaceId: string, text: string): Promise<void> {
+    const c = await this.ensureCompany(workspaceId);
+    await this.postSystem(c.id, text);
+  }
+
+  ensureCompany(workspaceId: string): Promise<Channel> {
+    return this.ensureChannel(workspaceId, COMPANY_SLUG, 'company', { topic: 'Company announcements: hires, reorgs, budgets, the brief.', allAgents: true, allHumans: true });
   }
 
   /** The runtime subscribes here; listeners run after the row is written. */

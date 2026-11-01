@@ -29,14 +29,14 @@ import { WorkspaceOrgController } from './workspace-org.controller';
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
  * the workspace-scoped controller and the Announcer seam. `#company`
- * announcements are wired by providing ORG_ANNOUNCER (see org-announcer.ts)
- * once the group-chat module (item 15) is in the tree; until then the
- * OrgAnnouncer wrapper drops them and everything else works.
+ * announcements reach the group chat (item 15) because GroupChatService
+ * binds itself into the exported OrgAnnouncer wrapper (see org-announcer.ts);
+ * without that module the wrapper drops them and everything else works.
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule],
   controllers: [OrgController, WorkspaceOrgController],
   providers: [OrgService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgBriefService, OrgRuntimeService, OrgAnnouncer, OrgModeService, OrgController],
-  exports: [OrgService, OrgTasksService, OrgRuntimeService, OrgModeService],
+  exports: [OrgService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer],
 })
 export class OrgModule {}

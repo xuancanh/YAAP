@@ -401,7 +401,7 @@ services; `eventLink`/`eventHead` in the Telegram, email and push sweeps;
 `channelDailyTokenBudget` setting. SPA: `ChannelView.tsx`, the Channels
 block in `Rails.tsx`, `store.tsx` (`channels`, `openChannel`,
 `onWorkspaceEvent`, deep links `#/ws/<id>/channel/<slug>[/<messageId>]`),
-`src/lib/channels.ts`. Tests: `tests/backend-groupchat.test.ts` (12),
+`src/lib/channels.ts`. Tests: `tests/backend-groupchat.test.ts` (13, including `#company` through the `OrgAnnouncer` seam),
 `web-tests/channels.test.ts` (6). Not done: `#goal:<id>` references.
 
 ### 16. Workspace is the company *(done)*
