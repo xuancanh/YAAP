@@ -226,7 +226,7 @@ export class ChannelRuntimeService implements ToolProviderHook {
     for (const a of candidates) {
       if (picked.length >= UNPROMPTED_PER_MESSAGE) break;
       const agent = await this.agents.get(a.memberId).catch(() => null);
-      if (!agent) continue;
+      if (!agent || (agent.workspaceId && agent.workspaceId !== c.workspaceId)) continue;
       const verdict = await this.relevant({
         agentName: agent.name, charter: (agent as { charter?: string }).charter ?? '',
         channel: { slug: c.slug, topic: c.topic },
@@ -307,7 +307,9 @@ export class ChannelRuntimeService implements ToolProviderHook {
 
   private async wake(member: NamedMember, c: Channel, trigger: ChannelMessage, opts: { unprompted: boolean; actor: string; actorName: string }): Promise<void> {
     const agent = await this.agents.get(member.memberId).catch(() => null);
-    if (!agent) return;
+    // A stale membership of an agent moved elsewhere wakes nobody: an agent
+    // acts only in its own workspace.
+    if (!agent || (agent.workspaceId && agent.workspaceId !== c.workspaceId)) return;
     const threadRootId = trigger.threadRootId ?? trigger.id;
     const key = `${c.id}:${threadRootId}`;
     if (!opts.unprompted) this.replying.set(key, (this.replying.get(key) ?? 0) + 1);

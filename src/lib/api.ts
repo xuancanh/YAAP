@@ -100,6 +100,8 @@ export interface EmailStatus {
 
 export interface Agent {
   id: string;
+  /** The owning workspace (docs/shared-agents.md "Workspace ownership"); agents are never shared across workspaces. */
+  workspaceId?: string;
   name: string;
   /** Local part of the agent's inbound email address (docs/channels.md). */
   emailSlug?: string;
@@ -1040,9 +1042,12 @@ export const api = {
   exportUrl: (id: string) => `/api/chats/${id}/export`,
 
   // agents
-  agents: () => get<Agent[]>('/api/agents', agentListSchema),
-  createAgent: (input: { name: string; charter?: string; role?: string; emoji?: string; colors?: [string, string]; provider?: string; model?: string }) =>
+  /** The workspace's agents (every agent belongs to exactly one workspace). */
+  agents: (workspaceId?: string) => get<Agent[]>(`/api/agents${workspaceId ? `?workspaceId=${enc(workspaceId)}` : ''}`, agentListSchema),
+  createAgent: (input: { name: string; workspaceId: string; charter?: string; role?: string; emoji?: string; colors?: [string, string]; provider?: string; model?: string }) =>
     send<Agent>('/api/agents', 'POST', input, agentSchema),
+  /** Move an agent to another workspace — refused while it sits in an organization. */
+  moveAgent: (id: string, workspaceId: string) => send<Agent>(`/api/agents/${id}/move`, 'POST', { workspaceId }, agentSchema),
   updateAgent: (id: string, patch: Record<string, unknown>) => send<Agent>(`/api/agents/${id}`, 'PATCH', patch, agentSchema),
   deleteAgent: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}`, 'DELETE'),
   deleteAgentApp: (id: string, appId: string) => send<{ ok: boolean }>(`/api/agents/${id}/apps/${appId}`, 'DELETE'),
@@ -1198,8 +1203,9 @@ export const api = {
   marketConnectors: () => get<ConnectorEntry[]>('/api/market/connectors'),
   /** Full bundled-skill text, for the hire review (docs/permissions.md). */
   marketPackSkills: (id: string) => get<Array<{ name: string; description: string; instructions: string }>>(`/api/market/${id}/skills`),
-  market: () => get<MarketItem[]>('/api/market'),
-  hire: (id: string) => send<{ ok: boolean; agent: Agent }>(`/api/market/${id}/hire`, 'POST', undefined, hireResultSchema),
+  /** `hired` is per workspace: a pack hired in one workspace is free in another. */
+  market: (workspaceId?: string) => get<MarketItem[]>(`/api/market${workspaceId ? `?workspaceId=${enc(workspaceId)}` : ''}`),
+  hire: (id: string, workspaceId?: string) => send<{ ok: boolean; agent: Agent }>(`/api/market/${id}/hire`, 'POST', workspaceId ? { workspaceId } : undefined, hireResultSchema),
   // market registry (docs/registry.md)
   registry: (kind?: RegistryKind | '', q?: string) =>
     get<RegistryList>(`/api/registry?${kind ? `kind=${enc(kind)}` : ''}${q ? `&q=${enc(q)}` : ''}`),

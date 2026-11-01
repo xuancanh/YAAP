@@ -203,13 +203,14 @@ export class OrgService {
       const pack = input.chief.packId ? [...AUTHORED_PACKS, ...PROFESSION_PACKS].find((p) => p.id === input.chief?.packId) : undefined;
       const base = defaultChiefCharter(name, input.mission ?? '');
       const created = await this.agents.create({
-        name: input.chief.name, charter: input.chief.charter ?? (pack ? `${pack.charter}\n\n${base}` : base),
+        name: input.chief.name, workspaceId: input.workspaceId, charter: input.chief.charter ?? (pack ? `${pack.charter}\n\n${base}` : base),
         provider: input.chief.provider, model: input.chief.model, emoji: input.chief.emoji ?? '🧭', role: input.chief.role ?? 'Chief of staff',
       });
       chiefId = created.id;
     }
     if (!chiefId) throw new BadRequestException('an organization needs a chief of staff: pass chiefOfStaffAgentId or chief');
-    await this.agents.get(chiefId);
+    const chiefAgent = await this.agents.get(chiefId);
+    if (chiefAgent.workspaceId && chiefAgent.workspaceId !== input.workspaceId) throw new BadRequestException(`${chiefAgent.name} belongs to another workspace; agents are not shared across workspaces`);
     const existing = await this.byWorkspace(input.workspaceId);
     if (existing) throw new ConflictException(`workspace already has an organization (${existing.name}); the workspace is the company — change its mode instead`);
     const row: Organization = {
@@ -433,6 +434,8 @@ export class OrgService {
   async addMember(orgId: string, input: { agentId: string; title?: string; reportsToAgentId: string | null; scopes?: string[]; actor?: string; grantedBy?: string }): Promise<OrgMember> {
     const org = await this.get(orgId);
     const agent = await this.agents.get(input.agentId);
+    // An organization is its workspace's: only the workspace's own agents sit in it.
+    if (agent.workspaceId && agent.workspaceId !== org.workspaceId) throw new BadRequestException(`${agent.name} belongs to another workspace; agents are not shared across workspaces`);
     if (await this.member(orgId, input.agentId)) throw new ConflictException(`${agent.name} is already a member of ${org.name}`);
     let depth = 1;
     if (input.reportsToAgentId) {

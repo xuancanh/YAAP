@@ -12,6 +12,8 @@ import { TranscriptionService, isAudioUpload } from '../voice/transcription.serv
 
 class CreateAgentDto {
   @IsString() name!: string;
+  /** The owning workspace (docs/shared-agents.md "Workspace ownership"): required over HTTP. */
+  @IsString() workspaceId!: string;
   @IsOptional() @IsString() charter?: string;
   @IsOptional() @IsString() provider?: string;
   @IsOptional() @IsString() model?: string;
@@ -36,6 +38,10 @@ class UpdateAgentDto {
   @IsOptional() @IsString() loops?: string;
   /** Assigned workspace folder, mounted into the agent's chats as shared/. */
   @IsOptional() @IsString() workspaceFolder?: string;
+}
+
+class MoveAgentDto {
+  @IsString() workspaceId!: string;
 }
 
 class InstallLoopDto {
@@ -75,9 +81,19 @@ export class AgentsController {
     private readonly voice: TranscriptionService,
   ) {}
 
-  @Get() list() { return this.agents.list(); }
+  /** `?workspaceId=` lists that workspace's agents (the SPA always passes
+   *  one); without it, every agent of the account. */
+  @Get() list(@Query('workspaceId') workspaceId?: string) { return this.agents.list({ workspaceId: workspaceId || undefined }); }
   @Get(':id') get(@Param('id') id: string) { return this.agents.get(id); }
-  @Post() create(@Body() dto: CreateAgentDto) { return this.agents.create(dto); }
+  @Post() async create(@Body() dto: CreateAgentDto) {
+    if (!dto.workspaceId?.trim()) throw new BadRequestException('workspaceId is required: an agent belongs to one workspace');
+    return this.agents.create(dto);
+  }
+  /** The explicit way an agent changes workspace; refused while it sits in an organization. */
+  @Post(':id/move') async move(@Param('id') id: string, @Body() dto: MoveAgentDto) {
+    if (!dto.workspaceId?.trim()) throw new BadRequestException('workspaceId is required');
+    return this.agents.move(id, dto.workspaceId);
+  }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateAgentDto) { return this.agents.update(id, dto); }
   @Delete(':id') remove(@Param('id') id: string) { return this.agents.remove(id); }
   @Post(':id/feedback') async feedback(@Param('id') id: string, @Body() dto: FeedbackDto) {

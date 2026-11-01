@@ -824,3 +824,45 @@ tags, tier, estimate and competencies per role, with the cost of the picked
 seats against the envelope; the hires step is hidden when the roles route
 is absent; tunables are accepted by the route but the wizard does not edit
 them (the Settings card does, with the fence).
+
+### 26. Workspace-owned agents *(done)*
+Each workspace owns its own agents and its own organization; agents are
+never shared across workspaces, and moving one is an explicit action. Before
+this, `agents` had no `workspaceId`: every agent was account-global, showed
+in every workspace, was enrolled by organization mode wholesale, and loops
+and heartbeats ran "in the default workspace".
+
+*Shipped as (1 November 2026, branch `feat/ws-agents`):* migration
+`0038-agents-workspace` (`agents.workspaceId TEXT NOT NULL DEFAULT ''` +
+`idx_agents_workspace`; backfill `backfillAgentWorkspaces`: the workspace of
+the one live organization the agent is a member of when it is a member of
+exactly one, otherwise the account's default — oldest — workspace; an
+account with no workspace keeps `''`); `AgentsService` (`list({ workspaceId? })`,
+`create` requires-or-defaults `workspaceId` through `defaultWorkspaceId()`,
+`importJson(profile, { workspaceId })`, `move(id, workspaceId)` with its
+`moved` audit event, refused while an org member; chats move, old channel
+seats drop); `AgentsController` (`GET /api/agents?workspaceId=`, `POST
+/api/agents {workspaceId required → 400}`, `POST /api/agents/:id/move
+{workspaceId}`); scoping in `OrgModeService.setMode` (workspace agents
+only), `OrgService.create|addMember` (foreign agent → 400, chief created in
+the org's workspace), `OrgApprovalsService.applyHire` (hires land in the
+org's workspace), `GroupChatService.ensureChannel|addMember`,
+`ChannelRuntimeService` (a foreign seat never wakes), `ChatsService.create`
+(foreign agent → 400), `LoopsService.runLoop` and `HeartbeatService`
+(the agent's own workspace, `workspaceOf`), `TurnLoopService` `delegate_task`
+(the delegating agent's workspace), `MarketService.hire(id, workspaceId)`
+(`POST /api/market/:id/hire {workspaceId}`), `PortabilityService.importAgent`
+and the registry install (`options.workspaceId` → the agent's workspace),
+`WorkspacesService.remove` (re-homes the agents); SPA `api.agents(workspaceId)`,
+`api.moveAgent`, `createAgent {workspaceId}`, `hire(id, workspaceId)`,
+the store's `refreshAgents` per selected workspace (reloads on switch; Rails,
+the channel member picker and the org chart read the same list), the agent
+Settings tab's "Move to workspace…" card; `docs/shared-agents.md` §1
+"Workspace ownership", `docs/group-chat.md` §1, `docs/security.md` §b row.
+Tests: `tests/backend-agents-workspace.test.ts` (10). Departures: the column
+is `NOT NULL DEFAULT ''` rather than nullable so every reader sees a string;
+`move` also carries the agent's chat sessions and drops its old channel
+seats (an agent and its history move together; channels stay with their
+workspace); `delegate_task` scopes by the delegating agent's workspace, not
+the session's; `GET /api/agents` without `?workspaceId=` still returns every
+agent of the account for admin and name-map callers.

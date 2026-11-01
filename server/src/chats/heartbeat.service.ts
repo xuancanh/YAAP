@@ -159,12 +159,12 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
 
   private async tickAccount(now: Date): Promise<void> {
     const stamp = now.toISOString().slice(0, 16);
-    const ws = (await this.workspaces.list())[0];
     const live = new Set<string>();
     for (const agent of await this.agents.list()) {
       live.add(agent.id);
       if (!agent.heartbeatEnabled) continue;
-      const { cron } = effectiveHeartbeat(ws, agent);
+      // The cadence defaults come from the agent's own workspace (item 26).
+      const { cron } = effectiveHeartbeat(await this.workspaceOf(agent), agent);
       if (!cronMatches(cron, now) || this.lastBeat.get(agent.id) === stamp) continue;
       this.lastBeat.set(agent.id, stamp);
       await this.beat(agent.id, now).catch((err) => {
@@ -174,6 +174,13 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
     for (const id of [...this.lastBeat.keys()]) if (!live.has(id)) this.lastBeat.delete(id);
   }
 
+  /** The agent's own workspace (execution-plan item 26); the account's
+   *  default only for a row that never got one. */
+  private async workspaceOf(agent: { workspaceId?: string }) {
+    const own = agent.workspaceId ? await this.workspaces.get(agent.workspaceId).catch(() => null) : null;
+    return own ?? (await this.workspaces.list())[0];
+  }
+
   // ---- one beat ----
 
   /** Run the gate for one agent now. `force` ignores the enabled flag (the
@@ -181,7 +188,7 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
    *  never the quiet hours, the spend stop or the daily cap. */
   async beat(agentId: string, now: Date = new Date(), opts: { force?: boolean } = {}): Promise<BeatResult> {
     const agent = await this.agents.get(agentId);
-    const ws = (await this.workspaces.list())[0];
+    const ws = await this.workspaceOf(agent);
     const tunables = effectiveHeartbeat(ws, agent);
     const prior = await this.state(agentId);
     const nextDue = nextCronMatch(tunables.cron, now);
@@ -345,7 +352,7 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
   /** GET /api/agents/:id/heartbeat: settings in effect, state, today's runs. */
   async view(agentId: string, now: Date = new Date()): Promise<HeartbeatView> {
     const agent = await this.agents.get(agentId);
-    const ws = (await this.workspaces.list())[0];
+    const ws = await this.workspaceOf(agent);
     const t = effectiveHeartbeat(ws, agent);
     const s = await this.state(agentId);
     const today = now.toISOString().slice(0, 10);

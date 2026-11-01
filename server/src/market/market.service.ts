@@ -18,8 +18,8 @@ const CATALOG = [...AUTHORED_PACKS, ...PROFESSION_PACKS];
 export class MarketService {
   constructor(private readonly agents: AgentsService, private readonly skills: SkillsService) {}
 
-  async list() {
-    const hiredNames = new Set((await this.agents.list()).map((a) => a.name));
+  async list(workspaceId?: string) {
+    const hiredNames = new Set((await this.agents.list({ workspaceId })).map((a) => a.name));
     // Skill bodies stay server-side; the client only needs names for review.
     return CATALOG.map(({ skills, ...item }) => ({
       ...item,
@@ -40,13 +40,16 @@ export class MarketService {
     }));
   }
 
-  async hire(id: string) {
+  /** Hire into `workspaceId` (the account's default when none is named):
+   *  the hired agent belongs to that workspace alone. */
+  async hire(id: string, workspaceId?: string) {
     const item = CATALOG.find((m) => m.id === id);
     if (!item) throw new NotFoundException(`market item ${id}`);
-    const existing = (await this.agents.list()).find((a) => a.name === item.name);
+    const existing = (await this.agents.list({ workspaceId })).find((a) => a.name === item.name);
     if (existing) throw new ConflictException(`${item.name} is already hired`);
     const agent = await this.agents.create({
       name: item.name,
+      workspaceId,
       emoji: item.emoji,
       colors: item.colors,
       role: item.role,

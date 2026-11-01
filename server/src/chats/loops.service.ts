@@ -239,7 +239,7 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
       const lastErrorAt = state?.lastErrorAt ? new Date(state.lastErrorAt).getTime() : 0;
       if (now.getTime() - lastErrorAt < POLL_ERROR_EVERY_MS) return;
       await this.repo.putLoopState(agentId, loop.name, { lastErrorAt: now.toISOString() });
-      const ws = (await this.workspaces.list())[0];
+      const ws = await this.workspaceOf(agentId);
       await this.agents.addEvent(agentId, {
         kind: 'loop_error',
         title: `Trigger for loop "${loop.name}" could not poll`,
@@ -405,6 +405,15 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /** The workspace an agent's unattended work runs in: its own (execution-plan
+   *  item 26), falling back to the account's default only for a row that
+   *  never got one. */
+  private async workspaceOf(agentId: string) {
+    const agent = await this.agents.get(agentId).catch(() => null);
+    const own = agent?.workspaceId ? await this.workspaces.get(agent.workspaceId).catch(() => null) : null;
+    return own ?? (await this.workspaces.list())[0];
+  }
+
   /** Run a trigger-fired loop and stamp lastFiredAt whatever the outcome: a
    *  busy run skipped is still "the trigger fired", and the caller has
    *  already advanced its cursor so the backlog is never replayed. */
@@ -419,7 +428,7 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
    *  agent's activity feed instead of burning tokens silently. With `fired`,
    *  the trigger payload is appended as untrusted content. */
   async runLoop(agentId: string, agentName: string, loop: LoopDef, fired?: TriggerFire): Promise<LoopRunStatus> {
-    const ws = (await this.workspaces.list())[0];
+    const ws = await this.workspaceOf(agentId);
     if (!ws) return 'busy';
     const name = `Loop · ${loop.name}`;
     const existing = (await this.repo.listSessions(ws.id)).find((s) => s.agentId === agentId && s.name === name);

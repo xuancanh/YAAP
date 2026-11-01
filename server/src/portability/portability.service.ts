@@ -93,7 +93,8 @@ export class PortabilityService {
   async importAgent(profile: Record<string, unknown>, opts: ImportOptions = {}) {
     const version = typeof profile.formatVersion === 'number' ? profile.formatVersion : 1;
     if (version > AGENT_JSON_FORMAT_VERSION) throw new BadRequestException(`AGENT.json formatVersion ${version} is newer than this server understands (${AGENT_JSON_FORMAT_VERSION})`);
-    const agent = await this.agents.importJson(profile);
+    // The agent lands in the named workspace (the account's default without one).
+    const agent = await this.agents.importJson(profile, { workspaceId: opts.workspaceId });
     const summary = { lessons: { added: 0, skipped: 0, trusted: opts.trustLessons === true }, skills: { added: 0, skipped: 0 }, tasks: { added: 0 }, profileProposals: 0 };
 
     if (opts.lessons !== false && Array.isArray(profile.lessons)) {

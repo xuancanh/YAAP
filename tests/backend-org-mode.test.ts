@@ -404,8 +404,9 @@ test('changing the chief swaps the two seats and keeps the tree shape; the migra
 
   // legacy POST /api/orgs on a fresh workspace lands it in supervised mode
   const other = await s.workspaces.create({ name: 'Legacy' });
-  const o = await s.orgs.create({ workspaceId: other.id, name: 'Legacy Co', chiefOfStaffAgentId: s.editor.id });
+  const legacyChief = await s.agents.create({ name: 'Legacy chief', workspaceId: other.id }); // an agent of that workspace (item 26)
+  const o = await s.orgs.create({ workspaceId: other.id, name: 'Legacy Co', chiefOfStaffAgentId: legacyChief.id });
   const w = await s.workspaces.get(other.id);
-  assert.equal(w.orgMode, 'supervised'); assert.equal(w.chiefOfStaffAgentId, s.editor.id);
+  assert.equal(w.orgMode, 'supervised'); assert.equal(w.chiefOfStaffAgentId, legacyChief.id);
   assert.equal((await s.controller.status(other.id)).orgId, o.id);
 });

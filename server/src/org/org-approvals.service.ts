@@ -349,7 +349,7 @@ export class OrgApprovalsService {
     // No memory or connection inheritance: a fresh agent with the pack's
     // charter, its skills, and nothing else (§4.6).
     const agent = await this.agents.create({
-      name, charter: p.charter || pack?.charter || '', role: p.title, provider: p.provider, model: p.model,
+      name, workspaceId: org.workspaceId, charter: p.charter || pack?.charter || '', role: p.title, provider: p.provider, model: p.model,
       emoji: pack?.emoji, colors: pack?.colors, loops: [],
     });
     for (const s of pack?.skills ?? []) {

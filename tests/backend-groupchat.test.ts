@@ -131,10 +131,11 @@ test('every workspace gets #general with every agent and the owner; create/updat
   await s.groupchat.addMember(s.general.id, { kind: 'agent', id: scout.id });
   assert.ok((await s.groupchat.members(s.general.id)).some((m) => m.memberKind === 'agent' && m.name === 'Scout'));
 
-  // a second workspace gets its own #general through the create hook
+  // a second workspace gets its own #general through the create hook — with
+  // its own agents only: Scout belongs to the first workspace (item 26)
   const ws2 = await s.workspaces.create({ name: 'Side project' });
   assert.equal((await s.groupchat.list(ws2.id))[0].slug, 'general');
-  assert.ok((await s.groupchat.members((await s.groupchat.bySlug(ws2.id, 'general')).id)).some((m) => m.memberKind === 'agent' && m.memberId === scout.id), 'allAgents on create');
+  assert.equal((await s.groupchat.members((await s.groupchat.bySlug(ws2.id, 'general')).id)).some((m) => m.memberKind === 'agent' && m.memberId === scout.id), false, 'allAgents on create means the workspace agents');
 
   const launch = await s.groupchat.create(s.ws.id, { name: 'Product Launch', topic: 'Q1 launch', agentIds: [scout.id] });
   assert.equal(launch.slug, 'product-launch');

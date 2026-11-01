@@ -383,8 +383,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return me.names[id] ?? (id === me.ownerAccountId ? 'Owner' : id.slice(0, 8));
   }, [me]);
 
+  // Agents belong to one workspace (docs/shared-agents.md "Workspace
+  // ownership"): the list is the selected workspace's and reloads on switch.
   const refreshAgents = useCallback(async () => {
-    const list = await api.agents();
+    if (!workspaceId) { setAgents([]); setAgentStats({}); return; }
+    const list = await api.agents(workspaceId);
     setAgents(list);
     const stats: Record<string, AgentStats> = {};
     await Promise.all(list.map(async (a) => {
@@ -392,7 +395,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }));
     setAgentStats(stats);
     setUnread(await api.unreadAgentEvents().catch(() => ({})));
-  }, []);
+  }, [workspaceId]);
 
   const refreshSessions = useCallback(async () => {
     if (!workspaceId) return;
@@ -405,7 +408,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshAgentTypes = useCallback(async () => setAgentTypes(await api.agentTypes()), []);
   const refreshSkills = useCallback(async () => setSkills(await api.skills(workspaceId || undefined)), [workspaceId]);
   const refreshMcp = useCallback(async () => setMcp(await api.mcp()), []);
-  const refreshMarket = useCallback(async () => setMarket(await api.market()), []);
+  const refreshMarket = useCallback(async () => setMarket(await api.market(workspaceId || undefined)), [workspaceId]);
   const refreshWsOrg = useCallback(async () => {
     if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); return; }
     const st = await api.workspaceOrg(workspaceId).catch((): WorkspaceOrg | null => null);
@@ -617,9 +620,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCurrentId(null);
     setCurrentChannel(null);
     setMobileChatOpen(false);
-    // Agents, types and the rest are per workspace owner too.
-    void refreshAgents().catch(() => {});
-  }, [refreshAgents]);
+    // The agents list follows workspaceId (refreshAgents depends on it and
+    // the mount effect re-runs); fetching here would race with the old id.
+  }, []);
 
   // ---- draft persistence (FR-2.1) ----
   const draftTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -929,7 +932,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!hireId) return;
     const item = market.find((m) => m.id === hireId);
     try {
-      const res = await api.hire(hireId);
+      const res = await api.hire(hireId, workspaceId || undefined);
       setHireId(null);
       await refreshMarket();
       await refreshAgents();
@@ -938,7 +941,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'hire failed');
     }
-  }, [hireId, market, refreshMarket, refreshAgents, openAgent, showToast]);
+  }, [hireId, market, refreshMarket, refreshAgents, openAgent, showToast, workspaceId]);
 
   const store: Store = useMemo(() => ({
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView, setHomeView,

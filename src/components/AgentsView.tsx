@@ -194,7 +194,7 @@ export function NewAgentDialog() {
           <button disabled={!name.trim() || busy} onClick={async () => {
             setBusy(true);
             try {
-              const agent = await api.createAgent({ name: name.trim(), role: role.trim(), charter, emoji, colors });
+              const agent = await api.createAgent({ name: name.trim(), workspaceId: app.workspaceId, role: role.trim(), charter, emoji, colors });
               await app.refreshAgents();
               close();
               app.openAgent(agent.id);
@@ -1562,6 +1562,39 @@ export function AgentHome() {
                 <div style={{ flex: 1, fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5 }}>
                   Pending feedback since the last turn is surfaced to the model on its next reply, then cleared.
                 </div>
+              </div>
+            </div>
+
+            <div style={{ ...card, padding: '16px 18px' }}>
+              <div style={{ ...label, marginBottom: 8 }}>Workspace</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <span style={{ flex: 1, fontSize: 12.5, color: 'var(--text-dim)', minWidth: 200 }}>
+                  {a.name} belongs to <b>{app.workspaces.find((w) => w.id === (a.workspaceId || app.workspaceId))?.name ?? 'this workspace'}</b>. Agents are never shared across workspaces; moving takes its chats along and leaves its organization and channels behind.
+                </span>
+                <select
+                  value=""
+                  disabled={app.workspaces.length < 2}
+                  onChange={async (e) => {
+                    const target = e.target.value;
+                    if (!target) return;
+                    const ws = app.workspaces.find((w) => w.id === target);
+                    if (!window.confirm(`Move ${a.name} to ${ws?.name ?? 'that workspace'}?`)) return;
+                    try {
+                      await api.moveAgent(a.id, target);
+                      await app.refreshAgents();
+                      await app.refreshSessions();
+                      app.setSelectedAgent(null);
+                      app.go('overview');
+                      app.showToast(`Moved ${a.name} to ${ws?.name ?? 'the workspace'}`);
+                    } catch (err) {
+                      app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'move failed');
+                    }
+                  }}
+                  style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '7px 10px', fontSize: 12, cursor: 'pointer' }}
+                >
+                  <option value="">Move to workspace…</option>
+                  {app.workspaces.filter((w) => w.id !== (a.workspaceId || app.workspaceId)).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                </select>
               </div>
             </div>
 

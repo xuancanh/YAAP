@@ -1328,7 +1328,42 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_decisions_meeting ON org_decisions ("orgId", "meetingId")`);
     },
   },
+  {
+    id: '0038-agents-workspace',
+    up: async (db) => {
+      // Workspace-owned agents (execution-plan item 26): every agent belongs
+      // to exactly one workspace. Backfill rule for existing rows — the
+      // workspace of the one live organization the agent is a member of when
+      // it is a member of exactly one; otherwise the account's default
+      // workspace (its oldest row, the one WorkspacesService ensures). An
+      // account with no workspace keeps '' until its first workspace exists.
+      // Idempotent: only rows still at '' are touched.
+      if (!(await hasColumn(db, 'agents', 'workspaceId'))) {
+        await db.query(`ALTER TABLE agents ADD COLUMN "workspaceId" TEXT NOT NULL DEFAULT ''`);
+      }
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents ("workspaceId")`);
+      await backfillAgentWorkspaces(db);
+    },
+  },
 ];
+
+/** The 0038 backfill, also callable on its own (see the migration's rule). */
+export async function backfillAgentWorkspaces(db: Queryable): Promise<number> {
+  // RETURNING rather than rowCount: PGlite's exec path reports rows only.
+  const res = await db.query(`
+    UPDATE agents a SET "workspaceId" = COALESCE(
+      (SELECT MIN(o."workspaceId") FROM org_members m
+         JOIN organizations o ON o."id" = m."orgId"
+        WHERE m."agentId" = a."id" AND m."status" <> 'terminated' AND o."status" <> 'archived'
+       HAVING COUNT(DISTINCT o."workspaceId") = 1),
+      (SELECT w."id" FROM workspaces w WHERE w."accountId" = a."accountId" ORDER BY w."createdAt" ASC, w."id" ASC LIMIT 1)
+    )
+    WHERE a."workspaceId" = ''
+      AND EXISTS (SELECT 1 FROM workspaces w2 WHERE w2."accountId" = a."accountId")
+    RETURNING a."id"
+  `);
+  return res.rows.length;
+}
 
 /**
  * Units backfill (migration 0030, also callable on its own): for every live

@@ -899,7 +899,9 @@ export class TurnLoopService implements OnModuleDestroy {
         case 'delegate_task': {
           const me = await this.agents.get(agentId).catch(() => null);
           const targetName = String(input.agent ?? '').trim();
-          const all = await this.agents.list();
+          // Delegation stays inside the delegating agent's workspace: its
+          // colleagues only (agents are never shared across workspaces).
+          const all = await this.agents.list({ workspaceId: me?.workspaceId || session.workspaceId });
           const target = all.find((a) => a.name.toLowerCase() === targetName.toLowerCase());
           if (!target) throw new Error(`no agent named "${targetName}" — known agents: ${all.map((a) => a.name).join(', ')}`);
           const task = await this.agents.addTask(target.id, {

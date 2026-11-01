@@ -203,7 +203,7 @@ export class GroupChatService {
     };
     await this.db.insert(channels).values(row);
     const agentIds = new Set(opts.agentIds ?? []);
-    if (opts.allAgents) for (const a of await this.agents.list()) agentIds.add(a.id);
+    if (opts.allAgents) for (const a of await this.agents.list({ workspaceId })) agentIds.add(a.id);
     for (const id of agentIds) await this.addMember(row.id, { kind: 'agent', id, unprompted: opts.unprompted ?? false }, { system: true }).catch(() => undefined);
     const humans = new Set(opts.humanIds ?? []);
     if (opts.allHumans) {
@@ -336,7 +336,11 @@ export class GroupChatService {
     if (!opts.system) await this.assertMayManage(c);
     if (input.kind !== 'agent' && input.kind !== 'human') throw new BadRequestException('kind must be agent or human');
     if (!input.id) throw new BadRequestException('member id is required');
-    if (input.kind === 'agent') await this.agents.get(input.id); // 404 for an unknown agent
+    if (input.kind === 'agent') {
+      const agent = await this.agents.get(input.id); // 404 for an unknown agent
+      // A channel belongs to its workspace, and so do its agents (execution-plan item 26).
+      if (agent.workspaceId && agent.workspaceId !== c.workspaceId) throw new BadRequestException(`${agent.name} belongs to another workspace; agents are not shared across workspaces`);
+    }
     const existing = await this.member(channelId, input.kind, input.id);
     if (existing) return existing;
     const row: ChannelMember = {

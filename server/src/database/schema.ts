@@ -74,6 +74,11 @@ export const workspaces = pgTable('workspaces', {
 export const agents = pgTable('agents', {
   ...accountScoped(),
   id: text('id').primaryKey(),
+  /** The owning workspace (migration 0038, execution-plan item 26): an agent
+   *  belongs to exactly one workspace and is never shared across them —
+   *  moving it is an explicit action (AgentsService.move). '' only for a row
+   *  whose account had no workspace at backfill time. */
+  workspaceId: text('workspaceId').notNull().default(''),
   name: text('name').notNull(),
   /** Avatar emoji + gradient color pair (JSON [from,to]) for the UI. */
   emoji: text('emoji').notNull().default('\u{1F916}'),

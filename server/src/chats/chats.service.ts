@@ -45,7 +45,14 @@ export class ChatsService {
     return this.get(id);
   }
 
-  create(input: { workspaceId: string; name?: string; cwd?: string; agentId?: string; agentTypeId?: string; model?: string; tokenCeiling?: number }) {
+  async create(input: { workspaceId: string; name?: string; cwd?: string; agentId?: string; agentTypeId?: string; model?: string; tokenCeiling?: number }) {
+    if (input.agentId) {
+      // Agents belong to one workspace (execution-plan item 26): a chat in
+      // workspace A never runs an agent of workspace B.
+      const agent = await this.agents.get(input.agentId);
+      const owner = (agent as { workspaceId?: string }).workspaceId;
+      if (owner && owner !== input.workspaceId) throw new BadRequestException(`${agent.name} belongs to another workspace; move it first or pick an agent of this workspace`);
+    }
     return this.repo.createSession(input);
   }
 

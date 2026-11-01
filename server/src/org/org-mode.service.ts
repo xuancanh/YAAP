@@ -106,10 +106,11 @@ export class OrgModeService {
       return this.status(workspaceId);
     }
 
-    // Enabling or changing a live mode.
-    const agents = await this.agents.list();
+    // Enabling or changing a live mode. Only this workspace's agents are
+    // candidates: agents belong to one workspace (execution-plan item 26).
+    const agents = await this.agents.list({ workspaceId });
     let chiefId = input.chiefOfStaffAgentId ?? org?.chiefOfStaffAgentId ?? ws.chiefOfStaffAgentId ?? null;
-    if (chiefId && !agents.some((a) => a.id === chiefId)) throw new BadRequestException(`chiefOfStaffAgentId ${chiefId} is not an agent`);
+    if (chiefId && !agents.some((a) => a.id === chiefId)) throw new BadRequestException(`chiefOfStaffAgentId ${chiefId} is not an agent of this workspace`);
     if (!org) {
       if (!chiefId) chiefId = agents[0]?.id ?? null;
       org = await this.org.create({

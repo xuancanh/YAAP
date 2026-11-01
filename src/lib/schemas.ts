@@ -62,6 +62,7 @@ export const chatTurnSchema = z.object({
 
 export const agentSchema = z.object({
   id: z.string(),
+  workspaceId: z.string().optional(),
   name: z.string(),
   emoji: z.string(),
   colors: z.string(), // JSON [from, to]

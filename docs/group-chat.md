@@ -23,7 +23,11 @@ A **workspace** is the company. Every workspace, personal or shared, has
 channels. A workspace may switch on **organization mode** (§5), which adds the
 chief of staff, the reports-to tree, goals, budgets and the board. Nothing in
 this document requires organization mode: a personal workspace with one user
-and three agents gets `#general` and can add channels.
+and three agents gets `#general` and can add channels. Agents belong to one
+workspace (`agents.workspaceId`, docs/shared-agents.md "Workspace
+ownership"): a channel's members, "all agents" at creation and the member
+picker are the workspace's own agents, and adding one from another workspace
+is refused.
 
 Tables (all `accountScoped()`):
 

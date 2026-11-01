@@ -9,7 +9,7 @@ import { actorId, currentAccountId, currentViewer } from '../accounts/account-co
 import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { workspaces } from '../database/schema';
+import { agents, workspaces } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
 import { workspacePrefix } from '../storage/storage.keys';
@@ -220,6 +220,11 @@ export class WorkspacesService {
 
   async remove(id: string) {
     await this.db.delete(workspaces).where(eq(workspaces.id, id));
+    // Its agents are not deleted with it: they re-home to the oldest remaining
+    // workspace (an agent always has an owner — execution-plan item 26).
+    const rest = (await this.db.select({ id: workspaces.id, createdAt: workspaces.createdAt }).from(workspaces))
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+    await this.db.update(agents).set({ workspaceId: rest[0]?.id ?? '' }).where(eq(agents.workspaceId, id));
     await this.storage.deletePrefix(workspacePrefix(id));
     return { ok: true };
   }

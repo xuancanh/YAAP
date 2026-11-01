@@ -43,6 +43,24 @@ columns `connection_grants.memberAccountId`, `agent_lessons.audience`,
 `agent_events.forMemberAccountId`, `workspaces.profilePrivate`,
 `org_approvals.decidedBy`. All owned by the workspace's account.
 
+**Workspace ownership** (migration `0038-agents-workspace`, execution-plan
+item 26). An agent belongs to exactly one workspace — `agents.workspaceId` —
+and is never shared across workspaces: the agents list, the channel member
+picker, organization enrolment, loops and heartbeats, delegation and the
+market all see one workspace's agents. `POST /api/agents` requires a
+`workspaceId`; service and CLI callers that name none land in the account's
+default (oldest) workspace. Using an agent across the line is refused with a
+400 (`OrgService.addMember`, `GroupChatService.addMember`,
+`ChatsService.create`, the chief of a new organization), and a stale channel
+seat of an agent that moved away wakes nobody. Moving an agent is the one
+explicit action (`POST /api/agents/:id/move {workspaceId}`, the "Move to
+workspace…" select on the agent's Settings tab): refused while the agent sits
+in an organization, it takes the agent's chats along, drops its channel
+seats in the old workspace and leaves a `moved` `agent_events` row. Deleting
+a workspace re-homes its agents to the oldest remaining one. Existing rows
+were backfilled to the workspace of the one live organization they were a
+member of, otherwise to the account's default workspace.
+
 ## 2. Roles and invitations
 
 | Role | May |

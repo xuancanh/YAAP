@@ -12,7 +12,7 @@ import { AccountsService } from '../accounts/accounts.service';
 import { actorId, currentAccountId } from '../accounts/account-context';
 import { unscoped } from '../accounts/scoped-db';
 import type { DrizzleDb } from '../database/database.module';
-import { agents, agentEvents, agentTasks, chatSessions, chatTurns, heartbeatState } from '../database/schema';
+import { agents, agentEvents, agentTasks, channelMembers, channels, chatSessions, chatTurns, heartbeatState, orgMembers, organizations, workspaces } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix } from '../storage/storage.keys';
@@ -139,8 +139,31 @@ export class AgentsService {
     @Optional() private readonly accounts?: AccountsService,
   ) {}
 
-  list() {
-    return this.db.select().from(agents);
+  /** Every agent of the account, or only the given workspace's (the SPA
+   *  always passes one; admin and name-map callers take them all). */
+  list(opts: { workspaceId?: string } = {}) {
+    return opts.workspaceId
+      ? this.db.select().from(agents).where(eq(agents.workspaceId, opts.workspaceId))
+      : this.db.select().from(agents);
+  }
+
+  /** The account's default workspace id — its oldest row, created when the
+   *  account has none yet (the same lazy default WorkspacesService.list
+   *  ensures). Service callers that name no workspace land here; the HTTP
+   *  layer always names one. */
+  async defaultWorkspaceId(): Promise<string> {
+    const rows = await this.db.select({ id: workspaces.id, createdAt: workspaces.createdAt }).from(workspaces);
+    const oldest = rows.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1))[0];
+    if (oldest) return oldest.id;
+    const def = { id: newId(), name: 'Default', createdAt: nowIso() };
+    await this.db.insert(workspaces).values(def);
+    return def.id;
+  }
+
+  /** 400 unless `workspaceId` names a workspace of this account. */
+  private async assertWorkspace(workspaceId: string): Promise<void> {
+    const rows = await this.db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
+    if (!rows[0]) throw new BadRequestException(`workspace ${workspaceId} does not exist`);
   }
 
   async get(id: string) {
@@ -149,10 +172,11 @@ export class AgentsService {
     return rows[0];
   }
 
-  /** `workspaceId` is accepted ahead of the per-workspace agents migration
-   *  (each workspace owns its agents); until that column exists it is read
-   *  and ignored here, so callers already pass it. */
-  async create(input: { name: string; charter?: string; provider?: string; model?: string; homeDir?: string; emoji?: string; colors?: [string, string]; role?: string; loops?: unknown[]; workspaceId?: string }) {
+  async create(input: { name: string; workspaceId?: string; charter?: string; provider?: string; model?: string; homeDir?: string; emoji?: string; colors?: [string, string]; role?: string; loops?: unknown[] }) {
+    // The owning workspace (docs/shared-agents.md "Workspace ownership"):
+    // named by every HTTP caller, defaulted for service and CLI callers.
+    const workspaceId = input.workspaceId ?? await this.defaultWorkspaceId();
+    if (input.workspaceId) await this.assertWorkspace(workspaceId);
     if (this.accounts) {
       const existing = await this.list();
       await this.accounts.assertCanCreateAgent(existing.length);
@@ -161,6 +185,7 @@ export class AgentsService {
     const id = newId();
     const row = {
       id,
+      workspaceId,
       name: input.name,
       emoji: input.emoji ?? '\u{1F916}',
       colors: JSON.stringify(input.colors ?? ['#8b8cf0', '#5cc2f2']),
@@ -496,6 +521,42 @@ export class AgentsService {
     return { ok: true };
   }
 
+  /**
+   * Move an agent to another workspace: the one explicit way an agent changes
+   * hands (agents are never shared across workspaces). Refused while the
+   * agent is an active or paused member of an organization — leave the
+   * company first. Its sessions move with it; its channel memberships in the
+   * old workspace are dropped (channels belong to their workspace). Audited
+   * as an `agent_events` row.
+   */
+  async move(id: string, workspaceId: string, actor = 'user') {
+    const agent = await this.get(id);
+    await this.assertWorkspace(workspaceId);
+    if (agent.workspaceId === workspaceId) return agent;
+    const seats = await this.db.select({ orgId: orgMembers.orgId, status: orgMembers.status }).from(orgMembers).where(eq(orgMembers.agentId, id));
+    const live = seats.filter((m) => m.status !== 'terminated');
+    if (live.length > 0) {
+      const org = (await this.db.select({ name: organizations.name }).from(organizations).where(eq(organizations.id, live[0].orgId)).limit(1)).at(0);
+      throw new BadRequestException(`${agent.name} is a member of ${org?.name ?? 'an organization'} — remove it from the organization before moving it`);
+    }
+    const from = agent.workspaceId;
+    await this.db.update(agents).set({ workspaceId }).where(eq(agents.id, id));
+    await this.db.update(chatSessions).set({ workspaceId }).where(eq(chatSessions.agentId, id));
+    if (from) {
+      const old = await this.db.select({ id: channels.id }).from(channels).where(eq(channels.workspaceId, from));
+      if (old.length > 0) {
+        await this.db.delete(channelMembers).where(and(eq(channelMembers.memberKind, 'agent'), eq(channelMembers.memberId, id), inArray(channelMembers.channelId, old.map((c) => c.id))));
+      }
+    }
+    const to = (await this.db.select({ name: workspaces.name }).from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1)).at(0);
+    await this.addEvent(id, {
+      kind: 'moved', title: `Moved to workspace ${to?.name ?? workspaceId}`,
+      body: `${actor} moved ${agent.name} from workspace ${from || '(none)'} to ${workspaceId}. Its chats moved with it; channel memberships in the old workspace were dropped.`,
+      payload: JSON.stringify({ from, to: workspaceId, actor }), origin: 'system', silent: true,
+    });
+    return this.get(id);
+  }
+
   async remove(id: string) {
     await this.db.delete(agents).where(eq(agents.id, id));
     await this.db.delete(agentTasks).where(eq(agentTasks.agentId, id));
@@ -735,7 +796,7 @@ export class AgentsService {
   /** AGENT.json import (FR-11.7): validate hard before install, because
    *  imported loops enable immediately — the client shows the capability
    *  review, the server enforces the bounds. */
-  async importJson(profile: Record<string, unknown>) {
+  async importJson(profile: Record<string, unknown>, opts: { workspaceId?: string } = {}) {
     const fail = (msg: string): never => { throw new BadRequestException(`invalid AGENT.json: ${msg}`); };
     const name = profile.name;
     if (typeof name !== 'string' || name.length < 1 || name.length > 60) fail('name must be 1-60 chars');
@@ -753,7 +814,7 @@ export class AgentsService {
     // Shared validator with the schedule editor; a webhook trigger in a
     // profile never carries a usable secret, so it is minted on import.
     const loops = JSON.parse(validateLoopsJson(JSON.stringify(rawLoops.map((l) => validateLoopDef(l, fail))))) as LoopDef[];
-    const agent = await this.create({ name: name as string, charter, role, emoji, colors, loops });
+    const agent = await this.create({ name: name as string, workspaceId: opts.workspaceId, charter, role, emoji, colors, loops });
     if (typeof profile.dashboard === 'string' && profile.dashboard) {
       await this.update(agent.id, { dashboard: profile.dashboard.slice(0, DASHBOARD_CAP) });
     }
