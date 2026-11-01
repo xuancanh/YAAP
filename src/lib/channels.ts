@@ -119,3 +119,38 @@ export function goalMentions(mentionsJson: string): string[] {
     return Array.isArray(v) ? v.filter((m) => m && m.kind === 'goal' && typeof m.id === 'string').map((m) => m.id as string) : [];
   } catch { return []; }
 }
+
+/** `#decision:<id>` references in a message (docs/group-chat.md §8): the
+ *  raw ids as written, deduplicated — the minutes write them with an 8-char
+ *  prefix, which `GET …/chat/decisions/:id` resolves. */
+export function decisionRefs(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/(^|[^\w#])#decision:([\w-]{4,})/g)) { const id = m[2].replace(/[.,;:!?]+$/, ''); if (id && !out.includes(id)) out.push(id); }
+  return out;
+}
+
+/** The decisions a stored message references, from its `mentions` JSON. */
+export function decisionMentions(mentionsJson: string): string[] {
+  try {
+    const v = JSON.parse(mentionsJson || '[]') as Array<{ kind?: string; id?: string }>;
+    return Array.isArray(v) ? v.filter((m) => m && m.kind === 'decision' && typeof m.id === 'string').map((m) => m.id as string) : [];
+  } catch { return []; }
+}
+
+export const MEETING_COMMAND_KINDS = ['planning', 'standup', 'weekly_review', 'retro', 'board'] as const;
+
+/** The composer's `/meeting` hint (docs/group-chat.md §8): while the text is
+ *  the command being typed, what it will do — the kind, the unit and the
+ *  agenda so far — or null when the text is anything else. Mirrors
+ *  `parseMeetingCommand` on the server. */
+export function meetingCommandHint(text: string): { kind: string; unitSlug: string | null; agenda: string; complete: boolean } | null {
+  const m = /^\/m(?:e(?:e(?:t(?:i(?:n(?:g)?)?)?)?)?)?(?:\s+([\s\S]*))?$/i.exec(text.trimStart());
+  if (!m) return null;
+  const complete = /^\/meeting(\s|$)/i.test(text.trimStart());
+  const tokens = (m[1] ?? '').trim().split(/\s+/).filter(Boolean);
+  let kind = 'adhoc';
+  if (tokens.length && (MEETING_COMMAND_KINDS as readonly string[]).includes(tokens[0].toLowerCase().replace('-', '_'))) kind = tokens.shift()!.toLowerCase().replace('-', '_');
+  let unitSlug: string | null = null;
+  if (tokens.length && /^#[a-z0-9][a-z0-9-]*$/i.test(tokens[0])) unitSlug = tokens.shift()!.slice(1).toLowerCase();
+  return { kind, unitSlug, agenda: tokens.join(' '), complete };
+}

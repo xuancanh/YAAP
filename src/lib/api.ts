@@ -39,6 +39,8 @@ export interface Workspace {
   orgMonthlyUsd: number;
   /** Autonomous mode: at most this many members (chief included). */
   orgAgentCap: number;
+  /** Heartbeat defaults JSON { cron?, dailyRunCap?, staleMinutes? } (docs/triggers.md "Heartbeat"); '{}' = built-in. */
+  heartbeatDefaults?: string;
   createdAt: string;
 }
 
@@ -669,7 +671,15 @@ export interface OrgMember {
   id: string; orgId: string; agentId: string; title: string; reportsToAgentId: string | null; depth: number;
   sponsor: string; scopes: string; status: 'active' | 'paused' | 'terminated'; charterHash: string; joinedAt: string;
 }
-export interface OrgGoal { id: string; orgId: string; title: string; description: string; status: string; ownerAgentId: string | null; unitId: string | null; parentGoalId: string | null; createdAt: string }
+export type OrgGoalKind = 'vision' | 'objective' | 'key_result';
+export interface OrgGoal {
+  id: string; orgId: string; title: string; description: string; status: string; ownerAgentId: string | null; unitId: string | null; parentGoalId: string | null; createdAt: string;
+  /** Intent (docs/company-vision.md §2, item 18): the kind and the key-result
+   *  fields; `confidence` 0–1 (null = never checked in); `atRisk` is the
+   *  model-free assessment with its reason. The vision keeps its horizon in dueAt. */
+  kind: OrgGoalKind; metric: string; targetValue: number | null; currentValue: number | null; startValue: number | null; unitLabel: string; dueAt: string | null;
+  confidence: number | null; atRisk: number; atRiskReason: string; lastCheckInAt: string | null; checkInCadenceDays: number;
+}
 /** Units (docs/group-chat.md §7): a board, a channel and a goal tracker per org level. */
 export interface OrgUnit {
   id: string; orgId: string; leadAgentId: string; parentUnitId: string | null; name: string; slug: string; channelId: string | null; archivedAt: string | null; createdAt: string;
@@ -720,6 +730,66 @@ export interface OrgSpend {
   members: Array<OrgSpendNode & { agentId: string; name: string; title: string }>;
   acceptedTasks: number; costPerAcceptedTask: number | null; series: UsageDay[];
 }
+
+// ---- the CEO's seat (docs/company-vision.md §8; execution plan items 18–21) ----
+export type Pace = 'onPace' | 'behind' | 'unknown';
+/** GET …/org/intent?unitId= — the goal tree with pace, measured progress, confidence, risk and owner. */
+export interface OrgIntentNode extends OrgGoal {
+  progress: number; tasks: { total: number; done: number };
+  pace: Pace; expected: number | null; measured: number | null; ownerName: string | null;
+  children: OrgIntentNode[];
+}
+export interface OrgVisionInfo { vision: OrgGoal | null; rules: string; values: string; culture: string }
+export interface OrgProfile { values: string; culture: string; rules: string; mission: string }
+export type TunableArea = 'intent' | 'planning' | 'rituals' | 'assurance' | 'heartbeat' | 'brief';
+/** GET …/org/tunables — every tunable with its default, bound, area and the org's effective/stored value. */
+export interface OrgTunable { key: string; default: number; min: number; max: number; description: string; area: TunableArea; value: number; stored: number | null }
+export interface OrgCheckin { id: string; orgId: string; goalId: string; actor: string; currentValue: number | null; confidence: number | null; note: string; createdAt: string }
+export interface WhyLink { kind: 'task' | 'vision' | 'objective' | 'key_result'; id: string; title: string; status: string }
+export interface WhyChain { chain: WhyLink[]; broken: boolean; brokenAt: string | null; linked: boolean }
+export type SignalSeverity = 'info' | 'warn' | 'critical';
+export interface OrgSignal {
+  id: string; orgId: string; unitId: string | null; kind: string; severity: SignalSeverity; refType: string; refId: string; title: string; detail: string;
+  addresseeKind: 'owner' | 'lead' | 'chief' | 'ceo'; addresseeId: string; dayKey: string; status: 'open' | 'acked' | 'resolved'; ackNote: string; ackedAt: string | null; resolvedAt: string | null; createdAt: string;
+}
+export interface SloTargets { cycleTimeHours: number; firstReviewAcceptancePct: number; decisionLatencyHours: number }
+export interface SloMetrics {
+  dayKey: string; windowDays: number; cycleTimeHours: number | null; cycleTimeByClass: Record<string, number>; firstReviewAcceptancePct: number | null;
+  costPerAcceptedTaskUsd: number | null; decisionLatencyHours: number | null; goalsOwnedPct: number | null; goalsAtRiskPct: number | null; spendVsEnvelopePct: number | null;
+  acceptedTasks: number; runs: number; decisions: number; openCriticalSignals: number;
+}
+export interface PulseWeights { cycle: number; acceptance: number; latency: number; health: number; criticalPenalty: number }
+/** GET …/org/pulse — the score, today's metrics, targets, breaches and the 30-day series. */
+export interface OrgPulse {
+  score: number; today: SloMetrics; targets: SloTargets; weights: PulseWeights;
+  breaches: Array<{ metric: keyof SloTargets; value: number; target: number; detail: string }>;
+  worst: Array<{ metric: keyof SloTargets; value: number | null; target: number; ratio: number }>;
+  series: Array<{ day: string; score: number | null; metrics: SloMetrics | null }>;
+}
+export interface OrgSloInfo { targets: SloTargets; weights: PulseWeights; tunables: Record<string, number>; bounds: Record<string, { default: number; min: number; max: number; doc: string }> }
+export interface OrgAuditRun {
+  id: string; orgId: string; auditorAgentId: string; trigger: 'cadence' | 'manual'; startedAt: string; endedAt: string | null; sampled: string; findings: string; summary: string;
+  singleModel: number; model: string; usd: number; status: 'running' | 'done' | 'failed' | 'budget_stop'; createdAt: string;
+}
+export interface AuditFinding { severity: string; kind: string; refType: string; refId: string; title: string; detail: string }
+export type MeetingKind = 'planning' | 'standup' | 'weekly_review' | 'retro' | 'board' | 'adhoc';
+export const MEETING_KINDS: MeetingKind[] = ['planning', 'standup', 'weekly_review', 'retro', 'board', 'adhoc'];
+export type MeetingStatus = 'scheduled' | 'running' | 'done' | 'cancelled' | 'postponed';
+export interface MinutesAction { title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string }
+export interface MinutesDecision { title: string; decision: string; alternatives: string; rationale: string; by: string; decisionId?: string }
+export interface Minutes { summary: string; decisions: MinutesDecision[]; actions: MinutesAction[]; risks: Array<{ text: string; by: string }>; questions: Array<{ question: string; by: string }>; endedBy?: string }
+/** A meeting (docs/group-chat.md §8): a thread in a unit channel; `minutes` is JSON (Minutes). */
+export interface OrgMeeting {
+  id: string; orgId: string; unitId: string | null; channelId: string | null; threadRootId: string | null; kind: MeetingKind; title: string; agenda: string;
+  facilitatorAgentId: string | null; attendees: string; status: MeetingStatus; scheduledFor: string | null; startedAt: string | null; endedAt: string | null;
+  rounds: number; usd: number; minutes: string; createdBy: string; createdAt: string;
+}
+/** The decision log (docs/company-vision.md §6); referenced as `#decision:<id>`. */
+export interface OrgDecision {
+  id: string; orgId: string; unitId: string | null; meetingId: string | null; approvalId: string | null; title: string; decision: string; alternatives: string; rationale: string;
+  decidedBy: string; refType: string; refId: string; createdAt: string;
+}
+export interface OrgCadence { id: string; orgId: string; unitId: string; kind: MeetingKind; cron: string; enabled: number; lastRunAt: string | null; nextRunAt: string | null; createdAt: string }
 
 export const PROVIDER_COLORS: Record<string, string> = {
   anthropic: '#d97757', 'anthropic-compatible': '#d97757',
@@ -879,7 +949,7 @@ export const api = {
   // workspaces + workspace files
   workspaces: () => get<Workspace[]>('/api/workspaces'),
   createWorkspace: (name: string, color?: string) => send<Workspace>('/api/workspaces', 'POST', { name, color }),
-  updateWorkspace: (id: string, patch: Partial<Pick<Workspace, 'name' | 'color' | 'memory' | 'profile' | 'quietHours' | 'spendBudgetTokens'>>) =>
+  updateWorkspace: (id: string, patch: Partial<Pick<Workspace, 'name' | 'color' | 'memory' | 'profile' | 'quietHours' | 'spendBudgetTokens' | 'heartbeatDefaults'>>) =>
     send<Workspace>(`/api/workspaces/${id}`, 'PATCH', patch),
   workspaceSpend: (id: string) => get<SpendStatus>(`/api/workspaces/${id}/spend`),
   workspaceUsage: (id: string, days = 30) => get<WorkspaceUsage>(`/api/workspaces/${id}/usage?days=${days}`, usageReportSchema),
@@ -1172,6 +1242,51 @@ export const api = {
   orgHumans: (wsId: string) => get<{ ceoAccountId: string; me: { actorId: string; role: HumanRole | null }; humans: OrgHuman[] }>(`/api/workspaces/${wsId}/org/humans`),
   setOrgHuman: (wsId: string, memberAccountId: string, role: HumanRole) => send<OrgHuman>(`/api/workspaces/${wsId}/org/humans`, 'POST', { memberAccountId, role }),
   removeOrgHuman: (wsId: string, memberAccountId: string) => send<{ ok: true }>(`/api/workspaces/${wsId}/org/humans/${enc(memberAccountId)}`, 'DELETE'),
+
+  // the CEO's seat (docs/company-vision.md §8): intent (item 18), rituals (19), assurance (20)
+  orgVision: (wsId: string) => get<OrgVisionInfo>(`/api/workspaces/${wsId}/org/vision`),
+  setOrgVision: (wsId: string, body: { title: string; description?: string; dueAt?: string | null; rules?: string; monthlyUsd?: number }) => send<{ vision: OrgGoal; org: Org }>(`/api/workspaces/${wsId}/org/vision`, 'PUT', body),
+  orgProfile: (wsId: string) => get<OrgProfile>(`/api/workspaces/${wsId}/org/profile`),
+  setOrgProfile: (wsId: string, body: { values?: string; culture?: string }) => send<OrgProfile>(`/api/workspaces/${wsId}/org/profile`, 'PUT', body),
+  orgTunables: (wsId: string) => get<OrgTunable[]>(`/api/workspaces/${wsId}/org/tunables`),
+  setOrgTunable: (wsId: string, body: { key: string; value: number; why?: string }) => send<Org>(`/api/workspaces/${wsId}/org/tunables`, 'PUT', body),
+  orgIntent: (wsId: string, unitId?: string | null) => get<OrgIntentNode[]>(`/api/workspaces/${wsId}/org/intent${unitId ? `?unitId=${enc(unitId)}` : ''}`),
+  orgCheckIn: (wsId: string, goalId: string, body: { currentValue?: number | null; confidence?: number | null; note?: string }) => send<{ goal: OrgGoal; checkin: OrgCheckin }>(`/api/workspaces/${wsId}/org/goals/${goalId}/checkin`, 'POST', body),
+  orgCheckIns: (wsId: string, goalId: string) => get<OrgCheckin[]>(`/api/workspaces/${wsId}/org/goals/${goalId}/checkins`),
+  orgWhy: (wsId: string, ref: { taskId?: string; goalId?: string }) => get<WhyChain>(`/api/workspaces/${wsId}/org/why?${ref.taskId ? `taskId=${enc(ref.taskId)}` : `goalId=${enc(ref.goalId ?? '')}`}`),
+  orgPlanNow: (wsId: string, body: { unitId?: string; reason?: string } = {}) => send<{ result: string }>(`/api/workspaces/${wsId}/org/plan`, 'POST', body),
+  orgStrategy: (wsId: string) => get<{ memo: string; at: string | null }>(`/api/workspaces/${wsId}/org/strategy`),
+  orgSignals: (wsId: string, opts: { status?: string; severity?: string; unitId?: string | null; kind?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.status) q.set('status', opts.status);
+    if (opts.severity) q.set('severity', opts.severity);
+    if (opts.unitId) q.set('unitId', opts.unitId);
+    if (opts.kind) q.set('kind', opts.kind);
+    const qs = q.toString();
+    return get<OrgSignal[]>(`/api/workspaces/${wsId}/org/signals${qs ? `?${qs}` : ''}`);
+  },
+  ackOrgSignal: (wsId: string, signalId: string, note?: string) => send<OrgSignal>(`/api/workspaces/${wsId}/org/signals/${signalId}/ack`, 'POST', { note }),
+  resolveOrgSignal: (wsId: string, signalId: string) => send<OrgSignal>(`/api/workspaces/${wsId}/org/signals/${signalId}/resolve`, 'POST'),
+  orgPulse: (wsId: string) => get<OrgPulse>(`/api/workspaces/${wsId}/org/pulse`),
+  orgSlo: (wsId: string) => get<OrgSloInfo>(`/api/workspaces/${wsId}/org/slo`),
+  setOrgSlo: (wsId: string, body: Partial<SloTargets> & { tunables?: Record<string, number | null> }) => send<SloTargets>(`/api/workspaces/${wsId}/org/slo`, 'PATCH', body),
+  orgAudits: (wsId: string, limit = 20) => get<OrgAuditRun[]>(`/api/workspaces/${wsId}/org/audits?limit=${limit}`),
+  runOrgAudit: (wsId: string) => send<{ result: string }>(`/api/workspaces/${wsId}/org/audit/run`, 'POST'),
+  orgMeetings: (wsId: string, opts: { unitId?: string | null; status?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.unitId) q.set('unitId', opts.unitId);
+    if (opts.status) q.set('status', opts.status);
+    const qs = q.toString();
+    return get<OrgMeeting[]>(`/api/workspaces/${wsId}/org/meetings${qs ? `?${qs}` : ''}`);
+  },
+  orgMeeting: (wsId: string, meetingId: string) => get<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings/${enc(meetingId)}`),
+  startOrgMeeting: (wsId: string, body: { kind: MeetingKind; unitId?: string; channelId?: string; agenda?: string; title?: string }) => send<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings`, 'POST', body),
+  cancelOrgMeeting: (wsId: string, meetingId: string) => send<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings/${enc(meetingId)}/cancel`, 'POST'),
+  orgDecisions: (wsId: string, unitId?: string | null) => get<OrgDecision[]>(`/api/workspaces/${wsId}/org/decisions${unitId ? `?unitId=${enc(unitId)}` : ''}`),
+  /** The decision a `#decision:<id>` chip names (id or unique prefix). */
+  chatDecision: (wsId: string, idOrPrefix: string) => get<OrgDecision>(`/api/workspaces/${wsId}/chat/decisions/${enc(idOrPrefix)}`),
+  orgCadences: (wsId: string) => get<OrgCadence[]>(`/api/workspaces/${wsId}/org/cadences`),
+  updateOrgCadence: (wsId: string, cadenceId: string, patch: { cron?: string; enabled?: boolean }) => send<OrgCadence>(`/api/workspaces/${wsId}/org/cadences/${enc(cadenceId)}`, 'PATCH', patch),
 };
 
 export interface AppLlmResult {

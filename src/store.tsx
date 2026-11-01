@@ -9,6 +9,7 @@ import {
   type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision, type ToolReview,
   type BrowserStep, type WorkspaceOrg, type SharedWorkspace, type WorkspaceMe, type Channel, type WorkspaceEvent,
+  type OrgIntentNode, type OrgCadence,
 } from './lib/api';
 import { isChannelSession, parseChannelHash } from './lib/channels';
 
@@ -20,8 +21,12 @@ import type { PriceTable } from './lib/pricing';
 export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 'settings';
 /** The organization panes under the Workspace section (docs/group-chat.md
  *  §5: the workspace is the company; there is no separate Company section). */
-export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit';
-export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit'];
+export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions';
+export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions'];
+/** Something a pane should open or scroll to once loaded (a signal row's
+ *  deep link, docs/company-vision.md §5): a task on the board, a goal on the
+ *  vision page, a meeting thread. Consumed by the pane. */
+export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision'; id: string }
 const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
 /** What the main pane shows while in the Home section: a conversation, a
  *  group-chat channel, an agent's home page (or the directory when no agent
@@ -165,6 +170,11 @@ interface Store {
   orgPane: OrgPane | null; setOrgPane: (v: OrgPane | null) => void;
   /** The unit the Board / Goals panes are scoped to (docs/group-chat.md §7); null = the company. */
   orgUnitId: string | null; setOrgUnitId: (v: string | null) => void;
+  /** The CEO's seat (docs/company-vision.md §8): the company intent tree and
+   *  the ritual cadences, refreshed with wsOrg so the rail can badge units
+   *  with at-risk goals and today's ritual without its own fetches. */
+  orgIntent: OrgIntentNode[]; orgCadences: OrgCadence[];
+  orgFocus: OrgFocus | null; setOrgFocus: (v: OrgFocus | null) => void;
 
   // group chat (docs/group-chat.md, execution plan item 15)
   channels: Channel[]; refreshChannels: () => Promise<void>;
@@ -266,6 +276,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return p.get('section') === 'company' ? 'board' : null;
   });
   const [orgUnitId, setOrgUnitId] = useState<string | null>(null);
+  const [orgIntent, setOrgIntent] = useState<OrgIntentNode[]>([]);
+  const [orgCadences, setOrgCadences] = useState<OrgCadence[]>([]);
+  const [orgFocus, setOrgFocus] = useState<OrgFocus | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentChannel, setCurrentChannel] = useState<string | null>(null);
   const [channelFocus, setChannelFocus] = useState<string | null>(null);
@@ -394,8 +407,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshMcp = useCallback(async () => setMcp(await api.mcp()), []);
   const refreshMarket = useCallback(async () => setMarket(await api.market()), []);
   const refreshWsOrg = useCallback(async () => {
-    if (!workspaceId || !companiesEnabled) { setWsOrg(null); return; }
-    setWsOrg(await api.workspaceOrg(workspaceId).catch((): WorkspaceOrg | null => null));
+    if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); return; }
+    const st = await api.workspaceOrg(workspaceId).catch((): WorkspaceOrg | null => null);
+    setWsOrg(st);
+    // The intent tree and the cadences ride along for the rail (at-risk
+    // counts, today's ritual); the workspace event bus carries no org events
+    // yet, so the panes poll lightly while on screen and call this on writes.
+    if (st && st.mode !== 'off' && st.orgId) {
+      const [intent, cadences] = await Promise.all([api.orgIntent(workspaceId).catch((): OrgIntentNode[] => []), api.orgCadences(workspaceId).catch((): OrgCadence[] => [])]);
+      setOrgIntent(intent); setOrgCadences(cadences);
+    } else { setOrgIntent([]); setOrgCadences([]); }
   }, [workspaceId, companiesEnabled]);
   useEffect(() => {
     api.orgsStatus().then((s) => setCompaniesEnabled(s.enabled)).catch(() => setCompaniesEnabled(false));
@@ -936,7 +957,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgFocus, setOrgFocus,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
@@ -955,7 +976,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgFocus,
     channels, refreshChannels, currentChannel, channelFocus, openChannel, onWorkspaceEvent,
   ]);
 
