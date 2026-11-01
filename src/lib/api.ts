@@ -158,9 +158,25 @@ export interface AgentLesson {
   trusted: number;
   pinned: number;
   useCount: number;
+  /** 'shared' or 'private:<memberAccountId>' (docs/shared-agents.md §4). */
+  audience?: string;
   createdAt: string;
   updatedAt: string;
 }
+
+// ---- shared workspaces (docs/shared-agents.md) ----
+export type MemberRole = 'owner' | 'member' | 'viewer';
+export interface SharedWorkspace { id: string; name: string; color: string; ownerAccountId: string; ownerName: string; role: MemberRole }
+export interface WorkspaceMember { id: string; workspaceId: string; memberAccountId: string; role: MemberRole; displayName: string; email: string; invitedBy: string; joinedAt: string }
+export interface WorkspaceInvite { id: string; workspaceId: string; email: string; role: MemberRole; invitedBy: string; expiresAt: string; createdAt: string }
+export type FlowKind = 'lessons' | 'connections' | 'files';
+export interface FlowRule { id: string; workspaceId: string; fromMember: string; toMember: string; effect: 'allow' | 'deny'; kind: FlowKind; createdAt: string }
+/** Who the caller is in the workspace on screen, plus display names by actor id. */
+export interface WorkspaceMe { actorId: string; role: MemberRole; ownerAccountId: string; names: Record<string, string>; hasMembers: boolean }
+export interface MemberGrant { id: string; connectionId: string; agentId: string; service: string; level: string; memberAccountId: string; provider: string; accountEmail: string }
+export interface MemberChannel { id: string; workspaceId: string; memberAccountId: string; kind: 'telegram' | 'email'; address: string; createdAt: string }
+export type HumanRole = 'ceo' | 'board' | 'observer';
+export interface OrgHuman { id: string; orgId: string; memberAccountId: string; role: HumanRole; createdAt: string }
 
 export interface AgentStats {
   chats: number;
@@ -175,7 +191,8 @@ export interface AgentStats {
 export interface AgentEvent {
   id: string;
   agentId: string;
-  kind: 'loop_run' | 'loop_error' | 'budget_stop' | 'budget_warn' | 'brief' | 'org_run' | 'info' | 'action_pending' | 'action_done' | 'action_failed' | 'action_dismissed';
+  kind: 'loop_run' | 'loop_error' | 'budget_stop' | 'budget_warn' | 'brief' | 'org_run' | 'info' | 'action_pending' | 'action_done' | 'action_failed' | 'action_dismissed'
+    | 'approval_request' | 'approval_granted' | 'approval_denied' | 'approval_expired';
   title: string;
   body: string;
   payload: string;
@@ -187,6 +204,8 @@ export interface AgentEvent {
   origin: string;
   channel: number;
   deliveredAt: string | null;
+  /** Addressed to one member (a routed approval, docs/shared-agents.md §3); '' = everyone. */
+  forMemberAccountId?: string;
   createdAt: string;
 }
 
@@ -222,6 +241,10 @@ export interface ChatSession {
   compactCutoff: string | null;
   tokensIn: number;
   tokensOut: number;
+  /** Shared workspaces: the member who created it ('' = the owner) and
+   *  whether every member may see it (1) or only its creator and the owner. */
+  initiatedBy?: string;
+  shared?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -234,6 +257,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'tool' | 'thinking';
   content: string;
   toolName: string | null;
+  /** The member who wrote a user message ('' = the owner). */
+  authorAccountId?: string;
   createdAt: string;
 }
 
@@ -585,7 +610,7 @@ export interface OrgMessage { id: string; orgId: string; taskId: string | null; 
 export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation';
 export interface OrgApproval {
   id: string; orgId: string; kind: OrgApprovalKind; payload: string; requestedBy: string; recommendation: string;
-  status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired'; decidedAt: string | null; decisionNote: string; expiresAt: string | null; createdAt: string;
+  status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired'; decidedAt: string | null; decidedBy?: string; decisionNote: string; expiresAt: string | null; createdAt: string;
 }
 export interface OrgAuditRow { id: string; orgId: string; seq: number; actor: string; action: string; refType: string; refId: string; payload: string; prevHash: string; hash: string; createdAt: string }
 export interface OrgBrief { orgId: string; at: string; text: string; items: Array<{ n: number; approvalId: string; kind: string; summary: string }> }
@@ -614,7 +639,7 @@ export type TurnEvent =
   | { type: 'thinking'; text: string }
   | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ToolReview }
-  | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown>; review?: ToolReview }
+  | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown>; review?: ToolReview; routedTo?: { memberAccountId: string; name: string } }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   /** The workspace's monthly spend stop is reached; the turn still runs. */
   | { type: 'budget'; month: string; spentTokens: number; budgetTokens: number }
@@ -651,21 +676,35 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Shared workspaces (docs/shared-agents.md §2): when the workspace on
+ *  screen is one shared *with* this account, every call carries
+ *  `X-Yaam-Workspace` and the server runs it inside the owner's account as
+ *  this member. Own workspaces need no header. Set by the store. */
+let sharedWorkspaceHeader: string | null = null;
+export function setActiveSharedWorkspace(id: string | null): void { sharedWorkspaceHeader = id; }
+
+/** Routes about *this* account rather than the workspace on screen: never
+ *  carry the workspace header, or an owner's data would answer for ours. */
+const OWN_ACCOUNT_ROUTE = /^\/api\/(auth|account|admin|push)(\/|$)|^\/api\/workspaces(\/shared)?$/;
+
 /** Power-user escape hatch matching YAAM_API_TOKEN on the server: set
- *  localStorage key `yaam_api_token` to attach a bearer token to every call. */
-export const authHeaders = (): Record<string, string> => {
+ *  localStorage key `yaam_api_token` to attach a bearer token to every call.
+ *  Pass the URL so the shared-workspace header can be added where it belongs. */
+export const authHeaders = (url?: string): Record<string, string> => {
   const token = localStorage.getItem('yaam_api_token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const out: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+  if (sharedWorkspaceHeader && (!url || !OWN_ACCOUNT_ROUTE.test(url.split('?')[0]))) out['X-Yaam-Workspace'] = sharedWorkspaceHeader;
+  return out;
 };
 
 const get = <T,>(url: string, schema?: z.ZodType) =>
-  fetch(url, { headers: authHeaders() })
+  fetch(url, { headers: authHeaders(url) })
     .then((r) => json<T>(r))
     .then((v) => (schema ? looseParse(schema, v, `GET ${url}`) : v));
 const send = <T,>(url: string, method: string, body?: unknown, schema?: z.ZodType) =>
   fetch(url, {
     method,
-    headers: body !== undefined ? { ...authHeaders(), 'Content-Type': 'application/json' } : authHeaders(),
+    headers: body !== undefined ? { ...authHeaders(url), 'Content-Type': 'application/json' } : authHeaders(url),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
     .then((r) => json<T>(r))
@@ -685,6 +724,28 @@ export const api = {
   setAccountKey: (provider: string, apiKey: string) => send<AccountDetail>('/api/account/keys', 'PUT', { provider, apiKey }),
   adminAccounts: () => get<Array<AccountSummary & { usage: AccountUsageMonth }>>('/api/admin/accounts'),
   adminPatchAccount: (id: string, patch: { plan?: Plan; status?: 'active' | 'disabled' }) => send<AccountSummary>(`/api/admin/accounts/${enc(id)}`, 'PATCH', patch),
+
+  // shared workspaces (docs/shared-agents.md)
+  sharedWorkspaces: () => get<SharedWorkspace[]>('/api/workspaces/shared'),
+  workspaceMe: (id: string) => get<WorkspaceMe>(`/api/workspaces/${id}/me`),
+  workspaceMembers: (id: string) => get<WorkspaceMember[]>(`/api/workspaces/${id}/members`),
+  setMemberRole: (id: string, memberId: string, role: MemberRole) => send<WorkspaceMember>(`/api/workspaces/${id}/members/${enc(memberId)}`, 'PATCH', { role }),
+  removeMember: (id: string, memberId: string) => send<{ ok: true }>(`/api/workspaces/${id}/members/${enc(memberId)}`, 'DELETE'),
+  workspaceInvites: (id: string) => get<WorkspaceInvite[]>(`/api/workspaces/${id}/invites`),
+  inviteMember: (id: string, email: string, role: 'member' | 'viewer') => send<{ invite: WorkspaceInvite; sent: boolean; token?: string }>(`/api/workspaces/${id}/invites`, 'POST', { email, role }),
+  revokeInvite: (id: string, inviteId: string) => send<{ ok: true }>(`/api/workspaces/${id}/invites/${inviteId}`, 'DELETE'),
+  flowRules: (id: string) => get<FlowRule[]>(`/api/workspaces/${id}/flow-rules`),
+  addFlowRule: (id: string, rule: { fromMember: string; toMember?: string; effect?: 'allow' | 'deny'; kind: FlowKind }) => send<FlowRule>(`/api/workspaces/${id}/flow-rules`, 'POST', rule),
+  removeFlowRule: (id: string, ruleId: string) => send<{ ok: true }>(`/api/workspaces/${id}/flow-rules/${ruleId}`, 'DELETE'),
+  myConnections: (id: string) => get<Connection[]>(`/api/workspaces/${id}/my-connections`),
+  memberGrants: (id: string) => get<MemberGrant[]>(`/api/workspaces/${id}/member-grants`),
+  setMemberGrant: (id: string, body: { connectionId: string; agentId: string; service: string; level: 'read' | 'write' }) => send<{ ok: boolean }>(`/api/workspaces/${id}/member-grants`, 'POST', body),
+  removeMemberGrant: (id: string, grantId: string) => send<{ ok: boolean }>(`/api/workspaces/${id}/member-grants/${grantId}`, 'DELETE'),
+  workspaceChannels: (id: string) => get<MemberChannel[]>(`/api/workspaces/${id}/channels`),
+  unpairWorkspaceChannel: (id: string, kind: 'telegram' | 'email') => send<{ ok: true }>(`/api/workspaces/${id}/channels/${kind}`, 'DELETE'),
+  /** The addressee of a routed approval answers it from the inbox. */
+  decideAgentEvent: (id: string, eventId: string, decision: 'allow' | 'deny') =>
+    send<{ resolved: boolean; decision: string }>(`/api/agents/${id}/events/${eventId}/decide`, 'POST', { decision }),
 
   // workspaces + workspace files
   workspaces: () => get<Workspace[]>('/api/workspaces'),
@@ -787,7 +848,7 @@ export const api = {
     send<{ language: string; output: string }>(
       `/api/agents/${id}/apps/${appId}/compute`, 'POST', { language, code, stdin, timeoutSeconds }),
   agentLessons: (id: string) => get<AgentLesson[]>(`/api/agents/${id}/lessons`),
-  patchLesson: (id: string, lessonId: string, patch: { trusted?: boolean; pinned?: boolean }) =>
+  patchLesson: (id: string, lessonId: string, patch: { trusted?: boolean; pinned?: boolean; audience?: string }) =>
     send<AgentLesson>(`/api/agents/${id}/lessons/${lessonId}`, 'PATCH', patch),
   deleteLesson: (id: string, lessonId: string) =>
     send<{ ok: boolean }>(`/api/agents/${id}/lessons/${lessonId}`, 'DELETE'),
@@ -957,6 +1018,9 @@ export const api = {
   replyOrgBrief: (id: string, text: string) => send<{ decisions: Array<{ n: number; decision: string; status: string }>; unresolved: string[] }>(`/api/orgs/${id}/brief/reply`, 'POST', { text }),
   orgSpend: (id: string) => get<OrgSpend>(`/api/orgs/${id}/spend`),
   setOrgBudget: (id: string, body: { scope: 'company' | 'agent' | 'project'; refId?: string; monthlyUsd: number }) => send<OrgBudget>(`/api/orgs/${id}/budgets`, 'PUT', body),
+  orgHumans: (id: string) => get<{ ceoAccountId: string; me: { actorId: string; role: HumanRole | null }; humans: OrgHuman[] }>(`/api/orgs/${id}/humans`),
+  setOrgHuman: (id: string, memberAccountId: string, role: HumanRole) => send<OrgHuman>(`/api/orgs/${id}/humans`, 'POST', { memberAccountId, role }),
+  removeOrgHuman: (id: string, memberAccountId: string) => send<{ ok: true }>(`/api/orgs/${id}/humans/${enc(memberAccountId)}`, 'DELETE'),
   orgMessages: (id: string) => get<OrgMessage[]>(`/api/orgs/${id}/messages`),
   postOrgMessage: (id: string, text: string) => send<OrgMessage>(`/api/orgs/${id}/messages`, 'POST', { text }),
 };
@@ -1021,7 +1085,7 @@ export async function sendTurn(
 ): Promise<void> {
   const res = await fetch(`/api/chats/${chatId}/turns`, {
     method: 'POST',
-    headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    headers: { ...authHeaders(`/api/chats/${chatId}/turns`), 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, attachments }),
     signal,
   });

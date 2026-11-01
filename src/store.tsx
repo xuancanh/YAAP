@@ -5,11 +5,15 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  api, sendTurn, authHeaders,
+  api, sendTurn, authHeaders, setActiveSharedWorkspace,
   type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision, type ToolReview,
-  type BrowserStep, type Org,
+  type BrowserStep, type Org, type SharedWorkspace, type WorkspaceMe,
 } from './lib/api';
+
+/** A workspace in the picker: one of ours, or one shared with us (then
+ *  `shared` names the owner and our role; docs/shared-agents.md). */
+export type WorkspaceEntry = Workspace & { shared?: SharedWorkspace };
 import type { PriceTable } from './lib/pricing';
 
 export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 'company' | 'settings';
@@ -29,6 +33,9 @@ export interface LiveTool {
   result?: string;
   /** Set when the independent reviewer looked at this call. */
   review?: ToolReview;
+  /** The approval belongs to another member (the owner of the connection in
+   *  use): this client can only wait for them (docs/shared-agents.md §3). */
+  routedTo?: { memberAccountId: string; name: string };
 }
 export type LiveItem =
   | { kind: 'thinking'; text: string; streaming: boolean }
@@ -73,8 +80,11 @@ interface Store {
   toast: string | null; showToast: (msg: string) => void;
 
   // data
-  workspaces: Workspace[]; workspaceId: string; pickWorkspace: (id: string) => void;
+  workspaces: WorkspaceEntry[]; workspaceId: string; pickWorkspace: (id: string) => void;
   refreshWorkspaces: () => Promise<void>;
+  /** Who we are in the workspace on screen (role, actor id, display names);
+   *  null while loading. `nameOf` turns an actor id into a name. */
+  me: WorkspaceMe | null; refreshMe: () => Promise<void>; nameOf: (actorId: string | undefined | null) => string;
   agents: Agent[]; agentStats: Record<string, AgentStats>; refreshAgents: () => Promise<void>;
   unread: Record<string, number>;
   sessions: ChatSession[]; refreshSessions: () => Promise<void>;
@@ -191,8 +201,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
   const [workspaceId, setWorkspaceId] = useState('');
+  const [me, setMe] = useState<WorkspaceMe | null>(null);
+  /** Ids of workspaces shared with us, for the request header. */
+  const sharedIds = useRef<Set<string>>(new Set());
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentStats, setAgentStats] = useState<Record<string, AgentStats>>({});
   const [unread, setUnread] = useState<Record<string, number>>({});
@@ -283,10 +296,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ---- data loading ----
   const refreshWorkspaces = useCallback(async () => {
-    const ws = await api.workspaces();
-    setWorkspaces(ws);
-    setWorkspaceId((cur) => cur && ws.some((w) => w.id === cur) ? cur : (ws[0]?.id ?? ''));
+    const own = await api.workspaces();
+    // Workspaces shared with us (docs/shared-agents.md): listed after our
+    // own, under the owner's name. Their rows live in the owner's account.
+    const shared = await api.sharedWorkspaces().catch((): SharedWorkspace[] => []);
+    sharedIds.current = new Set(shared.map((w) => w.id));
+    const all: WorkspaceEntry[] = [
+      ...own,
+      ...shared.filter((w) => !own.some((o) => o.id === w.id)).map((w) => ({
+        id: w.id, name: w.name, color: w.color, memory: '', profile: '', profilePending: '[]', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, createdAt: '', shared: w,
+      })),
+    ];
+    setWorkspaces(all);
+    // An invitation link lands with ?workspace=<id>: open that one.
+    const wanted = new URLSearchParams(window.location.search).get('workspace');
+    setWorkspaceId((cur) => {
+      const next = wanted && all.some((w) => w.id === wanted) ? wanted : cur && all.some((w) => w.id === cur) ? cur : (all[0]?.id ?? '');
+      setActiveSharedWorkspace(sharedIds.current.has(next) ? next : null);
+      return next;
+    });
   }, []);
+
+  const refreshMe = useCallback(async () => {
+    if (!workspaceId) { setMe(null); return; }
+    setMe(await api.workspaceMe(workspaceId).catch(() => null));
+  }, [workspaceId]);
+  const nameOf = useCallback((actor: string | undefined | null): string => {
+    if (!me) return actor ? actor.slice(0, 8) : 'Owner';
+    const id = actor || me.ownerAccountId;
+    return me.names[id] ?? (id === me.ownerAccountId ? 'Owner' : id.slice(0, 8));
+  }, [me]);
 
   const refreshAgents = useCallback(async () => {
     const list = await api.agents();
@@ -324,7 +363,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { void refreshWorkspaces().catch(() => showToast('API offline')); }, [refreshWorkspaces, showToast]);
   useEffect(() => { void refreshAgents().catch(() => {}); void refreshAgentTypes().catch(() => {}); void refreshMcp().catch(() => {}); void refreshMarket().catch(() => {}); api.settings().then(setSettings).catch(() => {}); }, [refreshAgents, refreshAgentTypes, refreshMcp, refreshMarket]);
-  useEffect(() => { void refreshSessions().catch(() => {}); void refreshSkills().catch(() => {}); }, [refreshSessions, refreshSkills]);
+  useEffect(() => { void refreshSessions().catch(() => {}); void refreshSkills().catch(() => {}); void refreshMe(); }, [refreshSessions, refreshSkills, refreshMe]);
 
   // pick a session when the workspace changes / sessions load
   useEffect(() => {
@@ -420,10 +459,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [workspaceId, settings, refreshSessions, openSession]);
 
   const pickWorkspace = useCallback((id: string) => {
+    // The header must change before the first request for the new workspace.
+    setActiveSharedWorkspace(sharedIds.current.has(id) ? id : null);
     setWorkspaceId(id);
     setCurrentId(null);
     setMobileChatOpen(false);
-  }, []);
+    // Agents, types and the rest are per workspace owner too.
+    void refreshAgents().catch(() => {});
+  }, [refreshAgents]);
 
   // ---- draft persistence (FR-2.1) ----
   const draftTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -486,8 +529,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           applyBuf();
           patch((items) => {
             const found = items.some((i) => i.kind === 'tool' && i.id === ev.callId);
-            if (found) return items.map((i) => (i.kind === 'tool' && i.id === ev.callId ? { ...i, status: 'pending' as const, review: ev.review ?? i.review } : i));
-            return [...items, { kind: 'tool', id: ev.callId, name: ev.tool, input: ev.input, status: 'pending', review: ev.review }];
+            if (found) return items.map((i) => (i.kind === 'tool' && i.id === ev.callId ? { ...i, status: 'pending' as const, review: ev.review ?? i.review, routedTo: ev.routedTo } : i));
+            return [...items, { kind: 'tool', id: ev.callId, name: ev.tool, input: ev.input, status: 'pending', review: ev.review, routedTo: ev.routedTo }];
           });
         } else if (ev.type === 'tool_result') {
           applyBuf();
@@ -747,7 +790,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const store: Store = useMemo(() => ({
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView, setHomeView,
     mobileChatOpen, setMobileChatOpen, mobileDetail, setMobileDetail, toast, showToast,
-    workspaces, workspaceId, pickWorkspace, refreshWorkspaces,
+    workspaces, workspaceId, pickWorkspace, refreshWorkspaces, me, refreshMe, nameOf,
     agents, agentStats, refreshAgents, unread, sessions, refreshSessions, archived, archiveChat, restoreChat,
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, setMcp, refreshMcp,
     market, refreshMarket, settings, saveSettings, pricing,
@@ -765,7 +808,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
     mobileChatOpen, mobileDetail, toast, showToast,
-    workspaces, workspaceId, pickWorkspace, refreshWorkspaces,
+    workspaces, workspaceId, pickWorkspace, refreshWorkspaces, me, refreshMe, nameOf,
     agents, agentStats, refreshAgents, unread, sessions, refreshSessions, archived, archiveChat, restoreChat,
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, refreshMcp,
     market, refreshMarket, settings, saveSettings, pricing,

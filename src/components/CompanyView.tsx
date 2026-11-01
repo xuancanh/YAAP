@@ -6,8 +6,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
 import {
-  api, ORG_TASK_STATUSES, type Agent, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgMember, type OrgMessage, type OrgRun,
-  type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus,
+  api, ORG_TASK_STATUSES, type Agent, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
+  type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type WorkspaceMember,
 } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
@@ -231,8 +231,71 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
           </div>
         </div>
       )}
-      <div style={{ ...card, padding: '10px 12px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 9 }}><span style={{ fontSize: 18 }}>🧑‍💼</span><div><div style={{ fontSize: 13, fontWeight: 600 }}>You — CEO</div><div style={faint}>Approvals, budgets and the kill switch are yours alone.</div></div></div>
+      <Humans org={org} />
       {tree(null, 1)}
+    </div>
+  );
+}
+
+/** The humans of the company (phase D): the owner is CEO; members of the
+ *  shared workspace can sit on the board (hire / budget / strategy
+ *  approvals) or observe. Only the CEO changes this. */
+function Humans({ org }: { org: OrgDetail }) {
+  const app = useApp();
+  const [humans, setHumans] = useState<OrgHuman[]>([]);
+  const [meRole, setMeRole] = useState<HumanRole | null>(null);
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
+  const [pick, setPick] = useState('');
+  const [role, setRole] = useState<HumanRole>('board');
+  const refresh = useCallback(async () => {
+    const h = await api.orgHumans(org.id).catch(() => null);
+    if (h) { setHumans(h.humans); setMeRole(h.me.role); }
+    setMembers(await api.workspaceMembers(org.workspaceId).catch(() => []));
+  }, [org.id, org.workspaceId]);
+  useEffect(() => { void refresh(); }, [refresh]);
+  const isCeo = meRole === 'ceo';
+  const free = members.filter((m) => !humans.some((h) => h.memberAccountId === m.memberAccountId));
+  const act = async (fn: () => Promise<unknown>) => { try { await fn(); await refresh(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
+  const ROLE_HINT: Record<HumanRole, string> = { ceo: 'everything', board: 'decides hire, budget and strategy approvals; gets the brief', observer: 'reads the company; decides nothing' };
+  return (
+    <div style={{ ...card, padding: '10px 12px', marginBottom: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        <span style={{ fontSize: 18 }}>🧑‍💼</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>{isCeo ? 'You — CEO' : `${app.nameOf(null)} — CEO`}{meRole && !isCeo && <span style={{ ...pill(), marginLeft: 8 }}>you: {meRole}</span>}</div>
+          <div style={faint}>Approvals, budgets and the kill switch are the CEO's. Board members decide hires, budget raises and strategy; observers read.</div>
+        </div>
+      </div>
+      {humans.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+          {humans.map((h) => (
+            <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, padding: '4px 0' }}>
+              <span style={{ fontSize: 14 }}>🧑</span>
+              <span style={{ flex: 1 }}>{app.nameOf(h.memberAccountId)}</span>
+              <span style={pill()} title={ROLE_HINT[h.role]}>{h.role}</span>
+              {isCeo && (
+                <>
+                  <select value={h.role} onChange={(e) => void act(() => api.setOrgHuman(org.id, h.memberAccountId, e.target.value as HumanRole))} style={{ ...input, width: 'auto', padding: '3px 6px' }}>
+                    <option value="board">board</option><option value="observer">observer</option>
+                  </select>
+                  <button style={btn()} onClick={() => void act(() => api.removeOrgHuman(org.id, h.memberAccountId))}>Remove</button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {isCeo && members.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }}>
+          <select value={pick} onChange={(e) => setPick(e.target.value)} style={{ ...input, width: 'auto', flex: 1 }}>
+            <option value="">Add a workspace member…</option>
+            {free.map((m) => <option key={m.id} value={m.memberAccountId}>{m.displayName || m.email}</option>)}
+          </select>
+          <select value={role} onChange={(e) => setRole(e.target.value as HumanRole)} style={{ ...input, width: 'auto' }}><option value="board">board</option><option value="observer">observer</option></select>
+          <button style={btn(true)} disabled={!pick} onClick={() => void act(async () => { await api.setOrgHuman(org.id, pick, role); setPick(''); })}>Add</button>
+        </div>
+      )}
+      {isCeo && members.length === 0 && <div style={{ ...faint, marginTop: 6 }}>Invite people to this workspace (Settings → Workspace → Members) to seat a board.</div>}
     </div>
   );
 }
@@ -435,8 +498,17 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
   const [rows, setRows] = useState<OrgApproval[]>([]);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [history, setHistory] = useState(false);
-  const refresh = useCallback(async () => setRows(await api.orgApprovals(org.id).catch(() => [])), [org.id]);
+  const [humans, setHumans] = useState<{ me: HumanRole | null; board: string[] }>({ me: null, board: [] });
+  const refresh = useCallback(async () => {
+    setRows(await api.orgApprovals(org.id).catch(() => []));
+    const h = await api.orgHumans(org.id).catch(() => null);
+    if (h) setHumans({ me: h.me.role, board: h.humans.filter((x) => x.role === 'board').map((x) => x.memberAccountId) });
+  }, [org.id]);
   useEffect(() => { void refresh(); }, [refresh]);
+  const BOARD_KINDS = new Set(['hire', 'budget_raise', 'strategy']);
+  /** Who may decide this card (docs/autonomous-company.md phase D). */
+  const deciders = (kind: string) => (BOARD_KINDS.has(kind) && humans.board.length > 0 ? `CEO or board (${humans.board.map((b) => app.nameOf(b)).join(', ')})` : 'CEO only');
+  const mayDecide = (kind: string) => humans.me === 'ceo' || (humans.me === 'board' && BOARD_KINDS.has(kind));
   const decide = async (a: OrgApproval, d: 'approve' | 'reject' | 'revise') => {
     try { await api.decideOrgApproval(org.id, a.id, d, notes[a.id]); await refresh(); await reload(); await app.refreshAgents(); app.showToast(`${a.kind}: ${d}d`); }
     catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
@@ -447,7 +519,7 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
   return (
     <div style={{ maxWidth: 820 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Approvals · {pending.length} pending</h2><div style={faint}>The full artifact, not a summary. Only you can decide here; an agent's message never counts. Unanswered cards expire after 72 h ("not done").</div></div>
+        <div style={{ flex: 1 }}><h2 style={h2}>Approvals · {pending.length} pending</h2><div style={faint}>The full artifact, not a summary. Only a human decides here — the CEO, or a board member for hires, budgets and strategy; an agent's message never counts. Unanswered cards expire after 72 h ("not done").</div></div>
         <button style={btn(history)} onClick={() => setHistory(!history)}>{history ? 'Show pending' : 'History'}</button>
       </div>
       {shown.length === 0 && <div style={faint}>{history ? 'Nothing decided yet.' : 'Nothing to decide.'}</div>}
@@ -457,11 +529,15 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
           <div key={a.id} style={{ ...card, marginBottom: 10, borderLeft: `3px solid ${a.status === 'pending' ? 'var(--amber)' : a.status === 'approved' ? 'var(--green)' : 'var(--text-faint)'}` }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
               <span style={pill('var(--accent-dim)', 'var(--text)')}>{a.kind}</span>
-              <span style={faint}>by {a.requestedBy} · {ago(a.createdAt)}{a.status !== 'pending' ? ` · ${a.status}${a.decisionNote ? ` — ${a.decisionNote}` : ''}` : a.expiresAt ? ` · expires ${ago(a.expiresAt).replace(' ago', '')}` : ''}</span>
+              <span style={faint}>by {a.requestedBy} · {ago(a.createdAt)}{a.status !== 'pending' ? ` · ${a.status}${a.decidedBy ? ` by ${app.nameOf(a.decidedBy)}` : ''}${a.decisionNote ? ` — ${a.decisionNote}` : ''}` : a.expiresAt ? ` · expires ${ago(a.expiresAt).replace(' ago', '')}` : ''}</span>
+              {a.status === 'pending' && <span style={pill()} title="Who may decide this card">{deciders(a.kind)}</span>}
             </div>
             {a.recommendation && <div style={{ fontSize: 12.5, marginBottom: 6 }}><b>Chief:</b> {a.recommendation}</div>}
             <ApprovalArtifact kind={a.kind} p={p} nm={nm} />
-            {a.status === 'pending' && (
+            {a.status === 'pending' && !mayDecide(a.kind) && humans.me !== null && (
+              <div style={{ ...faint, marginTop: 10 }}>{humans.me === 'observer' ? 'Observers read the company but decide nothing.' : `A ${a.kind} approval is the CEO's to decide.`}</div>
+            )}
+            {a.status === 'pending' && mayDecide(a.kind) && (
               <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                 <input value={notes[a.id] ?? ''} onChange={(e) => setNotes({ ...notes, [a.id]: e.target.value })} placeholder="Note to the chief (required for revise)" style={input} />
                 <button style={btn(true)} onClick={() => void decide(a, 'approve')}>Approve</button>

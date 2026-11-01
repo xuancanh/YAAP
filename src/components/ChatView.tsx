@@ -79,7 +79,13 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
           Running {t.name}…
         </div>
       )}
-      {t.status === 'pending' && (
+      {t.status === 'pending' && t.routedTo && (
+        <div style={{ padding: '11px 13px', borderTop: '1px solid var(--border-soft)', fontSize: 12, color: 'var(--amber)', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500 }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--amber)', animation: 'pulse 1s infinite' }} />
+          Waiting for {t.routedTo.name}'s approval — {t.name} would use their connection, so only they can allow it (from their inbox or their phone). Nobody else sees the request.
+        </div>
+      )}
+      {t.status === 'pending' && !t.routedTo && (
         <div style={{ padding: '11px 13px', borderTop: '1px solid var(--border-soft)' }}>
           <div style={{ fontSize: 12, color: 'var(--amber)', display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10, fontWeight: 500 }}>
             <I d={P.warn} size={14} />{t.review ? `The reviewer asked for your decision — ${t.review.reason}` : computer ? `Approve to ${arg} on your computer` : `This tool needs approval — approve to run ${t.name}`}
@@ -229,14 +235,21 @@ function SystemDivider({ text }: { text: string }) {
 
 /** Transcript rows are memoized so a streaming frame doesn't re-render and
  *  re-parse every earlier message; props stay referentially stable. */
-const UserRow = memo(function UserRow({ m, turn, onEditResend, onFork }: {
+const UserRow = memo(function UserRow({ m, turn, onEditResend, onFork, author }: {
   m: ChatMessage; turn?: ChatTurn;
   onEditResend: (turnId: string) => void; onFork: (turnId: string) => void;
+  /** Shared workspaces: who wrote it, and whether that is the viewer. */
+  author?: { name: string; mine: boolean };
 }) {
   const atts = safeJsonParse<Array<{ path?: string; name?: string; kind?: string; transcript?: string | null; durationSeconds?: number | null }>>(turn?.attachments, []);
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '16px 0', animation: 'msgIn .2s ease' }}>
       <div style={{ maxWidth: '80%' }}>
+        {author && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+            <span title={author.mine ? 'You wrote this' : `${author.name} wrote this`} style={{ fontSize: 10.5, fontWeight: 600, color: author.mine ? 'var(--accent)' : 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '1px 7px' }}>{author.mine ? `${author.name} (you)` : author.name}</span>
+          </div>
+        )}
         {atts.length > 0 && (
           <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', marginBottom: 6, flexWrap: 'wrap' }}>
             {atts.map((a, i) => {
@@ -493,7 +506,8 @@ export function ChatView() {
   const renderMsg = (m: ChatMessage) => {
     if (!dividerPlaced && cutoffSeq !== null && m.seq > cutoffSeq) pushDivider();
     if (m.role === 'user') {
-      rows.push(<UserRow key={m.id} m={m} turn={turnById.get(m.turnId)} onEditResend={app.editResend} onFork={app.fork} />);
+      const author = app.me?.hasMembers ? { name: app.nameOf(m.authorAccountId), mine: (m.authorAccountId || app.me.ownerAccountId) === app.me.actorId } : undefined;
+      rows.push(<UserRow key={m.id} m={m} turn={turnById.get(m.turnId)} onEditResend={app.editResend} onFork={app.fork} author={author} />);
     } else if (m.role === 'thinking') {
       rows.push(<Thinking key={m.id} text={m.content} streaming={false} />);
     } else if (m.role === 'tool') {
@@ -548,6 +562,14 @@ export function ChatView() {
             <button onClick={() => void app.archiveChat(s.id)} title="Archive (retained; restore from the sidebar)" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: 'var(--text-faint)', flex: 'none' }}>
               <I d={P.board} size={13} />
             </button>
+            {app.me?.hasMembers && (
+              <button onClick={() => void app.patchSession(s.id, { shared: s.shared !== 1 })}
+                title={s.shared === 1 ? 'Shared with every member of this workspace — click to make it private to you and the owner' : 'Private to you and the owner — click to share it with every member'}
+                disabled={app.me.role !== 'owner' && (s.initiatedBy || app.me.ownerAccountId) !== app.me.actorId}
+                style={{ background: s.shared === 1 ? 'var(--accent-dim)' : 'none', border: `1px solid ${s.shared === 1 ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 5, padding: '1px 7px', fontSize: 10, fontWeight: 600, color: s.shared === 1 ? 'var(--accent)' : 'var(--text-faint)', cursor: 'pointer', flex: 'none' }}>
+                {s.shared === 1 ? 'shared' : 'private'}
+              </button>
+            )}
             {spend.over && (
               <span title={`${spend.spentTokens.toLocaleString()} of ${spend.budgetTokens.toLocaleString()} tokens used this month. Scheduled loops are paused; raise the budget in Settings → Workspace.`}
                 style={{ fontSize: 10, fontWeight: 600, color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 5, padding: '1px 7px', whiteSpace: 'nowrap', flex: 'none' }}>

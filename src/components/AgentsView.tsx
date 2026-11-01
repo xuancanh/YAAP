@@ -1043,8 +1043,17 @@ function SharedFolderCard({ a }: { a: Agent }) {
  *  be inspectable and revocable: a lesson silently shapes every future turn,
  *  so a memory nobody can see is one nobody can correct. */
 function MemoryTab({ a }: { a: Agent }) {
+  const app = useApp();
   const [rows, setRows] = useState<AgentLesson[]>([]);
   const [busy, setBusy] = useState(false);
+  const isOwner = !app.me || app.me.role === 'owner';
+  /** 'shared' | 'private:<member>' → a badge label (docs/shared-agents.md §4). */
+  const audienceOf = (r: AgentLesson): { label: string; privateTo: string | null } => {
+    const aud = r.audience ?? 'shared';
+    if (!aud.startsWith('private:')) return { label: 'shared', privateTo: null };
+    const member = aud.slice('private:'.length);
+    return { label: `private · ${app.nameOf(member)}`, privateTo: member };
+  };
   const reload = useCallback(() => { void api.agentLessons(a.id).then(setRows).catch(() => setRows([])); }, [a.id]);
   useEffect(reload, [reload]);
 
@@ -1056,11 +1065,21 @@ function MemoryTab({ a }: { a: Agent }) {
     <div style={{ ...card, padding: '11px 14px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 13, lineHeight: 1.5 }}>{r.text}</div>
-        <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 4, fontFamily: 'var(--mono)' }}>
-          {r.sourceKind}{r.useCount > 1 ? ` · learned ${r.useCount}×` : ''}{r.pinned ? ' · pinned' : ''} · {r.updatedAt.slice(0, 10)}
+        <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 4, fontFamily: 'var(--mono)', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span>{r.sourceKind}{r.useCount > 1 ? ` · learned ${r.useCount}×` : ''}{r.pinned ? ' · pinned' : ''} · {r.updatedAt.slice(0, 10)}</span>
+          {app.me?.hasMembers && (
+            <span title={audienceOf(r).privateTo ? 'Injected only into turns this member starts' : 'Injected for every member'}
+              style={{ fontSize: 9.5, fontWeight: 600, borderRadius: 4, padding: '0 5px', color: audienceOf(r).privateTo ? 'var(--amber)' : 'var(--accent)', border: `1px solid ${audienceOf(r).privateTo ? 'var(--amber)' : 'var(--accent)'}` }}>
+              {audienceOf(r).label}
+            </span>
+          )}
         </div>
       </div>
       <div style={{ display: 'flex', gap: 6 }}>
+        {app.me?.hasMembers && isOwner && audienceOf(r).privateTo && (
+          <button disabled={busy} title="Make this lesson visible to every member (the owner's call — no agent tool can do this)" onClick={() => void act(() => api.patchLesson(a.id, r.id, { audience: 'shared' }))}
+            style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '5px 11px', fontSize: 11.5, cursor: 'pointer' }}>Share</button>
+        )}
         {r.trusted === 0 && (
           <button disabled={busy} onClick={() => void act(() => api.patchLesson(a.id, r.id, { trusted: true }))}
             style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 11px', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>Promote</button>
@@ -1174,6 +1193,17 @@ export function AgentHome() {
       app.showToast(decision === 'dismiss' ? 'Dismissed' : res.ok ? 'Approved — action ran' : `Action failed: ${res.error ?? 'unknown error'}`);
     } catch (err) {
       app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'action failed');
+    }
+    reloadEvents();
+  };
+  /** A routed approval (docs/shared-agents.md §3): another member's turn
+   *  wants to use *your* connection; only you see this and only you decide. */
+  const decideEvent = async (ev: AgentEvent, decision: 'allow' | 'deny') => {
+    try {
+      const res = await api.decideAgentEvent(a.id, ev.id, decision);
+      app.showToast(!res.resolved ? 'That request had already expired' : decision === 'allow' ? 'Allowed — the turn continues' : 'Denied');
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'decision failed');
     }
     reloadEvents();
   };
@@ -1296,7 +1326,7 @@ export function AgentHome() {
                   {events.slice(0, 6).map((ev) => (
                     <div key={ev.id} onClick={() => ev.sessionId && app.openSession(ev.sessionId)}
                       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, cursor: ev.sessionId ? 'pointer' : 'default' }}>
-                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: ev.kind === 'loop_error' || ev.kind === 'action_failed' || ev.kind === 'budget_stop' ? 'var(--red)' : ev.kind === 'action_pending' ? 'var(--amber)' : 'var(--green)', flex: 'none' }} />
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: ev.kind === 'loop_error' || ev.kind === 'action_failed' || ev.kind === 'budget_stop' || ev.kind === 'approval_denied' ? 'var(--red)' : ev.kind === 'action_pending' || ev.kind === 'approval_request' ? 'var(--amber)' : 'var(--green)', flex: 'none' }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</div>
                         {ev.body && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.body}</div>}
@@ -1305,6 +1335,13 @@ export function AgentHome() {
                         <span style={{ display: 'flex', gap: 6, flex: 'none' }} onClick={(e) => e.stopPropagation()}>
                           <button onClick={() => void actOnEvent(ev, 'approve')} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
                           <button onClick={() => void actOnEvent(ev, 'dismiss')} style={{ background: 'none', color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Dismiss</button>
+                        </span>
+                      )}
+                      {ev.kind === 'approval_request' && (
+                        <span style={{ display: 'flex', gap: 6, flex: 'none', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+                          <span title="Routed to you: this turn would use your connection" style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--amber)', border: '1px solid var(--amber)', borderRadius: 4, padding: '0 5px' }}>for you</span>
+                          <button onClick={() => void decideEvent(ev, 'allow')} style={{ background: 'var(--green)', color: '#04140d', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Allow</button>
+                          <button onClick={() => void decideEvent(ev, 'deny')} style={{ background: 'none', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Deny</button>
                         </span>
                       )}
                       <span style={{ fontSize: 9.5, color: 'var(--text-faint)', flex: 'none', fontFamily: 'var(--mono)' }}>{ago(ev.createdAt)}</span>

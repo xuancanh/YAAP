@@ -6,7 +6,7 @@ import { useApp } from '../store';
 import { useAuth } from '../auth';
 import { ImportSkillMdButton, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { PublishButton } from './RegistryBits';
-import { api, PROVIDER_COLORS, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceUsage } from '../lib/api';
+import { api, PROVIDER_COLORS, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type FlowKind, type FlowRule, type MemberGrant, type MemberRole, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceInvite, type WorkspaceMember, type WorkspaceUsage } from '../lib/api';
 import { KIND_LABEL } from '../lib/registry';
 import { PLAN_LABEL, capLine, ceilingPct, usageLine } from '../lib/account';
 import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
@@ -22,7 +22,7 @@ const PANE_META: Record<string, [string, string]> = {
   permissions: ['Permissions', 'Default permission mode for new chats and remembered approvals.'],
   context: ['Context & budget', 'Token ceiling and automatic compaction threshold.'],
   memory: ['Workspace memory', 'Durable chat memory injected as shared context for this workspace.'],
-  workspace: ['Workspace', 'Quiet hours, the interrupt policy, and the monthly spend stop. Loops keep working; what changes is when you hear about it and how much it may cost.'],
+  workspace: ['Workspace', 'Who else works here and as what, quiet hours, the interrupt policy, and the monthly spend stop. Loops keep working; what changes is when you hear about it and how much it may cost.'],
   usage: ['Usage', 'Tokens and dollars over the last 30 days — per agent, per loop, per day — and the price table behind the estimate.'],
   channels: ['Channels', 'Talk to your agents where you already are — Telegram, email, and push to this device, paired to you alone.'],
   connections: ['Connections', 'Link external services (Google Calendar first). Connecting grants nothing — you approve access per agent.'],
@@ -475,6 +475,7 @@ function WorkspacePane() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <MembersSection ws={ws} />
       <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ flex: 1 }}>
@@ -547,6 +548,184 @@ function WorkspacePane() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+const ROLE_HINT: Record<MemberRole, string> = {
+  owner: 'settings, budgets, members, rules, everyone\'s connections',
+  member: 'chat, tasks, files, their own connection grants and channel pairings',
+  viewer: 'read-only',
+};
+
+/** Settings → Workspace → Members (docs/shared-agents.md): the owner invites
+ *  by email with a role, changes roles, removes people, writes
+ *  information-flow rules and sees which members' connections agents may use;
+ *  a member grants their own connections to agents here. Nothing here is
+ *  reachable by an agent tool. */
+function MembersSection({ ws }: { ws: Workspace }) {
+  const app = useApp();
+  const auth = useAuth();
+  const isOwner = !app.me || app.me.role === 'owner';
+  const [members, setMembers] = useState<WorkspaceMember[]>([]);
+  const [invites, setInvites] = useState<WorkspaceInvite[]>([]);
+  const [rules, setRules] = useState<FlowRule[]>([]);
+  const [grants, setGrants] = useState<MemberGrant[]>([]);
+  const [mine, setMine] = useState<Connection[]>([]);
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<'member' | 'viewer'>('member');
+  const [rule, setRule] = useState<{ fromMember: string; toMember: string; kind: FlowKind; effect: 'allow' | 'deny' }>({ fromMember: '', toMember: '*', kind: 'lessons', effect: 'allow' });
+  const [grant, setGrant] = useState<{ connectionId: string; agentId: string; service: string; level: 'read' | 'write' }>({ connectionId: '', agentId: '', service: 'calendar', level: 'read' });
+  const [busy, setBusy] = useState(false);
+  const accountsMode = auth.mode === 'accounts';
+
+  const refresh = async () => {
+    const [m, g] = await Promise.all([api.workspaceMembers(ws.id).catch(() => []), api.memberGrants(ws.id).catch(() => [])]);
+    setMembers(m); setGrants(g);
+    if (isOwner) {
+      setInvites(await api.workspaceInvites(ws.id).catch(() => []));
+      setRules(await api.flowRules(ws.id).catch(() => []));
+    } else {
+      setMine(await api.myConnections(ws.id).catch(() => []));
+    }
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void refresh(); }, [ws.id, isOwner]);
+  const act = async (fn: () => Promise<unknown>, done?: string) => {
+    setBusy(true);
+    try { await fn(); await refresh(); await app.refreshMe(); if (done) app.showToast(done); }
+    catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'failed'); }
+    finally { setBusy(false); }
+  };
+  const people = [{ id: app.me?.ownerAccountId ?? '', name: `${app.nameOf(null)} (owner)` }, ...members.map((m) => ({ id: m.memberAccountId, name: m.displayName || m.email }))];
+  const nameOf = (id: string) => (id === '*' ? 'everyone' : app.nameOf(id));
+
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Members{members.length > 0 ? ` · ${members.length + 1}` : ''}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>
+            {isOwner
+              ? 'Other people who may use these agents, each with a role. Their sessions start private, their lessons are theirs, and a tool that would use their connection asks them — not you.'
+              : `You are a ${app.me?.role} here. Your own connections can be granted to this workspace's agents below; a turn you start uses yours, and a turn someone else starts asks you first.`}
+          </div>
+        </div>
+      </div>
+      {!accountsMode && (
+        <div style={{ marginTop: 12, fontSize: 12.5, color: 'var(--text-dim)' }}>Single-user mode: there is no second account to invite. Shared workspaces need <code style={mono}>AUTH_MODE=accounts</code>.</div>
+      )}
+      {accountsMode && (
+        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 9, background: 'var(--panel-2)' }}>
+            <span style={{ fontSize: 14 }}>🧑</span>
+            <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600 }}>{app.nameOf(null)}</span>
+            <span style={{ fontSize: 10.5, color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 7px' }} title={ROLE_HINT.owner}>owner</span>
+          </div>
+          {members.map((m) => (
+            <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 9, background: 'var(--panel-2)' }}>
+              <span style={{ fontSize: 14 }}>🧑</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600 }}>{m.displayName || m.email}{m.memberAccountId === app.me?.actorId ? ' (you)' : ''}</div>
+                <div style={{ fontSize: 10.5, color: 'var(--text-faint)', ...mono }}>{m.email} · joined {m.joinedAt.slice(0, 10)}</div>
+              </div>
+              {isOwner ? (
+                <>
+                  <select disabled={busy} value={m.role} title={ROLE_HINT[m.role]} onChange={(e) => void act(() => api.setMemberRole(ws.id, m.memberAccountId, e.target.value as MemberRole), 'Role changed')} style={{ ...inputStyle, width: 'auto', padding: '3px 6px' }}>
+                    <option value="owner">owner</option><option value="member">member</option><option value="viewer">viewer</option>
+                  </select>
+                  <button disabled={busy} onClick={() => { if (window.confirm(`Remove ${m.displayName || m.email} from this workspace? Their private sessions and lessons stay, unreadable to anyone else.`)) void act(() => api.removeMember(ws.id, m.memberAccountId), 'Removed'); }}
+                    style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '3px 9px', fontSize: 11.5, cursor: 'pointer' }}>Remove</button>
+                </>
+              ) : <span style={{ fontSize: 10.5, color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 7px' }} title={ROLE_HINT[m.role]}>{m.role}</span>}
+            </div>
+          ))}
+          {isOwner && invites.map((inv) => (
+            <div key={inv.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 9, border: '1px dashed var(--border)' }}>
+              <span style={{ fontSize: 14, opacity: 0.6 }}>✉️</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5 }}>{inv.email}</div>
+                <div style={{ fontSize: 10.5, color: 'var(--text-faint)', ...mono }}>invited as {inv.role} · expires {inv.expiresAt.slice(0, 10)}</div>
+              </div>
+              <button disabled={busy} onClick={() => void act(() => api.revokeInvite(ws.id, inv.id), 'Invitation revoked')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '3px 9px', fontSize: 11.5, cursor: 'pointer' }}>Revoke</button>
+            </div>
+          ))}
+          {isOwner && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" style={{ ...inputStyle, flex: 1, minWidth: 180 }}
+                onKeyDown={(e) => { if (e.key === 'Enter' && email.trim()) void act(async () => { const r = await api.inviteMember(ws.id, email.trim(), role); setEmail(''); if (!r.sent) app.showToast('Mail is off: the invitation link was logged on the server'); }, 'Invitation sent'); }} />
+              <select value={role} onChange={(e) => setRole(e.target.value as 'member' | 'viewer')} style={{ ...inputStyle, width: 'auto' }} title={ROLE_HINT[role]}>
+                <option value="member">member</option><option value="viewer">viewer</option>
+              </select>
+              <button disabled={busy || !email.trim()} onClick={() => void act(async () => { const r = await api.inviteMember(ws.id, email.trim(), role); setEmail(''); if (!r.sent) app.showToast('Mail is off: the invitation link was logged on the server'); }, 'Invitation sent')}
+                style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', opacity: !email.trim() ? 0.5 : 1 }}>Invite</button>
+            </div>
+          )}
+
+          {(grants.length > 0 || !isOwner) && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600 }}>Members' connections</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>An agent uses a member's connection only in turns that member starts; a turn someone else starts pauses for that member's approval. Nothing is ever used implicitly.</div>
+              {grants.map((g) => (
+                <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '5px 0' }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: PROVIDER_COLORS[g.provider] ?? 'var(--text-faint)', flex: 'none' }} />
+                  <span style={{ flex: 1 }}>{nameOf(g.memberAccountId)}'s {g.provider} {g.service} ({g.level}) → {app.agents.find((a) => a.id === g.agentId)?.name ?? g.agentId.slice(0, 8)}</span>
+                  {(isOwner || g.memberAccountId === app.me?.actorId) && <button disabled={busy} onClick={() => void act(() => api.removeMemberGrant(ws.id, g.id), 'Grant removed')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}>Revoke</button>}
+                </div>
+              ))}
+              {!isOwner && app.me?.role !== 'viewer' && (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+                  <select value={grant.connectionId} onChange={(e) => setGrant({ ...grant, connectionId: e.target.value })} style={{ ...inputStyle, width: 'auto', flex: 1, minWidth: 160 }}>
+                    <option value="">Your connection…</option>
+                    {mine.map((c) => <option key={c.id} value={c.id}>{c.provider} · {c.accountEmail}</option>)}
+                  </select>
+                  <select value={grant.agentId} onChange={(e) => setGrant({ ...grant, agentId: e.target.value })} style={{ ...inputStyle, width: 'auto' }}>
+                    <option value="">Agent…</option>
+                    {app.agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                  <select value={grant.service} onChange={(e) => setGrant({ ...grant, service: e.target.value })} style={{ ...inputStyle, width: 'auto' }}><option value="calendar">calendar</option><option value="gmail">mail</option><option value="drive">drive</option></select>
+                  <select value={grant.level} onChange={(e) => setGrant({ ...grant, level: e.target.value as 'read' | 'write' })} style={{ ...inputStyle, width: 'auto' }}><option value="read">read</option><option value="write">write</option></select>
+                  <button disabled={busy || !grant.connectionId || !grant.agentId} onClick={() => void act(() => api.setMemberGrant(ws.id, grant), 'Granted')}
+                    style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Grant</button>
+                  {mine.length === 0 && <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>Connect a service first: switch to one of your own workspaces → Settings → Connections.</span>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {isOwner && members.length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600 }}>Information-flow rules</div>
+              <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>By default nobody sees another member's private lessons or connection content. An allow row opens one member's material to another (or to everyone); a deny row pins an exception. Agents cannot write these.</div>
+              {rules.map((r) => (
+                <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '5px 0' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: r.effect === 'allow' ? 'var(--green)' : 'var(--red)', border: `1px solid ${r.effect === 'allow' ? 'var(--green)' : 'var(--red)'}`, borderRadius: 4, padding: '0 5px' }}>{r.effect}</span>
+                  <span style={{ flex: 1 }}>{nameOf(r.fromMember)}'s {r.kind} → {nameOf(r.toMember)}</span>
+                  <button disabled={busy} onClick={() => void act(() => api.removeFlowRule(ws.id, r.id), 'Rule removed')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}>Remove</button>
+                </div>
+              ))}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+                <select value={rule.effect} onChange={(e) => setRule({ ...rule, effect: e.target.value as 'allow' | 'deny' })} style={{ ...inputStyle, width: 'auto' }}><option value="allow">allow</option><option value="deny">deny</option></select>
+                <select value={rule.fromMember} onChange={(e) => setRule({ ...rule, fromMember: e.target.value })} style={{ ...inputStyle, width: 'auto' }}>
+                  <option value="">whose…</option>
+                  {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <select value={rule.kind} onChange={(e) => setRule({ ...rule, kind: e.target.value as FlowKind })} style={{ ...inputStyle, width: 'auto' }}><option value="lessons">lessons</option><option value="connections">connection content</option><option value="files">files</option></select>
+                <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>→</span>
+                <select value={rule.toMember} onChange={(e) => setRule({ ...rule, toMember: e.target.value })} style={{ ...inputStyle, width: 'auto' }}>
+                  <option value="*">everyone</option>
+                  {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <button disabled={busy || !rule.fromMember} onClick={() => void act(() => api.addFlowRule(ws.id, rule), 'Rule added')}
+                  style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Add rule</button>
+              </div>
+            </div>
+          )}
+          {!isOwner && (
+            <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>Channels: a pairing code minted under Settings → Channels while this workspace is open pairs Telegram or email to <em>you</em>, so your messages there count as yours and approvals routed to you reach you.</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
