@@ -7,3 +7,6 @@ data/
 .env
 .DS_Store
 *.tsbuildinfo
+
+# agent worktrees
+.claude/worktrees/
