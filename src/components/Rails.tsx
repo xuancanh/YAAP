@@ -5,6 +5,7 @@ import { I, P } from '../lib/icons';
 import { useApp, grad, type OrgPane } from '../store';
 import { api, type ChatSession, type OrgUnitNode } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
+import { atRiskByUnit, firesOn, MEETING_KIND_TITLES } from '../lib/org';
 
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '2px 18px 8px' };
 
@@ -350,6 +351,11 @@ export function HomeRail() {
 export const ORG_PANES: Array<{ id: OrgPane; label: string; icon: string[] }> = [
   { id: 'board', label: 'Board', icon: P.board },
   { id: 'goals', label: 'Goals', icon: P.star },
+  // The CEO's seat (docs/company-vision.md §8, items 18–20).
+  { id: 'vision', label: 'Vision', icon: P.compass },
+  { id: 'pulse', label: 'Pulse', icon: P.sun },
+  { id: 'meetings', label: 'Meetings', icon: P.chat },
+  { id: 'decisions', label: 'Decisions', icon: P.check },
   { id: 'chart', label: 'Org chart', icon: P.bot },
   { id: 'approvals', label: 'Approvals', icon: P.shield },
   { id: 'spend', label: 'Spend', icon: P.bolt },
@@ -382,6 +388,10 @@ function UnitGroup({ node, depth }: { node: OrgUnitNode; depth: number }) {
   const pane = (id: OrgPane) => { app.setOrgUnitId(unitId); app.setOrgPane(id); app.setMobileDetail(true); };
   const indent = depth * 12;
   const channelActive = app.homeView === 'channel' && app.currentChannel === (channel?.slug ?? node.slug);
+  // The CEO's seat (docs/company-vision.md §8): goals at risk in this unit and today's ritual.
+  const atRisk = useMemo(() => atRiskByUnit(app.orgIntent), [app.orgIntent]);
+  const risk = (atRisk[node.id] ?? 0) + (isRoot ? atRisk[''] ?? 0 : 0);
+  const today = app.orgCadences.filter((c) => c.unitId === node.id && c.enabled === 1 && firesOn(c.cron)).map((c) => MEETING_KIND_TITLES[c.kind] ?? c.kind);
   return (
     <div style={{ marginBottom: 2 }}>
       <div onClick={() => !isRoot && setOpen(!open)} title={isRoot ? 'The company' : `${node.name} · led by ${lead?.name ?? 'an agent'} · ${node.memberAgentIds.length} member(s)`}
@@ -390,6 +400,8 @@ function UnitGroup({ node, depth }: { node: OrgUnitNode; depth: number }) {
           ? <span style={{ width: 18, height: 18, borderRadius: 6, background: 'var(--panel-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, flex: 'none' }}>🏢</span>
           : <span style={{ width: 18, height: 18, borderRadius: 6, background: lead ? grad(lead.colors) : 'var(--panel-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, flex: 'none' }}>{lead?.emoji ?? '?'}</span>}
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{isRoot ? 'Company' : node.name}</span>
+        {today.length > 0 && <span title={`Today: ${today.join(', ')}`} onClick={(e) => { e.stopPropagation(); pane('meetings'); }} style={{ fontSize: 9.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '0 5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 90 }}>{today[0].toLowerCase()}{today.length > 1 ? ` +${today.length - 1}` : ''}</span>}
+        {risk > 0 && <span title={`${risk} goal(s) at risk — open the vision page`} onClick={(e) => { e.stopPropagation(); pane('vision'); }} style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px' }}>{risk}</span>}
         {node.counts.openTasks > 0 && <span title="Open tasks on this board" style={{ fontSize: 10, color: 'var(--text-faint)' }}>{node.counts.openTasks}</span>}
         {!isRoot && <I d={P.chevD} size={13} style={{ transform: open ? 'none' : 'rotate(-90deg)', transition: 'transform .12s', color: 'var(--text-faint)', flex: 'none' }} />}
       </div>

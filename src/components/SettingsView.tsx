@@ -6,7 +6,8 @@ import { useApp } from '../store';
 import { useAuth } from '../auth';
 import { ImportSkillMdButton, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { PublishButton } from './RegistryBits';
-import { api, PROVIDER_COLORS, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type FlowKind, type FlowRule, type MemberGrant, type MemberRole, type OrgCaps, type OrgMode, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceInvite, type WorkspaceMember, type WorkspaceUsage } from '../lib/api';
+import { api, PROVIDER_COLORS, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type FlowKind, type FlowRule, type MemberGrant, type MemberRole, type OrgCaps, type OrgMode, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceInvite, type WorkspaceMember, type WorkspaceUsage, type OrgTunable } from '../lib/api';
+import { AREA_LABEL, groupTunables, SLO_TARGET_OF, tunableError } from '../lib/org';
 import { KIND_LABEL } from '../lib/registry';
 import { PLAN_LABEL, capLine, ceilingPct, usageLine } from '../lib/account';
 import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
@@ -489,6 +490,7 @@ function WorkspacePane() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <MembersSection ws={ws} />
       {app.companiesEnabled && <OrganizationSection ws={ws} />}
+      <HeartbeatDefaultsSection ws={ws} />
       <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ flex: 1 }}>
@@ -668,6 +670,7 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
           {(Number(usd) || 0) <= 0 && <div style={{ color: 'var(--amber)', marginTop: 6 }}>With no company envelope the chief cannot allocate any budget: hires come without an envelope and allocations are refused until you set one.</div>}
         </div>
       )}
+      {current !== 'off' && st?.orgId && <TunablesEditor ws={ws} />}
       {isOwner && (
         <div style={{ display: 'flex', marginTop: 12 }}>
           <button disabled={busy || (mode !== 'off' && !chief && app.agents.length > 0)} onClick={() => void save()}
@@ -677,6 +680,135 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
         </div>
       )}
       {!isOwner && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 10 }}>Only the workspace owner changes the organization mode, chief and caps.</div>}
+    </div>
+  );
+}
+
+/** The tunables (docs/company-vision.md §1b, items 18–20): every threshold
+ *  the company reads — intent, planning, rituals, assurance — as a default
+ *  with a bound and the org's effective value, grouped by area. The CEO
+ *  writes within the fence (the bound stays in code); `slo.*` targets go
+ *  through PATCH …/org/slo, everything else through PUT …/org/tunables. */
+function TunablesEditor({ ws }: { ws: Workspace }) {
+  const app = useApp();
+  const [list, setList] = useState<OrgTunable[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [why, setWhy] = useState('');
+  const reload = async () => setList(await api.orgTunables(ws.id).catch(() => null));
+  useEffect(() => { if (open) void reload(); // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, ws.id]);
+  const save = async (t: OrgTunable) => {
+    const raw = drafts[t.key] ?? String(t.value);
+    const err = tunableError(t, raw);
+    if (err) { app.showToast(`${t.key}: ${err}`); return; }
+    const value = Number(raw);
+    try {
+      const slo = SLO_TARGET_OF[t.key];
+      if (slo) await api.setOrgSlo(ws.id, { [slo]: value }); else await api.setOrgTunable(ws.id, { key: t.key, value, why: why.trim() || undefined });
+      setDrafts((d) => { const n = { ...d }; delete n[t.key]; return n; });
+      await reload(); void app.refreshWsOrg();
+      app.showToast(`${t.key} = ${value}`);
+    } catch (e) { app.showToast(e instanceof Error ? e.message.slice(0, 160) : 'save failed'); }
+  };
+  const reset = async (t: OrgTunable) => {
+    try {
+      const slo = SLO_TARGET_OF[t.key];
+      if (slo) await api.setOrgSlo(ws.id, { tunables: { [t.key]: null } }); else await api.setOrgTunable(ws.id, { key: t.key, value: t.default, why: 'back to the default' });
+      await reload(); app.showToast(`${t.key} back to ${t.default}`);
+    } catch (e) { app.showToast(e instanceof Error ? e.message.slice(0, 160) : 'reset failed'); }
+  };
+  const overridden = list?.filter((t) => t.stored !== null).length ?? 0;
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--border-soft)', paddingTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Tunables</div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>Nothing in the company is a fixed rule: every threshold is a default with a bound. The chief tunes within the fence (<span style={mono}>org_tune</span>); you tune here. Every change is a decision-shaped audit row.{list ? ` ${overridden} of ${list.length} changed from the default.` : ''}</div>
+        </div>
+        <button onClick={() => setOpen(!open)} aria-expanded={open} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>{open ? 'Hide' : 'Edit tunables'}</button>
+      </div>
+      {open && list === null && <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 8 }}>Loading…</div>}
+      {open && list && (
+        <div style={{ marginTop: 10 }}>
+          <input value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Why (recorded with each change; optional)" style={{ ...inputStyle, width: '100%', marginBottom: 8 }} aria-label="Reason for the change" />
+          {groupTunables(list).map((g) => (
+            <div key={g.area} style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--text-faint)', marginBottom: 4 }}>{AREA_LABEL[g.area]}</div>
+              {g.rows.map((t) => {
+                const raw = drafts[t.key] ?? String(t.value);
+                const err = drafts[t.key] !== undefined ? tunableError(t, raw) : null;
+                const changed = t.stored !== null;
+                return (
+                  <div key={t.key} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 96px auto', gap: 8, alignItems: 'center', padding: '5px 0', borderBottom: '1px solid var(--border-soft)' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <label htmlFor={`tun-${t.key}`} style={{ fontSize: 12.5, fontWeight: 600, ...mono }}>{t.key}{changed && <span style={{ fontSize: 10, color: 'var(--amber)', marginLeft: 6, fontFamily: 'inherit' }}>changed</span>}</label>
+                      <div style={{ fontSize: 11.5, color: 'var(--text-dim)' }}>{t.description} <span style={{ color: 'var(--text-faint)' }}>default {t.default} · bound {t.min}–{t.max}</span></div>
+                      {err && <div style={{ fontSize: 11, color: 'var(--red)' }}>{err}</div>}
+                    </div>
+                    <input id={`tun-${t.key}`} value={raw} inputMode="decimal" onChange={(e) => setDrafts({ ...drafts, [t.key]: e.target.value.replace(/[^\d.-]/g, '') })} onKeyDown={(e) => { if (e.key === 'Enter') void save(t); }}
+                      style={{ ...inputStyle, ...mono, width: '100%', borderColor: err ? 'var(--red)' : undefined }} />
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button disabled={drafts[t.key] === undefined || Boolean(err)} onClick={() => void save(t)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '4px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer', opacity: drafts[t.key] === undefined || err ? .5 : 1 }}>Set</button>
+                      {changed && <button onClick={() => void reset(t)} title={`Back to the default (${t.default})`} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '4px 9px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Reset</button>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Settings → Workspace → Heartbeat defaults (docs/triggers.md "Heartbeat",
+ *  docs/company-vision.md §13): the cadence, daily run cap and staleness
+ *  every agent of the workspace inherits unless it overrides them on its
+ *  page. Bounded by the server (cadence ≥ 5 min, ≤ 48 runs a day, staleness
+ *  5 min..7 d); '{}' means the built-in defaults. */
+function HeartbeatDefaultsSection({ ws }: { ws: Workspace }) {
+  const app = useApp();
+  const saved = safeJsonParse<{ cron?: string; dailyRunCap?: number; staleMinutes?: number }>(ws.heartbeatDefaults || '{}', {});
+  const [cron, setCron] = useState(saved.cron ?? '');
+  const [cap, setCap] = useState(saved.dailyRunCap === undefined ? '' : String(saved.dailyRunCap));
+  const [stale, setStale] = useState(saved.staleMinutes === undefined ? '' : String(saved.staleMinutes));
+  useEffect(() => {
+    const cur = safeJsonParse<{ cron?: string; dailyRunCap?: number; staleMinutes?: number }>(ws.heartbeatDefaults || '{}', {});
+    setCron(cur.cron ?? ''); setCap(cur.dailyRunCap === undefined ? '' : String(cur.dailyRunCap)); setStale(cur.staleMinutes === undefined ? '' : String(cur.staleMinutes));
+  }, [ws.id, ws.heartbeatDefaults]);
+  const isOwner = !app.me || app.me.role === 'owner';
+  const save = async () => {
+    const next: { cron?: string; dailyRunCap?: number; staleMinutes?: number } = {};
+    if (cron.trim()) next.cron = cron.trim();
+    if (cap.trim()) next.dailyRunCap = parseInt(cap, 10);
+    if (stale.trim()) next.staleMinutes = parseInt(stale, 10);
+    try {
+      await api.updateWorkspace(ws.id, { heartbeatDefaults: JSON.stringify(next) });
+      await app.refreshWorkspaces();
+      app.showToast(Object.keys(next).length ? 'Heartbeat defaults saved — agents without an override follow them' : 'Heartbeat defaults back to built-in');
+    } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'save failed'); }
+  };
+  const field: React.CSSProperties = { ...inputStyle, ...mono, width: '100%' };
+  const lab: React.CSSProperties = { fontSize: 11.5, color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: 4 };
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Heartbeat defaults</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>Every agent beats on a cadence and runs a turn only with a reason (a stale task, an unread inbox item, an unanswered mention, a due check-in, a ritual it facilitates). These are the workspace defaults; an agent's page overrides them. Built-in: every 30 minutes, 12 runs a day, stale after 30 minutes. Fence: cadence ≥ 5 min, ≤ 48 runs a day, staleness 5 min to 7 days.</div>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginTop: 12 }}>
+        <label style={lab}>Cadence (five-field cron)<input value={cron} onChange={(e) => setCron(e.target.value)} disabled={!isOwner} placeholder="*/30 * * * *" style={field} /></label>
+        <label style={lab}>Daily run cap<input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^\d]/g, ''))} disabled={!isOwner} placeholder="12" style={field} inputMode="numeric" /></label>
+        <label style={lab}>Stale after (minutes)<input value={stale} onChange={(e) => setStale(e.target.value.replace(/[^\d]/g, ''))} disabled={!isOwner} placeholder="30" style={field} inputMode="numeric" /></label>
+      </div>
+      {isOwner && <div style={{ display: 'flex', marginTop: 10, gap: 6, justifyContent: 'flex-end' }}>
+        <button onClick={() => { setCron(''); setCap(''); setStale(''); }} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Clear</button>
+        <button onClick={() => void save()} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Save defaults</button>
+      </div>}
     </div>
   );
 }

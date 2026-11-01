@@ -6,7 +6,7 @@
  *  audit (runs and the hash-chained log). Enabling, the mode, the chief and
  *  the caps live in Settings → Workspace → Organization; the group log moved
  *  to the `#company` channel. */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { useApp } from '../store';
 import {
   api, ORG_TASK_STATUSES, type Agent, type ChannelMessage, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgGoalNode, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
@@ -16,52 +16,18 @@ import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
 import { UsageBars, UsageRows } from './UsageChart';
 import { I, P } from '../lib/icons';
-import { grad } from '../store';
+import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, Avatar } from './org-ui';
 
-const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 13, background: 'var(--panel)', padding: '14px 16px' };
-const input: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 10px', color: 'var(--text)', fontSize: 12.5, outline: 'none', width: '100%' };
-const btn = (primary = false, danger = false): React.CSSProperties => ({
-  background: primary ? 'var(--accent)' : danger ? 'var(--red)' : 'var(--panel-2)', color: primary || danger ? '#fff' : 'var(--text)',
-  border: primary || danger ? 'none' : '1px solid var(--border)', borderRadius: 8, padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-});
-const pill = (bg = 'var(--panel-2)', color = 'var(--text-dim)'): React.CSSProperties => ({ fontSize: 10.5, background: bg, color, border: '1px solid var(--border-soft)', borderRadius: 6, padding: '1px 7px', whiteSpace: 'nowrap' });
-const h2: React.CSSProperties = { fontSize: 15, fontWeight: 700, margin: 0 };
-const faint: React.CSSProperties = { fontSize: 12, color: 'var(--text-faint)' };
+/** The CEO's-seat panes (docs/company-vision.md §8, items 18–20) load on demand. */
+const VisionPane = lazy(() => import('./OrgVisionView').then((m) => ({ default: m.VisionPane })));
+const PulsePane = lazy(() => import('./OrgPulseView').then((m) => ({ default: m.PulsePane })));
+const MeetingsPane = lazy(() => import('./OrgMeetingsView').then((m) => ({ default: m.MeetingsPane })));
+const DecisionsPane = lazy(() => import('./OrgMeetingsView').then((m) => ({ default: m.DecisionsPane })));
+const WhyDrawer = lazy(() => import('./OrgVisionView').then((m) => ({ default: m.WhyDrawer })));
 
 const STATUS_COLOR: Record<OrgTaskStatus, string> = {
   backlog: 'var(--text-faint)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
 };
-
-function ago(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-  if (m < 1) return 'now'; if (m < 60) return `${m}m ago`; if (m < 1440) return `${Math.floor(m / 60)}h ago`; return `${Math.floor(m / 1440)}d ago`;
-}
-
-function useAgentNames() {
-  const app = useApp();
-  return useMemo(() => new Map(app.agents.map((a) => [a.id, a])), [app.agents]);
-}
-
-/** Every unit, depth-first, with its depth (docs/group-chat.md §7). */
-function flattenUnits(nodes: OrgUnitNode[], depth = 0): Array<OrgUnitNode & { depth: number }> {
-  return nodes.flatMap((n) => [{ ...n, depth }, ...flattenUnits(n.children, depth + 1)]);
-}
-
-/** The unit tree of the current workspace plus the lookups the panes share. */
-function useUnits() {
-  const app = useApp();
-  const units = useMemo(() => flattenUnits(app.wsOrg?.units ?? []), [app.wsOrg]);
-  const root = units.find((u) => u.parentUnitId === null) ?? null;
-  const byId = useMemo(() => new Map(units.map((u) => [u.id, u])), [units]);
-  /** The pane's unit: the selected one, else the root. */
-  const current = app.orgUnitId ? byId.get(app.orgUnitId) ?? root : root;
-  return { units, root, byId, current, isCompany: !app.orgUnitId || app.orgUnitId === root?.id };
-}
-
-function Avatar({ a, size = 22 }: { a?: Agent; size?: number }) {
-  return <span style={{ width: size, height: size, borderRadius: 7, background: a ? grad(a.colors) : 'var(--panel-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.55, flex: 'none' }}>{a?.emoji ?? '?'}</span>;
-}
 
 export function OrganizationView() {
   const app = useApp();
@@ -112,6 +78,14 @@ export function OrganizationView() {
         {view === 'spend' && <Spend org={org} reload={reload} />}
         {view === 'audit' && <Audit org={org} />}
         {view === 'brief' && <BriefView org={org} mode={mode} />}
+        {(view === 'vision' || view === 'pulse' || view === 'meetings' || view === 'decisions') && (
+          <Suspense fallback={<div style={faint}>Loading…</div>}>
+            {view === 'vision' && <VisionPane org={org} reload={reload} />}
+            {view === 'pulse' && <PulsePane org={org} />}
+            {view === 'meetings' && <MeetingsPane org={org} />}
+            {view === 'decisions' && <DecisionsPane org={org} />}
+          </Suspense>
+        )}
       </div>
     </div>
   );
@@ -305,6 +279,12 @@ function Board({ org }: { org: OrgDetail }) {
     setTasks(await api.orgTasks(org.workspaceId, opts).catch(() => []));
   }, [org.workspaceId, current, rolled, isCompany]);
   useEffect(() => { void reload(); const t = setInterval(() => { void reload(); }, 15_000); return () => clearInterval(t); }, [reload]);
+  // A signal row or a minutes card deep-linked a task: open its drawer once it is on the board.
+  useEffect(() => {
+    if (app.orgFocus?.kind !== 'task') return;
+    const t = tasks.find((x) => x.id === app.orgFocus!.id || x.id.startsWith(app.orgFocus!.id));
+    if (t) { setOpen(t); setShowCold(true); app.setOrgFocus(null); }
+  }, [tasks, app]);
   const cols = ORG_TASK_STATUSES.filter((s) => showCold || (s !== 'done' && s !== 'cancelled'));
   const members = org.members.filter((m) => m.status === 'active');
   const lead = current ? names.get(current.leadAgentId) : undefined;
@@ -402,6 +382,7 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
   const [runs, setRuns] = useState<OrgRun[]>([]);
   const [text, setText] = useState('');
   const [note, setNote] = useState('');
+  const [why, setWhy] = useState(false);
   const brief = parseBriefText(task.brief);
   const refresh = useCallback(async () => {
     const [c, r] = await Promise.all([api.orgTaskComments(org.workspaceId, task.id).catch(() => []), api.orgTaskRuns(org.workspaceId, task.id).catch(() => [])]);
@@ -416,8 +397,10 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ ...pill(STATUS_COLOR[task.status], '#fff') }}>{task.status.replace('_', ' ')}</span>
           <h2 style={{ ...h2, flex: 1 }}>{task.title}</h2>
-          <button style={btn()} onClick={onClose}><I d={P.x} size={14} /></button>
+          <button style={btn()} onClick={() => setWhy(true)} title="Why does this task exist? The chain up to the vision (docs/company-vision.md §2)">Why</button>
+          <button style={btn()} onClick={onClose} aria-label="Close"><I d={P.x} size={14} /></button>
         </div>
+        {why && <Suspense fallback={null}><WhyDrawer wsId={org.workspaceId} taskId={task.id} title={task.title} onClose={() => setWhy(false)} /></Suspense>}
         <div style={faint}>[{task.id.slice(0, 8)}] created by {task.createdBy} · {ago(task.createdAt)} · owner {task.assigneeAgentId ? names.get(task.assigneeAgentId)?.name : 'nobody'}{task.reviewerAgentId ? ` · reviewer ${names.get(task.reviewerAgentId)?.name}` : ''}{task.claimedBy ? ' · claimed' : ''}</div>
         <div style={card}>
           {(['outcome', 'context', 'constraints', 'done_when'] as const).map((k) => <div key={k} style={{ marginBottom: 6 }}><div style={{ ...faint, textTransform: 'uppercase', letterSpacing: '.4px', fontSize: 10.5 }}>{k.replace('_', ' ')}</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{brief[k] || <span style={faint}>—</span>}</div></div>)}

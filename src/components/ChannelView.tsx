@@ -6,10 +6,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
-import { api, type Agent, type ChannelDetail, type ChannelFile, type ChannelMember, type ChannelMessage, type WorkspaceEvent } from '../lib/api';
-import { applyMention, goalMentions, groupThreads, initials, mentionQuery, mentionSuggestions, type MentionCandidate } from '../lib/channels';
+import { api, type Agent, type ChannelDetail, type ChannelFile, type ChannelMember, type ChannelMessage, type OrgDecision, type OrgMeeting, type WorkspaceEvent } from '../lib/api';
+import { applyMention, decisionMentions, decisionRefs, goalMentions, groupThreads, initials, meetingCommandHint, mentionQuery, mentionSuggestions, type MentionCandidate } from '../lib/channels';
 import { Markdown } from '../lib/md';
 import { safeJsonParse } from '../lib/util';
+import { fmtUsd } from '../lib/pricing';
+import { MEETING_KIND_TITLES, minutesMeetingId, parseMinutes } from '../lib/org';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 };
@@ -48,6 +50,9 @@ export function ChannelView() {
   const [typing, setTyping] = useState<Record<string, { agentId: string; threadRootId: string | null }>>({});
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [files, setFiles] = useState<ChannelFile[]>([]);
+  // Meetings held in this channel (docs/group-chat.md §8): the thread root
+  // each one is gets a header; the minutes message a structured card.
+  const [meetings, setMeetings] = useState<OrgMeeting[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const focusRef = useRef<string | null>(null);
@@ -105,6 +110,25 @@ export function ChannelView() {
     if (tab !== 'files' || !wsId || !slug) return;
     void api.channelFiles(wsId, slug).then(setFiles).catch(() => setFiles([]));
   }, [tab, wsId, slug]);
+
+  // Meetings of this channel: loaded with the channel, re-polled while one runs
+  // (the event bus carries no meeting events yet).
+  const orgChannel = Boolean(detail?.orgMode && app.companiesEnabled);
+  const channelId = channel?.id ?? null;
+  useEffect(() => {
+    if (!orgChannel || !wsId || !channelId) { setMeetings([]); return; }
+    let stop = false;
+    const load = () => api.orgMeetings(wsId).then((list) => { if (!stop) setMeetings(list.filter((m) => m.channelId === channelId)); }).catch(() => {});
+    void load();
+    const t = setInterval(() => { void load(); }, 20_000);
+    return () => { stop = true; clearInterval(t); };
+  }, [orgChannel, wsId, channelId, page.messages.length]);
+  const meetingByRoot = useMemo(() => new Map(meetings.filter((m) => m.threadRootId).map((m) => [m.threadRootId!, m])), [meetings]);
+  const cancelMeeting = async (m: OrgMeeting) => {
+    if (!confirm(`End ${m.title || 'the meeting'} now? The minutes are written from what was proposed so far.`)) return;
+    try { await api.cancelOrgMeeting(wsId, m.id); app.showToast('Meeting cancelled'); setMeetings((l) => l.map((x) => (x.id === m.id ? { ...x, status: 'cancelled' } : x))); } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'could not cancel'); }
+  };
+  const openDecision = (id: string) => { app.setOrgFocus({ kind: 'decision', id }); app.setOrgUnitId(null); app.setOrgPane('decisions'); app.go('workspace'); app.setMobileDetail(true); };
 
   // live events for this channel
   useEffect(() => {
@@ -206,10 +230,14 @@ export function ChannelView() {
     const name = nameOf(m.authorKind, m.authorId);
     const atts = safeJsonParse<Array<{ path: string; kind: string }>>(m.attachments, []);
     const mine = m.authorKind === 'human' && (m.authorId === me || (!app.me && m.authorId));
+    const meeting = meetingByRoot.get(m.id);
+    const minutesOf = minutesMeetingId(atts);
+    const decisions = Array.from(new Set([...decisionMentions(m.mentions), ...decisionRefs(m.text)]));
     return (
-      <div key={m.id} id={`msg-${m.id}`} className="chan-msg" style={{ display: 'flex', gap: 11, padding: '7px 10px', margin: '2px -10px', borderRadius: 10, animation: 'msgIn .18s ease', background: focusRef.current === m.id ? 'var(--accent-dim)' : undefined }}>
+      <div key={m.id} id={`msg-${m.id}`} className="chan-msg" style={{ display: 'flex', gap: 11, padding: '7px 10px', margin: '2px -10px', borderRadius: 10, animation: 'msgIn .18s ease', background: focusRef.current === m.id ? 'var(--accent-dim)' : undefined, borderLeft: meeting ? `3px solid ${meeting.status === 'running' ? 'var(--green)' : 'var(--border)'}` : undefined }}>
         <Chip kind={m.authorKind} agent={agent} name={name} />
         <div style={{ flex: 1, minWidth: 0 }}>
+          {meeting && <MeetingHeader meeting={meeting} inThread={Boolean(opts.inThread)} onOpen={() => setThread(m.id)} onCancel={() => void cancelMeeting(meeting)} />}
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
             <span style={{ fontWeight: 600, fontSize: 13, color: mine ? 'var(--accent-hi)' : 'var(--text)' }}>{name}{mine ? ' (you)' : ''}</span>
             {m.authorKind === 'agent' && <span style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 5px' }}>agent{m.unprompted === 1 ? ' · unprompted' : ''}</span>}
@@ -219,10 +247,10 @@ export function ChannelView() {
               <button onClick={() => void makeTask(m)} title="Make a task from this message" style={ghostBtn}><I d={P.board} size={13} />Make task</button>
             </span>
           </div>
-          <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={m.text} /></div>
-          {atts.length > 0 && (
+          {minutesOf ? <MinutesCard wsId={wsId} meetingId={minutesOf} fallback={m.text} onDecision={openDecision} onTask={(id) => { app.setOrgFocus({ kind: 'task', id }); app.setOrgPane('board'); app.go('workspace'); app.setMobileDetail(true); }} /> : <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={m.text} /></div>}
+          {atts.filter((a) => a.kind !== 'minutes').length > 0 && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-              {atts.map((a, i) => (
+              {atts.filter((a) => a.kind !== 'minutes').map((a, i) => (
                 <button key={i} onClick={() => app.openFile({ kind: 'workspace', id: wsId }, a.path)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 9px', fontSize: 11.5, color: 'var(--text-dim)', cursor: 'pointer', ...mono }}>
                   {a.kind === 'image' ? '▣' : '▤'} {a.path.split('/').pop()}
                 </button>
@@ -239,6 +267,11 @@ export function ChannelView() {
                   </button>
                 );
               })}
+            </div>
+          )}
+          {decisions.length > 0 && !minutesOf && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+              {decisions.map((id) => <DecisionChip key={id} wsId={wsId} id={id} onOpen={() => openDecision(id)} />)}
             </div>
           )}
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 5 }}>
@@ -353,7 +386,7 @@ export function ChannelView() {
                 {approvals.filter((a) => !a.threadRootId || !thread).map(renderApproval)}
               </div>
             </div>
-            <Composer wsId={wsId} slug={slug} folder={channel.folder} mentionables={mentionables} placeholder={`Message #${channel.slug}  ·  @ to mention an agent or a person`} />
+            <Composer wsId={wsId} slug={slug} folder={channel.folder} mentionables={mentionables} orgMode={orgChannel} placeholder={`Message #${channel.slug}  ·  @ to mention an agent or a person${orgChannel ? '  ·  /meeting to start one' : ''}`} />
           </div>
           {thread && threadRoot && (
             <aside style={{ width: app.stacked ? '100%' : 380, flex: 'none', borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--panel)', position: app.stacked ? 'absolute' : 'relative', inset: app.stacked ? 0 : undefined, zIndex: app.stacked ? 20 : undefined }}>
@@ -370,7 +403,9 @@ export function ChannelView() {
                 {Object.values(typing).filter((t) => t.threadRootId === thread && !live.some((l) => l.agentId === t.agentId && l.threadRootId === thread)).map(renderTyping)}
                 {approvals.filter((a) => a.threadRootId === thread).map(renderApproval)}
               </div>
-              <Composer wsId={wsId} slug={slug} folder={channel.folder} mentionables={mentionables} threadRootId={thread} placeholder="Reply in thread" compact />
+              <Composer wsId={wsId} slug={slug} folder={channel.folder} mentionables={mentionables} threadRootId={thread} compact orgMode={orgChannel}
+                placeholder={meetingByRoot.get(thread)?.status === 'running' ? 'Reply — read at the next round; "stop" ends the meeting' : 'Reply in thread'}
+                note={meetingByRoot.get(thread)?.status === 'running' ? 'A meeting is running here: your message is read at the next round. Mentions wake nobody; "stop" ends it.' : undefined} />
             </aside>
           )}
         </div>
@@ -384,8 +419,12 @@ export function ChannelView() {
 
 // ---- composer ----
 
-function Composer({ wsId, slug, folder, mentionables, threadRootId, placeholder, compact }: {
+function Composer({ wsId, slug, folder, mentionables, threadRootId, placeholder, compact, note, orgMode }: {
   wsId: string; slug: string; folder: string; mentionables: MentionCandidate[]; threadRootId?: string | null; placeholder: string; compact?: boolean;
+  /** One line under the box (a running meeting reads replies at the next round). */
+  note?: string;
+  /** Organization mode: the `/meeting` command is available here (docs/group-chat.md §8). */
+  orgMode?: boolean;
 }) {
   const app = useApp();
   const [text, setText] = useState('');
@@ -397,6 +436,7 @@ function Composer({ wsId, slug, folder, mentionables, threadRootId, placeholder,
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const suggestions = menu ? mentionSuggestions(menu.filter, mentionables) : [];
+  const meetingHint = orgMode && !threadRootId ? meetingCommandHint(text) : null;
 
   const onChange = (v: string, caret: number) => {
     setText(v);
@@ -460,6 +500,15 @@ function Composer({ wsId, slug, folder, mentionables, threadRootId, placeholder,
               </div>
             </div>
           )}
+          {meetingHint && (
+            <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px 0', fontSize: 11.5, color: 'var(--text-dim)' }}>
+              <I d={P.slash} size={12} />
+              <span style={{ ...mono, color: 'var(--text)' }}>/meeting [planning|standup|weekly_review|retro|board] [#unit] [agenda…]</span>
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {meetingHint.complete ? `starts a ${MEETING_KIND_TITLES[meetingHint.kind]?.toLowerCase() ?? 'meeting'} ${meetingHint.unitSlug ? `in #${meetingHint.unitSlug}` : 'here'}${meetingHint.agenda ? ` — "${meetingHint.agenda.slice(0, 60)}"` : ', agenda from the board or your text'}; Enter sends` : 'starts a meeting in this channel; attendees take one turn per round'}
+              </span>
+            </div>
+          )}
           {atts.length > 0 && (
             <div style={{ display: 'flex', gap: 7, padding: '11px 13px 0', flexWrap: 'wrap' }}>
               {atts.map((a) => (
@@ -490,6 +539,7 @@ function Composer({ wsId, slug, folder, mentionables, threadRootId, placeholder,
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 11px 9px' }}>
             <button onClick={() => fileRef.current?.click()} title="Attach a file to the channel folder (or drop it here)" style={{ ...ghostBtn, padding: 6 }}><I d={P.attach} size={16} /></button>
             <button onClick={() => { const v = `${text}${text && !/\s$/.test(text) ? ' ' : ''}@`; setText(v); setMenu(mentionQuery(v)); inputRef.current?.focus(); }} title="Mention" style={{ ...ghostBtn, padding: 6 }}><I d={P.at} size={16} /></button>
+            {note && <span role="status" style={{ fontSize: 11, color: 'var(--amber)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={note}>{note}</span>}
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 9 }}>
               {!compact && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>Enter to send</span>}
               <button onClick={() => void send()} disabled={sending} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, background: text.trim() || atts.length ? 'var(--accent)' : 'var(--accent-dim)', color: '#fff', border: 'none', borderRadius: 10, cursor: 'pointer' }}>
@@ -500,6 +550,96 @@ function Composer({ wsId, slug, folder, mentionables, threadRootId, placeholder,
         </div>
       </div>
     </div>
+  );
+}
+
+// ---- meetings (docs/group-chat.md §8) ----
+
+/** The strip above a meeting's agenda root: "Meeting · <kind> · running/done",
+ *  rounds and cost, Cancel while it runs, Open thread from the channel. */
+function MeetingHeader({ meeting: m, inThread, onOpen, onCancel }: { meeting: OrgMeeting; inThread: boolean; onOpen: () => void; onCancel: () => void }) {
+  const running = m.status === 'running';
+  const color = running ? 'var(--green)' : m.status === 'done' ? 'var(--text-dim)' : m.status === 'cancelled' ? 'var(--red)' : 'var(--amber)';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4, fontSize: 11.5 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--panel-2)', border: `1px solid ${running ? 'var(--green)' : 'var(--border)'}`, borderRadius: 6, padding: '1px 8px', fontWeight: 600, color: 'var(--text)' }}>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, animation: running ? 'pulse 1.2s infinite' : undefined }} />
+        Meeting · {MEETING_KIND_TITLES[m.kind] ?? m.kind} · <span style={{ color }}>{m.status}</span>
+      </span>
+      <span style={{ color: 'var(--text-faint)' }}>{m.rounds > 0 ? `${m.rounds} round${m.rounds === 1 ? '' : 's'} · ` : ''}{fmtUsd(m.usd)}{running ? ' · replies are read at the next round' : ''}</span>
+      <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+        {!inThread && <button onClick={onOpen} style={{ ...smallBtn, padding: '2px 8px', fontSize: 11 }}>Open thread</button>}
+        {running && <button onClick={onCancel} style={{ ...smallBtn, padding: '2px 8px', fontSize: 11, color: 'var(--red)' }} title="End the meeting now; the minutes are written from what was proposed">Cancel</button>}
+      </span>
+    </div>
+  );
+}
+
+/** The minutes as a structured card (summary, decisions as `#decision:` chips,
+ *  actions linking to the tasks they became, risks, questions for the CEO),
+ *  read from the meeting row; the rendered text is the fallback. */
+function MinutesCard({ wsId, meetingId, fallback, onDecision, onTask }: { wsId: string; meetingId: string; fallback: string; onDecision: (id: string) => void; onTask: (taskId: string) => void }) {
+  const app = useApp();
+  const [m, setM] = useState<OrgMeeting | null | undefined>(undefined);
+  const [raw, setRaw] = useState(false);
+  useEffect(() => { void api.orgMeeting(wsId, meetingId).then(setM).catch(() => setM(null)); }, [wsId, meetingId]);
+  if (m === undefined) return <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4 }}>Loading the minutes…</div>;
+  if (m === null || raw) return <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={fallback} />{m && <button onClick={() => setRaw(false)} style={{ ...ghostBtn, padding: 0 }}>structured view</button>}</div>;
+  const minutes = parseMinutes(m.minutes);
+  const nm = (id: string) => app.agents.find((a) => a.id === id)?.name ?? (id ? id.slice(0, 8) : 'the facilitator');
+  const section = (title: string, n: number) => <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--text-faint)', marginTop: 10, marginBottom: 4 }}>{title} · {n}</div>;
+  const row: React.CSSProperties = { fontSize: 13, lineHeight: 1.5, padding: '3px 0', borderBottom: '1px solid var(--border-soft)' };
+  return (
+    <div style={{ marginTop: 4, border: '1px solid var(--border)', borderRadius: 12, background: 'var(--panel)', padding: '12px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 14, fontWeight: 700 }}>Minutes — {m.title || MEETING_KIND_TITLES[m.kind]}</span>
+        <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{minutes.endedBy === 'stopped' ? 'ended early' : minutes.endedBy === 'usd_cap' ? 'stopped at the USD cap' : `${m.rounds} round${m.rounds === 1 ? '' : 's'}`} · {fmtUsd(m.usd)}</span>
+        <button onClick={() => setRaw(true)} style={{ ...ghostBtn, marginLeft: 'auto', padding: 0 }}>as text</button>
+      </div>
+      {minutes.summary && <div style={{ fontSize: 13.5, lineHeight: 1.55, marginTop: 6, whiteSpace: 'pre-wrap' }}>{minutes.summary}</div>}
+      {section('Decisions', minutes.decisions.length)}
+      {minutes.decisions.length === 0 && <div style={{ ...row, color: 'var(--text-faint)', borderBottom: 'none' }}>none</div>}
+      {minutes.decisions.map((d, i) => (
+        <div key={i} style={{ ...row, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 180 }}><b>{d.title}</b>{d.decision ? `: ${d.decision}` : ''}{d.rationale ? <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>why: {d.rationale}</div> : null}</div>
+          {d.decisionId ? <button onClick={() => onDecision(d.decisionId!)} title="Open in the decision log" style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--accent-dim)', border: 'none', color: 'var(--text)', borderRadius: 7, padding: '2px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer', ...mono }}>#decision:{d.decisionId.slice(0, 8)}</button> : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>not logged</span>}
+        </div>
+      ))}
+      {section('Actions', minutes.actions.length)}
+      {minutes.actions.length === 0 && <div style={{ ...row, color: 'var(--text-faint)', borderBottom: 'none' }}>none</div>}
+      {minutes.actions.map((a, i) => (
+        <div key={i} style={{ ...row, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 180 }}><b>{a.title}</b> — {a.owner || 'unowned'}{a.done_when ? <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>done when: {a.done_when}</div> : null}</div>
+          {a.taskId ? <button onClick={() => onTask(a.taskId!)} title="Open on the board" style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--accent-dim)', border: 'none', color: 'var(--text)', borderRadius: 7, padding: '2px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}><I d={P.board} size={12} />task {a.taskId.slice(0, 8)}</button> : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>no task</span>}
+        </div>
+      ))}
+      {section('Risks', minutes.risks.length)}
+      {minutes.risks.length === 0 && <div style={{ ...row, color: 'var(--text-faint)', borderBottom: 'none' }}>none</div>}
+      {minutes.risks.map((r, i) => <div key={i} style={{ ...row, color: 'var(--amber)' }}>■ {r.text} <span style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>({nm(r.by)})</span></div>)}
+      {section('Questions for the CEO', minutes.questions.length)}
+      {minutes.questions.length === 0 && <div style={{ ...row, color: 'var(--text-faint)', borderBottom: 'none' }}>none</div>}
+      {minutes.questions.map((q, i) => <div key={i} style={row}>? {q.question} <span style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>({nm(q.by)})</span></div>)}
+      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>Minutes are hash-chained into the audit log; actions became tasks, decisions went to the log, questions reach the next brief.</div>
+    </div>
+  );
+}
+
+const decisionCache = new Map<string, Promise<OrgDecision | null>>();
+/** A `#decision:<id>` chip: resolves through GET …/chat/decisions/:id (an id
+ *  or its unique prefix, cached), shows the title, opens the decision log. */
+function DecisionChip({ wsId, id, onOpen }: { wsId: string; id: string; onOpen: () => void }) {
+  const [d, setD] = useState<OrgDecision | null | undefined>(undefined);
+  useEffect(() => {
+    const key = `${wsId}:${id}`;
+    if (!decisionCache.has(key)) decisionCache.set(key, api.chatDecision(wsId, id).catch(() => null));
+    let on = true;
+    void decisionCache.get(key)!.then((v) => { if (on) setD(v); });
+    return () => { on = false; };
+  }, [wsId, id]);
+  return (
+    <button onClick={onOpen} title={d ? `${d.decision || d.title} · decided by ${d.decidedBy}` : d === null ? 'No decision with this id' : 'Open the decision log'} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--accent-dim)', border: 'none', color: d === null ? 'var(--text-faint)' : 'var(--text)', borderRadius: 7, padding: '2px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer', maxWidth: 320 }}>
+      <I d={P.check} size={12} /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d ? d.title : `decision ${id.slice(0, 8)}`}</span>
+    </button>
   );
 }
 
