@@ -27,6 +27,7 @@ import { CompactionService } from './compaction.service';
 import { ToolsService, FileRoot, fileRootKey } from './tools.service';
 import { TranscriptionService, transcriptPathFor } from '../voice/transcription.service';
 import { RunnerService } from '../runner/runner.service';
+import { BrowserService, BrowserStep, BrowserTurnEvent } from '../browser/browser.service';
 import { TurnContextService } from './turn-context.service';
 import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
 import { McpService, MCP_TOOL_PREFIX } from '../mcp/mcp.module';
@@ -56,6 +57,9 @@ export type TurnEvent =
   /** The workspace's monthly spend stop is reached (phase 2.5): user turns
    *  still run, the client shows the badge; loop turns are refused instead. */
   | { type: 'budget'; month: string; spentTokens: number; budgetTokens: number }
+  /** A browser tool rendered a page: the client shows the screenshot live
+   *  in the artifact panel's Browser tab (docs/browser-tool.md §4). */
+  | BrowserTurnEvent
   | { type: 'error'; message: string };
 
 interface ToolRecord {
@@ -66,6 +70,9 @@ interface ToolRecord {
   isError: boolean;
   /** Independent reviewer's verdict when the call was reviewed (docs/permissions.md §6). */
   review?: ReviewRecord;
+  /** Screenshot step a browser tool produced, so the Browser panel can be
+   *  rebuilt from the transcript after the turn. */
+  browser?: BrowserStep;
 }
 
 /** Tools that modify the agent/chat configuration itself can never receive a
@@ -231,6 +238,8 @@ export class TurnLoopService implements OnModuleDestroy {
     @Optional() private readonly runner?: RunnerService,
     /** Optional so test constructors without a reviewer keep working. */
     @Optional() private readonly review?: ActionReviewService,
+    /** Optional so test constructors without a browser keep working. */
+    @Optional() private readonly browser?: BrowserService,
   ) {}
 
   /** Graceful shutdown: abort every in-flight turn through the same path as
@@ -324,6 +333,9 @@ export class TurnLoopService implements OnModuleDestroy {
         // (docs/code-execution.md §5); they are mutation-class, so Ask mode
         // pauses on the full code.
         ...(this.runner?.specs() ?? []),
+        // Browser tools exist only when a backend is available
+        // (docs/browser-tool.md §2); browser_act is mutation-class.
+        ...(this.browser?.specs() ?? []),
       ];
       // Per-round overhead every provider call also carries: the resolved
       // system prompt plus the full tool-spec JSON (tens of KB once MCP
@@ -369,7 +381,8 @@ export class TurnLoopService implements OnModuleDestroy {
           // (docs/integrations.md §5, docs/code-execution.md §5).
           if (input.origin === 'loop' && session.agentId
             && ((this.connections?.owns(call.name) && this.connections.isReadOnly(call.name) === false)
-              || this.runner?.owns(call.name))) {
+              || this.runner?.owns(call.name)
+              || (this.browser?.owns(call.name) && this.browser.isReadOnly(call.name) === false))) {
             const summary = JSON.stringify(call.input).slice(0, 280);
             await this.agents.addEvent(session.agentId, {
               kind: 'action_pending',
@@ -464,7 +477,12 @@ export class TurnLoopService implements OnModuleDestroy {
           }
           await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
           history.push({ role: 'tool', content: output, toolCallId: call.id, isError });
-          toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: decision, isError, ...(review ? { review } : {}) });
+          // Browser steps stream before the tool_result so the panel shows
+          // the page as the model receives it; the step is also recorded on
+          // the tool record for the transcript view.
+          const browserStep = this.browser?.owns(call.name) ? this.browser.lastStep(session.id) : null;
+          for (const bev of this.browser?.takeEvents(session.id) ?? []) yield bev;
+          toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: decision, isError, ...(review ? { review } : {}), ...(browserStep ? { browser: browserStep } : {}) });
           yield { type: 'tool_result', id: call.id, name: call.name, output: output.slice(0, 500), isError, ...(review ? { review } : {}) };
         }
 
@@ -498,6 +516,9 @@ export class TurnLoopService implements OnModuleDestroy {
       // whether the turn ended well, stopped, or errored.
       if (ws && tokensIn + tokensOut > 0) await this.workspaces.addSpend(ws.id, tokensIn + tokensOut).catch(() => {});
       this.turnOrigins.delete(sessionId);
+      // The browser session is per turn: cookies, logins and the page itself
+      // end here, whether the turn finished, stopped or errored.
+      if (this.browser) await this.browser.endTurn(sessionId).catch(() => {});
       this.locks.release(sessionId);
       this.aborts.delete(sessionId);
       // Post-turn auto-compaction with the real per-round overhead. It cannot
@@ -558,6 +579,7 @@ export class TurnLoopService implements OnModuleDestroy {
     if (name.startsWith(MCP_TOOL_PREFIX)) return this.mcp.execute(name, input);
     if (this.connections?.owns(name)) return this.connections.execute(session.agentId ?? undefined, name, input);
     if (this.runner?.owns(name)) return this.runner.execute(name, input);
+    if (this.browser?.owns(name)) return this.browser.execute({ sessionId: session.id, fileRoot: await this.fileRootFor(session) }, name, input);
     if (name.startsWith(CUSTOM_TOOL_PREFIX)) {
       if (!session.agentId) throw new Error(`unknown tool: ${name}`);
       return this.agents.executeCustomTool(session.agentId, name, input);
@@ -684,7 +706,8 @@ export class TurnLoopService implements OnModuleDestroy {
           : AGENT_TOOL_NAMES.has(call.name) ? (session.agentId ? AGENT_READONLY_TOOLS.has(call.name) : undefined)
             : this.connections?.owns(call.name) ? this.connections.isReadOnly(call.name)
               : this.runner?.owns(call.name) ? this.runner.isReadOnly(call.name)
-                : this.tools.isReadOnly(call.name);
+                : this.browser?.owns(call.name) ? this.browser.isReadOnly(call.name)
+                  : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
     // Confirm-always tools (gmail_send) are outward-facing and irreversible:
     // they pause in host chrome on every call — Auto mode and remembered

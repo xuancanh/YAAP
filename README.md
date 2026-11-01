@@ -69,6 +69,11 @@ fs_search** research tools, a **slides_create** tool rendering self-contained
 HTML decks, workspace-wide **search** (`/api/search`), and **rich file
 previews** (`/api/workspaces/:id/preview` classifies markdown/html/image/pdf/
 text; HTML previews must render in a sandboxed, network-denied iframe).
+A **credential-free browser tool** (`browser_open` / `browser_read` /
+`browser_act` / `browser_screenshot`, Cloudflare Browser Rendering or local
+Playwright, incognito per turn, SSRF-guarded, password fields refused) streams
+every page it renders as a screenshot into the chat's Browser panel
+(`docs/browser-tool.md`).
 
 The frontend implements the design comp in `design/`: activity-bar shell,
 workspace-scoped chat list grouped by agent, streaming chat with thinking

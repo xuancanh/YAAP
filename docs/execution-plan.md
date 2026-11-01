@@ -85,7 +85,7 @@ Shipped as: `docs/security.md` §a–k, `SECURITY.md`, `GET /api/security`
 and `tests/backend-security.test.ts`; the Settings → Security pane that
 renders it is still to be wired in `SettingsView.tsx`.
 
-### 4. Browser tool *(todo)*
+### 4. Browser tool *(done)*
 `browser_open`, `browser_act` (click/type/scroll/select by text), `browser_read`
 (readable text + links), `browser_screenshot`. Two backends behind one
 interface, like the code runner: Cloudflare Browser Rendering (hosted) and
@@ -93,6 +93,19 @@ local Playwright (`playwright-core`, optional). Credential-free: no cookie
 jar persists across sessions, no password fields are filled, egress through
 the SSRF guard. Viewable: every step's screenshot streams to the artifact
 panel as a live "Browser" tab, and the session ends with the turn.
+Shipped as: `server/src/browser/` (`BrowserService` with `owns()/
+isReadOnly()/execute()/endTurn()`, `browser-backend.interface.ts`,
+`cloudflare-browser.backend.ts` over the REST Quick Actions `/snapshot` +
+`/scrape`, `playwright-browser.backend.ts` with a dynamic `playwright-core`
+import and `context.route` egress wall, `page-model.ts`), config
+`BROWSER_BACKEND=auto|cloudflare|playwright|off`, `BROWSER_CF_ACCOUNT_ID`,
+`BROWSER_CF_TOKEN`, `BROWSER_CHROMIUM_PATH`, `GET /api/browser/status`, the
+`browser` TurnEvent + `toolCalls[i].browser` record, the Browser tab in
+`ArtifactPanel.tsx` (live screenshot, URL/title, step strip, rebuilt from
+the transcript), the Browser section of Settings → Code runner & browser,
+`docs/browser-tool.md`, security.md §c–e, and
+`tests/backend-browser.test.ts`. Not done: credential-by-reference sign-in
+and live DOM actions on the hosted backend (links + GET forms only there).
 
 ### 5. Email channel, web push, PWA *(done)*
 Shipped as: migrations `0020`–`0021` (`agents.emailSlug` with a unique

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
-import { api, PROVIDER_COLORS, type Connection, type ConnectionProvider, type EmailStatus, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RunnerStatus, type Workspace, type WorkspaceUsage } from '../lib/api';
+import { api, PROVIDER_COLORS, type BrowserStatus, type Connection, type ConnectionProvider, type EmailStatus, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RunnerStatus, type Workspace, type WorkspaceUsage } from '../lib/api';
 import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../lib/push';
 import { fmtUsd } from '../lib/pricing';
@@ -20,7 +20,7 @@ const PANE_META: Record<string, [string, string]> = {
   usage: ['Usage', 'Tokens and dollars over the last 30 days — per agent, per loop, per day — and the price table behind the estimate.'],
   channels: ['Channels', 'Talk to your agents where you already are — Telegram, email, and push to this device, paired to you alone.'],
   connections: ['Connections', 'Link external services (Google Calendar first). Connecting grants nothing — you approve access per agent.'],
-  runner: ['Code runner', 'Where run_js and run_python execute. Every run is disposable, offline, and approval-gated.'],
+  runner: ['Code runner & browser', 'Where run_js / run_python execute and where browser_open / browser_act render. Both are disposable and approval-gated; the browser is credential-free and visible to you.'],
 };
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 13, background: 'var(--panel)', padding: '15px 17px' };
@@ -998,7 +998,62 @@ function RunnerPane() {
         The Cloudflare backend also needs <span style={mono}>RUNNER_CF_URL</span> and <span style={mono}>RUNNER_CF_TOKEN</span> — deploy <span style={mono}>cloudflare/runner-worker</span> and restart the server.
         The local backend needs <span style={mono}>sandbox-exec</span> (macOS, built in) or <span style={mono}>bubblewrap</span> (Linux).
       </div>
+      <BrowserSection />
     </div>
+  );
+}
+
+/** Browser tool (docs/browser-tool.md): read-only status, same pattern as
+ *  the runner — an environment decision shown live, not a toggle. */
+function BrowserSection() {
+  const [status, setStatus] = useState<BrowserStatus | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { void api.browserStatus().then(setStatus).catch(() => setFailed(true)); }, []);
+
+  const heading = <div style={{ fontSize: 15, fontWeight: 700, marginTop: 10, letterSpacing: '-.2px' }}>Browser</div>;
+  if (failed) return <>{heading}<div style={{ ...card, fontSize: 12.5, color: 'var(--text-dim)' }}>Could not read browser status.</div></>;
+  if (!status) return <>{heading}<div style={{ ...card, fontSize: 12.5, color: 'var(--text-faint)' }}>Loading…</div></>;
+
+  const live = status.backend !== null;
+  const label = status.backend === 'cloudflare' ? 'Cloudflare Browser Rendering' : status.backend === 'playwright' ? 'Local Chromium (Playwright)' : 'Off';
+  return (
+    <>
+      {heading}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 20, flex: 'none' }}>{status.backend === 'cloudflare' ? '☁️' : live ? '🖥️' : '🚫'}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>{label}</span>
+              <span style={{ fontSize: 10, color: live ? 'var(--green)' : 'var(--text-faint)', border: `1px solid ${live ? 'var(--green)' : 'var(--border)'}`, borderRadius: 5, padding: '1px 6px' }}>
+                {live ? 'active' : 'no backend'}
+              </span>
+              {live && (
+                <span style={{ fontSize: 10, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 6px' }}>
+                  {status.interactive ? 'interactive' : 'links + GET forms'}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3 }}>{status.detail}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 4 }}>
+              {live
+                ? 'Tools offered: browser_open, browser_read, browser_screenshot (read-only) and browser_act (needs approval in Ask mode). Every page the agent renders appears as a screenshot in the chat’s Browser panel.'
+                : 'The browser tools are not offered to any agent while no backend is available.'}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style={{ ...card, fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+        <strong>Credential-free and disposable.</strong> No cookies or logins survive a turn, password / one-time-code / card fields are never filled
+        (the agent asks you to do that part), and every URL — including redirects and link clicks — passes the same private-address guard as <span style={mono}>web_fetch</span>.
+        Page text reaches the model wrapped as untrusted data. Background loop turns never click or type; they queue the action in the agent&apos;s inbox.
+      </div>
+      <div style={{ ...card, fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+        Configure with <span style={mono}>BROWSER_BACKEND</span> (<span style={mono}>auto</span> · <span style={mono}>cloudflare</span> · <span style={mono}>playwright</span> · <span style={mono}>off</span>).
+        Cloudflare needs <span style={mono}>BROWSER_CF_ACCOUNT_ID</span> and <span style={mono}>BROWSER_CF_TOKEN</span> (an API token with Browser Rendering edit permission) and is stateless: it follows links and submits GET forms but cannot click arbitrary buttons.
+        The local backend needs <span style={mono}>playwright-core</span> and a Chromium at <span style={mono}>BROWSER_CHROMIUM_PATH</span>; it drives a real page, one private window per turn.
+      </div>
+    </>
   );
 }
 
