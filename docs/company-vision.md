@@ -37,6 +37,45 @@ them.
 | **Trust** | Scopes, approvals, audit, disclosure. | Meet rule, Ask/Auto, hash-chained audit, external floor. | A per-company constitution; an independent auditor role; plan preview before autonomous execution. |
 | **Time** | Cadences, triggers, quiet hours. | Minute tick, daily brief, board-event chief review. | Rituals per unit (standup, weekly review, retro, board meeting); time-boxed sprints; deadlines that escalate. |
 
+## 1b. Everything adapts: the operating profile
+
+No mechanism in this document is a fixed rule. Each is a **tunable with a
+default and a bound**, and the company adjusts it to its own values,
+culture, vision and goals. The workspace carries an **operating profile**:
+its values (what it optimises for and what it refuses), its culture (how
+it communicates: terse or discursive, how often it meets, how much it
+reviews, how much autonomy a member gets), its vision and current goals.
+The profile is written by the CEO in plain language, revised by the chief
+through proposals, and read by every prompt that plans, meets, monitors or
+wakes.
+
+Concretely:
+
+- **Rituals** take their cadence, length, attendees and format from the
+  profile. A two-agent newsletter company may hold no standup and one weekly
+  review; a research lab may hold a daily seminar. The chief proposes
+  cadence changes with a reason; they apply within bounds (never more than
+  N meetings a day, never outside quiet hours).
+- **Thresholds** (stale, at-risk pace, confidence drops, burn warnings,
+  SLO targets) are per-org settings the chief tunes to the work: a slow
+  research objective and a daily publishing objective should not share a
+  48-hour cycle-time target.
+- **Heartbeat** cadence and gate rules follow the culture: a reactive
+  support agent beats often; an archivist beats daily.
+- **Roles and charters** are drawn from the catalog and reshaped to the
+  vision; the catalog is a starting point, not a taxonomy.
+- **The brief** says what this CEO cares about, in the order they care, in
+  the tone of the culture.
+- **Planning depth, review strictness and autonomy** flex with the goals:
+  a launch week can ask for daily replans and two reviewers; a quiet month
+  can run on weekly check-ins.
+
+What does **not** adapt is the safety floor: depth and fan-out caps, the
+meet rule, the kill switch, the external floor, the audit chain, and the
+bounds on every tunable. Culture chooses within the fence; it never moves
+it. Every change to the profile or a tunable is a decision-log entry, so
+the company can see how it changed itself and why.
+
 ## 2. The intent cascade (the example, generalised)
 
 The CEO writes a **vision**: one paragraph, a horizon, a budget, and the
