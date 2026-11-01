@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–14 and 16 done** (31 Oct – 1 Nov 2026); **item 15 in progress** after the owner's correction that the company is the workspace and the group chat is a Slack-style channel (`docs/group-chat.md`).
+Status: **done** — items 1–16 shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
