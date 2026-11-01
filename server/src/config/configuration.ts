@@ -81,6 +81,15 @@ export default () => ({
   runnerCfUrl: process.env.RUNNER_CF_URL || '',
   /** Shared bearer token the worker requires on every request. */
   runnerCfToken: process.env.RUNNER_CF_TOKEN || '',
+  /** Browser tool backend (docs/browser-tool.md §2): 'auto' picks cloudflare
+   *  when BROWSER_CF_* are set, else local Playwright when playwright-core and
+   *  a Chromium are present, else the browser tools do not exist. 'off' disables. */
+  browserBackend: process.env.BROWSER_BACKEND || 'auto',
+  /** Cloudflare account id + API token with Browser Rendering edit permission. */
+  browserCfAccountId: process.env.BROWSER_CF_ACCOUNT_ID || '',
+  browserCfToken: process.env.BROWSER_CF_TOKEN || '',
+  /** Chromium binary for the local backend; empty = playwright-core's own path. */
+  browserChromiumPath: process.env.BROWSER_CHROMIUM_PATH || '',
   /** Vulnerability-disclosure address shown by GET /api/security and Settings
    *  (docs/security.md §j). Empty = the UI shows the policy without a contact. */
   securityContact: process.env.SECURITY_CONTACT || '',

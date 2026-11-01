@@ -52,6 +52,12 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
         <span style={{ width: 9, height: 9, borderRadius: '50%', flex: 'none', background: color, animation: t.status === 'running' ? 'pulse 1s infinite' : undefined }} />
         <span style={{ ...mono, fontSize: 12.5, fontWeight: 600 }}>{t.name}</span>
         <span style={{ ...mono, fontSize: 12, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{arg}</span>
+        {t.name.startsWith('browser_') && app.browserSteps.length > 0 && !app.browserOpen && (
+          <button onClick={app.openBrowserPanel} title="Show the screenshots in the Browser panel"
+            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-dim)', fontSize: 10.5, padding: '2px 7px', cursor: 'pointer' }}>
+            Browser
+          </button>
+        )}
         <span style={{ fontSize: 11, color, fontWeight: 600 }}>{label}</span>
       </div>
       {t.status === 'running' && (

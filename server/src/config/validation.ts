@@ -56,6 +56,10 @@ const envSchema = z
     VAPID_PUBLIC_KEY: z.string().optional(),
     VAPID_PRIVATE_KEY: z.string().optional(),
     VAPID_SUBJECT: z.string().regex(/^$|^(mailto:|https:)/, 'VAPID_SUBJECT must be a mailto: or https: URL').optional(),
+    BROWSER_BACKEND: z.enum(['auto', 'cloudflare', 'playwright', 'off']).optional(),
+    BROWSER_CF_ACCOUNT_ID: z.string().optional(),
+    BROWSER_CF_TOKEN: z.string().optional(),
+    BROWSER_CHROMIUM_PATH: z.string().optional(),
   })
   .superRefine((env, ctx) => {
     // Selecting the cloudflare backend without its endpoint is a boot-time
@@ -78,6 +82,13 @@ const envSchema = z
     }
     if (Boolean(env.VAPID_PUBLIC_KEY) !== Boolean(env.VAPID_PRIVATE_KEY)) {
       ctx.addIssue({ code: 'custom', path: ['VAPID_PRIVATE_KEY'], message: 'VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY must be set together (npm run push:keys)' });
+    }
+    if (env.BROWSER_BACKEND === 'cloudflare' && !(env.BROWSER_CF_ACCOUNT_ID && env.BROWSER_CF_TOKEN)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['BROWSER_CF_ACCOUNT_ID'],
+        message: 'BROWSER_CF_ACCOUNT_ID and BROWSER_CF_TOKEN are required when BROWSER_BACKEND=cloudflare',
+      });
     }
     if (env.NODE_ENV !== 'production') return;
     const required = [

@@ -49,6 +49,7 @@ import { PushModule } from './push/push.module';
 import { AppBridgeModule } from './appbridge/app-bridge.module';
 import { ConnectionsModule } from './connections/connections.module';
 import { RunnerModule } from './runner/runner.module';
+import { BrowserModule } from './browser/browser.module';
 import { SecurityModule } from './security/security.module';
 import { UsageModule } from './usage/usage.module';
 import { VoiceModule } from './voice/voice.module';
@@ -73,6 +74,7 @@ import { VoiceModule } from './voice/voice.module';
     AppBridgeModule,
     ConnectionsModule,
     RunnerModule,
+    BrowserModule,
     SecurityModule,
     UsageModule,
     VoiceModule,

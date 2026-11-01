@@ -8,6 +8,7 @@ import {
   api, sendTurn, authHeaders,
   type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision, type ToolReview,
+  type BrowserStep,
 } from './lib/api';
 import type { PriceTable } from './lib/pricing';
 
@@ -110,6 +111,11 @@ interface Store {
   artifact: { title: string; src: string; appCtx?: { agentId: string; miniApp: AgentApp } } | null;
   openArtifact: (title: string, src: string) => void;
   closeArtifact: () => void;
+  /** Browser tool steps for the current chat (persisted turns + the live
+   *  turn), and whether the panel's Browser tab is showing them. */
+  browserSteps: BrowserStep[];
+  browserOpen: boolean;
+  openBrowserPanel: () => void;
   /** chat.compose bridge op: open the agent's latest chat, prefill the box. */
   composeInChat: (agentId: string, text: string) => Promise<void>;
 
@@ -189,6 +195,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [agentTabRequest, setAgentTabRequest] = useState<string | null>(null);
   const [newAgentOpen, setNewAgentOpen] = useState(false);
   const [artifact, setArtifact] = useState<{ title: string; src: string; appCtx?: { agentId: string; miniApp: AgentApp } } | null>(null);
+  const [liveBrowserSteps, setLiveBrowserSteps] = useState<BrowserStep[]>([]);
+  const [browserOpen, setBrowserOpen] = useState(false);
   const [hireId, setHireId] = useState<string | null>(null);
 
   const currentIdRef = useRef<string | null>(null);
@@ -326,6 +334,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setHomeView('chat');
     setMobileChatOpen(true);
     setArtifact(null);
+    setBrowserOpen(false);
   }, []);
 
   const openAgent = useCallback((id: string, tab?: string) => {
@@ -335,6 +344,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (tab) setAgentTabRequest(tab);
     setMobileChatOpen(true); // stacked: the agent page is the detail pane
     setArtifact(null);
+    setBrowserOpen(false);
     // opening the home page acknowledges the agent's proactive activity
     void api.markAgentEventsRead(id)
       .then(() => setUnread((u) => ({ ...u, [id]: 0 })))
@@ -348,6 +358,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCurrentFile(path);
     if (path) setMobileChatOpen(true);
     setArtifact(null);
+    setBrowserOpen(false);
   }, []);
 
   const newChat = useCallback(async (agentId?: string | null) => {
@@ -392,6 +403,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const runTurn = useCallback(async (id: string, text: string, atts: Array<{ path: string; kind: string }>) => {
     setStreaming(true);
     setLive([]);
+    setLiveBrowserSteps([]);
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     // live rows belong to the session the turn runs in: after a chat switch
@@ -441,6 +453,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
               ? { ...i, status: ev.isError ? (ev.output.includes('Denied') ? 'denied' : 'error') : 'done', result: ev.output, review: ev.review ?? i.review }
               : i
           )));
+        } else if (ev.type === 'browser') {
+          // a page rendered: the Browser tab shows it as the model sees it
+          if (current()) {
+            setLiveBrowserSteps((s) => [...s, { url: ev.url, title: ev.title, screenshotPath: ev.screenshotPath, step: ev.step }]);
+            setBrowserOpen(true);
+          }
         } else if (ev.type === 'budget') {
           // the header badge derives from the workspace row — refresh it so
           // the stop shows without waiting for the next poll
@@ -459,6 +477,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setStreaming(false);
     setLive([]);
     await refreshTranscript();
+    // the persisted tool records now carry the same steps
+    setLiveBrowserSteps([]);
     await refreshSessions();
     const next = queueRef.current[0];
     if (next) {
@@ -610,6 +630,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMobileChatOpen(false);
     setMobileDetail(false);
     setArtifact(null);
+    setBrowserOpen(false);
   }, []);
 
   const saveSettings = useCallback(async (patch: Record<string, string>) => {
@@ -620,7 +641,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { api.pricing().then((p) => setPricing(p.prices)).catch(() => {}); }, []);
 
   const openArtifact = useCallback((title: string, src: string) => setArtifact({ title, src }), []);
-  const closeArtifact = useCallback(() => setArtifact(null), []);
+  const closeArtifact = useCallback(() => { setArtifact(null); setBrowserOpen(false); }, []);
+  const openBrowserPanel = useCallback(() => setBrowserOpen(true), []);
+
+  // Browser steps: the transcript's tool records (every turn so far) plus the
+  // steps streamed during the live turn. The panel survives the turn because
+  // the records do (docs/browser-tool.md §4).
+  const browserSteps = useMemo<BrowserStep[]>(() => {
+    const persisted: BrowserStep[] = [];
+    for (const t of transcript.turns) {
+      let records: Array<{ browser?: BrowserStep }>;
+      try { records = JSON.parse(t.toolCalls || '[]') as Array<{ browser?: BrowserStep }>; } catch { records = []; }
+      for (const r of records) if (r.browser?.screenshotPath) persisted.push(r.browser);
+    }
+    const seen = new Set(persisted.map((s) => s.screenshotPath));
+    return [...persisted, ...liveBrowserSteps.filter((s) => !seen.has(s.screenshotPath))];
+  }, [transcript.turns, liveBrowserSteps]);
 
   /** Open a mini app beside the agent's most recent conversation (creating
    *  one when the agent has none) — the YAAM "embed in chat" flow. */
@@ -672,6 +708,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     fileTarget, setFileTarget, fileList, refreshFiles, currentFile, setCurrentFile, openFile,
     selectedAgent, setSelectedAgent, openAgent, agentTabRequest, setAgentTabRequest, newAgentOpen, setNewAgentOpen, embedApp, composeInChat,
     artifact, openArtifact, closeArtifact,
+    browserSteps, browserOpen, openBrowserPanel,
     hireId, setHireId, confirmHire,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
@@ -687,6 +724,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     fileTarget, fileList, refreshFiles, currentFile, openFile,
     selectedAgent, openAgent, agentTabRequest, newAgentOpen, embedApp, composeInChat,
     artifact, openArtifact, closeArtifact,
+    browserSteps, browserOpen, openBrowserPanel,
     hireId, confirmHire,
   ]);
 

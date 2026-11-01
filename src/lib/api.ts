@@ -314,6 +314,23 @@ export interface RunnerStatus {
   detail: string;
 }
 
+/** Which backend renders browser_open / browser_act (docs/browser-tool.md). */
+export interface BrowserStatus {
+  backend: 'cloudflare' | 'playwright' | null;
+  detail: string;
+  /** False on the stateless hosted backend: links and GET forms only. */
+  interactive: boolean;
+}
+
+/** One screenshot the browser tool produced; the path lives under the chat's
+ *  file root (agent or workspace store) and is read via the preview endpoint. */
+export interface BrowserStep {
+  url: string;
+  title: string;
+  screenshotPath: string;
+  step: number;
+}
+
 /** One entry in the curated connectors directory (docs/integrations.md §4a). */
 export interface ConnectorEntry {
   id: string;
@@ -405,6 +422,8 @@ export type TurnEvent =
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   /** The workspace's monthly spend stop is reached; the turn still runs. */
   | { type: 'budget'; month: string; spentTokens: number; budgetTokens: number }
+  /** The browser tool rendered a page; show its screenshot live. */
+  | ({ type: 'browser'; sessionId: string } & BrowserStep)
   | { type: 'done' }
   | { type: 'error'; message: string };
 
@@ -596,6 +615,8 @@ export const api = {
     send<{ ok: boolean }>(`/api/connections/${id}/grants/${agentId}${service ? `?service=${service}` : ''}`, 'DELETE'),
   // code runner (docs/code-execution.md) — read-only: the backend is env-configured
   runnerStatus: () => get<RunnerStatus>('/api/runner/status'),
+  // browser tool (docs/browser-tool.md) — read-only: the backend is env-configured
+  browserStatus: () => get<BrowserStatus>('/api/browser/status'),
   mcp: () => get<McpServer[]>('/api/mcp'),
   createMcp: (name: string, url: string) => send<McpServer>('/api/mcp', 'POST', { name, url }),
   updateMcp: (id: string, patch: { enabled?: boolean }) => send<McpServer>(`/api/mcp/${id}`, 'PATCH', patch),
