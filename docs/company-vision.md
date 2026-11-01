@@ -533,3 +533,60 @@ task's, not re-judged per call; `strong` resolves through a small per-provider
 table rather than a priced lookup; the preview is one row per run, not a diff
 view (the SPA will draw it); the CEO pins models through the agent's
 `model`, not through the routing table.
+
+*Phase D, Memory (item 22) — shipped 1 November 2026.* §6 is built, backend
+only: migration `0037-org-memory` (`org_playbooks`). **Playbooks** are skills
+agents write for the company (`OrgPlaybooksService`): `org_write_playbook
+{title, body, roles?, why}` creates the skill `org-<slug>` in the org's
+workspace as a parked draft and a review task owned by the author that goes
+straight to a reviewer other than the author (the `org_request_review` path);
+the reviewer's accept activates the version — the body becomes the skill's
+instructions, the skill is enabled and `#company` hears of it — and writing
+the same title again proposes a new version while the live one keeps
+serving. Active playbooks whose `roles` name a member's title (or nobody in
+particular) are listed with one-line summaries in that member's org context;
+the agent loads one through the ordinary `skill_org_<slug>` tool.
+`org_playbooks {role?}` lists them; skill outcome tracking (item 10) is
+copied onto `org_playbooks.outcomes` and the retro's agenda names every
+playbook with its uses and rating, the unused and the poorly rated called
+out. **Postmortems** (`OrgMemoryService`): an abandoned objective or key
+result, a task escalated after the review rounds, a breaker tripped twice on
+one task in a day, or a critical audit finding schedules a `retro` for the
+owning unit through the item-19 runtime, with an agenda built from the record
+and no model — what happened, the timeline (the ref's audit rows as
+`[audit:<seq>]`), the cost (its runs), the signals, the decisions touching
+it, the playbook outcomes — once per ref per `memory.postmortemCooldownDays`;
+`memory.postmortemTriggers` is the bit set of what triggers (§1b). The
+retro's minutes gain `lessons[]` through `meeting_propose_lesson {text,
+audience: member|unit|company, proposedCharterChange?, proposedPlaybookChange?}`;
+when the minutes materialise each lesson is recorded in the lessons store of
+the agents its audience names (source `loop`, the trusted surface), a
+charter change becomes a `charter_change` approval card carrying the before,
+the after and the line diff — the CEO decides; approving writes the charter
+and re-accepts its hash through `acceptCharter`, so it is never drift — and a
+playbook change becomes a revise task for the playbook's owner. **The
+decision log** now receives a row for every approved or rejected approval
+and every executed autonomous action (`auto_*` and an autonomous
+`org_tune`), with the alternatives and the rationale from the `why`;
+`GET …/org/decisions/search?q=` is ILIKE over title, decision and rationale
+and `org_decisions {q?, unit?}` is the same read for any member. **Ask the
+company** (`OrgKnowledgeService`): `POST …/org/ask {question}` (anyone with
+standing: CEO, board, observer) assembles a citation pack from the record
+by keyword — goals and key results, tasks, decisions, minutes, signals,
+audit rows, channel messages, `memory.recallCap` per source — and runs one
+chief turn over it with read-only tools only (`org_intent`, `org_why`,
+`org_decisions`, `org_read_board`, `org_read_goal`, `org_audit_query`,
+`org_signals`, `org_playbooks`; anything else is refused by the turn loop,
+not executed); every `[task:…]`, `[decision:…]`, `[goal:…]`, `[meeting:…]`,
+`[audit:<seq>]` in the answer is verified against the record and unknown
+ones are stripped; the turn is reserved and settled like any run under
+`memory.askUsdCap` and audited as `ask_company`. `org_recall {question}`
+gives the chief the pack alone inside planning and review runs. **The
+graph**: `GET …/org/graph?ref=<kind:id>&depth=1|2` walks goal ↔ project ↔
+task ↔ comment, decision ↔ meeting ↔ approval, message ↔ task / mention /
+file through the existing link columns, model-free. Departures from §6:
+skill names are slugs, so the `org/` namespace is spelled `org-`; a skill's
+tool is visible workspace-wide once active (the role targeting is the
+context list, not the tool list); a charter change is text appended to (or
+replacing) the charter rather than a free-form patch, the card shows the
+computed line diff; the SPA is not touched.

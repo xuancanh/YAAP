@@ -112,7 +112,17 @@ progress), allocations say what each envelope buys, task classes route to
 model tiers, a trailing-burn **forecast** warns before the balance does, the
 autonomous chief's structural plans wait a **veto window** before they apply
 (or run as a dry run that applies nothing), and any day can be **replayed**
-from the audit chain. The Workspace
+from the audit chain. The
+company **remembers** (`docs/company-vision.md` §6): agents write
+**playbooks** as skills that a reviewer other than the author accepts before
+they are offered to a role; a failed objective, a task escalated after its
+review rounds, a breaker that keeps tripping or a critical audit finding
+schedules a **postmortem retro** with an agenda built from the record, whose
+lessons land in the agents' memory, propose charter changes you approve as a
+diff, and send playbooks back for revision; every approval and autonomous
+action is a row in the searchable **decision log**; and you can **ask the
+company** a question and get an answer whose citations are verified against
+the record. The Workspace
 rail shows the company and each unit (channel, board, goals), then the org
 chart, approvals, spend, brief and audit;
 Settings → Workspace → Organization holds the mode, chief, envelope, cap and

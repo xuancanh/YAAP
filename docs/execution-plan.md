@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–21 and 23 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–23 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -628,8 +628,49 @@ a **Heartbeat defaults** row (cadence, daily run cap, stale minutes; `PATCH
 /api/workspaces/:id { heartbeatDefaults }`, the fence stated in the copy);
 `Workspace.heartbeatDefaults` on the client type.
 
-### 22. Memory: playbooks, postmortems, ask-the-company *(planned)*
+### 22. Memory: playbooks, postmortems, ask-the-company *(done)*
 `docs/company-vision.md` §6, phase D.
+
+*Shipped as (1 November 2026):* migration `0037-org-memory` (`org_playbooks`
+— skillId, name `org-<slug>`, title, body, owner, roles, status draft |
+in_review | active | retired, version, sourceTaskId, reviewTaskId,
+outcomes JSON); `server/src/org/memory-tunables.ts` (`memory.postmortemTriggers`
+bit set, `memory.postmortemCooldownDays`, `memory.breakerTrips`,
+`memory.recallCap`, `memory.askUsdCap` on the shared registry, area
+`memory`); `org-playbooks.service.ts` (`write` → parked draft skill + review
+task straight to a reviewer ≠ author, `syncReviews` → `activate` on the
+accepted task (skill enabled, `#company` line, owner inbox) or back to draft
+on cancel, `offeredTo` / `contextBlock` by title, `refreshOutcomes` from the
+item-10 counters, `outcomesSummary` for the retro agenda, `reviseTask`,
+`retire`); `org-knowledge.service.ts` (`recall` + `renderPack` model-free,
+`answer` as one chief turn with `RunCtx.aux { context, restrict: ASK_TOOLS }`,
+`verifyCitations`, reserve/settle, `ask_company_start | ask_company |
+ask_company_refused` audit rows, `searchDecisions` ILIKE, `graph` BFS over
+the link columns with a 200-node cap); `org-memory.service.ts` (a
+`ToolProviderHook` with `org_write_playbook`, `org_playbooks`,
+`org_decisions`, `org_recall` (chief), the playbooks block in `contextFor`,
+the postmortem triggers — `org.onGoalChange` for abandons, `onOrgBoard`
+escalations with `reviewRounds ≥ 3`, a minute tick `sweep` for breakers and
+critical `audit_finding` signals — `considerPostmortem` with the cooldown
+read from `postmortem_scheduled` audit rows and `postmortemAgenda`,
+`meeting_propose_lesson` registered on the meeting runtime for retros,
+`materialiseLessons` → `AgentMemoryService.record` per audience /
+`charter_change` card with `lineDiff` / `reviseTask`, the `charter_change`
+applier (`agents.update` + `acceptCharter`), `onDecided` → decision rows for
+approvals, `onAutoAction` → decision rows for `auto_*` and autonomous tune);
+seams added for it: `OrgApprovalsService.onDecided` and the `charter_change`
+kind, `OrgRuntimeService.onAutoAction` and `RunCtx.aux` (context + tool
+restriction for a task-free run), `OrgMeetingsService.onMaterialise` and
+`Minutes.lessons`, `OrgMeetingRuntime.addMeetingTool` / `addAgendaProvider`;
+routes `GET …/org/decisions/search?q=&unitId=`, `POST …/org/ask {question}`,
+`GET …/org/recall?q=`, `GET …/org/graph?ref=&depth=`, `GET …/org/playbooks?role=&status=`
+on the workspace surface; `docs/security.md` §b row and §f paragraph. Tests:
+`tests/backend-org-memory.test.ts` (10). Departures: skill names are slugs
+(`org-<slug>`, not `org/<slug>`); the skill tool is workspace-wide once
+active and the role targeting lives in the context list; a charter change is
+appended/replacing text with a computed line diff on the card rather than an
+agent-written patch; `org_decisions.outcomes` of the vision is
+`org_playbooks.outcomes`; backend only.
 
 ### 23. Capital and the CEO seat: cost per outcome, forecasts, routing, preview with veto window, replay *(done)*
 `docs/company-vision.md` §7–§8, phase E.

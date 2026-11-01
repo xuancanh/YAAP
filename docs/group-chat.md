@@ -402,3 +402,18 @@ switch and the API cancel take effect at the next turn boundary (a turn is
 bounded anyway); a standup has no closing turn (its summary is composed); in
 supervised mode a board meeting fires only when an `org_humans` CEO or board
 row exists.
+
+Lessons in retros (item 22, `docs/company-vision.md` §6): a retro — scheduled
+by its cadence, by `/meeting retro`, or as a postmortem the memory module
+opens from the record — offers one more tool, `meeting_propose_lesson {text,
+audience: member | unit | company, proposedCharterChange?: {agent, text,
+mode?}, proposedPlaybookChange?: {playbookId, note}}`. Lessons sit in the
+minutes under "Lessons" and are executed with the rest of the minutes: each
+is recorded in the lessons store of the agents its audience names (the
+proposer; the unit's lead and reports; every active member) as a trusted
+`loop`-surface lesson, a charter change becomes a `charter_change` approval
+card showing the before/after diff that only the CEO approves (the charter
+then changes and its hash is re-accepted), a playbook change becomes a
+revise task for the playbook's owner. A postmortem's agenda is composed
+without a model — timeline, cost, signals, decisions, playbook outcomes —
+and every retro's agenda ends with the playbooks and how they fared.
