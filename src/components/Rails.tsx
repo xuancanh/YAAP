@@ -2,7 +2,7 @@
  *  chats + their folder, YAAM-style), market categories, and settings nav. */
 import { useEffect, useMemo, useState } from 'react';
 import { I, P } from '../lib/icons';
-import { useApp, grad, type CompanyView } from '../store';
+import { useApp, grad, type OrgPane } from '../store';
 import { api, type ChatSession } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 
@@ -287,7 +287,21 @@ export function HomeRail() {
   );
 }
 
-/** The Workspace tab's rail: the shared file store tree. */
+/** The organization panes under the workspace (docs/group-chat.md §5). The
+ *  group log moved to the `#company` channel; Approvals hides in autonomous
+ *  mode unless something is pending. */
+export const ORG_PANES: Array<{ id: OrgPane; label: string; icon: string[] }> = [
+  { id: 'board', label: 'Board', icon: P.board },
+  { id: 'goals', label: 'Goals', icon: P.star },
+  { id: 'chart', label: 'Org chart', icon: P.bot },
+  { id: 'approvals', label: 'Approvals', icon: P.shield },
+  { id: 'spend', label: 'Spend', icon: P.bolt },
+  { id: 'brief', label: 'Brief', icon: P.sysLines },
+  { id: 'audit', label: 'Audit', icon: P.clock },
+];
+
+/** The Workspace tab's rail: the shared file store tree, and — when the
+ *  workspace runs in organization mode — its company panes. */
 export function WorkspaceRail() {
   const app = useApp();
   useEffect(() => {
@@ -297,8 +311,31 @@ export function WorkspaceRail() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.workspaceId, app.fileTarget?.kind]);
+  const org = app.companiesEnabled && app.wsOrg && app.wsOrg.mode !== 'off' ? app.wsOrg : null;
+  const panes = org ? ORG_PANES.filter((n) => n.id !== 'approvals' || org.mode !== 'autonomous' || org.pendingApprovals > 0) : [];
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
+      {/* ---- organization panes (execution plan item 16) — begin ---- */}
+      {org && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ ...sectionLabel, padding: '2px 10px 6px', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ flex: 1 }}>Organization</span>
+            <span title={org.orgStatus === 'paused' ? 'Paused (kill switch)' : `${org.mode} mode`} style={{ fontSize: 9.5, fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: org.orgStatus === 'paused' ? '#fff' : 'var(--text-dim)', background: org.orgStatus === 'paused' ? 'var(--red)' : 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '0 6px' }}>{org.orgStatus === 'paused' ? 'paused' : org.mode}</span>
+          </div>
+          {panes.map((n) => (
+            <div key={n.id} onClick={() => { app.setOrgPane(n.id); app.setMobileDetail(true); }} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '8px 10px', borderRadius: 9, cursor: 'pointer', fontSize: 13, margin: '1px 0', color: 'var(--text)', background: n.id === app.orgPane ? 'var(--accent-dim)' : 'none' }}>
+              <I d={n.icon} size={16} sw={1.9} style={{ flex: 'none' }} />
+              <span style={{ flex: 1 }}>{n.label}</span>
+              {n.id === 'approvals' && org.pendingApprovals > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px' }}>{org.pendingApprovals}</span>}
+            </div>
+          ))}
+          <div style={{ ...sectionLabel, padding: '10px 10px 6px', display: 'flex', alignItems: 'center' }}>
+            <span style={{ flex: 1 }}>Files</span>
+            {app.orgPane && <button onClick={() => app.setOrgPane(null)} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 10.5, cursor: 'pointer', padding: 0, textTransform: 'none', letterSpacing: 0 }}>show</button>}
+          </div>
+        </div>
+      )}
+      {/* ---- organization panes — end ---- */}
       <FileTree indent={8} />
     </div>
   );
@@ -356,41 +393,4 @@ export function SettingsRail({ pane, setPane }: { pane: string; setPane: (p: str
 
 export function SecondaryHeader({ title }: { title: string }) {
   return <div style={sectionLabel}>{title}</div>;
-}
-
-export const COMPANY_VIEWS: Array<{ id: CompanyView; label: string; icon: string[] }> = [
-  { id: 'board', label: 'Board', icon: P.board },
-  { id: 'chart', label: 'Org chart', icon: P.bot },
-  { id: 'goals', label: 'Goals', icon: P.star },
-  { id: 'approvals', label: 'Approvals', icon: P.shield },
-  { id: 'spend', label: 'Spend', icon: P.bolt },
-  { id: 'activity', label: 'Activity', icon: P.clock },
-  { id: 'chat', label: 'Group chat', icon: P.chat },
-  { id: 'brief', label: 'Brief', icon: P.sysLines },
-];
-
-/** The Company rail (docs/autonomous-company.md §4.4): org picker plus the
- *  CEO's views. Creating an org happens in the main pane (CompanyView). */
-export function CompanyRail() {
-  const app = useApp();
-  return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '2px 8px 12px' }}>
-      <div style={{ padding: '0 2px 8px' }}>
-        <select value={app.orgId ?? ''} onChange={(e) => app.pickOrg(e.target.value || null)}
-          style={{ width: '100%', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 10px', color: 'var(--text)', fontSize: 13 }}>
-          {app.orgs.map((o) => <option key={o.id} value={o.id}>{o.name}{o.status === 'paused' ? ' · paused' : ''}</option>)}
-          <option value="">{app.orgs.length === 0 ? 'No organisation yet — create one' : '+ New organisation'}</option>
-        </select>
-      </div>
-      {app.orgId && COMPANY_VIEWS.map((n) => (
-        <div key={n.id} onClick={() => { app.setCompanyView(n.id); app.setMobileDetail(true); }} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '9px 10px', borderRadius: 9, cursor: 'pointer', fontSize: 13, margin: '1px 0', color: 'var(--text)', background: n.id === app.companyView ? 'var(--accent-dim)' : 'none' }}>
-          <I d={n.icon} size={16} sw={1.9} style={{ flex: 'none' }} />
-          <span style={{ flex: 1 }}>{n.label}</span>
-        </div>
-      ))}
-      <div style={{ margin: '14px 8px 0', padding: 12, border: '1px solid var(--border-soft)', borderRadius: 11, background: 'var(--panel-2)', fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-        A task board with one owner per task, event wakes instead of heartbeats, and a chief of staff that proposes while you decide.
-      </div>
-    </div>
-  );
 }

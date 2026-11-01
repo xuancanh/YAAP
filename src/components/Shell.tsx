@@ -8,11 +8,7 @@ const NAV: Array<{ id: Section; label: string; icon: string[] }> = [
   { id: 'workspace', label: 'Workspace', icon: P.folder },
   { id: 'apps', label: 'Apps', icon: P.window },
   { id: 'market', label: 'Market', icon: P.market },
-  { id: 'company', label: 'Company', icon: P.board },
 ];
-
-/** The Company entry exists only when the server has companies enabled. */
-const visibleNav = (companies: boolean) => NAV.filter((n) => n.id !== 'company' || companies);
 
 export function ActivityBar() {
   const app = useApp();
@@ -24,7 +20,7 @@ export function ActivityBar() {
   return (
     <nav style={{ width: 62, flex: 'none', background: 'var(--panel)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 0 14px', gap: 4 }}>
       <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg,var(--accent),var(--blue))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: '#fff', fontSize: 14, marginBottom: 8 }}>Y</div>
-      {visibleNav(app.companiesEnabled).map((n) => (
+      {NAV.map((n) => (
         <button key={n.id} onClick={() => app.go(n.id)} style={btn(app.section === n.id)}>
           <I d={n.icon} size={19} sw={1.9} />
           <span style={{ fontSize: 9 }}>{n.label}</span>
@@ -50,7 +46,7 @@ export function BottomNav() {
   });
   return (
     <nav style={{ position: 'fixed', left: 0, right: 0, bottom: 0, height: 58, background: 'var(--panel)', borderTop: '1px solid var(--border)', display: 'flex', zIndex: 70 }}>
-      {[...visibleNav(app.companiesEnabled), { id: 'settings' as Section, label: 'Settings', icon: P.gear }].map((n) => (
+      {[...NAV, { id: 'settings' as Section, label: 'Settings', icon: P.gear }].map((n) => (
         <button key={n.id} onClick={() => app.go(n.id)} style={btn(app.section === n.id)}>
           <I d={n.icon} size={20} sw={1.9} />
           <span style={{ fontSize: 9.5 }}>{n.label}</span>

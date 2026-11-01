@@ -1138,6 +1138,12 @@ type HomeTab = (typeof TABS)[number];
 export function AgentHome() {
   const app = useApp();
   const a = app.agents.find((x) => x.id === app.selectedAgent);
+  // Workspaces whose organization this agent leads (the current one is read
+  // from the live org status so shared workspaces count too).
+  const chiefOf = Array.from(new Set([
+    ...app.workspaces.filter((w) => w.orgMode !== 'off' && w.chiefOfStaffAgentId === a?.id).map((w) => w.name),
+    ...(app.wsOrg && app.wsOrg.mode !== 'off' && app.wsOrg.chiefOfStaffAgentId === a?.id ? [app.workspaces.find((w) => w.id === app.wsOrg!.workspaceId)?.name ?? 'this workspace'] : []),
+  ]));
   const [tab, setTab] = useState<HomeTab>('Dashboard');
   const [openApp, setOpenApp] = useState<AgentApp | null>(null);
   const [reviewApp, setReviewApp] = useState<AgentApp | null>(null);
@@ -1234,6 +1240,7 @@ export function AgentHome() {
           <div style={{ flex: 1, minWidth: 160 }}>
             <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-.3px' }}>{a.name}</div>
             <div style={{ color: 'var(--text-dim)', fontSize: 12.5, marginTop: 2 }}>
+              {chiefOf.length > 0 && <span title="This agent leads the organization of the named workspace (docs/group-chat.md §5)" style={{ color: 'var(--accent-hi)', fontWeight: 600 }}>Chief of staff of {chiefOf.join(', ')} · </span>}
               {a.role || 'Durable agent'}
               <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-faint)', fontSize: 11.5 }}> · {a.model || a.provider} · {stats?.rating !== null && stats?.rating !== undefined ? `${stats.rating}% approval` : 'unrated'} · {(((stats?.tokensIn ?? 0) + (stats?.tokensOut ?? 0)) / 1000).toFixed(1)}k tokens{usage && usage.totals.turns > 0 ? ` · ${fmtUsd(usage.totals.usd)} / 30d` : ''}</span>
             </div>

@@ -1,8 +1,11 @@
-/** The Company section (docs/autonomous-company.md §4.4, execution plan item
- *  14): create an organisation, the org chart, the shared board, goals, the
- *  approvals queue (full artifact, never a summary), spend vs envelopes, the
- *  activity feed (summary → runs → open session), the attributed group log
- *  that wakes nobody, and the brief with its one-reply input. */
+/** The organization panes of a workspace (docs/group-chat.md §5, execution
+ *  plan items 14 and 16): the workspace *is* the company, so these render in
+ *  the Workspace section when organization mode is on — the shared board,
+ *  goals, the org chart, the approvals queue (full artifact, never a
+ *  summary), spend vs envelopes, the brief with its one-reply input, and the
+ *  audit (runs and the hash-chained log). Enabling, the mode, the chief and
+ *  the caps live in Settings → Workspace → Organization; the group log moved
+ *  to the `#company` channel. */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
 import {
@@ -44,35 +47,41 @@ function Avatar({ a, size = 22 }: { a?: Agent; size?: number }) {
   return <span style={{ width: size, height: size, borderRadius: 7, background: a ? grad(a.colors) : 'var(--panel-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.55, flex: 'none' }}>{a?.emoji ?? '?'}</span>;
 }
 
-export function CompanyView() {
+export function OrganizationView() {
   const app = useApp();
   const [org, setOrg] = useState<OrgDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const wsId = app.workspaceId;
   const reload = useCallback(async () => {
-    if (!app.orgId) { setOrg(null); return; }
-    try { setOrg(await api.org(app.orgId)); setErr(null); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-  }, [app.orgId]);
+    if (!wsId) { setOrg(null); return; }
+    try { setOrg(await api.org(wsId)); setErr(null); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    void app.refreshWsOrg();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsId]);
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => { const t = setInterval(() => { void reload(); }, 30_000); return () => clearInterval(t); }, [reload]);
 
   if (!app.companiesEnabled) return <div style={{ padding: 24, ...faint }}>Companies are disabled on this server (COMPANIES_ENABLED=false).</div>;
-  if (!app.orgId || !org) return <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>{err ? <div style={{ color: 'var(--red)', fontSize: 12.5 }}>{err}</div> : <CreateOrg />}</div>;
+  if (!wsId || !org) return <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>{err ? <div style={{ color: 'var(--red)', fontSize: 12.5 }}>{err}</div> : <div style={faint}>Loading…</div>}</div>;
+  const mode = app.wsOrg?.mode ?? 'supervised';
+  const ws = app.workspaces.find((w) => w.id === wsId);
 
   const toggle = async () => {
     try {
-      if (org.status === 'active') { if (!confirm(`Pause ${org.name}? Every queued wake is dropped and in-flight runs are aborted.`)) return; await api.pauseOrg(org.id); } else await api.resumeOrg(org.id);
-      await app.refreshOrgs(); await reload();
+      if (org.status === 'active') { if (!confirm(`Pause ${org.name}? Every queued wake is dropped and in-flight runs are aborted.`)) return; await api.pauseOrg(wsId); } else await api.resumeOrg(wsId);
+      await reload();
     } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
-  const view = app.companyView;
+  const view = app.orgPane ?? 'board';
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 20px 10px', borderBottom: '1px solid var(--border)' }}>
         {app.stacked && <button onClick={() => app.setMobileDetail(false)} style={{ ...btn(), padding: 6 }}><I d={P.chevL} size={14} /></button>}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <h2 style={h2}>{org.name}</h2>
+            <h2 style={h2}>{ws?.name ?? org.name}</h2>
             <span style={pill(org.status === 'active' ? 'var(--green)' : 'var(--red)', '#fff')}>{org.status}</span>
+            <span title={mode === 'autonomous' ? 'The chief of staff hires, reorganizes and allocates within caps on its own' : 'Structural changes are approvals you decide'} style={pill()}>{mode}</span>
             {org.charterDrift.length > 0 && <span title="A member's charter changed outside the org path" style={pill('var(--amber)', '#fff')}>charter drift · {org.charterDrift.length}</span>}
           </div>
           {org.mission && <div style={{ ...faint, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{org.mission}</div>}
@@ -85,73 +94,9 @@ export function CompanyView() {
         {view === 'goals' && <Goals org={org} reload={reload} />}
         {view === 'approvals' && <Approvals org={org} reload={reload} />}
         {view === 'spend' && <Spend org={org} reload={reload} />}
-        {view === 'activity' && <Activity org={org} />}
-        {view === 'chat' && <GroupChat org={org} />}
-        {view === 'brief' && <BriefView org={org} />}
+        {view === 'audit' && <Audit org={org} />}
+        {view === 'brief' && <BriefView org={org} mode={mode} />}
       </div>
-    </div>
-  );
-}
-
-// ---- create ----
-
-function CreateOrg() {
-  const app = useApp();
-  const [name, setName] = useState('');
-  const [mission, setMission] = useState('');
-  const [mode, setMode] = useState<'existing' | 'new'>(app.agents.length ? 'existing' : 'new');
-  const [chiefId, setChiefId] = useState(app.agents[0]?.id ?? '');
-  const [chiefName, setChiefName] = useState('Chief of staff');
-  const [packId, setPackId] = useState('');
-  const [budget, setBudget] = useState('');
-  const [busy, setBusy] = useState(false);
-  const pack = app.market.find((m) => m.id === packId);
-  const create = async () => {
-    if (!name.trim() || !app.workspaceId) return;
-    setBusy(true);
-    try {
-      const o = await api.createOrg({
-        workspaceId: app.workspaceId, name: name.trim(), mission: mission.trim() || undefined,
-        ...(mode === 'existing' ? { chiefOfStaffAgentId: chiefId } : { chief: { name: chiefName.trim() || 'Chief of staff', packId: pack?.id } }),
-        monthlyBudgetUsd: budget ? Number(budget) : undefined,
-      });
-      await app.refreshOrgs(); await app.refreshAgents(); app.pickOrg(o.id); app.setCompanyView('chart');
-      app.showToast(`${o.name} created — add members in the org chart or ask the chief of staff to propose hires`);
-    } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } finally { setBusy(false); }
-  };
-  return (
-    <div style={{ maxWidth: 560, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div><h2 style={h2}>New organisation</h2><div style={faint}>One human CEO (you), one chief of staff, two to five specialists, a shared board, hard budgets. The chief proposes; you decide.</div></div>
-      <div style={card}>
-        <label style={faint}>Name</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Newsletter" style={{ ...input, marginBottom: 10 }} />
-        <label style={faint}>Mission</label>
-        <textarea value={mission} onChange={(e) => setMission(e.target.value)} rows={3} placeholder="Ship a weekly newsletter our readers forward." style={{ ...input, resize: 'vertical', marginBottom: 10 }} />
-        <label style={faint}>Company budget (USD / month, optional — 100% is a hard stop)</label>
-        <input value={budget} onChange={(e) => setBudget(e.target.value.replace(/[^\d.]/g, ''))} placeholder="25" style={input} />
-      </div>
-      <div style={card}>
-        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Chief of staff</div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-          <button onClick={() => setMode('existing')} style={btn(mode === 'existing')} disabled={app.agents.length === 0}>An existing agent</button>
-          <button onClick={() => setMode('new')} style={btn(mode === 'new')}>Create one</button>
-        </div>
-        {mode === 'existing' ? (
-          <select value={chiefId} onChange={(e) => setChiefId(e.target.value)} style={input}>
-            {app.agents.map((a) => <option key={a.id} value={a.id}>{a.emoji} {a.name}{a.role ? ` · ${a.role}` : ''}</option>)}
-          </select>
-        ) : (
-          <>
-            <input value={chiefName} onChange={(e) => setChiefName(e.target.value)} placeholder="Chief of staff" style={{ ...input, marginBottom: 8 }} />
-            <select value={packId} onChange={(e) => setPackId(e.target.value)} style={input}>
-              <option value="">Default chief-of-staff charter (decompose, route, review, report)</option>
-              {app.market.map((m) => <option key={m.id} value={m.id}>Start from the {m.name} pack charter</option>)}
-            </select>
-          </>
-        )}
-        <div style={{ ...faint, marginTop: 8 }}>The chief starts with file and web tools only. Mail, calendar, code and browser are grants you give in the org chart.</div>
-      </div>
-      <button onClick={() => void create()} disabled={busy || !name.trim()} style={{ ...btn(true), padding: 10, opacity: busy || !name.trim() ? 0.6 : 1 }}>Create organisation</button>
     </div>
   );
 }
@@ -195,16 +140,16 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 5, flex: 'none' }}>
-              {drift && <button style={btn()} onClick={() => void act(() => api.acceptOrgCharter(org.id, m.agentId))}>Accept charter</button>}
+              {drift && <button style={btn()} onClick={() => void act(() => api.acceptOrgCharter(org.workspaceId, m.agentId))}>Accept charter</button>}
               <button style={btn()} onClick={() => { setEditing(m.agentId); setEditScopes(sc.join(', ')); }}>Scopes</button>
-              {!isChief && <button style={btn()} onClick={() => void act(() => m.status === 'active' ? api.pauseOrgMember(org.id, m.agentId) : api.resumeOrgMember(org.id, m.agentId))}>{m.status === 'active' ? 'Pause' : 'Resume'}</button>}
-              {!isChief && <button style={btn(false, true)} onClick={() => { if (confirm(`Terminate ${a?.name}? Its reports move up one level; the agent itself stays.`)) void act(() => api.terminateOrgMember(org.id, m.agentId)); }}>Terminate</button>}
+              {!isChief && <button style={btn()} onClick={() => void act(() => m.status === 'active' ? api.pauseOrgMember(org.workspaceId, m.agentId) : api.resumeOrgMember(org.workspaceId, m.agentId))}>{m.status === 'active' ? 'Pause' : 'Resume'}</button>}
+              {!isChief && <button style={btn(false, true)} onClick={() => { if (confirm(`Terminate ${a?.name}? Its reports move up one level; the agent itself stays.`)) void act(() => api.terminateOrgMember(org.workspaceId, m.agentId)); }}>Terminate</button>}
             </div>
           </div>
           {editing === m.agentId && (
             <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
               <input value={editScopes} onChange={(e) => setEditScopes(e.target.value)} style={input} placeholder="tool:fs_read, connection:gmail:read, folder:shared/notes" />
-              <button style={btn(true)} onClick={() => void act(async () => { await api.setOrgMemberScopes(org.id, m.agentId, editScopes.split(',').map((s) => s.trim()).filter(Boolean)); setEditing(null); })}>Save</button>
+              <button style={btn(true)} onClick={() => void act(async () => { await api.setOrgMemberScopes(org.workspaceId, m.agentId, editScopes.split(',').map((s) => s.trim()).filter(Boolean)); setEditing(null); })}>Save</button>
               <button style={btn()} onClick={() => setEditing(null)}>Cancel</button>
             </div>
           )}
@@ -216,7 +161,7 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
   return (
     <div style={{ maxWidth: 820 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Org chart</h2><div style={faint}>You → chief of staff → specialists. Depth ≤ {org.maxDepth}, ≤ {org.maxDirectReports} direct reports. Scopes are what a member may touch; the chief can only narrow them without you.</div></div>
+        <div style={{ flex: 1 }}><h2 style={h2}>Org chart</h2><div style={faint}>You → chief of staff → specialists. Depth ≤ {org.maxDepth}, ≤ {org.maxDirectReports} direct reports. Scopes are what a member may touch and never exceed the chief's own. Mode, chief and caps: Settings → Workspace → Organization.</div></div>
         <button style={btn(true)} onClick={() => setAdding(!adding)} disabled={free.length === 0}>Add member</button>
       </div>
       {adding && (
@@ -227,7 +172,7 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
           <input value={scopes} onChange={(e) => setScopes(e.target.value)} placeholder="scopes, comma-separated" style={input} />
           <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
             <button style={btn()} onClick={() => setAdding(false)}>Cancel</button>
-            <button style={btn(true)} disabled={!agentId} onClick={() => void act(async () => { await api.addOrgMember(org.id, { agentId, title, reportsToAgentId: reportsTo, scopes: scopes.split(',').map((s) => s.trim()).filter(Boolean) }); setAdding(false); setAgentId(''); })}>Add</button>
+            <button style={btn(true)} disabled={!agentId} onClick={() => void act(async () => { await api.addOrgMember(org.workspaceId, { agentId, title, reportsToAgentId: reportsTo, scopes: scopes.split(',').map((s) => s.trim()).filter(Boolean) }); setAdding(false); setAgentId(''); })}>Add</button>
           </div>
         </div>
       )}
@@ -248,7 +193,7 @@ function Humans({ org }: { org: OrgDetail }) {
   const [pick, setPick] = useState('');
   const [role, setRole] = useState<HumanRole>('board');
   const refresh = useCallback(async () => {
-    const h = await api.orgHumans(org.id).catch(() => null);
+    const h = await api.orgHumans(org.workspaceId).catch(() => null);
     if (h) { setHumans(h.humans); setMeRole(h.me.role); }
     setMembers(await api.workspaceMembers(org.workspaceId).catch(() => []));
   }, [org.id, org.workspaceId]);
@@ -275,10 +220,10 @@ function Humans({ org }: { org: OrgDetail }) {
               <span style={pill()} title={ROLE_HINT[h.role]}>{h.role}</span>
               {isCeo && (
                 <>
-                  <select value={h.role} onChange={(e) => void act(() => api.setOrgHuman(org.id, h.memberAccountId, e.target.value as HumanRole))} style={{ ...input, width: 'auto', padding: '3px 6px' }}>
+                  <select value={h.role} onChange={(e) => void act(() => api.setOrgHuman(org.workspaceId, h.memberAccountId, e.target.value as HumanRole))} style={{ ...input, width: 'auto', padding: '3px 6px' }}>
                     <option value="board">board</option><option value="observer">observer</option>
                   </select>
-                  <button style={btn()} onClick={() => void act(() => api.removeOrgHuman(org.id, h.memberAccountId))}>Remove</button>
+                  <button style={btn()} onClick={() => void act(() => api.removeOrgHuman(org.workspaceId, h.memberAccountId))}>Remove</button>
                 </>
               )}
             </div>
@@ -292,7 +237,7 @@ function Humans({ org }: { org: OrgDetail }) {
             {free.map((m) => <option key={m.id} value={m.memberAccountId}>{m.displayName || m.email}</option>)}
           </select>
           <select value={role} onChange={(e) => setRole(e.target.value as HumanRole)} style={{ ...input, width: 'auto' }}><option value="board">board</option><option value="observer">observer</option></select>
-          <button style={btn(true)} disabled={!pick} onClick={() => void act(async () => { await api.setOrgHuman(org.id, pick, role); setPick(''); })}>Add</button>
+          <button style={btn(true)} disabled={!pick} onClick={() => void act(async () => { await api.setOrgHuman(org.workspaceId, pick, role); setPick(''); })}>Add</button>
         </div>
       )}
       {isCeo && members.length === 0 && <div style={{ ...faint, marginTop: 6 }}>Invite people to this workspace (Settings → Workspace → Members) to seat a board.</div>}
@@ -313,7 +258,7 @@ function Board({ org }: { org: OrgDetail }) {
   const [open, setOpen] = useState<OrgTask | null>(null);
   const [adding, setAdding] = useState(false);
   const [showCold, setShowCold] = useState(false);
-  const reload = useCallback(async () => { setTasks(await api.orgTasks(org.id).catch(() => [])); }, [org.id]);
+  const reload = useCallback(async () => { setTasks(await api.orgTasks(org.workspaceId).catch(() => [])); }, [org.id]);
   useEffect(() => { void reload(); const t = setInterval(() => { void reload(); }, 15_000); return () => clearInterval(t); }, [reload]);
   const cols = ORG_TASK_STATUSES.filter((s) => showCold || (s !== 'done' && s !== 'cancelled'));
   const members = org.members.filter((m) => m.status === 'active');
@@ -360,7 +305,7 @@ function NewTask({ org, members, onDone }: { org: OrgDetail; members: OrgMember[
   const [assignee, setAssignee] = useState('');
   const [projectId, setProjectId] = useState('');
   const save = async () => {
-    try { await api.addOrgTask(org.id, { title, brief, assigneeAgentId: assignee || null, projectId: projectId || null }); onDone(); }
+    try { await api.addOrgTask(org.workspaceId, { title, brief, assigneeAgentId: assignee || null, projectId: projectId || null }); onDone(); }
     catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
   return (
@@ -387,7 +332,7 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
   const [note, setNote] = useState('');
   const brief = parseBriefText(task.brief);
   const refresh = useCallback(async () => {
-    const [c, r] = await Promise.all([api.orgTaskComments(org.id, task.id).catch(() => []), api.orgTaskRuns(org.id, task.id).catch(() => [])]);
+    const [c, r] = await Promise.all([api.orgTaskComments(org.workspaceId, task.id).catch(() => []), api.orgTaskRuns(org.workspaceId, task.id).catch(() => [])]);
     setComments(c); setRuns(r); await reload();
   }, [org.id, task.id, reload]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -407,11 +352,11 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
           {blockers.length > 0 && <div><div style={{ ...faint, textTransform: 'uppercase', fontSize: 10.5 }}>blockers</div>{blockers.map((b, i) => <div key={i} style={{ fontSize: 12.5, color: 'var(--red)' }}>■ {b}</div>)}</div>}
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <select value="" onChange={(e) => { if (e.target.value) void act(() => api.assignOrgTask(org.id, task.id, e.target.value)); }} style={{ ...input, width: 'auto' }}><option value="">Assign to…</option>{members.map((m) => <option key={m.id} value={m.agentId}>{names.get(m.agentId)?.name}</option>)}</select>
-          {task.assigneeAgentId && !['done', 'cancelled'].includes(task.status) && <button style={btn()} onClick={() => void act(() => api.wakeOrgTask(org.id, task.id, true))}>Wake now</button>}
-          {task.status === 'in_review' && <><button style={btn(true)} onClick={() => void act(() => api.reviewOrgTask(org.id, task.id, 'accept', note))}>Accept</button><button style={btn()} onClick={() => void act(() => api.reviewOrgTask(org.id, task.id, 'request_changes', note || 'changes requested'))}>Request changes</button></>}
-          {task.status === 'blocked' && <button style={btn()} onClick={() => void act(() => api.updateOrgTask(org.id, task.id, { status: 'todo', blockers: [] }))}>Unblock → todo</button>}
-          {!['done', 'cancelled'].includes(task.status) && <button style={btn(false, true)} onClick={() => void act(() => api.updateOrgTask(org.id, task.id, { status: 'cancelled' }))}>Cancel task</button>}
+          <select value="" onChange={(e) => { if (e.target.value) void act(() => api.assignOrgTask(org.workspaceId, task.id, e.target.value)); }} style={{ ...input, width: 'auto' }}><option value="">Assign to…</option>{members.map((m) => <option key={m.id} value={m.agentId}>{names.get(m.agentId)?.name}</option>)}</select>
+          {task.assigneeAgentId && !['done', 'cancelled'].includes(task.status) && <button style={btn()} onClick={() => void act(() => api.wakeOrgTask(org.workspaceId, task.id, true))}>Wake now</button>}
+          {task.status === 'in_review' && <><button style={btn(true)} onClick={() => void act(() => api.reviewOrgTask(org.workspaceId, task.id, 'accept', note))}>Accept</button><button style={btn()} onClick={() => void act(() => api.reviewOrgTask(org.workspaceId, task.id, 'request_changes', note || 'changes requested'))}>Request changes</button></>}
+          {task.status === 'blocked' && <button style={btn()} onClick={() => void act(() => api.updateOrgTask(org.workspaceId, task.id, { status: 'todo', blockers: [] }))}>Unblock → todo</button>}
+          {!['done', 'cancelled'].includes(task.status) && <button style={btn(false, true)} onClick={() => void act(() => api.updateOrgTask(org.workspaceId, task.id, { status: 'cancelled' }))}>Cancel task</button>}
         </div>
         {task.status === 'in_review' && <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Review note (optional)" style={input} />}
         <div>
@@ -423,8 +368,8 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
               <div style={{ flex: 1, minWidth: 0 }}><div style={faint}>{a?.name ?? 'You'} · {ago(c.createdAt)}</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{c.text}</div></div>
             </div>); })}
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Comment — wakes the owner" style={input} onKeyDown={(e) => { if (e.key === 'Enter' && text.trim()) { void act(async () => { await api.commentOrgTask(org.id, task.id, text.trim()); setText(''); }); } }} />
-            <button style={btn(true)} disabled={!text.trim()} onClick={() => void act(async () => { await api.commentOrgTask(org.id, task.id, text.trim()); setText(''); })}>Post</button>
+            <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Comment — wakes the owner" style={input} onKeyDown={(e) => { if (e.key === 'Enter' && text.trim()) { void act(async () => { await api.commentOrgTask(org.workspaceId, task.id, text.trim()); setText(''); }); } }} />
+            <button style={btn(true)} disabled={!text.trim()} onClick={() => void act(async () => { await api.commentOrgTask(org.workspaceId, task.id, text.trim()); setText(''); })}>Post</button>
           </div>
         </div>
         <div>
@@ -468,20 +413,20 @@ function Goals({ org, reload }: { org: OrgDetail; reload: () => Promise<void> })
       <div style={{ ...card, display: 'flex', gap: 6, marginBottom: 12 }}>
         <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Goal" style={input} />
         <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Why / what success looks like" style={input} />
-        <button style={btn(true)} disabled={!title.trim()} onClick={() => void act(async () => { await api.addOrgGoal(org.id, { title, description: desc }); setTitle(''); setDesc(''); })}>Add</button>
+        <button style={btn(true)} disabled={!title.trim()} onClick={() => void act(async () => { await api.addOrgGoal(org.workspaceId, { title, description: desc }); setTitle(''); setDesc(''); })}>Add</button>
       </div>
       {org.goals.length === 0 && <div style={faint}>No goals yet.</div>}
       {org.goals.map((g) => (
         <div key={g.id} style={{ ...card, marginBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ flex: 1 }}><div style={{ fontSize: 13.5, fontWeight: 600 }}>{g.title}</div>{g.description && <div style={faint}>{g.description}</div>}</div>
-            <select value={g.status} onChange={(e) => void act(() => api.updateOrgGoal(org.id, g.id, { status: e.target.value }))} style={{ ...input, width: 'auto' }}>{['draft', 'active', 'achieved', 'abandoned'].map((s) => <option key={s}>{s}</option>)}</select>
+            <select value={g.status} onChange={(e) => void act(() => api.updateOrgGoal(org.workspaceId, g.id, { status: e.target.value }))} style={{ ...input, width: 'auto' }}>{['draft', 'active', 'achieved', 'abandoned'].map((s) => <option key={s}>{s}</option>)}</select>
           </div>
           <div style={{ marginTop: 8, paddingLeft: 10, borderLeft: '2px solid var(--border-soft)' }}>
             {org.projects.filter((p) => p.goalId === g.id).map((p) => <div key={p.id} style={{ fontSize: 12.5, padding: '2px 0' }}>▸ {p.title} <span style={pill()}>{p.status}</span></div>)}
             <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
               <input value={project[g.id] ?? ''} onChange={(e) => setProject({ ...project, [g.id]: e.target.value })} placeholder="New project under this goal" style={input} />
-              <button style={btn()} disabled={!(project[g.id] ?? '').trim()} onClick={() => void act(async () => { await api.addOrgProject(org.id, { title: project[g.id], goalId: g.id }); setProject({ ...project, [g.id]: '' }); })}>Add</button>
+              <button style={btn()} disabled={!(project[g.id] ?? '').trim()} onClick={() => void act(async () => { await api.addOrgProject(org.workspaceId, { title: project[g.id], goalId: g.id }); setProject({ ...project, [g.id]: '' }); })}>Add</button>
             </div>
           </div>
         </div>
@@ -500,8 +445,8 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
   const [history, setHistory] = useState(false);
   const [humans, setHumans] = useState<{ me: HumanRole | null; board: string[] }>({ me: null, board: [] });
   const refresh = useCallback(async () => {
-    setRows(await api.orgApprovals(org.id).catch(() => []));
-    const h = await api.orgHumans(org.id).catch(() => null);
+    setRows(await api.orgApprovals(org.workspaceId).catch(() => []));
+    const h = await api.orgHumans(org.workspaceId).catch(() => null);
     if (h) setHumans({ me: h.me.role, board: h.humans.filter((x) => x.role === 'board').map((x) => x.memberAccountId) });
   }, [org.id]);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -510,7 +455,7 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
   const deciders = (kind: string) => (BOARD_KINDS.has(kind) && humans.board.length > 0 ? `CEO or board (${humans.board.map((b) => app.nameOf(b)).join(', ')})` : 'CEO only');
   const mayDecide = (kind: string) => humans.me === 'ceo' || (humans.me === 'board' && BOARD_KINDS.has(kind));
   const decide = async (a: OrgApproval, d: 'approve' | 'reject' | 'revise') => {
-    try { await api.decideOrgApproval(org.id, a.id, d, notes[a.id]); await refresh(); await reload(); await app.refreshAgents(); app.showToast(`${a.kind}: ${d}d`); }
+    try { await api.decideOrgApproval(org.workspaceId, a.id, d, notes[a.id]); await refresh(); await reload(); await app.refreshAgents(); app.showToast(`${a.kind}: ${d}d`); }
     catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
   const pending = rows.filter((r) => r.status === 'pending');
@@ -519,7 +464,7 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
   return (
     <div style={{ maxWidth: 820 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Approvals · {pending.length} pending</h2><div style={faint}>The full artifact, not a summary. Only a human decides here — the CEO, or a board member for hires, budgets and strategy; an agent's message never counts. Unanswered cards expire after 72 h ("not done").</div></div>
+        <div style={{ flex: 1 }}><h2 style={h2}>Approvals · {pending.length} pending</h2><div style={faint}>The full artifact, not a summary. Only a human decides here — the CEO, or a board member for hires, budgets and strategy; an agent's message never counts. Unanswered cards expire after 72 h ("not done"). In autonomous mode only strategy, escalations and external actions still arrive here.</div></div>
         <button style={btn(history)} onClick={() => setHistory(!history)}>{history ? 'Show pending' : 'History'}</button>
       </div>
       {shown.length === 0 && <div style={faint}>{history ? 'Nothing decided yet.' : 'Nothing to decide.'}</div>}
@@ -589,10 +534,10 @@ function Spend({ org, reload }: { org: OrgDetail; reload: () => Promise<void> })
   const app = useApp();
   const [spend, setSpend] = useState<OrgSpend | null>(null);
   const [caps, setCaps] = useState<Record<string, string>>({});
-  const refresh = useCallback(async () => setSpend(await api.orgSpend(org.id).catch(() => null)), [org.id]);
+  const refresh = useCallback(async () => setSpend(await api.orgSpend(org.workspaceId).catch(() => null)), [org.id]);
   useEffect(() => { void refresh(); }, [refresh]);
   const setCap = async (scope: 'company' | 'agent' | 'project', refId: string) => {
-    try { await api.setOrgBudget(org.id, { scope, refId, monthlyUsd: Number(caps[refId] ?? 0) }); await refresh(); await reload(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
+    try { await api.setOrgBudget(org.workspaceId, { scope, refId, monthlyUsd: Number(caps[refId] ?? 0) }); await refresh(); await reload(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
   if (!spend) return <div style={faint}>Loading…</div>;
   const node = (scope: 'company' | 'agent' | 'project', refId: string, label: string, n: { usd: number; monthlyUsd: number; reservedUsd: number; runs: number }) => {
@@ -626,9 +571,9 @@ function Spend({ org, reload }: { org: OrgDetail; reload: () => Promise<void> })
   );
 }
 
-// ---- activity ----
+// ---- audit ----
 
-function Activity({ org }: { org: OrgDetail }) {
+function Audit({ org }: { org: OrgDetail }) {
   const names = useAgentNames();
   const [runs, setRuns] = useState<OrgRun[]>([]);
   const [tasks, setTasks] = useState<OrgTask[]>([]);
@@ -636,14 +581,14 @@ function Activity({ org }: { org: OrgDetail }) {
   const [verify, setVerify] = useState<{ ok: boolean; length: number; brokenAt: number | null; reason?: string } | null>(null);
   const [layer, setLayer] = useState<'runs' | 'audit'>('runs');
   useEffect(() => {
-    void Promise.all([api.orgRuns(org.id).catch(() => []), api.orgTasks(org.id).catch(() => []), api.orgAudit(org.id, 150).catch(() => []), api.verifyOrgAudit(org.id).catch(() => null)])
+    void Promise.all([api.orgRuns(org.workspaceId).catch(() => []), api.orgTasks(org.workspaceId).catch(() => []), api.orgAudit(org.workspaceId, 150).catch(() => []), api.verifyOrgAudit(org.workspaceId).catch(() => null)])
       .then(([r, t, a, v]) => { setRuns(r); setTasks(t); setAudit(a); setVerify(v); });
   }, [org.id]);
   const titles = new Map(tasks.map((t) => [t.id, t.title]));
   return (
     <div style={{ maxWidth: 820 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Activity</h2><div style={faint}>Three layers: the brief and badges on top, runs and their outcomes here, the full transcript one click away.</div></div>
+        <div style={{ flex: 1 }}><h2 style={h2}>Audit</h2><div style={faint}>Runs and their outcomes, and the hash-chained log of every change — including what the chief did on its own in autonomous mode (<code>auto_*</code> rows carry its reason).</div></div>
         <button style={btn(layer === 'runs')} onClick={() => setLayer('runs')}>Runs</button>
         <button style={btn(layer === 'audit')} onClick={() => setLayer('audit')}>Audit log {verify && <span style={pill(verify.ok ? 'var(--green)' : 'var(--red)', '#fff')}>{verify.ok ? `chain ok · ${verify.length}` : `broken at #${verify.brokenAt}`}</span>}</button>
       </div>
@@ -658,49 +603,20 @@ function Activity({ org }: { org: OrgDetail }) {
   );
 }
 
-// ---- group chat ----
-
-function GroupChat({ org }: { org: OrgDetail }) {
-  const app = useApp();
-  const names = useAgentNames();
-  const [msgs, setMsgs] = useState<OrgMessage[]>([]);
-  const [text, setText] = useState('');
-  const refresh = useCallback(async () => setMsgs(await api.orgMessages(org.id).catch(() => [])), [org.id]);
-  useEffect(() => { void refresh(); const t = setInterval(() => { void refresh(); }, 10_000); return () => clearInterval(t); }, [refresh]);
-  const post = async () => { if (!text.trim()) return; await api.postOrgMessage(org.id, text.trim()); setText(''); await refresh(); };
-  return (
-    <div style={{ maxWidth: 760, display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <h2 style={h2}>Group chat</h2>
-      <div style={{ ...faint, marginBottom: 12 }}>A log everyone can read, attributed to who wrote it. Posting here wakes nobody — to make someone act, <span style={{ color: 'var(--accent)', cursor: 'pointer' }} onClick={() => app.setCompanyView('board')}>assign a task</span>.</div>
-      <div style={{ ...card, flex: 1, minHeight: 240, overflowY: 'auto' }}>
-        {msgs.length === 0 && <div style={faint}>Quiet so far.</div>}
-        {msgs.map((m) => { const a = m.fromAgentId ? names.get(m.fromAgentId) : undefined; return (
-          <div key={m.id} style={{ display: 'flex', gap: 9, padding: '7px 0', borderBottom: '1px solid var(--border-soft)' }}>
-            {a ? <Avatar a={a} /> : <span style={{ fontSize: 18 }}>🧑‍💼</span>}
-            <div style={{ flex: 1, minWidth: 0 }}><div style={faint}>{a ? `${a.name} (agent)` : 'You (CEO)'} · {ago(m.createdAt)}</div><div style={{ fontSize: 13, whiteSpace: 'pre-wrap' }}>{m.text}</div></div>
-          </div>); })}
-      </div>
-      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-        <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void post(); }} placeholder="Say something to the company (wakes nobody)" style={input} />
-        <button style={btn(true)} onClick={() => void post()} disabled={!text.trim()}>Post</button>
-      </div>
-    </div>
-  );
-}
-
 // ---- brief ----
 
-function BriefView({ org }: { org: OrgDetail }) {
+function BriefView({ org, mode }: { org: OrgDetail; mode: string }) {
   const app = useApp();
   const [brief, setBrief] = useState<OrgBrief | null>(null);
   const [reply, setReply] = useState('');
   const [result, setResult] = useState<string | null>(null);
-  const refresh = useCallback(async () => setBrief(await api.orgBrief(org.id).catch(() => null)), [org.id]);
+  const refresh = useCallback(async () => setBrief(await api.orgBrief(org.workspaceId).catch(() => null)), [org.id]);
   useEffect(() => { void refresh(); }, [refresh]);
-  const compose = async () => { try { setBrief(await api.composeOrgBrief(org.id)); setResult(null); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
+  const compose = async () => { try { setBrief(await api.composeOrgBrief(org.workspaceId)); setResult(null); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
+  const review = async () => { try { const r = await api.reviewOrgStructure(org.workspaceId); app.showToast(r.result === 'ran' ? 'The chief reviewed the structure — see Audit and #company' : `Review ${r.result}`); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
   const send = async () => {
     try {
-      const r = await api.replyOrgBrief(org.id, reply);
+      const r = await api.replyOrgBrief(org.workspaceId, reply);
       setResult(`${r.decisions.map((d) => `#${d.n} ${d.decision} → ${d.status}`).join(' · ') || 'nothing resolved'}${r.unresolved.length ? ` · unresolved: ${r.unresolved.join(', ')}` : ''}`);
       setReply(''); await app.refreshAgents(); await refresh();
     } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
@@ -708,7 +624,8 @@ function BriefView({ org }: { org: OrgDetail }) {
   return (
     <div style={{ maxWidth: 760 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Brief</h2><div style={faint}>Written daily at {String(org.briefHour).padStart(2, '0')}:00 (workspace time, quiet hours respected) and pushed to your channels. Answer the numbered decisions in one line.</div></div>
+        <div style={{ flex: 1 }}><h2 style={h2}>Brief</h2><div style={faint}>Written daily at {String(org.briefHour).padStart(2, '0')}:00 (workspace time, quiet hours respected) and pushed to your channels. Answer the numbered decisions in one line.{mode === 'autonomous' ? ' In autonomous mode it also lists what the chief did on its own since the last brief, and the chief reviews the structure at this hour.' : ''}</div></div>
+        {mode === 'autonomous' && <button style={btn()} title="Wake the chief of staff now to review idle and overloaded members, unassigned goals and blocked tasks" onClick={() => void review()}>Review structure now</button>}
         <button style={btn()} onClick={() => void compose()}>Write one now</button>
       </div>
       {!brief ? <div style={faint}>No brief yet.</div> : (

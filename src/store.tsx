@@ -8,7 +8,7 @@ import {
   api, sendTurn, authHeaders, setActiveSharedWorkspace,
   type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision, type ToolReview,
-  type BrowserStep, type Org, type SharedWorkspace, type WorkspaceMe,
+  type BrowserStep, type WorkspaceOrg, type SharedWorkspace, type WorkspaceMe,
 } from './lib/api';
 
 /** A workspace in the picker: one of ours, or one shared with us (then
@@ -16,9 +16,12 @@ import {
 export type WorkspaceEntry = Workspace & { shared?: SharedWorkspace };
 import type { PriceTable } from './lib/pricing';
 
-export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 'company' | 'settings';
-/** Sub-views of the Company section (docs/autonomous-company.md §4.4). */
-export type CompanyView = 'chart' | 'board' | 'goals' | 'approvals' | 'spend' | 'activity' | 'chat' | 'brief';
+export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 'settings';
+/** The organization panes under the Workspace section (docs/group-chat.md
+ *  §5: the workspace is the company; there is no separate Company section). */
+export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit';
+export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit'];
+const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
 /** What the main pane shows while in the Home section: a conversation, an
  *  agent's home page (or the directory when no agent is selected), or a file
  *  preview — all reachable from the one combined rail, YAAM-style. */
@@ -152,11 +155,12 @@ interface Store {
   hireId: string | null; setHireId: (id: string | null) => void;
   confirmHire: () => Promise<void>;
 
-  // company section (execution plan item 14)
+  // organization mode of the current workspace (execution plan items 14 and 16)
   companiesEnabled: boolean;
-  orgs: Org[]; refreshOrgs: () => Promise<void>;
-  orgId: string | null; pickOrg: (id: string | null) => void;
-  companyView: CompanyView; setCompanyView: (v: CompanyView) => void;
+  /** GET /api/workspaces/:id/org for the current workspace; null while loading or when companies are disabled. */
+  wsOrg: WorkspaceOrg | null; refreshWsOrg: () => Promise<void>;
+  /** Which organization pane the Workspace section shows; null = the files. */
+  orgPane: OrgPane | null; setOrgPane: (v: OrgPane | null) => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -185,7 +189,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [section, setSection] = useState<Section>(() => {
     const p = new URLSearchParams(window.location.search);
     const q = p.get('section');
-    if (q === 'market' || q === 'settings' || q === 'overview' || q === 'workspace' || q === 'apps' || q === 'company') return q;
+    if (q === 'market' || q === 'settings' || q === 'overview' || q === 'workspace' || q === 'apps') return q;
+    if (q === 'company') return 'workspace'; // legacy: the company lives under the workspace now
     // legacy: ?section=agents without a specific agent is the fleet overview
     if (q === 'agents' && !p.get('agent')) return 'overview';
     if (q === 'files') return 'workspace';
@@ -239,9 +244,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [computerOpen, setComputerOpen] = useState(false);
   const [hireId, setHireId] = useState<string | null>(null);
   const [companiesEnabled, setCompaniesEnabled] = useState(false);
-  const [orgs, setOrgs] = useState<Org[]>([]);
-  const [orgId, setOrgId] = useState<string | null>(() => localStorage.getItem('yaam-org'));
-  const [companyView, setCompanyView] = useState<CompanyView>('board');
+  const [wsOrg, setWsOrg] = useState<WorkspaceOrg | null>(null);
+  const [orgPane, setOrgPane] = useState<OrgPane | null>(() => {
+    const p = new URLSearchParams(window.location.search);
+    const pane = p.get('org');
+    if (isOrgPane(pane)) return pane;
+    return p.get('section') === 'company' ? 'board' : null;
+  });
 
   const currentIdRef = useRef<string | null>(null);
   currentIdRef.current = currentId;
@@ -259,10 +268,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // session list may not have loaded yet, so the id waits in a ref and the
   // session-pick effect below honours it once the list contains it.
   const deepLink = useRef<string | null>(/^#\/chat\/([\w-]+)$/.exec(window.location.hash)?.[1] ?? null);
+  // Organization deep links (#company announcements, the brief):
+  // #/ws/<workspaceId>/org/<pane> opens that pane of that workspace.
+  const orgLink = useRef<{ workspaceId: string; pane: OrgPane } | null>(null);
+  const parseOrgLink = (hash: string) => {
+    const m = /^#\/ws\/([\w-]+)\/org\/(\w+)$/.exec(hash);
+    return m && isOrgPane(m[2]) ? { workspaceId: m[1], pane: m[2] } : null;
+  };
+  if (orgLink.current === null && !deepLink.current) orgLink.current = parseOrgLink(window.location.hash);
   useEffect(() => {
     const onHash = () => {
       const id = /^#\/chat\/([\w-]+)$/.exec(window.location.hash)?.[1];
       if (id) { deepLink.current = id; setSessions((list) => [...list]); } // nudge the pick effect
+      const org = parseOrgLink(window.location.hash);
+      if (org) { orgLink.current = org; setWorkspaces((list) => [...list]); }
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
@@ -304,7 +323,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const all: WorkspaceEntry[] = [
       ...own,
       ...shared.filter((w) => !own.some((o) => o.id === w.id)).map((w) => ({
-        id: w.id, name: w.name, color: w.color, memory: '', profile: '', profilePending: '[]', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, createdAt: '', shared: w,
+        id: w.id, name: w.name, color: w.color, memory: '', profile: '', profilePending: '[]', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, orgMode: 'off' as const, chiefOfStaffAgentId: null, orgMonthlyUsd: 0, orgAgentCap: 12, createdAt: '', shared: w,
       })),
     ];
     setWorkspaces(all);
@@ -348,18 +367,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshSkills = useCallback(async () => setSkills(await api.skills(workspaceId || undefined)), [workspaceId]);
   const refreshMcp = useCallback(async () => setMcp(await api.mcp()), []);
   const refreshMarket = useCallback(async () => setMarket(await api.market()), []);
-  const refreshOrgs = useCallback(async () => {
-    const list = await api.orgs().catch((): Org[] => []);
-    setOrgs(list);
-    setOrgId((cur) => (cur && list.some((o) => o.id === cur) ? cur : list[0]?.id ?? null));
-  }, []);
-  const pickOrg = useCallback((id: string | null) => {
-    setOrgId(id);
-    try { if (id) localStorage.setItem('yaam-org', id); else localStorage.removeItem('yaam-org'); } catch { /* private mode */ }
-  }, []);
+  const refreshWsOrg = useCallback(async () => {
+    if (!workspaceId || !companiesEnabled) { setWsOrg(null); return; }
+    setWsOrg(await api.workspaceOrg(workspaceId).catch((): WorkspaceOrg | null => null));
+  }, [workspaceId, companiesEnabled]);
   useEffect(() => {
-    api.orgsStatus().then((s) => { setCompaniesEnabled(s.enabled); if (s.enabled) void refreshOrgs(); }).catch(() => setCompaniesEnabled(false));
-  }, [refreshOrgs]);
+    api.orgsStatus().then((s) => setCompaniesEnabled(s.enabled)).catch(() => setCompaniesEnabled(false));
+  }, []);
+  useEffect(() => { void refreshWsOrg(); }, [refreshWsOrg]);
+  // The organization panes exist only while the mode is on; fall back to the files.
+  useEffect(() => {
+    if (wsOrg && wsOrg.mode === 'off' && orgPane) setOrgPane(null);
+  }, [wsOrg, orgPane]);
 
   useEffect(() => { void refreshWorkspaces().catch(() => showToast('API offline')); }, [refreshWorkspaces, showToast]);
   useEffect(() => { void refreshAgents().catch(() => {}); void refreshAgentTypes().catch(() => {}); void refreshMcp().catch(() => {}); void refreshMarket().catch(() => {}); api.settings().then(setSettings).catch(() => {}); }, [refreshAgents, refreshAgentTypes, refreshMcp, refreshMarket]);
@@ -434,7 +453,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openFile = useCallback((target: FileTarget, path: string | null) => {
-    if (target.kind === 'workspace') setSection('workspace');
+    if (target.kind === 'workspace') { setSection('workspace'); setOrgPane(null); }
     else { setSection('home'); setHomeView('file'); }
     setFileTarget(target);
     setCurrentFile(path);
@@ -457,6 +476,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     openSession(created.id);
     return created.id;
   }, [workspaceId, settings, refreshSessions, openSession]);
+
+  useEffect(() => {
+    const wanted = orgLink.current;
+    if (!wanted || !workspaces.some((w) => w.id === wanted.workspaceId)) return;
+    orgLink.current = null;
+    if (wanted.workspaceId !== workspaceId) {
+      setActiveSharedWorkspace(sharedIds.current.has(wanted.workspaceId) ? wanted.workspaceId : null);
+      setWorkspaceId(wanted.workspaceId);
+      setCurrentId(null);
+    }
+    setSection('workspace');
+    setOrgPane(wanted.pane);
+    setMobileDetail(true);
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, [workspaces, workspaceId]);
 
   const pickWorkspace = useCallback((id: string) => {
     // The header must change before the first request for the new workspace.
@@ -804,7 +838,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
-    companiesEnabled, orgs, refreshOrgs, orgId, pickOrg, companyView, setCompanyView,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
     mobileChatOpen, mobileDetail, toast, showToast,
@@ -822,7 +856,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
-    companiesEnabled, orgs, refreshOrgs, orgId, pickOrg, companyView,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane,
   ]);
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;

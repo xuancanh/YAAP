@@ -6,7 +6,7 @@ import { useApp } from '../store';
 import { useAuth } from '../auth';
 import { ImportSkillMdButton, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { PublishButton } from './RegistryBits';
-import { api, PROVIDER_COLORS, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type FlowKind, type FlowRule, type MemberGrant, type MemberRole, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceInvite, type WorkspaceMember, type WorkspaceUsage } from '../lib/api';
+import { api, PROVIDER_COLORS, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type FlowKind, type FlowRule, type MemberGrant, type MemberRole, type OrgCaps, type OrgMode, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceInvite, type WorkspaceMember, type WorkspaceUsage } from '../lib/api';
 import { KIND_LABEL } from '../lib/registry';
 import { PLAN_LABEL, capLine, ceilingPct, usageLine } from '../lib/account';
 import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
@@ -476,6 +476,7 @@ function WorkspacePane() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <MembersSection ws={ws} />
+      {app.companiesEnabled && <OrganizationSection ws={ws} />}
       <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ flex: 1 }}>
@@ -548,6 +549,122 @@ function WorkspacePane() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Settings → Workspace → Organization (docs/group-chat.md §5): the
+ *  workspace is the company. Mode, chief of staff, the company envelope and
+ *  the agent cap live here; the panes (board, goals, org chart, approvals,
+ *  spend, brief, audit) appear under the workspace in the rail while the
+ *  mode is on. */
+const MODE_COPY: Record<OrgMode, { label: string; blurb: string }> = {
+  off: { label: 'Off', blurb: 'No company. Your agents stay individuals; existing company data is kept but paused and its panes are hidden.' },
+  supervised: { label: 'Supervised', blurb: 'A chief of staff runs a shared board and proposes hires, scope widening, reorganizations, budget raises and terminations as approval cards you decide (in the app or by answering the brief). Narrowing a scope, assigning and reviewing it does alone.' },
+  autonomous: { label: 'Autonomous', blurb: 'The chief of staff acts on its own within hard caps: it hires from the catalog, widens scopes up to its own holdings, reorganizes, allocates envelopes and terminates — each action audited with its reason, announced in #company and listed in the next brief. Outside the caps a tool refuses with the reason; nothing is queued. It also reviews the structure when a task blocks, escalates, a budget warns or you add a goal, and once a day at the brief hour. Strategy, escalations and outward actions still come to you; budgets still hard-stop; the pause button still stops everything.' },
+};
+
+function OrganizationSection({ ws }: { ws: Workspace }) {
+  const app = useApp();
+  const st = app.wsOrg;
+  const [mode, setMode] = useState<OrgMode>(st?.mode ?? ws.orgMode);
+  const [chief, setChief] = useState(st?.chiefOfStaffAgentId ?? ws.chiefOfStaffAgentId ?? '');
+  const [usd, setUsd] = useState(String(st?.orgMonthlyUsd ?? ws.orgMonthlyUsd ?? 0));
+  const [cap, setCap] = useState(String(st?.orgAgentCap ?? ws.orgAgentCap ?? 12));
+  const [caps, setCaps] = useState<OrgCaps | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setMode(st?.mode ?? ws.orgMode);
+    setChief(st?.chiefOfStaffAgentId ?? ws.chiefOfStaffAgentId ?? '');
+    setUsd(String(st?.orgMonthlyUsd ?? ws.orgMonthlyUsd ?? 0));
+    setCap(String(st?.orgAgentCap ?? ws.orgAgentCap ?? 12));
+  }, [ws.id, ws.orgMode, ws.chiefOfStaffAgentId, ws.orgMonthlyUsd, ws.orgAgentCap, st?.mode, st?.chiefOfStaffAgentId, st?.orgMonthlyUsd, st?.orgAgentCap]);
+  useEffect(() => { api.orgCaps(ws.id).then(setCaps).catch(() => setCaps(null)); }, [ws.id]);
+  const isOwner = !app.me || app.me.role === 'owner';
+  const current = st?.mode ?? ws.orgMode;
+  const save = async () => {
+    setBusy(true);
+    try {
+      const r = await api.setWorkspaceOrg(ws.id, { mode, chiefOfStaffAgentId: mode !== 'off' && chief ? chief : undefined, monthlyUsd: Math.max(0, Number(usd) || 0), agentCap: Math.min(50, Math.max(1, parseInt(cap || '12', 10) || 12)) });
+      await Promise.all([app.refreshWsOrg(), app.refreshWorkspaces(), app.refreshAgents()]);
+      if (mode === 'off') app.showToast('Organization mode off — the company is paused, nothing deleted');
+      else if (r.enrolled) app.showToast(`${MODE_COPY[mode].label} mode on — ${r.enrolled.length} agent(s) joined the company${r.notEnrolled?.length ? `, ${r.notEnrolled.length} could not be seated` : ''}`);
+      else app.showToast(`Organization: ${MODE_COPY[mode].label}`);
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'save failed');
+    } finally { setBusy(false); }
+  };
+  const toggleRun = async () => {
+    try {
+      if (st?.orgStatus === 'active') { if (!confirm(`Pause the company? Every queued wake is dropped and in-flight runs are aborted.`)) return; await api.pauseOrg(ws.id); } else await api.resumeOrg(ws.id);
+      await app.refreshWsOrg();
+    } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'failed'); }
+  };
+  const open = () => { app.go('workspace'); app.setOrgPane('board'); };
+  const members = st?.org?.members.filter((m) => m.status !== 'terminated').length ?? 0;
+  return (
+    <div style={card}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>Organization</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>
+            The workspace is the company. Turn it on and every agent here joins, with a chief of staff at the top; the board, goals, org chart, spend, brief and audit appear under the workspace.
+          </div>
+        </div>
+        {current !== 'off' && st && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: st.orgStatus === 'paused' ? '#fff' : 'var(--text-dim)', background: st.orgStatus === 'paused' ? 'var(--red)' : 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px' }}>{st.orgStatus === 'paused' ? 'paused' : `${current} · ${members} member${members === 1 ? '' : 's'}${st.pendingApprovals ? ` · ${st.pendingApprovals} pending` : ''}`}</span>
+            <button onClick={open} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Open the board</button>
+            {isOwner && <button onClick={() => void toggleRun()} style={{ background: st.orgStatus === 'active' ? 'var(--red)' : 'var(--accent)', border: 'none', color: '#fff', borderRadius: 7, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }} title={st.orgStatus === 'active' ? 'Kill switch: stop every wake and run' : 'Resume wakes and runs'}>{st.orgStatus === 'active' ? 'Pause' : 'Resume'}</button>}
+          </div>
+        )}
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
+        {(['off', 'supervised', 'autonomous'] as OrgMode[]).map((m) => (
+          <div key={m} onClick={() => { if (isOwner) setMode(m); }}
+            style={{ flex: 1, minWidth: 200, padding: '10px 12px', borderRadius: 10, cursor: isOwner ? 'pointer' : 'default', border: `1px solid ${mode === m ? 'var(--accent)' : 'var(--border)'}`, background: mode === m ? 'var(--accent-dim)' : 'var(--panel-2)' }}>
+            <div style={{ fontWeight: 600, fontSize: 12.5 }}>{MODE_COPY[m].label}{current === m ? <span style={{ fontSize: 10.5, color: 'var(--text-faint)', fontWeight: 500 }}> · current</span> : null}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2, lineHeight: 1.45 }}>{MODE_COPY[m].blurb}</div>
+          </div>
+        ))}
+      </div>
+      {mode !== 'off' && (
+        <div style={{ marginTop: 14, display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+          <label style={{ fontSize: 11.5, color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            Chief of staff
+            <select value={chief} onChange={(e) => setChief(e.target.value)} disabled={!isOwner} style={inputStyle}>
+              {!chief && <option value="">{app.agents.length ? 'Pick an agent…' : 'Create one for me'}</option>}
+              {app.agents.map((a) => <option key={a.id} value={a.id}>{a.emoji} {a.name}{a.role ? ` · ${a.role}` : ''}</option>)}
+            </select>
+          </label>
+          <label style={{ fontSize: 11.5, color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            Company envelope (USD / month, 100% is a hard stop)
+            <input value={usd} onChange={(e) => setUsd(e.target.value.replace(/[^\d.]/g, ''))} disabled={!isOwner} style={{ ...inputStyle, ...mono }} placeholder="0 = none" />
+          </label>
+          <label style={{ fontSize: 11.5, color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+            Agent cap (members, chief included)
+            <input value={cap} onChange={(e) => setCap(e.target.value.replace(/[^\d]/g, ''))} disabled={!isOwner} style={{ ...inputStyle, ...mono }} />
+          </label>
+        </div>
+      )}
+      {mode === 'autonomous' && caps && (
+        <div style={{ marginTop: 12, fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+          <div style={{ fontWeight: 600, color: 'var(--text)' }}>What the chief may do on its own</div>
+          <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+            {caps.rules.map((r) => <li key={r}>{r.replace('the agent cap', `the agent cap (${cap || caps.defaultAgentCap})`).replace('the company envelope', `the company envelope ($${(Number(usd) || 0).toFixed(2)}/month)`)}</li>)}
+          </ul>
+          {(Number(usd) || 0) <= 0 && <div style={{ color: 'var(--amber)', marginTop: 6 }}>With no company envelope the chief cannot allocate any budget: hires come without an envelope and allocations are refused until you set one.</div>}
+        </div>
+      )}
+      {isOwner && (
+        <div style={{ display: 'flex', marginTop: 12 }}>
+          <button disabled={busy || (mode !== 'off' && !chief && app.agents.length > 0)} onClick={() => void save()}
+            style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            {current === 'off' && mode !== 'off' ? `Turn on ${MODE_COPY[mode].label.toLowerCase()} mode` : 'Save organization'}
+          </button>
+        </div>
+      )}
+      {!isOwner && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 10 }}>Only the workspace owner changes the organization mode, chief and caps.</div>}
     </div>
   );
 }
