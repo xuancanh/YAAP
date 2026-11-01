@@ -16,6 +16,8 @@ import { LoopsService } from './loops.service';
 import { DistillService } from './distill.service';
 import { LoopsController } from './loops.controller';
 import { HooksController } from './hooks.controller';
+import { HeartbeatService } from './heartbeat.service';
+import { HeartbeatController } from './heartbeat.controller';
 import { AgentApprovalsController } from './agent-approvals.controller';
 import { AiModule } from '../ai/ai.module';
 import { AgentTypesModule } from '../agent-types/agent-types.module';
@@ -32,8 +34,8 @@ import { RegistryModule } from '../registry/registry.module';
 
 @Module({
   imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, BrowserModule, ActionReviewModule, ComputerModule, RegistryModule],
-  controllers: [ChatsController, LoopsController, HooksController, AgentApprovalsController],
-  providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService],
-  exports: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService],
+  controllers: [ChatsController, LoopsController, HooksController, AgentApprovalsController, HeartbeatController],
+  providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService, HeartbeatService],
+  exports: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, HeartbeatService],
 })
 export class ChatsModule {}

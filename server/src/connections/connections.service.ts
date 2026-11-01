@@ -21,7 +21,8 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { currentAccountId } from '../accounts/account-context';
 import { unscoped } from '../accounts/scoped-db';
-import { agents, connections, connectionGrants } from '../database/schema';
+import { agents, agentEvents, connections, connectionGrants } from '../database/schema';
+import { CARDS, cardContextBlock, cardFor, cardForProfile, mcpCardFor, type CardGrantLevel, type ContextCard } from './cards';
 import { newId, nowIso } from '../common/ids.util';
 import { seal, open } from '../common/secretbox';
 import { AiToolSpec } from '../ai/ai-provider.interface';
@@ -340,7 +341,67 @@ export class ConnectionsService implements GoogleHttp {
     } else {
       await this.db.insert(connectionGrants).values({ id: newId(), connectionId, agentId, service, level, memberAccountId, createdAt: nowIso() });
     }
+    // The card's suggested uses as one-click installs (docs/integrations.md
+    // "Context cards"): one inbox event per new grant, carrying the card id.
+    const card = cardFor(row.provider, service);
+    if (card && !existing) {
+      const uses = card.suggestedUses.filter((u) => u.grantLevel === 'read' || level === 'write');
+      await this.db.insert(agentEvents).values({
+        id: newId(), agentId, kind: 'info',
+        // A member's grant is their business (docs/shared-agents.md §3); the
+        // owner's is for everyone. Informational: silent, never pushed, and
+        // already read so it never lights the inbox badge — the Skills &
+        // tools tab shows the same installs next to the grant.
+        forMemberAccountId: memberAccountId,
+        title: `New connection: ${card.title} — ${uses.length} suggested use${uses.length === 1 ? '' : 's'}`,
+        body: uses.map((u) => `- ${u.title}`).join('\n').slice(0, 1_000),
+        payload: JSON.stringify({ cardId: card.id, service, level, useIds: uses.map((u) => u.id) }),
+        sessionId: null, readAt: nowIso(), createdAt: nowIso(), deliverAfter: null, silent: 1, origin: 'system', channel: 0, deliveredAt: null,
+      }).catch(() => {});
+    }
     return { ok: true };
+  }
+
+  // ---- context cards (docs/integrations.md "Context cards and suggested loops") ----
+
+  /** The grant levels an agent holds, per provider and service — the
+   *  activation gate as data, for cards and the install route. */
+  async grantLevels(agentId: string, initiator = ''): Promise<Array<{ provider: ProviderName; service: ServiceName; level: GrantLevel }>> {
+    const granted = await this.grantedConnections(agentId, initiator);
+    const out: Array<{ provider: ProviderName; service: ServiceName; level: GrantLevel }> = [];
+    for (const provider of Object.keys(granted) as ProviderName[]) {
+      const levels = granted[provider]!.levels;
+      for (const service of Object.keys(levels) as ServiceName[]) out.push({ provider, service, level: levels[service]! });
+    }
+    return out;
+  }
+
+  /** The static catalog, uses ranked for `profile` when given. */
+  cards(profile?: string | null): ContextCard[] {
+    return CARDS.map((c) => cardForProfile(c, profile));
+  }
+
+  /** Cards the agent holds a grant on (connection cards only), with the
+   *  level held. Other surfaces (browser, computer, MCP) are added by the
+   *  turn loop, which knows what is available. */
+  async heldCards(agentId: string, initiator = ''): Promise<Array<{ card: ContextCard; level: CardGrantLevel }>> {
+    const held: Array<{ card: ContextCard; level: CardGrantLevel }> = [];
+    for (const g of await this.grantLevels(agentId, initiator)) {
+      const card = cardFor(g.provider, g.service);
+      if (card) held.push({ card, level: g.level });
+    }
+    return held;
+  }
+
+  /** The compact system-context block for this agent: its connection cards
+   *  plus the surface cards the caller says are available. Null when the
+   *  agent holds nothing. */
+  async cardContext(agentId: string, initiator = '', available: { browser?: boolean; computer?: boolean; mcp?: Array<{ id: string; name: string; tools: string | string[] }> } = {}): Promise<string | null> {
+    const held = await this.heldCards(agentId, initiator);
+    if (available.browser) held.push({ card: CARDS.find((c) => c.id === 'browser')!, level: 'write' });
+    if (available.computer) held.push({ card: CARDS.find((c) => c.id === 'computer')!, level: 'write' });
+    for (const server of available.mcp ?? []) held.push({ card: mcpCardFor(server), level: 'write' });
+    return cardContextBlock(held);
   }
 
   /** Revoke one service's grant, or every grant this agent holds on the

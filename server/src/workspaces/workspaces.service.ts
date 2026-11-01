@@ -14,6 +14,7 @@ import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
 import { workspacePrefix } from '../storage/storage.keys';
 import { validateQuietHours } from './quiet-hours';
+import { validateHeartbeatDefaults } from '../chats/heartbeat-config';
 import { monthKey, spendStatus, SpendStatus } from './spend.util';
 
 export interface ProfileProposal {
@@ -69,7 +70,7 @@ export class WorkspacesService {
   async list() {
     const all = await this.db.select().from(workspaces);
     if (all.length > 0) return all;
-    const def = { id: newId(), name: 'Default', color: '#F5C451', memory: '', profile: '', profilePending: '[]', profilePrivate: '{}', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, ...ORG_OFF, createdAt: nowIso() };
+    const def = { id: newId(), name: 'Default', color: '#F5C451', memory: '', profile: '', profilePending: '[]', profilePrivate: '{}', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, ...ORG_OFF, heartbeatDefaults: '{}', createdAt: nowIso() };
     await this.db.insert(workspaces).values(def);
     await this.fireCreated(def);
     return [def];
@@ -95,6 +96,7 @@ export class WorkspacesService {
       spendMonth: '',
       spendTokens: 0,
       ...ORG_OFF,
+      heartbeatDefaults: '{}',
       createdAt: nowIso(),
     };
     await this.db.insert(workspaces).values(row);
@@ -109,9 +111,18 @@ export class WorkspacesService {
     await this.db.update(workspaces).set(patch).where(eq(workspaces.id, id));
   }
 
-  async update(id: string, patch: Partial<{ name: string; color: string; memory: string; profile: string; quietHours: string; spendBudgetTokens: number }>) {
+  async update(id: string, patch: Partial<{ name: string; color: string; memory: string; profile: string; quietHours: string; spendBudgetTokens: number; heartbeatDefaults: string }>) {
     await this.get(id);
     if (patch.profile !== undefined) patch.profile = patch.profile.slice(0, PROFILE_CAP);
+    if (patch.heartbeatDefaults !== undefined) {
+      // Stored normalized and bounds-checked (chats/heartbeat-config.ts);
+      // '' or '{}' falls back to the built-in defaults.
+      let parsed: unknown = {};
+      if (patch.heartbeatDefaults.trim()) {
+        try { parsed = JSON.parse(patch.heartbeatDefaults) as unknown; } catch { throw new BadRequestException('heartbeatDefaults must be JSON'); }
+      }
+      patch.heartbeatDefaults = JSON.stringify(validateHeartbeatDefaults(parsed));
+    }
     if (patch.quietHours !== undefined && patch.quietHours.trim() !== '') {
       // Stored normalized so every reader can trust the shape; '' turns it off.
       try {

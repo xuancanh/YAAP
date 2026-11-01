@@ -12,7 +12,7 @@ import { AccountsService } from '../accounts/accounts.service';
 import { actorId, currentAccountId } from '../accounts/account-context';
 import { unscoped } from '../accounts/scoped-db';
 import type { DrizzleDb } from '../database/database.module';
-import { agents, agentEvents, agentTasks, chatSessions, chatTurns } from '../database/schema';
+import { agents, agentEvents, agentTasks, chatSessions, chatTurns, heartbeatState } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix } from '../storage/storage.keys';
@@ -20,6 +20,7 @@ import { assertPublicUrl, fetchPublic } from '../common/url-guard';
 import { AiToolSpec } from '../ai/ai-provider.interface';
 import { TriggerBus } from '../chats/trigger-bus';
 import { hashWebhookSecret, validateLoopDef, type LoopDef } from '../chats/loop-def';
+import { cardById, loopForUse, type CardGrantLevel } from '../connections/cards';
 
 /** A self-built mini app (FR-11.5): a self-contained HTML tool the agent
  *  writes for itself via save_app. Rendered only in a network-blocked
@@ -170,6 +171,12 @@ export class AgentsService {
       loops: JSON.stringify(input.loops ?? []),
       pendingFeedback: '[]',
       emailSlug: await this.uniqueEmailSlug(input.name),
+      // The gated heartbeat is on from birth, on the workspace cadence
+      // (docs/company-vision.md §13; chats/heartbeat.service.ts).
+      heartbeatEnabled: 1,
+      heartbeatCron: '',
+      heartbeatDailyRunCap: null,
+      heartbeatStaleMinutes: null,
       createdAt: nowIso(),
     };
     await this.db.insert(agents).values(row);
@@ -489,6 +496,7 @@ export class AgentsService {
   async remove(id: string) {
     await this.db.delete(agents).where(eq(agents.id, id));
     await this.db.delete(agentTasks).where(eq(agentTasks.agentId, id));
+    await this.db.delete(heartbeatState).where(eq(heartbeatState.agentId, id)).catch(() => {});
     await this.storage.deletePrefix(agentPrefix(id)).catch(() => {});
     return { ok: true };
   }
@@ -766,6 +774,33 @@ export class AgentsService {
     return this.get(agent.id);
   }
 
+  /**
+   * Install a context card's suggested loop (docs/integrations.md "Context
+   * cards and suggested loops"). `held` is the grant level the agent holds
+   * on the card's service (null = none): connection cards refuse without
+   * it, or with read when the use needs write; surface cards (browser,
+   * computer, channels) carry no grant and install freely. The loop is an
+   * ordinary loop afterwards and can be edited.
+   */
+  async installSuggestedLoop(agentId: string, cardId: string, useId: string, held: CardGrantLevel | null): Promise<{ loop: LoopDef; loops: LoopDef[] }> {
+    const agent = await this.get(agentId);
+    const card = cardById(cardId);
+    if (!card) throw new NotFoundException(`no context card ${cardId}`);
+    const use = card.suggestedUses.find((u) => u.id === useId);
+    if (!use) throw new NotFoundException(`card ${cardId} has no suggested use ${useId}`);
+    const isConnection = card.provider !== '';
+    if (isConnection) {
+      if (!held) throw new BadRequestException(`${agent.name} holds no ${card.service} grant on ${card.provider} — grant it on the Skills & tools tab first`);
+      if (use.grantLevel === 'write' && held !== 'write') throw new BadRequestException(`"${use.title}" needs a write grant on ${card.title}; ${agent.name} holds read`);
+    }
+    const existing = parseLoopsOf(agent.loops);
+    if (existing.length >= 10) throw new BadRequestException('at most 10 loops');
+    const loop = loopForUse(use, existing);
+    const next = [...existing, loop];
+    await this.update(agentId, { loops: JSON.stringify(next) });
+    return { loop, loops: parseLoopsOf((await this.get(agentId)).loops) };
+  }
+
   /** Mint (or replace) the shared secret of a webhook-triggered loop. Only
    *  the SHA-256 of the secret is stored, inside the loop definition; the
    *  plaintext is returned exactly once (docs/triggers.md). */
@@ -838,4 +873,12 @@ function validateLoopsJson(raw: string): string {
     }
   }
   return JSON.stringify(out);
+}
+
+/** An agent's loops column; malformed JSON reads as no loops. */
+function parseLoopsOf(raw: string | null | undefined): LoopDef[] {
+  try {
+    const parsed = JSON.parse(raw || '[]') as unknown;
+    return Array.isArray(parsed) ? (parsed as LoopDef[]) : [];
+  } catch { return []; }
 }

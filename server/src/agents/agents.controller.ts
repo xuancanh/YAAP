@@ -3,6 +3,7 @@ import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
 import { AgentsService } from './agents.service';
 import { AgentMemoryService } from './agent-memory.service';
 import { ConnectionsService } from '../connections/connections.service';
+import { cardById } from '../connections/cards';
 import { RunnerService } from '../runner/runner.service';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix, agentRelativePath, workspaceFileKey } from '../storage/storage.keys';
@@ -35,6 +36,11 @@ class UpdateAgentDto {
   @IsOptional() @IsString() loops?: string;
   /** Assigned workspace folder, mounted into the agent's chats as shared/. */
   @IsOptional() @IsString() workspaceFolder?: string;
+}
+
+class InstallLoopDto {
+  @IsString() cardId!: string;
+  @IsString() useId!: string;
 }
 
 class CreateTaskDto {
@@ -124,6 +130,17 @@ export class AgentsController {
   }
 
   // ---- self-built HTTP tools: proposed by the agent, user-activated ----
+  /** Install a context card's suggested loop (docs/integrations.md "Context
+   *  cards and suggested loops"); refused without the grant level it needs. */
+  @Post(':id/loops/install')
+  async installLoop(@Param('id') id: string, @Body() dto: InstallLoopDto) {
+    const card = cardById(dto.cardId);
+    const held = card && card.provider
+      ? (await this.connections.grantLevels(id)).find((g) => g.provider === card.provider && g.service === card.service)?.level ?? null
+      : null;
+    return this.agents.installSuggestedLoop(id, dto.cardId, dto.useId, held);
+  }
+
   @Get(':id/tools') customTools(@Param('id') id: string) { return this.agents.listCustomTools(id); }
   @Post(':id/tools/:toolId/approve') approveTool(@Param('id') id: string, @Param('toolId') toolId: string) { return this.agents.resolveCustomTool(id, toolId, true); }
   @Delete(':id/tools/:toolId') deleteTool(@Param('id') id: string, @Param('toolId') toolId: string) { return this.agents.resolveCustomTool(id, toolId, false); }

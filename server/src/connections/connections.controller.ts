@@ -1,9 +1,10 @@
 /** HTTP surface for connections: list, OAuth start/callback, grants. */
-import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, Res } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Post, Query, Res } from '@nestjs/common';
 import { IsIn, IsString } from 'class-validator';
 import type { Response } from 'express';
 import { ConnectionsService, ScopeTier, isProviderName } from './connections.service';
 import type { ConnectionService as ServiceName } from './connections.tools';
+import { cardById, cardForProfile, cardsForService } from './cards';
 
 class GrantDto {
   @IsString() agentId!: string;
@@ -18,6 +19,21 @@ export class ConnectionsController {
   @Get() list() { return this.svc.list(); }
   @Get('providers') providers() { return this.svc.providers(); }
   @Get('tools') tools() { return this.svc.toolCatalog(); }
+
+  /** Context cards (docs/integrations.md "Context cards and suggested
+   *  loops"); `?profile=` ranks suggested uses for an operating profile. */
+  @Get('cards') cards(@Query('profile') profile?: string) { return this.svc.cards(profile); }
+
+  /** One card by id (google-gmail) or the cards of a service (gmail → both
+   *  providers' cards, the first one when there is only one). */
+  @Get('cards/:service')
+  card(@Param('service') idOrService: string, @Query('profile') profile?: string) {
+    const byId = cardById(idOrService);
+    if (byId) return cardForProfile(byId, profile);
+    const cards = cardsForService(idOrService);
+    if (cards.length === 0) throw new NotFoundException(`no context card for ${idOrService}`);
+    return cards.length === 1 ? cardForProfile(cards[0], profile) : cards.map((c) => cardForProfile(c, profile));
+  }
 
   /** tier=read on first connect; the other tiers are incremental re-consents. */
   @Get(':provider/start')

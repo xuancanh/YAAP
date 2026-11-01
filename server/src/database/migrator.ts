@@ -1078,6 +1078,36 @@ const MIGRATIONS: Migration[] = [
       await add('organizations', 'tunables', "TEXT NOT NULL DEFAULT '{}'");
     },
   },
+  {
+    id: '0034-heartbeat-connection-cards',
+    up: async (db) => {
+      // Gated heartbeats (docs/company-vision.md §13, execution-plan item 21):
+      // one state row per agent, workspace-level heartbeat defaults, and a
+      // `heartbeat` loop on every existing agent that has none. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS heartbeat_state (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "agentId" TEXT PRIMARY KEY,
+        "lastBeatAt" TEXT,
+        "lastReason" TEXT NOT NULL DEFAULT '',
+        "lastRunAt" TEXT,
+        "nextDueAt" TEXT,
+        "beatsSkipped" INTEGER NOT NULL DEFAULT 0,
+        "runsDay" TEXT NOT NULL DEFAULT '',
+        "runsToday" INTEGER NOT NULL DEFAULT 0,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('workspaces', 'heartbeatDefaults', `TEXT NOT NULL DEFAULT '{}'`);
+      // Every existing agent gets a heartbeat at boot through the defaults:
+      // enabled, workspace cadence, workspace caps.
+      await add('agents', 'heartbeatEnabled', 'INTEGER NOT NULL DEFAULT 1');
+      await add('agents', 'heartbeatCron', `TEXT NOT NULL DEFAULT ''`);
+      await add('agents', 'heartbeatDailyRunCap', 'INTEGER');
+      await add('agents', 'heartbeatStaleMinutes', 'INTEGER');
+    },
+  },
 ];
 
 /**

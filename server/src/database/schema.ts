@@ -64,6 +64,10 @@ export const workspaces = pgTable('workspaces', {
   orgMonthlyUsd: real('orgMonthlyUsd').notNull().default(0),
   /** Autonomous mode cap on the number of org members (chief included). */
   orgAgentCap: integer('orgAgentCap').notNull().default(12),
+  /** Workspace defaults for every agent's heartbeat (chats/heartbeat-config.ts):
+   *  JSON { cron?, dailyRunCap?, staleMinutes? }; '{}' = the built-in
+   *  defaults. Per-agent overrides sit on the agent's heartbeat loop. */
+  heartbeatDefaults: text('heartbeatDefaults').notNull().default('{}'),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -102,6 +106,13 @@ export const agents = pgTable('agents', {
    *  (channels/email.service.ts). Derived from the name once, kept stable on
    *  rename, unique across agents; '' until the email channel assigns it. */
   emailSlug: text('emailSlug').notNull().default(''),
+  /** The gated heartbeat (docs/triggers.md "Heartbeat", migration 0034):
+   *  on by default for every agent; cadence '' and null caps mean "the
+   *  workspace's heartbeatDefaults, then the built-in" (heartbeat-config.ts). */
+  heartbeatEnabled: integer('heartbeatEnabled').notNull().default(1),
+  heartbeatCron: text('heartbeatCron').notNull().default(''),
+  heartbeatDailyRunCap: integer('heartbeatDailyRunCap'),
+  heartbeatStaleMinutes: integer('heartbeatStaleMinutes'),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -440,6 +451,26 @@ export const loopState = pgTable('loop_state', {
   lastFiredAt: text('lastFiredAt'),
   /** When the last poll failure was journaled — one loop_error per hour. */
   lastErrorAt: text('lastErrorAt'),
+  updatedAt: text('updatedAt').notNull(),
+});
+
+/** The gated heartbeat's state row per agent (docs/triggers.md "Heartbeat",
+ *  migration 0034): what the last beat found, when the next is due, and the
+ *  day's real-run count that bounds cost. */
+export const heartbeatState = pgTable('heartbeat_state', {
+  ...accountScoped(),
+  agentId: text('agentId').primaryKey(),
+  lastBeatAt: text('lastBeatAt'),
+  /** The gate's outcome: 'empty', 'quiet', 'cap', 'spend_stop', 'busy', or
+   *  the reasons that opened it (newline-joined, bounded). */
+  lastReason: text('lastReason').notNull().default(''),
+  lastRunAt: text('lastRunAt'),
+  nextDueAt: text('nextDueAt'),
+  /** Beats that found nothing since the last real run. */
+  beatsSkipped: integer('beatsSkipped').notNull().default(0),
+  /** UTC day ('YYYY-MM-DD') the run counter belongs to. */
+  runsDay: text('runsDay').notNull().default(''),
+  runsToday: integer('runsToday').notNull().default(0),
   updatedAt: text('updatedAt').notNull(),
 });
 

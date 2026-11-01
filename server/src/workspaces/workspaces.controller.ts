@@ -29,6 +29,8 @@ class UpdateWorkspaceDto {
   @IsOptional() @IsString() quietHours?: string;
   /** Monthly token budget for every agent in the workspace; 0 = unlimited. */
   @IsOptional() @IsInt() @Min(0) spendBudgetTokens?: number;
+  /** Heartbeat defaults JSON { cron?, dailyRunCap?, staleMinutes? } (bounded). */
+  @IsOptional() @IsString() heartbeatDefaults?: string;
 }
 
 class ResolveProposalDto {

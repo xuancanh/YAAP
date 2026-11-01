@@ -490,6 +490,21 @@ export class TurnLoopService implements OnModuleDestroy {
       const extraContext = session.agentId
         ? (await Promise.all(this.providers().map((p) => p.contextFor(session)))).filter((c): c is string => Boolean(c))
         : [];
+      // Connection context cards (docs/integrations.md "Context cards"): the
+      // manual for every connection the agent holds a grant on, plus the
+      // browser / companion / MCP cards when those tools are on offer.
+      if (session.agentId && this.connections) {
+        const names = new Set(toolSpecs.map((t) => t.name));
+        const mcpList = typeof (this.mcp as { list?: unknown }).list === 'function'
+          ? await (this.mcp as unknown as { list(): Promise<Array<{ id: string; name: string; tools: string; enabled: number }>> }).list().catch(() => [])
+          : [];
+        const cards = await this.connections.cardContext(session.agentId, actor, {
+          browser: names.has('browser_open'),
+          computer: names.has('computer_screenshot'),
+          mcp: mcpList.filter((s) => s.enabled === 1).map((s) => ({ id: s.id, name: s.name, tools: s.tools })),
+        }).catch(() => null);
+        if (cards) extraContext.push(cards);
+      }
       const system = [ctx.system, ...extraContext].join('\n\n');
       // Per-round overhead every provider call also carries: the resolved
       // system prompt plus the full tool-spec JSON (tens of KB once MCP

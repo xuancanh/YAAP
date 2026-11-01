@@ -7,7 +7,7 @@ import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
 import { ImportSkillMdButton, MemoryImportModal, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { PublishButton } from './RegistryBits';
-import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentJsonV2, type AgentLesson, type AgentTask, type AgentUsage, type Connection, type FileEntry, type FilePreview, type LoopState, type Skill } from '../lib/api';
+import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentJsonV2, type AgentLesson, type AgentTask, type AgentUsage, type Connection, type ContextCard, type FileEntry, type FilePreview, type HeartbeatView, type LoopState, type Skill } from '../lib/api';
 import { UsageBars, UsageRows } from './UsageChart';
 import { fmtUsd } from '../lib/pricing';
 import { fmtTokens } from '../lib/util';
@@ -443,6 +443,48 @@ function TasksBoard({ a, tasks, reload }: { a: Agent; tasks: AgentTask[]; reload
   );
 }
 
+/** The gated heartbeat (docs/triggers.md "Heartbeat"): every agent has one;
+ *  it beats on its cadence, computes reasons without a model, and runs a
+ *  turn only when there are some. Toggle, cadence, last beat, last reason,
+ *  next due, "Beat now" — no delete. */
+function HeartbeatCard({ a }: { a: Agent }) {
+  const app = useApp();
+  const [hb, setHb] = useState<HeartbeatView | null>(null);
+  const [cron, setCron] = useState('');
+  const [busy, setBusy] = useState(false);
+  const reload = useCallback(() => { void api.heartbeat(a.id).then((v) => { setHb(v); setCron(v.cron); }).catch(() => setHb(null)); }, [a.id]);
+  useEffect(() => { reload(); const t = setInterval(reload, 30_000); return () => clearInterval(t); }, [reload]);
+  const act = async (fn: () => Promise<unknown>, done?: string) => {
+    setBusy(true);
+    try { await fn(); await app.refreshAgents(); reload(); if (done) app.showToast(done); } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'heartbeat update failed'); } finally { setBusy(false); }
+  };
+  const when = (iso: string | null) => (iso ? ago(iso) : 'never');
+  const field: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 9px', color: 'var(--text)', fontSize: 12, outline: 'none', fontFamily: 'var(--mono)', width: 120 };
+  const btn: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '4px 11px', fontSize: 11, fontWeight: 600, cursor: busy ? 'default' : 'pointer', flex: 'none', opacity: busy ? 0.6 : 1 };
+  if (!hb) return null;
+  return (
+    <div style={{ ...card, padding: '10px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 11, flexWrap: 'wrap' }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: hb.enabled ? 'var(--green)' : 'var(--text-faint)', flex: 'none' }} />
+        <span title="Gated heartbeat" style={{ color: 'var(--text-faint)', display: 'flex', flex: 'none' }}><I d={P.clock} size={14} /></span>
+        <div style={{ flex: 1, minWidth: 180 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: hb.enabled ? 'var(--text)' : 'var(--text-dim)' }}>Heartbeat</span>
+            <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>last beat {when(hb.lastBeatAt)} · last run {when(hb.lastRunAt)} · {hb.runsToday}/{hb.dailyRunCap} runs today · next {hb.nextDueAt ? untilLabel(new Date(hb.nextDueAt)) : '—'}</span>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={hb.lastReason}>
+            {hb.lastReason ? `last: ${hb.lastReason.split('\n')[0].slice(0, 90)}${hb.lastReason.includes('\n') ? ' …' : ''}` : 'wakes only with a reason: a stale task, an unread inbox item, an unanswered mention'}
+          </div>
+        </div>
+        <input value={cron} onChange={(e) => setCron(e.target.value)} onBlur={() => { if (cron.trim() && cron.trim() !== hb.cron) void act(() => api.updateHeartbeat(a.id, { cron: cron.trim() }), 'Cadence saved'); }}
+          title="Five-field cron (every 5 minutes at most); the workspace default applies when cleared" placeholder={hb.cron} style={field} />
+        <button disabled={busy} onClick={() => void act(() => api.beatNow(a.id).then((r) => app.showToast(r.ran ? `Heartbeat ran: ${r.reasons.length} reason(s)` : r.reasons.length ? `Gate ${r.status}: ${r.reasons.length} reason(s), no run` : `Nothing to do (${r.status})`)))} style={btn}>Beat now</button>
+        <button disabled={busy} onClick={() => void act(() => api.updateHeartbeat(a.id, { enabled: !hb.enabled }), hb.enabled ? 'Heartbeat paused' : 'Heartbeat resumed')} style={btn}>{hb.enabled ? 'Pause' : 'Resume'}</button>
+      </div>
+    </div>
+  );
+}
+
 /** Schedule editor: the agent's loops — each runs on a cron, on an event
  *  trigger (new mail, calendar change, task assigned, webhook), or both
  *  (docs/triggers.md) — firing a real auto-mode turn in its "Loop · name"
@@ -524,6 +566,7 @@ function ScheduleTab({ a }: { a: Agent }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
+      <HeartbeatCard a={a} />
       <div style={{ ...card, padding: '14px 16px' }}>
         <div style={{ ...label, marginBottom: 10 }}>Add a loop</div>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Loop name, e.g. Morning sweep" style={{ ...field, width: '100%' }} />
@@ -888,11 +931,47 @@ function SkillsToolsTab({ a }: { a: Agent }) {
   const [promoting, setPromoting] = useState<Skill | null>(null);
   const [tools, setTools] = useState<AgentCustomTool[]>([]);
   const [conns, setConns] = useState<Connection[]>([]);
+  const [cards, setCards] = useState<ContextCard[]>([]);
   const [granting, setGranting] = useState<Connection | null>(null);
   const refresh = (id: string) => {
     void api.skills(app.workspaceId || undefined, id).then((all) => setSkills(all.filter((s) => s.agentId === id))).catch(() => setSkills([]));
     void api.agentCustomTools(id).then(setTools).catch(() => setTools([]));
     void api.connections().then(setConns).catch(() => setConns([]));
+    void api.connectionCards().then(setCards).catch(() => setCards([]));
+  };
+  const installedNames = (() => { try { return new Set((JSON.parse(a.loops) as Loop[]).map((l) => l.name)); } catch { return new Set<string>(); } })();
+  const install = async (cardId: string, useId: string) => {
+    try {
+      const res = await api.installSuggestedLoop(a.id, cardId, useId);
+      await app.refreshAgents();
+      app.showToast(`Loop "${res.loop.name}" installed — edit it on the Schedule tab`);
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'install failed');
+    }
+  };
+  /** The context card for a granted service: summary + suggested uses with
+   *  one-click installs (docs/integrations.md "Context cards"). */
+  const cardBlock = (c: Connection, service: string, level: string) => {
+    const cardDef = cards.find((k) => k.provider === c.provider && k.service === service);
+    if (!cardDef) return null;
+    return (
+      <div key={`${c.id}-${service}`} style={{ margin: '4px 0 8px 36px', padding: '8px 10px', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 9 }}>
+        <div style={{ fontSize: 12, color: 'var(--text-dim)' }}><span style={{ fontWeight: 600, color: 'var(--text)' }}>{cardDef.title}</span> · {cardDef.summary}</div>
+        {cardDef.suggestedUses.map((u) => {
+          const installed = installedNames.has(u.loop.name);
+          const allowed = u.grantLevel === 'read' || level === 'write';
+          return (
+            <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600 }}>{u.title} {pill(u.grantLevel, allowed ? 'var(--text-faint)' : 'var(--amber)')}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{u.why}</div>
+              </div>
+              {installed ? pill('installed', 'var(--green)') : btn('Install', () => { if (allowed) void install(cardDef.id, u.id); else app.showToast(`needs a write grant on ${cardDef.title}`); })}
+            </div>
+          );
+        })}
+      </div>
+    );
   };
   useEffect(() => { refresh(a.id); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [a.id]);
 
@@ -1002,6 +1081,7 @@ function SkillsToolsTab({ a }: { a: Agent }) {
               </div>
             );
           })}
+          {conns.flatMap((c) => c.grants.filter((g) => g.agentId === a.id).map((g) => cardBlock(c, g.service, g.level)))}
           {conns.length === 0 && <div style={{ padding: '10px 10px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>No services connected yet — link a Google or Microsoft account under Settings → Connections, then grant it here.</div>}
         </div>
       </div>
@@ -1290,6 +1370,7 @@ export function AgentHome() {
                 </button>
               ))}
             </div>
+            <HeartbeatCard a={a} />
             <div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
                 <span style={label}>Dashboard</span>

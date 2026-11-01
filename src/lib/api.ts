@@ -381,6 +381,44 @@ export interface LoopState {
 
 export type ConnectionServiceName = 'calendar' | 'gmail' | 'drive';
 
+/** A connection context card (docs/integrations.md "Context cards and
+ *  suggested loops"): the manual for a connection plus ready-made loops. */
+export interface SuggestedUse {
+  id: string;
+  title: string;
+  why: string;
+  loop: { name: string; cron?: string; trigger?: unknown; prompt?: string };
+  grantLevel: 'read' | 'write';
+  fits?: string[];
+}
+export interface ContextCard {
+  id: string;
+  service: ConnectionServiceName | 'telegram' | 'email' | 'push' | 'browser' | 'computer' | 'mcp';
+  provider: 'google' | 'microsoft' | '';
+  title: string;
+  summary: string;
+  capabilities: { read: string[]; write: string[] };
+  dataExposed: string;
+  risks: string;
+  usage: string[];
+  suggestedUses: SuggestedUse[];
+}
+
+/** The gated heartbeat (docs/triggers.md "Heartbeat"): settings in effect + state. */
+export interface HeartbeatView {
+  enabled: boolean;
+  cron: string;
+  dailyRunCap: number;
+  staleMinutes: number;
+  lastBeatAt: string | null;
+  lastReason: string;
+  lastRunAt: string | null;
+  nextDueAt: string | null;
+  beatsSkipped: number;
+  runsToday: number;
+}
+export interface BeatResult { status: string; reasons: string[]; ran: boolean }
+
 export interface ConnectionProvider {
   provider: string;
   configured: boolean;
@@ -948,6 +986,15 @@ export const api = {
   loopStates: (id: string) => get<LoopState[]>(`/api/agents/${id}/loops/state`),
   rotateWebhookSecret: (id: string, loopName: string) =>
     send<{ secret: string; path: string; url: string }>(`/api/agents/${id}/loops/${encodeURIComponent(loopName)}/webhook-secret`, 'POST'),
+  // context cards and suggested loops (docs/integrations.md)
+  connectionCards: (profile?: string) => get<ContextCard[]>(`/api/connections/cards${profile ? `?profile=${encodeURIComponent(profile)}` : ''}`),
+  installSuggestedLoop: (id: string, cardId: string, useId: string) =>
+    send<{ loop: { name: string }; loops: unknown[] }>(`/api/agents/${id}/loops/install`, 'POST', { cardId, useId }),
+  // the gated heartbeat (docs/triggers.md "Heartbeat")
+  heartbeat: (id: string) => get<HeartbeatView>(`/api/agents/${id}/heartbeat`),
+  beatNow: (id: string) => send<BeatResult>(`/api/agents/${id}/heartbeat/beat`, 'POST'),
+  updateHeartbeat: (id: string, body: { enabled?: boolean; cron?: string | null; dailyRunCap?: number | null; staleMinutes?: number | null }) =>
+    send<HeartbeatView>(`/api/agents/${id}/heartbeat`, 'PATCH', body),
   markAgentEventsRead: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}/events/read`, 'POST'),
   actOnAgentEvent: (id: string, eventId: string, decision: 'approve' | 'dismiss') =>
     send<{ ok: boolean; status: string; result?: string; error?: string }>(`/api/agents/${id}/events/${eventId}/act`, 'POST', { decision }),
