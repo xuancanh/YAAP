@@ -331,7 +331,7 @@ public.
 | `POST experiments/:expId/keep` | CEO | keep now |
 | `POST experiments/:expId/revert` | CEO | revert now |
 | `GET predictions?agentId=&status=` | standing | the ledger |
-| `GET calibration` | standing | per member |
+| `GET calibration` | standing | `{ bar, members }`: per member, and the trust ledger's promotion bar |
 | `GET reconciliation` | standing | the latest gaps |
 | `POST reconciliation/run` | CEO | sweep now |
 

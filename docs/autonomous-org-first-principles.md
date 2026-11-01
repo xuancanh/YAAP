@@ -376,7 +376,10 @@ C5 and C7 are in the SPA — the Metrics, Incidents and Experiments panes
 (with calibration and reconciliation), Settings → Workspace → Trust and the
 agent's Trust tab, the owner's key on held and staged actions in Approvals
 and in chat, the health strip and the auditor's spot checks on Pulse (see
-`docs/execution-plan.md` items 27–30, "Shipped as, SPA").
+`docs/execution-plan.md` items 27–30, "Shipped as, SPA"); C4, C6, C8 and C12
+followed in item 32's part two — decision cards with deadlines and
+defaults, delegations, the boundary table, the Evals and Outcomes panes,
+WIP and deadlines on the board.
 
 ## 8. Build order
 

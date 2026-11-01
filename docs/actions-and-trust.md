@@ -237,8 +237,14 @@ level may not exceed the ceiling). Both are the owner's or the CEO's.
 | `PUT /api/workspaces/:id/trust/ceilings` | owner / CEO | `{ceilings: {class: 0–3}}` (or the map itself) |
 | `POST /api/workspaces/:id/trust/:agentId/:class` | owner / CEO | `{level, reason}` — ≤ ceiling, audited |
 | `GET /api/workspaces/:id/actions?agentId=&class=&status=&limit=` | any member | the action log, newest first |
+| `GET /api/workspaces/:id/actions/:actionId` | any member | one row (the owner's key shows its exact call) |
 | `POST /api/workspaces/:id/actions/:actionId/revert-report` | owner / CEO | `{note}` — marks it reverted, demotes |
 | `POST /api/workspaces/:id/actions/:actionId/keys` | owner / CEO | `{approve, note?}` — the owner's key on a held or staged action |
+
+The turn stream's `tool_result` event, and the turn's stored tool records,
+carry `actionClass`, `actionId` and `held` (`held` | `staged`) for every
+call the contract logged, so a client shows the class and offers the key
+without parsing the result text.
 
 Tool: **`trust_status`** (read) for agents in a workspace with organization
 mode on — the caller's own levels; the chief of staff sees every member's.

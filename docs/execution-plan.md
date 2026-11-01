@@ -1480,7 +1480,52 @@ Existing tests changed where the behaviour changed on purpose:
 - Activity sections are grouped under one `# Activity` heading rather than
   removed.
 
-### 32. SPA for items 27–31 *(planned)*
+### 32. SPA for items 27–31 *(done)*
 Part one (items 27–30) is on branch `feat/spa3`: see the "Shipped as, SPA"
-paragraphs of items 27–30. Part two covers item 31; the approval cards
-already render its optional decision fields when present (`DecisionExtras`).
+paragraphs of items 27–30.
+
+*Shipped as, part two (2 November 2026, branch `feat/spa3`, item 31 on
+screen):*
+
+- **Decision cards.** Every approval card renders the recommended action,
+  alternatives (the JSON list), reversibility (irreversible in red),
+  confidence, the deadline with a live countdown (amber within six hours,
+  red when overdue) and "If you do not answer: approve / deny at <time>"
+  (`DecisionExtras`, `decisionExtras`, `countdown`); decided cards carry a
+  "decided by default" / "decided by delegate …" badge from `decidedVia`
+  (`decidedViaBadge`), and a gated charter or routing card its eval line
+  (`payload.eval`: pass rate against the baseline and the verdict,
+  `CardEvalLine`). A person a kind is delegated to may decide those cards
+  from the Approvals pane.
+- **Settings → Workspace** (`src/components/OrgGovernanceView.tsx`,
+  `GovernanceSettings`): **Delegated approvals** — list, add (an approval
+  kind or an action class, an optional USD cap, a person with standing or a
+  member role), revoke; kinds that are never delegable are disabled with the
+  boundary's reason (`delegationOptions` over `GET …/org/boundary`) — and
+  the **boundary table** read-only (change, scope, alone / experiment /
+  propose / never, "not delegable", why).
+- **Evals** pane (`#/ws/<id>/org/evals`): role tabs from member titles
+  (`roleKeyOf`) and case counts; the golden set per role (source, title,
+  checks or rubric), **Add a case** from a task or written by hand and
+  **Retire** (CEO); runs with the candidate, pass rate against the baseline
+  and the verdict (`evalRunText`) and per-case results; **Run eval** with a
+  charter, playbook body, model or routing-tier candidate.
+- **Capacity.** The board header shows each member's open work against the
+  WIP limit (`GET …/org/capacity`, `wipLabel`; red at the limit); board
+  cards show the deadline (overdue red, within a day amber — `dueBadge`),
+  "waits on" chips from `waitingOn`, the `waiting` column and the expected
+  duration from history (`expectedLabel`); the drawer repeats them; the
+  new-task form takes a due date and dependencies (`POST …/tasks` now
+  accepts `dependsOn` and `dueAt`).
+- **Outcomes** pane (`#/ws/<id>/org/outcomes`): totals, then per objective
+  the value realised against spend this month and the return
+  (`roiText`), each key result's measured movement this week
+  (`movementText`) with its price and the CEO's **set value** form (`PUT
+  …/goals/:goalId/value`), and the last 30 days of value events. A
+  `no_outcome` signal on Pulse deep-links to its unit's objectives there.
+- **Backend gaps closed:** the live `tool_result` event and the turn's
+  tool records carry `actionClass`, `actionId` and `held` when the action
+  contract logged the call; `GET /api/workspaces/:id/actions/:actionId`;
+  `GET …/org/calibration` returns `{ bar, members }`. The chat card's class
+  pill and inline key and the `two_key` card's exact call use them; the
+  text-parsing fallbacks are gone.
