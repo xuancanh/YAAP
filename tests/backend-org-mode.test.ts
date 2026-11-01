@@ -332,7 +332,7 @@ test('board events wake the autonomous chief into one coalesced structure review
   assert.match(user, /trigger: board/);
   assert.match(user, /blocked: "Stuck" is blocked: waiting on data/);
   assert.match(user, /escalation: "Stuck" escalated: cannot proceed/);
-  assert.match(user, /goal: new goal "Another goal"/);
+  assert.match(user, /goal: new objective "Another goal"/);
   assert.ok(req.tools!.some((x) => x.name === 'org_review_structure') && req.tools!.some((x) => x.name === 'org_hire_agent'), 'manager tools offered');
   const toolResult = s.provider.requests[1].messages.find((m) => m.role === 'tool')!.content;
   assert.match(toolResult, /structure review/);

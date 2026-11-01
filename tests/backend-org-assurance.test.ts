@@ -276,7 +276,7 @@ test('SLOs are computed from seeded tasks, runs and approvals: median cycle time
   assert.equal(m.decisionLatencyHours, 18, 'median of 6h and 30h');
   assert.equal(m.decisions, 2);
   assert.equal(m.goalsOwnedPct, 25, 'one of four goals has both an owner and a unit');
-  assert.equal(m.goalsAtRiskPct, null, 'no atRisk column on this branch');
+  assert.equal(m.goalsAtRiskPct, 0, 'four active goals, none flagged by the intent sweep (item 18)');
   assert.equal(m.spendVsEnvelopePct, 12, '$6 of $50');
   assert.equal(classOf({ title: 'Check the sources', brief: '{}' }), 'review');
   assert.equal(classOf({ title: 'Anything', brief: JSON.stringify({ constraints: 'type: outreach' }) }), 'outreach');

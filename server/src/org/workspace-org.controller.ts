@@ -9,6 +9,7 @@
  *  GET    /api/workspaces/:id/org/caps       the autonomy caps in plain words (for the Settings card)
  *  GET    /api/workspaces/:id/org/units      the unit tree (docs/group-chat.md §7) · PATCH units/:unitId · GET units/:unitId/board · GET units/:unitId/goals/tree · GET goals/tree
  *  assurance (docs/company-vision.md §5): GET signals · POST signals/:signalId/ack | /resolve · GET pulse · GET|PATCH slo · GET audits · POST audit/run
+ *  intent (docs/company-vision.md §1b–§2): GET|PUT vision · GET|PUT profile · GET|PUT tunables · GET intent?unitId= · POST goals/:goalId/checkin · GET goals/:goalId/checkins · GET why?taskId=|goalId= · POST plan · GET strategy
  *
  * Everything else is a thin alias of `/api/orgs/:orgId/...` that resolves the
  * workspace's one org id and delegates to OrgController, so the two surfaces
@@ -21,6 +22,7 @@ import { ORG_MODES, type OrgMode } from '../workspaces/workspaces.service';
 import { OrgModeService, AUTONOMY_CAPS, MAX_ORG_AGENT_CAP } from './org-mode.service';
 import {
   OrgController, UpdateOrgDto, AddMemberDto, UpdateMemberDto, ScopesDto, GoalDto, ProjectDto, TaskDto, AssignDto, TextDto, ReviewDto, DecideDto, ProposalDto, BudgetDto, WakeDto, HumanDto, UnitDto, SloDto, AckDto,
+  VisionDto, ProfileDto, TunableDto, CheckInDto, PlanDto,
 } from './org.controller';
 
 class OrgModeDto {
@@ -69,6 +71,20 @@ export class WorkspaceOrgController {
   @Get('units/:unitId/board') async unitBoard(@Param('id') id: string, @Param('unitId') unitId: string, @Query('rollUp') rollUp?: string, @Query('status') status?: string) { return this.orgs.unitBoard(await this.oid(id), unitId, rollUp, status); }
   @Get('units/:unitId/goals/tree') async unitGoals(@Param('id') id: string, @Param('unitId') unitId: string) { return this.orgs.unitGoals(await this.oid(id), unitId); }
   @Get('goals/tree') async goalTree(@Param('id') id: string, @Query('unitId') unitId?: string) { return this.orgs.goalTree(await this.oid(id), unitId); }
+
+  // Intent (docs/company-vision.md §1b–§2, item 18)
+  @Get('vision') async vision(@Param('id') id: string) { return this.orgs.vision(await this.oid(id)); }
+  @Put('vision') async setVision(@Param('id') id: string, @Body() dto: VisionDto) { return this.orgs.setVision(await this.oid(id), dto); }
+  @Get('profile') async profile(@Param('id') id: string) { return this.orgs.profile(await this.oid(id)); }
+  @Put('profile') async setProfile(@Param('id') id: string, @Body() dto: ProfileDto) { return this.orgs.setProfile(await this.oid(id), dto); }
+  @Get('tunables') async tunables(@Param('id') id: string) { return this.orgs.tunables(await this.oid(id)); }
+  @Put('tunables') async setTunable(@Param('id') id: string, @Body() dto: TunableDto) { return this.orgs.setTunable(await this.oid(id), dto); }
+  @Get('intent') async intentTree(@Param('id') id: string, @Query('unitId') unitId?: string) { return this.orgs.intentTree(await this.oid(id), unitId); }
+  @Post('goals/:goalId/checkin') async checkIn(@Param('id') id: string, @Param('goalId') goalId: string, @Body() dto: CheckInDto) { return this.orgs.checkIn(await this.oid(id), goalId, dto); }
+  @Get('goals/:goalId/checkins') async checkIns(@Param('id') id: string, @Param('goalId') goalId: string) { return this.orgs.checkIns(await this.oid(id), goalId); }
+  @Get('why') async why(@Param('id') id: string, @Query('taskId') taskId?: string, @Query('goalId') goalId?: string) { return this.orgs.why(await this.oid(id), taskId, goalId); }
+  @Post('plan') async plan(@Param('id') id: string, @Body() dto: PlanDto) { return this.orgs.plan(await this.oid(id), dto); }
+  @Get('strategy') async strategy(@Param('id') id: string) { return this.orgs.strategy(await this.oid(id)); }
 
   @Get('goals') async goals(@Param('id') id: string, @Query('unitId') unitId?: string) { return this.orgs.goals(await this.oid(id), unitId); }
   @Post('goals') async addGoal(@Param('id') id: string, @Body() dto: GoalDto) { return this.orgs.addGoal(await this.oid(id), dto); }

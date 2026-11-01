@@ -30,7 +30,7 @@ import { orgProjects, orgTasks, orgUnits } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
-import { OrgService, type OrgGoal, type OrgMember } from './org.service';
+import { OrgService, type GoalIntentFields, type OrgGoal, type OrgMember } from './org.service';
 import { OrgAuditService } from './org-audit.service';
 import { OrgAnnouncer } from './org-announcer';
 
@@ -416,7 +416,7 @@ export class OrgUnitsService {
 
   /** Create a goal in a unit; the parent must belong to that unit or one of
    *  its ancestors (a lead sets children of goals it can see). */
-  async addGoal(orgId: string, input: { title: string; description?: string; ownerAgentId?: string | null; status?: string; unitId?: string | null; parentGoalId?: string | null }, actor = 'user'): Promise<OrgGoal> {
+  async addGoal(orgId: string, input: { title: string; description?: string; ownerAgentId?: string | null; status?: string; unitId?: string | null; parentGoalId?: string | null } & GoalIntentFields, actor = 'user'): Promise<OrgGoal> {
     const root = await this.rootUnit(orgId);
     const unitId = input.unitId ? (await this.get(orgId, input.unitId)).id : (input.ownerAgentId ? (await this.unitForAssignee(orgId, input.ownerAgentId)).id : root.id);
     if (input.parentGoalId) {

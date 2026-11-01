@@ -630,6 +630,16 @@ export const organizations = pgTable('organizations', {
   lastBriefAt: text('lastBriefAt'),
   /** JSON of the latest brief: { text, items: [{ n, approvalId }] }. */
   lastBrief: text('lastBrief').notNull().default(''),
+  /** Intent (docs/company-vision.md §2, item 18): the CEO's standing rules
+   *  (the constitution seed) and the chief's latest strategy memo. */
+  rules: text('rules').notNull().default(''),
+  strategyMemo: text('strategyMemo').notNull().default(''),
+  strategyMemoAt: text('strategyMemoAt'),
+  /** The operating profile (docs/company-vision.md §1b): values and culture
+   *  in the CEO's words, read by every planning prompt; the tunables
+   *  column below is read through org-tunables.ts. */
+  values: text('values').notNull().default(''),
+  culture: text('culture').notNull().default(''),
   /** Assurance (docs/company-vision.md §5): the auditor role — a member on
    *  a different model family where possible — its cadence in days, the USD
    *  cap of one audit run. `tunables` (docs/company-vision.md §1b) is the
@@ -745,6 +755,39 @@ export const orgGoals = pgTable('org_goals', {
    *  the company, i.e. the root unit) and its parent in the goal tree. */
   unitId: text('unitId'),
   parentGoalId: text('parentGoalId'),
+  /** Intent (docs/company-vision.md §2, item 18): vision | objective |
+   *  key_result. A key result measures `metric` from startValue to
+   *  targetValue by dueAt; its owner checks in currentValue and confidence
+   *  (0–1, null = never checked in) every checkInCadenceDays. atRisk is set by
+   *  the model-free assessment (OrgIntentService.assessRisk) with its reason.
+   *  The vision keeps its horizon in dueAt. */
+  kind: text('kind').notNull().default('objective'),
+  metric: text('metric').notNull().default(''),
+  targetValue: real('targetValue'),
+  currentValue: real('currentValue'),
+  startValue: real('startValue'),
+  unitLabel: text('unitLabel').notNull().default(''),
+  dueAt: text('dueAt'),
+  confidence: real('confidence'),
+  atRisk: integer('atRisk').notNull().default(0),
+  atRiskReason: text('atRiskReason').notNull().default(''),
+  lastCheckInAt: text('lastCheckInAt'),
+  checkInCadenceDays: integer('checkInCadenceDays').notNull().default(7),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** A key result check-in (docs/company-vision.md §2.3): the owner's current
+ *  value and confidence at a point in time; the goal row carries the latest. */
+export const orgCheckins = pgTable('org_checkins', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  goalId: text('goalId').notNull(),
+  /** user | human:<id> | chief | agent:<id>. */
+  actor: text('actor').notNull().default('user'),
+  currentValue: real('currentValue'),
+  confidence: real('confidence'),
+  note: text('note').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 

@@ -576,7 +576,7 @@ test('triggers and members: org_create_task from a member\'s own session lands i
   const { o, chiefId, writer } = await company(s);
   const loopSession = await s.repo.createSession({ workspaceId: s.ws.id, agentId: writer.id, name: 'Loop · Mail', permissionMode: 'auto' });
   const specs = await s.runtime.specsFor(loopSession);
-  assert.deepEqual(specs.map((x) => x.name).sort(), ['org_ack_signal', 'org_create_task', 'org_message', 'org_read_board', 'org_read_goal', 'org_signals']);
+  assert.deepEqual(specs.map((x) => x.name).sort(), ['org_ack_signal', 'org_check_in', 'org_create_task', 'org_intent', 'org_message', 'org_read_board', 'org_read_goal', 'org_signals', 'org_why']);
   const out = await s.runtime.execute(loopSession, 'org_create_task', { title: 'Reply to the sponsor', outcome: 'A reply draft', done_when: 'Draft in shared/' });
   assert.match(out, /created in backlog/);
   assert.deepEqual(s.runtime.pendingWakeKeys(), [], 'backlog items wake nobody');

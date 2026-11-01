@@ -1016,6 +1016,49 @@ const MIGRATIONS: Migration[] = [
     },
   },
   {
+    id: '0031-org-intent',
+    up: async (db) => {
+      // Intent (docs/company-vision.md §2, execution-plan item 18): goals
+      // gain a kind (vision | objective | key_result) and the key-result
+      // fields; check-ins get a table; the organization keeps the CEO's rules
+      // and the chief's latest strategy memo. Idempotent.
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('org_goals', 'kind', `TEXT NOT NULL DEFAULT 'objective'`);
+      await add('org_goals', 'metric', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_goals', 'targetValue', 'REAL');
+      await add('org_goals', 'currentValue', 'REAL');
+      await add('org_goals', 'startValue', 'REAL');
+      await add('org_goals', 'unitLabel', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_goals', 'dueAt', 'TEXT');
+      await add('org_goals', 'confidence', 'REAL');
+      await add('org_goals', 'atRisk', 'INTEGER NOT NULL DEFAULT 0');
+      await add('org_goals', 'atRiskReason', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_goals', 'lastCheckInAt', 'TEXT');
+      await add('org_goals', 'checkInCadenceDays', 'INTEGER NOT NULL DEFAULT 7');
+      await db.query(`CREATE TABLE IF NOT EXISTS org_checkins (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "goalId" TEXT NOT NULL,
+        "actor" TEXT NOT NULL DEFAULT 'user',
+        "currentValue" REAL,
+        "confidence" REAL,
+        "note" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_checkins_goal ON org_checkins ("goalId", "createdAt")`);
+      await add('organizations', 'rules', `TEXT NOT NULL DEFAULT ''`);
+      await add('organizations', 'strategyMemo', `TEXT NOT NULL DEFAULT ''`);
+      await add('organizations', 'strategyMemoAt', 'TEXT');
+      // The operating profile and the tunables column (docs/company-vision.md §1b).
+      await add('organizations', 'values', `TEXT NOT NULL DEFAULT ''`);
+      await add('organizations', 'culture', `TEXT NOT NULL DEFAULT ''`);
+      await add('organizations', 'tunables', `TEXT NOT NULL DEFAULT '{}'`);
+    },
+  },
+  {
     id: '0033-org-assurance',
     up: async (db) => {
       // Assurance (docs/company-vision.md §5, execution-plan item 20):

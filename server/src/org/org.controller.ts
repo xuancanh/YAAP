@@ -10,7 +10,8 @@
  *  members: POST /:id/members · PATCH /:id/members/:agentId · DELETE (terminate)
  *           POST /:id/members/:agentId/scopes · /pause · /resume · /charter/accept
  *  units (docs/group-chat.md §7): GET /:id/units (tree) · PATCH /:id/units/:unitId (rename) · GET /:id/units/:unitId/board · GET /:id/units/:unitId/goals/tree · GET /:id/goals/tree
- *  goals / projects: GET · POST · PATCH (goals take unitId, parentGoalId; ?unitId= filters)
+ *  intent (docs/company-vision.md §1b–§2): GET|PUT /:id/vision · GET|PUT /:id/profile · GET|PUT /:id/tunables · GET /:id/intent?unitId= · POST /:id/goals/:goalId/checkin · GET …/checkins · GET /:id/why?taskId=|goalId= · POST /:id/plan · GET /:id/strategy
+ *  goals / projects: GET · POST · PATCH (goals take unitId, parentGoalId, kind and the key-result fields; ?unitId= filters)
  *  tasks: GET /:id/tasks (board) · POST · PATCH /:id/tasks/:taskId · POST …/assign · …/comment · …/review · …/wake · GET …/runs
  *  approvals: GET /:id/approvals · POST /:id/approvals/:approvalId/decide — the only place an approval is decided
  *  humans (phase D): GET /:id/humans · POST /:id/humans { memberAccountId, role } · DELETE /:id/humans/:memberAccountId
@@ -44,6 +45,8 @@ import { ASSURANCE_TUNABLES, parseTunables } from './org-assurance-tunables';
 import { OrgSignalsService } from './org-signals.service';
 import { OrgSloService } from './org-slo.service';
 import { OrgAuditorService } from './org-auditor.service';
+import { OrgIntentService } from './org-intent.service';
+import { describeTunables } from './org-tunables';
 
 export class ChiefDto {
   @IsString() name!: string;
@@ -112,7 +115,27 @@ export class GoalDto {
   /** Units (docs/group-chat.md §7). */
   @IsOptional() unitId?: string | null;
   @IsOptional() parentGoalId?: string | null;
+  /** Intent (docs/company-vision.md §2): kind and the key-result fields. */
+  @IsOptional() @IsIn(['vision', 'objective', 'key_result']) kind?: 'vision' | 'objective' | 'key_result';
+  @IsOptional() @IsString() metric?: string;
+  @IsOptional() targetValue?: number | null;
+  @IsOptional() startValue?: number | null;
+  @IsOptional() @IsString() unitLabel?: string;
+  @IsOptional() dueAt?: string | null;
+  @IsOptional() @IsInt() @Min(1) @Max(90) checkInCadenceDays?: number;
 }
+
+export class VisionDto {
+  @IsString() title!: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() dueAt?: string | null;
+  @IsOptional() @IsString() rules?: string;
+  @IsOptional() @IsNumber() @Min(0) monthlyUsd?: number;
+}
+export class ProfileDto { @IsOptional() @IsString() values?: string; @IsOptional() @IsString() culture?: string }
+export class TunableDto { @IsString() key!: string; @IsNumber() value!: number; @IsOptional() @IsString() why?: string }
+export class CheckInDto { @IsOptional() currentValue?: number | null; @IsOptional() confidence?: number | null; @IsOptional() @IsString() note?: string }
+export class PlanDto { @IsOptional() @IsString() unitId?: string; @IsOptional() @IsString() reason?: string }
 
 export class UnitDto { @IsString() name!: string }
 
@@ -174,6 +197,7 @@ export class OrgController {
     @Optional() private readonly signals?: OrgSignalsService,
     @Optional() private readonly slo?: OrgSloService,
     @Optional() private readonly auditor?: OrgAuditorService,
+    @Optional() private readonly intent?: OrgIntentService,
   ) {}
 
   private enabled(): boolean { return this.config.get<boolean>('companiesEnabled') !== false; }
@@ -246,11 +270,39 @@ export class OrgController {
   @Get(':id/units/:unitId/goals/tree') async unitGoals(@Param('id') id: string, @Param('unitId') unitId: string) { this.guard(); return this.unitsOr().goalTree(id, { unitId }); }
   @Get(':id/goals/tree') async goalTree(@Param('id') id: string, @Query('unitId') unitId?: string) { this.guard(); return this.unitsOr().goalTree(id, { unitId: unitId || null }); }
 
+  // ---- intent (docs/company-vision.md §1b–§2, item 18) ----
+  private intentOr(): OrgIntentService { if (!this.intent) throw new NotFoundException('intent is not available'); return this.intent; }
+  /** The CEO's seat only: the vision, the profile and the tunables are theirs to write. */
+  private async assertCeo(orgId: string, what: string): Promise<void> {
+    if ((await this.org.humanRole(orgId, actorId())) !== 'ceo') throw new ForbiddenException(`${what} is the CEO's to write`);
+  }
+  @Get(':id/vision') async vision(@Param('id') id: string) {
+    this.guard();
+    const org = await this.org.get(id);
+    return { vision: await this.intentOr().vision(id), rules: org.rules, values: org.values, culture: org.culture };
+  }
+  @Put(':id/vision') async setVision(@Param('id') id: string, @Body() dto: VisionDto) { this.guard(); await this.assertCeo(id, 'the vision'); return this.intentOr().setVision(id, dto, this.actor()); }
+  @Get(':id/profile') async profile(@Param('id') id: string) { this.guard(); const o = await this.org.get(id); return { values: o.values, culture: o.culture, rules: o.rules, mission: o.mission }; }
+  @Put(':id/profile') async setProfile(@Param('id') id: string, @Body() dto: ProfileDto) { this.guard(); await this.assertCeo(id, 'the operating profile'); const o = await this.org.setProfile(id, dto, this.actor()); return { values: o.values, culture: o.culture, rules: o.rules, mission: o.mission }; }
+  @Get(':id/tunables') async tunables(@Param('id') id: string) { this.guard(); return describeTunables(await this.org.get(id)); }
+  @Put(':id/tunables') async setTunable(@Param('id') id: string, @Body() dto: TunableDto) { this.guard(); await this.assertCeo(id, 'a tunable'); return this.org.setTunable(id, dto.key, dto.value, { actor: this.actor(), why: dto.why, decidedBy: actorId() }); }
+  @Get(':id/intent') async intentTree(@Param('id') id: string, @Query('unitId') unitId?: string) { this.guard(); return this.intentOr().intentTree(id, { unitId: unitId || null }); }
+  @Post(':id/goals/:goalId/checkin') checkIn(@Param('id') id: string, @Param('goalId') goalId: string, @Body() dto: CheckInDto) { this.guard(); return this.intentOr().checkIn(id, goalId, dto, this.actor()); }
+  @Get(':id/goals/:goalId/checkins') checkIns(@Param('id') id: string, @Param('goalId') goalId: string) { this.guard(); return this.intentOr().checkIns(id, goalId); }
+  @Get(':id/why') why(@Param('id') id: string, @Query('taskId') taskId?: string, @Query('goalId') goalId?: string) { this.guard(); return this.intentOr().whyChain(id, { taskId: taskId || undefined, goalId: goalId || undefined }); }
+  /** A planning session now (the CEO): the unit's lead, the root by default. Ignores the cooldown. */
+  @Post(':id/plan') async plan(@Param('id') id: string, @Body() dto: PlanDto) {
+    this.guard();
+    const unitId = dto.unitId ?? (await this.unitsOr().rootUnit(id)).id;
+    return { result: await this.runtime.runPlanning(id, { unitId, trigger: 'manual', reasons: [dto.reason || 'planning requested by the CEO'] }) };
+  }
+  @Get(':id/strategy') strategy(@Param('id') id: string) { this.guard(); return this.intentOr().strategy(id); }
+
   // ---- goals / projects ----
   @Get(':id/goals') goals(@Param('id') id: string, @Query('unitId') unitId?: string) { this.guard(); return this.org.goals(id, { unitId: unitId || undefined }); }
   @Post(':id/goals') addGoal(@Param('id') id: string, @Body() dto: GoalDto) {
     this.guard();
-    const input = { title: dto.title ?? '', description: dto.description, ownerAgentId: dto.ownerAgentId, status: dto.status, unitId: dto.unitId, parentGoalId: dto.parentGoalId };
+    const input = { title: dto.title ?? '', description: dto.description, ownerAgentId: dto.ownerAgentId, status: dto.status, unitId: dto.unitId, parentGoalId: dto.parentGoalId, kind: dto.kind, metric: dto.metric, targetValue: dto.targetValue, startValue: dto.startValue, unitLabel: dto.unitLabel, dueAt: dto.dueAt, checkInCadenceDays: dto.checkInCadenceDays };
     return this.units ? this.units.addGoal(id, input, this.actor()) : this.org.addGoal(id, input, this.actor());
   }
   @Patch(':id/goals/:goalId') updateGoal(@Param('id') id: string, @Param('goalId') goalId: string, @Body() dto: GoalDto) { this.guard(); return this.org.updateGoal(id, goalId, dto); }

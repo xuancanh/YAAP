@@ -17,9 +17,9 @@
  *   costPerAcceptedTaskUsd     run spend in the window / tasks accepted
  *   decisionLatencyHours       median hours an approval waited for the CEO
  *   goalsOwnedPct              share of active goals with an owner and a unit
- *   goalsAtRiskPct             share of active goals flagged at risk — only
- *                              when org_goals has an `atRisk` column at
- *                              runtime (another branch adds it); null otherwise
+ *   goalsAtRiskPct             share of active goals flagged at risk by the
+ *                              intent sweep (org_goals.atRisk, item 18); null
+ *                              without active goals
  *   spendVsEnvelopePct         month-to-date spend / company envelope
  *
  * Targets are per-org tunables (docs/company-vision.md §1b;
@@ -44,7 +44,7 @@
  * zero).
  */
 import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { organizations, orgSloSamples } from '../database/schema';
@@ -152,9 +152,6 @@ export function breachesOf(m: SloMetrics, t: SloTargets): SloBreach[] {
 
 @Injectable()
 export class OrgSloService {
-  /** Memoised per process: does org_goals carry `atRisk` (another branch's column)? */
-  private atRiskColumn: boolean | null = null;
-
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
     private readonly org: OrgService,
@@ -206,7 +203,7 @@ export class OrgSloService {
     const decided = (await this.approvals.list(orgId)).filter((a) => a.decidedAt && a.decidedAt >= since && ['approved', 'rejected', 'revision_requested'].includes(a.status));
     const goals = (await this.org.goals(orgId)).filter((g) => g.status === 'active');
     const owned = goals.filter((g) => g.ownerAgentId && g.unitId).length;
-    const atRisk = await this.atRiskPct(orgId, goals.length);
+    const atRisk = goals.length === 0 ? null : round((goals.filter((g) => g.atRisk === 1).length / goals.length) * 100);
     const ws = await this.workspaces.get(org.workspaceId).catch(() => null);
     const envelope = ws?.orgMonthlyUsd ?? org.monthlyBudgetUsd;
     const month = now.toISOString().slice(0, 7);
@@ -225,26 +222,6 @@ export class OrgSloService {
       spendVsEnvelopePct: envelope > 0 ? round((monthSpend / envelope) * 100) : null,
       acceptedTasks: accepted.length, runs: runs.length, decisions: decided.length, openCriticalSignals: criticals,
     };
-  }
-
-  /** `atRisk` on org_goals belongs to the intent branch (item 18); probe the
-   *  live schema once and read it with raw SQL so this module neither depends
-   *  on nor breaks without it. Truthy = 1 / true / non-empty. */
-  private async atRiskPct(orgId: string, activeGoals: number): Promise<number | null> {
-    if (activeGoals === 0) return null;
-    if (this.atRiskColumn === null) {
-      try {
-        const res = await this.db.execute(sql`SELECT 1 FROM information_schema.columns WHERE table_name = 'org_goals' AND column_name = 'atRisk'`);
-        const rows = (res as { rows?: unknown[] }).rows ?? (Array.isArray(res) ? res : []);
-        this.atRiskColumn = rows.length > 0;
-      } catch { this.atRiskColumn = false; }
-    }
-    if (!this.atRiskColumn) return null;
-    try {
-      const res = await this.db.execute(sql`SELECT count(*)::int AS n FROM org_goals WHERE "orgId" = ${orgId} AND "status" = 'active' AND "atRisk" IS NOT NULL AND "atRisk"::text NOT IN ('0', 'false', '')`);
-      const rows = ((res as { rows?: unknown[] }).rows ?? (Array.isArray(res) ? res : [])) as Array<{ n: number | string }>;
-      return round((Number(rows[0]?.n ?? 0) / activeGoals) * 100);
-    } catch { return null; }
   }
 
   // ---- samples and the pulse ----

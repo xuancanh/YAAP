@@ -25,6 +25,7 @@ import { OrgRuntimeService } from './org-runtime.service';
 import { OrgModeService } from './org-mode.service';
 import { OrgAnnouncer } from './org-announcer';
 import { OrgUnitsService } from './org-units.service';
+import { OrgIntentService } from './org-intent.service';
 import { WorkspaceOrgController } from './workspace-org.controller';
 import { OrgSignalsService } from './org-signals.service';
 import { OrgSloService } from './org-slo.service';
@@ -42,11 +43,14 @@ import { OrgAuditorService } from './org-auditor.service';
  * OrgSloService are model-free and run on the runtime's tick; the
  * OrgAuditorService drives an audit run through the runtime on its own
  * cadence timer.
+ * Intent (docs/company-vision.md §1b–§2, item 18): OrgIntentService holds the
+ * vision, key results, check-ins and the model-free risk assessment; the
+ * runtime runs the planning cascade and reads the org's tunables.
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule],
   controllers: [OrgController, WorkspaceOrgController],
-  providers: [OrgService, OrgUnitsService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController],
-  exports: [OrgService, OrgUnitsService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController],
+  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService],
 })
 export class OrgModule {}

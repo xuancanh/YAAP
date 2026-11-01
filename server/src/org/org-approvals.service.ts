@@ -30,8 +30,8 @@ import { OrgTasksService, parseBrief, type TaskBrief } from './org-tasks.service
 import { meetScopes, parseScopes } from './scopes';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune'];
 export type ApprovalDecision = 'approve' | 'reject' | 'revise';
 
 export const APPROVAL_TTL_MS = 72 * 60 * 60_000;
@@ -253,6 +253,9 @@ export class OrgApprovalsService {
         await this.org.terminateMember(orgId, agentId, 'user');
         return { agentId };
       }
+      case 'tune':
+        // A tunable (docs/company-vision.md §1b) the chief proposed in supervised mode; bounds are re-checked on apply.
+        return this.org.setTunable(orgId, String(payload.key ?? ''), payload.value, { actor: 'user', why: String(payload.why ?? ''), decidedBy: by });
       case 'external':
         // Nothing to apply: the outward action itself still runs through the
         // agent inbox's action_pending gate; this records the CEO's go-ahead.
@@ -338,6 +341,7 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'terminate': return `terminate ${String(payload.agentName ?? payload.agentId ?? '')}`;
     case 'external': return String(payload.description ?? 'external action').slice(0, 120);
     case 'escalation': return `task "${String(payload.title ?? '')}": ${String(payload.reason ?? '')}`.slice(0, 160);
+    case 'tune': return `tune ${String(payload.key ?? '')} ${payload.from !== undefined ? `${String(payload.from)} → ` : ''}${String(payload.value ?? '')}`;
     default: return kind;
   }
 }

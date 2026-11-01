@@ -1,16 +1,14 @@
 /**
  * Assurance tunables (docs/company-vision.md §1b, §5): every threshold the
  * signals sweep, the SLOs, the pulse and the auditor use is a per-org
- * setting with a default and a bound, read from `organizations.tunables`
- * (JSON { key: number }). The chief tunes them (the `org_tune` tool, item 18)
- * to the company's culture; the bounds are the safety floor and stay in
- * code — a value outside them is clamped, never applied.
- *
- * TODO(rebase): item 18 adds `server/src/org/org-tunables.ts` with a generic
- * `tunable(org, key)` over the same column; switch `assuranceTunable` to it
- * and register these defaults there. Until then this module owns the keys
- * below and reads the column itself.
+ * setting with a default and a bound. Since item 18 the one store is
+ * `organizations.tunables` read through `server/src/org/org-tunables.ts`:
+ * this module registers the assurance keys there at import and keeps
+ * `assuranceTunable` / `mergeTunables` / `parseTunables` as thin, typed
+ * wrappers, so `org_tune`, `PUT …/org/tunables` and `PATCH …/org/slo` all
+ * read and write the same column with the same bounds.
  */
+import { checkTunable, registerTunables, tunable, TUNABLES, parseTunables as parseAll, type TunableDef } from './org-tunables';
 
 export interface TunableSpec { default: number; min: number; max: number; doc: string }
 
@@ -38,37 +36,34 @@ export const ASSURANCE_TUNABLES = {
 
 export type AssuranceTunableKey = keyof typeof ASSURANCE_TUNABLES;
 
+// One registry: the assurance keys join item 18's table at import time.
+registerTunables(Object.fromEntries(Object.entries(ASSURANCE_TUNABLES).map(([k, v]): [string, TunableDef] => [k, {
+  default: v.default, min: v.min, max: v.max, description: v.doc, area: 'assurance',
+}])));
+
 export function parseTunables(raw: unknown): Record<string, number> {
-  if (typeof raw !== 'string') return {};
-  try {
-    const v = JSON.parse(raw || '{}') as unknown;
-    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
-    const out: Record<string, number> = {};
-    for (const [k, n] of Object.entries(v as Record<string, unknown>)) if (typeof n === 'number' && Number.isFinite(n)) out[k] = n;
-    return out;
-  } catch { return {}; }
+  return parseAll(typeof raw === 'string' ? raw : undefined);
 }
 
 /** The clamped value of a tunable for an org row (which carries `tunables`
  *  JSON; a row without the column, or with a bad value, yields the default). */
 export function assuranceTunable(org: { tunables?: string | null } | Record<string, unknown>, key: AssuranceTunableKey): number {
-  const spec: TunableSpec = ASSURANCE_TUNABLES[key];
-  const v = parseTunables((org as { tunables?: unknown }).tunables)[key];
-  if (v === undefined) return spec.default;
-  return Math.min(spec.max, Math.max(spec.min, v));
+  return tunable(org as { tunables?: string | null }, key);
 }
 
-/** Validate a patch: known keys, finite numbers, inside the bounds. Returns
- *  the merged map; throws naming the first offending key. */
+/** Validate a patch against the shared registry: known keys must be finite
+ *  numbers inside their bound (the message names it); null removes an
+ *  override; a key no module registered is refused, so the SLO route and
+ *  `org_tune` agree on what a tunable is. Returns the merged map. */
 export function mergeTunables(current: Record<string, number>, patch: Record<string, unknown>): Record<string, number> {
   const next = { ...current };
   for (const [k, v] of Object.entries(patch)) {
-    const spec = (ASSURANCE_TUNABLES as Record<string, TunableSpec | undefined>)[k];
-    if (!spec) { if (v === null) { delete next[k]; continue; } next[k] = Number(v); continue; } // another module's key: pass through
     if (v === null) { delete next[k]; continue; }
+    if (!TUNABLES[k]) throw new Error(`unknown tunable "${k}" — known: ${Object.keys(TUNABLES).join(', ')}`);
     if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`${k} must be a number`);
-    if (v < spec.min || v > spec.max) throw new Error(`${k} must be between ${spec.min} and ${spec.max} (the bound is the safety floor)`);
-    next[k] = v;
+    const check = checkTunable(k, v);
+    if (!check.ok) throw new Error(`${k} must be between ${TUNABLES[k].min} and ${TUNABLES[k].max} (the bound is the safety floor)`);
+    next[k] = check.value;
   }
   return next;
 }

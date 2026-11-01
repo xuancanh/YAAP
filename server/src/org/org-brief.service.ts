@@ -13,9 +13,8 @@
  * that widens authority or spends money is taken in the app
  * (docs/security.md §b, "approvals exist only in the app").
  */
-import { BadRequestException, Injectable, Optional } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
 import { desc, eq } from 'drizzle-orm';
-import { Inject } from '@nestjs/common';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { organizations, orgAudits } from '../database/schema';
@@ -28,6 +27,7 @@ import { OrgApprovalsService, summarize, type ApprovalDecision } from './org-app
 import { OrgAuditService } from './org-audit.service';
 import { OrgSignalsService } from './org-signals.service';
 import { OrgSloService } from './org-slo.service';
+import { OrgIntentService } from './org-intent.service';
 
 export interface BriefItem { n: number; approvalId: string; kind: string; summary: string }
 export interface Brief { orgId: string; at: string; text: string; items: BriefItem[] }
@@ -47,6 +47,8 @@ export class OrgBriefService {
     /** Optional: assurance (docs/company-vision.md §5) — the Signals, Pulse and Audit sections. */
     @Optional() private readonly signals?: OrgSignalsService,
     @Optional() private readonly slo?: OrgSloService,
+    /** Optional: key results (docs/company-vision.md §2) for the "Key results" section. */
+    @Optional() private readonly intent?: OrgIntentService,
   ) {}
 
   /** Compose (and, with deliver, write) the brief. Deterministic: no model call. */
@@ -95,6 +97,19 @@ export class OrgBriefService {
     for (const r of failed.slice(0, 5)) lines.push(`  - ✗ ${r.status}: ${tasks.find((t) => t.id === r.taskId)?.title ?? r.taskId.slice(0, 8)} (${nameOf(r.agentId)})`);
     const accepted = tasks.filter((t) => t.status === 'done').length;
     if (accepted > 0 && orgSpent > 0) lines.push(`- Cost per accepted task this month: $${(orgSpent / accepted).toFixed(2)}.`);
+
+    // 2b. Key results (docs/company-vision.md §2.3–§2.4): pace counts, the
+    //     top at-risk with owners, and the vision-level decision line.
+    if (this.intent) {
+      const kr = await this.intent.summary(orgId, now).catch(() => null);
+      if (kr && (kr.total > 0 || kr.objectivesAtRisk.length > 0)) {
+        lines.push('', '## Key results');
+        lines.push(`- ${kr.total} active: ${kr.onPace} on pace, ${kr.behind} behind, ${kr.unknown} not yet measurable; ${kr.atRisk.length ? `${kr.atRisk.length} at risk` : 'none at risk'}.`);
+        for (const { goal, ownerName } of kr.atRisk) lines.push(`  - ⚠ ${goal.title} (${ownerName}${goal.dueAt ? `, due ${goal.dueAt.slice(0, 10)}` : ''}) — ${goal.atRiskReason}`);
+        for (const o of kr.objectivesAtRisk) lines.push(`  - ■ objective at risk: ${o.title} — ${o.atRiskReason}`);
+        if (kr.visionAtRisk) lines.push(`- **Decision:** ${kr.objectivesAtRisk.length} objectives are at risk — the vision is. Cut scope, add budget, or accept the slip; tell the chief of staff which.`);
+      }
+    }
 
     // 3. Anomalies
     const anomalies: string[] = [];
