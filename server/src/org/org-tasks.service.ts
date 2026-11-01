@@ -19,6 +19,7 @@ import { currentAccountId } from '../accounts/account-context';
 import { TriggerBus, OrgWakeReason } from '../chats/trigger-bus';
 import { OrgAuditService } from './org-audit.service';
 import { OrgService } from './org.service';
+import { OrgUnitsService } from './org-units.service';
 
 export type OrgTask = typeof orgTasks.$inferSelect;
 export type OrgRun = typeof orgRuns.$inferSelect;
@@ -46,15 +47,23 @@ export class OrgTasksService {
     private readonly org: OrgService,
     private readonly audit: OrgAuditService,
     @Optional() private readonly bus?: TriggerBus,
+    /** Optional: without it tasks carry no unit (docs/group-chat.md §7). */
+    @Optional() private readonly units?: OrgUnitsService,
   ) {}
 
   // ---- tasks ----
 
-  list(orgId: string, opts: { projectId?: string; status?: string } = {}): Promise<OrgTask[]> {
+  /** The board, optionally one unit's: `unitId` alone is that unit's own
+   *  tasks; with `rollUp` the units below it are included too. */
+  async list(orgId: string, opts: { projectId?: string; status?: string; unitId?: string; rollUp?: boolean } = {}): Promise<OrgTask[]> {
     const conds = [eq(orgTasks.orgId, orgId)];
     if (opts.projectId) conds.push(eq(orgTasks.projectId, opts.projectId));
     if (opts.status) conds.push(eq(orgTasks.status, opts.status));
-    return this.db.select().from(orgTasks).where(and(...conds));
+    const rows = await this.db.select().from(orgTasks).where(and(...conds));
+    if (!opts.unitId) return rows;
+    const scope = new Set(opts.rollUp && this.units ? await this.units.subtree(orgId, opts.unitId) : [opts.unitId]);
+    const root = this.units ? await this.units.rootUnit(orgId).catch(() => null) : null;
+    return rows.filter((t) => scope.has(t.unitId ?? root?.id ?? ''));
   }
 
   async get(orgId: string, taskId: string): Promise<OrgTask> {
@@ -78,6 +87,8 @@ export class OrgTasksService {
     createdBy?: string;
     /** Group chat linkage (docs/group-chat.md §3): the message this task was made from. */
     channelId?: string | null; messageId?: string | null;
+    /** Units (docs/group-chat.md §7): named explicitly, or defaulted by the rule. */
+    unitId?: string | null;
   }): Promise<OrgTask> {
     const org = await this.org.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 200);
@@ -92,6 +103,12 @@ export class OrgTasksService {
       if (!m || m.status !== 'active') throw new BadRequestException('assignee must be an active member of this organization');
     }
     const brief = parseBrief(typeof input.brief === 'string' ? input.brief : (input.brief as Record<string, unknown> | undefined));
+    let unitId: string | null = null;
+    let unitExplicit = 0;
+    if (this.units) {
+      if (input.unitId) { unitId = (await this.units.get(orgId, input.unitId)).id; unitExplicit = 1; }
+      else unitId = await this.units.defaultUnitId(orgId, { assigneeAgentId: input.assigneeAgentId, createdBy: input.createdBy }).catch(() => null);
+    }
     const now = nowIso();
     const row: OrgTask = {
       id: newId(), accountId: currentAccountId(), orgId, projectId: input.projectId ?? null, parentTaskId: input.parentTaskId ?? null,
@@ -101,10 +118,11 @@ export class OrgTasksService {
       blockers: '[]', fileScope: JSON.stringify((input.fileScope ?? []).map(String).slice(0, 20)),
       noProgressCount: 0, lastRunAt: null, createdBy: input.createdBy ?? 'user',
       channelId: input.channelId ?? null, messageId: input.messageId ?? null,
+      unitId, unitExplicit,
       createdAt: now, updatedAt: now,
     };
     await this.db.insert(orgTasks).values(row);
-    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId } });
+    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId } });
     if (row.assigneeAgentId && status === 'todo' && org.status === 'active') this.emitWake(orgId, row.id, row.assigneeAgentId, 'assignment');
     return row;
   }
@@ -112,9 +130,12 @@ export class OrgTasksService {
   async update(orgId: string, taskId: string, patch: {
     title?: string; brief?: Partial<TaskBrief>; status?: TaskStatus; blockers?: string[]; projectId?: string | null;
     reviewerAgentId?: string | null; fileScope?: string[]; noProgressCount?: number; lastRunAt?: string | null; claimedBy?: string | null; claimedAt?: string | null; reviewRounds?: number;
+    /** Move the task to another unit board (pins it there). */
+    unitId?: string;
   }, actor = 'user'): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     const set: Record<string, unknown> = { updatedAt: nowIso() };
+    if (patch.unitId !== undefined && this.units) { set.unitId = (await this.units.get(orgId, patch.unitId)).id; set.unitExplicit = 1; }
     if (patch.title !== undefined) { const title = patch.title.trim().slice(0, 200); if (!title) throw new BadRequestException('title cannot be empty'); set.title = title; }
     if (patch.brief !== undefined) set.brief = JSON.stringify({ ...parseBrief(t.brief), ...parseBrief(patch.brief as Record<string, unknown>) });
     if (patch.status !== undefined) {
@@ -138,9 +159,10 @@ export class OrgTasksService {
     // A task that just became blocked is a board event the autonomous chief reviews (docs/group-chat.md §5).
     if (patch.status === 'blocked' && t.status !== 'blocked') this.bus?.emitOrgBoard({ orgId, kind: 'blocked', refId: taskId, detail: `"${t.title}" is blocked${patch.blockers?.length ? `: ${patch.blockers.at(-1)}` : ''}` });
     const updated = await this.get(orgId, taskId);
-    // Status back into the originating channel thread (docs/group-chat.md §3).
-    if (patch.status !== undefined && patch.status !== t.status && updated.channelId) {
-      this.bus?.emitTaskStatus({ source: 'org', taskId, title: updated.title, status: updated.status, previous: t.status, channelId: updated.channelId, messageId: updated.messageId, agentId: updated.assigneeAgentId });
+    // Status back into the originating channel thread (docs/group-chat.md §3),
+    // or into the unit channel when the task did not come from a message (§7).
+    if (patch.status !== undefined && patch.status !== t.status && (updated.channelId || updated.unitId)) {
+      this.bus?.emitTaskStatus({ source: 'org', taskId, title: updated.title, status: updated.status, previous: t.status, channelId: updated.channelId, messageId: updated.messageId, agentId: updated.assigneeAgentId, unitId: updated.unitId });
     }
     return updated;
   }
@@ -152,8 +174,10 @@ export class OrgTasksService {
     const m = await this.org.member(orgId, agentId);
     if (!m || m.status !== 'active') throw new BadRequestException('assignee must be an active member of this organization');
     if (['done', 'cancelled'].includes(t.status)) throw new BadRequestException(`task is ${t.status}`);
-    await this.db.update(orgTasks).set({ assigneeAgentId: agentId, status: 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
-    await this.audit.append(orgId, { actor, action: 'task_assign', refType: 'task', refId: taskId, payload: { agentId, previous: t.assigneeAgentId } });
+    // The board follows the assignee unless the unit was named explicitly (docs/group-chat.md §7).
+    const unitId = this.units && !t.unitExplicit ? await this.units.defaultUnitId(orgId, { assigneeAgentId: agentId }).catch(() => t.unitId) : t.unitId;
+    await this.db.update(orgTasks).set({ assigneeAgentId: agentId, status: 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.audit.append(orgId, { actor, action: 'task_assign', refType: 'task', refId: taskId, payload: { agentId, previous: t.assigneeAgentId, unitId } });
     if (await this.org.isActive(orgId)) this.emitWake(orgId, taskId, agentId, 'assignment');
     return this.get(orgId, taskId);
   }

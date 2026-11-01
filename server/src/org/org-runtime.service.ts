@@ -63,6 +63,7 @@ import { OrgApprovalsService, ReorgChange, StrategyPayload } from './org-approva
 import { OrgAuditService } from './org-audit.service';
 import { OrgBriefService, localParts } from './org-brief.service';
 import { OrgAnnouncer } from './org-announcer';
+import { OrgUnitsService, type OrgUnit } from './org-units.service';
 import { parseScopes, widenedScopes } from './scopes';
 
 export type RunResult = 'ran' | 'budget_stop' | 'refused' | `skipped:${string}`;
@@ -134,6 +135,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
      *  its context (docs/accounts.md §3); wakes inherit the context of the
      *  request or run that queued them. */
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: units (docs/group-chat.md §7) — lead tools and unit-channel lines. */
+    @Optional() private readonly units?: OrgUnitsService,
   ) {
     bus?.onOrgWake((ev) => this.wake(ev));
     bus?.onOrgBoard((ev) => this.onBoardEvent(ev));
@@ -667,6 +670,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       lines.push(`- "${org.name}" (${org.status}${chief ? ', you are the chief of staff' : `, you are ${m.title || 'a member'}`}). ${org.mission ? `Mission: ${org.mission.slice(0, 300)}` : ''}`);
       if (chief && await this.isAutonomous(org)) lines.push('  As chief of staff you decompose goals into briefed tasks (org_create_task, org_assign), review results (org_review), keep the board moving (org_read_board, org_escalate) and report (org_report). This company is in autonomous mode: org_hire_agent, org_reorg, org_set_scope, org_allocate_budget and org_terminate_agent act at once within caps (depth, fan-out, agent cap, company envelope, your own scopes) and are refused with the reason outside them; give a one-line why each time. Strategy still needs the CEO. Keep the roster small.');
       else if (chief) lines.push('  As chief of staff you decompose goals into briefed tasks (org_create_task, org_assign), review results (org_review), keep the board moving (org_read_board, org_escalate) and report (org_report). Hiring, scope widening, reorgs, budget raises and terminations are proposals the CEO approves in the app — they never take effect on your say-so. Keep the roster small.');
+      else if (this.units && await this.units.isLead(org.id, session.agentId)) lines.push('  You lead a unit: org_create_task and org_assign work for yourself and your direct reports, org_set_goal sets a goal for your unit (a child of a goal you can see), org_unit_report shows your unit\'s board and goal progress. Work outside your unit goes to the chief of staff as a backlog task.');
       else lines.push('  org_create_task puts work into the backlog for the chief of staff to triage; org_read_board shows the board; org_message posts to the group log (wakes nobody).');
     }
     return lines.join('\n');
@@ -692,16 +696,20 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   async specsFor(session: ChatSession): Promise<AiToolSpec[]> {
     if (!this.enabled() || !session.agentId) return [];
     const ctx = this.running.get(session.id);
+    const leadOf = async (orgIds: string[]) => { for (const id of orgIds) if (this.units && await this.units.isLead(id, session.agentId!)) return true; return false; };
     if (ctx) {
       const specs = [...COMMON_TOOLS, ...TASK_TOOLS];
       if (ctx.reviewer || ctx.isChief) specs.push(...REVIEW_TOOLS);
-      if (ctx.isChief) specs.push(...MANAGER_TOOLS.filter((t) => !REVIEW_TOOLS.includes(t)));
+      if (ctx.isChief) specs.push(...MANAGER_TOOLS.filter((t) => !REVIEW_TOOLS.includes(t)), ...LEAD_TOOLS.filter((t) => !MANAGER_TOOLS.includes(t)));
+      else if (await leadOf([ctx.orgId])) specs.push(...LEAD_TOOLS);
       return specs;
     }
     const memberships = (await this.org.membershipsOf(session.agentId)).filter((m) => m.status === 'active');
     if (memberships.length === 0) return [];
     const chiefOf = (await Promise.all(memberships.map((m) => this.org.get(m.orgId).catch(() => null)))).some((o) => o?.chiefOfStaffAgentId === session.agentId);
-    return chiefOf ? [...COMMON_TOOLS, ...TASK_TOOLS, ...REVIEW_TOOLS, ...MANAGER_TOOLS.filter((t) => !REVIEW_TOOLS.includes(t))] : [...COMMON_TOOLS];
+    if (chiefOf) return [...COMMON_TOOLS, ...TASK_TOOLS, ...REVIEW_TOOLS, ...MANAGER_TOOLS.filter((t) => !REVIEW_TOOLS.includes(t)), ...LEAD_TOOLS.filter((t) => !MANAGER_TOOLS.includes(t))];
+    // A unit lead (docs/group-chat.md §7) gets the unit-scoped set.
+    return (await leadOf(memberships.map((m) => m.orgId))) ? [...COMMON_TOOLS, ...LEAD_TOOLS] : [...COMMON_TOOLS];
   }
 
   async execute(session: ChatSession, rawName: string, input: Record<string, unknown>): Promise<string> {
@@ -731,6 +739,12 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     };
     const agentOf = (key = 'agent'): Promise<OrgMember> => memberByRef(str(key));
     const requireChief = () => { if (!isChief) throw new Error(`${name} is a chief-of-staff tool`); };
+    // Units (docs/group-chat.md §7): a member that leads a unit gets a
+    // unit-scoped set — its reports and itself, its board, its goal subtree.
+    const leadUnit: OrgUnit | null = !isChief && this.units ? await this.units.isLead(org.id, agentId) : null;
+    const requireChiefOrLead = () => { if (!isChief && !leadUnit) throw new Error(`${name} is for the chief of staff and unit leads`); };
+    const inMyUnit = (m: OrgMember) => isChief || (leadUnit !== null && (m.agentId === agentId || m.reportsToAgentId === agentId));
+    const requireInMyUnit = (m: OrgMember) => { if (!inMyUnit(m)) throw new Error(`refused: ${names.get(m.agentId) ?? m.agentId.slice(0, 8)} is outside your unit — you may assign only yourself and your direct reports`); };
     // Autonomous mode (docs/group-chat.md §5): the chief's structural tools
     // act at once within caps and are refused — not queued — outside them.
     const ws = await this.workspaces.get(org.workspaceId).catch(() => null);
@@ -772,7 +786,12 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       case 'org_create_task': {
         const brief = { outcome: str('outcome'), context: str('context'), constraints: str('constraints'), done_when: str('done_when') };
         let assignee: string | null = null;
-        if (isChief && str('assignee')) assignee = (await agentOf('assignee')).agentId;
+        if (str('assignee')) {
+          if (!isChief && !leadUnit) throw new Error('only the chief of staff or a unit lead assigns on creation; leave assignee empty and the chief will triage');
+          const m = await agentOf('assignee');
+          requireInMyUnit(m);
+          assignee = m.agentId;
+        }
         const projectId = str('projectId') ? (await this.org.projects(org.id)).find((p) => p.id.startsWith(str('projectId')))?.id ?? null : (ctx ? (await this.tasks.get(org.id, ctx.taskId)).projectId : null);
         const t = await this.tasks.create(org.id, {
           title: str('title'), brief, projectId, parentTaskId: ctx?.taskId ?? null, assigneeAgentId: assignee,
@@ -835,13 +854,34 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       }
       // ---- manager set ----
       case 'org_assign': {
-        requireChief();
+        requireChiefOrLead();
         const t = await taskOf();
         const m = await agentOf('agent');
+        requireInMyUnit(m);
+        if (leadUnit && t.unitId !== leadUnit.id && t.assigneeAgentId) {
+          const owner = await this.org.member(org.id, t.assigneeAgentId);
+          if (!owner || !inMyUnit(owner)) throw new Error(`refused: task [${t.id.slice(0, 8)}] is not on your unit's board and belongs to someone outside your unit`);
+        }
         if (m.status !== 'active') throw new Error(`${names.get(m.agentId)} is ${m.status}`);
         await this.tasks.assign(org.id, t.id, m.agentId, actor);
         if (ctx) ctx.progress = true;
         return `Task [${t.id.slice(0, 8)}] assigned to ${names.get(m.agentId)}; they will be woken.`;
+      }
+      case 'org_set_goal': {
+        requireChiefOrLead();
+        if (!this.units) throw new Error('units are not available on this server');
+        const unit = leadUnit ?? (str('unit') ? await this.unitByRef(org.id, str('unit')) : await this.units.rootUnit(org.id));
+        const parentId = str('parentGoalId') ? (await this.org.goals(org.id)).find((g) => g.id === str('parentGoalId') || g.id.startsWith(str('parentGoalId')))?.id : null;
+        if (str('parentGoalId') && !parentId) throw new Error(`no goal "${str('parentGoalId')}"`);
+        const g = await this.units.addGoal(org.id, { title: str('title'), description: str('description'), ownerAgentId: agentId, unitId: unit.id, parentGoalId: parentId ?? null }, actor).catch((err: unknown) => { throw new Error(`refused: ${err instanceof Error ? err.message : String(err)}`); });
+        if (ctx) ctx.progress = true;
+        return `Goal [${g.id.slice(0, 8)}] "${g.title}" set for ${unit.name} (#${unit.slug})${parentId ? ` under goal [${parentId.slice(0, 8)}]` : ''}. Reference it in channels as #goal:${g.id.slice(0, 8)}.`;
+      }
+      case 'org_unit_report': {
+        requireChiefOrLead();
+        if (!this.units) throw new Error('units are not available on this server');
+        const unit = leadUnit ?? (str('unit') ? await this.unitByRef(org.id, str('unit')) : await this.units.rootUnit(org.id));
+        return this.units.unitReport(org.id, unit.id, names);
       }
       case 'org_hire_agent': {
         requireChief();
@@ -866,6 +906,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         if (payload.monthlyBudgetUsd) await checkAllocation('agent', '__new__', payload.monthlyBudgetUsd);
         const result = await this.approvals.applyHire(org.id, payload, 'chief', 'chief');
         await this.recordAuto(org, 'hire', `${result.name} as ${payload.title}${payload.packName ? ` (${payload.packName} pack)` : ''}, reporting to ${names.get(reportsTo) ?? 'the chief'}${payload.monthlyBudgetUsd ? `, $${payload.monthlyBudgetUsd.toFixed(2)}/month` : ''}`, why, { agentId: result.agentId, scopes: result.scopes, depth: result.depth, packId: payload.packId, monthlyBudgetUsd: payload.monthlyBudgetUsd ?? 0 }, ctx);
+        await this.units?.announceIn(org.id, [result.agentId], `${result.name} joined this unit as ${payload.title}, reporting to ${names.get(reportsTo) ?? 'the chief'}.`);
         return `Hired ${result.name} (${payload.title}) at depth ${result.depth}, reporting to ${reportsTo === agentId ? 'you' : names.get(reportsTo) ?? reportsTo.slice(0, 8)}. Scopes: ${result.scopes.join(', ') || 'none'}${payload.outsideChiefHoldings.length ? `; dropped because you do not hold them: ${payload.outsideChiefHoldings.join(', ')}` : ''}. No memory, connections or loops inherited. Audited and announced in #company.`;
       }
       case 'org_set_scope': {
@@ -902,9 +943,11 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         await inSubtree(m);
         if (autonomous) {
           requireWhy();
+          const unitBefore = await this.units?.unitForAssignee(org.id, m.agentId).catch(() => null);
           await this.org.terminateMember(org.id, m.agentId, actor);
           this.cancelWakesFor(org.id, m.agentId);
           await this.recordAuto(org, 'terminate', `${names.get(m.agentId)} (${m.title || 'member'})`, why, { agentId: m.agentId }, ctx);
+          if (unitBefore && unitBefore.parentUnitId !== null && unitBefore.channelId) await this.announcer.channels?.postSystem(unitBefore.channelId, `${names.get(m.agentId)} left this unit (terminated${why ? `: ${why}` : ''}).`).catch(() => undefined);
           return `${names.get(m.agentId)} is terminated: its reports moved up one level, its grants are gone; the agent itself still exists outside the company. Audited and announced in #company.`;
         }
         const a = await this.approvals.create(org.id, { kind: 'terminate', payload: { agentId: m.agentId, agentName: names.get(m.agentId), reason: why }, requestedBy: 'chief', recommendation: why || undefined });
@@ -926,10 +969,19 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         if (autonomous) {
           requireWhy();
           if (changes.some((c) => c.agentId === agentId)) throw new Error('refused: you cannot move, pause or terminate yourself');
+          const touched = [...new Set(changes.flatMap((c) => (c.op === 'move' ? [c.agentId, c.reportsToAgentId] : [c.agentId])))];
+          const unitsBefore = this.units ? (await Promise.all(touched.map((a) => this.units!.unitForAssignee(org.id, a).catch(() => null)))).filter((u): u is OrgUnit => Boolean(u)) : [];
           const r = await this.approvals.applyReorg(org.id, changes, actor);
           for (const c of changes.slice(0, r.applied.length)) if (c.op === 'pause' || c.op === 'terminate') this.cancelWakesFor(org.id, c.agentId);
           const describe = (c: ReorgChange) => `${c.op} ${names.get(c.agentId) ?? c.agentId.slice(0, 8)}${c.op === 'move' ? ` → ${names.get(c.reportsToAgentId) ?? c.reportsToAgentId.slice(0, 8)}` : c.op === 'retitle' ? ` → "${c.title}"` : ''}`;
-          if (r.applied.length > 0) await this.recordAuto(org, 'reorg', changes.slice(0, r.applied.length).map(describe).join('; '), why, { changes: changes.slice(0, r.applied.length), failed: r.failed ?? null }, ctx);
+          if (r.applied.length > 0) {
+            const summary = changes.slice(0, r.applied.length).map(describe).join('; ');
+            await this.recordAuto(org, 'reorg', summary, why, { changes: changes.slice(0, r.applied.length), failed: r.failed ?? null }, ctx);
+            // One line in every unit channel the change touched: where people moved from and to (docs/group-chat.md §7).
+            const line = `Reorganized: ${summary}${why ? ` — ${why}` : ''}`;
+            const posted = new Set(await this.units?.announceIn(org.id, touched, line) ?? []);
+            for (const u of unitsBefore) if (!posted.has(u.id) && u.parentUnitId !== null && u.channelId) { posted.add(u.id); await this.announcer.channels?.postSystem(u.channelId, line).catch(() => undefined); }
+          }
           if (r.failed) return `${r.applied.length ? `Applied ${r.applied.length} change(s) (${changes.slice(0, r.applied.length).map(describe).join('; ')}); ` : ''}refused at ${r.failed}. Nothing after it was applied.`;
           return `Reorg applied (${changes.length} change(s)): ${changes.map(describe).join('; ')}. Audited and announced in #company.`;
         }
@@ -1026,6 +1078,15 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     return lines.join('\n');
   }
 
+  /** A unit by id prefix, slug or name (the chief's `unit` argument). */
+  private async unitByRef(orgId: string, ref: string): Promise<OrgUnit> {
+    const q = ref.trim().toLowerCase().replace(/^#/, '');
+    const all = this.units ? await this.units.units(orgId) : [];
+    const u = all.find((x) => x.id === q || x.id.startsWith(q) || x.slug === q || x.name.toLowerCase() === q);
+    if (!u) throw new Error(`no unit "${ref}" — units: ${all.map((x) => `${x.name} (#${x.slug})`).join(', ') || 'none'}`);
+    return u;
+  }
+
   private async resolveOrg(agentId: string, ctx: RunCtx | null, orgHint: unknown): Promise<Organization> {
     if (ctx) return this.org.get(ctx.orgId);
     const memberships = (await this.org.membershipsOf(agentId)).filter((m) => m.status === 'active');
@@ -1100,7 +1161,15 @@ const COMMON_TOOLS: AiToolSpec[] = [
   { name: 'org_read_board', description: 'Read the organisation\'s shared task board: id, status, title, owner. Pass mine=true for only your tasks.', inputSchema: { type: 'object', properties: { mine: { type: 'boolean' }, org: { type: 'string', description: 'Organisation name when you belong to several.' } } } },
   { name: 'org_read_goal', description: 'Read the organisation\'s goals and their projects.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
   { name: 'org_message', description: 'Post a short attributed message to the organisation\'s group log. It wakes nobody and carries no authority; use it for summaries, not for asking someone to act.', inputSchema: { type: 'object', properties: { text: { type: 'string' }, org: { type: 'string' } }, required: ['text'] } },
-  { name: 'org_create_task', description: 'Create a task on the shared board with the four-field brief. As a member it lands in the backlog (a subtask of your current task) for the chief of staff to triage; the chief may assign it directly.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, ...brief4, projectId: { type: 'string' }, assignee: { type: 'string', description: 'Chief only: member name to assign to.' }, org: { type: 'string' } }, required: ['title', 'outcome', 'done_when'] } },
+  { name: 'org_create_task', description: 'Create a task on the shared board with the four-field brief. As a member it lands in the backlog (a subtask of your current task) for the chief of staff to triage; the chief, or a unit lead for its own reports, may assign it directly.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, ...brief4, projectId: { type: 'string' }, assignee: { type: 'string', description: 'Chief or unit lead only: member name to assign to (a lead: itself or a direct report).' }, org: { type: 'string' } }, required: ['title', 'outcome', 'done_when'] } },
+];
+
+/** Unit leads (docs/group-chat.md §7): the unit-scoped set. The chief gets
+ *  these too, company-wide (`unit` names which unit). */
+const LEAD_TOOLS: AiToolSpec[] = [
+  { name: 'org_assign', description: 'Assign a board task to a member (by name); they are woken. Keep each member to a few open tasks. A unit lead may assign only itself and its direct reports.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, agent: { type: 'string' }, org: { type: 'string' } }, required: ['taskId', 'agent'] } },
+  { name: 'org_set_goal', description: 'Set a goal for your unit (the chief: for the company, or for a unit named in `unit`). Optionally a child of a goal you can see (parentGoalId: a goal of your unit or of a unit above it). Progress is computed from linked tasks and child goals.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, parentGoalId: { type: 'string' }, unit: { type: 'string', description: 'Chief only: unit name or #slug; defaults to the company.' }, org: { type: 'string' } }, required: ['title'] } },
+  { name: 'org_unit_report', description: 'Your unit\'s board (tasks by status, open work by owner) and goal tree with progress. The chief passes `unit` to read any unit; default is the company.', inputSchema: { type: 'object', properties: { unit: { type: 'string' }, org: { type: 'string' } } } },
 ];
 
 const TASK_TOOLS: AiToolSpec[] = [
@@ -1116,7 +1185,7 @@ const REVIEW_TOOLS: AiToolSpec[] = [
 
 const MANAGER_TOOLS: AiToolSpec[] = [
   ...REVIEW_TOOLS,
-  { name: 'org_assign', description: 'Assign a board task to a member (by name); they are woken. Keep each member to a few open tasks.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, agent: { type: 'string' }, org: { type: 'string' } }, required: ['taskId', 'agent'] } },
+  LEAD_TOOLS[0],
   { name: 'org_hire_agent', description: 'Hire a new member from a catalog pack (e.g. "Researcher", "Marketer") or a template (name + charter). Supervised mode: creates an approval card for the CEO and no agent exists until approved. Autonomous mode: executes at once within caps (depth ≤ 3, ≤ 5 reports, agent cap, company envelope) or is refused with the reason; why is required. Requested scopes are intersected with your own holdings; nothing is inherited.', inputSchema: { type: 'object', properties: { templateOrPack: { type: 'string' }, name: { type: 'string' }, title: { type: 'string' }, charter: { type: 'string', description: 'Template hires only.' }, reportsTo: { type: 'string', description: 'Member name; defaults to you.' }, scopes: { type: 'array', items: { type: 'string' }, description: 'tool:<name>, connection:<service>:<read|write>, skill:<name>, folder:<path>' }, provider: { type: 'string' }, model: { type: 'string' }, monthlyBudgetUsd: { type: 'number' }, why: { type: 'string', description: 'Your one-line recommendation.' }, org: { type: 'string' } }, required: ['templateOrPack', 'title'] } },
   { name: 'org_set_scope', description: 'Set a report\'s scopes. Narrowing applies immediately; widening creates an approval card for the CEO (supervised) or applies at once (autonomous, why required). You can never grant what you do not hold.', inputSchema: { type: 'object', properties: { agent: { type: 'string' }, scopes: { type: 'array', items: { type: 'string' } }, why: { type: 'string' }, org: { type: 'string' } }, required: ['agent', 'scopes'] } },
   { name: 'org_pause_agent', description: 'Pause a report immediately (a narrowing): its queued wakes are dropped and it runs no tasks until resumed by the CEO.', inputSchema: { type: 'object', properties: { agent: { type: 'string' }, org: { type: 'string' } }, required: ['agent'] } },
@@ -1132,11 +1201,11 @@ const MANAGER_TOOLS: AiToolSpec[] = [
 /** Old names kept for one release (docs/group-chat.md §5): accepted, not offered. */
 const TOOL_ALIASES: Record<string, string> = { org_propose_reorg: 'org_reorg', org_budget_request: 'org_allocate_budget' };
 
-const ALL_TOOL_NAMES = new Set([...COMMON_TOOLS, ...TASK_TOOLS, ...MANAGER_TOOLS].map((t) => t.name).concat(Object.keys(TOOL_ALIASES)));
+const ALL_TOOL_NAMES = new Set([...COMMON_TOOLS, ...TASK_TOOLS, ...MANAGER_TOOLS, ...LEAD_TOOLS].map((t) => t.name).concat(Object.keys(TOOL_ALIASES)));
 /** Reads, plus proposals: in supervised mode they only create an approval
  *  card the user resolves; in autonomous mode the owner's mode choice is the
  *  gate (org runs are Auto-mode turns either way). */
-const READONLY_TOOLS = new Set(['org_read_board', 'org_read_goal', 'org_audit_query', 'org_review_structure', 'org_hire_agent', 'org_reorg', 'org_propose_reorg', 'org_propose_strategy', 'org_terminate_agent']);
+const READONLY_TOOLS = new Set(['org_read_board', 'org_read_goal', 'org_audit_query', 'org_review_structure', 'org_unit_report', 'org_hire_agent', 'org_reorg', 'org_propose_reorg', 'org_propose_strategy', 'org_terminate_agent']);
 
 export const ORG_TOOL_NAMES = ALL_TOOL_NAMES;
 

@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants, orgHumans, workspaces } from '../database/schema';
+import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants, orgHumans, orgUnits, workspaces } from '../database/schema';
 import { TriggerBus } from '../chats/trigger-bus';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
@@ -53,14 +53,30 @@ export const DEFAULT_CHIEF_SCOPES = ['tool:fs_read', 'tool:fs_write', 'tool:web_
 
 export const charterHashOf = (charter: string): string => createHash('sha256').update(charter ?? '').digest('hex');
 
+/** Runs after the reports-to tree changed (docs/group-chat.md §7: units
+ *  follow the chart). Awaited, so a caller sees units in place on return. */
+export type StructureChangeHook = (orgId: string) => Promise<void>;
+
 @Injectable()
 export class OrgService {
+  private readonly structureHooks: StructureChangeHook[] = [];
+
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
     private readonly agents: AgentsService,
     private readonly audit: OrgAuditService,
     @Optional() private readonly bus?: TriggerBus,
   ) {}
+
+  /** OrgUnitsService registers here; a throwing hook never breaks the change. */
+  onStructureChange(hook: StructureChangeHook): () => void {
+    this.structureHooks.push(hook);
+    return () => { const i = this.structureHooks.indexOf(hook); if (i >= 0) this.structureHooks.splice(i, 1); };
+  }
+
+  private async structureChanged(orgId: string): Promise<void> {
+    for (const h of this.structureHooks) { try { await h(orgId); } catch { /* the hook logs its own failures */ } }
+  }
 
   // ---- humans (phase D) ----
 
@@ -198,6 +214,7 @@ export class OrgService {
     await this.db.update(workspaces).set({ chiefOfStaffAgentId: agentId }).where(eq(workspaces.id, org.workspaceId));
     await this.recomputeDepths(orgId);
     await this.audit.append(orgId, { actor, action: 'chief_replace', refType: 'agent', refId: agentId, payload: { previous: oldId } });
+    await this.structureChanged(orgId);
     return this.get(orgId);
   }
 
@@ -249,6 +266,7 @@ export class OrgService {
     await this.db.delete(orgProjects).where(eq(orgProjects.orgId, id));
     await this.db.delete(orgBudgets).where(eq(orgBudgets.orgId, id));
     await this.db.delete(orgGrants).where(eq(orgGrants.orgId, id));
+    await this.db.delete(orgUnits).where(eq(orgUnits.orgId, id));
     await this.db.delete(organizations).where(eq(organizations.id, id));
     if (org.status !== 'archived') await this.db.update(workspaces).set({ orgMode: 'off', chiefOfStaffAgentId: null }).where(eq(workspaces.id, org.workspaceId));
     return { ok: true };
@@ -308,6 +326,7 @@ export class OrgService {
     await this.db.insert(orgMembers).values(row);
     await this.writeGrants(orgId, input.agentId, scopes, input.grantedBy ?? input.actor ?? 'user');
     await this.audit.append(orgId, { actor: input.actor ?? 'user', action: 'member_add', refType: 'agent', refId: input.agentId, payload: { title: row.title, reportsToAgentId: input.reportsToAgentId, depth, scopes, charterHash: row.charterHash } });
+    await this.structureChanged(orgId);
     return row;
   }
 
@@ -341,6 +360,7 @@ export class OrgService {
       await this.db.update(orgMembers).set(set).where(eq(orgMembers.id, m.id));
       if (set.depth !== undefined) await this.recomputeDepths(orgId);
       await this.audit.append(orgId, { actor, action: 'member_update', refType: 'agent', refId: agentId, payload: set });
+      if (set.reportsToAgentId !== undefined) await this.structureChanged(orgId);
     }
     return (await this.member(orgId, agentId))!;
   }
@@ -390,6 +410,7 @@ export class OrgService {
     await this.db.delete(orgGrants).where(and(eq(orgGrants.orgId, orgId), eq(orgGrants.agentId, agentId)));
     await this.recomputeDepths(orgId);
     await this.audit.append(orgId, { actor, action: 'member_terminate', refType: 'agent', refId: agentId, payload: { reportsMovedTo: m.reportsToAgentId } });
+    await this.structureChanged(orgId);
     return { ok: true };
   }
 
@@ -469,7 +490,10 @@ export class OrgService {
 
   // ---- goals and projects ----
 
-  goals(orgId: string): Promise<OrgGoal[]> { return this.db.select().from(orgGoals).where(eq(orgGoals.orgId, orgId)); }
+  async goals(orgId: string, opts: { unitId?: string | null } = {}): Promise<OrgGoal[]> {
+    const rows = await this.db.select().from(orgGoals).where(eq(orgGoals.orgId, orgId));
+    return opts.unitId ? rows.filter((g) => g.unitId === opts.unitId) : rows;
+  }
 
   async goal(orgId: string, id: string): Promise<OrgGoal> {
     const g = (await this.db.select().from(orgGoals).where(and(eq(orgGoals.orgId, orgId), eq(orgGoals.id, id))).limit(1)).at(0);
@@ -477,20 +501,36 @@ export class OrgService {
     return g;
   }
 
-  async addGoal(orgId: string, input: { title: string; description?: string; ownerAgentId?: string | null; status?: string }, actor = 'user'): Promise<OrgGoal> {
+  /** Add a goal. `unitId`/`parentGoalId` (docs/group-chat.md §7) are stored
+   *  as given; OrgUnitsService.addGoal is the path that defaults the unit and
+   *  checks the parent is visible from it. */
+  async addGoal(orgId: string, input: { title: string; description?: string; ownerAgentId?: string | null; status?: string; unitId?: string | null; parentGoalId?: string | null }, actor = 'user'): Promise<OrgGoal> {
     await this.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 200);
     if (!title) throw new BadRequestException('goal title is required');
-    const row: OrgGoal = { id: newId(), accountId: currentAccountId(), orgId, title, description: (input.description ?? '').slice(0, 4_000), status: input.status ?? 'active', ownerAgentId: input.ownerAgentId ?? null, createdAt: nowIso() };
+    if (input.parentGoalId) await this.goal(orgId, input.parentGoalId);
+    const row: OrgGoal = { id: newId(), accountId: currentAccountId(), orgId, title, description: (input.description ?? '').slice(0, 4_000), status: input.status ?? 'active', ownerAgentId: input.ownerAgentId ?? null, unitId: input.unitId ?? null, parentGoalId: input.parentGoalId ?? null, createdAt: nowIso() };
     await this.db.insert(orgGoals).values(row);
-    await this.audit.append(orgId, { actor, action: 'goal_create', refType: 'goal', refId: row.id, payload: { title } });
+    await this.audit.append(orgId, { actor, action: 'goal_create', refType: 'goal', refId: row.id, payload: { title, unitId: row.unitId, parentGoalId: row.parentGoalId } });
     if (actor === 'user' || actor.startsWith('human:')) this.bus?.emitOrgBoard({ orgId, kind: 'goal', refId: row.id, detail: `new goal "${title}"` });
     return row;
   }
 
-  async updateGoal(orgId: string, id: string, patch: Partial<Pick<OrgGoal, 'title' | 'description' | 'status' | 'ownerAgentId'>>, actor = 'user'): Promise<OrgGoal> {
+  async updateGoal(orgId: string, id: string, patch: Partial<Pick<OrgGoal, 'title' | 'description' | 'status' | 'ownerAgentId' | 'unitId' | 'parentGoalId'>>, actor = 'user'): Promise<OrgGoal> {
     await this.goal(orgId, id);
     const set: Record<string, unknown> = {};
+    if (patch.unitId !== undefined) set.unitId = patch.unitId;
+    if (patch.parentGoalId !== undefined) {
+      if (patch.parentGoalId === id) throw new BadRequestException('a goal cannot be its own parent');
+      if (patch.parentGoalId) {
+        // no cycles: walk up from the proposed parent
+        const all = await this.goals(orgId);
+        let cur: OrgGoal | undefined = all.find((g) => g.id === patch.parentGoalId);
+        if (!cur) throw new NotFoundException(`goal ${patch.parentGoalId}`);
+        for (let i = 0; cur && i < 20; i++) { if (cur.id === id) throw new BadRequestException('that parent would form a cycle'); cur = cur.parentGoalId ? all.find((g) => g.id === cur!.parentGoalId) : undefined; }
+      }
+      set.parentGoalId = patch.parentGoalId;
+    }
     if (patch.title !== undefined) set.title = patch.title.trim().slice(0, 200);
     if (patch.description !== undefined) set.description = patch.description.slice(0, 4_000);
     if (patch.status !== undefined) {

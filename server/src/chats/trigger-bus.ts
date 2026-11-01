@@ -40,16 +40,20 @@ export interface OrgBoardEvent {
 }
 
 /** A task's status changed (docs/group-chat.md §3): the group chat posts a
- *  system line into the thread the task was made from. Emitted by both task
- *  services (agent kanban and the organisation board). */
+ *  system line into the thread the task was made from — or, for an org task
+ *  that did not come from a channel, into its unit channel (§7). Emitted by
+ *  both task services (agent kanban and the organisation board). */
 export interface TaskStatusEvent {
   source: 'agent' | 'org';
   taskId: string;
   title: string;
   status: string;
   previous: string;
-  channelId: string;
+  /** The originating channel; null when the task was not made from a message. */
+  channelId: string | null;
   messageId: string | null;
+  /** Org tasks: the unit board the task sits on (docs/group-chat.md §7). */
+  unitId?: string | null;
   /** The agent whose board it is (agent tasks) or the assignee (org tasks). */
   agentId: string | null;
 }

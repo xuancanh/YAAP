@@ -14,7 +14,9 @@ export interface MentionableMember {
   aliases?: string[];
 }
 
-export interface Mention { kind: 'agent' | 'human'; id: string }
+/** `goal` entries (docs/group-chat.md §3) are `#goal:<id>` references
+ *  resolved against the organization's goals; they notify nobody. */
+export interface Mention { kind: 'agent' | 'human' | 'goal'; id: string }
 
 export function handleOf(name: string): string {
   return name.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -56,4 +58,15 @@ export function parseMentions(text: string, members: MentionableMember[]): Menti
 /** The slug a channel name becomes: `Product Launch` → `product-launch`. */
 export function slugify(name: string): string {
   return handleOf(name).slice(0, 48);
+}
+
+/** `#goal:<id-or-prefix>` references (docs/group-chat.md §3, §7): the raw
+ *  ids as written, deduplicated, in order. Resolution against the org's
+ *  goals happens in the service. */
+export const GOAL_REF_RE = /(^|[^\w#])#goal:([\w-]{4,})/g;
+
+export function parseGoalRefs(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(GOAL_REF_RE)) { const id = m[2].replace(/[.,;:!?]+$/, ''); if (id && !out.includes(id)) out.push(id); }
+  return out;
 }

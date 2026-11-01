@@ -24,6 +24,7 @@ import { OrgBriefService } from './org-brief.service';
 import { OrgRuntimeService } from './org-runtime.service';
 import { OrgModeService } from './org-mode.service';
 import { OrgAnnouncer } from './org-announcer';
+import { OrgUnitsService } from './org-units.service';
 import { WorkspaceOrgController } from './workspace-org.controller';
 
 /**
@@ -32,11 +33,13 @@ import { WorkspaceOrgController } from './workspace-org.controller';
  * announcements reach the group chat (item 15) because GroupChatService
  * binds itself into the exported OrgAnnouncer wrapper (see org-announcer.ts);
  * without that module the wrapper drops them and everything else works.
+ * Units (docs/group-chat.md §7, item 17): OrgUnitsService derives a board, a
+ * channel and a goal tree per org level from the chart, through the same seam.
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule],
   controllers: [OrgController, WorkspaceOrgController],
-  providers: [OrgService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgBriefService, OrgRuntimeService, OrgAnnouncer, OrgModeService, OrgController],
-  exports: [OrgService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer],
+  providers: [OrgService, OrgUnitsService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgBriefService, OrgRuntimeService, OrgAnnouncer, OrgModeService, OrgController],
+  exports: [OrgService, OrgUnitsService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer],
 })
 export class OrgModule {}

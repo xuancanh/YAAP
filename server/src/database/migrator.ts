@@ -987,7 +987,118 @@ const MIGRATIONS: Migration[] = [
       `, [new Date().toISOString()]);
     },
   },
+  {
+    id: '0030-org-units',
+    up: async (db) => {
+      // Units (docs/group-chat.md §7, execution-plan item 17): a board, a
+      // channel and a goal tracker per org level. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_units (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "leadAgentId" TEXT NOT NULL,
+        "parentUnitId" TEXT,
+        "name" TEXT NOT NULL,
+        "slug" TEXT NOT NULL,
+        "channelId" TEXT,
+        "archivedAt" TEXT,
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_units_lead ON org_units ("orgId", "leadAgentId")`);
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('org_tasks', 'unitId', 'TEXT');
+      await add('org_tasks', 'unitExplicit', 'INTEGER NOT NULL DEFAULT 0');
+      await add('org_goals', 'unitId', 'TEXT');
+      await add('org_goals', 'parentGoalId', 'TEXT');
+      await backfillOrgUnits(db);
+    },
+  },
 ];
+
+/**
+ * Units backfill (migration 0030, also callable on its own): for every live
+ * organization, a root unit for the chief (named after the org, slug
+ * `company`, channel `#company` — created with every agent of the account
+ * and every person of the workspace when missing) and a unit for every
+ * member that has direct reports (`#<lead-slug>`, members = lead + reports +
+ * the owner and the org's CEO/board humans); then `org_tasks.unitId` and
+ * `org_goals.unitId` by the default rule for rows that have none: the unit
+ * led by the assignee's (owner's) manager, the root unit for the chief, for
+ * root-level members and for unowned rows. Pure SQL, idempotent.
+ */
+export async function backfillOrgUnits(db: Queryable): Promise<{ units: number }> {
+  const now = new Date().toISOString();
+  const orgs = (await db.query(`SELECT "id", "accountId", "workspaceId", "name", "chiefOfStaffAgentId" FROM organizations WHERE "status" <> 'archived'`)).rows as Array<{ id: string; accountId: string; workspaceId: string; name: string; chiefOfStaffAgentId: string | null }>;
+  let created = 0;
+  const slugOf = (name: string) => name.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'unit';
+  const rid = (seed: string) => `${seed}-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`.replace(/[^a-z0-9-]/g, '').slice(0, 48);
+  for (const org of orgs) {
+    if (!org.chiefOfStaffAgentId) continue;
+    const members = (await db.query(`SELECT "agentId", "reportsToAgentId", "status" FROM org_members WHERE "orgId" = $1`, [org.id])).rows as Array<{ agentId: string; reportsToAgentId: string | null; status: string }>;
+    const live = members.filter((m) => m.status !== 'terminated');
+    const humans = new Set<string>([org.accountId]);
+    for (const h of (await db.query(`SELECT "memberAccountId" FROM org_humans WHERE "orgId" = $1 AND "role" IN ('ceo', 'board')`, [org.id])).rows as Array<{ memberAccountId: string }>) humans.add(h.memberAccountId);
+    const ensureChannel = async (slug: string, name: string, topic: string, agentIds: string[], humanIds: string[], everyone: boolean): Promise<{ id: string; slug: string }> => {
+      let s = slug; let n = 2;
+      for (;;) {
+        const rows = (await db.query(`SELECT "id" FROM channels WHERE "workspaceId" = $1 AND "slug" = $2`, [org.workspaceId, s])).rows as Array<{ id: string }>;
+        if (rows.length > 0) { if (slug === 'company') return { id: rows[0].id, slug: s }; s = `${slug}-${n++}`; continue; }
+        break;
+      }
+      const id = rid('ch');
+      await db.query(`INSERT INTO channels ("accountId", "id", "workspaceId", "slug", "name", "topic", "kind", "createdBy", "folder", "createdAt") VALUES ($1, $2, $3, $4, $5, $6, 'public', 'system', $7, $8)`, [org.accountId, id, org.workspaceId, s, name, topic, `channels/${s}`, now]);
+      const agentsIn = everyone ? ((await db.query(`SELECT "id" FROM agents WHERE "accountId" = $1`, [org.accountId])).rows as Array<{ id: string }>).map((a) => a.id) : agentIds;
+      const humansIn = new Set(humanIds);
+      if (everyone) for (const m of (await db.query(`SELECT "memberAccountId" FROM workspace_members WHERE "workspaceId" = $1`, [org.workspaceId])).rows as Array<{ memberAccountId: string }>) humansIn.add(m.memberAccountId);
+      for (const a of new Set(agentsIn)) await db.query(`INSERT INTO channel_members ("accountId", "id", "channelId", "memberKind", "memberId", "role", "notify", "unprompted", "joinedAt") VALUES ($1, $2, $3, 'agent', $4, 'member', 'mentions', 0, $5)`, [org.accountId, rid('cm'), id, a, now]);
+      for (const h of humansIn) await db.query(`INSERT INTO channel_members ("accountId", "id", "channelId", "memberKind", "memberId", "role", "notify", "unprompted", "joinedAt") VALUES ($1, $2, $3, 'human', $4, $5, 'mentions', 0, $6)`, [org.accountId, rid('cm'), id, h, h === org.accountId ? 'owner' : 'member', now]);
+      return { id, slug: s };
+    };
+    const existing = (await db.query(`SELECT "id", "leadAgentId", "archivedAt" FROM org_units WHERE "orgId" = $1`, [org.id])).rows as Array<{ id: string; leadAgentId: string; archivedAt: string | null }>;
+    const unitOfLead = new Map(existing.map((u) => [u.leadAgentId, u.id]));
+    // root
+    let rootId = (await db.query(`SELECT "id" FROM org_units WHERE "orgId" = $1 AND "parentUnitId" IS NULL AND "archivedAt" IS NULL`, [org.id])).rows.map((r) => (r as { id: string }).id)[0];
+    if (!rootId) {
+      const ch = await ensureChannel('company', 'company', 'Company announcements: hires, reorgs, budgets, the brief.', [], [...humans], true);
+      rootId = unitOfLead.get(org.chiefOfStaffAgentId) ?? rid('unit');
+      if (unitOfLead.has(org.chiefOfStaffAgentId)) await db.query(`UPDATE org_units SET "parentUnitId" = NULL, "archivedAt" = NULL, "channelId" = COALESCE("channelId", $2) WHERE "id" = $1`, [rootId, ch.id]);
+      else { await db.query(`INSERT INTO org_units ("accountId", "id", "orgId", "leadAgentId", "parentUnitId", "name", "slug", "channelId", "archivedAt", "createdAt") VALUES ($1, $2, $3, $4, NULL, $5, 'company', $6, NULL, $7)`, [org.accountId, rootId, org.id, org.chiefOfStaffAgentId, org.name, ch.id, now]); created++; }
+      unitOfLead.set(org.chiefOfStaffAgentId, rootId);
+    }
+    // a unit per lead with live reports
+    const leads = [...new Set(live.filter((m) => m.reportsToAgentId && m.reportsToAgentId !== org.chiefOfStaffAgentId).map((m) => m.reportsToAgentId!))].filter((l) => live.some((m) => m.agentId === l));
+    const takenSlugs = new Set(((await db.query(`SELECT "slug" FROM org_units WHERE "orgId" = $1`, [org.id])).rows as Array<{ slug: string }>).map((r) => r.slug));
+    for (const lead of leads) {
+      if (unitOfLead.has(lead)) { await db.query(`UPDATE org_units SET "archivedAt" = NULL WHERE "id" = $1`, [unitOfLead.get(lead)]); continue; }
+      const leadName = ((await db.query(`SELECT "name" FROM agents WHERE "id" = $1`, [lead])).rows[0] as { name: string } | undefined)?.name ?? lead.slice(0, 8);
+      let slug = slugOf(leadName); for (let n = 2; takenSlugs.has(slug); n++) slug = `${slugOf(leadName)}-${n}`;
+      takenSlugs.add(slug);
+      const reports = live.filter((m) => m.reportsToAgentId === lead).map((m) => m.agentId);
+      const ch = await ensureChannel(slug, slug, `Unit channel of ${leadName}'s team.`, [lead, ...reports], [...humans], false);
+      const id = rid('unit');
+      await db.query(`INSERT INTO org_units ("accountId", "id", "orgId", "leadAgentId", "parentUnitId", "name", "slug", "channelId", "archivedAt", "createdAt") VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, NULL, $8)`, [org.accountId, id, org.id, lead, `${leadName}'s team`, ch.slug, ch.id, now]);
+      unitOfLead.set(lead, id); created++;
+    }
+    // parents: the unit led by the lead's nearest unit-leading manager
+    const managerOf = new Map(members.map((m) => [m.agentId, m.reportsToAgentId]));
+    const unitFor = (agentId: string | null | undefined): string => {
+      let cur = agentId ? managerOf.get(agentId) ?? null : null;
+      for (let i = 0; cur && i < 10; i++) { const u = unitOfLead.get(cur); if (u) return u; cur = managerOf.get(cur) ?? null; }
+      return rootId!;
+    };
+    for (const [lead, id] of unitOfLead) if (id !== rootId) await db.query(`UPDATE org_units SET "parentUnitId" = $2 WHERE "id" = $1`, [id, unitFor(lead)]);
+    // tasks and goals by the default rule
+    for (const t of (await db.query(`SELECT "id", "assigneeAgentId" FROM org_tasks WHERE "orgId" = $1 AND "unitId" IS NULL`, [org.id])).rows as Array<{ id: string; assigneeAgentId: string | null }>) {
+      await db.query(`UPDATE org_tasks SET "unitId" = $2 WHERE "id" = $1`, [t.id, t.assigneeAgentId ? unitFor(t.assigneeAgentId) : rootId]);
+    }
+    for (const g of (await db.query(`SELECT "id", "ownerAgentId" FROM org_goals WHERE "orgId" = $1 AND "unitId" IS NULL`, [org.id])).rows as Array<{ id: string; ownerAgentId: string | null }>) {
+      await db.query(`UPDATE org_goals SET "unitId" = $2 WHERE "id" = $1`, [g.id, g.ownerAgentId ? unitFor(g.ownerAgentId) : rootId]);
+    }
+  }
+  return { units: created };
+}
 
 /** Mirrors accounts/account-context.ts SINGLE_ACCOUNT; spelled out here so
  *  the migrator stays dependency-free. */

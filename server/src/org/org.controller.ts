@@ -9,7 +9,8 @@
  *  POST   /api/orgs/:id/pause | /resume          the kill switch
  *  members: POST /:id/members · PATCH /:id/members/:agentId · DELETE (terminate)
  *           POST /:id/members/:agentId/scopes · /pause · /resume · /charter/accept
- *  goals / projects: GET · POST · PATCH
+ *  units (docs/group-chat.md §7): GET /:id/units (tree) · PATCH /:id/units/:unitId (rename) · GET /:id/units/:unitId/board · GET /:id/units/:unitId/goals/tree · GET /:id/goals/tree
+ *  goals / projects: GET · POST · PATCH (goals take unitId, parentGoalId; ?unitId= filters)
  *  tasks: GET /:id/tasks (board) · POST · PATCH /:id/tasks/:taskId · POST …/assign · …/comment · …/review · …/wake · GET …/runs
  *  approvals: GET /:id/approvals · POST /:id/approvals/:approvalId/decide — the only place an approval is decided
  *  humans (phase D): GET /:id/humans · POST /:id/humans { memberAccountId, role } · DELETE /:id/humans/:memberAccountId
@@ -26,7 +27,7 @@
  * workspace's one organization and delegates here; these routes stay as
  * aliases and keep working.
  */
-import { Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Optional, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
 import { ConfigService } from '@nestjs/config';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
@@ -36,6 +37,7 @@ import { OrgApprovalsService, APPROVAL_KINDS, type ApprovalKind } from './org-ap
 import { OrgAuditService } from './org-audit.service';
 import { OrgBriefService, parseBriefReply } from './org-brief.service';
 import { OrgRuntimeService } from './org-runtime.service';
+import { OrgUnitsService } from './org-units.service';
 
 export class ChiefDto {
   @IsString() name!: string;
@@ -87,7 +89,12 @@ export class GoalDto {
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsString() status?: string;
   @IsOptional() ownerAgentId?: string | null;
+  /** Units (docs/group-chat.md §7). */
+  @IsOptional() unitId?: string | null;
+  @IsOptional() parentGoalId?: string | null;
 }
+
+export class UnitDto { @IsString() name!: string }
 
 export class ProjectDto {
   @IsOptional() @IsString() title?: string;
@@ -106,6 +113,8 @@ export class TaskDto {
   @IsOptional() reviewerAgentId?: string | null;
   @IsOptional() @IsArray() blockers?: string[];
   @IsOptional() @IsArray() fileScope?: string[];
+  /** Units (docs/group-chat.md §7): the board the task sits on; defaulted by the rule when absent. */
+  @IsOptional() @IsString() unitId?: string;
 }
 
 export class AssignDto { @IsString() agentId!: string }
@@ -141,6 +150,7 @@ export class OrgController {
     private readonly brief: OrgBriefService,
     private readonly runtime: OrgRuntimeService,
     private readonly config: ConfigService,
+    @Optional() private readonly units?: OrgUnitsService,
   ) {}
 
   private enabled(): boolean { return this.config.get<boolean>('companiesEnabled') !== false; }
@@ -203,23 +213,39 @@ export class OrgController {
   @Post(':id/members/:agentId/resume') resumeMember(@Param('id') id: string, @Param('agentId') agentId: string) { this.guard(); return this.org.setMemberStatus(id, agentId, 'active'); }
   @Post(':id/members/:agentId/charter/accept') acceptCharter(@Param('id') id: string, @Param('agentId') agentId: string) { this.guard(); return this.org.acceptCharter(id, agentId); }
 
+  // ---- units (docs/group-chat.md §7) ----
+  private unitsOr(): OrgUnitsService { if (!this.units) throw new NotFoundException('units are not available'); return this.units; }
+  @Get(':id/units') async units_(@Param('id') id: string) { this.guard(); return this.unitsOr().unitTree(id); }
+  @Patch(':id/units/:unitId') async renameUnit(@Param('id') id: string, @Param('unitId') unitId: string, @Body() dto: UnitDto) { this.guard(); return this.unitsOr().rename(id, unitId, dto.name, this.actor()); }
+  @Get(':id/units/:unitId/board') unitBoard(@Param('id') id: string, @Param('unitId') unitId: string, @Query('rollUp') rollUp?: string, @Query('status') status?: string) {
+    this.guard(); return this.tasks.list(id, { unitId, rollUp: rollUp === 'true', status: status || undefined });
+  }
+  @Get(':id/units/:unitId/goals/tree') async unitGoals(@Param('id') id: string, @Param('unitId') unitId: string) { this.guard(); return this.unitsOr().goalTree(id, { unitId }); }
+  @Get(':id/goals/tree') async goalTree(@Param('id') id: string, @Query('unitId') unitId?: string) { this.guard(); return this.unitsOr().goalTree(id, { unitId: unitId || null }); }
+
   // ---- goals / projects ----
-  @Get(':id/goals') goals(@Param('id') id: string) { this.guard(); return this.org.goals(id); }
-  @Post(':id/goals') addGoal(@Param('id') id: string, @Body() dto: GoalDto) { this.guard(); return this.org.addGoal(id, { title: dto.title ?? '', description: dto.description, ownerAgentId: dto.ownerAgentId, status: dto.status }); }
+  @Get(':id/goals') goals(@Param('id') id: string, @Query('unitId') unitId?: string) { this.guard(); return this.org.goals(id, { unitId: unitId || undefined }); }
+  @Post(':id/goals') addGoal(@Param('id') id: string, @Body() dto: GoalDto) {
+    this.guard();
+    const input = { title: dto.title ?? '', description: dto.description, ownerAgentId: dto.ownerAgentId, status: dto.status, unitId: dto.unitId, parentGoalId: dto.parentGoalId };
+    return this.units ? this.units.addGoal(id, input, this.actor()) : this.org.addGoal(id, input, this.actor());
+  }
   @Patch(':id/goals/:goalId') updateGoal(@Param('id') id: string, @Param('goalId') goalId: string, @Body() dto: GoalDto) { this.guard(); return this.org.updateGoal(id, goalId, dto); }
   @Get(':id/projects') projects(@Param('id') id: string) { this.guard(); return this.org.projects(id); }
   @Post(':id/projects') addProject(@Param('id') id: string, @Body() dto: ProjectDto) { this.guard(); return this.org.addProject(id, { title: dto.title ?? '', goalId: dto.goalId, ownerAgentId: dto.ownerAgentId }); }
   @Patch(':id/projects/:projectId') updateProject(@Param('id') id: string, @Param('projectId') projectId: string, @Body() dto: ProjectDto) { this.guard(); return this.org.updateProject(id, projectId, dto); }
 
   // ---- tasks (the board) ----
-  @Get(':id/tasks') board(@Param('id') id: string, @Query('projectId') projectId?: string, @Query('status') status?: string) { this.guard(); return this.tasks.list(id, { projectId: projectId || undefined, status: status || undefined }); }
+  @Get(':id/tasks') board(@Param('id') id: string, @Query('projectId') projectId?: string, @Query('status') status?: string, @Query('unitId') unitId?: string, @Query('rollUp') rollUp?: string) {
+    this.guard(); return this.tasks.list(id, { projectId: projectId || undefined, status: status || undefined, unitId: unitId || undefined, rollUp: rollUp === 'true' });
+  }
   @Post(':id/tasks') addTask(@Param('id') id: string, @Body() dto: TaskDto) {
     this.guard();
-    return this.tasks.create(id, { title: dto.title ?? '', brief: dto.brief, projectId: dto.projectId, parentTaskId: dto.parentTaskId, status: dto.status, assigneeAgentId: dto.assigneeAgentId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, createdBy: 'user' });
+    return this.tasks.create(id, { title: dto.title ?? '', brief: dto.brief, projectId: dto.projectId, parentTaskId: dto.parentTaskId, status: dto.status, assigneeAgentId: dto.assigneeAgentId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, createdBy: 'user' });
   }
   @Patch(':id/tasks/:taskId') updateTask(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TaskDto) {
     this.guard();
-    return this.tasks.update(id, taskId, { title: dto.title, brief: dto.brief, status: dto.status, blockers: dto.blockers, projectId: dto.projectId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope });
+    return this.tasks.update(id, taskId, { title: dto.title, brief: dto.brief, status: dto.status, blockers: dto.blockers, projectId: dto.projectId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId });
   }
   @Post(':id/tasks/:taskId/assign') assign(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: AssignDto) { this.guard(); return this.tasks.assign(id, taskId, dto.agentId); }
   @Post(':id/tasks/:taskId/comment') comment(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TextDto) { this.guard(); return this.tasks.comment(id, taskId, { text: dto.text, fromAgentId: null }); }

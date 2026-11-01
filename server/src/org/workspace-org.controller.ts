@@ -7,6 +7,7 @@
  *  PUT    /api/workspaces/:id/org            { mode, chiefOfStaffAgentId?, monthlyUsd?, agentCap? } — enable / change / turn off
  *  POST   /api/workspaces/:id/org/pause | /resume   the kill switch
  *  GET    /api/workspaces/:id/org/caps       the autonomy caps in plain words (for the Settings card)
+ *  GET    /api/workspaces/:id/org/units      the unit tree (docs/group-chat.md §7) · PATCH units/:unitId · GET units/:unitId/board · GET units/:unitId/goals/tree · GET goals/tree
  *
  * Everything else is a thin alias of `/api/orgs/:orgId/...` that resolves the
  * workspace's one org id and delegates to OrgController, so the two surfaces
@@ -18,7 +19,7 @@ import { IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-val
 import { ORG_MODES, type OrgMode } from '../workspaces/workspaces.service';
 import { OrgModeService, AUTONOMY_CAPS, MAX_ORG_AGENT_CAP } from './org-mode.service';
 import {
-  OrgController, UpdateOrgDto, AddMemberDto, UpdateMemberDto, ScopesDto, GoalDto, ProjectDto, TaskDto, AssignDto, TextDto, ReviewDto, DecideDto, ProposalDto, BudgetDto, WakeDto, HumanDto,
+  OrgController, UpdateOrgDto, AddMemberDto, UpdateMemberDto, ScopesDto, GoalDto, ProjectDto, TaskDto, AssignDto, TextDto, ReviewDto, DecideDto, ProposalDto, BudgetDto, WakeDto, HumanDto, UnitDto,
 } from './org.controller';
 
 class OrgModeDto {
@@ -42,7 +43,8 @@ export class WorkspaceOrgController {
   @Get() async status(@Param('id') id: string) {
     this.guard();
     const st = await this.mode.status(id);
-    return { ...st, org: st.orgId ? await this.orgs.get(st.orgId) : null };
+    // Units (docs/group-chat.md §7) ride along so the rail draws them without a second call.
+    return { ...st, org: st.orgId ? await this.orgs.get(st.orgId) : null, units: st.orgId ? await this.orgs.units_(st.orgId).catch(() => []) : [] };
   }
   @Put() set(@Param('id') id: string, @Body() dto: OrgModeDto) { this.guard(); return this.mode.setMode(id, dto, this.orgs.actorName()); }
   @Get('caps') caps() { this.guard(); return AUTONOMY_CAPS; }
@@ -61,14 +63,20 @@ export class WorkspaceOrgController {
   @Post('members/:agentId/resume') async resumeMember(@Param('id') id: string, @Param('agentId') agentId: string) { return this.orgs.resumeMember(await this.oid(id), agentId); }
   @Post('members/:agentId/charter/accept') async acceptCharter(@Param('id') id: string, @Param('agentId') agentId: string) { return this.orgs.acceptCharter(await this.oid(id), agentId); }
 
-  @Get('goals') async goals(@Param('id') id: string) { return this.orgs.goals(await this.oid(id)); }
+  @Get('units') async units(@Param('id') id: string) { return this.orgs.units_(await this.oid(id)); }
+  @Patch('units/:unitId') async renameUnit(@Param('id') id: string, @Param('unitId') unitId: string, @Body() dto: UnitDto) { return this.orgs.renameUnit(await this.oid(id), unitId, dto); }
+  @Get('units/:unitId/board') async unitBoard(@Param('id') id: string, @Param('unitId') unitId: string, @Query('rollUp') rollUp?: string, @Query('status') status?: string) { return this.orgs.unitBoard(await this.oid(id), unitId, rollUp, status); }
+  @Get('units/:unitId/goals/tree') async unitGoals(@Param('id') id: string, @Param('unitId') unitId: string) { return this.orgs.unitGoals(await this.oid(id), unitId); }
+  @Get('goals/tree') async goalTree(@Param('id') id: string, @Query('unitId') unitId?: string) { return this.orgs.goalTree(await this.oid(id), unitId); }
+
+  @Get('goals') async goals(@Param('id') id: string, @Query('unitId') unitId?: string) { return this.orgs.goals(await this.oid(id), unitId); }
   @Post('goals') async addGoal(@Param('id') id: string, @Body() dto: GoalDto) { return this.orgs.addGoal(await this.oid(id), dto); }
   @Patch('goals/:goalId') async updateGoal(@Param('id') id: string, @Param('goalId') goalId: string, @Body() dto: GoalDto) { return this.orgs.updateGoal(await this.oid(id), goalId, dto); }
   @Get('projects') async projects(@Param('id') id: string) { return this.orgs.projects(await this.oid(id)); }
   @Post('projects') async addProject(@Param('id') id: string, @Body() dto: ProjectDto) { return this.orgs.addProject(await this.oid(id), dto); }
   @Patch('projects/:projectId') async updateProject(@Param('id') id: string, @Param('projectId') projectId: string, @Body() dto: ProjectDto) { return this.orgs.updateProject(await this.oid(id), projectId, dto); }
 
-  @Get('tasks') async board(@Param('id') id: string, @Query('projectId') projectId?: string, @Query('status') status?: string) { return this.orgs.board(await this.oid(id), projectId, status); }
+  @Get('tasks') async board(@Param('id') id: string, @Query('projectId') projectId?: string, @Query('status') status?: string, @Query('unitId') unitId?: string, @Query('rollUp') rollUp?: string) { return this.orgs.board(await this.oid(id), projectId, status, unitId, rollUp); }
   @Post('tasks') async addTask(@Param('id') id: string, @Body() dto: TaskDto) { return this.orgs.addTask(await this.oid(id), dto); }
   @Patch('tasks/:taskId') async updateTask(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TaskDto) { return this.orgs.updateTask(await this.oid(id), taskId, dto); }
   @Post('tasks/:taskId/assign') async assign(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: AssignDto) { return this.orgs.assign(await this.oid(id), taskId, dto); }

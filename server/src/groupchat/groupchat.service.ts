@@ -26,7 +26,7 @@ import { ConfigService } from '@nestjs/config';
 import { and, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { agents, channelMembers, channelMessages, channelReads, channels, workspaces } from '../database/schema';
+import { agents, channelMembers, channelMessages, channelReads, channels, orgUnits, workspaces } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
@@ -40,7 +40,7 @@ import { OrgService } from '../org/org.service';
 import { OrgTasksService } from '../org/org-tasks.service';
 import { OrgAnnouncer } from '../org/org-announcer';
 import { WorkspaceEventBus } from './workspace-events';
-import { parseMentions, slugify, type Mention, type MentionableMember } from './mentions';
+import { parseGoalRefs, parseMentions, slugify, type Mention, type MentionableMember } from './mentions';
 
 export type Channel = typeof channels.$inferSelect;
 export type ChannelMember = typeof channelMembers.$inferSelect;
@@ -94,7 +94,43 @@ export class GroupChatService {
   ) {
     this.workspaces.onCreated(async (ws) => { await this.ensureGeneral(ws.id); });
     bus?.onTaskStatus((ev) => { void this.onTaskStatus(ev).catch(() => undefined); });
-    announcer?.bind({ announce: (workspaceId, text) => this.announceCompany(workspaceId, text) });
+    // The Announcer seam (`#company`) and the unit-channel operations units
+    // need (docs/group-chat.md §7) — both bound here to avoid a module cycle.
+    announcer?.bind({
+      announce: (workspaceId, text) => this.announceCompany(workspaceId, text),
+      companyChannel: async (workspaceId) => { const c = await this.ensureCompany(workspaceId); return { id: c.id, slug: c.slug }; },
+      ensureUnitChannel: async (workspaceId, slug, name, opts) => {
+        let s = slug;
+        for (let n = 2; await this.bySlug(workspaceId, s).then(() => true, () => false); n++) s = `${slug}-${n}`;
+        const c = await this.ensureChannel(workspaceId, s, name === slug ? s : name, { topic: opts.topic, agentIds: opts.agentIds, humanIds: opts.humanIds });
+        return { id: c.id, slug: c.slug };
+      },
+      channelMembers: async (channelId) => (await this.db.select().from(channelMembers).where(eq(channelMembers.channelId, channelId))).map((m) => ({ kind: m.memberKind as 'agent' | 'human', id: m.memberId })),
+      addChannelMember: async (channelId, kind, id) => { await this.addMember(channelId, { kind, id }, { system: true }); },
+      removeChannelMember: async (channelId, kind, id) => { await this.removeMember(channelId, kind, id, { system: true }); },
+      updateChannel: async (channelId, patch) => {
+        if (patch.name !== undefined || patch.topic !== undefined) await this.update(channelId, { name: patch.name, topic: patch.topic }, { system: true });
+        if (patch.archived !== undefined) await this.archive(channelId, patch.archived, { system: true });
+      },
+      postSystem: async (channelId, text) => { await this.postSystem(channelId, text); },
+    });
+  }
+
+  /** The unit whose channel this is (docs/group-chat.md §7), or null. */
+  async unitOf(channelId: string): Promise<{ id: string; name: string; slug: string; orgId: string; leadAgentId: string } | null> {
+    const u = (await this.db.select().from(orgUnits).where(eq(orgUnits.channelId, channelId)).limit(1)).at(0);
+    return u && !u.archivedAt ? { id: u.id, name: u.name, slug: u.slug, orgId: u.orgId, leadAgentId: u.leadAgentId } : null;
+  }
+
+  /** Messages that reference `#goal:<id>` (docs/group-chat.md §3), newest
+   *  last, from channels the current actor may see. */
+  async goalMessages(workspaceId: string, goalId: string, limit = 50): Promise<Array<ChannelMessage & { slug: string }>> {
+    const visible = await this.list(workspaceId);
+    if (visible.length === 0) return [];
+    const rows = await this.db.select().from(channelMessages)
+      .where(and(inArray(channelMessages.channelId, visible.map((c) => c.id)), sql`${channelMessages.mentions} LIKE ${`%"kind":"goal","id":"${goalId}"%`}`))
+      .orderBy(desc(channelMessages.createdAt)).limit(Math.min(200, limit));
+    return rows.sort(byTime).map((m) => ({ ...m, slug: visible.find((c) => c.id === m.channelId)?.slug ?? '' }));
   }
 
   /** `#company` (docs/group-chat.md §1, §5): system announcements from
@@ -207,9 +243,9 @@ export class GroupChatService {
     return c;
   }
 
-  async update(channelId: string, patch: { name?: string; topic?: string; kind?: 'public' | 'private'; dailyTokenBudget?: number }): Promise<Channel> {
+  async update(channelId: string, patch: { name?: string; topic?: string; kind?: 'public' | 'private'; dailyTokenBudget?: number }, opts: { system?: boolean } = {}): Promise<Channel> {
     const c = await this.get(channelId);
-    await this.assertMayManage(c);
+    if (!opts.system) await this.assertMayManage(c);
     const set: Partial<Channel> = {};
     if (patch.name !== undefined) { const n = patch.name.trim().slice(0, 80); if (!n) throw new BadRequestException('name cannot be empty'); set.name = n; }
     if (patch.topic !== undefined) set.topic = patch.topic.slice(0, 500);
@@ -223,10 +259,11 @@ export class GroupChatService {
     return this.get(channelId);
   }
 
-  async archive(channelId: string, archived = true): Promise<Channel> {
+  async archive(channelId: string, archived = true, opts: { system?: boolean } = {}): Promise<Channel> {
     const c = await this.get(channelId);
-    await this.assertMayManage(c);
+    if (!opts.system) await this.assertMayManage(c);
     if (c.slug === GENERAL_SLUG && archived) throw new BadRequestException('#general cannot be archived');
+    if (c.slug === COMPANY_SLUG && archived) throw new BadRequestException('#company cannot be archived while the organization exists');
     await this.db.update(channels).set({ archivedAt: archived ? nowIso() : null }).where(eq(channels.id, channelId));
     this.events.emit({ type: 'channel_update', workspaceId: c.workspaceId, channelId });
     return this.get(channelId);
@@ -304,9 +341,9 @@ export class GroupChatService {
     return { ...m, ...set };
   }
 
-  async removeMember(channelId: string, kind: 'agent' | 'human', id: string): Promise<{ ok: true }> {
+  async removeMember(channelId: string, kind: 'agent' | 'human', id: string, opts: { system?: boolean } = {}): Promise<{ ok: true }> {
     const c = await this.get(channelId);
-    if (!(kind === 'human' && id === actorId())) await this.assertMayManage(c); // leaving is always allowed
+    if (!opts.system && !(kind === 'human' && id === actorId())) await this.assertMayManage(c); // leaving is always allowed
     if (c.slug === GENERAL_SLUG && kind === 'human') throw new BadRequestException('everyone belongs to #general');
     await this.db.delete(channelMembers).where(and(eq(channelMembers.channelId, channelId), eq(channelMembers.memberKind, kind), eq(channelMembers.memberId, id)));
     this.events.emit({ type: 'channel_update', workspaceId: c.workspaceId, channelId });
@@ -400,6 +437,7 @@ export class GroupChatService {
       threadRootId = root.threadRootId ?? root.id; // replies to a reply stay in the root's thread
     }
     const mentions: Mention[] = input.authorKind === 'system' ? [] : parseMentions(text, await this.mentionables(c.id));
+    if (input.authorKind !== 'system') mentions.push(...await this.resolveGoalRefs(c.workspaceId, text));
     const row: ChannelMessage = {
       accountId: currentAccountId(), id: newId(), channelId: c.id, threadRootId, authorKind: input.authorKind, authorId,
       text, attachments: JSON.stringify(attachments), mentions: JSON.stringify(mentions), taskId: null,
@@ -412,6 +450,23 @@ export class GroupChatService {
     if (input.authorKind !== 'system') await this.notifyHumans(c, row, mentions).catch(() => undefined);
     for (const l of this.postedListeners) { try { l(row, c); } catch { /* listeners isolate their failures */ } }
     return row;
+  }
+
+  /** `#goal:<id>` → the organization goal it names (full id or a prefix of
+   *  at least 4 characters matching exactly one goal); unknown refs are kept
+   *  as text only. */
+  private async resolveGoalRefs(workspaceId: string, text: string): Promise<Mention[]> {
+    const refs = parseGoalRefs(text);
+    if (refs.length === 0 || !this.org) return [];
+    const org = await this.orgFor(workspaceId);
+    if (!org) return [];
+    const goals = await this.org.goals(org.id).catch(() => []);
+    const out: Mention[] = [];
+    for (const ref of refs) {
+      const hits = goals.filter((g) => g.id === ref || g.id.startsWith(ref));
+      if (hits.length === 1 && !out.some((m) => m.id === hits[0].id)) out.push({ kind: 'goal', id: hits[0].id });
+    }
+    return out;
   }
 
   /** A system line (task status, pauses, announcements). Also the contract the
@@ -532,11 +587,19 @@ export class GroupChatService {
     return { kind, task, message: updated };
   }
 
-  /** A linked task changed status: say so in the originating thread. */
+  /** A linked task changed status: say so in the originating thread — or,
+   *  for an org task that did not come from a channel, as a one-liner in its
+   *  unit channel (docs/group-chat.md §7). */
   private async onTaskStatus(ev: TaskStatusEvent): Promise<void> {
-    const c = await this.get(ev.channelId).catch(() => null);
+    let channelId = ev.channelId;
+    if (!channelId && ev.source === 'org' && ev.unitId) {
+      const u = (await this.db.select().from(orgUnits).where(eq(orgUnits.id, ev.unitId)).limit(1)).at(0);
+      channelId = u?.channelId ?? null;
+    }
+    if (!channelId) return;
+    const c = await this.get(channelId).catch(() => null);
     if (!c || c.archivedAt) return;
-    const origin = ev.messageId ? await this.message(ev.messageId).catch(() => null) : null;
+    const origin = ev.channelId && ev.messageId ? await this.message(ev.messageId).catch(() => null) : null;
     const thread = origin ? (origin.threadRootId ?? origin.id) : null;
     await this.postSystem(c.id, `Task [${ev.taskId.slice(0, 8)}] "${ev.title}" → ${ev.status.replace(/_/g, ' ')}`, thread);
     this.events.emit({ type: 'task_update', workspaceId: c.workspaceId, channelId: c.id, taskId: ev.taskId, status: ev.status, messageId: ev.messageId, title: ev.title });

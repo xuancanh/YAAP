@@ -20,7 +20,7 @@
  * structured fields are JSON strings — matching the reference app's column
  * conventions.
  */
-import { pgTable, text, integer, real, primaryKey } from 'drizzle-orm/pg-core';
+import { pgTable, text, integer, real, primaryKey, uniqueIndex } from 'drizzle-orm/pg-core';
 import { accountScoped } from '../accounts/account-context';
 
 export const workspaces = pgTable('workspaces', {
@@ -634,8 +634,31 @@ export const orgGoals = pgTable('org_goals', {
   /** draft | active | achieved | abandoned — set by the CEO, never computed. */
   status: text('status').notNull().default('active'),
   ownerAgentId: text('ownerAgentId'),
+  /** Units (docs/group-chat.md §7): the unit this goal belongs to (null =
+   *  the company, i.e. the root unit) and its parent in the goal tree. */
+  unitId: text('unitId'),
+  parentGoalId: text('parentGoalId'),
   createdAt: text('createdAt').notNull(),
 });
+
+/** A unit (docs/group-chat.md §7): every member with at least one direct
+ *  report leads one; the root unit is the company (lead = the chief, channel
+ *  `#company`). Created and archived automatically with the org chart; one
+ *  row per (org, lead) ever, un-archived when the lead gains reports again. */
+export const orgUnits = pgTable('org_units', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  leadAgentId: text('leadAgentId').notNull(),
+  /** null for the root unit. */
+  parentUnitId: text('parentUnitId'),
+  name: text('name').notNull(),
+  slug: text('slug').notNull(),
+  /** The unit channel (`#<slug>`); null when the group chat is not bound. */
+  channelId: text('channelId'),
+  archivedAt: text('archivedAt'),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_units_lead').on(t.orgId, t.leadAgentId)]);
 
 export const orgProjects = pgTable('org_projects', {
   id: text('id').primaryKey(),
@@ -679,6 +702,11 @@ export const orgTasks = pgTable('org_tasks', {
    *  made from, so status changes post back into its thread. */
   channelId: text('channelId'),
   messageId: text('messageId'),
+  /** Units (docs/group-chat.md §7): the unit board this task sits on. By
+   *  default the unit led by the assignee's manager; `unitExplicit = 1` when
+   *  a caller named it, so re-assignment does not move it. */
+  unitId: text('unitId'),
+  unitExplicit: integer('unitExplicit').notNull().default(0),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });

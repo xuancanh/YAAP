@@ -8,6 +8,7 @@
  *   /api/workspaces/:id/chat/channels/:slug/messages/:messageId/task   make a task
  *   /api/workspaces/:id/chat/channels/:slug/read       move the read cursor
  *   /api/workspaces/:id/chat/channels/:slug/files      the channel folder
+ *   /api/workspaces/:id/chat/goals/:goalId/messages    messages that reference #goal:<id> (§7)
  *   /api/workspaces/:id/events                         workspace SSE (§4)
  *
  * `/chat/` sits in the path because `/api/workspaces/:id/channels` already
@@ -90,8 +91,14 @@ export class GroupChatController {
   async get(@Param('id') id: string, @Param('slug') slug: string) {
     const c = await this.groupchat.open(id, slug);
     const members = await this.groupchat.members(c.id);
-    const [spent, org] = await Promise.all([this.runtime.spentToday(c).catch(() => 0), this.groupchat.orgFor(id)]);
-    return { ...c, members, spentToday: spent, orgMode: Boolean(org) };
+    const [spent, org, unit] = await Promise.all([this.runtime.spentToday(c).catch(() => 0), this.groupchat.orgFor(id), this.groupchat.unitOf(c.id).catch(() => null)]);
+    return { ...c, members, spentToday: spent, orgMode: Boolean(org), unit };
+  }
+
+  /** Messages referencing `#goal:<id>` (docs/group-chat.md §3, §7): the goal page lists them. */
+  @Get('chat/goals/:goalId/messages')
+  goalMessages(@Param('id') id: string, @Param('goalId') goalId: string, @Query('limit') limit?: string) {
+    return this.groupchat.goalMessages(id, goalId, limit ? Number(limit) : undefined);
   }
 
   @Patch('chat/channels/:slug')
