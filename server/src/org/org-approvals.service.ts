@@ -352,12 +352,15 @@ export class OrgApprovalsService {
       case 'tune':
         // A tunable (docs/company-vision.md §1b) the chief proposed in supervised mode; bounds are re-checked on apply.
         return this.org.setTunable(orgId, String(payload.key ?? ''), payload.value, { actor: 'user', why: String(payload.why ?? ''), decidedBy: by });
-      // A metric source (docs/sensing.md §4) defines what counts as truth: OrgSensingService activates it.
+      // Kinds another module owns and applies through `onApply`: a metric source
+      // (docs/sensing.md §4, OrgSensingService activates it), an experiment
+      // (docs/experiments.md §1.3, OrgExperimentsService starts it), the
+      // meetings module's cadence, the memory module's charter change, and the
+      // action contract's two-key hold.
       case 'cadence':
       case 'charter_change':
       case 'metric_source':
       case 'two_key':
-      // An experiment (docs/experiments.md §1.3) starts through OrgExperimentsService.
       case 'experiment': {
         // Kinds another module owns (the meetings module's cadence, the memory module's charter change).
         const fn = this.appliers.get(kind);
