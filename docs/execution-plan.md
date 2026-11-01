@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–18 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–18 and 20 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -477,7 +477,8 @@ the `tune` approval kind; the brief's "Key results" section; `GET|PUT
 …/org/intent?unitId=`, `POST …/org/goals/:goalId/checkin`, `GET
 …/goals/:goalId/checkins`, `GET …/org/why?taskId=|goalId=`, `POST …/org/plan`,
 `GET …/org/strategy` on both controllers; `POST/PATCH …/goals` take `kind`
-and the key-result fields. No SPA. Tests: `tests/backend-org-intent.test.ts`
+and the key-result fields; item 20's `org-assurance-tunables.ts` is a wrapper
+over `org-tunables.ts` (one registry, one store, one set of bounds). No SPA. Tests: `tests/backend-org-intent.test.ts`
 (11). Departures are noted in `docs/company-vision.md` §14.
 
 ### 19. Rituals: meetings with minutes, standup, review, retro, board *(in progress)*
