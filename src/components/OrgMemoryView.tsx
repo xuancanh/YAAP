@@ -221,6 +221,7 @@ export function PlaybooksPane({ org }: { org: OrgDetail }) {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 5, flex: 'none' }}>
+                {(p.status === 'active' || p.status === 'draft') && <button style={btn()} onClick={() => { void api.retireOrgPlaybook(wsId, p.id).then(() => refresh()).catch((e: unknown) => app.showToast(e instanceof Error ? e.message : String(e))); }} title="Disable the playbook's skill and stop offering it">Retire</button>}
                 {p.status === 'in_review' && p.reviewTaskId && <button style={btn()} onClick={() => follow('task', p.reviewTaskId!)} title="The review task whose acceptance activates this version">Review task</button>}
                 {p.sourceTaskId && <button style={btn()} onClick={() => follow('task', p.sourceTaskId!)} title="The task it was written from">Source</button>}
                 <button style={btn()} onClick={() => setOpen(expanded ? null : p.id)} aria-expanded={expanded}>{expanded ? 'Less' : 'Read'}</button>

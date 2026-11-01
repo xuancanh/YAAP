@@ -1470,6 +1470,7 @@ export const api = {
     const qs = q.toString();
     return get<OrgPlaybook[]>(`/api/workspaces/${wsId}/org/playbooks${qs ? `?${qs}` : ''}`);
   },
+  retireOrgPlaybook: (wsId: string, playbookId: string, why = '') => send<OrgPlaybook>(`/api/workspaces/${wsId}/org/playbooks/${playbookId}/retire`, 'POST', { why }),
   orgCosts: (wsId: string, period: 'month' | 'all' = 'month', unitId?: string | null) => get<CostReport>(`/api/workspaces/${wsId}/org/costs?period=${period}${unitId ? `&unitId=${enc(unitId)}` : ''}`),
   orgForecast: (wsId: string) => get<OrgForecast>(`/api/workspaces/${wsId}/org/forecast`),
   orgRouting: (wsId: string) => get<OrgRouting>(`/api/workspaces/${wsId}/org/routing`),

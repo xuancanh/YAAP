@@ -240,6 +240,14 @@ export class WorkspaceOrgController {
     if (!this.playbooks) throw new NotFoundException('playbooks are not available');
     return this.playbooks.list(await this.oid(id), { role: role || null, status: status || null });
   }
+  /** Retire a playbook (CEO or board): its skill is disabled and it is no longer offered. */
+  @Post('playbooks/:playbookId/retire') async retirePlaybook(@Param('id') id: string, @Param('playbookId') playbookId: string, @Body() dto: Partial<AskDto> & { why?: string }) {
+    if (!this.playbooks) throw new NotFoundException('playbooks are not available');
+    const orgId = await this.oid(id);
+    const role = this.orgService ? await this.orgService.humanRole(orgId, actorId()) : 'ceo';
+    if (role !== 'ceo' && role !== 'board') throw new ForbiddenException('only the CEO or the board may retire a playbook');
+    return this.playbooks.retire(orgId, playbookId, this.orgs.actorName(), typeof dto?.why === 'string' ? dto.why.slice(0, 500) : '');
+  }
   /** Ask the company: anyone with standing (CEO, board, observer) may ask; the chief answers read-only with verified citations. */
   @Post('ask') async ask(@Param('id') id: string, @Body() dto: AskDto) {
     if (!this.memory) throw new NotFoundException('company memory is not available');
