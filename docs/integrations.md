@@ -249,6 +249,65 @@ charter tail gaining one line ("prefer the user's connected calendar/mail
 over your file copies when granted"), and skills keep their draft-first
 discipline, which maps exactly onto `gmail_draft` vs `gmail_send`.
 
+## 5a. Context cards and suggested loops
+
+Status: **shipped** (execution plan item 21; `docs/company-vision.md` §12).
+A connection is a capability with a manual. Every connector ships a
+**context card** as data in `server/src/connections/cards/` — one
+TypeScript const per card, validated at import (`validateCards`: every
+suggested cron matches within 8 days, every service name exists, ids are
+unique) so a broken card fails the build's tests, not an agent's turn:
+
+| card id | service | what it documents |
+|---|---|---|
+| `google-gmail`, `microsoft-mail` | `gmail` | draft/send tools, the `mail` trigger, the external floor on sends |
+| `google-calendar`, `microsoft-calendar` | `calendar` | read/write tools, calendar triggers, invitations as external actions |
+| `google-drive`, `microsoft-files` | `drive` | search/read, exports create new files, documents as data |
+| `telegram`, `email`, `web-push` | channels | what reaches the user, what comes back, lock-screen and unverified-sender risks |
+| `browser`, `computer` | surfaces | read-first, Ask-gated acting, no credentials into pages, companion scope |
+| `mcp-<server>` (`mcpCardFor`) | `mcp` | built per enabled MCP server from its name and discovered tools |
+
+Card shape: `{ id, service, provider, title, summary, capabilities: { read,
+write }, dataExposed, risks, usage[], suggestedUses[] }`; a suggested use is
+`{ id, title, why, loop (a LoopDef: cron or trigger), grantLevel, fits? }`.
+
+**Injection.** `TurnLoopService` appends `ConnectionsService.cardContext`
+to the system context of every agent session: one block, "Your
+connections", with a section per card the agent *holds* — the connection
+cards for its grants (capability lines limited to the held level: a read
+grant never lists `gcal_create_event`) plus the browser, companion and MCP
+cards when those tools are on offer in that turn. The block is bounded
+(`CARD_CONTEXT_CHAR_CAP`, ≈600 tokens); cards past the budget are named,
+not expanded. An agent with no grants gets nothing.
+
+**Suggested uses as one-click installs.** `POST
+/api/agents/:id/loops/install { cardId, useId }` validates the use's loop,
+gives it a unique name ("Plan of the day", "Plan of the day 2"), and
+refuses when the agent lacks the grant level the use needs (a write-level
+use on a read grant → 400); surface cards need no grant. The loop is an
+ordinary loop afterwards. `ConnectionsService.setGrant` writes one `info`
+event per new grant — "New connection: Gmail — 3 suggested uses", payload
+`{ cardId, service, level, useIds }` — informational (silent, pre-read,
+addressed to the granting member); the agent's **Skills & tools** tab
+renders each granted card's summary and its uses with *Install* /
+*installed*. The chief of staff has no install tool yet: installing for a
+report goes through `PATCH /api/agents/:id` loops as before (left as a
+note; not trivial to expose through the org tool matrix without touching
+the org module).
+
+**Profile ranking** (`docs/company-vision.md` §1b). Uses carry `fits`
+tags (`sales`, `research`, `publishing`, `support`, `operations`,
+`finance`, `executive`, `personal`, …). `GET /api/connections/cards`
+and `GET /api/connections/cards/:idOrService` accept `?profile=<text>`
+and return each card with its uses ranked by how many tags the text
+mentions (`rankUses`): tagged hits first, untagged next, tagged misses
+last; no profile keeps the card's order. Pure string matching, no model.
+
+Tests: `tests/backend-connection-cards.test.ts` (catalog validity against
+`CONNECTION_TOOLS`, injection only for held grants and only at the held
+level, the end-to-end system prompt, install refusals and naming, the
+grant event, ranking).
+
 ## 6. Sequencing
 
 1. **Connections foundation:** ConnectionsModule, encrypted token store,

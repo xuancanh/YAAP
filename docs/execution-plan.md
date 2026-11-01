@@ -495,8 +495,41 @@ so a sample is stable with few tasks a day; task class is derived from the
 brief by keyword (`class: <name>` in constraints wins) until item 23 stores
 one; the SPA is not touched.
 
-### 21. Connection context cards and suggested loops; gated heartbeat per agent *(in progress)*
-`docs/company-vision.md` §12–§13.
+### 21. Connection context cards and suggested loops; gated heartbeat per agent *(done)*
+`docs/company-vision.md` §12–§13, with the §1b rule that every tunable is a
+default with a bound.
+Shipped as: migration `0034-heartbeat-connection-cards` (`heartbeat_state`,
+`workspaces.heartbeatDefaults`, `agents.heartbeatEnabled | heartbeatCron |
+heartbeatDailyRunCap | heartbeatStaleMinutes` — the heartbeat is agent
+columns, not a loops entry, so the loop cap, export/import and pack hires
+are untouched and existing agents get one at boot through the defaults),
+`server/src/connections/cards/` (eleven cards as TypeScript data —
+`google-gmail`, `google-calendar`, `google-drive`, `microsoft-mail`,
+`microsoft-calendar`, `microsoft-files`, `telegram`, `email`, `web-push`,
+`browser`, `computer` — plus `mcpCardFor` per enabled MCP server;
+`validateCards` at import; `rankUses` by the operating profile's text
+against each use's `fits` tags; `cardContextBlock` ≈600 tokens),
+`ConnectionsService.grantLevels | cards | heldCards | cardContext` and the
+`info` suggestion event on `setGrant`, the card block appended to the
+system context in `TurnLoopService` for held grants and available
+browser/companion/MCP tools, `GET /api/connections/cards[/:idOrService]
+?profile=`, `POST /api/agents/:id/loops/install` (grant-level checked,
+unique names), `server/src/chats/heartbeat-config.ts` (fence: cadence ≥ 5
+min, daily cap ≤ 48, staleness 5 min..7 d; built-in ← workspace ← agent),
+`heartbeat.service.ts` (own minute tick; model-free gate: quiet hours defer,
+spend stop, org-paused members, stale tasks + addressed inbox rows +
+unanswered mentions + `HeartbeatReasonProvider`s; daily cap; one
+`runLoop` named `heartbeat` with the reasons, the charter and the
+`HeartbeatContextProvider`s' operating profile in the prompt;
+`setHeartbeat` for the org module), `heartbeat.controller.ts` (`GET | PATCH
+/api/agents/:id/heartbeat`, `POST …/heartbeat/beat`), the Heartbeat card
+and the card installs on the agent page, `docs/integrations.md` §5a,
+`docs/triggers.md` "Heartbeat", and `tests/backend-heartbeat.test.ts` (10)
++ `tests/backend-connection-cards.test.ts` (5). Not done: a chief-of-staff
+install tool (installs for reports go through the agent's loops PATCH),
+channel cards are not injected (no per-agent channel availability signal
+in the turn loop), and the org module's reasons/context providers are
+interfaces only.
 
 ### 22. Memory: playbooks, postmortems, ask-the-company *(planned)*
 `docs/company-vision.md` §6, phase D.

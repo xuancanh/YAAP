@@ -126,6 +126,117 @@ without firing; the spend stop refusing trigger runs; one `loop_error` per
 hour; the ≤4-polls-per-tick bound. `web-tests/triggers.test.ts` covers the
 labels the schedule tab renders.
 
+## Heartbeat
+
+Status: **shipped** (execution plan item 21; `docs/company-vision.md` §13,
+which supersedes "no idle heartbeats" in `docs/autonomous-company.md`).
+Every agent has a heartbeat from birth, but the heartbeat is **gated**: a
+model-free check decides whether there is anything to act on, and only
+then does a real turn run.
+
+**Where it lives.** Not in `agents.loops`: four columns on `agents`
+(migration `0034-heartbeat-connection-cards`) — `heartbeatEnabled`
+(default 1), `heartbeatCron` ('' = inherit), `heartbeatDailyRunCap` and
+`heartbeatStaleMinutes` (null = inherit) — plus `heartbeat_state`
+(`agentId`, `lastBeatAt`, `lastReason`, `lastRunAt`, `nextDueAt`,
+`beatsSkipped`, `runsDay`, `runsToday`, `accountId`) and
+`workspaces.heartbeatDefaults` (JSON `{ cron?, dailyRunCap?,
+staleMinutes? }`). Keeping it off the loops JSON means the schedule editor
+cannot delete it, the ≤10 loop cap, AGENT.json export/import and pack
+hires are untouched, and existing agents get a heartbeat at boot through
+the column defaults. It still *runs as a loop*: `HeartbeatService` calls
+`LoopsService.runLoop` with a `LoopDef` named `heartbeat`, so the run
+lands in the "Loop · heartbeat" session in auto mode with `origin 'loop'`,
+a `loop_run` event and a journal line, and the per-loop model override and
+budget mechanics apply.
+
+**Tunables with bounds** (`server/src/chats/heartbeat-config.ts`,
+`docs/company-vision.md` §1b). Built-in ← workspace `heartbeatDefaults` ←
+agent columns, clamped to the fence: cadence `*/30 * * * *` by default and
+never more often than every **5 minutes** (`validateHeartbeatCron` probes
+the first two matches); daily real-run cap 12, bounded 0..**48**;
+staleness 30 min, bounded 5 min..7 days. `PATCH /api/workspaces/:id
+{ heartbeatDefaults }` sets the workspace's; `PATCH /api/agents/:id/heartbeat
+{ enabled, cron, dailyRunCap, staleMinutes }` (null clears an override to
+the workspace default) sets the agent's — the same
+`HeartbeatService.setHeartbeat(agentId, patch)` the org module can call to
+tune a report's heartbeat. Culture chooses within the fence; the fence is
+code.
+
+**The gate** (`HeartbeatService.beat`, once per matching minute per agent
+from its own minute tick, or `POST /api/agents/:id/heartbeat/beat`):
+
+1. `LOOPS_ENABLED=false` → `loops_off`; `heartbeatEnabled = 0` →
+   `disabled` (a manual beat still runs the gate); an `org_members.status
+   = 'paused'` row for the agent → `paused` (read defensively; the table
+   belongs to the org module).
+2. **Quiet hours** → `quiet`: no reasons are computed and nothing runs,
+   unlike other loops, which run and only hold their notifications. The
+   state row's `nextDueAt` is the first cadence match after the window.
+3. The monthly **spend stop** → `spend_stop`, before any query.
+4. **Reasons**, each source bounded to 5 lines, 15 in all:
+   - open board tasks (`todo` | `doing`) untouched for `staleMinutes`;
+   - inbox events addressed to the agent since its last heartbeat run:
+     unread `mention` / `escalation` / `blocked` / `info` rows whose origin
+     is not `loop` or `system` — never its own `loop_run`, `loop_error`,
+     `budget_stop` or `action_*` rows (that would be the self-wake chain);
+   - channel messages mentioning the agent, in a channel it belongs to,
+     with no later reply by the agent in the same channel and thread
+     (7-day window, one direct query);
+   - every registered **`HeartbeatReasonProvider`**.
+   Empty → `empty`: no model call; the state row records the beat.
+5. The **daily cap** (`runsToday` for the UTC day) → `cap`: reasons are
+   recorded, nothing runs.
+6. Otherwise one real turn with the prompt
+   `Heartbeat. You were woken because:\n- …\nCheck each item, act with
+   your tools, then stop. Do not invent work.` followed by the agent's
+   charter ("Your charter (check your work against it)") and, when a
+   **`HeartbeatContextProvider`** supplied one, the company's operating
+   profile ("How this company works …", bounded to 1 500 chars). `busy`
+   and `budget_stop` come back from `runLoop` unchanged.
+
+**Provider interfaces** (for the org module and any other domain; nothing
+there is implemented here):
+
+```ts
+interface HeartbeatReasonProvider {
+  readonly name: string;                                  // for logs
+  reasons(agentId: string, ctx: HeartbeatContext): Promise<string[]>;
+}
+interface HeartbeatContextProvider {
+  readonly name: string;
+  context(agentId: string, ctx: HeartbeatContext): Promise<string | null>;
+}
+interface HeartbeatContext { now: Date; workspaceId: string; tunables: HeartbeatTunables; lastRunAt: string | null }
+heartbeat.addReasonProvider(p)   // → unsubscribe()
+heartbeat.addContextProvider(p)  // → unsubscribe()
+```
+
+The org module is expected to register reasons such as "key result
+check-in due", "signal addressed to you", "ritual you facilitate", and a
+context provider that renders the organization's values, culture, vision
+and current goals. A throwing provider is logged and skipped; `ChatsModule`
+exports `HeartbeatService`.
+
+**API and UI.** `GET /api/agents/:id/heartbeat` → settings in effect
+(`enabled`, `cron`, `dailyRunCap`, `staleMinutes`), state and `runsToday`;
+`POST …/heartbeat/beat` → `{ status, reasons, ran }`; `PATCH …/heartbeat`.
+The agent page shows a **Heartbeat** card (Dashboard and Schedule tabs):
+toggle, cadence field, last beat, last reason, next due, runs today,
+*Beat now* — and no delete.
+
+**Cost bound.** An empty gate is a handful of indexed queries and one row
+write. The worst case per agent per day is `dailyRunCap` real runs (12 by
+default, 48 at most) — and `*/30` inside waking hours is at most 48 beats
+anyway.
+
+Tests: `tests/backend-heartbeat.test.ts` (heartbeat on from create and
+import, migration defaults and idempotence, empty gate, stale task with
+the reason and charter in the prompt, unanswered vs answered mention,
+quiet hours, daily cap and the UTC reset, pause / force / spend stop /
+delete, workspace defaults vs agent overrides vs the fence, providers and
+the profile reaching the prompt).
+
 ## Not done
 
 - No push-style mail delivery (Gmail Pub/Sub watch, Graph change
@@ -134,3 +245,7 @@ labels the schedule tab renders.
 - Triggers wake the per-agent loop; the org-level `org_wakes` queue in
   `docs/autonomous-company.md` will route trigger-created work through it
   when that item lands.
+- The heartbeat's built-in reasons stop at tasks, inbox and mentions; the
+  org module's check-ins, signals and rituals arrive through the provider
+  registry. There is no per-agent timezone: cadence crons are server-local
+  like every loop, quiet hours are the workspace's.

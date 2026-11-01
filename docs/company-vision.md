@@ -376,3 +376,19 @@ pulse and audits are API-only), `org_tune` (item 18 owns it; the reads
 here already go through the tunables column so tuning works once merged),
 and the generic `org-tunables.ts` helper this module will switch to on
 rebase.
+
+**§12–§13 (item 21, 1 November 2026).** Context cards are data in
+`server/src/connections/cards/` (eleven cards plus one built per MCP
+server), injected into the system context for held grants only and ranked
+by the operating profile's text (`fits` tags, no model); suggested uses
+install as ordinary loops through `POST /api/agents/:id/loops/install`
+with the grant level checked. The heartbeat is on for every agent from
+birth as agent columns (not a loops entry), gated by a model-free check —
+stale tasks, addressed inbox rows, unanswered mentions, plus whatever the
+org module registers through `HeartbeatReasonProvider` — that runs one
+"Loop · heartbeat" turn only with reasons, framed with the charter and the
+operating profile from `HeartbeatContextProvider`s. Per §1b every number is
+a default with a bound: workspace `heartbeatDefaults`, agent overrides,
+and a fence in code (cadence ≥ 5 min, ≤ 48 runs a day, staleness 5 min..7
+days). Quiet hours defer the beat; the spend stop closes it. Details:
+`docs/triggers.md` "Heartbeat", `docs/integrations.md` §5a.
