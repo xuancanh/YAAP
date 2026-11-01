@@ -846,7 +846,7 @@ function ConnectionsPane() {
   };
   useEffect(refresh, []);
 
-  const connect = async (provider: 'google' | 'microsoft', tier: 'read' | 'write' | 'gmail' | 'drive' = 'read') => {
+  const connect = async (provider: 'google' | 'microsoft', tier: 'read' | 'write' | 'gmail' | 'mailread' | 'drive' = 'read') => {
     const d = PROV_DISPLAY[provider];
     try {
       const { url } = await api.connectStart(provider, tier);
@@ -856,6 +856,7 @@ function ConnectionsPane() {
       const capableBefore = {
         write: mine(conns).filter((c) => c.writeCapable).length,
         gmail: mine(conns).filter((c) => c.gmailCapable).length,
+        mailread: mine(conns).filter((c) => c.mailReadCapable).length,
         drive: mine(conns).filter((c) => c.driveCapable).length,
       };
       const poll = setInterval(async () => {
@@ -863,12 +864,13 @@ function ConnectionsPane() {
         if (!now) return;
         const done = tier === 'write' ? mine(now).filter((c) => c.writeCapable).length > capableBefore.write
           : tier === 'gmail' ? mine(now).filter((c) => c.gmailCapable).length > capableBefore.gmail
-            : tier === 'drive' ? mine(now).filter((c) => c.driveCapable).length > capableBefore.drive
-              : mine(now).length > before;
+            : tier === 'mailread' ? mine(now).filter((c) => c.mailReadCapable).length > capableBefore.mailread
+              : tier === 'drive' ? mine(now).filter((c) => c.driveCapable).length > capableBefore.drive
+                : mine(now).length > before;
         if (done || popup?.closed) {
           clearInterval(poll);
           setConns(now);
-          if (done) app.showToast(tier === 'write' ? 'Calendar write access enabled' : tier === 'gmail' ? `${d.mail} enabled` : tier === 'drive' ? `${d.drive} enabled` : `${d.label} connected`);
+          if (done) app.showToast(tier === 'write' ? 'Calendar write access enabled' : tier === 'gmail' ? `${d.mail} enabled` : tier === 'mailread' ? `${d.mail} reading enabled for mail triggers` : tier === 'drive' ? `${d.drive} enabled` : `${d.label} connected`);
         }
       }, 2500);
       setTimeout(() => clearInterval(poll), 180_000);
@@ -895,7 +897,7 @@ function ConnectionsPane() {
               <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 4 }}>
                 {[
                   c.writeCapable ? 'Calendar: read + write (writes approval-gated per agent).' : 'Calendar: read-only.',
-                  c.gmailCapable ? `${d.mail}: draft + send (sending confirms every time; no read access).` : `${d.mail}: off.`,
+                  c.gmailCapable ? `${d.mail}: draft + send (sending confirms every time${c.mailReadCapable ? '; mail triggers may poll a query' : '; no read access'}).` : c.mailReadCapable ? `${d.mail}: trigger polling only (no tools).` : `${d.mail}: off.`,
                   c.driveCapable ? `${d.drive}: read + export.` : `${d.drive}: off.`,
                 ].join(' ')}
                 {' '}{c.grants.length === 0 ? 'No agents have access yet — grant it per agent on their Skills & tools tab.' : `Granted to ${new Set(c.grants.map((g) => g.agentId)).size} agent(s).`}
@@ -906,6 +908,9 @@ function ConnectionsPane() {
             )}
             {!c.gmailCapable && (
               <button onClick={() => connect(provider, 'gmail')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable {d.mail}…</button>
+            )}
+            {provider === 'google' && !c.mailReadCapable && (
+              <button onClick={() => connect(provider, 'mailread')} title="Lets an agent's mail trigger poll a Gmail search (metadata only). The tools never read mail." style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable {d.mail} reading…</button>
             )}
             {!c.driveCapable && (
               <button onClick={() => connect(provider, 'drive')} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Enable {d.drive}…</button>

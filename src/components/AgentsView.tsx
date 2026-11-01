@@ -5,13 +5,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
-import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentLesson, type AgentTask, type AgentUsage, type Connection, type FileEntry, type FilePreview, type Skill } from '../lib/api';
+import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentLesson, type AgentTask, type AgentUsage, type Connection, type FileEntry, type FilePreview, type LoopState, type Skill } from '../lib/api';
 import { UsageBars, UsageRows } from './UsageChart';
 import { fmtUsd } from '../lib/pricing';
 import { fmtTokens } from '../lib/util';
 import { Markdown } from '../lib/md';
 import { sealHtml } from '../lib/sandbox';
 import { nextFire, untilLabel } from '../lib/cron';
+import { RUNS_WHEN, lastFiredLabel, runsWhenOf, triggerGlyph, triggerLabel, type Loop, type LoopTrigger, type RunsWhen } from '../lib/triggers';
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 14, background: 'var(--panel)' };
 const label: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.6px', textTransform: 'uppercase', color: 'var(--text-faint)' };
@@ -31,7 +32,7 @@ function parseApps(a: Agent): AgentApp[] {
 interface PendingImport {
   profile: Record<string, unknown>;
   name: string;
-  loops: Array<{ name: string; cron: string }>;
+  loops: Loop[];
 }
 
 /** FR-11.7: imported loops enable immediately, so review them first. */
@@ -54,7 +55,7 @@ function ImportReviewModal({ pending, onClose }: { pending: PendingImport; onClo
                 <div key={l.name} style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 12, color: 'var(--text-dim)', padding: '3px 0' }}>
                   <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--amber)', flex: 'none' }} />
                   <span style={{ flex: 1 }}>{l.name}</span>
-                  <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-faint)' }}>{l.cron}</span>
+                  <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-faint)' }}>{triggerLabel(l)}</span>
                 </div>
               ))}
             </div>
@@ -215,7 +216,7 @@ function FleetRow({ a }: { a: Agent }) {
       <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : '1fr 1fr 1fr', gap: 12, paddingTop: 12, borderTop: '1px solid var(--border-soft)' }}>
         {cell('Now', doing[0] ? doing[0].title : latest ? `${latest.title} · ${ago(latest.createdAt)}` : 'nothing in progress')}
         {cell('Next task', todo[0] ? `${todo[0].title}${todo.length > 1 ? `  (+${todo.length - 1} queued)` : ''}` : 'board is clear')}
-        {cell('Next loop', upcoming ? `${upcoming.l.name} · ${untilLabel(upcoming.at)}` : loops.length > 0 ? `${loops.length} scheduled` : 'no schedule')}
+        {cell('Next loop', upcoming ? `${upcoming.l.name} · ${untilLabel(upcoming.at)}` : loops.length > 0 ? `${loops.length} ${loops.every((l) => l.trigger) ? 'event-triggered' : 'scheduled'}` : 'no schedule')}
       </div>
     </div>
   );
@@ -232,7 +233,7 @@ export function AgentsDirectory() {
       setPending({
         profile,
         name: typeof profile.name === 'string' ? profile.name : 'agent',
-        loops: Array.isArray(profile.loops) ? (profile.loops as Array<{ name: string; cron: string }>) : [],
+        loops: Array.isArray(profile.loops) ? (profile.loops as Loop[]) : [],
       });
     } catch {
       app.showToast('Not a valid AGENT.json file');
@@ -396,69 +397,212 @@ function TasksBoard({ a, tasks, reload }: { a: Agent; tasks: AgentTask[]; reload
   );
 }
 
-interface Loop { name: string; cron: string; prompt?: string; enabled?: boolean; model?: string; budgetTokens?: number }
-
-/** Schedule editor: the agent's recurring loops (cron + prompt), each firing a
- *  real auto-mode turn in its "Loop · name" conversation. */
+/** Schedule editor: the agent's loops — each runs on a cron, on an event
+ *  trigger (new mail, calendar change, task assigned, webhook), or both
+ *  (docs/triggers.md) — firing a real auto-mode turn in its "Loop · name"
+ *  conversation. */
 function ScheduleTab({ a }: { a: Agent }) {
   const app = useApp();
   const [name, setName] = useState('');
+  const [when, setWhen] = useState<RunsWhen>('schedule');
   const [cron, setCron] = useState('0 9 * * *');
+  const [alsoCron, setAlsoCron] = useState('');
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState('');
   const [budget, setBudget] = useState('');
+  // mail
+  const [mailService, setMailService] = useState<'gmail' | 'msmail'>('gmail');
+  const [mailQuery, setMailQuery] = useState('');
+  const [pollMinutes, setPollMinutes] = useState('5');
+  // calendar
+  const [calService, setCalService] = useState<'gcal' | 'mscal'>('gcal');
+  const [calOn, setCalOn] = useState<'created' | 'changed' | 'starting'>('created');
+  const [withinHours, setWithinHours] = useState('24');
+  const [leadMinutes, setLeadMinutes] = useState('15');
+  const [states, setStates] = useState<LoopState[]>([]);
+  /** The webhook secret, shown once right after it is minted. */
+  const [revealed, setRevealed] = useState<{ loopName: string; url: string; secret: string } | null>(null);
   const loops = (() => { try { return JSON.parse(a.loops) as Loop[]; } catch { return []; } })();
+
+  const reloadStates = useCallback(() => { void api.loopStates(a.id).then(setStates).catch(() => setStates([])); }, [a.id]);
+  useEffect(() => { reloadStates(); const t = setInterval(reloadStates, 30_000); return () => clearInterval(t); }, [reloadStates]);
 
   const save = async (next: Loop[]) => {
     try {
       await api.updateAgent(a.id, { loops: JSON.stringify(next) });
       await app.refreshAgents();
+      return true;
     } catch (err) {
       app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'saving loops failed');
+      return false;
     }
   };
 
+  const reveal = async (loopName: string) => {
+    try {
+      const res = await api.rotateWebhookSecret(a.id, loopName);
+      setRevealed({ loopName, url: res.url, secret: res.secret });
+      await app.refreshAgents();
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'minting the secret failed');
+    }
+  };
+
+  const copy = async (text: string, what: string) => {
+    try { await navigator.clipboard.writeText(text); app.showToast(`${what} copied`); } catch { app.showToast('Copy failed — select the text and copy it'); }
+  };
+
+  const trigger = (): LoopTrigger | undefined => {
+    const poll = pollMinutes && parseInt(pollMinutes, 10) >= 2 ? { pollMinutes: parseInt(pollMinutes, 10) } : {};
+    switch (when) {
+      case 'mail': return { kind: 'mail', service: mailService, query: mailQuery.trim(), ...poll };
+      case 'calendar': return {
+        kind: 'calendar', service: calService, on: calOn, withinHours: Math.max(1, parseInt(withinHours, 10) || 24),
+        ...(calOn === 'starting' ? { leadMinutes: Math.max(1, parseInt(leadMinutes, 10) || 15) } : {}), ...poll,
+      };
+      case 'task': return { kind: 'task' };
+      case 'webhook': return { kind: 'webhook' };
+      default: return undefined;
+    }
+  };
+  const cronValue = when === 'schedule' ? cron.trim() : alsoCron.trim();
+  const canAdd = !!name.trim() && loops.length < 10 && (when !== 'schedule' || !!cronValue) && !loops.some((l) => l.name === name.trim());
+
   const field: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 11px', color: 'var(--text)', fontSize: 12.5, outline: 'none' };
+  const select: React.CSSProperties = { ...field, appearance: 'auto' as never };
+  const chip = (active: boolean): React.CSSProperties => ({
+    background: active ? 'var(--accent)' : 'var(--panel-2)', color: active ? '#fff' : 'var(--text-dim)', border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+    borderRadius: 999, padding: '5px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+  });
+  const hint = RUNS_WHEN.find((r) => r.id === when)?.hint ?? '';
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
       <div style={{ ...card, padding: '14px 16px' }}>
         <div style={{ ...label, marginBottom: 10 }}>Add a loop</div>
-        <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : '1fr 150px', gap: 8 }}>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Loop name, e.g. Morning sweep" style={field} />
-          <input value={cron} onChange={(e) => setCron(e.target.value)} placeholder="0 9 * * *" style={{ ...field, fontFamily: 'var(--mono)' }} />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Loop name, e.g. Morning sweep" style={{ ...field, width: '100%' }} />
+
+        <div style={{ ...label, margin: '14px 0 8px' }}>Runs when</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {RUNS_WHEN.map((r) => (
+            <button key={r.id} onClick={() => setWhen(r.id)} style={chip(when === r.id)}>
+              <I d={P[triggerGlyph({ trigger: r.id === 'schedule' ? undefined : { kind: r.id } as LoopTrigger })]} size={12} />{r.label}
+            </button>
+          ))}
         </div>
-        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Prompt for each run (optional — defaults to 'follow your charter and do this loop's work')"
+        <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 6 }}>{hint}</div>
+
+        {when === 'schedule' && (
+          <input value={cron} onChange={(e) => setCron(e.target.value)} placeholder="0 9 * * *" style={{ ...field, fontFamily: 'var(--mono)', marginTop: 8, width: '100%' }} />
+        )}
+        {when === 'mail' && (
+          <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : '150px 1fr 120px', gap: 8, marginTop: 8 }}>
+            <select value={mailService} onChange={(e) => setMailService(e.target.value as 'gmail' | 'msmail')} style={select}>
+              <option value="gmail">Gmail</option>
+              <option value="msmail">Outlook</option>
+            </select>
+            <input value={mailQuery} onChange={(e) => setMailQuery(e.target.value)} placeholder={mailService === 'gmail' ? 'Gmail search, e.g. from:boss@acme.com is:unread' : 'Outlook search, e.g. subject:invoice'} style={{ ...field, fontFamily: 'var(--mono)' }} />
+            <input value={pollMinutes} onChange={(e) => setPollMinutes(e.target.value.replace(/[^0-9]/g, ''))} placeholder="every (min)" title="Poll every N minutes (min 2)" style={{ ...field, fontFamily: 'var(--mono)' }} />
+          </div>
+        )}
+        {when === 'calendar' && (
+          <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : '170px 1fr 1fr 120px', gap: 8, marginTop: 8 }}>
+            <select value={calService} onChange={(e) => setCalService(e.target.value as 'gcal' | 'mscal')} style={select}>
+              <option value="gcal">Google Calendar</option>
+              <option value="mscal">Outlook Calendar</option>
+            </select>
+            <select value={calOn} onChange={(e) => setCalOn(e.target.value as 'created' | 'changed' | 'starting')} style={select}>
+              <option value="created">an event is created</option>
+              <option value="changed">an event is created or changed</option>
+              <option value="starting">an event is about to start</option>
+            </select>
+            {calOn === 'starting'
+              ? <input value={leadMinutes} onChange={(e) => setLeadMinutes(e.target.value.replace(/[^0-9]/g, ''))} placeholder="lead (min)" title="Fire this many minutes before the start" style={{ ...field, fontFamily: 'var(--mono)' }} />
+              : <input value={withinHours} onChange={(e) => setWithinHours(e.target.value.replace(/[^0-9]/g, ''))} placeholder="window (hours)" title="Watch events in the next N hours" style={{ ...field, fontFamily: 'var(--mono)' }} />}
+            <input value={pollMinutes} onChange={(e) => setPollMinutes(e.target.value.replace(/[^0-9]/g, ''))} placeholder="every (min)" title="Poll every N minutes (min 2)" style={{ ...field, fontFamily: 'var(--mono)' }} />
+          </div>
+        )}
+        {when === 'task' && (
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }}>Fires when you, a promoted chat turn, or another agent's <span style={{ fontFamily: 'var(--mono)' }}>delegate_task</span> adds work to this board — tasks the agent queues for itself do not wake it. A burst of assignments within 30 seconds becomes one run.</div>
+        )}
+        {when === 'webhook' && (
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }}>After you add the loop, a secret URL is shown once. Any system that can POST JSON (≤64KB, 30/min) to it wakes the agent with that body as its payload.</div>
+        )}
+        {when !== 'schedule' && (
+          <input value={alsoCron} onChange={(e) => setAlsoCron(e.target.value)} placeholder="Also on a schedule (optional cron, e.g. 0 9 * * 1-5)" style={{ ...field, fontFamily: 'var(--mono)', marginTop: 8, width: '100%' }} />
+        )}
+
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Prompt for each run (optional — defaults to 'follow your charter and do this loop's work'; trigger payloads are appended as data, not instructions)"
           style={{ ...field, width: '100%', minHeight: 56, resize: 'vertical', marginTop: 8, lineHeight: 1.5 }} />
         <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : '1fr 1fr', gap: 8, marginTop: 8 }}>
           <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="Model override (optional — a cheap model keeps heartbeats near-free)" style={{ ...field, fontFamily: 'var(--mono)' }} />
           <input value={budget} onChange={(e) => setBudget(e.target.value.replace(/[^0-9]/g, ''))} placeholder="Token budget (optional — hard stop, surfaces in Activity)" style={{ ...field, fontFamily: 'var(--mono)' }} />
         </div>
         <div style={{ display: 'flex', alignItems: 'center', marginTop: 10 }}>
-          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>5-field cron · runs land in the "Loop · {name.trim() || 'name'}" conversation in auto mode</span>
-          <button disabled={!name.trim() || !cron.trim() || loops.length >= 10} onClick={async () => {
-            await save([...loops, {
-              name: name.trim(), cron: cron.trim(),
+          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>runs land in the "Loop · {name.trim() || 'name'}" conversation in auto mode · budget, model, quiet hours and the spend stop apply to every run</span>
+          <button disabled={!canAdd} onClick={async () => {
+            const loopName = name.trim();
+            const t = trigger();
+            const ok = await save([...loops, {
+              name: loopName,
+              ...(cronValue ? { cron: cronValue } : {}),
+              ...(t ? { trigger: t } : {}),
               ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
               ...(model.trim() ? { model: model.trim() } : {}),
               ...(budget && parseInt(budget, 10) > 0 ? { budgetTokens: parseInt(budget, 10) } : {}),
             }]);
-            setName(''); setPrompt(''); setModel(''); setBudget('');
-            app.showToast('Loop added — it fires on the next matching minute');
-          }} style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 15px', fontSize: 12.5, fontWeight: 600, cursor: name.trim() && cron.trim() ? 'pointer' : 'default', opacity: name.trim() && cron.trim() && loops.length < 10 ? 1 : 0.5 }}>Add loop</button>
+            if (!ok) return;
+            setName(''); setPrompt(''); setModel(''); setBudget(''); setAlsoCron(''); setMailQuery('');
+            if (t?.kind === 'webhook') await reveal(loopName);
+            else app.showToast(t ? 'Loop added — it fires on the next matching event' : 'Loop added — it fires on the next matching minute');
+            reloadStates();
+          }} style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 15px', fontSize: 12.5, fontWeight: 600, cursor: canAdd ? 'pointer' : 'default', opacity: canAdd ? 1 : 0.5, flex: 'none' }}>Add loop</button>
         </div>
       </div>
 
+      {revealed && (
+        <div style={{ ...card, padding: '14px 16px', borderColor: 'var(--amber)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <I d={P.bolt} size={14} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Webhook for "{revealed.loopName}" — shown once</span>
+            <button onClick={() => setRevealed(null)} title="Dismiss" style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 3, display: 'flex' }}><I d={P.x} size={12} /></button>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>Only a hash of the secret is stored. Copy the URL now; "New secret" on the loop below replaces it if you lose it.</div>
+          {[{ k: 'URL', v: revealed.url }, { k: 'Secret', v: revealed.secret }].map(({ k, v }) => (
+            <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+              <span style={{ ...label, width: 48, flex: 'none' }}>{k}</span>
+              <code style={{ flex: 1, minWidth: 0, fontFamily: 'var(--mono)', fontSize: 11.5, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '6px 9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v}</code>
+              <button onClick={() => void copy(v, k)} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '5px 10px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Copy</button>
+            </div>
+          ))}
+          <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8, fontFamily: 'var(--mono)' }}>curl -X POST '{revealed.url}' -H 'content-type: application/json' -d '{'{'}"event":"deploy","ok":true{'}'}'</div>
+        </div>
+      )}
+
       <div style={{ ...card, padding: '6px 8px' }}>
-        {loops.length === 0 && <div style={{ padding: '12px 10px', fontSize: 12.5, color: 'var(--text-dim)' }}>No loops yet — schedule recurring work above, or import an agent profile that ships some.</div>}
-        {loops.map((l, i) => (
+        {loops.length === 0 && <div style={{ padding: '12px 10px', fontSize: 12.5, color: 'var(--text-dim)' }}>No loops yet — schedule recurring work above, wire an event trigger, or import an agent profile that ships some.</div>}
+        {loops.map((l, i) => {
+          const st = states.find((s) => s.name === l.name);
+          const kind = runsWhenOf(l);
+          return (
           <div key={`${l.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 10px', borderTop: i > 0 ? '1px solid var(--border-soft)' : 'none' }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: l.enabled === false ? 'var(--text-faint)' : 'var(--green)', flex: 'none' }} />
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: l.enabled === false ? 'var(--text-faint)' : st?.lastErrorAt && (!st.lastFiredAt || st.lastErrorAt > st.lastFiredAt) ? 'var(--amber)' : 'var(--green)', flex: 'none' }} />
+            <span title={RUNS_WHEN.find((r) => r.id === kind)?.label} style={{ color: 'var(--text-faint)', display: 'flex', flex: 'none' }}><I d={P[triggerGlyph(l)]} size={14} /></span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, textDecoration: l.enabled === false ? 'line-through' : 'none', color: l.enabled === false ? 'var(--text-dim)' : 'var(--text)' }}>{l.name}</div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, textDecoration: l.enabled === false ? 'line-through' : 'none', color: l.enabled === false ? 'var(--text-dim)' : 'var(--text)' }}>{l.name}</span>
+                {l.trigger && <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>{lastFiredLabel(st?.lastFiredAt)}{st?.lastErrorAt && (!st.lastFiredAt || st.lastErrorAt > st.lastFiredAt) ? ' · poll failing (see Activity)' : ''}</span>}
+              </div>
               <div style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {l.cron}{l.model ? ` · ${l.model}` : ''}{l.budgetTokens ? ` · ≤${(l.budgetTokens / 1000).toFixed(0)}k tok` : ''}{l.prompt ? ` · ${l.prompt.replace(/\s+/g, ' ').slice(0, 50)}` : ''}
+                {triggerLabel(l)}{l.model ? ` · ${l.model}` : ''}{l.budgetTokens ? ` · ≤${(l.budgetTokens / 1000).toFixed(0)}k tok` : ''}{l.prompt ? ` · ${l.prompt.replace(/\s+/g, ' ').slice(0, 50)}` : ''}
               </div>
             </div>
+            {l.trigger?.kind === 'webhook' && (
+              <button onClick={() => { if (window.confirm(`Mint a new secret for "${l.name}"? The current URL stops working.`)) void reveal(l.name); }}
+                style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '4px 11px', fontSize: 11, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>
+                New secret
+              </button>
+            )}
             <button onClick={() => void save(loops.map((x, xi) => (xi === i ? { ...x, enabled: x.enabled === false ? undefined : false } as Loop : x)))}
               style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '4px 11px', fontSize: 11, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>
               {l.enabled === false ? 'Resume' : 'Pause'}
@@ -468,7 +612,8 @@ function ScheduleTab({ a }: { a: Agent }) {
               <I d={P.x} size={12} />
             </button>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

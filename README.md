@@ -121,6 +121,10 @@ Settings → Usage) with 30-day per-agent/per-loop charts on the agent home and
 events for the paired default agent (plus every agent's failures and budget
 stops) are pushed to the paired chat within a minute, batched, each with a
 deep link back to the conversation, never echoing channel-born events back.
+Loops also fire on **event triggers** (`docs/triggers.md`): new mail matching
+a query, a calendar event created/changed/starting, a task assigned by
+someone else, or a secret webhook URL — payloads reach the agent framed as
+data, not instructions, under the same budgets and quiet hours.
 
 Presence (roadmap Phase 4, `docs/channels.md`): every agent has an **email
 address** (`<slug>@EMAIL_DOMAIN`, inbound through an HMAC-signed webhook fed

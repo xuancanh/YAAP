@@ -101,7 +101,7 @@ export interface Agent {
   /** Assigned workspace folder, mounted into its chats as shared/. */
   workspaceFolder: string;
   dashboard: string;
-  loops: string; // JSON array of { name, cron }
+  loops: string; // JSON array of LoopDef (src/lib/triggers.ts): { name, cron?, trigger?, … }
   apps: string; // JSON array of AgentApp
   createdAt: string;
 }
@@ -273,9 +273,20 @@ export interface Connection {
   scopes: string[];
   writeCapable: boolean;
   gmailCapable: boolean;
+  /** The `mail` loop trigger can poll this connection (docs/triggers.md). */
+  mailReadCapable: boolean;
   driveCapable: boolean;
   createdAt: string;
   grants: Array<{ agentId: string; service: string; level: string }>;
+}
+
+/** Per-loop trigger state for the schedule tab (GET /api/agents/:id/loops/state). */
+export interface LoopState {
+  name: string;
+  kind: 'mail' | 'calendar' | 'task' | 'webhook' | null;
+  lastPolledAt: string | null;
+  lastFiredAt: string | null;
+  lastErrorAt: string | null;
 }
 
 export type ConnectionServiceName = 'calendar' | 'gmail' | 'drive';
@@ -533,6 +544,10 @@ export const api = {
   deleteLesson: (id: string, lessonId: string) =>
     send<{ ok: boolean }>(`/api/agents/${id}/lessons/${lessonId}`, 'DELETE'),
   agentEvents: (id: string) => get<AgentEvent[]>(`/api/agents/${id}/events`),
+  // event triggers (docs/triggers.md): per-loop state, and the one-time webhook secret
+  loopStates: (id: string) => get<LoopState[]>(`/api/agents/${id}/loops/state`),
+  rotateWebhookSecret: (id: string, loopName: string) =>
+    send<{ secret: string; path: string; url: string }>(`/api/agents/${id}/loops/${encodeURIComponent(loopName)}/webhook-secret`, 'POST'),
   markAgentEventsRead: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}/events/read`, 'POST'),
   actOnAgentEvent: (id: string, eventId: string, decision: 'approve' | 'dismiss') =>
     send<{ ok: boolean; status: string; result?: string; error?: string }>(`/api/agents/${id}/events/${eventId}/act`, 'POST', { decision }),
@@ -573,7 +588,7 @@ export const api = {
   connections: () => get<Connection[]>('/api/connections'),
   connectionProviders: () => get<ConnectionProvider[]>('/api/connections/providers'),
   connectionTools: () => get<Array<{ name: string; description: string; provider: string; service: string; level: string }>>('/api/connections/tools'),
-  connectStart: (provider: string, tier: 'read' | 'write' | 'gmail' | 'drive' = 'read') => get<{ url: string }>(`/api/connections/${provider}/start?tier=${tier}`),
+  connectStart: (provider: string, tier: 'read' | 'write' | 'gmail' | 'mailread' | 'drive' = 'read') => get<{ url: string }>(`/api/connections/${provider}/start?tier=${tier}`),
   removeConnection: (id: string) => send<{ ok: boolean }>(`/api/connections/${id}`, 'DELETE'),
   grantConnection: (id: string, agentId: string, service: ConnectionServiceName, level: 'read' | 'write' = 'read') =>
     send<{ ok: boolean }>(`/api/connections/${id}/grants`, 'POST', { agentId, service, level }),

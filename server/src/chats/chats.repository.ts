@@ -7,10 +7,11 @@ import { Injectable, Inject } from '@nestjs/common';
 import { and, asc, eq, gt, gte, inArray, isNull, isNotNull, lt, notLike, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { chatMessages, chatSessions, chatTurns } from '../database/schema';
+import { chatMessages, chatSessions, chatTurns, loopState } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 
 export type ChatSession = typeof chatSessions.$inferSelect;
+export type LoopStateRow = typeof loopState.$inferSelect;
 export type ChatTurn = typeof chatTurns.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 
@@ -32,6 +33,43 @@ export class ChatsRepository {
   async getSession(id: string): Promise<ChatSession | undefined> {
     const rows = await this.db.select().from(chatSessions).where(eq(chatSessions.id, id)).limit(1);
     return rows[0];
+  }
+
+  // ---- loop trigger state (docs/triggers.md) ----
+
+  async getLoopState(agentId: string, loopName: string): Promise<LoopStateRow | undefined> {
+    const rows = await this.db.select().from(loopState).where(eq(loopState.loopKey, `${agentId}:${loopName}`)).limit(1);
+    return rows[0];
+  }
+
+  async listLoopStates(agentId: string): Promise<LoopStateRow[]> {
+    return this.db.select().from(loopState).where(eq(loopState.agentId, agentId));
+  }
+
+  /** Upsert: a partial patch over the stored row (cursor is replaced whole). */
+  async putLoopState(agentId: string, loopName: string, patch: Partial<Pick<LoopStateRow, 'cursor' | 'lastPolledAt' | 'lastFiredAt' | 'lastErrorAt'>>): Promise<void> {
+    const loopKey = `${agentId}:${loopName}`;
+    const existing = await this.getLoopState(agentId, loopName);
+    const now = nowIso();
+    if (existing) {
+      await this.db.update(loopState).set({ ...patch, updatedAt: now }).where(eq(loopState.loopKey, loopKey));
+    } else {
+      await this.db.insert(loopState).values({
+        loopKey, agentId, loopName,
+        cursor: patch.cursor ?? '{}',
+        lastPolledAt: patch.lastPolledAt ?? null,
+        lastFiredAt: patch.lastFiredAt ?? null,
+        lastErrorAt: patch.lastErrorAt ?? null,
+        updatedAt: now,
+      });
+    }
+  }
+
+  /** Drop state for loops that no longer exist (renamed or removed). */
+  async pruneLoopStates(agentId: string, liveNames: string[]): Promise<void> {
+    const rows = await this.listLoopStates(agentId);
+    const dead = rows.filter((r) => !liveNames.includes(r.loopName)).map((r) => r.loopKey);
+    if (dead.length > 0) await this.db.delete(loopState).where(inArray(loopState.loopKey, dead));
   }
 
   async createSession(input: Partial<ChatSession> & { workspaceId: string }): Promise<ChatSession> {

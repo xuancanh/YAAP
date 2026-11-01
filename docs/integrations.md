@@ -173,6 +173,11 @@ Google supports incremental authorization; use it as the design everywhere:
   feature is wanted, which is the same moment they trust it most.
 - Scope grants display per-connection in Settings, revocable individually
   where the provider allows.
+- One read tier exists that no tool uses: **"Gmail reading"**
+  (`gmail.readonly`, `tier=mailread`) lets a loop's `mail` trigger poll a
+  query for new message ids and headers (`docs/triggers.md`). The mail
+  tools stay draft-and-send only; Outlook's `Mail.ReadWrite` already covers
+  the poll.
 
 ### Connections are user-level; agent access is a grant
 

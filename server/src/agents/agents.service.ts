@@ -4,7 +4,8 @@
  * folder. The brain (LESSONS.md / JOURNAL.md / knowledge/) and mini apps are
  * follow-up work; this scaffold owns the profile CRUD and pending feedback.
  */
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import { and, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
@@ -14,6 +15,8 @@ import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix } from '../storage/storage.keys';
 import { assertPublicUrl, fetchPublic } from '../common/url-guard';
 import { AiToolSpec } from '../ai/ai-provider.interface';
+import { TriggerBus } from '../chats/trigger-bus';
+import { hashWebhookSecret, validateLoopDef, type LoopDef } from '../chats/loop-def';
 
 /** A self-built mini app (FR-11.5): a self-contained HTML tool the agent
  *  writes for itself via save_app. Rendered only in a network-blocked
@@ -88,6 +91,9 @@ export class AgentsService {
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
     private readonly storage: StorageService,
+    /** Optional so test constructors without a bus keep working; when
+     *  present, every addTask announces itself (the `task` trigger). */
+    @Optional() private readonly bus?: TriggerBus,
   ) {}
 
   list() {
@@ -202,6 +208,7 @@ export class AgentsService {
       createdAt: nowIso(), updatedAt: nowIso(),
     };
     await this.db.insert(agentTasks).values(row);
+    this.bus?.emitTaskAdded({ agentId, task: row });
     return row;
   }
 
@@ -626,7 +633,7 @@ export class AgentsService {
    *  imported loops enable immediately — the client shows the capability
    *  review, the server enforces the bounds. */
   async importJson(profile: Record<string, unknown>) {
-    const fail = (msg: string) => { throw new BadRequestException(`invalid AGENT.json: ${msg}`); };
+    const fail = (msg: string): never => { throw new BadRequestException(`invalid AGENT.json: ${msg}`); };
     const name = profile.name;
     if (typeof name !== 'string' || name.length < 1 || name.length > 60) fail('name must be 1-60 chars');
     if ((await this.list()).some((a) => a.name === name)) fail(`an agent named "${name}" already exists`);
@@ -640,16 +647,9 @@ export class AgentsService {
     }
     const rawLoops = Array.isArray(profile.loops) ? profile.loops : [];
     if (rawLoops.length > 10) fail('at most 10 loops');
-    const loops = rawLoops.map((l) => {
-      const loop = l as Record<string, unknown>;
-      if (typeof loop?.name !== 'string' || loop.name.length < 1 || loop.name.length > 100) fail('every loop needs a name (≤100 chars)');
-      if (typeof loop?.cron !== 'string' || loop.cron.length > 50) fail('every loop needs a cron (≤50 chars)');
-      return {
-        name: loop.name as string,
-        cron: loop.cron as string,
-        ...(typeof loop.prompt === 'string' ? { prompt: (loop.prompt as string).slice(0, 2_000) } : {}),
-      };
-    });
+    // Shared validator with the schedule editor; a webhook trigger in a
+    // profile never carries a usable secret, so it is minted on import.
+    const loops = JSON.parse(validateLoopsJson(JSON.stringify(rawLoops.map((l) => validateLoopDef(l, fail))))) as LoopDef[];
     const agent = await this.create({ name: name as string, charter, role, emoji, colors, loops });
     if (typeof profile.dashboard === 'string' && profile.dashboard) {
       await this.update(agent.id, { dashboard: profile.dashboard.slice(0, DASHBOARD_CAP) });
@@ -668,13 +668,31 @@ export class AgentsService {
     return this.get(agent.id);
   }
 
+  /** Mint (or replace) the shared secret of a webhook-triggered loop. Only
+   *  the SHA-256 of the secret is stored, inside the loop definition; the
+   *  plaintext is returned exactly once (docs/triggers.md). */
+  async rotateWebhookSecret(agentId: string, loopName: string): Promise<{ secret: string; path: string }> {
+    const a = await this.get(agentId);
+    const loops = JSON.parse(a.loops) as LoopDef[];
+    const loop = loops.find((l) => l.name === loopName);
+    if (!loop) throw new NotFoundException(`loop "${loopName}"`);
+    if (loop.trigger?.kind !== 'webhook') throw new BadRequestException(`loop "${loopName}" is not webhook-triggered`);
+    const secret = randomBytes(24).toString('base64url');
+    loop.trigger = { kind: 'webhook', secretHash: hashWebhookSecret(secret) };
+    await this.db.update(agents).set({ loops: JSON.stringify(loops) }).where(eq(agents.id, agentId));
+    return { secret, path: `/api/hooks/${agentId}/${encodeURIComponent(loopName)}` };
+  }
+
   /** AGENT.json export: profile, loops, dashboard, mini apps (FR-11.7). */
   async exportJson(id: string) {
     const a = await this.get(id);
     return {
       name: a.name, emoji: a.emoji, colors: JSON.parse(a.colors), role: a.role,
       charter: a.charter, provider: a.provider, model: a.model,
-      loops: JSON.parse(a.loops), dashboard: a.dashboard, apps: await this.listApps(id),
+      // A webhook secret belongs to this install: exports carry the trigger
+      // shape only, and an import mints a fresh one.
+      loops: (JSON.parse(a.loops) as LoopDef[]).map((l) => (l.trigger?.kind === 'webhook' ? { ...l, trigger: { kind: 'webhook' } } : l)),
+      dashboard: a.dashboard, apps: await this.listApps(id),
     };
   }
 
@@ -700,28 +718,24 @@ export class AgentsService {
 }
 
 /** Loops arrive from the schedule editor as a JSON string; enforce the same
- *  bounds as AGENT.json import (loops enable immediately). */
+ *  bounds as AGENT.json import (loops enable immediately). A webhook trigger
+ *  saved without a secret hash gets one minted here so the hook is never
+ *  open; the plaintext is only ever handed out by rotateWebhookSecret. */
 function validateLoopsJson(raw: string): string {
-  const fail = (msg: string) => { throw new BadRequestException(`invalid loops: ${msg}`); };
+  const fail = (msg: string): never => { throw new BadRequestException(`invalid loops: ${msg}`); };
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { fail('not valid JSON'); }
   if (!Array.isArray(parsed)) fail('must be an array');
   const loops = parsed as unknown[];
   if (loops.length > 10) fail('at most 10 loops');
-  const out = loops.map((l) => {
-    const loop = l as Record<string, unknown>;
-    if (typeof loop?.name !== 'string' || loop.name.length < 1 || loop.name.length > 100) fail('every loop needs a name (≤100 chars)');
-    if (typeof loop?.cron !== 'string' || loop.cron.length > 50) fail('every loop needs a cron (≤50 chars)');
-    if (loop.model !== undefined && (typeof loop.model !== 'string' || loop.model.length > 100)) fail('loop model must be a string (≤100 chars)');
-    if (loop.budgetTokens !== undefined && (typeof loop.budgetTokens !== 'number' || loop.budgetTokens < 0 || loop.budgetTokens > 10_000_000)) fail('budgetTokens must be 0..10000000');
-    return {
-      name: loop.name as string,
-      cron: loop.cron as string,
-      ...(typeof loop.prompt === 'string' ? { prompt: (loop.prompt as string).slice(0, 2_000) } : {}),
-      ...(loop.enabled === false ? { enabled: false } : {}),
-      ...(typeof loop.model === 'string' && loop.model ? { model: loop.model } : {}),
-      ...(typeof loop.budgetTokens === 'number' && loop.budgetTokens > 0 ? { budgetTokens: loop.budgetTokens } : {}),
-    };
-  });
+  const out = loops.map((l) => validateLoopDef(l, fail));
+  const names = new Set<string>();
+  for (const l of out) {
+    if (names.has(l.name)) fail(`duplicate loop name "${l.name}"`);
+    names.add(l.name);
+    if (l.trigger?.kind === 'webhook' && !l.trigger.secretHash) {
+      l.trigger = { kind: 'webhook', secretHash: hashWebhookSecret(randomBytes(24).toString('base64url')) };
+    }
+  }
   return JSON.stringify(out);
 }

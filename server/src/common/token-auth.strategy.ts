@@ -8,8 +8,9 @@
  * request passes (single-user localhost default; AppModule logs a boot
  * warning). GET /api/status stays open so liveness probes work without
  * credentials, GET /api/security so the disclosure policy is readable
- * without one, and POST /api/channels/email/inbound which carries its own
- * HMAC signature instead.
+ * without one, POST /api/channels/email/inbound which carries its own
+ * HMAC signature instead, and POST /api/hooks/:agentId/:loopName because
+ * webhook senders carry a per-loop secret instead (docs/triggers.md).
  */
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -22,10 +23,15 @@ export class TokenAuthStrategy implements AuthStrategy {
 
   isPublic(request: Request): boolean {
     if (request.method === 'GET') return request.path === '/api/status' || request.path === '/api/security';
+    if (request.method !== 'POST') return false;
     // The inbound-mail webhook authenticates itself with an HMAC over the
     // body (channels/email.service.ts verifySignature), not the bearer token
     // — the forwarder is a Cloudflare Worker, not the user's browser.
-    return request.method === 'POST' && request.path === '/api/channels/email/inbound';
+    if (request.path === '/api/channels/email/inbound') return true;
+    // Webhook-triggered loops (docs/triggers.md): the caller is a third-party
+    // system, authenticated by the loop's own secret in LoopsService, not by
+    // the app token. Exactly two path segments after /api/hooks/.
+    return /^\/api\/hooks\/[^/]+\/[^/]+\/?$/.test(request.path);
   }
 
   authenticate(request: Request): string {

@@ -14,6 +14,8 @@ import { ChatLocks } from './chat-locks';
 import { CompactionService } from './compaction.service';
 import { LoopsService } from './loops.service';
 import { DistillService } from './distill.service';
+import { LoopsController } from './loops.controller';
+import { HooksController } from './hooks.controller';
 import { AiModule } from '../ai/ai.module';
 import { AgentTypesModule } from '../agent-types/agent-types.module';
 import { AgentsModule } from '../agents/agents.module';
@@ -26,7 +28,7 @@ import { ActionReviewModule } from '../review/action-review.module';
 
 @Module({
   imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, ActionReviewModule],
-  controllers: [ChatsController],
+  controllers: [ChatsController, LoopsController, HooksController],
   providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService],
   exports: [ChatsService, ChatsRepository, TurnLoopService],
 })

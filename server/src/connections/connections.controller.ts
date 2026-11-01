@@ -23,7 +23,7 @@ export class ConnectionsController {
   @Get(':provider/start')
   start(@Param('provider') provider: string, @Query('tier') tier?: string) {
     if (!isProviderName(provider)) throw new BadRequestException('provider must be google or microsoft');
-    if (tier && !['read', 'write', 'gmail', 'drive'].includes(tier)) throw new BadRequestException('tier must be read, write, gmail, or drive');
+    if (tier && !['read', 'write', 'gmail', 'mailread', 'drive'].includes(tier)) throw new BadRequestException('tier must be read, write, gmail, mailread, or drive');
     return this.svc.startAuth(provider, (tier as ScopeTier) ?? 'read');
   }
 

@@ -22,6 +22,10 @@ export const GOOGLE_WRITE_SCOPES = ['https://www.googleapis.com/auth/calendar.ev
  *  draft-and-send covers the chase-ladder use case without restricted-read
  *  verification (docs/integrations.md §3a). */
 export const GOOGLE_GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.compose'];
+/** The mail-read tier: only the `mail` event trigger needs it (metadata-only
+ *  polling of a query, docs/triggers.md). A separate, explicit re-consent
+ *  because it is a restricted scope and the tools deliberately never read. */
+export const GOOGLE_GMAIL_READ_SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'];
 /** The drive tier: read the user's Drive, plus drive.file so exports can
  *  create Docs/Sheets — the app can only modify files it created itself. */
 export const GOOGLE_DRIVE_SCOPES = [
@@ -61,6 +65,11 @@ export function hasGmailScopes(scopes: string[]): boolean {
   return GOOGLE_GMAIL_SCOPES.every((s) => scopes.includes(s));
 }
 
+/** Does this connection's consented scope set cover the mail trigger's reads? */
+export function hasGmailReadScopes(scopes: string[]): boolean {
+  return GOOGLE_GMAIL_READ_SCOPES.every((s) => scopes.includes(s));
+}
+
 /** Does this connection's consented scope set cover drive tools? */
 export function hasDriveScopes(scopes: string[]): boolean {
   return GOOGLE_DRIVE_SCOPES.every((s) => scopes.includes(s));
@@ -86,15 +95,18 @@ export type ConnectionService = 'calendar' | 'gmail' | 'drive';
 export type ConnectionProvider = 'google' | 'microsoft';
 
 /** Capability flags a connection's consented scopes cover, per provider. */
-export function capabilitiesFor(provider: ConnectionProvider, scopes: string[]): { writeCapable: boolean; gmailCapable: boolean; driveCapable: boolean } {
+export function capabilitiesFor(provider: ConnectionProvider, scopes: string[]): { writeCapable: boolean; gmailCapable: boolean; mailReadCapable: boolean; driveCapable: boolean } {
   if (provider === 'microsoft') {
+    const mail = MS_MAIL_SCOPES.every((s) => scopes.includes(s));
     return {
       writeCapable: MS_WRITE_SCOPES.every((s) => scopes.includes(s)),
-      gmailCapable: MS_MAIL_SCOPES.every((s) => scopes.includes(s)),
+      gmailCapable: mail,
+      // Mail.ReadWrite already reads; the mail trigger needs no extra consent.
+      mailReadCapable: mail,
       driveCapable: MS_DRIVE_SCOPES.every((s) => scopes.includes(s)),
     };
   }
-  return { writeCapable: hasWriteScopes(scopes), gmailCapable: hasGmailScopes(scopes), driveCapable: hasDriveScopes(scopes) };
+  return { writeCapable: hasWriteScopes(scopes), gmailCapable: hasGmailScopes(scopes), mailReadCapable: hasGmailReadScopes(scopes), driveCapable: hasDriveScopes(scopes) };
 }
 
 export interface ConnectionTool extends AiToolSpec {

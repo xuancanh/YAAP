@@ -118,13 +118,28 @@ Web push with VAPID keys, a service worker, and `manifest.webmanifest` so
 the UI installs; inbox events push to subscribed devices respecting quiet
 hours.
 
-### 6. Event triggers *(todo)*
+### 6. Event triggers *(done)*
 Loops gain `trigger` alongside `cron`: `mail` (new message matching a
 query on a granted connection), `calendar` (event created/changed in the next
 N hours), `task` (task assigned to this agent), `webhook` (signed URL). A
 poller per connection type runs with the loop tick; webhook posts fire
 immediately. Trigger payload is injected into the loop prompt as untrusted
 content.
+Shipped as: `server/src/chats/loop-def.ts` (shared `LoopDef` + validation,
+`cron` now optional), `loops.service.ts` `triggerSweep` (≤4 polls per tick,
+`pollMinutes` ≥2, baseline-then-fire cursors, one `loop_error` per loop per
+hour) and `runLoop(…, fired)` with the `<trigger kind=…>` "data, not
+instructions" frame, `trigger-bus.ts` (`AgentsService.addTask` →
+`LoopsService.onTaskAdded`, 30 s debounce, self-queued tasks excluded),
+`hooks.controller.ts` (`POST /api/hooks/:agentId/:loopName`, public in
+`TokenAuthStrategy`, timing-safe SHA-256 secret, 64 KB, 30/min),
+`loops.controller.ts` (`GET /api/agents/:id/loops/state`, `POST …/loops/
+:name/webhook-secret`), `connections.poll.ts` + `ConnectionsService.fetchMail`
+/ `fetchCalendarWindow` with the new Google `mailread` tier
+(`gmail.readonly`, trigger polling only), migration `0022-loop-state`, the
+"Runs when" chooser in the agent home's Schedule tab with the one-time
+webhook secret, `docs/triggers.md`, and `tests/backend-triggers.test.ts` +
+`web-tests/triggers.test.ts`.
 
 ### 7. Paid cloud with tenancy *(todo)*
 `accountId` on every table, a `SessionAuthStrategy` (email + magic link, or

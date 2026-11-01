@@ -168,10 +168,16 @@ Goal: the agent initiates. This is the viral feature; ours must be trustworthy.
    `workspaces.quietHours` (start/end/timezone/policy `queue | silent |
    allow-urgent`): loops still run in the window; their events carry
    `deliverAfter` or stay inbox-only.
-4. **Watches.** *(reframed)* Lightweight triggers the agent can register with
-   a tool (`watch_url`, `watch_keyword` over web search) that feed heartbeat
-   runs, giving loops something real to check. Superseded by event triggers
-   from connections (execution plan item 6).
+4. **Watches → event triggers.** *(shipped as triggers)* The original
+   idea — `watch_url` / `watch_keyword` tools feeding heartbeat runs — was
+   superseded by event triggers from the data we already hold
+   (`docs/triggers.md`): a loop gains `trigger` alongside `cron` — `mail`
+   (new message matching a query on a granted connection, polled every ≥2
+   minutes with a per-loop cursor), `calendar` (event created/changed in
+   the next N hours, or starting within M minutes), `task` (work assigned
+   to this agent by someone else, debounced), `webhook` (a secret URL, fired
+   at once). Payloads enter the loop prompt framed as data, not
+   instructions; budgets, quiet hours and the spend stop apply unchanged.
 5. **Cost dashboard.** *(shipped)* Per-agent and per-loop token spend over
    time in the agent's home page; workspace budget with hard stop +
    notification. Make the invisible bill visible before it happens. Shipped

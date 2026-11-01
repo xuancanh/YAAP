@@ -421,6 +421,23 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '0022-loop-state',
+    up: async (db) => {
+      // Event triggers (docs/triggers.md): per-loop poll cursor + last-fired.
+      await db.query(`CREATE TABLE IF NOT EXISTS loop_state (
+        "loopKey" TEXT PRIMARY KEY,
+        "agentId" TEXT NOT NULL,
+        "loopName" TEXT NOT NULL,
+        "cursor" TEXT NOT NULL DEFAULT '{}',
+        "lastPolledAt" TEXT,
+        "lastFiredAt" TEXT,
+        "lastErrorAt" TEXT,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_loop_state_agent ON loop_state ("agentId")`);
+    },
+  },
 ];
 
 /** Advisory-lock key serializing migration runs: two instances booting

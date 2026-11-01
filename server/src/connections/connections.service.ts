@@ -26,17 +26,18 @@ import { AiToolSpec } from '../ai/ai-provider.interface';
 import {
   CONNECTION_TOOLS, ConnectionRow, ConnectionProvider as ProviderName,
   ConnectionService as ServiceName, GOOGLE_AUTH_URL, GOOGLE_BASE_SCOPES,
-  GOOGLE_DRIVE_SCOPES, GOOGLE_GMAIL_SCOPES, GOOGLE_READ_SCOPES, GOOGLE_REVOKE_URL,
+  GOOGLE_DRIVE_SCOPES, GOOGLE_GMAIL_READ_SCOPES, GOOGLE_GMAIL_SCOPES, GOOGLE_READ_SCOPES, GOOGLE_REVOKE_URL,
   GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL, GOOGLE_WRITE_SCOPES,
   MS_AUTH_URL, MS_BASE_SCOPES, MS_DRIVE_SCOPES, MS_MAIL_SCOPES, MS_READ_SCOPES,
   MS_TOKEN_URL, MS_USERINFO_URL, MS_WRITE_SCOPES,
   GoogleHttp, capabilitiesFor,
 } from './connections.tools';
+import { pollGcal, pollGmail, pollGraphCalendar, pollGraphMail, type CalendarEventSummary, type MailPollResult } from './connections.poll';
 
 type GrantRow = typeof connectionGrants.$inferSelect;
 
 export type GrantLevel = 'read' | 'write';
-export type ScopeTier = 'read' | 'write' | 'gmail' | 'drive';
+export type ScopeTier = 'read' | 'write' | 'gmail' | 'mailread' | 'drive';
 
 /** Per-provider OAuth shape: endpoints, tier scopes, account resolution. */
 interface ProviderMeta {
@@ -60,8 +61,9 @@ const PROVIDERS: Record<ProviderName, ProviderMeta> = {
     emailFrom: (info) => String(info.email ?? ''),
     tierScopes: (tier) => tier === 'write' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_WRITE_SCOPES]
       : tier === 'gmail' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_GMAIL_SCOPES]
-        : tier === 'drive' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_DRIVE_SCOPES]
-          : [...GOOGLE_BASE_SCOPES, ...GOOGLE_READ_SCOPES],
+        : tier === 'mailread' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_GMAIL_READ_SCOPES]
+          : tier === 'drive' ? [...GOOGLE_BASE_SCOPES, ...GOOGLE_DRIVE_SCOPES]
+            : [...GOOGLE_BASE_SCOPES, ...GOOGLE_READ_SCOPES],
     // Incremental auth: Google unions these scopes with prior consents,
     // so a write upgrade keeps calendar.readonly without re-listing it.
     extraAuthParams: { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true' },
@@ -76,7 +78,7 @@ const PROVIDERS: Record<ProviderName, ProviderMeta> = {
     // Graph consent is cumulative per app+user; each tier requests base +
     // its own scopes and the stored set merges on callback.
     tierScopes: (tier) => tier === 'write' ? [...MS_BASE_SCOPES, ...MS_WRITE_SCOPES]
-      : tier === 'gmail' ? [...MS_BASE_SCOPES, ...MS_MAIL_SCOPES]
+      : tier === 'gmail' || tier === 'mailread' ? [...MS_BASE_SCOPES, ...MS_MAIL_SCOPES]
         : tier === 'drive' ? [...MS_BASE_SCOPES, ...MS_DRIVE_SCOPES]
           : [...MS_BASE_SCOPES, ...MS_READ_SCOPES],
     extraAuthParams: { prompt: 'select_account' },
@@ -102,6 +104,8 @@ export interface ConnectionInfo {
   writeCapable: boolean;
   /** Whether the consented scopes cover gmail draft/send tools. */
   gmailCapable: boolean;
+  /** Whether the consented scopes let the `mail` trigger poll a query. */
+  mailReadCapable: boolean;
   /** Whether the consented scopes cover drive read + export tools. */
   driveCapable: boolean;
   createdAt: string;
@@ -341,6 +345,46 @@ export class ConnectionsService implements GoogleHttp {
     }
     const agent = (await this.db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId))).at(0);
     return tool.execute(granted.conn, input, this, { agentName: agent?.name ?? 'an agent' });
+  }
+
+  // ---- event-trigger polling (docs/triggers.md) ----
+
+  /** The connection a trigger may poll on this agent's behalf: one the agent
+   *  holds a grant for on `service` (any level — reads are the floor), on
+   *  `provider`, optionally pinned to a connection id. Same activation gate
+   *  as the tools: no grant, no poll. */
+  async connectionFor(agentId: string, provider: ProviderName, service: ServiceName, connectionId?: string): Promise<ConnectionRow> {
+    const grants: GrantRow[] = await this.db.select().from(connectionGrants)
+      .where(and(eq(connectionGrants.agentId, agentId), eq(connectionGrants.service, service)));
+    for (const g of grants) {
+      if (connectionId && g.connectionId !== connectionId) continue;
+      const row = (await this.db.select().from(connections).where(eq(connections.id, g.connectionId))).at(0);
+      if (row && row.provider === provider) return row;
+    }
+    throw new Error(`no ${service} grant on a ${provider} connection for this agent${connectionId ? ` (connection ${connectionId})` : ''} — grant it on the agent's Skills & tools tab`);
+  }
+
+  /** Mail poll for the `mail` trigger: ids matching the query plus
+   *  summaries (from, subject, snippet, date — no bodies) of unseen ones. */
+  async fetchMail(agentId: string, opts: { service: 'gmail' | 'msmail'; connectionId?: string; query: string; knownIds: Set<string> }): Promise<MailPollResult> {
+    const provider: ProviderName = opts.service === 'gmail' ? 'google' : 'microsoft';
+    const conn = await this.connectionFor(agentId, provider, 'gmail', opts.connectionId);
+    if (!capabilitiesFor(provider, JSON.parse(conn.scopes) as string[]).mailReadCapable) {
+      throw new Error('this Gmail connection has no read consent — enable "Gmail reading" in Settings → Connections (the mail trigger polls a query; the tools still never read mail)');
+    }
+    return provider === 'google'
+      ? pollGmail(conn, this, opts.query, opts.knownIds)
+      : pollGraphMail(conn, this, opts.query, opts.knownIds);
+  }
+
+  /** Calendar poll for the `calendar` trigger: events in the next N hours. */
+  async fetchCalendarWindow(agentId: string, opts: { service: 'gcal' | 'mscal'; connectionId?: string; withinHours: number; now?: Date }): Promise<CalendarEventSummary[]> {
+    const provider: ProviderName = opts.service === 'gcal' ? 'google' : 'microsoft';
+    const conn = await this.connectionFor(agentId, provider, 'calendar', opts.connectionId);
+    const now = opts.now ?? new Date();
+    return provider === 'google'
+      ? pollGcal(conn, this, now, opts.withinHours)
+      : pollGraphCalendar(conn, this, now, opts.withinHours);
   }
 
   /** All connections this agent may use, keyed by provider, with per-service

@@ -337,6 +337,22 @@ export const agentLessons = pgTable('agent_lessons', {
   updatedAt: text('updatedAt').notNull(),
 });
 
+/** Event-trigger state per loop (docs/triggers.md): the poll/dedupe cursor
+ *  for mail and calendar triggers, and the timestamps the loop list shows.
+ *  Keyed by `agentId:loopName`; a renamed loop starts a fresh cursor. */
+export const loopState = pgTable('loop_state', {
+  loopKey: text('loopKey').primaryKey(),
+  agentId: text('agentId').notNull(),
+  loopName: text('loopName').notNull(),
+  /** JSON cursor: mail { ids, baselined }, calendar { events, started, baselined }. */
+  cursor: text('cursor').notNull().default('{}'),
+  lastPolledAt: text('lastPolledAt'),
+  lastFiredAt: text('lastFiredAt'),
+  /** When the last poll failure was journaled — one loop_error per hour. */
+  lastErrorAt: text('lastErrorAt'),
+  updatedAt: text('updatedAt').notNull(),
+});
+
 /** App-wide key/value settings: defaultPermissionMode, defaultAgentTypeId, … */
 export const appSettings = pgTable('app_settings', {
   key: text('key').primaryKey(),
