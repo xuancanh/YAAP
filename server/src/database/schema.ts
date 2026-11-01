@@ -21,6 +21,7 @@
  * conventions.
  */
 import { pgTable, text, integer, real, primaryKey, uniqueIndex } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { accountScoped } from '../accounts/account-context';
 
 export const workspaces = pgTable('workspaces', {
@@ -293,6 +294,9 @@ export const chatTurns = pgTable('chat_turns', {
    *  rating on the turn can attach to the skills that shaped it. */
   skillsUsed: text('skillsUsed').notNull().default('[]'),
   error: text('error'),
+  /** Degradation (execution-plan item 29): JSON { from, to } when the turn
+   *  ran on a fallback provider because its own was degraded; null otherwise. */
+  degraded: text('degraded'),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -665,6 +669,10 @@ export const organizations = pgTable('organizations', {
    *  class as JSON { classes: { <class>: cheap|standard|strong }, models:
    *  { <tier>: <model id> } }, read through org-routing.ts. */
   routing: text('routing').notNull().default('{}'),
+  /** Incidents (execution-plan item 29): JSON array of action classes frozen
+   *  workspace-wide by a critical incident's containment, read through
+   *  OrgIncidentsService.isFrozen; resolving the incident with undo lifts it. */
+  frozenClasses: text('frozenClasses').notNull().default('[]'),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -731,8 +739,51 @@ export const orgAudits = pgTable('org_audits', {
   usd: real('usd').notNull().default(0),
   /** running | done | failed | budget_stop. */
   status: text('status').notNull().default('running'),
+  /** Audit of the auditor (execution-plan item 29): JSON array of the CEO's
+   *  spot-check cards { itemId, kind: finding | pass, refType, refId, title,
+   *  agree: boolean | null, note, answeredAt }; precision / recall are the
+   *  estimates from every answered card of the org's recent audits, as of the
+   *  latest answer on this run (null until one is answered). */
+  spotChecks: text('spotChecks').notNull().default('[]'),
+  precision: real('precision'),
+  recall: real('recall'),
+  /** 1 when the auditor seat could not rotate (one eligible candidate). */
+  noRotation: integer('noRotation').notNull().default(0),
   createdAt: text('createdAt').notNull(),
 });
+
+/** An incident (docs/incidents.md, execution-plan item 29): something went
+ *  wrong badly enough to contain — a breaker trip, a failed check after
+ *  acceptance, a critical audit finding, a budget hard stop, an external
+ *  bounce, a tool-error streak, a degraded provider or connection, a red-team
+ *  breach, an owner's complaint. One open row per (org, kind, refId); the
+ *  containment steps are recorded so resolving can undo the reversible ones. */
+export const orgIncidents = pgTable('org_incidents', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  workspaceId: text('workspaceId').notNull().default(''),
+  kind: text('kind').notNull(),
+  /** minor | major | critical. */
+  severity: text('severity').notNull().default('minor'),
+  /** open | contained | resolved. */
+  status: text('status').notNull().default('open'),
+  title: text('title').notNull(),
+  detail: text('detail').notNull().default(''),
+  agentId: text('agentId'),
+  actionClass: text('actionClass'),
+  refType: text('refType').notNull().default(''),
+  refId: text('refId').notNull().default(''),
+  /** system | auditor | owner | member. */
+  detectedBy: text('detectedBy').notNull().default('system'),
+  /** JSON array of { action, at, result, reversible, undone? }. */
+  containment: text('containment').notNull().default('[]'),
+  postmortemMeetingId: text('postmortemMeetingId'),
+  openedAt: text('openedAt').notNull(),
+  containedAt: text('containedAt'),
+  resolvedAt: text('resolvedAt'),
+  resolution: text('resolution').notNull().default(''),
+}, (t) => [uniqueIndex('idx_org_incidents_open').on(t.orgId, t.kind, t.refId).where(sql`"status" <> 'resolved'`)]);
 
 export const orgMembers = pgTable('org_members', {
   id: text('id').primaryKey(),

@@ -48,7 +48,7 @@ import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/commo
 import { and, desc, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { organizations, orgSloSamples } from '../database/schema';
+import { organizations, orgAudits, orgSloSamples } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -102,6 +102,9 @@ export interface Pulse {
   /** The two SLOs furthest from target, worst first (for the brief). */
   worst: Array<{ metric: keyof SloTargets; value: number | null; target: number; ratio: number }>;
   series: Array<{ day: string; score: number | null; metrics: SloMetrics | null }>;
+  /** Audit of the auditor (docs/incidents.md §5.1): precision / recall from
+   *  the CEO's spot checks, as of the latest answered card; null until one. */
+  auditor?: { precision: number | null; recall: number | null; auditId: string } | null;
 }
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -262,7 +265,9 @@ export class OrgSloService {
       .map(([metric, value]) => ({ metric, value, target: targets[metric], ratio: ratioOf(metric, value) }))
       .sort((a, b) => b.ratio - a.ratio).slice(0, 2);
     const weights = await this.weights(orgId);
-    return { score: pulseScore(today, targets, weights), today, targets, weights, breaches: breachesOf(today, targets), worst, series };
+    const scored = (await this.db.select().from(orgAudits).where(eq(orgAudits.orgId, orgId)).orderBy(desc(orgAudits.startedAt)).limit(20)).find((a) => a.precision !== null || a.recall !== null);
+    const auditor = scored ? { precision: scored.precision, recall: scored.recall, auditId: scored.id } : null;
+    return { score: pulseScore(today, targets, weights), today, targets, weights, breaches: breachesOf(today, targets), worst, series, auditor };
   }
 }
 

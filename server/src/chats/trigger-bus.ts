@@ -5,7 +5,8 @@
  * events: a task landed on an agent's board (docs/triggers.md, the `task`
  * trigger), and an org wake (docs/autonomous-company.md §4.2: assignment,
  * comment on an owned task, approval decision, review request, manual) that
- * OrgRuntimeService debounces into one run per task. Listeners are
+ * OrgRuntimeService debounces into one run per task — and, among others, an
+ * opened incident (docs/incidents.md) the trust ledger reacts to. Listeners are
  * fire-and-forget; a throwing listener must not break the write that emitted
  * the event.
  */
@@ -58,6 +59,19 @@ export interface TaskStatusEvent {
   agentId: string | null;
 }
 
+/** An incident opened (docs/incidents.md, execution-plan item 29): emitted
+ *  once per incident by OrgIncidentsService; the trust ledger (item 28)
+ *  drops the member's level for the action class on it. `actionClass` is
+ *  null when the incident is not about one class of action. */
+export interface OrgIncidentEvent {
+  orgId: string;
+  incidentId: string;
+  agentId: string | null;
+  actionClass: string | null;
+  severity: 'minor' | 'major' | 'critical';
+  kind: string;
+}
+
 @Injectable()
 export class TriggerBus {
   private readonly emitter = new EventEmitter();
@@ -100,5 +114,15 @@ export class TriggerBus {
     const wrapped = (event: OrgBoardEvent) => { try { listener(event); } catch { /* see header */ } };
     this.emitter.on('org.board', wrapped);
     return () => { this.emitter.off('org.board', wrapped); };
+  }
+
+  emitOrgIncident(event: OrgIncidentEvent): void {
+    try { this.emitter.emit('org.incident', event); } catch { /* see header */ }
+  }
+
+  onOrgIncident(listener: (event: OrgIncidentEvent) => void): () => void {
+    const wrapped = (event: OrgIncidentEvent) => { try { listener(event); } catch { /* see header */ } };
+    this.emitter.on('org.incident', wrapped);
+    return () => { this.emitter.off('org.incident', wrapped); };
   }
 }

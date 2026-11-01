@@ -192,7 +192,9 @@ audit finding.
 
 **C9. Independent verification.** *Partial.*
 Model-free signals, SLOs, the hash-chained audit log, and an auditor on
-a different model family exist. Missing:
+a different model family exist; since item 29 also the audit of the
+auditor (spot checks with precision and recall), rotation and red-team runs
+(`docs/incidents.md` §5). Missing (item 30):
 - the auditor reads **ground truth** (C1, C3 checks), not only the record
   the doers wrote;
 - **reconciliation**: claimed versus measured, per key result and per
@@ -225,7 +227,11 @@ and money and irreversible actions start capped at level 0 or 1. The
 owner's approval load then falls over time for the work that has proven
 safe, and only for that work.
 
-**C11. Incidents as a first-class object.** *Missing.*
+**C11. Incidents as a first-class object.** *Have* (item 29,
+`docs/incidents.md`): detection, containment by severity with undo, one
+owner line, postmortems, `emitOrgIncident` for the ledger, provider and
+connection degradation; the frozen class is enforced once item 28's action
+contract reads it.
 Signals and breakers exist, but there is no incident. Needed: detection
 (a breaker trip, a failed check, a revert, an owner complaint, an
 external bounce), **containment** (pause the member or the action class,
@@ -318,9 +324,9 @@ one page and one spot-check. It rises again only after an incident.
 | C6 Evals and gated rollout | Missing | dry-run planning (item 23), accepted tasks |
 | C7 Prediction ledger | Missing | check-ins (item 18) |
 | C8 Self-modification boundary | Partial | caps, tunables, plan preview (items 16, 18, 23) |
-| C9 Independent verification | Partial | signals, SLOs, auditor, audit chain (item 20) |
+| C9 Independent verification | Partial — spot checks, rotation, red team done (item 29); ground truth and reconciliation remain (item 30) | signals, SLOs, auditor, audit chain (item 20) |
 | C10 Trust ledger | Missing | supervised/autonomous mode (item 16) |
-| C11 Incidents | Missing | breakers, signals, retros (items 15, 20, 22) |
+| C11 Incidents | Have (item 29) | breakers, signals, retros (items 15, 20, 22) |
 | C12 Owner's seat | Partial | brief, cards, vision, pulse, ask, replay (items 18–24) |
 
 The honest reading: yaam-chat has built the **body** of an organization

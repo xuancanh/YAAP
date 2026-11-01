@@ -8,6 +8,7 @@ import { AiProviderFactory } from './providers.factory';
 import { AnthropicAiProvider } from './anthropic-ai.provider';
 import { OpenAiCompatProvider } from './openai-ai.provider';
 import { EchoAiProvider } from './echo-ai.provider';
+import { ProviderHealthService } from './provider-health';
 
 @Module({
   providers: [
@@ -17,7 +18,9 @@ import { EchoAiProvider } from './echo-ai.provider';
     { provide: AnthropicAiProvider, useFactory: () => new AnthropicAiProvider() },
     { provide: OpenAiCompatProvider, useFactory: () => new OpenAiCompatProvider() },
     EchoAiProvider,
+    // Degradation (execution-plan item 29): in-memory provider health per workspace.
+    ProviderHealthService,
   ],
-  exports: [AiProviderFactory],
+  exports: [AiProviderFactory, ProviderHealthService],
 })
 export class AiModule {}

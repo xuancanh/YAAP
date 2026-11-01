@@ -14,6 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import { AiProvider } from '../ai/ai-provider.interface';
 import { AccountsService } from '../accounts/accounts.service';
 import { AiProviderFactory } from '../ai/providers.factory';
+import { ProviderHealthService, providerFamily } from '../ai/provider-health';
 import { AgentTypesService } from '../agent-types/agent-types.service';
 import { AgentsService } from '../agents/agents.service';
 import { AgentMemoryService } from '../agents/agent-memory.service';
@@ -36,6 +37,11 @@ export interface TurnContext {
   /** True when the turn spends a platform key (hosted plan): its dollars
    *  count against the account's monthly ceiling (docs/accounts.md §4). */
   hosted?: boolean;
+  /** The provider name the turn runs on (for provider health, item 29). */
+  providerName?: string;
+  /** Set when the session's own provider is degraded and the turn runs on
+   *  another enabled agent type of a different provider (docs/incidents.md §4). */
+  degraded?: { from: string; to: string };
 }
 
 @Injectable()
@@ -56,6 +62,8 @@ export class TurnContextService {
     /** Optional: the app-wide default agent type, the fallback for sessions
      *  created without one (channels, loops, meetings, org runs). */
     @Optional() private readonly settings?: SettingsService,
+    /** Optional: provider degradation (docs/incidents.md §4, item 29). */
+    @Optional() private readonly health?: ProviderHealthService,
   ) {}
 
   /** The agent type a session runs on. Sessions the UI opens carry one;
@@ -88,11 +96,36 @@ export class TurnContextService {
     return this.accounts.resolveProviderKey(type?.provider ?? 'echo', type?.apiKey);
   }
 
+  /**
+   * Degradation (docs/incidents.md §4): when the session's provider is
+   * degraded for this workspace, another enabled agent type whose provider
+   * is of a different family, not itself degraded, resolvable and with a
+   * usable key. Null when there is none (the turn then tries its own).
+   */
+  private async fallbackFor(session: ChatSession, type: AgentType): Promise<{ type: AgentType; key: { apiKey?: string; hosted: boolean } } | null> {
+    if (!this.health || !this.health.isDegraded(session.workspaceId, type.provider)) return null;
+    const family = providerFamily(type.provider);
+    const candidates = (await this.agentTypes.list().catch(() => [])).filter((t) => t.enabled && t.provider !== 'echo' && providerFamily(t.provider) !== family && !this.health!.isDegraded(session.workspaceId, t.provider));
+    for (const c of candidates) {
+      try {
+        this.providers.resolve(c.provider);
+        const full = await this.agentTypes.resolve(c.id);
+        if (!full) continue;
+        const key = this.accounts ? await this.accounts.resolveProviderKey(full.provider, full.apiKey) : { apiKey: full.apiKey ?? undefined, hosted: false };
+        return { type: full, key };
+      } catch { /* not usable: try the next */ }
+    }
+    return null;
+  }
+
   async build(session: ChatSession): Promise<TurnContext> {
     const type = await this.typeFor(session);
-    const providerName = type?.provider ?? 'echo';
+    // Parity rule (docs/incidents.md §4): a fallback changes the provider and
+    // the model only — the persona, charter, memory and tools stay the agent's.
+    const fallback = type ? await this.fallbackFor(session, type) : null;
+    const providerName = fallback?.type.provider ?? type?.provider ?? 'echo';
     const provider = this.providers.resolve(providerName);
-    const key = this.accounts ? await this.accounts.resolveProviderKey(providerName, type?.apiKey) : { apiKey: type?.apiKey ?? undefined, hosted: false };
+    const key = fallback ? fallback.key : this.accounts ? await this.accounts.resolveProviderKey(providerName, type?.apiKey) : { apiKey: type?.apiKey ?? undefined, hosted: false };
 
     const parts: string[] = [];
     if (type?.persona) parts.push(type.persona);
@@ -164,14 +197,17 @@ export class TurnContextService {
     // Quick replies (FR-5.3): a provider-neutral text protocol the UI parses.
     parts.push('When a short list of likely user responses would genuinely help, end your reply with exactly one final line of the form QUICK_REPLIES: ["option one","option two"] (2-4 options, each under 40 characters). Omit the line otherwise. Never mention this mechanism.');
 
+    const ownModel = session.model || agentModel || type?.model || '';
     return {
       provider,
-      model: session.model || agentModel || type?.model || '',
+      model: fallback ? fallback.type.model : ownModel,
       apiKey: key.apiKey,
-      baseUrl: type?.baseUrl ?? this.providers.defaultBaseUrl(providerName),
+      baseUrl: fallback ? fallback.type.baseUrl ?? this.providers.defaultBaseUrl(providerName) : type?.baseUrl ?? this.providers.defaultBaseUrl(providerName),
       system: parts.join('\n\n'),
       maxToolRounds: this.config.get<number>('maxToolRounds') ?? 24,
       hosted: key.hosted,
+      providerName,
+      ...(fallback && type ? { degraded: { from: `${type.provider}:${ownModel}`, to: `${fallback.type.provider}:${fallback.type.model}` } } : {}),
     };
   }
 }

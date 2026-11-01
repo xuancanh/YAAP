@@ -122,7 +122,18 @@ lessons land in the agents' memory, propose charter changes you approve as a
 diff, and send playbooks back for revision; every approval and autonomous
 action is a row in the searchable **decision log**; and you can **ask the
 company** a question and get an answer whose citations are verified against
-the record. A
+the record. When
+something goes wrong it is an **incident** (`docs/incidents.md`): a breaker
+trip, a failed check or revert, a critical audit finding, a budget stop, a
+bounce, a tool-error streak or your own report is contained by severity —
+note, pause the member, freeze the external action class, drop to supervised
+— you get one line saying what was contained, major ones get a postmortem,
+and resolving with undo reverses the containment. A provider outage fails
+over to another model family with the same tools and prompt; a revoked
+connection pauses only what needs it; the brief and `GET …/org/health` say
+what is degraded. The auditor is audited too: you spot-check two of its
+calls per audit (its precision and recall), its seat rotates, and a weekly
+red-team run tries a canary prompt injection against record-only tools. A
 company exports as a **blueprint** (`docs/blueprints.md`, `COMPANY.json`):
 roles, charters, profile, vision, tunables, playbooks and budget split, none
 of its history; import one into an empty workspace with a mode and a budget

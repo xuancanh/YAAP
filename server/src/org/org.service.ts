@@ -221,7 +221,7 @@ export class OrgService {
       maxDepth: MAX_DEPTH_CEILING, maxDirectReports: DEFAULT_MAX_DIRECT_REPORTS,
       briefHour: clampHour(input.briefHour ?? 8), lastBriefAt: null, lastBrief: '',
       auditorAgentId: null, auditCadenceDays: 7, auditUsdCap: 2,
-      rules: '', strategyMemo: '', strategyMemoAt: null, values: '', culture: '', tunables: '{}', routing: '{}',
+      rules: '', strategyMemo: '', strategyMemoAt: null, values: '', culture: '', tunables: '{}', routing: '{}', frozenClasses: '[]',
       createdAt: nowIso(),
     };
     await this.db.insert(organizations).values(row);

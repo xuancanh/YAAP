@@ -36,7 +36,7 @@ import { AgentsService } from '../agents/agents.service';
 import { AccountsService } from '../accounts/accounts.service';
 import { currentAccountId, runWithAccount } from '../accounts/account-context';
 import { WorkspacesService } from '../workspaces/workspaces.service';
-import { ConnectionsService } from '../connections/connections.service';
+import { ConnectionsService, ConnectionDegradedError } from '../connections/connections.service';
 import type { CalendarEventSummary, MailSummary } from '../connections/connections.poll';
 import { ChatsRepository, LoopStateRow } from './chats.repository';
 import { TurnLoopService } from './turn-loop.service';
@@ -233,6 +233,10 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
       if (trigger.kind === 'mail') await this.pollMail(agentId, agentName, loop, trigger, cursor as MailCursor);
       else await this.pollCalendar(agentId, agentName, loop, trigger, cursor as CalendarCursor, now);
     } catch (err) {
+      // A degraded connection (docs/incidents.md §4) is one incident and one
+      // signal, raised where it degraded — every poll that needs it is skipped
+      // quietly until it is reconnected, not reported once an hour per loop.
+      if (err instanceof ConnectionDegradedError) return;
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`trigger poll for loop "${loop.name}" (${agentName}) failed: ${message}`);
       // One loop_error per loop per hour, not per poll (dedupe like budget_stop).

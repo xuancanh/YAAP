@@ -56,6 +56,7 @@ import { OrgAnnouncer } from './org-announcer';
 import { OrgRuntimeService, RunResult, type AuditFinding, type RunCtx } from './org-runtime.service';
 import { OrgSignalsService } from './org-signals.service';
 import { assuranceTunable } from './org-assurance-tunables';
+import { incidentTunable } from './incident-tunables';
 
 export type OrgAuditRun = typeof orgAudits.$inferSelect;
 export type AuditTrigger = 'cadence' | 'manual';
@@ -79,12 +80,49 @@ export function driftsFromCharter(charter: string, titles: string[]): boolean {
   return !titles.some((t) => [...vocabulary(t)].some((w) => vocab.has(w)));
 }
 
+/** One spot-check card (docs/incidents.md §5.1): an item the auditor judged —
+ *  a finding it raised, or an accepted task it let pass — that the CEO
+ *  agrees with or not. */
+export interface SpotCard { itemId: string; kind: 'finding' | 'pass'; refType: string; refId: string; title: string; agree: boolean | null; note: string; answeredAt: string | null }
+
+export function parseSpotCards(raw: string | null | undefined): SpotCard[] {
+  try { const v = JSON.parse(raw || '[]') as unknown; return Array.isArray(v) ? v as SpotCard[] : []; } catch { return []; }
+}
+
+/**
+ * The auditor's precision and recall from answered spot checks. A finding the
+ * CEO agrees with is a true positive, one they reject a false positive; a
+ * pass they agree with is a true negative, one they reject a miss (false
+ * negative). precision = TP / (TP + FP), recall = TP / (TP + FN); null when
+ * the denominator is empty. Pure.
+ */
+export function auditorQuality(cards: SpotCard[]): { answered: number; tp: number; fp: number; tn: number; fn: number; precision: number | null; recall: number | null } {
+  const answered = cards.filter((c) => c.agree !== null);
+  const tp = answered.filter((c) => c.kind === 'finding' && c.agree).length;
+  const fp = answered.filter((c) => c.kind === 'finding' && !c.agree).length;
+  const tn = answered.filter((c) => c.kind === 'pass' && c.agree).length;
+  const fn = answered.filter((c) => c.kind === 'pass' && !c.agree).length;
+  return { answered: answered.length, tp, fp, tn, fn, precision: tp + fp > 0 ? tp / (tp + fp) : null, recall: tp + fn > 0 ? tp / (tp + fn) : null };
+}
+
+/** Told after every audit run with its findings (incidents, docs/incidents.md §2). */
+export type FindingsListener = (ev: { orgId: string; auditId: string; auditorAgentId: string; findings: AuditFinding[] }) => Promise<void> | void;
+
 @Injectable()
 export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OrgAuditorService.name);
   private timer?: ReturnType<typeof setInterval>;
   /** Estimated tokens of one audit turn (sampled material in, a report out). */
   estimateTokens = { input: 30_000, output: 6_000 };
+  /** Test seam: the random source of the spot-check sample. */
+  random: () => number = Math.random;
+  private readonly findingsListeners: FindingsListener[] = [];
+
+  /** Be told of each audit's findings (the incident for a critical one). */
+  onFindings(fn: FindingsListener): () => void {
+    this.findingsListeners.push(fn);
+    return () => { const i = this.findingsListeners.indexOf(fn); if (i >= 0) this.findingsListeners.splice(i, 1); };
+  }
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
@@ -132,7 +170,7 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
   /** Due when no audit has started within auditCadenceDays (a failed or
    *  refused run counts: the next attempt waits for the next period). */
   async due(org: Organization, now = new Date()): Promise<boolean> {
-    const last = (await this.list(org.id, 1)).at(0);
+    const last = (await this.list(org.id, 20)).find((a) => a.trigger !== 'redteam');
     if (!last) return true;
     return now.getTime() - new Date(last.startedAt).getTime() >= Math.max(1, org.auditCadenceDays) * DAY_MS;
   }
@@ -147,28 +185,31 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
     if (!this.enabled()) return 'skipped:disabled';
     const org = await this.org.get(orgId);
     if (org.status !== 'active') return 'skipped:paused';
-    const auditorId = org.auditorAgentId;
-    if (!auditorId) return 'skipped:no_auditor';
-    const member = await this.org.member(orgId, auditorId);
+    if (!org.auditorAgentId) return 'skipped:no_auditor';
+    const member = await this.org.member(orgId, org.auditorAgentId);
     if (!member || member.status !== 'active') return 'skipped:member_inactive';
+    const history = (await this.list(orgId, 200)).filter((a) => a.trigger !== 'redteam');
+    const last = history.find((a) => a.status === 'done');
+    const since = last?.endedAt ?? new Date(Date.now() - 30 * DAY_MS).toISOString();
+    // Rotation (docs/incidents.md §5.2): the seat moves among eligible members every audit.rotateEveryAudits audits.
+    const seat = await this.seat(org, since, history);
+    const auditorId = seat.agentId;
     const agent = await this.agents.get(auditorId);
     const ws = await this.workspaces.get(org.workspaceId).catch(() => null);
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
 
     // Independence: a family other than the workers' majority when possible.
-    const pick = await this.pickModel(org, auditorId);
+    const pick = await this.pickModel(org, auditorId, seat.turn);
     const model = pick.model || agent.model;
     const cap = Math.max(0.1, org.auditUsdCap || 2);
     const estimate = Math.min(cap, await this.estimateUsd(model));
     const reservation = await this.runtime.reserve(orgId, { agentId: auditorId, projectId: null }, estimate);
     if (!reservation.ok) {
       await this.audit.append(orgId, { actor: 'system', action: 'audit_refused', refType: 'org', refId: orgId, payload: { trigger, scope: reservation.scope, estimateUsd: estimate } });
-      await this.db.insert(orgAudits).values({ id: newId(), accountId: currentAccountId(), orgId, auditorAgentId: auditorId, trigger, startedAt: nowIso(), endedAt: nowIso(), sampled: '{}', findings: '[]', summary: `refused: ${reservation.scope} envelope exhausted`, singleModel: pick.single ? 1 : 0, model, usd: 0, status: 'budget_stop', createdAt: nowIso() });
+      await this.db.insert(orgAudits).values({ id: newId(), accountId: currentAccountId(), orgId, auditorAgentId: auditorId, trigger, startedAt: nowIso(), endedAt: nowIso(), sampled: '{}', findings: '[]', summary: `refused: ${reservation.scope} envelope exhausted`, singleModel: pick.single ? 1 : 0, noRotation: seat.noRotation ? 1 : 0, model, usd: 0, status: 'budget_stop', createdAt: nowIso() });
       return 'budget_stop';
     }
 
-    const last = (await this.list(orgId, 1)).find((a) => a.status === 'done');
-    const since = last?.endedAt ?? new Date(Date.now() - 30 * DAY_MS).toISOString();
     const sample = await this.sample(org, since, names);
     const name = `Org · ${org.name}${SESSION_SUFFIX}`;
     const sessions = await this.repo.listSessions(org.workspaceId);
@@ -178,10 +219,10 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
 
     const runId = newId();
     const startedAt = nowIso();
-    await this.db.insert(orgAudits).values({ id: runId, accountId: currentAccountId(), orgId, auditorAgentId: auditorId, trigger, startedAt, endedAt: null, sampled: JSON.stringify(sample.counts), findings: '[]', summary: '', singleModel: pick.single ? 1 : 0, model, usd: 0, status: 'running', createdAt: startedAt });
+    await this.db.insert(orgAudits).values({ id: runId, accountId: currentAccountId(), orgId, auditorAgentId: auditorId, trigger, startedAt, endedAt: null, sampled: JSON.stringify(sample.counts), findings: '[]', summary: '', singleModel: pick.single ? 1 : 0, noRotation: seat.noRotation ? 1 : 0, model, usd: 0, status: 'running', createdAt: startedAt });
     const ctx: RunCtx = { orgId, taskId: '', agentId: auditorId, runId, sessionId: session.id, isChief: false, reviewer: false, progress: false, calls: new Map(), loopDetected: false, audit: { findings: [], summary: '', closed: false, material: sample.material } };
     this.runtime.beginAuxRun(ctx);
-    await this.audit.append(orgId, { actor: 'system', action: 'audit_start', refType: 'audit', refId: runId, payload: { trigger, ...sample.counts, singleModel: pick.single, model, estimateUsd: estimate, capUsd: cap } });
+    await this.audit.append(orgId, { actor: 'system', action: 'audit_start', refType: 'audit', refId: runId, payload: { trigger, ...sample.counts, singleModel: pick.single, model, estimateUsd: estimate, capUsd: cap, seat: auditorId, noRotation: seat.noRotation, excluded: seat.excluded } });
     const prompt = [
       `You were woken as the auditor of "${org.name}" (trigger: ${trigger}). Audit the material in your context: ${sample.counts.tasks} accepted task(s), ${sample.counts.auditRows} scope/spend/autonomous audit row(s) and ${sample.counts.driftCandidates} charter-drift candidate(s) since ${since.slice(0, 16).replace('T', ' ')}.`,
       'For each accepted task, judge whether the final comment shows done_when was met and whether the work honours the company\'s values; for each scope widening and autonomous action, whether the recorded reason justifies it; for each spend row, whether it is proportionate; for each drift candidate, whether the work matches the charter. Record every problem with org_audit_finding (cite the id). If something holds, say so in the summary rather than inventing a finding. Finish with org_audit_close.',
@@ -206,7 +247,9 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
     const summary = (state.summary || answer.replace(/\s+/g, ' ').trim()).slice(0, 2_000) || (error ? `audit failed: ${error}` : 'no summary');
     const status = ctx.loopDetected ? 'loop' : error ? 'failed' : 'done';
     const overCap = usd > cap;
-    await this.db.update(orgAudits).set({ endedAt: nowIso(), findings: JSON.stringify(state.findings), summary, usd, status }).where(eq(orgAudits.id, runId));
+    // Audit of the auditor (docs/incidents.md §5.1): a random sample of what it judged becomes the CEO's spot-check cards.
+    const cards = status === 'done' ? this.spotCards(org, state.findings, sample.accepted) : [];
+    await this.db.update(orgAudits).set({ endedAt: nowIso(), findings: JSON.stringify(state.findings), summary, usd, status, spotChecks: JSON.stringify(cards) }).where(eq(orgAudits.id, runId));
     await this.audit.append(orgId, { actor: 'system', action: 'audit_end', refType: 'audit', refId: runId, payload: { trigger, status, findings: state.findings.length, critical: state.findings.filter((f) => f.severity === 'critical').length, closed: state.closed, singleModel: pick.single, tokensIn, tokensOut, usd: Number(usd.toFixed(6)), overCap } });
 
     // Findings → signals (chief; critical → CEO), once per (kind, refId, day).
@@ -215,8 +258,20 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
     }
     if (overCap) await this.signals.open(orgId, { kind: 'audit_finding', severity: 'warn', refType: 'audit', refId: `cap:${runId}`, title: `Audit run cost $${usd.toFixed(2)}, above its $${cap.toFixed(2)} cap`, detail: 'Lower audit.sampleSize or raise auditUsdCap.', addressee: 'chief' }).catch(() => undefined);
 
+    for (const fn of this.findingsListeners) await Promise.resolve(fn({ orgId, auditId: runId, auditorAgentId: auditorId, findings: state.findings })).catch((err) => this.logger.warn(`findings listener failed: ${err instanceof Error ? err.message : err}`));
+    if (org.chiefOfStaffAgentId) {
+      for (const c of cards) {
+        await this.agents.addEvent(org.chiefOfStaffAgentId, {
+          kind: 'org_spotcheck', title: `Spot check: ${c.kind === 'finding' ? 'the auditor flagged' : 'the auditor let pass'} ${c.title}`.slice(0, 200),
+          body: `Two minutes: do you agree with the auditor? Answer with POST …/org/audits/${runId}/spotcheck/${c.itemId} { agree, note }. Your answers measure the auditor's precision and recall.`,
+          payload: JSON.stringify({ orgId, auditId: runId, itemId: c.itemId, kind: c.kind, refType: c.refType, refId: c.refId }), origin: 'loop', ...deliveryFor(ws, 'org_spotcheck'),
+        }).catch(() => {});
+      }
+      if (cards.length) await this.audit.append(orgId, { actor: 'system', action: 'spotcheck_cards', refType: 'audit', refId: runId, payload: { items: cards.map((c) => ({ itemId: c.itemId, kind: c.kind, refId: c.refId })) } });
+    }
+
     // The report: #company and the inboxes of auditor and chief.
-    const report = this.report(org, state.findings, summary, sample.counts, pick.single, usd, status, names);
+    const report = this.report(org, auditorId, state.findings, summary, sample.counts, pick.single, usd, status, names, seat.noRotation);
     await this.announcer.announce(org.workspaceId, report);
     const title = `Audit of ${org.name}: ${state.findings.length} finding(s)${state.findings.some((f) => f.severity === 'critical') ? ', critical' : ''}${pick.single ? ' — single-model audit' : ''}`.slice(0, 200);
     for (const target of new Set([auditorId, org.chiefOfStaffAgentId].filter((x): x is string => Boolean(x)))) {
@@ -227,7 +282,7 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
 
   // ---- sampling (no model) ----
 
-  private async sample(org: Organization, since: string, names: Map<string, string>): Promise<{ material: string; counts: { tasks: number; auditRows: number; driftCandidates: number; since: string } }> {
+  private async sample(org: Organization, since: string, names: Map<string, string>): Promise<{ material: string; counts: { tasks: number; auditRows: number; driftCandidates: number; since: string }; accepted: Array<{ id: string; title: string }> }> {
     const nm = (id: string | null | undefined) => (id ? names.get(id) ?? id.slice(0, 8) : 'nobody');
     const size = assuranceTunable(org, 'audit.sampleSize');
     const tasks = await this.tasks.list(org.id);
@@ -271,7 +326,48 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
     }
     lines.push('', `### Charter-drift candidates (${drift.length}) — recent task titles share no vocabulary with the charter; judge, do not assume`);
     lines.push(...(drift.length ? drift : ['- none']));
-    return { material: lines.join('\n'), counts: { tasks: accepted.length, auditRows: rows.length, driftCandidates: drift.length, since } };
+    return { material: lines.join('\n'), counts: { tasks: accepted.length, auditRows: rows.length, driftCandidates: drift.length, since }, accepted: accepted.map((t) => ({ id: t.id, title: t.title })) };
+  }
+
+  // ---- audit independence (docs/incidents.md §5) ----
+
+  /** A random sample of `audit.ownerSpotChecks` judged items: the findings,
+   *  and the sampled accepted tasks no finding names (the passes). */
+  spotCards(org: Organization, findings: AuditFinding[], accepted: Array<{ id: string; title: string }>): SpotCard[] {
+    const n = Math.round(incidentTunable(org, 'audit.ownerSpotChecks'));
+    if (n <= 0) return [];
+    const flagged = new Set(findings.filter((f) => f.refType === 'task').map((f) => f.refId));
+    const items: Array<Omit<SpotCard, 'itemId' | 'agree' | 'note' | 'answeredAt'>> = [
+      ...findings.map((f) => ({ kind: 'finding' as const, refType: f.refType || 'audit', refId: f.refId, title: `${f.title} (${f.severity})`.slice(0, 200) })),
+      ...accepted.filter((t) => !flagged.has(t.id)).map((t) => ({ kind: 'pass' as const, refType: 'task', refId: t.id, title: `"${t.title}" — accepted, no finding`.slice(0, 200) })),
+    ];
+    // Fisher–Yates on the seam's random source.
+    for (let i = items.length - 1; i > 0; i--) { const j = Math.floor(this.random() * (i + 1)); [items[i], items[j]] = [items[j], items[i]]; }
+    return items.slice(0, n).map((it, i) => ({ ...it, itemId: `sc${i + 1}-${newId().slice(0, 6)}`, agree: null, note: '', answeredAt: null }));
+  }
+
+  /**
+   * The auditor seat for the next run (docs/incidents.md §5.2): candidates
+   * are the configured auditor and every active member titled "auditor"
+   * (never the chief). A candidate is ineligible when it did or reviewed work
+   * in the window being audited, or leads someone who did (it would audit a
+   * unit it led or was a member of). The seat advances every
+   * `audit.rotateEveryAudits` completed audits; with one eligible candidate
+   * the run is flagged `no_rotation`.
+   */
+  async seat(org: Organization, since: string, history: OrgAuditRun[]): Promise<{ agentId: string; noRotation: boolean; turn: number; candidates: string[]; excluded: string[] }> {
+    const base = org.auditorAgentId!;
+    const members = (await this.org.members(org.id)).filter((m) => m.status === 'active');
+    const candidates = [base, ...members.filter((m) => m.agentId !== base && m.agentId !== org.chiefOfStaffAgentId && /audit/i.test(m.title)).sort((a, b) => (a.joinedAt < b.joinedAt ? -1 : a.joinedAt > b.joinedAt ? 1 : a.agentId.localeCompare(b.agentId))).map((m) => m.agentId)];
+    const accepted = (await this.tasks.list(org.id)).filter((t) => t.status === 'done' && t.updatedAt >= since);
+    const workers = new Set(accepted.flatMap((t) => [t.assigneeAgentId, t.reviewerAgentId]).filter((x): x is string => Boolean(x)));
+    const leads = new Set(accepted.map((t) => members.find((m) => m.agentId === t.assigneeAgentId)?.reportsToAgentId).filter((x): x is string => Boolean(x)));
+    const excluded = candidates.filter((c) => workers.has(c) || leads.has(c));
+    const eligible = candidates.filter((c) => !excluded.includes(c));
+    const completed = history.filter((a) => a.status === 'done' || a.status === 'failed' || a.status === 'loop').length;
+    const turn = Math.floor(completed / Math.max(1, Math.round(incidentTunable(org, 'audit.rotateEveryAudits'))));
+    if (eligible.length === 0) return { agentId: base, noRotation: true, turn, candidates, excluded };
+    return { agentId: eligible[turn % eligible.length], noRotation: eligible.length <= 1, turn, candidates, excluded };
   }
 
   /** §1b operating profile: `values` / `culture` / `vision` columns another
@@ -295,7 +391,7 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
   // ---- model selection ----
 
   /** The majority family of the active workers vs the auditor's own. */
-  async pickModel(org: Organization, auditorId: string): Promise<{ single: boolean; agentTypeId?: string; model?: string; majority: string; auditor: string }> {
+  async pickModel(org: Organization, auditorId: string, rotation = 0): Promise<{ single: boolean; agentTypeId?: string; model?: string; majority: string; auditor: string }> {
     const agents = new Map((await this.agents.list()).map((a) => [a.id, a]));
     const workers = (await this.org.members(org.id)).filter((m) => m.status === 'active' && m.agentId !== auditorId);
     const tally = new Map<string, number>();
@@ -306,7 +402,9 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
     if (!majority || mine !== majority) return { single: false, majority, auditor: mine };
     const myProvider = me?.provider ?? '';
     const types = await this.db.select().from(agentTypes).where(eq(agentTypes.enabled, 1));
-    const other = types.find((t) => t.provider !== myProvider && familyOf({ provider: t.provider, model: t.model }) !== majority);
+    // Rotation (docs/incidents.md §5.2) also moves among the other-family agent types.
+    const others = types.filter((t) => t.provider !== myProvider && familyOf({ provider: t.provider, model: t.model }) !== majority);
+    const other = others.length ? others[rotation % others.length] : undefined;
     if (other) {
       const providerName = (() => { try { return this.providers?.resolve(other.provider).name ?? other.provider; } catch { return other.provider; } })();
       return { single: false, agentTypeId: other.id, model: cheapestModelFor(providerName, other.baseUrl ?? undefined, other.model), majority, auditor: familyOf({ provider: other.provider, model: other.model }) };
@@ -320,10 +418,10 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
     return perRun * (this.estimateTokens.input / 20_000);
   }
 
-  private report(org: Organization, findings: AuditFinding[], summary: string, counts: { tasks: number; auditRows: number; driftCandidates: number }, single: boolean, usd: number, status: string, names: Map<string, string>): string {
+  private report(org: Organization, auditorId: string, findings: AuditFinding[], summary: string, counts: { tasks: number; auditRows: number; driftCandidates: number }, single: boolean, usd: number, status: string, names: Map<string, string>, noRotation: boolean): string {
     const nm = (id: string | null) => (id ? names.get(id) ?? id.slice(0, 8) : '');
     const sev = (s: AuditFinding['severity']) => findings.filter((f) => f.severity === s).length;
-    const head = `Audit of ${org.name} by ${nm(org.auditorAgentId)}${single ? ' — single-model audit (no other model family available)' : ''}${status !== 'done' ? ` — ${status}` : ''}: sampled ${counts.tasks} accepted task(s), ${counts.auditRows} scope/spend/autonomous row(s), ${counts.driftCandidates} drift candidate(s); ${findings.length} finding(s) (${sev('critical')} critical, ${sev('warn')} warn, ${sev('info')} info); $${usd.toFixed(2)}.`;
+    const head = `Audit of ${org.name} by ${nm(auditorId)}${single ? ' — single-model audit (no other model family available)' : ''}${status !== 'done' ? ` — ${status}` : ''}: sampled ${counts.tasks} accepted task(s), ${counts.auditRows} scope/spend/autonomous row(s), ${counts.driftCandidates} drift candidate(s); ${findings.length} finding(s) (${sev('critical')} critical, ${sev('warn')} warn, ${sev('info')} info); $${usd.toFixed(2)}.${noRotation ? ' Rotation: no_rotation (one eligible auditor; hire or title a second "Auditor" so the seat can rotate).' : ''}`;
     const body = findings.slice(0, 12).map((f) => `• [${f.severity}] ${f.title}${f.refId ? ` (${f.refType || 'ref'} ${f.refId.slice(0, 8)})` : ''}`).join('\n');
     return [head, body, summary ? `Summary: ${summary.slice(0, 600)}` : ''].filter(Boolean).join('\n');
   }

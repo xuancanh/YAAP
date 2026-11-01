@@ -59,6 +59,9 @@ import { OrgKnowledgeService } from './org-knowledge.service';
 import { memoryTunable, postmortemTriggerOn, type PostmortemTrigger } from './memory-tunables';
 
 const DAY_MS = 24 * 60 * 60_000;
+
+/** What a module tells a retro about one of its refs (see addRefDescriber). */
+export type RefDescriber = (orgId: string, refId: string) => Promise<{ title: string; subject: string; unitId?: string | null; taskIds?: string[] } | null>;
 const TOOL_NAMES = new Set(['org_write_playbook', 'org_playbooks', 'org_decisions', 'org_recall']);
 
 const MEMBER_TOOLS: AiToolSpec[] = [
@@ -86,6 +89,12 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
   private timer?: ReturnType<typeof setInterval>;
   /** Test seam: the clock. */
   now: () => Date = () => new Date();
+  /** refType → how another module describes its refs to a retro (incidents, item 29). */
+  private readonly describers = new Map<string, RefDescriber>();
+
+  /** Let another module describe its refs (the "What happened" of the agenda and the unit). */
+  addRefDescriber(refType: string, fn: RefDescriber): void { this.describers.set(refType, fn); }
+
   /** refType:refId → the postmortem consideration in flight (one per ref at a time). */
   private readonly considering = new Map<string, Promise<{ meetingId: string | null; reason?: string }>>();
 
@@ -223,6 +232,9 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
       if (refType === 'task') { const t = await this.tasks.get(orgId, refId); return t.unitId ? await this.units.get(orgId, t.unitId) : await this.units.unitForAssignee(orgId, t.assigneeAgentId); }
       if (refType === 'goal') { const g = await this.org.goal(orgId, refId); return g.unitId ? await this.units.get(orgId, g.unitId) : root; }
       if (refType === 'signal' && this.signals) { const s = await this.signals.get(orgId, refId); return s.unitId ? await this.units.get(orgId, s.unitId) : root; }
+      const described = this.describers.has(refType) ? await this.describers.get(refType)!(orgId, refId) : null;
+      if (described?.unitId) return await this.units.get(orgId, described.unitId);
+      if (described?.taskIds?.length) { const t = await this.tasks.get(orgId, described.taskIds[0]); return t.unitId ? await this.units.get(orgId, t.unitId) : await this.units.unitForAssignee(orgId, t.assigneeAgentId); }
     } catch { /* fall through to the root */ }
     return root;
   }
@@ -254,6 +266,9 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
       subject = `Audit finding (signal ${s.id.slice(0, 8)}, ${s.severity}, ${s.status}): ${s.title}${s.detail ? `\n${s.detail}` : ''}\nAbout ${s.refType} ${s.refId}.`;
       const m = /^[a-z_]+:([\w-]+)$/.exec(s.refId);
       if (s.refType === 'task' && m) taskIds.push(m[1]);
+    } else if (this.describers.has(refType)) {
+      const d = await this.describers.get(refType)!(orgId, refId).catch(() => null);
+      if (d) { title = `Postmortem · ${d.title}`; subject = d.subject; taskIds.push(...(d.taskIds ?? [])); }
     }
     lines.push(`**Why this retro**: ${describeTrigger(trigger)}.`, '', '## What happened', subject || `${refType} ${refId}`);
     // Timeline: the audit rows of the ref (and of its tasks), oldest first.
@@ -496,6 +511,7 @@ function describeTrigger(t: PostmortemTrigger): string {
     case 'escalation': return `a task escalated to the CEO after ${REVIEW_ROUND_CAP} review rounds`;
     case 'breaker': return 'a circuit breaker tripped repeatedly on one task (loop or no-progress stops)';
     case 'audit_critical': return 'the auditor recorded a critical finding';
+    case 'incident': return 'a major or critical incident was opened and contained';
   }
 }
 

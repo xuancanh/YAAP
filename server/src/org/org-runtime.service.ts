@@ -131,6 +131,12 @@ export type AutoAction = 'hire' | 'reorg' | 'scope_widen' | 'budget' | 'terminat
  *  the decision log (docs/company-vision.md §6, item 22) writes its row. */
 export type AutoActionListener = (ev: { orgId: string; action: AutoAction | 'tune'; summary: string; reason: string; payload: Record<string, unknown>; actor: string }) => Promise<void> | void;
 
+/** A breaker tripped (docs/incidents.md §2): the same-call loop stop, the
+ *  no-progress block, or a budget hard stop. OrgIncidentsService opens the
+ *  incident; the runtime has already stopped the run. */
+export interface BreakerEvent { orgId: string; agentId: string; taskId: string; kind: 'loop' | 'no_progress' | 'budget_stop'; detail: string; sessionId?: string; scope?: string; refId?: string }
+export type BreakerListener = (ev: BreakerEvent) => Promise<void> | void;
+
 const SESSION_PREFIX = 'Org · ';
 const ORG_TOOL_PREFIX = 'org_';
 
@@ -174,6 +180,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   planningDebounceMs: number | null = null;
   planningCooldownMs: number | null = null;
   private readonly autoListeners: AutoActionListener[] = [];
+  private readonly breakerListeners: BreakerListener[] = [];
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
@@ -314,6 +321,16 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   onAutoAction(fn: AutoActionListener): () => void {
     this.autoListeners.push(fn);
     return () => { const i = this.autoListeners.indexOf(fn); if (i >= 0) this.autoListeners.splice(i, 1); };
+  }
+
+  /** Be told of every breaker trip (incidents, docs/incidents.md §2). */
+  onBreaker(fn: BreakerListener): () => void {
+    this.breakerListeners.push(fn);
+    return () => { const i = this.breakerListeners.indexOf(fn); if (i >= 0) this.breakerListeners.splice(i, 1); };
+  }
+
+  private async emitBreaker(ev: BreakerEvent): Promise<void> {
+    for (const fn of this.breakerListeners) await Promise.resolve(fn(ev)).catch((err) => this.logger.warn(`breaker listener failed: ${err instanceof Error ? err.message : err}`));
   }
 
   private async emitAuto(ev: Parameters<AutoActionListener>[0]): Promise<void> {
@@ -712,6 +729,13 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     return this.org.setStatus(orgId, 'active', actor);
   }
 
+  /** Stop the in-flight runs of one member (incident containment, docs/incidents.md §3). Returns how many. */
+  stopRunsOf(orgId: string, agentId: string): number {
+    let n = 0;
+    for (const ctx of [...this.running.values()]) if (ctx.orgId === orgId && ctx.agentId === agentId && !ctx.audit) { if (this.turns.stop(ctx.sessionId)) n++; }
+    return n;
+  }
+
   /** Drop queued wakes for one member (member pause cascade). */
   cancelWakesFor(orgId: string, agentId: string): void {
     for (const [key, p] of [...this.pendingWakes.entries()]) if (p.ev.orgId === orgId && p.ev.agentId === agentId) { clearTimeout(p.timer); this.pendingWakes.delete(key); }
@@ -814,6 +838,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     if (ctx.loopDetected) {
       await this.tasks.update(orgId, taskId, { status: 'blocked', blockers: [...listOf(current.blockers), 'loop detected: the same tool call repeated 3 times'] }, 'system');
       await this.ownerEvent(org, agentId, `Run stopped: loop detected on "${task.title}"`, `${agent.name} repeated the same tool call ${this.identicalCallLimit} times. The task is blocked with the chief of staff as owner.`, session.id, ws);
+      await this.emitBreaker({ orgId, agentId, taskId, kind: 'loop', detail: `${agent.name} repeated the same tool call ${this.identicalCallLimit} times on "${task.title}"`, sessionId: session.id });
     } else if (!killed && !reviewer && outcome === 'no_progress') {
       await this.noProgress(org, current, agent.name, session.id, ws);
     } else if (progressed && current.noProgressCount > 0) {
@@ -833,6 +858,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     if (count > this.backoffMinutes.length) {
       await this.tasks.update(org.id, task.id, { status: 'blocked', blockers: [...listOf(task.blockers), `no progress after ${count} runs`] }, 'system');
       await this.ownerEvent(org, task.assigneeAgentId!, `Blocked: "${task.title}" made no progress in ${count} runs`, `${agentName} ran ${count} times without changing the task. It is blocked with the chief of staff as owner — reassign, rebrief or cancel it.`, sessionId, ws);
+      if (task.assigneeAgentId) await this.emitBreaker({ orgId: org.id, agentId: task.assigneeAgentId, taskId: task.id, kind: 'no_progress', detail: `${agentName} ran ${count} times on "${task.title}" without progress`, sessionId });
       return;
     }
     const minutes = this.backoffMinutes[count - 1];
@@ -930,6 +956,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   private async budgetStopEvent(org: Organization, agentId: string, scope: string, refId: string, taskId: string): Promise<void> {
     const ws = await this.workspaces.get(org.workspaceId).catch(() => null);
     await this.audit.append(org.id, { actor: 'system', action: 'budget_stop', refType: scope, refId, payload: { taskId, agentId } });
+    await this.emitBreaker({ orgId: org.id, agentId, taskId, kind: 'budget_stop', detail: `the ${scope} envelope has no headroom for another run`, scope, refId });
     const target = org.chiefOfStaffAgentId ?? agentId;
     // One per scope per day (like loops' budget_stop), not one per wake.
     const today = nowIso().slice(0, 10);

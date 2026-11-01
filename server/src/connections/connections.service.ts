@@ -39,6 +39,17 @@ import { pollGcal, pollGmail, pollGraphCalendar, pollGraphMail, type CalendarEve
 
 type GrantRow = typeof connectionGrants.$inferSelect;
 
+/** A connection whose token was revoked or could not be refreshed
+ *  (docs/incidents.md §4): only the actions that need it are refused, with
+ *  this error; the loop poller skips it silently (the incident is the one signal). */
+export class ConnectionDegradedError extends Error {
+  constructor(readonly connectionId: string, message: string) { super(message); this.name = 'ConnectionDegradedError'; }
+}
+
+export interface ConnectionHealthEvent { connectionId: string; provider: string; accountEmail: string; state: 'degraded' | 'recovered'; reason: string; at: string }
+export interface ConnectionDeliveryFailure { agentId: string; connectionId: string; provider: string; service: string; tool: string; error: string; at: string }
+export interface DegradedConnection { connectionId: string; provider: string; accountEmail: string; reason: string; since: string }
+
 export type GrantLevel = 'read' | 'write';
 export type ScopeTier = 'read' | 'write' | 'gmail' | 'mailread' | 'drive';
 
@@ -134,6 +145,57 @@ export class ConnectionsService implements GoogleHttp {
   private readonly pendingStates = new Map<string, { provider: ProviderName; at: number }>();
   /** Test seam. */
   fetchImpl: typeof fetch = fetch;
+  /** connectionId → why it is degraded (docs/incidents.md §4); in memory. */
+  private readonly degradedConns = new Map<string, DegradedConnection>();
+  private readonly healthListeners: Array<(ev: ConnectionHealthEvent) => void | Promise<void>> = [];
+  private readonly deliveryListeners: Array<(ev: ConnectionDeliveryFailure) => void | Promise<void>> = [];
+
+  // ---- degradation (docs/incidents.md §4, execution-plan item 29) ----
+
+  onHealth(fn: (ev: ConnectionHealthEvent) => void | Promise<void>): () => void {
+    this.healthListeners.push(fn);
+    return () => { const i = this.healthListeners.indexOf(fn); if (i >= 0) this.healthListeners.splice(i, 1); };
+  }
+
+  /** Told when a mutating connection action (a send, a create) fails at the provider. */
+  onDeliveryFailure(fn: (ev: ConnectionDeliveryFailure) => void | Promise<void>): () => void {
+    this.deliveryListeners.push(fn);
+    return () => { const i = this.deliveryListeners.indexOf(fn); if (i >= 0) this.deliveryListeners.splice(i, 1); };
+  }
+
+  private tell<T>(fns: Array<(ev: T) => void | Promise<void>>, ev: T): void {
+    for (const fn of fns) { try { void Promise.resolve(fn(ev)).catch(() => undefined); } catch { /* listeners isolate their own failures */ } }
+  }
+
+  /** Mark a connection degraded; listeners hear it once per transition. */
+  markDegraded(conn: Pick<ConnectionRow, 'id' | 'provider' | 'accountEmail'>, reason: string): void {
+    if (this.degradedConns.has(conn.id)) return;
+    const row: DegradedConnection = { connectionId: conn.id, provider: conn.provider, accountEmail: conn.accountEmail, reason: reason.slice(0, 300), since: nowIso() };
+    this.degradedConns.set(conn.id, row);
+    this.tell(this.healthListeners, { connectionId: conn.id, provider: conn.provider, accountEmail: conn.accountEmail, state: 'degraded', reason: row.reason, at: row.since });
+  }
+
+  markRecovered(connectionId: string, reason: string): void {
+    const row = this.degradedConns.get(connectionId);
+    if (!row) return;
+    this.degradedConns.delete(connectionId);
+    this.tell(this.healthListeners, { connectionId, provider: row.provider, accountEmail: row.accountEmail, state: 'recovered', reason, at: nowIso() });
+  }
+
+  isDegraded(connectionId: string): boolean { return this.degradedConns.has(connectionId); }
+
+  /** What is degraded now (the org health route and the brief). */
+  degraded(): DegradedConnection[] { return [...this.degradedConns.values()]; }
+
+  /** The agents holding a grant on a connection (to find their organisations). */
+  async agentsOnConnection(connectionId: string): Promise<string[]> {
+    const rows = await this.db.select({ agentId: connectionGrants.agentId }).from(connectionGrants).where(eq(connectionGrants.connectionId, connectionId));
+    return [...new Set(rows.map((r) => r.agentId))];
+  }
+
+  private degradedMessage(row: DegradedConnection): string {
+    return `Refused: the ${row.provider} connection${row.accountEmail ? ` (${row.accountEmail})` : ''} is degraded — ${row.reason}. Only actions that need it are paused; reconnect it in Settings → Connections. Do not retry; your other tools work.`;
+  }
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
@@ -287,6 +349,7 @@ export class ConnectionsService implements GoogleHttp {
     };
     if (existing) await this.db.update(connections).set(row).where(eq(connections.id, existing.id));
     else await this.db.insert(connections).values(row);
+    this.markRecovered(row.id, 'reconnected');
     return (await this.list()).find((c2) => c2.id === row.id)!;
   }
 
@@ -299,6 +362,7 @@ export class ConnectionsService implements GoogleHttp {
   async remove(id: string): Promise<{ ok: boolean }> {
     const row = (await this.db.select().from(connections).where(eq(connections.id, id))).at(0);
     if (!row) throw new NotFoundException(`connection ${id}`);
+    this.markRecovered(id, 'disconnected');
     const token = row.refreshToken || row.accessToken;
     const revokeUrl = PROVIDERS[row.provider as ProviderName]?.revokeUrl;
     if (token && revokeUrl) {
@@ -478,8 +542,18 @@ export class ConnectionsService implements GoogleHttp {
     if (tool.level === 'write' && level !== 'write') {
       throw new Error(`no write grant: the user granted read access only — ${name} needs a write grant on the agent's Skills & tools tab`);
     }
+    const degraded = this.degradedConns.get(granted.conn.id);
+    if (degraded) throw new ConnectionDegradedError(granted.conn.id, this.degradedMessage(degraded));
     const agent = (await this.db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId))).at(0);
-    return tool.execute(granted.conn, input, this, { agentName: agent?.name ?? 'an agent' });
+    try {
+      return await tool.execute(granted.conn, input, this, { agentName: agent?.name ?? 'an agent' });
+    } catch (err) {
+      // An external bounce (docs/incidents.md §2): a mutating action the provider refused.
+      if (!tool.readOnly && !(err instanceof ConnectionDegradedError) && !this.degradedConns.has(granted.conn.id) && !/^token refresh failed/.test(err instanceof Error ? err.message : '')) {
+        this.tell(this.deliveryListeners, { agentId, connectionId: granted.conn.id, provider: tool.provider, service: tool.service, tool: name, error: (err instanceof Error ? err.message : String(err)).slice(0, 300), at: nowIso() });
+      }
+      throw err;
+    }
   }
 
   // ---- event-trigger polling (docs/triggers.md) ----
@@ -495,7 +569,11 @@ export class ConnectionsService implements GoogleHttp {
     for (const g of grants) {
       if (connectionId && g.connectionId !== connectionId) continue;
       const row = (await this.db.select().from(connections).where(eq(connections.id, g.connectionId))).at(0);
-      if (row && row.provider === provider) return row;
+      if (row && row.provider === provider) {
+        const degraded = this.degradedConns.get(row.id);
+        if (degraded) throw new ConnectionDegradedError(row.id, this.degradedMessage(degraded));
+        return row;
+      }
     }
     throw new Error(`no ${service} grant on a ${provider} connection for this agent${connectionId ? ` (connection ${connectionId})` : ''} — grant it on the agent's Skills & tools tab`);
   }
@@ -558,7 +636,10 @@ export class ConnectionsService implements GoogleHttp {
   private async accessToken(conn: ConnectionRow): Promise<string> {
     const fresh = conn.expiresAt && new Date(conn.expiresAt).getTime() - Date.now() > 60_000;
     if (fresh && conn.accessToken) return open(conn.accessToken);
-    if (!conn.refreshToken) throw new Error('connection has no refresh token — reconnect the account in Settings');
+    if (!conn.refreshToken) {
+      this.markDegraded(conn, 'it has no refresh token');
+      throw new ConnectionDegradedError(conn.id, 'connection has no refresh token — reconnect the account in Settings');
+    }
     const provider = isProviderName(conn.provider) ? conn.provider : 'google';
     const c = this.oauthClient(provider);
     const res = await this.fetchImpl(PROVIDERS[provider].tokenUrl, {
@@ -570,8 +651,14 @@ export class ConnectionsService implements GoogleHttp {
       }),
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
-    if (!res.ok) throw new Error(`token refresh failed (${res.status}) — reconnect the account in Settings`);
+    if (!res.ok) {
+      // 400 invalid_grant / 401: the grant was revoked or expired — degrade
+      // the connection (one incident), not every call that needs it.
+      if (res.status === 400 || res.status === 401 || res.status === 403) this.markDegraded(conn, `its token could not be refreshed (${res.status}): access was revoked or expired`);
+      throw new Error(`token refresh failed (${res.status}) — reconnect the account in Settings`);
+    }
     const tok = await res.json() as { access_token: string; refresh_token?: string; expires_in?: number };
+    this.markRecovered(conn.id, 'token refreshed');
     const expiresAt = new Date(Date.now() + (tok.expires_in ?? 3600) * 1000).toISOString();
     await this.db.update(connections)
       .set({
@@ -592,6 +679,7 @@ export class ConnectionsService implements GoogleHttp {
       headers: { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
+    if (res.status === 401) this.markDegraded(conn, 'the provider rejected its access token (401)');
     if (!res.ok) throw new Error(`google api error ${res.status}: ${(await res.text()).slice(0, 300)}`);
     return res.json();
   }
@@ -606,6 +694,7 @@ export class ConnectionsService implements GoogleHttp {
       headers: { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
+    if (res.status === 401) this.markDegraded(conn, 'the provider rejected its access token (401)');
     if (!res.ok) throw new Error(`google api error ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const text = await res.text();
     if (text.includes('\u0000')) throw new Error('file is binary — only text files and Google Docs/Sheets/Slides can be read');
@@ -644,6 +733,7 @@ export class ConnectionsService implements GoogleHttp {
       body,
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
+    if (res.status === 401) this.markDegraded(conn, 'the provider rejected its access token (401)');
     if (!res.ok) throw new Error(`google api error ${res.status}: ${(await res.text()).slice(0, 300)}`);
     return res.json();
   }
@@ -660,6 +750,7 @@ export class ConnectionsService implements GoogleHttp {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
+    if (res.status === 401) this.markDegraded(conn, 'the provider rejected its access token (401)');
     if (!res.ok) throw new Error(`google api error ${res.status}: ${(await res.text()).slice(0, 300)}`);
     return res.json();
   }

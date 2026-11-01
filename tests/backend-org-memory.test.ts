@@ -235,7 +235,7 @@ test('each postmortem trigger schedules one retro for the owning unit with an ag
   const orgId = await enable(s);
   const root = await s.units.rootUnit(orgId);
   const company = await s.groupchat.bySlug(s.ws.id, COMPANY_SLUG);
-  assert.equal(TUNABLES['memory.postmortemTriggers'].default, 15);
+  assert.equal(TUNABLES['memory.postmortemTriggers'].default, 31);
   assert.ok(MEMORY_TUNABLES['memory.postmortemCooldownDays'].min >= 1);
   const retros = async () => (await s.meetings.list(orgId)).filter((m) => m.kind === 'retro' && m.createdBy === 'postmortem');
 
@@ -326,7 +326,7 @@ test('each postmortem trigger schedules one retro for the owning unit with an ag
   await s.memory.idle();
   assert.equal((await retros()).length, 4, 'goal_abandoned is off');
   assert.match((await s.memory.considerPostmortem(orgId, 'goal_abandoned', 'goal', g2.id)).reason!, /trigger goal_abandoned is off/);
-  await assert.rejects(s.org.setTunable(orgId, 'memory.postmortemTriggers', 99), /must stay within 0–15/);
+  await assert.rejects(s.org.setTunable(orgId, 'memory.postmortemTriggers', 99), /must stay within 0–31/);
   // every retro ran with the operating path of item 19: created by 'postmortem', in the unit channel
   assert.ok((await retros()).every((m) => m.createdBy === 'postmortem' && m.channelId === company.id));
 });

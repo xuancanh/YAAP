@@ -45,6 +45,9 @@ import { OrgBootstrapService } from './org-bootstrap.service';
 import { ConnectionsModule } from '../connections/connections.module';
 import { OrgSensingService } from './org-sensing.service';
 import { OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController } from './org-sensing.controller';
+import { OrgIncidentsService } from './org-incidents.service';
+import { OrgRedTeamService } from './org-redteam.service';
+import { IncidentsController } from './incidents.controller';
 
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
@@ -86,11 +89,16 @@ import { OrgSensingController, WorkspaceOrgSensingController, MetricsIngestContr
  * tick, binds itself as OrgTasksService's acceptance gate (task checks run
  * before review), activates `metric_source` approvals and offers its tools;
  * it reads connections through ConnectionsModule.
+ * Incidents (docs/incidents.md, item 29): OrgIncidentsService detects from
+ * the runtime's breakers, the auditor's findings, connection and provider
+ * health and the tool-error streak, contains by severity, tells the owner,
+ * schedules the postmortem and leads the brief; OrgRedTeamService runs the
+ * record-only canary passes; IncidentsController adds the workspace routes.
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule, RegistryModule, ConnectionsModule],
-  controllers: [OrgController, WorkspaceOrgController, BlueprintsController, CompaniesController, OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController],
-  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController],
-  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService],
+  controllers: [OrgController, WorkspaceOrgController, BlueprintsController, CompaniesController, OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController, IncidentsController],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController, OrgIncidentsService, OrgRedTeamService],
+  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgIncidentsService, OrgRedTeamService],
 })
 export class OrgModule {}

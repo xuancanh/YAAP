@@ -29,7 +29,7 @@ export interface QuietHours {
 export const QUIET_POLICIES: readonly QuietPolicy[] = ['queue', 'silent', 'allow-urgent'];
 
 /** Event kinds that `allow-urgent` lets through a quiet window. */
-export const URGENT_EVENT_KINDS = new Set(['loop_error', 'budget_stop']);
+export const URGENT_EVENT_KINDS = new Set(['loop_error', 'budget_stop', 'org_incident']);
 
 const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 

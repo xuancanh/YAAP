@@ -36,8 +36,20 @@ export interface Brief { orgId: string; at: string; text: string; items: BriefIt
 
 export interface BriefReplyDecision { n: number; decision: ApprovalDecision; note?: string }
 
+/** A section another module adds to the brief (incidents, docs/incidents.md
+ *  §3, lead the brief): its lines, or [] to stay silent. */
+export interface BriefSection { position: 'first'; lines(orgId: string, since: string, now: Date): Promise<string[]> }
+
 @Injectable()
 export class OrgBriefService {
+  private readonly sections: BriefSection[] = [];
+
+  /** Register a section (see BriefSection). */
+  addSection(section: BriefSection): () => void {
+    this.sections.push(section);
+    return () => { const i = this.sections.indexOf(section); if (i >= 0) this.sections.splice(i, 1); };
+  }
+
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
     private readonly org: OrgService,
@@ -72,6 +84,11 @@ export class OrgBriefService {
     const lines: string[] = [];
     lines.push(`# ${org.name} — brief for ${now.toISOString().slice(0, 10)}`);
     if (org.status === 'paused') lines.push('', '**The organization is paused (kill switch). No agent runs until you resume it.**');
+    // Sections that lead the brief (incidents, docs/incidents.md §3): exceptions before activity.
+    for (const sec of this.sections.filter((x) => x.position === 'first')) {
+      const extra = await sec.lines(orgId, since, now).catch(() => [] as string[]);
+      if (extra.length) lines.push('', ...extra);
+    }
 
     // 1. Spend vs envelopes
     lines.push('', '## Spend');
@@ -191,14 +208,20 @@ export class OrgBriefService {
         if (p.today.costPerAcceptedTaskUsd !== null) lines.push(`- cost per accepted task (7d): $${p.today.costPerAcceptedTaskUsd.toFixed(2)}`);
       }
     }
-    const audits = (await this.db.select().from(orgAudits).where(eq(orgAudits.orgId, orgId)).orderBy(desc(orgAudits.startedAt)).limit(3)).filter((a) => a.endedAt && a.endedAt >= since && a.status !== 'running');
-    if (audits.length > 0) {
+    const recentAudits = await this.db.select().from(orgAudits).where(eq(orgAudits.orgId, orgId)).orderBy(desc(orgAudits.startedAt)).limit(20);
+    const audits = recentAudits.slice(0, 3).filter((a) => a.endedAt && a.endedAt >= since && a.status !== 'running');
+    // Audit of the auditor (docs/incidents.md §5.1): the CEO's spot checks as precision / recall, and the cards still open.
+    const scored = recentAudits.find((a) => a.precision !== null || a.recall !== null);
+    const openCards = recentAudits.reduce((n, a) => n + parseCards(a.spotChecks).filter((c) => c.agree === null).length, 0);
+    if (audits.length > 0 || scored || openCards > 0) {
       lines.push('', '## Audit');
       for (const a of audits) {
         const findings = (() => { try { return JSON.parse(a.findings) as Array<{ severity: string; title: string }>; } catch { return []; } })();
-        lines.push(`- ${a.startedAt.slice(0, 16).replace('T', ' ')} by ${nameOf(a.auditorAgentId)}${a.singleModel ? ' (single-model audit)' : ''}${a.status !== 'done' ? ` — ${a.status}` : ''}: ${findings.length} finding(s), $${a.usd.toFixed(2)}${a.summary ? ` — ${a.summary.slice(0, 200)}` : ''}`);
+        lines.push(`- ${a.trigger === 'redteam' ? 'Red-team run ' : ''}${a.startedAt.slice(0, 16).replace('T', ' ')} by ${nameOf(a.auditorAgentId)}${a.singleModel ? ' (single-model audit)' : ''}${a.status !== 'done' ? ` — ${a.status}` : ''}: ${findings.length} finding(s), $${a.usd.toFixed(2)}${a.summary ? ` — ${a.summary.slice(0, 200)}` : ''}${a.noRotation ? ' [no_rotation: one eligible auditor]' : ''}`);
         for (const f of findings.filter((x) => x.severity === 'critical').slice(0, 3)) lines.push(`  - critical: ${f.title}`);
       }
+      if (scored) lines.push(`- Auditor quality from your spot checks: precision ${fmtPct(scored.precision)}, recall ${fmtPct(scored.recall)}.`);
+      if (openCards > 0) lines.push(`- ${openCards} spot-check card(s) wait for you (two minutes: agree or not with the auditor).`);
     }
 
     // 3d. Questions the company asked the CEO in its meetings (item 19).
@@ -294,6 +317,8 @@ export class OrgBriefService {
 }
 
 function pct(a: number, b: number): string { return b > 0 ? `${Math.round((a / b) * 100)}%` : '—'; }
+function fmtPct(v: number | null): string { return v === null ? 'n/a' : `${Math.round(v * 100)}%`; }
+function parseCards(raw: string): Array<{ agree: boolean | null }> { try { const v = JSON.parse(raw || '[]') as unknown; return Array.isArray(v) ? v as Array<{ agree: boolean | null }> : []; } catch { return []; } }
 function lastOf(rawList: string): string {
   try { const v = JSON.parse(rawList || '[]') as unknown[]; return String(v.at(-1) ?? 'no owner note'); } catch { return 'no owner note'; }
 }

@@ -45,6 +45,7 @@ import { ComputerService } from '../computer/computer.service';
 import { REMEMBERABLE_COMPUTER_TOOLS, summarizeInput as summarizeComputerInput } from '../computer/computer-scopes';
 
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
+import { ProviderHealthService } from '../ai/provider-health';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
@@ -83,6 +84,9 @@ export interface ToolProviderHook {
   execute(session: ChatSession, name: string, input: Record<string, unknown>): Promise<string>;
   contextFor(session: ChatSession): Promise<string | null>;
   onToolCall?(sessionId: string, call: AiToolCall): string | null;
+  /** Told after every executed tool call of an agent session with whether
+   *  it failed (the tool-error streak of docs/incidents.md §2). Fire-and-forget. */
+  onToolResult?(session: ChatSession, call: AiToolCall, result: { isError: boolean; output: string }): void;
   /** A workspace folder to mount as shared/ for this session instead of the
    *  agent's assigned one (a channel session sees its channel folder). */
   sharedFolderFor?(session: ChatSession): Promise<string | null>;
@@ -127,6 +131,11 @@ interface ToolRecord {
    *  can keep what it fetched private to them (docs/shared-agents.md §4). */
   usedConnectionOf?: string;
 }
+
+/** A record-only sandbox for one session (the red-team run, docs/incidents.md
+ *  §5.3): every tool call the model makes is handed to the recorder, which
+ *  returns the stub result the model sees; no tool is ever executed. */
+export type SandboxRecorder = (call: AiToolCall) => string;
 
 /** Tools that modify the agent/chat configuration itself can never receive a
  *  blanket "always allow tool" grant (FR-4.5). */
@@ -297,6 +306,12 @@ export class TurnLoopService implements OnModuleDestroy {
   private readonly extraProviders: ToolProviderHook[] = [];
   /** How long a paused approval waits before auto-deny (test seam). */
   approvalTtlMs = APPROVAL_TTL_MS;
+  /** sessionId → the record-only recorder (see SandboxRecorder). */
+  private readonly sandboxes = new Map<string, SandboxRecorder>();
+
+  /** Make every tool call of a session record-only until `clearSandbox`. */
+  setSandbox(sessionId: string, recorder: SandboxRecorder): void { this.sandboxes.set(sessionId, recorder); }
+  clearSandbox(sessionId: string): void { this.sandboxes.delete(sessionId); }
 
   setOrgTools(hook: OrgToolsHook | undefined): void {
     this.orgTools = hook;
@@ -345,6 +360,9 @@ export class TurnLoopService implements OnModuleDestroy {
     /** Optional: without it the workspace has one human and nothing is
      *  attributed, routed or wrapped (docs/shared-agents.md). */
     @Optional() private readonly shared?: SharedService,
+    /** Optional: provider degradation (docs/incidents.md §4, item 29) — every
+     *  provider round reports its outcome so outages are noticed. */
+    @Optional() private readonly health?: ProviderHealthService,
   ) {}
 
   /** Graceful shutdown: abort every in-flight turn through the same path as
@@ -459,6 +477,9 @@ export class TurnLoopService implements OnModuleDestroy {
       const ctx = await this.context.build(session);
       hosted = ctx.hosted ?? false;
       turnModel = ctx.model || turnModel;
+      // Degradation (docs/incidents.md §4): the turn says which fallback it ran on.
+      if (ctx.degraded) await this.repo.updateTurn(turn.id, { degraded: JSON.stringify(ctx.degraded), model: ctx.model }).catch(() => undefined);
+      let providerOk = false;
       const history = await this.buildHistory(session.id, session.compactSummary, session.compactCutoff,
         hasMembers && session.shared === 1 ? { names, ownerActor } : undefined);
       // Attachments: inject workspace-file contents into the provider input —
@@ -531,22 +552,30 @@ export class TurnLoopService implements OnModuleDestroy {
       for (let round = 0; ; round++) {
         let answer = '';
         const calls: AiToolCall[] = [];
-        for await (const ev of ctx.provider.stream({
-          model: ctx.model,
-          system,
-          messages: history,
-          tools: toolSpecs,
-          thinkingEffort: session.thinkingEffort,
-          apiKey: ctx.apiKey,
-          baseUrl: ctx.baseUrl,
-          signal: ctl.signal,
-        })) {
-          if (ev.type === 'answer') answer += ev.text;
-          if (ev.type === 'usage') { tokensIn += ev.inputTokens; tokensOut += ev.outputTokens; }
-          if (ev.type === 'done' && calls.length > 0) continue; // round continues after tools
-          if (ev.type === 'tool_call') calls.push({ id: ev.id, name: ev.name, input: ev.input });
-          yield ev;
+        try {
+          for await (const ev of ctx.provider.stream({
+            model: ctx.model,
+            system,
+            messages: history,
+            tools: toolSpecs,
+            thinkingEffort: session.thinkingEffort,
+            apiKey: ctx.apiKey,
+            baseUrl: ctx.baseUrl,
+            signal: ctl.signal,
+          })) {
+            if (ev.type === 'answer') answer += ev.text;
+            if (ev.type === 'usage') { tokensIn += ev.inputTokens; tokensOut += ev.outputTokens; }
+            if (ev.type === 'done' && calls.length > 0) continue; // round continues after tools
+            if (ev.type === 'tool_call') calls.push({ id: ev.id, name: ev.name, input: ev.input });
+            yield ev;
+          }
+        } catch (err) {
+          // Provider health (docs/incidents.md §4): a transient failure counts
+          // towards degrading this provider for the workspace; a stop does not.
+          if (this.health && ctx.providerName && !ctl.signal.aborted) await this.health.recordFailure(session.workspaceId, ctx.providerName, err).catch(() => undefined);
+          throw err;
         }
+        if (!providerOk && this.health && ctx.providerName && !ctl.signal.aborted) { providerOk = true; this.health.recordSuccess(session.workspaceId, ctx.providerName); }
 
         if (answer) await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'assistant', content: answer });
         if (calls.length === 0 || ctl.signal.aborted) break;
@@ -560,6 +589,18 @@ export class TurnLoopService implements OnModuleDestroy {
 
         for (const call of calls) {
           if (ctl.signal.aborted) break;
+          // A record-only sandbox (the red-team run, docs/incidents.md §5.3):
+          // nothing executes, queues, routes or reaches a reviewer; the call
+          // is recorded and the model sees the recorder's stub result.
+          const sandbox = this.sandboxes.get(sessionId);
+          if (sandbox) {
+            const output = sandbox(call);
+            await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
+            history.push({ role: 'tool', content: output, toolCallId: call.id, isError: false });
+            toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'deny', isError: false });
+            yield { type: 'tool_result', id: call.id, name: call.name, output, isError: false };
+            continue;
+          }
           // Computer tools act on the user's own machine and run only from a
           // turn the user started in the app. A loop or channel turn has
           // nobody at the keyboard to approve, so the call is refused — not
@@ -777,6 +818,7 @@ export class TurnLoopService implements OnModuleDestroy {
           const browserStep = this.browser?.owns(call.name) ? this.browser.lastStep(session.id) : null;
           for (const bev of this.browser?.takeEvents(session.id) ?? []) yield bev;
           toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: decision, isError, ...(review ? { review } : {}), ...(browserStep ? { browser: browserStep } : {}), ...(connOwner !== null && hasMembers ? { usedConnectionOf: connOwner } : {}) });
+          if (session.agentId && decision !== 'deny' && !reviewDenial) for (const p of this.providers()) { try { p.onToolResult?.(session, call, { isError, output }); } catch { /* observers isolate their own failures */ } }
           yield { type: 'tool_result', id: call.id, name: call.name, output: output.slice(0, 500), isError, ...(review ? { review } : {}) };
           if (step && decision !== 'deny') {
             yield {

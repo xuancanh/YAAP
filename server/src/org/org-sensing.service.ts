@@ -604,6 +604,14 @@ export class OrgSensingService implements ToolProviderHook, OnModuleInit, OnModu
     });
   }
 
+  private readonly checkListeners: Array<(ev: { orgId: string; task: OrgTask; outcome: 'pass' | 'fail' | 'error'; results: CheckResult[]; actor: string }) => Promise<void> | void> = [];
+
+  /** Be told after every check run with the task as it stood before it (incidents, docs/incidents.md §2: a task accepted by check that fails a re-run). */
+  onChecksRun(fn: (ev: { orgId: string; task: OrgTask; outcome: 'pass' | 'fail' | 'error'; results: CheckResult[]; actor: string }) => Promise<void> | void): () => void {
+    this.checkListeners.push(fn);
+    return () => { const i = this.checkListeners.indexOf(fn); if (i >= 0) this.checkListeners.splice(i, 1); };
+  }
+
   /** Run every check of a task now (model-free); the results replace the last ones. */
   async runChecks(orgId: string, taskId: string, actor = 'system'): Promise<{ outcome: 'none' | 'pass' | 'fail' | 'error'; results: CheckResult[] }> {
     const org = await this.org.get(orgId);
@@ -622,6 +630,7 @@ export class OrgSensingService implements ToolProviderHook, OnModuleInit, OnModu
     for (const r of results) await this.db.insert(orgTaskChecks).values({ accountId: currentAccountId(), id: newId(), orgId, taskId: t.id, checkIndex: r.index, status: r.status, detail: r.detail.slice(0, 1_000), evidence: JSON.stringify(r.evidence).slice(0, 4_000), ranAt });
     const outcome = results.some((r) => r.status === 'fail') ? 'fail' : results.some((r) => r.status === 'error') ? 'error' : 'pass';
     await this.audit.append(orgId, { actor, action: 'checks_run', refType: 'task', refId: t.id, payload: { outcome, results: results.map((r) => ({ i: r.index, kind: r.check.kind, status: r.status })) } });
+    for (const fn of this.checkListeners) await Promise.resolve(fn({ orgId, task: t, outcome, results, actor })).catch(() => undefined);
     return { outcome, results };
   }
 

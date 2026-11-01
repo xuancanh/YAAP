@@ -1009,9 +1009,48 @@ execution for irreversible actions; per-member, per-class autonomy levels
 earned from the record and dropped on incidents. Replaces the
 supervised/autonomous switch as the unit of autonomy.
 
-### 29. Incidents, degradation and independent audit (C11, C9) *(in progress)*
+### 29. Incidents, degradation and independent audit (C11, C9) *(done)*
 Incidents with containment and postmortems; provider and connection
 degradation modes; audit of the auditor, rotation, red-team runs.
+
+*Shipped as (2 November 2026, branch `feat/incidents`):* migration
+`0041-org-incidents` (`org_incidents` with a partial unique index on
+(orgId, kind, refId) while not resolved, `organizations.frozenClasses`,
+`org_audits.spotChecks | precision | recall | noRotation`,
+`chat_turns.degraded`); `server/src/org/org-incidents.service.ts` (`open`
+with dedupe, `containBySeverity` over the `incidents.contain*` levels —
+note, pause + drop wakes + stop runs, freeze an external class, autonomous →
+supervised — recorded steps, `contain`, `resolve` with undo, the one
+words-first `org_incident` owner event, the `incident` postmortem trigger
+and a ref describer on OrgMemoryService, `TriggerBus.emitOrgIncident`,
+detectors for breakers / budget stop (`OrgRuntimeService.onBreaker`),
+critical findings (`OrgAuditorService.onFindings`), bounces and degraded
+connections (`ConnectionsService.onDeliveryFailure | onHealth`), degraded
+providers (`ProviderHealthService.onChange`, tunable thresholds), the
+tool-error streak (`ToolProviderHook.onToolResult`), `reportIncident` for
+items 27–28, `report`, `answerSpotCheck`, `isFrozen`, the brief's
+Incidents and Degraded sections (`OrgBriefService.addSection`),
+`healthReport`, tools `org_incidents` / `org_report_incident`);
+`server/src/org/incident-tunables.ts`; `server/src/org/org-redteam.service.ts`
+(canary in a sandboxed copy of inbound content, throwaway session with
+`TurnLoopService.setSandbox` record-only tools, breach → critical finding +
+major incident, cadence tick); `server/src/ai/provider-health.ts`
+(transient-error classification, degrade / probe / recover per workspace and
+provider family) with failover in `TurnContextService.build` (another
+family's agent type, same prompt and tools, `degraded {from, to}` on the
+turn); degraded connections in `ConnectionsService` (`ConnectionDegradedError`,
+refused only for their own tools, skipped silently by the loop poller);
+the auditor's spot-check cards, `auditorQuality`, the rotating `seat` and the
+`no_rotation` flag; the pulse's `auditor` precision/recall;
+`server/src/org/incidents.controller.ts` (`GET|POST …/org/incidents`, `GET
+…/org/incidents/:id`, `POST …/:id/contain | /resolve`, `GET …/org/health`,
+`POST …/org/audits/:auditId/spotcheck/:itemId`, `POST …/org/redteam/run`);
+`docs/incidents.md`, `docs/security.md` §b rows and §k line. Tests:
+`tests/backend-org-incidents.test.ts` (17; the last wires item 27: a task accepted by check that fails a re-run of its checks opens `check_failed` through `OrgSensingService.onChecksRun`). Departures (`docs/incidents.md`
+§8): connection incidents use the tool name as the action class; health is
+in memory; the chief is never paused automatically; the freeze is enforced
+by item 28's contract through `isFrozen`; `memory.postmortemTriggers` grows
+bit 16 (default 31).
 
 ### 30. Experiments and the prediction ledger (C5, C7, C9 reconciliation) *(planned)*
 Changes as hypotheses with a metric, window and revert rule; forecasts

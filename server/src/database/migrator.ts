@@ -1405,6 +1405,50 @@ const MIGRATIONS: Migration[] = [
     },
   },
   {
+    id: '0041-org-incidents',
+    up: async (db) => {
+      // Incidents, degradation and audit independence (docs/incidents.md,
+      // execution-plan item 29): the incident record with its containment
+      // steps, one open row per (org, kind, refId); the action classes a
+      // critical incident froze; the CEO's spot checks of the auditor, its
+      // precision/recall and the rotation flag; the fallback a degraded
+      // provider used on a turn. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_incidents (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "workspaceId" TEXT NOT NULL DEFAULT '',
+        "kind" TEXT NOT NULL,
+        "severity" TEXT NOT NULL DEFAULT 'minor',
+        "status" TEXT NOT NULL DEFAULT 'open',
+        "title" TEXT NOT NULL,
+        "detail" TEXT NOT NULL DEFAULT '',
+        "agentId" TEXT,
+        "actionClass" TEXT,
+        "refType" TEXT NOT NULL DEFAULT '',
+        "refId" TEXT NOT NULL DEFAULT '',
+        "detectedBy" TEXT NOT NULL DEFAULT 'system',
+        "containment" TEXT NOT NULL DEFAULT '[]',
+        "postmortemMeetingId" TEXT,
+        "openedAt" TEXT NOT NULL,
+        "containedAt" TEXT,
+        "resolvedAt" TEXT,
+        "resolution" TEXT NOT NULL DEFAULT ''
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_incidents_open ON org_incidents ("orgId", "kind", "refId") WHERE "status" <> 'resolved'`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_incidents_org_status ON org_incidents ("orgId", "status")`);
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('organizations', 'frozenClasses', "TEXT NOT NULL DEFAULT '[]'");
+      await add('org_audits', 'spotChecks', "TEXT NOT NULL DEFAULT '[]'");
+      await add('org_audits', 'precision', 'REAL');
+      await add('org_audits', 'recall', 'REAL');
+      await add('org_audits', 'noRotation', 'INTEGER NOT NULL DEFAULT 0');
+      await add('chat_turns', 'degraded', 'TEXT');
+    },
+  },
+  {
     id: '0042-chat-compact-baseline',
     up: async (db) => {
       // The token ceiling counts tokens since the last compaction, so a
