@@ -36,11 +36,13 @@ export interface Brief { orgId: string; at: string; text: string; items: BriefIt
 
 export interface BriefReplyDecision { n: number; decision: ApprovalDecision; note?: string }
 
-/** A section another module adds to the brief: `first` leads it (incidents,
- *  docs/incidents.md §3); `improve` follows the outcome sections
- *  (experiments, calibration and reconciliation, docs/experiments.md §5).
- *  Its lines, or [] to stay silent. */
-export interface BriefSection { position: 'first' | 'improve'; lines(orgId: string, since: string, now: Date): Promise<string[]> }
+/** A section another module adds to the brief (docs/owners-seat.md §3):
+ *  `outcomes` opens it (measured movement and value, item 31); `first` leads
+ *  the exceptions (incidents, docs/incidents.md §3); `decisions` follows the
+ *  decisions needed (what was decided for the owner); `improve` follows them
+ *  (experiments, calibration and reconciliation, docs/experiments.md §5);
+ *  `end` closes it. Its lines, or [] to stay silent. */
+export interface BriefSection { position: 'outcomes' | 'first' | 'decisions' | 'improve' | 'end'; lines(orgId: string, since: string, now: Date): Promise<string[]> }
 
 @Injectable()
 export class OrgBriefService {
@@ -86,35 +88,43 @@ export class OrgBriefService {
     const lines: string[] = [];
     lines.push(`# ${org.name} — brief for ${now.toISOString().slice(0, 10)}`);
     if (org.status === 'paused') lines.push('', '**The organization is paused (kill switch). No agent runs until you resume it.**');
-    // Sections that lead the brief (incidents, docs/incidents.md §3): exceptions before activity.
-    for (const sec of this.sections.filter((x) => x.position === 'first')) {
-      const extra = await sec.lines(orgId, since, now).catch(() => [] as string[]);
-      if (extra.length) lines.push('', ...extra);
-    }
+    // The order (docs/owners-seat.md §3): outcomes against ground truth, then
+    // exceptions, then decisions; activity counts last.
+    const sectionLines = async (position: BriefSection['position'], into: string[]) => {
+      for (const sec of this.sections.filter((x) => x.position === position)) {
+        const extra = await sec.lines(orgId, since, now).catch(() => [] as string[]);
+        if (extra.length) into.push('', ...extra);
+      }
+    };
+    await sectionLines('outcomes', lines);
+    // Sections that lead the exceptions (incidents, docs/incidents.md §3).
+    await sectionLines('first', lines);
+    /** Activity (spend, work, autonomous actions, the pulse) goes after the decisions. */
+    const activity: string[] = [];
 
     // 1. Spend vs envelopes
-    lines.push('', '## Spend');
+    activity.push('', '## Spend');
     const spentByAgent = new Map<string, number>();
     let orgSpent = 0;
     for (const r of (await this.tasks.runs(orgId, { limit: 500 })).filter((r) => r.startedAt.slice(0, 7) === month)) {
       orgSpent += r.usd; spentByAgent.set(r.agentId, (spentByAgent.get(r.agentId) ?? 0) + r.usd);
     }
     const company = budgets.find((b) => b.scope === 'company');
-    lines.push(`- Company: $${orgSpent.toFixed(2)} this month${company && company.monthlyUsd > 0 ? ` of $${company.monthlyUsd.toFixed(2)} (${pct(orgSpent, company.monthlyUsd)})${orgSpent / company.monthlyUsd >= 0.8 ? ' ⚠ over 80%' : ''}` : ' (no company cap)'}`);
+    activity.push(`- Company: $${orgSpent.toFixed(2)} this month${company && company.monthlyUsd > 0 ? ` of $${company.monthlyUsd.toFixed(2)} (${pct(orgSpent, company.monthlyUsd)})${orgSpent / company.monthlyUsd >= 0.8 ? ' ⚠ over 80%' : ''}` : ' (no company cap)'}`);
     const sinceRuns = runs.length;
     const chiefShare = org.chiefOfStaffAgentId ? (spentByAgent.get(org.chiefOfStaffAgentId) ?? 0) / Math.max(orgSpent, 0.000001) : 0;
     for (const m of members) {
       const b = budgets.find((x) => x.scope === 'agent' && x.refId === m.agentId);
       const spent = spentByAgent.get(m.agentId) ?? 0;
-      lines.push(`- ${nameOf(m.agentId)} (${m.title || 'member'}${m.status === 'paused' ? ', paused' : ''}): $${spent.toFixed(2)}${b && b.monthlyUsd > 0 ? ` of $${b.monthlyUsd.toFixed(2)} (${pct(spent, b.monthlyUsd)})${spent / b.monthlyUsd >= 0.8 ? ' ⚠' : ''}` : ''}`);
+      activity.push(`- ${nameOf(m.agentId)} (${m.title || 'member'}${m.status === 'paused' ? ', paused' : ''}): $${spent.toFixed(2)}${b && b.monthlyUsd > 0 ? ` of $${b.monthlyUsd.toFixed(2)} (${pct(spent, b.monthlyUsd)})${spent / b.monthlyUsd >= 0.8 ? ' ⚠' : ''}` : ''}`);
     }
-    if (orgSpent > 0 && chiefShare > 0.15) lines.push(`- ⚠ Coordination share: the chief of staff used ${Math.round(chiefShare * 100)}% of org spend (soft alarm at 15%).`);
+    if (orgSpent > 0 && chiefShare > 0.15) activity.push(`- ⚠ Coordination share: the chief of staff used ${Math.round(chiefShare * 100)}% of org spend (soft alarm at 15%).`);
     // Capital (docs/company-vision.md §7): the projection, not the balance, is what warns.
     const forecast = this.capital ? await this.capital.forecast(orgId, now).catch(() => null) : null;
     if (forecast) {
       const c = forecast.company;
-      lines.push(`- Projection: $${c.projectedUsd.toFixed(2)} by month-end at $${c.dailyBurnUsd.toFixed(2)}/day (trailing ${forecast.windowDays}d)${c.capUsd > 0 ? ` — ${c.projectedPct}% of the envelope, ${c.state === 'onTrack' ? 'on track' : c.state === 'warn' ? '⚠ over the warn line' : '■ projected to stop'}` : ''}.`);
-      for (const e of [...forecast.agents, ...forecast.projects, ...forecast.objectives].filter((x) => x.state !== 'onTrack').slice(0, 5)) lines.push(`  - ${e.state === 'stop' ? '■' : '⚠'} ${e.scope} ${e.name}: $${e.projectedUsd.toFixed(2)} projected of $${e.capUsd.toFixed(2)} (${e.projectedPct}%)`);
+      activity.push(`- Projection: $${c.projectedUsd.toFixed(2)} by month-end at $${c.dailyBurnUsd.toFixed(2)}/day (trailing ${forecast.windowDays}d)${c.capUsd > 0 ? ` — ${c.projectedPct}% of the envelope, ${c.state === 'onTrack' ? 'on track' : c.state === 'warn' ? '⚠ over the warn line' : '■ projected to stop'}` : ''}.`);
+      for (const e of [...forecast.agents, ...forecast.projects, ...forecast.objectives].filter((x) => x.state !== 'onTrack').slice(0, 5)) activity.push(`  - ${e.state === 'stop' ? '■' : '⚠'} ${e.scope} ${e.name}: $${e.projectedUsd.toFixed(2)} projected of $${e.capUsd.toFixed(2)} (${e.projectedPct}%)`);
     }
 
     // 2. Tasks since the last brief
@@ -122,17 +132,17 @@ export class OrgBriefService {
     const blocked = tasks.filter((t) => t.status === 'blocked');
     const review = tasks.filter((t) => t.status === 'in_review');
     const failed = runs.filter((r) => ['failed', 'loop', 'budget_stop'].includes(r.status));
-    lines.push('', `## Work since ${since.slice(0, 16).replace('T', ' ')}`);
-    lines.push(`- ${sinceRuns} run(s), ${done.length} task(s) accepted, ${review.length} in review, ${blocked.length} blocked, ${failed.length} failed run(s).`);
-    for (const t of done.slice(0, 8)) lines.push(`  - ✓ ${t.title} (${nameOf(t.assigneeAgentId)})`);
-    for (const t of blocked.slice(0, 8)) lines.push(`  - ■ blocked: ${t.title} (${nameOf(t.assigneeAgentId)}) — ${lastOf(t.blockers)}`);
-    for (const r of failed.slice(0, 5)) lines.push(`  - ✗ ${r.status}: ${tasks.find((t) => t.id === r.taskId)?.title ?? r.taskId.slice(0, 8)} (${nameOf(r.agentId)})`);
+    activity.push('', `## Work since ${since.slice(0, 16).replace('T', ' ')}`);
+    activity.push(`- ${sinceRuns} run(s), ${done.length} task(s) accepted, ${review.length} in review, ${blocked.length} blocked, ${failed.length} failed run(s).`);
+    for (const t of done.slice(0, 8)) activity.push(`  - ✓ ${t.title} (${nameOf(t.assigneeAgentId)})`);
+    for (const t of blocked.slice(0, 8)) activity.push(`  - ■ blocked: ${t.title} (${nameOf(t.assigneeAgentId)}) — ${lastOf(t.blockers)}`);
+    for (const r of failed.slice(0, 5)) activity.push(`  - ✗ ${r.status}: ${tasks.find((t) => t.id === r.taskId)?.title ?? r.taskId.slice(0, 8)} (${nameOf(r.agentId)})`);
     const accepted = tasks.filter((t) => t.status === 'done').length;
     // Executable acceptance (docs/sensing.md §3): verified by check versus by opinion.
     const weekAgo = new Date(now.getTime() - 7 * 86_400_000).toISOString();
     const doneWeek = tasks.filter((t) => t.status === 'done' && t.updatedAt >= weekAgo);
-    if (doneWeek.length > 0) lines.push(`- ${Math.round((doneWeek.filter((t) => t.acceptedBy === 'check').length / doneWeek.length) * 100)}% of tasks accepted by check this week (${doneWeek.filter((t) => t.acceptedBy === 'check').length} of ${doneWeek.length}); the rest by review or by hand.`);
-    if (accepted > 0 && orgSpent > 0) lines.push(`- Cost per accepted task this month: $${(orgSpent / accepted).toFixed(2)}.`);
+    if (doneWeek.length > 0) activity.push(`- ${Math.round((doneWeek.filter((t) => t.acceptedBy === 'check').length / doneWeek.length) * 100)}% of tasks accepted by check this week (${doneWeek.filter((t) => t.acceptedBy === 'check').length} of ${doneWeek.length}); the rest by review or by hand.`);
+    if (accepted > 0 && orgSpent > 0) activity.push(`- Cost per accepted task this month: $${(orgSpent / accepted).toFixed(2)}.`);
 
     // 2b. Key results (docs/company-vision.md §2.3–§2.4): pace counts, the
     //     top at-risk with owners, and the vision-level decision line.
@@ -167,12 +177,6 @@ export class OrgBriefService {
       }
     }
 
-    // 2d. The improve loop (docs/experiments.md §5): experiments, calibration, reconciliation gaps.
-    for (const sec of this.sections.filter((x) => x.position === 'improve')) {
-      const extra = await sec.lines(orgId, since, now).catch(() => [] as string[]);
-      if (extra.length) lines.push('', ...extra);
-    }
-
     // 3. Anomalies
     const anomalies: string[] = [];
     const drift = await this.org.checkCharters(orgId);
@@ -191,11 +195,11 @@ export class OrgBriefService {
     const ws = await this.workspaces.get(org.workspaceId).catch(() => null);
     const auto = (await this.audit.list(orgId, { limit: 200 })).filter((r) => r.action.startsWith('auto_') && r.createdAt >= since);
     if (ws?.orgMode === 'autonomous' || auto.length > 0) {
-      lines.push('', '## Autonomous actions');
-      if (auto.length === 0) lines.push('- none');
+      activity.push('', '## Autonomous actions');
+      if (auto.length === 0) activity.push('- none');
       for (const r of auto.slice().reverse().slice(0, 20)) {
         const p = (() => { try { return JSON.parse(r.payload) as { summary?: string; reason?: string }; } catch { return {}; } })();
-        lines.push(`- ${r.action.slice('auto_'.length).replace('_', ' ')}: ${p.summary ?? ''}${p.reason ? ` — ${p.reason}` : ''}`);
+        activity.push(`- ${r.action.slice('auto_'.length).replace('_', ' ')}: ${p.summary ?? ''}${p.reason ? ` — ${p.reason}` : ''}`);
       }
     }
 
@@ -210,10 +214,10 @@ export class OrgBriefService {
     if (this.slo) {
       const p = await this.slo.pulse(orgId, now).catch(() => null);
       if (p) {
-        lines.push('', `## Pulse: ${p.score}/100`);
+        activity.push('', `## Pulse: ${p.score}/100`);
         const f = (metric: string, v: number | null, target: number) => metric === 'firstReviewAcceptancePct' ? `first-review acceptance ${v === null ? 'n/a' : `${Math.round(v)}%`} (target ≥ ${target}%)` : `${metric === 'cycleTimeHours' ? 'cycle time' : 'decision latency'} ${v === null ? 'n/a' : `${v}h`} (target ≤ ${target}h)`;
-        for (const w of p.worst) lines.push(`- ${f(w.metric, w.value, w.target)}${w.ratio > 0 ? ' ⚠ off target' : ''}`);
-        if (p.today.costPerAcceptedTaskUsd !== null) lines.push(`- cost per accepted task (7d): $${p.today.costPerAcceptedTaskUsd.toFixed(2)}`);
+        for (const w of p.worst) activity.push(`- ${f(w.metric, w.value, w.target)}${w.ratio > 0 ? ' ⚠ off target' : ''}`);
+        if (p.today.costPerAcceptedTaskUsd !== null) activity.push(`- cost per accepted task (7d): $${p.today.costPerAcceptedTaskUsd.toFixed(2)}`);
       }
     }
     const recentAudits = await this.db.select().from(orgAudits).where(eq(orgAudits.orgId, orgId)).orderBy(desc(orgAudits.startedAt)).limit(20);
@@ -246,9 +250,14 @@ export class OrgBriefService {
     if (items.length === 0) lines.push('- none');
     for (const it of items) {
       const a = pending[it.n - 1];
-      lines.push(`${it.n}. [${it.kind}] ${it.summary}${a.recommendation ? ` — chief: ${a.recommendation}` : ''}`);
+      lines.push(`${it.n}. [${it.kind}] ${it.summary}${a.recommendation ? ` — chief: ${a.recommendation}` : ''}${a.reversibility ? ` · ${a.recommendedAction || 'approve'}, ${a.reversibility}${a.confidence !== null ? `, confidence ${Math.round(a.confidence * 100)}%` : ''}${a.deadline && a.defaultAction ? `; if unanswered by ${a.deadline.slice(0, 16).replace('T', ' ')} UTC: ${a.defaultAction}` : ''}` : ''}`);
     }
     if (items.length > 0) lines.push('', 'Reply with e.g. "do 1, 3, skip 2" or "revise 2: halve the budget".');
+    await sectionLines('decisions', lines);
+    // The improve loop (docs/experiments.md §5): experiments, calibration, reconciliation gaps — after the decisions, before activity.
+    await sectionLines('improve', lines);
+    if (activity.length) lines.push('', '---', '', '# Activity', ...activity);
+    await sectionLines('end', lines);
 
     const text = lines.join('\n');
     const brief: Brief = { orgId, at: now.toISOString(), text, items };

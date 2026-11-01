@@ -348,8 +348,9 @@ export class OrgController {
   @Get(':id/tasks') board(@Param('id') id: string, @Query('projectId') projectId?: string, @Query('status') status?: string, @Query('unitId') unitId?: string, @Query('rollUp') rollUp?: string) {
     this.guard();
     // Executable acceptance (docs/sensing.md §3): how each done task was verified.
+    // Capacity (item 31): `waitingOn` and the expected duration per task.
     return this.tasks.list(id, { projectId: projectId || undefined, status: status || undefined, unitId: unitId || undefined, rollUp: rollUp === 'true' })
-      .then((rows) => rows.map((t) => ({ ...t, verification: verificationOf(t) })));
+      .then((rows) => this.tasks.annotate(id, rows)).then((rows) => rows.map((t) => ({ ...t, verification: verificationOf(t) })));
   }
   @Post(':id/tasks') addTask(@Param('id') id: string, @Body() dto: TaskDto) {
     this.guard();
@@ -396,6 +397,9 @@ export class OrgController {
     const a = await this.approvals.get(id, approvalId);
     // A human_review card (item 24) is its addressee's to decide (or the CEO's).
     const addressee = a.kind === 'human_review' ? (JSON.parse(a.payload || '{}') as { reviewerHumanId?: string }).reviewerHumanId : undefined;
+    // A delegate (docs/owners-seat.md §2) decides the cards delegated to them, nothing else.
+    const via = addressee && addressee === actorId() ? null : await this.approvals.delegateVia(id, a, actorId());
+    if (via && actorId() !== currentAccountId()) return this.approvals.decide(id, approvalId, dto.decision, dto.note ?? '', this.actor(), actorId(), { via });
     if (!(addressee && addressee === actorId())) await this.assertMayDecide(id, a.kind);
     return this.approvals.decide(id, approvalId, dto.decision, dto.note ?? '', this.actor(), actorId());
   }

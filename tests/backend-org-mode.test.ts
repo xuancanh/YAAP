@@ -230,7 +230,8 @@ test('org_allocate_budget respects the company envelope in autonomous mode; the 
   await assert.rejects(s.runtime.execute(session, 'org_allocate_budget', { scope: 'agent', agent: 'Editor', monthlyUsd: 5, why: 'x' }), /refused: allocating \$5\.00 would put allocated envelopes at \$11\.00, above the company envelope of \$10\.00 \(already allocated: \$6\.00\)/);
   // re-allocating the same envelope counts only the others
   assert.match(await s.runtime.execute(session, 'org_allocate_budget', { scope: 'agent', agent: 'Writer', monthlyUsd: 8, why: 'more' }), /\$8\.00\/month \(allocated \$8\.00 of the \$10\.00/);
-  await assert.rejects(s.runtime.execute(session, 'org_allocate_budget', { scope: 'company', monthlyUsd: 50, why: 'x' }), /refused: the company envelope \(\$10\.00\/month\) is the CEO's to set/);
+  // Item 31 (docs/boundary.md): money above the envelope is a card for the CEO, in every mode.
+  assert.match(await s.runtime.execute(session, 'org_allocate_budget', { scope: 'company', monthlyUsd: 50, why: 'x' }), /Not yours to change alone: the company envelope \(\$10\.00\/month\) is the CEO's to set .*Proposed to the CEO as approval/);
   assert.equal((await s.org.get(orgId)).monthlyBudgetUsd, 10);
   // lowering stays a narrowing, no why needed
   assert.match(await s.runtime.execute(session, 'org_allocate_budget', { scope: 'agent', agent: 'Writer', monthlyUsd: 2 }), /lowered to \$2\.00/);

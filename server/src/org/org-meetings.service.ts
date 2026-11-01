@@ -495,6 +495,8 @@ export class OrgMeetingsService {
    */
   async setCadence(orgId: string, input: { unitId: string; kind: string; cron: string | null; why: string; actor: string; decidedBy: string; approvalId?: string | null }): Promise<OrgCadence> {
     const org = await this.org.get(orgId);
+    // The self-modification boundary (docs/boundary.md): cadences are the org's to set alone.
+    await this.org.gate(orgId, { kind: 'cadence', key: `${input.unitId}:${input.kind}`, summary: `${input.kind} cadence → ${input.cron ?? 'off'}` }, input.actor);
     const unit = await this.units.get(orgId, input.unitId);
     if (input.cron !== null) {
       const err = await this.cadenceBoundsError(org, input.kind, input.cron);

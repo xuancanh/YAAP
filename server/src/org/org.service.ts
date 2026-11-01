@@ -23,6 +23,7 @@ import { OrgAuditService } from './org-audit.service';
 import { isNarrowing, parseScopes, scopeKind, widenedScopes } from './scopes';
 import { checkTunable, parseTunables, tunable, TUNABLES } from './org-tunables';
 import { mergeRouting, parseRouting, type ModelTier, type OrgRouting } from './org-routing';
+import { checkBoundary, type BoundaryDecision, type SelfChange } from './boundary';
 import { PROFESSION_PACKS } from '../market/profession-packs.generated';
 import { AUTHORED_PACKS } from '../market/authored-packs.generated';
 
@@ -74,10 +75,16 @@ export type StructureChangeHook = (orgId: string) => Promise<void>;
  *  creation. Awaited; a throwing hook never breaks the change. */
 export type GoalChangeHook = (goal: OrgGoal, before: OrgGoal | null) => Promise<void> | void;
 
+/** The self-modification boundary (docs/boundary.md, item 31): the decision
+ *  for one self-change by one actor, with its side effects (a `never` by an
+ *  agent is a finding and an incident). OrgBoundaryService binds it. */
+export type BoundaryPort = (orgId: string, change: SelfChange, actor: string) => Promise<BoundaryDecision>;
+
 @Injectable()
 export class OrgService {
   private readonly structureHooks: StructureChangeHook[] = [];
   private readonly goalHooks: GoalChangeHook[] = [];
+  private boundary?: BoundaryPort;
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
@@ -85,6 +92,25 @@ export class OrgService {
     private readonly audit: OrgAuditService,
     @Optional() private readonly bus?: TriggerBus,
   ) {}
+
+  /** OrgBoundaryService binds the boundary here (docs/boundary.md). */
+  bindBoundary(fn: BoundaryPort | undefined): void { this.boundary = fn; }
+
+  /** The boundary's decision for a self-change (pure fallback when unbound). */
+  async boundaryDecide(orgId: string, change: SelfChange, actor: string): Promise<BoundaryDecision> {
+    if (this.boundary) return this.boundary(orgId, change, actor);
+    return checkBoundary(change, actor);
+  }
+
+  /** The low-level fence every self-change writer calls: anything but
+   *  `proceed` is refused here. Tool paths decide first (and turn `card` or
+   *  `experiment` into a proposal), so an agent only reaches a writer with a
+   *  change the boundary lets it make alone; humans pass. */
+  async gate(orgId: string, change: SelfChange, actor: string): Promise<void> {
+    const d = await this.boundaryDecide(orgId, change, actor);
+    if (d.outcome === 'proceed') return;
+    throw new BadRequestException(d.outcome === 'refuse' || d.outcome === 'experiment' ? d.reason : `refused: ${d.reason} — propose it; the CEO decides`);
+  }
 
   /** OrgUnitsService registers here; a throwing hook never breaks the change. */
   onStructureChange(hook: StructureChangeHook): () => void {
@@ -280,8 +306,12 @@ export class OrgService {
       .reduce((sum, b) => sum + b.monthlyUsd, 0);
   }
 
-  async update(id: string, patch: Partial<Pick<Organization, 'name' | 'mission' | 'ceoUserNote' | 'briefHour' | 'maxDirectReports' | 'monthlyBudgetUsd' | 'auditorAgentId' | 'auditCadenceDays' | 'auditUsdCap'>>): Promise<Organization> {
+  async update(id: string, patch: Partial<Pick<Organization, 'name' | 'mission' | 'ceoUserNote' | 'briefHour' | 'maxDirectReports' | 'monthlyBudgetUsd' | 'auditorAgentId' | 'auditCadenceDays' | 'auditUsdCap'>>, actor = 'user'): Promise<Organization> {
     await this.get(id);
+    // The boundary (docs/boundary.md): audit settings are never an agent's; caps only proposed.
+    if (patch.auditorAgentId !== undefined || patch.auditCadenceDays !== undefined || patch.auditUsdCap !== undefined) await this.gate(id, { kind: 'audit_settings', summary: 'change the auditor seat, cadence or cap' }, actor);
+    if (patch.maxDirectReports !== undefined) await this.gate(id, { kind: 'caps', key: 'maxDirectReports', summary: `fan-out cap → ${patch.maxDirectReports}` }, actor);
+    if (patch.monthlyBudgetUsd !== undefined) await this.gate(id, { kind: 'budget', withinEnvelope: false, key: 'company', summary: `company envelope → $${Number(patch.monthlyBudgetUsd).toFixed(2)}` }, actor);
     const set: Record<string, unknown> = {};
     // Assurance (docs/company-vision.md §5.3): the auditor is a member; cadence and cap inside their bounds.
     if (patch.auditorAgentId !== undefined) {
@@ -300,11 +330,11 @@ export class OrgService {
     if (patch.maxDirectReports !== undefined) set.maxDirectReports = Math.min(DEFAULT_MAX_DIRECT_REPORTS, Math.max(1, Math.floor(patch.maxDirectReports)));
     if (patch.monthlyBudgetUsd !== undefined) {
       set.monthlyBudgetUsd = Math.max(0, patch.monthlyBudgetUsd);
-      await this.setBudget(id, { scope: 'company', refId: id, monthlyUsd: Math.max(0, patch.monthlyBudgetUsd), actor: 'user' });
+      await this.setBudget(id, { scope: 'company', refId: id, monthlyUsd: Math.max(0, patch.monthlyBudgetUsd), actor });
     }
     if (Object.keys(set).length > 0) {
       await this.db.update(organizations).set(set).where(eq(organizations.id, id));
-      await this.audit.append(id, { actor: 'user', action: 'org_update', refType: 'org', refId: id, payload: set });
+      await this.audit.append(id, { actor, action: 'org_update', refType: 'org', refId: id, payload: set });
     }
     return this.get(id);
   }
@@ -330,6 +360,7 @@ export class OrgService {
     const org = await this.get(orgId);
     const check = checkTunable(key, value);
     if (!check.ok) throw new BadRequestException(check.reason);
+    await this.gate(orgId, { kind: 'tunable', key, summary: `set ${key} → ${check.value}` }, opts.actor ?? 'user');
     const from = tunable(org, key);
     const all = parseTunables(org.tunables);
     all[key] = check.value;
@@ -350,6 +381,7 @@ export class OrgService {
    *  org_set_routing or an approved `routing` card). Decision-shaped audit row. */
   async setRouting(orgId: string, patch: { classes?: Record<string, unknown>; models?: Record<string, unknown> }, opts: { actor?: string; why?: string; decidedBy?: string } = {}): Promise<OrgRouting> {
     const org = await this.get(orgId);
+    await this.gate(orgId, { kind: 'routing', key: Object.keys(patch.classes ?? {}).join(',') || 'models', summary: 'change model routing' }, opts.actor ?? 'user');
     const from = parseRouting(org.routing);
     let next: OrgRouting;
     try { next = mergeRouting(from, patch); } catch (err) { throw new BadRequestException(err instanceof Error ? err.message : String(err)); }
@@ -384,6 +416,7 @@ export class OrgService {
    *  and aborts in-flight runs when it sees the status flip. */
   async setStatus(id: string, status: 'active' | 'paused', actor = 'user'): Promise<Organization> {
     await this.get(id);
+    await this.gate(id, { kind: 'kill_switch', summary: status === 'paused' ? 'pause the organization' : 'resume the organization' }, actor);
     await this.db.update(organizations).set({ status }).where(eq(organizations.id, id));
     await this.audit.append(id, { actor, action: status === 'paused' ? 'org_pause' : 'org_resume', refType: 'org', refId: id });
     return this.get(id);
@@ -463,9 +496,10 @@ export class OrgService {
     return row;
   }
 
-  async updateMember(orgId: string, agentId: string, patch: { title?: string; reportsToAgentId?: string | null }, actor = 'user'): Promise<OrgMember> {
+  async updateMember(orgId: string, agentId: string, patch: { title?: string; reportsToAgentId?: string | null }, actor = 'user', boundary: { withinUnit?: boolean } = {}): Promise<OrgMember> {
     const m = await this.member(orgId, agentId);
     if (!m) throw new NotFoundException(`member ${agentId}`);
+    await this.gate(orgId, { kind: 'reorg', key: agentId, withinUnit: boundary.withinUnit, summary: 'change a reporting line or title' }, actor);
     const set: Record<string, unknown> = {};
     if (patch.title !== undefined) set.title = patch.title.slice(0, 80);
     if (patch.reportsToAgentId !== undefined) {
@@ -536,6 +570,7 @@ export class OrgService {
     const m = await this.member(orgId, agentId);
     if (!m) throw new NotFoundException(`member ${agentId}`);
     const all = await this.members(orgId);
+    await this.gate(orgId, { kind: 'terminate', key: agentId, withinUnit: !all.some((x) => x.reportsToAgentId === agentId && x.status !== 'terminated'), summary: 'terminate a member' }, actor);
     for (const r of all.filter((x) => x.reportsToAgentId === agentId)) {
       await this.db.update(orgMembers).set({ reportsToAgentId: m.reportsToAgentId }).where(eq(orgMembers.id, r.id));
     }
@@ -565,6 +600,7 @@ export class OrgService {
     const wanted = parseScopes(next);
     const widened = widenedScopes(current, wanted);
     if (!opts.force && !isNarrowing(current, wanted)) return { applied: false, widened, scopes: current };
+    await this.gate(orgId, { kind: widened.length ? 'scope_widen' : 'scope_narrow', key: agentId, summary: widened.length ? `widen +${widened.join(', ')}` : 'narrow scopes' }, opts.actor);
     await this.applyScopes(orgId, agentId, wanted, opts.actor, opts.grantedBy ?? opts.actor);
     return { applied: true, widened, scopes: wanted };
   }
@@ -614,6 +650,7 @@ export class OrgService {
   async acceptCharter(orgId: string, agentId: string, actor = 'user'): Promise<OrgMember> {
     const m = await this.member(orgId, agentId);
     if (!m) throw new NotFoundException(`member ${agentId}`);
+    await this.gate(orgId, { kind: 'charter', key: agentId, summary: 'accept a charter' }, actor);
     const agent = await this.agents.get(agentId);
     const hash = charterHashOf(agent.charter);
     await this.db.update(orgMembers).set({ charterHash: hash }).where(eq(orgMembers.id, m.id));
@@ -651,6 +688,7 @@ export class OrgService {
       kind, metric: (input.metric ?? '').slice(0, 200), targetValue: input.targetValue ?? null, currentValue: input.currentValue ?? null, startValue: input.startValue ?? null, unitLabel: (input.unitLabel ?? '').slice(0, 40),
       dueAt: input.dueAt ?? null, confidence: clampConfidence(input.confidence), atRisk: 0, atRiskReason: '', lastCheckInAt: input.lastCheckInAt ?? null, checkInCadenceDays: clampCadence(input.checkInCadenceDays ?? tunable(org, 'intent.checkInCadenceDays')),
       metricSourceId: null, lastMeasuredAt: null,
+      valuePerUnit: null, valueOnAchieve: null, valueNote: '',
       createdAt: nowIso(),
     };
     await this.db.insert(orgGoals).values(row);
@@ -756,6 +794,9 @@ export class OrgService {
     if (!['company', 'agent', 'project'].includes(input.scope)) throw new BadRequestException('budget scope must be company|agent|project');
     const monthlyUsd = Math.max(0, Number(input.monthlyUsd) || 0);
     const existing = await this.budget(orgId, input.scope, input.refId);
+    // A raise of the company envelope is money beyond the envelope (propose); an allocation inside it is the chief's.
+    const raise = !existing || monthlyUsd > existing.monthlyUsd;
+    await this.gate(orgId, { kind: 'budget', key: input.scope, withinEnvelope: !(input.scope === 'company' && raise), summary: `${input.scope} envelope → $${monthlyUsd.toFixed(2)}` }, input.actor ?? 'user');
     if (existing) {
       await this.db.update(orgBudgets).set({ monthlyUsd }).where(eq(orgBudgets.id, existing.id));
     } else {

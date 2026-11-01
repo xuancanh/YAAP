@@ -38,6 +38,9 @@ export type TrustLevelRow = typeof trustLevels.$inferSelect;
 export interface TrustHooks {
   /** Append to the workspace's organization audit chain (no-op without one). */
   audit?(workspaceId: string, entry: { actor: string; action: string; refType: string; refId: string; payload: Record<string, unknown> }): Promise<void>;
+  /** The self-modification boundary (docs/boundary.md, item 31): consulted
+   *  before trust ceilings change; throws to refuse. */
+  boundary?(workspaceId: string, actor: string, summary: string): Promise<void>;
 }
 
 export interface OrgContext { id: string; tunables: string; chiefOfStaffAgentId: string | null; rules: string; values: string }
@@ -195,6 +198,7 @@ export class TrustService {
   /** PUT …/trust/ceilings: per-class ceilings; levels above a lowered ceiling drop to it. */
   async setCeilings(workspaceId: string, patch: Record<string, unknown>, actor = actorId()): Promise<Record<ActionClass, TrustLevel>> {
     if (!(await this.isOwnerOrCeo(workspaceId, actor))) throw new ForbiddenException('only the owner or the CEO sets trust ceilings');
+    await this.hooks.boundary?.(workspaceId, actor, `trust ceilings ${Object.keys(patch ?? {}).join(', ')}`);
     const ws = await this.workspaceRow(workspaceId);
     if (!ws) throw new NotFoundException(`workspace ${workspaceId}`);
     const next = parseCeilings(ws.trustCeilings);

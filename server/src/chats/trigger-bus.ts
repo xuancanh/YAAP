@@ -18,7 +18,7 @@ export interface TaskAddedEvent {
   task: { id: string; title: string; note: string; origin: string; sessionId: string | null; createdAt: string };
 }
 
-export type OrgWakeReason = 'assignment' | 'comment' | 'approval' | 'review' | 'manual' | 'trigger' | 'rewake';
+export type OrgWakeReason = 'assignment' | 'comment' | 'approval' | 'review' | 'manual' | 'trigger' | 'rewake' | 'dependency';
 
 export interface OrgWakeEvent {
   orgId: string;

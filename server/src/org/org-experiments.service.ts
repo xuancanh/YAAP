@@ -365,6 +365,10 @@ export class OrgExperimentsService implements ToolProviderHook, OnModuleInit, On
       case 'tunable': {
         const key = str('key');
         if (key.startsWith('experiments.')) throw new BadRequestException('an experiment cannot change the experiment rules themselves');
+        // The self-modification boundary (docs/boundary.md, item 31): never-keys are nobody's to test; propose-keys are the CEO's card.
+        const d = await this.org.boundaryDecide(org.id, { kind: 'tunable', key, summary: `experiment on ${key}` }, actor);
+        if (d.outcome === 'refuse') throw new BadRequestException(d.reason);
+        if (d.outcome === 'card') throw new BadRequestException(`${d.reason} — propose it with org_tune (a card for the CEO), not as an experiment`);
         const check = checkTunable(key, c.value);
         if (!check.ok) throw new BadRequestException(check.reason);
         if (tunable(org, key) === check.value) throw new BadRequestException(`${key} is already ${check.value}: nothing to test`);

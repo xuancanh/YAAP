@@ -27,7 +27,10 @@ export type OrgTask = typeof orgTasks.$inferSelect;
 export type OrgRun = typeof orgRuns.$inferSelect;
 export type OrgMessage = typeof orgMessages.$inferSelect;
 
-export const TASK_STATUSES = ['backlog', 'todo', 'claimed', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'] as const;
+/** `waiting` (item 31, C4): assigned but a task it depends on is not done
+ *  yet; it cannot be claimed and moves to todo (with a wake) when the last
+ *  dependency is done. */
+export const TASK_STATUSES = ['backlog', 'waiting', 'todo', 'claimed', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'] as const;
 export type TaskStatus = typeof TASK_STATUSES[number];
 export const REVIEW_ROUND_CAP = 3;
 const TASK_LIMIT = 500;
@@ -80,6 +83,39 @@ export function normalizeTaskClass(v: unknown): string | null {
   return c;
 }
 
+/** Task ids a task depends on (org_tasks.dependsOn). */
+export function parseDeps(raw: string | null | undefined): string[] {
+  try { const v = JSON.parse(raw || '[]') as unknown; return Array.isArray(v) ? v.map(String).filter(Boolean) : []; } catch { return []; }
+}
+
+/** Statuses that count against a member's WIP limit (capacity.wipPerMember). */
+export const WIP_STATUSES = ['todo', 'claimed', 'in_progress', 'blocked'] as const;
+
+/** Whether a dependency graph would contain a cycle if `taskId` depended on
+ *  `deps`. Pure: `edges` maps every task id to its dependsOn. */
+export function wouldCycle(taskId: string, deps: string[], edges: Map<string, string[]>): string[] | null {
+  const seen = new Set<string>();
+  const path: string[] = [];
+  const visit = (id: string): boolean => {
+    if (id === taskId) return true;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    path.push(id);
+    for (const d of edges.get(id) ?? []) if (visit(d)) return true;
+    path.pop();
+    return false;
+  };
+  for (const d of deps) { path.length = 0; if (visit(d)) return [taskId, ...path, taskId]; }
+  return null;
+}
+
+/** A listener told when a task is accepted (by check or by review), for
+ *  harvesting golden-set cases (docs/evals.md §1). */
+export type AcceptedListener = (ev: { orgId: string; task: OrgTask; by: 'check' | 'review'; rounds: number }) => Promise<void> | void;
+
+/** Extra fields the board API shows per task (expected duration, item 31). */
+export type BoardAnnotator = (orgId: string, rows: OrgTask[]) => Promise<Map<string, Record<string, unknown>>>;
+
 export function parseBrief(raw: string | Record<string, unknown> | undefined): TaskBrief {
   let v: Record<string, unknown> = {};
   if (typeof raw === 'string') { try { v = JSON.parse(raw || '{}') as Record<string, unknown>; } catch { v = {}; } }
@@ -108,6 +144,109 @@ export class OrgTasksService {
 
   /** The task's checks, parsed. */
   checksOf(t: Pick<OrgTask, 'checks'>): Check[] { return parseChecks(t.checks); }
+
+  // ---- capacity (docs/autonomous-org-first-principles.md C4, item 31) ----
+
+  private readonly acceptedListeners: AcceptedListener[] = [];
+  private annotator?: BoardAnnotator;
+
+  /** Be told when a task is accepted (OrgEvalsService harvests golden cases). */
+  onAccepted(fn: AcceptedListener): () => void {
+    this.acceptedListeners.push(fn);
+    return () => { const i = this.acceptedListeners.indexOf(fn); if (i >= 0) this.acceptedListeners.splice(i, 1); };
+  }
+
+  private async accepted(orgId: string, taskId: string, by: 'check' | 'review', rounds: number): Promise<void> {
+    const task = await this.get(orgId, taskId);
+    for (const fn of this.acceptedListeners) await Promise.resolve(fn({ orgId, task, by, rounds })).catch(() => undefined);
+    await this.releaseDependants(orgId, taskId);
+  }
+
+  /** OrgCapacityService binds the expected-duration annotator for the board. */
+  setBoardAnnotator(fn: BoardAnnotator | undefined): void { this.annotator = fn; }
+
+  /** Board rows with their extra fields (`waitingOn`, `expected`). */
+  async annotate(orgId: string, rows: OrgTask[]): Promise<Array<OrgTask & Record<string, unknown>>> {
+    const extra = this.annotator ? await this.annotator(orgId, rows).catch(() => new Map<string, Record<string, unknown>>()) : new Map<string, Record<string, unknown>>();
+    const all = rows.some((t) => parseDeps(t.dependsOn).length) ? await this.list(orgId) : rows;
+    const done = new Set(all.filter((t) => t.status === 'done').map((t) => t.id));
+    return rows.map((t) => ({ ...t, waitingOn: parseDeps(t.dependsOn).filter((d) => !done.has(d)), ...(extra.get(t.id) ?? {}) }));
+  }
+
+  /** The member's open tasks (the WIP count). */
+  async openTasksOf(orgId: string, agentId: string): Promise<OrgTask[]> {
+    return (await this.list(orgId)).filter((t) => t.assigneeAgentId === agentId && (WIP_STATUSES as readonly string[]).includes(t.status));
+  }
+
+  /** Refuse an assignment beyond the member's WIP limit (agents only; the
+   *  chief may override with a reason, which is audited). Humans are not
+   *  bound. Throws with the member's open list. */
+  async checkWip(orgId: string, agentId: string, opts: { actor: string; override?: string; taskId?: string; limit: number }): Promise<void> {
+    if (!(opts.actor === 'chief' || opts.actor.startsWith('agent:'))) return;
+    const open = (await this.openTasksOf(orgId, agentId)).filter((t) => t.id !== opts.taskId);
+    if (open.length < opts.limit) return;
+    if (opts.override && opts.override.trim()) {
+      if (opts.actor !== 'chief') throw new BadRequestException('only the chief of staff may override the WIP limit');
+      await this.audit.append(orgId, { actor: opts.actor, action: 'wip_override', refType: 'agent', refId: agentId, payload: { open: open.length, limit: opts.limit, taskId: opts.taskId ?? null, reason: opts.override.slice(0, 300) } });
+      return;
+    }
+    throw new BadRequestException(`refused: the member already holds ${open.length} open task(s), the WIP limit is ${opts.limit} (capacity.wipPerMember) — open: ${open.slice(0, 10).map((t) => `[${t.id.slice(0, 8)}] ${t.title} (${t.status})`).join('; ')}. Finish or hand back one first${opts.actor === 'chief' ? ', or pass override with a reason' : ''}.`);
+  }
+
+  /** Resolve and validate dependencies for a task: known ids (or 8-char
+   *  prefixes) of this org, no self-dependency, no cycle. */
+  async resolveDeps(orgId: string, taskId: string | null, raw: unknown): Promise<string[]> {
+    if (raw === undefined || raw === null || raw === '') return [];
+    const list = Array.isArray(raw) ? raw.map(String) : typeof raw === 'string' ? (() => { try { const v = JSON.parse(raw) as unknown; return Array.isArray(v) ? v.map(String) : [raw]; } catch { return raw.split(',').map((x) => x.trim()); } })() : [];
+    const all = await this.list(orgId);
+    const out: string[] = [];
+    for (const ref of list.filter(Boolean).slice(0, 20)) {
+      const hits = all.filter((t) => t.id === ref || t.id.startsWith(ref));
+      if (hits.length !== 1) throw new BadRequestException(`dependency "${ref}" matches ${hits.length} tasks`);
+      if (hits[0].id === taskId) throw new BadRequestException('a task cannot depend on itself');
+      if (!out.includes(hits[0].id)) out.push(hits[0].id);
+    }
+    if (taskId) {
+      const edges = new Map(all.map((t) => [t.id, parseDeps(t.dependsOn)]));
+      const cycle = wouldCycle(taskId, out, edges);
+      if (cycle) throw new BadRequestException(`refused: that dependency makes a cycle (${cycle.map((id) => id.slice(0, 8)).join(' → ')})`);
+    }
+    return out;
+  }
+
+  /** Dependencies of a task that are not done yet. */
+  async unmetDeps(orgId: string, t: Pick<OrgTask, 'dependsOn'>): Promise<OrgTask[]> {
+    const deps = parseDeps(t.dependsOn);
+    if (deps.length === 0) return [];
+    return (await this.list(orgId)).filter((x) => deps.includes(x.id) && x.status !== 'done');
+  }
+
+  /** Why a member may not claim this task now: unmet dependencies or its WIP
+   *  limit of active (claimed, in progress) tasks. Null = it may. */
+  async claimBlocker(orgId: string, t: OrgTask, agentId: string, wipLimit: number): Promise<string | null> {
+    const unmet = await this.unmetDeps(orgId, t);
+    if (unmet.length) return `waiting on ${unmet.map((x) => `[${x.id.slice(0, 8)}] ${x.title}`).join(', ')}`;
+    const active = (await this.list(orgId)).filter((x) => x.assigneeAgentId === agentId && x.id !== t.id && ['claimed', 'in_progress'].includes(x.status));
+    if (active.length >= wipLimit) return `wip: ${active.length} active task(s), limit ${wipLimit}`;
+    return null;
+  }
+
+  /** A task is done: dependants whose every dependency is now done leave
+   *  `waiting` for todo and their assignee is woken (TriggerBus). */
+  async releaseDependants(orgId: string, doneTaskId: string): Promise<string[]> {
+    const all = await this.list(orgId);
+    const done = new Set(all.filter((t) => t.status === 'done').map((t) => t.id));
+    const released: string[] = [];
+    for (const t of all.filter((x) => x.status === 'waiting' && parseDeps(x.dependsOn).includes(doneTaskId))) {
+      if (!parseDeps(t.dependsOn).every((d) => done.has(d))) continue;
+      const next = t.assigneeAgentId || t.assigneeHumanId ? 'todo' : 'backlog';
+      await this.db.update(orgTasks).set({ status: next, updatedAt: nowIso() }).where(eq(orgTasks.id, t.id));
+      await this.audit.append(orgId, { actor: 'system', action: 'task_unblocked', refType: 'task', refId: t.id, payload: { by: doneTaskId, status: next } });
+      if (t.assigneeAgentId && next === 'todo' && await this.org.isActive(orgId)) this.emitWake(orgId, t.id, t.assigneeAgentId, 'dependency');
+      released.push(t.id);
+    }
+    return released;
+  }
 
   // ---- tasks ----
 
@@ -151,6 +290,9 @@ export class OrgTasksService {
     class?: string | null;
     /** Executable acceptance (docs/sensing.md §3): model-free checks run before review. */
     checks?: unknown;
+    /** Capacity (item 31): task ids this one waits on, and its deadline (ISO). */
+    dependsOn?: unknown;
+    dueAt?: string | null;
   }): Promise<OrgTask> {
     const org = await this.org.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 200);
@@ -158,7 +300,7 @@ export class OrgTasksService {
     if ((await this.list(orgId)).length >= TASK_LIMIT) throw new BadRequestException(`task limit (${TASK_LIMIT}) reached — close or cancel tasks first`);
     if (input.projectId) await this.org.project(orgId, input.projectId);
     if (input.parentTaskId) await this.get(orgId, input.parentTaskId);
-    const status: TaskStatus = input.status ?? (input.assigneeAgentId ? 'todo' : 'backlog');
+    let status: TaskStatus = input.status ?? (input.assigneeAgentId ? 'todo' : 'backlog');
     if (!TASK_STATUSES.includes(status)) throw new BadRequestException(`status must be one of ${TASK_STATUSES.join(', ')}`);
     if (input.assigneeAgentId) {
       const m = await this.org.member(orgId, input.assigneeAgentId);
@@ -167,6 +309,9 @@ export class OrgTasksService {
     const brief = parseBrief(typeof input.brief === 'string' ? input.brief : (input.brief as Record<string, unknown> | undefined));
     let checks: Check[];
     try { checks = normalizeChecks(input.checks ?? (input.brief && typeof input.brief === 'object' ? (input.brief as Record<string, unknown>).checks : undefined)); } catch (err) { throw new BadRequestException(err instanceof Error ? err.message : String(err)); }
+    const dependsOn = await this.resolveDeps(orgId, null, input.dependsOn);
+    const dueAt = normalizeDue(input.dueAt);
+    if (status === 'todo' && dependsOn.length && (await this.unmetDeps(orgId, { dependsOn: JSON.stringify(dependsOn) })).length) status = 'waiting';
     let unitId: string | null = null;
     let unitExplicit = 0;
     if (this.units) {
@@ -185,10 +330,11 @@ export class OrgTasksService {
       unitId, unitExplicit,
       class: normalizeTaskClass(input.class) ?? deriveTaskClass({ title, brief }),
       checks: JSON.stringify(checks), acceptedBy: '',
+      dependsOn: JSON.stringify(dependsOn), dueAt,
       createdAt: now, updatedAt: now,
     };
     await this.db.insert(orgTasks).values(row);
-    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId, class: row.class, ...(checks.length ? { checks: checks.length } : {}) } });
+    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId, class: row.class, ...(checks.length ? { checks: checks.length } : {}), ...(dependsOn.length ? { dependsOn } : {}), ...(dueAt ? { dueAt } : {}) } });
     if (row.assigneeAgentId && status === 'todo' && org.status === 'active') this.emitWake(orgId, row.id, row.assigneeAgentId, 'assignment');
     return row;
   }
@@ -206,9 +352,15 @@ export class OrgTasksService {
     class?: string;
     /** Executable acceptance (docs/sensing.md §3): replace the checks. */
     checks?: unknown;
+    /** Capacity (item 31): replace the dependencies (cycles refused) or the deadline. */
+    dependsOn?: unknown;
+    dueAt?: string | null;
   }, actor = 'user'): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     const set: Record<string, unknown> = { updatedAt: nowIso() };
+    let deps = parseDeps(t.dependsOn);
+    if (patch.dependsOn !== undefined) { deps = await this.resolveDeps(orgId, taskId, patch.dependsOn); set.dependsOn = JSON.stringify(deps); }
+    if (patch.dueAt !== undefined) set.dueAt = normalizeDue(patch.dueAt);
     if (patch.checks !== undefined) {
       try { set.checks = JSON.stringify(normalizeChecks(patch.checks)); } catch (err) { throw new BadRequestException(err instanceof Error ? err.message : String(err)); }
     }
@@ -223,6 +375,8 @@ export class OrgTasksService {
     if (patch.status !== undefined) {
       if (!TASK_STATUSES.includes(patch.status)) throw new BadRequestException(`status must be one of ${TASK_STATUSES.join(', ')}`);
       set.status = patch.status;
+      // A task with an unmet dependency waits instead of becoming todo (C4).
+      if (patch.status === 'todo' && deps.length && (await this.unmetDeps(orgId, { dependsOn: JSON.stringify(deps) })).length) set.status = 'waiting';
       // A status set by hand is not a verification: done that way reads `none`.
       if (patch.status !== t.status) set.acceptedBy = '';
       // Leaving the active states releases the claim so the next wake can claim again.
@@ -237,12 +391,20 @@ export class OrgTasksService {
     if (patch.claimedBy !== undefined) set.claimedBy = patch.claimedBy;
     if (patch.claimedAt !== undefined) set.claimedAt = patch.claimedAt;
     if (patch.reviewRounds !== undefined) set.reviewRounds = patch.reviewRounds;
+    // New or changed dependencies: todo ↔ waiting follows them.
+    if (patch.dependsOn !== undefined && patch.status === undefined) {
+      const unmet = deps.length ? (await this.unmetDeps(orgId, { dependsOn: JSON.stringify(deps) })).length : 0;
+      if (t.status === 'todo' && unmet) set.status = 'waiting';
+      else if (t.status === 'waiting' && !unmet) set.status = t.assigneeAgentId || t.assigneeHumanId ? 'todo' : 'backlog';
+    }
     await this.db.update(orgTasks).set(set).where(eq(orgTasks.id, taskId));
     const { updatedAt: _u, ...logged } = set; void _u;
     if (Object.keys(logged).length > 0) await this.audit.append(orgId, { actor, action: 'task_update', refType: 'task', refId: taskId, payload: logged });
     // A task that just became blocked is a board event the autonomous chief reviews (docs/group-chat.md §5).
     if (patch.status === 'blocked' && t.status !== 'blocked') this.bus?.emitOrgBoard({ orgId, kind: 'blocked', refId: taskId, detail: `"${t.title}" is blocked${patch.blockers?.length ? `: ${patch.blockers.at(-1)}` : ''}` });
     const updated = await this.get(orgId, taskId);
+    if (updated.status === 'done' && t.status !== 'done') await this.releaseDependants(orgId, taskId);
+    if (t.status === 'waiting' && updated.status === 'todo' && updated.assigneeAgentId && await this.org.isActive(orgId)) this.emitWake(orgId, taskId, updated.assigneeAgentId, 'dependency');
     // Status back into the originating channel thread (docs/group-chat.md §3),
     // or into the unit channel when the task did not come from a message (§7).
     if (patch.status !== undefined && patch.status !== t.status && (updated.channelId || updated.unitId)) {
@@ -260,9 +422,10 @@ export class OrgTasksService {
     if (['done', 'cancelled'].includes(t.status)) throw new BadRequestException(`task is ${t.status}`);
     // The board follows the assignee unless the unit was named explicitly (docs/group-chat.md §7).
     const unitId = this.units && !t.unitExplicit ? await this.units.defaultUnitId(orgId, { assigneeAgentId: agentId }).catch(() => t.unitId) : t.unitId;
-    await this.db.update(orgTasks).set({ assigneeAgentId: agentId, assigneeHumanId: null, status: 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
-    await this.audit.append(orgId, { actor, action: 'task_assign', refType: 'task', refId: taskId, payload: { agentId, previous: t.assigneeAgentId ?? t.assigneeHumanId, unitId } });
-    if (await this.org.isActive(orgId)) this.emitWake(orgId, taskId, agentId, 'assignment');
+    const waiting = (await this.unmetDeps(orgId, t)).length > 0;
+    await this.db.update(orgTasks).set({ assigneeAgentId: agentId, assigneeHumanId: null, status: waiting ? 'waiting' : 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.audit.append(orgId, { actor, action: 'task_assign', refType: 'task', refId: taskId, payload: { agentId, previous: t.assigneeAgentId ?? t.assigneeHumanId, unitId, ...(waiting ? { waiting: true } : {}) } });
+    if (!waiting && await this.org.isActive(orgId)) this.emitWake(orgId, taskId, agentId, 'assignment');
     return this.get(orgId, taskId);
   }
 
@@ -385,6 +548,7 @@ export class OrgTasksService {
         await this.db.update(orgTasks).set({ status: 'done', acceptedBy: 'check', claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
         await this.audit.append(orgId, { actor: 'check', action: 'review_accept', refType: 'task', refId: taskId, payload: { by: 'check', requestedBy: by, rounds: t.reviewRounds } });
         await this.comment(orgId, taskId, { text: `Accepted by check: ${verdict.detail}`.slice(0, 8_000), fromAgentId: null, wake: false });
+        await this.accepted(orgId, taskId, 'check', t.reviewRounds);
         const done = await this.get(orgId, taskId);
         if (done.channelId || done.unitId) this.bus?.emitTaskStatus({ source: 'org', taskId, title: done.title, status: 'done', previous: t.status, channelId: done.channelId, messageId: done.messageId, agentId: done.assigneeAgentId, unitId: done.unitId });
         return done;
@@ -456,6 +620,7 @@ export class OrgTasksService {
       await this.db.update(orgTasks).set({ status: 'done', acceptedBy: 'review', claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
       await this.audit.append(orgId, { actor, action: 'review_accept', refType: 'task', refId: taskId, payload: { rounds: t.reviewRounds } });
       if (input.note) await this.comment(orgId, taskId, { text: `Accepted: ${input.note}`, fromAgentId: input.byAgentId ?? null, runId: input.runId ?? null, wake: false });
+      await this.accepted(orgId, taskId, 'review', t.reviewRounds);
       return this.get(orgId, taskId);
     }
     const rounds = t.reviewRounds + 1;
@@ -537,7 +702,8 @@ export class OrgTasksService {
       .map((t) => {
         const b = parseBrief(t.brief);
         const who = t.assigneeAgentId ? agentNames.get(t.assigneeAgentId) ?? t.assigneeAgentId.slice(0, 8) : t.assigneeHumanId ? `human ${t.assigneeHumanId.slice(0, 8)}` : 'unassigned';
-        return `[${t.id.slice(0, 8)}] (${t.status}) ${t.title} — owner: ${who}${t.reviewRounds ? ` · review round ${t.reviewRounds}` : ''}${b.outcome ? ` · outcome: ${b.outcome.slice(0, 100)}` : ''}`;
+        const deps = parseDeps(t.dependsOn);
+        return `[${t.id.slice(0, 8)}] (${t.status}) ${t.title} — owner: ${who}${t.reviewRounds ? ` · review round ${t.reviewRounds}` : ''}${t.dueAt ? ` · due ${t.dueAt.slice(0, 16).replace('T', ' ')}` : ''}${deps.length ? ` · depends on ${deps.map((d) => d.slice(0, 8)).join(', ')}` : ''}${b.outcome ? ` · outcome: ${b.outcome.slice(0, 100)}` : ''}`;
       })
       .join('\n');
   }
@@ -556,6 +722,14 @@ export function familyOf(x: { provider: string; model: string }): string {
   const m = (x.model || '').toLowerCase().replace(/^.*\//, '');
   const head = m.match(/^(claude-(?:opus|sonnet|haiku)|gpt-\d+(?:\.\d+)?(?:-(?:mini|nano))?|o\d|gemini-[\d.]+-(?:pro|flash)|deepseek-\w+|[a-z]+)/)?.[1] ?? m;
   return `${x.provider}:${head}`;
+}
+
+/** A deadline as ISO, or null; refuses what is not a date. */
+export function normalizeDue(v: string | null | undefined): string | null {
+  if (v === undefined || v === null || v === '') return null;
+  const ms = Date.parse(String(v));
+  if (!Number.isFinite(ms)) throw new BadRequestException(`dueAt "${String(v).slice(0, 40)}" is not a date`);
+  return new Date(ms).toISOString();
 }
 
 function parseList(raw: string): string[] {

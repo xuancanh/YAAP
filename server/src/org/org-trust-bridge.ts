@@ -31,6 +31,7 @@ import { OrgApprovalsService } from './org-approvals.service';
 import { OrgTasksService } from './org-tasks.service';
 import { OrgSignalsService } from './org-signals.service';
 import { OrgIncidentsService } from './org-incidents.service';
+import { OrgService } from './org.service';
 
 @Injectable()
 export class OrgTrustBridge {
@@ -43,6 +44,7 @@ export class OrgTrustBridge {
     @Optional() private readonly trust?: TrustService,
     @Optional() private readonly signals?: OrgSignalsService,
     @Optional() private readonly incidents?: OrgIncidentsService,
+    @Optional() private readonly org?: OrgService,
   ) {
     if (!actions || !trust) return;
     const auditSink = async (workspaceId: string, entry: { actor: string; action: string; refType: string; refId: string; payload: Record<string, unknown> }) => {
@@ -50,6 +52,11 @@ export class OrgTrustBridge {
       if (orgId) await this.audit.append(orgId, entry);
     };
     trust.hooks.audit = auditSink;
+    // Trust ceilings are a boundary row (propose for agents; humans pass): one fence for every path.
+    trust.hooks.boundary = async (workspaceId, actor, summary) => {
+      const orgId = await this.orgIdOf(workspaceId);
+      if (orgId) await this.org?.gate(orgId, { kind: 'trust_ceiling', summary }, actor === currentAccountId() ? 'user' : actor.startsWith('agent:') || actor === 'chief' ? actor : `human:${actor}`);
+    };
     actions.hooks.audit = auditSink;
     actions.hooks.frozen = async (workspaceId, agentId, cls) => {
       const orgId = await this.orgIdOf(workspaceId);

@@ -204,16 +204,36 @@ export class OrgPlaybooksService {
       if (!p.reviewTaskId) continue;
       const t = await this.tasks.get(orgId, p.reviewTaskId).catch(() => null);
       if (!t) continue;
-      if (t.status === 'done') { await this.activate(orgId, p.id, `review:${t.reviewerAgentId ?? 'user'}`); out.push({ id: p.id, status: 'active' }); }
+      if (t.status === 'done') {
+        // The eval gate (docs/evals.md §3): a new version replays its roles' golden set first.
+        if (this.activationGate) {
+          const live = p.skillId ? (await this.db.select().from(skills).where(eq(skills.id, p.skillId)).limit(1)).at(0)?.instructions ?? null : null;
+          const g = await this.activationGate(orgId, p, live).catch((err: unknown) => ({ ok: true, summary: `eval gate error: ${err instanceof Error ? err.message : String(err)}` }));
+          if (!g.ok) {
+            await this.db.update(orgPlaybooks).set({ status: 'draft', updatedAt: nowIso() }).where(eq(orgPlaybooks.id, p.id));
+            await this.audit.append(orgId, { actor: 'system', action: 'playbook_blocked_by_eval', refType: 'playbook', refId: p.id, payload: { version: p.version, summary: g.summary.slice(0, 400) } });
+            if (p.ownerAgentId) await this.agents.addEvent(p.ownerAgentId, { kind: 'info', title: `Playbook "${p.title}" v${p.version} was not activated: it regressed in evals`, body: g.summary.slice(0, 1_000), payload: JSON.stringify({ orgId, playbookId: p.id }), origin: 'loop' }).catch(() => undefined);
+            out.push({ id: p.id, status: 'draft' });
+            continue;
+          }
+        }
+        await this.activate(orgId, p.id, `review:${t.reviewerAgentId ?? 'user'}`); out.push({ id: p.id, status: 'active' });
+      }
       else if (t.status === 'cancelled') { await this.db.update(orgPlaybooks).set({ status: 'draft', updatedAt: nowIso() }).where(eq(orgPlaybooks.id, p.id)); await this.audit.append(orgId, { actor: 'system', action: 'playbook_review_cancelled', refType: 'playbook', refId: p.id, payload: { taskId: t.id } }); out.push({ id: p.id, status: 'draft' }); }
     }
     return out;
   }
 
+  private activationGate?: PlaybookActivationGate;
+
+  /** OrgEvalsService binds the eval gate for new versions (docs/evals.md §3). */
+  setActivationGate(fn: PlaybookActivationGate | undefined): void { this.activationGate = fn; }
+
   /** Activate the current version: the body becomes the skill's instructions
    *  and the skill is enabled; announced in #company. */
   async activate(orgId: string, id: string, actor = 'user'): Promise<OrgPlaybook> {
     const p = await this.get(orgId, id);
+    await this.org.gate(orgId, { kind: 'playbook', key: id, summary: `activate playbook "${p.title}" v${p.version}` }, actor);
     const org = await this.org.get(orgId);
     if (p.skillId && this.skills) {
       const live = await this.skills.get(p.skillId).catch(() => null);
@@ -288,6 +308,9 @@ export class OrgPlaybooksService {
     return ['## Playbooks and how they fared (skill outcomes, item 10)', ...lines, 'Propose a playbook change with meeting_propose_lesson {proposedPlaybookChange: {playbookId, note}} when one misleads; its owner gets a revise task.'].join('\n');
   }
 }
+
+/** Runs before a reviewed playbook version activates; `ok: false` keeps it a draft. */
+export type PlaybookActivationGate = (orgId: string, p: OrgPlaybook, liveBody: string | null) => Promise<{ ok: boolean; summary: string }>;
 
 /** The first meaningful line of a SKILL.md body, for the one-line summary. */
 export function summaryOf(body: string): string {

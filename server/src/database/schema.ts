@@ -848,6 +848,12 @@ export const orgGoals = pgTable('org_goals', {
    *  when it was last measured. Null = self-reported through check-ins. */
   metricSourceId: text('metricSourceId'),
   lastMeasuredAt: text('lastMeasuredAt'),
+  /** Value accounting (docs/owners-seat.md §4, item 31): what one unit of
+   *  measured movement toward the target is worth in USD, a fixed USD value
+   *  realised when the key result is achieved, and the CEO's note. */
+  valuePerUnit: real('valuePerUnit'),
+  valueOnAchieve: real('valueOnAchieve'),
+  valueNote: text('valueNote').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -1040,6 +1046,12 @@ export const orgTasks = pgTable('org_tasks', {
   checks: text('checks').notNull().default('[]'),
   /** How a done task was accepted: '' (not, or set done by hand) | check | review. */
   acceptedBy: text('acceptedBy').notNull().default(''),
+  /** Capacity (docs/autonomous-org-first-principles.md C4, item 31): JSON
+   *  array of task ids this task waits on (a graph, cycles refused on
+   *  write; a task with an unmet dependency is `waiting` and cannot be
+   *  claimed) and the deadline the heartbeat ranks urgent work by. */
+  dependsOn: text('dependsOn').notNull().default('[]'),
+  dueAt: text('dueAt'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });
@@ -1165,6 +1177,19 @@ export const orgApprovals = pgTable('org_approvals', {
   decisionNote: text('decisionNote').notNull().default(''),
   /** Expiry means "not done", never "allowed" (72 h by default). */
   expiresAt: text('expiresAt'),
+  /** The decision card (docs/owners-seat.md §1, item 31): the proposer's
+   *  recommended answer (approve | deny | modify; `recommendation` is its
+   *  one line), alternatives (JSON string[]), reversibility (reversible |
+   *  costly | irreversible), confidence 0–1, the deadline and the default
+   *  action the tick applies at it ('' = none: the card just expires). */
+  recommendedAction: text('recommendedAction').notNull().default(''),
+  alternatives: text('alternatives').notNull().default('[]'),
+  reversibility: text('reversibility').notNull().default(''),
+  confidence: real('confidence'),
+  deadline: text('deadline'),
+  defaultAction: text('defaultAction').notNull().default(''),
+  /** How it was decided: '' (by hand) | default | delegate:<human:id|role:key>. */
+  decidedVia: text('decidedVia').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -1666,3 +1691,92 @@ export const orgPredictions = pgTable('org_predictions', {
   status: text('status').notNull().default('open'),
   createdAt: text('createdAt').notNull(),
 });
+
+/** A golden-set case (docs/evals.md, execution-plan item 31, C6): a past
+ *  task with a known-good outcome for one role, harvested from work
+ *  accepted by check or accepted by review on the first round, or added by
+ *  the CEO. `taskSnapshot` is JSON { title, brief, checks, class, inputs };
+ *  `expected` is JSON { checks: Check[], rubric }. */
+export const orgEvalCases = pgTable('org_eval_cases', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  /** The member title slug (or a role id) the case belongs to. */
+  roleKey: text('roleKey').notNull(),
+  taskSnapshot: text('taskSnapshot').notNull().default('{}'),
+  expected: text('expected').notNull().default('{}'),
+  sourceTaskId: text('sourceTaskId'),
+  /** check | review | manual. */
+  source: text('source').notNull().default('manual'),
+  createdAt: text('createdAt').notNull(),
+  retiredAt: text('retiredAt'),
+});
+
+/** One replay of a role's golden set against a candidate (or the current
+ *  configuration, `kind = baseline`, cached per `versionHash`). */
+export const orgEvalRuns = pgTable('org_eval_runs', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  roleKey: text('roleKey').notNull(),
+  /** candidate | baseline. */
+  kind: text('kind').notNull().default('candidate'),
+  /** JSON { kind: charter|playbook|model|routing, ref, before, after }. */
+  candidate: text('candidate').notNull().default('{}'),
+  versionHash: text('versionHash').notNull().default(''),
+  /** JSON array of case ids. */
+  cases: text('cases').notNull().default('[]'),
+  /** JSON [{ caseId, pass, detail, usd, gradedBy }]. */
+  results: text('results').notNull().default('[]'),
+  passRate: real('passRate'),
+  baselinePassRate: real('baselinePassRate'),
+  baselineRunId: text('baselineRunId'),
+  /** pass | regress | inconclusive ('' while running). */
+  verdict: text('verdict').notNull().default(''),
+  usd: real('usd').notNull().default(0),
+  /** What asked for it: user | chief | gate:<kind>:<ref>. */
+  requestedBy: text('requestedBy').notNull().default('user'),
+  startedAt: text('startedAt').notNull(),
+  endedAt: text('endedAt'),
+  /** running | done | failed. */
+  status: text('status').notNull().default('running'),
+});
+
+/** A delegated approval (docs/owners-seat.md §2): cards of `kind` (an
+ *  approval kind or an action class), optionally up to `maxUsd`, may be
+ *  decided by a human member or an agent role instead of the CEO. */
+export const orgDelegations = pgTable('org_delegations', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  kind: text('kind').notNull(),
+  maxUsd: real('maxUsd'),
+  /** human | role. */
+  delegateType: text('delegateType').notNull(),
+  /** A member account id (human) or a role key / member title (role). */
+  delegateRef: text('delegateRef').notNull(),
+  createdBy: text('createdBy').notNull().default('user'),
+  createdAt: text('createdAt').notNull(),
+  revokedAt: text('revokedAt'),
+});
+
+/** Value realised (docs/owners-seat.md §4): one row per measured movement of
+ *  a valued key result (from a metric sample) or per achievement. */
+export const orgValueEvents = pgTable('org_value_events', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  goalId: text('goalId').notNull(),
+  objectiveId: text('objectiveId'),
+  unitId: text('unitId'),
+  /** movement | achieved. */
+  kind: text('kind').notNull().default('movement'),
+  sampleId: text('sampleId'),
+  fromValue: real('fromValue'),
+  toValue: real('toValue'),
+  /** Movement toward the target (signed). */
+  delta: real('delta').notNull().default(0),
+  valueUsd: real('valueUsd').notNull().default(0),
+  at: text('at').notNull(),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_value_events_ref').on(t.goalId, t.kind, t.sampleId)]);

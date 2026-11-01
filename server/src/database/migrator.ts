@@ -1589,6 +1589,97 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_predictions_subject ON org_predictions ("orgId", "subjectKind", "subjectId")`);
     },
   },
+  {
+    id: '0044-org-evals-boundary',
+    up: async (db) => {
+      // Evals, the self-modification boundary, capacity and the owner's seat
+      // (docs/evals.md, docs/boundary.md, docs/owners-seat.md, execution-plan
+      // item 31): golden-set cases and eval runs per role; delegated
+      // approvals; value events from measured key-result movement; task
+      // dependencies and deadlines; key-result value; the decision-card
+      // fields on approvals. The boundary itself is code (boundary.ts), not a
+      // table. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_eval_cases (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "roleKey" TEXT NOT NULL,
+        "taskSnapshot" TEXT NOT NULL DEFAULT '{}',
+        "expected" TEXT NOT NULL DEFAULT '{}',
+        "sourceTaskId" TEXT,
+        "source" TEXT NOT NULL DEFAULT 'manual',
+        "createdAt" TEXT NOT NULL,
+        "retiredAt" TEXT
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_eval_cases_role ON org_eval_cases ("orgId", "roleKey")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_eval_runs (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "roleKey" TEXT NOT NULL,
+        "kind" TEXT NOT NULL DEFAULT 'candidate',
+        "candidate" TEXT NOT NULL DEFAULT '{}',
+        "versionHash" TEXT NOT NULL DEFAULT '',
+        "cases" TEXT NOT NULL DEFAULT '[]',
+        "results" TEXT NOT NULL DEFAULT '[]',
+        "passRate" REAL,
+        "baselinePassRate" REAL,
+        "baselineRunId" TEXT,
+        "verdict" TEXT NOT NULL DEFAULT '',
+        "usd" REAL NOT NULL DEFAULT 0,
+        "requestedBy" TEXT NOT NULL DEFAULT 'user',
+        "startedAt" TEXT NOT NULL,
+        "endedAt" TEXT,
+        "status" TEXT NOT NULL DEFAULT 'running'
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_eval_runs_role ON org_eval_runs ("orgId", "roleKey")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_delegations (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "kind" TEXT NOT NULL,
+        "maxUsd" REAL,
+        "delegateType" TEXT NOT NULL,
+        "delegateRef" TEXT NOT NULL,
+        "createdBy" TEXT NOT NULL DEFAULT 'user',
+        "createdAt" TEXT NOT NULL,
+        "revokedAt" TEXT
+      )`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_value_events (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "goalId" TEXT NOT NULL,
+        "objectiveId" TEXT,
+        "unitId" TEXT,
+        "kind" TEXT NOT NULL DEFAULT 'movement',
+        "sampleId" TEXT,
+        "fromValue" REAL,
+        "toValue" REAL,
+        "delta" REAL NOT NULL DEFAULT 0,
+        "valueUsd" REAL NOT NULL DEFAULT 0,
+        "at" TEXT NOT NULL,
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_value_events_ref ON org_value_events ("goalId", "kind", "sampleId")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_value_events_org ON org_value_events ("orgId", "at")`);
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('org_tasks', 'dependsOn', "TEXT NOT NULL DEFAULT '[]'");
+      await add('org_tasks', 'dueAt', 'TEXT');
+      await add('org_goals', 'valuePerUnit', 'REAL');
+      await add('org_goals', 'valueOnAchieve', 'REAL');
+      await add('org_goals', 'valueNote', "TEXT NOT NULL DEFAULT ''");
+      await add('org_approvals', 'recommendedAction', "TEXT NOT NULL DEFAULT ''");
+      await add('org_approvals', 'alternatives', "TEXT NOT NULL DEFAULT '[]'");
+      await add('org_approvals', 'reversibility', "TEXT NOT NULL DEFAULT ''");
+      await add('org_approvals', 'confidence', 'REAL');
+      await add('org_approvals', 'deadline', 'TEXT');
+      await add('org_approvals', 'defaultAction', "TEXT NOT NULL DEFAULT ''");
+      await add('org_approvals', 'decidedVia', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

@@ -29,6 +29,8 @@ import { OrgService, MAX_DEPTH_CEILING } from './org.service';
 import { OrgTasksService, parseBrief, type TaskBrief } from './org-tasks.service';
 import { meetScopes, parseScopes } from './scopes';
 import { resolveRoleHire } from './org-roles.service';
+import { clamp01, computedAlternatives, defaultActionFor, normalizeAlternatives, RECOMMENDED_ACTIONS, reversibilityOf, type DefaultAction, type RecommendedAction } from './decision-cards';
+import { govTunable } from './governance-tunables';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
 export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment';
@@ -45,11 +47,20 @@ export type DecisionListener = (ev: { orgId: string; approval: OrgApproval; deci
 
 export const APPROVAL_TTL_MS = 72 * 60 * 60_000;
 
+/** The decision-card fields a proposer fills (docs/owners-seat.md §1). */
+export interface CardInput { recommendedAction?: RecommendedAction | string; alternatives?: unknown; confidence?: unknown; defaultAction?: DefaultAction }
+/** Told after a card is written (delegated decisions, docs/owners-seat.md §2). */
+export type CreatedListener = (orgId: string, approval: OrgApproval) => Promise<void> | void;
+/** Runs before an approved card applies; throwing blocks the approval (the eval gate, docs/evals.md §3). */
+export type BeforeApply = (orgId: string, approval: OrgApproval, payload: Record<string, unknown>) => Promise<void>;
+
 const CATALOG: MarketItem[] = [...AUTHORED_PACKS, ...PROFESSION_PACKS] as MarketItem[];
 
 export interface HireInput {
   templateOrPack: string; name?: string; title?: string; charter?: string; reportsToAgentId?: string; scopes?: string[];
   provider?: string; model?: string; monthlyBudgetUsd?: number; recommendation?: string; requestedBy: string;
+  /** The decision-card fields (docs/owners-seat.md §1). */
+  card?: CardInput;
 }
 
 export interface HirePayload {
@@ -136,15 +147,17 @@ export class OrgApprovalsService {
 
   /** Create a proposal. The chief's inbox gets no event (it wrote it); the
    *  user sees it in the approvals queue and in the brief. */
-  async create(orgId: string, input: { kind: ApprovalKind; payload: Record<string, unknown>; requestedBy: string; recommendation?: string }): Promise<OrgApproval> {
+  async create(orgId: string, input: { kind: ApprovalKind; payload: Record<string, unknown>; requestedBy: string; recommendation?: string; card?: CardInput }): Promise<OrgApproval> {
     const org = await this.org.get(orgId);
     if (!APPROVAL_KINDS.includes(input.kind)) throw new BadRequestException(`approval kind must be one of ${APPROVAL_KINDS.join(', ')}`);
+    const card = cardFields(org, input.kind, input.payload, input.card ?? {}, Date.now());
     const row: OrgApproval = {
       id: newId(), accountId: currentAccountId(), orgId, kind: input.kind,
       payload: JSON.stringify(input.payload).slice(0, 60_000),
       requestedBy: input.requestedBy.slice(0, 80), recommendation: (input.recommendation ?? '').slice(0, 600),
       status: 'pending', decidedAt: null, decidedBy: '', decisionNote: '',
       expiresAt: new Date(Date.now() + APPROVAL_TTL_MS).toISOString(), createdAt: nowIso(),
+      ...card, decidedVia: '',
     };
     await this.db.insert(orgApprovals).values(row);
     await this.audit.append(orgId, { actor: input.requestedBy, action: 'approval_request', refType: 'approval', refId: row.id, payload: { kind: input.kind, summary: summarize(input.kind, input.payload) } });
@@ -154,7 +167,50 @@ export class OrgApprovalsService {
         body: input.recommendation ?? '', payload: JSON.stringify({ orgId, approvalId: row.id, kind: input.kind }), origin: 'loop', channel: true,
       }).catch(() => {});
     }
-    return row;
+    for (const fn of this.createdListeners) await Promise.resolve(fn(orgId, row)).catch(() => undefined);
+    return (await this.list(orgId)).find((a) => a.id === row.id) ?? row;
+  }
+
+  private readonly createdListeners: CreatedListener[] = [];
+  private readonly beforeApply = new Map<string, BeforeApply[]>();
+
+  /** Be told after a card is written (OrgSeatService: an agent delegate decides it). */
+  onCreated(fn: CreatedListener): () => void {
+    this.createdListeners.push(fn);
+    return () => { const i = this.createdListeners.indexOf(fn); if (i >= 0) this.createdListeners.splice(i, 1); };
+  }
+
+  /** Run before a card of `kind` applies on approval; a throw blocks it and the card stays pending. */
+  onBeforeApply(kind: ApprovalKind, fn: BeforeApply): void {
+    this.beforeApply.set(kind, [...(this.beforeApply.get(kind) ?? []), fn]);
+  }
+
+  private delegateResolver?: (orgId: string, a: OrgApproval, memberAccountId: string) => Promise<string | null>;
+
+  /** OrgSeatService binds who may decide a card as a delegate (returns the `via`). */
+  setDelegateResolver(fn: ((orgId: string, a: OrgApproval, memberAccountId: string) => Promise<string | null>) | undefined): void { this.delegateResolver = fn; }
+
+  /** `delegate:human:<id>` when this person may decide the card by delegation, else null. */
+  async delegateVia(orgId: string, a: OrgApproval, memberAccountId: string): Promise<string | null> {
+    return this.delegateResolver ? this.delegateResolver(orgId, a, memberAccountId).catch(() => null) : null;
+  }
+
+  /** Merge into a pending card's payload (an eval result attached to it). */
+  async attach(orgId: string, id: string, patch: Record<string, unknown>): Promise<OrgApproval> {
+    const a = await this.get(orgId, id);
+    const payload = { ...(JSON.parse(a.payload || '{}') as Record<string, unknown>), ...patch };
+    await this.db.update(orgApprovals).set({ payload: JSON.stringify(payload).slice(0, 60_000) }).where(eq(orgApprovals.id, id));
+    return this.get(orgId, id);
+  }
+
+  /** Fill the decision-card fields of a card written without them (a
+   *  system-generated escalation or human review): computed defaults. */
+  async fillCard(orgId: string, a: OrgApproval): Promise<OrgApproval> {
+    if (a.reversibility) return a;
+    const org = await this.org.get(orgId);
+    const card = cardFields(org, a.kind, JSON.parse(a.payload || '{}') as Record<string, unknown>, {}, Date.parse(a.createdAt) || Date.now());
+    await this.db.update(orgApprovals).set(card).where(eq(orgApprovals.id, a.id));
+    return this.get(orgId, a.id);
   }
 
   /** Build a hire proposal: the requested scopes are intersected with the
@@ -162,7 +218,7 @@ export class OrgApprovalsService {
    *  so the card is never un-approvable. */
   async proposeHire(orgId: string, input: HireInput): Promise<OrgApproval> {
     const payload = await this.prepareHire(orgId, input);
-    return this.create(orgId, { kind: 'hire', payload: payload as unknown as Record<string, unknown>, requestedBy: input.requestedBy, recommendation: input.recommendation });
+    return this.create(orgId, { kind: 'hire', payload: payload as unknown as Record<string, unknown>, requestedBy: input.requestedBy, recommendation: input.recommendation, card: input.card });
   }
 
   /** Validate a hire and build its payload (shared by the supervised card
@@ -202,7 +258,7 @@ export class OrgApprovalsService {
 
   /** The CEO's (or a board member's) decision. Only the controller calls
    *  this; `decidedBy` is the deciding human's account id (phase D). */
-  async decide(orgId: string, id: string, decision: ApprovalDecision, note = '', actor = 'user', decidedBy = ''): Promise<{ approval: OrgApproval; result?: Record<string, unknown> }> {
+  async decide(orgId: string, id: string, decision: ApprovalDecision, note = '', actor = 'user', decidedBy = '', opts: { via?: string } = {}): Promise<{ approval: OrgApproval; result?: Record<string, unknown> }> {
     const a = await this.get(orgId, id);
     if (a.status !== 'pending') throw new BadRequestException(`approval is ${a.status}`);
     if (a.expiresAt && a.expiresAt < nowIso()) {
@@ -213,6 +269,7 @@ export class OrgApprovalsService {
     let result: Record<string, unknown> | undefined;
     let status: OrgApproval['status'];
     if (decision === 'approve') {
+      for (const fn of this.beforeApply.get(a.kind) ?? []) await fn(orgId, a, payload);
       result = await this.apply(orgId, a.kind as ApprovalKind, payload, a, note);
       status = 'approved';
     } else if (decision === 'reject') {
@@ -227,8 +284,10 @@ export class OrgApprovalsService {
     } else {
       status = 'revision_requested';
     }
-    await this.db.update(orgApprovals).set({ status, decidedAt: nowIso(), decidedBy: decidedBy || currentAccountId(), decisionNote: note.slice(0, 2_000) }).where(eq(orgApprovals.id, id));
-    await this.audit.append(orgId, { actor, action: `approval_${status}`, refType: 'approval', refId: id, payload: { kind: a.kind, note: note.slice(0, 300), result, decidedBy: decidedBy || currentAccountId() } });
+    await this.db.update(orgApprovals).set({ status, decidedAt: nowIso(), decidedBy: decidedBy || currentAccountId(), decisionNote: note.slice(0, 2_000), decidedVia: (opts.via ?? '').slice(0, 120) }).where(eq(orgApprovals.id, id));
+    await this.audit.append(orgId, { actor, action: `approval_${status}`, refType: 'approval', refId: id, payload: { kind: a.kind, note: note.slice(0, 300), result, decidedBy: decidedBy || currentAccountId(), ...(opts.via ? { via: opts.via } : {}) } });
+    // Delegated decisions (docs/owners-seat.md §2) carry their own audit row too.
+    if (opts.via?.startsWith('delegate:')) await this.audit.append(orgId, { actor, action: 'delegated_decision', refType: 'approval', refId: id, payload: { kind: a.kind, decision: status, delegate: opts.via.slice('delegate:'.length) } });
     for (const fn of this.decisionListeners) await Promise.resolve(fn({ orgId, approval: { ...a, status }, decision, note, result, decidedBy: decidedBy || currentAccountId() })).catch(() => undefined);
     const org = await this.org.get(orgId);
     if (org.chiefOfStaffAgentId) {
@@ -348,6 +407,7 @@ export class OrgApprovalsService {
     // Re-meet at apply time: the chief's holdings may have narrowed since.
     const chief = org.chiefOfStaffAgentId ? await this.org.member(orgId, org.chiefOfStaffAgentId) : null;
     const scopes = meetScopes(this.org.scopesOf(chief), parseScopes(p.requestedScopes ?? p.scopes ?? []));
+    await this.org.gate(orgId, { kind: 'hire', withinUnit: true, key: p.reportsToAgentId, summary: `hire ${p.name}` }, actor);
     const pack = p.packId ? OrgApprovalsService.catalogItem(p.packId) : undefined;
     const taken = new Set((await this.agents.list()).map((a) => a.name));
     let name = p.name; for (let n = 2; taken.has(name); n++) name = `${p.name} ${n}`;
@@ -394,6 +454,25 @@ export class OrgApprovalsService {
     }
     return stale.length;
   }
+}
+
+/** The decision-card fields of a new card: the proposer's where given and
+ *  valid, computed defaults otherwise (docs/owners-seat.md §1). */
+export function cardFields(org: { tunables?: string | null } | null, kind: string, payload: Record<string, unknown>, input: CardInput, nowMs: number): Pick<OrgApproval, 'recommendedAction' | 'alternatives' | 'reversibility' | 'confidence' | 'deadline' | 'defaultAction'> {
+  const rec = String(input.recommendedAction ?? '').toLowerCase();
+  const alternatives = normalizeAlternatives(input.alternatives);
+  const computed = defaultActionFor(org, kind, payload);
+  // A proposer may make the default stricter (deny), never looser.
+  const defaultAction: DefaultAction = input.defaultAction === 'deny' ? 'deny' : computed;
+  const hours = govTunable(org, 'seat.deadlineHours');
+  return {
+    recommendedAction: (RECOMMENDED_ACTIONS as readonly string[]).includes(rec) ? rec : 'approve',
+    alternatives: JSON.stringify(alternatives.length ? alternatives : computedAlternatives(kind)),
+    reversibility: reversibilityOf(kind, payload),
+    confidence: clamp01(input.confidence) ?? govTunable(org, 'seat.defaultConfidence'),
+    deadline: new Date(nowMs + hours * 3_600_000).toISOString(),
+    defaultAction,
+  };
 }
 
 export function summarize(kind: string, payload: Record<string, unknown>): string {
