@@ -29,6 +29,7 @@ import { OrgSignalsService } from './org-signals.service';
 import { OrgSloService } from './org-slo.service';
 import { OrgIntentService } from './org-intent.service';
 import { OrgMeetingsService } from './org-meetings.service';
+import { OrgCapitalService } from './org-capital.service';
 
 export interface BriefItem { n: number; approvalId: string; kind: string; summary: string }
 export interface Brief { orgId: string; at: string; text: string; items: BriefItem[] }
@@ -52,6 +53,8 @@ export class OrgBriefService {
     @Optional() private readonly intent?: OrgIntentService,
     /** Optional: questions raised in meetings (docs/company-vision.md §3, item 19). */
     @Optional() private readonly meetings?: OrgMeetingsService,
+    /** Optional: capital (docs/company-vision.md §7) — the Spend projection line and "Cost per outcome". */
+    @Optional() private readonly capital?: OrgCapitalService,
   ) {}
 
   /** Compose (and, with deliver, write) the brief. Deterministic: no model call. */
@@ -87,6 +90,13 @@ export class OrgBriefService {
       lines.push(`- ${nameOf(m.agentId)} (${m.title || 'member'}${m.status === 'paused' ? ', paused' : ''}): $${spent.toFixed(2)}${b && b.monthlyUsd > 0 ? ` of $${b.monthlyUsd.toFixed(2)} (${pct(spent, b.monthlyUsd)})${spent / b.monthlyUsd >= 0.8 ? ' ⚠' : ''}` : ''}`);
     }
     if (orgSpent > 0 && chiefShare > 0.15) lines.push(`- ⚠ Coordination share: the chief of staff used ${Math.round(chiefShare * 100)}% of org spend (soft alarm at 15%).`);
+    // Capital (docs/company-vision.md §7): the projection, not the balance, is what warns.
+    const forecast = this.capital ? await this.capital.forecast(orgId, now).catch(() => null) : null;
+    if (forecast) {
+      const c = forecast.company;
+      lines.push(`- Projection: $${c.projectedUsd.toFixed(2)} by month-end at $${c.dailyBurnUsd.toFixed(2)}/day (trailing ${forecast.windowDays}d)${c.capUsd > 0 ? ` — ${c.projectedPct}% of the envelope, ${c.state === 'onTrack' ? 'on track' : c.state === 'warn' ? '⚠ over the warn line' : '■ projected to stop'}` : ''}.`);
+      for (const e of [...forecast.agents, ...forecast.projects, ...forecast.objectives].filter((x) => x.state !== 'onTrack').slice(0, 5)) lines.push(`  - ${e.state === 'stop' ? '■' : '⚠'} ${e.scope} ${e.name}: $${e.projectedUsd.toFixed(2)} projected of $${e.capUsd.toFixed(2)} (${e.projectedPct}%)`);
+    }
 
     // 2. Tasks since the last brief
     const done = tasks.filter((t) => t.status === 'done' && t.updatedAt >= since);
@@ -111,6 +121,24 @@ export class OrgBriefService {
         for (const { goal, ownerName } of kr.atRisk) lines.push(`  - ⚠ ${goal.title} (${ownerName}${goal.dueAt ? `, due ${goal.dueAt.slice(0, 10)}` : ''}) — ${goal.atRiskReason}`);
         for (const o of kr.objectivesAtRisk) lines.push(`  - ■ objective at risk: ${o.title} — ${o.atRiskReason}`);
         if (kr.visionAtRisk) lines.push(`- **Decision:** ${kr.objectivesAtRisk.length} objectives are at risk — the vision is. Cut scope, add budget, or accept the slip; tell the chief of staff which.`);
+      }
+    }
+
+    // 2c. Cost per outcome (docs/company-vision.md §7): one line per objective.
+    if (this.capital) {
+      const costs = await this.capital.costByGoal(orgId, { period: 'month', now }).catch(() => null);
+      if (costs && costs.objectives.length > 0) {
+        lines.push('', '## Cost per outcome');
+        for (const o of costs.objectives.slice(0, 10)) lines.push(`- ${this.capital.objectiveLine(o)}`);
+        if (costs.unlinkedUsd > 0) lines.push(`- $${costs.unlinkedUsd.toFixed(2)} spent on work linked to no objective.`);
+        const flagged = costs.objectives.filter((o) => o.overspend);
+        if (flagged.length) lines.push(`- **Decision:** ${flagged.length} objective(s) consume their envelope faster than they deliver (margin ${Math.round(costs.margin * 100)} points) — cut scope, re-allocate, or accept the cost; tell the chief of staff which.`);
+      }
+      // Plans awaiting the veto window (docs/company-vision.md §8).
+      const pending = await this.capital.plans(orgId, { status: 'pending' }).catch(() => []);
+      if (pending.length > 0) {
+        lines.push('', '## Plans awaiting your veto');
+        for (const p of pending) lines.push(`- ${p.summary.slice(0, 300)} — est. $${p.estimateUsd.toFixed(2)}, applies ${p.applyAt ? p.applyAt.slice(11, 16) + ' UTC' : 'now'} (POST …/org/plans/${p.id}/veto to stop it)`);
       }
     }
 

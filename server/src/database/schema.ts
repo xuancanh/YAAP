@@ -650,6 +650,10 @@ export const organizations = pgTable('organizations', {
   auditCadenceDays: integer('auditCadenceDays').notNull().default(7),
   auditUsdCap: real('auditUsdCap').notNull().default(2),
   tunables: text('tunables').notNull().default('{}'),
+  /** Capital (docs/company-vision.md §7, item 23): model routing by task
+   *  class as JSON { classes: { <class>: cheap|standard|strong }, models:
+   *  { <tier>: <model id> } }, read through org-routing.ts. */
+  routing: text('routing').notNull().default('{}'),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -922,6 +926,11 @@ export const orgTasks = pgTable('org_tasks', {
    *  a caller named it, so re-assignment does not move it. */
   unitId: text('unitId'),
   unitExplicit: integer('unitExplicit').notNull().default(0),
+  /** Capital (docs/company-vision.md §7, item 23): the task class —
+   *  triage | research | synthesis | review | ops | general (or another
+   *  slug) — set by the creator or derived from the brief by
+   *  `deriveTaskClass`; cost roll-ups and model routing read it. */
+  class: text('class').notNull().default('general'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });
@@ -963,6 +972,54 @@ export const orgBudgets = pgTable('org_budgets', {
   month: text('month').notNull().default(''),
   /** When the 80% warning was last written (one per scope per day). */
   warnedAt: text('warnedAt'),
+});
+
+/** Capital (docs/company-vision.md §7, item 23): what an envelope buys — an
+ *  allocation of USD per month to an objective, with the rationale the
+ *  strategy memo states, written alongside the agent/project envelope it
+ *  accompanies (`scope`/`refId`). One row per (org, objective). */
+export const orgAllocations = pgTable('org_allocations', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  /** The objective. */
+  goalId: text('goalId').notNull(),
+  unitId: text('unitId'),
+  /** The envelope this allocation rides on: company | agent | project, and its id ('' when none). */
+  scope: text('scope').notNull().default(''),
+  refId: text('refId').notNull().default(''),
+  monthlyUsd: real('monthlyUsd').notNull().default(0),
+  /** What the money buys (which key results). */
+  rationale: text('rationale').notNull().default(''),
+  createdBy: text('createdBy').notNull().default('user'),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_allocations_goal').on(t.orgId, t.goalId)]);
+
+/** Plan preview with a veto window (docs/company-vision.md §8, §10; item
+ *  23): in autonomous mode the structural actions the chief takes during a
+ *  planning run or a structure review are collected here instead of
+ *  executing; they apply at `applyAt` unless the CEO vetoes. `dry_run` rows
+ *  record what the chief would do and apply nothing. */
+export const orgPlans = pgTable('org_plans', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  /** vision | objective_assigned | at_risk | manual | sprint | board | daily | dry_run. */
+  trigger: text('trigger').notNull().default('manual'),
+  summary: text('summary').notNull().default(''),
+  /** JSON [{ tool, input, estimateUsd, summary }]. */
+  actions: text('actions').notNull().default('[]'),
+  estimateUsd: real('estimateUsd').notNull().default(0),
+  /** pending | applied | vetoed | expired | dry_run. */
+  status: text('status').notNull().default('pending'),
+  vetoWindowMinutes: integer('vetoWindowMinutes').notNull().default(30),
+  /** JSON [{ tool, ok, output }] once applied (or where it stopped). */
+  result: text('result').notNull().default('[]'),
+  createdAt: text('createdAt').notNull(),
+  applyAt: text('applyAt'),
+  appliedAt: text('appliedAt'),
+  /** user | human:<id> | system (the tick) | chief. */
+  decidedBy: text('decidedBy').notNull().default(''),
 });
 
 /** Provenance rows behind org_members.scopes: one per scope string in force. */

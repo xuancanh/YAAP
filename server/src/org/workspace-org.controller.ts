@@ -10,6 +10,7 @@
  *  GET    /api/workspaces/:id/org/units      the unit tree (docs/group-chat.md §7) · PATCH units/:unitId · GET units/:unitId/board · GET units/:unitId/goals/tree · GET goals/tree
  *  assurance (docs/company-vision.md §5): GET signals · POST signals/:signalId/ack | /resolve · GET pulse · GET|PATCH slo · GET audits · POST audit/run
  *  intent (docs/company-vision.md §1b–§2): GET|PUT vision · GET|PUT profile · GET|PUT tunables · GET intent?unitId= · POST goals/:goalId/checkin · GET goals/:goalId/checkins · GET why?taskId=|goalId= · POST plan · GET strategy
+ *  capital (docs/company-vision.md §7–§8): GET costs?period=&unitId= · GET forecast · GET|PUT routing · GET|PUT allocations · GET plans?status= · GET plans/:planId · POST plans/:planId/veto | /apply-now · POST plan/dry-run · GET replay?day=
  *
  *  meetings (docs/company-vision.md §3, item 19): GET /org/meetings?unitId=&status= · POST /org/meetings { kind, unitId?, agenda?, attendees? } (starts now)
  *           GET /org/meetings/:meetingId · POST /org/meetings/:meetingId/cancel · GET /org/decisions?unitId= · GET /org/cadences · PATCH /org/cadences/:cadenceId { cron, enabled }
@@ -27,7 +28,7 @@ import { ORG_MODES, type OrgMode } from '../workspaces/workspaces.service';
 import { OrgModeService, AUTONOMY_CAPS, MAX_ORG_AGENT_CAP } from './org-mode.service';
 import {
   OrgController, UpdateOrgDto, AddMemberDto, UpdateMemberDto, ScopesDto, GoalDto, ProjectDto, TaskDto, AssignDto, TextDto, ReviewDto, DecideDto, ProposalDto, BudgetDto, WakeDto, HumanDto, UnitDto, SloDto, AckDto,
-  VisionDto, ProfileDto, TunableDto, CheckInDto, PlanDto,
+  VisionDto, ProfileDto, TunableDto, CheckInDto, PlanDto, RoutingDto, AllocationDto, DryRunDto, VetoDto,
 } from './org.controller';
 
 class OrgModeDto {
@@ -109,6 +110,20 @@ export class WorkspaceOrgController {
   @Get('why') async why(@Param('id') id: string, @Query('taskId') taskId?: string, @Query('goalId') goalId?: string) { return this.orgs.why(await this.oid(id), taskId, goalId); }
   @Post('plan') async plan(@Param('id') id: string, @Body() dto: PlanDto) { return this.orgs.plan(await this.oid(id), dto); }
   @Get('strategy') async strategy(@Param('id') id: string) { return this.orgs.strategy(await this.oid(id)); }
+
+  // Capital (docs/company-vision.md §7–§8, item 23)
+  @Get('costs') async costs(@Param('id') id: string, @Query('period') period?: string, @Query('unitId') unitId?: string) { return this.orgs.costs(await this.oid(id), period, unitId); }
+  @Get('forecast') async forecast(@Param('id') id: string) { return this.orgs.forecast(await this.oid(id)); }
+  @Get('routing') async routing(@Param('id') id: string) { return this.orgs.routing(await this.oid(id)); }
+  @Put('routing') async setRouting(@Param('id') id: string, @Body() dto: RoutingDto) { return this.orgs.setRouting(await this.oid(id), dto); }
+  @Get('allocations') async allocations(@Param('id') id: string) { return this.orgs.allocations(await this.oid(id)); }
+  @Put('allocations') async setAllocation(@Param('id') id: string, @Body() dto: AllocationDto) { return this.orgs.setAllocation(await this.oid(id), dto); }
+  @Get('plans') async plans(@Param('id') id: string, @Query('status') status?: string) { return this.orgs.plans(await this.oid(id), status); }
+  @Get('plans/:planId') async planGet(@Param('id') id: string, @Param('planId') planId: string) { return this.orgs.planGet(await this.oid(id), planId); }
+  @Post('plans/:planId/veto') async vetoPlan(@Param('id') id: string, @Param('planId') planId: string, @Body() dto: VetoDto) { return this.orgs.vetoPlan(await this.oid(id), planId, dto); }
+  @Post('plans/:planId/apply-now') async applyPlan(@Param('id') id: string, @Param('planId') planId: string) { return this.orgs.applyPlan(await this.oid(id), planId); }
+  @Post('plan/dry-run') async dryRun(@Param('id') id: string, @Body() dto: DryRunDto) { return this.orgs.dryRun(await this.oid(id), dto); }
+  @Get('replay') async replay(@Param('id') id: string, @Query('day') day?: string) { return this.orgs.replay(await this.oid(id), day); }
 
   @Get('goals') async goals(@Param('id') id: string, @Query('unitId') unitId?: string) { return this.orgs.goals(await this.oid(id), unitId); }
   @Post('goals') async addGoal(@Param('id') id: string, @Body() dto: GoalDto) { return this.orgs.addGoal(await this.oid(id), dto); }

@@ -1213,6 +1213,51 @@ const MIGRATIONS: Migration[] = [
       await add('agents', 'heartbeatStaleMinutes', 'INTEGER');
     },
   },
+  {
+    id: '0035-org-capital',
+    up: async (db) => {
+      // Capital and the CEO seat (docs/company-vision.md §7–§8, execution-plan
+      // item 23): the task class for cost roll-ups and routing, model routing
+      // per class on the organization, allocations per objective (what an
+      // envelope buys) and plan previews with a veto window. Idempotent.
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('org_tasks', 'class', `TEXT NOT NULL DEFAULT 'general'`);
+      await add('organizations', 'routing', `TEXT NOT NULL DEFAULT '{}'`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_allocations (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "goalId" TEXT NOT NULL,
+        "unitId" TEXT,
+        "scope" TEXT NOT NULL DEFAULT '',
+        "refId" TEXT NOT NULL DEFAULT '',
+        "monthlyUsd" REAL NOT NULL DEFAULT 0,
+        "rationale" TEXT NOT NULL DEFAULT '',
+        "createdBy" TEXT NOT NULL DEFAULT 'user',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_allocations_goal ON org_allocations ("orgId", "goalId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_plans (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "trigger" TEXT NOT NULL DEFAULT 'manual',
+        "summary" TEXT NOT NULL DEFAULT '',
+        "actions" TEXT NOT NULL DEFAULT '[]',
+        "estimateUsd" REAL NOT NULL DEFAULT 0,
+        "status" TEXT NOT NULL DEFAULT 'pending',
+        "vetoWindowMinutes" INTEGER NOT NULL DEFAULT 30,
+        "result" TEXT NOT NULL DEFAULT '[]',
+        "createdAt" TEXT NOT NULL,
+        "applyAt" TEXT,
+        "appliedAt" TEXT,
+        "decidedBy" TEXT NOT NULL DEFAULT ''
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_plans_org_status ON org_plans ("orgId", "status")`);
+    },
+  },
 ];
 
 /**
