@@ -595,10 +595,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const newChat = useCallback(async (agentId?: string | null) => {
+    const pinned = agentId ? agents.find((x) => x.id === agentId) : undefined;
     const created = await api.createChat({
       workspaceId,
       agentId: agentId ?? undefined,
-      agentTypeId: settings.defaultAgentTypeId || undefined,
+      // the agent's own model setting wins over the app default
+      agentTypeId: pinned?.agentTypeId || settings.defaultAgentTypeId || undefined,
+      model: pinned?.agentTypeId ? pinned.model || undefined : undefined,
       tokenCeiling: settings.defaultTokenCeiling ? parseInt(settings.defaultTokenCeiling, 10) : undefined,
     });
     if (settings.defaultPermissionMode === 'auto') {
@@ -607,7 +610,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await refreshSessions();
     openSession(created.id);
     return created.id;
-  }, [workspaceId, settings, refreshSessions, openSession]);
+  }, [workspaceId, settings, agents, refreshSessions, openSession]);
 
   useEffect(() => {
     const wanted = orgLink.current;

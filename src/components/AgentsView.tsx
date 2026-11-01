@@ -1090,6 +1090,109 @@ function SkillsToolsTab({ a }: { a: Agent }) {
   );
 }
 
+const fieldInput: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 10px', color: 'var(--text)', fontSize: 13, outline: 'none', minWidth: 0 };
+
+/** Identity: name, emoji, role and the avatar gradient. */
+function IdentityCard({ a }: { a: Agent }) {
+  const app = useApp();
+  const colorsOf = (raw: string): [string, string] => { try { const c = JSON.parse(raw) as string[]; if (Array.isArray(c) && c.length === 2) return [c[0], c[1]]; } catch { /* fall through */ } return ['#8b8cf0', '#5cc2f2']; };
+  const [name, setName] = useState(a.name);
+  const [emoji, setEmoji] = useState(a.emoji);
+  const [role, setRole] = useState(a.role);
+  const [colors, setColors] = useState<[string, string]>(colorsOf(a.colors));
+  useEffect(() => { setName(a.name); setEmoji(a.emoji); setRole(a.role); setColors(colorsOf(a.colors)); }, [a.id, a.name, a.emoji, a.role, a.colors]);
+  const dirty = name !== a.name || emoji !== a.emoji || role !== a.role || JSON.stringify(colors) !== JSON.stringify(colorsOf(a.colors));
+  const save = async () => {
+    try {
+      await api.updateAgent(a.id, { name: name.trim(), emoji: emoji.trim() || '🤖', role: role.trim(), colors: JSON.stringify(colors) });
+      await app.refreshAgents();
+      app.showToast('Identity saved');
+    } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'could not save'); }
+  };
+  return (
+    <div style={{ ...card, padding: '16px 18px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <span style={label}>Identity</span>
+        <button disabled={!dirty || !name.trim()} onClick={() => { void save(); }} style={{ background: dirty ? 'var(--accent)' : 'var(--panel-2)', color: dirty ? '#fff' : 'var(--text-faint)', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: dirty ? 'pointer' : 'default' }}>Save</button>
+      </div>
+      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <div aria-hidden style={{ width: 48, height: 48, borderRadius: 12, background: `linear-gradient(135deg, ${colors[0]}, ${colors[1]})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, flex: 'none' }}>{emoji || '🤖'}</div>
+        <div style={{ flex: 1, minWidth: 220, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>Name<input value={name} maxLength={60} onChange={(e) => setName(e.target.value)} style={fieldInput} /></label>
+          <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>Role<input value={role} maxLength={80} onChange={(e) => setRole(e.target.value)} placeholder="e.g. Customer support" style={fieldInput} /></label>
+          <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>Emoji<input value={emoji} maxLength={8} onChange={(e) => setEmoji(e.target.value)} style={{ ...fieldInput, width: 70 }} /></label>
+          <div style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>
+            Colours
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type="color" aria-label="Gradient start colour" value={colors[0]} onChange={(e) => setColors([e.target.value, colors[1]])} style={{ width: 40, height: 32, border: 'none', background: 'none', padding: 0, cursor: 'pointer' }} />
+              <input type="color" aria-label="Gradient end colour" value={colors[1]} onChange={(e) => setColors([colors[0], e.target.value])} style={{ width: 40, height: 32, border: 'none', background: 'none', padding: 0, cursor: 'pointer' }} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Model: the agent type (provider, key, base URL) and the model within it.
+ *  Every session kind — private chats, channels, loops, heartbeats, org runs —
+ *  runs on it, unless a chat picked a model by hand in its header. */
+function ModelCard({ a }: { a: Agent }) {
+  const app = useApp();
+  const types = app.agentTypes;
+  const enabled = types.filter((t) => t.enabled);
+  const current = types.find((t) => t.id === a.agentTypeId) ?? null;
+  const [typeId, setTypeId] = useState<string>(a.agentTypeId ?? '');
+  const [model, setModel] = useState(a.model);
+  const [applyToChats, setApplyToChats] = useState(true);
+  useEffect(() => { setTypeId(a.agentTypeId ?? ''); setModel(a.model); }, [a.id, a.agentTypeId, a.model]);
+  const picked = types.find((t) => t.id === typeId) ?? null;
+  const suggestions = (() => { try { const m = JSON.parse(picked?.models || '[]') as unknown; return Array.isArray(m) ? m.filter((x): x is string => typeof x === 'string') : []; } catch { return []; } })();
+  const dirty = typeId !== (a.agentTypeId ?? '') || model !== a.model;
+  const save = async () => {
+    try {
+      await api.updateAgent(a.id, { agentTypeId: typeId || null, model: model.trim(), applyToChats });
+      await app.refreshAgents();
+      await app.refreshSessions();
+      app.showToast(`${a.name} now runs on ${model.trim() || picked?.model || 'the type default'}${applyToChats ? ', including its existing chats' : ' in new chats'}`);
+    } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'could not save'); }
+  };
+  return (
+    <div style={{ ...card, padding: '16px 18px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <span style={label}>Model</span>
+        <button disabled={!dirty} onClick={() => { void save(); }} style={{ background: dirty ? 'var(--accent)' : 'var(--panel-2)', color: dirty ? '#fff' : 'var(--text-faint)', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: dirty ? 'pointer' : 'default' }}>Save</button>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 11, lineHeight: 1.5 }}>
+        What {a.name} runs on everywhere: its chats, channel replies, loops, heartbeat and organization work. A model picked by hand in one chat&apos;s header still wins for that chat.
+        {!current && ` Today: ${a.model || 'the default model'} via the ${a.provider} provider.`}
+      </div>
+      {enabled.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: 'var(--amber)' }}>No enabled agent types. Add one with an API key in Settings → Models first.</div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>
+            Agent type
+            <select value={typeId} onChange={(e) => { const t = types.find((x) => x.id === e.target.value); setTypeId(e.target.value); if (t) setModel(t.model); }} style={{ ...fieldInput, cursor: 'pointer' }}>
+              <option value="">Automatic (by provider: {a.provider})</option>
+              {enabled.map((t) => <option key={t.id} value={t.id}>{t.name} · {t.provider}{t.hasApiKey ? '' : ' (no key)'}</option>)}
+            </select>
+          </label>
+          <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>
+            Model
+            <input value={model} onChange={(e) => setModel(e.target.value)} list={`models-${a.id}`} placeholder={picked?.model || 'type default'} style={{ ...fieldInput, fontFamily: 'var(--mono)' }} />
+            <datalist id={`models-${a.id}`}>{[...new Set([picked?.model, ...suggestions].filter(Boolean) as string[])].map((m) => <option key={m} value={m} />)}</datalist>
+          </label>
+        </div>
+      )}
+      <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--text-dim)', marginTop: 10, cursor: 'pointer' }}>
+        <input type="checkbox" checked={applyToChats} onChange={(e) => setApplyToChats(e.target.checked)} style={{ accentColor: 'var(--accent)' }} />
+        Also switch {a.name}&apos;s existing chats
+      </label>
+    </div>
+  );
+}
+
 /** Assign a workspace folder: the agent sees it as shared/ next to its own
  *  working folder, in every workspace it chats in. */
 function SharedFolderCard({ a }: { a: Agent }) {
@@ -1531,6 +1634,9 @@ export function AgentHome() {
 
         {tab === 'Settings' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
+            <IdentityCard a={a} />
+            <ModelCard a={a} />
+            <HeartbeatCard a={a} />
             <div style={{ ...card, padding: '16px 18px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
                 <span style={label}>Charter</span>

@@ -75,6 +75,10 @@ export class TurnContextService {
     const tryId = async (id: string | null | undefined) => (id ? this.agentTypes.resolve(id).catch(() => undefined) : undefined);
     const own = await tryId(session.agentTypeId);
     if (own) return own;
+    // the agent's chosen model setting (Settings → Model on the agent page)
+    const pinned = session.agentId ? await this.agents.get(session.agentId).catch(() => null) : null;
+    const byAgentType = await tryId((pinned as { agentTypeId?: string | null } | null)?.agentTypeId);
+    if (byAgentType && byAgentType.enabled) return byAgentType;
     const settings = this.settings ? await this.settings.all().catch((): Record<string, string> => ({})) : {};
     const types = (await this.agentTypes.list().catch(() => [])).filter((t) => t.enabled);
     // An agent pinned to a provider prefers an enabled type of that provider.

@@ -71,6 +71,7 @@ export const agentSchema = z.object({
   charter: z.string(),
   provider: z.string(),
   model: z.string(),
+  agentTypeId: z.string().nullable().optional(),
   homeDir: z.string().nullable(),
   workspaceFolder: z.string(),
   dashboard: z.string(),

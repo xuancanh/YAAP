@@ -111,6 +111,8 @@ export interface Agent {
   charter: string;
   provider: string;
   model: string;
+  /** The agent type it runs on (provider, key, base URL); null = by provider. */
+  agentTypeId?: string | null;
   homeDir: string | null;
   /** Assigned workspace folder, mounted into its chats as shared/. */
   workspaceFolder: string;
@@ -1126,7 +1128,7 @@ export const api = {
   // chats
   chats: (workspaceId: string) => get<ChatSession[]>(`/api/chats?workspaceId=${enc(workspaceId)}`, chatSessionListSchema),
   chat: (id: string) => get<ChatSession>(`/api/chats/${id}`, chatSessionSchema),
-  createChat: (input: { workspaceId: string; name?: string; agentId?: string; agentTypeId?: string; cwd?: string; tokenCeiling?: number }) =>
+  createChat: (input: { workspaceId: string; name?: string; agentId?: string; agentTypeId?: string; model?: string; cwd?: string; tokenCeiling?: number }) =>
     send<ChatSession>('/api/chats', 'POST', input, chatSessionSchema),
   updateChat: (id: string, patch: Record<string, unknown>) => send<ChatSession>(`/api/chats/${id}`, 'PATCH', patch, chatSessionSchema),
   deleteChat: (id: string) => send<{ ok: boolean }>(`/api/chats/${id}`, 'DELETE'),

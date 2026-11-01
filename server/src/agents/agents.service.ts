@@ -12,7 +12,7 @@ import { AccountsService } from '../accounts/accounts.service';
 import { actorId, currentAccountId } from '../accounts/account-context';
 import { unscoped } from '../accounts/scoped-db';
 import type { DrizzleDb } from '../database/database.module';
-import { agents, agentEvents, agentTasks, channelMembers, channels, chatSessions, chatTurns, heartbeatState, orgMembers, organizations, workspaces } from '../database/schema';
+import { agents, agentEvents, agentTasks, agentTypes, channelMembers, channels, chatSessions, chatTurns, heartbeatState, orgMembers, organizations, workspaces } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
 import { agentFileKey, agentPrefix } from '../storage/storage.keys';
@@ -260,8 +260,35 @@ export class AgentsService {
     }
   }
 
-  async update(id: string, patch: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string }>) {
+  async update(id: string, input: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string; agentTypeId: string | null; applyToChats: boolean }>) {
     await this.get(id);
+    const { applyToChats, ...patch } = input as typeof input & { agentTypeId?: string | null };
+    if (patch.name !== undefined) {
+      patch.name = patch.name.trim();
+      if (!patch.name || patch.name.length > 60) throw new BadRequestException('name must be 1–60 characters');
+    }
+    if (patch.emoji !== undefined && [...patch.emoji].length > 4) throw new BadRequestException('emoji must be at most one emoji');
+    if (patch.role !== undefined && patch.role.length > 80) throw new BadRequestException('role must be at most 80 characters');
+    if (patch.colors !== undefined) {
+      const ok = (() => {
+        try { const c = JSON.parse(patch.colors) as unknown; return Array.isArray(c) && c.length === 2 && c.every((x) => typeof x === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(x)); } catch { return false; }
+      })();
+      if (!ok) throw new BadRequestException('colors must be a JSON pair of hex colours, e.g. ["#8b8cf0","#5cc2f2"]');
+    }
+    if (patch.model !== undefined) patch.model = patch.model.trim().slice(0, 120);
+    // The model setting (agent type + model): the type gives provider, key and
+    // base URL. Changing it can carry over to the agent's existing chats.
+    if (patch.agentTypeId !== undefined) {
+      if (patch.agentTypeId) {
+        const type = (await this.db.select().from(agentTypes).where(eq(agentTypes.id, patch.agentTypeId)).limit(1))[0];
+        if (!type) throw new BadRequestException('unknown agent type');
+        if (!type.enabled) throw new BadRequestException(`agent type "${type.name}" is disabled`);
+        patch.provider = type.provider;
+        if (patch.model === undefined || patch.model === '') patch.model = type.model;
+      } else {
+        patch.agentTypeId = null;
+      }
+    }
     if (patch.loops !== undefined) {
       patch.loops = validateLoopsJson(patch.loops);
       if (this.accounts) {
@@ -275,7 +302,13 @@ export class AgentsService {
       if (folder) agentFileKey('probe', folder);
       patch.workspaceFolder = folder;
     }
-    await this.db.update(agents).set(patch).where(eq(agents.id, id));
+    await this.db.update(agents).set(patch as Partial<typeof agents.$inferInsert>).where(eq(agents.id, id));
+    if (applyToChats && (patch.agentTypeId !== undefined || patch.model !== undefined)) {
+      const set: Partial<typeof chatSessions.$inferInsert> = {};
+      if (patch.agentTypeId !== undefined) set.agentTypeId = patch.agentTypeId;
+      if (patch.model !== undefined) set.model = patch.model;
+      await this.db.update(chatSessions).set(set).where(eq(chatSessions.agentId, id));
+    }
     return this.get(id);
   }
 

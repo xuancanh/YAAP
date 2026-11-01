@@ -93,6 +93,9 @@ export const agents = pgTable('agents', {
   charter: text('charter').notNull().default(''),
   provider: text('provider').notNull().default('anthropic'),
   model: text('model').notNull().default(''),
+  /** The agent type (provider, key, base URL) the agent runs on; its model
+   *  field picks the model within it. Null = resolve by provider. */
+  agentTypeId: text('agentTypeId'),
   /** Optional file-brain home folder path (LESSONS.md / JOURNAL.md / knowledge/). */
   homeDir: text('homeDir'),
   /** Markdown home dashboard (FR-11.5). */

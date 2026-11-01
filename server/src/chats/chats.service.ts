@@ -52,6 +52,8 @@ export class ChatsService {
       const agent = await this.agents.get(input.agentId);
       const owner = (agent as { workspaceId?: string }).workspaceId;
       if (owner && owner !== input.workspaceId) throw new BadRequestException(`${agent.name} belongs to another workspace; move it first or pick an agent of this workspace`);
+      const pinnedType = (agent as { agentTypeId?: string | null }).agentTypeId;
+      if (pinnedType && !input.agentTypeId) return this.repo.createSession({ ...input, agentTypeId: pinnedType, model: input.model || agent.model || '' });
     }
     return this.repo.createSession(input);
   }

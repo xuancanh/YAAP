@@ -244,3 +244,41 @@ test('a loop runs its session in the agent workspace, not the default one', asyn
   assert.equal(inSecond!.agentId, agent.id);
   assert.equal((await s.repo.listSessions(s.ws.id)).some((x) => x.name === 'Loop · Nightly'), false, 'nothing in the default workspace');
 });
+
+test('agent model setting: a type sets provider and model, carries to existing chats, new chats inherit it; identity is validated', async () => {
+  const s = await setup();
+  const { agentTypes, chatSessions } = await import('../server/src/database/schema');
+  await s.db.insert(agentTypes).values([
+    { id: 'tA', name: 'Fast', provider: 'deepseek', model: 'deepseek-chat', models: '[]', baseUrl: null, apiKey: '', persona: '', enabled: 1, createdAt: new Date().toISOString() } as never,
+    { id: 'tOff', name: 'Off', provider: 'openai', model: 'gpt-x', models: '[]', baseUrl: null, apiKey: '', persona: '', enabled: 0, createdAt: new Date().toISOString() } as never,
+  ]);
+  const a = await s.agents.create({ name: 'Writer', workspaceId: s.ws.id });
+  const chats = new ChatsService(s.repo, s.agents);
+  const before = await chats.create({ workspaceId: s.ws.id, agentId: a.id });
+  assert.equal(before.agentTypeId, null);
+
+  const updated = await s.agents.update(a.id, { agentTypeId: 'tA', model: '', applyToChats: true });
+  assert.equal(updated.agentTypeId, 'tA');
+  assert.equal(updated.provider, 'deepseek');
+  assert.equal(updated.model, 'deepseek-chat', 'an empty model takes the type default');
+  const moved = (await s.db.select().from(chatSessions).where(eq(chatSessions.id, before.id)))[0];
+  assert.equal(moved.agentTypeId, 'tA');
+  assert.equal(moved.model, 'deepseek-chat');
+
+  const fresh = await chats.create({ workspaceId: s.ws.id, agentId: a.id });
+  assert.equal(fresh.agentTypeId, 'tA', 'a new chat inherits the agent type');
+  const explicit = await chats.create({ workspaceId: s.ws.id, agentId: a.id, agentTypeId: 'other' });
+  assert.equal(explicit.agentTypeId, 'other', 'a type chosen for the chat wins');
+
+  await s.agents.update(a.id, { model: 'deepseek-reasoner', applyToChats: false });
+  assert.equal((await s.db.select().from(chatSessions).where(eq(chatSessions.id, before.id)))[0].model, 'deepseek-chat', 'chats keep their model without applyToChats');
+
+  await assert.rejects(s.agents.update(a.id, { agentTypeId: 'tOff' }), BadRequestException);
+  await assert.rejects(s.agents.update(a.id, { agentTypeId: 'missing' }), BadRequestException);
+  await assert.rejects(s.agents.update(a.id, { name: '   ' }), BadRequestException);
+  await assert.rejects(s.agents.update(a.id, { colors: 'red' }), BadRequestException);
+  const ok = await s.agents.update(a.id, { name: ' Editor ', emoji: '✍️', role: 'Copy desk', colors: '["#112233","#445566"]' });
+  assert.equal(ok.name, 'Editor');
+  assert.equal(ok.role, 'Copy desk');
+  assert.equal((await s.agents.update(a.id, { agentTypeId: null })).agentTypeId, null);
+});

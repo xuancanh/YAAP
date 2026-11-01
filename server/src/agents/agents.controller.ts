@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
-import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString, ValidateIf } from 'class-validator';
 import { AgentsService } from './agents.service';
 import { AgentMemoryService } from './agent-memory.service';
 import { ConnectionsService } from '../connections/connections.service';
@@ -38,6 +38,10 @@ class UpdateAgentDto {
   @IsOptional() @IsString() loops?: string;
   /** Assigned workspace folder, mounted into the agent's chats as shared/. */
   @IsOptional() @IsString() workspaceFolder?: string;
+  /** The agent type the agent runs on (provider, key, base URL); null clears it. */
+  @IsOptional() @ValidateIf((_o, v) => v !== null) @IsString() agentTypeId?: string | null;
+  /** With agentTypeId/model: also switch the agent's existing chats. */
+  @IsOptional() @IsBoolean() applyToChats?: boolean;
 }
 
 class MoveAgentDto {

@@ -1680,6 +1680,17 @@ const MIGRATIONS: Migration[] = [
       await add('org_approvals', 'decidedVia', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '0045-agent-type',
+    up: async (db) => {
+      // An agent's model is chosen from an agent type (provider + key + base
+      // URL); its chats, channel replies, loops and org runs run on it unless a
+      // chat picked another model by hand.
+      if (!(await hasColumn(db, 'agents', 'agentTypeId'))) {
+        await db.query(`ALTER TABLE agents ADD COLUMN "agentTypeId" TEXT`);
+      }
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */
