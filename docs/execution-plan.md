@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **done** — items 1–16 shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–16 done**, item 17 in progress — items 1–16 shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -427,3 +427,8 @@ panes in the rail, the Settings → Workspace → Organization card, the
 "Chief of staff of <workspace>" badge, `#/ws/<id>/org/<pane>` deep links;
 `tests/backend-org-mode.test.ts` (10 tests). Old tool names are accepted for
 one release.
+
+### 17. Units: board, channel and goal tracker per org level *(todo)*
+`docs/group-chat.md` §7: a unit per agent with direct reports, created and
+archived automatically; unit channel with chart-driven membership; unit board
+and goal tracker with roll-up; lead tools.

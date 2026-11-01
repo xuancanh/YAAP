@@ -252,3 +252,34 @@ kill switch.
 No voice/huddles; no message search beyond the existing FTS extended to
 `channel_messages`; no reactions beyond 👍/👎 (which feed skill outcomes); no
 cross-workspace channels; no agent may add itself to a channel.
+
+## 7. Units: a board, a channel and a goal tracker per org level
+
+Added 1 November 2026 (execution-plan item 17). Every agent with at least one
+direct report leads a **unit**. The root unit is the company, led by the chief
+of staff, and its channel is `#company`. A unit is created automatically when
+an agent gains its first report (hire or reorg) and archived, data kept, when
+its last report leaves.
+
+- `org_units` — id, orgId, leadAgentId, parentUnitId (null for the root),
+  name (default "<lead>'s team"; the root is the workspace name), slug,
+  channelId, archivedAt, createdAt.
+- **Channel.** `#<slug>` with members = lead + direct reports + the
+  workspace's human CEO and board members. Membership follows the org chart:
+  hire, reorg and termination add and remove channel members. Task status
+  lines for tasks that did not originate in a channel post into the unit
+  channel.
+- **Board.** `org_tasks.unitId` defaults to the unit led by the assignee's
+  manager (a lead's own tasks belong to its parent unit; tasks it creates for
+  reports belong to its unit). The unit board shows its tasks; the company
+  board offers "this unit only" and "roll up" views.
+- **Goal tracker.** `org_goals.unitId` and `parentGoalId`. Progress = done /
+  total of linked tasks plus the mean progress of child goals; the tracker
+  shows the goal tree with progress bars and linked tasks and messages.
+- **Lead tools.** A unit lead gets `org_set_goal` (child of a goal it can
+  see), `org_create_task`/`org_assign` within its unit, and
+  `org_unit_report` (board and goal progress for its unit). The chief keeps
+  the company-wide set.
+- **UI.** Under the workspace, the rail shows the company (`#company`, Board,
+  Goals) and each unit as a collapsible group (`#channel`, Board, Goals); the
+  org chart draws unit boundaries.
