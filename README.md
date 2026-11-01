@@ -100,9 +100,13 @@ like a mutation).
 Composer attachments accept drag-and-drop and file-picker uploads (stored
 under uploads/ in the workspace file store); assistants can offer one-tap
 quick replies (FR-5.3, a provider-neutral QUICK_REPLIES protocol line the UI
-parses); AGENT.json round-trips — export from the agent home, import on the
-directory page behind a loop-review modal with server-side validation
-(FR-11.7).
+parses); AGENT.json v2 round-trips — export from the agent home (identity,
+loops, apps, lessons, private skills, open tasks), import on the directory
+page behind a review modal where lessons arrive quarantined and skills as
+drafts (FR-11.7). Agents also import memory from Claude, Meta Muse, Hermes
+and OpenClaw exports as proposals, and skills import/export as agentskills.io
+`SKILL.md` through a scan step; every skill tracks use and 👍/👎 outcomes,
+and a 👎 lets the agent propose a revision you accept as a diff.
 
 Image attachments are real vision inputs: uploaded/mentioned images become
 base64 image blocks (Anthropic) or data-URI image_url parts (OpenAI family)

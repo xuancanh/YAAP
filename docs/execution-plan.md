@@ -167,16 +167,47 @@ grants, per-member memory visibility (lessons and profile entries carry an
 `audience`), approvals routed to the member whose grant the tool uses, and
 information-flow rules on what one member's content may reach another.
 
-### 9. Portability *(todo)*
+### 9. Portability *(done)*
 AGENT.json gains lessons, skills, profile, tasks; importers for Claude
 memory export, Muse data export, Hermes `MEMORY.md`/`USER.md`; agentskills.io
 `SKILL.md` import with a scan step (size, URLs, instruction-smell) before
 the skill enters `draft`.
+Shipped as: `server/src/portability/` (`PortabilityService` — AGENT.json
+`formatVersion: 2` with `lessons`, agent-private `skills`, open `tasks`, and
+`profile` only behind `?includeProfile=1`; v1 and v2 import with per-section
+toggles, lessons quarantined unless "trust imported lessons" is ticked,
+skills as drafts; `importMemory` for `claude-memory` / `muse` / `hermes` /
+`openclaw` → `{ lessons, profileProposals, charterSuggestion }`), the
+`import` lesson source (untrusted like `app`/`channel`, migration `0022`),
+`skill-md.ts` (parse / scan / render) with `POST /api/skills/import`,
+`GET /api/skills/:id/skill.md` and `skills.scanReport`, the agent-home
+Import dialog and v2 review modal (`SkillBits.tsx`, `AgentsView.tsx`), the
+Import SKILL.md button and scan flags on both skills surfaces, docs
+`agent-memory.md` §8 and `permissions.md` "Skills", and
+`tests/backend-portability.test.ts`. Not done: zip / multi-file skill
+bundles (single `SKILL.md` only), multipart upload (the UI reads files
+client-side and posts JSON), and the Claude export is treated as pasted
+text because Claude has no file export (assumption documented in §8).
 
-### 10. Skill outcome tracking *(todo)*
+### 10. Skill outcome tracking *(done)*
 Each turn records which skills it used; ratings attach to those skills;
 Skills page shows last used, use count, 👍/👎 rate; a 👎 on a skill turn
 produces a draft revision with a diff.
+Shipped as: `chat_turns.skillsUsed` (set by the turn loop when a `skill_*`
+tool loads), `skill_outcomes` (one row per skill × turn, re-rating updates)
+and `skills.useCount/upCount/downCount/lastUsedAt` (migration `0022`;
+`SkillsService.recordUse/recordOutcome`, called from the turn loop and
+`ChatsService.rateTurn`), skill names carried in the agent's pending
+feedback and a system-prompt hint naming the skill after a 👎, the
+`revise_skill(skillId, instructions, reason)` agent tool →
+`skills.pendingRevision` (read-only class: the user's accept is the gate),
+`POST /api/skills/:id/revision/accept|reject` with `skills.history` (last
+5), `src/lib/diff.ts` (LCS line diff, `web-tests/diff.test.ts`), the
+`RevisionCard` / `SkillStats` UI on Settings → Skills and the agent's
+Skills & tools tab, and `tests/backend-skill-outcomes.test.ts`. A
+pre-existing bug surfaced on the way: the `0002` unique index on skills
+ignored `agentId`, so two agents could not own a same-named private skill;
+`0022` replaces it.
 
 ### 11. Voice notes *(done)*
 Shipped as: `server/src/voice/` (`TranscriptionService` + `VoiceModule`:

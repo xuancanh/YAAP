@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
+import { ImportSkillMdButton, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { api, PROVIDER_COLORS, type BrowserStatus, type Connection, type ConnectionProvider, type EmailStatus, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RunnerStatus, type Workspace, type WorkspaceUsage } from '../lib/api';
 import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../lib/push';
@@ -165,19 +166,40 @@ function SkillsPane() {
   const app = useApp();
   const drafts = app.skills.filter((s) => s.draft === 1);
   const live = app.skills.filter((s) => s.draft !== 1);
+  const revisions = live.filter((s) => s.pendingRevision);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: 'var(--text-faint)', flex: 1 }}>
+          Skills record which turns loaded them and how those turns were rated; a 👎 lets the agent propose a revision you accept as a diff.
+        </span>
+        <ImportSkillMdButton scope={{ workspaceId: app.workspaceId || undefined }} onDone={() => void app.refreshSkills()} />
+      </div>
+      {revisions.length > 0 && (
+        <div style={{ ...card, borderColor: 'var(--amber)' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--amber)', marginBottom: 4 }}>Proposed revisions · {revisions.length}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 6 }}>
+            An agent revised a skill after a reply that used it was rated down. Nothing changes until you accept the diff; the previous text is kept in history.
+          </div>
+          {revisions.map((s) => (
+            <div key={s.id} style={{ marginBottom: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, ...mono }}>/{s.name}</span>
+              <RevisionCard s={s} onDone={() => void app.refreshSkills()} />
+            </div>
+          ))}
+        </div>
+      )}
       {drafts.length > 0 && (
         <div style={{ ...card, borderColor: 'var(--amber)' }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--amber)', marginBottom: 4 }}>Skill drafts · {drafts.length}</div>
           <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 10 }}>
-            Captured by agents from work that went well. A draft only becomes callable after you approve it.
+            Captured by agents from work that went well, or imported from a SKILL.md (with its scan flags). A draft only becomes callable after you approve it.
           </div>
           {drafts.map((s) => (
             <div key={s.id} style={{ padding: '10px 12px', border: '1px solid var(--border-soft)', borderRadius: 10, marginBottom: 8, background: 'var(--panel-2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, ...mono }}>/{s.name}</span>
-                <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>drafted by {s.proposedBy || 'an agent'}</span>
+                <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>{s.scanReport ? 'imported' : 'drafted'} by {s.proposedBy || 'an agent'}</span>
                 <span style={{ flex: 1 }} />
                 <button onClick={async () => { await api.resolveSkillDraft(s.id, true); await app.refreshSkills(); app.showToast(`Skill /${s.name} approved`); }}
                   style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
@@ -185,6 +207,7 @@ function SkillsPane() {
                   style={{ background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Reject</button>
               </div>
               {s.description && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 5 }}>{s.description}</div>}
+              <ScanFlags s={s} />
               <pre style={{ margin: '8px 0 0', padding: '9px 11px', background: 'var(--code)', borderRadius: 8, fontSize: 11, ...mono, lineHeight: 1.55, color: 'var(--text-dim)', whiteSpace: 'pre-wrap', maxHeight: 140, overflowY: 'auto' }}>{s.instructions}</pre>
             </div>
           ))}
@@ -194,12 +217,15 @@ function SkillsPane() {
         <div key={s.id} style={card}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 14, fontWeight: 600, ...mono }}>/{s.name}</span>
                 <span style={{ fontSize: 10, color: 'var(--text-faint)', border: '1px solid var(--text-faint)', borderRadius: 5, padding: '1px 6px' }}>{s.builtin ? 'built-in' : s.workspaceId ? 'workspace' : 'global'}</span>
+                {s.pendingRevision && <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--amber)', border: '1px solid var(--amber)', borderRadius: 5, padding: '1px 6px' }}>revision pending</span>}
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>{s.description || 'No description'}</div>
+              <div style={{ marginTop: 5 }}><SkillStats s={s} /></div>
             </div>
+            <a href={api.skillMdUrl(s.id)} download title="Export as agentskills.io SKILL.md" style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 10px', textDecoration: 'none', flex: 'none' }}>SKILL.md</a>
             <Toggle on={s.enabled === 1} onClick={async () => {
               await api.updateSkill(s.id, { enabled: s.enabled !== 1 });
               await app.refreshSkills();

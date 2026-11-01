@@ -123,8 +123,10 @@ Design principles derived from the research:
 - **Isolation as the security model.** The agent has no host: it has an S3
   workspace, a per-agent prefix, and brokered tools. Injection can waste a
   turn; it cannot reach SSH keys, because there are none to reach.
-- **The agent is portable property.** AGENT.json (profile, brain, skills,
-  apps, tasks, loops) remains a first-class export.
+- **The agent is portable property.** AGENT.json v2 (identity, charter,
+  loops, dashboard, apps, lessons, private skills, open tasks; the workspace
+  profile only on request) is a first-class export, and memory from Claude,
+  Muse, Hermes and OpenClaw imports as proposals.
 
 ---
 

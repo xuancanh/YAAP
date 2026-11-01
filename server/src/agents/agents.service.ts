@@ -683,7 +683,9 @@ export class AgentsService {
     return { secret, path: `/api/hooks/${agentId}/${encodeURIComponent(loopName)}` };
   }
 
-  /** AGENT.json export: profile, loops, dashboard, mini apps (FR-11.7). */
+  /** AGENT.json v1 core: identity, loops, dashboard, mini apps (FR-11.7).
+   *  PortabilityService wraps this with the v2 sections (lessons, skills,
+   *  tasks, profile). */
   async exportJson(id: string) {
     const a = await this.get(id);
     return {
@@ -698,7 +700,7 @@ export class AgentsService {
 
   /** Record a 👍/👎 on a turn owned by this agent; surfaced to the model on
    *  its next reply, then cleared (FR-6.5). */
-  async addFeedback(id: string, feedback: { rating: 'up' | 'down'; note?: string; turnId: string }) {
+  async addFeedback(id: string, feedback: { rating: 'up' | 'down'; note?: string; turnId: string; skills?: Array<{ id: string; name: string }> }) {
     const agent = await this.get(id);
     const pending = JSON.parse(agent.pendingFeedback) as unknown[];
     pending.push({ ...feedback, at: nowIso() });

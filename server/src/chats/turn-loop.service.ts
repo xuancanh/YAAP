@@ -187,6 +187,19 @@ const AGENT_TOOLS: AiToolSpec[] = [
     },
   },
   {
+    name: 'revise_skill',
+    description: 'Propose corrected instructions for one of your skills after the user rated a reply that used it 👎 (pending feedback names the skill and its id). Send the complete new instruction text, not a patch, plus the reason. The user reviews the change as a diff and accepts or rejects it; nothing changes until they do.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        skillId: { type: 'string', description: 'The skill id (or exact name) named in the feedback.' },
+        instructions: { type: 'string', description: 'The full revised step-by-step instructions.' },
+        reason: { type: 'string', description: 'What went wrong and what the revision fixes.' },
+      },
+      required: ['skillId', 'instructions', 'reason'],
+    },
+  },
+  {
     name: 'update_user_profile',
     description: 'Propose one durable fact about the user (a preference, constraint, or piece of stable context) for their consented profile. The user reviews every proposal before it is remembered; propose sparingly and only things worth keeping across all future conversations.',
     inputSchema: {
@@ -200,7 +213,7 @@ const AGENT_TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
 /** Agent tools that auto-run even in Ask mode: pure reads, plus
  *  update_user_profile — it only queues a proposal, and the durable write is
  *  gated on explicit user approval in the profile UI. */
-const AGENT_READONLY_TOOLS = new Set(['list_tasks', 'search_history', 'update_user_profile', 'draft_skill', 'save_tool']);
+const AGENT_READONLY_TOOLS = new Set(['list_tasks', 'search_history', 'update_user_profile', 'draft_skill', 'save_tool', 'revise_skill']);
 
 const exactKey = (call: AiToolCall): string =>
   `${call.name}:${createHash('sha256').update(JSON.stringify(call.input)).digest('hex').slice(0, 16)}`;
@@ -303,6 +316,9 @@ export class TurnLoopService implements OnModuleDestroy {
     let tokensOut = 0;
     let overheadChars = 0;
     const toolRecords: ToolRecord[] = [];
+    /** Skills whose skill_* tool loaded this turn (execution-plan item 10):
+     *  persisted on the turn so a later rating can reach them. */
+    const skillsUsed: string[] = [];
     try {
       const ctx = await this.context.build(session);
       const history = await this.buildHistory(session.id, session.compactSummary, session.compactCutoff);
@@ -469,7 +485,7 @@ export class TurnLoopService implements OnModuleDestroy {
             isError = true;
           } else {
             try {
-              output = await this.executeTool(session, call.name, call.input);
+              output = await this.executeTool(session, call.name, call.input, skillsUsed);
             } catch (err) {
               output = `tool error: ${err instanceof Error ? err.message : String(err)}`;
               isError = true;
@@ -499,8 +515,10 @@ export class TurnLoopService implements OnModuleDestroy {
       await this.repo.updateTurn(turn.id, {
         status: ctl.signal.aborted ? 'stopped' : 'done',
         toolCalls: JSON.stringify(toolRecords),
+        skillsUsed: JSON.stringify([...new Set(skillsUsed)]),
         tokensIn, tokensOut,
       });
+      if (skillsUsed.length > 0) await this.skills.recordUse(skillsUsed).catch(() => {});
       await this.repo.updateSession(sessionId, {
         tokensIn: session.tokensIn + tokensIn,
         tokensOut: session.tokensOut + tokensOut,
@@ -508,7 +526,7 @@ export class TurnLoopService implements OnModuleDestroy {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await this.repo.updateTurn(turn.id, {
-        status: 'error', error: message, toolCalls: JSON.stringify(toolRecords), tokensIn, tokensOut,
+        status: 'error', error: message, toolCalls: JSON.stringify(toolRecords), skillsUsed: JSON.stringify([...new Set(skillsUsed)]), tokensIn, tokensOut,
       });
       yield { type: 'error', message };
     } finally {
@@ -570,10 +588,11 @@ export class TurnLoopService implements OnModuleDestroy {
 
   /** Route a call to a skill (returns its instructions), an MCP server, an
    *  agent self-maintenance tool, or a core tool. */
-  private async executeTool(session: ChatSession, name: string, input: Record<string, unknown>): Promise<string> {
+  private async executeTool(session: ChatSession, name: string, input: Record<string, unknown>, skillsUsed?: string[]): Promise<string> {
     if (name.startsWith(SKILL_TOOL_PREFIX)) {
       const skill = await this.skills.resolveTool(session.workspaceId, name, session.agentId ?? undefined);
       if (!skill) throw new Error(`unknown tool: ${name}`);
+      skillsUsed?.push(skill.id);
       return this.skills.invocation(skill);
     }
     if (name.startsWith(MCP_TOOL_PREFIX)) return this.mcp.execute(name, input);
@@ -647,6 +666,17 @@ export class TurnLoopService implements OnModuleDestroy {
             workspaceId: session.workspaceId,
             proposedBy: agent?.name ?? 'agent',
             agentId,
+          });
+        }
+        case 'revise_skill': {
+          const agent = await this.agents.get(agentId).catch(() => null);
+          return this.skills.proposeRevision({
+            skillId: String(input.skillId ?? ''),
+            instructions: String(input.instructions ?? ''),
+            reason: String(input.reason ?? ''),
+            workspaceId: session.workspaceId,
+            agentId,
+            proposedBy: agent?.name ?? 'agent',
           });
         }
         case 'update_user_profile': {
