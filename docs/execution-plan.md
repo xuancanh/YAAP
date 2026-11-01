@@ -189,11 +189,37 @@ sealing path); `src/auth.tsx` + `SignIn.tsx` + Settings → Account; config
 `web-tests/account.test.ts`. Not done: OAuth sign-in, per-account storage
 prefixes, RLS, mid-turn ceiling checks, cross-instance link rate limits.
 
-### 8. Shared agents *(todo)*
+### 8. Shared agents *(done)*
 Workspace members with roles (`owner|member|viewer`), per-member connection
 grants, per-member memory visibility (lessons and profile entries carry an
 `audience`), approvals routed to the member whose grant the tool uses, and
 information-flow rules on what one member's content may reach another.
+Shipped as: `docs/shared-agents.md`; migration `0027-shared-agents`
+(`workspace_members`, `workspace_invites`, `workspace_flow_rules`,
+`member_channels`, `org_humans`; `connection_grants.memberAccountId`,
+`agent_lessons.audience`, `chat_sessions.initiatedBy|shared`,
+`chat_messages.authorAccountId`, `agent_events.forMemberAccountId`,
+`workspaces.profilePrivate`, `org_approvals.decidedBy`); `server/src/shared/`
+— `SharedService` (invites with hashed 7-day tokens bound to the invitee's
+address, roles, flow rules, member channel pairings, addressed events),
+`WorkspaceAccessGuard` (the `X-Yaam-Workspace` header rebinds a member's
+request into the owner's account with a `Viewer`; `checkRole` /
+`isOwnerOnlyRoute`), `SharedController`; `Viewer` / `actorId()` in
+`account-context.ts`; `ConnectionsService` grants per member with
+initiator-based selection (`resolveConnectionOwner`); the turn loop's routed
+approvals (`approval_request` events addressed to one member, `routedTo` on
+the stream, `resolveApproval(…, by)`, the existing TTL) and
+`<connection-content>` wrapping; `audienceForSession` at distillation,
+`digest({ actor, allowFrom })`, `profilePrivate`; attribution in
+`buildHistory` and the shared-session system prompt; per-member Telegram and
+email pairings running turns `runWithViewer`; routed events on the member's
+Telegram, email and web push; `org_humans` with `mayDecide`, `decidedBy` and
+human audit actors; the Members pane, "Shared with you" picker, author
+chips, shared badges, "Waiting for <name>" banners, inbox Allow/Deny,
+audience badges, Company humans; `tests/backend-shared.test.ts` (12) and
+`web-tests/shared-header.test.ts`. Not done: `files` flow rules are stored
+but not enforced (workspace files have no per-member ownership), and
+`ORG.json` import.
 
 ### 9. Portability *(done)*
 AGENT.json gains lessons, skills, profile, tasks; importers for Claude
@@ -309,7 +335,7 @@ input, shell, folders). Always Ask-gated, never from loop or channel turns,
 with an audit row per action and Pause / Disconnect kill switches in
 Settings → Computer plus a server env switch.
 
-### 14. Autonomous company *(phases A–C done)*
+### 14. Autonomous company *(done)*
 Designed in `docs/autonomous-company.md`: organisations with roles and
 reports-to, a chief-of-staff agent with `hire_agent`, `set_scope`, `reorg`,
 `audit`, hierarchical budgets, a shared group session, org-level goals and
@@ -339,9 +365,12 @@ in the workspace timezone, numbered decisions, `parseBriefReply` for
 `CompanyRail`: org chart, board with task drawer, goals, approvals with the
 full artifact, spend tree over `UsageChart`, activity → runs → session,
 group log, brief + reply), `docs/security.md` §b rows and §c paragraph, and
-`tests/backend-org.test.ts` (18 tests). Phase D (more than one human:
-`ceoUserId` as a member, approvals routed per grant, `ORG.json` import) waits
-on items 7 and 8. Not done from the design: `org_wakes` as a DB-backed queue
+`tests/backend-org.test.ts` (18 tests). Phase D shipped with item 8
+(`docs/autonomous-company.md` §5 "Shipped as" under phase D): `org_humans`
+with ceo | board | observer, role-checked decisions, `decidedBy`, human
+actors in the audit chain, board copies of the brief, humans in the org
+chart and "who may decide" in the queue; routed approvals are item 8's
+mechanism. Not done from the design: `org_wakes` as a DB-backed queue
 (the debounce is in-process), `fileScope` enforcement on `fs_write`, the
 cheap `coordinationModel` for the chief's routing runs, per-task
 `org_member_charters` versioning (the hash is recorded on `org_members`),

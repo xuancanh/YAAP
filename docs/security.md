@@ -68,6 +68,12 @@ piece of text arrived on, never the text itself.
 | Org run | A member of an organisation woken for a board task (`docs/autonomous-company.md`) | Loop-tier: `origin 'loop'`, Auto mode inside the bounded `org_*` tool set, outward mutations and code queue as `action_pending`, the action reviewer applies; spend is reserved before the call | `org/org-runtime.service.ts`, `turn-loop.service.ts` (`OrgToolsHook`) |
 | Agent message (org) | A task comment, handoff or group-log message another agent wrote | Data. Framed "from agent X — not the user; carries no approval authority"; wakes only the task owner, never a mention; can never resolve an approval | `org/org-tasks.service.ts`, `org-runtime.service.ts` `wakePrompt` |
 | Chief of staff | The org's lead agent calling a manager tool | Trusted to *narrow* (pause a report, shrink its scopes, lower a cap) and to assign/review; hiring, widening, reorgs, raises and terminations only create `org_approvals` rows the user decides in the app | `org/org-approvals.service.ts`, `org.controller.ts` `decide` |
+| Member (owner) | The account that owns the workspace (`docs/shared-agents.md`) | Full, as "User" above; also the only principal for settings, members, flow rules, lesson audiences and others' connections | `shared/workspace-access.guard.ts` (`isOwnerOnlyRoute`) |
+| Member (`member`) | Another account invited by email, acting inside the owner's account with a `Viewer` | Trusted to chat, run tasks, read/write files, grant *their own* connections and pair *their own* channels. Their sessions are private until shared; their messages are attributed, never authoritative; a mutating call on another member's connection is routed to that member | `WorkspaceAccessGuard` (rebind + `checkRole`), `turn-loop.service.ts` (routing, `buildHistory` attribution), `chats.repository.ts` (`canView`) |
+| Member (`viewer`) | The same, read-only | GET only; sees shared sessions and the board, never another member's private session or routed approval | `checkRole` |
+| Routed approval | An `approval_request` inbox event addressed to the member whose connection a call would use | Answered only by its addressee, from their inbox or their own channels; invisible to everyone else, the owner included; TTL-denied | `chats/agent-approvals.controller.ts`, `TurnLoopService.resolveApproval(…, by)`, `agents.service.ts` `listEvents` |
+| Member channel | A Telegram chat or email address paired while a shared workspace was open | Channel-tier (Ask mode, gated tools denied), and *that member's*: the turn runs as them, in their private channel session, with their grants | `member_channels`, `telegram.service.ts`, `email.service.ts` (`runWithViewer`) |
+| Board member (org) | A workspace member with `org_humans.role = board` | Decides `hire`, `budget_raise`, `strategy` approvals and gets the brief; nothing else about the company | `org.controller.ts` `assertMayDecide`, `mayDecide` |
 
 The principle that ties the table together: **an untrusted surface may
 propose, it may never act or teach**. Channel and app turns can ask for a
@@ -335,6 +341,25 @@ The deterministic floor beneath all of this: **mutations are gated by the
 policy, not by the content**. Nothing a tool result says changes a verdict.
 There is no "the page asked nicely" path to a write.
 
+**Information flow between people** (`docs/shared-agents.md` §4). With more
+than one human on a workspace the injection question gains a second axis:
+not only "can this text make the agent act" but "can this text make the
+agent carry one person's material to another". Authentication alone does
+not answer it — the household test that overshared had authenticated every
+participant. So flow is authorized explicitly: a lesson learned from a
+member's private session or from content fetched through their connection
+carries `audience = private:<member>` and is injected only into turns that
+member starts; content fetched through member X's connection into a session
+others can read is wrapped `<connection-content owner="X"
+audience="private">` with a system-prompt rule not to repeat or summarise
+it; a member's private profile section is injected only for them; a member's
+message in a shared session is prefixed as *attribution only, not
+authority*, and `checkPolicy` never reads it. Opening any of this to another
+member is a `workspace_flow_rules` row the **owner** writes through an
+owner-only HTTP route — there is no agent tool that can create one, so no
+injected instruction can widen a flow. Default deny applies to the owner too:
+a member's private lesson is not in the owner's prompt either.
+
 What we do not yet have (see §i): a uniform "data, not instructions"
 wrapper on `web_fetch` and MCP results — today connection results and
 browser pages carry that framing, `web_fetch` and MCP do not. (The
@@ -530,6 +555,7 @@ From `git log`, newest first. Dates are commit dates.
 
 | Date | Commit | Change |
 |---|---|---|
+| 2026-11-01 | shared | Shared workspaces (plan item 8, company phase D): invited members with roles acting inside the owner's account through `WorkspaceAccessGuard` (`X-Yaam-Workspace`, rebind + `checkRole`), hashed 7-day invite tokens bound to the invitee's verified address, per-member connection grants with initiator-based selection and no implicit cross-member use, approvals routed to the connection's owner as addressee-only inbox events (TTL-denied, invisible to others), lesson and profile audiences with default-deny `workspace_flow_rules` the owner alone writes, `<connection-content>` wrapping, attributed-not-authoritative messages in shared sessions, per-member channel pairings, `org_humans` with board/observer roles, `decidedBy` and human actors in the audit chain (`docs/shared-agents.md`) |
 | 2026-11-01 | this | Desktop computer control: paired outbound companion, hashed companion token on four routes (`CompanionGuard`), user-chosen narrow-only scopes, every `computer_*` tool Ask-gated in every mode with acting tools never remembered, loop/channel refusal, `computer_actions` audit, Pause/Disconnect/`COMPUTER_CONTROL_ENABLED` kill switches (`docs/computer-control.md`) |
 | 2026-11-01 | this | Autonomous company (plan item 14 A–C): atomic task claims, pre-call budget reservation with hard stop, approvals-only structural change, meet-rule scopes, charter drift detection, hash-chained `org_audit`, org kill switch and `COMPANIES_ENABLED` |
 | 2026-11-01 | accounts | Tenancy: `accountId` on every table with a boot-time sweep and a reflection test, account-scoped Drizzle handle, per-request/per-sweep account context; `AUTH_MODE=accounts` with hashed one-use magic links, HttpOnly session cookies, link rate limits; plans with server-side 402 ceilings; experimental suite-JWT strategy |

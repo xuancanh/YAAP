@@ -147,6 +147,19 @@ under a monthly dollar ceiling, default $15, enforced as a hard stop) and
 `byo` (your keys, no ceiling) — with billing left to a `BillingProvider` seam
 an admin drives by hand today.
 
+Shared agents (docs/shared-agents.md): in accounts mode a workspace owner
+invites other people by email as `member` or `viewer`; they work inside the
+owner's workspace with their own identity. A member's sessions are private
+until shared and their messages are attributed to them (never treated as
+authority); an agent may use a member's own Google/Microsoft connection only
+in turns that member starts, and a call that would use someone else's
+connection pauses for *that* person's approval, delivered to their inbox,
+phone or mail and invisible to everyone else; lessons and profile entries
+carry an audience (shared or private to one member) and cross-member flow is
+default-deny until the owner writes a rule. Organisations gain humans too:
+board members decide hires, budgets and strategy, observers read, and the
+audit chain names who decided.
+
 Proactivity controls (roadmap Phase 2, finished): per-workspace **quiet
 hours** with an interrupt policy (`queue` | `silent` | `allow-urgent`) — loops
 still run inside the window, their notifications wait or stay inbox-only; a

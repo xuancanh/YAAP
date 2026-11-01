@@ -246,6 +246,23 @@ first.)*
   reconciling two different cutoffs for a saving of one model call. Left
   alone deliberately.
 
+### Audience — who a lesson is for *(execution-plan item 8)*
+With more than one human on a workspace (`docs/shared-agents.md`) a lesson
+has a second axis beside trust: `agent_lessons.audience`, `shared` or
+`private:<memberAccountId>`. Distillation sets it from the session: content
+that came through a member's connection makes the lesson that member's; a
+member's private session makes it theirs; a shared session with nothing
+private in it stays shared; a workspace with no members is all shared.
+`digest(agentId, { actor, allowFrom })` injects shared rows plus the acting
+member's own plus what a `workspace_flow_rules` allow row opens — never
+another member's private rows by default, the owner included. Dedup runs
+within an audience so repetition cannot widen one. The Memory tab badges
+each row and lets the owner flip a private lesson to shared; no agent tool
+can. The same split applies to the consented profile: a `private:<member>`
+proposal lands in `workspaces.profilePrivate[member]` and is injected only
+for that member. Trust (§3) and audience are independent: a quarantined
+private lesson needs both a promotion and the right reader.
+
 ## 7. What we deliberately do not build
 
 Cross-agent memory sharing — agents stay separate brains; the shared surface
@@ -326,7 +343,10 @@ all.
 - `server/src/database/migrator.ts` — migration `0006-recall-profile` (FTS
   index); the lessons table lands as a new numbered migration
 - `server/src/agents/agent-memory.service.ts` — the store, digest, dedup,
-  consolidation, and LESSONS.md regeneration
+  consolidation, and LESSONS.md regeneration; `audience`, `visibleTo`
+- `server/src/chats/distill.service.ts` `audienceForSession`,
+  `server/src/shared/shared.service.ts` `allowedSources` — who a new lesson
+  is for and who else may read it (`docs/shared-agents.md` §4)
 - `src/components/AgentsView.tsx` — the Memory tab (promote, pin, forget)
 - `tests/backend-memory.test.ts` — provenance, quarantine, dedup, budget,
   and the prompt-injection check that closes the loop
