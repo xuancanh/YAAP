@@ -1343,8 +1343,14 @@ and §7, `docs/security.md` §b and §k.
 - `tests/backend-org-seat.test.ts` (8);
 - the shared harness `tests/org-governance-harness.ts`.
 
-`tests/backend-org-mode.test.ts` changes one assertion: raising the company
-envelope is now a card, not an error.
+Existing tests changed where the behaviour changed on purpose:
+
+- `tests/backend-org-mode.test.ts`: raising the company envelope is now a
+  card; a cross-unit move and terminating a unit lead are now cards (the
+  depth-refusal case of that test is gone, because the move it used crosses
+  units).
+- `tests/backend-org-units.test.ts`: the cross-unit move is approved by the
+  CEO instead of applied by the chief.
 
 **Departures.**
 

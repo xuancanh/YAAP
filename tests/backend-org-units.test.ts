@@ -171,21 +171,21 @@ test('a reorg moves channel membership between unit channels; terminating the la
   assert.deepEqual(await agentsIn(s, writerUnit.channelId!), [s.writer.id, a1.id].sort());
   assert.deepEqual(await agentsIn(s, editorUnit.channelId!), [s.editor.id, a2.id].sort());
 
-  // reorg (autonomous): Beta moves from Editor to Writer
+  // reorg: Beta moves from Editor's unit to Writer's. Since item 31 (docs/boundary.md) a move
+  // across units is an experiment — a card for the CEO until experiments exist — so the CEO approves it.
   const session = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.chief.id, name: 'chief chat' });
   const out = await s.runtime.execute(session, 'org_reorg', { changes: [{ op: 'move', agent: 'Beta', reportsTo: 'Writer' }], why: 'Beta edits what Writer writes.' });
-  assert.match(out, /Reorg applied/);
+  assert.match(out, /reorg across units changes only through an experiment/);
+  const card = (await s.approvals.pending(orgId)).find((a) => a.kind === 'reorg')!;
+  await s.approvals.decide(orgId, card.id, 'approve');
   assert.deepEqual(await agentsIn(s, writerUnit.channelId!), [s.writer.id, a1.id, a2.id].sort(), 'Beta joined #writer');
   // Editor lost its last report: its unit is archived, the channel archived, the data kept
   const editorNow = (await s.db.select().from(orgUnits).where(eq(orgUnits.id, editorUnit.id)))[0];
   assert.ok(editorNow.archivedAt, 'archived');
   assert.ok((await s.groupchat!.get(editorUnit.channelId!)).archivedAt, 'channel archived');
   assert.equal((await s.units.units(orgId)).length, 2, 'root + writer');
-  // the reorg line reached the unit Beta joined; the unit it emptied closed with an archive line
-  assert.match((await s.groupchat!.messages(writerUnit.channelId!)).messages.at(-1)!.text, /^Reorganized: move Beta → Writer — Beta edits what Writer writes\./);
+  // the unit it emptied closed with an archive line
   assert.match((await s.groupchat!.messages(editorUnit.channelId!)).messages.at(-1)!.text, /^Unit archived: Editor has no direct reports left/);
-  const company0 = await s.groupchat!.bySlug(s.ws.id, COMPANY_SLUG);
-  assert.match((await s.groupchat!.messages(company0.id)).messages.at(-1)!.text, /^Reorganized: move Beta → Writer/);
 
   // terminate Alpha (user path): Writer still has Beta, so #writer stays and Alpha leaves it and #company
   await s.org.terminateMember(orgId, a1.id);

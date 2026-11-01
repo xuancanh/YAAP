@@ -236,7 +236,7 @@ test('org_allocate_budget respects the company envelope in autonomous mode; the 
   // lowering stays a narrowing, no why needed
   assert.match(await s.runtime.execute(session, 'org_allocate_budget', { scope: 'agent', agent: 'Writer', monthlyUsd: 2 }), /lowered to \$2\.00/);
   assert.equal((await s.audit.list(orgId, { action: 'auto_budget' })).length, 2);
-  assert.equal((await s.approvals.pending(orgId)).length, 0);
+  assert.deepEqual((await s.approvals.pending(orgId)).map((a) => a.kind), ['budget_raise'], 'only the company envelope card');
   // the alias name routes to the same tool
   assert.match(await s.runtime.execute(session, 'org_budget_request', { scope: 'agent', agent: 'Editor', monthlyUsd: 3, why: 'alias' }), /agent envelope of Editor set to \$3\.00/);
   assert.ok(s.runtime.owns('org_budget_request') && s.runtime.owns('org_propose_reorg') && s.runtime.owns('org_allocate_budget') && s.runtime.owns('org_reorg'));
@@ -264,17 +264,19 @@ test('org_reorg executes in autonomous mode (in order, stopping at the first ref
   // a refused step stops the batch with the reason; earlier steps stay
   const deep = await s.agents.create({ name: 'Deep' });
   await s.org.addMember(orgId, { agentId: deep.id, reportsToAgentId: s.chief.id });
-  const partial = await s.runtime.execute(session, 'org_reorg', { changes: [{ op: 'pause', agent: 'Deep' }, { op: 'move', agent: 'Deep', reportsTo: 'Editor' }], why: 'x' });
-  assert.match(partial, /Applied 1 change\(s\) \(pause Deep\); refused at move:.* — depth limit \(3\) would be exceeded\. Nothing after it was applied\./);
-  assert.equal((await s.org.member(orgId, deep.id))!.status, 'paused');
+  // Item 31 (docs/boundary.md): moving Deep into Writer's unit crosses units — a card, nothing applied
+  assert.match(await s.runtime.execute(session, 'org_reorg', { changes: [{ op: 'pause', agent: 'Deep' }, { op: 'move', agent: 'Deep', reportsTo: 'Editor' }], why: 'x' }), /reorg across units changes only through an experiment/);
+  assert.equal((await s.org.member(orgId, deep.id))!.status, 'active');
   await assert.rejects(s.runtime.execute(session, 'org_reorg', { changes: [{ op: 'pause', agent: 'Chief' }], why: 'x' }), /cannot move, pause or terminate yourself/);
   // termination is immediate, with the reports moving up
-  const t = await s.tasks.create(orgId, { title: 'x', assigneeAgentId: s.writer.id });
-  s.runtime.cancelWakesFor(orgId, s.writer.id);
-  assert.match(await s.runtime.execute(session, 'org_terminate_agent', { agent: 'Writer', why: 'redundant' }), /Writer is terminated: its reports moved up one level/);
-  assert.equal((await s.org.member(orgId, s.writer.id))!.status, 'terminated');
-  assert.equal((await s.org.member(orgId, s.editor.id))!.reportsToAgentId, s.chief.id);
-  assert.equal(await s.runtime.runTask(orgId, t.id, s.writer.id, 'manual'), 'skipped:member_inactive');
+  // Item 31: terminating a lead (Writer leads Editor) reshapes two units — an experiment, a card until experiments exist
+  assert.match(await s.runtime.execute(session, 'org_terminate_agent', { agent: 'Writer', why: 'redundant' }), /terminate a unit lead .*changes only through an experiment/);
+  assert.equal((await s.org.member(orgId, s.writer.id))!.status, 'active');
+  const t = await s.tasks.create(orgId, { title: 'x', assigneeAgentId: s.editor.id });
+  s.runtime.cancelWakesFor(orgId, s.editor.id);
+  assert.match(await s.runtime.execute(session, 'org_terminate_agent', { agent: 'Editor', why: 'redundant' }), /Editor is terminated: its reports moved up one level/);
+  assert.equal((await s.org.member(orgId, s.editor.id))!.status, 'terminated');
+  assert.equal(await s.runtime.runTask(orgId, t.id, s.editor.id, 'manual'), 'skipped:member_inactive');
   assert.equal((await s.audit.list(orgId, { action: 'auto_terminate' })).length, 1);
   // supervised: the same call is a proposal, and the old name still proposes
   await s.controller.set(s.ws.id, { mode: 'supervised' });
