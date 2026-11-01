@@ -3,6 +3,7 @@
  *  and pill styles, the agent avatar, relative time, and the unit lookups. */
 /* eslint-disable react-refresh/only-export-components */
 import { useMemo } from 'react';
+import { decisionExtras } from '../lib/org3';
 import { useApp, grad } from '../store';
 import type { Agent, OrgUnitNode } from '../lib/api';
 
@@ -86,7 +87,9 @@ export function Drawer({ onClose, children, width = 560 }: { onClose: () => void
 /** Follow a reference to the pane that shows it (docs/company-vision.md §6,
  *  §8): a task opens the board drawer, a decision the log, a goal the vision
  *  page, a meeting its thread, a plan the Plans pane, an audit row or a day
- *  the Replay pane (`id` is the YYYY-MM-DD), a member its home page. Used by
+ *  the Replay pane (`id` is the YYYY-MM-DD), a member its home page; a metric
+ *  source, an incident or an experiment its pane (items 27–30), a held action
+ *  the Approvals pane's key list. Used by
  *  citation chips, the Related drawer and the replay timeline. */
 export function useFollowRef() {
   const app = useApp();
@@ -99,6 +102,10 @@ export function useFollowRef() {
     else if (kind === 'plan') { app.setOrgFocus({ kind: 'plan', id }); app.setOrgPane('plans'); }
     else if (kind === 'playbook') { app.setOrgFocus({ kind: 'playbook', id }); app.setOrgPane('playbooks'); }
     else if (kind === 'day' || kind === 'replay') { app.setOrgFocus({ kind: 'replay', id }); app.setOrgPane('replay'); }
+    else if (kind === 'source' || kind === 'metric_source') { app.setOrgFocus({ kind: 'source', id }); app.setOrgPane('metrics'); }
+    else if (kind === 'incident') { app.setOrgFocus({ kind: 'incident', id }); app.setOrgPane('incidents'); }
+    else if (kind === 'experiment') { app.setOrgFocus({ kind: 'experiment', id }); app.setOrgPane('experiments'); }
+    else if (kind === 'action') { app.setOrgFocus({ kind: 'action', id }); app.setOrgPane('approvals'); }
     else if (kind === 'audit') app.setOrgPane('audit');
     else if (kind === 'signal') app.setOrgPane('pulse');
     else if (kind === 'approval') app.setOrgPane('approvals');
@@ -107,4 +114,23 @@ export function useFollowRef() {
     else return false;
     return true;
   };
+}
+
+/** The decision card's optional fields — recommendation, alternatives,
+ *  reversibility, confidence, deadline, default action — rendered when the
+ *  card carries them (execution-plan item 31 adds them; nothing shows until
+ *  then). `skip` drops fields the caller already shows. */
+export function DecisionExtras({ source, skip }: { source: Record<string, unknown> | null | undefined; skip?: string[] }) {
+  const rows = decisionExtras(source, skip);
+  if (rows.length === 0) return null;
+  return (
+    <dl style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, max-content) 1fr', gap: '3px 10px', margin: '6px 0', fontSize: 12.5 }}>
+      {rows.map((r) => (
+        <div key={r.key} style={{ display: 'contents' }}>
+          <dt style={{ ...label, alignSelf: 'baseline' }}>{r.label}</dt>
+          <dd style={{ margin: 0, overflowWrap: 'anywhere', color: r.key === 'defaultAction' ? 'var(--amber)' : undefined }}>{r.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }

@@ -5,7 +5,7 @@
  *  they name, the latest audits with "Run audit now", spend against the
  *  envelope, and today's rituals. Plain SVG, no chart library (the same
  *  approach as UsageChart). */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { useApp } from '../store';
 import { api, type AuditFinding, type OrgAuditRun, type OrgDetail, type OrgMeeting, type OrgPulse, type OrgSignal, type OrgSpend } from '../lib/api';
 import { I, P } from '../lib/icons';
@@ -15,6 +15,9 @@ import { firesOn, groupSignals, humanCron, MEETING_KIND_TITLES, scoreColor, SEVE
 import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar } from './org-ui';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
+/** Health and audit independence (item 29, SPA item 32). */
+const HealthStrip = lazy(() => import('./OrgIncidentsView').then((m) => ({ default: m.HealthStrip })));
+const AssuranceCard = lazy(() => import('./OrgIncidentsView').then((m) => ({ default: m.AssuranceCard })));
 
 export function PulsePane({ org }: { org: OrgDetail }) {
   const app = useApp();
@@ -50,6 +53,7 @@ export function PulsePane({ org }: { org: OrgDetail }) {
         <button style={btn()} onClick={() => void act(() => api.runOrgAudit(wsId).then((r) => { if (r.result !== 'done' && r.result !== 'ran') throw new Error(`Audit ${r.result}`); }), 'Audit ran — findings are signals')} title="Run the auditor now (needs an auditor member; capped by auditUsdCap)">Run audit now</button>
       </div>
       {err && <div style={{ ...card, color: 'var(--red)', fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
+      <Suspense fallback={null}><HealthStrip health={app.orgHealth} onOpenIncidents={() => app.setOrgPane('incidents')} /></Suspense>
       {app.orgPendingPlans > 0 && (
         <div role="status" style={{ ...card, borderLeft: '3px solid var(--amber)', display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 13 }}><b>{app.orgPendingPlans} plan{app.orgPendingPlans === 1 ? '' : 's'}</b> awaiting your veto — the chief's structural changes apply when the window closes unless you stop them.</span>
@@ -64,6 +68,7 @@ export function PulsePane({ org }: { org: OrgDetail }) {
       {pulse && <SloRow pulse={pulse} />}
       <SignalsCard signals={open} onAck={(s, note) => act(() => api.ackOrgSignal(wsId, s.id, note), 'Signal acknowledged')} onResolve={(s) => act(() => api.resolveOrgSignal(wsId, s.id), 'Signal resolved')} />
       <AuditsCard audits={audits} />
+      <Suspense fallback={null}><AssuranceCard org={org} audits={audits} onChanged={refresh} /></Suspense>
     </div>
   );
 }

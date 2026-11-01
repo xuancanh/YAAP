@@ -506,6 +506,7 @@ function WorkspacePane() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <MembersSection ws={ws} />
       {app.companiesEnabled && <OrganizationSection ws={ws} />}
+      <Suspense fallback={null}><TrustSection wsId={ws.id} /></Suspense>
       <HeartbeatDefaultsSection ws={ws} />
       <div style={card}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -709,6 +710,8 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
 
 /** Blueprints (docs/blueprints.md, item 24) load on demand: export COMPANY.json, import one with its dry-run plan, publish to the registry. */
 const BlueprintCard = lazy(() => import('./OrgBlueprintBits').then((m) => ({ default: m.BlueprintCard })));
+/** The trust ledger (item 28, SPA item 32): agents × action classes, ceilings, overrides, held actions. */
+const TrustSection = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.TrustSection })));
 
 /** The tunables (docs/company-vision.md §1b, items 18–20): every threshold
  *  the company reads — intent, planning, rituals, assurance — as a default

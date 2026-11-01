@@ -295,6 +295,10 @@ export interface ChatTurn {
   tokensOut: number;
   rating: string | null;
   taskHandoff: string | null;
+  /** JSON `{ from, to }` when the turn ran on a fallback model because its
+   *  provider was degraded (docs/incidents.md §4); absent otherwise. */
+  degraded?: string | null;
+  model?: string;
 }
 
 export interface Skill {
@@ -688,6 +692,8 @@ export interface OrgGoal {
    *  model-free assessment with its reason. The vision keeps its horizon in dueAt. */
   kind: OrgGoalKind; metric: string; targetValue: number | null; currentValue: number | null; startValue: number | null; unitLabel: string; dueAt: string | null;
   confidence: number | null; atRisk: number; atRiskReason: string; lastCheckInAt: string | null; checkInCadenceDays: number;
+  /** Sensing (item 27): the metric source the value comes from, and when it was last measured. */
+  metricSourceId?: string | null; lastMeasuredAt?: string | null;
 }
 /** Units (docs/group-chat.md §7): a board, a channel and a goal tracker per org level. */
 export interface OrgUnit {
@@ -712,13 +718,18 @@ export interface OrgTask {
   unitId: string | null; unitExplicit: number;
   /** Capital (item 23): the task class routing reads; hybrid staff (item 24): a human owner / reviewer by account id. */
   class?: string; assigneeHumanId?: string | null; reviewerHumanId?: string | null;
+  /** Executable acceptance (item 27, docs/sensing.md §3): the JSON check list,
+   *  who accepted it (`check` | `review` | ''), and on board routes how a done
+   *  task was verified. */
+  checks?: string; acceptedBy?: string; verification?: 'check' | 'review' | 'none' | null;
 }
 export interface OrgRun {
   id: string; orgId: string; taskId: string; agentId: string; sessionId: string | null; wakeReason: string;
   status: string; outcome: string; tokensIn: number; tokensOut: number; usd: number; startedAt: string; endedAt: string | null;
 }
 export interface OrgMessage { id: string; orgId: string; taskId: string | null; fromAgentId: string | null; runId: string | null; text: string; createdAt: string }
-export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review';
+export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review'
+  | 'two_key' | 'metric_source' | 'experiment';
 export interface OrgApproval {
   id: string; orgId: string; kind: OrgApprovalKind; payload: string; requestedBy: string; recommendation: string;
   status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired'; decidedAt: string | null; decidedBy?: string; decisionNote: string; expiresAt: string | null; createdAt: string;
@@ -781,6 +792,9 @@ export type Pace = 'onPace' | 'behind' | 'unknown';
 export interface OrgIntentNode extends OrgGoal {
   progress: number; tasks: { total: number; done: number };
   pace: Pace; expected: number | null; measured: number | null; ownerName: string | null;
+  /** Item 27: the source a key result is measured by, or `selfReported`. */
+  measuredBy?: { sourceId: string; name: string; kind: string; lastFetchedAt: string | null; status: string } | null;
+  selfReported?: boolean;
   children: OrgIntentNode[];
 }
 export interface OrgVisionInfo { vision: OrgGoal | null; rules: string; values: string; culture: string }
@@ -812,8 +826,10 @@ export interface OrgPulse {
 }
 export interface OrgSloInfo { targets: SloTargets; weights: PulseWeights; tunables: Record<string, number>; bounds: Record<string, { default: number; min: number; max: number; doc: string }> }
 export interface OrgAuditRun {
-  id: string; orgId: string; auditorAgentId: string; trigger: 'cadence' | 'manual'; startedAt: string; endedAt: string | null; sampled: string; findings: string; summary: string;
+  id: string; orgId: string; auditorAgentId: string; trigger: 'cadence' | 'manual' | 'redteam'; startedAt: string; endedAt: string | null; sampled: string; findings: string; summary: string;
   singleModel: number; model: string; usd: number; status: 'running' | 'done' | 'failed' | 'budget_stop'; createdAt: string;
+  /** Audit of the auditor (item 29): JSON SpotCard[]; precision / recall as of the latest answer; 1 when the seat could not rotate. */
+  spotChecks?: string; precision?: number | null; recall?: number | null; noRotation?: number;
 }
 export interface AuditFinding { severity: string; kind: string; refType: string; refId: string; title: string; detail: string }
 export type MeetingKind = 'planning' | 'standup' | 'weekly_review' | 'retro' | 'board' | 'adhoc';
@@ -1003,6 +1019,103 @@ export function normalizeRoles(raw: unknown): OrgRole[] {
   }
   return out;
 }
+
+// ---- sensing, actions & trust, incidents, experiments (execution plan items 27–30; SPA item 32) ----
+export type MetricSourceKind = 'http_json' | 'webhook' | 'connection' | 'manual_attested';
+export type MetricSourceStatus = 'pending_approval' | 'ok' | 'error' | 'stale' | 'rejected';
+export type ConnectionQueryName = 'gmail_unread' | 'gmail_matching' | 'calendar_events_week' | 'drive_changed';
+/** GET …/org/metrics/sources — secrets are names only; a webhook token is never listed. */
+export interface MetricSource {
+  id: string; orgId: string; name: string; kind: MetricSourceKind | string; config: Record<string, unknown>; secretNames: string[]; hasToken: boolean;
+  unit: string; pollMinutes: number; status: MetricSourceStatus | string; lastValue: number | null; lastFetchedAt: string | null; lastError: string;
+  nextPollAt: string | null; approvalId: string | null; activatedAt: string | null; createdBy: string; createdAt: string;
+  boundKeyResults: Array<{ id: string; title: string }>;
+}
+export interface MetricProvenance { kind: string; url?: string; connection?: string; service?: string; query?: string; by?: string; note?: string; responseHash?: string; status?: number }
+/** A sample; `provenance` is JSON (MetricProvenance). */
+export interface MetricSample { id: string; sourceId: string; value: number; observedAt: string; fetchedAt: string; provenance: string; createdAt: string }
+export interface MetricSourceInput { name?: string; kind?: MetricSourceKind; unit?: string; pollMinutes?: number; config?: Record<string, unknown>; secrets?: Record<string, string | null> }
+/** A task check (docs/sensing.md §3). */
+export type TaskCheck =
+  | { kind: 'metric_at_least'; sourceId: string; value: number }
+  | { kind: 'metric_increased'; sourceId: string; by: number; sinceTaskStart?: boolean }
+  | { kind: 'http_status'; url: string; status?: number }
+  | { kind: 'http_json_match'; url: string; selector: string; equals?: string | number | boolean; contains?: string; atLeast?: number }
+  | { kind: 'file_exists'; path: string }
+  | { kind: 'file_matches'; path: string; contains?: string; regex?: string; jsonSchemaKeys?: string[] }
+  | { kind: 'connection_query'; service: ConnectionQueryName; query: string; days: number; atLeast: number };
+export type TaskCheckKind = TaskCheck['kind'];
+export type CheckStatus = 'pass' | 'fail' | 'error' | 'pending';
+export interface TaskCheckResult { index: number; check: TaskCheck; status: CheckStatus; detail: string; evidence: Record<string, unknown>; ranAt?: string }
+
+export type ActionClass = 'read' | 'internal_write' | 'external_reversible' | 'external_irreversible' | 'money';
+export type TrustLevel = 0 | 1 | 2 | 3;
+export interface TrustClassRow {
+  actionClass: ActionClass; level: TrustLevel; ceiling: TrustLevel; effective: TrustLevel; cleanCount: number; rejectStreak: number;
+  lastIncidentAt: string | null; lastChangedAt: string | null; reason: string; counts: Record<string, number>;
+}
+/** GET /api/workspaces/:id/trust */
+export interface TrustOverview {
+  workspaceId: string; orgMode: string; ceilings: Record<ActionClass, TrustLevel>;
+  matrix: Array<{ cls: ActionClass; levels: Record<string, string> }>;
+  agents: Array<{ agentId: string; name: string; classes: TrustClassRow[] }>;
+}
+export type ActionStatus = 'started' | 'succeeded' | 'failed' | 'held' | 'staged' | 'refused' | 'denied';
+/** One action_log row (docs/actions-and-trust.md §2); `input` and `keys` are JSON. */
+export interface ActionLogRow {
+  id: string; key: string; workspaceId: string; agentId: string | null; sessionId: string; orgId: string | null; tool: string; class: ActionClass | string; channel: string;
+  inputHash: string; input: string; status: ActionStatus | string; decision: string; level: number | null; keys: string; stagedRef: string; result: string; resultHash: string;
+  dedupeCount: number; revertedAt: string | null; note: string; createdAt: string; finishedAt: string | null;
+}
+
+export type IncidentSeverity = 'minor' | 'major' | 'critical';
+export type IncidentStatus = 'open' | 'contained' | 'resolved';
+export type ManualContainment = 'pause_member' | 'freeze_class' | 'supervised' | 'pause_org';
+export interface ContainmentStep { action: 'note' | 'pause_member' | 'cancel_wakes' | 'freeze_class' | 'supervised' | 'pause_org' | string; at: string; result: string; reversible: boolean; undone?: boolean; data?: Record<string, string> }
+export interface OrgIncident {
+  id: string; orgId: string; workspaceId: string; kind: string; severity: IncidentSeverity; status: IncidentStatus; title: string; detail: string;
+  agentId: string | null; actionClass: string | null; refType: string; refId: string; detectedBy: 'system' | 'auditor' | 'owner' | 'member' | string;
+  containment: ContainmentStep[]; postmortemMeetingId: string | null; openedAt: string; containedAt: string | null; resolvedAt: string | null; resolution: string;
+}
+/** GET …/org/health (docs/incidents.md §4). */
+export interface OrgHealth {
+  status: 'ok' | 'degraded' | 'incident'; orgStatus: string; mode: string | null;
+  providers: Array<{ workspaceId?: string; provider: string; state: 'degraded' | 'probing' | string; since?: string; until: string | null; failures: number; lastError: string }>;
+  connections: Array<{ connectionId: string; provider: string; accountEmail: string; reason: string; since: string }>;
+  frozenClasses: string[]; pausedByIncident: Array<{ agentId: string; name: string; incidentId: string }>;
+  openIncidents: Array<{ id: string; kind: string; severity: IncidentSeverity; status: IncidentStatus; title: string; agentId: string | null; openedAt: string }>;
+  lines: string[];
+}
+export interface SpotCard { itemId: string; kind: 'finding' | 'pass'; refType: string; refId: string; title: string; agree: boolean | null; note: string; answeredAt: string | null }
+export interface AuditorQuality { precision: number | null; recall: number | null; answered: number; [k: string]: unknown }
+export interface RedTeamResult { result: string; auditId: string | null; agentId: string | null; breach: boolean; recorded: string[] }
+
+export type ExperimentStatus = 'proposed' | 'running' | 'extended' | 'kept' | 'reverted' | 'abandoned';
+export type ChangeKind = 'tunable' | 'cadence' | 'routing' | 'playbook' | 'charter' | 'structure' | 'other';
+export interface ExperimentStats { mean?: number; n?: number; sd?: number; from?: string; to?: string }
+export interface ExperimentResult extends ExperimentStats { delta?: number; relative?: number | null; threshold?: number; verdict?: 'improved' | 'worse' | 'inconclusive' | 'harm' | string; expected?: number; met?: boolean; note?: string; revertApprovalId?: string }
+export interface OrgExperiment {
+  id: string; orgId: string; unitId: string | null; title: string; hypothesis: string; changeKind: ChangeKind | string; change: Record<string, unknown>;
+  metricSourceId: string | null; direction: 'up' | 'down'; expectedEffect: number; effectKind: 'relative' | 'absolute'; windowDays: number;
+  design: 'before_after' | 'slice'; slice: Record<string, unknown>; baseline: ExperimentStats; result: ExperimentResult; status: ExperimentStatus;
+  revertRule: { worseBy?: number; relative?: boolean }; extensions: number; proposedBy: string; approvalId: string | null; changeApprovalId: string | null;
+  startedAt: string | null; endsAt: string | null; lastCheckAt: string | null; decidedAt: string | null; decisionId: string | null; createdAt: string;
+  predictions?: OrgPrediction[];
+}
+export interface ExperimentInput {
+  title: string; hypothesis: string; changeKind: ChangeKind; change: Record<string, unknown>; metric?: string; keyResult?: string;
+  direction: 'up' | 'down'; expectedEffect: number; effectKind?: 'relative' | 'absolute'; windowDays?: number; design?: 'before_after' | 'slice';
+  slice?: Record<string, unknown>; revertRule?: { worseBy?: number; relative?: boolean }; unitId?: string;
+}
+export interface OrgPrediction {
+  id: string; orgId: string; agentId: string; subjectKind: string; subjectId: string; question: string;
+  forecast: { kind?: string; value?: number | string; low?: number; high?: number; unit?: string }; origin: string; resolvesAt: string | null;
+  outcome: Record<string, unknown>; resolvedAt: string | null; score: number | null; status: 'open' | 'resolved' | 'void'; createdAt: string;
+}
+export interface CalibrationRow { agentId: string; name: string; resolved: number; open: number; brier: number | null; calibration: number | null; bias: number | null; biasLabel: 'over' | 'under' | 'balanced' | null }
+export type GapKind = 'overclaim' | 'claimed_number' | 'claim_mismatch' | 'report_drift';
+export interface ReconciliationGap { kind: GapKind | string; refType: string; refId: string; title: string; detail: string; claimed?: number | string | null; measured?: number | null }
+export interface Reconciliation { at: string | null; gaps: ReconciliationGap[]; checked: { keyResults: number; tasks: number; brief: boolean } }
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -1397,7 +1510,7 @@ export const api = {
     const qs = q.toString();
     return get<OrgTask[]>(`/api/workspaces/${wsId}/org/tasks${qs ? `?${qs}` : ''}`);
   },
-  addOrgTask: (wsId: string, body: { title: string; brief?: Partial<OrgTaskBrief>; projectId?: string | null; assigneeAgentId?: string | null; unitId?: string }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks`, 'POST', body),
+  addOrgTask: (wsId: string, body: { title: string; brief?: Partial<OrgTaskBrief>; projectId?: string | null; assigneeAgentId?: string | null; unitId?: string; checks?: TaskCheck[] }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks`, 'POST', body),
   updateOrgTask: (wsId: string, taskId: string, patch: { title?: string; brief?: Partial<OrgTaskBrief>; status?: OrgTaskStatus; blockers?: string[] }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}`, 'PATCH', patch),
   assignOrgTask: (wsId: string, taskId: string, agentId: string) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}/assign`, 'POST', { agentId }),
   commentOrgTask: (wsId: string, taskId: string, text: string) => send<OrgMessage>(`/api/workspaces/${wsId}/org/tasks/${taskId}/comment`, 'POST', { text }),
@@ -1501,6 +1614,51 @@ export const api = {
   requestOrgTaskReview: (wsId: string, taskId: string, body: { text?: string; reviewerHumanId?: string }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}/request-review`, 'POST', body),
   orgMyTasks: (wsId: string) => get<{ assigned: OrgTask[]; reviewing: OrgTask[] }>(`/api/workspaces/${wsId}/org/humans/me/tasks`),
   proposeOrgApproval: (wsId: string, body: { kind: OrgApprovalKind; payload: Record<string, unknown>; recommendation?: string }) => send<OrgApproval>(`/api/workspaces/${wsId}/org/approvals`, 'POST', body),
+  // sensing (item 27, docs/sensing.md §5)
+  orgMetricSources: (wsId: string) => get<MetricSource[]>(`/api/workspaces/${wsId}/org/metrics/sources`),
+  createOrgMetricSource: (wsId: string, body: MetricSourceInput) => send<{ source: MetricSource; token?: string }>(`/api/workspaces/${wsId}/org/metrics/sources`, 'POST', body),
+  updateOrgMetricSource: (wsId: string, sourceId: string, patch: MetricSourceInput) => send<MetricSource>(`/api/workspaces/${wsId}/org/metrics/sources/${enc(sourceId)}`, 'PATCH', patch),
+  deleteOrgMetricSource: (wsId: string, sourceId: string) => send<unknown>(`/api/workspaces/${wsId}/org/metrics/sources/${enc(sourceId)}`, 'DELETE'),
+  pollOrgMetricSource: (wsId: string, sourceId: string) => send<{ ok: boolean; value?: number; error?: string }>(`/api/workspaces/${wsId}/org/metrics/sources/${enc(sourceId)}/poll`, 'POST'),
+  rotateOrgMetricToken: (wsId: string, sourceId: string) => send<{ token: string; url: string }>(`/api/workspaces/${wsId}/org/metrics/sources/${enc(sourceId)}/token`, 'POST'),
+  orgMetricSamples: (wsId: string, sourceId: string, since?: string) => get<MetricSample[]>(`/api/workspaces/${wsId}/org/metrics/sources/${enc(sourceId)}/samples${since ? `?since=${enc(since)}` : ''}`),
+  attestOrgMetric: (wsId: string, sourceId: string, body: { value: number; note: string; observedAt?: string }) => send<MetricSample>(`/api/workspaces/${wsId}/org/metrics/sources/${enc(sourceId)}/attest`, 'POST', body),
+  bindOrgGoalSource: (wsId: string, goalId: string, sourceId: string | null) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals/${enc(goalId)}/source`, 'POST', { sourceId }),
+  orgTaskChecks: (wsId: string, taskId: string) => get<TaskCheckResult[]>(`/api/workspaces/${wsId}/org/tasks/${enc(taskId)}/checks`),
+  runOrgTaskChecks: (wsId: string, taskId: string) => send<{ outcome: 'none' | 'pass' | 'fail' | 'error'; results: TaskCheckResult[] }>(`/api/workspaces/${wsId}/org/tasks/${enc(taskId)}/checks/run`, 'POST'),
+  // the action contract and the trust ledger (item 28, docs/actions-and-trust.md §8)
+  workspaceTrust: (wsId: string) => get<TrustOverview>(`/api/workspaces/${wsId}/trust`),
+  setTrustCeilings: (wsId: string, ceilings: Partial<Record<ActionClass, number>>) => send<{ ceilings: Record<ActionClass, TrustLevel> }>(`/api/workspaces/${wsId}/trust/ceilings`, 'PUT', { ceilings }),
+  overrideTrust: (wsId: string, agentId: string, cls: ActionClass, level: number, reason: string) => send<unknown>(`/api/workspaces/${wsId}/trust/${enc(agentId)}/${enc(cls)}`, 'POST', { level, reason }),
+  workspaceActions: (wsId: string, q: { agentId?: string; cls?: string; status?: string; limit?: number } = {}) => {
+    const p = new URLSearchParams();
+    if (q.agentId) p.set('agentId', q.agentId);
+    if (q.cls) p.set('class', q.cls);
+    if (q.status) p.set('status', q.status);
+    if (q.limit) p.set('limit', String(q.limit));
+    const qs = p.toString();
+    return get<ActionLogRow[]>(`/api/workspaces/${wsId}/actions${qs ? `?${qs}` : ''}`);
+  },
+  reportActionRevert: (wsId: string, actionId: string, note: string) => send<ActionLogRow>(`/api/workspaces/${wsId}/actions/${enc(actionId)}/revert-report`, 'POST', { note }),
+  giveActionKey: (wsId: string, actionId: string, approve: boolean, note?: string) => send<{ status: ActionStatus; result: string }>(`/api/workspaces/${wsId}/actions/${enc(actionId)}/keys`, 'POST', { approve, note }),
+  // incidents, health, audit independence (item 29, docs/incidents.md §6)
+  orgIncidents: (wsId: string, status?: IncidentStatus) => get<OrgIncident[]>(`/api/workspaces/${wsId}/org/incidents${status ? `?status=${status}` : ''}`),
+  orgIncident: (wsId: string, incidentId: string) => get<OrgIncident>(`/api/workspaces/${wsId}/org/incidents/${enc(incidentId)}`),
+  reportOrgIncident: (wsId: string, body: { title: string; detail: string; severity: IncidentSeverity; agentId?: string; actionClass?: string }) => send<OrgIncident>(`/api/workspaces/${wsId}/org/incidents`, 'POST', body),
+  containOrgIncident: (wsId: string, incidentId: string, body: { action: ManualContainment; agentId?: string; actionClass?: string }) => send<OrgIncident>(`/api/workspaces/${wsId}/org/incidents/${enc(incidentId)}/contain`, 'POST', body),
+  resolveOrgIncident: (wsId: string, incidentId: string, body: { resolution: string; undo?: boolean }) => send<OrgIncident>(`/api/workspaces/${wsId}/org/incidents/${enc(incidentId)}/resolve`, 'POST', body),
+  orgHealth: (wsId: string) => get<OrgHealth>(`/api/workspaces/${wsId}/org/health`),
+  answerSpotCheck: (wsId: string, auditId: string, itemId: string, body: { agree: boolean; note?: string }) => send<{ card: SpotCard; quality: AuditorQuality; incident: OrgIncident | null }>(`/api/workspaces/${wsId}/org/audits/${enc(auditId)}/spotcheck/${enc(itemId)}`, 'POST', body),
+  runOrgRedTeam: (wsId: string, agentId?: string) => send<RedTeamResult>(`/api/workspaces/${wsId}/org/redteam/run`, 'POST', agentId ? { agentId } : {}),
+  // experiments, predictions, reconciliation (item 30, docs/experiments.md §6)
+  orgExperiments: (wsId: string, status?: ExperimentStatus) => get<OrgExperiment[]>(`/api/workspaces/${wsId}/org/experiments${status ? `?status=${status}` : ''}`),
+  orgExperiment: (wsId: string, expId: string) => get<OrgExperiment>(`/api/workspaces/${wsId}/org/experiments/${enc(expId)}`),
+  proposeOrgExperiment: (wsId: string, body: ExperimentInput) => send<OrgExperiment>(`/api/workspaces/${wsId}/org/experiments`, 'POST', body),
+  orgExperimentAction: (wsId: string, expId: string, action: 'start' | 'stop' | 'keep' | 'revert', note?: string) => send<OrgExperiment>(`/api/workspaces/${wsId}/org/experiments/${enc(expId)}/${action}`, 'POST', action === 'stop' ? { note: note ?? '' } : undefined),
+  orgPredictions: (wsId: string, q: { agentId?: string; status?: string } = {}) => get<OrgPrediction[]>(`/api/workspaces/${wsId}/org/predictions?${new URLSearchParams(Object.entries(q).filter(([, v]) => Boolean(v)) as Array<[string, string]>).toString()}`),
+  orgCalibration: (wsId: string) => get<CalibrationRow[]>(`/api/workspaces/${wsId}/org/calibration`),
+  orgReconciliation: (wsId: string) => get<Reconciliation>(`/api/workspaces/${wsId}/org/reconciliation`),
+  runOrgReconciliation: (wsId: string) => send<Reconciliation>(`/api/workspaces/${wsId}/org/reconciliation/run`, 'POST'),
 };
 
 export interface AppLlmResult {

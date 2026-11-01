@@ -9,7 +9,8 @@
  *  walks task → key result → objective → vision and names a broken link. */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
-import { api, type OrgCheckin, type OrgDetail, type OrgGoal, type OrgIntentNode, type OrgVisionInfo, type WhyChain } from '../lib/api';
+import { api, type MetricSource, type OrgCheckin, type OrgDetail, type OrgGoal, type OrgIntentNode, type OrgVisionInfo, type WhyChain } from '../lib/api';
+import { KrSourceLine } from './OrgSensingView';
 import { I, P } from '../lib/icons';
 import { atRiskByUnit, checkInDue, confidenceGap, daysUntil, dueLabel, flattenIntent, KIND_LABEL, paceBadge, summarizeChildren } from '../lib/org';
 import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar, UnitChips, Drawer } from './org-ui';
@@ -34,10 +35,11 @@ export function VisionPane({ org, reload }: { org: OrgDetail; reload: () => Prom
   const [tree, setTree] = useState<OrgIntentNode[] | null>(null);
   const [why, setWhy] = useState<{ goalId: string; title: string } | null>(null);
   const [planning, setPlanning] = useState(false);
+  const [sources, setSources] = useState<MetricSource[]>([]);
   const unitId = isCompany ? null : current?.id ?? null;
   const refresh = useCallback(async () => {
-    const [v, s, t] = await Promise.all([api.orgVision(wsId).catch(() => null), api.orgStrategy(wsId).catch(() => null), api.orgIntent(wsId, unitId).catch((): OrgIntentNode[] => [])]);
-    setInfo(v); setStrategy(s); setTree(t);
+    const [v, s, t, src] = await Promise.all([api.orgVision(wsId).catch(() => null), api.orgStrategy(wsId).catch(() => null), api.orgIntent(wsId, unitId).catch((): OrgIntentNode[] => []), api.orgMetricSources(wsId).catch((): MetricSource[] => [])]);
+    setInfo(v); setStrategy(s); setTree(t); setSources(src);
   }, [wsId, unitId]);
   useEffect(() => { void refresh(); const t = setInterval(() => { void refresh(); }, 30_000); return () => clearInterval(t); }, [refresh]);
   // A deep link (a signal row, a chip) names a goal: scroll to it once rendered.
@@ -86,7 +88,7 @@ export function VisionPane({ org, reload }: { org: OrgDetail; reload: () => Prom
           {visionNode || info?.vision ? 'No objectives yet. Planning runs when the vision is written or revised (debounced); "Plan now" runs it immediately.' : 'No vision yet. Write one above — one line, a horizon, your standing rules — and the chief plans the objectives.'}
         </div>
       )}
-      {objectives.map((g) => <IntentRow key={g.id} g={g} depth={0} org={org} act={act} onWhy={(goal) => setWhy({ goalId: goal.id, title: goal.title })} />)}
+      {objectives.map((g) => <IntentRow key={g.id} g={g} depth={0} org={org} act={act} onWhy={(goal) => setWhy({ goalId: goal.id, title: goal.title })} sources={sources} isCeo={isCeo} onSourceChanged={async () => { await refresh(); void reload(); }} />)}
       {why && <WhyDrawer wsId={wsId} goalId={why.goalId} title={why.title} onClose={() => setWhy(null)} />}
     </div>
   );
@@ -202,7 +204,7 @@ function Bar({ value, color, title }: { value: number | null; color: string; tit
 
 /** One goal: an objective (blended progress, children summary) or a key
  *  result (measured vs confidence, pace, risk, owner, due, check-in). */
-function IntentRow({ g, depth, org, act, onWhy }: { g: OrgIntentNode; depth: number; org: OrgDetail; act: (fn: () => Promise<unknown>, done?: string) => Promise<void>; onWhy: (g: OrgGoal) => void }) {
+function IntentRow({ g, depth, org, act, onWhy, sources, isCeo, onSourceChanged }: { g: OrgIntentNode; depth: number; org: OrgDetail; act: (fn: () => Promise<unknown>, done?: string) => Promise<void>; onWhy: (g: OrgGoal) => void; sources: MetricSource[]; isCeo: boolean | null; onSourceChanged: () => Promise<void> }) {
   const names = useAgentNames();
   const [checkIn, setCheckIn] = useState(false);
   const [history, setHistory] = useState<OrgCheckin[] | null>(null);
@@ -265,6 +267,7 @@ function IntentRow({ g, depth, org, act, onWhy }: { g: OrgIntentNode; depth: num
           </div>
         )}
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 7, flexWrap: 'wrap', ...faint }}>
+          {isKr && <KrSourceLine g={g} wsId={org.workspaceId} sources={sources} isCeo={isCeo} onChanged={onSourceChanged} />}
           {isKr && <span title={g.lastCheckInAt ?? 'never'} style={{ color: checkInDue(g) && g.status === 'active' ? 'var(--amber)' : undefined }}>last check-in {g.lastCheckInAt ? ago(g.lastCheckInAt) : 'never'} · every {g.checkInCadenceDays}d{checkInDue(g) && g.status === 'active' ? ' · due' : ''}</span>}
           {!isKr && g.tasks.total > 0 && <span>{g.tasks.done}/{g.tasks.total} task(s) done</span>}
           {isKr && g.status === 'active' && <button style={linkBtn} onClick={() => setCheckIn(!checkIn)}>{checkIn ? 'close check-in' : 'check in'}</button>}
@@ -286,7 +289,7 @@ function IntentRow({ g, depth, org, act, onWhy }: { g: OrgIntentNode; depth: num
           </div>
         )}
       </div>
-      {g.children.map((c) => <IntentRow key={c.id} g={c} depth={depth + 1} org={org} act={act} onWhy={onWhy} />)}
+      {g.children.map((c) => <IntentRow key={c.id} g={c} depth={depth + 1} org={org} act={act} onWhy={onWhy} sources={sources} isCeo={isCeo} onSourceChanged={onSourceChanged} />)}
     </div>
   );
 }
@@ -295,13 +298,17 @@ function CheckInForm({ g, org, onDone, act }: { g: OrgIntentNode; org: OrgDetail
   const [value, setValue] = useState(g.currentValue === null ? '' : String(g.currentValue));
   const [conf, setConf] = useState(g.confidence === null ? 70 : Math.round(g.confidence * 100));
   const [note, setNote] = useState('');
+  // A measured key result takes its value only from its source: the check-in records confidence and a note.
+  const measured = g.measuredBy ?? null;
   const save = () => void act(async () => {
-    await api.orgCheckIn(org.workspaceId, g.id, { currentValue: value.trim() === '' ? null : Number(value), confidence: conf / 100, note });
+    await api.orgCheckIn(org.workspaceId, g.id, measured ? { confidence: conf / 100, note } : { currentValue: value.trim() === '' ? null : Number(value), confidence: conf / 100, note });
     onDone();
   }, 'Check-in recorded');
   return (
     <div style={{ marginTop: 8, borderTop: '1px solid var(--border-soft)', paddingTop: 8, display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', alignItems: 'end' }}>
-      <div><label style={label} htmlFor={`ci-value-${g.id}`}>Current {g.metric || 'value'}{g.unitLabel ? ` (${g.unitLabel})` : ''}</label><input id={`ci-value-${g.id}`} value={value} onChange={(e) => setValue(e.target.value.replace(/[^\d.-]/g, ''))} inputMode="decimal" style={{ ...input, fontFamily: 'var(--mono)' }} placeholder={`target ${g.targetValue ?? '?'}`} /></div>
+      {measured
+        ? <div style={{ fontSize: 12 }}><div style={label}>Current {g.metric || 'value'}</div><span style={{ fontFamily: 'var(--mono)' }}>{g.currentValue ?? '—'}{g.unitLabel ? ` ${g.unitLabel}` : ''}</span> <span style={faint}>from {measured.name} — your confidence is recorded next to it</span></div>
+        : <div><label style={label} htmlFor={`ci-value-${g.id}`}>Current {g.metric || 'value'}{g.unitLabel ? ` (${g.unitLabel})` : ''}</label><input id={`ci-value-${g.id}`} value={value} onChange={(e) => setValue(e.target.value.replace(/[^\d.-]/g, ''))} inputMode="decimal" style={{ ...input, fontFamily: 'var(--mono)' }} placeholder={`target ${g.targetValue ?? '?'}`} /></div>}
       <div><label style={label} htmlFor={`ci-conf-${g.id}`}>Confidence · {conf}%</label><input id={`ci-conf-${g.id}`} type="range" min={0} max={100} step={5} value={conf} onChange={(e) => setConf(Number(e.target.value))} style={{ width: '100%' }} /></div>
       <div><label style={label} htmlFor={`ci-note-${g.id}`}>Note</label><input id={`ci-note-${g.id}`} value={note} onChange={(e) => setNote(e.target.value)} style={input} placeholder="What moved, what is in the way" onKeyDown={(e) => { if (e.key === 'Enter') save(); }} /></div>
       <button style={btn(true)} onClick={save}>Record</button>

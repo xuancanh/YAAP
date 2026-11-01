@@ -10,13 +10,14 @@ import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react
 import { useApp } from '../store';
 import {
   api, ORG_TASK_STATUSES, type Agent, type ChannelMessage, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgGoalNode, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
-  type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type OrgUnitNode, type WorkspaceMember,
+  type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type OrgUnitNode, type WorkspaceMember, type TaskCheck,
 } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
 import { UsageBars, UsageRows } from './UsageChart';
 import { I, P } from '../lib/icons';
-import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, useFollowRef, Avatar } from './org-ui';
+import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
+import { changeSummary, verificationBadge } from '../lib/org3';
 
 /** The CEO's-seat panes (docs/company-vision.md §8, items 18–20) load on demand. */
 const VisionPane = lazy(() => import('./OrgVisionView').then((m) => ({ default: m.VisionPane })));
@@ -33,7 +34,15 @@ const ReplayPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default:
 const CapitalPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.CapitalPane })));
 const MyTasksPane = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.MyTasksPane })));
 const HireDialog = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.HireDialog })));
-const LAZY_PANES = new Set(['vision', 'pulse', 'meetings', 'decisions', 'ask', 'plans', 'replay', 'capital', 'playbooks', 'mytasks']);
+/** Sensing, the trust ledger, incidents and experiments (items 27–30, SPA item 32). */
+const MetricsPane = lazy(() => import('./OrgSensingView').then((m) => ({ default: m.MetricsPane })));
+const TaskChecksPanel = lazy(() => import('./OrgSensingView').then((m) => ({ default: m.TaskChecksPanel })));
+const ChecksBuilder = lazy(() => import('./OrgSensingView').then((m) => ({ default: m.ChecksBuilder })));
+const IncidentsPane = lazy(() => import('./OrgIncidentsView').then((m) => ({ default: m.IncidentsPane })));
+const ExperimentsPane = lazy(() => import('./OrgExperimentsView').then((m) => ({ default: m.ExperimentsPane })));
+const HeldActions = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.HeldActions })));
+const ActionCallPreview = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.ActionCallPreview })));
+const LAZY_PANES = new Set(['vision', 'pulse', 'meetings', 'decisions', 'ask', 'plans', 'replay', 'capital', 'playbooks', 'mytasks', 'metrics', 'incidents', 'experiments']);
 
 const STATUS_COLOR: Record<OrgTaskStatus, string> = {
   backlog: 'var(--text-faint)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
@@ -100,6 +109,9 @@ export function OrganizationView() {
             {view === 'replay' && <ReplayPane org={org} />}
             {view === 'capital' && <CapitalPane org={org} />}
             {view === 'mytasks' && <MyTasksPane org={org} />}
+            {view === 'metrics' && <MetricsPane org={org} />}
+            {view === 'incidents' && <IncidentsPane org={org} />}
+            {view === 'experiments' && <ExperimentsPane org={org} />}
           </Suspense>
         )}
       </div>
@@ -377,6 +389,8 @@ function Board({ org }: { org: OrgDetail }) {
                     {t.reviewRounds > 0 && <span style={pill()}>review {t.reviewRounds}/3</span>}
                     {t.noProgressCount > 0 && <span style={pill()}>no progress ×{t.noProgressCount}</span>}
                     {t.status === 'in_review' && t.reviewerAgentId && <span style={pill()}>reviewer: {names.get(t.reviewerAgentId)?.name ?? '?'}</span>}
+                    {(() => { const v = verificationBadge(t.verification); return v ? <span style={pill(v.color, '#fff')} title={v.title}>{v.label}</span> : null; })()}
+                    {t.status !== 'done' && t.checks && t.checks !== '[]' && <span style={pill()} title="Executable checks run before review">checks</span>}
                   </div>
                 </div>
               );
@@ -397,8 +411,10 @@ function NewTask({ org, members, units, defaultUnitId, onDone }: { org: OrgDetai
   const [assignee, setAssignee] = useState('');
   const [projectId, setProjectId] = useState('');
   const [unitId, setUnitId] = useState(defaultUnitId);
+  const [checks, setChecks] = useState<TaskCheck[]>([]);
+  const [withChecks, setWithChecks] = useState(false);
   const save = async () => {
-    try { await api.addOrgTask(org.workspaceId, { title, brief, assigneeAgentId: assignee || null, projectId: projectId || null, unitId: unitId || undefined }); onDone(); }
+    try { await api.addOrgTask(org.workspaceId, { title, brief, assigneeAgentId: assignee || null, projectId: projectId || null, unitId: unitId || undefined, ...(checks.length ? { checks } : {}) }); onDone(); }
     catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
   return (
@@ -412,6 +428,8 @@ function NewTask({ org, members, units, defaultUnitId, onDone }: { org: OrgDetai
         <select value={projectId} onChange={(e) => setProjectId(e.target.value)} style={input}><option value="">No project</option>{org.projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}</select>
         {units.length > 1 && <select value={unitId} onChange={(e) => setUnitId(e.target.value)} style={input} title="Which unit's board; by default the one led by the assignee's manager"><option value="">Board: by assignee</option>{units.map((u) => <option key={u.id} value={u.id}>{'· '.repeat(u.depth)}{u.parentUnitId === null ? 'Company' : u.name}</option>)}</select>}
       </div>
+      {withChecks ? <Suspense fallback={<div style={faint}>Loading…</div>}><ChecksBuilder wsId={org.workspaceId} value={checks} onChange={setChecks} /></Suspense>
+        : <button style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', cursor: 'pointer', padding: 0, fontSize: 12, fontWeight: 600, justifySelf: 'start' }} onClick={() => setWithChecks(true)}>+ executable checks (accept without a model)</button>}
       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}><button style={btn()} onClick={onDone}>Cancel</button><button style={btn(true)} disabled={!title.trim()} onClick={() => void save()}>Create{assignee ? ' and wake' : ''}</button></div>
     </div>
   );
@@ -453,6 +471,7 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
           {(['outcome', 'context', 'constraints', 'done_when'] as const).map((k) => <div key={k} style={{ marginBottom: 6 }}><div style={{ ...faint, textTransform: 'uppercase', letterSpacing: '.4px', fontSize: 10.5 }}>{k.replace('_', ' ')}</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{brief[k] || <span style={faint}>—</span>}</div></div>)}
           {blockers.length > 0 && <div><div style={{ ...faint, textTransform: 'uppercase', fontSize: 10.5 }}>blockers</div>{blockers.map((b, i) => <div key={i} style={{ fontSize: 12.5, color: 'var(--red)' }}>■ {b}</div>)}</div>}
         </div>
+        <Suspense fallback={null}><TaskChecksPanel wsId={org.workspaceId} task={task} onRan={() => void refresh()} /></Suspense>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <select value="" onChange={(e) => { const v = e.target.value; if (!v) return; void act(() => v.startsWith('human:') ? api.assignOrgTaskHuman(org.workspaceId, task.id, v.slice(6)) : api.assignOrgTask(org.workspaceId, task.id, v)); }} style={{ ...input, width: 'auto' }} aria-label="Assign to">
             <option value="">Assign to…</option>
@@ -664,7 +683,8 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
     catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
   const pending = rows.filter((r) => r.status === 'pending');
-  const shown = history ? rows.filter((r) => r.status !== 'pending').sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) : pending;
+  // A held or staged action is decided in "Waiting for your key" below (the same key; its two_key card closes with it).
+  const shown = history ? rows.filter((r) => r.status !== 'pending').sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) : pending.filter((r) => r.kind !== 'two_key');
   const nm = (id: unknown) => (typeof id === 'string' ? names.get(id)?.name ?? id.slice(0, 8) : '—');
   return (
     <div style={{ maxWidth: 820 }}>
@@ -672,7 +692,8 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
         <div style={{ flex: 1 }}><h2 style={h2}>Approvals · {pending.length} pending</h2><div style={faint}>The full artifact, not a summary. Only a human decides here — the CEO, or a board member for hires, budgets and strategy; an agent's message never counts. Unanswered cards expire after 72 h ("not done"). In autonomous mode only strategy, escalations and external actions still arrive here.</div></div>
         <button style={btn(history)} onClick={() => setHistory(!history)}>{history ? 'Show pending' : 'History'}</button>
       </div>
-      {shown.length === 0 && <div style={faint}>{history ? 'Nothing decided yet.' : 'Nothing to decide.'}</div>}
+      {!history && (app.orgHeldActions > 0 || app.orgFocus?.kind === 'action') && <div style={{ ...card, marginBottom: 12 }}><Suspense fallback={<div style={faint}>Loading…</div>}><HeldActions wsId={org.workspaceId} /></Suspense></div>}
+      {shown.length === 0 && <div style={faint}>{history ? 'Nothing decided yet.' : app.orgHeldActions > 0 ? 'No other card to decide.' : 'Nothing to decide.'}</div>}
       {shown.map((a) => {
         const p = safeJsonParse<Record<string, unknown>>(a.payload, {});
         return (
@@ -683,14 +704,15 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
               {a.status === 'pending' && <span style={pill()} title="Who may decide this card">{deciders(a.kind)}</span>}
             </div>
             {a.recommendation && <div style={{ fontSize: 12.5, marginBottom: 6 }}><b>Chief:</b> {a.recommendation}</div>}
-            <ApprovalArtifact kind={a.kind} p={p} nm={nm} />
+            <DecisionExtras source={{ ...p, ...(a as unknown as Record<string, unknown>) }} skip={['recommendation']} />
+            <ApprovalArtifact kind={a.kind} p={p} nm={nm} wsId={org.workspaceId} />
             {a.status === 'pending' && !mayDecide(a.kind) && humans.me !== null && (
               <div style={{ ...faint, marginTop: 10 }}>{humans.me === 'observer' ? 'Observers read the company but decide nothing.' : `A ${a.kind} approval is the CEO's to decide.`}</div>
             )}
             {a.status === 'pending' && mayDecide(a.kind) && (
               <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                 <input value={notes[a.id] ?? ''} onChange={(e) => setNotes({ ...notes, [a.id]: e.target.value })} placeholder="Note to the chief (required for revise)" style={input} />
-                <button style={btn(true)} onClick={() => void decide(a, 'approve')}>Approve</button>
+                <button style={btn(true)} onClick={() => void decide(a, 'approve')}>{a.kind === 'two_key' ? (p.staged ? 'Send the draft (my key)' : 'Approve (my key)') : 'Approve'}</button>
                 <button style={btn()} disabled={!(notes[a.id] ?? '').trim()} onClick={() => void decide(a, 'revise')}>Revise</button>
                 <button style={btn(false, true)} onClick={() => void decide(a, 'reject')}>Reject</button>
               </div>
@@ -702,9 +724,33 @@ function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void
   );
 }
 
-function ApprovalArtifact({ kind, p, nm }: { kind: string; p: Record<string, unknown>; nm: (id: unknown) => string }) {
+function ApprovalArtifact({ kind, p, nm, wsId }: { kind: string; p: Record<string, unknown>; nm: (id: unknown) => string; wsId: string }) {
   const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
   const mono: React.CSSProperties = { fontFamily: 'var(--mono)', fontSize: 11.5 };
+  // Items 27, 28, 30: the owner's second key (the exact call), a proposed metric source, an experiment.
+  if (kind === 'two_key') return (
+    <div style={{ fontSize: 12.5, display: 'grid', gap: 4 }}>
+      <div><b style={mono}>{String(p.tool ?? '')}</b> by {nm(p.agentId)} — {String(p.class ?? '').replace(/_/g, ' ')}{p.staged ? ', staged as a draft' : ''}</div>
+      {typeof p.actionId === 'string' ? <Suspense fallback={<div style={faint}>Loading the call…</div>}><ActionCallPreview wsId={wsId} actionId={p.actionId} /></Suspense> : <div style={faint}>{String(p.summary ?? '')}</div>}
+    </div>
+  );
+  if (kind === 'metric_source') return (
+    <div style={{ fontSize: 12.5, display: 'grid', gap: 4 }}>
+      <div>Make <b>{String(p.name ?? '')}</b> a live {String(p.kind ?? '')} source{p.unit ? ` (${String(p.unit)})` : ''}{p.pollMinutes ? `, read every ${String(p.pollMinutes)} min` : ''}.</div>
+      <div style={{ ...mono, overflowWrap: 'anywhere' }}>{String(p.target ?? '')}</div>
+      {p.why ? <div style={faint}>Why: {String(p.why)}</div> : null}
+      <details><summary style={{ cursor: 'pointer', ...faint }}>Config</summary><pre style={{ ...mono, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--panel-2)', padding: 8, borderRadius: 8 }}>{JSON.stringify(p.config ?? {}, null, 2)}</pre></details>
+      <div style={faint}>A source defines what counts as truth: only you make one live. A referenced secret must be set first (Metrics → Edit).</div>
+    </div>
+  );
+  if (kind === 'experiment') return (
+    <div style={{ fontSize: 12.5, display: 'grid', gap: 4 }}>
+      <div>Start the experiment <b>{String(p.title ?? '')}</b>{p.hypothesis ? <> — <i>{String(p.hypothesis)}</i></> : null}</div>
+      <div><span style={mono}>{changeSummary(String(p.changeKind ?? ''), (p.change ?? {}) as Record<string, unknown>)}</span> · measured by {String(p.metric ?? 'unmeasured')} · expected {String(p.expected ?? '?')} ({String(p.direction ?? 'up')} is better) · {String(p.windowDays ?? '?')}-day window</div>
+      {p.experimentId ? <div><RefButton kind="experiment" id={String(p.experimentId)} label="Open the experiment" /></div> : null}
+      <details><summary style={{ cursor: 'pointer', ...faint }}>Details</summary><pre style={{ ...mono, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--panel-2)', padding: 8, borderRadius: 8 }}>{JSON.stringify(p, null, 2)}</pre></details>
+    </div>
+  );
   if (kind === 'hire') return (
     <div style={{ fontSize: 12.5, display: 'grid', gap: 4 }}>
       <div><b>{String(p.name)}</b> as <b>{String(p.title)}</b>{p.packName ? <> from the <b>{String(p.packName)}</b> pack</> : ' (template)'} · reports to {nm(p.reportsToAgentId)}{p.monthlyBudgetUsd ? ` · $${Number(p.monthlyBudgetUsd).toFixed(2)}/month` : ''}{p.model ? ` · ${String(p.model)}` : ''}</div>

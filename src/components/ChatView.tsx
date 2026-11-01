@@ -1,7 +1,7 @@
 /** The chat main pane: header (pin, token meter, model/effort popover,
  *  Ask/Auto), transcript (user/assistant/thinking/tool/system rows, inline
  *  approvals, artifact chips), queue, and the composer with slash/@ menus. */
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type LiveItem, type LiveTool } from '../store';
 import { api, PROVIDER_COLORS, isComputerTool, REMEMBERABLE_COMPUTER_TOOLS, type Agent, type ApprovalDecision, type ChatMessage, type ChatTurn, type ToolReview } from '../lib/api';
@@ -10,6 +10,10 @@ import { fmtUsd, usdFor } from '../lib/pricing';
 import { MAX_AUDIO_BYTES, fmtDuration, isAudioFile, recorderAvailable, useVoiceRecorder, AUDIO_EXT_RE } from '../lib/voice';
 import { VoiceChip } from './VoiceChip';
 import { Markdown, plainText } from '../lib/md';
+import { CLASS_COLOR, CLASS_LABEL, CLASS_SHORT, degradedChatNote, parseHeldToolResult, toolClassHint } from '../lib/org3';
+
+/** The owner's key inline on a held tool card (item 28, SPA item 32). */
+const HeldInline = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.HeldInline })));
 
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 5, borderRadius: 6, display: 'flex' };
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -49,6 +53,12 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
   const computer = isComputerTool(t.name);
   const arg = computer ? computerSummary(t.name, t.input) : typeof t.input?.path === 'string' ? t.input.path : typeof t.input?.url === 'string' ? t.input.url : typeof t.input?.query === 'string' ? t.input.query : '';
   const canRemember = !computer || REMEMBERABLE_COMPUTER_TOOLS.has(t.name);
+  // The action contract (docs/actions-and-trust.md): the call's class, and a
+  // call parked for the owner's key (the turn returns "Held for the owner's key" / "Staged, not sent").
+  const held = t.status === 'done' ? parseHeldToolResult(t.result) : null;
+  const cls = held?.cls ?? toolClassHint(t.name);
+  const [keyOpen, setKeyOpen] = useState(false);
+  const wsId = app.current?.workspaceId ?? app.workspaceId;
   return (
     <div style={{ margin: '12px 0', border: `1px solid ${border}`, borderRadius: 12, overflow: 'hidden', background: 'var(--panel)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 13px', background: 'var(--panel-2)' }}>
@@ -61,8 +71,19 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
             Browser
           </button>
         )}
-        <span style={{ fontSize: 11, color, fontWeight: 600 }}>{label}</span>
+        {cls && cls !== 'read' && <span title={`${CLASS_LABEL[cls] ?? cls} action`} style={{ fontSize: 10, color: CLASS_COLOR[cls] ?? 'var(--text-dim)', border: `1px solid ${CLASS_COLOR[cls] ?? 'var(--border)'}`, borderRadius: 5, padding: '0 5px', whiteSpace: 'nowrap', flex: 'none' }}>{CLASS_SHORT[cls] ?? cls}</span>}
+        <span style={{ fontSize: 11, color: held ? 'var(--amber)' : color, fontWeight: 600 }}>{held ? (held.kind === 'staged' ? 'Staged' : 'Held') : label}</span>
       </div>
+      {held && (
+        <div style={{ padding: '9px 13px', borderTop: '1px solid var(--amber)', background: 'color-mix(in srgb, var(--amber) 10%, transparent)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--amber)', fontWeight: 600, flexWrap: 'wrap' }}>
+            <I d={P.shield} size={13} stroke="var(--amber)" />
+            <span style={{ flex: 1, minWidth: 160 }}>{held.kind === 'staged' ? 'Staged as a draft — waiting for your key to send' : 'Held — waiting for your key'}</span>
+            {held.actionPrefix && wsId && <button onClick={() => setKeyOpen(!keyOpen)} aria-expanded={keyOpen} style={{ background: 'none', border: '1px solid var(--amber)', borderRadius: 7, color: 'var(--amber)', fontSize: 11.5, fontWeight: 600, padding: '3px 9px', cursor: 'pointer' }}>{keyOpen ? 'Close' : 'Review and decide'}</button>}
+          </div>
+          {keyOpen && held.actionPrefix && wsId && <div style={{ marginTop: 8 }}><Suspense fallback={null}><HeldInline wsId={wsId} prefix={held.actionPrefix} /></Suspense></div>}
+        </div>
+      )}
       {computer && t.status === 'pending' && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px', background: 'color-mix(in srgb, var(--red) 14%, transparent)', borderTop: '1px solid var(--red)', color: 'var(--red)', fontSize: 12, fontWeight: 600 }}>
           <I d={P.window} size={14} stroke="var(--red)" />
@@ -444,6 +465,8 @@ export function ChatView() {
   // Estimated spend for this chat at the model's list price (Settings → Usage
   // overrides); null when the model is unknown to the table.
   const chatUsd = usdFor(s.model || type?.model || agent?.model, s.tokensIn, s.tokensOut, app.pricing);
+  // Degradation (docs/incidents.md §4): the last turn ran on a fallback, or the agent's provider is degraded now.
+  const degradedNote = degradedChatNote(app.transcript.turns.at(-1)?.degraded, s.workspaceId === app.workspaceId ? app.orgHealth : null, type?.provider ?? agent?.provider);
 
   const filesForMention = app.fileList;
 
@@ -578,6 +601,12 @@ export function ChatView() {
               <span title={`${spend.spentTokens.toLocaleString()} of ${spend.budgetTokens.toLocaleString()} tokens used this month. Scheduled loops are paused; raise the budget in Settings → Workspace.`}
                 style={{ fontSize: 10, fontWeight: 600, color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 5, padding: '1px 7px', whiteSpace: 'nowrap', flex: 'none' }}>
                 Workspace budget reached
+              </span>
+            )}
+            {degradedNote && (
+              <span role="status" title="The provider failed repeatedly; turns run on another enabled agent type of a different family until it recovers (docs/incidents.md §4)"
+                style={{ fontSize: 10, fontWeight: 600, color: 'var(--amber)', border: '1px solid var(--amber)', borderRadius: 5, padding: '1px 7px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '0 1 auto' }}>
+                {degradedNote}
               </span>
             )}
           </div>

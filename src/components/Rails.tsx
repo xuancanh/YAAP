@@ -347,6 +347,10 @@ export const ORG_PANES: Array<{ id: OrgPane; label: string; icon: string[] }> = 
   { id: 'replay', label: 'Replay', icon: P.retry },
   { id: 'playbooks', label: 'Playbooks', icon: P.file },
   { id: 'mytasks', label: 'My tasks', icon: P.board },
+  // Sensing, incidents, experiments (items 27–30, SPA item 32).
+  { id: 'metrics', label: 'Metrics', icon: P.sun },
+  { id: 'incidents', label: 'Incidents', icon: P.warn },
+  { id: 'experiments', label: 'Experiments', icon: P.retry },
   { id: 'chart', label: 'Org chart', icon: P.bot },
   { id: 'approvals', label: 'Approvals', icon: P.shield },
   { id: 'spend', label: 'Spend', icon: P.bolt },
@@ -354,12 +358,12 @@ export const ORG_PANES: Array<{ id: OrgPane; label: string; icon: string[] }> = 
   { id: 'audit', label: 'Audit', icon: P.clock },
 ];
 
-function PaneRow({ id, label, icon, active, badge, onClick, indent = 0 }: { id: string; label: string; icon: string[]; active: boolean; badge?: number; onClick: () => void; indent?: number }) {
+function PaneRow({ id, label, icon, active, badge, badgeColor = 'var(--amber)', badgeTitle, onClick, indent = 0 }: { id: string; label: string; icon: string[]; active: boolean; badge?: number; badgeColor?: string; badgeTitle?: string; onClick: () => void; indent?: number }) {
   return (
     <div key={id} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '8px 10px', paddingLeft: 10 + indent, borderRadius: 9, cursor: 'pointer', fontSize: 13, margin: '1px 0', color: 'var(--text)', background: active ? 'var(--accent-dim)' : 'none' }}>
       <I d={icon} size={16} sw={1.9} style={{ flex: 'none' }} />
       <span style={{ flex: 1 }}>{label}</span>
-      {badge !== undefined && <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px' }}>{badge}</span>}
+      {badge !== undefined && <span title={badgeTitle} style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: badgeColor, borderRadius: 8, padding: '1px 6px' }}>{badge}</span>}
     </div>
   );
 }
@@ -424,14 +428,25 @@ export function WorkspaceRail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.workspaceId, app.fileTarget?.kind]);
   const org = app.companiesEnabled && app.wsOrg && app.wsOrg.mode !== 'off' ? app.wsOrg : null;
-  const panes = org ? ORG_PANES.filter((n) => n.id !== 'approvals' || org.mode !== 'autonomous' || org.pendingApprovals > 0) : [];
+  const panes = org ? ORG_PANES.filter((n) => n.id !== 'approvals' || org.mode !== 'autonomous' || org.pendingApprovals > 0 || app.orgHeldActions > 0) : [];
+  const openIncidents = app.orgHealth?.openIncidents.length ?? 0;
+  const badgeOf = (id: OrgPane): { n: number; color?: string; title: string } | undefined => {
+    if (id === 'approvals' && org && org.pendingApprovals > 0) return { n: org.pendingApprovals, title: `${org.pendingApprovals} card(s) to decide` };
+    if (id === 'approvals' && app.orgHeldActions > 0) return { n: app.orgHeldActions, title: `${app.orgHeldActions} action(s) waiting for your key` };
+    if (id === 'plans' && app.orgPendingPlans > 0) return { n: app.orgPendingPlans, title: `${app.orgPendingPlans} plan(s) awaiting your veto` };
+    if (id === 'incidents' && openIncidents > 0) return { n: openIncidents, color: 'var(--red)', title: `${openIncidents} open incident(s)` };
+    if (id === 'experiments' && app.orgRunningExperiments > 0) return { n: app.orgRunningExperiments, color: 'var(--accent)', title: `${app.orgRunningExperiments} running` };
+    return undefined;
+  };
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
       {/* ---- organization panes (execution plan item 16) — begin ---- */}
       {org && (
         <div style={{ marginBottom: 10 }}>
-          <div style={{ ...sectionLabel, padding: '2px 10px 6px', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ ...sectionLabel, padding: '2px 10px 6px', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ flex: 1 }}>Organization</span>
+            {openIncidents > 0 && <span title={`${openIncidents} open incident(s)`} onClick={() => { app.setOrgPane('incidents'); app.setMobileDetail(true); }} style={{ fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'var(--red)', borderRadius: 8, padding: '0 6px', cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}>{openIncidents} incident{openIncidents === 1 ? '' : 's'}</span>}
+            {app.orgHeldActions > 0 && <span title={`${app.orgHeldActions} action(s) held or staged, waiting for your key`} onClick={() => { app.setOrgPane('approvals'); app.setMobileDetail(true); }} style={{ fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '0 6px', cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}>{app.orgHeldActions} key{app.orgHeldActions === 1 ? '' : 's'}</span>}
             {app.orgPendingPlans > 0 && <span title={`${app.orgPendingPlans} plan(s) awaiting your veto`} onClick={() => { app.setOrgPane('plans'); app.setMobileDetail(true); }} style={{ fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '0 6px', cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}>{app.orgPendingPlans} plan{app.orgPendingPlans === 1 ? '' : 's'}</span>}
             <span title={org.orgStatus === 'paused' ? 'Paused (kill switch)' : `${org.mode} mode`} style={{ fontSize: 9.5, fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: org.orgStatus === 'paused' ? '#fff' : 'var(--text-dim)', background: org.orgStatus === 'paused' ? 'var(--red)' : 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '0 6px' }}>{org.orgStatus === 'paused' ? 'paused' : org.mode}</span>
           </div>
@@ -440,7 +455,7 @@ export function WorkspaceRail() {
           {(org.units ?? []).length === 0 && panes.filter((n) => n.id === 'board' || n.id === 'goals').map((n) => <PaneRow key={n.id} id={n.id} label={n.label} icon={n.icon} active={n.id === app.orgPane && app.orgUnitId === null} onClick={() => { app.setOrgUnitId(null); app.setOrgPane(n.id); app.setMobileDetail(true); }} />)}
           <div style={{ height: 6 }} />
           {panes.filter((n) => n.id !== 'board' && n.id !== 'goals').map((n) => (
-            <PaneRow key={n.id} id={n.id} label={n.label} icon={n.icon} active={n.id === app.orgPane} badge={n.id === 'approvals' && org.pendingApprovals > 0 ? org.pendingApprovals : n.id === 'plans' && app.orgPendingPlans > 0 ? app.orgPendingPlans : undefined} onClick={() => { app.setOrgPane(n.id); app.setMobileDetail(true); }} />
+            <PaneRow key={n.id} id={n.id} label={n.label} icon={n.icon} active={n.id === app.orgPane} badge={badgeOf(n.id)?.n} badgeColor={badgeOf(n.id)?.color} badgeTitle={badgeOf(n.id)?.title} onClick={() => { app.setOrgPane(n.id); app.setMobileDetail(true); }} />
           ))}
           <div style={{ ...sectionLabel, padding: '10px 10px 6px', display: 'flex', alignItems: 'center' }}>
             <span style={{ flex: 1 }}>Files</span>

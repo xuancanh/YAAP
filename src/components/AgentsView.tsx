@@ -1,7 +1,7 @@
 /** Agents: the directory grid, the create-agent dialog, and the per-agent
  *  home page — tabbed like YAAM: Dashboard (agent-maintained markdown),
  *  Mini apps (self-built, embeddable), Chats, Memory (file brain), Settings. */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
@@ -1329,7 +1329,9 @@ function MemoryTab({ a }: { a: Agent }) {
   );
 }
 
-const TABS = ['Dashboard', 'Tasks', 'Schedule', 'Memory', 'Mini apps', 'Skills & tools', 'Chats', 'Files', 'Settings'] as const;
+const TABS = ['Dashboard', 'Tasks', 'Schedule', 'Memory', 'Mini apps', 'Skills & tools', 'Trust', 'Chats', 'Files', 'Settings'] as const;
+/** The agent's trust levels, its action log and held actions (item 28, SPA item 32). */
+const AgentTrustTab = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.AgentTrustTab })));
 type HomeTab = (typeof TABS)[number];
 
 export function AgentHome() {
@@ -1571,6 +1573,7 @@ export function AgentHome() {
         {tab === 'Memory' && <MemoryTab a={a} />}
         {tab === 'Skills & tools' && <SkillsToolsTab a={a} />}
         {tab === 'Files' && <AgentFilesTab a={a} />}
+        {tab === 'Trust' && (app.workspaceId ? <Suspense fallback={<div style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>Loading…</div>}><AgentTrustTab agentId={a.id} wsId={a.workspaceId || app.workspaceId} /></Suspense> : <div style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>Open a workspace to see this agent's trust levels.</div>)}
 
         {tab === 'Mini apps' && (
           <div style={{ marginTop: 18 }}>

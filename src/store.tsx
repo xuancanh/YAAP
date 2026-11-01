@@ -9,7 +9,7 @@ import {
   type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision, type ToolReview,
   type BrowserStep, type WorkspaceOrg, type SharedWorkspace, type WorkspaceMe, type Channel, type WorkspaceEvent,
-  type OrgIntentNode, type OrgCadence,
+  type OrgIntentNode, type OrgCadence, type OrgHealth,
 } from './lib/api';
 import { isChannelSession, parseChannelHash } from './lib/channels';
 
@@ -21,13 +21,14 @@ import type { PriceTable } from './lib/pricing';
 export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 'settings';
 /** The organization panes under the Workspace section (docs/group-chat.md
  *  §5: the workspace is the company; there is no separate Company section). */
-export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'ask' | 'plans' | 'replay' | 'capital' | 'playbooks' | 'mytasks';
-export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'ask', 'plans', 'replay', 'capital', 'playbooks', 'mytasks'];
+export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'ask' | 'plans' | 'replay' | 'capital' | 'playbooks' | 'mytasks'
+  | 'metrics' | 'incidents' | 'experiments';
+export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'ask', 'plans', 'replay', 'capital', 'playbooks', 'mytasks', 'metrics', 'incidents', 'experiments'];
 /** Something a pane should open or scroll to once loaded (a signal row's
  *  deep link, docs/company-vision.md §5): a task on the board, a goal on the
  *  vision page, a meeting thread, a plan, a playbook, a replay day (the id is
  *  the YYYY-MM-DD). Consumed by the pane. */
-export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'playbook' | 'replay'; id: string }
+export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'playbook' | 'replay' | 'source' | 'incident' | 'experiment' | 'action'; id: string }
 const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
 /** What the main pane shows while in the Home section: a conversation, a
  *  group-chat channel, an agent's home page (or the directory when no agent
@@ -178,6 +179,11 @@ interface Store {
   orgIntent: OrgIntentNode[]; orgCadences: OrgCadence[];
   /** Plans awaiting the CEO's veto (docs/company-vision.md §8, item 23) — the rail count and the Pulse banner. */
   orgPendingPlans: number;
+  /** Items 27–30 (SPA item 32): `GET …/org/health` (degraded providers and
+   *  connections, frozen classes, open incidents), actions held or staged for
+   *  the owner's key, and running experiments — fetched with wsOrg for the
+   *  rail badges, the Pulse health strip and the chat header. */
+  orgHealth: OrgHealth | null; orgHeldActions: number; orgRunningExperiments: number;
   orgFocus: OrgFocus | null; setOrgFocus: (v: OrgFocus | null) => void;
 
   // group chat (docs/group-chat.md, execution plan item 15)
@@ -285,6 +291,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [orgIntent, setOrgIntent] = useState<OrgIntentNode[]>([]);
   const [orgCadences, setOrgCadences] = useState<OrgCadence[]>([]);
   const [orgPendingPlans, setOrgPendingPlans] = useState(0);
+  const [orgHealth, setOrgHealth] = useState<OrgHealth | null>(null);
+  const [orgHeldActions, setOrgHeldActions] = useState(0);
+  const [orgRunningExperiments, setOrgRunningExperiments] = useState(0);
   const [orgFocus, setOrgFocus] = useState<OrgFocus | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentChannel, setCurrentChannel] = useState<string | null>(null);
@@ -424,16 +433,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshMcp = useCallback(async () => setMcp(await api.mcp()), []);
   const refreshMarket = useCallback(async () => setMarket(await api.market(workspaceId || undefined)), [workspaceId]);
   const refreshWsOrg = useCallback(async () => {
-    if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); return; }
+    if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgRunningExperiments(0); return; }
     const st = await api.workspaceOrg(workspaceId).catch((): WorkspaceOrg | null => null);
     setWsOrg(st);
     // The intent tree and the cadences ride along for the rail (at-risk
     // counts, today's ritual); the workspace event bus carries no org events
     // yet, so the panes poll lightly while on screen and call this on writes.
     if (st && st.mode !== 'off' && st.orgId) {
-      const [intent, cadences, plans] = await Promise.all([api.orgIntent(workspaceId).catch((): OrgIntentNode[] => []), api.orgCadences(workspaceId).catch((): OrgCadence[] => []), api.orgPlans(workspaceId, 'pending').catch((): unknown[] => [])]);
+      const [intent, cadences, plans, health, held, staged, running] = await Promise.all([
+        api.orgIntent(workspaceId).catch((): OrgIntentNode[] => []), api.orgCadences(workspaceId).catch((): OrgCadence[] => []), api.orgPlans(workspaceId, 'pending').catch((): unknown[] => []),
+        api.orgHealth(workspaceId).catch((): OrgHealth | null => null),
+        api.workspaceActions(workspaceId, { status: 'held', limit: 200 }).catch((): unknown[] => []), api.workspaceActions(workspaceId, { status: 'staged', limit: 200 }).catch((): unknown[] => []),
+        api.orgExperiments(workspaceId).catch((): Array<{ status: string }> => []),
+      ]);
       setOrgIntent(intent); setOrgCadences(cadences); setOrgPendingPlans(plans.length);
-    } else { setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); }
+      setOrgHealth(health); setOrgHeldActions(held.length + staged.length); setOrgRunningExperiments(running.filter((e) => e.status === 'running' || e.status === 'extended').length);
+    } else { setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgRunningExperiments(0); }
   }, [workspaceId, companiesEnabled]);
   useEffect(() => {
     api.orgsStatus().then((s) => setCompaniesEnabled(s.enabled)).catch(() => setCompaniesEnabled(false));
@@ -985,7 +1000,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgFocus, setOrgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgRunningExperiments, orgFocus, setOrgFocus,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
@@ -1004,7 +1019,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgRunningExperiments, orgFocus,
     channels, refreshChannels, currentChannel, channelFocus, openChannel, onWorkspaceEvent,
   ]);
 
