@@ -14,16 +14,23 @@
  *
  *  meetings (docs/company-vision.md §3, item 19): GET /org/meetings?unitId=&status= · POST /org/meetings { kind, unitId?, agenda?, attendees? } (starts now)
  *           GET /org/meetings/:meetingId · POST /org/meetings/:meetingId/cancel · GET /org/decisions?unitId= · GET /org/cadences · PATCH /org/cadences/:cadenceId { cron, enabled }
+ *  memory (docs/company-vision.md §6, item 22): GET /org/decisions/search?q=&unitId= · POST /org/ask { question } (CEO, board, observers) · GET /org/recall?q= ·
+ *           GET /org/graph?ref=<kind:id>&depth=1|2 · GET /org/playbooks?role=&status=
  *
  * Everything else is a thin alias of `/api/orgs/:orgId/...` that resolves the
  * workspace's one org id and delegates to OrgController, so the two surfaces
  * cannot drift. `/api/orgs/...` keeps working.
  */
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Optional, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Optional, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 import { OrgMeetingsService, MEETING_KINDS, type MeetingKind, type Attendee } from './org-meetings.service';
 import { OrgMeetingRuntime } from './org-meeting-runtime.service';
+import { OrgMemoryService } from './org-memory.service';
+import { OrgKnowledgeService } from './org-knowledge.service';
+import { OrgPlaybooksService } from './org-playbooks.service';
+import { OrgService } from './org.service';
+import { actorId } from '../accounts/account-context';
 import { ORG_MODES, type OrgMode } from '../workspaces/workspaces.service';
 import { OrgModeService, AUTONOMY_CAPS, MAX_ORG_AGENT_CAP } from './org-mode.service';
 import {
@@ -53,6 +60,8 @@ export class CadenceDto {
   @IsOptional() @IsBoolean() enabled?: boolean;
 }
 
+export class AskDto { @IsString() question!: string }
+
 @Controller('workspaces/:id/org')
 export class WorkspaceOrgController {
   constructor(
@@ -61,7 +70,14 @@ export class WorkspaceOrgController {
     private readonly config: ConfigService,
     @Optional() private readonly meetings?: OrgMeetingsService,
     @Optional() private readonly meetingRuntime?: OrgMeetingRuntime,
+    /** Memory (item 22): ask-the-company, the decision search, the graph, playbooks. */
+    @Optional() private readonly memory?: OrgMemoryService,
+    @Optional() private readonly knowledge?: OrgKnowledgeService,
+    @Optional() private readonly playbooks?: OrgPlaybooksService,
+    @Optional() private readonly orgService?: OrgService,
   ) {}
+
+  private knowledgeOr(): OrgKnowledgeService { if (!this.knowledge) throw new NotFoundException('company memory is not available'); return this.knowledge; }
 
   private meetingsOr(): OrgMeetingsService { if (!this.meetings) throw new NotFoundException('meetings are not available'); return this.meetings; }
 
@@ -189,6 +205,23 @@ export class WorkspaceOrgController {
   @Patch('cadences/:cadenceId') async updateCadence(@Param('id') id: string, @Param('cadenceId') cadenceId: string, @Body() dto: CadenceDto) {
     if (dto.cron === undefined && dto.enabled === undefined) throw new BadRequestException('cron or enabled is required');
     return this.meetingsOr().updateCadence(await this.oid(id), cadenceId, dto, this.orgs.actorName());
+  }
+
+  // ---- memory (docs/company-vision.md §6; item 22) ----
+  @Get('decisions/search') async searchDecisions(@Param('id') id: string, @Query('q') q?: string, @Query('unitId') unitId?: string, @Query('limit') limit?: string) { return this.knowledgeOr().searchDecisions(await this.oid(id), q ?? '', { unitId: unitId || null, limit: Number(limit) || 50 }); }
+  @Get('recall') async recall(@Param('id') id: string, @Query('q') q?: string) { return this.knowledgeOr().recall(await this.oid(id), q ?? ''); }
+  @Get('graph') async graph(@Param('id') id: string, @Query('ref') ref?: string, @Query('depth') depth?: string) { return this.knowledgeOr().graph(await this.oid(id), ref ?? '', Number(depth) || 1); }
+  @Get('playbooks') async playbookList(@Param('id') id: string, @Query('role') role?: string, @Query('status') status?: string) {
+    if (!this.playbooks) throw new NotFoundException('playbooks are not available');
+    return this.playbooks.list(await this.oid(id), { role: role || null, status: status || null });
+  }
+  /** Ask the company: anyone with standing (CEO, board, observer) may ask; the chief answers read-only with verified citations. */
+  @Post('ask') async ask(@Param('id') id: string, @Body() dto: AskDto) {
+    if (!this.memory) throw new NotFoundException('company memory is not available');
+    const orgId = await this.oid(id);
+    const role = this.orgService ? await this.orgService.humanRole(orgId, actorId()) : 'ceo';
+    if (!role) throw new ForbiddenException('you have no standing in this organisation');
+    return this.memory.ask(orgId, dto.question, this.orgs.actorName());
   }
 
   /** Manual structure review (autonomous mode only): runs the chief now. */

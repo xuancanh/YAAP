@@ -114,6 +114,10 @@ export interface RunCtx {
   plan?: PlanCapture;
   /** Set while OrgCapitalService applies a plan's actions through `execute`. */
   applying?: boolean;
+  /** Set for a task-free run another module drives with its own framing
+   *  (ask-the-company, docs/company-vision.md §6): the system context it
+   *  carries and, when set, the only tool names offered and accepted. */
+  aux?: { kind: string; context: string; restrict?: Set<string> };
 }
 
 export interface AuditFinding { severity: 'info' | 'warn' | 'critical'; kind: string; refType: string; refId: string; title: string; detail: string }
@@ -123,6 +127,9 @@ export type PlanningTrigger = 'vision' | 'objective_assigned' | 'at_risk' | 'man
 
 /** Structural actions the autonomous chief may take; mirrored in the brief. */
 export type AutoAction = 'hire' | 'reorg' | 'scope_widen' | 'budget' | 'terminate' | 'routing';
+/** Told after every executed autonomous action (and an autonomous tune):
+ *  the decision log (docs/company-vision.md §6, item 22) writes its row. */
+export type AutoActionListener = (ev: { orgId: string; action: AutoAction | 'tune'; summary: string; reason: string; payload: Record<string, unknown>; actor: string }) => Promise<void> | void;
 
 const SESSION_PREFIX = 'Org · ';
 const ORG_TOOL_PREFIX = 'org_';
@@ -166,6 +173,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
    *  / `planning.cooldownSeconds` tunables (docs/company-vision.md §1b). */
   planningDebounceMs: number | null = null;
   planningCooldownMs: number | null = null;
+  private readonly autoListeners: AutoActionListener[] = [];
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
@@ -300,6 +308,16 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   /** Fire every queued review now (tests). */
   async flushReviews(): Promise<void> {
     for (const id of [...this.pendingReviews.keys()]) await this.flushReview(id);
+  }
+
+  /** Be told of every executed autonomous structural action (see AutoActionListener). */
+  onAutoAction(fn: AutoActionListener): () => void {
+    this.autoListeners.push(fn);
+    return () => { const i = this.autoListeners.indexOf(fn); if (i >= 0) this.autoListeners.splice(i, 1); };
+  }
+
+  private async emitAuto(ev: Parameters<AutoActionListener>[0]): Promise<void> {
+    for (const fn of this.autoListeners) await Promise.resolve(fn(ev)).catch(() => undefined);
   }
 
   /** Register a task-free run another service drives (the auditor,
@@ -637,6 +655,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     }
     const verb = action === 'hire' ? 'Hired' : action === 'reorg' ? 'Reorganized' : action === 'scope_widen' ? 'Scope widened' : action === 'budget' ? 'Budget allocated' : action === 'routing' ? 'Routing changed' : 'Terminated';
     await this.announcer.announce(org.workspaceId, `${verb}: ${summary}${reason ? ` — ${reason}` : ''}`);
+    await this.emitAuto({ orgId: org.id, action, summary, reason, payload, actor: 'chief' });
   }
 
   // ---- wakes ----
@@ -976,6 +995,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   async contextFor(session: ChatSession): Promise<string | null> {
     if (!this.enabled() || !session.agentId) return null;
     const ctx = this.running.get(session.id);
+    if (ctx && ctx.aux) return ctx.aux.context;
     if (ctx && ctx.audit) {
       const org = await this.org.get(ctx.orgId);
       return [
@@ -1071,6 +1091,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   /** The auditor's run is read-only: only its set is offered or accepted (OrgToolsHook.restrictTo). */
   async restrictTo(session: ChatSession): Promise<Set<string> | null> {
     const ctx = this.running.get(session.id);
+    if (ctx?.aux?.restrict) return ctx.aux.restrict;
     return ctx?.audit ? AUDIT_TOOL_NAMES : null;
   }
 
@@ -1372,6 +1393,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
           if (ctx) ctx.progress = true;
           await this.agents.addEvent(agentId, { kind: 'info', title: `Tuned ${key}: ${r.from} → ${r.to}`, body: why, payload: JSON.stringify({ orgId: org.id, key }), origin: 'loop' }).catch(() => {});
           await this.announcer.announce(org.workspaceId, `Tuned ${key}: ${r.from} → ${r.to} — ${why}`);
+          await this.emitAuto({ orgId: org.id, action: 'tune', summary: `${key}: ${r.from} → ${r.to}`, reason: why, payload: { key, from: r.from, to: r.to }, actor });
           return `${key} set to ${r.to} (was ${r.from}; bound ${describeTunables(org).find((t) => t.key === key)!.min}–${describeTunables(org).find((t) => t.key === key)!.max}). Audited as a decision and announced in #company.`;
         }
         const a = await this.approvals.create(org.id, { kind: 'tune', payload: { key, value: check.value, from, why }, requestedBy: 'chief', recommendation: why });

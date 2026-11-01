@@ -1258,6 +1258,36 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_plans_org_status ON org_plans ("orgId", "status")`);
     },
   },
+  {
+    id: '0037-org-memory',
+    up: async (db) => {
+      // Memory (docs/company-vision.md §6, execution-plan item 22): playbooks
+      // as agent-authored skills with a review and versions. Lessons land in
+      // agent_lessons, charter changes in org_approvals, retros in
+      // org_meetings — all existing tables. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_playbooks (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "skillId" TEXT,
+        "name" TEXT NOT NULL,
+        "title" TEXT NOT NULL,
+        "body" TEXT NOT NULL DEFAULT '',
+        "ownerAgentId" TEXT,
+        "roles" TEXT NOT NULL DEFAULT '[]',
+        "status" TEXT NOT NULL DEFAULT 'draft',
+        "version" INTEGER NOT NULL DEFAULT 1,
+        "sourceTaskId" TEXT,
+        "reviewTaskId" TEXT,
+        "outcomes" TEXT NOT NULL DEFAULT '{}',
+        "why" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_playbooks_name ON org_playbooks ("orgId", "name")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_decisions_meeting ON org_decisions ("orgId", "meetingId")`);
+    },
+  },
 ];
 
 /**

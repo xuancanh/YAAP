@@ -33,6 +33,9 @@ import { OrgAuditorService } from './org-auditor.service';
 import { OrgMeetingsService } from './org-meetings.service';
 import { OrgMeetingRuntime } from './org-meeting-runtime.service';
 import { OrgCapitalService } from './org-capital.service';
+import { OrgPlaybooksService } from './org-playbooks.service';
+import { OrgKnowledgeService } from './org-knowledge.service';
+import { OrgMemoryService } from './org-memory.service';
 
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
@@ -58,11 +61,15 @@ import { OrgCapitalService } from './org-capital.service';
  * Capital (docs/company-vision.md §7–§8, item 23): OrgCapitalService is the
  * model-free cost roll-up, forecast, plan preview and replay; the runtime
  * binds the one way a plan's action becomes a change (`bindApplier`).
+ * Memory (docs/company-vision.md §6, item 22): OrgPlaybooksService (skills
+ * the company reviews), OrgKnowledgeService (recall, ask-the-company, the
+ * graph) and OrgMemoryService (the tools, postmortem triggers, lessons, the
+ * decision-log rows of approvals and autonomous actions).
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule],
   controllers: [OrgController, WorkspaceOrgController],
-  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime],
-  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService],
+  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService],
 })
 export class OrgModule {}

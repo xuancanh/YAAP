@@ -30,14 +30,17 @@ import { OrgTasksService, parseBrief, type TaskBrief } from './org-tasks.service
 import { meetScopes, parseScopes } from './scopes';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19): registered with `onApply`, called from
  *  `decide` on approve. */
 export type ApprovalApplier = (orgId: string, payload: Record<string, unknown>, approval: OrgApproval) => Promise<Record<string, unknown>>;
 export type ApprovalDecision = 'approve' | 'reject' | 'revise';
+/** Told after every decision is written (docs/company-vision.md §6: the
+ *  decision log; item 22's OrgMemoryService writes the row). */
+export type DecisionListener = (ev: { orgId: string; approval: OrgApproval; decision: ApprovalDecision; note: string; result?: Record<string, unknown>; decidedBy: string }) => Promise<void> | void;
 
 export const APPROVAL_TTL_MS = 72 * 60 * 60_000;
 
@@ -118,6 +121,14 @@ export class OrgApprovalsService {
 
   /** Register the applier of a kind another module owns (see ApprovalApplier). */
   onApply(kind: ApprovalKind, fn: ApprovalApplier): void { this.appliers.set(kind, fn); }
+
+  private readonly decisionListeners: DecisionListener[] = [];
+
+  /** Be told after a decision is written (the decision log, item 22). */
+  onDecided(fn: DecisionListener): () => void {
+    this.decisionListeners.push(fn);
+    return () => { const i = this.decisionListeners.indexOf(fn); if (i >= 0) this.decisionListeners.splice(i, 1); };
+  }
 
   /** Create a proposal. The chief's inbox gets no event (it wrote it); the
    *  user sees it in the approvals queue and in the brief. */
@@ -205,6 +216,7 @@ export class OrgApprovalsService {
     }
     await this.db.update(orgApprovals).set({ status, decidedAt: nowIso(), decidedBy: decidedBy || currentAccountId(), decisionNote: note.slice(0, 2_000) }).where(eq(orgApprovals.id, id));
     await this.audit.append(orgId, { actor, action: `approval_${status}`, refType: 'approval', refId: id, payload: { kind: a.kind, note: note.slice(0, 300), result, decidedBy: decidedBy || currentAccountId() } });
+    for (const fn of this.decisionListeners) await Promise.resolve(fn({ orgId, approval: { ...a, status }, decision, note, result, decidedBy: decidedBy || currentAccountId() })).catch(() => undefined);
     const org = await this.org.get(orgId);
     if (org.chiefOfStaffAgentId) {
       await this.agents.addEvent(org.chiefOfStaffAgentId, {
@@ -268,9 +280,11 @@ export class OrgApprovalsService {
       case 'tune':
         // A tunable (docs/company-vision.md §1b) the chief proposed in supervised mode; bounds are re-checked on apply.
         return this.org.setTunable(orgId, String(payload.key ?? ''), payload.value, { actor: 'user', why: String(payload.why ?? ''), decidedBy: by });
-      case 'cadence': {
-        const fn = this.appliers.get('cadence');
-        if (!fn) throw new BadRequestException('cadence approvals need the meetings module');
+      case 'cadence':
+      case 'charter_change': {
+        // Kinds another module owns (the meetings module's cadence, the memory module's charter change).
+        const fn = this.appliers.get(kind);
+        if (!fn) throw new BadRequestException(`${kind} approvals need the module that owns them`);
         return fn(orgId, payload, approval);
       }
       case 'routing':
@@ -368,6 +382,7 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'escalation': return `task "${String(payload.title ?? '')}": ${String(payload.reason ?? '')}`.slice(0, 160);
     case 'tune': return `tune ${String(payload.key ?? '')} ${payload.from !== undefined ? `${String(payload.from)} → ` : ''}${String(payload.value ?? '')}`;
     case 'cadence': return `${String(payload.kind ?? 'meeting')} of ${String(payload.unitName ?? 'the company')} → ${payload.cron ? String(payload.cron) : 'off'}`;
+    case 'charter_change': return `charter of ${String(payload.agentName ?? payload.agentId ?? 'a member')}: ${String(payload.lesson ?? payload.summary ?? 'change proposed by a retro').slice(0, 100)}`;
     default: return kind;
   }
 }

@@ -879,6 +879,35 @@ export const orgCadences = pgTable('org_cadences', {
   createdAt: text('createdAt').notNull(),
 }, (t) => [uniqueIndex('idx_org_cadences_unit_kind').on(t.orgId, t.unitId, t.kind)]);
 
+/** Playbooks (docs/company-vision.md §6, execution-plan item 22): repeatable
+ *  procedures agents author for the company as skills (`org-<slug>` in the
+ *  org's workspace), reviewed like any task, versioned, offered to roles.
+ *  `outcomes` mirrors the skill's item-10 counters for the retro. */
+export const orgPlaybooks = pgTable('org_playbooks', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  skillId: text('skillId'),
+  name: text('name').notNull(),
+  title: text('title').notNull(),
+  /** The SKILL.md body of the current (or pending) version. */
+  body: text('body').notNull().default(''),
+  ownerAgentId: text('ownerAgentId'),
+  /** JSON array of titles / role ids it is offered to ('' = everyone). */
+  roles: text('roles').notNull().default('[]'),
+  /** draft | in_review | active | retired. */
+  status: text('status').notNull().default('draft'),
+  version: integer('version').notNull().default(1),
+  sourceTaskId: text('sourceTaskId'),
+  /** The review task whose acceptance activates this version. */
+  reviewTaskId: text('reviewTaskId'),
+  /** JSON { uses, up, down, successRate, lastUsedAt, refreshedAt }. */
+  outcomes: text('outcomes').notNull().default('{}'),
+  why: text('why').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+});
+
 export const orgProjects = pgTable('org_projects', {
   id: text('id').primaryKey(),
   accountId: text('accountId').notNull().default('single'),

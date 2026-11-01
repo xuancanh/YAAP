@@ -62,12 +62,25 @@ export interface MinutesAction { title: string; owner: string; done_when: string
 export interface MinutesDecision { title: string; decision: string; alternatives: string; rationale: string; by: string; decisionId?: string }
 export interface MinutesRisk { text: string; by: string }
 export interface MinutesQuestion { question: string; by: string }
+/** A lesson from a retro (docs/company-vision.md §6, item 22): text with an
+ *  audience, optionally a charter change for a member (a CEO approval card)
+ *  and a playbook change (a revise task for its owner). Materialised by
+ *  OrgMemoryService through `onMaterialise`. */
+export interface MinutesLesson {
+  text: string;
+  audience: 'member' | 'unit' | 'company';
+  by: string;
+  proposedCharterChange?: { agent: string; text: string; mode?: 'append' | 'replace'; approvalId?: string };
+  proposedPlaybookChange?: { playbookId: string; note: string; taskId?: string };
+  lessonIds?: string[];
+}
 export interface Minutes {
   summary: string;
   decisions: MinutesDecision[];
   actions: MinutesAction[];
   risks: MinutesRisk[];
   questions: MinutesQuestion[];
+  lessons?: MinutesLesson[];
   /** Why the meeting ended: closed | stopped | usd_cap | rounds. */
   endedBy?: string;
 }
@@ -104,11 +117,11 @@ export function nextCronAfter(expr: string, from: Date): Date | null {
 }
 
 export function parseMinutes(raw: string | null | undefined): Minutes {
-  const empty: Minutes = { summary: '', decisions: [], actions: [], risks: [], questions: [] };
+  const empty: Minutes = { summary: '', decisions: [], actions: [], risks: [], questions: [], lessons: [] };
   if (!raw) return empty;
   try {
     const v = JSON.parse(raw) as Partial<Minutes>;
-    return { ...empty, ...v, decisions: v.decisions ?? [], actions: v.actions ?? [], risks: v.risks ?? [], questions: v.questions ?? [] };
+    return { ...empty, ...v, decisions: v.decisions ?? [], actions: v.actions ?? [], risks: v.risks ?? [], questions: v.questions ?? [], lessons: v.lessons ?? [] };
   } catch { return empty; }
 }
 
@@ -150,6 +163,15 @@ export class OrgMeetingsService {
     // A unit that appears gets its default cadences (docs/company-vision.md §3).
     this.org.onStructureChange((orgId) => this.ensureCadenceDefaults(orgId).then(() => undefined));
     this.approvals?.onApply('cadence', (orgId, payload, approval) => this.applyCadenceApproval(orgId, payload, approval.id));
+  }
+
+  /** Another module's step in `materialise` (lessons → the lessons store,
+   *  charter cards, playbook revisions: OrgMemoryService, item 22). Runs
+   *  after the built-in steps, before the minutes are written back. */
+  private readonly materialisers: Array<(orgId: string, meeting: OrgMeeting, minutes: Minutes) => Promise<void>> = [];
+  onMaterialise(fn: (orgId: string, meeting: OrgMeeting, minutes: Minutes) => Promise<void>): () => void {
+    this.materialisers.push(fn);
+    return () => { const i = this.materialisers.indexOf(fn); if (i >= 0) this.materialisers.splice(i, 1); };
   }
 
   /** Round cap, USD cap, daily cap and attendee rule for this org (§1b tunables, clamped). */
@@ -344,6 +366,7 @@ export class OrgMeetingsService {
       d.decisionId = row.id;
     }
     for (const r of minutes.risks) await this.audit.append(orgId, { actor: `agent:${r.by || facilitator}`, action: 'meeting_risk', refType: 'meeting', refId: meeting.id, payload: { text: r.text.slice(0, 600) } });
+    for (const fn of this.materialisers) await fn(orgId, meeting, minutes).catch((err: unknown) => this.audit.append(orgId, { actor: 'system', action: 'meeting_materialise_failed', refType: 'meeting', refId: meeting.id, payload: { error: String(err instanceof Error ? err.message : err).slice(0, 300) } }).then(() => undefined));
     const hash = minutesHash(minutes);
     await this.db.update(orgMeetings).set({ minutes: JSON.stringify(minutes) }).where(eq(orgMeetings.id, meeting.id));
     return { minutes, hash };
@@ -358,6 +381,8 @@ export class OrgMeetingsService {
     lines.push('', `Actions (${minutes.actions.length})`, ...(minutes.actions.length ? minutes.actions.map((a) => `- ${a.title} — ${a.owner || 'unowned'}${a.taskId ? ` · task [${a.taskId.slice(0, 8)}]` : ''}`) : ['- none']));
     lines.push('', `Risks (${minutes.risks.length})`, ...(minutes.risks.length ? minutes.risks.map((r) => `- ${r.text} (${nm(r.by)})`) : ['- none']));
     lines.push('', `Questions for the CEO (${minutes.questions.length})`, ...(minutes.questions.length ? minutes.questions.map((q) => `- ${q.question} (${nm(q.by)})`) : ['- none']));
+    const lessons = minutes.lessons ?? [];
+    if (lessons.length) lines.push('', `Lessons (${lessons.length})`, ...lessons.map((l) => `- [${l.audience}] ${l.text}${l.proposedCharterChange ? ` · charter change for ${nm(l.proposedCharterChange.agent)}${l.proposedCharterChange.approvalId ? ` (approval ${l.proposedCharterChange.approvalId.slice(0, 8)})` : ''}` : ''}${l.proposedPlaybookChange ? ` · playbook ${l.proposedPlaybookChange.playbookId.slice(0, 8)}${l.proposedPlaybookChange.taskId ? ` → task [${l.proposedPlaybookChange.taskId.slice(0, 8)}]` : ''}` : ''} (${nm(l.by)})`));
     return lines.join('\n');
   }
 

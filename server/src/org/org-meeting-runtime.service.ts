@@ -88,6 +88,14 @@ interface TurnCtx {
 
 const TOOL_NAMES = new Set(['meeting_speak', 'meeting_propose_action', 'meeting_propose_decision', 'meeting_raise_risk', 'meeting_ask_ceo', 'meeting_close', 'org_set_cadence']);
 
+/** What another module's meeting tool sees of the turn (item 22's
+ *  `meeting_propose_lesson`): the meeting, the speaker, the minutes so far and
+ *  a way to post into the thread. */
+export interface MeetingToolCtx { meeting: OrgMeeting; orgId: string; agentId: string; minutes: Minutes; post(text: string): Promise<void> }
+export interface MeetingToolExtension { spec: AiToolSpec; kinds?: MeetingKind[]; execute(ctx: MeetingToolCtx, input: Record<string, unknown>): Promise<string> }
+/** Extra agenda text another module composes for a meeting kind (no model). */
+export type AgendaProvider = (orgId: string, meeting: OrgMeeting, unit: OrgUnit | null) => Promise<string | null>;
+
 /** The chief's and a unit lead's cadence tool (docs/company-vision.md §1b). */
 const CADENCE_TOOL: AiToolSpec = {
   name: 'org_set_cadence',
@@ -114,6 +122,22 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
   private readonly inFlight = new Set<Promise<unknown>>();
   /** Test seam: the clock. */
   now: () => Date = () => new Date();
+  private readonly extensions: MeetingToolExtension[] = [];
+  private readonly agendaProviders: AgendaProvider[] = [];
+
+  /** Offer another module's tool during meeting turns (optionally only for some kinds). */
+  addMeetingTool(ext: MeetingToolExtension): () => void {
+    this.extensions.push(ext);
+    return () => { const i = this.extensions.indexOf(ext); if (i >= 0) this.extensions.splice(i, 1); };
+  }
+
+  /** Append model-free agenda text for a meeting (item 22: playbook outcomes in a retro). */
+  addAgendaProvider(fn: AgendaProvider): () => void {
+    this.agendaProviders.push(fn);
+    return () => { const i = this.agendaProviders.indexOf(fn); if (i >= 0) this.agendaProviders.splice(i, 1); };
+  }
+
+  private extensionsFor(kind: string): MeetingToolExtension[] { return this.extensions.filter((e) => !e.kinds || e.kinds.includes(kind as MeetingKind)); }
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
@@ -323,6 +347,10 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     } else if (!agenda) {
       agenda = defaultAgenda(m.kind as MeetingKind, unit);
     }
+    for (const fn of this.agendaProviders) {
+      const extra = await fn(orgId, m, unit).catch(() => null);
+      if (extra) agenda = `${agenda}\n\n${extra}`.slice(0, 12_000);
+    }
     const roundCap = m.kind === 'standup' ? STANDUP_ROUND_CAP : limits.roundCap;
     const rootText = [
       `**${m.title}** — ${KIND_TITLES[m.kind as MeetingKind] ?? 'meeting'}, facilitated by ${nm(facilitatorId)}. Attendees: ${speakers.map(nm).join(', ') || 'nobody'}${attendees.some((a) => a.kind === 'human') ? ' and the people in this channel' : ''}. ${roundCap} round${roundCap === 1 ? '' : 's'}, up to $${usdCap.toFixed(2)}.`,
@@ -479,7 +507,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
   async specsFor(session: ChatSession): Promise<AiToolSpec[]> {
     if (!this.enabled() || !session.agentId) return [];
     const ctx = this.active.get(session.id);
-    if (ctx) return ctx.closing ? [...MEETING_TOOLS, CLOSE_TOOL] : MEETING_TOOLS;
+    if (ctx) { const ext = this.extensionsFor(ctx.meeting.kind).map((e) => e.spec); return ctx.closing ? [...MEETING_TOOLS, ...ext, CLOSE_TOOL] : [...MEETING_TOOLS, ...ext]; }
     // Outside a meeting: the chief and unit leads may reshape the cadences (§1b).
     return (await this.managedOrgs(session.agentId)).length > 0 ? [CADENCE_TOOL] : [];
   }
@@ -497,11 +525,11 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     return out;
   }
 
-  owns(name: string): boolean { return TOOL_NAMES.has(name); }
+  owns(name: string): boolean { return TOOL_NAMES.has(name) || this.extensions.some((e) => e.spec.name === name); }
 
   /** Meeting tools only record proposals; the service executes the minutes
    *  afterwards under the unit rules — so they run like reads. */
-  isReadOnly(name: string): boolean { return TOOL_NAMES.has(name); }
+  isReadOnly(name: string): boolean { return this.owns(name); }
 
   async contextFor(session: ChatSession): Promise<string | null> {
     const ctx = this.active.get(session.id);
@@ -516,6 +544,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       ...ctx.minutes.decisions.map((d) => `decision: ${d.title}`),
       ...ctx.minutes.risks.map((r) => `risk: ${r.text.slice(0, 120)}`),
       ...ctx.minutes.questions.map((q) => `question for the CEO: ${q.question.slice(0, 120)}`),
+      ...(ctx.minutes.lessons ?? []).map((l) => `lesson (${l.audience}): ${l.text.slice(0, 120)}`),
     ];
     return [
       '# Meeting',
@@ -537,6 +566,8 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     if (!channels) throw new Error('the group chat is not available');
     const str = (k: string) => (typeof input[k] === 'string' ? (input[k] as string).trim() : '');
     const post = async (text: string) => { await channels.postAs(ctx.meeting.channelId!, { authorKind: 'agent', authorId: ctx.agentId, text: text.slice(0, 4_000), threadRootId: ctx.threadRootId, wake: false }); ctx.spoke = true; };
+    const ext = this.extensionsFor(ctx.meeting.kind).find((e) => e.spec.name === name);
+    if (ext) return ext.execute({ meeting: ctx.meeting, orgId: ctx.orgId, agentId: ctx.agentId, minutes: ctx.minutes, post }, input);
     switch (name) {
       case 'meeting_speak': {
         const text = str('text');
