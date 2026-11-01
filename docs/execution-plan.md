@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–17 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–18 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -452,8 +452,33 @@ header and goal chips in `ChannelView`, `goalRefs`/`goalMentions` in
 `src/lib/channels.ts`. Tests: `tests/backend-org-units.test.ts` (9),
 `web-tests/channels.test.ts` (+2). Departures are noted at the end of §7.
 
-### 18. Intent: vision, key results, check-ins, cascade *(in progress)*
-`docs/company-vision.md` §2 and §11 phase A.
+### 18. Intent: vision, key results, check-ins, cascade *(done)*
+`docs/company-vision.md` §2 and §11 phase A; the tunables and operating
+profile of §1b.
+
+*Shipped as (1 November 2026):* migration `0031-org-intent` (`org_goals.kind |
+metric | targetValue | currentValue | startValue | unitLabel | dueAt |
+confidence | atRisk | atRiskReason | lastCheckInAt | checkInCadenceDays`,
+`org_checkins`, `organizations.rules | strategyMemo | strategyMemoAt | values
+| culture | tunables`); `server/src/org/org-tunables.ts` (`TUNABLES` with
+defaults and bounds, `registerTunables`, `tunable`, `checkTunable`,
+`describeTunables`); `server/src/org/org-intent.service.ts` (`setVision` with
+one active vision per org, `setKeyResult`, `checkIn`/`checkIns`, `paceOf`,
+`measuredProgress`, `assessRisk`, `sweepRisk`, `whyChain`, `intentTree`,
+`summary`, `setStrategyMemo`, `onIntent`); `OrgService.onGoalChange`,
+`setProfile`, `setTunable`, goal kinds and the charter's cascade paragraph;
+`OrgRuntimeService.runPlanning` / `queuePlanning` / `flushPlanning(s)` on
+intent events with per-unit debounce and cooldown from the tunables, the
+shared `taskFreeTurn`, the risk sweep on the minute tick, planning context
+and the profile line in every org prompt; tools `org_set_key_result`,
+`org_check_in`, `org_why`, `org_intent`, `org_strategy_memo`, `org_tune`;
+the `tune` approval kind; the brief's "Key results" section; `GET|PUT
+…/org/vision`, `GET|PUT …/org/profile`, `GET|PUT …/org/tunables`, `GET
+…/org/intent?unitId=`, `POST …/org/goals/:goalId/checkin`, `GET
+…/goals/:goalId/checkins`, `GET …/org/why?taskId=|goalId=`, `POST …/org/plan`,
+`GET …/org/strategy` on both controllers; `POST/PATCH …/goals` take `kind`
+and the key-result fields. No SPA. Tests: `tests/backend-org-intent.test.ts`
+(11). Departures are noted in `docs/company-vision.md` §14.
 
 ### 19. Rituals: meetings with minutes, standup, review, retro, board *(in progress)*
 `docs/company-vision.md` §3, phase B. Decision log table lands here.

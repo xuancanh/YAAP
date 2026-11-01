@@ -96,7 +96,16 @@ structure when a task blocks or a goal lands and once a day. Every member
 with direct reports leads a **unit** (`docs/group-chat.md` §7): its own
 board, a `#<slug>` channel whose membership follows the org chart, and a
 goal subtree with computed progress, plus unit-scoped `org_set_goal` /
-`org_assign` / `org_unit_report` tools. The Workspace
+`org_assign` / `org_unit_report` tools. Intent flows down as a cascade
+(`docs/company-vision.md` §2): you write a **vision** with a horizon, a
+budget and your rules; the chief's planning session turns it into objectives
+with measurable **key results** (metric, target, owner, due date) and hands
+each objective to a unit whose lead plans its own; owners **check in** value
+and confidence; a model-free sweep flags key results at risk (behind pace,
+no active owner, confidence falling, check-in overdue) and wakes the unit
+lead, the chief, or your brief; any task can show its **why chain**. Every
+threshold is a per-company **tunable** with a bound, and the company's values
+and culture (its operating profile, §1b) reach every planning prompt. The Workspace
 rail shows the company and each unit (channel, board, goals), then the org
 chart, approvals, spend, brief and audit;
 Settings → Workspace → Organization holds the mode, chief, envelope, cap and

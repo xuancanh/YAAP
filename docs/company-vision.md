@@ -332,6 +332,51 @@ writes one `heartbeat` state row (last beat, last reason, next due).
 
 ## 14. Status
 
+*Phase A, Intent (item 18) — shipped 1 November 2026.* §2 and the §1b
+tunables/profile are built, backend only (the vision page is SPA work for a
+later item). Goals carry a
+`kind` (one active *vision* per organization, revised in place; *objectives*;
+*key results* with metric, start/target value, unit label, due date, owner
+and check-in cadence) and the model-free risk state (`atRisk`,
+`atRiskReason`); check-ins are rows of `org_checkins` with the latest
+mirrored on the goal; the CEO's rules, the chief's latest strategy memo and
+the operating profile (§1b: `values`, `culture`) sit on the organization row
+with the `tunables` JSON. `OrgIntentService` owns `setVision`,
+`setKeyResult`, `checkIn`, the pure `paceOf` (linear expectation between
+createdAt/startValue and dueAt/targetValue against the measured value;
+`onPace | behind | unknown`), `assessRisk` (behind pace by more than the
+tolerance, owner missing / paused / terminated, confidence falling N check-ins
+in a row, check-in overdue by M cadences; an objective with K at-risk key
+results; audited transitions), `sweepRisk` (the minute tick: one wake per
+goal per day through the audit log, a board event for an objective at risk),
+`whyChain` (task → key result → objective → vision with a `broken` flag),
+`intentTree` and the brief's "Key results" section with the vision-level
+decision line. The cascade runs in `OrgRuntimeService.runPlanning`: a
+per-unit planning session of the unit's lead (`Org · <org> · Planning ·
+<unit>`), queued by a new or revised vision (root), an objective handed to a
+non-root unit (`org_set_goal unit=…` or `PATCH unitId`), or a risk, debounced
+and cooled per unit by the `planning.*` tunables, bounded by the chart's
+depth, reserving budget like any run, auditing `planning_start | planning_end
+| planning_skipped | planning_refused`, and prompting with the vision, the
+rules, the operating profile, the unit's objectives, chart and envelope, the
+role catalog (chief) and the current tree. Tools: `org_set_key_result`,
+`org_check_in`, `org_why`, `org_intent` (lead/member set), `org_strategy_memo`
+and `org_tune` (chief). Thresholds are tunables with bounds
+(`server/src/org/org-tunables.ts`, `tunable(org, key)`); the chief tunes
+within the fence in autonomous mode or through a `tune` approval card in
+supervised mode, and every change is a decision-shaped audit row.
+Departures from §2: supervised-mode planning creates key results and tasks
+directly rather than as one plan-as-diff approval card (structural parts keep
+their cards; the preview/veto window is phase E); objective progress blends
+measured key results with linked tasks through the §7 formula rather than
+showing measured and judged side by side (the tree carries both `measured`
+and `confidence`, so the SPA can).
+On the rebase over item 20, `org-assurance-tunables.ts` became a wrapper over
+`org-tunables.ts` (its keys register at import; `assuranceTunable` delegates to
+`tunable`, `mergeTunables` validates against the one registry, so `org_tune`,
+`PUT …/org/tunables` and `PATCH …/org/slo` share one store and one set of
+bounds), and `goalsAtRiskPct` reads `org_goals.atRisk` directly.
+
 *Phase C, Assurance (item 20) — shipped 1 November 2026.* §5 is built,
 backend only: migration `0033-org-assurance` (`org_signals` with a unique
 index per (org, kind, refId, day), `org_slo_samples` one row per org per
