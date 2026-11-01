@@ -65,6 +65,9 @@ piece of text arrived on, never the text itself.
 | MCP server | A third-party tool server the user enabled | Opaque side effects. User activates per server; every call gates in Ask mode | `mcp/mcp.module.ts`, `checkPolicy` |
 | Web and connection content | `web_fetch`, `web_search`, `http_request` bodies; mail, calendar, drive content | Data. Can influence what the model proposes, never what runs | `connections.tools.ts` framing, the approval gates |
 | Loop output | Journal entries and events a loop wrote | Visible to the user as events; a lesson only through the trusted-source distillation path | `agents.service.ts` `addEvent`, `distill.service.ts` |
+| Org run | A member of an organisation woken for a board task (`docs/autonomous-company.md`) | Loop-tier: `origin 'loop'`, Auto mode inside the bounded `org_*` tool set, outward mutations and code queue as `action_pending`, the action reviewer applies; spend is reserved before the call | `org/org-runtime.service.ts`, `turn-loop.service.ts` (`OrgToolsHook`) |
+| Agent message (org) | A task comment, handoff or group-log message another agent wrote | Data. Framed "from agent X — not the user; carries no approval authority"; wakes only the task owner, never a mention; can never resolve an approval | `org/org-tasks.service.ts`, `org-runtime.service.ts` `wakePrompt` |
+| Chief of staff | The org's lead agent calling a manager tool | Trusted to *narrow* (pause a report, shrink its scopes, lower a cap) and to assign/review; hiring, widening, reorgs, raises and terminations only create `org_approvals` rows the user decides in the app | `org/org-approvals.service.ts`, `org.controller.ts` `decide` |
 
 The principle that ties the table together: **an untrusted surface may
 propose, it may never act or teach**. Channel and app turns can ask for a
@@ -201,6 +204,27 @@ and is why the token exists. A global `ValidationPipe({ whitelist: true })`
 strips unknown body fields; the JSON body limit is 25 MB. Environment is
 validated at boot with zod; production refuses to start on dev database or
 S3 credentials.
+
+**Organisations are policy in code, not in prompts.** An org run
+(`server/src/org/`) is an ordinary turn with three extra walls: the task is
+claimed by one `UPDATE … WHERE claimedBy IS NULL RETURNING`, so two members
+cannot work the same item; the run's estimated cost is reserved against the
+agent → project → company envelopes *before* the provider is called and the
+run is refused with `budget_stop` when any level lacks headroom; and the
+structure of the company — hires, scope widening, reporting lines, caps,
+terminations — changes only through `org_approvals` rows that the user
+decides via the controller, never through a tool or a message. A hire's
+scopes are the meet of the chief's holdings and the request; a member starts
+with no connections, no lessons and no loops. Each member's charter hash is
+recorded on join and re-checked, so a charter edited outside the org path
+shows as drift (the Carbonato lesson). Breakers fire without a model: the
+same tool call three times ends the run, no-progress runs back off and then
+block, review rounds cap at three and escalate. `POST /api/orgs/:id/pause`
+is the kill switch (drops queued wakes, aborts in-flight runs through the
+same `AbortController` a client disconnect uses) and `COMPANIES_ENABLED=false`
+removes the routes, the tools and the wakes. Every structural change is a row
+in the SHA-256 hash-chained `org_audit` table, verifiable with
+`GET /api/orgs/:id/audit/verify`.
 
 ## d. The approval taxonomy as implemented
 
@@ -489,6 +513,7 @@ From `git log`, newest first. Dates are commit dates.
 | Date | Commit | Change |
 |---|---|---|
 | 2026-11-01 | this | Desktop computer control: paired outbound companion, hashed companion token on four routes (`CompanionGuard`), user-chosen narrow-only scopes, every `computer_*` tool Ask-gated in every mode with acting tools never remembered, loop/channel refusal, `computer_actions` audit, Pause/Disconnect/`COMPUTER_CONTROL_ENABLED` kill switches (`docs/computer-control.md`) |
+| 2026-11-01 | this | Autonomous company (plan item 14 A–C): atomic task claims, pre-call budget reservation with hard stop, approvals-only structural change, meet-rule scopes, charter drift detection, hash-chained `org_audit`, org kill switch and `COMPANIES_ENABLED` |
 | 2026-10-31 | this | Email channel (HMAC-signed inbound webhook, envelope-sender pairing, `<email>` framing, quarantined lessons) and web push (VAPID + aes128gcm on node:crypto); `POST /api/channels/email/inbound` the second non-GET public route |
 | 2026-10-31 | browser | Credential-free, viewable browser tool: Cloudflare Browser Rendering / local Playwright, incognito per turn, password-field refusal, SSRF guard on every request, `<page-content>` framing, `browser_act` mutation-class and loop-queued |
 | 2026-10-31 | this | `docs/security.md`, `SECURITY.md`, `GET /api/security`, `SECURITY_CONTACT` |

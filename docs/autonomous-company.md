@@ -1,5 +1,17 @@
 # Build the company as a task board, not a chat room
 
+Status: **phases A–C shipped** (execution plan item 14, 1 November 2026);
+phase D waits on items 7 and 8. The research below is the design input and
+is kept as written; what each phase became in code is noted at the head of
+§5. The module is `server/src/org/` (not `server/src/orgs/` as proposed),
+the tools are prefixed `org_` (`org_hire_agent`, `org_set_scope`,
+`org_assign`, `org_review`, `org_escalate`, `org_audit_query`, `org_report`,
+`org_propose_reorg`, `org_propose_strategy`, `org_budget_request`,
+`org_pause_agent`, `org_terminate_agent` for the chief; `org_task_update`,
+`org_task_comment`, `org_request_review`, `org_create_task`,
+`org_read_board`, `org_read_goal`, `org_message` for every member), the
+environment switch is `COMPANIES_ENABLED`, and the API is `/api/orgs`.
+
 *Research date: 31 October 2026. External facts come from the five notes in `research_notes/Autonomous AI company orchestration/` (Paperclip, hosted products, frameworks and papers, governance and economics, practice and UX). Competitor context for the single-agent products is in `reports/Personal agent competitor gap analysis.md` and is not repeated here. Our side comes from the README, `docs/execution-plan.md`, `docs/roadmap.md` §2, `docs/permissions.md`, `docs/agent-memory.md`, `docs/security.md`, `server/src/database/schema.ts`, `server/src/chats/turn-loop.service.ts`, `server/src/chats/loops.service.ts` and `git log`. Where a claim in the notes has no primary URL it is omitted or flagged in §7. This report is the design input for execution-plan item 14 and is written to be lifted into `docs/autonomous-company.md`.*
 
 The evidence from eight months of people actually running agent organisations says one shape works and most of the others burn money: **one human, one lead agent, two to five specialists, coordinated through a task board with atomic claiming, inside hard budgets, with hiring, scope changes, spend and external actions gated by the human**. Paperclip — the only shipped "company layer", 109k stars and ~2,700 merged PRs since 2 March 2026 — converged on exactly that after its users lost tokens to wake-chain loops, idle heartbeats and silent failures ([GitHub](https://github.com/paperclipai/paperclip); [Discussion #13999](https://github.com/paperclipai/paperclip/discussions/13999)); the hosted products (Grok Bot, Hermes, OpenClaw, Claude Code agent teams) ship bounded group chat and strict-only scope inheritance but none lets an agent hire, re-scope or budget another agent ([docs.x.ai](https://docs.x.ai/grok-bot/teams-and-enterprises); [code.claude.com](https://code.claude.com/docs/en/agent-teams)); and the compute-matched research says multi-agent structure is a governance and parallelism device, not a capability multiplier, costing **3–15× the tokens** of a single agent and only paying off on independent, parallelisable work ([Anthropic](https://www.anthropic.com/engineering/multi-agent-research-system); [The Decoder on Google/MIT](https://the-decoder.com/more-ai-agents-isnt-always-better-new-google-and-mit-study-finds/)). yaam-chat already has most of the leaf primitives — durable agents with charters, a per-agent kanban, `delegate_task`, cron loops with token budgets and model overrides, an inbox of events, human-gated skills, per-service connection grants, and as of this week an independent action reviewer — but it lacks the company layer: an organisation object, reports-to, a claimable shared board with review and blockers, hierarchical budgets, attenuation-only scope grants, an approvals queue, an audit log and a chief-of-staff role. The design below adds those as one bounded domain (`server/src/orgs/`), reuses execution-plan items 1–13 for money, review, delivery and triggers, and deliberately refuses the five patterns the evidence shows failing: idle heartbeat fleets, chat as the execution bus, agent-initiated reorganisation without approval, same-model supervisors as the only check, and depth or fan-out beyond what a human can audit.
@@ -145,6 +157,35 @@ Item 1 (dollars, quiet hours, workspace stop, two-way Telegram) supplies the pri
 **Policy in code, not in prompts.** Budget caps, fan-out, depth, review rounds, the approval list and the external-action floor are enforced by `OrgsService`, not written into charters. Paperclip's spend gate "depends on agent compliance" and had to be paired with a hard cap ([Require board approval before spend](https://docs.paperclip.ing/how-to/require-board-approval-before-spend)); Vend's margin floor and CEO-approval-for-money rules cut discounts ~80% even as the CEO agent over-approved ([Anthropic](https://www.anthropic.com/research/project-vend-2)). Article 50 disclosure is part of the external floor: anything an org member sends outward carries the "sent by an AI agent on behalf of <user>" line the user cannot remove.
 
 ## 5. A phased build plan and the metrics to watch
+
+**Shipped as (1 November 2026).** *Phase A* — migration `0023-organizations`
+with the eleven tables (`org_task_comments` became `org_messages` with a
+nullable `taskId`, so the task timeline and the group log are one table;
+`org_wakes` is an in-process debounce in `OrgRuntimeService` rather than a
+DB queue), `OrgTasksService.claim` as the single conditional `UPDATE …
+RETURNING`, the four-field brief in `org_tasks.brief`, the different-member /
+different-model-family reviewer with the 3-round cap, the no-progress and
+same-call breakers, USD reservation before the call against agent → project
+→ company `org_budgets`, and the chief's `org_propose_strategy`,
+`org_create_task`, `org_assign`, `org_review`, `org_escalate`,
+`org_audit_query`, `org_report`. *Phase B* — `org_grants` rows mirroring the
+member's scope set with the meet rule in `scopes.ts`, `org_approvals` with
+72 h expiry, `org_hire_agent` from the catalog packs or a template (approval
+always; scopes = meet(chief, requested); no memory, connections or loops
+inherited), `org_set_scope` narrow-alone / widen-approval,
+`org_budget_request` lower-alone / raise-approval, the charter hash on
+`org_members` with drift detection (a versioned `org_member_charters` table
+was not built), the org kill switch (`POST /api/orgs/:id/pause`) and
+`COMPANIES_ENABLED`. *Phase C* — `org_propose_reorg` with approval, the
+attributed group log that wakes nobody (`org_messages`, `org_message`),
+reviewer selection by model family plus an independent second check at
+accept time (`ActionReviewService` on another provider's agent type when one
+exists, else the cheapest sibling flagged as single-model review), anomaly
+lines and numbered decisions in the daily brief with the one-reply parser,
+`org_create_task` available to every member's loop sessions so item-6
+triggers feed the backlog, and the cost-per-accepted-task figure in the
+spend tree. Not yet: `fileScope` enforcement on `fs_write`, the cheap
+`coordinationModel`, `ORG.json` export, OTel spans.
 
 **Phase A — the company of one lead (foundation).** Tables `organizations, org_members, org_goals, org_projects, org_tasks, org_task_comments, org_runs, org_budgets, org_audit`; the wake queue with assignment, handoff, review and manual reasons; atomic claiming; the four-field brief; review with a different member; no-progress and loop breakers; pre-call reservation against nested envelopes using item 1's pricing; the CoS with `propose_strategy, create_task, assign_task, review_task, escalate, audit, report`; the org page with chart, board, spend and a first brief delivered to the inbox and Telegram. Members are agents the user already has, added by the user; no hiring yet. What it makes possible: the user states a goal to one agent, approves a strategy, and watches two to five of their existing agents close tasks on a shared board inside a budget, with one morning message to answer. Tests: claim race under PGlite, budget refusal before any provider call, breaker trips, brief parse of "approve 1, reject 2".
 

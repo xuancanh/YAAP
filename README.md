@@ -75,6 +75,21 @@ Playwright, incognito per turn, SSRF-guarded, password fields refused) streams
 every page it renders as a screenshot into the chat's Browser panel
 (`docs/browser-tool.md`).
 
+An **autonomous company** layer (`docs/autonomous-company.md`, phases A–C):
+organisations with a chief-of-staff agent and up to five specialists under
+it (depth ≤ 3), a shared task board with atomic claiming and four-field
+briefs, event-driven wakes (assignment, comment on an owned task, review
+request, approval decision — never a mention, no heartbeats), USD envelopes
+reserved before every run with an 80% warning and a 100% hard stop,
+circuit breakers (no-progress backoff, same-call loop detection, a
+three-round review cap that escalates to you), a hash-chained audit log, and
+a chief of staff whose `org_hire_agent` / `org_set_scope` (widening) /
+`org_propose_reorg` / `org_budget_request` calls produce approval cards you
+decide in the app — narrowing, assigning and reviewing it does alone. The
+Company section has the org chart, board, goals, approvals queue, spend
+tree, activity feed, group log and a daily brief you answer with
+"do 1, 3, skip 2". `COMPANIES_ENABLED=false` hides it all.
+
 The frontend implements the design comp in `design/`: activity-bar shell,
 workspace-scoped chat list grouped by agent, streaming chat with thinking
 blocks, tool cards + inline Ask/Auto approvals, artifact side panel

@@ -283,11 +283,43 @@ input, shell, folders). Always Ask-gated, never from loop or channel turns,
 with an audit row per action and Pause / Disconnect kill switches in
 Settings → Computer plus a server env switch.
 
-### 14. Autonomous company *(research running)*
-Designed after the second research thread lands. Expected shape:
-organisations with roles and reports-to, a chief-of-staff agent with
-`hire_agent`, `set_scope`, `reorg`, `audit`, hierarchical budgets, a shared
-group session, org-level goals and board, an audit log, and a CEO brief.
+### 14. Autonomous company *(phases A–C done)*
+Designed in `docs/autonomous-company.md`: organisations with roles and
+reports-to, a chief-of-staff agent with `hire_agent`, `set_scope`, `reorg`,
+`audit`, hierarchical budgets, a shared group session, org-level goals and
+board, an audit log, and a CEO brief.
+Shipped as: migration `0023-organizations` (`organizations`, `org_members`,
+`org_goals`, `org_projects`, `org_tasks`, `org_runs`, `org_budgets`,
+`org_grants`, `org_approvals`, `org_audit`, `org_messages`, each with
+`accountId DEFAULT 'single'` for item 7), `server/src/org/` —
+`OrgService` (depth ≤ 3, fan-out ≤ 5, no cycles, meet-rule scopes via
+`scopes.ts`, charter hashes and drift), `OrgTasksService` (the atomic
+`UPDATE … RETURNING` claim, comments that wake only the owner, review with a
+different-model-family reviewer and the 3-round cap → `escalation`
+approval), `OrgRuntimeService` (TriggerBus `org.wake` events debounced into
+one run per task in an `Org · <org> · <task>` session with `origin 'loop'`,
+pre-call USD reservation against agent → project → company envelopes with
+`budget_warn` at 80% and `budget_stop` at 100%, no-progress backoff
+2→4→8→30 min then `blocked`, same-call ×3 stop, the `org_*` tool matrix
+registered through `TurnLoopService.setOrgTools`, the kill switch), 
+`OrgApprovalsService` (hire from a catalog pack or template with
+`meet(chief, requested)` scopes and no inheritance, `scope_widen`, `reorg`,
+`budget_raise`, `strategy`, `terminate`, `external`, 72 h expiry = not
+done; `decide()` only from the controller), `OrgAuditService` (SHA-256
+chained, `verify()`), `OrgBriefService` (deterministic brief at `briefHour`
+in the workspace timezone, numbered decisions, `parseBriefReply` for
+"do 1, 3, skip 2"), `OrgController` (`/api/orgs/*`, 404 when
+`COMPANIES_ENABLED=false`), the Company section (`CompanyView.tsx`,
+`CompanyRail`: org chart, board with task drawer, goals, approvals with the
+full artifact, spend tree over `UsageChart`, activity → runs → session,
+group log, brief + reply), `docs/security.md` §b rows and §c paragraph, and
+`tests/backend-org.test.ts` (18 tests). Phase D (more than one human:
+`ceoUserId` as a member, approvals routed per grant, `ORG.json` import) waits
+on items 7 and 8. Not done from the design: `org_wakes` as a DB-backed queue
+(the debounce is in-process), `fileScope` enforcement on `fs_write`, the
+cheap `coordinationModel` for the chief's routing runs, per-task
+`org_member_charters` versioning (the hash is recorded on `org_members`),
+and `ORG.json` export.
 
 ## Also in scope
 - Correct the doc/code mismatches listed in `docs/competitor-gap-analysis.md`
