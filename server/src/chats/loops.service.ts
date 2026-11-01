@@ -440,6 +440,9 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     const wanted: Record<string, unknown> = {};
     if ((loop.model ?? '') !== session.model) wanted.model = loop.model ?? '';
     if (loop.budgetTokens && loop.budgetTokens !== session.tokenCeiling) wanted.tokenCeiling = loop.budgetTokens;
+    // a loop with a token budget is a spend cap; without one, a context ceiling auto-compaction manages
+    const kind = loop.budgetTokens ? 'spend' : 'context';
+    if ((session as { ceilingKind?: string }).ceilingKind !== kind) wanted.ceilingKind = kind;
     if (Object.keys(wanted).length > 0) await this.repo.updateSession(session.id, wanted);
 
     // The loop chat still busy (a previous run overrunning its period, or a

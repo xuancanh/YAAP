@@ -22,6 +22,8 @@ const SUMMARY_CAP = 8_000;
 const MIN_MESSAGES = 4;
 /** Default share of the model's context window at which auto-compaction fires. */
 export const DEFAULT_COMPACT_PCT = 70;
+/** Auto-compaction fires at this share of a chat's token ceiling at the latest. */
+export const CEILING_SHARE = 0.8;
 const PCT_MIN = 30;
 const PCT_MAX = 95;
 
@@ -59,6 +61,12 @@ export class CompactionService {
     @Optional() private readonly settings?: SettingsService,
   ) {}
 
+  /** Whether auto-compaction is on (Settings → Context & budget). */
+  async enabled(): Promise<boolean> {
+    const settings = this.settings ? await this.settings.all().catch((): Record<string, string> => ({})) : {};
+    return (settings.autoCompact ?? 'on') !== 'off';
+  }
+
   /** Per-round overhead (system prompt + tool specs) last measured for a
    *  session, so the pre-turn check can use it too. */
   private readonly overhead = new Map<string, number>();
@@ -95,7 +103,9 @@ export class CompactionService {
       const maxSeq = all.at(-1)?.seq ?? 0;
       // the token ceiling counts from here: compaction gives the chat a fresh budget
       const now = await this.repo.getSession(sessionId);
-      await this.repo.updateSession(sessionId, { compactSummary: summary, compactCutoff: String(maxSeq), tokensAtCompact: now ? now.tokensIn + now.tokensOut : 0 });
+      // the next call carries the summary instead of the old history; the
+      // measured context restarts from the summary's size (refined by the next call)
+      await this.repo.updateSession(sessionId, { compactSummary: summary, compactCutoff: String(maxSeq), ...(now && now.ceilingKind === 'spend' ? {} : { tokensAtCompact: now ? now.tokensIn + now.tokensOut : 0 }), contextTokens: Math.ceil(summary.length / 4) });
       return { ok: true, summaryLength: summary.length };
     } finally {
       this.locks.release(sessionId);
@@ -125,11 +135,15 @@ export class CompactionService {
       const ctxModel = session.model || (await this.context.build(session).then((c) => c.model).catch(() => ''));
       const policy = compactionThreshold(settings, ctxModel, this.config.get<number>('compactionThresholdTokens'));
       if (!policy.enabled) return false;
-      const threshold = policy.tokens;
+      // Compact before the chat's own ceiling, never at it: the ceiling is a
+      // limit on the context, and auto-compaction is what keeps it under.
+      const threshold = session.tokenCeiling > 0 && session.ceilingKind !== 'spend' ? Math.min(policy.tokens, Math.floor(session.tokenCeiling * CEILING_SHARE)) : policy.tokens;
       const cutoff = session.compactCutoff === null ? null : Number(session.compactCutoff);
       const history = await this.repo.providerHistory(sessionId, Number.isNaN(cutoff as number) ? null : cutoff);
       const chars = history.reduce((n, m) => n + m.content.length, 0) + session.compactSummary.length + over;
-      if (!opts.force && chars / 4 < threshold) return false;
+      // the provider-measured size of the last call wins over the chars/4 estimate when larger
+      const estimate = Math.max(chars / 4, session.contextTokens ?? 0);
+      if (!opts.force && estimate < threshold) return false;
       const r = await this.compact(sessionId);
       return r.ok;
     } catch (err) {

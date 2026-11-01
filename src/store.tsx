@@ -796,8 +796,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // The ceiling counts tokens since the last compaction. With auto-compact
     // on, the server compacts a chat at its ceiling before the turn, so only
     // refuse locally when auto-compact is off.
-    if (s.tokenCeiling > 0 && s.tokensIn + s.tokensOut - (s.tokensAtCompact ?? 0) >= s.tokenCeiling && !streaming && settings.autoCompact === 'off') {
-      showToast('Token ceiling reached for this chat — run /compact for a fresh budget, or raise the ceiling.');
+    if (s.tokenCeiling > 0 && (s.contextTokens ?? 0) >= s.tokenCeiling && !streaming && settings.autoCompact === 'off') {
+      showToast('Context ceiling reached — run /compact, turn auto-compact on, or raise the ceiling.');
       return;
     }
     if (streaming) {

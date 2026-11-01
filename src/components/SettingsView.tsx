@@ -326,8 +326,8 @@ function ContextPane() {
   return (
     <div style={{ ...card, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
-        <div style={{ fontSize: 14, fontWeight: 600 }}>Token ceiling</div>
-        <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>Turns are refused before the API call once reached. 0 = unlimited. Applies to new chats.</div>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>Context ceiling</div>
+        <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>The most context one model call in a chat may carry. Auto-compact keeps chats under it, compacting at 80% of it at the latest; with auto-compact off, a chat at the ceiling is refused until /compact. 0 = unlimited. Applies to new chats.</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 11 }}>
           <input value={ceiling} onChange={(e) => setCeiling(e.target.value.replace(/[^0-9]/g, ''))}
             onBlur={() => void app.saveSettings({ defaultTokenCeiling: ceiling || '0' })}

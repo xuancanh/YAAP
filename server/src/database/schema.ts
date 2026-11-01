@@ -263,6 +263,14 @@ export const chatSessions = pgTable('chat_sessions', {
    *  only what the chat has used since then, so /compact (or auto-compact)
    *  gives the chat a fresh budget (FR-7.1, FR-7.3). */
   tokensAtCompact: integer('tokensAtCompact').notNull().default(0),
+  /** The context the last model call carried (its last round's input +
+   *  output, provider-reported). The token ceiling and the chat meter measure
+   *  this; auto-compaction keeps it below the ceiling. */
+  contextTokens: integer('contextTokens').notNull().default(0),
+  /** 'context' (default): tokenCeiling limits one call's context, kept under
+   *  by auto-compaction. 'spend': a loop's token budget, cumulative since the
+   *  last /clear. */
+  ceilingKind: text('ceilingKind').notNull().default('context'),
   /** When this session was last distilled into the agent brain; the idle
    *  sweep skips sessions whose transcript has not changed since. */
   distilledAt: text('distilledAt'),

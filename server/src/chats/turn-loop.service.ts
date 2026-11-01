@@ -489,18 +489,22 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     // chat that grew in another session, a lowered threshold, a smaller-window
     // model chosen since — so the history is checked once more before the
     // lock, and the turn starts compacted when it is over the threshold.
-    // The token ceiling counts tokens since the last compaction (FR-7.1). A
-    // chat at its ceiling compacts itself first when auto-compact is on, so
-    // the ceiling bounds one stretch of conversation, not the chat's life.
-    const sinceCompact = (s: { tokensIn: number; tokensOut: number; tokensAtCompact?: number }) => s.tokensIn + s.tokensOut - (s.tokensAtCompact ?? 0);
-    const atCeiling = session.tokenCeiling > 0 && sinceCompact(session) >= session.tokenCeiling;
-    const compacted = this.compaction && !this.locks.isBusy?.(sessionId)
+    // The token ceiling limits the context a call carries (FR-7.1), measured
+    // from the provider's own count of the last call. Auto-compaction keeps it
+    // below: it fires at 80% of the ceiling at the latest, and a chat already
+    // at its ceiling is compacted before this turn. The ceiling only refuses
+    // when auto-compaction is off.
+    const autoCompact = this.compaction ? await this.compaction.enabled().catch(() => true) : false;
+    // A loop's token budget ('spend') is a different ceiling: cumulative tokens
+    // since the last /clear, refused when spent (loops report "Budget reached").
+    const spendCap = session.ceilingKind === 'spend' && session.tokenCeiling > 0;
+    const spent = session.tokensIn + session.tokensOut - (session.tokensAtCompact ?? 0);
+    if (spendCap && spent >= session.tokenCeiling) throw new ForbiddenException('token ceiling reached — the loop budget is spent');
+    const atCeiling = !spendCap && session.tokenCeiling > 0 && (session.contextTokens ?? 0) >= session.tokenCeiling;
+    const compacted = this.compaction && autoCompact && !this.locks.isBusy?.(sessionId)
       ? await this.compaction.maybeAutoCompact(sessionId, undefined, { force: atCeiling }).catch(() => false)
       : false;
-    if (atCeiling) {
-      const fresh = compacted ? await this.repo.getSession(sessionId) : session;
-      if (!fresh || sinceCompact(fresh) >= session.tokenCeiling) throw new ForbiddenException('token ceiling reached — run /compact or raise the ceiling');
-    }
+    if (atCeiling && !autoCompact) throw new ForbiddenException('token ceiling reached — run /compact, turn auto-compact on, or raise the ceiling');
     if (!this.locks.tryAcquire(sessionId)) throw new ConflictException('chat is busy');
     this.turnOrigins.set(sessionId, input.origin ?? 'user');
     // Who is acting (docs/shared-agents.md): the member who sent this turn, or
@@ -526,7 +530,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     if (compacted) yield { type: 'compacted' };
     if (spend.over) yield { type: 'budget', ...spend };
 
-    let tokensIn = 0;
+    let tokensIn = 0; let lastContext = 0;
     let tokensOut = 0;
     let overheadChars = 0;
     /** Which key paid for this turn and which model ran, for the account's
@@ -632,7 +636,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             signal: ctl.signal,
           })) {
             if (ev.type === 'answer') answer += ev.text;
-            if (ev.type === 'usage') { tokensIn += ev.inputTokens; tokensOut += ev.outputTokens; }
+            if (ev.type === 'usage') { tokensIn += ev.inputTokens; tokensOut += ev.outputTokens; lastContext = ev.inputTokens + ev.outputTokens; }
             if (ev.type === 'done' && calls.length > 0) continue; // round continues after tools
             if (ev.type === 'tool_call') calls.push({ id: ev.id, name: ev.name, input: ev.input });
             yield ev;
@@ -647,10 +651,15 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
 
         if (answer) await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'assistant', content: answer });
         if (calls.length === 0 || ctl.signal.aborted) break;
-        // The ceiling is re-checked per round, not only at turn start:
-        // cumulative usage across rounds can blow past it mid-turn.
-        if (session.tokenCeiling > 0 && session.tokensIn + tokensIn + session.tokensOut + tokensOut - (compacted ? session.tokensIn + session.tokensOut : (session.tokensAtCompact ?? 0)) >= session.tokenCeiling) {
-          yield { type: 'error', message: 'token ceiling reached' };
+        // Mid-turn, a long tool loop grows the context round by round. With
+        // auto-compact off the ceiling stops it here; with it on, the turn
+        // continues and the post-turn compaction brings the chat back under.
+        if (spendCap && spent + tokensIn + tokensOut >= session.tokenCeiling) {
+          yield { type: 'error', message: 'token ceiling reached — the loop budget is spent' };
+          break;
+        }
+        if (!spendCap && session.tokenCeiling > 0 && !autoCompact && lastContext >= session.tokenCeiling) {
+          yield { type: 'error', message: 'token ceiling reached — run /compact, turn auto-compact on, or raise the ceiling' };
           break;
         }
         history.push({ role: 'assistant', content: answer, toolCalls: calls });
@@ -1010,6 +1019,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
       await this.repo.updateSession(sessionId, {
         tokensIn: session.tokensIn + tokensIn,
         tokensOut: session.tokensOut + tokensOut,
+        ...(lastContext > 0 ? { contextTokens: lastContext } : {}),
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

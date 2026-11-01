@@ -1691,6 +1691,24 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0046-chat-context-tokens',
+    up: async (db) => {
+      // The context the last model call carried (input + output of its last
+      // round, as the provider reported it): the token ceiling and the chat's
+      // meter measure this, not cumulative spend, and auto-compaction keeps it
+      // below the ceiling.
+      if (!(await hasColumn(db, 'chat_sessions', 'contextTokens'))) {
+        await db.query(`ALTER TABLE chat_sessions ADD COLUMN "contextTokens" INTEGER NOT NULL DEFAULT 0`);
+      }
+      // 'context' (the default): the ceiling limits one call's context and
+      // auto-compaction keeps chats under it. 'spend': a loop's token budget —
+      // cumulative tokens since the last /clear, refused when spent.
+      if (!(await hasColumn(db, 'chat_sessions', 'ceilingKind'))) {
+        await db.query(`ALTER TABLE chat_sessions ADD COLUMN "ceilingKind" TEXT NOT NULL DEFAULT 'context'`);
+      }
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

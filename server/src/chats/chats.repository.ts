@@ -111,6 +111,8 @@ export class ChatsRepository {
       tokensIn: 0,
       tokensOut: 0,
       tokensAtCompact: 0,
+      contextTokens: 0,
+      ceilingKind: input.ceilingKind ?? 'context',
       distilledAt: null,
       // A member's new session is private to them until they share it; the
       // owner's sessions record '' and are theirs (members do not see them
@@ -233,6 +235,8 @@ export class ChatsRepository {
         tokensIn: src.tokensIn,
         tokensOut: src.tokensOut,
         tokensAtCompact: src.tokensAtCompact,
+        contextTokens: src.contextTokens,
+        ceilingKind: src.ceilingKind,
         distilledAt: null,
         initiatedBy: currentViewer()?.memberAccountId ?? '',
         shared: 0,

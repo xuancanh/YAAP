@@ -26,6 +26,7 @@ export const chatSessionSchema = z.object({
   draft: z.string(),
   tokenCeiling: z.number(),
   tokensAtCompact: z.number().optional(),
+  contextTokens: z.number().optional(),
   compactSummary: z.string(),
   compactCutoff: z.string().nullable(),
   tokensIn: z.number(),

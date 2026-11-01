@@ -256,6 +256,8 @@ export interface ChatSession {
   tokenCeiling: number;
   /** tokensIn + tokensOut at the last compaction; the ceiling counts from here. */
   tokensAtCompact?: number;
+  /** The context the last model call carried (provider-reported); the ceiling measures this. */
+  contextTokens?: number;
   compactSummary: string;
   compactCutoff: string | null;
   tokensIn: number;

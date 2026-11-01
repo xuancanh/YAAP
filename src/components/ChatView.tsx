@@ -429,11 +429,13 @@ export function ChatView() {
     );
   }
 
-  // the ceiling and the meter count since the last compaction (/compact or auto)
-  const tokens = Math.max(0, s.tokensIn + s.tokensOut - (s.tokensAtCompact ?? 0));
+  // the meter and the ceiling measure the context the last call carried;
+  // auto-compaction keeps it under the ceiling
+  const tokens = Math.max(0, s.contextTokens ?? 0);
   const pct = s.tokenCeiling ? Math.min(100, (tokens / s.tokenCeiling) * 100) : 0;
   const tokenBarColor = pct > 85 ? 'var(--red)' : pct > 60 ? 'var(--amber)' : 'var(--accent)';
-  const capped = s.tokenCeiling > 0 && tokens >= s.tokenCeiling;
+  const autoCompactOn = app.settings.autoCompact !== 'off';
+  const capped = s.tokenCeiling > 0 && tokens >= s.tokenCeiling && !autoCompactOn;
   // Workspace-level monthly stop (phase 2.5): loops are paused server-side;
   // the person can still type, so this warns instead of blocking.
   const spend = workspaceSpend(app.workspaces.find((w) => w.id === s.workspaceId));
@@ -586,7 +588,7 @@ export function ChatView() {
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 9 }}>
           {app.width >= 1000 && (
             <div title="Context usage" style={{ cursor: 'default', textAlign: 'right' }}>
-              <div style={{ fontSize: 10.5, color: 'var(--text-faint)', ...mono }}>{Math.round(tokens / 1000)}k / {s.tokenCeiling ? `${s.tokenCeiling / 1000}k` : '∞'}{chatUsd !== null && tokens > 0 ? ` · ${fmtUsd(chatUsd)}` : ''}</div>
+              <div title="Context the last model call carried, against this chat's ceiling. Auto-compact keeps it under; the cost is the chat's total." style={{ fontSize: 10.5, color: 'var(--text-faint)', ...mono }}>{Math.round(tokens / 1000)}k / {s.tokenCeiling ? `${s.tokenCeiling / 1000}k` : '∞'}{chatUsd !== null && s.tokensIn + s.tokensOut > 0 ? ` · ${fmtUsd(chatUsd)}` : ''}</div>
               <div style={{ width: 88, height: 5, background: 'var(--panel-2)', borderRadius: 3, marginTop: 3, overflow: 'hidden' }}>
                 <div style={{ height: '100%', width: `${pct}%`, background: tokenBarColor, borderRadius: 3, transition: 'width .5s' }} />
               </div>
@@ -759,9 +761,7 @@ export function ChatView() {
           </div>
           {capped && (
             <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--red)', display: 'flex', alignItems: 'center', gap: 7 }}>
-              <I d={P.warn} size={13} />{app.settings.autoCompact === 'off'
-                ? 'Token ceiling reached — run /compact for a fresh budget, or raise the ceiling.'
-                : 'Token ceiling reached — the next message compacts this chat first, then sends.'}
+              <I d={P.warn} size={13} />Context ceiling reached — run /compact, turn auto-compact on (Settings → Context &amp; budget), or raise the ceiling.
             </div>
           )}
         </div>
