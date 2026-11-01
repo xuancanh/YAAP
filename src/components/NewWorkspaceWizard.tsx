@@ -73,7 +73,9 @@ export function NewWorkspaceWizard({ onClose, existing }: WizardProps) {
   const isLast = step === 'review';
   useEffect(() => { setTouched(false); (firstRef.current ?? firstTextRef.current)?.focus(); }, [step]);
   // Only the agents of this workspace may be its chief; a brand-new workspace has none yet.
-  const ownAgents: Agent[] = isExisting ? app.agents : [];
+  // app.agents is the selected workspace's list; filtering by the wizard's
+  // own target keeps the picker right even if the two ever differ.
+  const ownAgents: Agent[] = isExisting ? app.agents.filter((a) => !a.workspaceId || a.workspaceId === existing?.id) : [];
   useEffect(() => {
     if (!isExisting && state.chief.kind === 'existing') setState((s) => ({ ...s, chief: { kind: 'create', name: 'Chief of staff', provider: '', model: '' } }));
   }, [isExisting, state.chief.kind]);

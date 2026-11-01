@@ -248,3 +248,20 @@ test('planNow without a vision reports planning as unavailable with the reason; 
   assert.equal(caps.vetoWindowMinutes, TUNABLES['capital.vetoWindowMinutes'].default);
   assert.equal(caps.maxDepth, 3);
 });
+
+test('the chief and every first hire belong to the bootstrapped workspace; a chief from another workspace is refused (item 26)', async () => {
+  const s = await setup();
+  const target = await s.workspaces.create({ name: 'Venture' });
+  const elsewhere = await s.agents.create({ name: 'Elsewhere', workspaceId: s.ws.id });
+  await assert.rejects(() => s.bootstrap.bootstrap(target.id, { mode: 'supervised', chief: { agentId: elsewhere.id }, monthlyUsd: 0 }), /not an agent of this workspace/);
+  const r = await s.bootstrap.bootstrap(target.id, {
+    mode: 'autonomous', chief: { create: { name: 'Nova' } }, monthlyUsd: 20, agentCap: 4,
+    vision: { title: 'Grow' }, roles: ['role:engineer', 'Researcher'],
+  });
+  assert.equal(r.chief.created, true);
+  assert.equal((await s.agents.get(r.chief.agentId)).workspaceId, target.id, 'the chief lives in the target workspace');
+  const hired = r.hires.filter((h) => h.status === 'hired');
+  assert.ok(hired.length >= 1, 'at least one role hire was seated');
+  for (const h of hired) assert.equal((await s.agents.get(h.agentId!)).workspaceId, target.id, `${h.role} lives in the target workspace`);
+  assert.equal((await s.agents.list({ workspaceId: s.ws.id })).map((a) => a.id).join(), elsewhere.id, 'the default workspace gained nothing');
+});

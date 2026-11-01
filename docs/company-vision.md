@@ -637,3 +637,11 @@ company and, if so, for its chief, vision, horizon, rules, values, culture,
 budget, rhythm and first hires, and `POST …/org/bootstrap` writes them in
 order through the same services the Settings card and the chief use, so a
 company starts from the CEO's words rather than from fixed defaults.
+
+*Workspace-owned agents (item 26) — shipped 1 November 2026.* Each
+workspace owns its own agents and its own organization: enrolment, hires,
+blueprint imports and the onboarding chief all land in the company's
+workspace, an agent of another workspace cannot be seated, and moving an
+agent between workspaces is an explicit action (`POST /api/agents/:id/move`),
+refused while it sits in an organization (docs/shared-agents.md "Workspace
+ownership").

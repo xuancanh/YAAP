@@ -128,13 +128,14 @@ export class OrgBootstrapService {
     const roles = (input.roles ?? []).map((r) => String(r).trim()).filter(Boolean).slice(0, MAX_FIRST_HIRES);
     const notes: string[] = [];
 
-    // 1. The chief of staff.
-    const existing = await this.agents.list();
+    // 1. The chief of staff: one of this workspace's own agents, or a new one
+    // created in it (agents are never shared across workspaces, item 26).
+    const existing = await this.agents.list({ workspaceId });
     let chiefId: string;
     let created = false;
     if ('agentId' in input.chief && input.chief.agentId) {
       const wanted = input.chief.agentId;
-      if (!existing.some((a) => a.id === wanted)) throw new BadRequestException(`chief.agentId ${wanted} is not an agent of this account`);
+      if (!existing.some((a) => a.id === wanted)) throw new BadRequestException(`chief.agentId ${wanted} is not an agent of this workspace`);
       chiefId = wanted;
     } else if ('create' in input.chief && input.chief.create) {
       const name = (input.chief.create.name ?? '').trim().slice(0, 60) || 'Chief of staff';

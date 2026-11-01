@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–25 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–26 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -776,8 +776,8 @@ whole body first — mode, chief shape, `monthlyUsd ≥ 0`, `agentCap` 1–50,
 cadence mode, vision title, horizon, every tunable against `checkTunable` —
 then in order creates the chief when asked (`AgentsService.create` with
 `role: 'Chief of staff'`, the `defaultChiefCharter` of the workspace with the
-mission and the §1b profile baked in, and the workspace id ready for the
-per-workspace agents migration), `OrgModeService.setMode`,
+mission and the §1b profile baked in, and the workspace id — honoured since
+item 26), `OrgModeService.setMode`,
 `OrgIntentService.setVision` (`horizonDays` → `dueAt`, rules), `setProfile`
 and the org's `mission`, `setTunable` per key, `ensureCadenceDefaults` then
 `updateCadence` for `'light'` (standup and retro off on the root unit) or
@@ -856,14 +856,17 @@ and the registry install (`options.workspaceId` → the agent's workspace),
 `WorkspacesService.remove` (re-homes the agents), `OrgBlueprintsService.import`
 (the chief is created in the target workspace; role hires follow through
 `applyHire`), `OrgKnowledgeService` recall and graph (the org workspace's
-agents); SPA `api.agents(workspaceId)`,
+agents), `OrgBootstrapService` (the chief is created in, or must already
+belong to, the bootstrapped workspace) and the wizard's existing-chief
+picker; SPA `api.agents(workspaceId)`,
 `api.moveAgent`, `createAgent {workspaceId}`, `hire(id, workspaceId)`,
 the store's `refreshAgents` per selected workspace (reloads on switch; Rails,
 the channel member picker and the org chart read the same list), the agent
 Settings tab's "Move to workspace…" card; `docs/shared-agents.md` §1
 "Workspace ownership", `docs/group-chat.md` §1, `docs/security.md` §b row.
-Tests: `tests/backend-agents-workspace.test.ts` (10) and one blueprint test
-in `tests/backend-org-blueprints.test.ts`. Departures: the column
+Tests: `tests/backend-agents-workspace.test.ts` (10), one blueprint test
+in `tests/backend-org-blueprints.test.ts` and one bootstrap test in
+`tests/backend-org-bootstrap.test.ts`. Departures: the column
 is `NOT NULL DEFAULT ''` rather than nullable so every reader sees a string;
 `move` also carries the agent's chat sessions and drops its old channel
 seats (an agent and its history move together; channels stay with their
