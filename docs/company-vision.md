@@ -375,7 +375,9 @@ On the rebase over item 20, `org-assurance-tunables.ts` became a wrapper over
 `org-tunables.ts` (its keys register at import; `assuranceTunable` delegates to
 `tunable`, `mergeTunables` validates against the one registry, so `org_tune`,
 `PUT …/org/tunables` and `PATCH …/org/slo` share one store and one set of
-bounds), and `goalsAtRiskPct` reads `org_goals.atRisk` directly.
+bounds), and `goalsAtRiskPct` reads `org_goals.atRisk` directly. The runtime also
+registers the org's heartbeat providers (§13, item 21): open tasks and due
+check-ins as reasons, the operating profile and the vision as context.
 
 *Phase C, Assurance (item 20) — shipped 1 November 2026.* §5 is built,
 backend only: migration `0033-org-assurance` (`org_signals` with a unique

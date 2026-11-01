@@ -45,7 +45,9 @@ import { OrgAuditorService } from './org-auditor.service';
  * cadence timer.
  * Intent (docs/company-vision.md §1b–§2, item 18): OrgIntentService holds the
  * vision, key results, check-ins and the model-free risk assessment; the
- * runtime runs the planning cascade and reads the org's tunables.
+ * runtime runs the planning cascade and reads the org's tunables; it also
+ * registers the org's reasons (open tasks, due check-ins) and the operating
+ * profile on the gated heartbeat (docs/company-vision.md §13, item 21).
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule],

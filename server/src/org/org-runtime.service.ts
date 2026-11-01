@@ -62,6 +62,7 @@ import { deliveryFor } from '../workspaces/quiet-hours';
 import { ChatsRepository, ChatSession } from '../chats/chats.repository';
 import { TurnLoopService, OrgToolsHook } from '../chats/turn-loop.service';
 import { TurnContextService } from '../chats/turn-context.service';
+import { HeartbeatService } from '../chats/heartbeat.service';
 import { TriggerBus, OrgWakeEvent, OrgWakeReason, OrgBoardEvent } from '../chats/trigger-bus';
 import { AiProviderFactory } from '../ai/providers.factory';
 import { AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
@@ -178,10 +179,14 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     @Optional() private readonly slo?: OrgSloService,
     /** Optional: intent (docs/company-vision.md §2) — key results, the cascade, risk. */
     @Optional() private readonly intent?: OrgIntentService,
+    /** Optional: the gated heartbeat (docs/company-vision.md §13) — org reasons and the operating profile for its prompt. */
+    @Optional() heartbeat?: HeartbeatService,
   ) {
     bus?.onOrgWake((ev) => this.wake(ev));
     bus?.onOrgBoard((ev) => this.onBoardEvent(ev));
     intent?.onIntent((ev) => this.onIntentEvent(ev));
+    heartbeat?.addReasonProvider({ name: 'org', reasons: (agentId, ctx) => this.heartbeatReasons(agentId, ctx.now) });
+    heartbeat?.addContextProvider({ name: 'org', context: (agentId) => this.heartbeatContext(agentId) });
     if (this.enabled()) this.turns.setOrgTools(this);
   }
 
@@ -366,6 +371,37 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     }
     const usd = (usdFor(model, tokensIn, tokensOut) ?? (tokensIn * FALLBACK_PRICE.input + tokensOut * FALLBACK_PRICE.output) / 1_000_000);
     return { tokensIn, tokensOut, answer, error, usd };
+  }
+
+  // ---- the gated heartbeat (docs/company-vision.md §13) ----
+
+  /** Why an org member's heartbeat should open: its open tasks and the key
+   *  results it owns whose check-in is due. No model. */
+  async heartbeatReasons(agentId: string, now: Date): Promise<string[]> {
+    const out: string[] = [];
+    for (const m of (await this.org.membershipsOf(agentId)).filter((x) => x.status === 'active')) {
+      const org = await this.org.get(m.orgId).catch(() => null);
+      if (!org || org.status !== 'active') continue;
+      const open = (await this.tasks.list(org.id)).filter((t) => t.assigneeAgentId === agentId && ['todo', 'claimed', 'in_progress', 'blocked'].includes(t.status));
+      for (const t of open.slice(0, 5)) out.push(`task [${t.id.slice(0, 8)}] "${t.title}" is ${t.status.replace('_', ' ')} (org_task_update / org_request_review)`);
+      for (const g of (await this.org.goals(org.id)).filter((g) => g.kind === 'key_result' && g.status === 'active' && g.ownerAgentId === agentId)) {
+        const last = Date.parse(g.lastCheckInAt ?? g.createdAt);
+        if (Number.isFinite(last) && now.getTime() - last >= g.checkInCadenceDays * 86_400_000) out.push(`key result [${g.id.slice(0, 8)}] "${g.title}" is due a check-in (org_check_in; cadence ${g.checkInCadenceDays} day(s))`);
+      }
+    }
+    return out;
+  }
+
+  /** The operating profile and the vision, for the heartbeat prompt. */
+  async heartbeatContext(agentId: string): Promise<string | null> {
+    const lines: string[] = [];
+    for (const m of (await this.org.membershipsOf(agentId)).filter((x) => x.status === 'active')) {
+      const org = await this.org.get(m.orgId).catch(() => null);
+      if (!org) continue;
+      const vision = await this.intent?.vision(org.id).catch(() => null);
+      lines.push(`"${org.name}": ${org.mission ? `mission: ${org.mission.slice(0, 300)}. ` : ''}${vision ? `vision: ${vision.title}${vision.dueAt ? ` (by ${vision.dueAt.slice(0, 10)})` : ''}. ` : ''}${profileLine(org)}`.trim());
+    }
+    return lines.length ? lines.join('\n') : null;
   }
 
   // ---- the intent cascade (docs/company-vision.md §2) ----

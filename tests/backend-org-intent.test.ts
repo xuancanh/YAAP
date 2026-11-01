@@ -199,6 +199,17 @@ test('check-ins update the key result and keep a history; the owner, its manager
   assert.equal(node.kind, 'key_result'); assert.equal(node.measured, 0.4); assert.equal(node.progress, 0.4); assert.equal(node.pace, 'onPace'); assert.equal(node.ownerName, 'Alpha');
   assert.equal(tree[0].progress, 0.4, 'the objective blends its (measured) children');
   assert.match(await s.runtime.execute(alphaSession, 'org_intent', {}), /key result \[[0-9a-f]{8}\] \(active\) Subscribers — 40%, owner Alpha, due \d{4}-\d{2}-\d{2} subscribers: 2600 → 5000; pace onPace, confidence 70%/);
+  // the gated heartbeat (item 21): a due check-in and an open task are reasons; the profile and vision are context
+  assert.deepEqual(await s.runtime.heartbeatReasons(alpha.id, new Date()), [], 'checked in today, no open task');
+  await s.tasks.create(orgId, { title: 'Collect sources', assigneeAgentId: alpha.id });
+  const reasons = await s.runtime.heartbeatReasons(alpha.id, new Date(Date.now() + 8 * DAY));
+  assert.equal(reasons.length, 2);
+  assert.match(reasons[0], /task \[[0-9a-f]{8}\] "Collect sources" is todo/);
+  assert.match(reasons[1], /key result \[[0-9a-f]{8}\] "Subscribers" is due a check-in \(org_check_in; cadence 7 day\(s\)\)/);
+  await s.org.setProfile(orgId, { values: 'Honest numbers.' });
+  await s.intent.setVision(orgId, { title: 'A newsletter people open' });
+  assert.match((await s.runtime.heartbeatContext(alpha.id)) ?? '', /vision: A newsletter people open\. Operating profile — values: Honest numbers\./);
+  assert.equal(await s.runtime.heartbeatContext(s.chief.id) !== null, true);
 });
 
 // ---- 4. pace ----
