@@ -104,6 +104,19 @@ export class OrgBriefService {
     lines.push('', '## Anomalies');
     lines.push(...(anomalies.length ? anomalies.map((a) => `- ${a}`) : ['- none']));
 
+    // 3b. What the autonomous chief did on its own since the last brief
+    //     (docs/group-chat.md §5): every executed structural action, with reason.
+    const ws = await this.workspaces.get(org.workspaceId).catch(() => null);
+    const auto = (await this.audit.list(orgId, { limit: 200 })).filter((r) => r.action.startsWith('auto_') && r.createdAt >= since);
+    if (ws?.orgMode === 'autonomous' || auto.length > 0) {
+      lines.push('', '## Autonomous actions');
+      if (auto.length === 0) lines.push('- none');
+      for (const r of auto.slice().reverse().slice(0, 20)) {
+        const p = (() => { try { return JSON.parse(r.payload) as { summary?: string; reason?: string }; } catch { return {}; } })();
+        lines.push(`- ${r.action.slice('auto_'.length).replace('_', ' ')}: ${p.summary ?? ''}${p.reason ? ` — ${p.reason}` : ''}`);
+      }
+    }
+
     // 4. Pending approvals, numbered
     const pending = await this.approvals.pending(orgId);
     const items: BriefItem[] = pending.map((a, i) => ({ n: i + 1, approvalId: a.id, kind: a.kind, summary: summarize(a.kind, JSON.parse(a.payload || '{}') as Record<string, unknown>) }));
@@ -194,7 +207,7 @@ function lastOf(rawList: string): string {
   try { const v = JSON.parse(rawList || '[]') as unknown[]; return String(v.at(-1) ?? 'no owner note'); } catch { return 'no owner note'; }
 }
 
-function localParts(d: Date, tz?: string): { hour: number; day: string } {
+export function localParts(d: Date, tz?: string): { hour: number; day: string } {
   try {
     const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit' }).formatToParts(d);
     const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';

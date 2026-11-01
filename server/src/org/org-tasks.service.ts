@@ -131,6 +131,8 @@ export class OrgTasksService {
     await this.db.update(orgTasks).set(set).where(eq(orgTasks.id, taskId));
     const { updatedAt: _u, ...logged } = set; void _u;
     if (Object.keys(logged).length > 0) await this.audit.append(orgId, { actor, action: 'task_update', refType: 'task', refId: taskId, payload: logged });
+    // A task that just became blocked is a board event the autonomous chief reviews (docs/group-chat.md §5).
+    if (patch.status === 'blocked' && t.status !== 'blocked') this.bus?.emitOrgBoard({ orgId, kind: 'blocked', refId: taskId, detail: `"${t.title}" is blocked${patch.blockers?.length ? `: ${patch.blockers.at(-1)}` : ''}` });
     return this.get(orgId, taskId);
   }
 
@@ -278,6 +280,7 @@ export class OrgTasksService {
       });
     }
     await this.audit.append(orgId, { actor, action: 'task_escalate', refType: 'task', refId: taskId, payload: { reason: reason.slice(0, 300) } });
+    this.bus?.emitOrgBoard({ orgId, kind: 'escalation', refId: taskId, detail: `"${t.title}" escalated: ${reason.slice(0, 200)}` });
     return this.get(orgId, taskId);
   }
 

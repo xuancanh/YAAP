@@ -52,6 +52,18 @@ export const workspaces = pgTable('workspaces', {
   spendMonth: text('spendMonth').notNull().default(''),
   /** tokensIn + tokensOut of every turn completed this month, all agents. */
   spendTokens: integer('spendTokens').notNull().default(0),
+  /** Organization mode (docs/group-chat.md §5): off | supervised | autonomous.
+   *  The workspace *is* the company; the 1:1 `organizations` row holds the
+   *  roster, board and budgets. `off` pauses the runtime and hides the panes
+   *  but keeps the data. */
+  orgMode: text('orgMode').notNull().default('off'),
+  /** The chief of staff agent when organization mode is on. */
+  chiefOfStaffAgentId: text('chiefOfStaffAgentId'),
+  /** The company envelope in USD per month (mirrors organizations.monthlyBudgetUsd);
+   *  autonomous allocations must sum to at most this. 0 = none set. */
+  orgMonthlyUsd: real('orgMonthlyUsd').notNull().default(0),
+  /** Autonomous mode cap on the number of org members (chief included). */
+  orgAgentCap: integer('orgAgentCap').notNull().default(12),
   createdAt: text('createdAt').notNull(),
 });
 

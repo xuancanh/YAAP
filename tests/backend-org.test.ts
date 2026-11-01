@@ -22,6 +22,7 @@ import { OrgTasksService, REVIEW_ROUND_CAP } from '../server/src/org/org-tasks.s
 import { OrgApprovalsService } from '../server/src/org/org-approvals.service';
 import { OrgBriefService, parseBriefReply } from '../server/src/org/org-brief.service';
 import { OrgRuntimeService } from '../server/src/org/org-runtime.service';
+import { OrgAnnouncer } from '../server/src/org/org-announcer';
 import { OrgController } from '../server/src/org/org.controller';
 import { meetScopes, isNarrowing, widenedScopes } from '../server/src/org/scopes';
 import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
@@ -49,7 +50,7 @@ async function setup(rounds: AiStreamEvent[][], opts: { enabled?: boolean } = {}
   const tasks = new OrgTasksService(db, org, audit, bus);
   const approvals = new OrgApprovalsService(db, org, tasks, agents, audit, undefined, bus);
   const brief = new OrgBriefService(db, org, tasks, approvals, audit, agents, workspaces);
-  const runtime = new OrgRuntimeService(db, org, tasks, approvals, audit, brief, turns, repo, agents, workspaces, config, bus);
+  const runtime = new OrgRuntimeService(db, org, tasks, approvals, audit, brief, turns, repo, agents, workspaces, config, new OrgAnnouncer(), bus);
   runtime.debounceMs = 15;
   const controller = new OrgController(org, tasks, approvals, audit, brief, runtime, config);
   const ws = (await workspaces.list())[0];

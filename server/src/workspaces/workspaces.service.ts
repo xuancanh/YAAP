@@ -32,6 +32,11 @@ export function parsePrivateProfile(raw: string | undefined): Record<string, str
   try { const v = JSON.parse(raw || '{}') as unknown; return v && typeof v === 'object' ? (v as Record<string, string>) : {}; } catch { return {}; }
 }
 
+export type OrgMode = 'off' | 'supervised' | 'autonomous';
+export const ORG_MODES: readonly OrgMode[] = ['off', 'supervised', 'autonomous'];
+export const DEFAULT_ORG_AGENT_CAP = 12;
+const ORG_OFF = { orgMode: 'off' as OrgMode, chiefOfStaffAgentId: null as string | null, orgMonthlyUsd: 0, orgAgentCap: DEFAULT_ORG_AGENT_CAP };
+
 const PROFILE_CAP = 20_000;
 const PENDING_LIMIT = 30;
 
@@ -49,7 +54,7 @@ export class WorkspacesService {
   async list() {
     const all = await this.db.select().from(workspaces);
     if (all.length > 0) return all;
-    const def = { id: newId(), name: 'Default', color: '#F5C451', memory: '', profile: '', profilePending: '[]', profilePrivate: '{}', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, createdAt: nowIso() };
+    const def = { id: newId(), name: 'Default', color: '#F5C451', memory: '', profile: '', profilePending: '[]', profilePrivate: '{}', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, ...ORG_OFF, createdAt: nowIso() };
     await this.db.insert(workspaces).values(def);
     return [def];
   }
@@ -73,10 +78,18 @@ export class WorkspacesService {
       spendBudgetTokens: 0,
       spendMonth: '',
       spendTokens: 0,
+      ...ORG_OFF,
       createdAt: nowIso(),
     };
     await this.db.insert(workspaces).values(row);
     return row;
+  }
+
+  /** Organization-mode fields (docs/group-chat.md §5). Written only by
+   *  OrgModeService, which keeps the 1:1 `organizations` row in step. */
+  async setOrgFields(id: string, patch: Partial<{ orgMode: OrgMode; chiefOfStaffAgentId: string | null; orgMonthlyUsd: number; orgAgentCap: number }>): Promise<void> {
+    await this.get(id);
+    await this.db.update(workspaces).set(patch).where(eq(workspaces.id, id));
   }
 
   async update(id: string, patch: Partial<{ name: string; color: string; memory: string; profile: string; quietHours: string; spendBudgetTokens: number }>) {

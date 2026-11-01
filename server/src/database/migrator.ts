@@ -877,6 +877,35 @@ const MIGRATIONS: Migration[] = [
       await add('org_approvals', 'decidedBy', "TEXT NOT NULL DEFAULT ''");
     },
   },
+  {
+    id: '0028-org-mode',
+    up: async (db) => {
+      // Workspace is the company (docs/group-chat.md §5, execution-plan item
+      // 16): the organization folds into the workspace. Idempotent.
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('workspaces', 'orgMode', "TEXT NOT NULL DEFAULT 'off'");
+      await add('workspaces', 'chiefOfStaffAgentId', 'TEXT');
+      await add('workspaces', 'orgMonthlyUsd', 'REAL NOT NULL DEFAULT 0');
+      await add('workspaces', 'orgAgentCap', 'INTEGER NOT NULL DEFAULT 12');
+      // One organization per workspace: keep the oldest, archive the rest
+      // (their rows and tables stay; archived orgs never run).
+      await db.query(`UPDATE organizations SET "status" = 'archived'
+        WHERE "status" <> 'archived' AND "id" NOT IN (
+          SELECT DISTINCT ON ("workspaceId") "id" FROM organizations WHERE "status" <> 'archived' ORDER BY "workspaceId", "createdAt" ASC, "id" ASC
+        )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_workspace_live ON organizations ("workspaceId") WHERE "status" <> 'archived'`);
+      // Workspaces that already had an organization keep today's behaviour:
+      // supervised mode, the org's chief and envelope.
+      await db.query(`UPDATE workspaces w SET
+          "orgMode" = 'supervised',
+          "chiefOfStaffAgentId" = o."chiefOfStaffAgentId",
+          "orgMonthlyUsd" = o."monthlyBudgetUsd"
+        FROM organizations o
+        WHERE o."workspaceId" = w."id" AND o."status" <> 'archived' AND w."orgMode" = 'off'`);
+    },
+  },
 ];
 
 /** Mirrors accounts/account-context.ts SINGLE_ACCOUNT; spelled out here so

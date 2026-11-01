@@ -20,6 +20,11 @@
  *  runs: GET /:id/runs
  *
  * Every route except /status answers 404 when COMPANIES_ENABLED=false.
+ *
+ * Since execution plan item 16 the primary surface is
+ * `/api/workspaces/:id/org/...` (WorkspaceOrgController), which resolves the
+ * workspace's one organization and delegates here; these routes stay as
+ * aliases and keep working.
  */
 import { Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
@@ -32,7 +37,7 @@ import { OrgAuditService } from './org-audit.service';
 import { OrgBriefService, parseBriefReply } from './org-brief.service';
 import { OrgRuntimeService } from './org-runtime.service';
 
-class ChiefDto {
+export class ChiefDto {
   @IsString() name!: string;
   @IsOptional() @IsString() charter?: string;
   @IsOptional() @IsString() provider?: string;
@@ -42,7 +47,7 @@ class ChiefDto {
   @IsOptional() @IsString() packId?: string;
 }
 
-class CreateOrgDto {
+export class CreateOrgDto {
   @IsString() workspaceId!: string;
   @IsString() name!: string;
   @IsOptional() @IsString() mission?: string;
@@ -54,7 +59,7 @@ class CreateOrgDto {
   @IsOptional() @IsInt() @Min(0) @Max(23) briefHour?: number;
 }
 
-class UpdateOrgDto {
+export class UpdateOrgDto {
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsString() mission?: string;
   @IsOptional() @IsString() ceoUserNote?: string;
@@ -63,35 +68,35 @@ class UpdateOrgDto {
   @IsOptional() @IsNumber() monthlyBudgetUsd?: number;
 }
 
-class AddMemberDto {
+export class AddMemberDto {
   @IsString() agentId!: string;
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsString() reportsToAgentId?: string;
   @IsOptional() @IsArray() scopes?: string[];
 }
 
-class UpdateMemberDto {
+export class UpdateMemberDto {
   @IsOptional() @IsString() title?: string;
   @IsOptional() reportsToAgentId?: string | null;
 }
 
-class ScopesDto { @IsArray() scopes!: string[] }
+export class ScopesDto { @IsArray() scopes!: string[] }
 
-class GoalDto {
+export class GoalDto {
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsString() status?: string;
   @IsOptional() ownerAgentId?: string | null;
 }
 
-class ProjectDto {
+export class ProjectDto {
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsString() status?: string;
   @IsOptional() goalId?: string | null;
   @IsOptional() ownerAgentId?: string | null;
 }
 
-class TaskDto {
+export class TaskDto {
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsObject() brief?: Record<string, string>;
   @IsOptional() @IsIn(TASK_STATUSES as unknown as string[]) status?: TaskStatus;
@@ -103,28 +108,28 @@ class TaskDto {
   @IsOptional() @IsArray() fileScope?: string[];
 }
 
-class AssignDto { @IsString() agentId!: string }
-class TextDto { @IsString() text!: string }
-class ReviewDto {
+export class AssignDto { @IsString() agentId!: string }
+export class TextDto { @IsString() text!: string }
+export class ReviewDto {
   @IsIn(['accept', 'request_changes', 'escalate']) verdict!: 'accept' | 'request_changes' | 'escalate';
   @IsOptional() @IsString() note?: string;
 }
-class DecideDto {
+export class DecideDto {
   @IsIn(['approve', 'reject', 'revise']) decision!: 'approve' | 'reject' | 'revise';
   @IsOptional() @IsString() note?: string;
 }
-class ProposalDto {
+export class ProposalDto {
   @IsIn(APPROVAL_KINDS as unknown as string[]) kind!: ApprovalKind;
   @IsObject() payload!: Record<string, unknown>;
   @IsOptional() @IsString() recommendation?: string;
 }
-class BudgetDto {
+export class BudgetDto {
   @IsIn(['company', 'agent', 'project']) scope!: 'company' | 'agent' | 'project';
   @IsOptional() @IsString() refId?: string;
   @IsNumber() monthlyUsd!: number;
 }
-class WakeDto { @IsOptional() @IsString() agentId?: string; @IsOptional() @IsBoolean() now?: boolean }
-class HumanDto { @IsString() memberAccountId!: string; @IsIn(HUMAN_ROLES as unknown as string[]) role!: HumanRole }
+export class WakeDto { @IsOptional() @IsString() agentId?: string; @IsOptional() @IsBoolean() now?: boolean }
+export class HumanDto { @IsString() memberAccountId!: string; @IsIn(HUMAN_ROLES as unknown as string[]) role!: HumanRole }
 
 @Controller('orgs')
 export class OrgController {
@@ -143,6 +148,8 @@ export class OrgController {
 
   /** The audit actor for a human decision: 'user' for the owner (CEO),
    *  `human:<accountId>` for a member of the shared workspace (phase D). */
+  actorName(): string { return this.actor(); }
+
   private actor(): string {
     const v = currentViewer();
     return v && v.memberAccountId !== currentAccountId() ? `human:${v.memberAccountId}` : 'user';
@@ -283,6 +290,12 @@ export class OrgController {
   // ---- spend ----
   @Get(':id/spend') spend(@Param('id') id: string) { this.guard(); return this.runtime.spendTree(id); }
   @Put(':id/budgets') setBudget(@Param('id') id: string, @Body() dto: BudgetDto) { this.guard(); return this.org.setBudget(id, { scope: dto.scope, refId: dto.refId ?? id, monthlyUsd: dto.monthlyUsd }); }
+
+  /** Autonomous mode: run the chief's structure review now (docs/group-chat.md §5). */
+  async reviewStructureNow(id: string) {
+    this.guard();
+    return this.runtime.runChiefReview(id, ['manual review requested by the CEO'], 'manual');
+  }
 
   // ---- the group log ----
   @Get(':id/messages') messages(@Param('id') id: string) { this.guard(); return this.tasks.messages(id); }

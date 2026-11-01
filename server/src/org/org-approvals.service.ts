@@ -38,6 +38,11 @@ export const APPROVAL_TTL_MS = 72 * 60 * 60_000;
 
 const CATALOG: MarketItem[] = [...AUTHORED_PACKS, ...PROFESSION_PACKS] as MarketItem[];
 
+export interface HireInput {
+  templateOrPack: string; name?: string; title?: string; charter?: string; reportsToAgentId?: string; scopes?: string[];
+  provider?: string; model?: string; monthlyBudgetUsd?: number; recommendation?: string; requestedBy: string;
+}
+
 export interface HirePayload {
   /** Catalog pack id (profession packs are the hire templates) or null for a template hire. */
   packId: string | null;
@@ -130,7 +135,14 @@ export class OrgApprovalsService {
   /** Build a hire proposal: the requested scopes are intersected with the
    *  chief's holdings before the card exists; depth/fan-out are checked now
    *  so the card is never un-approvable. */
-  async proposeHire(orgId: string, input: { templateOrPack: string; name?: string; title?: string; charter?: string; reportsToAgentId?: string; scopes?: string[]; provider?: string; model?: string; monthlyBudgetUsd?: number; recommendation?: string; requestedBy: string }): Promise<OrgApproval> {
+  async proposeHire(orgId: string, input: HireInput): Promise<OrgApproval> {
+    const payload = await this.prepareHire(orgId, input);
+    return this.create(orgId, { kind: 'hire', payload: payload as unknown as Record<string, unknown>, requestedBy: input.requestedBy, recommendation: input.recommendation });
+  }
+
+  /** Validate a hire and build its payload (shared by the supervised card
+   *  and the autonomous path, docs/group-chat.md §5). */
+  async prepareHire(orgId: string, input: HireInput): Promise<HirePayload> {
     const org = await this.org.get(orgId);
     const chief = org.chiefOfStaffAgentId ? await this.org.member(orgId, org.chiefOfStaffAgentId) : null;
     const holdings = this.org.scopesOf(chief);
@@ -155,7 +167,7 @@ export class OrgApprovalsService {
       provider: input.provider, model: input.model, monthlyBudgetUsd: input.monthlyBudgetUsd,
       skills: pack?.skills?.map((s) => s.name),
     };
-    return this.create(orgId, { kind: 'hire', payload: payload as unknown as Record<string, unknown>, requestedBy: input.requestedBy, recommendation: input.recommendation });
+    return payload;
   }
 
   /** The CEO's (or a board member's) decision. Only the controller calls
@@ -203,47 +215,16 @@ export class OrgApprovalsService {
   private async apply(orgId: string, kind: ApprovalKind, payload: Record<string, unknown>, approval: OrgApproval, note: string): Promise<Record<string, unknown>> {
     const by = `approval:${approval.id}`;
     switch (kind) {
-      case 'hire': {
-        const p = payload as unknown as HirePayload;
-        const org = await this.org.get(orgId);
-        // Re-meet at approval time: the chief's holdings may have narrowed since.
-        const chief = org.chiefOfStaffAgentId ? await this.org.member(orgId, org.chiefOfStaffAgentId) : null;
-        const scopes = meetScopes(this.org.scopesOf(chief), parseScopes(p.requestedScopes ?? p.scopes ?? []));
-        const pack = p.packId ? OrgApprovalsService.catalogItem(p.packId) : undefined;
-        const taken = new Set((await this.agents.list()).map((a) => a.name));
-        let name = p.name; for (let n = 2; taken.has(name); n++) name = `${p.name} ${n}`;
-        // No memory or connection inheritance: a fresh agent with the pack's
-        // charter, its skills, and nothing else (§4.6).
-        const agent = await this.agents.create({
-          name, charter: p.charter || pack?.charter || '', role: p.title, provider: p.provider, model: p.model,
-          emoji: pack?.emoji, colors: pack?.colors, loops: [],
-        });
-        for (const s of pack?.skills ?? []) {
-          await this.skills?.create({ name: s.name, description: s.description, instructions: s.instructions, agentId: agent.id }).catch(() => {});
-        }
-        const member = await this.org.addMember(orgId, { agentId: agent.id, title: p.title, reportsToAgentId: p.reportsToAgentId, scopes, actor: 'user', grantedBy: by });
-        if (p.monthlyBudgetUsd && p.monthlyBudgetUsd > 0) await this.org.setBudget(orgId, { scope: 'agent', refId: agent.id, monthlyUsd: p.monthlyBudgetUsd, actor: 'user' });
-        return { agentId: agent.id, name, scopes, depth: member.depth };
-      }
+      case 'hire':
+        return this.applyHire(orgId, payload as unknown as HirePayload, 'user', by);
       case 'scope_widen': {
         const agentId = String(payload.agentId ?? '');
         const scopes = parseScopes(payload.scopes);
         await this.org.applyScopes(orgId, agentId, scopes, 'user', by);
         return { agentId, scopes };
       }
-      case 'reorg': {
-        const changes = Array.isArray(payload.changes) ? (payload.changes as ReorgChange[]) : [];
-        const applied: string[] = [];
-        for (const c of changes) {
-          if (c.op === 'move') await this.org.updateMember(orgId, c.agentId, { reportsToAgentId: c.reportsToAgentId }, 'user');
-          else if (c.op === 'retitle') await this.org.updateMember(orgId, c.agentId, { title: c.title }, 'user');
-          else if (c.op === 'pause') await this.org.setMemberStatus(orgId, c.agentId, 'paused', 'user');
-          else if (c.op === 'resume') await this.org.setMemberStatus(orgId, c.agentId, 'active', 'user');
-          else if (c.op === 'terminate') await this.org.terminateMember(orgId, c.agentId, 'user');
-          applied.push(`${c.op}:${c.agentId}`);
-        }
-        return { applied };
-      }
+      case 'reorg':
+        return this.applyReorg(orgId, Array.isArray(payload.changes) ? (payload.changes as ReorgChange[]) : [], 'user');
       case 'budget_raise': {
         const scope = String(payload.scope ?? 'company') as 'company' | 'agent' | 'project';
         const refId = String(payload.refId ?? orgId);
@@ -289,6 +270,50 @@ export class OrgApprovalsService {
       }
     }
     return {};
+  }
+
+  /** Create the hired agent and seat it. The one place a hire becomes an
+   *  agent: from an approved card (supervised) or directly (autonomous,
+   *  within caps — OrgRuntimeService checks them first). */
+  async applyHire(orgId: string, p: HirePayload, actor: string, grantedBy: string): Promise<{ agentId: string; name: string; scopes: string[]; depth: number }> {
+    const org = await this.org.get(orgId);
+    // Re-meet at apply time: the chief's holdings may have narrowed since.
+    const chief = org.chiefOfStaffAgentId ? await this.org.member(orgId, org.chiefOfStaffAgentId) : null;
+    const scopes = meetScopes(this.org.scopesOf(chief), parseScopes(p.requestedScopes ?? p.scopes ?? []));
+    const pack = p.packId ? OrgApprovalsService.catalogItem(p.packId) : undefined;
+    const taken = new Set((await this.agents.list()).map((a) => a.name));
+    let name = p.name; for (let n = 2; taken.has(name); n++) name = `${p.name} ${n}`;
+    // No memory or connection inheritance: a fresh agent with the pack's
+    // charter, its skills, and nothing else (§4.6).
+    const agent = await this.agents.create({
+      name, charter: p.charter || pack?.charter || '', role: p.title, provider: p.provider, model: p.model,
+      emoji: pack?.emoji, colors: pack?.colors, loops: [],
+    });
+    for (const s of pack?.skills ?? []) {
+      await this.skills?.create({ name: s.name, description: s.description, instructions: s.instructions, agentId: agent.id }).catch(() => {});
+    }
+    const member = await this.org.addMember(orgId, { agentId: agent.id, title: p.title, reportsToAgentId: p.reportsToAgentId, scopes, actor, grantedBy });
+    if (p.monthlyBudgetUsd && p.monthlyBudgetUsd > 0) await this.org.setBudget(orgId, { scope: 'agent', refId: agent.id, monthlyUsd: p.monthlyBudgetUsd, actor });
+    return { agentId: agent.id, name, scopes, depth: member.depth };
+  }
+
+  /** Apply reorg changes in order; stops at the first refusal (depth,
+   *  fan-out, cycle, chief) and reports what was applied before it. */
+  async applyReorg(orgId: string, changes: ReorgChange[], actor: string): Promise<{ applied: string[]; failed?: string }> {
+    const applied: string[] = [];
+    for (const c of changes) {
+      try {
+        if (c.op === 'move') await this.org.updateMember(orgId, c.agentId, { reportsToAgentId: c.reportsToAgentId }, actor);
+        else if (c.op === 'retitle') await this.org.updateMember(orgId, c.agentId, { title: c.title }, actor);
+        else if (c.op === 'pause') await this.org.setMemberStatus(orgId, c.agentId, 'paused', actor);
+        else if (c.op === 'resume') await this.org.setMemberStatus(orgId, c.agentId, 'active', actor);
+        else if (c.op === 'terminate') await this.org.terminateMember(orgId, c.agentId, actor);
+      } catch (err) {
+        return { applied, failed: `${c.op}:${c.agentId} — ${err instanceof Error ? err.message : String(err)}` };
+      }
+      applied.push(`${c.op}:${c.agentId}`);
+    }
+    return { applied };
   }
 
   async expireStale(orgId: string, now: Date = new Date()): Promise<number> {

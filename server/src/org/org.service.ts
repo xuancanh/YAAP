@@ -9,12 +9,13 @@
  * Agents stay global: an org member is a pointer to an agent plus the role
  * it plays *here*. Deleting the org leaves the agents.
  */
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants, orgHumans } from '../database/schema';
+import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants, orgHumans, workspaces } from '../database/schema';
+import { TriggerBus } from '../chats/trigger-bus';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
@@ -58,6 +59,7 @@ export class OrgService {
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
     private readonly agents: AgentsService,
     private readonly audit: OrgAuditService,
+    @Optional() private readonly bus?: TriggerBus,
   ) {}
 
   // ---- humans (phase D) ----
@@ -114,6 +116,14 @@ export class OrgService {
     return row;
   }
 
+  /** The workspace's one live organization (docs/group-chat.md §5: the
+   *  workspace is the company; `organizations.workspaceId` is unique among
+   *  non-archived rows), or null when organization mode was never enabled. */
+  async byWorkspace(workspaceId: string): Promise<Organization | null> {
+    const rows = await this.db.select().from(organizations).where(eq(organizations.workspaceId, workspaceId));
+    return rows.filter((o) => o.status !== 'archived').sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))[0] ?? null;
+  }
+
   /** Create an org. The chief of staff is either an existing agent or a new
    *  one created from `chief` (name, charter, provider/model); it joins at
    *  depth 1 with `scopes` (default DEFAULT_CHIEF_SCOPES) and its charter
@@ -138,6 +148,8 @@ export class OrgService {
     }
     if (!chiefId) throw new BadRequestException('an organization needs a chief of staff: pass chiefOfStaffAgentId or chief');
     await this.agents.get(chiefId);
+    const existing = await this.byWorkspace(input.workspaceId);
+    if (existing) throw new ConflictException(`workspace already has an organization (${existing.name}); the workspace is the company — change its mode instead`);
     const row: Organization = {
       id: newId(), accountId: currentAccountId(), workspaceId: input.workspaceId, name,
       mission: (input.mission ?? '').slice(0, 4_000), ceoUserNote: (input.ceoUserNote ?? '').slice(0, 4_000),
@@ -151,7 +163,55 @@ export class OrgService {
     await this.audit.append(row.id, { actor: 'user', action: 'org_create', refType: 'org', refId: row.id, payload: { name, chiefOfStaffAgentId: chiefId } });
     await this.addMember(row.id, { agentId: chiefId, title: 'Chief of staff', reportsToAgentId: null, scopes: input.chiefScopes ?? DEFAULT_CHIEF_SCOPES, actor: 'user' });
     if (row.monthlyBudgetUsd > 0) await this.setBudget(row.id, { scope: 'company', refId: row.id, monthlyUsd: row.monthlyBudgetUsd, actor: 'user' });
+    // The workspace mirrors its organization: a legacy POST /api/orgs lands
+    // the workspace in supervised mode (today's behaviour) unless a mode is set.
+    const ws = (await this.db.select().from(workspaces).where(eq(workspaces.id, input.workspaceId)).limit(1)).at(0);
+    if (ws) {
+      await this.db.update(workspaces).set({ orgMode: ws.orgMode === 'off' ? 'supervised' : ws.orgMode, chiefOfStaffAgentId: chiefId, orgMonthlyUsd: row.monthlyBudgetUsd }).where(eq(workspaces.id, ws.id));
+    }
     return row;
+  }
+
+  /** Make `agentId` the chief of staff. The new chief and the old one swap
+   *  places in the tree (the shape, and so depth and fan-out, is preserved);
+   *  an agent that is not yet a member joins under the old chief first. */
+  async replaceChief(orgId: string, agentId: string, actor = 'user'): Promise<Organization> {
+    const org = await this.get(orgId);
+    if (org.chiefOfStaffAgentId === agentId) return org;
+    const oldId = org.chiefOfStaffAgentId;
+    await this.agents.get(agentId);
+    let next = await this.member(orgId, agentId);
+    if (next && next.status === 'terminated') throw new BadRequestException('a terminated member cannot become chief of staff');
+    if (!next) next = await this.addMember(orgId, { agentId, title: 'Chief of staff', reportsToAgentId: oldId, scopes: DEFAULT_CHIEF_SCOPES, actor });
+    const all = await this.members(orgId);
+    const old = oldId ? all.find((m) => m.agentId === oldId) : undefined;
+    const parentOfNext = next.reportsToAgentId;
+    for (const m of all) {
+      if (m.agentId === agentId) continue;
+      if (m.agentId === oldId) continue;
+      if (m.reportsToAgentId === oldId) await this.db.update(orgMembers).set({ reportsToAgentId: agentId }).where(eq(orgMembers.id, m.id));
+      else if (m.reportsToAgentId === agentId) await this.db.update(orgMembers).set({ reportsToAgentId: oldId }).where(eq(orgMembers.id, m.id));
+    }
+    await this.db.update(orgMembers).set({ reportsToAgentId: null, depth: 1, title: 'Chief of staff' }).where(eq(orgMembers.id, next.id));
+    if (old) await this.db.update(orgMembers).set({ reportsToAgentId: parentOfNext === oldId ? agentId : parentOfNext, title: old.title === 'Chief of staff' ? '' : old.title }).where(eq(orgMembers.id, old.id));
+    await this.db.update(organizations).set({ chiefOfStaffAgentId: agentId }).where(eq(organizations.id, orgId));
+    await this.db.update(workspaces).set({ chiefOfStaffAgentId: agentId }).where(eq(workspaces.id, org.workspaceId));
+    await this.recomputeDepths(orgId);
+    await this.audit.append(orgId, { actor, action: 'chief_replace', refType: 'agent', refId: agentId, payload: { previous: oldId } });
+    return this.get(orgId);
+  }
+
+  /** Members that count toward the agent cap: everyone not terminated. */
+  async liveMemberCount(orgId: string): Promise<number> {
+    return (await this.members(orgId)).filter((m) => m.status !== 'terminated').length;
+  }
+
+  /** Sum of the agent and project envelopes (the allocations the chief
+   *  hands out of the company envelope). */
+  async allocatedUsd(orgId: string, except?: { scope: string; refId: string }): Promise<number> {
+    return (await this.budgets(orgId))
+      .filter((b) => b.scope !== 'company' && !(except && b.scope === except.scope && b.refId === except.refId))
+      .reduce((sum, b) => sum + b.monthlyUsd, 0);
   }
 
   async update(id: string, patch: Partial<Pick<Organization, 'name' | 'mission' | 'ceoUserNote' | 'briefHour' | 'maxDirectReports' | 'monthlyBudgetUsd'>>): Promise<Organization> {
@@ -183,13 +243,14 @@ export class OrgService {
   }
 
   async remove(id: string): Promise<{ ok: true }> {
-    await this.get(id);
+    const org = await this.get(id);
     await this.db.delete(orgMembers).where(eq(orgMembers.orgId, id));
     await this.db.delete(orgGoals).where(eq(orgGoals.orgId, id));
     await this.db.delete(orgProjects).where(eq(orgProjects.orgId, id));
     await this.db.delete(orgBudgets).where(eq(orgBudgets.orgId, id));
     await this.db.delete(orgGrants).where(eq(orgGrants.orgId, id));
     await this.db.delete(organizations).where(eq(organizations.id, id));
+    if (org.status !== 'archived') await this.db.update(workspaces).set({ orgMode: 'off', chiefOfStaffAgentId: null }).where(eq(workspaces.id, org.workspaceId));
     return { ok: true };
   }
 
@@ -423,6 +484,7 @@ export class OrgService {
     const row: OrgGoal = { id: newId(), accountId: currentAccountId(), orgId, title, description: (input.description ?? '').slice(0, 4_000), status: input.status ?? 'active', ownerAgentId: input.ownerAgentId ?? null, createdAt: nowIso() };
     await this.db.insert(orgGoals).values(row);
     await this.audit.append(orgId, { actor, action: 'goal_create', refType: 'goal', refId: row.id, payload: { title } });
+    if (actor === 'user' || actor.startsWith('human:')) this.bus?.emitOrgBoard({ orgId, kind: 'goal', refId: row.id, detail: `new goal "${title}"` });
     return row;
   }
 

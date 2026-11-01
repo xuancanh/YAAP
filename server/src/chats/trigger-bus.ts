@@ -27,6 +27,18 @@ export interface OrgWakeEvent {
   reason: OrgWakeReason;
 }
 
+/** A board-level event the autonomous chief of staff reviews
+ *  (docs/group-chat.md §5): a task blocked, an escalation, a budget warning
+ *  or a new goal. OrgRuntimeService coalesces them into one review run. */
+export type OrgBoardEventKind = 'blocked' | 'escalation' | 'budget_warn' | 'goal';
+
+export interface OrgBoardEvent {
+  orgId: string;
+  kind: OrgBoardEventKind;
+  refId: string;
+  detail: string;
+}
+
 @Injectable()
 export class TriggerBus {
   private readonly emitter = new EventEmitter();
@@ -49,5 +61,15 @@ export class TriggerBus {
     const wrapped = (event: OrgWakeEvent) => { try { listener(event); } catch { /* see header */ } };
     this.emitter.on('org.wake', wrapped);
     return () => { this.emitter.off('org.wake', wrapped); };
+  }
+
+  emitOrgBoard(event: OrgBoardEvent): void {
+    try { this.emitter.emit('org.board', event); } catch { /* see header */ }
+  }
+
+  onOrgBoard(listener: (event: OrgBoardEvent) => void): () => void {
+    const wrapped = (event: OrgBoardEvent) => { try { listener(event); } catch { /* see header */ } };
+    this.emitter.on('org.board', wrapped);
+    return () => { this.emitter.off('org.board', wrapped); };
   }
 }
