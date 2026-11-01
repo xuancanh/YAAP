@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–21 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–21 and 23 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -587,8 +587,55 @@ interfaces only.
 ### 22. Memory: playbooks, postmortems, ask-the-company *(planned)*
 `docs/company-vision.md` §6, phase D.
 
-### 23. Capital and the CEO seat: cost per outcome, forecasts, routing, preview with veto window, replay *(planned)*
+### 23. Capital and the CEO seat: cost per outcome, forecasts, routing, preview with veto window, replay *(done)*
 `docs/company-vision.md` §7–§8, phase E.
+
+*Shipped as (1 November 2026):* migration `0035-org-capital`
+(`org_tasks.class TEXT DEFAULT 'general'`, `organizations.routing TEXT
+DEFAULT '{}'`, `org_allocations` + unique (orgId, goalId), `org_plans`);
+`server/src/org/org-tasks.service.ts` (`TASK_CLASSES`, the one shared
+`deriveTaskClass` heuristic — item 20's `classOf` now reads the stored
+column — `normalizeTaskClass`, `class` on create/update and in `TaskDto` /
+`org_create_task`); `org-routing.ts` (pure: `parseRouting`, `mergeRouting`,
+`resolveRoute`, `tierModel` — cheap via `cheapestModelFor`, standard the
+session's model, strong a per-provider table, pinned tier models win);
+`org.service.ts` (`routing`, `setRouting` with a decision-shaped
+`routing_set` row, `allocations`, `setAllocation` upsert per objective with
+`allocation_set`); `org-capital.service.ts` (`costByGoal` and
+`describeCosts`/`objectiveLine`, `affectedObjectives`, `forecast` and
+`describeForecast`, `sweepForecast` → `burn_forecast` signal, plans:
+`createPlan` with the window and the CEO's `org_plan` event, `veto`,
+`applyNow`, `applyDue`, `apply` through the runtime-bound `applier` with
+`plan_created | plan_action_applied | plan_action_refused | plan_applied |
+plan_vetoed | plan_expired | plan_dry_run` rows, `replay` with the segment
+chain check); `org-runtime.service.ts` (`RunCtx.plan | applying`, capture
+of hire / reorg / terminate / scope widen / budget raise / routing / tune in
+autonomous planning runs and chief reviews, `dryRunPlanning` and the
+hypothetical in `planningPrompt`, the allocations section and the
+allocate-per-objective ask, routing in `runTask` (session model, `run_start`
+payload `class | model | routed | pinned`), `applyPlanAction`, `sweepForecast`
+and `applyDue` on the tick, tools `org_costs`, `org_forecast`,
+`org_set_routing`, `org_allocate_budget {objectiveId, buys}`, spend by class
+in `spendTree` and `org_pulse`); `org-slo.service.ts` (`spendByClassUsd`);
+`org-approvals.service.ts` (kind `routing`; `budget_raise` applies the
+allocation and its summary names what it buys and the affected objectives);
+`org-signals.service.ts` (kind `burn_forecast`, left to its owner by the
+sweep); `org-brief.service.ts` (Spend projection line, "Cost per outcome"
+with its decision line, "Plans awaiting your veto"); tunables
+`capital.overspendMargin` (0.2, 0–1), `capital.vetoWindowMinutes` (30,
+0–1440), `capital.forecastWindowDays` (7, 1–30) in `org-tunables.ts`; routes
+`GET …/org/costs?period=month|all&unitId=`, `GET …/org/forecast`, `GET|PUT
+…/org/routing`, `GET|PUT …/org/allocations`, `GET …/org/plans?status=`, `GET
+…/org/plans/:id`, `POST …/org/plans/:id/veto | /apply-now`, `POST
+…/org/plan/dry-run`, `GET …/org/replay?day=` on both controllers;
+`docs/company-vision.md` §14 Phase E, `docs/security.md` §b plan row and §k
+line. Tests: `tests/backend-org-capital.test.ts` (12). Departures: the class
+is stored on the task and derived once at creation (the brief's `class:`
+still wins); `strong` is a per-provider table, not a priced lookup; the plan
+is a row of actions the SPA will draw as a diff; the CEO pins a model on the
+agent (`agents.model`), not in the routing table; item 20's `burn_rate`
+signal (month-to-date average) stays alongside the trailing-window
+`burn_forecast`; the SPA is not touched.
 
 ### 24. Blueprints: company export/import, registry, role catalog, hybrid human roles *(planned)*
 `docs/company-vision.md` §9, phase F.

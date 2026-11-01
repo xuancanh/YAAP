@@ -459,3 +459,64 @@ organization has one; a facilitator's gated heartbeat (item 21) lists the
 rituals it runs today as a reason. Not built: pinned minutes (a `minutes` attachment
 marks them), planning sessions as the §2 cascade (item 18), postmortem
 retros (item 22).
+
+*Phase E, Capital and the CEO's seat (item 23) — shipped 1 November 2026.*
+§7 and the §8 preview/replay are built, backend only (the vision page, the
+pulse screen and the plan diff are SPA work): migration `0035-org-capital`
+(`org_tasks.class`, `organizations.routing`, `org_allocations`, `org_plans`).
+**Cost per outcome:** every task carries a `class` (`triage | research |
+synthesis | review | ops | general`, set by its creator or derived by the one
+shared heuristic `deriveTaskClass`, which item 20's `classOf` now reads);
+`OrgCapitalService.costByGoal` rolls run spend up task → key result →
+objective → vision for a period, model-free, sets each objective's share of
+its envelope (its allocation, else the company envelope) against its measured
+progress (the mean of its key results, else the tree's blended progress) and
+flags it when the spend share exceeds the progress share by more than
+`capital.overspendMargin` (default 0.2, bound 0–1); the brief's "Cost per
+outcome" section is one line per objective, `org_costs` and `GET …/org/costs`
+read the same report, and the pulse, the spend tree and `org_pulse` show USD
+by class. **Allocation by expected value:** `org_allocations` says what an
+envelope buys — `org_allocate_budget` takes `objectiveId` and `buys`, writes
+the row with the agent/project envelope it rides on (on approval, in
+supervised mode), the planning prompt lists allocations per objective with
+their cost so far and asks the chief to allocate per objective and say what
+each buys in the memo, and a budget card's summary names the objectives the
+envelope affects. **Model routing:** `organizations.routing` maps classes to
+tiers (`cheap | standard | strong`, `org-routing.ts`: cheap through
+`cheapestModelFor`, standard the session's own model, strong a per-provider
+table, each overridable by a pinned tier model); `runTask` sets the per-task
+session's model from the task's class unless the CEO pinned a model on the
+agent, and the `run_start` row records class, model, tier and pin.
+`org_set_routing {class, tier, why}` applies at once in autonomous mode
+(decision-shaped `routing_set` + `auto_routing`, inbox, `#company`) and is a
+`routing` approval card in supervised mode; `GET|PUT …/org/routing` is the
+CEO's. **Forecasts:** `forecast` projects month-end spend per envelope —
+company, each agent, each project, each objective's allocation — from the
+burn over the trailing `capital.forecastWindowDays` (default 7, 1–30) with
+`onTrack | warn | stop` against the assurance burn thresholds; the tick's
+`sweepForecast` opens a `burn_forecast` signal from the projection (warn →
+chief, critical → CEO) and resolves it when the projection falls back; the
+brief's Spend section carries the projection line; `org_forecast` and
+`GET …/org/forecast` read it. **Preview with a veto window:** in autonomous
+mode the structural actions of a planning run or a chief review (hire, reorg,
+terminate, scope widening, budget raise, routing, tuning) are not executed:
+`RunCtx.plan` collects them, validated and cap-checked as if they ran, into an
+`org_plans` row with `applyAt = now + capital.vetoWindowMinutes` (default 30,
+bound 0–1440; 0 applies at once), one inbox event pushed to the CEO ("Plan
+ready: N actions, est. $X, applies at HH:MM unless you veto"), and the tick
+applies the actions in order through the very `execute` path the tools use
+(`applyPlanAction`, caps re-checked, stop at the first refusal, every step
+audited); `POST …/org/plans/:id/veto | /apply-now` are the CEO's; key
+results, tasks, check-ins, assignments and the memo still apply immediately;
+supervised mode is unchanged. `POST …/org/plan/dry-run {prompt?, assume:
+{monthlyUsd?}}` runs a chief planning turn in which every mutating call is
+recorded and nothing is applied, with the hypothetical envelope injected as
+such, and returns a `dry_run` plan — "what would you do with twice the
+budget". **Replay:** `GET …/org/replay?day=` composes, from the audit chain,
+runs, signals, approvals and plans, an ordered timeline of what woke, what was
+decided and what it cost, with the chain verification of that day's segment
+against the row before it. Departures from §7–§8: a run's class is the
+task's, not re-judged per call; `strong` resolves through a small per-provider
+table rather than a priced lookup; the preview is one row per run, not a diff
+view (the SPA will draw it); the CEO pins models through the agent's
+`model`, not through the routing table.

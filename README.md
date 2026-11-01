@@ -105,7 +105,14 @@ and confidence; a model-free sweep flags key results at risk (behind pace,
 no active owner, confidence falling, check-in overdue) and wakes the unit
 lead, the chief, or your brief; any task can show its **why chain**. Every
 threshold is a per-company **tunable** with a bound, and the company's values
-and culture (its operating profile, §1b) reach every planning prompt. The Workspace
+and culture (its operating profile, §1b) reach every planning prompt. Money is
+the control surface (§7–§8): every task has a class, spend rolls up to key
+results and objectives (**cost per outcome**, flagged when it runs ahead of
+progress), allocations say what each envelope buys, task classes route to
+model tiers, a trailing-burn **forecast** warns before the balance does, the
+autonomous chief's structural plans wait a **veto window** before they apply
+(or run as a dry run that applies nothing), and any day can be **replayed**
+from the audit chain. The Workspace
 rail shows the company and each unit (channel, board, goals), then the org
 chart, approvals, spend, brief and audit;
 Settings → Workspace → Organization holds the mode, chief, envelope, cap and
