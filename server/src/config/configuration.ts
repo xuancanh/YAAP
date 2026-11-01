@@ -27,6 +27,10 @@ export default () => ({
   maxToolRounds: parseInt(process.env.MAX_TOOL_ROUNDS || '24', 10),
   /** Scheduled agent loops master switch (FR-11.6). */
   loopsEnabled: (process.env.LOOPS_ENABLED || 'true') === 'true',
+  /** Autonomous companies master switch (docs/autonomous-company.md §4.6):
+   *  false hides every /api/orgs route, the org tools and the Company UI, and
+   *  stops every org wake — the environment-level kill switch. */
+  companiesEnabled: (process.env.COMPANIES_ENABLED || 'true') === 'true',
   /** Telegram bot token (phase 4). Empty = channel disabled. */
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   /** Email channel (phase 4.1, channels/email.service.ts). Agents receive at

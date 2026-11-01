@@ -564,6 +564,174 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_registry_ratings_install_turn ON registry_ratings ("installId", "turnId") WHERE "turnId" <> ''`);
     },
   },
+  {
+    id: '0026-organizations',
+    up: async (db) => {
+      // Autonomous company (docs/autonomous-company.md, execution plan item 14).
+      // Every table carries accountId with the single-tenant default so item 7
+      // (tenancy) can backfill without a second migration.
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS organizations (
+          "id" TEXT PRIMARY KEY,
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "workspaceId" TEXT NOT NULL,
+          "name" TEXT NOT NULL,
+          "mission" TEXT NOT NULL DEFAULT '',
+          "ceoUserNote" TEXT NOT NULL DEFAULT '',
+          "chiefOfStaffAgentId" TEXT,
+          "status" TEXT NOT NULL DEFAULT 'active',
+          "monthlyBudgetUsd" REAL NOT NULL DEFAULT 0,
+          "maxDepth" INTEGER NOT NULL DEFAULT 3,
+          "maxDirectReports" INTEGER NOT NULL DEFAULT 5,
+          "briefHour" INTEGER NOT NULL DEFAULT 8,
+          "lastBriefAt" TEXT,
+          "lastBrief" TEXT NOT NULL DEFAULT '',
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS org_members (
+          "id" TEXT PRIMARY KEY,
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "orgId" TEXT NOT NULL,
+          "agentId" TEXT NOT NULL,
+          "title" TEXT NOT NULL DEFAULT '',
+          "reportsToAgentId" TEXT,
+          "depth" INTEGER NOT NULL DEFAULT 1,
+          "sponsor" TEXT NOT NULL DEFAULT 'user',
+          "scopes" TEXT NOT NULL DEFAULT '[]',
+          "status" TEXT NOT NULL DEFAULT 'active',
+          "charterHash" TEXT NOT NULL DEFAULT '',
+          "joinedAt" TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_org_members_org_agent ON org_members ("orgId", "agentId");
+        CREATE TABLE IF NOT EXISTS org_goals (
+          "id" TEXT PRIMARY KEY,
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "orgId" TEXT NOT NULL,
+          "title" TEXT NOT NULL,
+          "description" TEXT NOT NULL DEFAULT '',
+          "status" TEXT NOT NULL DEFAULT 'active',
+          "ownerAgentId" TEXT,
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS org_projects (
+          "id" TEXT PRIMARY KEY,
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "orgId" TEXT NOT NULL,
+          "goalId" TEXT,
+          "title" TEXT NOT NULL,
+          "status" TEXT NOT NULL DEFAULT 'active',
+          "ownerAgentId" TEXT,
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS org_tasks (
+          "id" TEXT PRIMARY KEY,
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "orgId" TEXT NOT NULL,
+          "projectId" TEXT,
+          "parentTaskId" TEXT,
+          "title" TEXT NOT NULL,
+          "brief" TEXT NOT NULL DEFAULT '{}',
+          "status" TEXT NOT NULL DEFAULT 'backlog',
+          "assigneeAgentId" TEXT,
+          "claimedBy" TEXT,
+          "claimedAt" TEXT,
+          "reviewerAgentId" TEXT,
+          "reviewRounds" INTEGER NOT NULL DEFAULT 0,
+          "blockers" TEXT NOT NULL DEFAULT '[]',
+          "fileScope" TEXT NOT NULL DEFAULT '[]',
+          "noProgressCount" INTEGER NOT NULL DEFAULT 0,
+          "lastRunAt" TEXT,
+          "createdBy" TEXT NOT NULL DEFAULT 'user',
+          "createdAt" TEXT NOT NULL,
+          "updatedAt" TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_tasks_org ON org_tasks ("orgId", "status");
+        CREATE TABLE IF NOT EXISTS org_runs (
+          "id" TEXT PRIMARY KEY,
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "orgId" TEXT NOT NULL,
+          "taskId" TEXT NOT NULL,
+          "agentId" TEXT NOT NULL,
+          "sessionId" TEXT,
+          "wakeReason" TEXT NOT NULL DEFAULT 'manual',
+          "status" TEXT NOT NULL DEFAULT 'running',
+          "outcome" TEXT NOT NULL DEFAULT '',
+          "tokensIn" INTEGER NOT NULL DEFAULT 0,
+          "tokensOut" INTEGER NOT NULL DEFAULT 0,
+          "usd" REAL NOT NULL DEFAULT 0,
+          "reservedUsd" REAL NOT NULL DEFAULT 0,
+          "startedAt" TEXT NOT NULL,
+          "endedAt" TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_runs_task ON org_runs ("taskId");
+        CREATE TABLE IF NOT EXISTS org_budgets (
+          "id" TEXT PRIMARY KEY,
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "orgId" TEXT NOT NULL,
+          "scope" TEXT NOT NULL,
+          "refId" TEXT NOT NULL,
+          "monthlyUsd" REAL NOT NULL DEFAULT 0,
+          "reservedUsd" REAL NOT NULL DEFAULT 0,
+          "spentUsd" REAL NOT NULL DEFAULT 0,
+          "month" TEXT NOT NULL DEFAULT '',
+          "warnedAt" TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_org_budgets_scope ON org_budgets ("orgId", "scope", "refId");
+        CREATE TABLE IF NOT EXISTS org_grants (
+          "id" TEXT PRIMARY KEY,
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "orgId" TEXT NOT NULL,
+          "agentId" TEXT NOT NULL,
+          "kind" TEXT NOT NULL,
+          "value" TEXT NOT NULL,
+          "grantedBy" TEXT NOT NULL DEFAULT 'user',
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_grants_agent ON org_grants ("orgId", "agentId");
+        CREATE TABLE IF NOT EXISTS org_approvals (
+          "id" TEXT PRIMARY KEY,
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "orgId" TEXT NOT NULL,
+          "kind" TEXT NOT NULL,
+          "payload" TEXT NOT NULL DEFAULT '{}',
+          "requestedBy" TEXT NOT NULL DEFAULT '',
+          "recommendation" TEXT NOT NULL DEFAULT '',
+          "status" TEXT NOT NULL DEFAULT 'pending',
+          "decidedAt" TEXT,
+          "decisionNote" TEXT NOT NULL DEFAULT '',
+          "expiresAt" TEXT,
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_approvals_org ON org_approvals ("orgId", "status");
+        CREATE TABLE IF NOT EXISTS org_audit (
+          "id" TEXT PRIMARY KEY,
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "orgId" TEXT NOT NULL,
+          "seq" INTEGER NOT NULL,
+          "actor" TEXT NOT NULL,
+          "action" TEXT NOT NULL,
+          "refType" TEXT NOT NULL DEFAULT '',
+          "refId" TEXT NOT NULL DEFAULT '',
+          "payload" TEXT NOT NULL DEFAULT '{}',
+          "prevHash" TEXT NOT NULL DEFAULT '',
+          "hash" TEXT NOT NULL,
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_org_audit_seq ON org_audit ("orgId", "seq");
+        CREATE TABLE IF NOT EXISTS org_messages (
+          "id" TEXT PRIMARY KEY,
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "orgId" TEXT NOT NULL,
+          "taskId" TEXT,
+          "fromAgentId" TEXT,
+          "runId" TEXT,
+          "text" TEXT NOT NULL,
+          "createdAt" TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_messages_org ON org_messages ("orgId", "createdAt");
+      `);
+    },
+  },
 ];
 
 /** Advisory-lock key serializing migration runs: two instances booting

@@ -28,6 +28,7 @@ const envSchema = z
     MAX_TOOL_ROUNDS: intVar('MAX_TOOL_ROUNDS'),
     COMPACTION_THRESHOLD_TOKENS: intVar('COMPACTION_THRESHOLD_TOKENS'),
     LOOPS_ENABLED: z.enum(['true', 'false']).optional(),
+    COMPANIES_ENABLED: z.enum(['true', 'false']).optional(),
     TELEGRAM_BOT_TOKEN: z.string().optional(),
     PUBLIC_APP_URL: z.string().optional(),
     SECURITY_CONTACT: z.string().optional(),

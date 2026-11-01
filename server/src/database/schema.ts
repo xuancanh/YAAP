@@ -20,7 +20,7 @@
  * structured fields are JSON strings — matching the reference app's column
  * conventions.
  */
-import { pgTable, text, integer } from 'drizzle-orm/pg-core';
+import { pgTable, text, integer, real } from 'drizzle-orm/pg-core';
 
 export const workspaces = pgTable('workspaces', {
   id: text('id').primaryKey(),
@@ -506,5 +506,215 @@ export const registryRatings = pgTable('registry_ratings', {
   /** up | down. */
   rating: text('rating').notNull(),
   note: text('note').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+});
+
+// ---- autonomous company (docs/autonomous-company.md, execution plan item 14) ----
+// Every org table carries accountId ('single' until item 7 lands) so tenancy
+// can backfill without a second migration. Scopes and briefs are JSON strings.
+
+/** An organisation: a workspace-scoped container with one human CEO (the
+ *  user), one chief-of-staff agent and a roster joined through org_members. */
+export const organizations = pgTable('organizations', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  workspaceId: text('workspaceId').notNull(),
+  name: text('name').notNull(),
+  mission: text('mission').notNull().default(''),
+  /** The CEO's standing note to the company, injected into every org run. */
+  ceoUserNote: text('ceoUserNote').notNull().default(''),
+  chiefOfStaffAgentId: text('chiefOfStaffAgentId'),
+  /** active | paused — paused is the kill switch: no wakes, no runs. */
+  status: text('status').notNull().default('active'),
+  /** Company envelope in USD per month; 0 = no company-level cap. */
+  monthlyBudgetUsd: real('monthlyBudgetUsd').notNull().default(0),
+  maxDepth: integer('maxDepth').notNull().default(3),
+  maxDirectReports: integer('maxDirectReports').notNull().default(5),
+  /** Local hour (workspace timezone) the daily brief is written. */
+  briefHour: integer('briefHour').notNull().default(8),
+  lastBriefAt: text('lastBriefAt'),
+  /** JSON of the latest brief: { text, items: [{ n, approvalId }] }. */
+  lastBrief: text('lastBrief').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+});
+
+export const orgMembers = pgTable('org_members', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  orgId: text('orgId').notNull(),
+  agentId: text('agentId').notNull(),
+  title: text('title').notNull().default(''),
+  /** null only for the chief of staff (depth 1). */
+  reportsToAgentId: text('reportsToAgentId'),
+  depth: integer('depth').notNull().default(1),
+  /** The accountable human; never an agent. */
+  sponsor: text('sponsor').notNull().default('user'),
+  /** JSON array of scope strings (tool:<name>, connection:<service>:<level>,
+   *  skill:<name>, folder:<path>). A hire's scopes are the meet of the
+   *  chief's holdings and the request; they can only narrow without approval. */
+  scopes: text('scopes').notNull().default('[]'),
+  /** active | paused | terminated. */
+  status: text('status').notNull().default('active'),
+  /** SHA-256 of the agent charter when it was last approved through the
+   *  org path; a different live hash is charter drift (docs/security.md). */
+  charterHash: text('charterHash').notNull().default(''),
+  joinedAt: text('joinedAt').notNull(),
+});
+
+export const orgGoals = pgTable('org_goals', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  orgId: text('orgId').notNull(),
+  title: text('title').notNull(),
+  description: text('description').notNull().default(''),
+  /** draft | active | achieved | abandoned — set by the CEO, never computed. */
+  status: text('status').notNull().default('active'),
+  ownerAgentId: text('ownerAgentId'),
+  createdAt: text('createdAt').notNull(),
+});
+
+export const orgProjects = pgTable('org_projects', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  orgId: text('orgId').notNull(),
+  goalId: text('goalId'),
+  title: text('title').notNull(),
+  /** active | done | cancelled. */
+  status: text('status').notNull().default('active'),
+  ownerAgentId: text('ownerAgentId'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** The shared board. One owner per task; the claim is atomic (org-tasks.service). */
+export const orgTasks = pgTable('org_tasks', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  orgId: text('orgId').notNull(),
+  projectId: text('projectId'),
+  parentTaskId: text('parentTaskId'),
+  title: text('title').notNull(),
+  /** JSON { outcome, context, constraints, done_when } — the four-field brief. */
+  brief: text('brief').notNull().default('{}'),
+  /** backlog | todo | claimed | in_progress | in_review | blocked | done | cancelled. */
+  status: text('status').notNull().default('backlog'),
+  assigneeAgentId: text('assigneeAgentId'),
+  /** The run id holding the claim; null = unclaimed. */
+  claimedBy: text('claimedBy'),
+  claimedAt: text('claimedAt'),
+  reviewerAgentId: text('reviewerAgentId'),
+  reviewRounds: integer('reviewRounds').notNull().default(0),
+  /** JSON array of blocker strings or task ids. */
+  blockers: text('blockers').notNull().default('[]'),
+  /** JSON array of path prefixes the task may write. */
+  fileScope: text('fileScope').notNull().default('[]'),
+  noProgressCount: integer('noProgressCount').notNull().default(0),
+  lastRunAt: text('lastRunAt'),
+  /** user | chief | agent:<id> | trigger | approval. */
+  createdBy: text('createdBy').notNull().default('user'),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+});
+
+/** One row per wake that became a run. */
+export const orgRuns = pgTable('org_runs', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  orgId: text('orgId').notNull(),
+  taskId: text('taskId').notNull(),
+  agentId: text('agentId').notNull(),
+  sessionId: text('sessionId'),
+  /** assignment | comment | approval | trigger | manual | review | rewake. */
+  wakeReason: text('wakeReason').notNull().default('manual'),
+  /** running | done | failed | budget_stop | loop | killed | refused. */
+  status: text('status').notNull().default('running'),
+  /** progressed | no_progress | blocked | done | '' while running. */
+  outcome: text('outcome').notNull().default(''),
+  tokensIn: integer('tokensIn').notNull().default(0),
+  tokensOut: integer('tokensOut').notNull().default(0),
+  usd: real('usd').notNull().default(0),
+  reservedUsd: real('reservedUsd').notNull().default(0),
+  startedAt: text('startedAt').notNull(),
+  endedAt: text('endedAt'),
+});
+
+/** Nested monthly envelopes: company → project → agent, USD. */
+export const orgBudgets = pgTable('org_budgets', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  orgId: text('orgId').notNull(),
+  /** company | agent | project. */
+  scope: text('scope').notNull(),
+  refId: text('refId').notNull(),
+  monthlyUsd: real('monthlyUsd').notNull().default(0),
+  reservedUsd: real('reservedUsd').notNull().default(0),
+  spentUsd: real('spentUsd').notNull().default(0),
+  /** 'YYYY-MM' the counters belong to; a new month resets them. */
+  month: text('month').notNull().default(''),
+  /** When the 80% warning was last written (one per scope per day). */
+  warnedAt: text('warnedAt'),
+});
+
+/** Provenance rows behind org_members.scopes: one per scope string in force. */
+export const orgGrants = pgTable('org_grants', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  orgId: text('orgId').notNull(),
+  agentId: text('agentId').notNull(),
+  /** tool | connection | skill | folder. */
+  kind: text('kind').notNull(),
+  value: text('value').notNull(),
+  /** user | chief | approval:<id>. */
+  grantedBy: text('grantedBy').notNull().default('user'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** Proposals only the user can resolve (controller path, never a tool). */
+export const orgApprovals = pgTable('org_approvals', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  orgId: text('orgId').notNull(),
+  /** hire | scope_widen | reorg | budget_raise | strategy | external | terminate | escalation. */
+  kind: text('kind').notNull(),
+  payload: text('payload').notNull().default('{}'),
+  /** chief | agent:<id> | user | system. */
+  requestedBy: text('requestedBy').notNull().default(''),
+  recommendation: text('recommendation').notNull().default(''),
+  /** pending | approved | rejected | revision_requested | expired. */
+  status: text('status').notNull().default('pending'),
+  decidedAt: text('decidedAt'),
+  decisionNote: text('decisionNote').notNull().default(''),
+  /** Expiry means "not done", never "allowed" (72 h by default). */
+  expiresAt: text('expiresAt'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** Append-only, SHA-256 hash-chained per org (org-audit.service.ts). */
+export const orgAudit = pgTable('org_audit', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  orgId: text('orgId').notNull(),
+  seq: integer('seq').notNull(),
+  /** user | system | chief | agent:<id>. */
+  actor: text('actor').notNull(),
+  action: text('action').notNull(),
+  refType: text('refType').notNull().default(''),
+  refId: text('refId').notNull().default(''),
+  payload: text('payload').notNull().default('{}'),
+  prevHash: text('prevHash').notNull().default(''),
+  hash: text('hash').notNull(),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** The group session log. Attributed, human-visible, and never a wake. */
+export const orgMessages = pgTable('org_messages', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  orgId: text('orgId').notNull(),
+  /** Set when the message is a task comment (the task timeline). */
+  taskId: text('taskId'),
+  /** null = the user (CEO). */
+  fromAgentId: text('fromAgentId'),
+  runId: text('runId'),
+  text: text('text').notNull(),
   createdAt: text('createdAt').notNull(),
 });
