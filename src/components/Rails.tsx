@@ -318,6 +318,8 @@ export const SETTINGS_PANES = [
   { id: 'connections', label: 'Connections', icon: P.globe },
   { id: 'runner', label: 'Code runner & browser', icon: P.shield },
   { id: 'computer', label: 'Computer', icon: P.window },
+  { id: 'market', label: 'Market', icon: P.market },
+  { id: 'security', label: 'Security', icon: P.shield },
 ];
 
 export function SettingsRail({ pane, setPane }: { pane: string; setPane: (p: string) => void }) {

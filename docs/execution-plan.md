@@ -82,8 +82,10 @@ to it. Settings → Security renders the same content from the API so the
 hosted product shows it too.
 Shipped as: `docs/security.md` §a–k, `SECURITY.md`, `GET /api/security`
 (`server/src/security/`, public like `/api/status`, `SECURITY_CONTACT` env)
-and `tests/backend-security.test.ts`; the Settings → Security pane that
-renders it is still to be wired in `SettingsView.tsx`.
+and `tests/backend-security.test.ts`; the Settings → Security pane
+(`SecurityPane` in `SettingsView.tsx`, registered in `Rails.tsx`) renders
+the contact, the summary bullets and the policy link, with a "Report a
+vulnerability" mailto when `SECURITY_CONTACT` is set — wired with item 12.
 
 ### 4. Browser tool *(done)*
 `browser_open`, `browser_act` (click/type/scroll/select by text), `browser_read`
@@ -227,11 +229,31 @@ Audio attachments transcribe on upload through a configurable
 OpenAI-compatible transcription endpoint; the transcript becomes the
 attachment text; optional TTS on replies behind a setting.
 
-### 12. Market registry *(todo)*
+### 12. Market registry *(done)*
 A registry: publish an agent (AGENT.json), skill, or mini app with mandatory
 capability review on install; install counts; ratings from the feedback we
 collect; remote registry URL configurable so self-hosted instances can pull
 from the hosted one.
+Shipped as: migration `0025-registry` (`registry_items`, `registry_installs`,
+`registry_ratings`, each with `accountId` from the start),
+`server/src/registry/` (`RegistryService` — `normalizeManifest` per kind,
+`publish` with `dryRun` and (kind, slug) version bumps that keep installs,
+`pushToRemote` / `acceptRemotePublish` behind `REGISTRY_PUBLISH_TOKEN`, the
+two-step `install` that answers `{ requiresConfirm, review }` until
+`confirm: true` and then imports inert via `PortabilityService` /
+`SkillsService.importSkillMd` / `AgentsService.saveApp`, `recordTurnRating`
+hooked from `ChatsService.rateTurn`, `rate`, a 10-minute remote cache over
+`fetchPublic`; `app-scan.ts` for mini-app HTML), `GET/POST /api/registry…`
+with the public feed `GET /api/registry/public[/:id]` and the counter
+endpoints left open in `TokenAuthStrategy`, config `REGISTRY_URL` /
+`REGISTRY_PUBLISH_TOKEN`, `capabilities` carried through
+`AgentsService.importJson`, the Community department in `MarketView.tsx`,
+`RegistryBits.tsx` (Publish form with the scan shown before confirming,
+`RegistryReviewModal`), Publish buttons on the agent home, skill rows and
+app cards, Settings → Market and Settings → Security, `src/lib/registry.ts`,
+`docs/registry.md`, and `tests/backend-registry.test.ts` +
+`web-tests/registry.test.ts`. Deliberately not built: payments, unreviewed
+installs, trusting a remote scan, ranking by installs.
 
 ### 13. Desktop computer control *(done)*
 Shipped as: migration `0024` (`computer_runners`, `computer_actions`),

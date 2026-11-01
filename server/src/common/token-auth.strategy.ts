@@ -37,11 +37,20 @@ export class TokenAuthStrategy implements AuthStrategy {
   constructor(private readonly config: ConfigService) {}
 
   isPublic(request: Request): boolean {
-    if (request.method === 'GET' && (request.path === '/api/status' || request.path === '/api/security')) return true;
+    if (request.method === 'GET') {
+      if (request.path === '/api/status' || request.path === '/api/security') return true;
+      // The public registry feed (docs/registry.md): read-only, items with
+      // published=1 and no personal data, so other instances can browse it.
+      if (/^\/api\/registry\/public(\/[^/]+)?\/?$/.test(request.path)) return true;
+    }
     // The desktop companion's four routes carry their own bearer kind
     // (computer/companion.guard.ts); GET /api/computer/work is among them.
     if (isCompanionRoute(request.method, request.path)) return true;
     if (request.method !== 'POST') return false;
+    // Remote publish carries REGISTRY_PUBLISH_TOKEN as its own bearer
+    // (RegistryService.acceptRemotePublish); the install/rate counters are
+    // anonymous by design — they count, they never read or write anything else.
+    if (/^\/api\/registry\/public(\/[^/]+\/(installed|rate))?\/?$/.test(request.path)) return true;
     // The inbound-mail webhook authenticates itself with an HMAC over the
     // body (channels/email.service.ts verifySignature), not the bearer token
     // — the forwarder is a Cloudflare Worker, not the user's browser.

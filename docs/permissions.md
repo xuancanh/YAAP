@@ -158,6 +158,31 @@ static checks (no secrets, literal hosts, size caps). Skill/tool provenance
 travels with the artifact. Installing an agent whose profile ships tools
 imports them **disabled**, always — the importing user activates each one.
 
+Shipped as the Community registry (`docs/registry.md`, execution-plan item
+12). The rules above are now code in `server/src/registry/`:
+
+- **Publish re-reviews.** Every publish runs the item-9 scan over the
+  charter, loop prompts and skill bodies (`scanSkillMd`) and over each mini
+  app's HTML (`scanAppHtml`: external URLs, `fetch`/`XMLHttpRequest`/
+  `WebSocket` use, embeds, capability tiers). Blocking flags refuse the
+  publish; warnings travel with the item and are shown verbatim to every
+  installer. The form shows the scan before the user confirms.
+- **Install is a two-step gate the server enforces.** `POST
+  /api/registry/:id/install` without `confirm: true` returns the review —
+  capabilities, loops, scan, the real charter and skill bodies, the app
+  source — and writes nothing. With confirmation it re-scans and imports
+  inert: loops `enabled: false`, skills as drafts, elevated app
+  capabilities parked. There is no one-click install and no "trust this
+  publisher".
+- **Remote items get the local review.** A manifest pulled from
+  `REGISTRY_URL` is normalized and scanned here; the remote's report is
+  displayed for comparison, never trusted.
+- **What never publishes:** lessons, tasks, the user profile, webhook
+  secrets. A registry item is the agent's design, not one user's history.
+- **Ratings are the feedback already collected** (§Skills, item 10): a 👍/👎
+  on a turn that ran on an installed agent or loaded an installed skill
+  rolls up to the item. No star widget.
+
 ## 6. The independent reviewer
 
 The three gates are deterministic, and that is their strength and their

@@ -658,10 +658,16 @@ export class AgentsService {
       for (const raw of profile.apps.slice(0, APP_LIMIT)) {
         const app = raw as Record<string, unknown>;
         if (typeof app?.name !== 'string' || typeof app?.html !== 'string') continue;
+        // Capabilities travel with the app; saveApp grants the free tier and
+        // parks the elevated ones for review, exactly as for a save_app call.
+        const caps = Array.isArray(app.capabilities)
+          ? app.capabilities.filter((c): c is string => typeof c === 'string' && (APP_CAPABILITIES as readonly string[]).includes(c))
+          : [];
         await this.saveApp(agent.id, {
           name: app.name,
           description: typeof app.description === 'string' ? app.description.slice(0, 300) : undefined,
           html: app.html.slice(0, APP_HTML_CAP),
+          capabilities: caps,
         }).catch(() => {});
       }
     }

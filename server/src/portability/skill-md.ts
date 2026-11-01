@@ -34,7 +34,11 @@ export type ScanFlagKind =
   | 'base64'
   | 'invisible-unicode'
   | 'foreign-tools'
-  | 'frontmatter';
+  | 'frontmatter'
+  /* registry/app-scan.ts — mini-app HTML flags */
+  | 'network'
+  | 'capabilities'
+  | 'embed';
 
 export interface ScanFlag {
   kind: ScanFlagKind;

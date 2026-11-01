@@ -22,6 +22,7 @@
  *  SecurityModule    → GET  /api/security            (threat model, docs/security.md)
  *  VoiceModule       → /api/voice/status, /api/voice/tts (voice notes, docs/voice.md)
  *  ComputerModule    → /api/computer                 (paired desktop companion, docs/computer-control.md)
+ *  RegistryModule    → /api/registry                  (market registry, docs/registry.md)
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
@@ -57,6 +58,7 @@ import { UsageModule } from './usage/usage.module';
 import { VoiceModule } from './voice/voice.module';
 import { PortabilityModule } from './portability/portability.module';
 import { ComputerModule } from './computer/computer.module';
+import { RegistryModule } from './registry/registry.module';
 
 @Module({
   imports: [
@@ -84,6 +86,7 @@ import { ComputerModule } from './computer/computer.module';
     VoiceModule,
     PortabilityModule,
     ComputerModule,
+    RegistryModule,
   ],
   providers: [
     // Identity is bound here and nowhere else: swapping this one provider

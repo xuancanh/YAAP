@@ -243,10 +243,17 @@ or three good ones, not 29.
    agent (our kanban is the natural handoff surface); the receiving agent's
    loop picks it up. This is OpenClaw's multi-agent story expressed through
    a primitive we already have, with the user able to watch the board.
-3. **Real market.** The curated market becomes a registry: publish an
+3. **Real market.** *(shipped)* The curated market becomes a registry: publish an
    AGENT.json (capability review stays mandatory), install counts, ratings
    from the feedback we already collect. Skills and mini apps shareable the
-   same way.
+   same way. Shipped as the Market's **Community** department
+   (`docs/registry.md`): `server/src/registry/` with publish (scan step
+   over skills and apps, versions, `dryRun` preview), a two-step install
+   that returns the review first and refuses without `confirm: true`,
+   inert imports (loops off, skills drafts, app capabilities parked),
+   ratings rolled up from turn 👍/👎, a public read-only feed, and
+   federation over `REGISTRY_URL` / `REGISTRY_PUBLISH_TOKEN` behind the
+   SSRF guard. No payments, no unreviewed installs.
 4. **Voice notes.** Transcription on upload (attachment type we already
    support), TTS on replies later. Wearables and wake words are explicitly
    out of scope.

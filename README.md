@@ -82,7 +82,8 @@ blocks, tool cards + inline Ask/Auto approvals, artifact side panel
 message queueing, retry / edit-and-resend / fork / promote / ratings, token
 meter, per-agent file brains with rich previews, agent directory + home
 (charter, loops, ratings, mini apps, AGENT.json export), the agent market
-with capability-review hiring, and six settings panes backed by the API.
+with capability-review hiring, and the settings panes (including Market and
+Security) backed by the API.
 
 Providers: Anthropic (+anthropic-compatible) and the OpenAI-compatible
 family — OpenAI, DeepSeek, Kimi, GLM, and custom gateways — all through one
@@ -106,7 +107,11 @@ page behind a review modal where lessons arrive quarantined and skills as
 drafts (FR-11.7). Agents also import memory from Claude, Meta Muse, Hermes
 and OpenClaw exports as proposals, and skills import/export as agentskills.io
 `SKILL.md` through a scan step; every skill tracks use and 👍/👎 outcomes,
-and a 👎 lets the agent propose a revision you accept as a diff.
+and a 👎 lets the agent propose a revision you accept as a diff. The Market's
+**Community** department is a registry (`docs/registry.md`): publish an
+agent, skill or mini app (scanned first), install behind a mandatory
+capability review that lands everything inert, ratings rolled up from turn
+feedback, and federation with a hosted registry over `REGISTRY_URL`.
 
 Image attachments are real vision inputs: uploaded/mentioned images become
 base64 image blocks (Anthropic) or data-URI image_url parts (OpenAI family)

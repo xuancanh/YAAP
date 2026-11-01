@@ -6,6 +6,7 @@ import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
 import { ImportSkillMdButton, MemoryImportModal, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
+import { PublishButton } from './RegistryBits';
 import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentJsonV2, type AgentLesson, type AgentTask, type AgentUsage, type Connection, type FileEntry, type FilePreview, type LoopState, type Skill } from '../lib/api';
 import { UsageBars, UsageRows } from './UsageChart';
 import { fmtUsd } from '../lib/pricing';
@@ -931,6 +932,7 @@ function SkillsToolsTab({ a }: { a: Agent }) {
                 {s.draft === 1 && btn('Reject', async () => { await api.resolveSkillDraft(s.id, false); refresh(a.id); }, false, true)}
                 {s.draft !== 1 && <a href={api.skillMdUrl(s.id)} download title="Export as agentskills.io SKILL.md" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 12px', textDecoration: 'none', flex: 'none' }}>SKILL.md</a>}
                 {s.draft !== 1 && btn('Share', () => setPromoting(s))}
+                {s.draft !== 1 && <PublishButton compact target={{ kind: 'skill', skillId: s.id }} defaultName={s.name} defaultDescription={s.description} />}
                 {s.draft !== 1 && btn('Remove', async () => { if (window.confirm(`Remove /${s.name}?`)) { await api.resolveSkillDraft(s.id, false).catch(async () => { await fetch(`/api/skills/${s.id}`, { method: 'DELETE', headers: authHeaders() }); }); refresh(a.id); } }, false, true)}
               </div>
               {s.draft === 1 && <ScanFlags s={s} />}
@@ -1213,6 +1215,7 @@ export function AgentHome() {
             <a href={api.agentExportUrl(a.id)} download title="AGENT.json v2: identity, loops, apps, lessons, skills, open tasks (no profile)" style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '8px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, textDecoration: 'none' }}>
               <I d={P.download} size={14} />Export
             </a>
+            <PublishButton target={{ kind: 'agent', agentId: a.id }} defaultName={a.name} defaultDescription={a.role} />
             <button onClick={() => void app.newChat(a.id)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 15px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7 }}>
               <I d={P.plus} size={14} />New conversation
             </button>
@@ -1365,6 +1368,7 @@ export function AgentHome() {
                     )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
                       <span style={{ fontSize: 9.5, color: 'var(--text-faint)', flex: 1, fontFamily: 'var(--mono)' }}>updated {ago(x.updatedAt)}</span>
+                      <PublishButton compact target={{ kind: 'app', agentId: a.id, appId: x.id }} defaultName={x.name} defaultDescription={x.description} />
                       <button title="Open beside this agent's latest conversation" onClick={(e) => { e.stopPropagation(); void app.embedApp(a.id, x); }}
                         style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '4px 11px', fontSize: 11, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>
                         Embed in chat

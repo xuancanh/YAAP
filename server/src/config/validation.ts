@@ -61,6 +61,8 @@ const envSchema = z
     BROWSER_CF_TOKEN: z.string().optional(),
     BROWSER_CHROMIUM_PATH: z.string().optional(),
     COMPUTER_CONTROL_ENABLED: z.enum(['true', 'false']).optional(),
+    REGISTRY_URL: z.string().regex(/^$|^https?:\/\//, 'REGISTRY_URL must be an http(s) URL').optional(),
+    REGISTRY_PUBLISH_TOKEN: z.string().optional(),
   })
   .superRefine((env, ctx) => {
     // Selecting the cloudflare backend without its endpoint is a boot-time

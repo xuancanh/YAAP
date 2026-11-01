@@ -508,6 +508,62 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_computer_actions_created ON computer_actions ("createdAt")`);
     },
   },
+  {
+    id: '0025-registry',
+    up: async (db) => {
+      // The market registry (docs/registry.md). accountId is present from
+      // the start so the tenancy work (item 7) finds nothing to backfill.
+      await db.query(`CREATE TABLE IF NOT EXISTS registry_items (
+        "id" TEXT PRIMARY KEY,
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "kind" TEXT NOT NULL,
+        "slug" TEXT NOT NULL,
+        "name" TEXT NOT NULL,
+        "description" TEXT NOT NULL DEFAULT '',
+        "version" INTEGER NOT NULL DEFAULT 1,
+        "publisherName" TEXT NOT NULL DEFAULT '',
+        "manifest" TEXT NOT NULL DEFAULT '{}',
+        "capabilities" TEXT NOT NULL DEFAULT '{}',
+        "scanReport" TEXT NOT NULL DEFAULT '{}',
+        "installs" INTEGER NOT NULL DEFAULT 0,
+        "ratingUp" INTEGER NOT NULL DEFAULT 0,
+        "ratingDown" INTEGER NOT NULL DEFAULT 0,
+        "published" INTEGER NOT NULL DEFAULT 1,
+        "source" TEXT NOT NULL DEFAULT 'local',
+        "remoteUrl" TEXT NOT NULL DEFAULT '',
+        "sourceRef" TEXT NOT NULL DEFAULT '',
+        "publishedAt" TEXT NOT NULL,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      // One listing per (account, kind, slug): a re-publish bumps the version.
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_registry_items_slug ON registry_items ("accountId", "kind", "slug")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS registry_installs (
+        "id" TEXT PRIMARY KEY,
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "itemId" TEXT NOT NULL,
+        "version" INTEGER NOT NULL DEFAULT 1,
+        "agentId" TEXT,
+        "skillId" TEXT,
+        "appId" TEXT,
+        "installedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_registry_installs_item ON registry_installs ("itemId")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_registry_installs_agent ON registry_installs ("agentId")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_registry_installs_skill ON registry_installs ("skillId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS registry_ratings (
+        "id" TEXT PRIMARY KEY,
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "itemId" TEXT NOT NULL,
+        "installId" TEXT NOT NULL DEFAULT '',
+        "turnId" TEXT NOT NULL DEFAULT '',
+        "rating" TEXT NOT NULL,
+        "note" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL
+      )`);
+      // A re-rated turn updates its row instead of doubling the counters.
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_registry_ratings_install_turn ON registry_ratings ("installId", "turnId") WHERE "turnId" <> ''`);
+    },
+  },
 ];
 
 /** Advisory-lock key serializing migration runs: two instances booting

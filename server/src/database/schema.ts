@@ -441,3 +441,70 @@ export const computerActions = pgTable('computer_actions', {
   createdAt: text('createdAt').notNull(),
   completedAt: text('completedAt'),
 });
+
+/**
+ * The market registry (execution-plan item 12, docs/registry.md): published
+ * agents, skills and mini apps. `manifest` is the portable artifact itself
+ * (AGENT.json v2 minus lessons/tasks/profile, a SKILL.md text, or an app
+ * {name, description, html, capabilities}); `capabilities` is the static
+ * summary the install review shows and `scanReport` the item-9 scan that ran
+ * at publish time. Remote items (pulled from REGISTRY_URL) are never stored
+ * here — they live in an in-memory cache — so `source`/`remoteUrl` only
+ * record where a locally mirrored item came from.
+ */
+export const registryItems = pgTable('registry_items', {
+  id: text('id').primaryKey(),
+  /** Tenancy (item 7): 'single' until accounts exist. */
+  accountId: text('accountId').notNull().default('single'),
+  /** agent | skill | app. */
+  kind: text('kind').notNull(),
+  slug: text('slug').notNull(),
+  name: text('name').notNull(),
+  description: text('description').notNull().default(''),
+  /** Bumps on every re-publish of the same (kind, slug). */
+  version: integer('version').notNull().default(1),
+  publisherName: text('publisherName').notNull().default(''),
+  manifest: text('manifest').notNull().default('{}'),
+  capabilities: text('capabilities').notNull().default('{}'),
+  scanReport: text('scanReport').notNull().default('{}'),
+  installs: integer('installs').notNull().default(0),
+  ratingUp: integer('ratingUp').notNull().default(0),
+  ratingDown: integer('ratingDown').notNull().default(0),
+  /** 1 = listed by GET /api/registry/public; 0 = unlisted (kept for installs). */
+  published: integer('published').notNull().default(1),
+  /** local | remote. */
+  source: text('source').notNull().default('local'),
+  remoteUrl: text('remoteUrl').notNull().default(''),
+  /** The agent/skill/app id this item was published from, for re-publish. */
+  sourceRef: text('sourceRef').notNull().default(''),
+  publishedAt: text('publishedAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+});
+
+/** One row per install: what was created locally from which item version,
+ *  so a rating on the installed agent/skill can roll back up to the item. */
+export const registryInstalls = pgTable('registry_installs', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  /** Local item id, or `remote:<id>` for an item pulled from REGISTRY_URL. */
+  itemId: text('itemId').notNull(),
+  version: integer('version').notNull().default(1),
+  agentId: text('agentId'),
+  skillId: text('skillId'),
+  appId: text('appId'),
+  installedAt: text('installedAt').notNull(),
+});
+
+/** Ratings: rolled up from turn ratings (turnId set, one per install × turn)
+ *  or explicit (POST /api/registry/:id/rate, turnId ''). */
+export const registryRatings = pgTable('registry_ratings', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull().default('single'),
+  itemId: text('itemId').notNull(),
+  installId: text('installId').notNull().default(''),
+  turnId: text('turnId').notNull().default(''),
+  /** up | down. */
+  rating: text('rating').notNull(),
+  note: text('note').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+});

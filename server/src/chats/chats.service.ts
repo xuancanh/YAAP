@@ -8,6 +8,7 @@ import { ChatsRepository, ChatSession } from './chats.repository';
 import { nowIso } from '../common/ids.util';
 import { AgentsService } from '../agents/agents.service';
 import { SkillsService } from '../skills/skills.service';
+import { RegistryService } from '../registry/registry.service';
 
 @Injectable()
 export class ChatsService {
@@ -16,6 +17,8 @@ export class ChatsService {
     private readonly agents: AgentsService,
     /** Optional so test constructors without skills keep working. */
     @Optional() private readonly skills?: SkillsService,
+    /** Optional for the same reason: ratings roll up to registry items. */
+    @Optional() private readonly registry?: RegistryService,
   ) {}
 
   list(workspaceId: string, archived = false) {
@@ -143,6 +146,12 @@ export class ChatsService {
     if (ids.length > 0 && this.skills) {
       const rows = await this.skills.recordOutcome(ids, turnId, rating, note).catch(() => []);
       skillsUsed = rows.map((s) => ({ id: s.id, name: s.name }));
+    }
+    // …and to the registry items the agent or those skills were installed
+    // from (execution-plan item 12): the market's ratings are the feedback
+    // we already collect, never a separate star widget.
+    if (this.registry) {
+      await this.registry.recordTurnRating({ agentId: session.agentId ?? null, skillIds: ids, turnId, rating, note }).catch(() => {});
     }
     // For durable agents the rating is recorded and surfaced on the next
     // reply (FR-6.5).

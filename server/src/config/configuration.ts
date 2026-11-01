@@ -109,6 +109,13 @@ export default () => ({
    *  false hides every computer_* tool and refuses pairing and companion
    *  traffic, whatever is paired. */
   computerControlEnabled: (process.env.COMPUTER_CONTROL_ENABLED || 'true') === 'true',
+  /** Market registry (docs/registry.md). REGISTRY_URL is the hosted registry
+   *  a self-hosted instance browses and installs from (its public items are
+   *  merged into GET /api/registry); empty = local items only. The publish
+   *  token lets `POST /api/registry/publish` push to that remote and, on the
+   *  remote side, is the bearer `POST /api/registry/public` requires. */
+  registryUrl: (process.env.REGISTRY_URL || '').replace(/\/+$/, ''),
+  registryPublishToken: process.env.REGISTRY_PUBLISH_TOKEN || '',
   /** Estimated provider-input tokens that trigger auto-compaction (FR-7.3). */
   compactionThresholdTokens: parseInt(process.env.COMPACTION_THRESHOLD_TOKENS || '120000', 10),
 });

@@ -5,7 +5,7 @@
  *  AgentsView (Skills & tools tab). */
 import { useRef, useState } from 'react';
 import { useApp } from '../store';
-import { api, parseRevision, parseScanReport, type Agent, type MemoryImportFormat, type MemoryImportSummary, type Skill } from '../lib/api';
+import { api, parseRevision, parseScanReport, type Agent, type MemoryImportFormat, type MemoryImportSummary, type Skill, type SkillScanReport } from '../lib/api';
 import { lineDiff, diffStats } from '../lib/diff';
 import { I, P } from '../lib/icons';
 
@@ -41,11 +41,17 @@ export function SkillStats({ s }: { s: Skill }) {
 export function ScanFlags({ s }: { s: Skill }) {
   const report = parseScanReport(s);
   if (!report) return null;
+  return <ScanReportView report={report} title="Imported SKILL.md" />;
+}
+
+/** The same card for any scan report — a SKILL.md import, a registry publish
+ *  preview, or an install review (docs/registry.md). */
+export function ScanReportView({ report, title }: { report: SkillScanReport; title: string }) {
   return (
     <div style={{ marginTop: 8, padding: '8px 10px', border: `1px solid ${report.flags.length ? 'var(--amber)' : 'var(--border-soft)'}`, borderRadius: 9, background: report.flags.length ? 'color-mix(in oklab,var(--amber) 10%,transparent)' : 'var(--panel-2)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 700, color: report.flags.length ? 'var(--amber)' : 'var(--text-dim)' }}>
         {report.flags.length > 0 && <I d={P.warn} size={13} />}
-        Imported SKILL.md · {report.bytes} bytes · {report.lines} lines · {report.urls.length} URL{report.urls.length === 1 ? '' : 's'} · {report.flags.length === 0 ? 'nothing flagged' : `${report.flags.length} flag${report.flags.length === 1 ? '' : 's'}`}
+        {title} · {report.bytes} bytes · {report.lines} lines · {report.urls.length} URL{report.urls.length === 1 ? '' : 's'} · {report.flags.length === 0 ? 'nothing flagged' : `${report.flags.length} flag${report.flags.length === 1 ? '' : 's'}`}
       </div>
       {report.flags.map((f, i) => (
         <div key={i} style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 4, display: 'flex', gap: 7 }}>

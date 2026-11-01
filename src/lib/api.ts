@@ -438,6 +438,82 @@ export interface MarketItem {
   skills?: Array<{ name: string; description: string }>;
 }
 
+// ---- market registry (docs/registry.md) ----
+export type RegistryKind = 'agent' | 'skill' | 'app';
+export interface RegistryCapabilities {
+  tools: string[];
+  connections: string[];
+  loops: Array<{ name: string; cron?: string; trigger?: string; enabled: false }>;
+  skills: Array<{ name: string; description: string }>;
+  apps: Array<{ name: string; capabilities: string[] }>;
+  appCapabilities?: { free: string[]; elevated: string[] };
+}
+export interface RegistryItem {
+  id: string;
+  kind: RegistryKind;
+  slug: string;
+  name: string;
+  description: string;
+  version: number;
+  publisherName: string;
+  capabilities: RegistryCapabilities;
+  scanReport: SkillScanReport;
+  installs: number;
+  ratingUp: number;
+  ratingDown: number;
+  publishedAt: string;
+  updatedAt: string;
+  source: 'local' | 'remote';
+  remoteUrl: string;
+  installed?: boolean;
+}
+export interface RegistryList {
+  items: RegistryItem[];
+  remote: { url: string; ok: boolean; error: string; fetchedAt: string | null };
+}
+/** The install review: everything shown before `confirm: true`. */
+export interface RegistryReview {
+  kind: RegistryKind;
+  name: string;
+  version: number;
+  publisherName: string;
+  source: 'local' | 'remote';
+  capabilities: RegistryCapabilities;
+  loops: RegistryCapabilities['loops'];
+  tools: string[];
+  connections: string[];
+  scanReport: SkillScanReport;
+  charter?: string;
+  skillBodies: Array<{ name: string; description: string; instructions: string }>;
+  appHtml?: string;
+  installs: string[];
+}
+export interface RegistryInstallOptions { workspaceId?: string; agentId?: string; name?: string }
+export type RegistryInstallResult =
+  | { requiresConfirm: true; review: RegistryReview }
+  | { ok: true; agentId?: string; skillId?: string; appId?: string; notes: string[] };
+export interface RegistryPublishInput {
+  kind: RegistryKind;
+  agentId?: string;
+  skillId?: string;
+  appId?: string;
+  name?: string;
+  description?: string;
+  publisherName?: string;
+  dryRun?: boolean;
+}
+export type RegistryPublishResult =
+  | { dryRun: true; kind: RegistryKind; slug: string; name: string; description: string; publisherName: string; capabilities: RegistryCapabilities; scanReport: SkillScanReport }
+  | { dryRun: false; item: RegistryItem; pushed: { attempted: boolean; ok: boolean; error?: string } };
+export interface RegistryStatus {
+  remoteUrl: string;
+  publishToken: boolean;
+  remote: { fetchedAt: string; items: number; error: string } | null;
+}
+/** GET /api/security (docs/security.md): the policy headline the hosted
+ *  product shows under Settings → Security. */
+export interface SecurityPolicy { contact: string; policyUrl: string; summary: string[] }
+
 export interface FileEntry {
   path: string;
   size: number;
@@ -723,6 +799,19 @@ export const api = {
   marketPackSkills: (id: string) => get<Array<{ name: string; description: string; instructions: string }>>(`/api/market/${id}/skills`),
   market: () => get<MarketItem[]>('/api/market'),
   hire: (id: string) => send<{ ok: boolean; agent: Agent }>(`/api/market/${id}/hire`, 'POST', undefined, hireResultSchema),
+  // market registry (docs/registry.md)
+  registry: (kind?: RegistryKind | '', q?: string) =>
+    get<RegistryList>(`/api/registry?${kind ? `kind=${enc(kind)}` : ''}${q ? `&q=${enc(q)}` : ''}`),
+  registryStatus: () => get<RegistryStatus>('/api/registry/status'),
+  registryItem: (id: string) => get<RegistryItem & { manifest: Record<string, unknown> }>(`/api/registry/${enc(id)}`),
+  /** Two-step: without `confirm` the server answers with the review only. */
+  registryInstall: (id: string, confirm: boolean, options: RegistryInstallOptions = {}) =>
+    send<RegistryInstallResult>(`/api/registry/${enc(id)}/install`, 'POST', confirm ? { confirm: true, options } : { options }),
+  registryPublish: (input: RegistryPublishInput) => send<RegistryPublishResult>('/api/registry/publish', 'POST', input),
+  registryRate: (id: string, rating: 'up' | 'down', note?: string) =>
+    send<{ ok: boolean; up: number; down: number }>(`/api/registry/${enc(id)}/rate`, 'POST', { rating, note }),
+  // threat model (docs/security.md) — public route
+  security: () => get<SecurityPolicy>('/api/security'),
   // channels (phase 4)
   telegramStatus: () => get<{ configured: boolean; paired: boolean; defaultAgentId: string }>('/api/channels/telegram/status'),
   telegramPairCode: () => send<{ code: string; expiresInSeconds: number }>('/api/channels/telegram/pair-code', 'POST'),

@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
 import { ImportSkillMdButton, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
-import { api, PROVIDER_COLORS, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RunnerStatus, type Workspace, type WorkspaceUsage } from '../lib/api';
+import { PublishButton } from './RegistryBits';
+import { api, PROVIDER_COLORS, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceUsage } from '../lib/api';
+import { KIND_LABEL } from '../lib/registry';
 import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../lib/push';
 import { fmtUsd } from '../lib/pricing';
@@ -23,6 +25,8 @@ const PANE_META: Record<string, [string, string]> = {
   connections: ['Connections', 'Link external services (Google Calendar first). Connecting grants nothing — you approve access per agent.'],
   runner: ['Code runner & browser', 'Where run_js / run_python execute and where browser_open / browser_act render. Both are disposable and approval-gated; the browser is credential-free and visible to you.'],
   computer: ['Computer', 'Let agents act on your own computer through a paired companion you run. Every action is approved by you, scoped to what you granted, and recorded here.'],
+  market: ['Market', 'The Community registry: which hosted registry this instance browses, whether Publish can push there, and what you have published.'],
+  security: ['Security', 'The threat model this product is held to, as published in docs/security.md — and where to report a vulnerability.'],
 };
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 13, background: 'var(--panel)', padding: '15px 17px' };
@@ -227,6 +231,7 @@ function SkillsPane() {
               <div style={{ marginTop: 5 }}><SkillStats s={s} /></div>
             </div>
             <a href={api.skillMdUrl(s.id)} download title="Export as agentskills.io SKILL.md" style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 10px', textDecoration: 'none', flex: 'none' }}>SKILL.md</a>
+            {!s.builtin && <PublishButton compact target={{ kind: 'skill', skillId: s.id }} defaultName={s.name} defaultDescription={s.description} />}
             <Toggle on={s.enabled === 1} onClick={async () => {
               await api.updateSkill(s.id, { enabled: s.enabled !== 1 });
               await app.refreshSkills();
@@ -1213,6 +1218,121 @@ function ComputerPane() {
   );
 }
 
+/** Market registry (docs/registry.md): remote URL + reachability, publish
+ *  token presence, and the items this instance has published. Read-only —
+ *  the registry is an environment decision, like the runner. */
+function MarketPane() {
+  const [status, setStatus] = useState<RegistryStatus | null>(null);
+  const [list, setList] = useState<RegistryList | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    void api.registryStatus().then(setStatus).catch(() => setFailed(true));
+    void api.registry().then(setList).catch(() => {});
+  }, []);
+  if (failed) return <div style={{ ...card, fontSize: 12.5, color: 'var(--text-dim)' }}>Could not read registry status.</div>;
+  if (!status) return <div style={{ ...card, fontSize: 12.5, color: 'var(--text-faint)' }}>Loading…</div>;
+  const mine = (list?.items ?? []).filter((i) => i.source === 'local');
+  const remoteOk = !!list && list.remote.ok;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 20, flex: 'none' }}>{status.remoteUrl ? '🌐' : '🏠'}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>{status.remoteUrl ? 'Remote registry' : 'Local registry only'}</span>
+              {status.remoteUrl && (
+                <span style={{ fontSize: 10, color: remoteOk ? 'var(--green)' : 'var(--amber)', border: `1px solid ${remoteOk ? 'var(--green)' : 'var(--amber)'}`, borderRadius: 5, padding: '1px 6px' }}>
+                  {remoteOk ? 'reachable' : list ? 'unreachable' : 'checking…'}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3, ...mono, wordBreak: 'break-all' }}>{status.remoteUrl || 'REGISTRY_URL is not set'}</div>
+            {list && status.remoteUrl && !list.remote.ok && <div style={{ fontSize: 11.5, color: 'var(--amber)', marginTop: 4 }}>{list.remote.error}</div>}
+            <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 4 }}>
+              {status.remoteUrl
+                ? 'Its public items are merged into Market → Community (cached 10 minutes). Installing one pulls the manifest and runs the scan here, under the same review.'
+                : 'Market → Community shows only what this instance has published. Set REGISTRY_URL to browse a hosted registry as well.'}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 600 }}>Publish token</span>
+          <span style={{ fontSize: 10, color: status.publishToken ? 'var(--green)' : 'var(--text-faint)', border: `1px solid ${status.publishToken ? 'var(--green)' : 'var(--border)'}`, borderRadius: 5, padding: '1px 6px' }}>{status.publishToken ? 'set' : 'not set'}</span>
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 4, lineHeight: 1.6 }}>
+          {status.publishToken
+            ? 'Publish pushes each item to the remote registry too, and this instance accepts pushes that present the same token on POST /api/registry/public.'
+            : 'Publishing stays local. Set REGISTRY_PUBLISH_TOKEN (with REGISTRY_URL) to push your items to the hosted registry.'}
+        </div>
+      </div>
+      <div style={card}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Published from here · {mine.length}</div>
+        {mine.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>Nothing yet. Use Publish on an agent&apos;s home page, a skill row or a mini-app card.</div>}
+        {mine.map((i) => (
+          <div key={i.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderTop: '1px solid var(--border-soft)', fontSize: 12.5 }}>
+            <span style={{ fontWeight: 600 }}>{i.name}</span>
+            <span style={{ fontSize: 10, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 6px' }}>{KIND_LABEL[i.kind]}</span>
+            <span style={{ ...mono, fontSize: 11, color: 'var(--text-faint)' }}>v{i.version}</span>
+            <span style={{ flex: 1 }} />
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{i.installs} install{i.installs === 1 ? '' : 's'} · 👍 {i.ratingUp} · 👎 {i.ratingDown}{i.scanReport.flags.length ? ` · ${i.scanReport.flags.length} flag${i.scanReport.flags.length === 1 ? '' : 's'}` : ''}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ ...card, fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+        What the registry deliberately does not do: payments, unreviewed installs, or trusting a remote scan — every install here re-scans and shows you the real text.
+      </div>
+    </div>
+  );
+}
+
+/** Settings → Security (execution-plan item 3): GET /api/security rendered
+ *  — contact, the summary bullets, the policy link — so the hosted product
+ *  shows the same policy the repo publishes. */
+function SecurityPane() {
+  const [policy, setPolicy] = useState<SecurityPolicy | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { void api.security().then(setPolicy).catch(() => setFailed(true)); }, []);
+  if (failed) return <div style={{ ...card, fontSize: 12.5, color: 'var(--text-dim)' }}>Could not read the security policy.</div>;
+  if (!policy) return <div style={{ ...card, fontSize: 12.5, color: 'var(--text-faint)' }}>Loading…</div>;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={card}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>What this product guarantees</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {policy.summary.map((line, i) => (
+            <div key={i} style={{ display: 'flex', gap: 9, fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.55 }}>
+              <I d={P.shield} size={14} style={{ flex: 'none', marginTop: 2, color: 'var(--green)' }} /><span>{line}</span>
+            </div>
+          ))}
+        </div>
+        <a href={policy.policyUrl} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12, fontSize: 12.5, fontWeight: 600, color: 'var(--accent-hi)', textDecoration: 'none' }}>
+          Read the full threat model<I d={P.external} size={13} />
+        </a>
+      </div>
+      <div style={card}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Report a vulnerability</div>
+        {policy.contact ? (
+          <>
+            <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.55 }}>
+              Found something? Write to <span style={mono}>{policy.contact}</span> with steps to reproduce. Please do not open a public issue for security reports.
+            </div>
+            <a href={`mailto:${policy.contact}?subject=${encodeURIComponent('yaam-chat vulnerability report')}`} style={{ display: 'inline-block', marginTop: 10, background: 'var(--accent)', color: '#fff', borderRadius: 9, padding: '8px 15px', fontSize: 12.5, fontWeight: 600, textDecoration: 'none' }}>
+              Report a vulnerability
+            </a>
+          </>
+        ) : (
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.55 }}>
+            No disclosure address is configured on this instance. Set <span style={mono}>SECURITY_CONTACT</span> so researchers can reach the operator; the policy document names the project address.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function SettingsView({ pane }: { pane: string }) {
   const app = useApp();
   const [title, sub] = PANE_META[pane] ?? PANE_META.providers;
@@ -1239,6 +1359,8 @@ export function SettingsView({ pane }: { pane: string }) {
           {pane === 'connections' && <ConnectionsPane />}
           {pane === 'runner' && <RunnerPane />}
           {pane === 'computer' && <ComputerPane />}
+          {pane === 'market' && <MarketPane />}
+          {pane === 'security' && <SecurityPane />}
         </div>
       </div>
     </div>
