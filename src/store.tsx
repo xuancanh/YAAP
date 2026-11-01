@@ -69,6 +69,7 @@ export interface ArtifactState { title: string; src: string; appCtx?: { agentId:
 
 /** A message staged while a turn streams: drained afterwards for the session
  *  it was written in, with its attachments (FR: nothing is silently dropped). */
+const EMPTY_LIVE: LiveItem[] = [];
 export interface QueuedMessage { id: number; sessionId: string; text: string; attachments: SentAttachment[] }
 /** The attachment descriptor persisted on a turn (the server reads files by path). */
 export interface SentAttachment { path: string; kind: string; transcript?: string | null; durationSeconds?: number | null }
@@ -252,8 +253,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<{ messages: ChatMessage[]; turns: ChatTurn[] }>({ messages: [], turns: [] });
-  const [streaming, setStreaming] = useState(false);
-  const [live, setLive] = useState<LiveItem[]>([]);
+  // Turns run per chat: a reply keeps streaming while you look at another
+  // chat, and its live rows are there when you come back.
+  const [streamingIds, setStreamingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [liveBy, setLiveBy] = useState<Record<string, LiveItem[]>>({});
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -292,10 +295,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   currentIdRef.current = currentId;
   const queueRef = useRef(queue);
   queueRef.current = queue;
-  // per-turn fetch abort + rAF-buffered stream text (one setLive per frame)
-  const abortRef = useRef<AbortController | null>(null);
-  const streamBuf = useRef<{ kind: 'thinking' | 'answer'; text: string } | null>(null);
-  const streamRaf = useRef(0);
+  // per-session fetch abort; the rAF-buffered stream text lives in each runTurn
+  const abortBy = useRef(new Map<string, AbortController>());
+  const streaming = currentId ? streamingIds.has(currentId) : false;
+  const live = useMemo(() => (currentId ? liveBy[currentId] ?? EMPTY_LIVE : EMPTY_LIVE), [liveBy, currentId]);
+  const sessionQueue = useMemo(() => queue.filter((q) => q.sessionId === currentId), [queue, currentId]);
+  const setLiveFor = useCallback((id: string, fn: (items: LiveItem[]) => LiveItem[]) => {
+    setLiveBy((m) => ({ ...m, [id]: fn(m[id] ?? EMPTY_LIVE) }));
+  }, []);
+  const clearLiveFor = useCallback((id: string) => {
+    setLiveBy((m) => { if (!(id in m)) return m; const next = { ...m }; delete next[id]; return next; });
+  }, []);
 
   const stacked = width < 820;
   const mediumDock = !stacked && width < 1120;
@@ -536,11 +546,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // leaving the session: stop reading the old stream and drop its live rows
-    abortRef.current?.abort();
-    if (streamRaf.current) { cancelAnimationFrame(streamRaf.current); streamRaf.current = 0; }
-    streamBuf.current = null;
-    setLive([]);
+    // switching chats never stops a reply: the old turn keeps streaming into
+    // its own live rows (liveBy), and this chat's transcript loads.
     void refreshTranscript();
     // hydrate the draft from the server copy once per session switch (FR-2.1)
     if (current && drafts[current.id] === undefined && current.draft) {
@@ -647,21 +654,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ---- the live turn stream ----
   const runTurn = useCallback(async (id: string, text: string, atts: Array<{ path: string; kind: string }>) => {
-    setStreaming(true);
-    setLive([]);
-    setLiveBrowserSteps([]);
+    setStreamingIds((s) => new Set(s).add(id));
+    setLiveFor(id, () => []);
+    if (currentIdRef.current === id) setLiveBrowserSteps([]);
     const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    // live rows belong to the session the turn runs in: after a chat switch
-    // the stream keeps draining server-side but must not patch the view.
+    abortBy.current.set(id, ctrl);
+    // Live rows belong to the session the turn runs in. Switching chats does
+    // not stop the turn (that used to abort the fetch, and the server ended
+    // the turn on disconnect): the rows keep filling for this session.
     const current = () => currentIdRef.current === id;
-    const patch = (fn: (items: LiveItem[]) => LiveItem[]) => { if (current()) setLive(fn); };
+    const patch = (fn: (items: LiveItem[]) => LiveItem[]) => setLiveFor(id, fn);
     // token text is buffered and flushed to state once per animation frame
+    const streamBuf: { current: { kind: 'thinking' | 'answer'; text: string } | null } = { current: null };
+    const streamRaf = { current: 0 };
     const applyBuf = () => {
       const buf = streamBuf.current;
       streamBuf.current = null;
-      if (!buf || !current()) return;
-      setLive((items) => {
+      if (!buf) return;
+      setLiveFor(id, (items) => {
         const last = items[items.length - 1];
         if (buf.kind === 'thinking') {
           if (last?.kind === 'thinking') return [...items.slice(0, -1), { ...last, text: last.text + buf.text }];
@@ -716,6 +726,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // the stop shows without waiting for the next poll
           void refreshWorkspaces().catch(() => {});
           showToast(`Workspace budget reached (${Math.round(ev.spentTokens / 1000)}k of ${Math.round(ev.budgetTokens / 1000)}k tokens this month) — loops are paused`);
+        } else if (ev.type === 'compacted') {
+          // the server summarised older history before this turn; the transcript
+          // shows the divider once it reloads
+          if (current()) { showToast('Context auto-compacted — older turns distilled to a summary'); void refreshTranscript(); }
         } else if (ev.type === 'error') {
           showToast(ev.message);
         }
@@ -725,19 +739,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     if (streamRaf.current) { cancelAnimationFrame(streamRaf.current); streamRaf.current = 0; }
     streamBuf.current = null;
-    if (abortRef.current === ctrl) abortRef.current = null;
-    setStreaming(false);
-    setLive([]);
-    await refreshTranscript();
+    if (abortBy.current.get(id) === ctrl) abortBy.current.delete(id);
+    // load the persisted rows before dropping the live ones, so nothing blinks
+    if (current()) await refreshTranscript();
+    setStreamingIds((s) => { const n = new Set(s); n.delete(id); return n; });
+    clearLiveFor(id);
     // the persisted tool records now carry the same steps
-    setLiveBrowserSteps([]);
+    if (current()) setLiveBrowserSteps([]);
     await refreshSessions();
-    const next = queueRef.current[0];
+    const next = queueRef.current.find((q) => q.sessionId === id);
     if (next) {
-      setQueue((q) => q.slice(1));
+      setQueue((q) => q.filter((x) => x.id !== next.id));
       setTimeout(() => { void runTurnRef.current?.(next.sessionId, next.text, next.attachments); }, 300);
     }
-  }, [refreshTranscript, refreshSessions, refreshWorkspaces, showToast]);
+  }, [refreshTranscript, refreshSessions, refreshWorkspaces, showToast, setLiveFor, clearLiveFor]);
   const runTurnRef = useRef<typeof runTurn>(runTurn);
   runTurnRef.current = runTurn;
 
@@ -775,8 +790,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    if (s.tokenCeiling > 0 && s.tokensIn + s.tokensOut >= s.tokenCeiling && !streaming) {
-      showToast('Token ceiling reached — send refused. Run /compact.');
+    // The ceiling counts tokens since the last compaction. With auto-compact
+    // on, the server compacts a chat at its ceiling before the turn, so only
+    // refuse locally when auto-compact is off.
+    if (s.tokenCeiling > 0 && s.tokensIn + s.tokensOut - (s.tokensAtCompact ?? 0) >= s.tokenCeiling && !streaming && settings.autoCompact === 'off') {
+      showToast('Token ceiling reached for this chat — run /compact for a fresh budget, or raise the ceiling.');
       return;
     }
     if (streaming) {
@@ -790,12 +808,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setDraft('');
     clearAttachments();
     await runTurn(id, trimmed, atts);
-  }, [sessions, skills, streaming, attachments, runTurn, refreshTranscript, refreshSessions, setDraft, clearAttachments, showToast]);
+  }, [sessions, skills, streaming, settings, attachments, runTurn, refreshTranscript, refreshSessions, setDraft, clearAttachments, showToast]);
 
   const stopTurn = useCallback(() => {
     const id = currentIdRef.current;
     if (id) void api.stop(id);
-    abortRef.current?.abort(); // also stop reading the SSE body locally
+    if (id) abortBy.current.get(id)?.abort(); // also stop reading the SSE body locally
     showToast('Turn stopped — partial output kept');
   }, [showToast]);
 
@@ -955,7 +973,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, setMcp, refreshMcp,
     market, refreshMarket, settings, saveSettings, pricing,
     currentId, openSession, current, transcript, refreshTranscript, patchSession, newChat,
-    streaming, live, send, stopTurn, approve, queue, removeQueued,
+    streaming, live, send, stopTurn, approve, queue: sessionQueue, removeQueued,
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
     retry, editResend, fork, promote, rate,
     fileTarget, setFileTarget, fileList, refreshFiles, currentFile, setCurrentFile, openFile,
@@ -974,7 +992,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, refreshMcp,
     market, refreshMarket, settings, saveSettings, pricing,
     currentId, openSession, current, transcript, refreshTranscript, patchSession, newChat,
-    streaming, live, send, stopTurn, approve, queue, removeQueued,
+    streaming, live, send, stopTurn, approve, sessionQueue, removeQueued,
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
     retry, editResend, fork, promote, rate,
     fileTarget, fileList, refreshFiles, currentFile, openFile,
