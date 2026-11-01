@@ -527,8 +527,9 @@ meeting thread renders specially — a "Meeting · <kind> · running/done" heade
 on the agenda root with rounds, cost, Open thread and Cancel, the `minutes`
 attachment as a structured card (summary, decisions as `#decision:` chips,
 actions linking to their tasks, risks, questions for the CEO), the thread
-composer saying replies are read at the next round, `#decision:<id>` chips
-resolved through `GET …/chat/decisions/:id` (`decisionRefs` /
+composer saying replies are read at the next round, `#goal:` / `#decision:` /
+`#task:` chips drawn inline by the Markdown `refs` resolver (decision titles
+fetched once per id through `GET …/chat/decisions/:id`; `decisionRefs` /
 `decisionMentions` beside `goalRefs` in `src/lib/channels.ts`) and a `/meeting`
 hint in the composer; the **Meetings** pane (`src/components/OrgMeetingsView.tsx`,
 `#/ws/<id>/org/meetings`) — cadences per unit with the cron in words

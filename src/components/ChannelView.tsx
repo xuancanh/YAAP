@@ -7,8 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
 import { api, type Agent, type ChannelDetail, type ChannelFile, type ChannelMember, type ChannelMessage, type OrgDecision, type OrgMeeting, type WorkspaceEvent } from '../lib/api';
-import { applyMention, decisionMentions, decisionRefs, goalMentions, groupThreads, initials, meetingCommandHint, mentionQuery, mentionSuggestions, type MentionCandidate } from '../lib/channels';
-import { Markdown } from '../lib/md';
+import { applyMention, decisionRefs, groupThreads, initials, meetingCommandHint, mentionQuery, mentionSuggestions, type MentionCandidate } from '../lib/channels';
+import { Markdown, type RefResolver } from '../lib/md';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
 import { MEETING_KIND_TITLES, minutesMeetingId, parseMinutes } from '../lib/org';
@@ -36,6 +36,9 @@ function Chip({ kind, agent, name, size = 28 }: { kind: 'agent' | 'human' | 'sys
   if (kind === 'system') return <div title="system" style={{ ...base, background: 'var(--panel-2)', color: 'var(--text-faint)' }}><I d={P.sysLines} size={size * 0.5} /></div>;
   return <div title={name} style={{ ...base, background: 'var(--accent-dim)', color: 'var(--text)', fontWeight: 700, fontSize: size * 0.4, letterSpacing: '.3px' }}>{initials(name)}</div>;
 }
+
+/** Resolved `#decision:` chips, per workspace and id (or prefix). */
+const decisionCache = new Map<string, Promise<OrgDecision | null>>();
 
 export function ChannelView() {
   const app = useApp();
@@ -128,7 +131,35 @@ export function ChannelView() {
     if (!confirm(`End ${m.title || 'the meeting'} now? The minutes are written from what was proposed so far.`)) return;
     try { await api.cancelOrgMeeting(wsId, m.id); app.showToast('Meeting cancelled'); setMeetings((l) => l.map((x) => (x.id === m.id ? { ...x, status: 'cancelled' } : x))); } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'could not cancel'); }
   };
-  const openDecision = (id: string) => { app.setOrgFocus({ kind: 'decision', id }); app.setOrgUnitId(null); app.setOrgPane('decisions'); app.go('workspace'); app.setMobileDetail(true); };
+  const openDecision = useCallback((id: string) => { app.setOrgFocus({ kind: 'decision', id }); app.setOrgUnitId(null); app.setOrgPane('decisions'); app.go('workspace'); app.setMobileDetail(true); }, [app]);
+  // `#decision:<id>` chips (docs/group-chat.md §8) resolve through
+  // GET …/chat/decisions/:id (id or unique prefix): titles are fetched once per
+  // id for the messages on screen and read synchronously by the Markdown
+  // `refs` resolver, which draws #goal:/#decision:/#task: chips inline.
+  const [decisionNames, setDecisionNames] = useState<Record<string, string | null>>({});
+  useEffect(() => {
+    if (!wsId) return;
+    const ids = new Set<string>();
+    for (const m of [...page.messages, ...threadMsgs]) for (const id of decisionRefs(m.text)) if (!(id in decisionNames)) ids.add(id);
+    if (ids.size === 0) return;
+    let on = true;
+    for (const id of ids) {
+      const key = `${wsId}:${id}`;
+      if (!decisionCache.has(key)) decisionCache.set(key, api.chatDecision(wsId, id).catch(() => null));
+      void decisionCache.get(key)!.then((d) => { if (on) setDecisionNames((n) => (id in n ? n : { ...n, [id]: d ? d.title : null })); });
+    }
+    return () => { on = false; };
+  }, [wsId, page.messages, threadMsgs, decisionNames]);
+  const refs = useCallback<RefResolver>((kind, id) => {
+    if (kind === 'goal') {
+      const g = goals.get(id) ?? [...goals.values()].find((x) => x.id.startsWith(id));
+      return { label: g?.title ?? `goal ${id.slice(0, 8)}`, onClick: () => openGoal(g?.id ?? id) };
+    }
+    if (kind === 'decision') return { label: decisionNames[id] ?? `decision ${id.slice(0, 8)}`, onClick: () => openDecision(id) };
+    if (kind === 'task' && orgChannel) return { label: `task ${id.slice(0, 8)}`, onClick: () => { app.setOrgFocus({ kind: 'task', id }); app.setOrgPane('board'); app.go('workspace'); app.setMobileDetail(true); } };
+    return null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goals, decisionNames, orgChannel, openDecision, rootUnitId, app]);
 
   // live events for this channel
   useEffect(() => {
@@ -232,7 +263,6 @@ export function ChannelView() {
     const mine = m.authorKind === 'human' && (m.authorId === me || (!app.me && m.authorId));
     const meeting = meetingByRoot.get(m.id);
     const minutesOf = minutesMeetingId(atts);
-    const decisions = Array.from(new Set([...decisionMentions(m.mentions), ...decisionRefs(m.text)]));
     return (
       <div key={m.id} id={`msg-${m.id}`} className="chan-msg" style={{ display: 'flex', gap: 11, padding: '7px 10px', margin: '2px -10px', borderRadius: 10, animation: 'msgIn .18s ease', background: focusRef.current === m.id ? 'var(--accent-dim)' : undefined, borderLeft: meeting ? `3px solid ${meeting.status === 'running' ? 'var(--green)' : 'var(--border)'}` : undefined }}>
         <Chip kind={m.authorKind} agent={agent} name={name} />
@@ -247,7 +277,7 @@ export function ChannelView() {
               <button onClick={() => void makeTask(m)} title="Make a task from this message" style={ghostBtn}><I d={P.board} size={13} />Make task</button>
             </span>
           </div>
-          {minutesOf ? <MinutesCard wsId={wsId} meetingId={minutesOf} fallback={m.text} onDecision={openDecision} onTask={(id) => { app.setOrgFocus({ kind: 'task', id }); app.setOrgPane('board'); app.go('workspace'); app.setMobileDetail(true); }} /> : <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={m.text} /></div>}
+          {minutesOf ? <MinutesCard wsId={wsId} meetingId={minutesOf} fallback={m.text} refs={refs} onDecision={openDecision} onTask={(id) => { app.setOrgFocus({ kind: 'task', id }); app.setOrgPane('board'); app.go('workspace'); app.setMobileDetail(true); }} /> : <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={m.text} refs={refs} compact /></div>}
           {atts.filter((a) => a.kind !== 'minutes').length > 0 && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
               {atts.filter((a) => a.kind !== 'minutes').map((a, i) => (
@@ -255,23 +285,6 @@ export function ChannelView() {
                   {a.kind === 'image' ? '▣' : '▤'} {a.path.split('/').pop()}
                 </button>
               ))}
-            </div>
-          )}
-          {goalMentions(m.mentions).length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-              {goalMentions(m.mentions).map((id) => {
-                const g = goals.get(id);
-                return (
-                  <button key={id} onClick={() => openGoal(id)} title={g ? `${g.title} · ${g.status}` : 'Open the goal tracker'} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--accent-dim)', border: 'none', color: 'var(--text)', borderRadius: 7, padding: '2px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
-                    <I d={P.star} size={12} />{g?.title ?? `goal ${id.slice(0, 8)}`}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          {decisions.length > 0 && !minutesOf && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-              {decisions.map((id) => <DecisionChip key={id} wsId={wsId} id={id} onOpen={() => openDecision(id)} />)}
             </div>
           )}
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 5 }}>
@@ -578,13 +591,13 @@ function MeetingHeader({ meeting: m, inThread, onOpen, onCancel }: { meeting: Or
 /** The minutes as a structured card (summary, decisions as `#decision:` chips,
  *  actions linking to the tasks they became, risks, questions for the CEO),
  *  read from the meeting row; the rendered text is the fallback. */
-function MinutesCard({ wsId, meetingId, fallback, onDecision, onTask }: { wsId: string; meetingId: string; fallback: string; onDecision: (id: string) => void; onTask: (taskId: string) => void }) {
+function MinutesCard({ wsId, meetingId, fallback, refs, onDecision, onTask }: { wsId: string; meetingId: string; fallback: string; refs: RefResolver; onDecision: (id: string) => void; onTask: (taskId: string) => void }) {
   const app = useApp();
   const [m, setM] = useState<OrgMeeting | null | undefined>(undefined);
   const [raw, setRaw] = useState(false);
   useEffect(() => { void api.orgMeeting(wsId, meetingId).then(setM).catch(() => setM(null)); }, [wsId, meetingId]);
   if (m === undefined) return <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4 }}>Loading the minutes…</div>;
-  if (m === null || raw) return <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={fallback} />{m && <button onClick={() => setRaw(false)} style={{ ...ghostBtn, padding: 0 }}>structured view</button>}</div>;
+  if (m === null || raw) return <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={fallback} refs={refs} compact />{m && <button onClick={() => setRaw(false)} style={{ ...ghostBtn, padding: 0 }}>structured view</button>}</div>;
   const minutes = parseMinutes(m.minutes);
   const nm = (id: string) => app.agents.find((a) => a.id === id)?.name ?? (id ? id.slice(0, 8) : 'the facilitator');
   const section = (title: string, n: number) => <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.4px', textTransform: 'uppercase', color: 'var(--text-faint)', marginTop: 10, marginBottom: 4 }}>{title} · {n}</div>;
@@ -621,25 +634,6 @@ function MinutesCard({ wsId, meetingId, fallback, onDecision, onTask }: { wsId: 
       {minutes.questions.map((q, i) => <div key={i} style={row}>? {q.question} <span style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>({nm(q.by)})</span></div>)}
       <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>Minutes are hash-chained into the audit log; actions became tasks, decisions went to the log, questions reach the next brief.</div>
     </div>
-  );
-}
-
-const decisionCache = new Map<string, Promise<OrgDecision | null>>();
-/** A `#decision:<id>` chip: resolves through GET …/chat/decisions/:id (an id
- *  or its unique prefix, cached), shows the title, opens the decision log. */
-function DecisionChip({ wsId, id, onOpen }: { wsId: string; id: string; onOpen: () => void }) {
-  const [d, setD] = useState<OrgDecision | null | undefined>(undefined);
-  useEffect(() => {
-    const key = `${wsId}:${id}`;
-    if (!decisionCache.has(key)) decisionCache.set(key, api.chatDecision(wsId, id).catch(() => null));
-    let on = true;
-    void decisionCache.get(key)!.then((v) => { if (on) setD(v); });
-    return () => { on = false; };
-  }, [wsId, id]);
-  return (
-    <button onClick={onOpen} title={d ? `${d.decision || d.title} · decided by ${d.decidedBy}` : d === null ? 'No decision with this id' : 'Open the decision log'} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--accent-dim)', border: 'none', color: d === null ? 'var(--text-faint)' : 'var(--text)', borderRadius: 7, padding: '2px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer', maxWidth: 320 }}>
-      <I d={P.check} size={12} /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d ? d.title : `decision ${id.slice(0, 8)}`}</span>
-    </button>
   );
 }
 
