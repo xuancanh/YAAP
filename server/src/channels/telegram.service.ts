@@ -28,7 +28,8 @@ import { randomBytes } from 'node:crypto';
 import { SettingsService } from '../settings/settings.module';
 import { AgentsService } from '../agents/agents.service';
 import { AccountsService } from '../accounts/accounts.service';
-import { currentAccountId, runWithAccount } from '../accounts/account-context';
+import { currentAccountId, currentViewer, runWithAccount, runWithViewer, type Viewer } from '../accounts/account-context';
+import { SharedService } from '../shared/shared.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { ChatsRepository } from '../chats/chats.repository';
 import { TurnLoopService } from '../chats/turn-loop.service';
@@ -50,8 +51,9 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   private timer?: ReturnType<typeof setTimeout>;
   private sweepTimer?: ReturnType<typeof setInterval>;
   private sweeping = false;
-  /** One live pairing code per process, remembering which account minted it. */
-  private pairCode: { code: string; expires: number; accountId: string } | null = null;
+  /** One live pairing code per process, remembering which account minted it
+   *  — and, for a member of a shared workspace, which member (docs/shared-agents.md §5). */
+  private pairCode: { code: string; expires: number; accountId: string; member?: { workspaceId: string; viewer: Viewer } } | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -63,6 +65,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     /** Optional: without it, one account (the current one) owns the bot. With
      *  it, the paired chat id decides whose agents a message reaches. */
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: per-member pairings in shared workspaces. */
+    @Optional() private readonly shared?: SharedService,
   ) {}
 
   private get token(): string {
@@ -96,11 +100,17 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  /** Mint a short-lived pairing code the user sends to the bot as /pair. */
-  mintPairCode(): { code: string; expiresInSeconds: number } {
+  /** Mint a short-lived pairing code the user sends to the bot as /pair. A
+   *  member acting in a shared workspace mints a *member* code: the chat
+   *  that redeems it means that member, not the owner. */
+  mintPairCode(): { code: string; expiresInSeconds: number; member?: boolean } {
     const code = randomBytes(4).toString('hex');
-    this.pairCode = { code, expires: Date.now() + PAIR_TTL_MS, accountId: currentAccountId() };
-    return { code, expiresInSeconds: PAIR_TTL_MS / 1000 };
+    const viewer = currentViewer();
+    this.pairCode = {
+      code, expires: Date.now() + PAIR_TTL_MS, accountId: currentAccountId(),
+      ...(viewer && viewer.role !== 'owner' ? { member: { workspaceId: viewer.workspaceId, viewer } } : {}),
+    };
+    return { code, expiresInSeconds: PAIR_TTL_MS / 1000, ...(viewer ? { member: true } : {}) };
   }
 
   async unpair() {
@@ -140,11 +150,23 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       : ((await this.settings.all()).telegramChatId === String(chatId) ? currentAccountId() : null);
 
     if (owner === null) {
+      // A member's pairing (shared workspaces): the chat means that member,
+      // and the turn runs under the owner's account as them.
+      const paired = this.shared ? await this.shared.channelOwner('telegram', String(chatId)) : null;
+      if (paired) {
+        await runWithViewer(paired.ownerAccountId, paired.viewer, () => this.handlePaired(chatId, text, paired.viewer));
+        return;
+      }
       // unknown sender: only the pairing handshake is acknowledged
       const m = /^\/pair\s+([a-f0-9]+)$/i.exec(text);
       if (m && this.pairCode && this.pairCode.code === m[1].toLowerCase() && Date.now() < this.pairCode.expires) {
-        const { accountId } = this.pairCode;
+        const { accountId, member } = this.pairCode;
         this.pairCode = null;
+        if (member && this.shared) {
+          await runWithAccount(accountId, () => this.shared!.pairChannel(member.workspaceId, member.viewer.memberAccountId, 'telegram', String(chatId)));
+          await this.send(chatId, `Paired as ${member.viewer.displayName || 'a member'} of a shared workspace. Messages here go to its default agent and count as yours; approvals routed to you arrive here too.`);
+          return;
+        }
         await runWithAccount(accountId, () => this.settings.put({ telegramChatId: String(chatId) }));
         await this.send(chatId, 'Paired. Messages here go to your default agent; set or change it in the app under Settings → Channels.');
       } else {
@@ -155,11 +177,13 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     await runWithAccount(owner, () => this.handlePaired(chatId, text));
   }
 
-  /** A message from the paired chat, under its account. */
-  private async handlePaired(chatId: number, text: string): Promise<void> {
+  /** A message from the paired chat, under its account (and, for a member
+   *  pairing, as that member: their session, their grants, their name). */
+  private async handlePaired(chatId: number, text: string, member?: Viewer): Promise<void> {
     const s = await this.settings.all();
     if (text === '/unpair') {
-      await this.unpair();
+      if (member && this.shared) await this.shared.unpairChannel(member.workspaceId, member.memberAccountId, 'telegram');
+      else await this.unpair();
       await this.send(chatId, 'Unpaired. Generate a new code in the app to reconnect.');
       return;
     }
@@ -171,9 +195,11 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const ws = (await this.workspaces.list())[0];
+    const ws = member ? await this.workspaces.get(member.workspaceId).catch(() => null) : (await this.workspaces.list())[0];
     if (!ws) return;
-    const name = `Telegram · ${agent.name}`;
+    // One channel session per person: a member's Telegram turns land in their
+    // own private session, never in the owner's.
+    const name = member ? `Telegram · ${agent.name} · ${member.displayName || member.memberAccountId.slice(0, 8)}` : `Telegram · ${agent.name}`;
     const existing = (await this.repo.listSessions(ws.id)).find((x) => x.agentId === agent.id && x.name === name);
     // Ask mode, deliberately: gated tools deny with a pointer to the app.
     const session = existing ?? await this.repo.createSession({ workspaceId: ws.id, agentId: agent.id, name, permissionMode: 'ask' });
@@ -218,36 +244,65 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async sweepAccount(now: Date): Promise<number> {
-    {
-      const s = await this.settings.all();
-      const chatId = Number(s.telegramChatId ?? '');
-      if (!chatId) return 0;
+    const s = await this.settings.all();
+    const chatId = Number(s.telegramChatId ?? '');
+    let delivered = 0;
+    if (chatId) {
       const defaultAgentId = s.telegramDefaultAgentId ?? '';
       const events = (await this.agents.undeliveredEvents(now))
         .filter((e) => e.agentId === defaultAgentId || e.channel === 1);
-      if (events.length === 0) return 0;
-
-      const batch = events.slice(0, 20); // the rest goes next minute; one phone message, not a flood
-      const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
-      const base = (this.config.get<string>('publicAppUrl') ?? 'http://localhost:5175').replace(/\/+$/, '');
-      const text = batch.map((e) => {
-        const head = `${this.glyph(e.kind)} ${names.get(e.agentId) ?? 'Agent'} · ${e.title}`;
-        const body = e.body ? `\n${e.body.replace(/\s+/g, ' ').slice(0, 400)}` : '';
-        const link = e.sessionId ? `\n${base}/#/chat/${e.sessionId}` : '';
-        return head + body + link;
-      }).join('\n\n');
-      await this.send(chatId, text);
-      // Marked only after the send succeeded: a failed push retries next sweep.
-      await this.agents.markEventsDelivered(batch.map((e) => e.id), now);
-      return batch.length;
+      if (events.length > 0) {
+        const batch = events.slice(0, 20); // the rest goes next minute; one phone message, not a flood
+        await this.send(chatId, await this.render(batch));
+        // Marked only after the send succeeded: a failed push retries next sweep.
+        await this.agents.markEventsDelivered(batch.map((e) => e.id), now);
+        delivered += batch.length;
+      }
     }
+    // Members' pairings deliver whether or not the owner paired a chat.
+    return delivered + await this.sweepMembers(now);
+  }
+
+  /** Events addressed to members (routed approvals) go to *their* paired
+   *  chats in this account's workspaces — never to the owner's phone. */
+  private async sweepMembers(now: Date): Promise<number> {
+    if (!this.shared) return 0;
+    let delivered = 0;
+    const seen = new Set<string>();
+    for (const ws of await this.workspaces.list()) {
+      for (const ch of (await this.shared.channels(ws.id)).filter((c) => c.kind === 'telegram')) {
+        const key = `${ch.memberAccountId}:${ch.address}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const events = (await this.shared.addressedEvents(ch.memberAccountId, 'deliveredAt'))
+          .filter((e) => e.accountId === currentAccountId() && (e.deliverAfter === null || e.deliverAfter <= now.toISOString()))
+          .slice(0, 20);
+        if (events.length === 0) continue;
+        await this.send(Number(ch.address), await this.render(events));
+        await this.agents.markEventsDelivered(events.map((e) => e.id), now);
+        delivered += events.length;
+      }
+    }
+    return delivered;
+  }
+
+  private async render(batch: Array<{ kind: string; agentId: string; title: string; body: string; sessionId: string | null }>): Promise<string> {
+    const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
+    const base = (this.config.get<string>('publicAppUrl') ?? 'http://localhost:5175').replace(/\/+$/, '');
+    return batch.map((e) => {
+      const head = `${this.glyph(e.kind)} ${names.get(e.agentId) ?? 'Agent'} · ${e.title}`;
+      const body = e.body ? `\n${e.body.replace(/\s+/g, ' ').slice(0, 400)}` : '';
+      const link = e.sessionId ? `\n${base}/#/chat/${e.sessionId}` : '';
+      const hint = e.kind === 'approval_request' ? '\nAllow or deny from your inbox in the app.' : '';
+      return head + body + link + hint;
+    }).join('\n\n');
   }
 
   private glyph(kind: string): string {
     switch (kind) {
       case 'loop_error': case 'action_failed': return '❌';
       case 'budget_stop': return '⛔';
-      case 'action_pending': return '⏸';
+      case 'action_pending': case 'approval_request': return '⏸';
       case 'loop_run': return '✅';
       default: return 'ℹ️';
     }

@@ -3,7 +3,8 @@
  * are not the turn loop: rename/pin/tags/archive, drafts, permission mode,
  * /clear, and markdown export (FR-6.7).
  */
-import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { currentViewer } from '../accounts/account-context';
 import { ChatsRepository, ChatSession } from './chats.repository';
 import { nowIso } from '../common/ids.util';
 import { AgentsService } from '../agents/agents.service';
@@ -25,10 +26,23 @@ export class ChatsService {
     return this.repo.listSessions(workspaceId, { archived });
   }
 
+  /** A member of a shared workspace may open shared sessions and their own;
+   *  a private session of someone else is a 404 to them, not a 403 — its
+   *  existence is theirs to disclose. */
   async get(id: string): Promise<ChatSession> {
     const s = await this.repo.getSession(id);
-    if (!s) throw new NotFoundException(`chat ${id}`);
+    if (!s || !this.repo.canView(s)) throw new NotFoundException(`chat ${id}`);
     return s;
+  }
+
+  /** Share a session with every member, or make it private again. Only its
+   *  creator or the owner may flip it. */
+  async setShared(id: string, shared: boolean): Promise<ChatSession> {
+    const s = await this.get(id);
+    const viewer = currentViewer();
+    if (viewer && viewer.role !== 'owner' && s.initiatedBy !== viewer.memberAccountId) throw new ForbiddenException('only the session creator or the owner can share it');
+    await this.repo.updateSession(id, { shared: shared ? 1 : 0 });
+    return this.get(id);
   }
 
   create(input: { workspaceId: string; name?: string; cwd?: string; agentId?: string; agentTypeId?: string; model?: string; tokenCeiling?: number }) {

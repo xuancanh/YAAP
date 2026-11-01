@@ -31,7 +31,24 @@ import type { NextFunction, Request, Response } from 'express';
  *  backfill value of every pre-tenancy row (migration 0023). */
 export const SINGLE_ACCOUNT = 'single';
 
-interface AccountStore { accountId?: string }
+/**
+ * Who, within an account, is acting (docs/shared-agents.md). A workspace
+ * owner acts as themselves and has no viewer; a *member* of a shared
+ * workspace acts inside the owner's account (every row belongs to the owner)
+ * and the viewer records which member it is and what their role allows.
+ * `actorId()` is the stable id approvals, lessons and audit rows carry:
+ * the member's own account id, or the owner's account id for the owner.
+ */
+export type MemberRole = 'owner' | 'member' | 'viewer';
+export interface Viewer {
+  /** The member's own account id (their identity across accounts). */
+  memberAccountId: string;
+  role: MemberRole;
+  workspaceId: string;
+  displayName: string;
+}
+
+interface AccountStore { accountId?: string; viewer?: Viewer }
 
 const als = new AsyncLocalStorage<AccountStore>();
 
@@ -49,6 +66,32 @@ export function hasBoundAccount(): boolean {
  *  the innermost wins for its own continuation only. */
 export function runWithAccount<T>(accountId: string, fn: () => T): T {
   return als.run({ accountId }, fn);
+}
+
+/** The member acting in a shared workspace, or undefined for the owner
+ *  (and for every request in a workspace without members). */
+export function currentViewer(): Viewer | undefined {
+  return als.getStore()?.viewer;
+}
+
+/** Attach the viewer to the open store (WorkspaceAccessGuard). */
+export function bindViewer(viewer: Viewer | undefined): boolean {
+  const store = als.getStore();
+  if (!store) return false;
+  store.viewer = viewer;
+  return true;
+}
+
+/** Run `fn` under `accountId` acting as `viewer` (a channel turn paired to a
+ *  member, a routed approval delivered from a sweep). */
+export function runWithViewer<T>(accountId: string, viewer: Viewer | undefined, fn: () => T): T {
+  return als.run({ accountId, viewer }, fn);
+}
+
+/** The human acting now: the member's account id, or the account itself
+ *  for its owner. Never empty. */
+export function actorId(): string {
+  return als.getStore()?.viewer?.memberAccountId ?? currentAccountId();
 }
 
 /** Bind the account for the rest of the current context. Returns false when

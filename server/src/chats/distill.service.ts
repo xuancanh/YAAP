@@ -4,12 +4,36 @@
  * writes one journal entry and, when it learned something durable, one
  * lesson; both appends are capped by AgentsService.
  */
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { ChatsRepository } from './chats.repository';
+import { Injectable, BadRequestException, NotFoundException, Optional } from '@nestjs/common';
+import { ChatsRepository, ChatSession } from './chats.repository';
 import { TurnContextService } from './turn-context.service';
 import { AgentsService } from '../agents/agents.service';
-import { AgentMemoryService, sourceForSession } from '../agents/agent-memory.service';
+import { AgentMemoryService, SHARED_AUDIENCE, privateAudience, sourceForSession } from '../agents/agent-memory.service';
 import { streamSignal } from '../ai/provider-timeout';
+import { currentAccountId } from '../accounts/account-context';
+import { SharedService } from '../shared/shared.service';
+
+/**
+ * Who may later read what this session taught (docs/shared-agents.md §4).
+ * Only in a workspace with members does anything become private; then:
+ * content fetched through a member's connection makes the lesson that
+ * member's (unless a flow rule already opens their connection content to the
+ * initiator), a member's private session makes it theirs, and a shared
+ * session with nothing private in it is shared.
+ */
+export function audienceForSession(
+  session: Pick<ChatSession, 'initiatedBy' | 'shared'>,
+  connectionOwners: string[],
+  opts: { hasMembers: boolean; ownerActor: string; allowedConnectionSources?: ReadonlySet<string> },
+): string {
+  if (!opts.hasMembers) return SHARED_AUDIENCE;
+  const initiator = session.initiatedBy || opts.ownerActor;
+  const foreign = connectionOwners.filter((o) => o !== initiator && !(opts.allowedConnectionSources?.has(o) ?? false));
+  if (foreign.length > 0) return privateAudience(foreign[0]);
+  if (session.shared !== 1) return privateAudience(initiator);
+  const own = connectionOwners.find((o) => o === initiator);
+  return own ? privateAudience(own) : SHARED_AUDIENCE;
+}
 
 const DISTILL_SYSTEM = `You distill completed work into an agent's file brain. From the conversation, output exactly this format:
 
@@ -25,7 +49,22 @@ export class DistillService {
     private readonly context: TurnContextService,
     private readonly agents: AgentsService,
     private readonly memory: AgentMemoryService,
+    /** Optional so test constructors without shared workspaces keep working. */
+    @Optional() private readonly shared?: SharedService,
   ) {}
+
+  /** Actors whose connections fed this session, from the turns' tool records. */
+  private async connectionOwners(sessionId: string): Promise<string[]> {
+    const owners = new Set<string>();
+    for (const t of await this.repo.listTurns(sessionId)) {
+      try {
+        for (const c of JSON.parse(t.toolCalls || '[]') as Array<{ usedConnectionOf?: string }>) {
+          if (c.usedConnectionOf) owners.add(c.usedConnectionOf);
+        }
+      } catch { /* malformed record: ignore */ }
+    }
+    return [...owners];
+  }
 
   async distill(sessionId: string): Promise<{ ok: boolean; journal?: string; lesson?: string; quarantined?: boolean }> {
     const session = await this.repo.getSession(sessionId);
@@ -64,7 +103,12 @@ export class DistillService {
     let quarantined = false;
     if (lesson) {
       const source = sourceForSession(session.name || '');
-      const res = await this.memory.record(session.agentId, lesson, { source, sessionId: sessionId });
+      const hasMembers = this.shared ? await this.shared.hasMembers(session.workspaceId).catch(() => false) : false;
+      const ownerActor = currentAccountId();
+      const initiator = session.initiatedBy || ownerActor;
+      const allowed = hasMembers && this.shared ? await this.shared.allowedSources(session.workspaceId, initiator, 'connections') : undefined;
+      const audience = audienceForSession(session, await this.connectionOwners(sessionId), { hasMembers, ownerActor, allowedConnectionSources: allowed });
+      const res = await this.memory.record(session.agentId, lesson, { source, sessionId: sessionId, audience });
       quarantined = res.lesson.trusted === 0;
       if (quarantined) {
         await this.agents.addEvent(session.agentId, {

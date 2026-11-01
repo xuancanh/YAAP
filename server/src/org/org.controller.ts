@@ -12,6 +12,7 @@
  *  goals / projects: GET · POST · PATCH
  *  tasks: GET /:id/tasks (board) · POST · PATCH /:id/tasks/:taskId · POST …/assign · …/comment · …/review · …/wake · GET …/runs
  *  approvals: GET /:id/approvals · POST /:id/approvals/:approvalId/decide — the only place an approval is decided
+ *  humans (phase D): GET /:id/humans · POST /:id/humans { memberAccountId, role } · DELETE /:id/humans/:memberAccountId
  *  audit: GET /:id/audit · GET /:id/audit/verify
  *  brief: GET /:id/brief · POST /:id/brief (compose now) · POST /:id/brief/reply { text }
  *  spend: GET /:id/spend · PUT /:id/budgets
@@ -20,14 +21,15 @@
  *
  * Every route except /status answers 404 when COMPANIES_ENABLED=false.
  */
-import { Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
 import { ConfigService } from '@nestjs/config';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
-import { OrgService } from './org.service';
+import { OrgService, HUMAN_ROLES, mayDecide, type HumanRole } from './org.service';
 import { OrgTasksService, TASK_STATUSES, type TaskStatus } from './org-tasks.service';
 import { OrgApprovalsService, APPROVAL_KINDS, type ApprovalKind } from './org-approvals.service';
 import { OrgAuditService } from './org-audit.service';
-import { OrgBriefService } from './org-brief.service';
+import { OrgBriefService, parseBriefReply } from './org-brief.service';
 import { OrgRuntimeService } from './org-runtime.service';
 
 class ChiefDto {
@@ -122,6 +124,7 @@ class BudgetDto {
   @IsNumber() monthlyUsd!: number;
 }
 class WakeDto { @IsOptional() @IsString() agentId?: string; @IsOptional() @IsBoolean() now?: boolean }
+class HumanDto { @IsString() memberAccountId!: string; @IsIn(HUMAN_ROLES as unknown as string[]) role!: HumanRole }
 
 @Controller('orgs')
 export class OrgController {
@@ -137,6 +140,24 @@ export class OrgController {
 
   private enabled(): boolean { return this.config.get<boolean>('companiesEnabled') !== false; }
   private guard(): void { if (!this.enabled()) throw new NotFoundException('organizations are disabled (COMPANIES_ENABLED=false)'); }
+
+  /** The audit actor for a human decision: 'user' for the owner (CEO),
+   *  `human:<accountId>` for a member of the shared workspace (phase D). */
+  private actor(): string {
+    const v = currentViewer();
+    return v && v.memberAccountId !== currentAccountId() ? `human:${v.memberAccountId}` : 'user';
+  }
+
+  /** Phase D: who may decide what. The owner is CEO; others need an
+   *  org_humans row — board for hire | budget_raise | strategy, nothing else. */
+  private async assertMayDecide(orgId: string, kind: string): Promise<void> {
+    const role = await this.org.humanRole(orgId, actorId());
+    if (!mayDecide(role, kind)) {
+      throw new ForbiddenException(role === 'board'
+        ? `board members decide hire, budget_raise and strategy approvals; a ${kind} approval is the CEO's`
+        : role === 'observer' ? 'observers can read the company but not decide for it' : 'you have no standing in this organisation');
+    }
+  }
 
   @Get('status') status() { return { enabled: this.enabled() }; }
 
@@ -220,9 +241,20 @@ export class OrgController {
   }
   /** The user may also raise a proposal by hand (e.g. an external action to record). */
   @Post(':id/approvals') propose(@Param('id') id: string, @Body() dto: ProposalDto) { this.guard(); return this.approvals.create(id, { kind: dto.kind, payload: dto.payload, requestedBy: 'user', recommendation: dto.recommendation }); }
-  @Post(':id/approvals/:approvalId/decide') decide(@Param('id') id: string, @Param('approvalId') approvalId: string, @Body() dto: DecideDto) {
-    this.guard(); return this.approvals.decide(id, approvalId, dto.decision, dto.note ?? '', 'user');
+  @Post(':id/approvals/:approvalId/decide') async decide(@Param('id') id: string, @Param('approvalId') approvalId: string, @Body() dto: DecideDto) {
+    this.guard();
+    const a = await this.approvals.get(id, approvalId);
+    await this.assertMayDecide(id, a.kind);
+    return this.approvals.decide(id, approvalId, dto.decision, dto.note ?? '', this.actor(), actorId());
   }
+
+  // ---- humans (phase D): the CEO is the owner; board and observers are members of the shared workspace ----
+  @Get(':id/humans') async humans(@Param('id') id: string) {
+    this.guard();
+    return { ceoAccountId: currentAccountId(), me: { actorId: actorId(), role: await this.org.humanRole(id, actorId()) }, humans: await this.org.humans(id) };
+  }
+  @Post(':id/humans') setHuman(@Param('id') id: string, @Body() dto: HumanDto) { this.guard(); return this.org.setHuman(id, dto, this.actor()); }
+  @Delete(':id/humans/:memberAccountId') removeHuman(@Param('id') id: string, @Param('memberAccountId') memberAccountId: string) { this.guard(); return this.org.removeHuman(id, memberAccountId, this.actor()); }
 
   // ---- audit ----
   @Get(':id/audit') auditList(@Param('id') id: string, @Query('limit') limit?: string, @Query('action') action?: string, @Query('refId') refId?: string) {
@@ -233,7 +265,20 @@ export class OrgController {
   // ---- brief ----
   @Get(':id/brief') latestBrief(@Param('id') id: string) { this.guard(); return this.brief.latest(id); }
   @Post(':id/brief') composeBrief(@Param('id') id: string) { this.guard(); return this.brief.compose(id, { deliver: true, by: 'user' }); }
-  @Post(':id/brief/reply') replyBrief(@Param('id') id: string, @Body() dto: TextDto) { this.guard(); return this.brief.reply(id, dto.text); }
+  @Post(':id/brief/reply') async replyBrief(@Param('id') id: string, @Body() dto: TextDto) {
+    this.guard();
+    const role = await this.org.humanRole(id, actorId());
+    if (role !== 'ceo' && role !== 'board') throw new ForbiddenException('only the CEO or a board member answers the brief');
+    // A board member may only answer the items of their kinds; a reply that
+    // touches a CEO-only item is refused whole rather than half-applied.
+    if (role === 'board') {
+      const brief = await this.brief.latest(id);
+      const { decisions } = parseBriefReply(dto.text, brief?.items.length ?? 0);
+      const ceoOnly = decisions.map((d) => brief?.items.find((i) => i.n === d.n)).filter((i) => i && !mayDecide(role, i.kind));
+      if (ceoOnly.length > 0) throw new ForbiddenException(`item(s) ${ceoOnly.map((i) => i!.n).join(', ')} are the CEO's to decide`);
+    }
+    return this.brief.reply(id, dto.text, this.actor(), actorId());
+  }
 
   // ---- spend ----
   @Get(':id/spend') spend(@Param('id') id: string) { this.guard(); return this.runtime.spendTree(id); }

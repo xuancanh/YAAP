@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { and, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import { AccountsService } from '../accounts/accounts.service';
+import { actorId, currentAccountId } from '../accounts/account-context';
 import { unscoped } from '../accounts/scoped-db';
 import type { DrizzleDb } from '../database/database.module';
 import { agents, agentEvents, agentTasks, chatSessions, chatTurns } from '../database/schema';
@@ -548,9 +549,13 @@ export class AgentsService {
     origin?: string;
     /** Push to the paired channel even for a non-default agent. */
     channel?: boolean;
+    /** Addressed to one member (a routed approval): visible to and
+     *  deliverable for them alone (docs/shared-agents.md §3). */
+    forMemberAccountId?: string;
   }) {
     const row = {
       id: newId(), agentId,
+      forMemberAccountId: input.forMemberAccountId ?? '',
       kind: input.kind, title: input.title.slice(0, 200),
       body: (input.body ?? '').slice(0, 1_000),
       payload: input.payload ?? '',
@@ -580,17 +585,37 @@ export class AgentsService {
     return row;
   }
 
+  /** The inbox as the current actor may see it: an event addressed to one
+   *  member (a routed approval) is hidden from everyone else — the group only
+   *  ever learns that someone's approval is awaited, never what. */
   async listEvents(agentId: string, limit = 50) {
+    const me = actorId();
     const rows = await this.db.select().from(agentEvents).where(eq(agentEvents.agentId, agentId));
-    return rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, limit);
+    return rows
+      .filter((r) => r.forMemberAccountId === '' || r.forMemberAccountId === me)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, limit);
+  }
+
+  async getEvent(agentId: string, eventId: string) {
+    const ev = (await this.db.select().from(agentEvents).where(eq(agentEvents.id, eventId))).at(0);
+    if (!ev || ev.agentId !== agentId) throw new NotFoundException(`event ${eventId}`);
+    return ev;
+  }
+
+  async patchEvent(eventId: string, patch: Partial<typeof agentEvents.$inferInsert>) {
+    await this.db.update(agentEvents).set(patch).where(eq(agentEvents.id, eventId));
   }
 
   /** Unread event counts for every agent (rail badges), one query. */
   async unreadEventCounts(): Promise<Record<string, number>> {
-    const rows = await this.db.select({ agentId: agentEvents.agentId })
+    const me = actorId();
+    const rows = await this.db.select({ agentId: agentEvents.agentId, forMemberAccountId: agentEvents.forMemberAccountId })
       .from(agentEvents).where(isNull(agentEvents.readAt));
     const out: Record<string, number> = {};
-    for (const r of rows) out[r.agentId] = (out[r.agentId] ?? 0) + 1;
+    for (const r of rows) {
+      if (r.forMemberAccountId !== '' && r.forMemberAccountId !== me) continue;
+      out[r.agentId] = (out[r.agentId] ?? 0) + 1;
+    }
     return out;
   }
 
@@ -609,8 +634,10 @@ export class AgentsService {
         eq(agentEvents.silent, 0),
         or(isNull(agentEvents.deliverAfter), lte(agentEvents.deliverAfter, nowIso)),
       ));
+    // Addressed events travel to their addressee's channels only
+    // (SharedService.addressedEvents); the account's own sweep skips them.
     return rows
-      .filter((r) => r.origin !== 'channel')
+      .filter((r) => r.origin !== 'channel' && (r.forMemberAccountId === '' || r.forMemberAccountId === currentAccountId()))
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
   }
 

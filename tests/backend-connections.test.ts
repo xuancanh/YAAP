@@ -182,7 +182,7 @@ test('write grant is refused until the connection holds write scopes', async () 
   await svc.setGrant('conn1', 'agent1', 'calendar', 'write');
   const listed = await svc.list();
   assert.equal(listed[0].writeCapable, true);
-  assert.deepEqual(listed[0].grants, [{ agentId: 'agent1', service: 'calendar', level: 'write' }]);
+  assert.deepEqual(listed[0].grants, [{ agentId: 'agent1', service: 'calendar', level: 'write', memberAccountId: '' }]);
   // a write grant exposes the read tools plus the write tools
   const specs = await svc.toolSpecs('agent1');
   assert.deepEqual(specs.map((s) => s.name).sort(), ['gcal_create_event', 'gcal_freebusy', 'gcal_search', 'gcal_upcoming', 'gcal_update_event']);

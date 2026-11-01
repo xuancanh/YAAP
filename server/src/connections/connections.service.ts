@@ -20,6 +20,7 @@ import { randomBytes } from 'node:crypto';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { currentAccountId } from '../accounts/account-context';
+import { unscoped } from '../accounts/scoped-db';
 import { agents, connections, connectionGrants } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { seal, open } from '../common/secretbox';
@@ -110,7 +111,20 @@ export interface ConnectionInfo {
   /** Whether the consented scopes cover drive read + export tools. */
   driveCapable: boolean;
   createdAt: string;
-  grants: Array<{ agentId: string; service: string; level: string }>;
+  grants: Array<{ agentId: string; service: string; level: string; memberAccountId: string }>;
+}
+
+/** A grant that lets an agent use a *member's* connection in a shared
+ *  workspace (docs/shared-agents.md §3), as the Members pane lists it. */
+export interface MemberGrant {
+  id: string;
+  connectionId: string;
+  agentId: string;
+  service: string;
+  level: string;
+  memberAccountId: string;
+  provider: string;
+  accountEmail: string;
 }
 
 @Injectable()
@@ -153,9 +167,49 @@ export class ConnectionsService implements GoogleHttp {
         scopes,
         ...caps,
         createdAt: r.createdAt,
-        grants: grants.filter((g) => g.connectionId === r.id).map((g) => ({ agentId: g.agentId, service: g.service, level: g.level })),
+        grants: grants.filter((g) => g.connectionId === r.id).map((g) => ({ agentId: g.agentId, service: g.service, level: g.level, memberAccountId: g.memberAccountId })),
       };
     });
+  }
+
+  /** The connections of one account, redacted — what a member sees of their
+   *  own services while acting in someone else's workspace. Unscoped on
+   *  purpose: the caller's context is the workspace owner's account. */
+  async listOwnedBy(accountId: string): Promise<Array<Omit<ConnectionInfo, 'grants'>>> {
+    const rows = await unscoped(this.db).select().from(connections).where(eq(connections.accountId, accountId));
+    return rows.map((r) => {
+      const scopes = JSON.parse(r.scopes) as string[];
+      return { id: r.id, provider: r.provider, accountEmail: r.accountEmail, scopes, ...capabilitiesFor(r.provider as ProviderName, scopes), createdAt: r.createdAt };
+    });
+  }
+
+  /** Grants in this workspace's account that use a member's connection. */
+  async memberGrants(): Promise<MemberGrant[]> {
+    const grants = (await this.db.select().from(connectionGrants)).filter((g) => g.memberAccountId !== '');
+    const out: MemberGrant[] = [];
+    for (const g of grants) {
+      const conn = await this.connectionRow(g.connectionId, g.memberAccountId);
+      out.push({ id: g.id, connectionId: g.connectionId, agentId: g.agentId, service: g.service, level: g.level, memberAccountId: g.memberAccountId, provider: conn?.provider ?? '', accountEmail: conn?.accountEmail ?? '' });
+    }
+    return out;
+  }
+
+  async removeMemberGrant(grantId: string, onlyIfMember?: string): Promise<{ ok: boolean }> {
+    const g = (await this.db.select().from(connectionGrants).where(eq(connectionGrants.id, grantId))).at(0);
+    if (!g) throw new NotFoundException(`grant ${grantId}`);
+    if (onlyIfMember !== undefined && g.memberAccountId !== onlyIfMember) throw new ConflictException('you can only remove grants on your own connections');
+    await this.db.delete(connectionGrants).where(eq(connectionGrants.id, grantId));
+    return { ok: true };
+  }
+
+  /** The connection row a grant points at. The owner's grants ('' member)
+   *  resolve in the current account; a member's in *their* account — the one
+   *  cross-account read this service makes, keyed by both id and owner so a
+   *  guessed id in another account cannot be reached. */
+  private async connectionRow(connectionId: string, memberAccountId: string): Promise<ConnectionRow | undefined> {
+    if (!memberAccountId) return (await this.db.select().from(connections).where(eq(connections.id, connectionId))).at(0);
+    return (await unscoped(this.db).select().from(connections)
+      .where(and(eq(connections.id, connectionId), eq(connections.accountId, memberAccountId))).limit(1)).at(0);
   }
 
   /** Build a provider consent URL; the client opens it in a popup. tier
@@ -259,9 +313,13 @@ export class ConnectionsService implements GoogleHttp {
 
   // ---- grants (activation gate) ----
 
-  async setGrant(connectionId: string, agentId: string, service: ServiceName, level: GrantLevel): Promise<{ ok: boolean }> {
-    const row = (await this.db.select().from(connections).where(eq(connections.id, connectionId))).at(0);
-    if (!row) throw new NotFoundException(`connection ${connectionId}`);
+  async setGrant(connectionId: string, agentId: string, service: ServiceName, level: GrantLevel, opts: { memberAccountId?: string } = {}): Promise<{ ok: boolean }> {
+    // A member's grant names their own connection, which lives in their
+    // account; the owner's names one in this account. Either way the row
+    // must exist *there* — a member cannot grant the owner's connection.
+    const memberAccountId = opts.memberAccountId && opts.memberAccountId !== currentAccountId() ? opts.memberAccountId : '';
+    const row = await this.connectionRow(connectionId, memberAccountId);
+    if (!row) throw new NotFoundException(`connection ${connectionId}${memberAccountId ? ' (not one of yours)' : ''}`);
     const caps = capabilitiesFor(row.provider as ProviderName, JSON.parse(row.scopes) as string[]);
     if (service === 'calendar' && level === 'write' && !caps.writeCapable) {
       throw new ConflictException('this connection has read-only consent — enable write access in Settings → Connections first');
@@ -276,11 +334,11 @@ export class ConnectionsService implements GoogleHttp {
       throw new ConflictException('this connection has no Drive consent — enable Drive in Settings → Connections first');
     }
     const existing = (await this.db.select().from(connectionGrants)
-      .where(and(eq(connectionGrants.connectionId, connectionId), eq(connectionGrants.agentId, agentId), eq(connectionGrants.service, service)))).at(0);
+      .where(and(eq(connectionGrants.connectionId, connectionId), eq(connectionGrants.agentId, agentId), eq(connectionGrants.service, service), eq(connectionGrants.memberAccountId, memberAccountId)))).at(0);
     if (existing) {
       await this.db.update(connectionGrants).set({ level }).where(eq(connectionGrants.id, existing.id));
     } else {
-      await this.db.insert(connectionGrants).values({ id: newId(), connectionId, agentId, service, level, createdAt: nowIso() });
+      await this.db.insert(connectionGrants).values({ id: newId(), connectionId, agentId, service, level, memberAccountId, createdAt: nowIso() });
     }
     return { ok: true };
   }
@@ -309,8 +367,8 @@ export class ConnectionsService implements GoogleHttp {
   /** Connection tools visible to one agent: only providers + services with a
    *  grant, and within a service only the tools its level covers (write
    *  implies read). */
-  async toolSpecs(agentId: string): Promise<AiToolSpec[]> {
-    const granted = await this.grantedConnections(agentId);
+  async toolSpecs(agentId: string, initiator = ''): Promise<AiToolSpec[]> {
+    const granted = await this.grantedConnections(agentId, initiator);
     return CONNECTION_TOOLS
       .filter((t) => {
         const level = granted[t.provider]?.levels[t.service];
@@ -333,11 +391,25 @@ export class ConnectionsService implements GoogleHttp {
     return CONNECTION_TOOLS.some((t) => t.name === name);
   }
 
-  async execute(agentId: string | undefined, name: string, input: Record<string, unknown>): Promise<string> {
+  /**
+   * Whose connection a call would use (docs/shared-agents.md §3): the
+   * initiating member's own grant when they hold one for the service, else the
+   * agent's default (the owner's). '' = the owner. Null when the agent has no
+   * usable grant at all, or the tool is not a connection tool.
+   */
+  async resolveConnectionOwner(agentId: string, name: string, initiator = ''): Promise<string | null> {
+    const tool = CONNECTION_TOOLS.find((t) => t.name === name);
+    if (!tool) return null;
+    const granted = (await this.grantedConnections(agentId, initiator))[tool.provider];
+    if (!granted || granted.levels[tool.service] === undefined) return null;
+    return granted.memberAccountId;
+  }
+
+  async execute(agentId: string | undefined, name: string, input: Record<string, unknown>, opts: { initiator?: string } = {}): Promise<string> {
     const tool = CONNECTION_TOOLS.find((t) => t.name === name);
     if (!tool) throw new Error(`unknown tool: ${name}`);
     if (!agentId) throw new Error('connection tools are available to durable agents with a granted connection only');
-    const granted = (await this.grantedConnections(agentId))[tool.provider];
+    const granted = (await this.grantedConnections(agentId, opts.initiator ?? ''))[tool.provider];
     const level = granted?.levels[tool.service];
     if (!granted || level === undefined) {
       throw new Error(`no connection grant: the user has not granted this agent ${tool.service} access on ${tool.provider} — grants live on the agent's Skills & tools tab`);
@@ -356,8 +428,9 @@ export class ConnectionsService implements GoogleHttp {
    *  `provider`, optionally pinned to a connection id. Same activation gate
    *  as the tools: no grant, no poll. */
   async connectionFor(agentId: string, provider: ProviderName, service: ServiceName, connectionId?: string): Promise<ConnectionRow> {
+    // Triggers poll unattended, on the owner's behalf: only default grants.
     const grants: GrantRow[] = await this.db.select().from(connectionGrants)
-      .where(and(eq(connectionGrants.agentId, agentId), eq(connectionGrants.service, service)));
+      .where(and(eq(connectionGrants.agentId, agentId), eq(connectionGrants.service, service), eq(connectionGrants.memberAccountId, '')));
     for (const g of grants) {
       if (connectionId && g.connectionId !== connectionId) continue;
       const row = (await this.db.select().from(connections).where(eq(connections.id, g.connectionId))).at(0);
@@ -389,17 +462,32 @@ export class ConnectionsService implements GoogleHttp {
       : pollGraphCalendar(conn, this, now, opts.withinHours);
   }
 
-  /** All connections this agent may use, keyed by provider, with per-service
-   *  grant levels. An agent can hold grants on google and microsoft at once. */
-  private async grantedConnections(agentId: string): Promise<Partial<Record<ProviderName, { conn: ConnectionRow; levels: Partial<Record<ServiceName, GrantLevel>> }>>> {
-    const grants: GrantRow[] = await this.db.select().from(connectionGrants).where(eq(connectionGrants.agentId, agentId));
-    if (grants.length === 0) return {};
-    const out: Partial<Record<ProviderName, { conn: ConnectionRow; levels: Partial<Record<ServiceName, GrantLevel>> }>> = {};
-    for (const g of grants) {
-      const row = (await this.db.select().from(connections).where(eq(connections.id, g.connectionId))).at(0);
+  /**
+   * All connections this agent may use, keyed by provider, with per-service
+   * grant levels. An agent can hold grants on google and microsoft at once.
+   *
+   * With an `initiator` (the member who started the turn, '' for the owner),
+   * that member's own grants win for the services they cover; the owner's
+   * default grants fill the rest. A member's connection is never used for a
+   * turn another member started unless that member holds the grant — the
+   * "no implicit cross-member connection use" rule.
+   */
+  private async grantedConnections(agentId: string, initiator = ''): Promise<Partial<Record<ProviderName, { conn: ConnectionRow; memberAccountId: string; levels: Partial<Record<ServiceName, GrantLevel>> }>>> {
+    const all: GrantRow[] = await this.db.select().from(connectionGrants).where(eq(connectionGrants.agentId, agentId));
+    if (all.length === 0) return {};
+    const own = initiator && initiator !== currentAccountId() ? initiator : '';
+    const mine = all.filter((g) => g.memberAccountId === own);
+    const defaults = own ? all.filter((g) => g.memberAccountId === '') : [];
+    const out: Partial<Record<ProviderName, { conn: ConnectionRow; memberAccountId: string; levels: Partial<Record<ServiceName, GrantLevel>> }>> = {};
+    for (const g of [...mine, ...defaults]) {
+      const row = await this.connectionRow(g.connectionId, g.memberAccountId);
       if (!row || !isProviderName(row.provider)) continue;
-      const entry = out[row.provider] ?? (out[row.provider] = { conn: row, levels: {} });
-      if (entry.conn.id === row.id) entry.levels[g.service as ServiceName] = g.level === 'write' ? 'write' : 'read';
+      const entry = out[row.provider] ?? (out[row.provider] = { conn: row, memberAccountId: g.memberAccountId, levels: {} });
+      // One connection per provider per turn: the first (the initiator's own
+      // when they have one) wins; a default grant never widens it.
+      if (entry.conn.id !== row.id) continue;
+      if (entry.levels[g.service as ServiceName] !== undefined) continue;
+      entry.levels[g.service as ServiceName] = g.level === 'write' ? 'write' : 'read';
     }
     return out;
   }

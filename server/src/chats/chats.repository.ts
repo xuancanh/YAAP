@@ -9,7 +9,7 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { chatMessages, chatSessions, chatTurns, loopState } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
-import { currentAccountId } from '../accounts/account-context';
+import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
 
 export type ChatSession = typeof chatSessions.$inferSelect;
 export type LoopStateRow = typeof loopState.$inferSelect;
@@ -25,10 +25,22 @@ export class ChatsRepository {
   constructor(@Inject(DRIZZLE_DB) private readonly db: DrizzleDb) {}
 
   // ---- sessions ----
+  /** Sessions of a workspace. A member of a shared workspace sees the shared
+   *  ones and their own; the owner sees everything (docs/shared-agents.md §5). */
   async listSessions(workspaceId: string, opts: { archived?: boolean } = {}): Promise<ChatSession[]> {
     const archived = opts.archived ? isNotNull(chatSessions.archivedAt) : isNull(chatSessions.archivedAt);
-    return this.db.select().from(chatSessions)
+    const rows = await this.db.select().from(chatSessions)
       .where(and(eq(chatSessions.workspaceId, workspaceId), archived));
+    const viewer = currentViewer();
+    if (!viewer || viewer.role === 'owner') return rows;
+    return rows.filter((s) => s.shared === 1 || s.initiatedBy === viewer.memberAccountId);
+  }
+
+  /** Whether the current actor may open this session at all. */
+  canView(session: Pick<ChatSession, 'shared' | 'initiatedBy'>): boolean {
+    const viewer = currentViewer();
+    if (!viewer || viewer.role === 'owner') return true;
+    return session.shared === 1 || session.initiatedBy === viewer.memberAccountId;
   }
 
   async getSession(id: string): Promise<ChatSession | undefined> {
@@ -99,6 +111,11 @@ export class ChatsRepository {
       tokensIn: 0,
       tokensOut: 0,
       distilledAt: null,
+      // A member's new session is private to them until they share it; the
+      // owner's sessions record '' and are theirs (members do not see them
+      // unless shared either).
+      initiatedBy: input.initiatedBy ?? (currentViewer()?.memberAccountId ?? ''),
+      shared: input.shared ?? 0,
       createdAt: now,
       updatedAt: now,
     };
@@ -215,6 +232,8 @@ export class ChatsRepository {
         tokensIn: src.tokensIn,
         tokensOut: src.tokensOut,
         distilledAt: null,
+        initiatedBy: currentViewer()?.memberAccountId ?? '',
+        shared: 0,
         createdAt: now,
         updatedAt: now,
       };
@@ -249,8 +268,9 @@ export class ChatsRepository {
   }
 
   // ---- transcript ----
-  async appendMessage(m: { sessionId: string; turnId: string; role: string; content: string; toolName?: string }): Promise<ChatMessage> {
-    // Same single-statement seq allocation as createTurn.
+  async appendMessage(m: { sessionId: string; turnId: string; role: string; content: string; toolName?: string; authorAccountId?: string }): Promise<ChatMessage> {
+    // Same single-statement seq allocation as createTurn. User messages carry
+    // their author (the acting member; '' for the owner) for attribution.
     const rows = await this.db.insert(chatMessages).values({
       id: newId(),
       sessionId: m.sessionId,
@@ -259,6 +279,7 @@ export class ChatsRepository {
       role: m.role,
       content: m.content,
       toolName: m.toolName ?? null,
+      authorAccountId: m.authorAccountId ?? (m.role === 'user' ? (currentViewer()?.memberAccountId ?? '') : ''),
       createdAt: nowIso(),
     }).returning();
     return rows[0];
@@ -317,6 +338,14 @@ export class ChatsRepository {
    *  updatedAt and would make the sweep re-distill forever. */
   async markDistilled(sessionId: string): Promise<void> {
     await this.db.update(chatSessions).set({ distilledAt: nowIso() }).where(eq(chatSessions.id, sessionId));
+  }
+
+  /** The actor id a '' author stands for: the owner of the account. */
+  ownerActor(): string { return currentAccountId(); }
+
+  /** Whether `actor` (actorId()) wrote this message. */
+  isAuthor(m: Pick<ChatMessage, 'authorAccountId'>, actor: string = actorId()): boolean {
+    return (m.authorAccountId || currentAccountId()) === actor;
   }
 
   /** Full-text recall over an agent's transcripts (search_history tool):

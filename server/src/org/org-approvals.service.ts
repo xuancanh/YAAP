@@ -113,7 +113,7 @@ export class OrgApprovalsService {
       id: newId(), accountId: currentAccountId(), orgId, kind: input.kind,
       payload: JSON.stringify(input.payload).slice(0, 60_000),
       requestedBy: input.requestedBy.slice(0, 80), recommendation: (input.recommendation ?? '').slice(0, 600),
-      status: 'pending', decidedAt: null, decisionNote: '',
+      status: 'pending', decidedAt: null, decidedBy: '', decisionNote: '',
       expiresAt: new Date(Date.now() + APPROVAL_TTL_MS).toISOString(), createdAt: nowIso(),
     };
     await this.db.insert(orgApprovals).values(row);
@@ -158,8 +158,9 @@ export class OrgApprovalsService {
     return this.create(orgId, { kind: 'hire', payload: payload as unknown as Record<string, unknown>, requestedBy: input.requestedBy, recommendation: input.recommendation });
   }
 
-  /** The CEO's decision. Only the controller calls this. */
-  async decide(orgId: string, id: string, decision: ApprovalDecision, note = '', actor = 'user'): Promise<{ approval: OrgApproval; result?: Record<string, unknown> }> {
+  /** The CEO's (or a board member's) decision. Only the controller calls
+   *  this; `decidedBy` is the deciding human's account id (phase D). */
+  async decide(orgId: string, id: string, decision: ApprovalDecision, note = '', actor = 'user', decidedBy = ''): Promise<{ approval: OrgApproval; result?: Record<string, unknown> }> {
     const a = await this.get(orgId, id);
     if (a.status !== 'pending') throw new BadRequestException(`approval is ${a.status}`);
     if (a.expiresAt && a.expiresAt < nowIso()) {
@@ -180,8 +181,8 @@ export class OrgApprovalsService {
     } else {
       status = 'revision_requested';
     }
-    await this.db.update(orgApprovals).set({ status, decidedAt: nowIso(), decisionNote: note.slice(0, 2_000) }).where(eq(orgApprovals.id, id));
-    await this.audit.append(orgId, { actor, action: `approval_${status}`, refType: 'approval', refId: id, payload: { kind: a.kind, note: note.slice(0, 300), result } });
+    await this.db.update(orgApprovals).set({ status, decidedAt: nowIso(), decidedBy: decidedBy || currentAccountId(), decisionNote: note.slice(0, 2_000) }).where(eq(orgApprovals.id, id));
+    await this.audit.append(orgId, { actor, action: `approval_${status}`, refType: 'approval', refId: id, payload: { kind: a.kind, note: note.slice(0, 300), result, decidedBy: decidedBy || currentAccountId() } });
     const org = await this.org.get(orgId);
     if (org.chiefOfStaffAgentId) {
       await this.agents.addEvent(org.chiefOfStaffAgentId, {

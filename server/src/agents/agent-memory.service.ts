@@ -24,7 +24,7 @@
  * to read and hand-edit it; it just stops being the source of truth for
  * machine reads, which is what makes any of the above possible.
  */
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
@@ -53,8 +53,26 @@ export interface LessonRow {
   trusted: number;
   pinned: number;
   useCount: number;
+  /** 'shared' | 'private:<memberAccountId>' (docs/shared-agents.md §4). */
+  audience: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export const SHARED_AUDIENCE = 'shared';
+export const privateAudience = (memberAccountId: string): string => `private:${memberAccountId}`;
+/** The member a private audience names, or null for shared. */
+export function audienceMember(audience: string): string | null {
+  return audience.startsWith('private:') ? audience.slice('private:'.length) : null;
+}
+
+/** Who may read a lesson: everyone for shared; the member it is private to;
+ *  and anyone a flow rule (`allowFrom`) opened that member's lessons to. */
+export function visibleTo(audience: string, actor: string, allowFrom?: ReadonlySet<string>): boolean {
+  const owner = audienceMember(audience);
+  if (owner === null) return true;
+  if (owner === actor) return true;
+  return allowFrom?.has(owner) ?? false;
 }
 
 /** Prompt budget for the injected digest — the same order as the user
@@ -109,12 +127,15 @@ export class AgentMemoryService {
   async record(
     agentId: string,
     text: string,
-    opts: { source: LessonSource; sessionId?: string | null } = { source: 'chat' },
+    opts: { source: LessonSource; sessionId?: string | null; audience?: string } = { source: 'chat' },
   ): Promise<{ lesson: LessonRow; merged: boolean }> {
     const body = text.trim().slice(0, 2_000);
     const trusted = TRUSTED_SOURCES.has(opts.source) ? 1 : 0;
+    const audience = opts.audience ?? SHARED_AUDIENCE;
 
-    const existing = await this.findSimilar(agentId, body, trusted);
+    // A private lesson never merges into a shared one (that would widen its
+    // audience by repetition), so similarity is checked within the audience.
+    const existing = await this.findSimilar(agentId, body, trusted, audience);
     if (existing) {
       const [row] = await this.db.update(agentLessons)
         .set({ useCount: existing.useCount + 1, updatedAt: nowIso() })
@@ -126,7 +147,7 @@ export class AgentMemoryService {
     const [row] = await this.db.insert(agentLessons).values({
       id: newId(), agentId, text: body,
       sourceKind: opts.source, sourceSessionId: opts.sessionId ?? null,
-      trusted, pinned: 0, useCount: 1,
+      trusted, pinned: 0, useCount: 1, audience,
       createdAt: nowIso(), updatedAt: nowIso(),
     }).returning();
     await this.consolidate(agentId);
@@ -161,7 +182,7 @@ export class AgentMemoryService {
         sourceKind: 'import', sourceSessionId: null,
         trusted: opts.trusted ? 1 : 0,
         pinned: opts.pinned?.includes(raw) ? 1 : 0,
-        useCount: 1,
+        useCount: 1, audience: SHARED_AUDIENCE,
         createdAt: nowIso(), updatedAt: nowIso(),
       }).returning();
       ids.push(row.id);
@@ -176,18 +197,18 @@ export class AgentMemoryService {
   /** Near-duplicate lookup. Uses pg_trgm where available and falls back to
    *  exact text match, which is worth having rather than nothing: the common
    *  repeat is a model re-deriving the same sentence. */
-  private async findSimilar(agentId: string, text: string, trusted: number): Promise<LessonRow | null> {
+  private async findSimilar(agentId: string, text: string, trusted: number, audience: string): Promise<LessonRow | null> {
     if (await this.hasTrigram()) {
       const res = await this.db.execute(sql`
         SELECT *, similarity("text", ${text}) AS sim FROM agent_lessons
-        WHERE "agentId" = ${agentId} AND "trusted" = ${trusted}
+        WHERE "agentId" = ${agentId} AND "trusted" = ${trusted} AND "audience" = ${audience}
           AND similarity("text", ${text}) > ${DUPE_THRESHOLD}
         ORDER BY sim DESC LIMIT 1
       `);
       return (res.rows[0] as unknown as LessonRow | undefined) ?? null;
     }
     const rows = await this.db.select().from(agentLessons)
-      .where(and(eq(agentLessons.agentId, agentId), eq(agentLessons.text, text), eq(agentLessons.trusted, trusted)))
+      .where(and(eq(agentLessons.agentId, agentId), eq(agentLessons.text, text), eq(agentLessons.trusted, trusted), eq(agentLessons.audience, audience)))
       .limit(1);
     return rows[0] ?? null;
   }
@@ -208,8 +229,13 @@ export class AgentMemoryService {
    * waits, because until something reaches the prompt the whole pipeline is
    * decoration.
    */
-  async digest(agentId: string): Promise<string> {
+  async digest(agentId: string, opts: { actor?: string; allowFrom?: ReadonlySet<string> } = {}): Promise<string> {
+    // Audience (docs/shared-agents.md §4): shared rows, the acting member's
+    // own private rows, and private rows a flow rule opened to them. With no
+    // actor named (single-user, or a caller that predates members) only the
+    // shared rows are injected — never a member's private ones by default.
     const rows = (await this.list(agentId, { trusted: true }))
+      .filter((r) => visibleTo(r.audience ?? SHARED_AUDIENCE, opts.actor ?? '', opts.allowFrom))
       .sort((a, b) =>
         (b.pinned - a.pinned)
         || (b.useCount - a.useCount)
@@ -229,10 +255,16 @@ export class AgentMemoryService {
 
   /** Promote a quarantined lesson (the user reviewed what an app or channel
    *  taught) or pin/unpin one. */
-  async update(agentId: string, id: string, patch: { trusted?: boolean; pinned?: boolean }): Promise<LessonRow> {
+  async update(agentId: string, id: string, patch: { trusted?: boolean; pinned?: boolean; audience?: string }): Promise<LessonRow> {
     const set: Record<string, unknown> = { updatedAt: nowIso() };
     if (patch.trusted !== undefined) set.trusted = patch.trusted ? 1 : 0;
     if (patch.pinned !== undefined) set.pinned = patch.pinned ? 1 : 0;
+    // The owner may widen a private lesson to shared (or narrow one back);
+    // the route is owner-only and there is no agent tool for it.
+    if (patch.audience !== undefined) {
+      if (patch.audience !== SHARED_AUDIENCE && !patch.audience.startsWith('private:')) throw new BadRequestException(`audience must be shared or private:<member>`);
+      set.audience = patch.audience;
+    }
     const [row] = await this.db.update(agentLessons).set(set)
       .where(and(eq(agentLessons.id, id), eq(agentLessons.agentId, agentId))).returning();
     if (!row) throw new NotFoundException(`lesson ${id}`);
@@ -287,6 +319,7 @@ export class AgentMemoryService {
       const bits = [r.sourceKind];
       if (r.useCount > 1) bits.push(`${r.useCount}×`);
       if (r.pinned) bits.push('pinned');
+      if (audienceMember(r.audience ?? SHARED_AUDIENCE)) bits.push('private');
       return `- ${r.text}\n  _(${bits.join(' · ')}, ${r.updatedAt.slice(0, 10)})_`;
     };
 

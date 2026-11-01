@@ -4,7 +4,8 @@
  * Workspace files live in S3-compatible object storage (see StorageService);
  * deleting a workspace also deletes its object prefix.
  */
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
 import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
@@ -21,6 +22,14 @@ export interface ProfileProposal {
   agentName: string;
   sessionId: string;
   at: string;
+  /** 'shared' or 'private:<memberAccountId>' (docs/shared-agents.md §4):
+   *  where the entry lands when approved, and who may approve it. */
+  audience?: string;
+}
+
+/** Per-member private profile sections: { [memberAccountId]: text }. */
+export function parsePrivateProfile(raw: string | undefined): Record<string, string> {
+  try { const v = JSON.parse(raw || '{}') as unknown; return v && typeof v === 'object' ? (v as Record<string, string>) : {}; } catch { return {}; }
 }
 
 const PROFILE_CAP = 20_000;
@@ -40,7 +49,7 @@ export class WorkspacesService {
   async list() {
     const all = await this.db.select().from(workspaces);
     if (all.length > 0) return all;
-    const def = { id: newId(), name: 'Default', color: '#F5C451', memory: '', profile: '', profilePending: '[]', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, createdAt: nowIso() };
+    const def = { id: newId(), name: 'Default', color: '#F5C451', memory: '', profile: '', profilePending: '[]', profilePrivate: '{}', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, createdAt: nowIso() };
     await this.db.insert(workspaces).values(def);
     return [def];
   }
@@ -59,6 +68,7 @@ export class WorkspacesService {
       memory: '',
       profile: '',
       profilePending: '[]',
+      profilePrivate: '{}',
       quietHours: '',
       spendBudgetTokens: 0,
       spendMonth: '',
@@ -112,7 +122,7 @@ export class WorkspacesService {
   // proposal here, and only an explicit user approval lands it.
 
   /** Called by the agent's update_user_profile tool. */
-  async addProfileProposal(id: string, input: { entry: string; agentName?: string; sessionId?: string }): Promise<string> {
+  async addProfileProposal(id: string, input: { entry: string; agentName?: string; sessionId?: string; audience?: string }): Promise<string> {
     const ws = await this.get(id);
     const entry = (input.entry ?? '').trim().slice(0, 500);
     if (!entry) throw new Error('profile entry is empty');
@@ -120,27 +130,51 @@ export class WorkspacesService {
     if (pending.length >= PENDING_LIMIT) {
       return 'Proposal queue is full; the user has pending proposals to review first.';
     }
+    const audience = input.audience ?? 'shared';
+    const known = audience === 'shared' ? ws.profile : (parsePrivateProfile(ws.profilePrivate)[audience.slice('private:'.length)] ?? '');
     // duplicate of an existing proposal or an already-known fact: no-op
-    if (pending.some((p) => p.entry === entry) || ws.profile.includes(entry)) {
+    if (pending.some((p) => p.entry === entry) || known.includes(entry)) {
       return 'Already known or already proposed.';
     }
-    pending.push({ id: newId(), entry, agentName: input.agentName ?? '', sessionId: input.sessionId ?? '', at: nowIso() });
+    pending.push({ id: newId(), entry, agentName: input.agentName ?? '', sessionId: input.sessionId ?? '', at: nowIso(), audience });
     await this.db.update(workspaces).set({ profilePending: JSON.stringify(pending) }).where(eq(workspaces.id, id));
     return 'Proposed. The user will review it before it enters the profile; do not assume it is remembered yet.';
   }
 
+  /** Who decides a proposal: the owner for shared entries; the member it is
+   *  about for private ones (the owner may too). */
   async resolveProfileProposal(id: string, proposalId: string, approve: boolean) {
     const ws = await this.get(id);
     const pending = parsePending(ws.profilePending);
     const proposal = pending.find((p) => p.id === proposalId);
     if (!proposal) throw new NotFoundException(`proposal ${proposalId}`);
+    const viewer = currentViewer();
+    const audience = proposal.audience ?? 'shared';
+    const member = audience.startsWith('private:') ? audience.slice('private:'.length) : null;
+    if (viewer && viewer.role !== 'owner' && member !== viewer.memberAccountId) {
+      throw new ForbiddenException(member ? 'this proposal is about another member' : 'only the owner reviews the shared profile');
+    }
     const rest = pending.filter((p) => p.id !== proposalId);
     const patch: Record<string, string> = { profilePending: JSON.stringify(rest) };
     if (approve) {
-      patch.profile = `${ws.profile.trimEnd()}\n- ${proposal.entry}`.trim().slice(0, PROFILE_CAP);
+      if (member) {
+        const priv = parsePrivateProfile(ws.profilePrivate);
+        priv[member] = `${(priv[member] ?? '').trimEnd()}\n- ${proposal.entry}`.trim().slice(0, PROFILE_CAP);
+        patch.profilePrivate = JSON.stringify(priv);
+      } else {
+        patch.profile = `${ws.profile.trimEnd()}\n- ${proposal.entry}`.trim().slice(0, PROFILE_CAP);
+      }
     }
     await this.db.update(workspaces).set(patch).where(eq(workspaces.id, id));
     return this.get(id);
+  }
+
+  /** The profile text a turn initiated by `actor` may see: the shared profile
+   *  plus that actor's own private section. Never another member's. */
+  profileFor(ws: { profile: string; profilePrivate?: string }, actor: string = actorId()): string {
+    const priv = parsePrivateProfile(ws.profilePrivate);
+    const own = actor === currentAccountId() ? '' : (priv[actor] ?? '');
+    return [ws.profile, own].filter((t) => t.trim()).join('\n');
   }
 
   async remove(id: string) {

@@ -802,6 +802,81 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_account_scope_agent_name ON skills ("accountId", COALESCE("workspaceId", ''), COALESCE("agentId", ''), "name")`);
     },
   },
+  {
+    id: '0027-shared-agents',
+    up: async (db) => {
+      // Shared workspaces (docs/shared-agents.md, execution-plan item 8) and
+      // the autonomous company's phase D (humans in an organisation).
+      // Idempotent: every statement is IF NOT EXISTS / hasColumn-guarded.
+      await db.query(`CREATE TABLE IF NOT EXISTS workspace_members (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "workspaceId" TEXT NOT NULL,
+        "memberAccountId" TEXT NOT NULL,
+        "role" TEXT NOT NULL DEFAULT 'member',
+        "displayName" TEXT NOT NULL DEFAULT '',
+        "email" TEXT NOT NULL DEFAULT '',
+        "invitedBy" TEXT NOT NULL DEFAULT '',
+        "joinedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_members_ws_member ON workspace_members ("workspaceId", "memberAccountId")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_workspace_members_member ON workspace_members ("memberAccountId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS workspace_invites (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "workspaceId" TEXT NOT NULL,
+        "email" TEXT NOT NULL,
+        "role" TEXT NOT NULL DEFAULT 'member',
+        "tokenHash" TEXT NOT NULL,
+        "invitedBy" TEXT NOT NULL DEFAULT '',
+        "expiresAt" TEXT NOT NULL,
+        "acceptedAt" TEXT,
+        "acceptedBy" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_invites_token ON workspace_invites ("tokenHash")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS workspace_flow_rules (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "workspaceId" TEXT NOT NULL,
+        "fromMember" TEXT NOT NULL,
+        "toMember" TEXT NOT NULL DEFAULT '*',
+        "effect" TEXT NOT NULL DEFAULT 'allow',
+        "kind" TEXT NOT NULL,
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE TABLE IF NOT EXISTS member_channels (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "workspaceId" TEXT NOT NULL,
+        "memberAccountId" TEXT NOT NULL,
+        "kind" TEXT NOT NULL,
+        "address" TEXT NOT NULL,
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_member_channels_address ON member_channels ("kind", "address")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_humans (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "memberAccountId" TEXT NOT NULL,
+        "role" TEXT NOT NULL DEFAULT 'observer',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_humans_org_member ON org_humans ("orgId", "memberAccountId")`);
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('connection_grants', 'memberAccountId', "TEXT NOT NULL DEFAULT ''");
+      await add('agent_lessons', 'audience', "TEXT NOT NULL DEFAULT 'shared'");
+      await add('chat_sessions', 'initiatedBy', "TEXT NOT NULL DEFAULT ''");
+      await add('chat_sessions', 'shared', 'INTEGER NOT NULL DEFAULT 0');
+      await add('chat_messages', 'authorAccountId', "TEXT NOT NULL DEFAULT ''");
+      await add('agent_events', 'forMemberAccountId', "TEXT NOT NULL DEFAULT ''");
+      await add('workspaces', 'profilePrivate', "TEXT NOT NULL DEFAULT '{}'");
+      await add('org_approvals', 'decidedBy', "TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 /** Mirrors accounts/account-context.ts SINGLE_ACCOUNT; spelled out here so

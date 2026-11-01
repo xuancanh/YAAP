@@ -36,6 +36,10 @@ export const workspaces = pgTable('workspaces', {
   /** JSON array of pending profile proposals awaiting user review:
    *  { id, entry, agentName, sessionId, at }. */
   profilePending: text('profilePending').notNull().default('[]'),
+  /** Per-member private profile sections in a shared workspace: JSON
+   *  { [memberAccountId]: "- line\n- line" }. Injected only into turns the
+   *  member initiates (docs/shared-agents.md §4). */
+  profilePrivate: text('profilePrivate').notNull().default('{}'),
   /** Quiet hours + interrupt policy (roadmap phase 2.3), JSON or '' when
    *  off: { start: "22:00", end: "07:00", timezone: "Europe/Berlin",
    *  policy: "queue" | "silent" | "allow-urgent" }. Loops still run inside
@@ -144,6 +148,11 @@ export const agentEvents = pgTable('agent_events', {
    *  another (channels/email.service.ts, push/push.service.ts). */
   emailDeliveredAt: text('emailDeliveredAt'),
   pushDeliveredAt: text('pushDeliveredAt'),
+  /** Addressed events (docs/shared-agents.md §3): an `approval_request`
+   *  routed to the member whose connection the tool would use is visible
+   *  to and deliverable for that member only. '' = everyone in the
+   *  workspace who may read the inbox. */
+  forMemberAccountId: text('forMemberAccountId').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -213,6 +222,11 @@ export const chatSessions = pgTable('chat_sessions', {
   /** When this session was last distilled into the agent brain; the idle
    *  sweep skips sessions whose transcript has not changed since. */
   distilledAt: text('distilledAt'),
+  /** Shared workspaces (docs/shared-agents.md §5): the member who created
+   *  the session ('' = the owner), and whether every member may see it
+   *  (1) or only its creator and the owner (0). */
+  initiatedBy: text('initiatedBy').notNull().default(''),
+  shared: integer('shared').notNull().default(0),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });
@@ -348,6 +362,11 @@ export const connectionGrants = pgTable('connection_grants', {
   service: text('service').notNull().default('calendar'),
   /** read | write. All gmail tools are write-level (draft/send mutate). */
   level: text('level').notNull().default('read'),
+  /** Shared workspaces (docs/shared-agents.md): the member whose connection
+   *  this grant lets the agent use. '' = the workspace owner's connection
+   *  (the default grant); otherwise the member's account id, and the
+   *  connection row lives in *that* account. */
+  memberAccountId: text('memberAccountId').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -381,6 +400,12 @@ export const agentLessons = pgTable('agent_lessons', {
   /** Bumped when a duplicate is learned again — the recurrence signal that
    *  makes "value" measurable instead of guessed. */
   useCount: integer('useCount').notNull().default(1),
+  /** Who may see it (docs/shared-agents.md §4): 'shared' (every member of
+   *  the workspace) or 'private:<memberAccountId>' — learned in that
+   *  member's private session or from content that came through their
+   *  connection. The digest injects shared rows plus the initiating
+   *  member's own, plus whatever a workspace_flow_rules allow row opens. */
+  audience: text('audience').notNull().default('shared'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });
@@ -419,6 +444,9 @@ export const chatMessages = pgTable('chat_messages', {
   role: text('role').notNull(),
   content: text('content').notNull().default(''),
   toolName: text('toolName'),
+  /** The member who wrote a user message ('' = the owner); the UI shows the
+   *  name and the model is told it as attribution, never authority. */
+  authorAccountId: text('authorAccountId').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -702,6 +730,9 @@ export const orgApprovals = pgTable('org_approvals', {
   /** pending | approved | rejected | revision_requested | expired. */
   status: text('status').notNull().default('pending'),
   decidedAt: text('decidedAt'),
+  /** The human who decided: the account id of the CEO or board member
+   *  (docs/autonomous-company.md phase D); '' while pending or when expired. */
+  decidedBy: text('decidedBy').notNull().default(''),
   decisionNote: text('decisionNote').notNull().default(''),
   /** Expiry means "not done", never "allowed" (72 h by default). */
   expiresAt: text('expiresAt'),
@@ -738,6 +769,87 @@ export const orgMessages = pgTable('org_messages', {
   text: text('text').notNull(),
   createdAt: text('createdAt').notNull(),
 });
+// ---- shared workspaces (docs/shared-agents.md, execution plan item 8) ----
+// Rows belong to the *owning* account (accountId); the member is named by
+// memberAccountId — their own account id, which is their identity everywhere.
+
+/** Who may act in a workspace besides its owner, and as what. */
+export const workspaceMembers = pgTable('workspace_members', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  memberAccountId: text('memberAccountId').notNull(),
+  /** owner | member | viewer. Viewer = read-only; member = chat, tasks,
+   *  files; owner = settings, budgets, members, connections of others. */
+  role: text('role').notNull().default('member'),
+  displayName: text('displayName').notNull().default(''),
+  email: text('email').notNull().default(''),
+  /** Account id of whoever sent the invite. */
+  invitedBy: text('invitedBy').notNull().default(''),
+  joinedAt: text('joinedAt').notNull(),
+});
+
+/** An outstanding invitation: random token, SHA-256 at rest, 7-day expiry. */
+export const workspaceInvites = pgTable('workspace_invites', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  email: text('email').notNull(),
+  role: text('role').notNull().default('member'),
+  tokenHash: text('tokenHash').notNull(),
+  invitedBy: text('invitedBy').notNull().default(''),
+  expiresAt: text('expiresAt').notNull(),
+  acceptedAt: text('acceptedAt'),
+  /** Account that accepted, for the record. */
+  acceptedBy: text('acceptedBy').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** Information-flow rules (docs/shared-agents.md §4): what one member's
+ *  private material may reach another. Default deny; only the owner writes
+ *  rows here, through the controller — no agent tool can. */
+export const workspaceFlowRules = pgTable('workspace_flow_rules', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  /** Member account id whose material the rule is about. */
+  fromMember: text('fromMember').notNull(),
+  /** Member account id, or '*' for every member. */
+  toMember: text('toMember').notNull().default('*'),
+  /** allow | deny (deny rows exist to pin an exception under a '*' allow). */
+  effect: text('effect').notNull().default('allow'),
+  /** lessons | connections | files. */
+  kind: text('kind').notNull(),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** Per-member channel pairings in a shared workspace: a Telegram chat id or
+ *  an email address that means *this member*, so a channel turn belongs to
+ *  a person and a routed approval reaches the right phone. */
+export const memberChannels = pgTable('member_channels', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  memberAccountId: text('memberAccountId').notNull(),
+  /** telegram | email. */
+  kind: text('kind').notNull(),
+  address: text('address').notNull(),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** Humans in an organisation (docs/autonomous-company.md phase D). The
+ *  workspace owner is the CEO whether or not a row says so; board members
+ *  may decide hire | budget_raise | strategy approvals; observers read. */
+export const orgHumans = pgTable('org_humans', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  memberAccountId: text('memberAccountId').notNull(),
+  /** ceo | board | observer. */
+  role: text('role').notNull().default('observer'),
+  createdAt: text('createdAt').notNull(),
+});
+
 // ---- accounts (docs/accounts.md) ----
 // The account infrastructure. `accounts` is the one table without an
 // accountId column (its id *is* the account); the other three carry

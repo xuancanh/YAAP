@@ -32,7 +32,8 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { SettingsService } from '../settings/settings.module';
 import { AgentsService } from '../agents/agents.service';
 import { AccountsService } from '../accounts/accounts.service';
-import { currentAccountId, runWithAccount } from '../accounts/account-context';
+import { currentAccountId, currentViewer, runWithAccount, runWithViewer, type Viewer } from '../accounts/account-context';
+import { SharedService } from '../shared/shared.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { ChatsRepository } from '../chats/chats.repository';
 import { TurnLoopService } from '../chats/turn-loop.service';
@@ -124,7 +125,7 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
   /** Test seam: replace the sender wholesale. */
   sender: EmailSender;
   /** One live pairing code per process, remembering which account minted it. */
-  private pairCode: { code: string; expires: number; accountId: string } | null = null;
+  private pairCode: { code: string; expires: number; accountId: string; member?: { workspaceId: string; viewer: Viewer } } | null = null;
   private prompted = new Map<string, number>();
   private sweepTimer?: ReturnType<typeof setInterval>;
   private sweeping = false;
@@ -139,6 +140,8 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
     /** Optional: without it, the current (single) account owns every
      *  address; with it, the agent behind the address decides the account. */
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: per-member pairings and routed approvals (docs/shared-agents.md). */
+    @Optional() private readonly shared?: SharedService,
   ) {
     this.sender = this.buildSender(fetch);
   }
@@ -180,10 +183,16 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  mintPairCode(): { code: string; expiresInSeconds: number } {
+  /** A member acting in a shared workspace mints a *member* code: the address
+   *  that redeems it means that member (docs/shared-agents.md §5). */
+  mintPairCode(): { code: string; expiresInSeconds: number; member?: boolean } {
     const code = randomBytes(4).toString('hex');
-    this.pairCode = { code, expires: Date.now() + PAIR_TTL_MS, accountId: currentAccountId() };
-    return { code, expiresInSeconds: PAIR_TTL_MS / 1000 };
+    const viewer = currentViewer();
+    this.pairCode = {
+      code, expires: Date.now() + PAIR_TTL_MS, accountId: currentAccountId(),
+      ...(viewer && viewer.role !== 'owner' ? { member: { workspaceId: viewer.workspaceId, viewer } } : {}),
+    };
+    return { code, expiresInSeconds: PAIR_TTL_MS / 1000, ...(viewer ? { member: true } : {}) };
   }
 
   async unpair(address?: string) {
@@ -240,12 +249,24 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
     const rawText = (mail.text?.trim() || (mail.html ? htmlToText(mail.html) : '')).slice(0, MAX_BODY_CHARS * 2);
     const body = stripQuotedHistory(rawText).slice(0, MAX_BODY_CHARS);
 
+    // A member's paired address (shared workspaces): the turn is theirs.
+    const paired = !owners.includes(from) && this.shared ? await this.shared.channelOwner('email', from) : null;
+    if (paired && paired.ownerAccountId === currentAccountId()) {
+      return runWithViewer(paired.ownerAccountId, paired.viewer, () => this.turnFor(mail, agent, from, body, paired.viewer));
+    }
+
     if (!owners.includes(from)) {
       // the pairing handshake: a live code anywhere in subject or body pairs this sender
       const code = this.pairCode;
       const haystack = `${mail.subject ?? ''}\n${body}`.toLowerCase();
       if (code && code.accountId === currentAccountId() && Date.now() < code.expires && new RegExp(`\\b${code.code}\\b`).test(haystack)) {
         this.pairCode = null;
+        if (code.member && this.shared) {
+          await this.shared.pairChannel(code.member.workspaceId, code.member.viewer.memberAccountId, 'email', from);
+          this.prompted.delete(from);
+          await this.reply(mail, fromHeader, `Paired as ${code.member.viewer.displayName || 'a member'} of a shared workspace. Mail from ${from} to this agent counts as yours; approvals routed to you arrive here too.`).catch((err) => this.warn(err));
+          return { outcome: 'paired', agentId: agent.id, address: from };
+        }
         await this.settings.put({ emailOwnerAddresses: JSON.stringify([...owners, from]) });
         this.prompted.delete(from);
         await this.reply(mail, fromHeader, `Paired. Mail from ${from} to any agent at @${this.domain} now reaches it; replies come back in this thread. Unpair any time in Settings → Channels.`).catch((err) => this.warn(err));
@@ -263,10 +284,17 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
       return { outcome: 'pairing_prompt', agentId: agent.id };
     }
 
-    // paired: an Ask-mode turn in the agent's email conversation
-    const ws = (await this.workspaces.list())[0];
+    return this.turnFor(mail, agent, from, body);
+  }
+
+  /** Paired: an Ask-mode turn in the agent's email conversation — the
+   *  owner's, or a member's own private one. */
+  private async turnFor(mail: InboundEmail, agent: { id: string; name: string }, from: string, body: string, member?: Viewer): Promise<InboundOutcome> {
+    const to = normalizeAddress(mail.to ?? '');
+    const fromHeader = { address: to, name: `${this.config.get<string>('emailFromName') ?? 'YAAM'} · ${agent.name}` };
+    const ws = member ? await this.workspaces.get(member.workspaceId).catch(() => null) : (await this.workspaces.list())[0];
     if (!ws) return { outcome: 'ignored', reason: 'no workspace' };
-    const name = `Email · ${agent.name}`;
+    const name = member ? `Email · ${agent.name} · ${member.displayName || member.memberAccountId.slice(0, 8)}` : `Email · ${agent.name}`;
     const existing = (await this.repo.listSessions(ws.id)).find((x) => x.agentId === agent.id && x.name === name);
     const session = existing ?? await this.repo.createSession({ workspaceId: ws.id, agentId: agent.id, name, permissionMode: 'ask' });
 
@@ -352,10 +380,11 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
 
   private async sweepAccount(now: Date): Promise<number> {
     {
+      const routed = await this.sweepMembers(now);
       const s = await this.settings.all();
       const owners = this.ownerAddresses(s);
       const mode = s.emailDigest ?? 'off';
-      if (owners.length === 0 || mode === 'off') return 0;
+      if (owners.length === 0 || mode === 'off') return routed;
       const ws = (await this.workspaces.list())[0];
       if (mode === 'daily') {
         if (ws && isQuiet(ws, now).quiet) return 0;
@@ -393,8 +422,43 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
       }
       // Marked only after every send succeeded: a failed push retries next sweep.
       await this.agents.markEventsDelivered(batch.map((e) => e.id), now, 'email');
-      return batch.length;
+      return batch.length + routed;
     }
+  }
+
+  /** Events addressed to a member (routed approvals) are mailed to that
+   *  member — their paired address here, else their account's address —
+   *  immediately, whatever the owner's digest mode: an approval is a
+   *  question to a person, not an update about the day. */
+  private async sweepMembers(now: Date): Promise<number> {
+    if (!this.shared) return 0;
+    let delivered = 0;
+    const base = (this.config.get<string>('publicAppUrl') ?? 'http://localhost:5175').replace(/\/+$/, '');
+    const fromName = this.config.get<string>('emailFromName') ?? 'YAAM';
+    const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
+    for (const ws of await this.workspaces.list()) {
+      for (const m of await this.shared.members(ws.id)) {
+        const events = (await this.shared.addressedEvents(m.memberAccountId, 'emailDeliveredAt'))
+          .filter((e) => e.accountId === currentAccountId() && e.kind === 'approval_request' && (e.deliverAfter === null || e.deliverAfter <= now.toISOString()))
+          .slice(0, 20);
+        if (events.length === 0) continue;
+        const address = (await this.shared.channels(ws.id, m.memberAccountId)).find((c) => c.kind === 'email')?.address || m.email || await this.shared.memberEmail(m.memberAccountId);
+        if (!address) continue;
+        const text = events.map((e) => `${names.get(e.agentId) ?? 'Agent'} · ${e.title}\n${e.body.replace(/\s+/g, ' ').slice(0, 400)}${e.sessionId ? `\n${base}/#/chat/${e.sessionId}` : ''}`).join('\n\n')
+          + `\n\nAllow or deny from your inbox in the app: ${base}/#/home`;
+        await this.sender.send({
+          to: address,
+          from: { address: `inbox@${this.domain}`, name: fromName },
+          subject: events.length === 1 ? events[0].title.slice(0, 120) : `${events.length} approvals waiting for you`,
+          text,
+          html: `<div style="font-family:sans-serif;white-space:pre-wrap">${escapeHtml(text)}</div>`,
+          headers: { 'Auto-Submitted': 'auto-generated' },
+        });
+        await this.agents.markEventsDelivered(events.map((e) => e.id), now, 'email');
+        delivered += events.length;
+      }
+    }
+    return delivered;
   }
 
   private timezone(quietHours: string | undefined): string {

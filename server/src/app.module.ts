@@ -24,6 +24,7 @@
  *  ComputerModule    → /api/computer                 (paired desktop companion, docs/computer-control.md)
  *  RegistryModule    → /api/registry                  (market registry, docs/registry.md)
  *  OrgModule         → /api/orgs                      (autonomous company, docs/autonomous-company.md)
+ *  SharedModule      → /api/workspaces/:id/members|invites|flow-rules, /api/invites (shared workspaces, docs/shared-agents.md)
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
@@ -62,6 +63,8 @@ import { ComputerModule } from './computer/computer.module';
 import { RegistryModule } from './registry/registry.module';
 import { OrgModule } from './org/org.module';
 import { AccountsModule } from './accounts/accounts.module';
+import { SharedModule } from './shared/shared.module';
+import { WorkspaceAccessGuard } from './shared/workspace-access.guard';
 import { SessionAuthStrategy } from './accounts/session-auth.strategy';
 import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
 
@@ -70,6 +73,7 @@ import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
     ConfigModule.forRoot({ isGlobal: true, load: [configuration], validate: validateEnv }),
     DatabaseModule,
     AccountsModule,
+    SharedModule,
     StorageModule,
     StatusModule,
     WorkspacesModule,
@@ -111,6 +115,9 @@ import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
       },
     },
     { provide: APP_GUARD, useClass: AuthGuard },
+    // After the caller is known: a member of a shared workspace acts inside
+    // its owner's account with a role (docs/shared-agents.md §2).
+    { provide: APP_GUARD, useClass: WorkspaceAccessGuard },
     { provide: APP_INTERCEPTOR, useClass: HttpLoggingInterceptor },
   ],
 })

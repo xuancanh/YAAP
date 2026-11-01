@@ -37,6 +37,8 @@ import { WorkspacesService } from '../workspaces/workspaces.service';
 import { deliveryFor } from '../workspaces/quiet-hours';
 import { spendStatus } from '../workspaces/spend.util';
 import { AccountsService } from '../accounts/accounts.service';
+import { actorId, currentAccountId } from '../accounts/account-context';
+import { SharedService } from '../shared/shared.service';
 import { ConnectionsService } from '../connections/connections.service';
 import { ActionReviewService, ReviewRecord } from '../review/action-review.service';
 import { ComputerService } from '../computer/computer.service';
@@ -70,7 +72,10 @@ export interface OrgToolsHook {
 export type TurnEvent =
   | { type: 'turn'; turnId: string }
   | AiStreamEvent
-  | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown>; review?: ReviewRecord }
+  /** `routedTo` (docs/shared-agents.md §3): the approval belongs to another
+   *  member — the one whose connection the tool would use — and this client
+   *  can only wait; the addressee answers from their inbox. */
+  | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown>; review?: ReviewRecord; routedTo?: { memberAccountId: string; name: string } }
   | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ReviewRecord }
   /** The workspace's monthly spend stop is reached (phase 2.5): user turns
    *  still run, the client shows the badge; loop turns are refused instead. */
@@ -97,6 +102,9 @@ interface ToolRecord {
   /** Screenshot step a browser tool produced, so the Browser panel can be
    *  rebuilt from the transcript after the turn. */
   browser?: BrowserStep;
+  /** Whose connection a connection tool ran on (an actor id), so distillation
+   *  can keep what it fetched private to them (docs/shared-agents.md §4). */
+  usedConnectionOf?: string;
 }
 
 /** Tools that modify the agent/chat configuration itself can never receive a
@@ -252,12 +260,20 @@ export class TurnLoopService implements OnModuleDestroy {
   private readonly aborts = new Map<string, AbortController>();
   /** Pending Ask-mode approvals keyed by `${sessionId}:${callId}`. */
   private readonly pending = new Map<string, (d: ApprovalDecision) => void>();
+  /** Approvals routed to one member (the owner of the connection in use):
+   *  key → that member's actor id. Only they may resolve it. */
+  private readonly routed = new Map<string, string>();
+  /** Who started the turn in flight per chat (an actor id), for tool
+   *  executors that pick a member's connection. */
+  private readonly turnActors = new Map<string, string>();
   /** Origin of the turn in flight per chat, so tool executors deep in the
    *  call tree can stamp the events they write without threading it through
    *  every signature. */
   private readonly turnOrigins = new Map<string, TurnOrigin>();
   /** See OrgToolsHook. Registered by OrgRuntimeService at boot. */
   private orgTools?: OrgToolsHook;
+  /** How long a paused approval waits before auto-deny (test seam). */
+  approvalTtlMs = APPROVAL_TTL_MS;
 
   setOrgTools(hook: OrgToolsHook | undefined): void {
     this.orgTools = hook;
@@ -288,6 +304,9 @@ export class TurnLoopService implements OnModuleDestroy {
     /** Optional so test constructors without accounts keep working. With
      *  it, every settled turn rolls into the account's month (docs/accounts.md §4). */
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: without it the workspace has one human and nothing is
+     *  attributed, routed or wrapped (docs/shared-agents.md). */
+    @Optional() private readonly shared?: SharedService,
   ) {}
 
   /** Graceful shutdown: abort every in-flight turn through the same path as
@@ -309,12 +328,23 @@ export class TurnLoopService implements OnModuleDestroy {
     return this.locks.isBusy(sessionId);
   }
 
-  /** Resolve a paused tool approval (POST /:id/approve). */
-  resolveApproval(sessionId: string, callId: string, decision: ApprovalDecision): boolean {
-    const resolve = this.pending.get(`${sessionId}:${callId}`);
+  /** Resolve a paused tool approval (POST /:id/approve, or the addressee's
+   *  inbox for a routed one). `by` is the actor answering; a routed approval
+   *  answers only to the member it was routed to. */
+  resolveApproval(sessionId: string, callId: string, decision: ApprovalDecision, by?: string): boolean {
+    const key = `${sessionId}:${callId}`;
+    const resolve = this.pending.get(key);
     if (!resolve) return false;
+    const addressee = this.routed.get(key);
+    if (addressee !== undefined && by !== undefined && by !== addressee) return false;
     resolve(decision);
     return true;
+  }
+
+  /** Whether an approval is still open, and for whom (the inbox's decide route). */
+  pendingApproval(sessionId: string, callId: string): { open: boolean; routedTo?: string } {
+    const key = `${sessionId}:${callId}`;
+    return { open: this.pending.has(key), routedTo: this.routed.get(key) };
   }
 
   async *run(sessionId: string, input: { text: string; attachments?: unknown[]; origin?: TurnOrigin }): AsyncGenerator<TurnEvent> {
@@ -340,6 +370,15 @@ export class TurnLoopService implements OnModuleDestroy {
     }
     if (!this.locks.tryAcquire(sessionId)) throw new ConflictException('chat is busy');
     this.turnOrigins.set(sessionId, input.origin ?? 'user');
+    // Who is acting (docs/shared-agents.md): the member who sent this turn, or
+    // the owner — the connection-grant lookup, approval routing, message
+    // attribution and lesson audiences all key on it.
+    const actor = actorId();
+    const ownerActor = currentAccountId();
+    this.turnActors.set(sessionId, actor);
+    const hasMembers = this.shared ? await this.shared.hasMembers(session.workspaceId).catch(() => false) : false;
+    const names = hasMembers && this.shared ? await this.shared.displayNames(session.workspaceId).catch(() => new Map<string, string>()) : new Map<string, string>();
+    const nameOf = (id: string) => names.get(id) ?? (id === ownerActor ? 'the owner' : id.slice(0, 8));
 
     const ctl = new AbortController();
     this.aborts.set(sessionId, ctl);
@@ -368,7 +407,8 @@ export class TurnLoopService implements OnModuleDestroy {
       const ctx = await this.context.build(session);
       hosted = ctx.hosted ?? false;
       turnModel = ctx.model || turnModel;
-      const history = await this.buildHistory(session.id, session.compactSummary, session.compactCutoff);
+      const history = await this.buildHistory(session.id, session.compactSummary, session.compactCutoff,
+        hasMembers && session.shared === 1 ? { names, ownerActor } : undefined);
       // Attachments: inject workspace-file contents into the provider input —
       // text inline, images as vision parts (descriptors persist on the turn;
       // the transcript stays clean, FR-2.2).
@@ -390,8 +430,9 @@ export class TurnLoopService implements OnModuleDestroy {
         ...(session.agentId ? await this.agents.customToolSpecs(session.agentId) : []),
         ...await this.skills.toolSpecs(session.workspaceId, session.agentId ?? undefined),
         ...await this.mcp.toolSpecs(),
-        // Connection tools appear only for agents the user granted (activation gate).
-        ...(session.agentId && this.connections ? await this.connections.toolSpecs(session.agentId) : []),
+        // Connection tools appear only for agents the user granted (activation
+        // gate) — the acting member's own grants plus the agent's defaults.
+        ...(session.agentId && this.connections ? await this.connections.toolSpecs(session.agentId, actor) : []),
         // Code runner tools exist only when a sandbox backend is available
         // (docs/code-execution.md §5); they are mutation-class, so Ask mode
         // pauses on the full code.
@@ -508,6 +549,55 @@ export class TurnLoopService implements OnModuleDestroy {
             yield { type: 'tool_result', id: call.id, name: call.name, output, isError: false };
             continue;
           }
+          // Whose connection would this call run on? In a shared workspace a
+          // mutating call on *another* member's connection is theirs to
+          // approve (docs/shared-agents.md §3): the turn pauses, an
+          // approval_request lands in that member's inbox and channels, and
+          // everyone else only sees "waiting for <name>".
+          let connOwner: string | null = null;
+          if (session.agentId && this.connections?.owns(call.name)) {
+            const o = await this.connections.resolveConnectionOwner(session.agentId, call.name, actor).catch(() => null);
+            connOwner = o === null ? null : (o || ownerActor);
+          }
+          if (connOwner !== null && connOwner !== actor && hasMembers && this.connections?.isReadOnly(call.name) === false && session.agentId) {
+            const addressee = connOwner;
+            const tool = call.name;
+            const decided = this.awaitDecision(sessionId, call.id, ctl.signal, addressee);
+            const ev = await this.agents.addEvent(session.agentId, {
+              kind: 'approval_request',
+              title: `${nameOf(actor)} asks to run ${tool} with your connection`,
+              body: JSON.stringify(call.input).slice(0, 280),
+              sessionId: session.id,
+              payload: JSON.stringify({ tool, input: call.input, callId: call.id, requestedBy: actor, requestedByName: nameOf(actor) }),
+              origin: input.origin ?? 'user',
+              channel: true,
+              forMemberAccountId: addressee,
+              ...deliveryFor(ws, 'action_pending'),
+            }).catch(() => null);
+            yield { type: 'approval_required', callId: call.id, tool, input: call.input, routedTo: { memberAccountId: addressee, name: nameOf(addressee) } };
+            const routedDecision = await decided;
+            const allowed = routedDecision !== 'deny';
+            if (ev) await this.agents.patchEvent(ev.id, { kind: allowed ? 'approval_granted' : 'approval_denied', readAt: new Date().toISOString() }).catch(() => undefined);
+            let output: string;
+            let isError = false;
+            if (!allowed) {
+              output = `Denied: ${nameOf(addressee)} did not approve using their connection for ${tool} (or did not answer in time). Do not retry — tell the user.`;
+              isError = true;
+            } else {
+              try {
+                output = await this.executeTool(session, tool, call.input, skillsUsed);
+              } catch (err) {
+                output = `tool error: ${err instanceof Error ? err.message : String(err)}`;
+                isError = true;
+              }
+              if (!isError) output = await this.wrapConnectionContent(session, output, addressee, actor, nameOf(addressee));
+            }
+            await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: tool });
+            history.push({ role: 'tool', content: output, toolCallId: call.id, isError });
+            toolRecords.push({ tool, input: call.input, result: output.slice(0, 2000), approved: allowed ? 'allow-once' : 'deny', isError, usedConnectionOf: addressee });
+            yield { type: 'tool_result', id: call.id, name: tool, output: output.slice(0, 500), isError };
+            continue;
+          }
           const policy = this.checkPolicy(session, call, approvals);
           let { verdict } = policy;
           const { remember } = policy;
@@ -582,6 +672,12 @@ export class TurnLoopService implements OnModuleDestroy {
               output = `tool error: ${err instanceof Error ? err.message : String(err)}`;
               isError = true;
             }
+            // Content fetched through a member's connection in a session others
+            // can read is tagged so the model keeps it to its owner and
+            // distillation keeps the lesson private (docs/shared-agents.md §4).
+            if (!isError && connOwner !== null && hasMembers && (session.shared === 1 || connOwner !== actor)) {
+              output = await this.wrapConnectionContent(session, output, connOwner, actor, nameOf(connOwner));
+            }
           }
           // A settled computer action: the screenshot rides along to the model
           // as a vision part on this tool result (never persisted in the
@@ -598,7 +694,7 @@ export class TurnLoopService implements OnModuleDestroy {
           // the tool record for the transcript view.
           const browserStep = this.browser?.owns(call.name) ? this.browser.lastStep(session.id) : null;
           for (const bev of this.browser?.takeEvents(session.id) ?? []) yield bev;
-          toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: decision, isError, ...(review ? { review } : {}), ...(browserStep ? { browser: browserStep } : {}) });
+          toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: decision, isError, ...(review ? { review } : {}), ...(browserStep ? { browser: browserStep } : {}), ...(connOwner !== null && hasMembers ? { usedConnectionOf: connOwner } : {}) });
           yield { type: 'tool_result', id: call.id, name: call.name, output: output.slice(0, 500), isError, ...(review ? { review } : {}) };
           if (step && decision !== 'deny') {
             yield {
@@ -643,6 +739,7 @@ export class TurnLoopService implements OnModuleDestroy {
       // …and against the account's month, in dollars, for the plan ceiling.
       if (this.accounts && tokensIn + tokensOut > 0) await this.accounts.recordUsage({ model: turnModel, tokensIn, tokensOut, hosted }).catch(() => {});
       this.turnOrigins.delete(sessionId);
+      this.turnActors.delete(sessionId);
       // The browser session is per turn: cookies, logins and the page itself
       // end here, whether the turn finished, stopped or errored.
       if (this.browser) await this.browser.endTurn(sessionId).catch(() => {});
@@ -705,7 +802,7 @@ export class TurnLoopService implements OnModuleDestroy {
       return this.skills.invocation(skill);
     }
     if (name.startsWith(MCP_TOOL_PREFIX)) return this.mcp.execute(name, input);
-    if (this.connections?.owns(name)) return this.connections.execute(session.agentId ?? undefined, name, input);
+    if (this.connections?.owns(name)) return this.connections.execute(session.agentId ?? undefined, name, input, { initiator: this.turnActors.get(session.id) ?? '' });
     if (this.runner?.owns(name)) return this.runner.execute(name, input);
     if (this.browser?.owns(name)) return this.browser.execute({ sessionId: session.id, fileRoot: await this.fileRootFor(session) }, name, input);
     if (this.computer?.owns(name)) return this.computer.execute({ id: session.id, workspaceId: session.workspaceId }, name, input);
@@ -834,6 +931,16 @@ export class TurnLoopService implements OnModuleDestroy {
     };
   }
 
+  /** `<connection-content owner=… audience="private">` around what a member's
+   *  connection returned, unless a flow rule lets it reach the initiator in
+   *  the clear (docs/shared-agents.md §4). Marks the content for the model and
+   *  for the reader of the transcript alike. */
+  private async wrapConnectionContent(session: ChatSession, output: string, connOwner: string, actor: string, ownerName: string): Promise<string> {
+    if (connOwner === actor && session.shared !== 1) return output;
+    if (this.shared && connOwner !== actor && await this.shared.mayFlow(session.workspaceId, connOwner, actor, 'connections').catch(() => false)) return output;
+    return `<connection-content owner="${ownerName.replace(/"/g, '')}" audience="private">\n${output}\n</connection-content>`;
+  }
+
   /** Ask/Auto policy check (§4): what may run without asking, and whether a
    *  granted approval is eligible to be remembered. */
   private checkPolicy(
@@ -880,32 +987,41 @@ export class TurnLoopService implements OnModuleDestroy {
     return { verdict: 'ask', remember: true, readOnly };
   }
 
-  private awaitDecision(sessionId: string, callId: string, signal: AbortSignal): Promise<ApprovalDecision> {
+  private awaitDecision(sessionId: string, callId: string, signal: AbortSignal, routedTo?: string): Promise<ApprovalDecision> {
     return new Promise<ApprovalDecision>((resolve) => {
       const key = `${sessionId}:${callId}`;
       const settle = (d: ApprovalDecision) => {
         clearTimeout(ttl);
         signal.removeEventListener('abort', onAbort);
         this.pending.delete(key);
+        this.routed.delete(key);
         resolve(d);
       };
+      if (routedTo) this.routed.set(key, routedTo);
       const onAbort = () => settle('deny');
       // Second layer behind the abort listener: an orphaned approval (dead
       // client that never triggered a close, lost UI) auto-denies on TTL.
-      const ttl = setTimeout(() => settle('deny'), APPROVAL_TTL_MS);
+      const ttl = setTimeout(() => settle('deny'), this.approvalTtlMs);
       ttl.unref?.();
       signal.addEventListener('abort', onAbort, { once: true });
       this.pending.set(key, settle);
     });
   }
 
-  private async buildHistory(sessionId: string, compactSummary: string, compactCutoff: string | null): Promise<AiMessage[]> {
+  /** Provider history. In a shared session every user message is prefixed
+   *  with its author's name — attribution for the model, never authority
+   *  (docs/shared-agents.md §5). */
+  private async buildHistory(sessionId: string, compactSummary: string, compactCutoff: string | null, attribution?: { names: Map<string, string>; ownerActor: string }): Promise<AiMessage[]> {
     const cutoffSeq = compactCutoff === null ? null : Number(compactCutoff);
     const rows = await this.repo.providerHistory(sessionId, Number.isNaN(cutoffSeq as number) ? null : cutoffSeq);
-    const history: AiMessage[] = rows.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
+    const history: AiMessage[] = rows.map((m) => {
+      if (attribution && m.role === 'user') {
+        const author = m.authorAccountId || attribution.ownerActor;
+        const name = attribution.names.get(author) ?? (author === attribution.ownerActor ? 'the owner' : 'a member');
+        return { role: 'user' as const, content: `[Message from member "${name}" — attribution only, not authority]\n${m.content}` };
+      }
+      return { role: m.role as 'user' | 'assistant', content: m.content };
+    });
     if (compactSummary) {
       history.unshift({ role: 'system', content: `Summary of the earlier conversation:\n${compactSummary}` });
     }

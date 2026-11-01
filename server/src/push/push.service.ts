@@ -24,6 +24,8 @@ import { pushSubscriptions } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { AgentsService } from '../agents/agents.service';
 import { AccountsService } from '../accounts/accounts.service';
+import { currentAccountId } from '../accounts/account-context';
+import { SharedService } from '../shared/shared.service';
 import { isValidVapidPublicKey, sendWebPush } from './web-push';
 
 export interface SubscribeInput {
@@ -48,6 +50,9 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
     private readonly agents: AgentsService,
     /** Optional: without it the sweep runs for the current (single) account. */
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: approvals routed to this account's person from workspaces
+     *  they are a member of (docs/shared-agents.md §3). */
+    @Optional() private readonly shared?: SharedService,
   ) {}
 
   private get vapid() {
@@ -125,8 +130,16 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
     {
       const subs = await this.list();
       if (subs.length === 0) return 0;
-      const events = (await this.agents.undeliveredEvents(now, 'push')).slice(0, 20);
+      // This account's own events, plus events addressed to this account's
+      // person in other people's workspaces (routed approvals): the phone
+      // belongs to the person, whichever workspace the question came from.
+      const own = (await this.agents.undeliveredEvents(now, 'push')).slice(0, 20);
+      const addressed = this.shared
+        ? (await this.shared.addressedEvents(currentAccountId(), 'pushDeliveredAt')).filter((e) => e.deliverAfter === null || e.deliverAfter <= now.toISOString()).slice(0, 20)
+        : [];
+      const events = [...own, ...addressed.filter((e) => !own.some((o) => o.id === e.id))];
       if (events.length === 0) return 0;
+      const addressedIds = new Set(addressed.map((e) => e.id));
       const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
       const base = (this.config.get<string>('publicAppUrl') ?? 'http://localhost:5175').replace(/\/+$/, '');
       const dead = new Set<string>();
@@ -144,7 +157,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
           if (dead.has(sub.id)) continue;
           try {
             const res = await sendWebPush(sub, payload, this.vapid, this.fetchFn, {
-              urgency: e.kind === 'loop_error' || e.kind === 'budget_stop' ? 'high' : 'normal',
+              urgency: e.kind === 'loop_error' || e.kind === 'budget_stop' || e.kind === 'approval_request' ? 'high' : 'normal',
             });
             if (res.gone) dead.add(sub.id);
             else if (res.ok) accepted++;
@@ -156,7 +169,8 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
         if (accepted > 0) delivered.push(e.id);
       }
       if (dead.size > 0) await this.db.delete(pushSubscriptions).where(inArray(pushSubscriptions.id, [...dead]));
-      await this.agents.markEventsDelivered(delivered, now, 'push');
+      await this.agents.markEventsDelivered(delivered.filter((id) => !addressedIds.has(id)), now, 'push');
+      if (this.shared) await this.shared.markAddressedDelivered(delivered.filter((id) => addressedIds.has(id)), 'pushDeliveredAt', now);
       return delivered.length;
     }
   }

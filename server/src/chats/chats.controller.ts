@@ -9,6 +9,7 @@
 import { Body, Controller, Delete, Get, Optional, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { AccountsService } from '../accounts/accounts.service';
+import { actorId } from '../accounts/account-context';
 import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { ChatsService } from './chats.service';
 import { TurnLoopService, ApprovalDecision } from './turn-loop.service';
@@ -36,6 +37,9 @@ class UpdateChatDto {
   @IsOptional() @IsString() cwd?: string;
   @IsOptional() @IsBoolean() pinned?: boolean;
   @IsOptional() @IsArray() tags?: string[];
+  /** Shared workspaces: visible to every member (true) or the creator and
+   *  the owner only (false). */
+  @IsOptional() @IsBoolean() shared?: boolean;
 }
 
 class SendTurnDto {
@@ -72,7 +76,11 @@ export class ChatsController {
 
   @Post() create(@Body() dto: CreateChatDto) { return this.chats.create(dto); }
   @Get(':id') get(@Param('id') id: string) { return this.chats.get(id); }
-  @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateChatDto) { return this.chats.update(id, dto); }
+  @Patch(':id') async update(@Param('id') id: string, @Body() dto: UpdateChatDto) {
+    const { shared, ...rest } = dto;
+    if (shared !== undefined) await this.chats.setShared(id, shared);
+    return Object.keys(rest).length > 0 ? this.chats.update(id, rest) : this.chats.get(id);
+  }
   @Delete(':id') remove(@Param('id') id: string) { return this.chats.remove(id); }
   @Post(':id/archive')
   async archive(@Param('id') id: string) {
@@ -93,6 +101,7 @@ export class ChatsController {
 
   @Post(':id/turns')
   async sendTurn(@Param('id') id: string, @Body() dto: SendTurnDto, @Res() res: Response) {
+    await this.chats.get(id); // 404 for a session the actor may not see
     // X-Yaam-Plan / -Usage-Usd / -Hosted-Usd / -Ceiling-Usd: the account's
     // month at a glance, before the stream starts.
     const usage = this.accounts ? await this.accounts.usageHeaders().catch(() => ({})) : {};
@@ -141,7 +150,9 @@ export class ChatsController {
   /** Resolve a paused Ask-mode tool approval (§4). */
   @Post(':id/approve')
   approve(@Param('id') id: string, @Body() dto: ApproveDto) {
-    return { resolved: this.turns.resolveApproval(id, dto.callId, dto.decision) };
+    // An approval routed to another member (docs/shared-agents.md §3) is
+    // theirs to answer: this path reports it unresolved for anyone else.
+    return { resolved: this.turns.resolveApproval(id, dto.callId, dto.decision, actorId()) };
   }
 
   /** /compact — distill private history into a summary (FR-7.3). */

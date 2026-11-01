@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants } from '../database/schema';
+import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants, orgHumans } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
@@ -28,6 +28,19 @@ export type OrgMember = typeof orgMembers.$inferSelect;
 export type OrgGoal = typeof orgGoals.$inferSelect;
 export type OrgProject = typeof orgProjects.$inferSelect;
 export type OrgBudget = typeof orgBudgets.$inferSelect;
+export type OrgHuman = typeof orgHumans.$inferSelect;
+/** Humans in an organisation (docs/autonomous-company.md phase D). */
+export type HumanRole = 'ceo' | 'board' | 'observer';
+export const HUMAN_ROLES: readonly HumanRole[] = ['ceo', 'board', 'observer'];
+/** Approval kinds a board member may decide; everything else is the CEO's. */
+export const BOARD_DECIDES = new Set<string>(['hire', 'budget_raise', 'strategy']);
+
+/** Whether a human role may decide an approval of `kind`. */
+export function mayDecide(role: HumanRole | null, kind: string): boolean {
+  if (role === 'ceo') return true;
+  if (role === 'board') return BOARD_DECIDES.has(kind);
+  return false;
+}
 
 export const MAX_DEPTH_CEILING = 3;
 export const DEFAULT_MAX_DIRECT_REPORTS = 5;
@@ -46,6 +59,46 @@ export class OrgService {
     private readonly agents: AgentsService,
     private readonly audit: OrgAuditService,
   ) {}
+
+  // ---- humans (phase D) ----
+
+  /** The humans of an org besides the owner. The workspace owner is the CEO
+   *  by default whether or not a row exists for them. */
+  humans(orgId: string): Promise<OrgHuman[]> {
+    return this.db.select().from(orgHumans).where(eq(orgHumans.orgId, orgId));
+  }
+
+  /** The role `actor` (an account id) holds here: the owner is CEO unless a
+   *  row names them otherwise; others need a row; null = no standing. */
+  async humanRole(orgId: string, actor: string): Promise<HumanRole | null> {
+    const rows = await this.humans(orgId);
+    const own = rows.find((h) => h.memberAccountId === actor);
+    if (own) return own.role as HumanRole;
+    return actor === currentAccountId() ? 'ceo' : null;
+  }
+
+  async setHuman(orgId: string, input: { memberAccountId: string; role: HumanRole }, actor = 'user'): Promise<OrgHuman> {
+    await this.get(orgId);
+    if (!HUMAN_ROLES.includes(input.role)) throw new BadRequestException(`role must be one of ${HUMAN_ROLES.join(', ')}`);
+    if (!input.memberAccountId) throw new BadRequestException('memberAccountId is required');
+    const existing = (await this.humans(orgId)).find((h) => h.memberAccountId === input.memberAccountId);
+    let row: OrgHuman;
+    if (existing) {
+      await this.db.update(orgHumans).set({ role: input.role }).where(eq(orgHumans.id, existing.id));
+      row = { ...existing, role: input.role };
+    } else {
+      row = { accountId: currentAccountId(), id: newId(), orgId, memberAccountId: input.memberAccountId, role: input.role, createdAt: nowIso() };
+      await this.db.insert(orgHumans).values(row);
+    }
+    await this.audit.append(orgId, { actor, action: 'human_set', refType: 'human', refId: input.memberAccountId, payload: { role: input.role } });
+    return row;
+  }
+
+  async removeHuman(orgId: string, memberAccountId: string, actor = 'user'): Promise<{ ok: true }> {
+    await this.db.delete(orgHumans).where(and(eq(orgHumans.orgId, orgId), eq(orgHumans.memberAccountId, memberAccountId)));
+    await this.audit.append(orgId, { actor, action: 'human_removed', refType: 'human', refId: memberAccountId });
+    return { ok: true };
+  }
 
   // ---- organisations ----
 

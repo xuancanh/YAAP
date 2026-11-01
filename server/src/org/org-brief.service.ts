@@ -131,6 +131,17 @@ export class OrgBriefService {
         payload: JSON.stringify({ orgId: brief.orgId, items: brief.items }), origin: 'loop', channel: true,
         ...deliveryFor(ws, 'brief', now),
       }).catch(() => {});
+      // Phase D: the brief goes to the CEO (the owner, above) and to each
+      // board member as an addressed copy on their own channels; observers
+      // read it in the app. Exceptions (loop_error, budget_stop) stay the CEO's.
+      for (const h of (await this.org.humans(brief.orgId)).filter((x) => x.role === 'board')) {
+        await this.agents.addEvent(chiefId, {
+          kind: 'brief', title: `Daily brief (board copy) — ${brief.items.length} decision(s) needed`, body: brief.text.slice(0, 1_000),
+          payload: JSON.stringify({ orgId: brief.orgId, items: brief.items }), origin: 'loop', channel: true,
+          forMemberAccountId: h.memberAccountId,
+          ...deliveryFor(ws, 'brief', now),
+        }).catch(() => {});
+      }
     }
   }
 
@@ -141,7 +152,7 @@ export class OrgBriefService {
   }
 
   /** Resolve a one-line reply against the latest brief's numbering. */
-  async reply(orgId: string, text: string, actor = 'user'): Promise<{ decisions: Array<BriefReplyDecision & { approvalId: string; status: string }>; unresolved: string[] }> {
+  async reply(orgId: string, text: string, actor = 'user', decidedBy = ''): Promise<{ decisions: Array<BriefReplyDecision & { approvalId: string; status: string }>; unresolved: string[] }> {
     const brief = await this.latest(orgId);
     if (!brief) throw new BadRequestException('no brief to reply to — compose one first');
     const { decisions, unresolved } = parseBriefReply(text, brief.items.length);
@@ -150,7 +161,7 @@ export class OrgBriefService {
       const item = brief.items.find((i) => i.n === d.n);
       if (!item) { unresolved.push(`#${d.n}`); continue; }
       try {
-        const { approval } = await this.approvals.decide(orgId, item.approvalId, d.decision, d.note ?? '', actor);
+        const { approval } = await this.approvals.decide(orgId, item.approvalId, d.decision, d.note ?? '', actor, decidedBy);
         out.push({ ...d, approvalId: item.approvalId, status: approval.status });
       } catch (err) {
         out.push({ ...d, approvalId: item.approvalId, status: `error: ${err instanceof Error ? err.message : String(err)}` });
