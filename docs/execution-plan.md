@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–24 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–25 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -762,3 +762,55 @@ scoping, `POST …/tasks/:taskId/assign { agentId | humanId }`, `GET
 install as drafts; cadences are listed, not written; tiers resolve through
 item 23's `tierModel`; a role hire is named after the
 title the chief gives.
+
+### 25. Company onboarding: the New workspace wizard and `POST …/org/bootstrap` *(done)*
+`docs/group-chat.md` §5 "Onboarding", `docs/company-vision.md` §1b, §14.
+
+The request: starting a workspace should ask whether to run it as a company
+with a chief of staff and then collect what the company needs — its values,
+culture, vision and goals — so nothing the chief reads is a hidden default.
+
+*Shipped as (1 November 2026):* `server/src/org/org-bootstrap.service.ts`
+(`OrgBootstrapService.bootstrap(workspaceId, input, actor)`: validates the
+whole body first — mode, chief shape, `monthlyUsd ≥ 0`, `agentCap` 1–50,
+cadence mode, vision title, horizon, every tunable against `checkTunable` —
+then in order creates the chief when asked (`AgentsService.create` with
+`role: 'Chief of staff'`, the `defaultChiefCharter` of the workspace with the
+mission and the §1b profile baked in, and the workspace id ready for the
+per-workspace agents migration), `OrgModeService.setMode`,
+`OrgIntentService.setVision` (`horizonDays` → `dueAt`, rules), `setProfile`
+and the org's `mission`, `setTunable` per key, `ensureCadenceDefaults` then
+`updateCadence` for `'light'` (standup and retro off on the root unit) or
+`'none'` (all off), the first hires through `proposeHire` (supervised) or
+`prepareHire` + `applyHire` under the agent cap (autonomous) — an unknown
+role is a `skipped` entry with a note, never a failure — and
+`runtime.runPlanning` of the root unit fire-and-forget when `planNow` and a
+vision exist (`planning: 'queued' | 'not_requested' | 'unavailable'`); one
+`org_bootstrap` audit row lists it all; a workspace with an organization or
+a live mode is refused with 400 naming Settings); `POST
+/api/workspaces/:id/org/bootstrap` (`BootstrapDto` on
+`WorkspaceOrgController`, `OrgBootstrapService` provided and exported by
+`OrgModule`); `GET …/org/caps` now also carries `vetoWindowMinutes` (the
+`capital.vetoWindowMinutes` default) for the wizard's autonomous card.
+SPA: `src/components/NewWorkspaceWizard.tsx` (steps name → mode → chief →
+vision → profile → budget → rhythm → hires → review; cards are
+`role="radio"` buttons, every field labelled, Escape closes, `min(640px,
+100%)` wide with no horizontal scroll on a phone; `existing={id, name}`
+starts at the mode step and only bootstraps), `src/lib/onboarding.ts`
+(`horizonToIso`, `wizardSteps`, `validateStep` / `validateAll`,
+`rankRoles` by profile-text overlap, `buildBootstrapBody` from what is on
+screen only, `buildSummary`, `successToast`, the mode / cadence / ritual
+copy), `src/lib/api.ts` (`bootstrapOrg`, `orgRoles` tolerant of 404 with
+`normalizeRoles` over either catalog shape, `BootstrapBody`,
+`BootstrapSummary`, `OrgRole`), `Rails.tsx` ("Add workspace" opens the
+wizard; the `window.prompt`-style inline input is gone), `SettingsView.tsx`
+(Organization card: "Enable company…" for a workspace in `off` mode). On
+success the wizard selects the workspace, opens the Vision pane and toasts
+"Company ready — <chief> is planning" when planning was queued. Tests:
+`tests/backend-org-bootstrap.test.ts` (7), `web-tests/onboarding.test.ts`
+(11). Departures: the chief picker lists existing agents only when the
+wizard runs for an existing workspace (a new workspace owns no agents yet,
+per the per-workspace agents rule); the role catalog is item 24's route,
+so until it lands the hires step is hidden and `roles` are resolved against
+the market packs by id or name; tunables are accepted by the route but the
+wizard does not edit them (the Settings card does, with the fence).

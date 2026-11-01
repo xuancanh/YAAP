@@ -6,6 +6,7 @@ import { useApp, grad, type OrgPane } from '../store';
 import { api, type ChatSession, type OrgUnitNode } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 import { atRiskByUnit, firesOn, MEETING_KIND_TITLES } from '../lib/org';
+import { NewWorkspaceWizard } from './NewWorkspaceWizard';
 
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '2px 18px 8px' };
 
@@ -39,9 +40,9 @@ function timeAgo(iso: string): string {
 export function WorkspacePill() {
   const app = useApp();
   const [open, setOpen] = useState(false);
+  // "Add workspace" opens the onboarding wizard (item 25): name and colour,
+  // then whether to run it as a company with a chief of staff.
   const [adding, setAdding] = useState(false);
-  const [name, setName] = useState('');
-  const [creating, setCreating] = useState(false);
   const ws = app.workspaces.find((w) => w.id === app.workspaceId);
   if (!ws) return null;
   return (
@@ -82,29 +83,12 @@ export function WorkspacePill() {
               {w.id === app.workspaceId && <I d={P.check} size={14} stroke="var(--accent)" sw={2.5} />}
             </div>
           ))}
-          {adding ? (
-            <div style={{ display: 'flex', gap: 6, padding: '8px 9px', borderTop: '1px solid var(--border-soft)', marginTop: 4 }}>
-              <input autoFocus value={name} onChange={(e) => setName(e.target.value)} disabled={creating}
-                onKeyDown={async (e) => {
-                  if (e.key !== 'Enter' || e.nativeEvent.isComposing || !name.trim() || creating) return;
-                  setCreating(true);
-                  try {
-                    await api.createWorkspace(name.trim());
-                    await app.refreshWorkspaces();
-                    setName(''); setAdding(false);
-                  } finally {
-                    setCreating(false);
-                  }
-                }}
-                placeholder="Workspace name" style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '5px 8px', color: 'var(--text)', fontSize: 12.5, outline: 'none' }} />
-            </div>
-          ) : (
-            <div onClick={() => setAdding(true)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '8px 9px', borderRadius: 8, cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12.5, borderTop: '1px solid var(--border-soft)', marginTop: 4 }}>
-              <I d={P.plus} size={14} />Add workspace
-            </div>
-          )}
+          <button type="button" onClick={() => { setAdding(true); setOpen(false); }} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9, padding: '8px 9px', borderRadius: 8, cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12.5, borderTop: '1px solid var(--border-soft)', marginTop: 4, background: 'none', border: 'none', borderTopStyle: 'solid', font: 'inherit', textAlign: 'left' }}>
+            <I d={P.plus} size={14} />Add workspace
+          </button>
         </div>
       )}
+      {adding && <NewWorkspaceWizard onClose={() => setAdding(false)} />}
     </div>
   );
 }

@@ -722,7 +722,33 @@ export interface WorkspaceOrg {
   units: OrgUnitNode[];
   enrolled?: string[]; notEnrolled?: Array<{ agentId: string; reason: string }>;
 }
-export interface OrgCaps { maxDepth: number; maxDirectReports: number; defaultAgentCap: number; rules: string[] }
+export interface OrgCaps { maxDepth: number; maxDirectReports: number; defaultAgentCap: number; rules: string[]; /** The default veto window on autonomous plans (minutes), for the wizard. */ vetoWindowMinutes?: number }
+// ---- company onboarding (execution plan item 25) ----
+/** POST …/org/bootstrap — the whole company setup in one call. */
+export interface BootstrapBody {
+  mode: 'supervised' | 'autonomous';
+  chief: { agentId: string } | { create: { name: string; provider?: string; model?: string } };
+  monthlyUsd: number; agentCap?: number;
+  vision?: { title: string; description?: string; horizonDays?: number; dueAt?: string | null; rules?: string };
+  profile?: { values?: string; culture?: string };
+  tunables?: Record<string, number>;
+  cadences?: 'default' | 'light' | 'none';
+  roles?: string[];
+  planNow?: boolean;
+}
+export interface BootstrapHire { role: string; status: 'proposed' | 'hired' | 'skipped'; note: string; approvalId?: string; agentId?: string }
+export interface BootstrapSummary {
+  workspaceId: string; orgId: string; mode: 'supervised' | 'autonomous';
+  chief: { agentId: string; name: string; created: boolean }; enrolled: number;
+  vision: { goalId: string; title: string; dueAt: string | null } | null;
+  profile: { values: boolean; culture: boolean };
+  tunables: Array<{ key: string; from: number; to: number }>;
+  cadences: { mode: 'default' | 'light' | 'none'; disabled: number; total: number };
+  hires: BootstrapHire[]; planning: 'queued' | 'not_requested' | 'unavailable'; notes: string[];
+}
+/** One entry of the role catalog (item 24, `GET …/org/roles`); normalised
+ *  from whatever shape that route answers with, since it lands after this. */
+export interface OrgRole { id: string; name: string; title?: string; summary?: string }
 export interface OrgSpendNode { usd: number; tokensIn: number; tokensOut: number; runs: number; monthlyUsd: number; reservedUsd: number }
 export interface OrgSpend {
   month: string; company: OrgSpendNode;
@@ -839,6 +865,22 @@ export type AuthMe =
   | { mode: 'single'; authenticated: true; account: AccountSummary }
   | { mode: 'accounts'; authenticated: true; account: AccountSummary }
   | { mode: 'accounts'; authenticated: false };
+
+/** Tolerant reader of the role catalog: an array or `{ roles: [...] }`, each
+ *  row with an `id` (or `packId`) and a `name` (or `role`/`title`). */
+export function normalizeRoles(raw: unknown): OrgRole[] {
+  const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && Array.isArray((raw as { roles?: unknown }).roles) ? (raw as { roles: unknown[] }).roles : [];
+  const out: OrgRole[] = [];
+  for (const x of list) {
+    if (!x || typeof x !== 'object') continue;
+    const r = x as Record<string, unknown>;
+    const id = typeof r.id === 'string' ? r.id : typeof r.packId === 'string' ? r.packId : '';
+    const name = typeof r.name === 'string' ? r.name : typeof r.role === 'string' ? r.role : typeof r.title === 'string' ? r.title : '';
+    if (!id || !name) continue;
+    out.push({ id, name, title: typeof r.title === 'string' ? r.title : typeof r.role === 'string' ? r.role : undefined, summary: typeof r.summary === 'string' ? r.summary : typeof r.description === 'string' ? r.description : typeof r.tagline === 'string' ? r.tagline : undefined });
+  }
+  return out;
+}
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
@@ -1193,6 +1235,15 @@ export const api = {
   workspaceOrg: (wsId: string) => get<WorkspaceOrg>(`/api/workspaces/${wsId}/org`),
   setWorkspaceOrg: (wsId: string, body: { mode: OrgMode; chiefOfStaffAgentId?: string; monthlyUsd?: number; agentCap?: number }) => send<WorkspaceOrg>(`/api/workspaces/${wsId}/org`, 'PUT', body),
   orgCaps: (wsId: string) => get<OrgCaps>(`/api/workspaces/${wsId}/org/caps`),
+  bootstrapOrg: (wsId: string, body: BootstrapBody) => send<BootstrapSummary>(`/api/workspaces/${wsId}/org/bootstrap`, 'POST', body),
+  /** The role catalog (item 24). Null when the route is absent (404) or fails: the wizard hides the step. */
+  orgRoles: async (wsId: string): Promise<OrgRole[] | null> => {
+    const url = `/api/workspaces/${wsId}/org/roles`;
+    const res = await fetch(url, { headers: authHeaders(url) }).catch(() => null);
+    if (!res || !res.ok) return null;
+    const raw = await res.json().catch(() => null) as unknown;
+    return normalizeRoles(raw);
+  },
   pauseOrg: (wsId: string) => send<WorkspaceOrg>(`/api/workspaces/${wsId}/org/pause`, 'POST'),
   resumeOrg: (wsId: string) => send<WorkspaceOrg>(`/api/workspaces/${wsId}/org/resume`, 'POST'),
   reviewOrgStructure: (wsId: string) => send<{ result: string }>(`/api/workspaces/${wsId}/org/review`, 'POST'),

@@ -631,3 +631,9 @@ that nothing installs live); cadences are listed, not written, by an import
 until item 19's rituals own them; tiers resolve through item 23's `tierModel` (one tier table); "companies working
 together" (§9.3) stays last and is not started; no SPA.
 
+*Onboarding (item 25) — shipped 1 November 2026.* The §1b profile is
+collected at birth: the New workspace wizard asks whether the workspace is a
+company and, if so, for its chief, vision, horizon, rules, values, culture,
+budget, rhythm and first hires, and `POST …/org/bootstrap` writes them in
+order through the same services the Settings card and the chief use, so a
+company starts from the CEO's words rather than from fixed defaults.

@@ -6,6 +6,7 @@ import { useApp } from '../store';
 import { useAuth } from '../auth';
 import { ImportSkillMdButton, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { PublishButton } from './RegistryBits';
+import { NewWorkspaceWizard } from './NewWorkspaceWizard';
 import { api, PROVIDER_COLORS, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type FlowKind, type FlowRule, type MemberGrant, type MemberRole, type OrgCaps, type OrgMode, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceInvite, type WorkspaceMember, type WorkspaceUsage, type OrgTunable } from '../lib/api';
 import { AREA_LABEL, groupTunables, SLO_TARGET_OF, tunableError } from '../lib/org';
 import { KIND_LABEL } from '../lib/registry';
@@ -587,6 +588,8 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
   const [cap, setCap] = useState(String(st?.orgAgentCap ?? ws.orgAgentCap ?? 12));
   const [caps, setCaps] = useState<OrgCaps | null>(null);
   const [busy, setBusy] = useState(false);
+  /** The onboarding wizard (item 25) from the mode step, for a workspace that exists. */
+  const [wizard, setWizard] = useState(false);
   useEffect(() => {
     setMode(st?.mode ?? ws.orgMode);
     setChief(st?.chiefOfStaffAgentId ?? ws.chiefOfStaffAgentId ?? '');
@@ -625,6 +628,10 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
             The workspace is the company. Turn it on and every agent here joins, with a chief of staff at the top; the board, goals, org chart, spend, brief and audit appear under the workspace.
           </div>
         </div>
+        {current === 'off' && isOwner && (
+          <button type="button" onClick={() => setWizard(true)} title="Set up a company step by step: chief of staff, vision, values and culture, budget, rhythm, first hires" style={{ background: 'var(--accent)', border: 'none', color: '#fff', borderRadius: 7, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Enable company…</button>
+        )}
+        {wizard && <NewWorkspaceWizard existing={{ id: ws.id, name: ws.name }} onClose={() => setWizard(false)} />}
         {current !== 'off' && st && (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: st.orgStatus === 'paused' ? '#fff' : 'var(--text-dim)', background: st.orgStatus === 'paused' ? 'var(--red)' : 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px' }}>{st.orgStatus === 'paused' ? 'paused' : `${current} · ${members} member${members === 1 ? '' : 's'}${st.pendingApprovals ? ` · ${st.pendingApprovals} pending` : ''}`}</span>

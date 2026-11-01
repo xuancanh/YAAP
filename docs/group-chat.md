@@ -232,6 +232,30 @@ agent home says "Chief of staff of <workspace>", and
 `tests/backend-org-mode.test.ts`. Not done: the group log pane (replaced by
 `#company`, item 15); `channel_make_task` → board linkage is item 15's.
 
+**Onboarding (execution-plan item 25, 1 November 2026).** "Add workspace"
+opens a wizard instead of a name prompt: name and colour, then "run this
+workspace as a company?" with three cards — just a workspace, company
+supervised, company autonomous (the caps and the veto window shown) — each
+with its plain-language consequence; for a company, the chief of staff
+(created with the workspace — a new workspace has no agents of its own yet;
+an existing one may also pick one of its agents), the mission and vision
+(one line, a paragraph, a horizon of 30/90/180/365 days or a date, standing
+rules), values and culture (the §1b operating profile, two short paragraphs),
+the budget and agent cap with the fence, the rhythm (default / light / none,
+one line per ritual), the first hires when `GET …/org/roles` answers (item
+24; hidden on 404), and a review of everything that will be created. One
+`POST /api/workspaces/:id/org/bootstrap` (`OrgBootstrapService`) then does
+the setup in order through the existing services — chief, `setMode`,
+`setVision`, `setProfile`, each tunable within its bound (checked before
+anything exists), cadences, hires through the one hire path (cards in
+supervised mode, seated within caps in autonomous mode), the first planning
+session fire-and-forget — audited as one `org_bootstrap` row plus each step's
+own decision row, and refused with 400 when the workspace already has a
+company. Settings → Workspace → Organization has "Enable company…" opening
+the same wizard from the mode step for an existing workspace. Nothing the
+chief reads is a hidden default: what the wizard leaves blank stays at the
+documented tunable defaults the Settings card shows.
+
 `workspaces.orgMode` ∈ `off | supervised | autonomous`, plus
 `chiefOfStaffAgentId`, `orgMonthlyUsd`, `orgAgentCap` (default 12). Enabling
 it creates the 1:1 organization record (the existing `organizations` row and
