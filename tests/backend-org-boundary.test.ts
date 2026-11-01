@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { BOUNDARY, BOUNDARY_VERDICTS, checkBoundary, ruleFor, type ChangeKind } from '../server/src/org/boundary';
 import { setup, enable, sessionOf } from './org-governance-harness';
 
-const KINDS: ChangeKind[] = ['tunable', 'cadence', 'routing', 'playbook', 'charter', 'role', 'hire', 'reorg', 'terminate', 'scope_widen', 'scope_narrow', 'budget', 'constitution', 'caps', 'external_floor', 'trust_ceiling', 'audit_settings', 'audit_chain', 'kill_switch', 'frozen_classes', 'delegation', 'eval_cases'];
+const KINDS: ChangeKind[] = ['tunable', 'cadence', 'routing', 'playbook', 'charter', 'role', 'hire', 'reorg', 'terminate', 'scope_widen', 'scope_narrow', 'budget', 'constitution', 'caps', 'external_floor', 'trust_ceiling', 'audit_settings', 'audit_chain', 'kill_switch', 'frozen_classes', 'delegation', 'eval_cases', 'member_identity', 'member_model', 'member_heartbeat', 'member_folder'];
 
 test('the table covers every family with a verdict and a reason; tunables classify by key prefix; GET …/org/boundary returns it', async () => {
   for (const k of KINDS) {
@@ -158,4 +158,47 @@ test('the CEO is not bound (except the audit chain): audit settings, the kill sw
   assert.equal((await s.incidents.list(orgId)).filter((i) => i.kind === 'boundary_violation').length, 0);
   assert.equal((await s.audit.list(orgId, { action: 'boundary_violation' })).length, 0);
   await assert.rejects(s.org.gate(orgId, { kind: 'audit_chain' }, 'user'), /never anyone's/);
+});
+
+test('the chief changes a report\'s settings: identity alone; model gated (card in supervised, applies in autonomous, switches chats); folder only by proposal', async () => {
+  const s = await setup();
+  const { agentTypes, chatSessions } = await import('../server/src/database/schema');
+  const { eq } = await import('drizzle-orm');
+  await s.db.insert(agentTypes).values({ id: 'tFast', name: 'Fast', provider: 'deepseek', model: 'deepseek-chat', models: '[]', baseUrl: null, apiKey: '', persona: '', enabled: 1, createdAt: new Date().toISOString() } as never);
+
+  // supervised: identity applies, a model change is a card, the card applies the model
+  const orgId = await enable(s, 'supervised');
+  let chief = await sessionOf(s, s.chief.id);
+  const writerChat = await sessionOf(s, s.writer.id);
+  const id = await s.runtime.execute(chief, 'org_update_member', { agent: 'Writer', role: 'Lead writer', emoji: '✍️', colors: ['#112233', '#445566'], why: 'clearer seat' });
+  assert.match(id, /Updated Writer: identity/);
+  assert.equal((await s.agents.get(s.writer.id)).role, 'Lead writer');
+  const card = await s.runtime.execute(chief, 'org_update_member', { agent: 'Writer', agentType: 'Fast', why: 'cheaper drafts' });
+  assert.match(card, /Model change proposed/);
+  assert.equal((await s.agents.get(s.writer.id)).agentTypeId ?? null, null, 'nothing changes before approval');
+  const pending = (await s.approvals.pending(orgId)).find((a) => a.kind === 'member_settings');
+  assert.ok(pending);
+  await s.approvals.decide(orgId, pending!.id, 'approve');
+  const after = await s.agents.get(s.writer.id);
+  assert.equal(after.agentTypeId, 'tFast');
+  assert.equal(after.model, 'deepseek-chat');
+  assert.equal((await s.db.select().from(chatSessions).where(eq(chatSessions.id, writerChat.id)))[0].agentTypeId, 'tFast', 'existing chats switch');
+
+  // the folder is always a proposal; an unknown type is refused; the chief cannot change itself
+  const folder = await s.runtime.execute(chief, 'org_update_member', { agent: 'Editor', workspaceFolder: 'drafts', why: 'needs drafts' });
+  assert.match(folder, /Not yours to change alone/);
+  assert.equal((await s.agents.get(s.editor.id)).workspaceFolder, '');
+  await assert.rejects(s.runtime.execute(chief, 'org_update_member', { agent: 'Editor', agentType: 'Nope', why: 'x' }), /no enabled agent type/);
+  await assert.rejects(s.runtime.execute(chief, 'org_update_member', { agent: 'Chief', role: 'Boss', why: 'x' }));
+  await assert.rejects(s.runtime.execute(chief, 'org_update_member', { agent: 'Editor', why: 'nothing' }), /nothing to change/);
+
+  // autonomous: the model change applies at once and is audited as a decision
+  await s.mode.setMode(s.ws.id, { mode: 'autonomous' });
+  chief = await sessionOf(s, s.chief.id);
+  const auto = await s.runtime.execute(chief, 'org_update_member', { agent: 'Editor', agentType: 'Fast', model: 'deepseek-reasoner', applyToChats: false, why: 'reasoning drafts' });
+  assert.match(auto, /Updated Editor: model/);
+  const ed = await s.agents.get(s.editor.id);
+  assert.equal(ed.agentTypeId, 'tFast');
+  assert.equal(ed.model, 'deepseek-reasoner');
+  assert.ok(s.checks.some((c) => c.change.kind === 'member_model' && c.outcome === 'proceed'));
 });

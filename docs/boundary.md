@@ -119,3 +119,19 @@ written to the audit chain as `boundary_route`, and a violation as
 - Frozen classes, the kill switch and the constitution have no agent path.
   Their rows exist so that a future path inherits the rule, and so that the
   delegation check can read `delegable`.
+
+## Member settings (added 2 November 2026)
+
+The chief of staff changes a report's own settings with `org_update_member`.
+Four rows govern it:
+
+| Row | Verdict | Why |
+|---|---|---|
+| `member_identity`: name, role, emoji, colours | alone | presentation only: no authority, money or behaviour changes |
+| `member_model`: agent type and model | alone, after the eval gate | like routing, it trades cost for quality inside the envelope; the member's golden set replays on the new model first and a regression blocks it. In supervised mode it is a `member_settings` card |
+| `member_heartbeat`: on/off and cadence | alone | bounded by the heartbeat fence in code |
+| `member_folder`: assigned workspace folder | propose | it widens which shared files the member can read and write |
+
+The chief cannot change its own settings, and a model change carries over to
+the member's existing chats unless `applyToChats` is false. The CEO changes
+any of these directly on the agent's Settings tab.

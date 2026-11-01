@@ -135,8 +135,10 @@ export class OrgEvalsService {
     approvals.onBeforeApply('routing', (orgId, a, payload) => this.gateCard(orgId, a, payload));
     playbooks?.setActivationGate((orgId, p, before) => this.gatePlaybook(orgId, p, before));
     runtime.setRolloutGate(async (orgId, cand, by) => {
-      const role = await this.roleForClass(orgId, cand.ref);
-      if (!role) return { blocked: false, summary: `no golden set covers ${cand.ref} tasks` };
+      // a member's own model: its role's golden set; routing: the role doing that class
+      const member = cand.kind === 'model' ? await this.org.member(orgId, cand.ref) : null;
+      const role = member ? roleKeyOf(member) : await this.roleForClass(orgId, cand.ref);
+      if (!role) return { blocked: false, summary: cand.kind === 'model' ? 'that member has no golden set yet' : `no golden set covers ${cand.ref} tasks` };
       const g = await this.gate(orgId, role, cand, by);
       return { blocked: g.verdict === 'regress', summary: g.summary };
     });

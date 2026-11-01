@@ -130,7 +130,18 @@ export interface AuditRunState { findings: AuditFinding[]; summary: string; clos
 export type PlanningTrigger = 'vision' | 'objective_assigned' | 'at_risk' | 'manual' | 'sprint';
 
 /** Structural actions the autonomous chief may take; mirrored in the brief. */
-export type AutoAction = 'hire' | 'reorg' | 'scope_widen' | 'budget' | 'terminate' | 'routing';
+export type AutoAction = 'hire' | 'reorg' | 'scope_widen' | 'budget' | 'terminate' | 'routing' | 'member_settings';
+/** A change to a member's own settings (docs/boundary.md: member_* rows). */
+export interface MemberSettingsChange {
+  agentId: string;
+  agentName?: string;
+  patch: Partial<{ name: string; role: string; emoji: string; colors: string; agentTypeId: string | null; model: string; workspaceFolder: string }>;
+  heartbeat?: { enabled?: boolean; cron?: string | null };
+  applyToChats?: boolean;
+  why?: string;
+  summary: string;
+}
+
 /** Told after every executed autonomous action (and an autonomous tune):
  *  the decision log (docs/company-vision.md §6, item 22) writes its row. */
 export type AutoActionListener = (ev: { orgId: string; action: AutoAction | 'tune'; summary: string; reason: string; payload: Record<string, unknown>; actor: string }) => Promise<void> | void;
@@ -148,7 +159,8 @@ export interface OrgTicker { name: string; everyMinutes: number; fn: (org: Organ
 export type PlanningNotes = (org: Organization, unitId: string, isChief: boolean) => Promise<string[]>;
 /** The rollout gate (docs/evals.md §3): replay a role's golden set before an
  *  agent's routing change applies; `blocked` refuses it with the summary. */
-export type RolloutGate = (orgId: string, candidate: { kind: 'routing'; ref: string; before: string | null; after: string }, requestedBy: string) => Promise<{ blocked: boolean; summary: string }>;
+/** `routing`: ref is a task class; `model`: ref is the member's agent id. */
+export type RolloutGate = (orgId: string, candidate: { kind: 'routing' | 'model'; ref: string; before: string | null; after: string }, requestedBy: string) => Promise<{ blocked: boolean; summary: string }>;
 
 const SESSION_PREFIX = 'Org · ';
 const ORG_TOOL_PREFIX = 'org_';
@@ -244,7 +256,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     /** Optional: intent (docs/company-vision.md §2) — key results, the cascade, risk. */
     @Optional() private readonly intent?: OrgIntentService,
     /** Optional: the gated heartbeat (docs/company-vision.md §13) — org reasons and the operating profile for its prompt. */
-    @Optional() heartbeat?: HeartbeatService,
+    @Optional() private readonly heartbeat?: HeartbeatService,
     /** Optional: capital (docs/company-vision.md §7–§8) — routing, costs, forecasts, plan previews. */
     @Optional() private readonly capital?: OrgCapitalService,
   ) {
@@ -254,7 +266,23 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     intent?.onIntent((ev) => this.onIntentEvent(ev));
     heartbeat?.addReasonProvider({ name: 'org', reasons: (agentId, ctx) => this.heartbeatReasons(agentId, ctx.now) });
     heartbeat?.addContextProvider({ name: 'org', context: (agentId) => this.heartbeatContext(agentId) });
+    // A member-settings card the CEO approved (org_update_member in supervised
+    // mode, or a change the boundary sends to the owner).
+    approvals.onApply('member_settings', async (orgId, payload) => ({ applied: await this.applyMemberSettings(orgId, payload as unknown as MemberSettingsChange, 'user') }));
     if (this.enabled()) this.turns.setOrgTools(this);
+  }
+
+  /** Apply a member-settings change (identity, model, heartbeat, folder) to
+   *  the member's agent. Validation lives in AgentsService.update and
+   *  HeartbeatService.setHeartbeat (the bounds are in code). */
+  async applyMemberSettings(orgId: string, change: MemberSettingsChange, actor: string): Promise<string> {
+    const member = await this.org.member(orgId, change.agentId);
+    if (!member || member.status === 'terminated') throw new Error('that member is no longer in the organization');
+    const patch = { ...change.patch, ...(change.patch.agentTypeId !== undefined || change.patch.model !== undefined ? { applyToChats: change.applyToChats !== false } : {}) };
+    if (Object.keys(change.patch).length > 0) await this.agents.update(change.agentId, patch);
+    if (change.heartbeat && this.heartbeat) await this.heartbeat.setHeartbeat(change.agentId, change.heartbeat);
+    await this.audit.append(orgId, { actor, action: 'member_settings', refType: 'agent', refId: change.agentId, payload: { patch: change.patch, heartbeat: change.heartbeat ?? null, why: change.why ?? '' } });
+    return change.summary;
   }
 
   enabled(): boolean {
@@ -1780,6 +1808,62 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         const a = await this.approvals.create(org.id, { kind: 'routing', payload: { class: cls, tier, from, why, example }, requestedBy: 'chief', recommendation: why, card: cardInput });
         return `Routing change proposed (approval ${a.id.slice(0, 8)}): ${cls} → ${tier}. The current routing stays until the CEO approves.`;
       }
+      case 'org_update_member': {
+        // The chief manages its reports' settings (docs/boundary.md member_* rows):
+        // identity and heartbeat alone; model alone after the eval gate
+        // (a card in supervised mode, like routing); folder access only by proposal.
+        requireChief();
+        const m = await agentOf('agent');
+        await inSubtree(m);
+        if (!why) throw new Error('why is required: the decision log carries it');
+        const target = await this.agents.get(m.agentId);
+        const patch: MemberSettingsChange['patch'] = {};
+        for (const k of ['name', 'role', 'emoji'] as const) if (typeof input[k] === 'string') patch[k] = String(input[k]);
+        if (Array.isArray(input.colors)) patch.colors = JSON.stringify(input.colors);
+        let typeLabel = '';
+        if (typeof input.agentType === 'string' && input.agentType.trim()) {
+          const types = await this.db.select().from(agentTypes);
+          const ref = input.agentType.trim().toLowerCase();
+          const t = types.find((x) => x.enabled && (x.id === input.agentType || x.name.toLowerCase() === ref));
+          if (!t) throw new Error(`no enabled agent type "${input.agentType}" — enabled: ${types.filter((x) => x.enabled).map((x) => `${x.name} (${x.provider}/${x.model})`).join(', ') || 'none'}`);
+          patch.agentTypeId = t.id;
+          typeLabel = t.name;
+        }
+        if (typeof input.model === 'string') patch.model = input.model.trim();
+        if (typeof input.workspaceFolder === 'string') patch.workspaceFolder = input.workspaceFolder;
+        const hb = input.heartbeat && typeof input.heartbeat === 'object' ? input.heartbeat as { enabled?: unknown; cron?: unknown } : null;
+        const heartbeat = hb ? { ...(typeof hb.enabled === 'boolean' ? { enabled: hb.enabled } : {}), ...(typeof hb.cron === 'string' ? { cron: hb.cron } : {}) } : undefined;
+        const modelChange = patch.agentTypeId !== undefined || patch.model !== undefined;
+        const parts = [
+          ...(['name', 'role', 'emoji', 'colors'].some((k) => k in patch) ? ['identity'] : []),
+          ...(modelChange ? [`model → ${typeLabel ? `${typeLabel} ` : ''}${patch.model ?? '(type default)'}`] : []),
+          ...(heartbeat && Object.keys(heartbeat).length ? [`heartbeat ${heartbeat.enabled === false ? 'off' : heartbeat.cron ?? 'on'}`] : []),
+          ...(patch.workspaceFolder !== undefined ? [`folder → ${patch.workspaceFolder || '(none)'}`] : []),
+        ];
+        if (parts.length === 0) throw new Error('nothing to change: pass name, role, emoji, colors, agentType, model, heartbeat or workspaceFolder');
+        const summary = `${target.name}: ${parts.join('; ')}`;
+        const change: MemberSettingsChange = { agentId: m.agentId, agentName: target.name, patch, heartbeat, applyToChats: input.applyToChats !== false, why, summary };
+        const card = { kind: 'member_settings' as ApprovalKind, payload: change as unknown as Record<string, unknown> };
+        // the strictest part decides: folder (propose) → model → identity/heartbeat
+        if (patch.workspaceFolder !== undefined) { const r = await boundaryRoute({ kind: 'member_folder', key: m.agentId, summary }, card); if (r) return r; }
+        if (modelChange) { const r = await boundaryRoute({ kind: 'member_model', key: m.agentId, summary }, card); if (r) return r; }
+        if (heartbeat && Object.keys(heartbeat).length) { const r = await boundaryRoute({ kind: 'member_heartbeat', key: m.agentId, summary }, card); if (r) return r; }
+        if (parts.includes('identity')) { const r = await boundaryRoute({ kind: 'member_identity', key: m.agentId, summary }, card); if (r) return r; }
+        if (previewing && modelChange) return capture(`${summary} — ${why}`);
+        if (modelChange && !autonomous) {
+          const a = await this.approvals.create(org.id, { kind: 'member_settings', payload: card.payload, requestedBy: 'chief', recommendation: why, card: cardInput });
+          return `Model change proposed (approval ${a.id.slice(0, 8)}): ${summary}. ${target.name} keeps its current model until the CEO approves.`;
+        }
+        if (modelChange) {
+          // The rollout gate (docs/evals.md §3): the member's golden set replays on the new model first.
+          const gate = await this.rolloutGate?.(org.id, { kind: 'model', ref: m.agentId, before: `${target.agentTypeId ?? target.provider}/${target.model}`, after: `${patch.agentTypeId ?? target.agentTypeId ?? target.provider}/${patch.model ?? target.model}` }, `gate:model:${m.agentId}`).catch(() => null);
+          if (gate?.blocked) throw new Error(`refused: blocked by evals — ${gate.summary}`);
+        }
+        await this.applyMemberSettings(org.id, change, actor);
+        await this.recordAuto(org, 'member_settings', summary, why, change as unknown as Record<string, unknown>, ctx);
+        if (ctx) ctx.progress = true;
+        return `Updated ${summary}.${modelChange ? (change.applyToChats ? ' Its existing chats switch too.' : ' New chats use it; existing chats keep their model.') : ''} Audited as a decision.`;
+      }
       case 'org_review_structure': {
         requireChief();
         return this.structureReview(org, names, { agentCap, envelope, autonomous });
@@ -2022,6 +2106,7 @@ const MANAGER_TOOLS: AiToolSpec[] = [
   { name: 'org_reorg', description: 'Structural changes: move a member under another, retitle, pause, resume, terminate. Supervised: an approval card. Autonomous: applied in order within depth/fan-out caps, stopping at the first refusal. Include a cost/benefit line in why.', inputSchema: { type: 'object', properties: { changes: { type: 'array', items: { type: 'object', properties: { op: { type: 'string', enum: ['move', 'retitle', 'pause', 'resume', 'terminate'] }, agent: { type: 'string' }, reportsTo: { type: 'string' }, title: { type: 'string' } }, required: ['op', 'agent'] } }, why: { type: 'string' }, org: { type: 'string' } }, required: ['changes', 'why'] } },
   { name: 'org_propose_strategy', description: 'PROPOSE goals → projects → first tasks (approval card). Nothing moves to todo until the CEO approves.', inputSchema: { type: 'object', properties: { goals: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, projects: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, tasks: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, brief: { type: 'object', properties: brief4 }, assigneeAgentId: { type: 'string' } }, required: ['title'] } } }, required: ['title'] } } }, required: ['title'] } }, why: { type: 'string' }, org: { type: 'string' } }, required: ['goals', 'why'] } },
   { name: 'org_allocate_budget', description: 'Allocate USD per month to an agent or project envelope. Lowering is immediate. Raising: an approval card (supervised), or immediate while agent+project envelopes stay within the company envelope (autonomous, why required; in a planning run or review it is previewed for the CEO\'s veto window). The company envelope itself is the CEO\'s. Name the objective the envelope funds (objectiveId) and what the money buys (buys: which key results) so a cut is a scope decision.', inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: ['company', 'agent', 'project'] }, agent: { type: 'string' }, projectId: { type: 'string' }, monthlyUsd: { type: 'number' }, objectiveId: { type: 'string', description: 'The objective (goal id or prefix) this envelope funds.' }, buys: { type: 'string', description: 'What the money buys: the key results it carries.' }, why: { type: 'string' }, org: { type: 'string' } }, required: ['scope', 'monthlyUsd'] } },
+  { name: 'org_update_member', description: 'Change a report\'s own settings: identity (name, role, emoji, colors as two hex colours), its model (agentType: an enabled agent type by name, and/or model), its heartbeat ({enabled, cron}), or its assigned workspace folder. Identity and heartbeat apply at once. A model change replays the member\'s golden set first (blocked on regression) and is an approval card in supervised mode. A folder change is always a proposal for the CEO. why is required and becomes the decision record.', inputSchema: { type: 'object', properties: { agent: { type: 'string', description: 'Member name.' }, name: { type: 'string' }, role: { type: 'string' }, emoji: { type: 'string' }, colors: { type: 'array', items: { type: 'string' } }, agentType: { type: 'string' }, model: { type: 'string' }, heartbeat: { type: 'object', properties: { enabled: { type: 'boolean' }, cron: { type: 'string' } } }, workspaceFolder: { type: 'string' }, applyToChats: { type: 'boolean', description: 'Model changes: also switch the member\'s existing chats (default true).' }, why: { type: 'string' }, recommend: { type: 'string' }, org: { type: 'string' } }, required: ['agent', 'why'] } },
   { name: 'org_set_routing', description: 'Route a task class (triage | research | synthesis | review | ops | general) to a model tier (cheap | standard | strong) to trade quality for cost per class; a model the CEO pinned on an agent still wins. Autonomous: applies at once (previewed in a planning run or review); supervised: an approval card. why is required and becomes the decision record. org_costs and org_pulse show spend by class.', inputSchema: { type: 'object', properties: { class: { type: 'string' }, tier: { type: 'string', enum: ['cheap', 'standard', 'strong'] }, why: { type: 'string' }, org: { type: 'string' } }, required: ['class', 'tier', 'why'] } },
   { name: 'org_review_structure', description: 'Review the company\'s structure: idle and overloaded members, unassigned goals, unowned and blocked tasks, headroom against the agent cap and the company envelope. Read-only; act with the other tools.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
   { name: 'org_audit_query', description: 'Read the hash-chained audit log: filter by action (task_assign, scope_widen, spend_commit, run_end, …) or refId.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, refId: { type: 'string' }, limit: { type: 'number' }, org: { type: 'string' } } } },
@@ -2037,7 +2122,7 @@ const CARD_PARAMS = {
   alternatives: { type: 'array', items: { type: 'string' }, description: 'If this becomes a card: the alternatives you considered (one line each), e.g. "do nothing: …", "cheaper: …".' },
   confidence: { type: 'number', description: 'Your confidence (0–1) that this is the right call.' },
 };
-const CARD_TOOLS = new Set(['org_hire_agent', 'org_set_scope', 'org_terminate_agent', 'org_reorg', 'org_propose_strategy', 'org_allocate_budget', 'org_set_routing', 'org_tune']);
+const CARD_TOOLS = new Set(['org_hire_agent', 'org_set_scope', 'org_terminate_agent', 'org_reorg', 'org_propose_strategy', 'org_allocate_budget', 'org_set_routing', 'org_tune', 'org_update_member']);
 for (const t of MANAGER_TOOLS) {
   if (!CARD_TOOLS.has(t.name)) continue;
   const schema = t.inputSchema as { properties: Record<string, unknown>; required?: string[] };

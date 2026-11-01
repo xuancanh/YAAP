@@ -32,7 +32,8 @@ export type ChangeKind =
   | 'hire' | 'reorg' | 'terminate' | 'scope_widen' | 'scope_narrow'
   | 'budget' | 'constitution' | 'caps' | 'external_floor' | 'trust_ceiling'
   | 'audit_settings' | 'audit_chain' | 'kill_switch' | 'frozen_classes'
-  | 'delegation' | 'eval_cases';
+  | 'delegation' | 'eval_cases'
+  | 'member_identity' | 'member_model' | 'member_heartbeat' | 'member_folder';
 
 /** A proposed self-change, described enough for the table to place it. */
 export interface SelfChange {
@@ -92,6 +93,10 @@ export const BOUNDARY: BoundaryRule[] = [
   { id: 'reorg:beyond', kind: 'reorg', match: 'reorg across units', verdict: 'experiment', reason: 'structure beyond one unit changes how units relate: measure it', delegable: true },
   { id: 'terminate:unit', kind: 'terminate', match: 'terminate a member who leads nobody', verdict: 'alone', reason: 'internal structure within caps; the agent itself survives', delegable: true },
   { id: 'terminate:beyond', kind: 'terminate', match: 'terminate a unit lead (its reports move up)', verdict: 'experiment', reason: 'removing a lead reshapes two units: measure it', delegable: true },
+  { id: 'member_identity', kind: 'member_identity', match: 'a member\'s name, role, emoji and colours', verdict: 'alone', reason: 'presentation only: it changes no authority, money or behaviour', delegable: true },
+  { id: 'member_model', kind: 'member_model', match: 'a member\'s agent type and model', verdict: 'alone', reason: 'like routing, it trades cost for quality inside the envelope; the eval gate replays the member\'s golden set first', delegable: true },
+  { id: 'member_heartbeat', kind: 'member_heartbeat', match: 'a member\'s heartbeat on/off and cadence', verdict: 'alone', reason: 'bounded by the heartbeat fence in code (cadence floor, daily run cap)', delegable: true },
+  { id: 'member_folder', kind: 'member_folder', match: 'a member\'s assigned workspace folder', verdict: 'propose', reason: 'it widens which shared files the member can read and write', delegable: true },
   { id: 'scope_widen', kind: 'scope_widen', match: 'widen a member\'s scopes', verdict: 'alone', reason: 'only within the chief\'s own holdings — the cap refuses anything beyond', delegable: true },
   { id: 'scope_narrow', kind: 'scope_narrow', match: 'narrow a member\'s scopes', verdict: 'alone', reason: 'narrowing removes authority', delegable: true },
   { id: 'budget:within', kind: 'budget', match: 'agent or project envelope within the company envelope', verdict: 'alone', reason: 'allocation inside the envelope the owner set', delegable: true },

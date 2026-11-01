@@ -33,8 +33,8 @@ import { clamp01, computedAlternatives, defaultActionFor, normalizeAlternatives,
 import { govTunable } from './governance-tunables';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19; `blueprint` is OrgBlueprintsService's,
@@ -361,6 +361,7 @@ export class OrgApprovalsService {
       case 'charter_change':
       case 'metric_source':
       case 'two_key':
+      case 'member_settings':
       case 'experiment': {
         // Kinds another module owns (the meetings module's cadence, the memory module's charter change).
         const fn = this.appliers.get(kind);
@@ -482,6 +483,7 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
   switch (kind) {
     case 'hire': return `${String(payload.name ?? 'agent')} as ${String(payload.title ?? 'specialist')}${payload.packName ? ` (${String(payload.packName)} pack)` : ''}`;
     case 'scope_widen': return `widen ${String(payload.agentName ?? payload.agentId ?? '')}: +${(Array.isArray(payload.widened) ? payload.widened : []).join(', ')}`;
+    case 'member_settings': return `${String(payload.agentName ?? payload.agentId ?? 'member')}: ${String(payload.summary ?? 'settings change')}`;
     case 'reorg': return `${Array.isArray(payload.changes) ? payload.changes.length : 0} change(s)`;
     case 'budget_raise': {
       const affected = Array.isArray(payload.affectedObjectives) ? (payload.affectedObjectives as unknown[]).map(String).filter(Boolean) : [];
