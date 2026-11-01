@@ -51,6 +51,21 @@ export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'd
  *  and their events are never echoed back to them. */
 export type TurnOrigin = 'user' | 'loop' | 'channel';
 
+/** Org tools and org-run context (docs/autonomous-company.md), supplied by
+ *  OrgRuntimeService through `setOrgTools` so this module never imports the
+ *  org domain. Specs appear only for agents that belong to an organisation;
+ *  `onToolCall` lets an org run stop itself on a repeated identical call. */
+export interface OrgToolsHook {
+  specsFor(session: ChatSession): Promise<AiToolSpec[]>;
+  owns(name: string): boolean;
+  isReadOnly(name: string): boolean;
+  execute(session: ChatSession, name: string, input: Record<string, unknown>): Promise<string>;
+  /** Extra system context for the session (the task brief), or null. */
+  contextFor(session: ChatSession): Promise<string | null>;
+  /** Returns a stop message when this call should end the run (loop detected). */
+  onToolCall(sessionId: string, call: AiToolCall): string | null;
+}
+
 export type TurnEvent =
   | { type: 'turn'; turnId: string }
   | AiStreamEvent
@@ -240,6 +255,12 @@ export class TurnLoopService implements OnModuleDestroy {
    *  call tree can stamp the events they write without threading it through
    *  every signature. */
   private readonly turnOrigins = new Map<string, TurnOrigin>();
+  /** See OrgToolsHook. Registered by OrgRuntimeService at boot. */
+  private orgTools?: OrgToolsHook;
+
+  setOrgTools(hook: OrgToolsHook | undefined): void {
+    this.orgTools = hook;
+  }
 
   constructor(
     private readonly repo: ChatsRepository,
@@ -365,19 +386,25 @@ export class TurnLoopService implements OnModuleDestroy {
         // Computer tools exist only while a companion is paired, unpaused and
         // scoped for them (docs/computer-control.md §3); every one is Ask-gated.
         ...(this.computer ? await this.computer.specs() : []),
+        // Org tools appear for agents that belong to an organisation
+        // (docs/autonomous-company.md §4.3): the bounded task set in an org
+        // run, the manager set for a chief of staff.
+        ...(session.agentId && this.orgTools ? await this.orgTools.specsFor(session) : []),
       ];
+      const orgContext = session.agentId && this.orgTools ? await this.orgTools.contextFor(session) : null;
+      const system = orgContext ? `${ctx.system}\n\n${orgContext}` : ctx.system;
       // Per-round overhead every provider call also carries: the resolved
       // system prompt plus the full tool-spec JSON (tens of KB once MCP
       // servers are enabled). Fed into the auto-compaction estimate below so
       // it fires before the provider's real context limit, not after.
-      overheadChars = ctx.system.length + JSON.stringify(toolSpecs).length;
+      overheadChars = system.length + JSON.stringify(toolSpecs).length;
 
       for (let round = 0; ; round++) {
         let answer = '';
         const calls: AiToolCall[] = [];
         for await (const ev of ctx.provider.stream({
           model: ctx.model,
-          system: ctx.system,
+          system,
           messages: history,
           tools: toolSpecs,
           thinkingEffort: session.thinkingEffort,
@@ -427,6 +454,18 @@ export class TurnLoopService implements OnModuleDestroy {
             toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'deny', isError: true });
             yield { type: 'tool_result', id: call.id, name: call.name, output, isError: true };
             continue;
+          }
+          // Org runs stop on a repeated identical call (the same-call loop
+          // breaker, docs/autonomous-company.md §4.2) instead of spending
+          // more rounds on it.
+          const stopMsg = this.orgTools?.onToolCall(session.id, call);
+          if (stopMsg) {
+            await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: stopMsg, toolName: call.name });
+            toolRecords.push({ tool: call.name, input: call.input, result: stopMsg, approved: 'deny', isError: true });
+            yield { type: 'tool_result', id: call.id, name: call.name, output: stopMsg, isError: true };
+            yield { type: 'error', message: stopMsg };
+            ctl.abort();
+            break;
           }
           // Loop turns are background turns: outward-facing (connection)
           // mutations and code execution queue as pending approvals in the
@@ -652,6 +691,10 @@ export class TurnLoopService implements OnModuleDestroy {
     if (this.runner?.owns(name)) return this.runner.execute(name, input);
     if (this.browser?.owns(name)) return this.browser.execute({ sessionId: session.id, fileRoot: await this.fileRootFor(session) }, name, input);
     if (this.computer?.owns(name)) return this.computer.execute({ id: session.id, workspaceId: session.workspaceId }, name, input);
+    if (this.orgTools?.owns(name)) {
+      if (!session.agentId) throw new Error(`${name} is only available to agents that belong to an organization`);
+      return this.orgTools.execute(session, name, input);
+    }
     if (name.startsWith(CUSTOM_TOOL_PREFIX)) {
       if (!session.agentId) throw new Error(`unknown tool: ${name}`);
       return this.agents.executeCustomTool(session.agentId, name, input);
@@ -791,7 +834,8 @@ export class TurnLoopService implements OnModuleDestroy {
               : this.runner?.owns(call.name) ? this.runner.isReadOnly(call.name)
                 : this.browser?.owns(call.name) ? this.browser.isReadOnly(call.name)
                 : this.computer?.owns(call.name) ? this.computer.isReadOnly(call.name)
-                  : this.tools.isReadOnly(call.name);
+                  : this.orgTools?.owns(call.name) ? (session.agentId ? this.orgTools.isReadOnly(call.name) : undefined)
+                    : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
     // Computer tools act on the user's own machine (docs/computer-control.md
     // §4): Auto mode never applies. The observational ones (screenshot, move,

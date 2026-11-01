@@ -33,6 +33,6 @@ import { RegistryModule } from '../registry/registry.module';
   imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, BrowserModule, ActionReviewModule, ComputerModule, RegistryModule],
   controllers: [ChatsController, LoopsController, HooksController],
   providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService],
-  exports: [ChatsService, ChatsRepository, TurnLoopService],
+  exports: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService],
 })
 export class ChatsModule {}
