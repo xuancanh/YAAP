@@ -13,12 +13,12 @@
  * that widens authority or spends money is taken in the app
  * (docs/security.md §b, "approvals exist only in the app").
  */
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
+import { desc, eq } from 'drizzle-orm';
 import { Inject } from '@nestjs/common';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { organizations } from '../database/schema';
+import { organizations, orgAudits } from '../database/schema';
 import { AgentsService } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { deliveryFor, parseQuietHours } from '../workspaces/quiet-hours';
@@ -26,6 +26,8 @@ import { OrgService } from './org.service';
 import { OrgTasksService } from './org-tasks.service';
 import { OrgApprovalsService, summarize, type ApprovalDecision } from './org-approvals.service';
 import { OrgAuditService } from './org-audit.service';
+import { OrgSignalsService } from './org-signals.service';
+import { OrgSloService } from './org-slo.service';
 
 export interface BriefItem { n: number; approvalId: string; kind: string; summary: string }
 export interface Brief { orgId: string; at: string; text: string; items: BriefItem[] }
@@ -42,6 +44,9 @@ export class OrgBriefService {
     private readonly audit: OrgAuditService,
     private readonly agents: AgentsService,
     private readonly workspaces: WorkspacesService,
+    /** Optional: assurance (docs/company-vision.md §5) — the Signals, Pulse and Audit sections. */
+    @Optional() private readonly signals?: OrgSignalsService,
+    @Optional() private readonly slo?: OrgSloService,
   ) {}
 
   /** Compose (and, with deliver, write) the brief. Deterministic: no model call. */
@@ -114,6 +119,33 @@ export class OrgBriefService {
       for (const r of auto.slice().reverse().slice(0, 20)) {
         const p = (() => { try { return JSON.parse(r.payload) as { summary?: string; reason?: string }; } catch { return {}; } })();
         lines.push(`- ${r.action.slice('auto_'.length).replace('_', ' ')}: ${p.summary ?? ''}${p.reason ? ` — ${p.reason}` : ''}`);
+      }
+    }
+
+    // 3c. Assurance (docs/company-vision.md §5): open signals by severity, the pulse, the audit since the last brief.
+    if (this.signals) {
+      const open = (await this.signals.list(orgId)).filter((s) => s.status !== 'resolved');
+      const count = (sev: string) => open.filter((s) => s.severity === sev).length;
+      lines.push('', `## Signals (${open.length} open: ${count('critical')} critical, ${count('warn')} warn, ${count('info')} info)`);
+      if (open.length === 0) lines.push('- none');
+      for (const s of open.slice(0, 5)) lines.push(`- [${s.severity}] ${s.title} → ${s.addresseeKind === 'ceo' ? 'you' : s.addresseeKind}${s.status === 'acked' ? ' (acked)' : ''}`);
+    }
+    if (this.slo) {
+      const p = await this.slo.pulse(orgId, now).catch(() => null);
+      if (p) {
+        lines.push('', `## Pulse: ${p.score}/100`);
+        const f = (metric: string, v: number | null, target: number) => metric === 'firstReviewAcceptancePct' ? `first-review acceptance ${v === null ? 'n/a' : `${Math.round(v)}%`} (target ≥ ${target}%)` : `${metric === 'cycleTimeHours' ? 'cycle time' : 'decision latency'} ${v === null ? 'n/a' : `${v}h`} (target ≤ ${target}h)`;
+        for (const w of p.worst) lines.push(`- ${f(w.metric, w.value, w.target)}${w.ratio > 0 ? ' ⚠ off target' : ''}`);
+        if (p.today.costPerAcceptedTaskUsd !== null) lines.push(`- cost per accepted task (7d): $${p.today.costPerAcceptedTaskUsd.toFixed(2)}`);
+      }
+    }
+    const audits = (await this.db.select().from(orgAudits).where(eq(orgAudits.orgId, orgId)).orderBy(desc(orgAudits.startedAt)).limit(3)).filter((a) => a.endedAt && a.endedAt >= since && a.status !== 'running');
+    if (audits.length > 0) {
+      lines.push('', '## Audit');
+      for (const a of audits) {
+        const findings = (() => { try { return JSON.parse(a.findings) as Array<{ severity: string; title: string }>; } catch { return []; } })();
+        lines.push(`- ${a.startedAt.slice(0, 16).replace('T', ' ')} by ${nameOf(a.auditorAgentId)}${a.singleModel ? ' (single-model audit)' : ''}${a.status !== 'done' ? ` — ${a.status}` : ''}: ${findings.length} finding(s), $${a.usd.toFixed(2)}${a.summary ? ` — ${a.summary.slice(0, 200)}` : ''}`);
+        for (const f of findings.filter((x) => x.severity === 'critical').slice(0, 3)) lines.push(`  - critical: ${f.title}`);
       }
     }
 

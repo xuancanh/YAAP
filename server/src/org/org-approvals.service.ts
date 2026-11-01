@@ -293,6 +293,8 @@ export class OrgApprovalsService {
       await this.skills?.create({ name: s.name, description: s.description, instructions: s.instructions, agentId: agent.id }).catch(() => {});
     }
     const member = await this.org.addMember(orgId, { agentId: agent.id, title: p.title, reportsToAgentId: p.reportsToAgentId, scopes, actor, grantedBy });
+    // Assurance (docs/company-vision.md §5.3): a hire from the Auditor pack becomes the org's auditor when the seat is empty.
+    if (p.packId === 'pack-auditor' && !(await this.org.get(orgId)).auditorAgentId) await this.org.update(orgId, { auditorAgentId: agent.id }).catch(() => undefined);
     if (p.monthlyBudgetUsd && p.monthlyBudgetUsd > 0) await this.org.setBudget(orgId, { scope: 'agent', refId: agent.id, monthlyUsd: p.monthlyBudgetUsd, actor });
     return { agentId: agent.id, name, scopes, depth: member.depth };
   }

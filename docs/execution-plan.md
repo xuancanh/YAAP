@@ -458,8 +458,42 @@ header and goal chips in `ChannelView`, `goalRefs`/`goalMentions` in
 ### 19. Rituals: meetings with minutes, standup, review, retro, board *(in progress)*
 `docs/company-vision.md` §3, phase B. Decision log table lands here.
 
-### 20. Assurance: signals, SLOs and pulse, the auditor role *(in progress)*
+### 20. Assurance: signals, SLOs and pulse, the auditor role *(done)*
 `docs/company-vision.md` §5, phase C.
+
+*Shipped as (1 November 2026):* migration `0033-org-assurance`
+(`org_signals` + unique (orgId, kind, refId, dayKey), `org_slo_samples`,
+`org_audits`, `organizations.auditorAgentId | auditCadenceDays | auditUsdCap
+| tunables`); `server/src/org/org-signals.service.ts` (`sweep` on the
+runtime tick every 5 min, `compute` for 12 model-free kinds, `open` with
+per-day dedup and owner/lead/chief/CEO routing — inbox `org_signal` events,
+`TriggerBus.emitOrgBoard({ kind: 'signal' })`, the brief — `ack`, `resolve`,
+auto-resolve, `visibleTo`); `org-slo.service.ts` (`compute`, `sample`,
+`pulse`, `pulseScore`/`breachesOf`/`classOf` pure, `slo_breach` signals,
+targets and weights from tunables); `org-assurance-tunables.ts`
+(`ASSURANCE_TUNABLES` defaults + bounds, `assuranceTunable`,
+`mergeTunables`; §1b); `org-auditor.service.ts` (`runAudit` with
+reserve/settle, `auditUsdCap`, `audit_start|audit_end|audit_refused`
+rows, model-free sampling, operating-profile framing, `pickModel`
+different-family selection and the single-model flag, findings → signals,
+`#company` report, `org_audits`, cadence tick, `due`); the runtime's
+`RunCtx.audit`, `beginAuxRun`/`endAuxRun`, `restrictTo` on
+`OrgToolsHook` (turn-loop filters offered tools and refuses calls outside
+the set), tools `org_signals`, `org_ack_signal`, `org_pulse`,
+`org_audit_finding`, `org_audit_close`, `org_audit_query` opened to the
+auditor; `packs/auditor.md` ("Auditor" pack, `pack-auditor`; a hire from it
+fills an empty `auditorAgentId`); routes `GET …/org/signals?status=
+&severity=&unitId=&kind=`, `POST …/org/signals/:id/ack | /resolve`, `GET
+…/org/pulse`, `GET|PATCH …/org/slo`, `GET …/org/audits`, `POST
+…/org/audit/run`, `PATCH …/org/detail` with `auditorAgentId |
+auditCadenceDays | auditUsdCap` (both on `/api/orgs/:id/…` and the
+workspace alias); brief sections Signals / Pulse / Audit; `docs/security.md`
+§b auditor row and §k line. Tests: `tests/backend-org-assurance.test.ts`
+(11). Departures: tools are `org_audit_finding`/`org_audit_close` (the
+org tool hook owns the `org_` prefix); the SLO window is a trailing 7 days
+so a sample is stable with few tasks a day; task class is derived from the
+brief by keyword (`class: <name>` in constraints wins) until item 23 stores
+one; the SPA is not touched.
 
 ### 21. Connection context cards and suggested loops; gated heartbeat per agent *(in progress)*
 `docs/company-vision.md` §12–§13.

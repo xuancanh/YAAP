@@ -26,6 +26,9 @@ import { OrgModeService } from './org-mode.service';
 import { OrgAnnouncer } from './org-announcer';
 import { OrgUnitsService } from './org-units.service';
 import { WorkspaceOrgController } from './workspace-org.controller';
+import { OrgSignalsService } from './org-signals.service';
+import { OrgSloService } from './org-slo.service';
+import { OrgAuditorService } from './org-auditor.service';
 
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
@@ -35,11 +38,15 @@ import { WorkspaceOrgController } from './workspace-org.controller';
  * without that module the wrapper drops them and everything else works.
  * Units (docs/group-chat.md §7, item 17): OrgUnitsService derives a board, a
  * channel and a goal tree per org level from the chart, through the same seam.
+ * Assurance (docs/company-vision.md §5, item 20): OrgSignalsService and
+ * OrgSloService are model-free and run on the runtime's tick; the
+ * OrgAuditorService drives an audit run through the runtime on its own
+ * cadence timer.
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule],
   controllers: [OrgController, WorkspaceOrgController],
-  providers: [OrgService, OrgUnitsService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgBriefService, OrgRuntimeService, OrgAnnouncer, OrgModeService, OrgController],
-  exports: [OrgService, OrgUnitsService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer],
+  providers: [OrgService, OrgUnitsService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController],
+  exports: [OrgService, OrgUnitsService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService],
 })
 export class OrgModule {}
