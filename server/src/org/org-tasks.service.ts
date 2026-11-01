@@ -20,6 +20,7 @@ import { TriggerBus, OrgWakeReason } from '../chats/trigger-bus';
 import { OrgAuditService } from './org-audit.service';
 import { OrgService } from './org.service';
 import { OrgUnitsService } from './org-units.service';
+import { AgentsService } from '../agents/agents.service';
 
 export type OrgTask = typeof orgTasks.$inferSelect;
 export type OrgRun = typeof orgRuns.$inferSelect;
@@ -81,6 +82,8 @@ export class OrgTasksService {
     @Optional() private readonly bus?: TriggerBus,
     /** Optional: without it tasks carry no unit (docs/group-chat.md §7). */
     @Optional() private readonly units?: OrgUnitsService,
+    /** Optional: addressed inbox events for human employees (item 24). */
+    @Optional() private readonly agents?: AgentsService,
   ) {}
 
   // ---- tasks ----
@@ -147,8 +150,8 @@ export class OrgTasksService {
     const row: OrgTask = {
       id: newId(), accountId: currentAccountId(), orgId, projectId: input.projectId ?? null, parentTaskId: input.parentTaskId ?? null,
       title, brief: JSON.stringify(brief), status,
-      assigneeAgentId: input.assigneeAgentId ?? null, claimedBy: null, claimedAt: null,
-      reviewerAgentId: input.reviewerAgentId ?? null, reviewRounds: 0,
+      assigneeAgentId: input.assigneeAgentId ?? null, assigneeHumanId: null, claimedBy: null, claimedAt: null,
+      reviewerAgentId: input.reviewerAgentId ?? null, reviewerHumanId: null, reviewRounds: 0,
       blockers: '[]', fileScope: JSON.stringify((input.fileScope ?? []).map(String).slice(0, 20)),
       noProgressCount: 0, lastRunAt: null, createdBy: input.createdBy ?? 'user',
       channelId: input.channelId ?? null, messageId: input.messageId ?? null,
@@ -222,10 +225,47 @@ export class OrgTasksService {
     if (['done', 'cancelled'].includes(t.status)) throw new BadRequestException(`task is ${t.status}`);
     // The board follows the assignee unless the unit was named explicitly (docs/group-chat.md §7).
     const unitId = this.units && !t.unitExplicit ? await this.units.defaultUnitId(orgId, { assigneeAgentId: agentId }).catch(() => t.unitId) : t.unitId;
-    await this.db.update(orgTasks).set({ assigneeAgentId: agentId, status: 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
-    await this.audit.append(orgId, { actor, action: 'task_assign', refType: 'task', refId: taskId, payload: { agentId, previous: t.assigneeAgentId, unitId } });
+    await this.db.update(orgTasks).set({ assigneeAgentId: agentId, assigneeHumanId: null, status: 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.audit.append(orgId, { actor, action: 'task_assign', refType: 'task', refId: taskId, payload: { agentId, previous: t.assigneeAgentId ?? t.assigneeHumanId, unitId } });
     if (await this.org.isActive(orgId)) this.emitWake(orgId, taskId, agentId, 'assignment');
     return this.get(orgId, taskId);
+  }
+
+  /** Hybrid staff (docs/company-vision.md §4, item 24): assign a task to a
+   *  human employee. Mutually exclusive with an agent assignee; no wake (a
+   *  person is not woken) but an addressed inbox event the push and channel
+   *  sweeps deliver, and the board lands on the unit of their manager. */
+  async assignHuman(orgId: string, taskId: string, memberAccountId: string, actor = 'user'): Promise<OrgTask> {
+    const t = await this.get(orgId, taskId);
+    const h = await this.org.employee(orgId, memberAccountId);
+    if (!h) throw new BadRequestException('assignee must be a human employee of this organization (POST …/humans with role employee)');
+    if (['done', 'cancelled'].includes(t.status)) throw new BadRequestException(`task is ${t.status}`);
+    // The board: the unit their manager leads, else the one the manager sits in.
+    const unitId = this.units && !t.unitExplicit && h.reportsToAgentId
+      ? ((await this.units.ledBy(orgId, h.reportsToAgentId).catch(() => null)) ?? (await this.units.unitForAssignee(orgId, h.reportsToAgentId).catch(() => null)))?.id ?? t.unitId
+      : t.unitId;
+    await this.db.update(orgTasks).set({ assigneeAgentId: null, assigneeHumanId: memberAccountId, status: 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.audit.append(orgId, { actor, action: 'task_assign_human', refType: 'task', refId: taskId, payload: { memberAccountId, previous: t.assigneeAgentId ?? t.assigneeHumanId, unitId } });
+    await this.notifyHuman(orgId, memberAccountId, { kind: 'org_task', title: `Task assigned to you: ${t.title}`.slice(0, 200), body: parseBrief(t.brief).outcome, payload: { orgId, taskId, action: 'assigned' } });
+    return this.get(orgId, taskId);
+  }
+
+  /** The task cards of one human: tasks they own or are asked to review (item 24). */
+  async tasksOfHuman(orgId: string, memberAccountId: string): Promise<{ assigned: OrgTask[]; reviewing: OrgTask[] }> {
+    const rows = await this.list(orgId);
+    const open = (t: OrgTask) => !['done', 'cancelled'].includes(t.status);
+    return { assigned: rows.filter((t) => t.assigneeHumanId === memberAccountId && open(t)), reviewing: rows.filter((t) => t.reviewerHumanId === memberAccountId && t.status === 'in_review') };
+  }
+
+  /** An addressed inbox event for a human of the org (the owner's events are
+   *  the account's own, '' addressee), pushed to their channels. */
+  private async notifyHuman(orgId: string, memberAccountId: string, ev: { kind: string; title: string; body?: string; payload: Record<string, unknown> }): Promise<void> {
+    const org = await this.org.get(orgId).catch(() => null);
+    if (!org?.chiefOfStaffAgentId || !this.agents) return;
+    await this.agents.addEvent(org.chiefOfStaffAgentId, {
+      kind: ev.kind, title: ev.title, body: (ev.body ?? '').slice(0, 400), payload: JSON.stringify(ev.payload), origin: 'user', channel: true,
+      forMemberAccountId: memberAccountId === currentAccountId() ? '' : memberAccountId,
+    }).catch(() => undefined);
   }
 
   /** The atomic claim: one UPDATE guarded by status and claimedBy IS NULL.
@@ -295,11 +335,31 @@ export class OrgTasksService {
   /** Move to in_review and pick a reviewer when none is set: a different
    *  member than the assignee, preferring one whose provider/model family
    *  differs (§4.6 layer two), falling back to the chief. */
-  async requestReview(orgId: string, taskId: string, input: { note?: string; fromAgentId?: string | null; runId?: string | null; agentModels?: Map<string, { provider: string; model: string }> }): Promise<OrgTask> {
+  async requestReview(orgId: string, taskId: string, input: { note?: string; fromAgentId?: string | null; runId?: string | null; agentModels?: Map<string, { provider: string; model: string }>; reviewerHumanId?: string | null }): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     if (['done', 'cancelled'].includes(t.status)) throw new BadRequestException(`task is ${t.status}`);
-    let reviewer = t.reviewerAgentId;
     const org = await this.org.get(orgId);
+    // A review by a human employee (item 24): an approval-like `human_review`
+    // card addressed to them; no agent reviewer is woken.
+    const humanReviewer = input.reviewerHumanId ?? t.reviewerHumanId;
+    if (humanReviewer) {
+      if (!(await this.org.employee(orgId, humanReviewer))) throw new BadRequestException('reviewerHumanId must be a human employee of this organization');
+      await this.db.update(orgTasks).set({ status: 'in_review', reviewerHumanId: humanReviewer, reviewerAgentId: null, claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+      if (input.note) await this.comment(orgId, taskId, { text: `Review requested: ${input.note}`, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, wake: false });
+      const pending = (await this.db.select().from(orgApprovals).where(and(eq(orgApprovals.orgId, orgId), eq(orgApprovals.kind, 'human_review'), eq(orgApprovals.status, 'pending'))))
+        .find((a) => (JSON.parse(a.payload) as { taskId?: string }).taskId === taskId);
+      if (!pending) {
+        await this.db.insert(orgApprovals).values({
+          id: newId(), accountId: currentAccountId(), orgId, kind: 'human_review',
+          payload: JSON.stringify({ taskId, title: t.title, reviewerHumanId: humanReviewer, assigneeAgentId: t.assigneeAgentId, note: input.note ?? '' }),
+          requestedBy: input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', recommendation: (input.note ?? '').slice(0, 600), status: 'pending', decidedAt: null, decidedBy: '', decisionNote: '', expiresAt: null, createdAt: nowIso(),
+        });
+      }
+      await this.audit.append(orgId, { actor: input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', action: 'review_request', refType: 'task', refId: taskId, payload: { reviewerHumanId: humanReviewer } });
+      await this.notifyHuman(orgId, humanReviewer, { kind: 'org_review', title: `Review requested: ${t.title}`.slice(0, 200), body: input.note, payload: { orgId, taskId, action: 'review' } });
+      return this.get(orgId, taskId);
+    }
+    let reviewer = t.reviewerAgentId;
     if (!reviewer || reviewer === t.assigneeAgentId) {
       const candidates = (await this.org.members(orgId)).filter((m) => m.status === 'active' && m.agentId !== t.assigneeAgentId);
       const mine = t.assigneeAgentId ? input.agentModels?.get(t.assigneeAgentId) : undefined;
@@ -409,7 +469,7 @@ export class OrgTasksService {
       .slice(0, 120)
       .map((t) => {
         const b = parseBrief(t.brief);
-        const who = t.assigneeAgentId ? agentNames.get(t.assigneeAgentId) ?? t.assigneeAgentId.slice(0, 8) : 'unassigned';
+        const who = t.assigneeAgentId ? agentNames.get(t.assigneeAgentId) ?? t.assigneeAgentId.slice(0, 8) : t.assigneeHumanId ? `human ${t.assigneeHumanId.slice(0, 8)}` : 'unassigned';
         return `[${t.id.slice(0, 8)}] (${t.status}) ${t.title} — owner: ${who}${t.reviewRounds ? ` · review round ${t.reviewRounds}` : ''}${b.outcome ? ` · outcome: ${b.outcome.slice(0, 100)}` : ''}`;
       })
       .join('\n');

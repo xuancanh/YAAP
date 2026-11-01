@@ -28,7 +28,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { registryInstalls, registryItems, registryRatings } from '../database/schema';
+import { registryInstalls, registryItems, registryOutcomes, registryRatings } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
 import { unscoped } from '../accounts/scoped-db';
@@ -38,9 +38,13 @@ import { SkillsService } from '../skills/skills.service';
 import { PortabilityService } from '../portability/portability.service';
 import { parseSkillMd, renderSkillMd, scanSkillMd, type ParsedSkillMd, type ScanFlag, type ScanReport } from '../portability/skill-md';
 import { scanAppHtml } from './app-scan';
+import { BlueprintError, validateBlueprint, type Blueprint } from '../org/blueprints/format';
 
-export type RegistryKind = 'agent' | 'skill' | 'app';
-export const REGISTRY_KINDS: readonly RegistryKind[] = ['agent', 'skill', 'app'];
+export type RegistryKind = 'agent' | 'skill' | 'app' | 'company';
+export const REGISTRY_KINDS: readonly RegistryKind[] = ['agent', 'skill', 'app', 'company'];
+/** Blueprint outcomes (docs/blueprints.md §4): the two measured milestones. */
+export type OutcomeKind = 'first_key_result' | 'thirty_days_in_envelope';
+export const OUTCOME_KINDS: readonly OutcomeKind[] = ['first_key_result', 'thirty_days_in_envelope'];
 
 export type RegistryItemRow = typeof registryItems.$inferSelect;
 
@@ -55,6 +59,8 @@ export interface CapabilitySummary {
   apps: Array<{ name: string; capabilities: string[] }>;
   /** For kind=app: the capabilities the app requests, split by tier. */
   appCapabilities?: { free: string[]; elevated: string[] };
+  /** For kind=company (item 24): the staffing the blueprint describes. */
+  company?: { roles: number; depth: number; monthlyUsd: number; playbooks: number; cadences: number; tunables: number; cards: string[] };
 }
 
 /** The public projection: what GET /api/registry/public serves and what the
@@ -101,6 +107,8 @@ export interface RegistryReview {
   charter?: string;
   skillBodies: Array<{ name: string; description: string; instructions: string }>;
   appHtml?: string;
+  /** kind=company: the validated blueprint itself (roles with charters, playbooks). */
+  blueprint?: Blueprint;
   /** What the install will create, in words the card can show. */
   installs: string[];
 }
@@ -114,6 +122,8 @@ export interface PublishInput {
   name?: string;
   description?: string;
   publisherName?: string;
+  /** company: the exported COMPANY.json (OrgBlueprintsService.export) — the companies controller passes it. */
+  manifest?: Record<string, unknown>;
   /** Scan and summarize, write nothing — the form shows this before confirm. */
   dryRun?: boolean;
 }
@@ -230,6 +240,37 @@ export function normalizeManifest(kind: RegistryKind, raw: Record<string, unknow
       name: parsed.name,
       description: parsed.description.slice(0, DESC_MAX),
       capabilities: { tools: [...new Set([...tools, ...parsed.allowedTools])].sort(), connections: connectionsFor(tools, [parsed.body]), loops: [], skills: [{ name: parsed.name, description: parsed.description }], apps: [] },
+      scan,
+    };
+  }
+
+  if (kind === 'company') {
+    // A company blueprint (docs/blueprints.md): strict shape, then every text
+    // — each role's charter, each playbook — through the SKILL.md scan.
+    let bp: Blueprint;
+    try { bp = validateBlueprint(raw); } catch (err) { return err instanceof BlueprintError ? fail(err.message) : fail(err instanceof Error ? err.message : String(err)); }
+    const scan = mergeScans([
+      ...bp.roles.map((r): [string, ScanReport] => [`role "${r.title}"`, scanText(r.charter, slugify(r.title))]),
+      ...bp.playbooks.map((p): [string, ScanReport] => {
+        try { const parsed = parseSkillMd(p.skillMd); return [`playbook "${p.name}"`, scanSkillMd(p.skillMd, parsed)]; }
+        catch (err) { return [`playbook "${p.name}"`, { ...emptyScan(), ok: false, flags: [{ kind: 'size', severity: 'block', detail: `not a SKILL.md: ${err instanceof Error ? err.message : String(err)}` }] }]; }
+      }),
+    ]);
+    const scopeTools = bp.roles.flatMap((r) => r.scopes.filter((x) => x.startsWith('tool:')).map((x) => x.slice(5)));
+    const scopeConnections = bp.roles.flatMap((r) => r.scopes.filter((x) => x.startsWith('connection:')).map((x) => x.split(':')[1]));
+    const texts = [...bp.roles.map((r) => r.charter), ...bp.playbooks.map((p) => p.skillMd)];
+    const tools = [...new Set([...toolsIn(texts), ...scopeTools])].sort();
+    const depth = Math.max(...bp.roles.map((r) => { let d = 1; let cur = r; while (cur.reportsTo) { d++; cur = bp.roles.find((x) => x.title.toLowerCase() === cur.reportsTo!.toLowerCase())!; } return d; }));
+    return {
+      manifest: bp as unknown as Record<string, unknown>,
+      name: bp.name.slice(0, NAME_MAX),
+      description: bp.description.slice(0, DESC_MAX),
+      capabilities: {
+        tools, connections: [...new Set([...connectionsFor(tools, texts), ...scopeConnections])].sort(), loops: [],
+        skills: bp.playbooks.map((p) => { try { const x = parseSkillMd(p.skillMd); return { name: x.name, description: x.description }; } catch { return { name: p.name, description: '' }; } }),
+        apps: [],
+        company: { roles: bp.roles.length, depth, monthlyUsd: bp.budget.monthlyUsd, playbooks: bp.playbooks.length, cadences: bp.cadences?.length ?? 0, tunables: Object.keys(bp.tunables).length, cards: bp.cards ?? [] },
+      },
       scan,
     };
   }
@@ -379,6 +420,12 @@ export class RegistryService {
       if (s.draft === 1) throw new BadRequestException('approve the draft before publishing it');
       raw = { skillMd: renderSkillMd({ name: s.name, description: s.description, instructions: s.instructions, proposedBy: s.proposedBy, createdAt: s.createdAt }) };
       sourceRef = input.skillId;
+    } else if (input.kind === 'company') {
+      // The blueprint is exported by OrgBlueprintsService (data only: no
+      // connections, memory, tokens or files can be in it by construction).
+      if (!input.manifest || typeof input.manifest !== 'object') throw new BadRequestException('manifest (a COMPANY.json) is required');
+      raw = input.manifest;
+      sourceRef = typeof (raw.origin as Record<string, unknown> | undefined)?.sourceOrgId === 'string' ? String((raw.origin as Record<string, unknown>).sourceOrgId) : '';
     } else {
       if (!input.agentId || !input.appId) throw new BadRequestException('agentId and appId are required');
       const app = (await this.agents.listApps(input.agentId)).find((a) => a.id === input.appId);
@@ -390,6 +437,7 @@ export class RegistryService {
     const name = (input.name ?? '').trim().slice(0, NAME_MAX) || norm.name;
     const description = (input.description ?? '').trim().slice(0, DESC_MAX) || norm.description;
     if (input.kind !== 'skill') norm.manifest.name = name;
+    if (input.kind === 'company' && description) norm.manifest.description = description;
     const slug = input.kind === 'skill' ? norm.name : slugify(name);
     const preview = { kind: input.kind, slug, name, description, publisherName, capabilities: norm.capabilities, scanReport: norm.scan };
     if (!norm.scan.ok) {
@@ -650,7 +698,7 @@ export class RegistryService {
     return { ...item, manifest };
   }
 
-  private async notifyRemote(remoteId: string, path: 'installed' | 'rate', body?: unknown): Promise<void> {
+  private async notifyRemote(remoteId: string, path: 'installed' | 'rate' | 'outcome', body?: unknown): Promise<void> {
     if (!this.cfg.registryUrl) return;
     try {
       await fetchPublic(`${this.cfg.registryUrl}/api/registry/public/${encodeURIComponent(remoteId)}/${path}`, {
@@ -675,9 +723,20 @@ export class RegistryService {
       ? [{ name: norm.name, description: norm.description, instructions: parseSkillMd(m.skillMd as string).body }]
       : detail.kind === 'agent'
         ? (m.skills as Array<{ name: string; description: string; instructions: string }>).map((s) => ({ name: s.name, description: s.description, instructions: s.instructions }))
-        : [];
+        : detail.kind === 'company'
+          ? (m as unknown as Blueprint).playbooks.map((p) => { const x = parseSkillMd(p.skillMd); return { name: x.name, description: x.description, instructions: x.body }; })
+          : [];
     const installs: string[] = [];
-    if (detail.kind === 'agent') {
+    if (detail.kind === 'company') {
+      const bp = m as unknown as Blueprint;
+      const c = norm.capabilities.company!;
+      installs.push(`an organization "${detail.name}" in the mode you pick, with ${c.roles} agent(s) staffed by role (one approval card for the whole plan in supervised mode)`);
+      installs.push('each agent gets its charter and the scopes you hold as chief or less (the meet rule); no connection, memory, lesson, token or file is created or copied');
+      if (bp.vision) installs.push(`the vision "${bp.vision.title}" and the operating profile (values, culture, rules)`);
+      if (c.tunables) installs.push(`${c.tunables} tunable(s), each clamped to its bound`);
+      if (c.playbooks) installs.push(`${c.playbooks} playbook(s) as skill drafts awaiting your approval`);
+      if (c.cards.length) installs.push(`recommended connection cards (nothing is granted): ${c.cards.join(', ')}`);
+    } else if (detail.kind === 'agent') {
       installs.push(`a new agent "${detail.name}" with its charter and dashboard`);
       if (norm.capabilities.loops.length) installs.push(`${norm.capabilities.loops.length} loop(s), all disabled — enable each one on its Schedule tab`);
       if (skillBodies.length) installs.push(`${skillBodies.length} private skill(s) as drafts awaiting your approval`);
@@ -707,6 +766,7 @@ export class RegistryService {
         ...(detail.kind === 'agent' ? { charter: m.charter as string } : {}),
         skillBodies,
         ...(detail.kind === 'app' ? { appHtml: m.html as string } : {}),
+        ...(detail.kind === 'company' ? { blueprint: m as unknown as Blueprint } : {}),
         installs,
       },
     };
@@ -720,6 +780,7 @@ export class RegistryService {
   async install(id: string, body: { confirm?: unknown; options?: InstallOptions } = {}): Promise<{ requiresConfirm: true; review: RegistryReview } | InstallResult> {
     const { review, manifest } = await this.review(id);
     if (body.confirm !== true) return { requiresConfirm: true, review };
+    if (review.kind === 'company') throw new BadRequestException('a company blueprint installs through POST /api/market/companies/:id/install (it needs a workspace, a mode and a budget)');
     if (!review.scanReport.ok) {
       throw new BadRequestException(`install refused: ${review.scanReport.flags.filter((f) => f.severity === 'block').map((f) => f.detail).join('; ')}`);
     }
@@ -760,7 +821,7 @@ export class RegistryService {
 
     const install: typeof registryInstalls.$inferSelect = {
       id: newId(), accountId: currentAccountId(), itemId: id, version: review.version,
-      agentId: created.agentId ?? null, skillId: created.skillId ?? null, appId: created.appId ?? null,
+      agentId: created.agentId ?? null, skillId: created.skillId ?? null, appId: created.appId ?? null, orgId: null,
       installedAt: nowIso(),
     };
     await this.db.insert(registryInstalls).values(install);
@@ -774,6 +835,53 @@ export class RegistryService {
 
   async installsOf(itemId: string) {
     return this.db.select().from(registryInstalls).where(eq(registryInstalls.itemId, itemId));
+  }
+
+  /** A company blueprint install (item 24): the import ran elsewhere
+   *  (OrgBlueprintsService); here the install row is written against the
+   *  organization it created and the counters follow as for any install. */
+  async recordExternalInstall(id: string, input: { orgId: string }) {
+    const detail = await this.get(id);
+    const install: typeof registryInstalls.$inferSelect = {
+      id: newId(), accountId: currentAccountId(), itemId: id, version: detail.version,
+      agentId: null, skillId: null, appId: null, orgId: input.orgId, installedAt: nowIso(),
+    };
+    await this.db.insert(registryInstalls).values(install);
+    if (id.startsWith(REMOTE_PREFIX)) await this.notifyRemote(id.slice(REMOTE_PREFIX.length), 'installed');
+    else await this.db.update(registryItems).set({ installs: sql`${registryItems.installs} + 1` }).where(eq(registryItems.id, id));
+    return install;
+  }
+
+  // ---- blueprint outcomes (docs/blueprints.md §4) ----
+
+  /** One anonymous outcome on an item: a local row, or a counter bump sent to
+   *  the remote feed. Called only when `shareBlueprintOutcomes` is on. */
+  async recordOutcome(itemId: string, kind: OutcomeKind): Promise<void> {
+    if (!OUTCOME_KINDS.includes(kind)) throw new BadRequestException(`outcome kind must be one of ${OUTCOME_KINDS.join(', ')}`);
+    if (itemId.startsWith(REMOTE_PREFIX)) { await this.notifyRemote(itemId.slice(REMOTE_PREFIX.length), 'outcome', { kind }); return; }
+    await this.row(itemId);
+    await this.db.insert(registryOutcomes).values({ id: newId(), accountId: currentAccountId(), itemId, kind, createdAt: nowIso() });
+  }
+
+  /** The feed side of a remote outcome: an anonymous row, nothing else. */
+  async bumpPublicOutcome(id: string, kind: unknown) {
+    if (!OUTCOME_KINDS.includes(kind as OutcomeKind)) throw new BadRequestException(`outcome kind must be one of ${OUTCOME_KINDS.join(', ')}`);
+    const row = await this.publicRow(id);
+    await unscoped(this.db).insert(registryOutcomes).values({ id: newId(), accountId: row.accountId, itemId: row.id, kind: kind as string, createdAt: nowIso() });
+    return { ok: true };
+  }
+
+  /** Outcome counts per item, for the companies listing. */
+  async outcomesOf(itemIds: string[]): Promise<Map<string, Record<OutcomeKind, number>>> {
+    const out = new Map<string, Record<OutcomeKind, number>>();
+    if (itemIds.length === 0) return out;
+    const rows = await this.db.select().from(registryOutcomes).where(inArray(registryOutcomes.itemId, itemIds));
+    for (const r of rows) {
+      const c = out.get(r.itemId) ?? { first_key_result: 0, thirty_days_in_envelope: 0 };
+      if (OUTCOME_KINDS.includes(r.kind as OutcomeKind)) c[r.kind as OutcomeKind]++;
+      out.set(r.itemId, c);
+    }
+    return out;
   }
 
   // ---- ratings ----

@@ -192,8 +192,10 @@ the right phone.
 
 ## 6. Organisations with more than one human (company phase D)
 
-`org_humans (orgId, memberAccountId, role ceo | board | observer)`. The
-workspace owner is the CEO whether or not a row says so. Board members may
+`org_humans (orgId, memberAccountId, role ceo | board | observer | employee,
+reportsToAgentId, title)`. The workspace owner is the CEO whether or not a
+row says so. An `employee` (item 24, `docs/blueprints.md` §6) reports to a
+member, sits on its unit's chart and channel, owns and reviews tasks. Board members may
 decide `hire`, `budget_raise` and `strategy` approvals and receive the daily
 brief as an addressed copy on their own channels; observers read; everything
 else about the company stays the CEO's (`OrgController.assertMayDecide`,

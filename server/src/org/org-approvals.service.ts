@@ -28,15 +28,16 @@ import { OrgAuditService } from './org-audit.service';
 import { OrgService, MAX_DEPTH_CEILING } from './org.service';
 import { OrgTasksService, parseBrief, type TaskBrief } from './org-tasks.service';
 import { meetScopes, parseScopes } from './scopes';
+import { resolveRoleHire } from './org-roles.service';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
- *  OrgMeetingsService's, item 19): registered with `onApply`, called from
- *  `decide` on approve. */
-export type ApprovalApplier = (orgId: string, payload: Record<string, unknown>, approval: OrgApproval) => Promise<Record<string, unknown>>;
+ *  OrgMeetingsService's, item 19; `blueprint` is OrgBlueprintsService's,
+ *  item 24): registered with `onApply`, called from `decide` on approve. */
+export type ApprovalApplier = (orgId: string, payload: Record<string, unknown>, approval: OrgApproval, note?: string) => Promise<Record<string, unknown>>;
 export type ApprovalDecision = 'approve' | 'reject' | 'revise';
 /** Told after every decision is written (docs/company-vision.md §6: the
  *  decision log; item 22's OrgMemoryService writes the row). */
@@ -54,6 +55,9 @@ export interface HireInput {
 export interface HirePayload {
   /** Catalog pack id (profession packs are the hire templates) or null for a template hire. */
   packId: string | null;
+  /** Role catalog id (docs/company-vision.md §4, `role:<id>`) when the hire came from a role. */
+  roleId?: string;
+  modelTier?: string;
   packName?: string;
   name: string;
   title: string;
@@ -176,17 +180,22 @@ export class OrgApprovalsService {
     const reports = (await this.org.members(orgId)).filter((m) => m.reportsToAgentId === reportsTo && m.status !== 'terminated');
     const pendingHires = (await this.pending(orgId)).filter((a) => a.kind === 'hire' && (JSON.parse(a.payload) as HirePayload).reportsToAgentId === reportsTo);
     if (reports.length + pendingHires.length >= org.maxDirectReports) throw new BadRequestException(`fan-out limit (${org.maxDirectReports} direct reports, counting pending hires) reached`);
-    const requested = parseScopes(input.scopes ?? []);
+    // A role hire (`role:<id>`, docs/company-vision.md §4) resolves into the
+    // template path: the role's charter, title, scopes and model tier.
+    const role = resolveRoleHire(input.templateOrPack, { orgName: org.name, name: input.name, title: input.title, scopes: input.scopes, provider: input.provider, model: input.model });
+    if (!role && input.templateOrPack.trim().toLowerCase().startsWith('role:')) throw new BadRequestException(`"${input.templateOrPack}" is not a catalog role (GET …/org/roles lists them)`);
+    const requested = parseScopes(role?.scopes ?? input.scopes ?? []);
     const scopes = meetScopes(holdings, requested);
-    const name = (input.name ?? pack?.name ?? input.templateOrPack).trim().slice(0, 60);
+    const name = (input.name ?? role?.name ?? pack?.name ?? input.templateOrPack).trim().slice(0, 60);
     if (!name) throw new BadRequestException('a hire needs a name');
-    const charter = (input.charter ?? pack?.charter ?? '').slice(0, 20_000);
+    const charter = (input.charter ?? role?.charter ?? pack?.charter ?? '').slice(0, 20_000);
     if (!pack && !charter) throw new BadRequestException(`"${input.templateOrPack}" is not a catalog pack; a template hire needs a charter`);
     const payload: HirePayload = {
-      packId: pack?.id ?? null, packName: pack?.name, name, title: (input.title ?? pack?.role ?? 'Specialist').slice(0, 80), charter,
+      packId: pack?.id ?? null, packName: pack?.name, name, title: (input.title ?? role?.title ?? pack?.role ?? 'Specialist').slice(0, 80), charter,
       reportsToAgentId: reportsTo, requestedScopes: requested, scopes, outsideChiefHoldings: requested.filter((s) => !scopes.includes(s)),
-      provider: input.provider, model: input.model, monthlyBudgetUsd: input.monthlyBudgetUsd,
+      provider: input.provider, model: input.model ?? (role?.model || undefined), monthlyBudgetUsd: input.monthlyBudgetUsd,
       skills: pack?.skills?.map((s) => s.name),
+      ...(role ? { roleId: role.roleId, modelTier: role.modelTier } : {}),
     };
     return payload;
   }
@@ -210,6 +219,10 @@ export class OrgApprovalsService {
       status = 'rejected';
       if (a.kind === 'escalation' && typeof payload.taskId === 'string') {
         await this.tasks.update(orgId, payload.taskId, { status: 'cancelled' }, actor).catch(() => {});
+      }
+      // A human reviewer's "no" is a request for changes with the note (item 24).
+      if (a.kind === 'human_review' && typeof payload.taskId === 'string') {
+        await this.tasks.review(orgId, payload.taskId, { verdict: 'request_changes', note: note || 'changes requested by the human reviewer', byAgentId: null }).catch(() => {});
       }
     } else {
       status = 'revision_requested';
@@ -294,6 +307,19 @@ export class OrgApprovalsService {
         // Nothing to apply: the outward action itself still runs through the
         // agent inbox's action_pending gate; this records the CEO's go-ahead.
         return { acknowledged: true };
+      case 'human_review': {
+        // Hybrid staff (docs/company-vision.md §4, item 24): a review request
+        // addressed to a human employee is an approval-like card; approving
+        // it accepts the task (the human is the floor, no second check).
+        const taskId = String(payload.taskId ?? '');
+        const t = await this.tasks.review(orgId, taskId, { verdict: 'accept', note: note || undefined, byAgentId: null });
+        return { taskId, status: t.status };
+      }
+      case 'blueprint': {
+        const applier = this.appliers.get('blueprint');
+        if (!applier) throw new BadRequestException('blueprint imports are not available on this server');
+        return applier(orgId, payload, approval, note);
+      }
       case 'escalation': {
         const taskId = String(payload.taskId ?? '');
         if (taskId) {
@@ -330,8 +356,8 @@ export class OrgApprovalsService {
       await this.skills?.create({ name: s.name, description: s.description, instructions: s.instructions, agentId: agent.id }).catch(() => {});
     }
     const member = await this.org.addMember(orgId, { agentId: agent.id, title: p.title, reportsToAgentId: p.reportsToAgentId, scopes, actor, grantedBy });
-    // Assurance (docs/company-vision.md §5.3): a hire from the Auditor pack becomes the org's auditor when the seat is empty.
-    if (p.packId === 'pack-auditor' && !(await this.org.get(orgId)).auditorAgentId) await this.org.update(orgId, { auditorAgentId: agent.id }).catch(() => undefined);
+    // Assurance (docs/company-vision.md §5.3): a hire from the Auditor pack (or the Auditor role) becomes the org's auditor when the seat is empty.
+    if ((p.packId === 'pack-auditor' || p.roleId === 'auditor') && !(await this.org.get(orgId)).auditorAgentId) await this.org.update(orgId, { auditorAgentId: agent.id }).catch(() => undefined);
     if (p.monthlyBudgetUsd && p.monthlyBudgetUsd > 0) await this.org.setBudget(orgId, { scope: 'agent', refId: agent.id, monthlyUsd: p.monthlyBudgetUsd, actor });
     return { agentId: agent.id, name, scopes, depth: member.depth };
   }
@@ -383,6 +409,8 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'tune': return `tune ${String(payload.key ?? '')} ${payload.from !== undefined ? `${String(payload.from)} → ` : ''}${String(payload.value ?? '')}`;
     case 'cadence': return `${String(payload.kind ?? 'meeting')} of ${String(payload.unitName ?? 'the company')} → ${payload.cron ? String(payload.cron) : 'off'}`;
     case 'charter_change': return `charter of ${String(payload.agentName ?? payload.agentId ?? 'a member')}: ${String(payload.lesson ?? payload.summary ?? 'change proposed by a retro').slice(0, 100)}`;
+    case 'blueprint': return `staff "${String(payload.name ?? 'company')}" from its blueprint: ${Array.isArray(payload.hires) ? payload.hires.length : 0} hire(s)`;
+    case 'human_review': return `review of task "${String(payload.title ?? '')}" by ${String(payload.reviewerHumanId ?? 'a human')}`.slice(0, 160);
     default: return kind;
   }
 }

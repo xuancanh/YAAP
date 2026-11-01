@@ -1259,6 +1259,46 @@ const MIGRATIONS: Migration[] = [
     },
   },
   {
+    id: '0036-org-blueprints',
+    up: async (db) => {
+      // Blueprints (docs/company-vision.md §9, execution-plan item 24):
+      // companies imported from a COMPANY.json and their measured outcomes,
+      // anonymous outcome counters on registry items, and the hybrid human
+      // roles — an employee reports to a lead and can own a task. Idempotent.
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('org_tasks', 'assigneeHumanId', 'TEXT');
+      await add('org_tasks', 'reviewerHumanId', 'TEXT');
+      await add('org_humans', 'reportsToAgentId', 'TEXT');
+      await add('org_humans', 'title', `TEXT NOT NULL DEFAULT ''`);
+      await add('registry_installs', 'orgId', 'TEXT');
+      await db.query(`CREATE TABLE IF NOT EXISTS org_blueprint_imports (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "workspaceId" TEXT NOT NULL,
+        "itemId" TEXT NOT NULL DEFAULT '',
+        "name" TEXT NOT NULL,
+        "mode" TEXT NOT NULL DEFAULT 'supervised',
+        "monthlyUsd" REAL NOT NULL DEFAULT 0,
+        "approvalId" TEXT,
+        "firstKeyResultAt" TEXT,
+        "envelopeAt" TEXT,
+        "importedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_blueprint_imports_org ON org_blueprint_imports ("orgId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS registry_outcomes (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "itemId" TEXT NOT NULL,
+        "kind" TEXT NOT NULL,
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_registry_outcomes_item ON registry_outcomes ("itemId")`);
+    },
+  },
+  {
     id: '0037-org-memory',
     up: async (db) => {
       // Memory (docs/company-vision.md §6, execution-plan item 22): playbooks

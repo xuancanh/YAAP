@@ -41,9 +41,11 @@ export interface GoalIntentFields {
   kind?: GoalKind; metric?: string; targetValue?: number | null; startValue?: number | null; currentValue?: number | null;
   unitLabel?: string; dueAt?: string | null; confidence?: number | null; checkInCadenceDays?: number; lastCheckInAt?: string | null;
 }
-/** Humans in an organisation (docs/autonomous-company.md phase D). */
-export type HumanRole = 'ceo' | 'board' | 'observer';
-export const HUMAN_ROLES: readonly HumanRole[] = ['ceo', 'board', 'observer'];
+/** Humans in an organisation (docs/autonomous-company.md phase D). An
+ *  `employee` (docs/company-vision.md §4 hybrid staff, item 24) reports to a
+ *  member, sits on its unit's chart and channel, and can own a task. */
+export type HumanRole = 'ceo' | 'board' | 'observer' | 'employee';
+export const HUMAN_ROLES: readonly HumanRole[] = ['ceo', 'board', 'observer', 'employee'];
 /** Approval kinds a board member may decide; everything else is the CEO's. */
 export const BOARD_DECIDES = new Set<string>(['hire', 'budget_raise', 'strategy']);
 
@@ -121,26 +123,44 @@ export class OrgService {
     return actor === currentAccountId() ? 'ceo' : null;
   }
 
-  async setHuman(orgId: string, input: { memberAccountId: string; role: HumanRole }, actor = 'user'): Promise<OrgHuman> {
-    await this.get(orgId);
+  async setHuman(orgId: string, input: { memberAccountId: string; role: HumanRole; reportsToAgentId?: string | null; title?: string }, actor = 'user'): Promise<OrgHuman> {
+    const org = await this.get(orgId);
     if (!HUMAN_ROLES.includes(input.role)) throw new BadRequestException(`role must be one of ${HUMAN_ROLES.join(', ')}`);
     if (!input.memberAccountId) throw new BadRequestException('memberAccountId is required');
+    // An employee reports to a live member (the chief by default); other roles report to nobody.
+    let reportsTo: string | null = null;
+    if (input.role === 'employee') {
+      reportsTo = input.reportsToAgentId ?? org.chiefOfStaffAgentId;
+      if (!reportsTo) throw new BadRequestException('an employee reports to a member; name reportsToAgentId');
+      const manager = await this.member(orgId, reportsTo);
+      if (!manager || manager.status === 'terminated') throw new BadRequestException('reportsToAgentId must be an active member of this organization');
+    }
+    const title = (input.title ?? '').slice(0, 80);
     const existing = (await this.humans(orgId)).find((h) => h.memberAccountId === input.memberAccountId);
     let row: OrgHuman;
     if (existing) {
-      await this.db.update(orgHumans).set({ role: input.role }).where(eq(orgHumans.id, existing.id));
-      row = { ...existing, role: input.role };
+      await this.db.update(orgHumans).set({ role: input.role, reportsToAgentId: reportsTo, title: title || existing.title }).where(eq(orgHumans.id, existing.id));
+      row = { ...existing, role: input.role, reportsToAgentId: reportsTo, title: title || existing.title };
     } else {
-      row = { accountId: currentAccountId(), id: newId(), orgId, memberAccountId: input.memberAccountId, role: input.role, createdAt: nowIso() };
+      row = { accountId: currentAccountId(), id: newId(), orgId, memberAccountId: input.memberAccountId, role: input.role, reportsToAgentId: reportsTo, title, createdAt: nowIso() };
       await this.db.insert(orgHumans).values(row);
     }
-    await this.audit.append(orgId, { actor, action: 'human_set', refType: 'human', refId: input.memberAccountId, payload: { role: input.role } });
+    await this.audit.append(orgId, { actor, action: 'human_set', refType: 'human', refId: input.memberAccountId, payload: { role: input.role, reportsToAgentId: reportsTo, title: title || undefined } });
+    // Employees sit on the chart: the units follow (docs/group-chat.md §7).
+    if (input.role === 'employee' || existing?.role === 'employee') await this.structureChanged(orgId);
     return row;
   }
 
+  /** The employee row of `memberAccountId`, or null (item 24). */
+  async employee(orgId: string, memberAccountId: string): Promise<OrgHuman | null> {
+    return (await this.humans(orgId)).find((h) => h.memberAccountId === memberAccountId && h.role === 'employee') ?? null;
+  }
+
   async removeHuman(orgId: string, memberAccountId: string, actor = 'user'): Promise<{ ok: true }> {
+    const was = (await this.humans(orgId)).find((h) => h.memberAccountId === memberAccountId);
     await this.db.delete(orgHumans).where(and(eq(orgHumans.orgId, orgId), eq(orgHumans.memberAccountId, memberAccountId)));
     await this.audit.append(orgId, { actor, action: 'human_removed', refType: 'human', refId: memberAccountId });
+    if (was?.role === 'employee') await this.structureChanged(orgId);
     return { ok: true };
   }
 

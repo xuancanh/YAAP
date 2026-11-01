@@ -65,7 +65,7 @@ export function isPublicRoute(request: Pick<Request, 'method' | 'path'>): boolea
   // Remote publish carries REGISTRY_PUBLISH_TOKEN as its own bearer
   // (RegistryService.acceptRemotePublish); the install/rate counters are
   // anonymous by design — they count, they never read or write anything else.
-  if (/^\/api\/registry\/public(\/[^/]+\/(installed|rate))?\/?$/.test(request.path)) return true;
+  if (/^\/api\/registry\/public(\/[^/]+\/(installed|rate|outcome))?\/?$/.test(request.path)) return true;
   return /^\/api\/hooks\/[^/]+\/[^/]+\/?$/.test(request.path);
 }
 

@@ -166,6 +166,8 @@ export class WorkspaceOrgController {
 
   @Get('humans') async humans(@Param('id') id: string) { return this.orgs.humans(await this.oid(id)); }
   @Post('humans') async setHuman(@Param('id') id: string, @Body() dto: HumanDto) { return this.orgs.setHuman(await this.oid(id), dto); }
+  @Get('humans/me/tasks') async myTasks(@Param('id') id: string) { return this.orgs.myTasks(await this.oid(id)); }
+  @Get('humans/:memberAccountId/tasks') async humanTasks(@Param('id') id: string, @Param('memberAccountId') memberAccountId: string) { return this.orgs.humanTasks(await this.oid(id), memberAccountId); }
   @Delete('humans/:memberAccountId') async removeHuman(@Param('id') id: string, @Param('memberAccountId') memberAccountId: string) { return this.orgs.removeHuman(await this.oid(id), memberAccountId); }
 
   @Get('audit') async auditList(@Param('id') id: string, @Query('limit') limit?: string, @Query('action') action?: string, @Query('refId') refId?: string) { return this.orgs.auditList(await this.oid(id), limit, action, refId); }

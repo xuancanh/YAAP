@@ -587,6 +587,8 @@ export const registryInstalls = pgTable('registry_installs', {
   agentId: text('agentId'),
   skillId: text('skillId'),
   appId: text('appId'),
+  /** A company blueprint install (item 24): the organization it created. */
+  orgId: text('orgId'),
   installedAt: text('installedAt').notNull(),
 });
 
@@ -933,6 +935,10 @@ export const orgTasks = pgTable('org_tasks', {
   /** backlog | todo | claimed | in_progress | in_review | blocked | done | cancelled. */
   status: text('status').notNull().default('backlog'),
   assigneeAgentId: text('assigneeAgentId'),
+  /** Hybrid staff (docs/company-vision.md §4, item 24): a human employee
+   *  owning the task; mutually exclusive with assigneeAgentId. */
+  assigneeHumanId: text('assigneeHumanId'),
+  reviewerHumanId: text('reviewerHumanId'),
   /** The run id holding the claim; null = unclaimed. */
   claimedBy: text('claimedBy'),
   claimedAt: text('claimedAt'),
@@ -1194,8 +1200,44 @@ export const orgHumans = pgTable('org_humans', {
   id: text('id').primaryKey(),
   orgId: text('orgId').notNull(),
   memberAccountId: text('memberAccountId').notNull(),
-  /** ceo | board | observer. */
+  /** ceo | board | observer | employee (docs/company-vision.md §4 hybrid staff). */
   role: text('role').notNull().default('observer'),
+  /** Employees (item 24): the member they report to — they join that unit's
+   *  channel and appear on its chart — and their title. */
+  reportsToAgentId: text('reportsToAgentId'),
+  title: text('title').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** Blueprints (docs/company-vision.md §9, item 24): one row per company
+ *  imported from a COMPANY.json, with the two measured milestones a
+ *  blueprint is rated by (first key result achieved; first 30 days under the
+ *  envelope). `itemId` names the registry item it came from ('' for a file). */
+export const orgBlueprintImports = pgTable('org_blueprint_imports', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  workspaceId: text('workspaceId').notNull(),
+  itemId: text('itemId').notNull().default(''),
+  name: text('name').notNull(),
+  /** supervised | autonomous. */
+  mode: text('mode').notNull().default('supervised'),
+  monthlyUsd: real('monthlyUsd').notNull().default(0),
+  /** The `blueprint` approval card the staffing plan waits on (supervised). */
+  approvalId: text('approvalId'),
+  firstKeyResultAt: text('firstKeyResultAt'),
+  envelopeAt: text('envelopeAt'),
+  importedAt: text('importedAt').notNull(),
+});
+
+/** Anonymous outcome counters on a registry item (item 24): `kind` is
+ *  first_key_result | thirty_days_in_envelope; nothing about the company
+ *  that reached it travels. Written only when `shareBlueprintOutcomes` is on. */
+export const registryOutcomes = pgTable('registry_outcomes', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  itemId: text('itemId').notNull(),
+  kind: text('kind').notNull(),
   createdAt: text('createdAt').notNull(),
 });
 

@@ -42,6 +42,8 @@ export interface UnitNode {
   id: string; orgId: string; leadAgentId: string; parentUnitId: string | null; name: string; slug: string; channelId: string | null; archivedAt: string | null; createdAt: string;
   /** The lead plus its active direct reports. */
   memberAgentIds: string[];
+  /** Human employees reporting into this unit (docs/company-vision.md §4, item 24). */
+  memberHumanIds: string[];
   counts: { openTasks: number; tasks: number; goals: number };
   children: UnitNode[];
 }
@@ -285,19 +287,38 @@ export class OrgUnitsService {
     const channels = this.announcer.channels;
     if (!channels) return;
     const humans = await this.unitHumans(orgId);
+    const employees = await this.employeesByUnit(orgId, all, members);
     const terminated = new Set(members.filter((m) => m.status === 'terminated').map((m) => m.agentId));
     for (const u of all) {
       if (!u.channelId) continue;
       const isRoot = u.id === rootNow.id;
       const want = new Set(isRoot ? live.map((m) => m.agentId) : [u.leadAgentId, ...live.filter((m) => m.reportsToAgentId === u.leadAgentId).map((m) => m.agentId)]);
+      // Humans: the CEO and board everywhere; an employee in its unit and in #company (item 24).
+      const wantHumans = new Set([...humans, ...(isRoot ? [...employees.values()].flat() : employees.get(u.id) ?? [])]);
       const current = await channels.channelMembers(u.channelId).catch(() => null);
       if (!current) continue;
       const haveAgents = new Set(current.filter((m) => m.kind === 'agent').map((m) => m.id));
       const haveHumans = new Set(current.filter((m) => m.kind === 'human').map((m) => m.id));
       for (const id of want) if (!haveAgents.has(id)) await channels.addChannelMember(u.channelId, 'agent', id).catch(() => undefined);
       for (const id of haveAgents) if (!want.has(id) && (!isRoot || terminated.has(id))) await channels.removeChannelMember(u.channelId, 'agent', id).catch(() => undefined);
-      for (const id of humans) if (!haveHumans.has(id)) await channels.addChannelMember(u.channelId, 'human', id).catch(() => undefined);
+      for (const id of wantHumans) if (!haveHumans.has(id)) await channels.addChannelMember(u.channelId, 'human', id).catch(() => undefined);
     }
+  }
+
+  /** unitId → the human employees whose manager leads that unit (or sits in it). */
+  private async employeesByUnit(orgId: string, units: OrgUnit[], members: OrgMember[]): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>();
+    const byAgent = new Map(members.map((m) => [m.agentId, m]));
+    const root = units.find((u) => u.parentUnitId === null);
+    for (const h of (await this.org.humans(orgId).catch(() => [])).filter((x) => x.role === 'employee')) {
+      let cur: string | null = h.reportsToAgentId;
+      let unit: OrgUnit | undefined;
+      for (let i = 0; cur && i < 10 && !unit; i++) { unit = units.find((u) => u.leadAgentId === cur); cur = byAgent.get(cur)?.reportsToAgentId ?? null; }
+      const id = (unit ?? root)?.id;
+      if (!id) continue;
+      out.set(id, [...(out.get(id) ?? []), h.memberAccountId]);
+    }
+    return out;
   }
 
   /** The humans every unit channel carries: the owner (CEO by default) and
@@ -344,12 +365,14 @@ export class OrgUnitsService {
     const tasks = await this.db.select().from(orgTasks).where(eq(orgTasks.orgId, orgId));
     const goals = await this.org.goals(orgId);
     const root = units.find((u) => u.parentUnitId === null);
+    const employees = await this.employeesByUnit(orgId, units, members);
     const node = (u: OrgUnit): UnitNode => {
       const isRoot = u.id === root?.id;
       const mine = tasks.filter((t) => (t.unitId ?? root?.id) === u.id);
       return {
         ...u,
         memberAgentIds: [u.leadAgentId, ...members.filter((m) => m.reportsToAgentId === u.leadAgentId).map((m) => m.agentId)],
+        memberHumanIds: employees.get(u.id) ?? [],
         counts: { openTasks: mine.filter((t) => !['done', 'cancelled'].includes(t.status)).length, tasks: mine.length, goals: goals.filter((g) => (g.unitId ?? root?.id) === u.id || (isRoot && !g.unitId)).length },
         children: units.filter((c) => c.parentUnitId === u.id).map(node),
       };

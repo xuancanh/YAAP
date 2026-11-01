@@ -5,7 +5,7 @@
  *   GET  /api/registry/public          public feed (no auth): published items
  *   GET  /api/registry/public/:id      one public item with its manifest
  *   POST /api/registry/public          remote publish (bearer = publish token)
- *   POST /api/registry/public/:id/installed | /rate   anonymous counters
+ *   POST /api/registry/public/:id/installed | /rate | /outcome   anonymous counters
  *   POST /api/registry/publish         publish an agent / skill / app (dryRun)
  *   GET  /api/registry/:id             item + manifest
  *   POST /api/registry/:id/install     { confirm?, options? } — review first
@@ -47,6 +47,8 @@ export class RegistryController {
   @Get('public/:id') getPublic(@Param('id') id: string) { return this.registry.getPublic(id); }
   @Post('public/:id/installed') publicInstalled(@Param('id') id: string) { return this.registry.bumpPublicInstall(id); }
   @Post('public/:id/rate') publicRate(@Param('id') id: string, @Body() body: { rating?: unknown }) { return this.registry.bumpPublicRating(id, body?.rating); }
+  /** Blueprint outcomes (docs/blueprints.md §4): an anonymous milestone counter. */
+  @Post('public/:id/outcome') publicOutcome(@Param('id') id: string, @Body() body: { kind?: unknown }) { return this.registry.bumpPublicOutcome(id, body?.kind); }
 
   @Post('publish') publish(@Body() dto: PublishDto) { return this.registry.publish(dto); }
   @Get(':id') get(@Param('id') id: string) { return this.registry.get(id); }

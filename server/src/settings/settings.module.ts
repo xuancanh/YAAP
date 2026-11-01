@@ -28,6 +28,9 @@ const ALLOWED_KEYS = new Set([
   // budget for agent replies per channel (a channel's own value overrides;
   // '0' = unlimited; unset = 200000).
   'channelDailyTokenBudget',
+  // Blueprints (docs/blueprints.md §4): share anonymous outcome milestones of
+  // companies imported from a registry blueprint ('on' | 'off', default off).
+  'shareBlueprintOutcomes',
 ]);
 
 @Injectable()

@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–23 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–24 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -723,4 +723,42 @@ signal (month-to-date average) stays alongside the trailing-window
 `burn_forecast`; the SPA is not touched.
 
 ### 24. Blueprints: company export/import, registry, role catalog, hybrid human roles *(planned)*
+### 24. Blueprints: company export/import, registry, role catalog, hybrid human roles *(done)*
 `docs/company-vision.md` §9, phase F.
+
+*Shipped as (1 November 2026):* migration `0036-org-blueprints`
+(`org_tasks.assigneeHumanId | reviewerHumanId`, `org_humans.reportsToAgentId |
+title`, `registry_installs.orgId`, `org_blueprint_imports`,
+`registry_outcomes`); `server/src/org/roles/catalog.ts` (`ROLES` — eleven
+roles as data, `rankRoles`, `roleById`, `roleRef`, `roleCharter`,
+`tierOfModel`) and `org-roles.service.ts` (`list`, `get`, `resolveRoleHire`,
+`modelForTier` over `org-routing.ts` `tierModel`); `role:<id>` in `OrgApprovalsService.prepareHire` with
+`roleId`/`modelTier` on the payload and the Auditor role filling the seat;
+`server/src/org/blueprints/format.ts` (`COMPANY.json` v1, `validateBlueprint`
+with the 256 KB / 20 roles / depth 3 / fan-out 5 caps, `hireOrder`,
+`unitsOf`); `org-blueprints.service.ts` (`export` with defensive probes for
+`org_cadences`, `organizations.routing` and held cards, `importPlan`,
+`import` in supervised or autonomous mode, the `blueprint` approval applier,
+`sweepOutcomes`, `imports`); the `blueprint` and `human_review` approval kinds
+and `registerApplier`; `RegistryService` kind `company` (`normalizeManifest`
+validate + scan, `review` with the blueprint and playbook bodies,
+`recordExternalInstall`, `recordOutcome`, `bumpPublicOutcome`, `outcomesOf`;
+the generic install refuses companies); `blueprints/blueprints.controller.ts`
+(`GET …/org/blueprint`, `POST …/org/blueprint/plan`, `POST
+…/org/blueprint/import`, `GET …/org/roles?profile=`) and
+`companies.controller.ts` (`GET|POST /api/market/companies`, `POST
+/api/market/companies/:id/install`); `POST /api/registry/public/:id/outcome`
+left open in `auth-strategy.interface.ts`; the `shareBlueprintOutcomes`
+setting; hybrid staff — `HUMAN_ROLES` + `employee`, `OrgService.setHuman`
+with a reporting line and `employee()`, `OrgTasksService.assignHuman`,
+`tasksOfHuman`, `requestReview` to a human (the `human_review` card and an
+addressed `org_review` event), `OrgUnitsService` employees on the tree
+(`memberHumanIds`) and in unit channels, `org_assign human=` with lead
+scoping, `POST …/tasks/:taskId/assign { agentId | humanId }`, `GET
+…/humans/me/tasks`, `GET …/humans/:memberAccountId/tasks`, `HumanDto` with
+`reportsToAgentId | title`; `docs/blueprints.md`, `docs/registry.md` §8,
+`docs/security.md` rows, `docs/company-vision.md` §14. Tests:
+`tests/backend-org-blueprints.test.ts` (11). No SPA. Departures: playbooks
+install as drafts; cadences are listed, not written; tiers resolve through
+item 23's `tierModel`; a role hire is named after the
+title the chief gives.

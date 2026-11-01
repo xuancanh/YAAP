@@ -32,7 +32,7 @@
  * workspace's one organization and delegates here; these routes stay as
  * aliases and keep working.
  */
-import { Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Optional, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Optional, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
 import { ConfigService } from '@nestjs/config';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
@@ -170,7 +170,7 @@ export class TaskDto {
   @IsOptional() @IsString() class?: string;
 }
 
-export class AssignDto { @IsString() agentId!: string }
+export class AssignDto { @IsOptional() @IsString() agentId?: string; /** Hybrid staff (item 24): a human employee's account id instead. */ @IsOptional() @IsString() humanId?: string }
 export class TextDto { @IsString() text!: string }
 export class ReviewDto {
   @IsIn(['accept', 'request_changes', 'escalate']) verdict!: 'accept' | 'request_changes' | 'escalate';
@@ -191,7 +191,13 @@ export class BudgetDto {
   @IsNumber() monthlyUsd!: number;
 }
 export class WakeDto { @IsOptional() @IsString() agentId?: string; @IsOptional() @IsBoolean() now?: boolean }
-export class HumanDto { @IsString() memberAccountId!: string; @IsIn(HUMAN_ROLES as unknown as string[]) role!: HumanRole }
+export class HumanDto {
+  @IsString() memberAccountId!: string;
+  @IsIn(HUMAN_ROLES as unknown as string[]) role!: HumanRole;
+  /** Employees (docs/company-vision.md §4, item 24): the member they report to and their title. */
+  @IsOptional() reportsToAgentId?: string | null;
+  @IsOptional() @IsString() title?: string;
+}
 
 @Controller('orgs')
 export class OrgController {
@@ -348,12 +354,17 @@ export class OrgController {
     this.guard();
     return this.tasks.update(id, taskId, { title: dto.title, brief: dto.brief, status: dto.status, blockers: dto.blockers, projectId: dto.projectId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class });
   }
-  @Post(':id/tasks/:taskId/assign') assign(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: AssignDto) { this.guard(); return this.tasks.assign(id, taskId, dto.agentId); }
+  @Post(':id/tasks/:taskId/assign') async assign(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: AssignDto) {
+    this.guard();
+    if (dto.humanId) return this.tasks.assignHuman(id, taskId, dto.humanId, this.actor());
+    if (!dto.agentId) throw new BadRequestException('agentId or humanId is required');
+    return this.tasks.assign(id, taskId, dto.agentId, this.actor());
+  }
   @Post(':id/tasks/:taskId/comment') comment(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TextDto) { this.guard(); return this.tasks.comment(id, taskId, { text: dto.text, fromAgentId: null }); }
   @Get(':id/tasks/:taskId/comments') comments(@Param('id') id: string, @Param('taskId') taskId: string) { this.guard(); return this.tasks.messages(id, { taskId }); }
   /** The CEO reviews directly (no independent check: the human is the floor). */
   @Post(':id/tasks/:taskId/review') review(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: ReviewDto) { this.guard(); return this.tasks.review(id, taskId, { verdict: dto.verdict, note: dto.note, byAgentId: null }); }
-  @Post(':id/tasks/:taskId/request-review') requestReview(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: Partial<TextDto>) { this.guard(); return this.tasks.requestReview(id, taskId, { note: dto.text, fromAgentId: null }); }
+  @Post(':id/tasks/:taskId/request-review') requestReview(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: Partial<TextDto> & { reviewerHumanId?: string }) { this.guard(); return this.tasks.requestReview(id, taskId, { note: dto.text, fromAgentId: null, reviewerHumanId: dto.reviewerHumanId ?? null }); }
   /** Manual wake of the owner (or a named member): debounced like any wake, or now=true. */
   @Post(':id/tasks/:taskId/wake') async wake(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: WakeDto) {
     this.guard();
@@ -378,7 +389,9 @@ export class OrgController {
   @Post(':id/approvals/:approvalId/decide') async decide(@Param('id') id: string, @Param('approvalId') approvalId: string, @Body() dto: DecideDto) {
     this.guard();
     const a = await this.approvals.get(id, approvalId);
-    await this.assertMayDecide(id, a.kind);
+    // A human_review card (item 24) is its addressee's to decide (or the CEO's).
+    const addressee = a.kind === 'human_review' ? (JSON.parse(a.payload || '{}') as { reviewerHumanId?: string }).reviewerHumanId : undefined;
+    if (!(addressee && addressee === actorId())) await this.assertMayDecide(id, a.kind);
     return this.approvals.decide(id, approvalId, dto.decision, dto.note ?? '', this.actor(), actorId());
   }
 
@@ -388,6 +401,9 @@ export class OrgController {
     return { ceoAccountId: currentAccountId(), me: { actorId: actorId(), role: await this.org.humanRole(id, actorId()) }, humans: await this.org.humans(id) };
   }
   @Post(':id/humans') setHuman(@Param('id') id: string, @Body() dto: HumanDto) { this.guard(); return this.org.setHuman(id, dto, this.actor()); }
+  /** Hybrid staff (item 24): the task cards of the calling human (or of one member, for the CEO). */
+  @Get(':id/humans/me/tasks') myTasks(@Param('id') id: string) { this.guard(); return this.tasks.tasksOfHuman(id, actorId()); }
+  @Get(':id/humans/:memberAccountId/tasks') humanTasks(@Param('id') id: string, @Param('memberAccountId') memberAccountId: string) { this.guard(); return this.tasks.tasksOfHuman(id, memberAccountId); }
   @Delete(':id/humans/:memberAccountId') removeHuman(@Param('id') id: string, @Param('memberAccountId') memberAccountId: string) { this.guard(); return this.org.removeHuman(id, memberAccountId, this.actor()); }
 
   // ---- audit ----

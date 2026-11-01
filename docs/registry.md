@@ -23,7 +23,7 @@ mirrored in `schema.ts`). All three carry `accountId TEXT NOT NULL DEFAULT
 
 | Table | What a row is |
 |---|---|
-| `registry_items` | One listing: `kind` (`agent` · `skill` · `app`), `slug`, `name`, `description`, `version`, `publisherName`, `manifest` (the portable artifact, JSON), `capabilities` (the static review summary, JSON), `scanReport` (the item-9 scan that ran at publish, JSON), `installs`, `ratingUp`/`ratingDown`, `published`, `source` (`local` · `remote`), `remoteUrl`, `sourceRef` (the agent/skill/app it was published from). Unique on (`accountId`, `kind`, `slug`). |
+| `registry_items` | One listing: `kind` (`agent` · `skill` · `app` · `company`, §8), `slug`, `name`, `description`, `version`, `publisherName`, `manifest` (the portable artifact, JSON), `capabilities` (the static review summary, JSON), `scanReport` (the item-9 scan that ran at publish, JSON), `installs`, `ratingUp`/`ratingDown`, `published`, `source` (`local` · `remote`), `remoteUrl`, `sourceRef` (the agent/skill/app it was published from). Unique on (`accountId`, `kind`, `slug`). |
 | `registry_installs` | One install: `itemId` (a local id, or `remote:<id>` for an item pulled from `REGISTRY_URL`), `version`, and the `agentId` / `skillId` / `appId` it created locally. |
 | `registry_ratings` | One rating: `itemId`, `installId`, `turnId` (set when rolled up from a turn rating, `''` when explicit), `rating`, `note`. Unique on (`installId`, `turnId`) so a re-rated turn updates instead of doubling. |
 
@@ -215,10 +215,54 @@ serving the same `/api/registry/public`.
 - **Executable bundles.** Skills are single `SKILL.md` texts (item 9's
   limit), apps are single HTML files; no scripts, no archives.
 
+## 8. Companies (item 24)
+
+A **company blueprint** (`docs/blueprints.md`, `COMPANY.json` v1) is the
+fourth kind, `company`. It follows every rule above and adds none of its own
+exceptions:
+
+- **Manifest**: the validated blueprint (`validateBlueprint` — ≤ 256 KB, ≤
+  20 roles, depth ≤ 3, fan-out ≤ 5, unknown fields refused). By construction
+  it carries no messages, tasks, lessons, files, connections, grants, tokens
+  or ids; the only text content is role charters and playbooks as `SKILL.md`.
+- **Publish**: `POST /api/market/companies { workspaceId, name?,
+  description?, publisherName?, dryRun? }` exports the workspace's company
+  and runs the same `normalizeManifest` → scan path (each role charter and
+  each playbook through `scanSkillMd`, flags prefixed `role "x":` /
+  `playbook "x":`); a blocking flag refuses. The capability summary gains
+  `company { roles, depth, monthlyUsd, playbooks, cadences, tunables, cards
+  }`; tools and connections come from the scopes and the texts. Re-publish
+  bumps the version like any kind; the push to `REGISTRY_URL` and
+  `acceptRemotePublish` accept the kind unchanged.
+- **Browse**: `GET /api/market/companies?q=` (or `GET
+  /api/registry?kind=company`) — local and remote items, each with
+  `outcomes { first_key_result, thirty_days_in_envelope }` counts.
+- **Review and install**: `POST /api/market/companies/:id/install {
+  workspaceId, mode, monthlyUsd?, confirm? }`. Without `confirm: true`:
+  `{ requiresConfirm, review, plan }` — the review (the blueprint with every
+  charter, `skillBodies` = the playbooks, the scan report, plain-language
+  `installs` lines) plus the dry-run **import plan** for that workspace;
+  nothing is written. With `confirm: true`: re-validated, re-scanned locally
+  (a remote's report is shown, never trusted), imported through
+  `OrgBlueprintsService.import`, and the install row written with the
+  created `orgId`. The generic `POST /api/registry/:id/install` refuses a
+  company and names this route. What installs is inert in the registry's
+  sense: agents with a charter and met scopes, playbooks as drafts, a vision
+  and profile, tunables within bounds — and, in supervised mode, no agent at
+  all until the CEO approves the one `blueprint` card.
+- **Outcomes instead of stars**: `registry_outcomes` rows (`kind`
+  `first_key_result` | `thirty_days_in_envelope`) are written by the
+  importing instance's `sweepOutcomes` only when its `shareBlueprintOutcomes`
+  setting is on — locally for a local item, through the anonymous public
+  `POST /api/registry/public/:id/outcome { kind }` for a remote one. Turn
+  ratings do not apply to companies (there is no turn to rate).
+
 ## 7. Files
 
 `server/src/registry/` (`registry.service.ts`, `registry.controller.ts`,
-`registry.module.ts`, `app-scan.ts`), migration `0025-registry`, config
+`registry.module.ts`, `app-scan.ts`), migration `0025-registry` (and
+`0036-org-blueprints` for `registry_installs.orgId` and `registry_outcomes`),
+`server/src/org/blueprints/companies.controller.ts` for `/api/market/companies`, config
 `registryUrl` / `registryPublishToken` (`REGISTRY_URL`,
 `REGISTRY_PUBLISH_TOKEN`), the public-route additions in
 `common/token-auth.strategy.ts`, the `recordTurnRating` hook in

@@ -36,6 +36,11 @@ import { OrgCapitalService } from './org-capital.service';
 import { OrgPlaybooksService } from './org-playbooks.service';
 import { OrgKnowledgeService } from './org-knowledge.service';
 import { OrgMemoryService } from './org-memory.service';
+import { RegistryModule } from '../registry/registry.module';
+import { OrgRolesService } from './org-roles.service';
+import { OrgBlueprintsService } from './org-blueprints.service';
+import { BlueprintsController } from './blueprints/blueprints.controller';
+import { CompaniesController } from './blueprints/companies.controller';
 
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
@@ -65,11 +70,15 @@ import { OrgMemoryService } from './org-memory.service';
  * the company reviews), OrgKnowledgeService (recall, ask-the-company, the
  * graph) and OrgMemoryService (the tools, postmortem triggers, lessons, the
  * decision-log rows of approvals and autonomous actions).
+ * Blueprints (docs/company-vision.md §9, item 24): OrgRolesService is the role
+ * catalog as data; OrgBlueprintsService exports and imports COMPANY.json and
+ * applies the `blueprint` approval; the two controllers add the workspace
+ * routes and `/api/market/companies` over RegistryModule's review gate.
  */
 @Module({
-  imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule],
-  controllers: [OrgController, WorkspaceOrgController],
-  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService],
-  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService],
+  imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule, RegistryModule],
+  controllers: [OrgController, WorkspaceOrgController, BlueprintsController, CompaniesController],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService],
+  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService],
 })
 export class OrgModule {}

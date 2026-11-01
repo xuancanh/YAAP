@@ -590,3 +590,44 @@ tool is visible workspace-wide once active (the role targeting is the
 context list, not the tool list); a charter change is text appended to (or
 replacing) the charter rather than a free-form patch, the card shows the
 computed line diff; the SPA is not touched.
+
+*Phase F, Blueprints (item 24) — shipped 1 November 2026.* §9 and the two §4
+items it depends on are built, backend only (`docs/blueprints.md`). A company
+exports as **`COMPANY.json` v1** (`format: yaam-company/1`): roles by title
+with charter, reporting line, meet-rule scopes, model tier and envelope; the
+operating profile and rules; the vision with a relative horizon; the stored
+tunables; the workspace's approved playbooks as `SKILL.md` text; the budget
+split; cadences and routing when later items' tables exist (probed
+defensively); recommended connection cards; a hashed origin — and none of its
+history (no messages, tasks, lessons, files, connections, grants, tokens or
+ids). `validateBlueprint` is the strict gate on every door (≤ 256 KB, ≤ 20
+roles, depth ≤ 3, fan-out ≤ 5, unknown fields refused). `POST
+…/org/blueprint/plan` is the dry run (hires with scopes after the meet,
+budget within the envelope, tunables within bounds, playbooks, what is skipped
+and why); `POST …/org/blueprint/import { blueprint, mode, monthlyUsd }` creates
+the chief, the organization in that mode, the profile, vision, tunables and
+skill drafts, and staffs the company — one **`blueprint` approval card** for
+the whole plan in supervised mode, direct `applyHire`s in autonomous mode.
+Import never runs code, never creates a connection or a grant (connection
+scopes are dropped and recommended), never copies memory. Blueprints publish
+to the registry as kind **`company`** behind the same scan and review gate
+(`POST|GET /api/market/companies`, `POST …/companies/:id/install` = review +
+plan, then import on `confirm`), federate like any kind, and are rated by two
+measured **outcomes** — the first key result achieved, thirty days under the
+envelope — recorded on the item only when `shareBlueprintOutcomes` is on. The
+**role catalog is data** (`server/src/org/roles/catalog.ts`: eleven roles with
+charter templates, competencies, scopes, tiers, cost estimates and `fits`
+tags; `GET …/org/roles?profile=` ranks them against the profile with a string
+match; `org_hire_agent` takes `role:<id>` through the existing template-hire
+path, scopes met with the chief's, the cheap tier → the provider's cheapest
+sibling). **Hybrid staff**: `org_humans.role = employee` with a reporting line
+and a title; employees sit on the unit chart and in their unit's channel and
+`#company`, can own a task (`assigneeHumanId`, an addressed inbox event, task
+cards at `GET …/humans/me/tasks`, status through the usual routes), review one
+as a `human_review` approval card only they or the CEO decide, and be assigned
+by a lead inside its unit or the chief anywhere (`org_assign human=`).
+Departures from §9: playbooks install as skill *drafts* (the registry rule
+that nothing installs live); cadences are listed, not written, by an import
+until item 19's rituals own them; tiers resolve through item 23's `tierModel` (one tier table); "companies working
+together" (§9.3) stays last and is not started; no SPA.
+
