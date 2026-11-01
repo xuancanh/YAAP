@@ -39,9 +39,34 @@ export interface OrgBoardEvent {
   detail: string;
 }
 
+/** A task's status changed (docs/group-chat.md §3): the group chat posts a
+ *  system line into the thread the task was made from. Emitted by both task
+ *  services (agent kanban and the organisation board). */
+export interface TaskStatusEvent {
+  source: 'agent' | 'org';
+  taskId: string;
+  title: string;
+  status: string;
+  previous: string;
+  channelId: string;
+  messageId: string | null;
+  /** The agent whose board it is (agent tasks) or the assignee (org tasks). */
+  agentId: string | null;
+}
+
 @Injectable()
 export class TriggerBus {
   private readonly emitter = new EventEmitter();
+
+  emitTaskStatus(event: TaskStatusEvent): void {
+    try { this.emitter.emit('task.status', event); } catch { /* see header */ }
+  }
+
+  onTaskStatus(listener: (event: TaskStatusEvent) => void): () => void {
+    const wrapped = (event: TaskStatusEvent) => { try { listener(event); } catch { /* see header */ } };
+    this.emitter.on('task.status', wrapped);
+    return () => { this.emitter.off('task.status', wrapped); };
+  }
 
   emitTaskAdded(event: TaskAddedEvent): void {
     try { this.emitter.emit('task.added', event); } catch { /* listeners isolate their own failures */ }

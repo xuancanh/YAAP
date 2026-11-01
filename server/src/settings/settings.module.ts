@@ -24,6 +24,10 @@ const ALLOWED_KEYS = new Set([
   'actionReview', 'reviewModel',
   // Voice notes (docs/voice.md): read replies aloud ('on' | 'off', default off) and the TTS voice name
   'ttsEnabled', 'ttsVoice',
+  // Group chat (docs/group-chat.md §2): the workspace default daily token
+  // budget for agent replies per channel (a channel's own value overrides;
+  // '0' = unlimited; unset = 200000).
+  'channelDailyTokenBudget',
 ]);
 
 @Injectable()

@@ -44,18 +44,34 @@ function parsePending(raw: string): ProfileProposal[] {
   try { return JSON.parse(raw) as ProfileProposal[]; } catch { return []; }
 }
 
+/** Runs after a workspace row is created (the lazy default included), under
+ *  the creating context. GroupChatService registers `#general` here so this
+ *  module never imports the group-chat domain. */
+export type WorkspaceCreatedHook = (workspace: { id: string; name: string }) => Promise<void>;
+
 @Injectable()
 export class WorkspacesService {
+  private readonly createdHooks: WorkspaceCreatedHook[] = [];
+
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
     private readonly storage: StorageService,
   ) {}
+
+  onCreated(hook: WorkspaceCreatedHook): void {
+    this.createdHooks.push(hook);
+  }
+
+  private async fireCreated(ws: { id: string; name: string }): Promise<void> {
+    for (const h of this.createdHooks) await h(ws).catch(() => undefined);
+  }
 
   async list() {
     const all = await this.db.select().from(workspaces);
     if (all.length > 0) return all;
     const def = { id: newId(), name: 'Default', color: '#F5C451', memory: '', profile: '', profilePending: '[]', profilePrivate: '{}', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, ...ORG_OFF, createdAt: nowIso() };
     await this.db.insert(workspaces).values(def);
+    await this.fireCreated(def);
     return [def];
   }
 
@@ -82,6 +98,7 @@ export class WorkspacesService {
       createdAt: nowIso(),
     };
     await this.db.insert(workspaces).values(row);
+    await this.fireCreated(row);
     return row;
   }
 

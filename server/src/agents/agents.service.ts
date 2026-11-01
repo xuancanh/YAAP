@@ -87,6 +87,31 @@ export function emailSlugify(name: string): string {
 
 /** Push channels that each own a delivered-at column on agent_events. */
 export type DeliveryChannel = 'telegram' | 'email' | 'push';
+
+/** Where a delivered inbox event should take the person: a deep link the
+ *  event carries in its payload (group-chat mentions: `#/ws/<id>/channel/
+ *  <slug>/<messageId>`, docs/group-chat.md §4), else its chat session, else
+ *  nothing. Shared by the Telegram, email and push sweeps. */
+export function eventLink(e: { sessionId: string | null; payload?: string | null }, base: string): string {
+  const link = payloadField(e.payload, 'link');
+  if (link) return link.startsWith('http') ? link : `${base}${link.startsWith('/') ? '' : '/'}${link}`;
+  return e.sessionId ? `${base}/#/chat/${e.sessionId}` : '';
+}
+
+/** `<sender> · <title>`: the agent's name, or what the payload names as the
+ *  sender for events that belong to no agent (a channel mention). */
+export function eventHead(e: { agentId: string; title: string; payload?: string | null }, names: Map<string, string>): string {
+  const from = names.get(e.agentId) ?? payloadField(e.payload, 'from') ?? 'Agent';
+  return `${from} · ${e.title}`;
+}
+
+function payloadField(payload: string | null | undefined, key: string): string | null {
+  if (!payload) return null;
+  try {
+    const v = (JSON.parse(payload) as Record<string, unknown>)[key];
+    return typeof v === 'string' && v ? v : null;
+  } catch { return null; }
+}
 const DELIVERY_COLUMNS = { telegram: 'deliveredAt', email: 'emailDeliveredAt', push: 'pushDeliveredAt' } as const;
 
 /** Enabled loops across a set of agents (plan cap, docs/accounts.md §4). */
@@ -225,7 +250,7 @@ export class AgentsService {
     return this.db.select().from(agentTasks).where(eq(agentTasks.agentId, agentId));
   }
 
-  async addTask(agentId: string, input: { title: string; note?: string; origin?: string; sessionId?: string }) {
+  async addTask(agentId: string, input: { title: string; note?: string; origin?: string; sessionId?: string; channelId?: string | null; messageId?: string | null }) {
     await this.get(agentId);
     const title = (input.title ?? '').trim().slice(0, 200);
     if (!title) throw new BadRequestException('task title is required');
@@ -237,6 +262,9 @@ export class AgentsService {
       note: (input.note ?? '').slice(0, 2_000),
       status: 'todo', origin: input.origin ?? 'user',
       sessionId: input.sessionId ?? null,
+      // Group chat linkage (docs/group-chat.md §3): the message this task was made from.
+      channelId: input.channelId ?? null,
+      messageId: input.messageId ?? null,
       createdAt: nowIso(), updatedAt: nowIso(),
     };
     await this.db.insert(agentTasks).values(row);
@@ -259,7 +287,13 @@ export class AgentsService {
       set.status = patch.status;
     }
     await this.db.update(agentTasks).set(set).where(eq(agentTasks.id, taskId));
-    return (await this.db.select().from(agentTasks).where(eq(agentTasks.id, taskId)))[0];
+    const updated = (await this.db.select().from(agentTasks).where(eq(agentTasks.id, taskId)))[0];
+    // A task made from a channel message reports its status back into that
+    // thread (docs/group-chat.md §3) — the group chat listens on the bus.
+    if (set.status && set.status !== rows[0].status && updated.channelId) {
+      this.bus?.emitTaskStatus({ source: 'agent', taskId, title: updated.title, status: updated.status, previous: rows[0].status, channelId: updated.channelId, messageId: updated.messageId, agentId });
+    }
+    return updated;
   }
 
   async deleteTask(agentId: string, taskId: string) {

@@ -906,6 +906,87 @@ const MIGRATIONS: Migration[] = [
         WHERE o."workspaceId" = w."id" AND o."status" <> 'archived' AND w."orgMode" = 'off'`);
     },
   },
+  {
+    id: '0029-group-chat',
+    up: async (db) => {
+      // Group chat (docs/group-chat.md §1, execution-plan item 15): channels,
+      // their members, messages and read cursors; task ↔ message linkage on
+      // both task tables; `#general` backfilled into every existing
+      // workspace. Idempotent: IF NOT EXISTS / hasColumn-guarded / NOT EXISTS.
+      await db.query(`CREATE TABLE IF NOT EXISTS channels (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "workspaceId" TEXT NOT NULL,
+        "slug" TEXT NOT NULL,
+        "name" TEXT NOT NULL,
+        "topic" TEXT NOT NULL DEFAULT '',
+        "kind" TEXT NOT NULL DEFAULT 'public',
+        "createdBy" TEXT NOT NULL DEFAULT 'system',
+        "folder" TEXT NOT NULL DEFAULT '',
+        "dailyTokenBudget" INTEGER NOT NULL DEFAULT 0,
+        "archivedAt" TEXT,
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_ws_slug ON channels ("workspaceId", "slug")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS channel_members (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "channelId" TEXT NOT NULL,
+        "memberKind" TEXT NOT NULL,
+        "memberId" TEXT NOT NULL,
+        "role" TEXT NOT NULL DEFAULT 'member',
+        "notify" TEXT NOT NULL DEFAULT 'mentions',
+        "unprompted" INTEGER NOT NULL DEFAULT 0,
+        "joinedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_members_unique ON channel_members ("channelId", "memberKind", "memberId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS channel_messages (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "channelId" TEXT NOT NULL,
+        "threadRootId" TEXT,
+        "authorKind" TEXT NOT NULL,
+        "authorId" TEXT NOT NULL DEFAULT '',
+        "text" TEXT NOT NULL DEFAULT '',
+        "attachments" TEXT NOT NULL DEFAULT '[]',
+        "mentions" TEXT NOT NULL DEFAULT '[]',
+        "taskId" TEXT,
+        "runId" TEXT,
+        "unprompted" INTEGER NOT NULL DEFAULT 0,
+        "editedAt" TEXT,
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_channel_messages_channel ON channel_messages ("channelId", "createdAt")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_channel_messages_thread ON channel_messages ("threadRootId")`);
+      // Same FTS shape as chat_messages (0006): the workspace search joins in.
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_channel_messages_fts ON channel_messages USING GIN (to_tsvector('english', "text"))`);
+      await db.query(`CREATE TABLE IF NOT EXISTS channel_reads (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "channelId" TEXT NOT NULL,
+        "memberAccountId" TEXT NOT NULL,
+        "lastReadMessageId" TEXT NOT NULL DEFAULT '',
+        "lastReadAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_reads_unique ON channel_reads ("channelId", "memberAccountId")`);
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('agent_tasks', 'channelId', 'TEXT');
+      await add('agent_tasks', 'messageId', 'TEXT');
+      await add('org_tasks', 'channelId', 'TEXT');
+      await add('org_tasks', 'messageId', 'TEXT');
+      // #general for every workspace that lacks one (new workspaces get it
+      // from WorkspacesService.create → GroupChatService.ensureGeneral).
+      await db.query(`
+        INSERT INTO channels ("accountId", "id", "workspaceId", "slug", "name", "topic", "kind", "createdBy", "folder", "createdAt")
+        SELECT w."accountId", md5(random()::text || w."id"), w."id", 'general', 'general',
+               'Everyone in this workspace — people and agents.', 'public', 'system', 'channels/general', $1
+        FROM workspaces w
+        WHERE NOT EXISTS (SELECT 1 FROM channels c WHERE c."workspaceId" = w."id" AND c."slug" = 'general')
+      `, [new Date().toISOString()]);
+    },
+  },
 ];
 
 /** Mirrors accounts/account-context.ts SINGLE_ACCOUNT; spelled out here so

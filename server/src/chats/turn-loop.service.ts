@@ -69,6 +69,21 @@ export interface OrgToolsHook {
   onToolCall(sessionId: string, call: AiToolCall): string | null;
 }
 
+/** The generic shape of the org hook, for other domains that offer tools to
+ *  agents (the group chat's channel tools, docs/group-chat.md §2). Registered
+ *  with `addToolProvider`; consulted after the org hook, never instead of it. */
+export interface ToolProviderHook {
+  specsFor(session: ChatSession): Promise<AiToolSpec[]>;
+  owns(name: string): boolean;
+  isReadOnly(name: string): boolean;
+  execute(session: ChatSession, name: string, input: Record<string, unknown>): Promise<string>;
+  contextFor(session: ChatSession): Promise<string | null>;
+  onToolCall?(sessionId: string, call: AiToolCall): string | null;
+  /** A workspace folder to mount as shared/ for this session instead of the
+   *  agent's assigned one (a channel session sees its channel folder). */
+  sharedFolderFor?(session: ChatSession): Promise<string | null>;
+}
+
 export type TurnEvent =
   | { type: 'turn'; turnId: string }
   | AiStreamEvent
@@ -272,11 +287,28 @@ export class TurnLoopService implements OnModuleDestroy {
   private readonly turnOrigins = new Map<string, TurnOrigin>();
   /** See OrgToolsHook. Registered by OrgRuntimeService at boot. */
   private orgTools?: OrgToolsHook;
+  /** Further tool providers (ToolProviderHook), in registration order. */
+  private readonly extraProviders: ToolProviderHook[] = [];
   /** How long a paused approval waits before auto-deny (test seam). */
   approvalTtlMs = APPROVAL_TTL_MS;
 
   setOrgTools(hook: OrgToolsHook | undefined): void {
     this.orgTools = hook;
+  }
+
+  /** Offer another domain's tools to agent sessions (see ToolProviderHook). */
+  addToolProvider(hook: ToolProviderHook): () => void {
+    this.extraProviders.push(hook);
+    return () => { const i = this.extraProviders.indexOf(hook); if (i >= 0) this.extraProviders.splice(i, 1); };
+  }
+
+  /** Every registered provider: the org hook first, then the extras. */
+  private providers(): ToolProviderHook[] {
+    return [...(this.orgTools ? [this.orgTools] : []), ...this.extraProviders];
+  }
+
+  private providerOf(name: string): ToolProviderHook | undefined {
+    return this.providers().find((p) => p.owns(name));
   }
 
   constructor(
@@ -446,10 +478,14 @@ export class TurnLoopService implements OnModuleDestroy {
         // Org tools appear for agents that belong to an organisation
         // (docs/autonomous-company.md §4.3): the bounded task set in an org
         // run, the manager set for a chief of staff.
-        ...(session.agentId && this.orgTools ? await this.orgTools.specsFor(session) : []),
+        // …and any other domain that registered a provider (channel tools in
+        // a channel session, docs/group-chat.md §2).
+        ...(session.agentId ? (await Promise.all(this.providers().map((p) => p.specsFor(session)))).flat() : []),
       ];
-      const orgContext = session.agentId && this.orgTools ? await this.orgTools.contextFor(session) : null;
-      const system = orgContext ? `${ctx.system}\n\n${orgContext}` : ctx.system;
+      const extraContext = session.agentId
+        ? (await Promise.all(this.providers().map((p) => p.contextFor(session)))).filter((c): c is string => Boolean(c))
+        : [];
+      const system = [ctx.system, ...extraContext].join('\n\n');
       // Per-round overhead every provider call also carries: the resolved
       // system prompt plus the full tool-spec JSON (tens of KB once MCP
       // servers are enabled). Fed into the auto-compaction estimate below so
@@ -515,7 +551,8 @@ export class TurnLoopService implements OnModuleDestroy {
           // Org runs stop on a repeated identical call (the same-call loop
           // breaker, docs/autonomous-company.md §4.2) instead of spending
           // more rounds on it.
-          const stopMsg = this.orgTools?.onToolCall(session.id, call);
+          let stopMsg: string | null = null;
+          for (const p of this.providers()) { stopMsg = p.onToolCall?.(session.id, call) ?? null; if (stopMsg) break; }
           if (stopMsg) {
             await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: stopMsg, toolName: call.name });
             toolRecords.push({ tool: call.name, input: call.input, result: stopMsg, approved: 'deny', isError: true });
@@ -806,9 +843,10 @@ export class TurnLoopService implements OnModuleDestroy {
     if (this.runner?.owns(name)) return this.runner.execute(name, input);
     if (this.browser?.owns(name)) return this.browser.execute({ sessionId: session.id, fileRoot: await this.fileRootFor(session) }, name, input);
     if (this.computer?.owns(name)) return this.computer.execute({ id: session.id, workspaceId: session.workspaceId }, name, input);
-    if (this.orgTools?.owns(name)) {
-      if (!session.agentId) throw new Error(`${name} is only available to agents that belong to an organization`);
-      return this.orgTools.execute(session, name, input);
+    const provider = this.providerOf(name);
+    if (provider) {
+      if (!session.agentId) throw new Error(`${name} is only available to durable agents`);
+      return provider.execute(session, name, input);
     }
     if (name.startsWith(CUSTOM_TOOL_PREFIX)) {
       if (!session.agentId) throw new Error(`unknown tool: ${name}`);
@@ -924,7 +962,14 @@ export class TurnLoopService implements OnModuleDestroy {
   private async fileRootFor(session: ChatSession): Promise<FileRoot> {
     if (!session.agentId) return { kind: 'workspace', id: session.workspaceId };
     const agent = await this.agents.get(session.agentId).catch(() => null);
-    const folder = (agent?.workspaceFolder ?? '').trim().replace(/^\/+|\/+$/g, '');
+    // A provider may mount its own folder as shared/ (a channel session sees
+    // the channel folder, docs/group-chat.md §3).
+    let folder = '';
+    for (const p of this.providers()) {
+      const f = p.sharedFolderFor ? await p.sharedFolderFor(session).catch(() => null) : null;
+      if (f) { folder = f; break; }
+    }
+    if (!folder) folder = (agent?.workspaceFolder ?? '').trim().replace(/^\/+|\/+$/g, '');
     return {
       kind: 'agent', id: session.agentId,
       ...(agent && folder ? { shared: { workspaceId: session.workspaceId, folder } } : {}),
@@ -959,7 +1004,7 @@ export class TurnLoopService implements OnModuleDestroy {
               : this.runner?.owns(call.name) ? this.runner.isReadOnly(call.name)
                 : this.browser?.owns(call.name) ? this.browser.isReadOnly(call.name)
                 : this.computer?.owns(call.name) ? this.computer.isReadOnly(call.name)
-                  : this.orgTools?.owns(call.name) ? (session.agentId ? this.orgTools.isReadOnly(call.name) : undefined)
+                  : this.providerOf(call.name) ? (session.agentId ? this.providerOf(call.name)!.isReadOnly(call.name) : undefined)
                     : this.tools.isReadOnly(call.name);
     if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
     // Computer tools act on the user's own machine (docs/computer-control.md

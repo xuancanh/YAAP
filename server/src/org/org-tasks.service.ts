@@ -76,6 +76,8 @@ export class OrgTasksService {
     title: string; brief?: Partial<TaskBrief> | string; projectId?: string | null; parentTaskId?: string | null;
     status?: TaskStatus; assigneeAgentId?: string | null; reviewerAgentId?: string | null; fileScope?: string[];
     createdBy?: string;
+    /** Group chat linkage (docs/group-chat.md §3): the message this task was made from. */
+    channelId?: string | null; messageId?: string | null;
   }): Promise<OrgTask> {
     const org = await this.org.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 200);
@@ -97,7 +99,9 @@ export class OrgTasksService {
       assigneeAgentId: input.assigneeAgentId ?? null, claimedBy: null, claimedAt: null,
       reviewerAgentId: input.reviewerAgentId ?? null, reviewRounds: 0,
       blockers: '[]', fileScope: JSON.stringify((input.fileScope ?? []).map(String).slice(0, 20)),
-      noProgressCount: 0, lastRunAt: null, createdBy: input.createdBy ?? 'user', createdAt: now, updatedAt: now,
+      noProgressCount: 0, lastRunAt: null, createdBy: input.createdBy ?? 'user',
+      channelId: input.channelId ?? null, messageId: input.messageId ?? null,
+      createdAt: now, updatedAt: now,
     };
     await this.db.insert(orgTasks).values(row);
     await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId } });
@@ -133,7 +137,12 @@ export class OrgTasksService {
     if (Object.keys(logged).length > 0) await this.audit.append(orgId, { actor, action: 'task_update', refType: 'task', refId: taskId, payload: logged });
     // A task that just became blocked is a board event the autonomous chief reviews (docs/group-chat.md §5).
     if (patch.status === 'blocked' && t.status !== 'blocked') this.bus?.emitOrgBoard({ orgId, kind: 'blocked', refId: taskId, detail: `"${t.title}" is blocked${patch.blockers?.length ? `: ${patch.blockers.at(-1)}` : ''}` });
-    return this.get(orgId, taskId);
+    const updated = await this.get(orgId, taskId);
+    // Status back into the originating channel thread (docs/group-chat.md §3).
+    if (patch.status !== undefined && patch.status !== t.status && updated.channelId) {
+      this.bus?.emitTaskStatus({ source: 'org', taskId, title: updated.title, status: updated.status, previous: t.status, channelId: updated.channelId, messageId: updated.messageId, agentId: updated.assigneeAgentId });
+    }
+    return updated;
   }
 
   /** Assign (or re-assign) a task to an active member and wake them. A task

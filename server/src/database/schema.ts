@@ -120,6 +120,10 @@ export const agentTasks = pgTable('agent_tasks', {
   origin: text('origin').notNull().default('user'),
   /** Chat session the task was promoted from, when origin = promote. */
   sessionId: text('sessionId'),
+  /** Group chat (docs/group-chat.md §3): the channel message this task was
+   *  made from, so status changes post back into its thread. */
+  channelId: text('channelId'),
+  messageId: text('messageId'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });
@@ -671,6 +675,10 @@ export const orgTasks = pgTable('org_tasks', {
   lastRunAt: text('lastRunAt'),
   /** user | chief | agent:<id> | trigger | approval. */
   createdBy: text('createdBy').notNull().default('user'),
+  /** Group chat (docs/group-chat.md §3): the channel message this task was
+   *  made from, so status changes post back into its thread. */
+  channelId: text('channelId'),
+  messageId: text('messageId'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });
@@ -919,3 +927,79 @@ export const accountUsage = pgTable('account_usage', {
   turns: integer('turns').notNull().default(0),
   updatedAt: text('updatedAt').notNull(),
 }, (t) => [primaryKey({ columns: [t.accountId, t.month] })]);
+
+// ---- group chat (docs/group-chat.md §1, execution-plan item 15) ----
+
+/** A Slack-style channel inside a workspace. `#general` exists in every
+ *  workspace; `#company` is created when organization mode is enabled. */
+export const channels = pgTable('channels', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  /** URL-safe, unique per workspace (lowercase, [a-z0-9-]). */
+  slug: text('slug').notNull(),
+  name: text('name').notNull(),
+  topic: text('topic').notNull().default(''),
+  /** public | private. */
+  kind: text('kind').notNull().default('public'),
+  /** human:<memberAccountId> | agent:<agentId> | system. */
+  createdBy: text('createdBy').notNull().default('system'),
+  /** Folder in the workspace store; default channels/<slug>. */
+  folder: text('folder').notNull().default(''),
+  /** Daily token budget for agent replies in this channel; 0 = the
+   *  workspace default setting (channelDailyTokenBudget). */
+  dailyTokenBudget: integer('dailyTokenBudget').notNull().default(0),
+  archivedAt: text('archivedAt'),
+  createdAt: text('createdAt').notNull(),
+});
+
+export const channelMembers = pgTable('channel_members', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  channelId: text('channelId').notNull(),
+  /** agent | human. */
+  memberKind: text('memberKind').notNull(),
+  /** The agent id, or the human's actor id (the owner's account id, or a
+   *  member's account id). */
+  memberId: text('memberId').notNull(),
+  /** owner | member. */
+  role: text('role').notNull().default('member'),
+  /** all | mentions | none — how a human is notified. */
+  notify: text('notify').notNull().default('mentions'),
+  /** 1 = this agent may reply without being mentioned (§2 step 2). */
+  unprompted: integer('unprompted').notNull().default(0),
+  joinedAt: text('joinedAt').notNull(),
+});
+
+export const channelMessages = pgTable('channel_messages', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  channelId: text('channelId').notNull(),
+  /** null = top level; else the id of the thread's root message. */
+  threadRootId: text('threadRootId'),
+  /** agent | human | system. */
+  authorKind: text('authorKind').notNull(),
+  authorId: text('authorId').notNull().default(''),
+  text: text('text').notNull().default(''),
+  /** JSON array of { path, kind } under the channel folder. */
+  attachments: text('attachments').notNull().default('[]'),
+  /** JSON array of { kind: 'agent' | 'human', id }. */
+  mentions: text('mentions').notNull().default('[]'),
+  /** The task this message became or reports on. */
+  taskId: text('taskId'),
+  /** The chat turn (run) that produced an agent reply. */
+  runId: text('runId'),
+  /** 1 = an unprompted agent reply (§2: never itself a wake trigger). */
+  unprompted: integer('unprompted').notNull().default(0),
+  editedAt: text('editedAt'),
+  createdAt: text('createdAt').notNull(),
+});
+
+export const channelReads = pgTable('channel_reads', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  channelId: text('channelId').notNull(),
+  memberAccountId: text('memberAccountId').notNull(),
+  lastReadMessageId: text('lastReadMessageId').notNull().default(''),
+  lastReadAt: text('lastReadAt').notNull(),
+});
