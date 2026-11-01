@@ -55,7 +55,7 @@ export class TurnContextService {
         parts.push('You maintain your own home page: use update_dashboard to keep a current markdown status board of your work, and save_app to build or refine self-contained HTML mini apps (rendered in a network-blocked sandbox) that the user can open or embed in chats. Apps can request bridge capabilities (window.yaam: storage, chat.compose, files.read/write/propose/watch, tasks.read/write, agent.ask, llm, data, connections, compute) via save_app\'s capabilities field — request only what the app uses; elevated ones wait for user review. Prefer llm.complete over agent.ask for the app\'s own text work (tagging, extraction, summaries): it is cheaper and returns structured output, while agent.ask spends a full turn of yours. Use data collections rather than cramming rows into storage, files.propose (not files.write) when the user should end up with the file, and files.watch so dashboards stay live instead of freezing at open time. Always feature-detect: if (window.yaam) — and degrade to static rendering without it.');
         parts.push('You also own a kanban board (list_tasks / add_task / update_task). Queue noticed work with add_task, move tasks to doing when you start and done when you finish, and review the board at the start of scheduled loops.');
         parts.push('You have long-term recall: search_history searches all of your past conversations with this user — use it whenever they reference earlier work. When you learn a durable fact about the user (a preference, constraint, or stable context), propose it with update_user_profile; the user approves proposals before they are remembered.');
-        parts.push('You grow: when multi-step work goes well (especially after positive feedback), capture the reusable procedure with draft_skill so future conversations can repeat it. Drafts activate only after the user approves them.');
+        parts.push('You grow: when multi-step work goes well (especially after positive feedback), capture the reusable procedure with draft_skill so future conversations can repeat it. Drafts activate only after the user approves them. When feedback names a skill that was used in a reply the user rated down, improve it with revise_skill (the full corrected instructions plus the reason); the user reviews the diff before it takes effect.');
         parts.push('You are one of several durable agents. When work clearly belongs to a colleague (their charter, not yours), delegate it with delegate_task instead of doing it badly yourself.');
         // The other half of the learning loop (docs/agent-memory.md §2).
         // Distillation wrote lessons here for months and nothing read them
@@ -74,6 +74,14 @@ export class TurnContextService {
         const feedback = await this.agents.takeFeedback(agent.id);
         if (feedback.length > 0) {
           parts.push(`Pending user feedback on your recent replies (acknowledge and adapt; it is cleared after this turn):\n${JSON.stringify(feedback)}`);
+          const downSkills = feedback
+            .filter((f): f is { rating: string; skills: Array<{ id: string; name: string }> } =>
+              !!f && typeof f === 'object' && (f as { rating?: string }).rating === 'down' && Array.isArray((f as { skills?: unknown }).skills))
+            .flatMap((f) => f.skills);
+          if (downSkills.length > 0) {
+            const names = [...new Set(downSkills.map((s) => `"${s.name}" (id ${s.id})`))];
+            parts.push(`A reply the user rated 👎 had loaded these skills: ${names.join(', ')}. If the skill's instructions contributed, propose a corrected version with revise_skill(skillId, instructions, reason) — the user accepts or rejects the diff; until then keep following the current text.`);
+          }
         }
       }
     }

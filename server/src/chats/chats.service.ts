@@ -3,16 +3,19 @@
  * are not the turn loop: rename/pin/tags/archive, drafts, permission mode,
  * /clear, and markdown export (FR-6.7).
  */
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { ChatsRepository, ChatSession } from './chats.repository';
 import { nowIso } from '../common/ids.util';
 import { AgentsService } from '../agents/agents.service';
+import { SkillsService } from '../skills/skills.service';
 
 @Injectable()
 export class ChatsService {
   constructor(
     private readonly repo: ChatsRepository,
     private readonly agents: AgentsService,
+    /** Optional so test constructors without skills keep working. */
+    @Optional() private readonly skills?: SkillsService,
   ) {}
 
   list(workspaceId: string, archived = false) {
@@ -129,12 +132,30 @@ export class ChatsService {
 
   async rateTurn(sessionId: string, turnId: string, rating: 'up' | 'down', note?: string) {
     const session = await this.get(sessionId);
+    const turn = await this.repo.getTurn(turnId);
+    if (!turn || turn.sessionId !== sessionId) throw new NotFoundException(`turn ${turnId}`);
     await this.repo.updateTurn(turnId, { rating, ratingNote: note ?? null });
+    // The rating also lands on every skill the turn loaded (execution-plan
+    // item 10): outcome row + aggregate counters, and the agent learns which
+    // skill was involved so it can propose a revision (revise_skill).
+    let skillsUsed: Array<{ id: string; name: string }> = [];
+    const ids = parseIds(turn.skillsUsed);
+    if (ids.length > 0 && this.skills) {
+      const rows = await this.skills.recordOutcome(ids, turnId, rating, note).catch(() => []);
+      skillsUsed = rows.map((s) => ({ id: s.id, name: s.name }));
+    }
     // For durable agents the rating is recorded and surfaced on the next
     // reply (FR-6.5).
     if (session.agentId) {
-      await this.agents.addFeedback(session.agentId, { rating, note, turnId }).catch(() => {});
+      await this.agents.addFeedback(session.agentId, { rating, note, turnId, ...(skillsUsed.length ? { skills: skillsUsed } : {}) }).catch(() => {});
     }
-    return { ok: true };
+    return { ok: true, skills: skillsUsed };
   }
+}
+
+function parseIds(raw: string | null | undefined): string[] {
+  try {
+    const v = JSON.parse(raw || '[]') as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch { return []; }
 }
