@@ -8,11 +8,13 @@ import {
   api, sendTurn, authHeaders,
   type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision, type ToolReview,
-  type BrowserStep,
+  type BrowserStep, type Org,
 } from './lib/api';
 import type { PriceTable } from './lib/pricing';
 
-export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 'settings';
+export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 'company' | 'settings';
+/** Sub-views of the Company section (docs/autonomous-company.md §4.4). */
+export type CompanyView = 'chart' | 'board' | 'goals' | 'approvals' | 'spend' | 'activity' | 'chat' | 'brief';
 /** What the main pane shows while in the Home section: a conversation, an
  *  agent's home page (or the directory when no agent is selected), or a file
  *  preview — all reachable from the one combined rail, YAAM-style. */
@@ -139,6 +141,12 @@ interface Store {
   // hire modal
   hireId: string | null; setHireId: (id: string | null) => void;
   confirmHire: () => Promise<void>;
+
+  // company section (execution plan item 14)
+  companiesEnabled: boolean;
+  orgs: Org[]; refreshOrgs: () => Promise<void>;
+  orgId: string | null; pickOrg: (id: string | null) => void;
+  companyView: CompanyView; setCompanyView: (v: CompanyView) => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -167,7 +175,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [section, setSection] = useState<Section>(() => {
     const p = new URLSearchParams(window.location.search);
     const q = p.get('section');
-    if (q === 'market' || q === 'settings' || q === 'overview' || q === 'workspace' || q === 'apps') return q;
+    if (q === 'market' || q === 'settings' || q === 'overview' || q === 'workspace' || q === 'apps' || q === 'company') return q;
     // legacy: ?section=agents without a specific agent is the fleet overview
     if (q === 'agents' && !p.get('agent')) return 'overview';
     if (q === 'files') return 'workspace';
@@ -217,6 +225,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [computer, setComputer] = useState<ComputerFeed | null>(null);
   const [computerOpen, setComputerOpen] = useState(false);
   const [hireId, setHireId] = useState<string | null>(null);
+  const [companiesEnabled, setCompaniesEnabled] = useState(false);
+  const [orgs, setOrgs] = useState<Org[]>([]);
+  const [orgId, setOrgId] = useState<string | null>(() => localStorage.getItem('yaam-org'));
+  const [companyView, setCompanyView] = useState<CompanyView>('board');
 
   const currentIdRef = useRef<string | null>(null);
   currentIdRef.current = currentId;
@@ -297,6 +309,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshSkills = useCallback(async () => setSkills(await api.skills(workspaceId || undefined)), [workspaceId]);
   const refreshMcp = useCallback(async () => setMcp(await api.mcp()), []);
   const refreshMarket = useCallback(async () => setMarket(await api.market()), []);
+  const refreshOrgs = useCallback(async () => {
+    const list = await api.orgs().catch((): Org[] => []);
+    setOrgs(list);
+    setOrgId((cur) => (cur && list.some((o) => o.id === cur) ? cur : list[0]?.id ?? null));
+  }, []);
+  const pickOrg = useCallback((id: string | null) => {
+    setOrgId(id);
+    try { if (id) localStorage.setItem('yaam-org', id); else localStorage.removeItem('yaam-org'); } catch { /* private mode */ }
+  }, []);
+  useEffect(() => {
+    api.orgsStatus().then((s) => { setCompaniesEnabled(s.enabled); if (s.enabled) void refreshOrgs(); }).catch(() => setCompaniesEnabled(false));
+  }, [refreshOrgs]);
 
   useEffect(() => { void refreshWorkspaces().catch(() => showToast('API offline')); }, [refreshWorkspaces, showToast]);
   useEffect(() => { void refreshAgents().catch(() => {}); void refreshAgentTypes().catch(() => {}); void refreshMcp().catch(() => {}); void refreshMarket().catch(() => {}); api.settings().then(setSettings).catch(() => {}); }, [refreshAgents, refreshAgentTypes, refreshMcp, refreshMarket]);
@@ -737,6 +761,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
+    companiesEnabled, orgs, refreshOrgs, orgId, pickOrg, companyView, setCompanyView,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
     mobileChatOpen, mobileDetail, toast, showToast,
@@ -754,6 +779,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
+    companiesEnabled, orgs, refreshOrgs, orgId, pickOrg, companyView,
   ]);
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;

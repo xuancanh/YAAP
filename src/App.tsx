@@ -3,7 +3,7 @@
 import { Component, Suspense, lazy, useState, type ReactNode } from 'react';
 import { AppProvider, useApp } from './store';
 import { ActivityBar, BottomNav, Toast } from './components/Shell';
-import { WorkspacePill, HomeRail, WorkspaceRail, MarketRail, SettingsRail, SecondaryHeader } from './components/Rails';
+import { WorkspacePill, HomeRail, WorkspaceRail, MarketRail, SettingsRail, SecondaryHeader, CompanyRail } from './components/Rails';
 import { ChatView } from './components/ChatView';
 import { FilesView } from './components/FilesView';
 import { AppsGallery } from './components/AppsView';
@@ -15,6 +15,7 @@ const AgentHome = lazy(() => import('./components/AgentsView').then((m) => ({ de
 const NewAgentDialog = lazy(() => import('./components/AgentsView').then((m) => ({ default: m.NewAgentDialog })));
 const MarketView = lazy(() => import('./components/MarketView').then((m) => ({ default: m.MarketView })));
 const HireModal = lazy(() => import('./components/MarketView').then((m) => ({ default: m.HireModal })));
+const CompanyView = lazy(() => import('./components/CompanyView').then((m) => ({ default: m.CompanyView })));
 const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
 
 const viewFallback = (
@@ -29,11 +30,11 @@ function Layout() {
   const sec = app.section;
   const detailActive =
     ((sec === 'home' || sec === 'workspace') && app.mobileChatOpen) ||
-    (sec === 'settings' && app.mobileDetail);
+    ((sec === 'settings' || sec === 'company') && app.mobileDetail);
   const showSecondary = app.stacked ? !detailActive : true;
   const showMain = app.stacked ? !showSecondary : true;
 
-  const secTitle = sec === 'home' ? 'Agents & chats' : sec === 'workspace' ? 'Shared files' : sec === 'market' ? 'Categories' : 'Settings';
+  const secTitle = sec === 'home' ? 'Agents & chats' : sec === 'workspace' ? 'Shared files' : sec === 'market' ? 'Categories' : sec === 'company' ? 'Company' : 'Settings';
   const hasSecondary = sec !== 'overview' && sec !== 'apps'; // fleet overview + apps gallery are full-width
 
   return (
@@ -48,6 +49,7 @@ function Layout() {
           {sec === 'workspace' && <WorkspaceRail />}
           {sec === 'market' && <MarketRail cat={marketCat} setCat={setMarketCat} />}
           {sec === 'settings' && <SettingsRail pane={settingsPane} setPane={setSettingsPane} />}
+          {sec === 'company' && <CompanyRail />}
         </aside>
       )}
 
@@ -61,6 +63,7 @@ function Layout() {
           {sec === 'workspace' && <FilesView />}
           {sec === 'market' && <Suspense fallback={viewFallback}><MarketView cat={marketCat} setCat={setMarketCat} /></Suspense>}
           {sec === 'settings' && <Suspense fallback={viewFallback}><SettingsView pane={settingsPane} /></Suspense>}
+          {sec === 'company' && <Suspense fallback={viewFallback}><CompanyView /></Suspense>}
         </main>
       )}
 

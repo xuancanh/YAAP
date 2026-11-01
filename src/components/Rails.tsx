@@ -2,7 +2,7 @@
  *  chats + their folder, YAAM-style), market categories, and settings nav. */
 import { useEffect, useMemo, useState } from 'react';
 import { I, P } from '../lib/icons';
-import { useApp, grad } from '../store';
+import { useApp, grad, type CompanyView } from '../store';
 import { api, type ChatSession } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 
@@ -338,4 +338,41 @@ export function SettingsRail({ pane, setPane }: { pane: string; setPane: (p: str
 
 export function SecondaryHeader({ title }: { title: string }) {
   return <div style={sectionLabel}>{title}</div>;
+}
+
+export const COMPANY_VIEWS: Array<{ id: CompanyView; label: string; icon: string[] }> = [
+  { id: 'board', label: 'Board', icon: P.board },
+  { id: 'chart', label: 'Org chart', icon: P.bot },
+  { id: 'goals', label: 'Goals', icon: P.star },
+  { id: 'approvals', label: 'Approvals', icon: P.shield },
+  { id: 'spend', label: 'Spend', icon: P.bolt },
+  { id: 'activity', label: 'Activity', icon: P.clock },
+  { id: 'chat', label: 'Group chat', icon: P.chat },
+  { id: 'brief', label: 'Brief', icon: P.sysLines },
+];
+
+/** The Company rail (docs/autonomous-company.md §4.4): org picker plus the
+ *  CEO's views. Creating an org happens in the main pane (CompanyView). */
+export function CompanyRail() {
+  const app = useApp();
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '2px 8px 12px' }}>
+      <div style={{ padding: '0 2px 8px' }}>
+        <select value={app.orgId ?? ''} onChange={(e) => app.pickOrg(e.target.value || null)}
+          style={{ width: '100%', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 10px', color: 'var(--text)', fontSize: 13 }}>
+          {app.orgs.map((o) => <option key={o.id} value={o.id}>{o.name}{o.status === 'paused' ? ' · paused' : ''}</option>)}
+          <option value="">{app.orgs.length === 0 ? 'No organisation yet — create one' : '+ New organisation'}</option>
+        </select>
+      </div>
+      {app.orgId && COMPANY_VIEWS.map((n) => (
+        <div key={n.id} onClick={() => { app.setCompanyView(n.id); app.setMobileDetail(true); }} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '9px 10px', borderRadius: 9, cursor: 'pointer', fontSize: 13, margin: '1px 0', color: 'var(--text)', background: n.id === app.companyView ? 'var(--accent-dim)' : 'none' }}>
+          <I d={n.icon} size={16} sw={1.9} style={{ flex: 'none' }} />
+          <span style={{ flex: 1 }}>{n.label}</span>
+        </div>
+      ))}
+      <div style={{ margin: '14px 8px 0', padding: 12, border: '1px solid var(--border-soft)', borderRadius: 11, background: 'var(--panel-2)', fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+        A task board with one owner per task, event wakes instead of heartbeats, and a chief of staff that proposes while you decide.
+      </div>
+    </div>
+  );
 }

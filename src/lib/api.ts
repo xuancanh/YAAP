@@ -175,7 +175,7 @@ export interface AgentStats {
 export interface AgentEvent {
   id: string;
   agentId: string;
-  kind: 'loop_run' | 'loop_error' | 'budget_stop' | 'info' | 'action_pending' | 'action_done' | 'action_failed' | 'action_dismissed';
+  kind: 'loop_run' | 'loop_error' | 'budget_stop' | 'budget_warn' | 'brief' | 'org_run' | 'info' | 'action_pending' | 'action_done' | 'action_failed' | 'action_dismissed';
   title: string;
   body: string;
   payload: string;
@@ -548,6 +548,55 @@ export interface SearchResults {
   files: Array<{ path: string; size: number }>;
 }
 
+// ---- autonomous company (docs/autonomous-company.md, /api/orgs) ----
+export type OrgTaskStatus = 'backlog' | 'todo' | 'claimed' | 'in_progress' | 'in_review' | 'blocked' | 'done' | 'cancelled';
+export const ORG_TASK_STATUSES: OrgTaskStatus[] = ['backlog', 'todo', 'claimed', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'];
+
+export interface Org {
+  id: string; workspaceId: string; name: string; mission: string; ceoUserNote: string;
+  chiefOfStaffAgentId: string | null; status: 'active' | 'paused';
+  monthlyBudgetUsd: number; maxDepth: number; maxDirectReports: number; briefHour: number;
+  lastBriefAt: string | null; lastBrief: string; createdAt: string;
+}
+export interface OrgMember {
+  id: string; orgId: string; agentId: string; title: string; reportsToAgentId: string | null; depth: number;
+  sponsor: string; scopes: string; status: 'active' | 'paused' | 'terminated'; charterHash: string; joinedAt: string;
+}
+export interface OrgGoal { id: string; orgId: string; title: string; description: string; status: string; ownerAgentId: string | null; createdAt: string }
+export interface OrgProject { id: string; orgId: string; goalId: string | null; title: string; status: string; ownerAgentId: string | null; createdAt: string }
+export interface OrgBudget { id: string; orgId: string; scope: 'company' | 'agent' | 'project'; refId: string; monthlyUsd: number; reservedUsd: number; spentUsd: number; month: string }
+export interface OrgGrant { id: string; orgId: string; agentId: string; kind: string; value: string; grantedBy: string; createdAt: string }
+export interface OrgDetail extends Org {
+  members: OrgMember[]; goals: OrgGoal[]; projects: OrgProject[]; budgets: OrgBudget[]; grants: OrgGrant[];
+  charterDrift: Array<{ agentId: string; name: string; recorded: string; live: string }>;
+}
+export interface OrgTaskBrief { outcome: string; context: string; constraints: string; done_when: string }
+export interface OrgTask {
+  id: string; orgId: string; projectId: string | null; parentTaskId: string | null; title: string; brief: string;
+  status: OrgTaskStatus; assigneeAgentId: string | null; claimedBy: string | null; claimedAt: string | null;
+  reviewerAgentId: string | null; reviewRounds: number; blockers: string; fileScope: string; noProgressCount: number;
+  lastRunAt: string | null; createdBy: string; createdAt: string; updatedAt: string;
+}
+export interface OrgRun {
+  id: string; orgId: string; taskId: string; agentId: string; sessionId: string | null; wakeReason: string;
+  status: string; outcome: string; tokensIn: number; tokensOut: number; usd: number; startedAt: string; endedAt: string | null;
+}
+export interface OrgMessage { id: string; orgId: string; taskId: string | null; fromAgentId: string | null; runId: string | null; text: string; createdAt: string }
+export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation';
+export interface OrgApproval {
+  id: string; orgId: string; kind: OrgApprovalKind; payload: string; requestedBy: string; recommendation: string;
+  status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired'; decidedAt: string | null; decisionNote: string; expiresAt: string | null; createdAt: string;
+}
+export interface OrgAuditRow { id: string; orgId: string; seq: number; actor: string; action: string; refType: string; refId: string; payload: string; prevHash: string; hash: string; createdAt: string }
+export interface OrgBrief { orgId: string; at: string; text: string; items: Array<{ n: number; approvalId: string; kind: string; summary: string }> }
+export interface OrgSpendNode { usd: number; tokensIn: number; tokensOut: number; runs: number; monthlyUsd: number; reservedUsd: number }
+export interface OrgSpend {
+  month: string; company: OrgSpendNode;
+  projects: Array<OrgSpendNode & { id: string; title: string }>;
+  members: Array<OrgSpendNode & { agentId: string; name: string; title: string }>;
+  acceptedTasks: number; costPerAcceptedTask: number | null; series: UsageDay[];
+}
+
 export const PROVIDER_COLORS: Record<string, string> = {
   anthropic: '#d97757', 'anthropic-compatible': '#d97757',
   openai: '#10a37f', deepseek: '#5c6cf2', kimi: '#8b5cf6',
@@ -839,6 +888,49 @@ export const api = {
   },
   search: (workspaceId: string, q: string) =>
     get<SearchResults>(`/api/search?workspaceId=${enc(workspaceId)}&q=${enc(q)}`),
+
+  // ---- autonomous company ----
+  orgsStatus: () => get<{ enabled: boolean }>('/api/orgs/status'),
+  orgs: (workspaceId?: string) => get<Org[]>(`/api/orgs${workspaceId ? `?workspaceId=${enc(workspaceId)}` : ''}`),
+  org: (id: string) => get<OrgDetail>(`/api/orgs/${id}`),
+  createOrg: (body: { workspaceId: string; name: string; mission?: string; chiefOfStaffAgentId?: string; chief?: { name: string; charter?: string; packId?: string; provider?: string; model?: string }; monthlyBudgetUsd?: number }) =>
+    send<Org>('/api/orgs', 'POST', body),
+  updateOrg: (id: string, patch: Partial<Pick<Org, 'name' | 'mission' | 'ceoUserNote' | 'briefHour' | 'monthlyBudgetUsd'>>) => send<Org>(`/api/orgs/${id}`, 'PATCH', patch),
+  deleteOrg: (id: string) => send<{ ok: true }>(`/api/orgs/${id}`, 'DELETE'),
+  pauseOrg: (id: string) => send<Org>(`/api/orgs/${id}/pause`, 'POST'),
+  resumeOrg: (id: string) => send<Org>(`/api/orgs/${id}/resume`, 'POST'),
+  addOrgMember: (id: string, body: { agentId: string; title?: string; reportsToAgentId?: string; scopes?: string[] }) => send<OrgMember>(`/api/orgs/${id}/members`, 'POST', body),
+  updateOrgMember: (id: string, agentId: string, patch: { title?: string; reportsToAgentId?: string | null }) => send<OrgMember>(`/api/orgs/${id}/members/${agentId}`, 'PATCH', patch),
+  terminateOrgMember: (id: string, agentId: string) => send<{ ok: true }>(`/api/orgs/${id}/members/${agentId}`, 'DELETE'),
+  setOrgMemberScopes: (id: string, agentId: string, scopes: string[]) => send<{ applied: boolean; scopes: string[] }>(`/api/orgs/${id}/members/${agentId}/scopes`, 'POST', { scopes }),
+  pauseOrgMember: (id: string, agentId: string) => send<OrgMember>(`/api/orgs/${id}/members/${agentId}/pause`, 'POST'),
+  resumeOrgMember: (id: string, agentId: string) => send<OrgMember>(`/api/orgs/${id}/members/${agentId}/resume`, 'POST'),
+  acceptOrgCharter: (id: string, agentId: string) => send<OrgMember>(`/api/orgs/${id}/members/${agentId}/charter/accept`, 'POST'),
+  addOrgGoal: (id: string, body: { title: string; description?: string }) => send<OrgGoal>(`/api/orgs/${id}/goals`, 'POST', body),
+  updateOrgGoal: (id: string, goalId: string, patch: { title?: string; description?: string; status?: string }) => send<OrgGoal>(`/api/orgs/${id}/goals/${goalId}`, 'PATCH', patch),
+  addOrgProject: (id: string, body: { title: string; goalId?: string | null }) => send<OrgProject>(`/api/orgs/${id}/projects`, 'POST', body),
+  orgTasks: (id: string) => get<OrgTask[]>(`/api/orgs/${id}/tasks`),
+  addOrgTask: (id: string, body: { title: string; brief?: Partial<OrgTaskBrief>; projectId?: string | null; assigneeAgentId?: string | null }) => send<OrgTask>(`/api/orgs/${id}/tasks`, 'POST', body),
+  updateOrgTask: (id: string, taskId: string, patch: { title?: string; brief?: Partial<OrgTaskBrief>; status?: OrgTaskStatus; blockers?: string[] }) => send<OrgTask>(`/api/orgs/${id}/tasks/${taskId}`, 'PATCH', patch),
+  assignOrgTask: (id: string, taskId: string, agentId: string) => send<OrgTask>(`/api/orgs/${id}/tasks/${taskId}/assign`, 'POST', { agentId }),
+  commentOrgTask: (id: string, taskId: string, text: string) => send<OrgMessage>(`/api/orgs/${id}/tasks/${taskId}/comment`, 'POST', { text }),
+  orgTaskComments: (id: string, taskId: string) => get<OrgMessage[]>(`/api/orgs/${id}/tasks/${taskId}/comments`),
+  reviewOrgTask: (id: string, taskId: string, verdict: 'accept' | 'request_changes' | 'escalate', note?: string) => send<OrgTask>(`/api/orgs/${id}/tasks/${taskId}/review`, 'POST', { verdict, note }),
+  wakeOrgTask: (id: string, taskId: string, now = false) => send<{ queued?: boolean; result?: string }>(`/api/orgs/${id}/tasks/${taskId}/wake`, 'POST', { now }),
+  orgTaskRuns: (id: string, taskId: string) => get<OrgRun[]>(`/api/orgs/${id}/tasks/${taskId}/runs`),
+  orgRuns: (id: string, limit = 100) => get<OrgRun[]>(`/api/orgs/${id}/runs?limit=${limit}`),
+  orgApprovals: (id: string, status?: string) => get<OrgApproval[]>(`/api/orgs/${id}/approvals${status ? `?status=${enc(status)}` : ''}`),
+  decideOrgApproval: (id: string, approvalId: string, decision: 'approve' | 'reject' | 'revise', note?: string) =>
+    send<{ approval: OrgApproval; result?: Record<string, unknown> }>(`/api/orgs/${id}/approvals/${approvalId}/decide`, 'POST', { decision, note }),
+  orgAudit: (id: string, limit = 100) => get<OrgAuditRow[]>(`/api/orgs/${id}/audit?limit=${limit}`),
+  verifyOrgAudit: (id: string) => get<{ ok: boolean; length: number; brokenAt: number | null; reason?: string }>(`/api/orgs/${id}/audit/verify`),
+  orgBrief: (id: string) => get<OrgBrief | null>(`/api/orgs/${id}/brief`),
+  composeOrgBrief: (id: string) => send<OrgBrief>(`/api/orgs/${id}/brief`, 'POST'),
+  replyOrgBrief: (id: string, text: string) => send<{ decisions: Array<{ n: number; decision: string; status: string }>; unresolved: string[] }>(`/api/orgs/${id}/brief/reply`, 'POST', { text }),
+  orgSpend: (id: string) => get<OrgSpend>(`/api/orgs/${id}/spend`),
+  setOrgBudget: (id: string, body: { scope: 'company' | 'agent' | 'project'; refId?: string; monthlyUsd: number }) => send<OrgBudget>(`/api/orgs/${id}/budgets`, 'PUT', body),
+  orgMessages: (id: string) => get<OrgMessage[]>(`/api/orgs/${id}/messages`),
+  postOrgMessage: (id: string, text: string) => send<OrgMessage>(`/api/orgs/${id}/messages`, 'POST', { text }),
 };
 
 export interface AppLlmResult {
