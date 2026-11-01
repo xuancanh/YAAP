@@ -6,7 +6,8 @@
  *  GET    /api/workspaces/:id/org            { mode, chiefOfStaffAgentId, orgMonthlyUsd, orgAgentCap, orgId, orgStatus, pendingApprovals, org? }
  *  PUT    /api/workspaces/:id/org            { mode, chiefOfStaffAgentId?, monthlyUsd?, agentCap? } — enable / change / turn off
  *  POST   /api/workspaces/:id/org/pause | /resume   the kill switch
- *  GET    /api/workspaces/:id/org/caps       the autonomy caps in plain words (for the Settings card)
+ *  GET    /api/workspaces/:id/org/caps       the autonomy caps in plain words (for the Settings card and the wizard), plus the default veto window
+ *  POST   /api/workspaces/:id/org/bootstrap  company onboarding in one call (item 25): chief, mode, vision, profile, tunables, cadences, first hires, planning
  *  GET    /api/workspaces/:id/org/units      the unit tree (docs/group-chat.md §7) · PATCH units/:unitId · GET units/:unitId/board · GET units/:unitId/goals/tree · GET goals/tree
  *  assurance (docs/company-vision.md §5): GET signals · POST signals/:signalId/ack | /resolve · GET pulse · GET|PATCH slo · GET audits · POST audit/run
  *  intent (docs/company-vision.md §1b–§2): GET|PUT vision · GET|PUT profile · GET|PUT tunables · GET intent?unitId= · POST goals/:goalId/checkin · GET goals/:goalId/checkins · GET why?taskId=|goalId= · POST plan · GET strategy
@@ -23,7 +24,9 @@
  */
 import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Optional, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
+import { OrgBootstrapService, CADENCE_MODES, type BootstrapInput, type CadenceMode } from './org-bootstrap.service';
+import { TUNABLES } from './org-tunables';
 import { OrgMeetingsService, MEETING_KINDS, type MeetingKind, type Attendee } from './org-meetings.service';
 import { OrgMeetingRuntime } from './org-meeting-runtime.service';
 import { OrgMemoryService } from './org-memory.service';
@@ -61,6 +64,19 @@ export class CadenceDto {
 }
 
 export class AskDto { @IsString() question!: string }
+/** Company onboarding (item 25). Nested shapes are checked by the service. */
+export class BootstrapDto implements BootstrapInput {
+  @IsIn(['supervised', 'autonomous']) mode!: 'supervised' | 'autonomous';
+  @IsObject() chief!: BootstrapInput['chief'];
+  @IsNumber() @Min(0) monthlyUsd!: number;
+  @IsOptional() @IsInt() @Min(1) @Max(MAX_ORG_AGENT_CAP) agentCap?: number;
+  @IsOptional() @IsObject() vision?: BootstrapInput['vision'];
+  @IsOptional() @IsObject() profile?: BootstrapInput['profile'];
+  @IsOptional() @IsObject() tunables?: Record<string, number>;
+  @IsOptional() @IsIn(CADENCE_MODES as unknown as string[]) cadences?: CadenceMode;
+  @IsOptional() @IsArray() roles?: string[];
+  @IsOptional() @IsBoolean() planNow?: boolean;
+}
 
 @Controller('workspaces/:id/org')
 export class WorkspaceOrgController {
@@ -75,6 +91,7 @@ export class WorkspaceOrgController {
     @Optional() private readonly knowledge?: OrgKnowledgeService,
     @Optional() private readonly playbooks?: OrgPlaybooksService,
     @Optional() private readonly orgService?: OrgService,
+    @Optional() private readonly bootstrapper?: OrgBootstrapService,
   ) {}
 
   private knowledgeOr(): OrgKnowledgeService { if (!this.knowledge) throw new NotFoundException('company memory is not available'); return this.knowledge; }
@@ -91,7 +108,13 @@ export class WorkspaceOrgController {
     return { ...st, org: st.orgId ? await this.orgs.get(st.orgId) : null, units: st.orgId ? await this.orgs.units_(st.orgId).catch(() => []) : [] };
   }
   @Put() set(@Param('id') id: string, @Body() dto: OrgModeDto) { this.guard(); return this.mode.setMode(id, dto, this.orgs.actorName()); }
-  @Get('caps') caps() { this.guard(); return AUTONOMY_CAPS; }
+  @Get('caps') caps() { this.guard(); return { ...AUTONOMY_CAPS, vetoWindowMinutes: TUNABLES['capital.vetoWindowMinutes']?.default ?? 30 }; }
+  /** Company onboarding (item 25): the whole setup in order, refused with 400 when the workspace already has a company. */
+  @Post('bootstrap') bootstrap(@Param('id') id: string, @Body() dto: BootstrapDto) {
+    this.guard();
+    if (!this.bootstrapper) throw new NotFoundException('company onboarding is not available');
+    return this.bootstrapper.bootstrap(id, dto, this.orgs.actorName());
+  }
   @Post('pause') pause(@Param('id') id: string) { this.guard(); return this.mode.pause(id, this.orgs.actorName()); }
   @Post('resume') resume(@Param('id') id: string) { this.guard(); return this.mode.resume(id, this.orgs.actorName()); }
 

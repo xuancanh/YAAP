@@ -149,7 +149,10 @@ export class AgentsService {
     return rows[0];
   }
 
-  async create(input: { name: string; charter?: string; provider?: string; model?: string; homeDir?: string; emoji?: string; colors?: [string, string]; role?: string; loops?: unknown[] }) {
+  /** `workspaceId` is accepted ahead of the per-workspace agents migration
+   *  (each workspace owns its agents); until that column exists it is read
+   *  and ignored here, so callers already pass it. */
+  async create(input: { name: string; charter?: string; provider?: string; model?: string; homeDir?: string; emoji?: string; colors?: [string, string]; role?: string; loops?: unknown[]; workspaceId?: string }) {
     if (this.accounts) {
       const existing = await this.list();
       await this.accounts.assertCanCreateAgent(existing.length);
