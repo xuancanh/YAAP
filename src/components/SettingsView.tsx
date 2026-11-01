@@ -317,7 +317,9 @@ function PermissionsPane() {
 function ContextPane() {
   const app = useApp();
   const [ceiling, setCeiling] = useState(app.settings.defaultTokenCeiling || '200000');
-  const [compact, setCompact] = useState(parseInt(app.settings.compactionThresholdTokens || '120000', 10) / 1000);
+  const [autoOn, setAutoOn] = useState((app.settings.autoCompact ?? 'on') !== 'off');
+  const [pct, setPct] = useState(() => { const v = parseInt(app.settings.compactionThresholdPct || '', 10); return Number.isFinite(v) ? Math.min(95, Math.max(30, v)) : 70; });
+  useEffect(() => { setAutoOn((app.settings.autoCompact ?? 'on') !== 'off'); }, [app.settings.autoCompact]);
   const [channelBudget, setChannelBudget] = useState(app.settings.channelDailyTokenBudget ?? '200000');
   useEffect(() => { setCeiling(app.settings.defaultTokenCeiling || '200000'); }, [app.settings.defaultTokenCeiling]);
   useEffect(() => { setChannelBudget(app.settings.channelDailyTokenBudget ?? '200000'); }, [app.settings.channelDailyTokenBudget]);
@@ -334,14 +336,27 @@ function ContextPane() {
         </div>
       </div>
       <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 15 }}>
-        <div style={{ fontSize: 14, fontWeight: 600 }}>Compaction threshold</div>
-        <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>Provider-input size that triggers an automatic /compact.</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 11 }}>
-          <input type="range" min={40} max={180} value={compact}
-            onChange={(e) => setCompact(+e.target.value)}
-            onMouseUp={() => void app.saveSettings({ compactionThresholdTokens: String(compact * 1000) })}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Auto-compact</div>
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>Before and after each turn, when a chat&apos;s history passes the threshold, older turns are distilled into a summary. The visible transcript is unchanged; /compact does it by hand.</div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, flex: 'none', cursor: 'pointer' }}>
+            <input type="checkbox" checked={autoOn} onChange={(e) => { setAutoOn(e.target.checked); void app.saveSettings({ autoCompact: e.target.checked ? 'on' : 'off' }); }} style={{ accentColor: 'var(--accent)' }} />
+            {autoOn ? 'On' : 'Off'}
+          </label>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 11, opacity: autoOn ? 1 : 0.5 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-faint)', flex: 'none' }}>Threshold</span>
+          <input type="range" min={30} max={95} step={5} value={pct} disabled={!autoOn} aria-label="Auto-compact threshold, percent of the model's context window"
+            onChange={(e) => setPct(+e.target.value)}
+            onMouseUp={() => void app.saveSettings({ compactionThresholdPct: String(pct), compactionThresholdTokens: '0' })}
+            onKeyUp={() => void app.saveSettings({ compactionThresholdPct: String(pct), compactionThresholdTokens: '0' })}
             style={{ flex: 1, accentColor: 'var(--accent)' }} />
-          <span style={{ fontSize: 12.5, ...mono, color: 'var(--text)', width: 56, textAlign: 'right' }}>{compact}k</span>
+          <span style={{ fontSize: 12.5, ...mono, color: 'var(--text)', width: 150, textAlign: 'right' }}>{pct}% of the model&apos;s window</span>
+        </div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 6 }}>
+          For a 128k-token model that is about {Math.round(128 * pct / 100)}k tokens; for a 200k model about {Math.round(200 * pct / 100)}k.
         </div>
       </div>
       <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 15 }}>

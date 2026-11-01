@@ -90,6 +90,8 @@ export interface ToolProviderHook {
 
 export type TurnEvent =
   | { type: 'turn'; turnId: string }
+  /** The history was auto-compacted before this turn (FR-7.3). */
+  | { type: 'compacted' }
   | AiStreamEvent
   /** `routedTo` (docs/shared-agents.md §3): the approval belongs to another
    *  member — the one whose connection the tool would use — and this client
@@ -386,9 +388,6 @@ export class TurnLoopService implements OnModuleDestroy {
   async *run(sessionId: string, input: { text: string; attachments?: unknown[]; origin?: TurnOrigin }): AsyncGenerator<TurnEvent> {
     const session = await this.repo.getSession(sessionId);
     if (!session) throw new NotFoundException(`chat ${sessionId}`);
-    if (session.tokenCeiling > 0 && session.tokensIn + session.tokensOut >= session.tokenCeiling) {
-      throw new ForbiddenException('token ceiling reached');
-    }
     // The workspace's monthly spend stop (phase 2.5). Background turns are
     // refused outright before any model call; a person typing still gets
     // their answer and a visible notice — the stop exists to catch unattended
@@ -403,6 +402,22 @@ export class TurnLoopService implements OnModuleDestroy {
     // and before any row is written — a 402 with the reason, for every origin.
     if (this.accounts && typeof (this.context as { resolveKey?: unknown }).resolveKey === 'function') {
       await this.context.resolveKey(session);
+    }
+    // Pre-turn auto-compaction (FR-7.3): the post-turn check can miss — a
+    // chat that grew in another session, a lowered threshold, a smaller-window
+    // model chosen since — so the history is checked once more before the
+    // lock, and the turn starts compacted when it is over the threshold.
+    // The token ceiling counts tokens since the last compaction (FR-7.1). A
+    // chat at its ceiling compacts itself first when auto-compact is on, so
+    // the ceiling bounds one stretch of conversation, not the chat's life.
+    const sinceCompact = (s: { tokensIn: number; tokensOut: number; tokensAtCompact?: number }) => s.tokensIn + s.tokensOut - (s.tokensAtCompact ?? 0);
+    const atCeiling = session.tokenCeiling > 0 && sinceCompact(session) >= session.tokenCeiling;
+    const compacted = this.compaction && !this.locks.isBusy?.(sessionId)
+      ? await this.compaction.maybeAutoCompact(sessionId, undefined, { force: atCeiling }).catch(() => false)
+      : false;
+    if (atCeiling) {
+      const fresh = compacted ? await this.repo.getSession(sessionId) : session;
+      if (!fresh || sinceCompact(fresh) >= session.tokenCeiling) throw new ForbiddenException('token ceiling reached — run /compact or raise the ceiling');
     }
     if (!this.locks.tryAcquire(sessionId)) throw new ConflictException('chat is busy');
     this.turnOrigins.set(sessionId, input.origin ?? 'user');
@@ -426,6 +441,7 @@ export class TurnLoopService implements OnModuleDestroy {
       await this.repo.updateSession(sessionId, { autoTitle: input.text.replace(/\s+/g, ' ').slice(0, 64) });
     }
     yield { type: 'turn', turnId: turn.id };
+    if (compacted) yield { type: 'compacted' };
     if (spend.over) yield { type: 'budget', ...spend };
 
     let tokensIn = 0;
@@ -536,7 +552,7 @@ export class TurnLoopService implements OnModuleDestroy {
         if (calls.length === 0 || ctl.signal.aborted) break;
         // The ceiling is re-checked per round, not only at turn start:
         // cumulative usage across rounds can blow past it mid-turn.
-        if (session.tokenCeiling > 0 && session.tokensIn + tokensIn + session.tokensOut + tokensOut >= session.tokenCeiling) {
+        if (session.tokenCeiling > 0 && session.tokensIn + tokensIn + session.tokensOut + tokensOut - (compacted ? session.tokensIn + session.tokensOut : (session.tokensAtCompact ?? 0)) >= session.tokenCeiling) {
           yield { type: 'error', message: 'token ceiling reached' };
           break;
         }

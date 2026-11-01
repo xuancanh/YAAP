@@ -110,6 +110,7 @@ export class ChatsRepository {
       compactCutoff: null,
       tokensIn: 0,
       tokensOut: 0,
+      tokensAtCompact: 0,
       distilledAt: null,
       // A member's new session is private to them until they share it; the
       // owner's sessions record '' and are theirs (members do not see them
@@ -231,6 +232,7 @@ export class ChatsRepository {
         compactCutoff: src.compactCutoff,
         tokensIn: src.tokensIn,
         tokensOut: src.tokensOut,
+        tokensAtCompact: src.tokensAtCompact,
         distilledAt: null,
         initiatedBy: currentViewer()?.memberAccountId ?? '',
         shared: 0,

@@ -133,3 +133,30 @@ test('compaction respects the shared busy lock (FR-7.5)', async () => {
   locks.release(s.id);
   assert.equal((await compaction.compact(s.id)).ok, true);
 });
+
+test('compaction resets the token-ceiling baseline; a forced auto-compact runs below the threshold', async () => {
+  const { repo, chats, compaction } = await setup();
+  const s = await chats.create({ workspaceId: 'ws1', tokenCeiling: 1000 });
+  await seedConversation(repo, s.id, 3);
+  await repo.updateSession(s.id, { tokensIn: 900, tokensOut: 300 });
+  const before = (await repo.getSession(s.id))!;
+  assert.equal(before.tokensIn + before.tokensOut - before.tokensAtCompact >= before.tokenCeiling, true, 'at the ceiling before compaction');
+  // tiny history: far below any threshold, but forced because the chat is at its ceiling
+  assert.equal(await compaction.maybeAutoCompact(s.id, 0, { force: true }), true);
+  const after = (await repo.getSession(s.id))!;
+  assert.equal(after.tokensAtCompact, 1200);
+  assert.equal(after.tokensIn + after.tokensOut - after.tokensAtCompact, 0, 'a fresh budget after compaction');
+  assert.ok(after.compactSummary.length > 0);
+});
+
+test('auto-compact off in settings: the threshold check never compacts', async () => {
+  const repo = new ChatsRepository(await testDb());
+  const chats = new ChatsService(repo, agentsStub());
+  const provider = new ScriptedProvider([summaryRound]);
+  const settings = { all: async () => ({ autoCompact: 'off' }) } as unknown as import('../server/src/settings/settings.module').SettingsService;
+  const compaction = new CompactionService(repo, new ChatLocks(), ctxStub(provider), configStub({ compactionThresholdTokens: 1 }), settings);
+  const s = await chats.create({ workspaceId: 'ws1' });
+  await seedConversation(repo, s.id, 6);
+  assert.equal(await compaction.maybeAutoCompact(s.id, 0), false);
+  assert.equal((await repo.getSession(s.id))!.compactSummary, '');
+});

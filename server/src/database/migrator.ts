@@ -1345,6 +1345,18 @@ const MIGRATIONS: Migration[] = [
       await backfillAgentWorkspaces(db);
     },
   },
+  {
+    id: '0042-chat-compact-baseline',
+    up: async (db) => {
+      // The token ceiling counts tokens since the last compaction, so a
+      // compacted chat is no longer refused forever. Existing compacted chats
+      // keep their history; their baseline starts at 0 (they may be refused
+      // once more, until the next compaction resets it).
+      if (!(await hasColumn(db, 'chat_sessions', 'tokensAtCompact'))) {
+        await db.query(`ALTER TABLE chat_sessions ADD COLUMN "tokensAtCompact" INTEGER NOT NULL DEFAULT 0`);
+      }
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

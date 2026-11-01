@@ -251,6 +251,10 @@ export const chatSessions = pgTable('chat_sessions', {
   compactCutoff: text('compactCutoff'),
   tokensIn: integer('tokensIn').notNull().default(0),
   tokensOut: integer('tokensOut').notNull().default(0),
+  /** tokensIn + tokensOut at the last compaction: the token ceiling counts
+   *  only what the chat has used since then, so /compact (or auto-compact)
+   *  gives the chat a fresh budget (FR-7.1, FR-7.3). */
+  tokensAtCompact: integer('tokensAtCompact').notNull().default(0),
   /** When this session was last distilled into the agent brain; the idle
    *  sweep skips sessions whose transcript has not changed since. */
   distilledAt: text('distilledAt'),

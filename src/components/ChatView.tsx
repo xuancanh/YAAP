@@ -429,7 +429,8 @@ export function ChatView() {
     );
   }
 
-  const tokens = s.tokensIn + s.tokensOut;
+  // the ceiling and the meter count since the last compaction (/compact or auto)
+  const tokens = Math.max(0, s.tokensIn + s.tokensOut - (s.tokensAtCompact ?? 0));
   const pct = s.tokenCeiling ? Math.min(100, (tokens / s.tokenCeiling) * 100) : 0;
   const tokenBarColor = pct > 85 ? 'var(--red)' : pct > 60 ? 'var(--amber)' : 'var(--accent)';
   const capped = s.tokenCeiling > 0 && tokens >= s.tokenCeiling;
@@ -758,7 +759,9 @@ export function ChatView() {
           </div>
           {capped && (
             <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--red)', display: 'flex', alignItems: 'center', gap: 7 }}>
-              <I d={P.warn} size={13} />Token ceiling reached — send refused before any API call. Run /compact.
+              <I d={P.warn} size={13} />{app.settings.autoCompact === 'off'
+                ? 'Token ceiling reached — run /compact for a fresh budget, or raise the ceiling.'
+                : 'Token ceiling reached — the next message compacts this chat first, then sends.'}
             </div>
           )}
         </div>

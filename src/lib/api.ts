@@ -252,6 +252,8 @@ export interface ChatSession {
   archivedAt: string | null;
   draft: string;
   tokenCeiling: number;
+  /** tokensIn + tokensOut at the last compaction; the ceiling counts from here. */
+  tokensAtCompact?: number;
   compactSummary: string;
   compactCutoff: string | null;
   tokensIn: number;
@@ -939,6 +941,7 @@ export interface ToolReview { verdict: 'allow' | 'ask' | 'deny'; reason: string;
 
 export type TurnEvent =
   | { type: 'turn'; turnId: string }
+  | { type: 'compacted' }
   | { type: 'answer'; text: string }
   | { type: 'thinking'; text: string }
   | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }

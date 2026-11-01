@@ -9,15 +9,39 @@
  * summary plus messages newer than the cutoff (FR-7.4). The summary is
  * size-bounded (NFR-4).
  */
-import { Injectable, ConflictException, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, ConflictException, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChatsRepository } from './chats.repository';
 import { ChatLocks } from './chat-locks';
 import { TurnContextService } from './turn-context.service';
 import { streamSignal } from '../ai/provider-timeout';
+import { contextWindowFor } from '../ai/context-windows';
+import { SettingsService } from '../settings/settings.module';
 
 const SUMMARY_CAP = 8_000;
 const MIN_MESSAGES = 4;
+/** Default share of the model's context window at which auto-compaction fires. */
+export const DEFAULT_COMPACT_PCT = 70;
+const PCT_MIN = 30;
+const PCT_MAX = 95;
+
+/** The auto-compaction policy, from app settings with bounds:
+ *  `autoCompact` on|off (default on), `compactionThresholdPct` (30–95, default
+ *  70, of the model's context window), `compactionThresholdTokens` (an
+ *  absolute override; 0 or unset = use the percentage; never above 95% of
+ *  the window, so a big override cannot defeat the point). */
+export function compactionThreshold(settings: Record<string, string>, model: string, envTokens?: number): { enabled: boolean; tokens: number; window: number; pct: number } {
+  const window = contextWindowFor(model);
+  const enabled = (settings.autoCompact ?? 'on') !== 'off';
+  const pctRaw = parseInt(settings.compactionThresholdPct ?? '', 10);
+  const pct = Number.isFinite(pctRaw) ? Math.min(PCT_MAX, Math.max(PCT_MIN, pctRaw)) : DEFAULT_COMPACT_PCT;
+  const ceiling = Math.floor(window * PCT_MAX / 100);
+  const abs = parseInt(settings.compactionThresholdTokens ?? '', 10);
+  const tokens = Number.isFinite(abs) && abs > 0
+    ? Math.min(abs, ceiling)
+    : envTokens && !('compactionThresholdPct' in settings) && envTokens < Math.floor(window * pct / 100) ? envTokens : Math.floor(window * pct / 100);
+  return { enabled, tokens, window, pct };
+}
 
 const COMPACT_SYSTEM = `You compact conversations. Write a dense, structured summary of the conversation so far that a colleague could continue from. Use these sections: Goal, Key facts & decisions, Work completed, Open threads. Be specific; keep names, paths, and numbers. Output only the summary.`;
 
@@ -30,7 +54,14 @@ export class CompactionService {
     private readonly locks: ChatLocks,
     private readonly context: TurnContextService,
     private readonly config: ConfigService,
+    /** Optional so test constructors keep working; without it the env
+     *  threshold and the model window decide. */
+    @Optional() private readonly settings?: SettingsService,
   ) {}
+
+  /** Per-round overhead (system prompt + tool specs) last measured for a
+   *  session, so the pre-turn check can use it too. */
+  private readonly overhead = new Map<string, number>();
 
   /** /compact — explicit user-triggered compaction. */
   async compact(sessionId: string): Promise<{ ok: boolean; reason?: string; summaryLength?: number }> {
@@ -62,7 +93,9 @@ export class CompactionService {
 
       const all = await this.repo.listMessages(sessionId);
       const maxSeq = all.at(-1)?.seq ?? 0;
-      await this.repo.updateSession(sessionId, { compactSummary: summary, compactCutoff: String(maxSeq) });
+      // the token ceiling counts from here: compaction gives the chat a fresh budget
+      const now = await this.repo.getSession(sessionId);
+      await this.repo.updateSession(sessionId, { compactSummary: summary, compactCutoff: String(maxSeq), tokensAtCompact: now ? now.tokensIn + now.tokensOut : 0 });
       return { ok: true, summaryLength: summary.length };
     } finally {
       this.locks.release(sessionId);
@@ -82,21 +115,29 @@ export class CompactionService {
    *  the turn loop (FR-7.5), so it cannot interleave with an in-flight turn.
    *  The pessimistic estimate makes the check fire early enough that the
    *  NEXT turn starts compacted. */
-  async maybeAutoCompact(sessionId: string, overheadChars = 0): Promise<void> {
+  async maybeAutoCompact(sessionId: string, overheadChars?: number, opts: { force?: boolean } = {}): Promise<boolean> {
     try {
       const session = await this.repo.getSession(sessionId);
-      if (!session) return;
-      const threshold = this.config.get<number>('compactionThresholdTokens') ?? 120_000;
+      if (!session) return false;
+      if (overheadChars !== undefined) this.overhead.set(sessionId, overheadChars);
+      const over = overheadChars ?? this.overhead.get(sessionId) ?? 0;
+      const settings = this.settings ? await this.settings.all().catch((): Record<string, string> => ({})) : {};
+      const ctxModel = session.model || (await this.context.build(session).then((c) => c.model).catch(() => ''));
+      const policy = compactionThreshold(settings, ctxModel, this.config.get<number>('compactionThresholdTokens'));
+      if (!policy.enabled) return false;
+      const threshold = policy.tokens;
       const cutoff = session.compactCutoff === null ? null : Number(session.compactCutoff);
       const history = await this.repo.providerHistory(sessionId, Number.isNaN(cutoff as number) ? null : cutoff);
-      const chars = history.reduce((n, m) => n + m.content.length, 0) + session.compactSummary.length + overheadChars;
-      if (chars / 4 < threshold) return;
-      await this.compact(sessionId);
+      const chars = history.reduce((n, m) => n + m.content.length, 0) + session.compactSummary.length + over;
+      if (!opts.force && chars / 4 < threshold) return false;
+      const r = await this.compact(sessionId);
+      return r.ok;
     } catch (err) {
       // A turn (or a racing auto-compact) holding the busy lock is normal:
-      // the next post-turn check retries. Anything else is worth a warning.
-      if (err instanceof ConflictException) return;
+      // the next check retries. Anything else is worth a warning.
+      if (err instanceof ConflictException) return false;
       this.logger.warn(`auto-compaction skipped for ${sessionId}: ${err instanceof Error ? err.message : err}`);
+      return false;
     }
   }
 }

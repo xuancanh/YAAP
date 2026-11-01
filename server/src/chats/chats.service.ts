@@ -95,7 +95,8 @@ export class ChatsService {
   async clear(id: string) {
     await this.get(id);
     await this.repo.clearMessages(id);
-    await this.repo.updateSession(id, { compactSummary: '', compactCutoff: null });
+    const cur = await this.repo.getSession(id);
+    await this.repo.updateSession(id, { compactSummary: '', compactCutoff: null, tokensAtCompact: cur ? cur.tokensIn + cur.tokensOut : 0 });
     return { ok: true };
   }
 
