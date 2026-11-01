@@ -853,13 +853,17 @@ org's workspace), `GroupChatService.ensureChannel|addMember`,
 (the delegating agent's workspace), `MarketService.hire(id, workspaceId)`
 (`POST /api/market/:id/hire {workspaceId}`), `PortabilityService.importAgent`
 and the registry install (`options.workspaceId` → the agent's workspace),
-`WorkspacesService.remove` (re-homes the agents); SPA `api.agents(workspaceId)`,
+`WorkspacesService.remove` (re-homes the agents), `OrgBlueprintsService.import`
+(the chief is created in the target workspace; role hires follow through
+`applyHire`), `OrgKnowledgeService` recall and graph (the org workspace's
+agents); SPA `api.agents(workspaceId)`,
 `api.moveAgent`, `createAgent {workspaceId}`, `hire(id, workspaceId)`,
 the store's `refreshAgents` per selected workspace (reloads on switch; Rails,
 the channel member picker and the org chart read the same list), the agent
 Settings tab's "Move to workspace…" card; `docs/shared-agents.md` §1
 "Workspace ownership", `docs/group-chat.md` §1, `docs/security.md` §b row.
-Tests: `tests/backend-agents-workspace.test.ts` (10). Departures: the column
+Tests: `tests/backend-agents-workspace.test.ts` (10) and one blueprint test
+in `tests/backend-org-blueprints.test.ts`. Departures: the column
 is `NOT NULL DEFAULT ''` rather than nullable so every reader sees a string;
 `move` also carries the agent's chat sessions and drops its old channel
 seats (an agent and its history move together; channels stay with their

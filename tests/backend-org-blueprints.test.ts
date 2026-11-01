@@ -604,3 +604,17 @@ test('human employee in channels and tools: joins the unit channel of their mana
   await s.org.setHuman(orgId, { memberAccountId: 'ann', role: 'employee', reportsToAgentId: leadB.id });
   assert.deepEqual(await humansIn(unitB.channelId!), ['ann', 'single']);
 });
+
+test('a blueprint import lands every agent — the chief and every role hire — in the target workspace (item 26)', async () => {
+  const s = await setup();
+  const target = await s.workspaces.create({ name: 'Staffed here' });
+  const res = await s.blueprints.import(target.id, sampleBlueprint(), { mode: 'autonomous', monthlyUsd: 40 });
+  assert.equal(res.approvalId, null);
+  const org = (await s.org.byWorkspace(target.id))!;
+  const members = (await s.org.members(org.id)).filter((m) => m.status !== 'terminated');
+  assert.ok(members.length >= 2, 'the chief and at least one hire');
+  for (const m of members) assert.equal((await s.agents.get(m.agentId)).workspaceId, target.id, `${m.title} lives in the target workspace`);
+  assert.equal((await s.agents.get(res.chiefAgentId)).workspaceId, target.id);
+  assert.deepEqual((await s.agents.list({ workspaceId: target.id })).map((a) => a.id).sort(), members.map((m) => m.agentId).sort(), 'nothing else, nothing elsewhere');
+  assert.equal((await s.agents.list({ workspaceId: s.ws.id })).some((a) => members.some((m) => m.agentId === a.id)), false, 'the default workspace got none of them');
+});

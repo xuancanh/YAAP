@@ -319,7 +319,8 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
     // 1. The chief: a fresh agent with the root role's charter — nothing inherited.
     const taken = new Set((await this.agents.list()).map((a) => a.name));
     const uniqueName = (base: string) => { let n = base; for (let i = 2; taken.has(n); i++) n = `${base} ${i}`; taken.add(n); return n; };
-    const chief = await this.agents.create({ name: uniqueName(root.title), charter: root.charter || `You are the chief of staff of ${bp.name}.`, role: root.title, model: plan.chief.model || undefined, emoji: '🧭', loops: [] });
+    // The chief belongs to the target workspace (item 26); role hires follow through applyHire → org.workspaceId.
+    const chief = await this.agents.create({ name: uniqueName(root.title), workspaceId, charter: root.charter || `You are the chief of staff of ${bp.name}.`, role: root.title, model: plan.chief.model || undefined, emoji: '🧭', loops: [] });
     // 2. The organization, in the chosen mode (no enrolment of other agents: the org is the blueprint's).
     const org = await this.org.create({ workspaceId, name: bp.name, mission: bp.description, chiefOfStaffAgentId: chief.id, chiefScopes: plan.chief.scopes, monthlyBudgetUsd: plan.budget.monthlyUsd });
     await this.mode.setMode(workspaceId, { mode: opts.mode, chiefOfStaffAgentId: chief.id, monthlyUsd: plan.budget.monthlyUsd, ...(bp.roles.length > ws.orgAgentCap ? { agentCap: bp.roles.length } : {}) }, actor);

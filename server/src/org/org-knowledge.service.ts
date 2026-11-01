@@ -120,7 +120,8 @@ export class OrgKnowledgeService {
     const org = await this.org.get(orgId);
     const cap = Math.max(1, Math.round(opts.cap ?? memoryTunable(org, 'memory.recallCap')));
     const keywords = keywordsOf(question);
-    const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
+    // Recall is over the company's own people: the org workspace's agents (item 26).
+    const names = new Map((await this.agents.list({ workspaceId: org.workspaceId })).map((a) => [a.id, a.name]));
     const nm = (id: string | null) => (id ? names.get(id) ?? id.slice(0, 8) : null);
     const pick = <T>(rows: T[], hay: (r: T) => string, recency: (r: T) => string, fallback = false): T[] => {
       const scored = rows.map((r) => ({ r, s: keywords.length ? score(hay(r), keywords) : 0 }));
@@ -278,7 +279,7 @@ export class OrgKnowledgeService {
     if (!kind || !id) throw new BadRequestException('ref must be <kind>:<id>, e.g. goal:abc123 or decision:abc123');
     const d = Math.min(2, Math.max(1, Math.round(depth) || 1));
     const org = await this.org.get(orgId);
-    const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
+    const names = new Map((await this.agents.list({ workspaceId: org.workspaceId })).map((a) => [a.id, a.name]));
     const root = await this.resolveNode(orgId, org, kind, id, names);
     if (!root) throw new BadRequestException(`no ${kind} "${id}" in this organization`);
     const nodes = new Map<string, GraphNode>([[root.key, root]]);
