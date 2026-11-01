@@ -75,8 +75,14 @@ export const CUSTOM_TOOL_PREFIX = 'tool_';
 const TOOL_LIMIT = 12;
 const PARAM_RE = /\{([a-z0-9_]+)\}/g;
 
-export type TaskStatus = 'todo' | 'doing' | 'done';
-const TASK_STATUSES: TaskStatus[] = ['todo', 'doing', 'done'];
+/** The agent's own board. `blocked`: waiting on something outside the agent
+ *  (a person, an approval, another task) — a reason is required. `abandoned`:
+ *  no longer worth doing — a reason is required. Both are explicit so a task
+ *  never sits stuck in todo/doing. */
+export type TaskStatus = 'todo' | 'doing' | 'blocked' | 'done' | 'abandoned';
+export const TASK_STATUSES: TaskStatus[] = ['todo', 'doing', 'blocked', 'done', 'abandoned'];
+/** Statuses that need a reason, recorded on the task's note. */
+const NEEDS_REASON = new Set<TaskStatus>(['blocked', 'abandoned']);
 const TASK_LIMIT = 200;
 
 /** `Fieldy, the Scout!` → `fieldy-the-scout`; nothing usable → `agent`. */
@@ -340,7 +346,7 @@ export class AgentsService {
     return row;
   }
 
-  async updateTask(agentId: string, taskId: string, patch: { title?: string; note?: string; status?: string }) {
+  async updateTask(agentId: string, taskId: string, patch: { title?: string; note?: string; status?: string; reason?: string }) {
     const rows = await this.db.select().from(agentTasks).where(eq(agentTasks.id, taskId)).limit(1);
     if (!rows[0] || rows[0].agentId !== agentId) throw new NotFoundException(`task ${taskId}`);
     const set: Record<string, string> = { updatedAt: nowIso() };
@@ -353,6 +359,13 @@ export class AgentsService {
     if (patch.status !== undefined) {
       if (!TASK_STATUSES.includes(patch.status as TaskStatus)) throw new BadRequestException(`status must be one of ${TASK_STATUSES.join(', ')}`);
       set.status = patch.status;
+      const reason = (patch.reason ?? '').trim().slice(0, 500);
+      if (NEEDS_REASON.has(patch.status as TaskStatus) && patch.status !== rows[0].status) {
+        if (!reason) throw new BadRequestException(`a ${patch.status} task needs a reason: say what it waits on, or why it is no longer worth doing`);
+        const prefix = patch.status === 'blocked' ? 'Blocked' : 'Abandoned';
+        const base = set.note ?? rows[0].note ?? '';
+        set.note = `${base ? `${base}\n` : ''}${prefix} (${nowIso().slice(0, 10)}): ${reason}`.slice(-2_000);
+      }
     }
     await this.db.update(agentTasks).set(set).where(eq(agentTasks.id, taskId));
     const updated = (await this.db.select().from(agentTasks).where(eq(agentTasks.id, taskId)))[0];
@@ -373,7 +386,7 @@ export class AgentsService {
 
   /** Tool-call variant: the model addresses tasks by the 8-char id prefix it
    *  saw in list_tasks. */
-  async updateTaskByPrefix(agentId: string, idPrefix: string, patch: { title?: string; note?: string; status?: string }) {
+  async updateTaskByPrefix(agentId: string, idPrefix: string, patch: { title?: string; note?: string; status?: string; reason?: string }) {
     const match = (await this.listTasks(agentId)).filter((t) => t.id.startsWith(idPrefix));
     if (match.length !== 1) throw new BadRequestException(`task id "${idPrefix}" matches ${match.length} tasks — use the id from list_tasks`);
     return this.updateTask(agentId, match[0].id, patch);

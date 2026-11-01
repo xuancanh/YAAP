@@ -61,7 +61,9 @@ class CreateTaskDto {
 class UpdateTaskDto {
   @IsOptional() @IsString() title?: string;
   @IsOptional() @IsString() note?: string;
-  @IsOptional() @IsIn(['todo', 'doing', 'done']) status?: string;
+  @IsOptional() @IsIn(['todo', 'doing', 'blocked', 'done', 'abandoned']) status?: string;
+  /** Required when moving to blocked (what it waits on) or abandoned (why). */
+  @IsOptional() @IsString() reason?: string;
 }
 
 class FeedbackDto {

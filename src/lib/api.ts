@@ -128,7 +128,7 @@ export interface AgentTask {
   agentId: string;
   title: string;
   note: string;
-  status: 'todo' | 'doing' | 'done';
+  status: 'todo' | 'doing' | 'blocked' | 'done' | 'abandoned';
   origin: 'user' | 'agent' | 'promote' | 'loop';
   sessionId: string | null;
   createdAt: string;
@@ -1241,7 +1241,7 @@ export const api = {
   deleteAgentTool: (id: string, toolId: string) => send<{ ok: boolean }>(`/api/agents/${id}/tools/${toolId}`, 'DELETE'),
   agentTasks: (id: string) => get<AgentTask[]>(`/api/agents/${id}/tasks`),
   addAgentTask: (id: string, input: { title: string; note?: string }) => send<AgentTask>(`/api/agents/${id}/tasks`, 'POST', input),
-  updateAgentTask: (id: string, taskId: string, patch: { title?: string; note?: string; status?: string }) =>
+  updateAgentTask: (id: string, taskId: string, patch: { title?: string; note?: string; status?: string; reason?: string }) =>
     send<AgentTask>(`/api/agents/${id}/tasks/${taskId}`, 'PATCH', patch),
   deleteAgentTask: (id: string, taskId: string) => send<{ ok: boolean }>(`/api/agents/${id}/tasks/${taskId}`, 'DELETE'),
   agentStats: (id: string) => get<AgentStats>(`/api/agents/${id}/stats`),

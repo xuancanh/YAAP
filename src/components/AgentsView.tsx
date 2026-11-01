@@ -356,11 +356,15 @@ function ConversationRow({ s, onOpen }: { s: { id: string; name: string; autoTit
 }
 
 const ORIGIN_BADGE: Record<AgentTask['origin'], string> = { user: 'you', agent: 'self', promote: 'chat', loop: 'loop' };
-const COLS: Array<{ id: AgentTask['status']; label: string }> = [
-  { id: 'todo', label: 'To do' },
-  { id: 'doing', label: 'In progress' },
-  { id: 'done', label: 'Done' },
+const COLS: Array<{ id: AgentTask['status']; label: string; color: string }> = [
+  { id: 'todo', label: 'To do', color: 'var(--text-faint)' },
+  { id: 'doing', label: 'In progress', color: 'var(--amber)' },
+  { id: 'blocked', label: 'Blocked', color: 'var(--red)' },
+  { id: 'done', label: 'Done', color: 'var(--green)' },
+  { id: 'abandoned', label: 'Abandoned', color: 'var(--text-faint)' },
 ];
+/** Moving a card here asks for a reason, recorded on the task. */
+const NEEDS_REASON: ReadonlySet<string> = new Set(['blocked', 'abandoned']);
 
 /** The agent's own kanban board: drag between columns (or use the arrows),
  *  quick-add into To do. The agent works the same board via list_tasks /
@@ -371,7 +375,17 @@ function TasksBoard({ a, tasks, reload }: { a: Agent; tasks: AgentTask[]; reload
   const dragId = useRef<string | null>(null);
 
   const move = async (taskId: string, status: AgentTask['status']) => {
-    await api.updateAgentTask(a.id, taskId, { status });
+    let reason: string | undefined;
+    if (NEEDS_REASON.has(status)) {
+      const answer = window.prompt(status === 'blocked' ? 'What is it waiting on?' : 'Why is it no longer worth doing?');
+      if (!answer || !answer.trim()) return;
+      reason = answer.trim();
+    }
+    try {
+      await api.updateAgentTask(a.id, taskId, { status, reason });
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'could not move the task');
+    }
     reload();
   };
   const add = async () => {
@@ -389,7 +403,7 @@ function TasksBoard({ a, tasks, reload }: { a: Agent; tasks: AgentTask[]; reload
           style={{ flex: 1, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '9px 12px', color: 'var(--text)', fontSize: 13, outline: 'none' }} />
         <button onClick={() => void add()} disabled={!title.trim()} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: title.trim() ? 'pointer' : 'default', opacity: title.trim() ? 1 : 0.5 }}>Add</button>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : 'repeat(3,1fr)', gap: 12, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, alignItems: 'start' }}>
         {COLS.map((col, ci) => {
           const items = tasks.filter((t) => t.status === col.id).sort((x, y) => (x.updatedAt < y.updatedAt ? 1 : -1));
           return (
@@ -398,7 +412,7 @@ function TasksBoard({ a, tasks, reload }: { a: Agent; tasks: AgentTask[]; reload
               onDrop={() => { if (dragId.current) void move(dragId.current, col.id); dragId.current = null; }}
               style={{ ...card, background: 'var(--panel-2)', padding: '10px 10px 12px', minHeight: 120 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 4px 8px' }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: col.id === 'done' ? 'var(--green)' : col.id === 'doing' ? 'var(--amber)' : 'var(--text-faint)', flex: 'none' }} />
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: col.color, flex: 'none' }} />
                 <span style={{ ...label }}>{col.label}</span>
                 <span style={{ fontSize: 10.5, color: 'var(--text-faint)', marginLeft: 'auto' }}>{items.length}</span>
               </div>
@@ -406,7 +420,7 @@ function TasksBoard({ a, tasks, reload }: { a: Agent; tasks: AgentTask[]; reload
                 {items.map((t) => (
                   <div key={t.id} draggable onDragStart={() => { dragId.current = t.id; }}
                     style={{ ...card, padding: '10px 12px', cursor: 'grab' }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.45, textDecoration: t.status === 'done' ? 'line-through' : 'none', color: t.status === 'done' ? 'var(--text-dim)' : 'var(--text)' }}>{t.title}</div>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.45, textDecoration: t.status === 'done' || t.status === 'abandoned' ? 'line-through' : 'none', color: t.status === 'done' || t.status === 'abandoned' ? 'var(--text-dim)' : 'var(--text)' }}>{t.title}</div>
                     {t.note && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 3, lineHeight: 1.45, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{t.note}</div>}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
                       <span style={{ fontSize: 9.5, fontFamily: 'var(--mono)', color: 'var(--text-faint)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '1px 6px' }}>{ORIGIN_BADGE[t.origin] ?? t.origin}</span>

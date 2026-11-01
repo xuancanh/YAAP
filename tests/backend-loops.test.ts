@@ -216,7 +216,18 @@ test('agent kanban: task CRUD, prefix updates, and bounds (§11)', async () => {
   assert.equal(moved.status, 'done');
 
   await assert.rejects(agents.addTask(a.id, { title: '   ' }), /title is required/);
-  await assert.rejects(agents.updateTask(a.id, t1.id, { status: 'blocked' }), /status must be/);
+  await assert.rejects(agents.updateTask(a.id, t1.id, { status: 'stuck' }), /status must be/);
+  // blocked and abandoned need a reason, recorded on the task's note
+  const t2 = (await agents.listTasks(a.id)).find((t) => t.title === 'Audit MCP perms')!;
+  await assert.rejects(agents.updateTask(a.id, t2.id, { status: 'blocked' }), /needs a reason/);
+  const blocked = await agents.updateTask(a.id, t2.id, { status: 'blocked', reason: 'waiting on the owner to grant MCP access' });
+  assert.equal(blocked.status, 'blocked');
+  assert.match(blocked.note, /Blocked \(\d{4}-\d{2}-\d{2}\): waiting on the owner/);
+  await assert.rejects(agents.updateTaskByPrefix(a.id, t2.id.slice(0, 8), { status: 'abandoned' }), /needs a reason/);
+  const gone = await agents.updateTaskByPrefix(a.id, t2.id.slice(0, 8), { status: 'abandoned', reason: 'MCP servers were removed' });
+  assert.equal(gone.status, 'abandoned');
+  assert.match(gone.note, /Blocked .*\nAbandoned .*MCP servers were removed/s);
+  await agents.updateTask(a.id, t2.id, { status: 'todo' });
   await assert.rejects(agents.updateTaskByPrefix(a.id, 'zzz', { status: 'done' }), /matches 0 tasks/);
 
   const board = await agents.tasksForModel(a.id);

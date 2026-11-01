@@ -284,5 +284,5 @@ test('registered providers extend the gate: reasons wake the agent and the opera
   assert.equal((await s.heartbeat.beat(a.id, new Date(NOON.getTime() + 60_000))).status, 'empty');
   // The prompt builder alone: no charter, no profile → just the list.
   const bare = heartbeatPrompt(['x'], '', '');
-  assert.equal(bare, 'Heartbeat. You were woken because:\n- x\nCheck each item, act with your tools, then stop. Do not invent work.');
+  assert.equal(bare, 'Heartbeat. You were woken because:\n- x\nCheck each item, act with your tools, then stop. Do not invent work. Keep your board true with update_task: doing when you work on a task, done when finished, blocked (with what it waits on) when you cannot move it, abandoned (with why) when it is no longer worth doing.');
 });

@@ -173,7 +173,7 @@ const AGENT_TOOLS: AiToolSpec[] = [
   },
   {
     name: 'list_tasks',
-    description: 'Read your kanban board: every task with its short id, status (todo/doing/done), and title. Check it at the start of scheduled loops.',
+    description: 'Read your kanban board: every task with its short id, status (todo / doing / blocked / done / abandoned), and title. Check it at the start of scheduled loops and heartbeats, and keep every task in the status that is true now.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -190,12 +190,13 @@ const AGENT_TOOLS: AiToolSpec[] = [
   },
   {
     name: 'update_task',
-    description: 'Update one of your tasks by the short id from list_tasks: move it between todo/doing/done or refine its title/note. Move a task to doing when you start it and done when you finish.',
+    description: 'Update one of your tasks by the short id from list_tasks. Keep the board true: doing when you start, done when finished, blocked when it waits on something outside you (a person, an approval, another task — say what in reason), abandoned when it is no longer worth doing (say why in reason), todo to put it back. Never leave a task in doing that you are not working on.',
     inputSchema: {
       type: 'object',
       properties: {
         id: { type: 'string', description: 'The short task id shown by list_tasks.' },
-        status: { type: 'string', enum: ['todo', 'doing', 'done'] },
+        status: { type: 'string', enum: ['todo', 'doing', 'blocked', 'done', 'abandoned'] },
+        reason: { type: 'string', description: 'Required for blocked (what it waits on) and abandoned (why it is no longer worth doing).' },
         title: { type: 'string' },
         note: { type: 'string' },
       },
@@ -279,7 +280,9 @@ const AGENT_TOOL_NAMES = new Set(AGENT_TOOLS.map((t) => t.name));
 /** Agent tools that auto-run even in Ask mode: pure reads, plus
  *  update_user_profile — it only queues a proposal, and the durable write is
  *  gated on explicit user approval in the profile UI. */
-const AGENT_READONLY_TOOLS = new Set(['list_tasks', 'search_history', 'update_user_profile', 'draft_skill', 'save_tool', 'revise_skill']);
+// The agent's own board is its bookkeeping: add_task and update_task never
+// ask, so tasks are not left stuck waiting for an approval to move.
+const AGENT_READONLY_TOOLS = new Set(['list_tasks', 'add_task', 'update_task', 'search_history', 'update_user_profile', 'draft_skill', 'save_tool', 'revise_skill']);
 
 const exactKey = (call: AiToolCall): string =>
   `${call.name}:${createHash('sha256').update(JSON.stringify(call.input)).digest('hex').slice(0, 16)}`;
@@ -1209,6 +1212,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             status: typeof input.status === 'string' ? input.status : undefined,
             title: typeof input.title === 'string' ? input.title : undefined,
             note: typeof input.note === 'string' ? input.note : undefined,
+            reason: typeof input.reason === 'string' ? input.reason : undefined,
           });
           return `Task [${task.id.slice(0, 8)}] is now (${task.status}) ${task.title}`;
         }

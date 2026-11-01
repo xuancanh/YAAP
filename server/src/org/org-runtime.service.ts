@@ -1413,12 +1413,21 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       case 'org_task_update': {
         const t = await taskOf();
         if (!isChief && t.assigneeAgentId !== agentId) throw new Error('you can only update your own task');
-        const status = str('status');
-        if (status === 'done') throw new Error('tasks finish through review: call org_request_review when done_when is met');
-        if (status && !['in_progress', 'blocked', 'todo', ...(isChief ? ['backlog', 'cancelled'] : [])].includes(status)) throw new Error(`status must be in_progress, blocked${isChief ? ', todo, backlog or cancelled' : ' or todo'}`);
+        const requested = str('status');
+        if (requested === 'done') throw new Error('tasks finish through review: call org_request_review when done_when is met');
+        if (requested && !['in_progress', 'blocked', 'todo', 'abandoned', ...(isChief ? ['backlog', 'cancelled'] : [])].includes(requested)) throw new Error(`status must be in_progress, blocked, todo or abandoned${isChief ? ', backlog or cancelled' : ''}`);
+        // blocked and abandoned need a reason, so nobody has to guess why a task stopped
+        const why = str('note') || (Array.isArray(input.blockers) ? input.blockers.map(String).join('; ') : '');
+        if ((requested === 'blocked' || requested === 'abandoned') && !why.trim()) throw new Error(requested === 'blocked' ? 'say what it waits on: pass blockers or a note' : 'say why it is no longer worth doing in note');
+        // abandoned is stored as cancelled; the owner gives it up and the chief is told
+        const status = requested === 'abandoned' ? 'cancelled' : requested;
         const patch: Parameters<OrgTasksService['update']>[2] = {};
         if (status) patch.status = status as never;
         if (Array.isArray(input.blockers)) patch.blockers = input.blockers.map(String);
+        if (requested === 'abandoned' && !isChief) {
+          await this.tasks.comment(org.id, t.id, { text: `Abandoned by its owner: ${why.trim()}`, fromAgentId: agentId, runId: ctx?.runId ?? null });
+          this.bus?.emitOrgBoard({ orgId: org.id, kind: 'blocked', refId: t.id, detail: `"${t.title}" abandoned by its owner: ${why.trim().slice(0, 120)}` });
+        }
         if (str('note')) await this.tasks.comment(org.id, t.id, { text: str('note'), fromAgentId: agentId, runId: ctx?.runId ?? null, wake: isChief && t.assigneeAgentId !== agentId });
         if (Object.keys(patch).length > 0) await this.tasks.update(org.id, t.id, patch, actor);
         if (ctx) ctx.progress = true;
@@ -2086,7 +2095,7 @@ const LEAD_TOOLS: AiToolSpec[] = [
 ];
 
 const TASK_TOOLS: AiToolSpec[] = [
-  { name: 'org_task_update', description: 'Update your task: status (in_progress, blocked, todo), a note for the timeline, blockers. Tasks finish through org_request_review, never by setting done.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: 'Defaults to the task you were woken for.' }, status: { type: 'string', enum: ['in_progress', 'blocked', 'todo', 'backlog', 'cancelled'] }, note: { type: 'string' }, blockers: { type: 'array', items: { type: 'string' } } } } },
+  { name: 'org_task_update', description: 'Update your task and keep it true: in_progress while you work it, blocked with what it waits on, abandoned with why it is no longer worth doing (the chief is told), todo to put it back; a note for the timeline, blockers. Tasks finish through org_request_review, never by setting done.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: 'Defaults to the task you were woken for.' }, status: { type: 'string', enum: ['in_progress', 'blocked', 'todo', 'abandoned', 'backlog', 'cancelled'] }, note: { type: 'string', description: 'Required for blocked (or pass blockers) and abandoned: what it waits on, or why it is no longer worth doing.' }, blockers: { type: 'array', items: { type: 'string' } } } } },
   { name: 'org_task_comment', description: 'Comment on a task\'s timeline (a handoff note, a question for the chief). A comment on somebody else\'s task wakes its owner; mentions do not.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, text: { type: 'string' } }, required: ['text'] } },
   { name: 'org_request_review', description: 'Hand your finished task to review: it moves to in_review and a reviewer other than you (preferring a different model family) is woken with the done_when rubric.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, note: { type: 'string', description: 'Where the result is and how it meets done_when.' } } } },
 ];

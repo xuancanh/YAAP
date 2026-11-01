@@ -72,7 +72,7 @@ export const TOOL_CLASSES: Record<string, Classifier> = {
   http_request: 'external_reversible',
   // agent self-maintenance tools (turn-loop.service.ts AGENT_TOOLS)
   list_tasks: 'read', search_history: 'read',
-  update_dashboard: 'internal_write', save_app: 'internal_write', add_task: 'internal_write', update_task: 'internal_write',
+  update_dashboard: 'internal_write', save_app: 'internal_write', add_task: 'read', update_task: 'read',
   delegate_task: 'internal_write', save_tool: 'internal_write', draft_skill: 'internal_write', revise_skill: 'internal_write',
   update_user_profile: 'internal_write',
   // the trust ledger's own read tool

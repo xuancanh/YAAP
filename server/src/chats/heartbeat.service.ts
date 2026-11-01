@@ -270,15 +270,17 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
 
   // ---- built-in reason sources ----
 
-  /** Open board tasks (todo | doing) not touched for the staleness interval. */
+  /** Open board tasks (todo | doing) not touched for the staleness interval,
+   *  and blocked ones not looked at for four intervals (is it still blocked?). */
   private async staleTasks(agentId: string, ctx: HeartbeatContext): Promise<string[]> {
     const before = new Date(ctx.now.getTime() - ctx.tunables.staleMinutes * 60_000).toISOString();
+    const blockedBefore = new Date(ctx.now.getTime() - 4 * ctx.tunables.staleMinutes * 60_000).toISOString();
     const rows = (await this.db.execute(sql`
       SELECT "id", "title", "status", "updatedAt" FROM agent_tasks
-      WHERE "agentId" = ${agentId} AND "status" IN ('todo', 'doing') AND "updatedAt" <= ${before}
+      WHERE "agentId" = ${agentId} AND (("status" IN ('todo', 'doing') AND "updatedAt" <= ${before}) OR ("status" = 'blocked' AND "updatedAt" <= ${blockedBefore}))
       ORDER BY "updatedAt" ASC LIMIT ${REASONS_PER_SOURCE + 1}
     `)).rows as unknown as Array<{ id: string; title: string; status: string; updatedAt: string }>;
-    const lines = rows.slice(0, REASONS_PER_SOURCE).map((t) => `Task [${t.id.slice(0, 8)}] "${t.title.slice(0, 80)}" is ${t.status === 'doing' ? 'in progress' : 'to do'} and untouched since ${t.updatedAt.slice(0, 16).replace('T', ' ')}`);
+    const lines = rows.slice(0, REASONS_PER_SOURCE).map((t) => `Task [${t.id.slice(0, 8)}] "${t.title.slice(0, 80)}" is ${t.status === 'doing' ? 'in progress' : t.status === 'blocked' ? 'blocked (check whether it can move now)' : 'to do'} and untouched since ${t.updatedAt.slice(0, 16).replace('T', ' ')}`);
     if (rows.length > REASONS_PER_SOURCE) lines[REASONS_PER_SOURCE - 1] += ' (and more on your board)';
     return lines;
   }
@@ -396,7 +398,7 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
  *  stops, rather than inventing work. */
 export function heartbeatPrompt(reasons: string[], charter: string, context: string): string {
   const parts = [
-    `Heartbeat. You were woken because:\n${reasons.map((r) => `- ${r}`).join('\n')}\nCheck each item, act with your tools, then stop. Do not invent work.`,
+    `Heartbeat. You were woken because:\n${reasons.map((r) => `- ${r}`).join('\n')}\nCheck each item, act with your tools, then stop. Do not invent work. Keep your board true with update_task: doing when you work on a task, done when finished, blocked (with what it waits on) when you cannot move it, abandoned (with why) when it is no longer worth doing.`,
   ];
   const purpose = (charter ?? '').trim();
   if (purpose) parts.push(`Your charter (check your work against it):\n${purpose.slice(0, 1_200)}`);
