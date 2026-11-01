@@ -105,7 +105,10 @@ export type TurnEvent =
    *  member — the one whose connection the tool would use — and this client
    *  can only wait; the addressee answers from their inbox. */
   | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown>; review?: ReviewRecord; routedTo?: { memberAccountId: string; name: string } }
-  | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ReviewRecord }
+  /** `actionClass` / `actionId` / `held` (docs/actions-and-trust.md): set when
+   *  the action contract logged the call — its class, its action_log row, and
+   *  whether it was held or staged for the owner's key. */
+  | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ReviewRecord; actionClass?: string; actionId?: string; held?: 'held' | 'staged' }
   /** The workspace's monthly spend stop is reached (phase 2.5): user turns
    *  still run, the client shows the badge; loop turns are refused instead. */
   | { type: 'budget'; month: string; spentTokens: number; budgetTokens: number }
@@ -134,6 +137,11 @@ interface ToolRecord {
   /** Whose connection a connection tool ran on (an actor id), so distillation
    *  can keep what it fetched private to them (docs/shared-agents.md §4). */
   usedConnectionOf?: string;
+  /** The action contract's class and action_log row for this call, and
+   *  whether it was held or staged (docs/actions-and-trust.md). */
+  actionClass?: string;
+  actionId?: string;
+  held?: 'held' | 'staged';
 }
 
 /** A record-only sandbox for one session (the red-team run, docs/incidents.md
@@ -782,8 +790,8 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
                   if (session.agentId) await this.actions.trust.record(session.workspaceId, session.agentId, cls, 'rejected', { refType: 'action', refId: row.id });
                   await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
                   history.push({ role: 'tool', content: output, toolCallId: call.id, isError: true });
-                  toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'deny', isError: true });
-                  yield { type: 'tool_result', id: call.id, name: call.name, output, isError: true };
+                  toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'deny', isError: true, actionClass: cls, actionId: row.id });
+                  yield { type: 'tool_result', id: call.id, name: call.name, output, isError: true, actionClass: cls, actionId: row.id };
                   continue;
                 } else {
                   // No independent key on another model family: the owner's key.
@@ -795,12 +803,15 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
                 const held = await this.holdOrStage(session, contract, call, skillsUsed);
                 await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: held.output, toolName: call.name });
                 history.push({ role: 'tool', content: held.output, toolCallId: call.id, isError: false });
-                toolRecords.push({ tool: call.name, input: call.input, result: held.output.slice(0, 2000), approved: held.approved, isError: false });
-                yield { type: 'tool_result', id: call.id, name: call.name, output: held.output.slice(0, 500), isError: false };
+                const tag = { actionClass: cls, actionId: row.id, held: held.approved };
+                toolRecords.push({ tool: call.name, input: call.input, result: held.output.slice(0, 2000), approved: held.approved, isError: false, ...tag });
+                yield { type: 'tool_result', id: call.id, name: call.name, output: held.output.slice(0, 500), isError: false, ...tag };
                 continue;
               }
             }
           }
+          // The class and action_log row ride on the tool result (the SPA's class pill).
+          const contractTag = contract ? { actionClass: contract.cls, actionId: contract.row.id } : {};
           // Loop turns are background turns: outward-facing (connection)
           // mutations and code execution queue as pending approvals in the
           // agent inbox, never silently execute — even in Auto mode
@@ -873,8 +884,8 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             if (contract) await this.actions?.finish(contract.row, { status: !allowed ? 'denied' : isError ? 'failed' : 'succeeded', result: output, keys: { owner: { by: addressee, approve: allowed, routed: true, at: new Date().toISOString() } } }).catch(() => undefined);
             await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: tool });
             history.push({ role: 'tool', content: output, toolCallId: call.id, isError });
-            toolRecords.push({ tool, input: call.input, result: output.slice(0, 2000), approved: allowed ? 'allow-once' : 'deny', isError, usedConnectionOf: addressee });
-            yield { type: 'tool_result', id: call.id, name: tool, output: output.slice(0, 500), isError };
+            toolRecords.push({ tool, input: call.input, result: output.slice(0, 2000), approved: allowed ? 'allow-once' : 'deny', isError, usedConnectionOf: addressee, ...contractTag });
+            yield { type: 'tool_result', id: call.id, name: tool, output: output.slice(0, 500), isError, ...contractTag };
             continue;
           }
           const policy = this.contractPolicy(contract, this.checkPolicy(session, call, approvals));
@@ -990,9 +1001,9 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
           // the tool record for the transcript view.
           const browserStep = this.browser?.owns(call.name) ? this.browser.lastStep(session.id) : null;
           for (const bev of this.browser?.takeEvents(session.id) ?? []) yield bev;
-          toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: decision, isError, ...(review ? { review } : {}), ...(browserStep ? { browser: browserStep } : {}), ...(connOwner !== null && hasMembers ? { usedConnectionOf: connOwner } : {}) });
+          toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: decision, isError, ...(review ? { review } : {}), ...(browserStep ? { browser: browserStep } : {}), ...(connOwner !== null && hasMembers ? { usedConnectionOf: connOwner } : {}), ...contractTag });
           if (session.agentId && decision !== 'deny' && !reviewDenial) for (const p of this.providers()) { try { p.onToolResult?.(session, call, { isError, output }); } catch { /* observers isolate their own failures */ } }
-          yield { type: 'tool_result', id: call.id, name: call.name, output: output.slice(0, 500), isError, ...(review ? { review } : {}) };
+          yield { type: 'tool_result', id: call.id, name: call.name, output: output.slice(0, 500), isError, ...(review ? { review } : {}), ...contractTag };
           if (step && decision !== 'deny') {
             yield {
               type: 'computer', callId: call.id, tool: step.tool, summary: step.summary, status: step.status,

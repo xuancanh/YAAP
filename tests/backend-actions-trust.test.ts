@@ -382,10 +382,15 @@ test('two-key: the owner key — inline when a person is present, from the actio
   // an invitation (irreversible, staging declared but not built) is held for the owner's key
   const loop = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.alice.id, name: 'Loop', permissionMode: 'auto' });
   s.provider.call('gcal_create_event', { ...EVENT, attendees: ['ann@client.example'] });
-  assert.match(resultOf(await run(s, loop.id, 'invite ann', 'loop'))!.output, /Held for the owner's key/);
+  const heldEv = resultOf(await run(s, loop.id, 'invite ann', 'loop'))!;
+  assert.match(heldEv.output, /Held for the owner's key/);
   assert.equal(hits(s, 'calendar'), 0);
   const held = (await rowsOf(s, 'gcal_create_event'))[0];
   assert.deepEqual([held.status, held.class, held.decision], ['held', 'external_irreversible', 'hold']);
+  // the live event carries the class, the action_log row and the held state (the SPA's key card), and GET …/actions/:id serves the row
+  assert.deepEqual([heldEv.actionClass, heldEv.actionId, heldEv.held], ['external_irreversible', held.id, 'held']);
+  assert.equal((await s.controller.one(s.ws.id, held.id)).tool, 'gcal_create_event');
+  await assert.rejects(s.controller.one(s.ws.id, 'nope'), /action nope/);
   // only the owner or the CEO holds the key
   await assert.rejects(runWithViewer('single', { memberAccountId: 'member-1', role: 'member', workspaceId: s.ws.id, displayName: 'M' }, () => s.controller.key(s.ws.id, held.id, { approve: true })), /only the owner or the CEO/);
   const done = await s.controller.key(s.ws.id, held.id, { approve: true });

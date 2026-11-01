@@ -11,7 +11,7 @@
  *  POST /api/workspaces/:id/org/experiments/:expId/keep     decide now: keep (the CEO)
  *  POST /api/workspaces/:id/org/experiments/:expId/revert   decide now: revert (the CEO)
  *  GET  /api/workspaces/:id/org/predictions?agentId=&status=
- *  GET  /api/workspaces/:id/org/calibration                 per member: resolved, open, Brier, calibration, bias
+ *  GET  /api/workspaces/:id/org/calibration                 { bar, members: per member resolved, open, Brier, calibration, bias }
  *  GET  /api/workspaces/:id/org/reconciliation              the latest sweep's gaps
  *  POST /api/workspaces/:id/org/reconciliation/run          sweep now (the CEO)
  *
@@ -111,8 +111,10 @@ export class ExperimentsController {
     return (await this.predictions.list(await this.oid(id), { agentId: agentId || undefined, status: status || undefined })).map((p) => this.predictions.view(p));
   }
 
+  /** `{ bar, members }`: `bar` is the trust ledger's promotion line (`trust.calibrationBar`). */
   @Get('calibration') async calibration(@Param('id') id: string) {
-    return this.predictions.report(await this.oid(id));
+    const orgId = await this.oid(id);
+    return { bar: await this.predictions.calibrationBar(orgId), members: await this.predictions.report(orgId) };
   }
 
   @Get('reconciliation') async reconciliationLatest(@Param('id') id: string) {

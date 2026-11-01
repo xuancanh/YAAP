@@ -486,7 +486,8 @@ test('calibration: null below the minimum count, then 1 − mean loss of the las
   assert.equal(c.resolved, 5); assert.equal(c.brier, 0.81); assert.equal(c.calibration, 0.19); assert.equal(c.biasLabel, 'over');
   assert.equal(await calibrationOf(s.ws.id, s.writer.id), 0.19, 'the registry serves the ledger');
   const report = await s.controller.calibration(s.ws.id);
-  assert.equal(report.find((r) => r.agentId === s.writer.id)!.calibration, 0.19);
+  assert.equal(report.members.find((r) => r.agentId === s.writer.id)!.calibration, 0.19);
+  assert.equal(report.bar, 0.7, 'the route carries the trust bar');
   assert.match((await s.brief.compose(orgId, { deliver: false })).text, /## Calibration\n- Writer 19% \(5, over-forecasts\)\. Discount the estimates of Writer\./);
   // the trust ledger (item 28): ten clean outcomes promote only a calibrated member
   const trust = new TrustService(s.db);

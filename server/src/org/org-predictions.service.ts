@@ -328,13 +328,18 @@ export class OrgPredictionsService implements ToolProviderHook, OnModuleInit, On
     return out;
   }
 
+  /** The trust ledger's promotion bar (item 28) when registered, else 0.7. */
+  async calibrationBar(orgId: string): Promise<number> {
+    const org = await this.org.get(orgId);
+    return TUNABLES['trust.calibrationBar'] ? tunable(org, 'trust.calibrationBar') : 0.7;
+  }
+
   /** The chief's "Calibration" line: whose estimates to discount. */
   async briefLines(orgId: string): Promise<string[]> {
     const rows = (await this.report(orgId)).filter((r) => r.calibration !== null);
     if (rows.length === 0) return [];
     // The trust ledger's bar (item 28) when registered: the same line promotion uses.
-    const org = await this.org.get(orgId);
-    const bar = TUNABLES['trust.calibrationBar'] ? tunable(org, 'trust.calibrationBar') : 0.7;
+    const bar = await this.calibrationBar(orgId);
     const line = rows.sort((a, b) => (a.calibration ?? 0) - (b.calibration ?? 0)).map((r) => `${r.name} ${Math.round((r.calibration ?? 0) * 100)}% (${r.resolved}${r.biasLabel && r.biasLabel !== 'balanced' ? `, ${r.biasLabel}-forecasts` : ''})`).join('; ');
     const discount = rows.filter((r) => (r.calibration ?? 0) < bar).map((r) => r.name);
     return ['## Calibration', `- ${line}.${discount.length ? ` Discount the estimates of ${discount.join(', ')}.` : ' Every scored member is calibrated.'}`];

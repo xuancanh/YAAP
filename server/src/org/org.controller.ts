@@ -170,6 +170,9 @@ export class TaskDto {
   @IsOptional() @IsString() class?: string;
   /** Executable acceptance (docs/sensing.md §3): model-free checks run before review. */
   @IsOptional() @IsArray() checks?: unknown[];
+  /** Capacity (item 31): task ids (or 8-char prefixes) this task waits on, and its deadline (ISO; null clears). */
+  @IsOptional() @IsArray() dependsOn?: string[];
+  @IsOptional() dueAt?: string | null;
 }
 
 export class AssignDto { @IsOptional() @IsString() agentId?: string; /** Hybrid staff (item 24): a human employee's account id instead. */ @IsOptional() @IsString() humanId?: string }
@@ -354,11 +357,11 @@ export class OrgController {
   }
   @Post(':id/tasks') addTask(@Param('id') id: string, @Body() dto: TaskDto) {
     this.guard();
-    return this.tasks.create(id, { title: dto.title ?? '', brief: dto.brief, projectId: dto.projectId, parentTaskId: dto.parentTaskId, status: dto.status, assigneeAgentId: dto.assigneeAgentId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class, checks: dto.checks, createdBy: 'user' });
+    return this.tasks.create(id, { title: dto.title ?? '', brief: dto.brief, projectId: dto.projectId, parentTaskId: dto.parentTaskId, status: dto.status, assigneeAgentId: dto.assigneeAgentId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class, checks: dto.checks, dependsOn: dto.dependsOn, dueAt: dto.dueAt, createdBy: 'user' });
   }
   @Patch(':id/tasks/:taskId') updateTask(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TaskDto) {
     this.guard();
-    return this.tasks.update(id, taskId, { title: dto.title, brief: dto.brief, status: dto.status, blockers: dto.blockers, projectId: dto.projectId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class, checks: dto.checks });
+    return this.tasks.update(id, taskId, { title: dto.title, brief: dto.brief, status: dto.status, blockers: dto.blockers, projectId: dto.projectId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class, checks: dto.checks, dependsOn: dto.dependsOn, dueAt: dto.dueAt });
   }
   @Post(':id/tasks/:taskId/assign') async assign(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: AssignDto) {
     this.guard();

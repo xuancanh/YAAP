@@ -6,6 +6,7 @@
  *  PUT  /api/workspaces/:id/trust/ceilings                { <class>: 0–3 } — owner / CEO
  *  POST /api/workspaces/:id/trust/:agentId/:class         { level, reason } — owner / CEO override, ≤ ceiling, audited
  *  GET  /api/workspaces/:id/actions?agentId=&class=&status=&limit=   the action log
+ *  GET  /api/workspaces/:id/actions/:actionId              one row (the owner's key shows its exact call)
  *  POST /api/workspaces/:id/actions/:actionId/revert-report { note } — owner / CEO: the action had to be undone
  *  POST /api/workspaces/:id/actions/:actionId/keys        { approve, note? } — owner / CEO key on a held or staged action
  *
@@ -51,6 +52,11 @@ export class ActionsController {
   @Get('actions') async list(@Param('id') id: string, @Query('agentId') agentId?: string, @Query('class') cls?: string, @Query('status') status?: string, @Query('limit') limit?: string) {
     await this.ws(id);
     return this.actions.list(id, { agentId: agentId || undefined, cls: cls || undefined, status: status || undefined, limit: limit ? Number(limit) : undefined });
+  }
+
+  @Get('actions/:actionId') async one(@Param('id') id: string, @Param('actionId') actionId: string) {
+    await this.ws(id);
+    return this.actions.get(id, actionId);
   }
 
   @Post('actions/:actionId/revert-report') revert(@Param('id') id: string, @Param('actionId') actionId: string, @Body() dto: RevertDto) {
