@@ -1,6 +1,8 @@
 # Roadmap: a durable personal agent for general users
 
-*Research date: July 2026. Sources listed at the bottom.*
+*Research date: July 2026; §2, §4, phase statuses and sources refreshed
+31 October 2026 against `docs/competitor-gap-analysis.md` and
+`docs/execution-plan.md`. Sources listed at the bottom.*
 
 This document distills what made OpenClaw and Hermes Agent the two breakout
 open-source personal agents of 2026, extracts the reasons behind their
@@ -92,25 +94,49 @@ persistent agent with:
 
 ## 2. Our position
 
-We already have the durable-agent core these projects converge on, running as
-a hosted web app with Postgres + S3 rather than a daemon on the user's laptop:
+*Rewritten 31 October 2026 against `docs/competitor-gap-analysis.md` §3–4.
+The July version compared us with OpenClaw and Hermes alone; four hosted
+agents launched in between.*
 
-| Their concept | Ours today |
-|---|---|
-| MEMORY.md / SOUL.md | Agent charter + file brain (LESSONS.md, JOURNAL.md, knowledge/) |
-| Heartbeat / cron | Scheduled loops (cron, pause/resume, per-loop prompt) |
-| Skills + registry | Skills (global/workspace, slash commands) + Market |
-| Self-maintenance | update_dashboard, save_app, kanban tools (list/add/update_task) |
-| Approval / pairing | Ask/Auto modes, per-tool and exact-input approvals |
-| Compaction | Summary + cutoff compaction, token ceilings |
-| Portability | AGENT.json export/import with capability review |
-| Sandboxing | Artifacts and previews in network-blocked iframes; S3 key isolation |
+Between July and October 2026 xAI's Grok Bot, Meta's Muse, OpenAI's Dots and
+Anthropic's Claude Duet all shipped what the July bet treated as our
+differentiator: a hosted, zero-setup, always-on personal agent with a cloud
+computer, approvals, connectors and a bundled model. "Without the
+operations" is now what Meta sells. What none of the six ships is the second
+half of the bet, and that is where each is being criticised: memory the user
+cannot inspect (Dots, personal Grok Bots), background work billed out of the
+chat quota with no hard stop (Duet, Dots, Grok), isolation weaker than it
+looks (Grok's shared computer, OpenClaw's one trust domain, Hermes'
+approval-free containers), learning the agent grades itself (Hermes, Grok),
+sharing that leaked (Muse), and a single owner everywhere.
 
-The strategic bet: **general users want the OpenClaw/Hermes experience
-without the OpenClaw/Hermes operations.** Zero setup, safe by default,
-predictable cost, and the same feeling of a persistent teammate that grows.
+The strategic bet, restated: **general users want what Muse, Dots, Duet and
+Grok Bot sell, but with memory they can read, budgets they can see, learning
+they approve, a model and data they own, and an agent they can share with
+the people they live and work with.** The first half is table stakes we now
+match; the second half is the product.
 
-Design principles derived from the research:
+Where we stand. Competitor cells are the 31 Oct 2026 grades from the gap
+analysis matrix (has / partial / none, shortest justifying note); the last
+column is `main` after execution-plan items 1–7 and 9–14, with item 8 in
+progress. Every competitor claim is sourced in that report.
+
+| Dimension | Grok Bot | Muse | Dots | Claude Duet | OpenClaw | Hermes | **yaam-chat today** |
+|---|---|---|---|---|---|---|---|
+| Memory: visible, editable, with provenance | partial — no memory screen for personal Bots | has — editable Soul/Identity/Memory.md | none — delete the dot to reset | has — topic-level view/edit | partial — files/CLI, no UI | partial — two small files, write approval off | **has** — Memory tab with provenance and trust tier, pin/forget, consented profile diffs, FTS recall, daily checkpoints; lessons, skills and profile travel in AGENT.json v2 (`docs/agent-memory.md`) |
+| Proactivity controls: quiet hours, budgets, hard stop | partial — routines; limit "not a hard stop mid-run" | partial — no cadence or budget controls | partial — read-only idle research; fixed cadence | partial — "every few hours", counts against chat quota | partial — `activeHours`; no budget | partial — cron; no quiet hours, no core budget | **has** — per-loop token budget and model override, workspace quiet hours with interrupt policy, monthly spend stop enforced before the call, dollars per agent and loop over 30 days (`docs/triggers.md`, README) |
+| Event triggers | has — Slack/GitHub/email/webhook routines | none documented | partial — scheduled tasks only | partial — polling only | has — automation jobs | has — cron | **has** — `mail`, `calendar`, `task`, `webhook` triggers on loops; payloads framed as data, same budgets and quiet hours (`docs/triggers.md`) |
+| Independent action review | has — Auto Review, skips memory writes | partial — Sentinel egress guard | has — out-of-band Auto-review | has — out-of-model intent and sensitive-info classifiers | none | none | **has** — `ActionReviewService`: a second cheap model call outside the turn returns allow/ask/deny with a reason on the tool card; sensitive-info check forces ask; deterministic gates stay the floor (`docs/permissions.md` §6) |
+| Browser | has — shared cloud computer | has — per-user VM | has — watch and take over | has — not viewable | has — on the host | has — password-manager login | **has** — credential-free, incognito per turn, SSRF-guarded, every page streamed live to the Browser panel; logins stay human by design (`docs/browser-tool.md`) |
+| Channels: email, push, messenger | has — own email inbox, Slack, X, voice | has — WhatsApp and apps | partial — Slack/Teams, no email identity | partial — separate app, no SMS | has — 20+ channels | has — eight messengers | **has** — per-agent email address, web push + PWA, two-way Telegram with pairing; channel turns are untrusted and Ask-only (`docs/channels.md`) |
+| Desktop / computer control | has — shared cloud computer, local commands with approval | announced | has — optional local computer | none | has — node control, full host | has — terminal | **has** — paired outbound companion on the user's own machine, user-chosen scopes, every action Ask-gated and audited, never from a loop or channel (`docs/computer-control.md`) |
+| Multi-agent / companies | has — ~50 Bots, group chats, chief-of-staff Bot | none | partial — one dot fanning out | none | has — routing, subagents | has — Bot Mode rooms | **has** — `delegate_task` over kanban, plus organisations: chief of staff, ≤5 reports, depth ≤3, task board with atomic claims, USD envelopes with 80%/100% stops, hash-chained audit; hire, re-scope, reorg and budget as approval cards (`docs/autonomous-company.md`) |
+| Tenancy / hosted plan | partial — X Subscription pool, opaque units | has — Free/$20/$100, card required | none — $100+ Pro only | partial — inside $20 Pro, shares quota | partial — self-host, BYO keys | partial — $20 includes hosted agent | **has** — `AUTH_MODE=accounts`: magic-link sign-in, `accountId` on every table, plans `free` / `hosted` (dollar ceiling, hard stop) / `byo`; billing seam driven by hand today (`docs/accounts.md`) |
+| Shared, multi-human agent | partial — team Bots in Cursor Teams only | none — sharing suspended after leak | none — single owner | none — single-player | partial — roles "not a security boundary" | none in OSS | **in progress** — execution-plan item 8: member roles, per-member grants, memory audience, approvals routed to the grant's owner |
+| Registry / portability | none — no export, team-only skills | partial — data export, closed | none | partial — memory import/export, Agent Skills standard | has — MIT, ClawHub, MCP | has — MIT, importers | **has** — AGENT.json v2 round-trip with capability review; memory import from Claude, Muse, Hermes, OpenClaw; agentskills.io `SKILL.md` with a scan step; Community registry with review-gated inert installs, ratings from turn feedback, federation (`docs/registry.md`) |
+| Model choice / cost legibility | none — hidden routing | partial — bundled | none — model-locked | partial — bundled, no meter | has — BYO | has — BYO and local | **has** — BYO Anthropic / OpenAI-family / Gemini, model visible on every turn, dollars from a list-price table, no markup |
+
+Design principles, unchanged in substance since July and now mostly code:
 
 - **Proactive, never spooky.** The agent may prepare work at any time, but
   it interrupts only through channels and quiet hours the user configured.
@@ -119,14 +145,20 @@ Design principles derived from the research:
   skills; durable state changes are reviewable diffs, not silent writes. We
   explicitly reject autonomy driven by self-evaluation (Hermes' trap).
 - **Budgeted autonomy.** Nothing unattended runs without a token/cost budget
-  attached, and spend is always visible before the bill.
+  attached, enforced before the call, and spend is always visible before the
+  bill.
 - **Isolation as the security model.** The agent has no host: it has an S3
   workspace, a per-agent prefix, and brokered tools. Injection can waste a
-  turn; it cannot reach SSH keys, because there are none to reach.
+  turn; it cannot reach SSH keys, because there are none to reach. The one
+  route to a real machine is the user's own paired companion, scoped and
+  Ask-gated per action.
 - **The agent is portable property.** AGENT.json v2 (identity, charter,
   loops, dashboard, apps, lessons, private skills, open tasks; the workspace
   profile only on request) is a first-class export, and memory from Claude,
   Muse, Hermes and OpenClaw imports as proposals.
+- **Legibility per task.** In a company of agents, trust is knowing what each
+  task cost, who did it, who checked it, what it may touch, and what the
+  human had to decide (`docs/autonomous-company.md`).
 
 ---
 
@@ -136,21 +168,25 @@ Design principles derived from the research:
 
 Goal: close the memory gap with Hermes. Everything else builds on this.
 
-1. **Conversation recall.** Postgres full-text index over all of an agent's
-   transcripts + a read-only `search_history` tool. The agent can answer
-   "what did we decide about X in March" by actually looking. (Hermes FTS5;
-   gain point 2.)
-2. **Auto-distillation.** Distill (JOURNAL/LESSON extraction) runs
-   automatically when a conversation goes idle or is archived, not only on
-   button press. Nudge semantics from Hermes, but writes are size-bounded
-   appends we already have.
-3. **User profile with consent.** A per-workspace USER.md the agent may
-   propose edits to; the UI shows proposed changes as diffs the user
-   accepts/rejects (fixes Hermes' overwrite pain and OpenClaw's
+1. **Conversation recall.** *(shipped — `search_history`, Postgres FTS with a
+   substring fallback; `docs/agent-memory.md`)* Postgres full-text index over
+   all of an agent's transcripts + a read-only `search_history` tool. The
+   agent can answer "what did we decide about X in March" by actually
+   looking. (Hermes FTS5; gain point 2.)
+2. **Auto-distillation.** *(shipped — `DistillService` idle sweep, lessons in
+   a table with provenance; `docs/agent-memory.md`)* Distill (JOURNAL/LESSON
+   extraction) runs automatically when a conversation goes idle or is
+   archived, not only on button press. Nudge semantics from Hermes, but
+   writes are size-bounded appends we already have.
+3. **User profile with consent.** *(shipped — `workspaces.profile`, agent
+   proposes, user approves; `docs/agent-memory.md`)* A per-workspace USER.md
+   the agent may propose edits to; the UI shows proposed changes as diffs the
+   user accepts/rejects (fixes Hermes' overwrite pain and OpenClaw's
    memory-injection risk). Injected into context like workspace memory.
-4. **Memory transparency.** "What do you know about me?" page per agent:
-   brain files, profile, and the provenance of each entry (which chat/loop
-   wrote it), with edit and delete.
+4. **Memory transparency.** *(shipped — the agent's Memory tab: provenance,
+   trust tier, pin/forget; `docs/agent-memory.md`)* "What do you know about
+   me?" page per agent: brain files, profile, and the provenance of each
+   entry (which chat/loop wrote it), with edit and delete.
 
 ### Phase 2 — Safe proactivity (the OpenClaw magic, minus the 7am scare)
 
@@ -191,21 +227,27 @@ Goal: the agent initiates. This is the viral feature; ours must be trustworthy.
 
 Goal: perceived improvement over time, without self-evaluation autonomy.
 
-1. **Skill drafts from experience.** After a multi-tool conversation ends
-   well (user 👍 or explicit "save this as a skill"), the agent drafts a
-   skill (name, description, instructions) into a **pending** state; the
-   user reviews and enables it in the agent's home page. Rejected drafts
-   feed LESSONS.md.
-2. **Skill refinement with signal.** 👎 on a turn that used a skill attaches
-   the feedback to that skill; the next draft revision shows a diff. The
-   learning signal is the human rating we already collect, not the model
-   grading itself.
-3. **Brain checkpoints.** Versioned snapshots of brain files (S3 object
-   versioning or dated copies) with one-click rollback, per Hermes'
-   checkpoint/rollback. Protects the growth investment.
-4. **Per-agent skill scope.** Skills owned by an agent (in addition to
-   global/workspace), included in AGENT.json, aligned with the
-   agentskills.io format so skills can be imported from the open ecosystem.
+1. **Skill drafts from experience.** *(shipped — `draft_skill`, pending and
+   invisible to the model until approved; `docs/permissions.md`)* After a
+   multi-tool conversation ends well (user 👍 or explicit "save this as a
+   skill"), the agent drafts a skill (name, description, instructions) into a
+   **pending** state; the user reviews and enables it in the agent's home
+   page. Rejected drafts feed LESSONS.md.
+2. **Skill refinement with signal.** *(shipped — `skill_outcomes`,
+   `revise_skill`, accept-as-diff; execution-plan item 10)* 👎 on a turn that
+   used a skill attaches the feedback to that skill; the next draft revision
+   shows a diff. The learning signal is the human rating we already collect,
+   not the model grading itself.
+3. **Brain checkpoints.** *(shipped, partly — daily `.checkpoints/<date>/`
+   snapshots; rollback is by file, no one-click UI; `docs/agent-memory.md`)*
+   Versioned snapshots of brain files (S3 object versioning or dated copies)
+   with one-click rollback, per Hermes' checkpoint/rollback. Protects the
+   growth investment.
+4. **Per-agent skill scope.** *(shipped — agent-private skills in AGENT.json
+   v2, agentskills.io `SKILL.md` import with a scan step; execution-plan item
+   9)* Skills owned by an agent (in addition to global/workspace), included
+   in AGENT.json, aligned with the agentskills.io format so skills can be
+   imported from the open ecosystem.
 
 ### Phase 4 — Presence (meet users where they are)
 
@@ -235,14 +277,18 @@ or three good ones, not 29.
 
 ### Phase 5 — Depth and ecosystem
 
-1. **Browser tool.** Headless browsing in an isolated, network-egress-
-   controlled worker (fetch/render/extract, no credentials), because "look
-   at this page and fill the form" is a top OpenClaw use case. SSRF guard
-   already exists for raw HTTP; the browser inherits it.
-2. **Agent-to-agent delegation.** An agent can hand a task card to another
-   agent (our kanban is the natural handoff surface); the receiving agent's
-   loop picks it up. This is OpenClaw's multi-agent story expressed through
-   a primitive we already have, with the user able to watch the board.
+1. **Browser tool.** *(shipped — `docs/browser-tool.md`)* Headless browsing
+   in an isolated, network-egress- controlled worker (fetch/render/extract,
+   no credentials), because "look at this page and fill the form" is a top
+   OpenClaw use case. SSRF guard already exists for raw HTTP; the browser
+   inherits it.
+2. **Agent-to-agent delegation.** *(shipped, then extended — `delegate_task`
+   over kanban, and organisations with a chief of staff, a claimable board,
+   budgets and approvals; `docs/autonomous-company.md`)* An agent can hand a
+   task card to another agent (our kanban is the natural handoff surface);
+   the receiving agent's loop picks it up. This is OpenClaw's multi-agent
+   story expressed through a primitive we already have, with the user able to
+   watch the board.
 3. **Real market.** *(shipped)* The curated market becomes a registry: publish an
    AGENT.json (capability review stays mandatory), install counts, ratings
    from the feedback we already collect. Skills and mini apps shareable the
@@ -254,7 +300,8 @@ or three good ones, not 29.
    ratings rolled up from turn 👍/👎, a public read-only feed, and
    federation over `REGISTRY_URL` / `REGISTRY_PUBLISH_TOKEN` behind the
    SSRF guard. No payments, no unreviewed installs.
-4. **Voice notes.** Transcription on upload (attachment type we already
+4. **Voice notes.** *(shipped — transcription on upload, optional TTS;
+   `docs/voice.md`)* Transcription on upload (attachment type we already
    support), TTS on replies later. Wearables and wake words are explicitly
    out of scope.
 
@@ -262,18 +309,87 @@ or three good ones, not 29.
 
 ## 4. What we deliberately do not copy
 
+Refusals, not backlog. The first five date from July; the rest were added
+31 October 2026 from incidents documented in `docs/competitor-gap-analysis.md`
+§(c) and `docs/autonomous-company.md` §6. `docs/security.md` §h is the
+enforceable version; if a change needs one of these, that document changes
+first.
+
 - **Full host access.** OpenClaw's power and its CVE list come from the same
-  place. Our agents keep brokered tools over isolated storage. If we ever
-  offer "connect to my machine," it is a separate, paired, sandboxed runner.
+  place (543 tracked CVEs; the Carbonato botnet ran Hermes on exposed Docker
+  hosts). Our agents keep brokered tools over isolated storage, and no
+  sandbox backend skips the Ask gate. "Connect to my machine" exists only as
+  the user's own paired companion (`docs/computer-control.md`): outbound-only,
+  scoped at the keyboard, every action approved and audited, never from a
+  loop or channel. ([BetterClaw](https://www.betterclaw.io/blog/openclaw-security-2026);
+  [CSA note](https://labs.cloudsecurityalliance.org/research/csa-research-note-carbonato-botnet-docker-ai-agent-20260928/))
 - **Self-hosted-only distribution.** Running the infrastructure is the
   community's top pain point; hosting it *is* our product. (AGENT.json
   export keeps the ownership story honest.)
-- **Self-evaluation autonomy.** Hermes' agent grading its own work is the
-  documented failure mode. Human signal gates all durable learning.
+- **Self-evaluation autonomy: self-graded skills, autonomous memory writes.**
+  Hermes' curator "never tests whether a skill actually works" and its
+  approval queues default off; Grok's Bot "decides on its own what is worth
+  saving and usually doesn't ask first". Human signal gates all durable
+  learning, and there is no `auto` mode for profile proposals or skill
+  drafts, because defaults are what users run.
+  ([Issue #61644](https://github.com/NousResearch/hermes-agent/issues/61644);
+  [docs: Bots](https://docs.x.ai/grok-bot/bots))
 - **Channel sprawl.** 29 channels is a maintenance treadmill. Email +
-  Telegram + push covers general users; more only with evidence.
+  Telegram + push covers general users; more only with evidence. WhatsApp
+  has no sane official API for our shape and stays out.
 - **Always-on heartbeats by default.** Proactivity is opt-in per agent, with
-  a budget, a model override, and quiet hours from day one.
+  a budget, a model override, and quiet hours. Companies likewise: members
+  wake on assignment, comment, review or decision, never on an interval.
+- **Enumerable share links** (Muse). GhostShares: share pages built from a
+  title plus a random ID on a per-share subdomain were enumerable via
+  passive DNS, exposing 6,800+ chats including a loan application; Meta
+  suspended sharing. Ours, when sharing ships: capability tokens or
+  authenticated links on one origin, revocable, never a subdomain per share,
+  never indexed. ([Claroc](https://blog.claroc.io/ghostshares-muse-passive-dns/);
+  [Ars Technica](https://arstechnica.com/security/2026/10/meta-muse-exposes-users-personal-and-business-secrets-when-they-share-conversations/))
+- **A shared per-user computer where agents are not a boundary** (Grok Bot).
+  xAI: "The computer is assigned per user, not per Bot. Do not use separate
+  Bots as a security boundary." Ours: no server-side computer at all, a
+  per-agent prefix, a browser that is per run and credential-free.
+  ([docs FAQ](https://docs.x.ai/grok-bot/faq);
+  [docs: teams](https://docs.x.ai/grok-bot/teams-and-enterprises))
+- **A separate app for the proactive mode** (Claude Duet). An early user
+  called the second download "a huge L"; proactive loops stay inside the one
+  agent home. ([X post](https://x.com/LLMJunky/status/2115133263857504440);
+  [Introducing Claude Duet](https://claude.com/resources/articles/claude-duet))
+- **Background work billed out of the chat quota with no hard stop** (Duet,
+  Grok Bot, Dots). Grok: a spending limit "is not a hard stop mid-run";
+  Duet's checks count at the chat rate even when they find nothing; Dots'
+  background allowance is unpublished. Ours: loop budgets separate from
+  chat, reserved before the call, a `budget_stop` event when hit.
+  ([Cursor help: plans](https://cursor.com/help/grok-bot/plans);
+  [Flavio Copes on Duet](https://flaviocopes.com/claude-duet/);
+  [Lindy on Dots](https://www.lindy.ai/blog/chatgpt-dots))
+- **Hidden model routing** (Grok Bot). "You cannot pick a model… It doesn't
+  show which model was used." The model is visible on every turn and the
+  user picks it. ([docs FAQ](https://docs.x.ai/grok-bot/faq))
+- **Opt-out training on user data** (Muse). "Help improve our AI models" is
+  default-on. With BYO keys we see no model traffic; this stays true when
+  platform-metered access arrives.
+  ([Meta Help](https://www.meta.com/help/superintelligence/2225571704857152/))
+- **Agent-initiated reorganisation without approval** (Paperclip). Agents
+  hired agents by default until the owner found the setting. `org_hire_agent`,
+  `org_set_scope` (widening), `org_propose_reorg` and `org_budget_request`
+  produce approval cards; there is no trust toggle that lets the chief of
+  staff act alone. ([Implicator](https://www.implicator.ai/paperclip-agents-hire-agents-by-default/))
+- **Chat as the execution bus** (Paperclip, Project Vend, Hermes Bot Mode).
+  Group-chat ping-pong burned tokens and produced "long, unproductive
+  conversations"; Hermes had to cap rooms at 10 messages and 3 rounds. Our
+  group log is a human-visible steering channel that wakes nobody; work
+  moves through the task board.
+  ([Discussion #13999](https://github.com/paperclipai/paperclip/discussions/13999);
+  [Anthropic](https://www.anthropic.com/research/project-vend-2);
+  [hermes bot-mode](https://hermes-agent.nousresearch.com/docs/user-guide/bot-mode))
+- **Phone calls and agentic payments, for now** (Muse). The calling beta was
+  partly human call-centre workers, and Amazon blocked Muse over credential
+  capture. Scoped one-time cards are a design we may want later; neither is
+  a 2026 item. ([404 Media](https://www.404media.co/meta-tests-muse-ai-agent-calls-that-are-actually-made-by-humans-in-a-call-center/);
+  [GeekWire](https://www.geekwire.com/2026/amazon-blocks-metas-muse-ai-assistant-in-new-standoff-over-agentic-shopping/))
 
 ## 5. Success measures
 
@@ -288,6 +404,8 @@ or three good ones, not 29.
 
 ## Sources
 
+- Competitor matrix, 31 Oct 2026: `docs/competitor-gap-analysis.md` — Grok Bot, Muse, Dots, Claude Duet, OpenClaw, Hermes; every competitor claim in §2 and §4 above is sourced there.
+- Autonomous companies, 31 Oct 2026: `docs/autonomous-company.md` — Paperclip, hosted multi-agent products, the governance evidence behind the company-layer refusals in §4.
 - OpenClaw: [site](https://openclaw.ai/), [repo](https://github.com/openclaw/openclaw), [DigitalOcean overview](https://www.digitalocean.com/resources/articles/what-is-openclaw), [architecture walkthrough](https://bibek-poudel.medium.com/how-openclaw-works-understanding-ai-agents-through-a-real-architecture-5d59cc7a4764), [heartbeat guide](https://skywork.ai/skypage/en/openclaw-heartbeat-ai-agents/2051941515905306624), [proactive agents coverage](https://hyperight.com/openclaws-proactive-ai-agents-are-messaging-humans-and-organizing-themselves/)
 - OpenClaw security: [IBM X-Force](https://www.ibm.com/think/x-force/what-openclaw-reveals-about-agentic-ai-security-risks), [Bitsight exposed instances](https://www.bitsight.com/blog/openclaw-ai-security-risks-exposed-instances), [Giskard vulnerabilities](https://www.giskard.ai/knowledge/openclaw-security-vulnerabilities-include-data-leakage-and-prompt-injection-risks), [prompt-injection attack notes](https://github.com/centminmod/explain-openclaw/blob/master/05-worst-case-security/prompt-injection-attacks.md), [memory-injection research](https://arxiv.org/pdf/2607.05189)
 - OpenClaw cost: [official token docs](https://docs.openclaw.ai/reference/token-use), [cost analysis](https://help.apiyi.com/en/openclaw-token-cost-optimization-guide-en.html), [Milvus token analysis](https://milvus.io/blog/why-ai-agents-like-openclaw-burn-through-tokens-and-how-to-cut-costs.md)
