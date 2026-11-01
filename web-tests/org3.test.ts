@@ -302,3 +302,14 @@ describe('golden-set roles', () => {
     expect(roleKeyOf({ title: '', agentId: 'abcdef123456' })).toBe('agent-abcdef12');
   });
 });
+
+describe('member_settings cards', () => {
+  it('words the patch and offers the kind for delegation by its member_* rows', async () => {
+    const { memberSettingsLines, delegationOptions } = await import('../src/lib/org3');
+    expect(memberSettingsLines({ patch: { model: 'claude-x', agentTypeId: null, name: 'Quill' }, heartbeat: { enabled: true, cron: '0 * * * *' }, applyToChats: true }))
+      .toEqual(['model → claude-x', 'agent type → (default)', 'name → Quill', 'heartbeat → on (0 * * * *)', 'also switches its existing chats']);
+    expect(memberSettingsLines({})).toEqual([]);
+    const opts = delegationOptions([{ kind: 'member_folder', match: 'a member\'s assigned workspace folder', verdict: 'propose', reason: 'it widens files', delegable: true }]);
+    expect(opts.find((o) => o.kind === 'member_settings')).toMatchObject({ disabled: false, note: '' });
+  });
+});

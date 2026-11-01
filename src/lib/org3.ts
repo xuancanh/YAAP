@@ -622,17 +622,28 @@ export function decidedViaBadge(via: string | null | undefined, nameOf: (id: str
 export const VERDICT_COLOR: Record<string, string> = { alone: 'var(--green)', experiment: 'var(--blue)', propose: 'var(--amber)', never: 'var(--red)' };
 export const VERDICT_LABEL_B: Record<string, string> = { alone: 'alone', experiment: 'through an experiment', propose: 'proposes a card', never: 'never' };
 /** Which boundary family a card of each approval kind stands for (for `delegable`). */
-const CARD_FAMILY: Record<string, string> = {
+const CARD_FAMILY: Record<string, string | string[]> = {
+  member_settings: ['member_identity', 'member_model', 'member_heartbeat', 'member_folder'],
   hire: 'hire', scope_widen: 'scope_widen', reorg: 'reorg', budget_raise: 'budget', terminate: 'terminate', tune: 'tunable', cadence: 'cadence', routing: 'routing', charter_change: 'charter',
 };
-export const DELEGABLE_KINDS = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'experiment', 'two_key', 'metric_source'];
+export const DELEGABLE_KINDS = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'experiment', 'member_settings', 'two_key', 'metric_source'];
+/** A member_settings card's patch in words (the chief's org_update_member). */
+export function memberSettingsLines(p: { patch?: Record<string, unknown>; heartbeat?: { enabled?: boolean; cron?: string | null }; applyToChats?: boolean }): string[] {
+  const patch = p.patch ?? {};
+  const label: Record<string, string> = { name: 'name', role: 'role', emoji: 'emoji', colors: 'colours', agentTypeId: 'agent type', model: 'model', workspaceFolder: 'workspace folder' };
+  const out = Object.entries(patch).filter(([, v]) => v !== undefined).map(([k, v]) => `${label[k] ?? k} → ${v === null || v === '' ? '(default)' : String(v)}`);
+  if (p.heartbeat) out.push(`heartbeat → ${p.heartbeat.enabled === false ? 'off' : 'on'}${p.heartbeat.cron ? ` (${p.heartbeat.cron})` : ''}`);
+  if ((patch.model !== undefined || patch.agentTypeId !== undefined) && p.applyToChats !== undefined) out.push(p.applyToChats ? 'also switches its existing chats' : 'existing chats keep their model');
+  return out;
+}
 /** The delegation form's kinds: approval kinds and action classes, with the reason a kind can never be delegated. */
 export function delegationOptions(rules: Array<{ kind: string; match: string; reason: string; delegable: boolean; verdict: string }>): Array<{ kind: string; label: string; disabled: boolean; note: string }> {
   const kinds = DELEGABLE_KINDS.map((k) => {
     if (k === 'metric_source') return { kind: k, label: k, disabled: true, note: 'a metric source defines what counts as truth' };
     if (k === 'two_key') return { kind: k, label: `${k} (prefer an action class)`, disabled: false, note: '' };
     const fam = CARD_FAMILY[k];
-    const rows = fam ? rules.filter((r) => r.kind === fam && r.verdict !== 'never' && r.verdict !== 'alone') : [];
+    const fams = fam === undefined ? [] : Array.isArray(fam) ? fam : [fam];
+    const rows = rules.filter((r) => fams.includes(r.kind) && r.verdict !== 'never' && r.verdict !== 'alone');
     const blocked = rows.filter((r) => !r.delegable);
     if (rows.length > 0 && blocked.length === rows.length) return { kind: k, label: k, disabled: true, note: blocked.map((r) => `${r.match}: ${r.reason}`).join('; ') };
     return { kind: k, label: k, disabled: false, note: blocked.length ? `never for ${blocked.map((r) => r.match).join(', ')} — ${blocked[0].reason}` : '' };

@@ -1529,3 +1529,10 @@ screen):*
   `GET …/org/calibration` returns `{ bar, members }`. The chat card's class
   pill and inline key and the `two_key` card's exact call use them; the
   text-parsing fallbacks are gone.
+- **After the rebase on member settings and agent-board statuses:** the
+  `member_settings` card shows the member and its patch in words (model,
+  agent type, identity, folder, heartbeat, whether chats follow —
+  `memberSettingsLines`) and is offered for delegation by its `member_*`
+  boundary rows; the org board labels its last column "cancelled ·
+  abandoned" and the task drawer heads an abandoned task with its owner's
+  reason (the "Abandoned by its owner" comment).

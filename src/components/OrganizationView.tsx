@@ -17,7 +17,7 @@ import { fmtUsd } from '../lib/pricing';
 import { UsageBars, UsageRows } from './UsageChart';
 import { I, P } from '../lib/icons';
 import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
-import { changeSummary, decidedViaBadge, dueBadge, expectedLabel, verificationBadge } from '../lib/org3';
+import { changeSummary, decidedViaBadge, dueBadge, expectedLabel, memberSettingsLines, verificationBadge } from '../lib/org3';
 
 /** The CEO's-seat panes (docs/company-vision.md §8, items 18–20) load on demand. */
 const VisionPane = lazy(() => import('./OrgVisionView').then((m) => ({ default: m.VisionPane })));
@@ -381,7 +381,7 @@ function Board({ org }: { org: OrgDetail }) {
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols.length}, minmax(150px, 1fr))`, gap: 8, overflowX: 'auto' }}>
         {cols.map((s) => (
           <div key={s} style={{ background: 'var(--panel-2)', borderRadius: 10, padding: 8, minHeight: 120 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: STATUS_COLOR[s], marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}><span>{s.replace('_', ' ')}</span><span>{tasks.filter((t) => t.status === s).length}</span></div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: STATUS_COLOR[s], marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}><span title={s === 'cancelled' ? 'Cancelled, or abandoned by its owner (the reason is on the timeline)' : s === 'waiting' ? 'Waiting on another task; cannot be claimed yet' : undefined}>{s === 'cancelled' ? 'cancelled · abandoned' : s.replace('_', ' ')}</span><span>{tasks.filter((t) => t.status === s).length}</span></div>
             {tasks.filter((t) => t.status === s).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).map((t) => {
               const a = t.assigneeAgentId ? names.get(t.assigneeAgentId) : undefined;
               const unit = t.unitId ? byId.get(t.unitId) : root;
@@ -475,6 +475,8 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
   useEffect(() => { void refresh(); }, [refresh]);
   const act = async (fn: () => Promise<unknown>) => { try { await fn(); await refresh(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
   const blockers = safeJsonParse<string[]>(task.blockers, []);
+  // A member may abandon its own task (stored as cancelled, with the reason as an "Abandoned by its owner" comment).
+  const abandoned = task.status === 'cancelled' ? comments.find((c) => c.text.startsWith('Abandoned by its owner')) : undefined;
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 90, display: 'flex', justifyContent: 'flex-end' }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(560px, 100%)', background: 'var(--bg)', borderLeft: '1px solid var(--border)', height: '100%', overflowY: 'auto', padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -495,6 +497,7 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
             {expectedLabel(task.expected) && <span style={faint}>expected {expectedLabel(task.expected)} from history</span>}
           </div>
         )}
+        {abandoned && <div role="status" style={{ ...card, borderLeft: '3px solid var(--amber)', fontSize: 12.5 }}><b>Abandoned by {names.get(abandoned.fromAgentId ?? '')?.name ?? 'its owner'}</b> — {abandoned.text.replace(/^Abandoned by its owner:\s*/, '')} <span style={faint}>· {ago(abandoned.createdAt)} · the chief was told to triage</span></div>}
         <div style={card}>
           {(['outcome', 'context', 'constraints', 'done_when'] as const).map((k) => <div key={k} style={{ marginBottom: 6 }}><div style={{ ...faint, textTransform: 'uppercase', letterSpacing: '.4px', fontSize: 10.5 }}>{k.replace('_', ' ')}</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{brief[k] || <span style={faint}>—</span>}</div></div>)}
           {blockers.length > 0 && <div><div style={{ ...faint, textTransform: 'uppercase', fontSize: 10.5 }}>blockers</div>{blockers.map((b, i) => <div key={i} style={{ fontSize: 12.5, color: 'var(--red)' }}>■ {b}</div>)}</div>}
@@ -771,6 +774,17 @@ function ApprovalArtifact({ kind, p, nm, wsId }: { kind: string; p: Record<strin
       {typeof p.actionId === 'string' ? <Suspense fallback={<div style={faint}>Loading the call…</div>}><ActionCallPreview wsId={wsId} actionId={p.actionId} /></Suspense> : <div style={faint}>{String(p.summary ?? '')}</div>}
     </div>
   );
+  if (kind === 'member_settings') {
+    const lines = memberSettingsLines(p as Parameters<typeof memberSettingsLines>[0]);
+    return (
+      <div style={{ fontSize: 12.5, display: 'grid', gap: 4 }}>
+        <div>Change the settings of <b>{String(p.agentName ?? nm(p.agentId))}</b>{p.summary ? <> — {String(p.summary)}</> : null}</div>
+        {lines.length > 0 && <ul style={{ margin: 0, paddingLeft: 18 }}>{lines.map((l) => <li key={l} style={mono}>{l}</li>)}</ul>}
+        {p.why ? <div style={faint}>Why: {String(p.why)}</div> : null}
+        {typeof p.agentId === 'string' ? <div><RefButton kind="agent" id={p.agentId} label="Open the member" /></div> : null}
+      </div>
+    );
+  }
   if (kind === 'metric_source') return (
     <div style={{ fontSize: 12.5, display: 'grid', gap: 4 }}>
       <div>Make <b>{String(p.name ?? '')}</b> a live {String(p.kind ?? '')} source{p.unit ? ` (${String(p.unit)})` : ''}{p.pollMinutes ? `, read every ${String(p.pollMinutes)} min` : ''}.</div>
