@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **done** — all fourteen items shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–14 done** (31 Oct – 1 Nov 2026); **items 15–16 in progress** after the owner's correction that the company is the workspace and the group chat is a Slack-style channel (`docs/group-chat.md`).
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -380,3 +380,17 @@ and `ORG.json` export.
 - Correct the doc/code mismatches listed in `docs/competitor-gap-analysis.md`
   §6 (roadmap AGENT.json claim, Phase 2 status, Telegram one-way).
 - Rewrite `docs/roadmap.md` §2 and §4 against the competitor matrix.
+
+### 15. Group chat: channels, threads, agents that talk *(todo)*
+`docs/group-chat.md` §1–§4: channels in every workspace (`#general` by
+default), threads, @mentions, unprompted replies gated by a cheap relevance
+check with rate caps, 3-round agent-to-agent cap per thread, channel folder,
+make-task from a message with status lines posting back, DMs in the same
+rail, workspace SSE, mention delivery through paired channels.
+
+### 16. Workspace is the company *(todo)*
+`docs/group-chat.md` §5: fold the organization object into the workspace
+(`orgMode off|supervised|autonomous`), Company panes under the workspace,
+`#company` announcements, autonomous chief of staff within caps (hire, reorg,
+scopes, budgets execute immediately and are audited and announced),
+supervised mode keeps approvals.
