@@ -21,6 +21,7 @@ import { OrgAuditService } from './org-audit.service';
 import { OrgService } from './org.service';
 import { OrgUnitsService } from './org-units.service';
 import { AgentsService } from '../agents/agents.service';
+import { normalizeChecks, parseChecks, type Check } from './org-checks';
 
 export type OrgTask = typeof orgTasks.$inferSelect;
 export type OrgRun = typeof orgRuns.$inferSelect;
@@ -32,6 +33,20 @@ export const REVIEW_ROUND_CAP = 3;
 const TASK_LIMIT = 500;
 
 export interface TaskBrief { outcome: string; context: string; constraints: string; done_when: string }
+
+/** Executable acceptance (docs/sensing.md §3, item 27): what running a
+ *  task's checks before review concluded. `none` = the task has no checks
+ *  (or no gate is bound); `pass` accepts it without a model unless
+ *  `alsoReview`; `fail` sends it back to the owner with `detail`, counting a
+ *  review round; `error` falls through to the normal review with a note. */
+export interface AcceptanceVerdict { outcome: 'none' | 'pass' | 'fail' | 'error'; detail: string; alsoReview: boolean }
+export type AcceptanceGate = (orgId: string, task: OrgTask) => Promise<AcceptanceVerdict>;
+
+/** How a done task was verified, for the board (docs/sensing.md §3). */
+export function verificationOf(t: Pick<OrgTask, 'status' | 'acceptedBy'>): 'check' | 'review' | 'none' | null {
+  if (t.status !== 'done') return null;
+  return t.acceptedBy === 'check' ? 'check' : t.acceptedBy === 'review' ? 'review' : 'none';
+}
 
 /** Task classes (docs/company-vision.md §7, item 23): the six the routing
  *  table and the cost roll-up name; a brief may name another slug
@@ -86,6 +101,14 @@ export class OrgTasksService {
     @Optional() private readonly agents?: AgentsService,
   ) {}
 
+  private acceptanceGate?: AcceptanceGate;
+
+  /** OrgSensingService binds the check runner here (docs/sensing.md §3). */
+  setAcceptanceGate(gate: AcceptanceGate | undefined): void { this.acceptanceGate = gate; }
+
+  /** The task's checks, parsed. */
+  checksOf(t: Pick<OrgTask, 'checks'>): Check[] { return parseChecks(t.checks); }
+
   // ---- tasks ----
 
   /** The board, optionally one unit's: `unitId` alone is that unit's own
@@ -126,6 +149,8 @@ export class OrgTasksService {
     unitId?: string | null;
     /** Capital (docs/company-vision.md §7): the task class; derived from the brief when absent. */
     class?: string | null;
+    /** Executable acceptance (docs/sensing.md §3): model-free checks run before review. */
+    checks?: unknown;
   }): Promise<OrgTask> {
     const org = await this.org.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 200);
@@ -140,6 +165,8 @@ export class OrgTasksService {
       if (!m || m.status !== 'active') throw new BadRequestException('assignee must be an active member of this organization');
     }
     const brief = parseBrief(typeof input.brief === 'string' ? input.brief : (input.brief as Record<string, unknown> | undefined));
+    let checks: Check[];
+    try { checks = normalizeChecks(input.checks ?? (input.brief && typeof input.brief === 'object' ? (input.brief as Record<string, unknown>).checks : undefined)); } catch (err) { throw new BadRequestException(err instanceof Error ? err.message : String(err)); }
     let unitId: string | null = null;
     let unitExplicit = 0;
     if (this.units) {
@@ -157,10 +184,11 @@ export class OrgTasksService {
       channelId: input.channelId ?? null, messageId: input.messageId ?? null,
       unitId, unitExplicit,
       class: normalizeTaskClass(input.class) ?? deriveTaskClass({ title, brief }),
+      checks: JSON.stringify(checks), acceptedBy: '',
       createdAt: now, updatedAt: now,
     };
     await this.db.insert(orgTasks).values(row);
-    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId, class: row.class } });
+    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId, class: row.class, ...(checks.length ? { checks: checks.length } : {}) } });
     if (row.assigneeAgentId && status === 'todo' && org.status === 'active') this.emitWake(orgId, row.id, row.assigneeAgentId, 'assignment');
     return row;
   }
@@ -176,9 +204,14 @@ export class OrgTasksService {
     assigneeAgentId?: string | null;
     /** Capital (docs/company-vision.md §7): reclassify the task. */
     class?: string;
+    /** Executable acceptance (docs/sensing.md §3): replace the checks. */
+    checks?: unknown;
   }, actor = 'user'): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     const set: Record<string, unknown> = { updatedAt: nowIso() };
+    if (patch.checks !== undefined) {
+      try { set.checks = JSON.stringify(normalizeChecks(patch.checks)); } catch (err) { throw new BadRequestException(err instanceof Error ? err.message : String(err)); }
+    }
     if (patch.assigneeAgentId !== undefined) {
       if (patch.assigneeAgentId) { const m = await this.org.member(orgId, patch.assigneeAgentId); if (!m || m.status !== 'active') throw new BadRequestException('assignee must be an active member of this organization'); }
       set.assigneeAgentId = patch.assigneeAgentId;
@@ -190,6 +223,8 @@ export class OrgTasksService {
     if (patch.status !== undefined) {
       if (!TASK_STATUSES.includes(patch.status)) throw new BadRequestException(`status must be one of ${TASK_STATUSES.join(', ')}`);
       set.status = patch.status;
+      // A status set by hand is not a verification: done that way reads `none`.
+      if (patch.status !== t.status) set.acceptedBy = '';
       // Leaving the active states releases the claim so the next wake can claim again.
       if (['todo', 'backlog', 'done', 'cancelled', 'blocked'].includes(patch.status)) { set.claimedBy = null; set.claimedAt = null; }
     }
@@ -339,6 +374,28 @@ export class OrgTasksService {
     const t = await this.get(orgId, taskId);
     if (['done', 'cancelled'].includes(t.status)) throw new BadRequestException(`task is ${t.status}`);
     const org = await this.org.get(orgId);
+    // Executable acceptance (docs/sensing.md §3): the checks run first and,
+    // when they settle it, no reviewer — model or human — is asked.
+    let checkNote = '';
+    if (this.acceptanceGate && this.checksOf(t).length > 0) {
+      const verdict = await this.acceptanceGate(orgId, t).catch((err: unknown): AcceptanceVerdict => ({ outcome: 'error', detail: err instanceof Error ? err.message : String(err), alsoReview: false }));
+      const by = input.fromAgentId ? `agent:${input.fromAgentId}` : 'user';
+      if (verdict.outcome === 'pass' && !verdict.alsoReview) {
+        if (input.note) await this.comment(orgId, taskId, { text: `Review requested: ${input.note}`, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, wake: false });
+        await this.db.update(orgTasks).set({ status: 'done', acceptedBy: 'check', claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+        await this.audit.append(orgId, { actor: 'check', action: 'review_accept', refType: 'task', refId: taskId, payload: { by: 'check', requestedBy: by, rounds: t.reviewRounds } });
+        await this.comment(orgId, taskId, { text: `Accepted by check: ${verdict.detail}`.slice(0, 8_000), fromAgentId: null, wake: false });
+        const done = await this.get(orgId, taskId);
+        if (done.channelId || done.unitId) this.bus?.emitTaskStatus({ source: 'org', taskId, title: done.title, status: 'done', previous: t.status, channelId: done.channelId, messageId: done.messageId, agentId: done.assigneeAgentId, unitId: done.unitId });
+        return done;
+      }
+      if (verdict.outcome === 'fail') {
+        await this.audit.append(orgId, { actor: 'check', action: 'checks_failed', refType: 'task', refId: taskId, payload: { requestedBy: by, detail: verdict.detail.slice(0, 600) } });
+        return this.review(orgId, taskId, { verdict: 'request_changes', note: `checks failed — ${verdict.detail}`, byAgentId: null, byCheck: true });
+      }
+      checkNote = verdict.outcome === 'pass' ? `All checks passed (${verdict.detail}); done_when also has text a reviewer judges.` : `Checks could not run (${verdict.detail}); review by judgment.`;
+    }
+    if (checkNote) await this.comment(orgId, taskId, { text: checkNote.slice(0, 8_000), fromAgentId: null, wake: false });
     // A review by a human employee (item 24): an approval-like `human_review`
     // card addressed to them; no agent reviewer is woken.
     const humanReviewer = input.reviewerHumanId ?? t.reviewerHumanId;
@@ -381,12 +438,12 @@ export class OrgTasksService {
    *  REVIEW_ROUND_CAP rounds the task escalates to the user instead (an
    *  `escalation` approval card) and stays blocked; `escalate` does that
    *  at once. Self-review is refused. */
-  async review(orgId: string, taskId: string, input: { verdict: 'accept' | 'request_changes' | 'escalate'; note?: string; byAgentId?: string | null; runId?: string | null }): Promise<OrgTask> {
+  async review(orgId: string, taskId: string, input: { verdict: 'accept' | 'request_changes' | 'escalate'; note?: string; byAgentId?: string | null; runId?: string | null; byCheck?: boolean }): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
-    const actor = input.byAgentId ? `agent:${input.byAgentId}` : 'user';
+    const actor = input.byCheck ? 'check' : input.byAgentId ? `agent:${input.byAgentId}` : 'user';
     if (input.byAgentId && input.byAgentId === t.assigneeAgentId) throw new BadRequestException('a task cannot be reviewed by its own assignee');
     if (input.verdict === 'accept') {
-      await this.db.update(orgTasks).set({ status: 'done', claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+      await this.db.update(orgTasks).set({ status: 'done', acceptedBy: 'review', claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
       await this.audit.append(orgId, { actor, action: 'review_accept', refType: 'task', refId: taskId, payload: { rounds: t.reviewRounds } });
       if (input.note) await this.comment(orgId, taskId, { text: `Accepted: ${input.note}`, fromAgentId: input.byAgentId ?? null, runId: input.runId ?? null, wake: false });
       return this.get(orgId, taskId);

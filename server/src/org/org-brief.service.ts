@@ -109,6 +109,10 @@ export class OrgBriefService {
     for (const t of blocked.slice(0, 8)) lines.push(`  - ■ blocked: ${t.title} (${nameOf(t.assigneeAgentId)}) — ${lastOf(t.blockers)}`);
     for (const r of failed.slice(0, 5)) lines.push(`  - ✗ ${r.status}: ${tasks.find((t) => t.id === r.taskId)?.title ?? r.taskId.slice(0, 8)} (${nameOf(r.agentId)})`);
     const accepted = tasks.filter((t) => t.status === 'done').length;
+    // Executable acceptance (docs/sensing.md §3): verified by check versus by opinion.
+    const weekAgo = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+    const doneWeek = tasks.filter((t) => t.status === 'done' && t.updatedAt >= weekAgo);
+    if (doneWeek.length > 0) lines.push(`- ${Math.round((doneWeek.filter((t) => t.acceptedBy === 'check').length / doneWeek.length) * 100)}% of tasks accepted by check this week (${doneWeek.filter((t) => t.acceptedBy === 'check').length} of ${doneWeek.length}); the rest by review or by hand.`);
     if (accepted > 0 && orgSpent > 0) lines.push(`- Cost per accepted task this month: $${(orgSpent / accepted).toFixed(2)}.`);
 
     // 2b. Key results (docs/company-vision.md §2.3–§2.4): pace counts, the
@@ -118,6 +122,8 @@ export class OrgBriefService {
       if (kr && (kr.total > 0 || kr.objectivesAtRisk.length > 0)) {
         lines.push('', '## Key results');
         lines.push(`- ${kr.total} active: ${kr.onPace} on pace, ${kr.behind} behind, ${kr.unknown} not yet measurable; ${kr.atRisk.length ? `${kr.atRisk.length} at risk` : 'none at risk'}.`);
+        // Sensing (docs/sensing.md §2): a self-reported number is a claim, not a measurement.
+        if (kr.selfReported > 0) lines.push(`- Note: ${kr.selfReported} of ${kr.total} key result(s) are self-reported (no metric source) — their values are what the owners typed in.`);
         for (const { goal, ownerName } of kr.atRisk) lines.push(`  - ⚠ ${goal.title} (${ownerName}${goal.dueAt ? `, due ${goal.dueAt.slice(0, 10)}` : ''}) — ${goal.atRiskReason}`);
         for (const o of kr.objectivesAtRisk) lines.push(`  - ■ objective at risk: ${o.title} — ${o.atRiskReason}`);
         if (kr.visionAtRisk) lines.push(`- **Decision:** ${kr.objectivesAtRisk.length} objectives are at risk — the vision is. Cut scope, add budget, or accept the slip; tell the chief of staff which.`);

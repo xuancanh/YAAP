@@ -788,6 +788,11 @@ export const orgGoals = pgTable('org_goals', {
   atRiskReason: text('atRiskReason').notNull().default(''),
   lastCheckInAt: text('lastCheckInAt'),
   checkInCadenceDays: integer('checkInCadenceDays').notNull().default(7),
+  /** Sensing (docs/sensing.md, item 27): the metric source a key result reads
+   *  its currentValue from — set only from that source's latest sample — and
+   *  when it was last measured. Null = self-reported through check-ins. */
+  metricSourceId: text('metricSourceId'),
+  lastMeasuredAt: text('lastMeasuredAt'),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -975,6 +980,11 @@ export const orgTasks = pgTable('org_tasks', {
    *  slug) — set by the creator or derived from the brief by
    *  `deriveTaskClass`; cost roll-ups and model routing read it. */
   class: text('class').notNull().default('general'),
+  /** Executable acceptance (docs/sensing.md, item 27): JSON array of
+   *  model-free checks (org-checks.ts) that run before review. */
+  checks: text('checks').notNull().default('[]'),
+  /** How a done task was accepted: '' (not, or set done by hand) | check | review. */
+  acceptedBy: text('acceptedBy').notNull().default(''),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });
@@ -1382,4 +1392,65 @@ export const channelReads = pgTable('channel_reads', {
   memberAccountId: text('memberAccountId').notNull(),
   lastReadMessageId: text('lastReadMessageId').notNull().default(''),
   lastReadAt: text('lastReadAt').notNull(),
+});
+
+/** A metric source (docs/sensing.md, item 27): where a number the company
+ *  steers by comes from — an HTTP JSON endpoint, a webhook, a connection
+ *  query or a human's attestation. Created `pending_approval` when an agent
+ *  proposes it; only the CEO activates it, because it defines what counts as
+ *  truth. `secrets` holds sealed header values (secretbox), never returned;
+ *  `tokenHash` is the SHA-256 of the webhook token. */
+export const orgMetricSources = pgTable('org_metric_sources', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  name: text('name').notNull(),
+  /** http_json | webhook | connection | manual_attested. */
+  kind: text('kind').notNull(),
+  config: text('config').notNull().default('{}'),
+  secrets: text('secrets').notNull().default('{}'),
+  tokenHash: text('tokenHash').notNull().default(''),
+  unit: text('unit').notNull().default(''),
+  pollMinutes: integer('pollMinutes').notNull().default(60),
+  /** pending_approval | ok | error | stale | rejected. */
+  status: text('status').notNull().default('pending_approval'),
+  lastValue: real('lastValue'),
+  lastFetchedAt: text('lastFetchedAt'),
+  lastError: text('lastError').notNull().default(''),
+  /** Consecutive poll failures (error backoff). */
+  failures: integer('failures').notNull().default(0),
+  nextPollAt: text('nextPollAt'),
+  approvalId: text('approvalId'),
+  /** When the CEO (or the approval) made it live; the stale clock starts here. */
+  activatedAt: text('activatedAt'),
+  /** user | human:<id> | chief | agent:<id>. */
+  createdBy: text('createdBy').notNull().default('user'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** One reading of a metric source with its provenance (JSON { kind, url |
+ *  connection + service + query | by, responseHash, status }). */
+export const orgMetricSamples = pgTable('org_metric_samples', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  sourceId: text('sourceId').notNull(),
+  value: real('value').notNull(),
+  observedAt: text('observedAt').notNull(),
+  fetchedAt: text('fetchedAt').notNull(),
+  provenance: text('provenance').notNull().default('{}'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** The latest result of each check of a task (docs/sensing.md §3). */
+export const orgTaskChecks = pgTable('org_task_checks', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  taskId: text('taskId').notNull(),
+  checkIndex: integer('checkIndex').notNull(),
+  /** pass | fail | error | pending. */
+  status: text('status').notNull().default('pending'),
+  detail: text('detail').notNull().default(''),
+  evidence: text('evidence').notNull().default('{}'),
+  ranAt: text('ranAt').notNull(),
 });

@@ -31,8 +31,8 @@ import { meetScopes, parseScopes } from './scopes';
 import { resolveRoleHire } from './org-roles.service';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19; `blueprint` is OrgBlueprintsService's,
@@ -293,8 +293,10 @@ export class OrgApprovalsService {
       case 'tune':
         // A tunable (docs/company-vision.md §1b) the chief proposed in supervised mode; bounds are re-checked on apply.
         return this.org.setTunable(orgId, String(payload.key ?? ''), payload.value, { actor: 'user', why: String(payload.why ?? ''), decidedBy: by });
+      // A metric source (docs/sensing.md §4) defines what counts as truth: OrgSensingService activates it.
       case 'cadence':
-      case 'charter_change': {
+      case 'charter_change':
+      case 'metric_source': {
         // Kinds another module owns (the meetings module's cadence, the memory module's charter change).
         const fn = this.appliers.get(kind);
         if (!fn) throw new BadRequestException(`${kind} approvals need the module that owns them`);
@@ -410,6 +412,7 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'cadence': return `${String(payload.kind ?? 'meeting')} of ${String(payload.unitName ?? 'the company')} → ${payload.cron ? String(payload.cron) : 'off'}`;
     case 'charter_change': return `charter of ${String(payload.agentName ?? payload.agentId ?? 'a member')}: ${String(payload.lesson ?? payload.summary ?? 'change proposed by a retro').slice(0, 100)}`;
     case 'blueprint': return `staff "${String(payload.name ?? 'company')}" from its blueprint: ${Array.isArray(payload.hires) ? payload.hires.length : 0} hire(s)`;
+    case 'metric_source': return `metric source "${String(payload.name ?? '')}" (${String(payload.kind ?? '')}${payload.target ? `: ${String(payload.target).slice(0, 80)}` : ''})`;
     case 'human_review': return `review of task "${String(payload.title ?? '')}" by ${String(payload.reviewerHumanId ?? 'a human')}`.slice(0, 160);
     default: return kind;
   }

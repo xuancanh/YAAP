@@ -948,10 +948,60 @@ agent of the account for admin and name-map callers.
 
 ## Autonomous organization: closing the gaps (`docs/autonomous-org-first-principles.md`)
 
-### 27. Sensing and executable acceptance (C1, C3) *(in progress)*
+### 27. Sensing and executable acceptance (C1, C3) *(done)*
 Metric sources bound to connections, webhooks or HTTP JSON with provenance;
 key results read their value only from their source; `done_when` checks run
 without a model.
+
+*Shipped as (2 November 2026, branch `feat/sensing`):* migration
+`0039-org-sensing` (`org_metric_sources` with sealed `secrets`, `tokenHash`,
+`failures`, `nextPollAt`, `approvalId`, `activatedAt`; `org_metric_samples`
++ `(sourceId, observedAt)` index; `org_goals.metricSourceId |
+lastMeasuredAt`; `org_tasks.checks | acceptedBy`; `org_task_checks`);
+`server/src/org/org-checks.ts` (check kinds and `normalizeChecks`, the
+JSONPath-like `parseSelector` / `selectValue` / `selectNumber` with
+`length`, `count`, `sum(field)`, the connection-query menu);
+`server/src/org/org-sensing.service.ts` (`OrgSensingService`: CRUD,
+`prepare` with https-only + SSRF-guarded fetches and `{{secret:NAME}}`
+headers sealed by secretbox, `create` live for the CEO or
+`pending_approval` + a `metric_source` card for an agent's proposal in both
+modes, `activateFromApproval`, `rotateToken`, `ingest` (timing-safe,
+30/min), `attest`, `recordSample` — the one sample write path, refusing
+agent actors — `measureKeyResults`, `poll` with exponential error backoff and
+a first-failure inbox event, its own minute `tick`/`sweep` per account with
+`metric_stale` signals, `runChecks`/`evaluate`/`taskChecks`, the acceptance
+`gate`, and the tools `org_metric_sources`, `org_metric_read`,
+`org_propose_metric_source`, `org_task_checks`, `org_run_checks` as a
+`ToolProviderHook`); `server/src/org/sensing-tunables.ts`
+(`sensing.staleMultiplier`, `sensing.minPollMinutes`,
+`acceptance.alsoReviewWhenChecksPass`, `acceptance.checkTimeoutSeconds`,
+area `sensing`); `OrgTasksService.setAcceptanceGate` and `requestReview`
+running checks first (pass → `done`, `acceptedBy: 'check'`; fail →
+`request_changes` with details, a counted round; error → review with a
+note), `acceptedBy: 'review'` on review acceptance, `verificationOf`;
+`OrgIntentService.bindSource`, check-ins refusing a value on a measured key
+result, `intentTree` `measuredBy`/`selfReported`, `summary.selfReported`;
+`OrgService.updateGoal` refusing a value edit on a measured key result;
+`org_create_task` `checks`, `org_set_key_result` `source`, `org_check_in`
+refusal and the planning prompts; the brief's self-reported note and "% of
+tasks accepted by check this week"; the board's `verification` field;
+`metric_source` approval kind and `metric_stale` signal kind;
+`server/src/org/org-sensing.controller.ts` (`GET|POST metrics/sources`,
+`PATCH|DELETE metrics/sources/:id`, `POST …/:id/poll`, `POST …/:id/token`,
+`GET …/:id/samples?since=`, `POST …/:id/attest`, `POST goals/:goalId/source`,
+`GET tasks/:taskId/checks`, `POST tasks/:taskId/checks/run` on
+`/api/orgs/:id/…` and the workspace alias; public `POST
+/api/metrics/:sourceId/ingest` in `isPublicRoute`); `docs/sensing.md`,
+`docs/security.md` §b rows and §k line. No SPA (item 32). Tests:
+`tests/backend-org-sensing.test.ts` (16).
+Departures: `github_check` is not offered, because the codebase has no
+GitHub connection (only an MCP catalog entry). The check is refused with
+that reason. `org_set_key_result` takes a `source` to bind rather than
+`checks`, since checks belong to tasks. Binding a key result through the
+API is the CEO's. Agents bind through `org_set_key_result` as the chief or
+the unit lead. A webhook source activated by approval gets its token from a
+CEO rotation, not from the approval result, which would land in the audit
+log. Connection sources and checks read Google connections only.
 
 ### 28. Action contract and the trust ledger (C2, C10) *(in progress)*
 Action classes, idempotency keys, staging, outbound rate limits, two-key

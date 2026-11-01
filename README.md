@@ -130,7 +130,13 @@ and it staffs itself (one approval card in supervised mode), or publish it to
 the market as a `company` and let it be rated by the outcomes of the
 companies that ran it. Hiring picks a **role** from a catalog
 (`role:<id>`), and a human can hold a role too: an `employee` sits on the
-chart and in its unit channel, owns tasks and reviews them. The Workspace
+chart and in its unit channel, owns tasks and reviews them. Key results can
+be **measured** rather than reported (`docs/sensing.md`): a metric source
+(an HTTPS JSON endpoint, a webhook, a Gmail/Calendar/Drive count, or your
+attestation) feeds a time series with provenance, a bound key result takes
+its value only from it, agents may propose a source but only you activate
+one, and a task's `done_when` can carry model-free **checks** that accept it
+without a reviewer when they pass. The Workspace
 rail shows the company and each unit (channel, board, goals), then the org
 chart, approvals, spend, brief and audit;
 Settings → Workspace → Organization holds the mode, chief, envelope, cap and

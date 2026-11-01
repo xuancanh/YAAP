@@ -56,6 +56,8 @@ export const SIGNAL_KINDS = [
   'stale_task', 'blocked_unowned', 'review_age', 'burn_rate', 'breaker_trip', 'charter_drift',
   'idle_member', 'overloaded_member', 'thin_unit', 'unit_no_goal', 'goal_unowned', 'duplicate_title',
   'slo_breach', 'audit_finding', 'burn_forecast',
+  // Sensing (docs/sensing.md §1.5): opened and resolved by OrgSensingService.
+  'metric_stale',
 ] as const;
 export type SignalKind = typeof SIGNAL_KINDS[number];
 

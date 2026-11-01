@@ -650,6 +650,7 @@ export class OrgService {
       id: newId(), accountId: currentAccountId(), orgId, title, description: (input.description ?? '').slice(0, 4_000), status: input.status ?? 'active', ownerAgentId: input.ownerAgentId ?? null, unitId: input.unitId ?? null, parentGoalId: input.parentGoalId ?? null,
       kind, metric: (input.metric ?? '').slice(0, 200), targetValue: input.targetValue ?? null, currentValue: input.currentValue ?? null, startValue: input.startValue ?? null, unitLabel: (input.unitLabel ?? '').slice(0, 40),
       dueAt: input.dueAt ?? null, confidence: clampConfidence(input.confidence), atRisk: 0, atRiskReason: '', lastCheckInAt: input.lastCheckInAt ?? null, checkInCadenceDays: clampCadence(input.checkInCadenceDays ?? tunable(org, 'intent.checkInCadenceDays')),
+      metricSourceId: null, lastMeasuredAt: null,
       createdAt: nowIso(),
     };
     await this.db.insert(orgGoals).values(row);
@@ -670,6 +671,10 @@ export class OrgService {
     if (patch.metric !== undefined) set.metric = patch.metric.slice(0, 200);
     if (patch.targetValue !== undefined) set.targetValue = patch.targetValue;
     if (patch.startValue !== undefined) set.startValue = patch.startValue;
+    // Sensing (docs/sensing.md §2): a key result bound to a metric source
+    // takes its value only from that source's samples (OrgSensingService
+    // writes it directly), never from an edit.
+    if (patch.currentValue !== undefined && before.metricSourceId && patch.currentValue !== before.currentValue) throw new BadRequestException('this key result is measured by a metric source; its current value comes only from the source\'s samples');
     if (patch.currentValue !== undefined) set.currentValue = patch.currentValue;
     if (patch.unitLabel !== undefined) set.unitLabel = patch.unitLabel.slice(0, 40);
     if (patch.dueAt !== undefined) set.dueAt = patch.dueAt;

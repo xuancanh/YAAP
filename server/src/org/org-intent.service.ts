@@ -26,7 +26,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException, Optional } 
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { orgCheckins, organizations, orgProjects, orgTasks } from '../database/schema';
+import { orgCheckins, orgGoals, orgMetricSources, organizations, orgProjects, orgTasks } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
 import { TriggerBus } from '../chats/trigger-bus';
@@ -82,7 +82,14 @@ export interface WhyChain {
   linked: boolean;
 }
 
+/** Sensing (docs/sensing.md §2): the source a key result is measured by. */
+export interface MeasuredBy { sourceId: string; name: string; kind: string; lastFetchedAt: string | null; status: string }
+
 export interface IntentNode extends GoalNode {
+  /** Key results only: the metric source, or null when self-reported. */
+  measuredBy: MeasuredBy | null;
+  /** Key results only: true when no source measures it (check-ins are the value). */
+  selfReported: boolean;
   pace: Pace;
   expected: number | null;
   measured: number | null;
@@ -197,6 +204,13 @@ export class OrgIntentService {
   async checkIn(orgId: string, goalId: string, input: { currentValue?: number | null; confidence?: number | null; note?: string }, actor = 'user'): Promise<{ goal: OrgGoal; checkin: OrgCheckin }> {
     const g = await this.org.goal(orgId, goalId);
     if (g.kind !== 'key_result') throw new BadRequestException('check-ins are for key results');
+    // Sensing (docs/sensing.md §2): a measured key result takes the owner's
+    // confidence and note — the judged forecast — never a value.
+    if (g.metricSourceId && input.currentValue !== undefined && input.currentValue !== null && Number(input.currentValue) !== g.currentValue) {
+      const src = (await this.db.select().from(orgMetricSources).where(eq(orgMetricSources.id, g.metricSourceId)).limit(1)).at(0);
+      throw new BadRequestException(`measured by ${src ? `"${src.name}" (${src.kind})` : 'a metric source'}: the current value comes only from its samples — check in your confidence and a note instead`);
+    }
+    if (g.metricSourceId) input = { ...input, currentValue: undefined };
     if (input.currentValue !== undefined && input.currentValue !== null && !Number.isFinite(Number(input.currentValue))) throw new BadRequestException('currentValue must be a number');
     if (input.confidence !== undefined && input.confidence !== null && (Number(input.confidence) < 0 || Number(input.confidence) > 1)) throw new BadRequestException('confidence is 0–1');
     const now = nowIso();
@@ -209,6 +223,30 @@ export class OrgIntentService {
     await this.audit.append(orgId, { actor, action: 'goal_checkin', refType: 'goal', refId: g.id, payload: { currentValue: checkin.currentValue, confidence: checkin.confidence, note: checkin.note.slice(0, 200) } });
     const goal = await this.org.updateGoal(orgId, g.id, { currentValue: checkin.currentValue, confidence: checkin.confidence, lastCheckInAt: now }, actor);
     return { goal, checkin };
+  }
+
+  /** Sensing (docs/sensing.md §2): bind a key result to a live metric
+   *  source — its currentValue is then the source's latest sample and only
+   *  that — or unbind it (null: self-reported again; the last measured value
+   *  stays). A source pending approval or rejected cannot be bound. */
+  async bindSource(orgId: string, goalId: string, sourceRef: string | null, actor = 'user'): Promise<OrgGoal> {
+    const g = await this.org.goal(orgId, goalId);
+    if (g.kind !== 'key_result') throw new BadRequestException('only a key result is measured by a metric source');
+    if (!sourceRef) {
+      if (!g.metricSourceId) return g;
+      await this.db.update(orgGoals).set({ metricSourceId: null }).where(eq(orgGoals.id, g.id));
+      await this.audit.append(orgId, { actor, action: 'kr_source_unbind', refType: 'goal', refId: g.id, payload: { sourceId: g.metricSourceId } });
+      return this.org.goal(orgId, g.id);
+    }
+    const q = sourceRef.trim();
+    const sources = await this.db.select().from(orgMetricSources).where(eq(orgMetricSources.orgId, orgId));
+    const hits = sources.filter((x) => x.id === q || x.id.startsWith(q) || x.name.toLowerCase() === q.toLowerCase());
+    if (hits.length !== 1) throw new BadRequestException(`metric source "${q}" matches ${hits.length} sources`);
+    const src = hits[0];
+    if (!['ok', 'error', 'stale'].includes(src.status)) throw new BadRequestException(`metric source "${src.name}" is ${src.status.replace('_', ' ')} — only a live source measures a key result`);
+    await this.db.update(orgGoals).set({ metricSourceId: src.id, ...(src.lastValue !== null ? { currentValue: src.lastValue, lastMeasuredAt: src.lastFetchedAt } : {}) }).where(eq(orgGoals.id, g.id));
+    await this.audit.append(orgId, { actor, action: 'kr_source_bind', refType: 'goal', refId: g.id, payload: { sourceId: src.id, name: src.name, kind: src.kind, from: g.currentValue, to: src.lastValue } });
+    return this.org.goal(orgId, g.id);
   }
 
   checkIns(orgId: string, goalId: string): Promise<OrgCheckin[]> {
@@ -335,11 +373,14 @@ export class OrgIntentService {
     const tolerance = tunable(await this.org.get(orgId), 'intent.paceTolerance');
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
     const tree = await this.units.goalTree(orgId, { unitId: opts.unitId });
+    const sources = new Map((await this.db.select().from(orgMetricSources).where(eq(orgMetricSources.orgId, orgId))).map((x) => [x.id, x]));
     const annotate = (n: GoalNode): IntentNode => {
       const children = n.children.map(annotate);
       const p = paceOf(n, now, tolerance);
       const progress = n.status === 'achieved' ? 1 : n.kind === 'key_result' && p.measured !== null ? p.measured : blendProgress(n.tasks, children.map((c) => c.progress));
-      return { ...n, progress, pace: p.pace, expected: p.expected, measured: p.measured, ownerName: n.ownerAgentId ? names.get(n.ownerAgentId) ?? n.ownerAgentId.slice(0, 8) : null, children };
+      const src = n.metricSourceId ? sources.get(n.metricSourceId) : undefined;
+      const measuredBy: MeasuredBy | null = src ? { sourceId: src.id, name: src.name, kind: src.kind, lastFetchedAt: src.lastFetchedAt, status: src.status } : null;
+      return { ...n, progress, measuredBy, selfReported: n.kind === 'key_result' && !measuredBy, pace: p.pace, expected: p.expected, measured: p.measured, ownerName: n.ownerAgentId ? names.get(n.ownerAgentId) ?? n.ownerAgentId.slice(0, 8) : null, children };
     };
     return tree.map(annotate);
   }
@@ -351,7 +392,7 @@ export class OrgIntentService {
     const lines: string[] = [];
     const walk = (nodes: IntentNode[], depth: number) => {
       for (const g of nodes) {
-        const kr = g.kind === 'key_result' ? ` ${g.metric || 'metric'}: ${fmt(g.currentValue ?? g.startValue)} → ${fmt(g.targetValue)}${g.unitLabel ? ` ${g.unitLabel}` : ''}; pace ${g.pace}${g.confidence !== null ? `, confidence ${Math.round(g.confidence * 100)}%` : ', never checked in'}` : '';
+        const kr = g.kind === 'key_result' ? ` ${g.metric || 'metric'}: ${fmt(g.currentValue ?? g.startValue)} → ${fmt(g.targetValue)}${g.unitLabel ? ` ${g.unitLabel}` : ''}; pace ${g.pace}${g.confidence !== null ? `, confidence ${Math.round(g.confidence * 100)}%` : ', never checked in'}; ${g.measuredBy ? `measured by "${g.measuredBy.name}" (${g.measuredBy.status})` : 'self-reported'}` : '';
         lines.push(`${'  '.repeat(depth)}- ${g.kind.replace('_', ' ')} [${g.id.slice(0, 8)}] (${g.status}${g.atRisk ? ', AT RISK' : ''}) ${g.title} — ${Math.round(g.progress * 100)}%${g.ownerName ? `, owner ${g.ownerName}` : ''}${g.dueAt ? `, due ${g.dueAt.slice(0, 10)}` : ''}${kr}${g.atRisk ? ` — ${g.atRiskReason}` : ''}`);
         walk(g.children, depth + 1);
       }
@@ -361,7 +402,7 @@ export class OrgIntentService {
   }
 
   /** The brief's "Key results" section: counts and the top at-risk items. */
-  async summary(orgId: string, now: Date = new Date()): Promise<{ total: number; onPace: number; behind: number; unknown: number; atRisk: Array<{ goal: OrgGoal; ownerName: string }>; objectivesAtRisk: OrgGoal[]; visionAtRisk: boolean }> {
+  async summary(orgId: string, now: Date = new Date()): Promise<{ total: number; onPace: number; behind: number; unknown: number; selfReported: number; atRisk: Array<{ goal: OrgGoal; ownerName: string }>; objectivesAtRisk: OrgGoal[]; visionAtRisk: boolean }> {
     const org = await this.org.get(orgId);
     const goals = await this.org.goals(orgId);
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
@@ -369,7 +410,7 @@ export class OrgIntentService {
     const paces = krs.map((g) => paceOf(g, now, tunable(org, 'intent.paceTolerance')).pace);
     const atRisk = krs.filter((g) => g.atRisk === 1).sort((a, b) => (a.dueAt ?? '') < (b.dueAt ?? '') ? -1 : 1).slice(0, 5).map((goal) => ({ goal, ownerName: goal.ownerAgentId ? names.get(goal.ownerAgentId) ?? goal.ownerAgentId.slice(0, 8) : 'nobody' }));
     const objectivesAtRisk = goals.filter((g) => g.kind === 'objective' && g.status === 'active' && g.atRisk === 1);
-    return { total: krs.length, onPace: paces.filter((p) => p === 'onPace').length, behind: paces.filter((p) => p === 'behind').length, unknown: paces.filter((p) => p === 'unknown').length, atRisk, objectivesAtRisk, visionAtRisk: objectivesAtRisk.length >= tunable(org, 'intent.objectiveRiskCount') };
+    return { total: krs.length, selfReported: krs.filter((g) => !g.metricSourceId).length, onPace: paces.filter((p) => p === 'onPace').length, behind: paces.filter((p) => p === 'behind').length, unknown: paces.filter((p) => p === 'unknown').length, atRisk, objectivesAtRisk, visionAtRisk: objectivesAtRisk.length >= tunable(org, 'intent.objectiveRiskCount') };
   }
 
   // ---- the strategy memo ----

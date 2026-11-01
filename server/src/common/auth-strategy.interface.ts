@@ -44,6 +44,8 @@ export const SINGLE_USER = 'local';
  *  - GET /api/status (liveness), GET /api/security (disclosure policy);
  *  - POST /api/channels/email/inbound — HMAC over the body;
  *  - POST /api/hooks/:agentId/:loopName — the loop's own secret;
+ *  - POST /api/metrics/:sourceId/ingest — the metric source's own token
+ *    (docs/sensing.md §1.2);
  *  - /api/auth/* — the sign-in flow itself (request-link, callback, me,
  *    logout); `me` answers "not signed in" rather than 401 so the SPA can
  *    decide what to render.
@@ -66,6 +68,7 @@ export function isPublicRoute(request: Pick<Request, 'method' | 'path'>): boolea
   // (RegistryService.acceptRemotePublish); the install/rate counters are
   // anonymous by design — they count, they never read or write anything else.
   if (/^\/api\/registry\/public(\/[^/]+\/(installed|rate|outcome))?\/?$/.test(request.path)) return true;
+  if (/^\/api\/metrics\/[^/]+\/ingest\/?$/.test(request.path)) return true;
   return /^\/api\/hooks\/[^/]+\/[^/]+\/?$/.test(request.path);
 }
 

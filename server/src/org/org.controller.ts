@@ -37,7 +37,7 @@ import { actorId, currentAccountId, currentViewer } from '../accounts/account-co
 import { ConfigService } from '@nestjs/config';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
 import { OrgService, HUMAN_ROLES, mayDecide, type HumanRole } from './org.service';
-import { OrgTasksService, TASK_STATUSES, type TaskStatus } from './org-tasks.service';
+import { OrgTasksService, TASK_STATUSES, verificationOf, type TaskStatus } from './org-tasks.service';
 import { OrgApprovalsService, APPROVAL_KINDS, type ApprovalKind } from './org-approvals.service';
 import { OrgAuditService } from './org-audit.service';
 import { OrgBriefService, parseBriefReply } from './org-brief.service';
@@ -168,6 +168,8 @@ export class TaskDto {
   @IsOptional() @IsString() unitId?: string;
   /** Capital (docs/company-vision.md §7): the task class (triage | research | synthesis | review | ops | general). */
   @IsOptional() @IsString() class?: string;
+  /** Executable acceptance (docs/sensing.md §3): model-free checks run before review. */
+  @IsOptional() @IsArray() checks?: unknown[];
 }
 
 export class AssignDto { @IsOptional() @IsString() agentId?: string; /** Hybrid staff (item 24): a human employee's account id instead. */ @IsOptional() @IsString() humanId?: string }
@@ -282,7 +284,7 @@ export class OrgController {
   @Get(':id/units') async units_(@Param('id') id: string) { this.guard(); return this.unitsOr().unitTree(id); }
   @Patch(':id/units/:unitId') async renameUnit(@Param('id') id: string, @Param('unitId') unitId: string, @Body() dto: UnitDto) { this.guard(); return this.unitsOr().rename(id, unitId, dto.name, this.actor()); }
   @Get(':id/units/:unitId/board') unitBoard(@Param('id') id: string, @Param('unitId') unitId: string, @Query('rollUp') rollUp?: string, @Query('status') status?: string) {
-    this.guard(); return this.tasks.list(id, { unitId, rollUp: rollUp === 'true', status: status || undefined });
+    this.guard(); return this.tasks.list(id, { unitId, rollUp: rollUp === 'true', status: status || undefined }).then((rows) => rows.map((t) => ({ ...t, verification: verificationOf(t) })));
   }
   @Get(':id/units/:unitId/goals/tree') async unitGoals(@Param('id') id: string, @Param('unitId') unitId: string) { this.guard(); return this.unitsOr().goalTree(id, { unitId }); }
   @Get(':id/goals/tree') async goalTree(@Param('id') id: string, @Query('unitId') unitId?: string) { this.guard(); return this.unitsOr().goalTree(id, { unitId: unitId || null }); }
@@ -344,15 +346,18 @@ export class OrgController {
 
   // ---- tasks (the board) ----
   @Get(':id/tasks') board(@Param('id') id: string, @Query('projectId') projectId?: string, @Query('status') status?: string, @Query('unitId') unitId?: string, @Query('rollUp') rollUp?: string) {
-    this.guard(); return this.tasks.list(id, { projectId: projectId || undefined, status: status || undefined, unitId: unitId || undefined, rollUp: rollUp === 'true' });
+    this.guard();
+    // Executable acceptance (docs/sensing.md §3): how each done task was verified.
+    return this.tasks.list(id, { projectId: projectId || undefined, status: status || undefined, unitId: unitId || undefined, rollUp: rollUp === 'true' })
+      .then((rows) => rows.map((t) => ({ ...t, verification: verificationOf(t) })));
   }
   @Post(':id/tasks') addTask(@Param('id') id: string, @Body() dto: TaskDto) {
     this.guard();
-    return this.tasks.create(id, { title: dto.title ?? '', brief: dto.brief, projectId: dto.projectId, parentTaskId: dto.parentTaskId, status: dto.status, assigneeAgentId: dto.assigneeAgentId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class, createdBy: 'user' });
+    return this.tasks.create(id, { title: dto.title ?? '', brief: dto.brief, projectId: dto.projectId, parentTaskId: dto.parentTaskId, status: dto.status, assigneeAgentId: dto.assigneeAgentId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class, checks: dto.checks, createdBy: 'user' });
   }
   @Patch(':id/tasks/:taskId') updateTask(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TaskDto) {
     this.guard();
-    return this.tasks.update(id, taskId, { title: dto.title, brief: dto.brief, status: dto.status, blockers: dto.blockers, projectId: dto.projectId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class });
+    return this.tasks.update(id, taskId, { title: dto.title, brief: dto.brief, status: dto.status, blockers: dto.blockers, projectId: dto.projectId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class, checks: dto.checks });
   }
   @Post(':id/tasks/:taskId/assign') async assign(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: AssignDto) {
     this.guard();

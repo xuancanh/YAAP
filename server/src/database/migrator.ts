@@ -1346,6 +1346,65 @@ const MIGRATIONS: Migration[] = [
     },
   },
   {
+    id: '0039-org-sensing',
+    up: async (db) => {
+      // Sensing and executable acceptance (docs/sensing.md, execution-plan
+      // item 27): metric sources with provenance-stamped samples, key results
+      // bound to a source, model-free task checks and their results.
+      // Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_metric_sources (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "name" TEXT NOT NULL,
+        "kind" TEXT NOT NULL,
+        "config" TEXT NOT NULL DEFAULT '{}',
+        "secrets" TEXT NOT NULL DEFAULT '{}',
+        "tokenHash" TEXT NOT NULL DEFAULT '',
+        "unit" TEXT NOT NULL DEFAULT '',
+        "pollMinutes" INTEGER NOT NULL DEFAULT 60,
+        "status" TEXT NOT NULL DEFAULT 'pending_approval',
+        "lastValue" REAL,
+        "lastFetchedAt" TEXT,
+        "lastError" TEXT NOT NULL DEFAULT '',
+        "failures" INTEGER NOT NULL DEFAULT 0,
+        "nextPollAt" TEXT,
+        "approvalId" TEXT,
+        "activatedAt" TEXT,
+        "createdBy" TEXT NOT NULL DEFAULT 'user',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_metric_sources_org ON org_metric_sources ("orgId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_metric_samples (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "sourceId" TEXT NOT NULL,
+        "value" REAL NOT NULL,
+        "observedAt" TEXT NOT NULL,
+        "fetchedAt" TEXT NOT NULL,
+        "provenance" TEXT NOT NULL DEFAULT '{}',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_metric_samples_source ON org_metric_samples ("sourceId", "observedAt")`);
+      if (!(await hasColumn(db, 'org_goals', 'metricSourceId'))) await db.query(`ALTER TABLE org_goals ADD COLUMN "metricSourceId" TEXT`);
+      if (!(await hasColumn(db, 'org_goals', 'lastMeasuredAt'))) await db.query(`ALTER TABLE org_goals ADD COLUMN "lastMeasuredAt" TEXT`);
+      if (!(await hasColumn(db, 'org_tasks', 'checks'))) await db.query(`ALTER TABLE org_tasks ADD COLUMN "checks" TEXT NOT NULL DEFAULT '[]'`);
+      if (!(await hasColumn(db, 'org_tasks', 'acceptedBy'))) await db.query(`ALTER TABLE org_tasks ADD COLUMN "acceptedBy" TEXT NOT NULL DEFAULT ''`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_task_checks (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "taskId" TEXT NOT NULL,
+        "checkIndex" INTEGER NOT NULL,
+        "status" TEXT NOT NULL DEFAULT 'pending',
+        "detail" TEXT NOT NULL DEFAULT '',
+        "evidence" TEXT NOT NULL DEFAULT '{}',
+        "ranAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_task_checks_task ON org_task_checks ("taskId", "checkIndex")`);
+    },
+  },
+  {
     id: '0042-chat-compact-baseline',
     up: async (db) => {
       // The token ceiling counts tokens since the last compaction, so a

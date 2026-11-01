@@ -42,6 +42,9 @@ import { OrgBlueprintsService } from './org-blueprints.service';
 import { BlueprintsController } from './blueprints/blueprints.controller';
 import { CompaniesController } from './blueprints/companies.controller';
 import { OrgBootstrapService } from './org-bootstrap.service';
+import { ConnectionsModule } from '../connections/connections.module';
+import { OrgSensingService } from './org-sensing.service';
+import { OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController } from './org-sensing.controller';
 
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
@@ -78,11 +81,16 @@ import { OrgBootstrapService } from './org-bootstrap.service';
  * Onboarding (item 25): OrgBootstrapService runs the whole company setup
  * behind `POST /api/workspaces/:id/org/bootstrap`, calling the services
  * above in order so no step has a second code path.
+ * Sensing (docs/sensing.md, item 27): OrgSensingService holds the metric
+ * sources and their samples, polls and marks staleness on its own minute
+ * tick, binds itself as OrgTasksService's acceptance gate (task checks run
+ * before review), activates `metric_source` approvals and offers its tools;
+ * it reads connections through ConnectionsModule.
  */
 @Module({
-  imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule, RegistryModule],
-  controllers: [OrgController, WorkspaceOrgController, BlueprintsController, CompaniesController],
-  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService],
-  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService],
+  imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule, RegistryModule, ConnectionsModule],
+  controllers: [OrgController, WorkspaceOrgController, BlueprintsController, CompaniesController, OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController],
+  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService],
 })
 export class OrgModule {}

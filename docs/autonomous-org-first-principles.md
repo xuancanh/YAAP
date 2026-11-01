@@ -310,9 +310,9 @@ one page and one spot-check. It rises again only after an incident.
 
 | Capability | Status | Built on |
 |---|---|---|
-| C1 Sensing | Missing | connections, loops, triggers (item 6), key results (item 18) |
+| C1 Sensing | Have — shipped (item 27, `docs/sensing.md`) | connections, loops, triggers (item 6), key results (item 18) |
 | C2 Effectors with action contract | Partial | connections, browser, computer, reviewer (items 2, 4, 14), external floor |
-| C3 Executable acceptance | Partial | four-field brief, cross-family review (item 15) |
+| C3 Executable acceptance | Have — shipped (item 27, `docs/sensing.md`) | four-field brief, cross-family review (item 15) |
 | C4 Coordination with capacity | Have, mostly | units, boards, meetings, heartbeat (items 15–21) |
 | C5 Experiments | Missing | decision log, retros (items 19, 22) |
 | C6 Evals and gated rollout | Missing | dry-run planning (item 23), accepted tasks |
@@ -329,6 +329,21 @@ layer of its **conscience** (signals, auditor, audit chain). It has not
 yet built its **senses** (C1), its **hands' safety catches** (C2, C3), or
 the mechanism by which **trust is earned** (C10). Those decide whether an
 owner can actually look away.
+
+*Shipped (2 November 2026, item 27):* **C1** — metric sources of four
+kinds (HTTP JSON through the SSRF guard with sealed secret headers, a
+token-authenticated webhook, a fixed menu of connection queries, a human
+attestation), samples with provenance, polling with error backoff, stale
+sources signalled to the chief; agents only propose a source and the CEO
+approves it in both modes; a key result bound to a source takes its value
+only from samples, with the owner's confidence kept beside it, and
+self-reported key results are counted in the brief. **C3** — model-free
+checks on a task (metric thresholds and increases, HTTP status and JSON
+match, workspace files, connection counts; no `github_check`, there is no
+GitHub connection) run before review: all pass accepts the task by check,
+a failure returns it to the owner as a review round, an error falls back
+to model review; the board shows `verification: check | review | none` and
+the brief the share accepted by check. See `docs/sensing.md`.
 
 ## 8. Build order
 
