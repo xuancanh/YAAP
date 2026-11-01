@@ -588,7 +588,11 @@ export interface ChannelMember {
   id: string; channelId: string; memberKind: 'agent' | 'human'; memberId: string; role: 'owner' | 'member';
   notify: 'all' | 'mentions' | 'none'; unprompted: number; joinedAt: string; name: string;
 }
-export interface ChannelDetail extends Channel { members: ChannelMember[]; spentToday: number; orgMode: boolean }
+export interface ChannelDetail extends Channel {
+  members: ChannelMember[]; spentToday: number; orgMode: boolean;
+  /** Set when this is a unit channel (docs/group-chat.md §7). */
+  unit?: { id: string; name: string; slug: string; orgId: string; leadAgentId: string } | null;
+}
 export interface ChannelMessage {
   id: string; channelId: string; threadRootId: string | null; authorKind: 'agent' | 'human' | 'system'; authorId: string;
   text: string; attachments: string; mentions: string; taskId: string | null; runId: string | null; unprompted: number;
@@ -627,7 +631,13 @@ export interface OrgMember {
   id: string; orgId: string; agentId: string; title: string; reportsToAgentId: string | null; depth: number;
   sponsor: string; scopes: string; status: 'active' | 'paused' | 'terminated'; charterHash: string; joinedAt: string;
 }
-export interface OrgGoal { id: string; orgId: string; title: string; description: string; status: string; ownerAgentId: string | null; createdAt: string }
+export interface OrgGoal { id: string; orgId: string; title: string; description: string; status: string; ownerAgentId: string | null; unitId: string | null; parentGoalId: string | null; createdAt: string }
+/** Units (docs/group-chat.md §7): a board, a channel and a goal tracker per org level. */
+export interface OrgUnit {
+  id: string; orgId: string; leadAgentId: string; parentUnitId: string | null; name: string; slug: string; channelId: string | null; archivedAt: string | null; createdAt: string;
+}
+export interface OrgUnitNode extends OrgUnit { memberAgentIds: string[]; counts: { openTasks: number; tasks: number; goals: number }; children: OrgUnitNode[] }
+export interface OrgGoalNode extends OrgGoal { progress: number; tasks: { total: number; done: number }; children: OrgGoalNode[] }
 export interface OrgProject { id: string; orgId: string; goalId: string | null; title: string; status: string; ownerAgentId: string | null; createdAt: string }
 export interface OrgBudget { id: string; orgId: string; scope: 'company' | 'agent' | 'project'; refId: string; monthlyUsd: number; reservedUsd: number; spentUsd: number; month: string }
 export interface OrgGrant { id: string; orgId: string; agentId: string; kind: string; value: string; grantedBy: string; createdAt: string }
@@ -641,6 +651,8 @@ export interface OrgTask {
   status: OrgTaskStatus; assigneeAgentId: string | null; claimedBy: string | null; claimedAt: string | null;
   reviewerAgentId: string | null; reviewRounds: number; blockers: string; fileScope: string; noProgressCount: number;
   lastRunAt: string | null; createdBy: string; createdAt: string; updatedAt: string;
+  /** Units (docs/group-chat.md §7). */
+  unitId: string | null; unitExplicit: number;
 }
 export interface OrgRun {
   id: string; orgId: string; taskId: string; agentId: string; sessionId: string | null; wakeReason: string;
@@ -658,6 +670,8 @@ export interface OrgBrief { orgId: string; at: string; text: string; items: Arra
 export interface WorkspaceOrg {
   workspaceId: string; mode: OrgMode; chiefOfStaffAgentId: string | null; orgMonthlyUsd: number; orgAgentCap: number;
   orgId: string | null; orgStatus: 'active' | 'paused' | null; pendingApprovals: number; org: OrgDetail | null;
+  /** The unit tree (docs/group-chat.md §7), empty without an organization. */
+  units: OrgUnitNode[];
   enrolled?: string[]; notEnrolled?: Array<{ agentId: string; reason: string }>;
 }
 export interface OrgCaps { maxDepth: number; maxDirectReports: number; defaultAgentCap: number; rules: string[] }
@@ -1074,11 +1088,22 @@ export const api = {
   pauseOrgMember: (wsId: string, agentId: string) => send<OrgMember>(`/api/workspaces/${wsId}/org/members/${agentId}/pause`, 'POST'),
   resumeOrgMember: (wsId: string, agentId: string) => send<OrgMember>(`/api/workspaces/${wsId}/org/members/${agentId}/resume`, 'POST'),
   acceptOrgCharter: (wsId: string, agentId: string) => send<OrgMember>(`/api/workspaces/${wsId}/org/members/${agentId}/charter/accept`, 'POST'),
-  addOrgGoal: (wsId: string, body: { title: string; description?: string }) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals`, 'POST', body),
-  updateOrgGoal: (wsId: string, goalId: string, patch: { title?: string; description?: string; status?: string }) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals/${goalId}`, 'PATCH', patch),
+  addOrgGoal: (wsId: string, body: { title: string; description?: string; unitId?: string | null; parentGoalId?: string | null; ownerAgentId?: string | null }) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals`, 'POST', body),
+  updateOrgGoal: (wsId: string, goalId: string, patch: { title?: string; description?: string; status?: string; parentGoalId?: string | null; unitId?: string | null; ownerAgentId?: string | null }) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals/${goalId}`, 'PATCH', patch),
+  // units (docs/group-chat.md §7)
+  orgUnits: (wsId: string) => get<OrgUnitNode[]>(`/api/workspaces/${wsId}/org/units`),
+  renameOrgUnit: (wsId: string, unitId: string, name: string) => send<OrgUnit>(`/api/workspaces/${wsId}/org/units/${unitId}`, 'PATCH', { name }),
+  orgGoalTree: (wsId: string, unitId?: string | null) => get<OrgGoalNode[]>(unitId ? `/api/workspaces/${wsId}/org/units/${unitId}/goals/tree` : `/api/workspaces/${wsId}/org/goals/tree`),
+  goalMessages: (wsId: string, goalId: string) => get<Array<ChannelMessage & { slug: string }>>(`/api/workspaces/${wsId}/chat/goals/${goalId}/messages`),
   addOrgProject: (wsId: string, body: { title: string; goalId?: string | null }) => send<OrgProject>(`/api/workspaces/${wsId}/org/projects`, 'POST', body),
-  orgTasks: (wsId: string) => get<OrgTask[]>(`/api/workspaces/${wsId}/org/tasks`),
-  addOrgTask: (wsId: string, body: { title: string; brief?: Partial<OrgTaskBrief>; projectId?: string | null; assigneeAgentId?: string | null }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks`, 'POST', body),
+  orgTasks: (wsId: string, opts: { unitId?: string | null; rollUp?: boolean } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.unitId) q.set('unitId', opts.unitId);
+    if (opts.rollUp) q.set('rollUp', 'true');
+    const qs = q.toString();
+    return get<OrgTask[]>(`/api/workspaces/${wsId}/org/tasks${qs ? `?${qs}` : ''}`);
+  },
+  addOrgTask: (wsId: string, body: { title: string; brief?: Partial<OrgTaskBrief>; projectId?: string | null; assigneeAgentId?: string | null; unitId?: string }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks`, 'POST', body),
   updateOrgTask: (wsId: string, taskId: string, patch: { title?: string; brief?: Partial<OrgTaskBrief>; status?: OrgTaskStatus; blockers?: string[] }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}`, 'PATCH', patch),
   assignOrgTask: (wsId: string, taskId: string, agentId: string) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}/assign`, 'POST', { agentId }),
   commentOrgTask: (wsId: string, taskId: string, text: string) => send<OrgMessage>(`/api/workspaces/${wsId}/org/tasks/${taskId}/comment`, 'POST', { text }),

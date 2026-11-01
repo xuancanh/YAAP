@@ -1,7 +1,7 @@
 /** Group-chat helpers (docs/group-chat.md): the @mention autocomplete
  *  parser, thread grouping, deep links and channel-session detection. */
 import { describe, expect, it } from 'vitest';
-import { applyMention, channelHash, groupThreads, handleOf, initials, isChannelSession, mentionQuery, mentionSuggestions, parseChannelHash } from '../src/lib/channels';
+import { applyMention, channelHash, goalMentions, goalRefs, groupThreads, handleOf, initials, isChannelSession, mentionQuery, mentionSuggestions, parseChannelHash } from '../src/lib/channels';
 
 const members = [
   { kind: 'agent' as const, id: 'a1', name: 'Scout' },
@@ -68,5 +68,18 @@ describe('deep links and channel sessions', () => {
     expect(isChannelSession({ name: 'Planning', tags: '["channel"]' })).toBe(true);
     expect(isChannelSession({ name: '#hashtag chat', tags: '[]' })).toBe(false);
     expect(isChannelSession({ name: 'Telegram · Scout', tags: 'not json' })).toBe(false);
+  });
+});
+
+describe('goal references (docs/group-chat.md §7)', () => {
+  it('finds #goal:<id> tokens, deduplicated, ignoring short ids and glued text', () => {
+    expect(goalRefs('see #goal:abcd1234 and #goal:abcd1234, then #goal:zzzz9999.')).toEqual(['abcd1234', 'zzzz9999']);
+    expect(goalRefs('#goal:ab is too short; mail#goal:abcd is glued')).toEqual([]);
+    expect(goalRefs('')).toEqual([]);
+  });
+  it('reads resolved goal mentions from a message and ignores the rest', () => {
+    expect(goalMentions('[{"kind":"agent","id":"a1"},{"kind":"goal","id":"g1"}]')).toEqual(['g1']);
+    expect(goalMentions('not json')).toEqual([]);
+    expect(goalMentions('')).toEqual([]);
   });
 });

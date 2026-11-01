@@ -163,6 +163,8 @@ interface Store {
   wsOrg: WorkspaceOrg | null; refreshWsOrg: () => Promise<void>;
   /** Which organization pane the Workspace section shows; null = the files. */
   orgPane: OrgPane | null; setOrgPane: (v: OrgPane | null) => void;
+  /** The unit the Board / Goals panes are scoped to (docs/group-chat.md §7); null = the company. */
+  orgUnitId: string | null; setOrgUnitId: (v: string | null) => void;
 
   // group chat (docs/group-chat.md, execution plan item 15)
   channels: Channel[]; refreshChannels: () => Promise<void>;
@@ -263,6 +265,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (isOrgPane(pane)) return pane;
     return p.get('section') === 'company' ? 'board' : null;
   });
+  const [orgUnitId, setOrgUnitId] = useState<string | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentChannel, setCurrentChannel] = useState<string | null>(null);
   const [channelFocus, setChannelFocus] = useState<string | null>(null);
@@ -402,6 +405,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (wsOrg && wsOrg.mode === 'off' && orgPane) setOrgPane(null);
   }, [wsOrg, orgPane]);
+  // A unit filter outlives its unit only until the next refresh.
+  useEffect(() => {
+    if (!orgUnitId || !wsOrg) return;
+    const has = (nodes: { id: string; children: { id: string; children: unknown[] }[] }[]): boolean => nodes.some((n) => n.id === orgUnitId || has(n.children as never));
+    if (!has(wsOrg.units ?? [])) setOrgUnitId(null);
+  }, [wsOrg, orgUnitId]);
+  useEffect(() => { setOrgUnitId(null); }, [workspaceId]);
 
   // ---- group chat (docs/group-chat.md) ----
   const refreshChannels = useCallback(async () => {
@@ -926,7 +936,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
@@ -945,7 +955,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId,
     channels, refreshChannels, currentChannel, channelFocus, openChannel, onWorkspaceEvent,
   ]);
 

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type OrgPane } from '../store';
-import { api, type ChatSession } from '../lib/api';
+import { api, type ChatSession, type OrgUnitNode } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '2px 18px 8px' };
@@ -357,6 +357,58 @@ export const ORG_PANES: Array<{ id: OrgPane; label: string; icon: string[] }> = 
   { id: 'audit', label: 'Audit', icon: P.clock },
 ];
 
+function PaneRow({ id, label, icon, active, badge, onClick, indent = 0 }: { id: string; label: string; icon: string[]; active: boolean; badge?: number; onClick: () => void; indent?: number }) {
+  return (
+    <div key={id} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '8px 10px', paddingLeft: 10 + indent, borderRadius: 9, cursor: 'pointer', fontSize: 13, margin: '1px 0', color: 'var(--text)', background: active ? 'var(--accent-dim)' : 'none' }}>
+      <I d={icon} size={16} sw={1.9} style={{ flex: 'none' }} />
+      <span style={{ flex: 1 }}>{label}</span>
+      {badge !== undefined && <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px' }}>{badge}</span>}
+    </div>
+  );
+}
+
+/** One unit of the organization (docs/group-chat.md §7): the company at
+ *  the top (`#company`, Board, Goals), then every unit below it as a
+ *  collapsible group headed by its lead — `#<slug>`, Board, Goals — each
+ *  opening the existing pane scoped to that unit (`orgUnitId`). */
+function UnitGroup({ node, depth }: { node: OrgUnitNode; depth: number }) {
+  const app = useApp();
+  const isRoot = node.parentUnitId === null;
+  const [open, setOpen] = useState(depth < 2);
+  const lead = app.agents.find((a) => a.id === node.leadAgentId);
+  const channel = app.channels.find((c) => c.id === node.channelId) ?? app.channels.find((c) => c.slug === node.slug);
+  const unitId = isRoot ? null : node.id;
+  const scoped = app.section === 'workspace' && app.orgUnitId === unitId;
+  const pane = (id: OrgPane) => { app.setOrgUnitId(unitId); app.setOrgPane(id); app.setMobileDetail(true); };
+  const indent = depth * 12;
+  const channelActive = app.homeView === 'channel' && app.currentChannel === (channel?.slug ?? node.slug);
+  return (
+    <div style={{ marginBottom: 2 }}>
+      <div onClick={() => !isRoot && setOpen(!open)} title={isRoot ? 'The company' : `${node.name} · led by ${lead?.name ?? 'an agent'} · ${node.memberAgentIds.length} member(s)`}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', paddingLeft: 10 + indent, borderRadius: 9, cursor: isRoot ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>
+        {isRoot
+          ? <span style={{ width: 18, height: 18, borderRadius: 6, background: 'var(--panel-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, flex: 'none' }}>🏢</span>
+          : <span style={{ width: 18, height: 18, borderRadius: 6, background: lead ? grad(lead.colors) : 'var(--panel-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, flex: 'none' }}>{lead?.emoji ?? '?'}</span>}
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{isRoot ? 'Company' : node.name}</span>
+        {node.counts.openTasks > 0 && <span title="Open tasks on this board" style={{ fontSize: 10, color: 'var(--text-faint)' }}>{node.counts.openTasks}</span>}
+        {!isRoot && <I d={P.chevD} size={13} style={{ transform: open ? 'none' : 'rotate(-90deg)', transition: 'transform .12s', color: 'var(--text-faint)', flex: 'none' }} />}
+      </div>
+      {open && (
+        <>
+          <div onClick={() => app.openChannel(channel?.slug ?? node.slug)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', paddingLeft: 22 + indent, borderRadius: 9, cursor: 'pointer', margin: '1px 0', background: channelActive ? 'var(--accent-dim)' : 'none' }}>
+            <span style={{ fontWeight: 700, color: 'var(--accent-hi)', width: 12, textAlign: 'center' }}>#</span>
+            <span style={{ flex: 1, fontSize: 12.5, fontWeight: (channel?.unread ?? 0) > 0 ? 700 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{channel?.slug ?? node.slug}</span>
+            {(channel?.unread ?? 0) > 0 && <span title="Unread messages" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--accent)', borderRadius: 8, padding: '1px 6px' }}>{channel!.unread}</span>}
+          </div>
+          <PaneRow id={`${node.id}-board`} label="Board" icon={P.board} indent={12 + indent} active={scoped && app.orgPane === 'board'} onClick={() => pane('board')} />
+          <PaneRow id={`${node.id}-goals`} label="Goals" icon={P.star} indent={12 + indent} active={scoped && app.orgPane === 'goals'} onClick={() => pane('goals')} />
+          {node.children.map((c) => <UnitGroup key={c.id} node={c} depth={depth + 1} />)}
+        </>
+      )}
+    </div>
+  );
+}
+
 /** The Workspace tab's rail: the shared file store tree, and — when the
  *  workspace runs in organization mode — its company panes. */
 export function WorkspaceRail() {
@@ -379,12 +431,12 @@ export function WorkspaceRail() {
             <span style={{ flex: 1 }}>Organization</span>
             <span title={org.orgStatus === 'paused' ? 'Paused (kill switch)' : `${org.mode} mode`} style={{ fontSize: 9.5, fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: org.orgStatus === 'paused' ? '#fff' : 'var(--text-dim)', background: org.orgStatus === 'paused' ? 'var(--red)' : 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '0 6px' }}>{org.orgStatus === 'paused' ? 'paused' : org.mode}</span>
           </div>
-          {panes.map((n) => (
-            <div key={n.id} onClick={() => { app.setOrgPane(n.id); app.setMobileDetail(true); }} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '8px 10px', borderRadius: 9, cursor: 'pointer', fontSize: 13, margin: '1px 0', color: 'var(--text)', background: n.id === app.orgPane ? 'var(--accent-dim)' : 'none' }}>
-              <I d={n.icon} size={16} sw={1.9} style={{ flex: 'none' }} />
-              <span style={{ flex: 1 }}>{n.label}</span>
-              {n.id === 'approvals' && org.pendingApprovals > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px' }}>{org.pendingApprovals}</span>}
-            </div>
+          {/* Units (docs/group-chat.md §7): the company, then one collapsible group per live unit — #channel, Board, Goals. */}
+          {(org.units ?? []).map((u) => <UnitGroup key={u.id} node={u} depth={0} />)}
+          {(org.units ?? []).length === 0 && panes.filter((n) => n.id === 'board' || n.id === 'goals').map((n) => <PaneRow key={n.id} id={n.id} label={n.label} icon={n.icon} active={n.id === app.orgPane && app.orgUnitId === null} onClick={() => { app.setOrgUnitId(null); app.setOrgPane(n.id); app.setMobileDetail(true); }} />)}
+          <div style={{ height: 6 }} />
+          {panes.filter((n) => n.id !== 'board' && n.id !== 'goals').map((n) => (
+            <PaneRow key={n.id} id={n.id} label={n.label} icon={n.icon} active={n.id === app.orgPane} badge={n.id === 'approvals' && org.pendingApprovals > 0 ? org.pendingApprovals : undefined} onClick={() => { app.setOrgPane(n.id); app.setMobileDetail(true); }} />
           ))}
           <div style={{ ...sectionLabel, padding: '10px 10px 6px', display: 'flex', alignItems: 'center' }}>
             <span style={{ flex: 1 }}>Files</span>

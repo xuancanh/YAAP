@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
 import { api, type Agent, type ChannelDetail, type ChannelFile, type ChannelMember, type ChannelMessage, type WorkspaceEvent } from '../lib/api';
-import { applyMention, groupThreads, initials, mentionQuery, mentionSuggestions, type MentionCandidate } from '../lib/channels';
+import { applyMention, goalMentions, groupThreads, initials, mentionQuery, mentionSuggestions, type MentionCandidate } from '../lib/channels';
 import { Markdown } from '../lib/md';
 import { safeJsonParse } from '../lib/util';
 
@@ -62,6 +62,23 @@ export function ChannelView() {
     return kind === 'agent' ? (agentOf(id)?.name ?? 'agent') : app.nameOf(id);
   }, [members, agentOf, app]);
   const me = app.me?.actorId ?? '';
+  // Units (docs/group-chat.md §7): the goals a message references, and the unit this channel belongs to.
+  const goals = useMemo(() => new Map((app.wsOrg?.org?.goals ?? []).map((g) => [g.id, g])), [app.wsOrg]);
+  const rootUnitId = app.wsOrg?.units?.[0]?.id ?? null;
+  const openGoal = (goalId: string) => {
+    const g = goals.get(goalId);
+    app.setOrgUnitId(g?.unitId && g.unitId !== rootUnitId ? g.unitId : null);
+    app.setOrgPane('goals');
+    app.go('workspace');
+    app.setMobileDetail(true);
+  };
+  const openUnitBoard = () => {
+    if (!detail?.unit) return;
+    app.setOrgUnitId(detail.unit.id === rootUnitId ? null : detail.unit.id);
+    app.setOrgPane('board');
+    app.go('workspace');
+    app.setMobileDetail(true);
+  };
 
   const load = useCallback(async () => {
     if (!wsId || !slug) return;
@@ -212,6 +229,18 @@ export function ChannelView() {
               ))}
             </div>
           )}
+          {goalMentions(m.mentions).length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+              {goalMentions(m.mentions).map((id) => {
+                const g = goals.get(id);
+                return (
+                  <button key={id} onClick={() => openGoal(id)} title={g ? `${g.title} · ${g.status}` : 'Open the goal tracker'} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--accent-dim)', border: 'none', color: 'var(--text)', borderRadius: 7, padding: '2px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                    <I d={P.star} size={12} />{g?.title ?? `goal ${id.slice(0, 8)}`}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 5 }}>
             {m.taskId && (
               <button onClick={() => openTask(m)} title="Open on the board" style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--accent-dim)', border: 'none', color: 'var(--text)', borderRadius: 7, padding: '2px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
@@ -286,6 +315,11 @@ export function ChannelView() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: '-.2px' }}>#{channel.slug}</div>
             {channel.kind === 'private' && <span style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 5px' }}>private</span>}
+            {detail?.unit && (
+              <button onClick={openUnitBoard} title="Open this unit's board" style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 6px', cursor: 'pointer' }}>
+                {detail.unit.id === rootUnitId ? 'Company channel' : `Unit channel · ${detail.unit.name}`}
+              </button>
+            )}
             {channel.archivedAt && <span style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--amber)', border: '1px solid var(--amber)', borderRadius: 4, padding: '0 5px' }}>archived</span>}
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

@@ -101,3 +101,21 @@ export function initials(name: string): string {
   if (parts.length === 0) return '?';
   return (parts.length === 1 ? parts[0].slice(0, 1) : parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
+
+/** `#goal:<id>` references in a message (docs/group-chat.md §3, §7): the
+ *  raw ids as written, deduplicated. The server stores the resolved goal in
+ *  the message's `mentions` as `{ kind: 'goal', id }`; this is for the chip
+ *  text while typing and for messages the server could not resolve. */
+export function goalRefs(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/(^|[^\w#])#goal:([\w-]{4,})/g)) { const id = m[2].replace(/[.,;:!?]+$/, ''); if (id && !out.includes(id)) out.push(id); }
+  return out;
+}
+
+/** The goals a stored message references, from its `mentions` JSON. */
+export function goalMentions(mentionsJson: string): string[] {
+  try {
+    const v = JSON.parse(mentionsJson || '[]') as Array<{ kind?: string; id?: string }>;
+    return Array.isArray(v) ? v.filter((m) => m && m.kind === 'goal' && typeof m.id === 'string').map((m) => m.id as string) : [];
+  } catch { return []; }
+}

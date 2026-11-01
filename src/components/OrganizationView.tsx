@@ -9,8 +9,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
 import {
-  api, ORG_TASK_STATUSES, type Agent, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
-  type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type WorkspaceMember,
+  api, ORG_TASK_STATUSES, type Agent, type ChannelMessage, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgGoalNode, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
+  type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type OrgUnitNode, type WorkspaceMember,
 } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
@@ -41,6 +41,22 @@ function ago(iso: string | null | undefined): string {
 function useAgentNames() {
   const app = useApp();
   return useMemo(() => new Map(app.agents.map((a) => [a.id, a])), [app.agents]);
+}
+
+/** Every unit, depth-first, with its depth (docs/group-chat.md §7). */
+function flattenUnits(nodes: OrgUnitNode[], depth = 0): Array<OrgUnitNode & { depth: number }> {
+  return nodes.flatMap((n) => [{ ...n, depth }, ...flattenUnits(n.children, depth + 1)]);
+}
+
+/** The unit tree of the current workspace plus the lookups the panes share. */
+function useUnits() {
+  const app = useApp();
+  const units = useMemo(() => flattenUnits(app.wsOrg?.units ?? []), [app.wsOrg]);
+  const root = units.find((u) => u.parentUnitId === null) ?? null;
+  const byId = useMemo(() => new Map(units.map((u) => [u.id, u])), [units]);
+  /** The pane's unit: the selected one, else the root. */
+  const current = app.orgUnitId ? byId.get(app.orgUnitId) ?? root : root;
+  return { units, root, byId, current, isCompany: !app.orgUnitId || app.orgUnitId === root?.id };
 }
 
 function Avatar({ a, size = 22 }: { a?: Agent; size?: number }) {
@@ -116,13 +132,17 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
   const live = org.members.filter((m) => m.status !== 'terminated');
   const free = app.agents.filter((a) => !live.some((m) => m.agentId === a.id));
   const act = async (fn: () => Promise<unknown>) => { try { await fn(); await reload(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
+  const { units } = useUnits();
+  const unitByLead = useMemo(() => new Map(units.map((u) => [u.leadAgentId, u])), [units]);
+  const openUnit = (u: OrgUnitNode, pane: 'board' | 'goals') => { app.setOrgUnitId(u.parentUnitId === null ? null : u.id); app.setOrgPane(pane); };
   const tree = (parent: string | null, depth: number): React.ReactNode => live.filter((m) => m.reportsToAgentId === parent).map((m) => {
     const a = names.get(m.agentId);
     const drift = org.charterDrift.find((d) => d.agentId === m.agentId);
     const sc = safeJsonParse<string[]>(m.scopes, []);
     const isChief = m.agentId === org.chiefOfStaffAgentId;
-    return (
-      <div key={m.id} style={{ marginLeft: depth * 22, marginBottom: 8 }}>
+    const unit = unitByLead.get(m.agentId);
+    const node = (
+      <div key={m.id} style={{ marginBottom: 8 }}>
         <div style={{ ...card, padding: '10px 12px', borderLeft: `3px solid ${m.status === 'active' ? 'var(--green)' : 'var(--amber)'}` }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
             <Avatar a={a} />
@@ -154,14 +174,30 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
             </div>
           )}
         </div>
-        {tree(m.agentId, depth + 1)}
+        <div style={{ marginLeft: 22 }}>{tree(m.agentId, depth + 1)}</div>
+      </div>
+    );
+    if (!unit) return node;
+    // A unit boundary (docs/group-chat.md §7): a subtle box around the lead and its reports, labelled with the unit and its channel.
+    return (
+      <div key={`unit-${unit.id}`} style={{ border: '1px dashed var(--border)', borderRadius: 12, padding: '6px 8px 0', marginBottom: 10, background: depth % 2 === 0 ? 'transparent' : 'var(--panel-2)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 4px 8px', fontSize: 11, color: 'var(--text-dim)' }}>
+          <span style={{ fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', fontSize: 10 }}>{unit.parentUnitId === null ? 'Company' : 'Unit'}</span>
+          <span style={{ fontWeight: 600, color: 'var(--text)' }}>{unit.name}</span>
+          <button onClick={() => app.openChannel(unit.slug)} title="Open the unit channel" style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 600 }}>#{unit.slug}</button>
+          <span style={{ flex: 1 }} />
+          <span style={faint}>{unit.counts.openTasks} open · {unit.counts.goals} goal(s)</span>
+          <button style={{ ...btn(), padding: '2px 7px', fontSize: 11 }} onClick={() => openUnit(unit, 'board')}>Board</button>
+          <button style={{ ...btn(), padding: '2px 7px', fontSize: 11 }} onClick={() => openUnit(unit, 'goals')}>Goals</button>
+        </div>
+        {node}
       </div>
     );
   });
   return (
     <div style={{ maxWidth: 820 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Org chart</h2><div style={faint}>You → chief of staff → specialists. Depth ≤ {org.maxDepth}, ≤ {org.maxDirectReports} direct reports. Scopes are what a member may touch and never exceed the chief's own. Mode, chief and caps: Settings → Workspace → Organization.</div></div>
+        <div style={{ flex: 1 }}><h2 style={h2}>Org chart</h2><div style={faint}>You → chief of staff → specialists. Depth ≤ {org.maxDepth}, ≤ {org.maxDirectReports} direct reports. Scopes are what a member may touch and never exceed the chief's own. Every member with reports leads a unit (a board, a channel, goals) — the dashed boxes. Mode, chief and caps: Settings → Workspace → Organization.</div></div>
         <button style={btn(true)} onClick={() => setAdding(!adding)} disabled={free.length === 0}>Add member</button>
       </div>
       {adding && (
@@ -253,34 +289,68 @@ function parseBriefText(raw: string): OrgTaskBrief {
 }
 
 function Board({ org }: { org: OrgDetail }) {
+  const app = useApp();
   const names = useAgentNames();
+  const { units, root, byId, current, isCompany } = useUnits();
   const [tasks, setTasks] = useState<OrgTask[]>([]);
   const [open, setOpen] = useState<OrgTask | null>(null);
   const [adding, setAdding] = useState(false);
   const [showCold, setShowCold] = useState(false);
-  const reload = useCallback(async () => { setTasks(await api.orgTasks(org.workspaceId).catch(() => [])); }, [org.id]);
+  // The company board rolls up by default (every task); a unit board shows its own tasks until asked to roll up (docs/group-chat.md §7).
+  const [rollUp, setRollUp] = useState<Record<string, boolean>>({});
+  const unitKey = current?.id ?? 'all';
+  const rolled = rollUp[unitKey] ?? isCompany;
+  const reload = useCallback(async () => {
+    const opts = !current ? {} : rolled && isCompany ? {} : { unitId: current.id, rollUp: rolled };
+    setTasks(await api.orgTasks(org.workspaceId, opts).catch(() => []));
+  }, [org.workspaceId, current, rolled, isCompany]);
   useEffect(() => { void reload(); const t = setInterval(() => { void reload(); }, 15_000); return () => clearInterval(t); }, [reload]);
   const cols = ORG_TASK_STATUSES.filter((s) => showCold || (s !== 'done' && s !== 'cancelled'));
   const members = org.members.filter((m) => m.status === 'active');
+  const lead = current ? names.get(current.leadAgentId) : undefined;
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Board</h2><div style={faint}>One owner per task. Assigning wakes the owner; a comment wakes the owner; mentions wake nobody.</div></div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <div style={{ flex: 1 }}>
+          <h2 style={h2}>{isCompany ? 'Board' : `${current?.name ?? 'Unit'} · board`}</h2>
+          <div style={faint}>
+            {isCompany ? 'One owner per task. Assigning wakes the owner; a comment wakes the owner; mentions wake nobody.' : <>Led by {lead?.name ?? '—'} · tasks of its reports, and what the lead hands them.</>}
+            {current && <> · <span style={{ color: 'var(--accent-hi)', cursor: 'pointer' }} onClick={() => app.openChannel(current.slug)}>#{current.slug}</span></>}
+          </div>
+        </div>
+        <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }} title={isCompany ? 'Every unit\'s tasks, or only the company\'s own' : 'Include the units below this one'}><input type="checkbox" checked={rolled} onChange={(e) => setRollUp({ ...rollUp, [unitKey]: e.target.checked })} />roll up</label>
         <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={showCold} onChange={(e) => setShowCold(e.target.checked)} />done & cancelled</label>
         <button style={btn(true)} onClick={() => setAdding(true)}>New task</button>
       </div>
-      {adding && <NewTask org={org} members={members} onDone={() => { setAdding(false); void reload(); }} />}
+      {units.length > 1 && (
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 12 }}>
+          {units.map((u) => {
+            const active = (u.parentUnitId === null && isCompany) || (u.parentUnitId !== null && app.orgUnitId === u.id);
+            const a = names.get(u.leadAgentId);
+            return (
+              <button key={u.id} onClick={() => app.setOrgUnitId(u.parentUnitId === null ? null : u.id)} title={`${u.counts.openTasks} open task(s)`}
+                style={{ ...pill(active ? 'var(--accent)' : 'var(--panel-2)', active ? '#fff' : 'var(--text)'), display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', cursor: 'pointer', marginLeft: u.depth > 1 ? (u.depth - 1) * 6 : 0 }}>
+                {u.parentUnitId === null ? '🏢' : <Avatar a={a} size={14} />}{u.parentUnitId === null ? 'Company' : u.name}<span style={{ opacity: .7 }}>{u.counts.openTasks}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {adding && <NewTask org={org} members={members} units={units} defaultUnitId={isCompany ? '' : current?.id ?? ''} onDone={() => { setAdding(false); void reload(); }} />}
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols.length}, minmax(150px, 1fr))`, gap: 8, overflowX: 'auto' }}>
         {cols.map((s) => (
           <div key={s} style={{ background: 'var(--panel-2)', borderRadius: 10, padding: 8, minHeight: 120 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: STATUS_COLOR[s], marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}><span>{s.replace('_', ' ')}</span><span>{tasks.filter((t) => t.status === s).length}</span></div>
             {tasks.filter((t) => t.status === s).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).map((t) => {
               const a = t.assigneeAgentId ? names.get(t.assigneeAgentId) : undefined;
+              const unit = t.unitId ? byId.get(t.unitId) : root;
+              const foreign = unit && unit.id !== current?.id;
               return (
                 <div key={t.id} onClick={() => setOpen(t)} style={{ ...card, padding: '8px 10px', marginBottom: 6, cursor: 'pointer' }}>
                   <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>{t.title}</div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                     {a ? <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }}><Avatar a={a} size={14} />{a.name}</span> : <span style={pill()}>unassigned</span>}
+                    {foreign && unit && <span style={pill()} title={`On the board of ${unit.name}`}>{unit.parentUnitId === null ? 'company' : unit.name}</span>}
                     {t.claimedBy && <span style={pill('var(--amber)', '#fff')}>claimed</span>}
                     {t.reviewRounds > 0 && <span style={pill()}>review {t.reviewRounds}/3</span>}
                     {t.noProgressCount > 0 && <span style={pill()}>no progress ×{t.noProgressCount}</span>}
@@ -297,15 +367,16 @@ function Board({ org }: { org: OrgDetail }) {
   );
 }
 
-function NewTask({ org, members, onDone }: { org: OrgDetail; members: OrgMember[]; onDone: () => void }) {
+function NewTask({ org, members, units, defaultUnitId, onDone }: { org: OrgDetail; members: OrgMember[]; units: Array<OrgUnitNode & { depth: number }>; defaultUnitId: string; onDone: () => void }) {
   const app = useApp();
   const names = useAgentNames();
   const [title, setTitle] = useState('');
   const [brief, setBrief] = useState<OrgTaskBrief>({ outcome: '', context: '', constraints: '', done_when: '' });
   const [assignee, setAssignee] = useState('');
   const [projectId, setProjectId] = useState('');
+  const [unitId, setUnitId] = useState(defaultUnitId);
   const save = async () => {
-    try { await api.addOrgTask(org.workspaceId, { title, brief, assigneeAgentId: assignee || null, projectId: projectId || null }); onDone(); }
+    try { await api.addOrgTask(org.workspaceId, { title, brief, assigneeAgentId: assignee || null, projectId: projectId || null, unitId: unitId || undefined }); onDone(); }
     catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
   return (
@@ -317,6 +388,7 @@ function NewTask({ org, members, onDone }: { org: OrgDetail; members: OrgMember[
       <div style={{ display: 'flex', gap: 8 }}>
         <select value={assignee} onChange={(e) => setAssignee(e.target.value)} style={input}><option value="">Backlog (chief triages)</option>{members.map((m) => <option key={m.id} value={m.agentId}>assign to {names.get(m.agentId)?.name ?? m.agentId.slice(0, 8)}</option>)}</select>
         <select value={projectId} onChange={(e) => setProjectId(e.target.value)} style={input}><option value="">No project</option>{org.projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}</select>
+        {units.length > 1 && <select value={unitId} onChange={(e) => setUnitId(e.target.value)} style={input} title="Which unit's board; by default the one led by the assignee's manager"><option value="">Board: by assignee</option>{units.map((u) => <option key={u.id} value={u.id}>{'· '.repeat(u.depth)}{u.parentUnitId === null ? 'Company' : u.name}</option>)}</select>}
       </div>
       <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}><button style={btn()} onClick={onDone}>Cancel</button><button style={btn(true)} disabled={!title.trim()} onClick={() => void save()}>Create{assignee ? ' and wake' : ''}</button></div>
     </div>
@@ -403,34 +475,127 @@ function RunRow({ r, names, title }: { r: OrgRun; names: Map<string, Agent>; tit
 
 function Goals({ org, reload }: { org: OrgDetail; reload: () => Promise<void> }) {
   const app = useApp();
+  const names = useAgentNames();
+  const { units, root, byId, current, isCompany } = useUnits();
+  const [tree, setTree] = useState<OrgGoalNode[]>([]);
+  const [adding, setAdding] = useState<{ parentGoalId: string } | null>(null);
+  const refresh = useCallback(async () => { setTree(await api.orgGoalTree(org.workspaceId, isCompany ? null : current?.id).catch(() => [])); }, [org.id, current?.id, isCompany]);
+  useEffect(() => { void refresh(); const t = setInterval(() => { void refresh(); }, 30_000); return () => clearInterval(t); }, [refresh]);
+  const act = async (fn: () => Promise<unknown>) => { try { await fn(); await refresh(); await reload(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
+  const flat: OrgGoalNode[] = [];
+  const walk = (nodes: OrgGoalNode[]) => { for (const g of nodes) { flat.push(g); walk(g.children); } };
+  walk(tree);
+  const count = (nodes: OrgGoalNode[]): number => nodes.reduce((n, g) => n + 1 + count(g.children), 0);
+  return (
+    <div style={{ maxWidth: 820 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <div style={{ flex: 1 }}>
+          <h2 style={h2}>{isCompany ? 'Goals' : `${current?.name ?? 'Unit'} · goals`}</h2>
+          <div style={faint}>Progress is computed: done ÷ linked tasks, averaged with the children. Status is yours to set. The chief proposes strategies you approve; unit leads add goals under ones they can see.{current && !isCompany && <> · <span style={{ color: 'var(--accent-hi)', cursor: 'pointer' }} onClick={() => app.openChannel(current.slug)}>#{current.slug}</span></>}</div>
+        </div>
+        <button style={btn(true)} onClick={() => setAdding(adding ? null : { parentGoalId: '' })}>Add goal</button>
+      </div>
+      {units.length > 1 && (
+        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 12 }}>
+          {units.map((u) => {
+            const active = (u.parentUnitId === null && isCompany) || (u.parentUnitId !== null && app.orgUnitId === u.id);
+            return <button key={u.id} onClick={() => app.setOrgUnitId(u.parentUnitId === null ? null : u.id)} style={{ ...pill(active ? 'var(--accent)' : 'var(--panel-2)', active ? '#fff' : 'var(--text)'), display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', cursor: 'pointer' }}>{u.parentUnitId === null ? '🏢 Company' : <><Avatar a={names.get(u.leadAgentId)} size={14} />{u.name}</>}<span style={{ opacity: .7 }}>{u.counts.goals}</span></button>;
+          })}
+        </div>
+      )}
+      {adding && <NewGoal org={org} units={units} defaultUnitId={isCompany ? (root?.id ?? '') : (current?.id ?? '')} parents={flat} parentGoalId={adding.parentGoalId} onDone={() => { setAdding(null); void act(async () => undefined); }} />}
+      {tree.length === 0 && <div style={faint}>No goals {isCompany ? 'yet' : 'in this unit yet'}.</div>}
+      {tree.map((g) => <GoalRow key={g.id} g={g} org={org} depth={0} names={names} unitOf={(id) => (id ? byId.get(id) : root) ?? root} currentUnitId={current?.id ?? null} act={act} addChild={(parentGoalId) => setAdding({ parentGoalId })} />)}
+      {flat.length > 0 && <div style={{ ...faint, marginTop: 10 }}>{count(tree)} goal(s) · reference one in a channel as <code>#goal:&lt;id&gt;</code> and it shows up under the goal.</div>}
+    </div>
+  );
+}
+
+function NewGoal({ org, units, defaultUnitId, parents, parentGoalId, onDone }: { org: OrgDetail; units: Array<OrgUnitNode & { depth: number }>; defaultUnitId: string; parents: OrgGoalNode[]; parentGoalId: string; onDone: () => void }) {
+  const app = useApp();
+  const names = useAgentNames();
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
-  const [project, setProject] = useState<Record<string, string>>({});
-  const act = async (fn: () => Promise<unknown>) => { try { await fn(); await reload(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
+  const [parent, setParent] = useState(parentGoalId);
+  const [unitId, setUnitId] = useState(() => (parentGoalId ? (parents.find((p) => p.id === parentGoalId)?.unitId ?? defaultUnitId) : defaultUnitId));
+  const [owner, setOwner] = useState('');
+  const save = async () => {
+    try {
+      await api.addOrgGoal(org.workspaceId, { title, description: desc, unitId: unitId || null, parentGoalId: parent || null, ownerAgentId: owner || null });
+      onDone();
+    } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
+  };
   return (
-    <div style={{ maxWidth: 760 }}>
-      <h2 style={h2}>Goals</h2><div style={{ ...faint, marginBottom: 12 }}>Set by you, never computed. The chief of staff proposes strategies (goals → projects → tasks) you approve.</div>
-      <div style={{ ...card, display: 'flex', gap: 6, marginBottom: 12 }}>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Goal" style={input} />
-        <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Why / what success looks like" style={input} />
-        <button style={btn(true)} disabled={!title.trim()} onClick={() => void act(async () => { await api.addOrgGoal(org.workspaceId, { title, description: desc }); setTitle(''); setDesc(''); })}>Add</button>
+    <div style={{ ...card, display: 'grid', gap: 8, marginBottom: 12 }}>
+      <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Goal" style={input} onKeyDown={(e) => { if (e.key === 'Enter' && title.trim()) void save(); }} />
+      <input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Why / what success looks like" style={input} />
+      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: '1fr 1fr 1fr' }}>
+        <select value={parent} onChange={(e) => setParent(e.target.value)} style={input}><option value="">Top-level goal</option>{parents.map((p) => <option key={p.id} value={p.id}>under: {p.title}</option>)}</select>
+        <select value={unitId} onChange={(e) => setUnitId(e.target.value)} style={input}>{units.map((u) => <option key={u.id} value={u.id}>{'· '.repeat(u.depth)}{u.parentUnitId === null ? 'Company' : u.name}</option>)}</select>
+        <select value={owner} onChange={(e) => setOwner(e.target.value)} style={input}><option value="">No owner</option>{org.members.filter((m) => m.status === 'active').map((m) => <option key={m.id} value={m.agentId}>owner: {names.get(m.agentId)?.name ?? m.agentId.slice(0, 8)}</option>)}</select>
       </div>
-      {org.goals.length === 0 && <div style={faint}>No goals yet.</div>}
-      {org.goals.map((g) => (
-        <div key={g.id} style={{ ...card, marginBottom: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ flex: 1 }}><div style={{ fontSize: 13.5, fontWeight: 600 }}>{g.title}</div>{g.description && <div style={faint}>{g.description}</div>}</div>
-            <select value={g.status} onChange={(e) => void act(() => api.updateOrgGoal(org.workspaceId, g.id, { status: e.target.value }))} style={{ ...input, width: 'auto' }}>{['draft', 'active', 'achieved', 'abandoned'].map((s) => <option key={s}>{s}</option>)}</select>
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}><button style={btn()} onClick={onDone}>Cancel</button><button style={btn(true)} disabled={!title.trim()} onClick={() => void save()}>Add</button></div>
+    </div>
+  );
+}
+
+/** One goal of the tracker: progress bar, owner, unit, linked tasks and
+ *  messages, inline status, "add child"; children indented below. */
+function GoalRow({ g, org, depth, names, unitOf, currentUnitId, act, addChild }: { g: OrgGoalNode; org: OrgDetail; depth: number; names: Map<string, Agent>; unitOf: (id: string | null) => OrgUnitNode | null; currentUnitId: string | null; act: (fn: () => Promise<unknown>) => Promise<void>; addChild: (parentGoalId: string) => void }) {
+  const app = useApp();
+  const [showMsgs, setShowMsgs] = useState(false);
+  const [msgs, setMsgs] = useState<Array<ChannelMessage & { slug: string }> | null>(null);
+  const [project, setProject] = useState('');
+  const owner = g.ownerAgentId ? names.get(g.ownerAgentId) : undefined;
+  const unit = unitOf(g.unitId);
+  const pct = Math.round(g.progress * 100);
+  const color = g.status === 'achieved' ? 'var(--green)' : g.status === 'abandoned' ? 'var(--text-faint)' : pct >= 100 ? 'var(--green)' : pct > 0 ? 'var(--accent)' : 'var(--border)';
+  useEffect(() => { if (showMsgs && msgs === null) void api.goalMessages(org.workspaceId, g.id).then(setMsgs).catch(() => setMsgs([])); }, [showMsgs, msgs, org.workspaceId, g.id]);
+  const projects = org.projects.filter((p) => p.goalId === g.id);
+  return (
+    <div style={{ marginLeft: depth * 18, marginBottom: 8 }}>
+      <div style={{ ...card, padding: '10px 12px', borderLeft: `3px solid ${color}`, opacity: g.status === 'abandoned' ? .6 : 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span>{g.title}</span>
+              <span style={{ ...faint, fontFamily: 'var(--mono)', fontSize: 10.5 }} title="Reference it in a channel">#goal:{g.id.slice(0, 8)}</span>
+              {unit && unit.id !== currentUnitId && <span style={pill()} title="Unit">{unit.parentUnitId === null ? 'company' : unit.name}</span>}
+              {owner && <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }}><Avatar a={owner} size={14} />{owner.name}</span>}
+            </div>
+            {g.description && <div style={faint}>{g.description}</div>}
           </div>
-          <div style={{ marginTop: 8, paddingLeft: 10, borderLeft: '2px solid var(--border-soft)' }}>
-            {org.projects.filter((p) => p.goalId === g.id).map((p) => <div key={p.id} style={{ fontSize: 12.5, padding: '2px 0' }}>▸ {p.title} <span style={pill()}>{p.status}</span></div>)}
+          <span style={{ fontSize: 12.5, fontWeight: 700, fontFamily: 'var(--mono)', color }}>{pct}%</span>
+          <select value={g.status} onChange={(e) => void act(() => api.updateOrgGoal(org.workspaceId, g.id, { status: e.target.value }))} style={{ ...input, width: 'auto', padding: '3px 6px' }}>{['draft', 'active', 'achieved', 'abandoned'].map((s) => <option key={s}>{s}</option>)}</select>
+        </div>
+        <div style={{ height: 6, background: 'var(--panel-2)', borderRadius: 3, marginTop: 8, overflow: 'hidden' }}><div style={{ width: `${Math.min(100, pct)}%`, height: 6, background: color, transition: 'width .3s' }} /></div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 7, flexWrap: 'wrap', ...faint }}>
+          <span title="Tasks linked through this goal's projects">{g.tasks.done}/{g.tasks.total} task(s) done</span>
+          {g.children.length > 0 && <span>{g.children.length} child goal(s)</span>}
+          <button onClick={() => setShowMsgs(!showMsgs)} style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', cursor: 'pointer', padding: 0, fontSize: 12 }}>{showMsgs ? 'hide messages' : `messages${msgs ? ` (${msgs.length})` : ''}`}</button>
+          <button onClick={() => addChild(g.id)} style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', cursor: 'pointer', padding: 0, fontSize: 12 }}>+ child goal</button>
+          <span style={{ flex: 1 }} />
+          {projects.map((p) => <span key={p.id} style={pill()}>▸ {p.title}</span>)}
+        </div>
+        {showMsgs && (
+          <div style={{ marginTop: 8, borderTop: '1px solid var(--border-soft)', paddingTop: 6 }}>
+            {msgs === null && <div style={faint}>Loading…</div>}
+            {msgs && msgs.length === 0 && <div style={faint}>No channel message references this goal yet — write <code>#goal:{g.id.slice(0, 8)}</code> in one.</div>}
+            {msgs?.map((m) => (
+              <div key={m.id} onClick={() => app.openChannel(m.slug, m.id)} style={{ fontSize: 12.5, padding: '4px 0', cursor: 'pointer', display: 'flex', gap: 8 }}>
+                <span style={{ color: 'var(--accent-hi)', fontWeight: 600, flex: 'none' }}>#{m.slug}</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.text}</span>
+                <span style={faint}>{ago(m.createdAt)}</span>
+              </div>
+            ))}
             <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-              <input value={project[g.id] ?? ''} onChange={(e) => setProject({ ...project, [g.id]: e.target.value })} placeholder="New project under this goal" style={input} />
-              <button style={btn()} disabled={!(project[g.id] ?? '').trim()} onClick={() => void act(async () => { await api.addOrgProject(org.workspaceId, { title: project[g.id], goalId: g.id }); setProject({ ...project, [g.id]: '' }); })}>Add</button>
+              <input value={project} onChange={(e) => setProject(e.target.value)} placeholder="New project under this goal (tasks link through projects)" style={input} />
+              <button style={btn()} disabled={!project.trim()} onClick={() => void act(async () => { await api.addOrgProject(org.workspaceId, { title: project, goalId: g.id }); setProject(''); })}>Add</button>
             </div>
           </div>
-        </div>
-      ))}
+        )}
+      </div>
+      {g.children.map((c) => <GoalRow key={c.id} g={c} org={org} depth={depth + 1} names={names} unitOf={unitOf} currentUnitId={currentUnitId} act={act} addChild={addChild} />)}
     </div>
   );
 }

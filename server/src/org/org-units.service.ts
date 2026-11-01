@@ -26,7 +26,7 @@ import { BadRequestException, Inject, Injectable, Logger, NotFoundException } fr
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { orgGoals, orgProjects, orgTasks, orgUnits } from '../database/schema';
+import { orgProjects, orgTasks, orgUnits } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
