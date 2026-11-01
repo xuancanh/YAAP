@@ -32,6 +32,38 @@ const TASK_LIMIT = 500;
 
 export interface TaskBrief { outcome: string; context: string; constraints: string; done_when: string }
 
+/** Task classes (docs/company-vision.md §7, item 23): the six the routing
+ *  table and the cost roll-up name; a brief may name another slug
+ *  (`class: outreach` in constraints) and it is kept as given. */
+export const TASK_CLASSES = ['triage', 'research', 'synthesis', 'review', 'ops', 'general'] as const;
+export type TaskClass = typeof TASK_CLASSES[number] | string;
+const CLASS_RE = /^[a-z][a-z0-9_-]{0,23}$/;
+
+/** The one shared heuristic: `class:`/`type:` in constraints wins, then a
+ *  deterministic keyword match on title, constraints and outcome; `general`
+ *  otherwise. Item 20 used it for cycle time per class; item 23 stores the
+ *  result on the task at creation. No model. */
+export function deriveTaskClass(task: { title: string; brief: string | Partial<TaskBrief> | undefined }): string {
+  const b = parseBrief(task.brief as string | Record<string, unknown> | undefined);
+  const hay = `${task.title} ${b.constraints} ${b.outcome}`.toLowerCase();
+  const m = /\b(class|type):\s*([a-z][a-z0-9_-]*)/.exec(b.constraints.toLowerCase());
+  if (m && CLASS_RE.test(m[2])) return m[2];
+  if (/\b(triage|sort|label|classify)\b/.test(hay)) return 'triage';
+  if (/\b(review|check|audit|verify|proofread)\b/.test(hay)) return 'review';
+  if (/\b(research|investigate|find|survey|compare|sources?)\b/.test(hay)) return 'research';
+  if (/\b(write|draft|synthesi[sz]e|summari[sz]e|compose|report)\b/.test(hay)) return 'synthesis';
+  if (/\b(deploy|configure|monitor|maintain|migrate|backup|ops)\b/.test(hay)) return 'ops';
+  return 'general';
+}
+
+/** Validate a creator-given class (a lowercase slug). */
+export function normalizeTaskClass(v: unknown): string | null {
+  const c = String(v ?? '').trim().toLowerCase();
+  if (!c) return null;
+  if (!CLASS_RE.test(c)) throw new BadRequestException(`class must be a lowercase slug (${TASK_CLASSES.join(', ')} or another)`);
+  return c;
+}
+
 export function parseBrief(raw: string | Record<string, unknown> | undefined): TaskBrief {
   let v: Record<string, unknown> = {};
   if (typeof raw === 'string') { try { v = JSON.parse(raw || '{}') as Record<string, unknown>; } catch { v = {}; } }
@@ -89,6 +121,8 @@ export class OrgTasksService {
     channelId?: string | null; messageId?: string | null;
     /** Units (docs/group-chat.md §7): named explicitly, or defaulted by the rule. */
     unitId?: string | null;
+    /** Capital (docs/company-vision.md §7): the task class; derived from the brief when absent. */
+    class?: string | null;
   }): Promise<OrgTask> {
     const org = await this.org.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 200);
@@ -119,10 +153,11 @@ export class OrgTasksService {
       noProgressCount: 0, lastRunAt: null, createdBy: input.createdBy ?? 'user',
       channelId: input.channelId ?? null, messageId: input.messageId ?? null,
       unitId, unitExplicit,
+      class: normalizeTaskClass(input.class) ?? deriveTaskClass({ title, brief }),
       createdAt: now, updatedAt: now,
     };
     await this.db.insert(orgTasks).values(row);
-    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId } });
+    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId, class: row.class } });
     if (row.assigneeAgentId && status === 'todo' && org.status === 'active') this.emitWake(orgId, row.id, row.assigneeAgentId, 'assignment');
     return row;
   }
@@ -136,6 +171,8 @@ export class OrgTasksService {
      *  standup's "blocked needs an owner" rule, docs/company-vision.md §3);
      *  `assign` is the path that wakes. */
     assigneeAgentId?: string | null;
+    /** Capital (docs/company-vision.md §7): reclassify the task. */
+    class?: string;
   }, actor = 'user'): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     const set: Record<string, unknown> = { updatedAt: nowIso() };
@@ -143,6 +180,7 @@ export class OrgTasksService {
       if (patch.assigneeAgentId) { const m = await this.org.member(orgId, patch.assigneeAgentId); if (!m || m.status !== 'active') throw new BadRequestException('assignee must be an active member of this organization'); }
       set.assigneeAgentId = patch.assigneeAgentId;
     }
+    if (patch.class !== undefined) { const c = normalizeTaskClass(patch.class); if (c) set.class = c; }
     if (patch.unitId !== undefined && this.units) { set.unitId = (await this.units.get(orgId, patch.unitId)).id; set.unitExplicit = 1; }
     if (patch.title !== undefined) { const title = patch.title.trim().slice(0, 200); if (!title) throw new BadRequestException('title cannot be empty'); set.title = title; }
     if (patch.brief !== undefined) set.brief = JSON.stringify({ ...parseBrief(t.brief), ...parseBrief(patch.brief as Record<string, unknown>) });

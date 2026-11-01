@@ -32,6 +32,7 @@ import { OrgSloService } from './org-slo.service';
 import { OrgAuditorService } from './org-auditor.service';
 import { OrgMeetingsService } from './org-meetings.service';
 import { OrgMeetingRuntime } from './org-meeting-runtime.service';
+import { OrgCapitalService } from './org-capital.service';
 
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
@@ -54,11 +55,14 @@ import { OrgMeetingRuntime } from './org-meeting-runtime.service';
  * OrgMeetingRuntime run meetings as unit-channel threads through the
  * `MeetingChannels` half of the seam; the group chat's `/meeting` command
  * reaches the runtime because GroupChatModule imports this module.
+ * Capital (docs/company-vision.md §7–§8, item 23): OrgCapitalService is the
+ * model-free cost roll-up, forecast, plan preview and replay; the runtime
+ * binds the one way a plan's action becomes a change (`bindApplier`).
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule],
   controllers: [OrgController, WorkspaceOrgController],
-  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime],
-  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime],
+  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService],
 })
 export class OrgModule {}

@@ -22,6 +22,8 @@
  *  runs: GET /:id/runs
  *  assurance (docs/company-vision.md §5): GET /:id/signals?status=&severity=&unitId= · POST /:id/signals/:signalId/ack | /resolve ·
  *           GET /:id/pulse · GET /:id/slo · PATCH /:id/slo · GET /:id/audits · POST /:id/audit/run
+ *  capital (docs/company-vision.md §7–§8): GET /:id/costs?period=&unitId= · GET /:id/forecast · GET|PUT /:id/routing · GET /:id/allocations ·
+ *           GET /:id/plans?status= · GET /:id/plans/:planId · POST /:id/plans/:planId/veto | /apply-now · POST /:id/plan/dry-run · GET /:id/replay?day=
  *
  * Every route except /status answers 404 when COMPANIES_ENABLED=false.
  *
@@ -46,6 +48,7 @@ import { OrgSignalsService } from './org-signals.service';
 import { OrgSloService } from './org-slo.service';
 import { OrgAuditorService } from './org-auditor.service';
 import { OrgIntentService } from './org-intent.service';
+import { OrgCapitalService } from './org-capital.service';
 import { describeTunables } from './org-tunables';
 
 export class ChiefDto {
@@ -136,6 +139,11 @@ export class ProfileDto { @IsOptional() @IsString() values?: string; @IsOptional
 export class TunableDto { @IsString() key!: string; @IsNumber() value!: number; @IsOptional() @IsString() why?: string }
 export class CheckInDto { @IsOptional() currentValue?: number | null; @IsOptional() confidence?: number | null; @IsOptional() @IsString() note?: string }
 export class PlanDto { @IsOptional() @IsString() unitId?: string; @IsOptional() @IsString() reason?: string }
+/** Capital (docs/company-vision.md §7–§8). */
+export class RoutingDto { @IsOptional() @IsObject() classes?: Record<string, string | null>; @IsOptional() @IsObject() models?: Record<string, string | null>; @IsOptional() @IsString() why?: string }
+export class AllocationDto { @IsString() goalId!: string; @IsNumber() @Min(0) monthlyUsd!: number; @IsOptional() @IsString() buys?: string }
+export class DryRunDto { @IsOptional() @IsString() prompt?: string; @IsOptional() @IsObject() assume?: { monthlyUsd?: number } }
+export class VetoDto { @IsOptional() @IsString() note?: string }
 
 export class UnitDto { @IsString() name!: string }
 
@@ -158,6 +166,8 @@ export class TaskDto {
   @IsOptional() @IsArray() fileScope?: string[];
   /** Units (docs/group-chat.md §7): the board the task sits on; defaulted by the rule when absent. */
   @IsOptional() @IsString() unitId?: string;
+  /** Capital (docs/company-vision.md §7): the task class (triage | research | synthesis | review | ops | general). */
+  @IsOptional() @IsString() class?: string;
 }
 
 export class AssignDto { @IsString() agentId!: string }
@@ -198,6 +208,7 @@ export class OrgController {
     @Optional() private readonly slo?: OrgSloService,
     @Optional() private readonly auditor?: OrgAuditorService,
     @Optional() private readonly intent?: OrgIntentService,
+    @Optional() private readonly capital?: OrgCapitalService,
   ) {}
 
   private enabled(): boolean { return this.config.get<boolean>('companiesEnabled') !== false; }
@@ -298,6 +309,21 @@ export class OrgController {
   }
   @Get(':id/strategy') strategy(@Param('id') id: string) { this.guard(); return this.intentOr().strategy(id); }
 
+  // ---- capital (docs/company-vision.md §7–§8, item 23) ----
+  private capitalOr(): OrgCapitalService { if (!this.capital) throw new NotFoundException('capital is not available'); return this.capital; }
+  @Get(':id/costs') costs(@Param('id') id: string, @Query('period') period?: string, @Query('unitId') unitId?: string) { this.guard(); return this.capitalOr().costByGoal(id, { period: period === 'all' ? 'all' : 'month', unitId: unitId || null }); }
+  @Get(':id/forecast') forecast(@Param('id') id: string) { this.guard(); return this.capitalOr().forecast(id); }
+  @Get(':id/routing') async routing(@Param('id') id: string) { this.guard(); return this.org.routing(id); }
+  @Put(':id/routing') async setRouting(@Param('id') id: string, @Body() dto: RoutingDto) { this.guard(); await this.assertCeo(id, 'the routing'); return this.org.setRouting(id, { classes: dto.classes, models: dto.models }, { actor: this.actor(), why: dto.why, decidedBy: actorId() }); }
+  @Get(':id/allocations') allocations(@Param('id') id: string) { this.guard(); return this.org.allocations(id); }
+  @Put(':id/allocations') async setAllocation(@Param('id') id: string, @Body() dto: AllocationDto) { this.guard(); await this.assertCeo(id, 'an allocation'); return this.org.setAllocation(id, { goalId: dto.goalId, monthlyUsd: dto.monthlyUsd, rationale: dto.buys, actor: this.actor() }); }
+  @Get(':id/plans') plans(@Param('id') id: string, @Query('status') status?: string) { this.guard(); return this.capitalOr().plans(id, { status: status || undefined }); }
+  @Get(':id/plans/:planId') planGet(@Param('id') id: string, @Param('planId') planId: string) { this.guard(); return this.capitalOr().plan(id, planId); }
+  @Post(':id/plans/:planId/veto') async vetoPlan(@Param('id') id: string, @Param('planId') planId: string, @Body() dto: VetoDto) { this.guard(); await this.assertCeo(id, 'a plan'); return this.capitalOr().veto(id, planId, this.actor(), dto?.note ?? ''); }
+  @Post(':id/plans/:planId/apply-now') async applyPlan(@Param('id') id: string, @Param('planId') planId: string) { this.guard(); await this.assertCeo(id, 'a plan'); return this.capitalOr().applyNow(id, planId, this.actor()); }
+  @Post(':id/plan/dry-run') async dryRun(@Param('id') id: string, @Body() dto: DryRunDto) { this.guard(); await this.assertCeo(id, 'a dry run'); return this.runtime.dryRunPlanning(id, { prompt: dto?.prompt, assume: dto?.assume }); }
+  @Get(':id/replay') replay(@Param('id') id: string, @Query('day') day?: string) { this.guard(); return this.capitalOr().replay(id, day || new Date().toISOString().slice(0, 10)); }
+
   // ---- goals / projects ----
   @Get(':id/goals') goals(@Param('id') id: string, @Query('unitId') unitId?: string) { this.guard(); return this.org.goals(id, { unitId: unitId || undefined }); }
   @Post(':id/goals') addGoal(@Param('id') id: string, @Body() dto: GoalDto) {
@@ -316,11 +342,11 @@ export class OrgController {
   }
   @Post(':id/tasks') addTask(@Param('id') id: string, @Body() dto: TaskDto) {
     this.guard();
-    return this.tasks.create(id, { title: dto.title ?? '', brief: dto.brief, projectId: dto.projectId, parentTaskId: dto.parentTaskId, status: dto.status, assigneeAgentId: dto.assigneeAgentId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, createdBy: 'user' });
+    return this.tasks.create(id, { title: dto.title ?? '', brief: dto.brief, projectId: dto.projectId, parentTaskId: dto.parentTaskId, status: dto.status, assigneeAgentId: dto.assigneeAgentId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class, createdBy: 'user' });
   }
   @Patch(':id/tasks/:taskId') updateTask(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TaskDto) {
     this.guard();
-    return this.tasks.update(id, taskId, { title: dto.title, brief: dto.brief, status: dto.status, blockers: dto.blockers, projectId: dto.projectId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId });
+    return this.tasks.update(id, taskId, { title: dto.title, brief: dto.brief, status: dto.status, blockers: dto.blockers, projectId: dto.projectId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class });
   }
   @Post(':id/tasks/:taskId/assign') assign(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: AssignDto) { this.guard(); return this.tasks.assign(id, taskId, dto.agentId); }
   @Post(':id/tasks/:taskId/comment') comment(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TextDto) { this.guard(); return this.tasks.comment(id, taskId, { text: dto.text, fromAgentId: null }); }

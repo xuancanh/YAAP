@@ -20,7 +20,7 @@ export interface TunableDef {
   /** One line for the CEO and the chief. */
   description: string;
   /** Who else reads it, for the settings card. */
-  area: 'intent' | 'planning' | 'rituals' | 'assurance' | 'heartbeat' | 'brief';
+  area: 'intent' | 'planning' | 'rituals' | 'assurance' | 'heartbeat' | 'brief' | 'capital';
 }
 
 /** The registry: item 18's keys here, other items' keys through registerTunables. */
@@ -34,6 +34,10 @@ export const TUNABLES: Record<string, TunableDef> = {
   'planning.cooldownSeconds': { default: 1_800, min: 0, max: 86_400, area: 'planning', description: 'Minimum gap between two planning sessions of one unit.' },
   'planning.objectivesPerVision': { default: 4, min: 1, max: 8, area: 'planning', description: 'Objectives the chief aims for per vision (the prompt\'s guidance, not a cap).' },
   'planning.keyResultsPerObjective': { default: 3, min: 1, max: 6, area: 'planning', description: 'Key results the facilitator aims for per objective.' },
+  // Capital (docs/company-vision.md §7–§8, item 23): read by OrgCapitalService and the runtime.
+  'capital.overspendMargin': { default: 0.2, min: 0, max: 1, area: 'capital', description: 'How far (0–1) an objective\'s share of its envelope may exceed its measured progress before the brief flags it as overspending.' },
+  'capital.vetoWindowMinutes': { default: 30, min: 0, max: 1_440, area: 'capital', description: 'Minutes the CEO has to veto a plan the autonomous chief prepared before its structural actions apply; 0 applies at once.' },
+  'capital.forecastWindowDays': { default: 7, min: 1, max: 30, area: 'capital', description: 'Trailing days the burn-rate forecast averages over.' },
 };
 
 /** Another item adds its keys (idempotent; an existing key keeps its first definition). */

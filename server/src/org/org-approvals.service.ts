@@ -30,8 +30,8 @@ import { OrgTasksService, parseBrief, type TaskBrief } from './org-tasks.service
 import { meetScopes, parseScopes } from './scopes';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19): registered with `onApply`, called from
@@ -239,6 +239,8 @@ export class OrgApprovalsService {
         const scope = String(payload.scope ?? 'company') as 'company' | 'agent' | 'project';
         const refId = String(payload.refId ?? orgId);
         const b = await this.org.setBudget(orgId, { scope, refId, monthlyUsd: Number(payload.monthlyUsd ?? 0), actor: 'user' });
+        // Capital (docs/company-vision.md §7): the card said what the envelope buys; record it.
+        if (typeof payload.objectiveId === 'string' && payload.objectiveId) await this.org.setAllocation(orgId, { goalId: payload.objectiveId, monthlyUsd: Number(payload.monthlyUsd ?? 0), rationale: typeof payload.buys === 'string' ? payload.buys : undefined, scope, refId, actor: 'user' }).catch(() => undefined);
         return { scope, refId, monthlyUsd: b.monthlyUsd };
       }
       case 'strategy': {
@@ -271,6 +273,9 @@ export class OrgApprovalsService {
         if (!fn) throw new BadRequestException('cadence approvals need the meetings module');
         return fn(orgId, payload, approval);
       }
+      case 'routing':
+        // Model routing by task class (docs/company-vision.md §7, item 23) the chief proposed in supervised mode.
+        return this.org.setRouting(orgId, { classes: { [String(payload.class ?? '')]: payload.tier } }, { actor: 'user', why: String(payload.why ?? ''), decidedBy: by }) as unknown as Promise<Record<string, unknown>>;
       case 'external':
         // Nothing to apply: the outward action itself still runs through the
         // agent inbox's action_pending gate; this records the CEO's go-ahead.
@@ -351,7 +356,12 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'hire': return `${String(payload.name ?? 'agent')} as ${String(payload.title ?? 'specialist')}${payload.packName ? ` (${String(payload.packName)} pack)` : ''}`;
     case 'scope_widen': return `widen ${String(payload.agentName ?? payload.agentId ?? '')}: +${(Array.isArray(payload.widened) ? payload.widened : []).join(', ')}`;
     case 'reorg': return `${Array.isArray(payload.changes) ? payload.changes.length : 0} change(s)`;
-    case 'budget_raise': return `${String(payload.scope ?? 'company')} cap → $${Number(payload.monthlyUsd ?? 0).toFixed(2)}/month`;
+    case 'budget_raise': {
+      const affected = Array.isArray(payload.affectedObjectives) ? (payload.affectedObjectives as unknown[]).map(String).filter(Boolean) : [];
+      const buys = typeof payload.buys === 'string' && payload.buys ? ` — buys: ${payload.buys.slice(0, 80)}` : '';
+      return `${String(payload.scope ?? 'company')} cap → $${Number(payload.monthlyUsd ?? 0).toFixed(2)}/month${affected.length ? ` — affects: ${affected.slice(0, 4).join(', ')}` : ''}${buys}`;
+    }
+    case 'routing': return `route ${String(payload.class ?? '')} → ${String(payload.tier ?? '')}${payload.from ? ` (was ${String(payload.from)})` : ''}`;
     case 'strategy': return `${Array.isArray(payload.goals) ? payload.goals.length : 0} goal(s)`;
     case 'terminate': return `terminate ${String(payload.agentName ?? payload.agentId ?? '')}`;
     case 'external': return String(payload.description ?? 'external action').slice(0, 120);

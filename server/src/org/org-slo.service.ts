@@ -21,6 +21,7 @@
  *                              intent sweep (org_goals.atRisk, item 18); null
  *                              without active goals
  *   spendVsEnvelopePct         month-to-date spend / company envelope
+ *   spendByClassUsd            run spend in the window per task class (item 23)
  *
  * Targets are per-org tunables (docs/company-vision.md §1b;
  * `organizations.tunables` keys `slo.*`, org-assurance-tunables.ts) over the
@@ -52,7 +53,7 @@ import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { OrgService } from './org.service';
-import { OrgTasksService, parseBrief } from './org-tasks.service';
+import { OrgTasksService, deriveTaskClass } from './org-tasks.service';
 import { OrgApprovalsService } from './org-approvals.service';
 import { OrgAuditService } from './org-audit.service';
 import { OrgSignalsService } from './org-signals.service';
@@ -78,6 +79,8 @@ export interface SloMetrics {
   goalsOwnedPct: number | null;
   goalsAtRiskPct: number | null;
   spendVsEnvelopePct: number | null;
+  /** USD in the window per task class (docs/company-vision.md §7: the pulse shows routing's effect). */
+  spendByClassUsd: Record<string, number>;
   acceptedTasks: number;
   runs: number;
   decisions: number;
@@ -104,19 +107,11 @@ export interface Pulse {
 const DAY_MS = 24 * 60 * 60_000;
 const WINDOW_DAYS = 7;
 
-/** A task class from the brief, for cycle time per class (§5: "per task
- *  class"). Deterministic keyword match on the title and constraints; tasks
- *  that match none are `general`. Item 23 may replace this with a stored class. */
-export function classOf(task: { title: string; brief: string }): string {
-  const b = parseBrief(task.brief);
-  const hay = `${task.title} ${b.constraints} ${b.outcome}`.toLowerCase();
-  const m = /\b(class|type):\s*([a-z_-]+)/.exec(b.constraints.toLowerCase());
-  if (m) return m[2];
-  if (/\b(triage|sort|label|classify)\b/.test(hay)) return 'triage';
-  if (/\b(review|check|audit|verify|proofread)\b/.test(hay)) return 'review';
-  if (/\b(research|investigate|find|survey|compare|sources?)\b/.test(hay)) return 'research';
-  if (/\b(write|draft|synthesi[sz]e|summari[sz]e|compose|report)\b/.test(hay)) return 'synthesis';
-  return 'general';
+/** A task's class: the stored column (item 23) when the row carries one,
+ *  the shared brief heuristic (`deriveTaskClass`) otherwise, so pre-item-23
+ *  rows and bare `{ title, brief }` objects still classify. */
+export function classOf(task: { title: string; brief: string; class?: string | null }): string {
+  return task.class && task.class !== 'general' ? task.class : deriveTaskClass(task);
 }
 
 export function median(values: number[]): number | null {
@@ -200,6 +195,9 @@ export class OrgSloService {
     for (const cls of new Set(cycles.map((c) => c.cls))) { const m = median(cycles.filter((c) => c.cls === cls).map((c) => c.h)); if (m !== null) byClass[cls] = round(m); }
     const runs = (await this.tasks.runs(orgId, { limit: 500 })).filter((r) => r.startedAt >= since && r.status !== 'running');
     const spend = runs.reduce((a, r) => a + r.usd, 0);
+    const classByTask = new Map(tasks.map((t) => [t.id, classOf(t)]));
+    const spendByClassUsd: Record<string, number> = {};
+    for (const r of runs) { const c = classByTask.get(r.taskId) ?? 'general'; spendByClassUsd[c] = round((spendByClassUsd[c] ?? 0) + r.usd, 4); }
     const decided = (await this.approvals.list(orgId)).filter((a) => a.decidedAt && a.decidedAt >= since && ['approved', 'rejected', 'revision_requested'].includes(a.status));
     const goals = (await this.org.goals(orgId)).filter((g) => g.status === 'active');
     const owned = goals.filter((g) => g.ownerAgentId && g.unitId).length;
@@ -220,6 +218,7 @@ export class OrgSloService {
       goalsOwnedPct: goals.length ? round((owned / goals.length) * 100) : null,
       goalsAtRiskPct: atRisk,
       spendVsEnvelopePct: envelope > 0 ? round((monthSpend / envelope) * 100) : null,
+      spendByClassUsd,
       acceptedTasks: accepted.length, runs: runs.length, decisions: decided.length, openCriticalSignals: criticals,
     };
   }

@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants, orgHumans, orgUnits, orgCheckins, workspaces } from '../database/schema';
+import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants, orgHumans, orgUnits, orgCheckins, orgAllocations, workspaces } from '../database/schema';
 import { TriggerBus } from '../chats/trigger-bus';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
@@ -22,6 +22,7 @@ import { AgentsService } from '../agents/agents.service';
 import { OrgAuditService } from './org-audit.service';
 import { isNarrowing, parseScopes, scopeKind, widenedScopes } from './scopes';
 import { checkTunable, parseTunables, tunable, TUNABLES } from './org-tunables';
+import { mergeRouting, parseRouting, type ModelTier, type OrgRouting } from './org-routing';
 import { PROFESSION_PACKS } from '../market/profession-packs.generated';
 import { AUTHORED_PACKS } from '../market/authored-packs.generated';
 
@@ -31,6 +32,7 @@ export type OrgGoal = typeof orgGoals.$inferSelect;
 export type OrgProject = typeof orgProjects.$inferSelect;
 export type OrgBudget = typeof orgBudgets.$inferSelect;
 export type OrgHuman = typeof orgHumans.$inferSelect;
+export type OrgAllocation = typeof orgAllocations.$inferSelect;
 /** Intent (docs/company-vision.md §2): what a goal row is. */
 export type GoalKind = 'vision' | 'objective' | 'key_result';
 export const GOAL_KINDS: readonly GoalKind[] = ['vision', 'objective', 'key_result'];
@@ -198,7 +200,7 @@ export class OrgService {
       maxDepth: MAX_DEPTH_CEILING, maxDirectReports: DEFAULT_MAX_DIRECT_REPORTS,
       briefHour: clampHour(input.briefHour ?? 8), lastBriefAt: null, lastBrief: '',
       auditorAgentId: null, auditCadenceDays: 7, auditUsdCap: 2,
-      rules: '', strategyMemo: '', strategyMemoAt: null, values: '', culture: '', tunables: '{}',
+      rules: '', strategyMemo: '', strategyMemoAt: null, values: '', culture: '', tunables: '{}', routing: '{}',
       createdAt: nowIso(),
     };
     await this.db.insert(organizations).values(row);
@@ -316,6 +318,45 @@ export class OrgService {
       decision: `set ${key} ${from} → ${check.value}`, alternatives: `keep ${from}`, rationale: (opts.why ?? '').slice(0, 600), decidedBy: opts.decidedBy ?? opts.actor ?? 'user',
     } });
     return { key, from, to: check.value };
+  }
+
+  // ---- capital (docs/company-vision.md §7, item 23): routing and allocations ----
+
+  /** The org's routing map (class → tier, pinned tier models), parsed. */
+  async routing(orgId: string): Promise<OrgRouting> { return parseRouting((await this.get(orgId)).routing); }
+
+  /** Merge a routing patch (the CEO through PUT …/routing, the chief through
+   *  org_set_routing or an approved `routing` card). Decision-shaped audit row. */
+  async setRouting(orgId: string, patch: { classes?: Record<string, unknown>; models?: Record<string, unknown> }, opts: { actor?: string; why?: string; decidedBy?: string } = {}): Promise<OrgRouting> {
+    const org = await this.get(orgId);
+    const from = parseRouting(org.routing);
+    let next: OrgRouting;
+    try { next = mergeRouting(from, patch); } catch (err) { throw new BadRequestException(err instanceof Error ? err.message : String(err)); }
+    await this.db.update(organizations).set({ routing: JSON.stringify(next) }).where(eq(organizations.id, orgId));
+    const changed = [...Object.keys(patch.classes ?? {}).map((c) => `${c}: ${from.classes[c] ?? 'agent model'} → ${next.classes[c] ?? 'agent model'}`), ...Object.keys(patch.models ?? {}).map((t) => `${t} model: ${from.models[t as ModelTier] ?? 'default'} → ${next.models[t as ModelTier] ?? 'default'}`)];
+    await this.audit.append(orgId, { actor: opts.actor ?? 'user', action: 'routing_set', refType: 'org', refId: orgId, payload: {
+      from, to: next, decision: `route ${changed.join('; ')}`.slice(0, 600), alternatives: 'keep the current routing', rationale: (opts.why ?? '').slice(0, 600), decidedBy: opts.decidedBy ?? opts.actor ?? 'user',
+    } });
+    return next;
+  }
+
+  allocations(orgId: string): Promise<OrgAllocation[]> { return this.db.select().from(orgAllocations).where(eq(orgAllocations.orgId, orgId)); }
+
+  /** Upsert what an envelope buys: USD per month to an objective with the
+   *  rationale (which key results). One row per (org, objective). */
+  async setAllocation(orgId: string, input: { goalId: string; monthlyUsd: number; rationale?: string; scope?: string; refId?: string; actor?: string }): Promise<OrgAllocation> {
+    const goal = await this.goal(orgId, input.goalId);
+    if (goal.kind === 'key_result') throw new BadRequestException('allocations go to objectives (or the vision), not to key results');
+    const monthlyUsd = Math.max(0, Number(input.monthlyUsd) || 0);
+    const existing = (await this.allocations(orgId)).find((a) => a.goalId === goal.id);
+    const rationale = (input.rationale ?? existing?.rationale ?? '').slice(0, 1_000);
+    if (existing) {
+      await this.db.update(orgAllocations).set({ monthlyUsd, rationale, unitId: goal.unitId, scope: input.scope ?? existing.scope, refId: input.refId ?? existing.refId }).where(eq(orgAllocations.id, existing.id));
+    } else {
+      await this.db.insert(orgAllocations).values({ id: newId(), accountId: currentAccountId(), orgId, goalId: goal.id, unitId: goal.unitId, scope: input.scope ?? '', refId: input.refId ?? '', monthlyUsd, rationale, createdBy: input.actor ?? 'user', createdAt: nowIso() });
+    }
+    await this.audit.append(orgId, { actor: input.actor ?? 'user', action: 'allocation_set', refType: 'goal', refId: goal.id, payload: { monthlyUsd, from: existing?.monthlyUsd ?? 0, buys: rationale.slice(0, 300), scope: input.scope ?? existing?.scope ?? '', refId: input.refId ?? existing?.refId ?? '' } });
+    return (await this.allocations(orgId)).find((a) => a.goalId === goal.id)!;
   }
 
   /** The kill switch (§4.6): set only through the API. Runtime stops wakes

@@ -49,12 +49,13 @@ export type SignalAddressee = 'owner' | 'lead' | 'chief' | 'ceo';
 
 export const SIGNAL_SEVERITIES: readonly SignalSeverity[] = ['info', 'warn', 'critical'];
 
-/** The kinds the sweep computes; `slo_breach` and `audit_finding` are opened
- *  by OrgSloService and OrgAuditorService through `open()`. */
+/** The kinds the sweep computes; `slo_breach`, `audit_finding` and
+ *  `burn_forecast` are opened by OrgSloService, OrgAuditorService and
+ *  OrgCapitalService through `open()`. */
 export const SIGNAL_KINDS = [
   'stale_task', 'blocked_unowned', 'review_age', 'burn_rate', 'breaker_trip', 'charter_drift',
   'idle_member', 'overloaded_member', 'thin_unit', 'unit_no_goal', 'goal_unowned', 'duplicate_title',
-  'slo_breach', 'audit_finding',
+  'slo_breach', 'audit_finding', 'burn_forecast',
 ] as const;
 export type SignalKind = typeof SIGNAL_KINDS[number];
 
@@ -196,7 +197,7 @@ export class OrgSignalsService {
     }
     // Auto-resolve: an open (or acked) sweep-owned signal whose condition is gone.
     let resolved = 0;
-    const sweepKinds = new Set<string>(SIGNAL_KINDS.filter((k) => k !== 'slo_breach' && k !== 'audit_finding'));
+    const sweepKinds = new Set<string>(SIGNAL_KINDS.filter((k) => !['slo_breach', 'audit_finding', 'burn_forecast'].includes(k)));
     for (const s of (await this.list(orgId)).filter((x) => x.status !== 'resolved' && sweepKinds.has(x.kind))) {
       if (keys.has(`${s.kind}:${s.refId}`)) continue;
       await this.db.update(orgSignals).set({ status: 'resolved', resolvedAt: nowIso() }).where(eq(orgSignals.id, s.id));
