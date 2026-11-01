@@ -8,6 +8,7 @@
  *  POST   /api/workspaces/:id/org/pause | /resume   the kill switch
  *  GET    /api/workspaces/:id/org/caps       the autonomy caps in plain words (for the Settings card)
  *  GET    /api/workspaces/:id/org/units      the unit tree (docs/group-chat.md §7) · PATCH units/:unitId · GET units/:unitId/board · GET units/:unitId/goals/tree · GET goals/tree
+ *  assurance (docs/company-vision.md §5): GET signals · POST signals/:signalId/ack | /resolve · GET pulse · GET|PATCH slo · GET audits · POST audit/run
  *
  * Everything else is a thin alias of `/api/orgs/:orgId/...` that resolves the
  * workspace's one org id and delegates to OrgController, so the two surfaces
@@ -19,7 +20,7 @@ import { IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-val
 import { ORG_MODES, type OrgMode } from '../workspaces/workspaces.service';
 import { OrgModeService, AUTONOMY_CAPS, MAX_ORG_AGENT_CAP } from './org-mode.service';
 import {
-  OrgController, UpdateOrgDto, AddMemberDto, UpdateMemberDto, ScopesDto, GoalDto, ProjectDto, TaskDto, AssignDto, TextDto, ReviewDto, DecideDto, ProposalDto, BudgetDto, WakeDto, HumanDto, UnitDto,
+  OrgController, UpdateOrgDto, AddMemberDto, UpdateMemberDto, ScopesDto, GoalDto, ProjectDto, TaskDto, AssignDto, TextDto, ReviewDto, DecideDto, ProposalDto, BudgetDto, WakeDto, HumanDto, UnitDto, SloDto, AckDto,
 } from './org.controller';
 
 class OrgModeDto {
@@ -108,6 +109,16 @@ export class WorkspaceOrgController {
 
   @Get('messages') async messages(@Param('id') id: string) { return this.orgs.messages(await this.oid(id)); }
   @Post('messages') async post(@Param('id') id: string, @Body() dto: TextDto) { return this.orgs.post(await this.oid(id), dto); }
+
+  // ---- assurance (docs/company-vision.md §5) ----
+  @Get('signals') async signals(@Param('id') id: string, @Query('status') status?: string, @Query('severity') severity?: string, @Query('unitId') unitId?: string, @Query('kind') kind?: string) { return this.orgs.signalsList(await this.oid(id), status, severity, unitId, kind); }
+  @Post('signals/:signalId/ack') async ackSignal(@Param('id') id: string, @Param('signalId') signalId: string, @Body() dto: AckDto) { return this.orgs.ackSignal(await this.oid(id), signalId, dto); }
+  @Post('signals/:signalId/resolve') async resolveSignal(@Param('id') id: string, @Param('signalId') signalId: string) { return this.orgs.resolveSignal(await this.oid(id), signalId); }
+  @Get('pulse') async pulse(@Param('id') id: string) { return this.orgs.pulse(await this.oid(id)); }
+  @Get('slo') async slo(@Param('id') id: string) { return this.orgs.sloTargets(await this.oid(id)); }
+  @Patch('slo') async setSlo(@Param('id') id: string, @Body() dto: SloDto) { return this.orgs.setSlo(await this.oid(id), dto); }
+  @Get('audits') async audits(@Param('id') id: string, @Query('limit') limit?: string) { return this.orgs.audits(await this.oid(id), limit); }
+  @Post('audit/run') async runAudit(@Param('id') id: string) { return this.orgs.runAudit(await this.oid(id)); }
 
   /** Manual structure review (autonomous mode only): runs the chief now. */
   @Post('review') async reviewNow(@Param('id') id: string) { return { result: await this.orgs.reviewStructureNow(await this.oid(id)) }; }

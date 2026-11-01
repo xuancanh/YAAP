@@ -329,3 +329,50 @@ writes one `heartbeat` state row (last beat, last reason, next due).
   tasks, your channels" happens, so tools like `org_task_update` and
   check-ins are reached from one well-known prompt rather than from many
   ad hoc triggers.
+
+## 14. Status
+
+*Phase C, Assurance (item 20) — shipped 1 November 2026.* §5 is built,
+backend only: migration `0033-org-assurance` (`org_signals` with a unique
+index per (org, kind, refId, day), `org_slo_samples` one row per org per
+day, `org_audits`; `organizations.auditorAgentId | auditCadenceDays |
+auditUsdCap | tunables`). `OrgSignalsService` runs on the runtime's tick
+every five minutes with no model: stale tasks, blocked tasks without an
+owner, review-queue age, burn rate projected to month-end against the
+envelope (warn at 100 %, critical at 120 %), breaker trips from `run_end`
+rows, charter drift, and the §4 org debt (idle and overloaded members, a
+lead with one report, a unit with no goal, a goal with no owner or unit,
+duplicate titles). Each signal is addressed — owner and lead get an
+`org_signal` inbox event, the chief an OrgBoard event (`kind: signal`) that
+runs its structure review with the signal as reason, the CEO a pushed
+event and a brief line — fires once a day, stays open while the condition
+holds, is acked by its addressee (`org_ack_signal`, `POST …/signals/:id/ack`)
+and resolves itself when the sweep no longer sees it. `OrgSloService`
+computes cycle time (overall and per task class derived from the brief),
+first-review acceptance, cost per accepted task, decision latency, goals
+with owner and unit (and at-risk when item 18's column is present),
+spend vs envelope over a trailing 7-day window, stores the day's sample,
+opens an `slo_breach` signal per missed target and serves `pulse()`: the
+score formula (four weighted quarters, minus a penalty per open critical
+signal) is in `org-slo.service.ts`. `OrgAuditorService` is the §5.3 role:
+`auditorAgentId` names a member — the "Auditor" catalog pack (read-only
+scopes) fills the seat when hired — and every `auditCadenceDays` (or
+`POST …/org/audit/run`) one run in `Org · <org> · Audit` samples accepted
+tasks with their done_when and final comment, the scope/spend/autonomous
+audit rows and charter-drift candidates, frames them with the operating
+profile (§1b: mission, values, culture, vision, read defensively) and
+runs with a tool set restricted to reads plus `org_audit_finding` /
+`org_audit_close` (`OrgToolsHook.restrictTo`: any other tool is refused,
+not executed). Budget is reserved before the call and clamped to
+`auditUsdCap`; the auditor runs on a model family other than the workers'
+majority when one is available (pinning the session to an enabled agent
+type on another provider) and the report is flagged *single-model audit*
+otherwise. Findings become signals (critical → CEO), the report goes to
+`#company` and `org_audits`, the brief gains Signals, Pulse and Audit
+sections. Every threshold, SLO target, pulse weight and the sample size is
+a per-org tunable with a default and a bound (`org-assurance-tunables.ts`,
+`GET|PATCH …/org/slo`); bounds stay in code. Not done: the SPA (signals,
+pulse and audits are API-only), `org_tune` (item 18 owns it; the reads
+here already go through the tunables column so tuning works once merged),
+and the generic `org-tunables.ts` helper this module will switch to on
+rebase.

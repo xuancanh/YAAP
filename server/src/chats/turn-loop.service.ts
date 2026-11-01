@@ -67,6 +67,10 @@ export interface OrgToolsHook {
   contextFor(session: ChatSession): Promise<string | null>;
   /** Returns a stop message when this call should end the run (loop detected). */
   onToolCall(sessionId: string, call: AiToolCall): string | null;
+  /** When set for a session, the only tool names offered and accepted in it
+   *  (the auditor's read-only run, docs/company-vision.md §5.3); null = no
+   *  restriction. Calls outside the set are refused, never executed. */
+  restrictTo?(session: ChatSession): Promise<Set<string> | null>;
 }
 
 /** The generic shape of the org hook, for other domains that offer tools to
@@ -456,6 +460,7 @@ export class TurnLoopService implements OnModuleDestroy {
       const approvals = parseApprovals(session.approvals);
       // Core tools + the workspace's enabled skills (FR-10.2) + tools
       // discovered from enabled MCP servers (FR-10.3).
+      const restrictTo = (session.agentId && this.orgTools?.restrictTo) ? await this.orgTools.restrictTo(session) : null;
       const toolSpecs = [
         ...this.tools.specs(),
         ...(session.agentId ? AGENT_TOOLS : []),
@@ -481,7 +486,7 @@ export class TurnLoopService implements OnModuleDestroy {
         // …and any other domain that registered a provider (channel tools in
         // a channel session, docs/group-chat.md §2).
         ...(session.agentId ? (await Promise.all(this.providers().map((p) => p.specsFor(session)))).flat() : []),
-      ];
+      ].filter((t) => !restrictTo || restrictTo.has(t.name));
       const extraContext = session.agentId
         ? (await Promise.all(this.providers().map((p) => p.contextFor(session)))).filter((c): c is string => Boolean(c))
         : [];
@@ -542,6 +547,15 @@ export class TurnLoopService implements OnModuleDestroy {
                 ...deliveryFor(ws, 'info'),
               }).catch(() => undefined);
             }
+            await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
+            history.push({ role: 'tool', content: output, toolCallId: call.id, isError: true });
+            toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'deny', isError: true });
+            yield { type: 'tool_result', id: call.id, name: call.name, output, isError: true };
+            continue;
+          }
+          // A restricted session (the auditor's run) accepts only its own set.
+          if (restrictTo && !restrictTo.has(call.name)) {
+            const output = `Refused: ${call.name} is not available in this run — it is read-only; only ${[...restrictTo].join(', ')} may be called.`;
             await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
             history.push({ role: 'tool', content: output, toolCallId: call.id, isError: true });
             toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'deny', isError: true });

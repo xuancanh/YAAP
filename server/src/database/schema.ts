@@ -599,6 +599,82 @@ export const organizations = pgTable('organizations', {
   lastBriefAt: text('lastBriefAt'),
   /** JSON of the latest brief: { text, items: [{ n, approvalId }] }. */
   lastBrief: text('lastBrief').notNull().default(''),
+  /** Assurance (docs/company-vision.md §5): the auditor role — a member on
+   *  a different model family where possible — its cadence in days, the USD
+   *  cap of one audit run. `tunables` (docs/company-vision.md §1b) is the
+   *  JSON { key: number } map of per-org thresholds, SLO targets and pulse
+   *  weights over the defaults in org-assurance-tunables.ts (item 18 shares
+   *  the column). */
+  auditorAgentId: text('auditorAgentId'),
+  auditCadenceDays: integer('auditCadenceDays').notNull().default(7),
+  auditUsdCap: real('auditUsdCap').notNull().default(2),
+  tunables: text('tunables').notNull().default('{}'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** A signal (docs/company-vision.md §5.1): a model-free observation about
+ *  the company — a stale task, an unowned goal, a burn rate, a breaker trip,
+ *  an SLO breach, an auditor finding — addressed to the party that can act
+ *  on it. One row per (org, kind, refId, day): it fires once a day and
+ *  resolves itself when the condition clears. */
+export const orgSignals = pgTable('org_signals', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  unitId: text('unitId'),
+  kind: text('kind').notNull(),
+  /** info | warn | critical. */
+  severity: text('severity').notNull().default('info'),
+  refType: text('refType').notNull().default(''),
+  refId: text('refId').notNull().default(''),
+  title: text('title').notNull(),
+  detail: text('detail').notNull().default(''),
+  /** owner | lead | chief | ceo — and the agent it reaches (the chief's id
+   *  for the CEO, whose inbox is the chief's events). */
+  addresseeKind: text('addresseeKind').notNull().default('chief'),
+  addresseeId: text('addresseeId').notNull().default(''),
+  dayKey: text('dayKey').notNull(),
+  /** open | acked | resolved. */
+  status: text('status').notNull().default('open'),
+  ackNote: text('ackNote').notNull().default(''),
+  ackedAt: text('ackedAt'),
+  resolvedAt: text('resolvedAt'),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_signals_dedup').on(t.orgId, t.kind, t.refId, t.dayKey)]);
+
+/** One SLO sample per org per day (docs/company-vision.md §5.2): the
+ *  metrics JSON org-slo.service.ts computes; the pulse's 30-day series. */
+export const orgSloSamples = pgTable('org_slo_samples', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  dayKey: text('dayKey').notNull(),
+  metrics: text('metrics').notNull().default('{}'),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_slo_samples_day').on(t.orgId, t.dayKey)]);
+
+/** An auditor run (docs/company-vision.md §5.3): what it sampled, what it
+ *  found, what it cost. Findings are also signals. */
+export const orgAudits = pgTable('org_audits', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  auditorAgentId: text('auditorAgentId').notNull(),
+  /** cadence | manual. */
+  trigger: text('trigger').notNull().default('cadence'),
+  startedAt: text('startedAt').notNull(),
+  endedAt: text('endedAt'),
+  /** JSON { tasks: n, auditRows: n, driftCandidates: n, since }. */
+  sampled: text('sampled').notNull().default('{}'),
+  /** JSON array of { severity, kind, refType, refId, title, detail }. */
+  findings: text('findings').notNull().default('[]'),
+  summary: text('summary').notNull().default(''),
+  /** 1 when no model family other than the workers' was available. */
+  singleModel: integer('singleModel').notNull().default(0),
+  model: text('model').notNull().default(''),
+  usd: real('usd').notNull().default(0),
+  /** running | done | failed | budget_stop. */
+  status: text('status').notNull().default('running'),
   createdAt: text('createdAt').notNull(),
 });
 

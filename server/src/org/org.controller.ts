@@ -19,6 +19,8 @@
  *  spend: GET /:id/spend · PUT /:id/budgets
  *  messages: GET /:id/messages · POST /:id/messages (the user posts; nobody is woken)
  *  runs: GET /:id/runs
+ *  assurance (docs/company-vision.md §5): GET /:id/signals?status=&severity=&unitId= · POST /:id/signals/:signalId/ack | /resolve ·
+ *           GET /:id/pulse · GET /:id/slo · PATCH /:id/slo · GET /:id/audits · POST /:id/audit/run
  *
  * Every route except /status answers 404 when COMPANIES_ENABLED=false.
  *
@@ -38,6 +40,10 @@ import { OrgAuditService } from './org-audit.service';
 import { OrgBriefService, parseBriefReply } from './org-brief.service';
 import { OrgRuntimeService } from './org-runtime.service';
 import { OrgUnitsService } from './org-units.service';
+import { ASSURANCE_TUNABLES, parseTunables } from './org-assurance-tunables';
+import { OrgSignalsService } from './org-signals.service';
+import { OrgSloService } from './org-slo.service';
+import { OrgAuditorService } from './org-auditor.service';
 
 export class ChiefDto {
   @IsString() name!: string;
@@ -68,7 +74,21 @@ export class UpdateOrgDto {
   @IsOptional() @IsInt() @Min(0) @Max(23) briefHour?: number;
   @IsOptional() @IsInt() maxDirectReports?: number;
   @IsOptional() @IsNumber() monthlyBudgetUsd?: number;
+  /** Assurance (docs/company-vision.md §5.3): the auditor member, its cadence and the USD cap of one run. */
+  @IsOptional() auditorAgentId?: string | null;
+  @IsOptional() @IsInt() @Min(1) @Max(90) auditCadenceDays?: number;
+  @IsOptional() @IsNumber() @Min(0.1) @Max(50) auditUsdCap?: number;
 }
+
+export class SloDto {
+  @IsOptional() @IsNumber() cycleTimeHours?: number;
+  @IsOptional() @IsNumber() firstReviewAcceptancePct?: number;
+  @IsOptional() @IsNumber() decisionLatencyHours?: number;
+  /** Any other assurance tunable (`pulse.*`, `signals.*`, `audit.*`), null removes an override. */
+  @IsOptional() @IsObject() tunables?: Record<string, number | null>;
+}
+
+export class AckDto { @IsOptional() @IsString() note?: string }
 
 export class AddMemberDto {
   @IsString() agentId!: string;
@@ -151,6 +171,9 @@ export class OrgController {
     private readonly runtime: OrgRuntimeService,
     private readonly config: ConfigService,
     @Optional() private readonly units?: OrgUnitsService,
+    @Optional() private readonly signals?: OrgSignalsService,
+    @Optional() private readonly slo?: OrgSloService,
+    @Optional() private readonly auditor?: OrgAuditorService,
   ) {}
 
   private enabled(): boolean { return this.config.get<boolean>('companiesEnabled') !== false; }
@@ -322,6 +345,30 @@ export class OrgController {
     this.guard();
     return this.runtime.runChiefReview(id, ['manual review requested by the CEO'], 'manual');
   }
+
+  // ---- assurance (docs/company-vision.md §5) ----
+  private signalsOr(): OrgSignalsService { if (!this.signals) throw new NotFoundException('signals are not available'); return this.signals; }
+  private sloOr(): OrgSloService { if (!this.slo) throw new NotFoundException('SLOs are not available'); return this.slo; }
+  private auditorOr(): OrgAuditorService { if (!this.auditor) throw new NotFoundException('the auditor is not available'); return this.auditor; }
+  @Get(':id/signals') signalsList(@Param('id') id: string, @Query('status') status?: string, @Query('severity') severity?: string, @Query('unitId') unitId?: string, @Query('kind') kind?: string) {
+    this.guard(); return this.signalsOr().list(id, { status: status || undefined, severity: severity || undefined, unitId: unitId || undefined, kind: kind || undefined });
+  }
+  @Post(':id/signals/:signalId/ack') ackSignal(@Param('id') id: string, @Param('signalId') signalId: string, @Body() dto: AckDto) { this.guard(); return this.signalsOr().ack(id, signalId, dto?.note ?? '', this.actor()); }
+  @Post(':id/signals/:signalId/resolve') resolveSignal(@Param('id') id: string, @Param('signalId') signalId: string) { this.guard(); return this.signalsOr().resolve(id, signalId, this.actor()); }
+  @Get(':id/pulse') pulse(@Param('id') id: string) { this.guard(); return this.sloOr().pulse(id); }
+  @Get(':id/slo') async sloTargets(@Param('id') id: string) {
+    this.guard();
+    const org = await this.org.get(id);
+    return { targets: await this.sloOr().targets(id), weights: await this.sloOr().weights(id), tunables: parseTunables(org.tunables), bounds: ASSURANCE_TUNABLES };
+  }
+  @Patch(':id/slo') async setSlo(@Param('id') id: string, @Body() dto: SloDto) {
+    this.guard();
+    const { tunables, ...targets } = dto;
+    return this.sloOr().setTargets(id, { ...Object.fromEntries(Object.entries(targets).filter(([, v]) => v !== undefined)), ...(tunables ?? {}) }, this.actor());
+  }
+  @Get(':id/audits') audits(@Param('id') id: string, @Query('limit') limit?: string) { this.guard(); return this.auditorOr().list(id, Number(limit) || 50); }
+  /** Run the auditor now (the CEO's manual trigger). */
+  @Post(':id/audit/run') async runAudit(@Param('id') id: string) { this.guard(); return { result: await this.auditorOr().runAudit(id, 'manual') }; }
 
   // ---- the group log ----
   @Get(':id/messages') messages(@Param('id') id: string) { this.guard(); return this.tasks.messages(id); }

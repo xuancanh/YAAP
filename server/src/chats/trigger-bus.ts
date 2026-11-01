@@ -30,7 +30,7 @@ export interface OrgWakeEvent {
 /** A board-level event the autonomous chief of staff reviews
  *  (docs/group-chat.md §5): a task blocked, an escalation, a budget warning
  *  or a new goal. OrgRuntimeService coalesces them into one review run. */
-export type OrgBoardEventKind = 'blocked' | 'escalation' | 'budget_warn' | 'goal';
+export type OrgBoardEventKind = 'blocked' | 'escalation' | 'budget_warn' | 'goal' | 'signal';
 
 export interface OrgBoardEvent {
   orgId: string;

@@ -173,6 +173,7 @@ export class OrgService {
       monthlyBudgetUsd: Math.max(0, input.monthlyBudgetUsd ?? 0),
       maxDepth: MAX_DEPTH_CEILING, maxDirectReports: DEFAULT_MAX_DIRECT_REPORTS,
       briefHour: clampHour(input.briefHour ?? 8), lastBriefAt: null, lastBrief: '',
+      auditorAgentId: null, auditCadenceDays: 7, auditUsdCap: 2, tunables: '{}',
       createdAt: nowIso(),
     };
     await this.db.insert(organizations).values(row);
@@ -231,9 +232,19 @@ export class OrgService {
       .reduce((sum, b) => sum + b.monthlyUsd, 0);
   }
 
-  async update(id: string, patch: Partial<Pick<Organization, 'name' | 'mission' | 'ceoUserNote' | 'briefHour' | 'maxDirectReports' | 'monthlyBudgetUsd'>>): Promise<Organization> {
+  async update(id: string, patch: Partial<Pick<Organization, 'name' | 'mission' | 'ceoUserNote' | 'briefHour' | 'maxDirectReports' | 'monthlyBudgetUsd' | 'auditorAgentId' | 'auditCadenceDays' | 'auditUsdCap'>>): Promise<Organization> {
     await this.get(id);
     const set: Record<string, unknown> = {};
+    // Assurance (docs/company-vision.md §5.3): the auditor is a member; cadence and cap inside their bounds.
+    if (patch.auditorAgentId !== undefined) {
+      if (patch.auditorAgentId) {
+        const m = await this.member(id, patch.auditorAgentId);
+        if (!m || m.status === 'terminated') throw new BadRequestException('the auditor must be a member of this organization');
+      }
+      set.auditorAgentId = patch.auditorAgentId || null;
+    }
+    if (patch.auditCadenceDays !== undefined) set.auditCadenceDays = Math.min(90, Math.max(1, Math.floor(patch.auditCadenceDays)));
+    if (patch.auditUsdCap !== undefined) set.auditUsdCap = Math.min(50, Math.max(0.1, patch.auditUsdCap));
     if (patch.name !== undefined) { const n = patch.name.trim().slice(0, 80); if (!n) throw new BadRequestException('name cannot be empty'); set.name = n; }
     if (patch.mission !== undefined) set.mission = patch.mission.slice(0, 4_000);
     if (patch.ceoUserNote !== undefined) set.ceoUserNote = patch.ceoUserNote.slice(0, 4_000);

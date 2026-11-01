@@ -1015,6 +1015,69 @@ const MIGRATIONS: Migration[] = [
       await backfillOrgUnits(db);
     },
   },
+  {
+    id: '0033-org-assurance',
+    up: async (db) => {
+      // Assurance (docs/company-vision.md §5, execution-plan item 20):
+      // model-free signals, daily SLO samples, the auditor's runs. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_signals (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "unitId" TEXT,
+        "kind" TEXT NOT NULL,
+        "severity" TEXT NOT NULL DEFAULT 'info',
+        "refType" TEXT NOT NULL DEFAULT '',
+        "refId" TEXT NOT NULL DEFAULT '',
+        "title" TEXT NOT NULL,
+        "detail" TEXT NOT NULL DEFAULT '',
+        "addresseeKind" TEXT NOT NULL DEFAULT 'chief',
+        "addresseeId" TEXT NOT NULL DEFAULT '',
+        "dayKey" TEXT NOT NULL,
+        "status" TEXT NOT NULL DEFAULT 'open',
+        "ackNote" TEXT NOT NULL DEFAULT '',
+        "ackedAt" TEXT,
+        "resolvedAt" TEXT,
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_signals_dedup ON org_signals ("orgId", "kind", "refId", "dayKey")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_signals_org_status ON org_signals ("orgId", "status")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_slo_samples (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "dayKey" TEXT NOT NULL,
+        "metrics" TEXT NOT NULL DEFAULT '{}',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_slo_samples_day ON org_slo_samples ("orgId", "dayKey")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_audits (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "auditorAgentId" TEXT NOT NULL,
+        "trigger" TEXT NOT NULL DEFAULT 'cadence',
+        "startedAt" TEXT NOT NULL,
+        "endedAt" TEXT,
+        "sampled" TEXT NOT NULL DEFAULT '{}',
+        "findings" TEXT NOT NULL DEFAULT '[]',
+        "summary" TEXT NOT NULL DEFAULT '',
+        "singleModel" INTEGER NOT NULL DEFAULT 0,
+        "model" TEXT NOT NULL DEFAULT '',
+        "usd" REAL NOT NULL DEFAULT 0,
+        "status" TEXT NOT NULL DEFAULT 'running',
+        "createdAt" TEXT NOT NULL
+      )`);
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('organizations', 'auditorAgentId', 'TEXT');
+      await add('organizations', 'auditCadenceDays', 'INTEGER NOT NULL DEFAULT 7');
+      await add('organizations', 'auditUsdCap', 'REAL NOT NULL DEFAULT 2');
+      // Per-org tunables (docs/company-vision.md §1b): JSON { key: number }; item 18 adds the same column idempotently.
+      await add('organizations', 'tunables', "TEXT NOT NULL DEFAULT '{}'");
+    },
+  },
 ];
 
 /**
