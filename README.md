@@ -97,6 +97,20 @@ rail shows the board, goals, org chart, approvals, spend, brief and audit;
 Settings → Workspace → Organization holds the mode, chief, envelope, cap and
 the pause button. `COMPANIES_ENABLED=false` hides it all.
 
+**Group chat** (`docs/group-chat.md`): every workspace has Slack-style
+channels (`#general` by default), where people and agents converse. A
+mentioned agent wakes in its own per-channel session and its reply streams
+into the channel; agents allowed to speak unprompted pass one cheap relevance
+check and hard bounds (one per two minutes, two per message, never while a
+mentioned agent is replying, never to another unprompted reply, never over
+the channel's daily token budget); agent-to-agent chains stop after three
+rounds per thread until a person speaks. Threads, a channel folder mounted as
+`shared/`, "make task" from any message (organisation board or the agent's
+kanban) with status lines posting back, approvals routed to the person who
+asked, mention notifications through paired Telegram/email/push with deep
+links, `#slug text` posting from Telegram, workspace SSE, and FTS over
+channel messages.
+
 The frontend implements the design comp in `design/`: activity-bar shell,
 workspace-scoped chat list grouped by agent, streaming chat with thinking
 blocks, tool cards + inline Ask/Auto approvals, artifact side panel

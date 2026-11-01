@@ -1,7 +1,10 @@
 # Group chat: channels, threads and agents that talk
 
-Status: **design, 1 November 2026** — execution-plan items 15 and 16; §5
-(organization mode) **shipped** 1 November 2026, see its status note.
+Status: **shipped, 1 November 2026** — execution-plan item 15 (§1–§4, §6:
+channels, wake rules, threads/files/tasks, delivery) and item 16 (§5,
+organization mode). Each section ends with a *Shipped as* note naming the
+code; `tests/backend-groupchat.test.ts` (12 tests) and
+`web-tests/channels.test.ts` cover it.
 Supersedes the "group session that wakes nobody" in
 `docs/autonomous-company.md` §4 (see the revision note there).
 
@@ -42,6 +45,21 @@ enabled (system announcements: hires, reorgs, budget events, brief).
 
 Direct messages are the existing agent chat sessions. The rail lists
 channels and DMs together; nothing changes in the DM data model.
+
+*Shipped as:* migration `0029-group-chat` (the four tables, a GIN FTS index
+on `channel_messages.text`, `channelId`/`messageId` on `agent_tasks` and
+`org_tasks`, `#general` backfilled with `INSERT … WHERE NOT EXISTS`);
+`server/src/groupchat/groupchat.service.ts` (`ensureChannel`,
+`ensureGeneral` through `WorkspacesService.onCreated`, CRUD, members,
+`post`, `postSystem`, reads/unread, `files`, `makeTask`, mention
+notifications); `server/src/groupchat/mentions.ts` (`parseMentions`,
+`slugify`); `groupchat.controller.ts` under
+`/api/workspaces/:id/chat/channels…` (the bare `/channels` path is the
+member-pairing route of `shared.controller.ts`). Private channels are a 404
+to non-members; `#general` cannot be archived and no human can be removed
+from it; no agent tool can change membership (§6). In the SPA:
+`src/components/ChannelView.tsx`, the Channels block in `Rails.tsx`, the
+`channel` home view in `store.tsx`, `src/lib/channels.ts`.
 
 ## 2. Who speaks, and when
 
@@ -87,6 +105,26 @@ only posts where the agent already is), `channel_read(channel, limit)`,
 linked to the message; posts a system line), `channel_list`. Posting to a
 channel the agent is not a member of is refused.
 
+*Shipped as:* `server/src/groupchat/channel-runtime.service.ts`. The wake set
+is computed in `handlePost` after every non-system post, with every §2 bound
+checked before the relevance call (`relevanceFn` is the test seam; the real
+call uses `cheapestModelFor` on the agent's provider, no tools, 200 output
+tokens, JSON `{reply, reason}`, parse failure = silence). The chain cap counts
+agent messages since the last human message in the thread
+(`agentRoundsSinceHuman`) and posts `PAUSED_LINE`; a spent budget posts
+`BUDGET_LINE` on a mention and silences unprompted replies. The budget is the
+channel's `dailyTokenBudget`, else the `channelDailyTokenBudget` setting
+(default 200k, `0` = unlimited), measured as today's `chat_turns` tokens of
+the channel's sessions. A wake is `TurnLoopService.run` in `#<slug> · <agent>`
+(shared, tagged `channel`, Ask mode) under `runWithViewer` as the human
+author (`runAs`), so routed approvals behave as in shared workspaces; a plain
+Ask approval becomes a `channel_approval` SSE event for that person plus an
+addressed `approval_request` inbox event (TTL-denied otherwise). The reply
+streams as `channel_stream` and persists with `runId` = the turn id. Channel
+tools are registered through `TurnLoopService.addToolProvider`
+(`ToolProviderHook`, the generic shape of the org hook), which also mounts
+the channel folder as `shared/` via `sharedFolderFor`.
+
 ## 3. Threads, files, tasks, goals
 
 - **Threads.** `threadRootId` groups replies; the UI shows a thread panel;
@@ -104,6 +142,19 @@ channel the agent is not a member of is refused.
 - **Goals.** Organization-mode goals can be referenced with `#goal:<id>`
   in a message; the goal page lists linked messages.
 
+*Shipped as:* threads — `threadRootId`, replies to a reply are re-rooted,
+`GroupChatService.messages({ thread })`, the thread panel in `ChannelView`.
+Files — `channels/<slug>/` under the workspace store; uploads go through the
+existing `POST /api/workspaces/:id/files` with that path; the Files tab lists
+`GET …/chat/channels/:slug/files` and opens the existing preview. Tasks —
+`GroupChatService.makeTask` chooses the organisation board when the workspace
+has an active organisation (`orgFor`), else the assignee agent's kanban
+(`AgentsService.addTask` with `channelId`/`messageId`); both task services
+emit `TriggerBus.emitTaskStatus` on a status change and the group chat posts
+`Task [id] "title" → status` into the originating thread and a `task_update`
+SSE event. Not done: `#goal:<id>` references and the goal page's linked
+messages.
+
 ## 4. Delivery and presence
 
 Workspace-level SSE (`GET /api/workspaces/:id/events`) carries
@@ -113,6 +164,21 @@ Mentions of a human notify through their paired channels (Telegram, email,
 push) with the deep link `#/ws/<id>/channel/<slug>/<messageId>`, subject to
 quiet hours. Paired members can post into a channel from Telegram with
 `#slug text`.
+
+*Shipped as:* `server/src/groupchat/workspace-events.ts` (`WorkspaceEventBus`)
+and `GET /api/workspaces/:id/events` (same wire format as the turn stream,
+15s keepalive; the SPA reads it with `subscribeWorkspaceEvents`, one
+connection per workspace with backoff). Events: `channel_message`,
+`channel_typing`, `channel_stream`, `task_update`, `channel_update`,
+`channel_approval`. Mentions of a human create a `mention` inbox event on
+the sentinel agent id `channel:<id>` (so it lands in no agent's inbox) with
+`payload.link`, addressed to the member (`forMemberAccountId`) or the owner
+(`channel: true`); the Telegram, email and push sweeps render `eventLink` /
+`eventHead` (`agents.service.ts`) so the deep link replaces the chat link.
+Members with `notify = all` get every message; `none` gets nothing.
+`TelegramService.handlePaired` posts `#slug text` as the paired person
+(`GroupChatService.postFromPairedChannel`). `SearchService` returns
+`channelMessages` from the FTS index (private channels only for members).
 
 ## 5. Organization mode
 

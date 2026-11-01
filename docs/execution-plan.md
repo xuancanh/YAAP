@@ -381,12 +381,28 @@ and `ORG.json` export.
   §6 (roadmap AGENT.json claim, Phase 2 status, Telegram one-way).
 - Rewrite `docs/roadmap.md` §2 and §4 against the competitor matrix.
 
-### 15. Group chat: channels, threads, agents that talk *(todo)*
+### 15. Group chat: channels, threads, agents that talk *(done)*
 `docs/group-chat.md` §1–§4: channels in every workspace (`#general` by
 default), threads, @mentions, unprompted replies gated by a cheap relevance
 check with rate caps, 3-round agent-to-agent cap per thread, channel folder,
 make-task from a message with status lines posting back, DMs in the same
 rail, workspace SSE, mention delivery through paired channels.
+
+*Shipped as (1 November 2026):* migration `0029-group-chat` (`channels`,
+`channel_members`, `channel_messages` + GIN FTS, `channel_reads`;
+`agent_tasks|org_tasks.channelId|messageId`; `#general` backfill);
+`server/src/groupchat/` (`GroupChatService`, `ChannelRuntimeService`,
+`GroupChatController` at `/api/workspaces/:id/chat/channels…` and
+`GET /api/workspaces/:id/events`, `WorkspaceEventBus`, `mentions.ts`);
+`TurnLoopService.addToolProvider` (`ToolProviderHook`);
+`WorkspacesService.onCreated`; `TriggerBus.emitTaskStatus` from both task
+services; `eventLink`/`eventHead` in the Telegram, email and push sweeps;
+`#slug text` in `TelegramService`; `SearchService.channelMessages`;
+`channelDailyTokenBudget` setting. SPA: `ChannelView.tsx`, the Channels
+block in `Rails.tsx`, `store.tsx` (`channels`, `openChannel`,
+`onWorkspaceEvent`, deep links `#/ws/<id>/channel/<slug>[/<messageId>]`),
+`src/lib/channels.ts`. Tests: `tests/backend-groupchat.test.ts` (12),
+`web-tests/channels.test.ts` (6). Not done: `#goal:<id>` references.
 
 ### 16. Workspace is the company *(done)*
 `docs/group-chat.md` §5: fold the organization object into the workspace
