@@ -48,5 +48,17 @@ export async function startApp(): Promise<void> {
   const app = await createApp();
   const port = app.get(ConfigService).get<number>('port')!;
   await app.listen(port);
+  // Shutdown: Nest's hooks call server.close(), which waits for every open
+  // connection — and SSE streams (events, workspace bus) never close on their
+  // own, so a restart used to hang in "waiting for graceful termination".
+  // Drop the long-lived connections once the listener is closed, and hard-exit
+  // if something still holds the process a few seconds later.
+  const server = app.getHttpServer() as import('node:http').Server;
+  const stop = () => {
+    setTimeout(() => { server.closeIdleConnections?.(); server.closeAllConnections?.(); }, 200).unref();
+    setTimeout(() => process.exit(0), 5_000).unref();
+  };
+  process.once('SIGTERM', stop);
+  process.once('SIGINT', stop);
   new Logger('Bootstrap').log(`yaam-chat API listening on http://localhost:${port}/api`);
 }

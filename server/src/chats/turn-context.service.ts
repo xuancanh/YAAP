@@ -19,6 +19,10 @@ import { AgentsService } from '../agents/agents.service';
 import { AgentMemoryService } from '../agents/agent-memory.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { SharedService } from '../shared/shared.service';
+import { SettingsService } from '../settings/settings.module';
+import type { agentTypes } from '../database/schema';
+
+type AgentType = typeof agentTypes.$inferSelect;
 import { currentAccountId } from '../accounts/account-context';
 import { ChatSession } from './chats.repository';
 
@@ -49,20 +53,43 @@ export class TurnContextService {
     /** Optional: without it there are no members, so every lesson and the
      *  whole profile is the one user's (docs/shared-agents.md §4). */
     @Optional() private readonly shared?: SharedService,
+    /** Optional: the app-wide default agent type, the fallback for sessions
+     *  created without one (channels, loops, meetings, org runs). */
+    @Optional() private readonly settings?: SettingsService,
   ) {}
+
+  /** The agent type a session runs on. Sessions the UI opens carry one;
+   *  sessions the server opens (channel wakes, loops, meetings, org runs)
+   *  often do not, and used to fall through to the Echo provider — which is
+   *  why a group chat "kept saying echo". Order: the session's own type, the
+   *  agent's type, the app default, the first enabled type, else none. */
+  private async typeFor(session: Pick<ChatSession, 'agentTypeId' | 'agentId'>): Promise<AgentType | undefined> {
+    const tryId = async (id: string | null | undefined) => (id ? this.agentTypes.resolve(id).catch(() => undefined) : undefined);
+    const own = await tryId(session.agentTypeId);
+    if (own) return own;
+    const settings = this.settings ? await this.settings.all().catch((): Record<string, string> => ({})) : {};
+    const types = (await this.agentTypes.list().catch(() => [])).filter((t) => t.enabled);
+    // An agent pinned to a provider prefers an enabled type of that provider.
+    const agent = session.agentId ? await this.agents.get(session.agentId).catch(() => null) : null;
+    const byProvider = agent?.provider ? types.find((t) => t.provider === agent.provider && t.id === settings.defaultAgentTypeId) ?? types.find((t) => t.provider === agent.provider) : undefined;
+    if (byProvider) return tryId(byProvider.id);
+    const byDefault = types.find((t) => t.id === settings.defaultAgentTypeId);
+    if (byDefault) return tryId(byDefault.id);
+    return types[0] ? tryId(types[0].id) : undefined;
+  }
 
   /** Which key this session's turns run on: the agent type's own key, or —
    *  on the hosted plan, under its ceiling — a platform key. Throws the plan's
    *  402 otherwise. The turn loop calls this before taking the busy lock so
    *  a refused turn writes nothing. */
-  async resolveKey(session: Pick<ChatSession, 'agentTypeId'>): Promise<{ apiKey?: string; hosted: boolean }> {
-    const type = session.agentTypeId ? await this.agentTypes.resolve(session.agentTypeId) : undefined;
+  async resolveKey(session: Pick<ChatSession, 'agentTypeId' | 'agentId'>): Promise<{ apiKey?: string; hosted: boolean }> {
+    const type = await this.typeFor(session);
     if (!this.accounts) return { apiKey: type?.apiKey ?? undefined, hosted: false };
     return this.accounts.resolveProviderKey(type?.provider ?? 'echo', type?.apiKey);
   }
 
   async build(session: ChatSession): Promise<TurnContext> {
-    const type = session.agentTypeId ? await this.agentTypes.resolve(session.agentTypeId) : undefined;
+    const type = await this.typeFor(session);
     const providerName = type?.provider ?? 'echo';
     const provider = this.providers.resolve(providerName);
     const key = this.accounts ? await this.accounts.resolveProviderKey(providerName, type?.apiKey) : { apiKey: type?.apiKey ?? undefined, hosted: false };
@@ -70,9 +97,11 @@ export class TurnContextService {
     const parts: string[] = [];
     if (type?.persona) parts.push(type.persona);
 
+    let agentModel = '';
     if (session.agentId) {
       const agent = await this.agents.get(session.agentId).catch(() => null);
       if (agent) {
+        agentModel = agent.model || '';
         parts.push(`You are the durable agent "${agent.name}".`);
         if (agent.charter) parts.push(`Your charter:\n${agent.charter}`);
         parts.push('You maintain your own home page: use update_dashboard to keep a current markdown status board of your work, and save_app to build or refine self-contained HTML mini apps (rendered in a network-blocked sandbox) that the user can open or embed in chats. Apps can request bridge capabilities (window.yaam: storage, chat.compose, files.read/write/propose/watch, tasks.read/write, agent.ask, llm, data, connections, compute) via save_app\'s capabilities field — request only what the app uses; elevated ones wait for user review. Prefer llm.complete over agent.ask for the app\'s own text work (tagging, extraction, summaries): it is cheaper and returns structured output, while agent.ask spends a full turn of yours. Use data collections rather than cramming rows into storage, files.propose (not files.write) when the user should end up with the file, and files.watch so dashboards stay live instead of freezing at open time. Always feature-detect: if (window.yaam) — and degrade to static rendering without it.');
@@ -130,12 +159,14 @@ export class TurnContextService {
         : `This workspace is shared by several people; this session is private to ${initiator} (and the owner). Do not disclose other members' private material here.`);
     }
 
+    // Formatting: replies render as Markdown with rich fenced components (src/lib/md.tsx).
+    parts.push('Your replies render as Markdown: headings, lists, task checkboxes, GFM tables, block quotes, callouts (> [!NOTE] / [!TIP] / [!WARNING]), code fences with a language label, links and images. Use them when they make the answer clearer, not by default. Rich components are fenced blocks named by language: ```chart with JSON {"type":"bar"|"line","title":"…","labels":[…],"series":[{"name":"…","values":[…]}],"unit":"…"} renders an inline chart; ```kv with "key: value" lines renders a definition grid; ```steps with one step per line renders a numbered timeline; ```progress with "label: 0-100" lines renders progress bars; ```details whose first line is the summary renders a collapsible section; ```callout whose first line is "note|tip|warning|danger Title" renders a callout. Never mention these mechanisms.');
     // Quick replies (FR-5.3): a provider-neutral text protocol the UI parses.
     parts.push('When a short list of likely user responses would genuinely help, end your reply with exactly one final line of the form QUICK_REPLIES: ["option one","option two"] (2-4 options, each under 40 characters). Omit the line otherwise. Never mention this mechanism.');
 
     return {
       provider,
-      model: session.model || type?.model || '',
+      model: session.model || agentModel || type?.model || '',
       apiKey: key.apiKey,
       baseUrl: type?.baseUrl ?? this.providers.defaultBaseUrl(providerName),
       system: parts.join('\n\n'),

@@ -20,6 +20,7 @@ import { HeartbeatService } from './heartbeat.service';
 import { HeartbeatController } from './heartbeat.controller';
 import { AgentApprovalsController } from './agent-approvals.controller';
 import { AiModule } from '../ai/ai.module';
+import { SettingsModule } from '../settings/settings.module';
 import { AgentTypesModule } from '../agent-types/agent-types.module';
 import { AgentsModule } from '../agents/agents.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
@@ -33,7 +34,7 @@ import { ComputerModule } from '../computer/computer.module';
 import { RegistryModule } from '../registry/registry.module';
 
 @Module({
-  imports: [AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, BrowserModule, ActionReviewModule, ComputerModule, RegistryModule],
+  imports: [SettingsModule, AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, BrowserModule, ActionReviewModule, ComputerModule, RegistryModule],
   controllers: [ChatsController, LoopsController, HooksController, AgentApprovalsController, HeartbeatController],
   providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService, HeartbeatService],
   exports: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, HeartbeatService],

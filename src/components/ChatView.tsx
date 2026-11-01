@@ -9,6 +9,7 @@ import { safeJsonParse, workspaceSpend } from '../lib/util';
 import { fmtUsd, usdFor } from '../lib/pricing';
 import { MAX_AUDIO_BYTES, fmtDuration, isAudioFile, recorderAvailable, useVoiceRecorder, AUDIO_EXT_RE } from '../lib/voice';
 import { VoiceChip } from './VoiceChip';
+import { Markdown, plainText } from '../lib/md';
 
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 5, borderRadius: 6, display: 'flex' };
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -263,7 +264,7 @@ const UserRow = memo(function UserRow({ m, turn, onEditResend, onFork, author }:
             })}
           </div>
         )}
-        <div style={{ background: 'var(--user)', border: '1px solid var(--border-soft)', borderRadius: '14px 14px 4px 14px', padding: '11px 15px', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{m.content}</div>
+        <div style={{ background: 'var(--user)', border: '1px solid var(--border-soft)', borderRadius: '14px 14px 4px 14px', padding: '9px 15px', lineHeight: 1.55 }}><Markdown text={m.content} compact /></div>
         <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end', marginTop: 5 }}>
           <button onClick={() => onEditResend(m.turnId)} title="Edit & resend" style={ghostBtn}><I d={P.edit} size={13} /></button>
           <button onClick={() => onFork(m.turnId)} title="Fork" style={ghostBtn}><I d={P.forkIcon} size={13} /></button>
@@ -325,8 +326,8 @@ const AssistantRow = memo(function AssistantRow({ m, turn, agent, isNewest, isLa
       <div style={{ width: 28, height: 28, borderRadius: 8, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2, fontSize: 14 }}>{agent?.emoji ?? '💬'}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>{bodyText}</div>
-          {tts && bodyText.trim() && !(streaming && isNewest) && <SpeakButton text={bodyText} voice={ttsVoice} />}
+          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.65 }}><Markdown text={bodyText} /></div>
+          {tts && bodyText.trim() && !(streaming && isNewest) && <SpeakButton text={plainText(bodyText)} voice={ttsVoice} />}
         </div>
         {art && (
           <div onClick={() => onOpenArtifact(art.title, art.src)} style={{ marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 11, border: '1px solid var(--border)', borderRadius: 11, padding: '11px 14px', cursor: 'pointer', background: 'var(--panel)', maxWidth: '100%' }}>
@@ -535,8 +536,8 @@ export function ChatView() {
       return (
         <div key={`la${i}`} style={{ display: 'flex', gap: 12, margin: '16px 0' }}>
           <div style={{ width: 28, height: 28, borderRadius: 8, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2, fontSize: 14 }}>{agent?.emoji ?? '💬'}</div>
-          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>
-            {item.text}{item.streaming && <span style={{ animation: 'blink 1s infinite', color: 'var(--accent)' }}>▋</span>}
+          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.65 }}>
+            <Markdown text={item.text} streaming={item.streaming} />
           </div>
         </div>
       );
