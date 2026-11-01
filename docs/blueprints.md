@@ -109,6 +109,23 @@ A blueprint is a registry item of kind `company` (`docs/registry.md` §8).
   here. The remote feed re-validates a remote company locally like any other
   kind.
 
+### In the app
+
+Settings → Workspace → Organization has a **Blueprint** row: *Export
+blueprint* downloads the COMPANY.json; *Import blueprint* takes a pasted or
+picked file, the mode and an optional envelope, shows the dry-run plan (the
+chief, hires by role with the scopes they keep and the ones dropped at the
+meet, units, budget and allocations, tunables as applied, playbooks as
+drafts, cadences listed, recommended connections) and imports on confirm —
+in supervised mode it then opens the one `blueprint` approval card; *Publish
+to registry* previews the scan first and publishes on a second click. The
+Market's **Companies** tab lists published blueprints with their two outcome
+counts and installs one into a chosen workspace through the same review →
+plan → confirm steps, playbook bodies shown before anything is created. The
+org chart's **Hire** dialog shows the role catalog (§5) ranked against the
+operating profile, and Organization → People seats hybrid employees (§6) who
+get a **My tasks** pane.
+
 ## 4. Rating by outcomes
 
 A blueprint is rated by what the companies that ran it achieved, not by

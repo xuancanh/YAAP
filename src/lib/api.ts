@@ -189,8 +189,9 @@ export interface FlowRule { id: string; workspaceId: string; fromMember: string;
 export interface WorkspaceMe { actorId: string; role: MemberRole; ownerAccountId: string; names: Record<string, string>; hasMembers: boolean }
 export interface MemberGrant { id: string; connectionId: string; agentId: string; service: string; level: string; memberAccountId: string; provider: string; accountEmail: string }
 export interface MemberChannel { id: string; workspaceId: string; memberAccountId: string; kind: 'telegram' | 'email'; address: string; createdAt: string }
-export type HumanRole = 'ceo' | 'board' | 'observer';
-export interface OrgHuman { id: string; orgId: string; memberAccountId: string; role: HumanRole; createdAt: string }
+export type HumanRole = 'ceo' | 'board' | 'observer' | 'employee';
+/** A human of the company; employees (item 24) carry a reporting line and a title. */
+export interface OrgHuman { id: string; orgId: string; memberAccountId: string; role: HumanRole; reportsToAgentId?: string | null; title?: string; createdAt: string }
 
 export interface AgentStats {
   chats: number;
@@ -703,13 +704,15 @@ export interface OrgTask {
   lastRunAt: string | null; createdBy: string; createdAt: string; updatedAt: string;
   /** Units (docs/group-chat.md §7). */
   unitId: string | null; unitExplicit: number;
+  /** Capital (item 23): the task class routing reads; hybrid staff (item 24): a human owner / reviewer by account id. */
+  class?: string; assigneeHumanId?: string | null; reviewerHumanId?: string | null;
 }
 export interface OrgRun {
   id: string; orgId: string; taskId: string; agentId: string; sessionId: string | null; wakeReason: string;
   status: string; outcome: string; tokensIn: number; tokensOut: number; usd: number; startedAt: string; endedAt: string | null;
 }
 export interface OrgMessage { id: string; orgId: string; taskId: string | null; fromAgentId: string | null; runId: string | null; text: string; createdAt: string }
-export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation';
+export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review';
 export interface OrgApproval {
   id: string; orgId: string; kind: OrgApprovalKind; payload: string; requestedBy: string; recommendation: string;
   status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired'; decidedAt: string | null; decidedBy?: string; decisionNote: string; expiresAt: string | null; createdAt: string;
@@ -812,7 +815,10 @@ export const MEETING_KINDS: MeetingKind[] = ['planning', 'standup', 'weekly_revi
 export type MeetingStatus = 'scheduled' | 'running' | 'done' | 'cancelled' | 'postponed';
 export interface MinutesAction { title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string }
 export interface MinutesDecision { title: string; decision: string; alternatives: string; rationale: string; by: string; decisionId?: string }
-export interface Minutes { summary: string; decisions: MinutesDecision[]; actions: MinutesAction[]; risks: Array<{ text: string; by: string }>; questions: Array<{ question: string; by: string }>; endedBy?: string }
+/** A retro's lesson (docs/company-vision.md §6, item 22): one sentence with an audience; may carry a proposed charter or playbook change. */
+export type LessonAudience = 'member' | 'unit' | 'company';
+export interface MinutesLesson { text: string; audience: LessonAudience; by: string; proposedCharterChange?: { agent: string; text: string; mode?: 'append' | 'replace'; approvalId?: string }; proposedPlaybookChange?: { playbookId: string; note: string; taskId?: string } }
+export interface Minutes { summary: string; decisions: MinutesDecision[]; actions: MinutesAction[]; risks: Array<{ text: string; by: string }>; questions: Array<{ question: string; by: string }>; lessons?: MinutesLesson[]; endedBy?: string }
 /** A meeting (docs/group-chat.md §8): a thread in a unit channel; `minutes` is JSON (Minutes). */
 export interface OrgMeeting {
   id: string; orgId: string; unitId: string | null; channelId: string | null; threadRootId: string | null; kind: MeetingKind; title: string; agenda: string;
@@ -825,6 +831,100 @@ export interface OrgDecision {
   decidedBy: string; refType: string; refId: string; createdAt: string;
 }
 export interface OrgCadence { id: string; orgId: string; unitId: string; kind: MeetingKind; cron: string; enabled: number; lastRunAt: string | null; nextRunAt: string | null; createdAt: string }
+
+// ---- memory, capital, blueprints (docs/company-vision.md §6, §7, §9; execution plan items 22–24) ----
+export type CitationKind = 'task' | 'decision' | 'goal' | 'meeting' | 'audit';
+export interface Citation { kind: CitationKind; id: string; title: string }
+/** GET …/org/recall?q= — the model-free pack behind an answer. */
+export interface RecallPack {
+  question: string; keywords: string[];
+  goals: Array<{ id: string; kind: string; title: string; status: string; owner: string | null; atRisk: boolean; metric?: string }>;
+  tasks: Array<{ id: string; title: string; status: string; owner: string | null; outcome: string; updatedAt: string }>;
+  decisions: Array<{ id: string; title: string; decision: string; rationale: string; decidedBy: string; createdAt: string; meetingId: string | null }>;
+  meetings: Array<{ id: string; kind: string; title: string; summary: string; endedAt: string | null; decisions: number; actions: number; lessons: number }>;
+  signals: Array<{ id: string; kind: string; severity: string; status: string; title: string; refId: string }>;
+  audit: Array<{ seq: number; actor: string; action: string; refType: string; refId: string; head: string; createdAt: string }>;
+  messages: Array<{ id: string; channel: string; author: string; text: string; createdAt: string }>;
+}
+/** POST …/org/ask — the chief's read-only answer with its verified citations. */
+export interface AskResult { answer: string; citations: Citation[]; stripped: string[]; usd: number; status: 'answered' | 'budget_stop' | 'busy' | 'failed'; pack: RecallPack }
+export interface GraphNode { key: string; kind: string; id: string; title: string; status?: string; at?: string }
+export interface GraphEdge { from: string; to: string; rel: string }
+/** GET …/org/graph?ref=<kind:id>&depth= — the record around one thing. */
+export interface OrgGraph { root: string; depth: number; nodes: GraphNode[]; edges: GraphEdge[]; truncated: boolean }
+export type PlaybookStatus = 'draft' | 'in_review' | 'active' | 'retired';
+export interface PlaybookOutcomes { uses: number; up: number; down: number; successRate: number | null; lastUsedAt: string | null; refreshedAt: string }
+export interface OrgPlaybook {
+  id: string; orgId: string; skillId: string | null; name: string; title: string; body: string; ownerAgentId: string | null;
+  /** JSON array of titles / role ids ('' = everyone). */
+  roles: string; status: PlaybookStatus; version: number; sourceTaskId: string | null; reviewTaskId: string | null;
+  /** JSON PlaybookOutcomes. */
+  outcomes: string; why: string; createdAt: string; updatedAt: string;
+}
+export type PlanStatus = 'pending' | 'applied' | 'vetoed' | 'expired' | 'dry_run';
+export interface PlanAction { tool: string; input: Record<string, unknown>; estimateUsd: number; summary: string }
+export interface PlanActionResult { tool: string; summary: string; ok: boolean; output: string }
+/** A plan awaiting the veto window (docs/company-vision.md §8): `actions` and `result` are JSON. */
+export interface OrgPlan {
+  id: string; orgId: string; trigger: string; summary: string; actions: string; estimateUsd: number; status: PlanStatus; vetoWindowMinutes: number;
+  result: string; createdAt: string; applyAt: string | null; appliedAt: string | null; decidedBy: string;
+}
+export interface DryRunResult { result: string; plan: OrgPlan | null }
+export type ForecastState = 'onTrack' | 'warn' | 'stop';
+export interface ObjectiveCost {
+  goalId: string; title: string; status: string; unitId: string | null; spentUsd: number; runs: number; shareOfSpend: number;
+  envelopeUsd: number; envelopeSource: 'allocation' | 'company' | 'none'; envelopePct: number | null; progress: number;
+  keyResults: { total: number; achieved: number; measuredPct: number | null }; allocation: { monthlyUsd: number; buys: string } | null; overspend: boolean; byClass: Record<string, number>;
+}
+/** GET …/org/costs?period= — cost per outcome. */
+export interface CostReport {
+  period: 'month' | 'all'; from: string | null; totalUsd: number; attributedUsd: number; unlinkedUsd: number; companyEnvelopeUsd: number; margin: number;
+  vision: { goalId: string; title: string; spentUsd: number } | null; objectives: ObjectiveCost[]; byClass: Record<string, number>;
+  byAgent: Array<{ agentId: string; name: string; usd: number; runs: number }>; costPerAcceptedTaskUsd: number | null;
+}
+export interface EnvelopeForecast { scope: 'company' | 'agent' | 'project' | 'objective'; refId: string; name: string; capUsd: number; spentUsd: number; dailyBurnUsd: number; projectedUsd: number; projectedPct: number | null; state: ForecastState }
+/** GET …/org/forecast — the trailing-window projection per envelope. */
+export interface OrgForecast { month: string; day: number; daysInMonth: number; windowDays: number; warnPct: number; criticalPct: number; company: EnvelopeForecast; agents: EnvelopeForecast[]; projects: EnvelopeForecast[]; objectives: EnvelopeForecast[] }
+export type ModelTier = 'cheap' | 'standard' | 'strong';
+export const MODEL_TIERS: ModelTier[] = ['cheap', 'standard', 'strong'];
+export const TASK_CLASSES = ['triage', 'research', 'synthesis', 'review', 'ops', 'general'] as const;
+/** GET|PUT …/org/routing — class → tier, and the CEO's pinned model per tier. */
+export interface OrgRouting { classes: Record<string, ModelTier>; models: Partial<Record<ModelTier, string>> }
+export interface OrgAllocation { id: string; orgId: string; goalId: string; unitId: string | null; scope: string; refId: string; monthlyUsd: number; rationale: string; createdAt?: string; updatedAt?: string }
+export type ReplayKind = 'woke' | 'ran' | 'decided' | 'signal' | 'plan' | 'spend' | 'change';
+export interface ReplayEntry { at: string; kind: ReplayKind; seq: number | null; title: string; usd: number | null; refType: string; refId: string }
+/** GET …/org/replay?day= — one day of the company with the chain check. */
+export interface OrgReplay {
+  day: string; entries: ReplayEntry[];
+  totals: { runs: number; usd: number; decisions: number; signals: number; plans: number; auditRows: number };
+  chain: { ok: boolean; rows: number; fromSeq: number | null; toSeq: number | null; brokenAt: number | null; reason?: string };
+}
+/** COMPANY.json v1 (docs/blueprints.md). */
+export interface BlueprintRole { roleId?: string; title: string; charter: string; reportsTo: string | null; scopes: string[]; modelTier: ModelTier; monthlyUsd: number }
+export interface Blueprint {
+  format: string; name: string; description: string; profile: { values: string; culture: string; rules: string };
+  vision?: { title: string; description: string; horizonDays: number }; roles: BlueprintRole[]; units?: Array<{ title: string; parent: string | null }>;
+  cadences?: Array<{ unitTitle: string; kind: string; cron: string }>; tunables: Record<string, number>; routing?: Record<string, string>;
+  playbooks: Array<{ name: string; skillMd: string }>; budget: { monthlyUsd: number; allocations?: Record<string, number> }; cards?: string[];
+  origin: { exportedFrom: string; at: string; sourceOrgId: string };
+}
+export type ImportMode = 'supervised' | 'autonomous';
+export interface PlannedHire { title: string; roleId?: string; reportsTo: string; requestedScopes: string[]; scopes: string[]; dropped: string[]; modelTier: string; model: string; monthlyUsd: number }
+/** POST …/org/blueprint/plan — the dry run of an import. */
+export interface BlueprintImportPlan {
+  ok: boolean; name: string; mode: ImportMode; chief: { title: string; roleId?: string; scopes: string[]; dropped: string[]; modelTier: string; model: string };
+  hires: PlannedHire[]; units: Array<{ title: string; parent: string | null }>; budget: { monthlyUsd: number; allocations: Record<string, number>; allocated: number };
+  tunables: Array<{ key: string; value: number; applied: number; note?: string }>; profile: { values: boolean; culture: boolean; rules: boolean };
+  vision: { title: string; horizonDays: number } | null; playbooks: Array<{ name: string }>; cadences: { count: number; applied: boolean; note: string };
+  recommendedCards: string[]; recommendedConnections: string[]; approval: 'blueprint' | 'none'; notes: string[];
+}
+export interface BlueprintImportResult { orgId: string; importId: string; mode: ImportMode; chiefAgentId: string; hired: Array<{ agentId: string; title: string }>; approvalId: string | null; playbooks: Array<{ skillId: string; name: string }>; notes: string[] }
+export interface CompanyOutcomes { first_key_result: number; thirty_days_in_envelope: number }
+/** GET /api/market/companies — published blueprints with their outcome counts. */
+export interface CompanyRegistryItem extends RegistryItem { outcomes: CompanyOutcomes }
+export type CompanyInstallResult =
+  | { requiresConfirm: true; review: RegistryReview; plan: BlueprintImportPlan }
+  | ({ ok: true; install: unknown } & BlueprintImportResult);
 
 export const PROVIDER_COLORS: Record<string, string> = {
   anthropic: '#d97757', 'anthropic-compatible': '#d97757',
@@ -1357,6 +1457,42 @@ export const api = {
   chatDecision: (wsId: string, idOrPrefix: string) => get<OrgDecision>(`/api/workspaces/${wsId}/chat/decisions/${enc(idOrPrefix)}`),
   orgCadences: (wsId: string) => get<OrgCadence[]>(`/api/workspaces/${wsId}/org/cadences`),
   updateOrgCadence: (wsId: string, cadenceId: string, patch: { cron?: string; enabled?: boolean }) => send<OrgCadence>(`/api/workspaces/${wsId}/org/cadences/${enc(cadenceId)}`, 'PATCH', patch),
+
+  // memory, capital, blueprints, hybrid staff (docs/company-vision.md §6, §7, §9; items 22–24)
+  orgAsk: (wsId: string, question: string) => send<AskResult>(`/api/workspaces/${wsId}/org/ask`, 'POST', { question }),
+  orgRecall: (wsId: string, q: string) => get<RecallPack>(`/api/workspaces/${wsId}/org/recall?q=${enc(q)}`),
+  orgSearchDecisions: (wsId: string, q: string, unitId?: string | null, limit = 50) => get<OrgDecision[]>(`/api/workspaces/${wsId}/org/decisions/search?q=${enc(q)}${unitId ? `&unitId=${enc(unitId)}` : ''}&limit=${limit}`),
+  orgGraph: (wsId: string, ref: string, depth: 1 | 2 = 1) => get<OrgGraph>(`/api/workspaces/${wsId}/org/graph?ref=${enc(ref)}&depth=${depth}`),
+  orgPlaybooks: (wsId: string, opts: { role?: string; status?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.role) q.set('role', opts.role);
+    if (opts.status) q.set('status', opts.status);
+    const qs = q.toString();
+    return get<OrgPlaybook[]>(`/api/workspaces/${wsId}/org/playbooks${qs ? `?${qs}` : ''}`);
+  },
+  orgCosts: (wsId: string, period: 'month' | 'all' = 'month', unitId?: string | null) => get<CostReport>(`/api/workspaces/${wsId}/org/costs?period=${period}${unitId ? `&unitId=${enc(unitId)}` : ''}`),
+  orgForecast: (wsId: string) => get<OrgForecast>(`/api/workspaces/${wsId}/org/forecast`),
+  orgRouting: (wsId: string) => get<OrgRouting>(`/api/workspaces/${wsId}/org/routing`),
+  setOrgRouting: (wsId: string, patch: { classes?: Record<string, string | null>; models?: Record<string, string | null>; why?: string }) => send<OrgRouting>(`/api/workspaces/${wsId}/org/routing`, 'PUT', patch),
+  orgAllocations: (wsId: string) => get<OrgAllocation[]>(`/api/workspaces/${wsId}/org/allocations`),
+  setOrgAllocation: (wsId: string, body: { goalId: string; monthlyUsd: number; buys?: string }) => send<OrgAllocation>(`/api/workspaces/${wsId}/org/allocations`, 'PUT', body),
+  orgPlans: (wsId: string, status?: string) => get<OrgPlan[]>(`/api/workspaces/${wsId}/org/plans${status ? `?status=${enc(status)}` : ''}`),
+  orgPlan: (wsId: string, planId: string) => get<OrgPlan>(`/api/workspaces/${wsId}/org/plans/${enc(planId)}`),
+  vetoOrgPlan: (wsId: string, planId: string, note?: string) => send<OrgPlan>(`/api/workspaces/${wsId}/org/plans/${enc(planId)}/veto`, 'POST', { note }),
+  applyOrgPlanNow: (wsId: string, planId: string) => send<OrgPlan>(`/api/workspaces/${wsId}/org/plans/${enc(planId)}/apply-now`, 'POST'),
+  orgDryRun: (wsId: string, body: { prompt?: string; assume?: { monthlyUsd?: number } }) => send<DryRunResult>(`/api/workspaces/${wsId}/org/plan/dry-run`, 'POST', body),
+  orgReplay: (wsId: string, day: string) => get<OrgReplay>(`/api/workspaces/${wsId}/org/replay?day=${enc(day)}`),
+  orgBlueprint: (wsId: string) => get<Blueprint>(`/api/workspaces/${wsId}/org/blueprint`),
+  orgBlueprintPlan: (wsId: string, blueprint: Record<string, unknown>, opts: { mode?: ImportMode; monthlyUsd?: number } = {}) => send<BlueprintImportPlan>(`/api/workspaces/${wsId}/org/blueprint/plan`, 'POST', { blueprint, ...opts }),
+  orgBlueprintImport: (wsId: string, blueprint: Record<string, unknown>, mode: ImportMode, monthlyUsd?: number) => send<BlueprintImportResult>(`/api/workspaces/${wsId}/org/blueprint/import`, 'POST', { blueprint, mode, monthlyUsd }),
+  marketCompanies: (q = '') => get<{ items: CompanyRegistryItem[]; remote: RegistryList['remote'] }>(`/api/market/companies${q ? `?q=${enc(q)}` : ''}`),
+  publishCompany: (body: { workspaceId: string; name?: string; description?: string; publisherName?: string; dryRun?: boolean }) => send<RegistryPublishResult>('/api/market/companies', 'POST', body),
+  installCompany: (id: string, body: { workspaceId: string; mode: ImportMode; monthlyUsd?: number; confirm?: boolean }) => send<CompanyInstallResult>(`/api/market/companies/${enc(id)}/install`, 'POST', body),
+  setOrgEmployee: (wsId: string, body: { memberAccountId: string; role: HumanRole; reportsToAgentId?: string | null; title?: string }) => send<OrgHuman>(`/api/workspaces/${wsId}/org/humans`, 'POST', body),
+  assignOrgTaskHuman: (wsId: string, taskId: string, humanId: string) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}/assign`, 'POST', { humanId }),
+  requestOrgTaskReview: (wsId: string, taskId: string, body: { text?: string; reviewerHumanId?: string }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}/request-review`, 'POST', body),
+  orgMyTasks: (wsId: string) => get<{ assigned: OrgTask[]; reviewing: OrgTask[] }>(`/api/workspaces/${wsId}/org/humans/me/tasks`),
+  proposeOrgApproval: (wsId: string, body: { kind: OrgApprovalKind; payload: Record<string, unknown>; recommendation?: string }) => send<OrgApproval>(`/api/workspaces/${wsId}/org/approvals`, 'POST', body),
 };
 
 export interface AppLlmResult {

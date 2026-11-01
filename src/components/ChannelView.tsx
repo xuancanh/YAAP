@@ -12,6 +12,7 @@ import { Markdown, type RefResolver } from '../lib/md';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
 import { MEETING_KIND_TITLES, minutesMeetingId, parseMinutes } from '../lib/org';
+import { AUDIENCE_COLOR, audienceLabel } from '../lib/org2';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 };
@@ -632,7 +633,20 @@ function MinutesCard({ wsId, meetingId, fallback, refs, onDecision, onTask }: { 
       {section('Questions for the CEO', minutes.questions.length)}
       {minutes.questions.length === 0 && <div style={{ ...row, color: 'var(--text-faint)', borderBottom: 'none' }}>none</div>}
       {minutes.questions.map((q, i) => <div key={i} style={row}>? {q.question} <span style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>({nm(q.by)})</span></div>)}
-      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>Minutes are hash-chained into the audit log; actions became tasks, decisions went to the log, questions reach the next brief.</div>
+      {(minutes.lessons?.length ?? 0) > 0 && (
+        <>
+          {section('Lessons', minutes.lessons!.length)}
+          {minutes.lessons!.map((l, i) => (
+            <div key={i} style={{ ...row, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: '#fff', background: AUDIENCE_COLOR[l.audience] ?? 'var(--panel-2)', borderRadius: 6, padding: '1px 7px', flex: 'none' }} title="Who remembers this lesson">{audienceLabel(l.audience)}</span>
+              <span style={{ flex: 1, minWidth: 180 }}>{l.text} <span style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>({nm(l.by)})</span></span>
+              {l.proposedCharterChange && <span style={{ fontSize: 11, color: 'var(--amber)' }} title={l.proposedCharterChange.text}>charter change for {nm(l.proposedCharterChange.agent)}{l.proposedCharterChange.approvalId ? ' → card' : ''}</span>}
+              {l.proposedPlaybookChange && (l.proposedPlaybookChange.taskId ? <button onClick={() => onTask(l.proposedPlaybookChange!.taskId!)} style={{ fontSize: 11, background: 'var(--accent-dim)', border: 'none', color: 'var(--text)', borderRadius: 7, padding: '2px 8px', cursor: 'pointer' }}>playbook revise task</button> : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>playbook change proposed</span>)}
+            </div>
+          ))}
+        </>
+      )}
+      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 8 }}>Minutes are hash-chained into the audit log; actions became tasks, decisions went to the log, questions reach the next brief{(minutes.lessons?.length ?? 0) > 0 ? ', lessons went to the memory of their audience' : ''}.</div>
     </div>
   );
 }

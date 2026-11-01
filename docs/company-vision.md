@@ -470,8 +470,15 @@ resolve and deep links, audits, spend vs envelope, today's rituals),
 meeting; meeting threads and minutes cards in the channel) and
 **Decisions** (§6: the log with rationale, alternatives, decider and source);
 the tunables (§1b) edit from Settings → Workspace → Organization and the
-heartbeat defaults (§13) from Settings → Workspace. Not on screen yet: Ask
-the company, Preview with the veto window and Replay (items 22–23).
+heartbeat defaults (§13) from Settings → Workspace. *(1 November 2026,
+branch `feat/spa2`)* The rest of the seat followed: **Ask** (§6, citations as
+chips, sources), **Plans** (§8, every planned change as a diff with the veto
+countdown, Veto / Apply now, the dry run), **Replay** (§8, a day as a
+timeline with the chain check), **Capital** (§7, cost per outcome, forecast,
+allocations, routing), **Playbooks** and the Related drawer (§6), the
+Blueprint row in Settings and the Companies tab in the Market (§9), the Hire
+dialog with the role catalog and hybrid employees with a **My tasks** pane
+(§4) — see each item's "Shipped as, SPA" in `docs/execution-plan.md`.
 
 *Phase E, Capital and the CEO's seat (item 23) — shipped 1 November 2026.*
 §7 and the §8 preview/replay are built, backend only (the vision page, the

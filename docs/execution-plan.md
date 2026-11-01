@@ -671,6 +671,25 @@ active and the role targeting lives in the context list; a charter change is
 appended/replacing text with a computed line diff on the card rather than an
 agent-written patch; `org_decisions.outcomes` of the vision is
 `org_playbooks.outcomes`; backend only.
+*Shipped as, SPA (1 November 2026, branch `feat/spa2`):* the **Ask** pane
+(`src/components/OrgMemoryView.tsx`, Company → Ask, `#/ws/<id>/org/ask`) —
+one question to `POST …/org/ask`, the answer through `<Markdown>` with every
+`[task:|decision:|goal:|meeting:|audit:…]` citation turned into a chip that
+opens what it names (task → board drawer, decision → Decisions, goal →
+Vision, meeting → its thread, audit → the Replay of that row's day; `md.tsx`
+gains `meeting` and `audit` ref kinds), the verified citations list, the
+stripped ones, the cost, the `budget_stop | busy | failed` states, "Show
+sources" (the recall pack, or `GET …/org/recall?q=`) and a session history;
+the **Playbooks** pane (`#/ws/<id>/org/playbooks`, `GET …/org/playbooks
+?role=&status=`: status, owner, roles offered to, version, outcomes, why, the
+body through Markdown, links to the review and source tasks — no retire
+button, no route exists); the Decisions pane searches server-side through
+`GET …/org/decisions/search?q=` (debounced) and every task drawer and
+decision row has a **Related** drawer (`GET …/org/graph?ref=&depth=1|2`
+rendered as grouped lists with the relation and hop count, `groupGraph`);
+retro minutes cards show `lessons[]` with audience badges and the proposed
+charter / playbook changes. Helpers in `src/lib/org2.ts`, tests in
+`web-tests/org2.test.ts`.
 
 ### 23. Capital and the CEO seat: cost per outcome, forecasts, routing, preview with veto window, replay *(done)*
 `docs/company-vision.md` §7–§8, phase E.
@@ -721,6 +740,31 @@ is a row of actions the SPA will draw as a diff; the CEO pins a model on the
 agent (`agents.model`), not in the routing table; item 20's `burn_rate`
 signal (month-to-date average) stays alongside the trailing-window
 `burn_forecast`; the SPA is not touched.
+*Shipped as, SPA (1 November 2026, branch `feat/spa2`):* the **Plans** pane
+(`src/components/OrgCapitalView.tsx`, `#/ws/<id>/org/plans`) — `GET
+…/org/plans?status=` with each plan as a **diff**: actions humanised from
+tool + input (`humanizePlanAction`) and grouped hire / reorg / terminate /
+scope / budget / routing / tune with the estimate per row and group, the
+veto countdown (`countdownLabel`, 30-s tick), **Veto** (note) and **Apply
+now**, applied / vetoed / expired / dry-run badges and "stopped here" on the
+refused action; the **Dry run** form (prompt + assumed monthly USD → `POST
+…/org/plan/dry-run`) rendering the same diff under a "hypothetical, nothing
+applied" banner; pending plans as a banner on Pulse, a badge on the Plans
+row and a count in the rail's Organization header (`orgPendingPlans`,
+fetched with `wsOrg`). The **Replay** pane (`#/ws/<id>/org/replay`): day
+picker with prev / next / today → `GET …/org/replay?day=`, totals tiles,
+the chain verification badge, the timeline grouped by hour
+(`groupReplayByHour`) with kind pills, cost and deep links. The **Capital**
+pane (`#/ws/<id>/org/capital`): the cost-per-outcome table from `GET
+…/org/costs?period=` (spent, share, envelope bar and source, progress,
+measured, the overspend flag with its sentence — `costRows`), spend by
+class, the forecast per envelope worst-first (`GET …/org/forecast`,
+`forecastRows`, on track / will warn / will stop), the allocations editor
+(`GET|PUT …/org/allocations`) and the routing table (`GET|PUT
+…/org/routing`: class → tier with the resolved model — pinned, the agent's
+own, the provider's strong model, "cheapest" — and pinned tier models). The
+`routing`, `tune` and `cadence` approval kinds render as cards. The board
+shows the task class.
 
 ### 24. Blueprints: company export/import, registry, role catalog, hybrid human roles *(planned)*
 ### 24. Blueprints: company export/import, registry, role catalog, hybrid human roles *(done)*
@@ -762,6 +806,34 @@ scoping, `POST …/tasks/:taskId/assign { agentId | humanId }`, `GET
 install as drafts; cadences are listed, not written; tiers resolve through
 item 23's `tierModel`; a role hire is named after the
 title the chief gives.
+*Shipped as, SPA (1 November 2026, branch `feat/spa2`):* Settings → Workspace
+→ Organization gains a **Blueprint** row (`src/components/OrgBlueprintBits.tsx`,
+lazy): **Export blueprint** downloads COMPANY.json from `GET …/org/blueprint`;
+**Import blueprint** takes a pasted or picked file, mode and an optional
+envelope → `POST …/org/blueprint/plan` renders the dry-run plan (chief, hires
+by role with scopes after the meet and the dropped ones, units, budget and
+allocations, tunables, playbooks as drafts, cadences listed, recommended
+connections and cards, notes; `blueprintPlanSummary`) → confirm → `POST
+…/org/blueprint/import {blueprint, mode, monthlyUsd}` (opens Approvals when a
+`blueprint` card was created); **Publish to registry** runs `POST
+/api/market/companies` with `dryRun` first (scan, slug, counts) and then
+publishes. The Market gains a **Companies** tab (`GET /api/market/companies
+?q=` cards with both outcome counts, scan state, playbook and scope counts)
+whose Install opens the two-step modal (`POST /api/market/companies/:id/
+install` → review with the playbook bodies + the plan → `confirm: true`).
+The org chart's **Hire** dialog (`src/components/OrgPeopleView.tsx`) shows
+the role catalog from `GET …/org/roles?profile=` as ranked chips (charter
+preview, competencies, scopes, tier, estimated USD) beside the profession
+packs and proposes a `hire` card through `POST …/org/approvals` with
+`templateOrPack: role:<id>`. Hybrid staff: Organization → People seats a
+workspace member as `employee` with a title and a reporting line (`POST
+…/org/humans`), employees hang under their manager on the chart with a
+person badge, the board drawer's Assign offers them (`assign {humanId}`) and
+"Human review by…" sends the task to one (`request-review {reviewerHumanId}`),
+the **My tasks** pane (`#/ws/<id>/org/mytasks`, `GET …/org/humans/me/tasks`)
+lists assigned and reviewing cards with status, comments and request review
+to a human or the agent reviewer, and the `human_review`, `blueprint` and
+`charter_change` (with the line diff) kinds render in the approvals UI.
 
 ### 25. Company onboarding: the New workspace wizard and `POST …/org/bootstrap` *(done)*
 `docs/group-chat.md` §5 "Onboarding", `docs/company-vision.md` §1b, §14.

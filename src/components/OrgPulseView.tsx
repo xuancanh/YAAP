@@ -50,6 +50,12 @@ export function PulsePane({ org }: { org: OrgDetail }) {
         <button style={btn()} onClick={() => void act(() => api.runOrgAudit(wsId).then((r) => { if (r.result !== 'done' && r.result !== 'ran') throw new Error(`Audit ${r.result}`); }), 'Audit ran — findings are signals')} title="Run the auditor now (needs an auditor member; capped by auditUsdCap)">Run audit now</button>
       </div>
       {err && <div style={{ ...card, color: 'var(--red)', fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
+      {app.orgPendingPlans > 0 && (
+        <div role="status" style={{ ...card, borderLeft: '3px solid var(--amber)', display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13 }}><b>{app.orgPendingPlans} plan{app.orgPendingPlans === 1 ? '' : 's'}</b> awaiting your veto — the chief's structural changes apply when the window closes unless you stop them.</span>
+          <button style={{ ...btn(true), marginLeft: 'auto' }} onClick={() => app.setOrgPane('plans')}>Review plans</button>
+        </div>
+      )}
       <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', marginBottom: 10 }}>
         <ScoreTile pulse={pulse} openCritical={open.filter((s) => s.severity === 'critical').length} />
         <SpendTile spend={spend} org={org} />
@@ -136,7 +142,7 @@ function SpendTile({ spend, org }: { spend: OrgSpend | null; org: OrgDetail }) {
   const projPct = c.monthlyUsd > 0 ? Math.round((projected / c.monthlyUsd) * 100) : null;
   return (
     <div style={{ ...card, display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}><div style={{ ...label, flex: 1 }}>Spend vs envelope · {spend.month}</div><button style={linkBtn} onClick={() => app.setOrgPane('spend')}>details</button></div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}><div style={{ ...label, flex: 1 }}>Spend vs envelope · {spend.month}</div><button style={linkBtn} onClick={() => app.setOrgPane('capital')} title="Cost per outcome, forecast, allocations, routing">capital</button><button style={linkBtn} onClick={() => app.setOrgPane('spend')}>details</button></div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span style={{ fontSize: 22, fontWeight: 700, ...mono }}>{fmtUsd(c.usd)}</span>
         <span style={faint}>{c.monthlyUsd > 0 ? `of ${fmtUsd(c.monthlyUsd)}` : 'no company envelope'}{c.reservedUsd > 0 ? ` · ${fmtUsd(c.reservedUsd)} reserved` : ''}</span>

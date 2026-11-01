@@ -16,7 +16,7 @@ import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
 import { UsageBars, UsageRows } from './UsageChart';
 import { I, P } from '../lib/icons';
-import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, Avatar } from './org-ui';
+import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, useFollowRef, Avatar } from './org-ui';
 
 /** The CEO's-seat panes (docs/company-vision.md §8, items 18–20) load on demand. */
 const VisionPane = lazy(() => import('./OrgVisionView').then((m) => ({ default: m.VisionPane })));
@@ -24,6 +24,16 @@ const PulsePane = lazy(() => import('./OrgPulseView').then((m) => ({ default: m.
 const MeetingsPane = lazy(() => import('./OrgMeetingsView').then((m) => ({ default: m.MeetingsPane })));
 const DecisionsPane = lazy(() => import('./OrgMeetingsView').then((m) => ({ default: m.DecisionsPane })));
 const WhyDrawer = lazy(() => import('./OrgVisionView').then((m) => ({ default: m.WhyDrawer })));
+/** Memory, capital, blueprints and hybrid staff (items 22–24). */
+const AskPane = lazy(() => import('./OrgMemoryView').then((m) => ({ default: m.AskPane })));
+const PlaybooksPane = lazy(() => import('./OrgMemoryView').then((m) => ({ default: m.PlaybooksPane })));
+const RelatedDrawer = lazy(() => import('./OrgMemoryView').then((m) => ({ default: m.RelatedDrawer })));
+const PlansPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.PlansPane })));
+const ReplayPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.ReplayPane })));
+const CapitalPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.CapitalPane })));
+const MyTasksPane = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.MyTasksPane })));
+const HireDialog = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.HireDialog })));
+const LAZY_PANES = new Set(['vision', 'pulse', 'meetings', 'decisions', 'ask', 'plans', 'replay', 'capital', 'playbooks', 'mytasks']);
 
 const STATUS_COLOR: Record<OrgTaskStatus, string> = {
   backlog: 'var(--text-faint)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
@@ -78,12 +88,18 @@ export function OrganizationView() {
         {view === 'spend' && <Spend org={org} reload={reload} />}
         {view === 'audit' && <Audit org={org} />}
         {view === 'brief' && <BriefView org={org} mode={mode} />}
-        {(view === 'vision' || view === 'pulse' || view === 'meetings' || view === 'decisions') && (
+        {LAZY_PANES.has(view) && (
           <Suspense fallback={<div style={faint}>Loading…</div>}>
             {view === 'vision' && <VisionPane org={org} reload={reload} />}
             {view === 'pulse' && <PulsePane org={org} />}
             {view === 'meetings' && <MeetingsPane org={org} />}
             {view === 'decisions' && <DecisionsPane org={org} />}
+            {view === 'ask' && <AskPane org={org} />}
+            {view === 'playbooks' && <PlaybooksPane org={org} />}
+            {view === 'plans' && <PlansPane org={org} />}
+            {view === 'replay' && <ReplayPane org={org} />}
+            {view === 'capital' && <CapitalPane org={org} />}
+            {view === 'mytasks' && <MyTasksPane org={org} />}
           </Suspense>
         )}
       </div>
@@ -103,6 +119,9 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
   const [scopes, setScopes] = useState('tool:fs_read, tool:fs_write');
   const [editing, setEditing] = useState<string | null>(null);
   const [editScopes, setEditScopes] = useState('');
+  const [hiring, setHiring] = useState(false);
+  // Hybrid staff (item 24): employees hang under the member they report to, with a person badge.
+  const [humans, setHumans] = useState<OrgHuman[]>([]);
   const live = org.members.filter((m) => m.status !== 'terminated');
   const free = app.agents.filter((a) => !live.some((m) => m.agentId === a.id));
   const act = async (fn: () => Promise<unknown>) => { try { await fn(); await reload(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
@@ -148,7 +167,19 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
             </div>
           )}
         </div>
-        <div style={{ marginLeft: 22 }}>{tree(m.agentId, depth + 1)}</div>
+        <div style={{ marginLeft: 22 }}>
+          {humans.filter((h) => h.role === 'employee' && h.reportsToAgentId === m.agentId).map((h) => (
+            <div key={h.id} style={{ ...card, padding: '8px 12px', marginBottom: 8, borderLeft: '3px solid var(--blue)', display: 'flex', alignItems: 'center', gap: 9 }}>
+              <span style={{ width: 22, height: 22, borderRadius: 7, background: 'var(--panel-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>🧑</span>
+              <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span>{app.nameOf(h.memberAccountId)}</span>
+                <span style={pill('var(--blue)', '#fff')} title="A human employee: takes task cards, reviews, sits in the unit channel">person</span>
+                <span style={pill()}>{h.title || 'employee'}</span>
+              </div>
+            </div>
+          ))}
+          {tree(m.agentId, depth + 1)}
+        </div>
       </div>
     );
     if (!unit) return node;
@@ -172,8 +203,10 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
     <div style={{ maxWidth: 820 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <div style={{ flex: 1 }}><h2 style={h2}>Org chart</h2><div style={faint}>You → chief of staff → specialists. Depth ≤ {org.maxDepth}, ≤ {org.maxDirectReports} direct reports. Scopes are what a member may touch and never exceed the chief's own. Every member with reports leads a unit (a board, a channel, goals) — the dashed boxes. Mode, chief and caps: Settings → Workspace → Organization.</div></div>
-        <button style={btn(true)} onClick={() => setAdding(!adding)} disabled={free.length === 0}>Add member</button>
+        <button style={btn()} onClick={() => setAdding(!adding)} disabled={free.length === 0} title="Seat an existing agent of this workspace">Add member</button>
+        <button style={btn(true)} onClick={() => setHiring(true)} title="Hire from the role catalog or a pack (a hire card in supervised mode)">Hire</button>
       </div>
+      {hiring && <Suspense fallback={null}><HireDialog org={org} members={live} onClose={() => setHiring(false)} onDone={reload} /></Suspense>}
       {adding && (
         <div style={{ ...card, marginBottom: 12, display: 'grid', gap: 8, gridTemplateColumns: '1fr 1fr' }}>
           <select value={agentId} onChange={(e) => setAgentId(e.target.value)} style={input}><option value="">Agent…</option>{free.map((a) => <option key={a.id} value={a.id}>{a.emoji} {a.name}</option>)}</select>
@@ -186,7 +219,7 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
           </div>
         </div>
       )}
-      <Humans org={org} />
+      <Humans org={org} onLoaded={setHumans} />
       {tree(null, 1)}
     </div>
   );
@@ -195,23 +228,28 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
 /** The humans of the company (phase D): the owner is CEO; members of the
  *  shared workspace can sit on the board (hire / budget / strategy
  *  approvals) or observe. Only the CEO changes this. */
-function Humans({ org }: { org: OrgDetail }) {
+function Humans({ org, onLoaded }: { org: OrgDetail; onLoaded?: (humans: OrgHuman[]) => void }) {
   const app = useApp();
+  const names = useAgentNames();
   const [humans, setHumans] = useState<OrgHuman[]>([]);
   const [meRole, setMeRole] = useState<HumanRole | null>(null);
   const [members, setMembers] = useState<WorkspaceMember[]>([]);
   const [pick, setPick] = useState('');
   const [role, setRole] = useState<HumanRole>('board');
+  const [empTitle, setEmpTitle] = useState('');
+  const [empManager, setEmpManager] = useState(org.chiefOfStaffAgentId ?? '');
   const refresh = useCallback(async () => {
     const h = await api.orgHumans(org.workspaceId).catch(() => null);
-    if (h) { setHumans(h.humans); setMeRole(h.me.role); }
+    if (h) { setHumans(h.humans); setMeRole(h.me.role); onLoaded?.(h.humans); }
     setMembers(await api.workspaceMembers(org.workspaceId).catch(() => []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [org.id, org.workspaceId]);
   useEffect(() => { void refresh(); }, [refresh]);
   const isCeo = meRole === 'ceo';
   const free = members.filter((m) => !humans.some((h) => h.memberAccountId === m.memberAccountId));
   const act = async (fn: () => Promise<unknown>) => { try { await fn(); await refresh(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
-  const ROLE_HINT: Record<HumanRole, string> = { ceo: 'everything', board: 'decides hire, budget and strategy approvals; gets the brief', observer: 'reads the company; decides nothing' };
+  const ROLE_HINT: Record<HumanRole, string> = { ceo: 'everything', board: 'decides hire, budget and strategy approvals; gets the brief', observer: 'reads the company; decides nothing', employee: 'a hybrid staff member: takes task cards, reviews, sits in the unit channel (docs/company-vision.md §4)' };
+  const live = org.members.filter((m) => m.status === 'active');
   return (
     <div style={{ ...card, padding: '10px 12px', marginBottom: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
@@ -227,11 +265,12 @@ function Humans({ org }: { org: OrgDetail }) {
             <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, padding: '4px 0' }}>
               <span style={{ fontSize: 14 }}>🧑</span>
               <span style={{ flex: 1 }}>{app.nameOf(h.memberAccountId)}</span>
-              <span style={pill()} title={ROLE_HINT[h.role]}>{h.role}</span>
+              <span style={pill(h.role === 'employee' ? 'var(--blue)' : undefined, h.role === 'employee' ? '#fff' : undefined)} title={ROLE_HINT[h.role]}>{h.role}{h.role === 'employee' && h.title ? ` · ${h.title}` : ''}</span>
+              {h.role === 'employee' && h.reportsToAgentId && <span style={faint}>reports to {names.get(h.reportsToAgentId)?.name ?? h.reportsToAgentId.slice(0, 8)}</span>}
               {isCeo && (
                 <>
-                  <select value={h.role} onChange={(e) => void act(() => api.setOrgHuman(org.workspaceId, h.memberAccountId, e.target.value as HumanRole))} style={{ ...input, width: 'auto', padding: '3px 6px' }}>
-                    <option value="board">board</option><option value="observer">observer</option>
+                  <select value={h.role} onChange={(e) => void act(() => api.setOrgEmployee(org.workspaceId, { memberAccountId: h.memberAccountId, role: e.target.value as HumanRole, reportsToAgentId: e.target.value === 'employee' ? (h.reportsToAgentId ?? org.chiefOfStaffAgentId) : undefined, title: h.title }))} style={{ ...input, width: 'auto', padding: '3px 6px' }}>
+                    <option value="board">board</option><option value="observer">observer</option><option value="employee">employee</option>
                   </select>
                   <button style={btn()} onClick={() => void act(() => api.removeOrgHuman(org.workspaceId, h.memberAccountId))}>Remove</button>
                 </>
@@ -246,8 +285,10 @@ function Humans({ org }: { org: OrgDetail }) {
             <option value="">Add a workspace member…</option>
             {free.map((m) => <option key={m.id} value={m.memberAccountId}>{m.displayName || m.email}</option>)}
           </select>
-          <select value={role} onChange={(e) => setRole(e.target.value as HumanRole)} style={{ ...input, width: 'auto' }}><option value="board">board</option><option value="observer">observer</option></select>
-          <button style={btn(true)} disabled={!pick} onClick={() => void act(async () => { await api.setOrgHuman(org.workspaceId, pick, role); setPick(''); })}>Add</button>
+          <select value={role} onChange={(e) => setRole(e.target.value as HumanRole)} style={{ ...input, width: 'auto' }}><option value="board">board</option><option value="observer">observer</option><option value="employee">employee</option></select>
+          {role === 'employee' && <input aria-label="Title" value={empTitle} onChange={(e) => setEmpTitle(e.target.value)} placeholder="Title" style={{ ...input, width: 120 }} />}
+          {role === 'employee' && <select aria-label="Reports to" value={empManager} onChange={(e) => setEmpManager(e.target.value)} style={{ ...input, width: 'auto' }}>{live.map((m) => <option key={m.id} value={m.agentId}>reports to {names.get(m.agentId)?.name ?? m.agentId.slice(0, 8)}</option>)}</select>}
+          <button style={btn(true)} disabled={!pick || (role === 'employee' && !empManager)} onClick={() => void act(async () => { await api.setOrgEmployee(org.workspaceId, { memberAccountId: pick, role, reportsToAgentId: role === 'employee' ? empManager : undefined, title: role === 'employee' ? empTitle : undefined }); setPick(''); setEmpTitle(''); })}>Add</button>
         </div>
       )}
       {isCeo && members.length === 0 && <div style={{ ...faint, marginTop: 6 }}>Invite people to this workspace (Settings → Workspace → Members) to seat a board.</div>}
@@ -329,7 +370,8 @@ function Board({ org }: { org: OrgDetail }) {
                 <div key={t.id} onClick={() => setOpen(t)} style={{ ...card, padding: '8px 10px', marginBottom: 6, cursor: 'pointer' }}>
                   <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>{t.title}</div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                    {a ? <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }}><Avatar a={a} size={14} />{a.name}</span> : <span style={pill()}>unassigned</span>}
+                    {a ? <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }}><Avatar a={a} size={14} />{a.name}</span> : t.assigneeHumanId ? <span style={pill('var(--blue)', '#fff')} title="A human employee owns this task">🧑 {app.nameOf(t.assigneeHumanId)}</span> : <span style={pill()}>unassigned</span>}
+                    {t.class && t.class !== 'general' && <span style={pill()} title="Task class (routing, cost by class)">{t.class}</span>}
                     {foreign && unit && <span style={pill()} title={`On the board of ${unit.name}`}>{unit.parentUnitId === null ? 'company' : unit.name}</span>}
                     {t.claimedBy && <span style={pill('var(--amber)', '#fff')}>claimed</span>}
                     {t.reviewRounds > 0 && <span style={pill()}>review {t.reviewRounds}/3</span>}
@@ -383,7 +425,10 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
   const [text, setText] = useState('');
   const [note, setNote] = useState('');
   const [why, setWhy] = useState(false);
+  const [related, setRelated] = useState(false);
+  const [employees, setEmployees] = useState<OrgHuman[]>([]);
   const brief = parseBriefText(task.brief);
+  useEffect(() => { void api.orgHumans(org.workspaceId).then((h) => setEmployees(h.humans.filter((x) => x.role === 'employee'))).catch(() => setEmployees([])); }, [org.workspaceId]);
   const refresh = useCallback(async () => {
     const [c, r] = await Promise.all([api.orgTaskComments(org.workspaceId, task.id).catch(() => []), api.orgTaskRuns(org.workspaceId, task.id).catch(() => [])]);
     setComments(c); setRuns(r); await reload();
@@ -398,16 +443,28 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
           <span style={{ ...pill(STATUS_COLOR[task.status], '#fff') }}>{task.status.replace('_', ' ')}</span>
           <h2 style={{ ...h2, flex: 1 }}>{task.title}</h2>
           <button style={btn()} onClick={() => setWhy(true)} title="Why does this task exist? The chain up to the vision (docs/company-vision.md §2)">Why</button>
+          <button style={btn()} onClick={() => setRelated(true)} title="Everything linked to this task in the record (docs/company-vision.md §6)">Related</button>
           <button style={btn()} onClick={onClose} aria-label="Close"><I d={P.x} size={14} /></button>
         </div>
         {why && <Suspense fallback={null}><WhyDrawer wsId={org.workspaceId} taskId={task.id} title={task.title} onClose={() => setWhy(false)} /></Suspense>}
-        <div style={faint}>[{task.id.slice(0, 8)}] created by {task.createdBy} · {ago(task.createdAt)} · owner {task.assigneeAgentId ? names.get(task.assigneeAgentId)?.name : 'nobody'}{task.reviewerAgentId ? ` · reviewer ${names.get(task.reviewerAgentId)?.name}` : ''}{task.claimedBy ? ' · claimed' : ''}</div>
+        {related && <Suspense fallback={null}><RelatedDrawer wsId={org.workspaceId} ref={`task:${task.id}`} title={task.title} onClose={() => setRelated(false)} /></Suspense>}
+        <div style={faint}>[{task.id.slice(0, 8)}] created by {task.createdBy} · {ago(task.createdAt)} · owner {task.assigneeAgentId ? names.get(task.assigneeAgentId)?.name : task.assigneeHumanId ? `🧑 ${app.nameOf(task.assigneeHumanId)}` : 'nobody'}{task.reviewerAgentId ? ` · reviewer ${names.get(task.reviewerAgentId)?.name}` : task.reviewerHumanId ? ` · reviewer 🧑 ${app.nameOf(task.reviewerHumanId)}` : ''}{task.claimedBy ? ' · claimed' : ''}{task.class ? ` · class ${task.class}` : ''}</div>
         <div style={card}>
           {(['outcome', 'context', 'constraints', 'done_when'] as const).map((k) => <div key={k} style={{ marginBottom: 6 }}><div style={{ ...faint, textTransform: 'uppercase', letterSpacing: '.4px', fontSize: 10.5 }}>{k.replace('_', ' ')}</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{brief[k] || <span style={faint}>—</span>}</div></div>)}
           {blockers.length > 0 && <div><div style={{ ...faint, textTransform: 'uppercase', fontSize: 10.5 }}>blockers</div>{blockers.map((b, i) => <div key={i} style={{ fontSize: 12.5, color: 'var(--red)' }}>■ {b}</div>)}</div>}
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <select value="" onChange={(e) => { if (e.target.value) void act(() => api.assignOrgTask(org.workspaceId, task.id, e.target.value)); }} style={{ ...input, width: 'auto' }}><option value="">Assign to…</option>{members.map((m) => <option key={m.id} value={m.agentId}>{names.get(m.agentId)?.name}</option>)}</select>
+          <select value="" onChange={(e) => { const v = e.target.value; if (!v) return; void act(() => v.startsWith('human:') ? api.assignOrgTaskHuman(org.workspaceId, task.id, v.slice(6)) : api.assignOrgTask(org.workspaceId, task.id, v)); }} style={{ ...input, width: 'auto' }} aria-label="Assign to">
+            <option value="">Assign to…</option>
+            {members.map((m) => <option key={m.id} value={m.agentId}>{names.get(m.agentId)?.name}</option>)}
+            {employees.length > 0 && <optgroup label="People">{employees.map((h) => <option key={h.id} value={`human:${h.memberAccountId}`}>🧑 {app.nameOf(h.memberAccountId)}{h.title ? ` · ${h.title}` : ''}</option>)}</optgroup>}
+          </select>
+          {employees.length > 0 && !['done', 'cancelled', 'in_review'].includes(task.status) && (
+            <select value="" onChange={(e) => { if (e.target.value) void act(() => api.requestOrgTaskReview(org.workspaceId, task.id, { reviewerHumanId: e.target.value, text: note || undefined })); }} style={{ ...input, width: 'auto' }} aria-label="Request a human review" title="Send the task to a human employee for review (a card they decide)">
+              <option value="">Human review by…</option>
+              {employees.map((h) => <option key={h.id} value={h.memberAccountId}>🧑 {app.nameOf(h.memberAccountId)}</option>)}
+            </select>
+          )}
           {task.assigneeAgentId && !['done', 'cancelled'].includes(task.status) && <button style={btn()} onClick={() => void act(() => api.wakeOrgTask(org.workspaceId, task.id, true))}>Wake now</button>}
           {task.status === 'in_review' && <><button style={btn(true)} onClick={() => void act(() => api.reviewOrgTask(org.workspaceId, task.id, 'accept', note))}>Accept</button><button style={btn()} onClick={() => void act(() => api.reviewOrgTask(org.workspaceId, task.id, 'request_changes', note || 'changes requested'))}>Request changes</button></>}
           {task.status === 'blocked' && <button style={btn()} onClick={() => void act(() => api.updateOrgTask(org.workspaceId, task.id, { status: 'todo', blockers: [] }))}>Unblock → todo</button>}
@@ -673,7 +730,42 @@ function ApprovalArtifact({ kind, p, nm }: { kind: string; p: Record<string, unk
   }
   if (kind === 'terminate') return <div style={{ fontSize: 12.5 }}>Terminate <b>{String(p.agentName ?? nm(p.agentId))}</b>{p.reason ? ` — ${String(p.reason)}` : ''}. Its reports move up one level; the agent itself stays.</div>;
   if (kind === 'escalation') return <div style={{ fontSize: 12.5 }}>Task <b>{String(p.title)}</b> ({nm(p.assigneeAgentId)}): {String(p.reason)}. Approve to reopen it with your note; reject to cancel it.</div>;
+  // Items 22–24: the human review card, a retro's charter change with its diff, a blueprint's hires, routing, a tunable, a cadence.
+  if (kind === 'human_review') return (
+    <div style={{ fontSize: 12.5, display: 'grid', gap: 4 }}>
+      <div>Review of task <b>{String(p.title ?? '')}</b>{p.assigneeAgentId ? <> by {nm(p.assigneeAgentId)}</> : null} — requested of <b>🧑 {String(p.reviewerName ?? p.reviewerHumanId ?? 'a human employee')}</b>.</div>
+      {p.note ? <div style={faint}>Note: {String(p.note)}</div> : null}
+      <div style={faint}>Approve accepts the task (done); reject requests changes with your note and wakes the owner. <RefButton kind="task" id={String(p.taskId ?? '')} label="Open the task" /></div>
+    </div>
+  );
+  if (kind === 'charter_change') return (
+    <div style={{ fontSize: 12.5, display: 'grid', gap: 4 }}>
+      <div>{String(p.mode ?? 'append') === 'replace' ? 'Replace' : 'Append to'} the charter of <b>{String(p.agentName ?? nm(p.agentId))}</b>{p.lesson ? <> — lesson: <i>{String(p.lesson)}</i></> : null}</div>
+      <pre style={{ ...mono, whiteSpace: 'pre-wrap', background: 'var(--panel-2)', padding: 8, borderRadius: 8, maxHeight: 260, overflow: 'auto' }}>{String(p.diff ?? '').split('\n').map((l, i) => <div key={i} style={{ color: l.startsWith('+') ? 'var(--green)' : l.startsWith('-') ? 'var(--red)' : undefined }}>{l}</div>)}</pre>
+      <div style={faint}>The agent accepts the new charter on approval; the change is audited with the meeting it came from.</div>
+    </div>
+  );
+  if (kind === 'blueprint') {
+    const hires = Array.isArray(p.hires) ? p.hires as Array<Record<string, unknown>> : [];
+    return (
+      <div style={{ fontSize: 12.5, display: 'grid', gap: 4 }}>
+        <div>Staff <b>{String(p.name ?? 'the company')}</b> from its blueprint: {hires.length} hire(s).</div>
+        {hires.map((h, i) => <div key={i} style={{ paddingLeft: 10 }}>• <b>{String(h.name ?? h.title)}</b> as {String(h.title)}{h.roleId ? <span style={{ ...faint, marginLeft: 4 }}>role:{String(h.roleId)}</span> : null} → reports to {String(h.reportsToTitle ?? nm(h.reportsToAgentId))}{Array.isArray(h.scopes) && h.scopes.length ? <span style={faint}> · {(h.scopes as unknown[]).length} scope(s)</span> : null}</div>)}
+        <div style={faint}>Nothing is inherited; playbooks land as drafts; cadences are listed, not written.</div>
+      </div>
+    );
+  }
+  if (kind === 'routing') return <div style={{ fontSize: 12.5 }}>Route class <b style={mono}>{String(p.class ?? '')}</b> → <b>{String(p.tier ?? '')}</b>{p.from ? <> (was {String(p.from)})</> : null}{p.model ? <span style={faint}> · resolves to {String(p.model)}</span> : null}{p.why ? <div style={faint}>{String(p.why)}</div> : null}</div>;
+  if (kind === 'tune') return <div style={{ fontSize: 12.5 }}>Tune <b style={mono}>{String(p.key ?? '')}</b>: {p.from !== undefined ? <>{String(p.from)} → </> : null}<b>{String(p.value ?? '')}</b>{p.why ? <div style={faint}>{String(p.why)}</div> : null}<div style={faint}>Bounds are re-checked on apply.</div></div>;
+  if (kind === 'cadence') return <div style={{ fontSize: 12.5 }}>{String(p.kind ?? 'meeting')} of <b>{String(p.unitName ?? 'the company')}</b> → {p.cron ? <code>{String(p.cron)}</code> : 'off'}</div>;
   return <pre style={{ ...mono, whiteSpace: 'pre-wrap' }}>{JSON.stringify(p, null, 2)}</pre>;
+}
+
+/** A small link that follows a reference to its pane (used by the approval artifacts). */
+function RefButton({ kind, id, label }: { kind: string; id: string; label: string }) {
+  const follow = useFollowRef();
+  if (!id) return null;
+  return <button style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', cursor: 'pointer', padding: 0, fontSize: 12, fontWeight: 600 }} onClick={() => follow(kind, id)}>{label}</button>;
 }
 
 // ---- spend ----

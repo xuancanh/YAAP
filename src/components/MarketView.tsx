@@ -1,20 +1,23 @@
 /** Agent Market: registry cards + the capability-review hire modal (FR-11.7),
  *  the Connectors department (docs/integrations.md §4a), and the Community
  *  department — the publish/install registry (docs/registry.md). */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { I, P, CAP_ICON } from '../lib/icons';
-import { api, type Connection, type ConnectorEntry, type RegistryItem, type RegistryKind, type RegistryList } from '../lib/api';
+import { api, type CompanyRegistryItem, type Connection, type ConnectorEntry, type RegistryItem, type RegistryKind, type RegistryList } from '../lib/api';
 import { useApp, gradPair } from '../store';
 import { marketCats } from './Rails';
 import { RegistryReviewModal } from './RegistryBits';
 import { KIND_GLYPH, KIND_LABEL, flagCount, fmtInstalls, installSummary, ratingLabel } from '../lib/registry';
 
-type Dept = 'agents' | 'connectors' | 'community';
-const DEPT_LABEL: Record<Dept, string> = { agents: 'Agents', connectors: 'Connectors', community: 'Community' };
+const CompanyInstallModal = lazy(() => import('./OrgBlueprintBits').then((m) => ({ default: m.CompanyInstallModal })));
+
+type Dept = 'agents' | 'connectors' | 'community' | 'companies';
+const DEPT_LABEL: Record<Dept, string> = { agents: 'Agents', connectors: 'Connectors', community: 'Community', companies: 'Companies' };
 const DEPT_BLURB: Record<Dept, string> = {
   agents: 'Hire durable agents from the registry. Each install runs a capability review first — imported loops enable immediately.',
   connectors: 'Connect the services your agents work with. Connecting grants nothing to any agent — access stays a per-agent grant.',
   community: 'Agents, skills and mini apps published by people like you. Every install shows the scan and the real text first, and lands inert: loops off, skills as drafts, capabilities parked.',
+  companies: 'Whole companies as blueprints (docs/blueprints.md): roles, charters, scopes, cadences, playbooks and a budget — never memory or credentials. Installing shows the review and the dry-run plan first; hires wait on one approval card in supervised mode.',
 };
 
 export function MarketView({ cat, setCat }: { cat: string; setCat: (c: string) => void }) {
@@ -31,7 +34,7 @@ export function MarketView({ cat, setCat }: { cat: string; setCat: (c: string) =
         <div style={{ fontSize: 23, fontWeight: 700, letterSpacing: '-.4px' }}>Market</div>
         <div style={{ color: 'var(--text-dim)', fontSize: 13.5, marginTop: 4, maxWidth: 560 }}>{DEPT_BLURB[dept]}</div>
         <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-          {(['agents', 'connectors', 'community'] as const).map((d) => (
+          {(['agents', 'connectors', 'community', ...(app.companiesEnabled ? ['companies' as const] : [])] as Dept[]).map((d) => (
             <div key={d} onClick={() => setDept(d)} style={{ padding: '7px 18px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: `1px solid ${d === dept ? 'var(--accent)' : 'var(--border)'}`, background: d === dept ? 'var(--accent-dim)' : 'var(--panel)', color: d === dept ? 'var(--accent-hi)' : 'var(--text-dim)' }}>
               {DEPT_LABEL[d]}
             </div>
@@ -39,6 +42,7 @@ export function MarketView({ cat, setCat }: { cat: string; setCat: (c: string) =
         </div>
         {dept === 'connectors' && <ConnectorsDept />}
         {dept === 'community' && <CommunityDept />}
+        {dept === 'companies' && <CompaniesDept />}
         {dept === 'agents' && <>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 9, padding: '8px 11px', flex: 1, minWidth: 200 }}>
@@ -331,6 +335,68 @@ function CommunityDept() {
         </div>
       )}
       {reviewing && <RegistryReviewModal item={reviewing} onClose={() => setReviewing(null)} onInstalled={load} />}
+    </>
+  );
+}
+
+/** The Companies department (docs/registry.md §8, item 24): published
+ *  blueprints with their outcome counts; Install opens the two-step modal. */
+function CompaniesDept() {
+  const app = useApp();
+  const [data, setData] = useState<{ items: CompanyRegistryItem[]; remote: RegistryList['remote'] } | null>(null);
+  const [failed, setFailed] = useState('');
+  const [q, setQ] = useState('');
+  const [installing, setInstalling] = useState<CompanyRegistryItem | null>(null);
+  const load = () => {
+    setFailed('');
+    void api.marketCompanies(q.trim()).then(setData).catch((err) => { setData(null); setFailed(err instanceof Error ? err.message : 'failed'); });
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, [q]);
+  const tag = (text: string, color: string) => <span style={{ fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color, border: `1px solid ${color}`, borderRadius: 5, padding: '1px 6px', flex: 'none' }}>{text}</span>;
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 9, padding: '8px 11px', marginTop: 18 }}>
+        <I d={P.search} size={15} stroke="var(--text-faint)" />
+        <input aria-label="Search companies" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search companies" style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13 }} />
+      </div>
+      {data && data.remote.url && <div style={{ fontSize: 11.5, color: data.remote.ok ? 'var(--text-faint)' : 'var(--amber)', marginTop: 10 }}>{data.remote.ok ? `Includes ${data.remote.url.replace(/^https?:\/\//, '')}` : `Remote registry unreachable: ${data.remote.error} — local items only`}</div>}
+      {failed && <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 14 }}>Could not load the companies: {failed}</div>}
+      {data && data.items.length === 0 && !failed && (
+        <div style={{ marginTop: 18, border: '1px solid var(--border)', borderRadius: 16, background: 'var(--panel)', padding: 20, fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+          No company published yet. Publish yours from Settings → Workspace → Organization → Blueprint; the export is scanned and shown to installers before any plan.
+        </div>
+      )}
+      <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : 'repeat(2,1fr)', gap: 16, marginTop: 18 }}>
+        {(data?.items ?? []).map((it) => {
+          const flags = flagCount(it.scanReport);
+          const roles = it.capabilities.tools.length;
+          return (
+            <div key={it.id} style={{ border: '1px solid var(--border)', borderRadius: 16, background: 'var(--panel)', padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 12, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 21 }}>🏢</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}><span style={{ fontSize: 15.5, fontWeight: 700 }}>{it.name}</span>{tag('company', 'var(--accent-hi)')}{it.source === 'remote' && tag('remote', 'var(--text-faint)')}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{it.publisherName || 'anonymous'} · v{it.version}</div>
+                </div>
+                <div style={{ textAlign: 'right', flex: 'none', fontSize: 10.5, color: 'var(--text-faint)' }}>{fmtInstalls(it.installs)} install{it.installs === 1 ? '' : 's'}</div>
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.55, minHeight: 18 }}>{it.description || 'No description.'}</div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span title="Installs that reached a first key result" style={{ fontSize: 10.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px' }}>◎ {it.outcomes.first_key_result} reached a key result</span>
+                <span title="Installs that ran thirty days inside their envelope" style={{ fontSize: 10.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px' }}>$ {it.outcomes.thirty_days_in_envelope} thirty days in envelope</span>
+                {it.capabilities.skills.length > 0 && <span style={{ fontSize: 10.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px' }}>{it.capabilities.skills.length} playbook(s)</span>}
+                {roles > 0 && <span style={{ fontSize: 10.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px', fontFamily: 'var(--mono)' }}>{roles} scope(s)</span>}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 11, borderTop: '1px solid var(--border-soft)' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: flags ? 'var(--amber)' : 'var(--text-faint)' }}>{flags > 0 && <I d={P.warn} size={13} />}{flags ? `${flags} scan flag${flags === 1 ? '' : 's'}` : 'scan clean'}</span>
+                <button onClick={() => setInstalling(it)} style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '7px 16px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>Review & install</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {installing && <Suspense fallback={null}><CompanyInstallModal item={installing} onClose={() => setInstalling(null)} onInstalled={load} /></Suspense>}
     </>
   );
 }

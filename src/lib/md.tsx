@@ -21,12 +21,12 @@
  * streaming) renders the remainder as code so the layout never jumps.
  *
  * Inline: `code`, **bold**, *italic*, ~~strike~~, [text](url), autolinked
- * URLs, ![alt](src), and `#goal:`/`#decision:`/`#task:` reference chips when
- * a `refs` resolver is given.
+ * URLs, ![alt](src), and `#goal:`/`#decision:`/`#task:`/`#meeting:`/`#audit:`
+ * reference chips when a `refs` resolver is given.
  */
 import { memo, useState, type CSSProperties, type ReactNode } from 'react';
 
-export type RefKind = 'goal' | 'decision' | 'task';
+export type RefKind = 'goal' | 'decision' | 'task' | 'meeting' | 'audit';
 export type RefResolver = (kind: RefKind, id: string) => { label: string; onClick?: () => void } | null;
 
 interface Ctx { refs?: RefResolver; compact?: boolean }
@@ -44,8 +44,11 @@ const INLINE_RE = new RegExp([
   '(!\\[[^\\]]*\\]\\([^)\\s]+\\))',                   // 5 image
   '(\\[[^\\]\\n]+\\]\\([^)\\s]+\\))',                 // 6 link
   '(https?:\\/\\/[^\\s<>()\\[\\]"\']+[^\\s<>()\\[\\]"\'.,;:!?])', // 7 bare url
-  '(#(?:goal|decision|task):[A-Za-z0-9_-]+)',        // 8 ref chip
+  '(#(?:goal|decision|task|meeting|audit):[A-Za-z0-9_-]+)', // 8 ref chip
 ].join('|'), 'g');
+
+/** The glyph before a reference chip (goal, decision, task; a meeting or an audit row cited by ask-the-company). */
+export const REF_GLYPH: Record<RefKind, string> = { goal: '◎', decision: '⚖', task: '☐', meeting: '🗓', audit: '#' };
 
 const codeStyle: CSSProperties = { fontFamily: 'var(--mono)', fontSize: '.9em', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 4, padding: '0 4px' };
 
@@ -72,9 +75,9 @@ export function inline(text: string, keyBase: string, ctx: Ctx = {}): ReactNode[
       else out.push(tok);
     } else if (m[7]) out.push(<a key={key} href={tok} target="_blank" rel="noreferrer noopener" style={{ color: 'var(--accent-hi)', wordBreak: 'break-all' }}>{tok}</a>);
     else if (m[8]) {
-      const [, kind, id] = /^#(goal|decision|task):(.+)$/.exec(tok)!;
+      const [, kind, id] = /^#(goal|decision|task|meeting|audit):(.+)$/.exec(tok)!;
       const r = ctx.refs?.(kind as RefKind, id);
-      if (r) out.push(<button key={key} type="button" onClick={r.onClick} title={`${kind} ${id}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--accent-dim)', color: 'var(--accent-hi)', border: 'none', borderRadius: 999, padding: '0 8px', fontSize: '.85em', fontWeight: 600, cursor: r.onClick ? 'pointer' : 'default', verticalAlign: 'baseline' }}>{kind === 'goal' ? '◎' : kind === 'decision' ? '⚖' : '☐'} {r.label}</button>);
+      if (r) out.push(<button key={key} type="button" onClick={r.onClick} title={`${kind} ${id}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--accent-dim)', color: 'var(--accent-hi)', border: 'none', borderRadius: 999, padding: '0 8px', fontSize: '.85em', fontWeight: 600, cursor: r.onClick ? 'pointer' : 'default', verticalAlign: 'baseline' }}>{REF_GLYPH[kind as RefKind]} {r.label}</button>);
       else out.push(tok);
     }
     last = m.index + tok.length;

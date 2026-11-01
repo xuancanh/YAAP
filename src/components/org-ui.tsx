@@ -82,3 +82,29 @@ export function Drawer({ onClose, children, width = 560 }: { onClose: () => void
     </div>
   );
 }
+
+/** Follow a reference to the pane that shows it (docs/company-vision.md §6,
+ *  §8): a task opens the board drawer, a decision the log, a goal the vision
+ *  page, a meeting its thread, a plan the Plans pane, an audit row or a day
+ *  the Replay pane (`id` is the YYYY-MM-DD), a member its home page. Used by
+ *  citation chips, the Related drawer and the replay timeline. */
+export function useFollowRef() {
+  const app = useApp();
+  return (kind: string, id: string) => {
+    app.setMobileDetail(true);
+    if (kind === 'task') { app.setOrgFocus({ kind: 'task', id }); app.setOrgPane('board'); }
+    else if (kind === 'decision') { app.setOrgFocus({ kind: 'decision', id }); app.setOrgPane('decisions'); }
+    else if (kind === 'goal' || kind === 'objective' || kind === 'key_result' || kind === 'vision') { app.setOrgFocus({ kind: 'goal', id }); app.setOrgUnitId(null); app.setOrgPane('vision'); }
+    else if (kind === 'meeting') { app.setOrgFocus({ kind: 'meeting', id }); app.setOrgPane('meetings'); }
+    else if (kind === 'plan') { app.setOrgFocus({ kind: 'plan', id }); app.setOrgPane('plans'); }
+    else if (kind === 'playbook') { app.setOrgFocus({ kind: 'playbook', id }); app.setOrgPane('playbooks'); }
+    else if (kind === 'day' || kind === 'replay') { app.setOrgFocus({ kind: 'replay', id }); app.setOrgPane('replay'); }
+    else if (kind === 'audit') app.setOrgPane('audit');
+    else if (kind === 'signal') app.setOrgPane('pulse');
+    else if (kind === 'approval') app.setOrgPane('approvals');
+    else if (kind === 'agent' || kind === 'member') app.openAgent(id);
+    else if (kind === 'unit') { app.setOrgUnitId(id); app.setOrgPane('board'); }
+    else return false;
+    return true;
+  };
+}

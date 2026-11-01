@@ -1,6 +1,6 @@
 /** Settings main pane: providers, MCP servers, skills, permissions, context
  *  budget, and workspace memory — persisted to the real API. */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
 import { useAuth } from '../auth';
@@ -678,6 +678,7 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
         </div>
       )}
       {current !== 'off' && st?.orgId && <TunablesEditor ws={ws} />}
+      {current !== 'off' && st?.orgId && <Suspense fallback={null}><BlueprintCard ws={ws} /></Suspense>}
       {isOwner && (
         <div style={{ display: 'flex', marginTop: 12 }}>
           <button disabled={busy || (mode !== 'off' && !chief && app.agents.length > 0)} onClick={() => void save()}
@@ -690,6 +691,9 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
     </div>
   );
 }
+
+/** Blueprints (docs/blueprints.md, item 24) load on demand: export COMPANY.json, import one with its dry-run plan, publish to the registry. */
+const BlueprintCard = lazy(() => import('./OrgBlueprintBits').then((m) => ({ default: m.BlueprintCard })));
 
 /** The tunables (docs/company-vision.md §1b, items 18–20): every threshold
  *  the company reads — intent, planning, rituals, assurance — as a default

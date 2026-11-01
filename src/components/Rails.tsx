@@ -340,6 +340,13 @@ export const ORG_PANES: Array<{ id: OrgPane; label: string; icon: string[] }> = 
   { id: 'pulse', label: 'Pulse', icon: P.sun },
   { id: 'meetings', label: 'Meetings', icon: P.chat },
   { id: 'decisions', label: 'Decisions', icon: P.check },
+  // Memory, capital, hybrid staff (docs/company-vision.md §6–§9, items 22–24).
+  { id: 'ask', label: 'Ask', icon: P.search },
+  { id: 'plans', label: 'Plans', icon: P.rows },
+  { id: 'capital', label: 'Capital', icon: P.bolt },
+  { id: 'replay', label: 'Replay', icon: P.retry },
+  { id: 'playbooks', label: 'Playbooks', icon: P.file },
+  { id: 'mytasks', label: 'My tasks', icon: P.board },
   { id: 'chart', label: 'Org chart', icon: P.bot },
   { id: 'approvals', label: 'Approvals', icon: P.shield },
   { id: 'spend', label: 'Spend', icon: P.bolt },
@@ -425,6 +432,7 @@ export function WorkspaceRail() {
         <div style={{ marginBottom: 10 }}>
           <div style={{ ...sectionLabel, padding: '2px 10px 6px', display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ flex: 1 }}>Organization</span>
+            {app.orgPendingPlans > 0 && <span title={`${app.orgPendingPlans} plan(s) awaiting your veto`} onClick={() => { app.setOrgPane('plans'); app.setMobileDetail(true); }} style={{ fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '0 6px', cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}>{app.orgPendingPlans} plan{app.orgPendingPlans === 1 ? '' : 's'}</span>}
             <span title={org.orgStatus === 'paused' ? 'Paused (kill switch)' : `${org.mode} mode`} style={{ fontSize: 9.5, fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: org.orgStatus === 'paused' ? '#fff' : 'var(--text-dim)', background: org.orgStatus === 'paused' ? 'var(--red)' : 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '0 6px' }}>{org.orgStatus === 'paused' ? 'paused' : org.mode}</span>
           </div>
           {/* Units (docs/group-chat.md §7): the company, then one collapsible group per live unit — #channel, Board, Goals. */}
@@ -432,7 +440,7 @@ export function WorkspaceRail() {
           {(org.units ?? []).length === 0 && panes.filter((n) => n.id === 'board' || n.id === 'goals').map((n) => <PaneRow key={n.id} id={n.id} label={n.label} icon={n.icon} active={n.id === app.orgPane && app.orgUnitId === null} onClick={() => { app.setOrgUnitId(null); app.setOrgPane(n.id); app.setMobileDetail(true); }} />)}
           <div style={{ height: 6 }} />
           {panes.filter((n) => n.id !== 'board' && n.id !== 'goals').map((n) => (
-            <PaneRow key={n.id} id={n.id} label={n.label} icon={n.icon} active={n.id === app.orgPane} badge={n.id === 'approvals' && org.pendingApprovals > 0 ? org.pendingApprovals : undefined} onClick={() => { app.setOrgPane(n.id); app.setMobileDetail(true); }} />
+            <PaneRow key={n.id} id={n.id} label={n.label} icon={n.icon} active={n.id === app.orgPane} badge={n.id === 'approvals' && org.pendingApprovals > 0 ? org.pendingApprovals : n.id === 'plans' && app.orgPendingPlans > 0 ? app.orgPendingPlans : undefined} onClick={() => { app.setOrgPane(n.id); app.setMobileDetail(true); }} />
           ))}
           <div style={{ ...sectionLabel, padding: '10px 10px 6px', display: 'flex', alignItems: 'center' }}>
             <span style={{ flex: 1 }}>Files</span>
