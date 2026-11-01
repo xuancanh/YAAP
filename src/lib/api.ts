@@ -577,7 +577,37 @@ export interface UploadResult {
 
 export interface VoiceStatus { transcription: boolean; tts: boolean; model: string }
 
+// ---- group chat (docs/group-chat.md) ----
+export interface Channel {
+  id: string; workspaceId: string; slug: string; name: string; topic: string; kind: 'public' | 'private';
+  createdBy: string; folder: string; dailyTokenBudget: number; archivedAt: string | null; createdAt: string;
+  /** Present on the list route. */
+  unread?: number; memberCount?: number;
+}
+export interface ChannelMember {
+  id: string; channelId: string; memberKind: 'agent' | 'human'; memberId: string; role: 'owner' | 'member';
+  notify: 'all' | 'mentions' | 'none'; unprompted: number; joinedAt: string; name: string;
+}
+export interface ChannelDetail extends Channel { members: ChannelMember[]; spentToday: number; orgMode: boolean }
+export interface ChannelMessage {
+  id: string; channelId: string; threadRootId: string | null; authorKind: 'agent' | 'human' | 'system'; authorId: string;
+  text: string; attachments: string; mentions: string; taskId: string | null; runId: string | null; unprompted: number;
+  editedAt: string | null; createdAt: string;
+}
+export interface ChannelPage { messages: ChannelMessage[]; replies: Record<string, { count: number; lastAt: string }>; hasMore: boolean }
+export interface ChannelFile { path: string; name: string; size: number; lastModified?: string }
+export type WorkspaceEvent =
+  | { type: 'hello'; workspaceId: string }
+  | { type: 'channel_message'; workspaceId: string; channelId: string; message: ChannelMessage }
+  | { type: 'channel_typing'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; liveId: string; on: boolean }
+  | { type: 'channel_stream'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; liveId: string; delta: string; done?: boolean }
+  | { type: 'task_update'; workspaceId: string; channelId: string; taskId: string; status: string; messageId: string | null; title: string }
+  | { type: 'channel_update'; workspaceId: string; channelId: string }
+  | { type: 'channel_approval'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; sessionId: string; callId: string; tool: string; input: Record<string, unknown>; forActor: string; forName: string };
+
 export interface SearchResults {
+  /** Group-chat hits (the same FTS extended to channel messages). */
+  channelMessages?: Array<{ channelId: string; slug: string; messageId: string; threadRootId: string | null; authorKind: string; authorId: string; snippet: string; createdAt: string }>;
   sessions: Array<{ id: string; name: string; autoTitle: string }>;
   messages: Array<{ sessionId: string; messageId: string; turnId: string; role: string; snippet: string }>;
   files: Array<{ path: string; size: number }>;
@@ -763,6 +793,36 @@ export const api = {
   /** The addressee of a routed approval answers it from the inbox. */
   decideAgentEvent: (id: string, eventId: string, decision: 'allow' | 'deny') =>
     send<{ resolved: boolean; decision: string }>(`/api/agents/${id}/events/${eventId}/decide`, 'POST', { decision }),
+
+  // group chat (docs/group-chat.md)
+  channels: (wsId: string, archived = false) => get<Channel[]>(`/api/workspaces/${wsId}/chat/channels${archived ? '?archived=true' : ''}`),
+  createChannel: (wsId: string, body: { name: string; slug?: string; topic?: string; kind?: 'public' | 'private'; agentIds?: string[]; humanIds?: string[] }) =>
+    send<Channel>(`/api/workspaces/${wsId}/chat/channels`, 'POST', body),
+  channel: (wsId: string, slug: string) => get<ChannelDetail>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}`),
+  updateChannel: (wsId: string, slug: string, patch: { name?: string; topic?: string; kind?: 'public' | 'private'; dailyTokenBudget?: number }) =>
+    send<Channel>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}`, 'PATCH', patch),
+  archiveChannel: (wsId: string, slug: string, archived = true) => send<Channel>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/${archived ? 'archive' : 'unarchive'}`, 'POST'),
+  addChannelMember: (wsId: string, slug: string, body: { kind: 'agent' | 'human'; id: string; notify?: string; unprompted?: boolean }) =>
+    send<ChannelMember>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/members`, 'POST', body),
+  updateChannelMember: (wsId: string, slug: string, kind: 'agent' | 'human', id: string, patch: { role?: 'owner' | 'member'; notify?: string; unprompted?: boolean }) =>
+    send<ChannelMember>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/members/${kind}/${enc(id)}`, 'PATCH', patch),
+  removeChannelMember: (wsId: string, slug: string, kind: 'agent' | 'human', id: string) =>
+    send<{ ok: true }>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/members/${kind}/${enc(id)}`, 'DELETE'),
+  channelMessages: (wsId: string, slug: string, opts: { thread?: string | null; before?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.thread) q.set('thread', opts.thread);
+    if (opts.before) q.set('before', opts.before);
+    if (opts.limit) q.set('limit', String(opts.limit));
+    const qs = q.toString();
+    return get<ChannelPage>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/messages${qs ? `?${qs}` : ''}`);
+  },
+  postChannelMessage: (wsId: string, slug: string, body: { text: string; threadRootId?: string | null; attachments?: Array<{ path: string; kind: string }> }) =>
+    send<ChannelMessage>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/messages`, 'POST', body),
+  makeChannelTask: (wsId: string, slug: string, messageId: string, body: { title?: string; assigneeAgentId?: string } = {}) =>
+    send<{ kind: 'org' | 'agent'; task: { id: string; title: string; status: string }; message: ChannelMessage }>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/messages/${messageId}/task`, 'POST', body),
+  markChannelRead: (wsId: string, slug: string, messageId?: string) =>
+    send<{ ok: true }>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/read`, 'POST', { messageId }),
+  channelFiles: (wsId: string, slug: string) => get<ChannelFile[]>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/files`),
 
   // workspaces + workspace files
   workspaces: () => get<Workspace[]>('/api/workspaces'),
@@ -1128,6 +1188,34 @@ export async function sendTurn(
       } catch {
         // one malformed event must not kill the whole stream
       }
+    }
+  }
+}
+
+/** The workspace event stream (docs/group-chat.md §4): the same fetch-based
+ *  SSE reader as sendTurn, so the bearer token and the shared-workspace
+ *  header travel with it. Resolves when the server closes or `signal` aborts. */
+export async function subscribeWorkspaceEvents(
+  workspaceId: string,
+  onEvent: (ev: WorkspaceEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const url = `/api/workspaces/${workspaceId}/events`;
+  const res = await fetch(url, { headers: authHeaders(url), signal });
+  if (!res.ok || !res.body) throw new Error(`${res.status} ${await res.text()}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split('\n\n');
+    buffer = events.pop() ?? '';
+    for (const chunk of events) {
+      const data = chunk.split('\n').filter((l) => l.startsWith('data: ')).map((l) => l.slice(6)).join('\n');
+      if (!data) continue;
+      try { onEvent(JSON.parse(data) as WorkspaceEvent); } catch { /* one malformed event must not kill the stream */ }
     }
   }
 }

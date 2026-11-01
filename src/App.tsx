@@ -7,6 +7,7 @@ import { SignIn } from './components/SignIn';
 import { ActivityBar, BottomNav, Toast } from './components/Shell';
 import { WorkspacePill, HomeRail, WorkspaceRail, MarketRail, SettingsRail, SecondaryHeader } from './components/Rails';
 import { ChatView } from './components/ChatView';
+import { ChannelView } from './components/ChannelView';
 import { FilesView } from './components/FilesView';
 import { AppsGallery } from './components/AppsView';
 import { ArtifactPanel } from './components/ArtifactPanel';
@@ -39,7 +40,7 @@ function Layout() {
   const showSecondary = app.stacked ? !detailActive : true;
   const showMain = app.stacked ? !showSecondary : true;
 
-  const secTitle = sec === 'home' ? 'Agents & chats' : sec === 'workspace' ? 'Workspace' : sec === 'market' ? 'Categories' : 'Settings';
+  const secTitle = sec === 'home' ? 'Channels & chats' : sec === 'workspace' ? 'Workspace' : sec === 'market' ? 'Categories' : 'Settings';
   const hasSecondary = sec !== 'overview' && sec !== 'apps'; // fleet overview + apps gallery are full-width
 
   return (
@@ -60,6 +61,7 @@ function Layout() {
       {(showMain || !hasSecondary) && (
         <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
           {sec === 'home' && app.homeView === 'chat' && <ChatView />}
+          {sec === 'home' && app.homeView === 'channel' && <ChannelView />}
           {sec === 'home' && app.homeView === 'file' && <FilesView />}
           {sec === 'home' && app.homeView === 'agent' && <Suspense fallback={viewFallback}>{app.selectedAgent ? <AgentHome /> : <AgentsDirectory />}</Suspense>}
           {sec === 'overview' && <Suspense fallback={viewFallback}><AgentsDirectory /></Suspense>}

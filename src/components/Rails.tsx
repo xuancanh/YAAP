@@ -223,6 +223,59 @@ function AgentGroup({ id, name, emoji, avatar, items, count, isAgent }: {
   );
 }
 
+// ---- group chat: channels (docs/group-chat.md, execution-plan item 15) — begin ----
+
+/** The Channels block at the top of the Home rail: every channel of the
+ *  workspace with its unread badge, plus "+ new channel". Direct messages
+ *  (the agent chats) follow below, unchanged. */
+function ChannelsBlock({ search }: { search: string }) {
+  const app = useApp();
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState('');
+  const [creating, setCreating] = useState(false);
+  const list = app.channels.filter((c) => !search || c.slug.includes(search) || c.topic.toLowerCase().includes(search));
+  const create = async () => {
+    if (!name.trim() || creating) return;
+    setCreating(true);
+    try {
+      const c = await api.createChannel(app.workspaceId, { name: name.trim(), agentIds: app.agents.map((a) => a.id) });
+      await app.refreshChannels();
+      setName(''); setAdding(false);
+      app.openChannel(c.slug);
+    } catch (err) {
+      app.showToast(err instanceof Error ? err.message.slice(0, 120) : 'could not create the channel');
+    } finally { setCreating(false); }
+  };
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 10px 4px' }}>
+        <span style={{ ...sectionLabel, padding: 0, flex: 1 }}>Channels</span>
+        <button onClick={() => setAdding(!adding)} title="New channel" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' }}><I d={P.plus} size={14} /></button>
+      </div>
+      {adding && (
+        <div style={{ padding: '2px 8px 6px' }}>
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} disabled={creating}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void create(); if (e.key === 'Escape') setAdding(false); }}
+            placeholder="Channel name (every agent joins)" style={{ width: '100%', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '6px 8px', color: 'var(--text)', fontSize: 12.5, outline: 'none' }} />
+        </div>
+      )}
+      {list.map((c) => {
+        const active = app.homeView === 'channel' && app.currentChannel === c.slug;
+        return (
+          <div key={c.id} onClick={() => app.openChannel(c.slug)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 9, cursor: 'pointer', margin: '1px 0', background: active ? 'var(--accent-dim)' : 'none' }}>
+            <span style={{ fontWeight: 700, color: c.kind === 'private' ? 'var(--text-faint)' : 'var(--accent-hi)', width: 12, textAlign: 'center' }}>{c.kind === 'private' ? '🔒' : '#'}</span>
+            <span style={{ flex: 1, fontSize: 12.5, fontWeight: (c.unread ?? 0) > 0 ? 700 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.slug}</span>
+            {(c.unread ?? 0) > 0 && <span title="Unread messages" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--accent)', borderRadius: 8, padding: '1px 6px' }}>{c.unread}</span>}
+          </div>
+        );
+      })}
+      {list.length === 0 && !adding && <div style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--text-faint)' }}>No channels match.</div>}
+    </div>
+  );
+}
+
+// ---- group chat — end ----
+
 /** The Home rail: one tree combining agents, their chats, and their folders,
  *  plus workspace-level chats/files and the archive — the YAAM layout. */
 export function HomeRail() {
@@ -266,6 +319,10 @@ export function HomeRail() {
         </div>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
+        {/* ---- group chat: channels (docs/group-chat.md) — begin ---- */}
+        <ChannelsBlock search={q} />
+        <div style={{ ...sectionLabel, padding: '10px 10px 4px' }}>Direct messages</div>
+        {/* ---- group chat — end ---- */}
         {groups.map((g) => <AgentGroup key={g.id} {...g} />)}
         {app.archived.length > 0 && (
           <div style={{ marginTop: 12, borderTop: '1px solid var(--border-soft)', paddingTop: 8 }}>

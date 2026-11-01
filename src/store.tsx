@@ -5,11 +5,12 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  api, sendTurn, authHeaders, setActiveSharedWorkspace,
+  api, sendTurn, authHeaders, setActiveSharedWorkspace, subscribeWorkspaceEvents,
   type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatSession, type ChatTurn,
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision, type ToolReview,
-  type BrowserStep, type WorkspaceOrg, type SharedWorkspace, type WorkspaceMe,
+  type BrowserStep, type WorkspaceOrg, type SharedWorkspace, type WorkspaceMe, type Channel, type WorkspaceEvent,
 } from './lib/api';
+import { isChannelSession, parseChannelHash } from './lib/channels';
 
 /** A workspace in the picker: one of ours, or one shared with us (then
  *  `shared` names the owner and our role; docs/shared-agents.md). */
@@ -22,10 +23,11 @@ export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 's
 export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit';
 export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit'];
 const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
-/** What the main pane shows while in the Home section: a conversation, an
- *  agent's home page (or the directory when no agent is selected), or a file
- *  preview — all reachable from the one combined rail, YAAM-style. */
-export type HomeView = 'chat' | 'agent' | 'file';
+/** What the main pane shows while in the Home section: a conversation, a
+ *  group-chat channel, an agent's home page (or the directory when no agent
+ *  is selected), or a file preview — all reachable from the one combined
+ *  rail, YAAM-style. */
+export type HomeView = 'chat' | 'channel' | 'agent' | 'file';
 
 export interface LiveTool {
   kind: 'tool';
@@ -161,6 +163,16 @@ interface Store {
   wsOrg: WorkspaceOrg | null; refreshWsOrg: () => Promise<void>;
   /** Which organization pane the Workspace section shows; null = the files. */
   orgPane: OrgPane | null; setOrgPane: (v: OrgPane | null) => void;
+
+  // group chat (docs/group-chat.md, execution plan item 15)
+  channels: Channel[]; refreshChannels: () => Promise<void>;
+  /** The open channel's slug while homeView is 'channel'. */
+  currentChannel: string | null;
+  /** A message a deep link asked to scroll to; consumed by the view. */
+  channelFocus: string | null; setChannelFocus: (id: string | null) => void;
+  openChannel: (slug: string, messageId?: string | null) => void;
+  /** Live workspace events (SSE): channel messages, typing, streams, tasks. */
+  onWorkspaceEvent: (listener: (ev: WorkspaceEvent) => void) => () => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -251,6 +263,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (isOrgPane(pane)) return pane;
     return p.get('section') === 'company' ? 'board' : null;
   });
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [currentChannel, setCurrentChannel] = useState<string | null>(null);
+  const [channelFocus, setChannelFocus] = useState<string | null>(null);
+  const wsListeners = useRef(new Set<(ev: WorkspaceEvent) => void>());
 
   const currentIdRef = useRef<string | null>(null);
   currentIdRef.current = currentId;
@@ -276,12 +292,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return m && isOrgPane(m[2]) ? { workspaceId: m[1], pane: m[2] } : null;
   };
   if (orgLink.current === null && !deepLink.current) orgLink.current = parseOrgLink(window.location.hash);
+  // …and from group-chat mentions: #/ws/<id>/channel/<slug>[/<messageId>]
+  // (docs/group-chat.md §4). Honoured once the workspace list has loaded.
+  const channelLink = useRef(parseChannelHash(window.location.hash));
   useEffect(() => {
     const onHash = () => {
       const id = /^#\/chat\/([\w-]+)$/.exec(window.location.hash)?.[1];
       if (id) { deepLink.current = id; setSessions((list) => [...list]); } // nudge the pick effect
       const org = parseOrgLink(window.location.hash);
       if (org) { orgLink.current = org; setWorkspaces((list) => [...list]); }
+      const ch = parseChannelHash(window.location.hash);
+      if (ch) { channelLink.current = ch; setWorkspaces((list) => [...list]); } // nudge the channel effect
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
@@ -359,7 +380,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const refreshSessions = useCallback(async () => {
     if (!workspaceId) return;
-    setSessions(await api.chats(workspaceId));
+    // Channel sessions (`#slug · Agent`) are the agents' hidden working
+    // sessions behind a channel, not direct messages: kept out of the rail.
+    setSessions((await api.chats(workspaceId)).filter((s) => !isChannelSession(s)));
     setArchived(await fetch(`/api/chats?workspaceId=${encodeURIComponent(workspaceId)}&archived=true`, { headers: authHeaders() }).then((r) => r.json() as Promise<ChatSession[]>).catch(() => []));
   }, [workspaceId]);
 
@@ -379,6 +402,70 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (wsOrg && wsOrg.mode === 'off' && orgPane) setOrgPane(null);
   }, [wsOrg, orgPane]);
+
+  // ---- group chat (docs/group-chat.md) ----
+  const refreshChannels = useCallback(async () => {
+    if (!workspaceId) { setChannels([]); return; }
+    setChannels(await api.channels(workspaceId).catch((): Channel[] => []));
+  }, [workspaceId]);
+  useEffect(() => { void refreshChannels(); }, [refreshChannels]);
+
+  const openChannel = useCallback((slug: string, messageId?: string | null) => {
+    setCurrentChannel(slug);
+    setChannelFocus(messageId ?? null);
+    setSection('home');
+    setHomeView('channel');
+    setMobileChatOpen(true);
+    setArtifact(null);
+    setBrowserOpen(false);
+  }, []);
+
+  const onWorkspaceEvent = useCallback((listener: (ev: WorkspaceEvent) => void) => {
+    wsListeners.current.add(listener);
+    return () => { wsListeners.current.delete(listener); };
+  }, []);
+
+  // One SSE connection per workspace on screen, reconnecting with backoff;
+  // unread badges follow every channel message without polling.
+  useEffect(() => {
+    if (!workspaceId) return;
+    const ctrl = new AbortController();
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let backoff = 1_000;
+    const run = async () => {
+      while (!ctrl.signal.aborted) {
+        try {
+          await subscribeWorkspaceEvents(workspaceId, (ev) => {
+            backoff = 1_000;
+            for (const l of wsListeners.current) { try { l(ev); } catch { /* a listener must not break the stream */ } }
+            if (ev.type === 'channel_message' || ev.type === 'channel_update') {
+              clearTimeout(refreshTimer);
+              refreshTimer = setTimeout(() => { void api.channels(workspaceId).then(setChannels).catch(() => {}); }, 400);
+            }
+          }, ctrl.signal);
+        } catch { /* reconnect below */ }
+        if (ctrl.signal.aborted) break;
+        await new Promise((r) => setTimeout(r, backoff));
+        backoff = Math.min(backoff * 2, 30_000);
+      }
+    };
+    void run();
+    return () => { ctrl.abort(); clearTimeout(refreshTimer); };
+  }, [workspaceId]);
+
+  // The channel deep link: switch workspace if needed, then open it.
+  useEffect(() => {
+    const link = channelLink.current;
+    if (!link || workspaces.length === 0) return;
+    if (!workspaces.some((w) => w.id === link.workspaceId)) { channelLink.current = null; return; }
+    channelLink.current = null;
+    if (link.workspaceId !== workspaceId) {
+      setActiveSharedWorkspace(sharedIds.current.has(link.workspaceId) ? link.workspaceId : null);
+      setWorkspaceId(link.workspaceId);
+    }
+    openChannel(link.slug, link.messageId);
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, [workspaces, workspaceId, openChannel]);
 
   useEffect(() => { void refreshWorkspaces().catch(() => showToast('API offline')); }, [refreshWorkspaces, showToast]);
   useEffect(() => { void refreshAgents().catch(() => {}); void refreshAgentTypes().catch(() => {}); void refreshMcp().catch(() => {}); void refreshMarket().catch(() => {}); api.settings().then(setSettings).catch(() => {}); }, [refreshAgents, refreshAgentTypes, refreshMcp, refreshMarket]);
@@ -497,6 +584,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setActiveSharedWorkspace(sharedIds.current.has(id) ? id : null);
     setWorkspaceId(id);
     setCurrentId(null);
+    setCurrentChannel(null);
     setMobileChatOpen(false);
     // Agents, types and the rest are per workspace owner too.
     void refreshAgents().catch(() => {});
@@ -839,6 +927,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
     companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane,
+    channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
     mobileChatOpen, mobileDetail, toast, showToast,
@@ -857,6 +946,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
     companiesEnabled, wsOrg, refreshWsOrg, orgPane,
+    channels, refreshChannels, currentChannel, channelFocus, openChannel, onWorkspaceEvent,
   ]);
 
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;

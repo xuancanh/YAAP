@@ -316,7 +316,9 @@ function ContextPane() {
   const app = useApp();
   const [ceiling, setCeiling] = useState(app.settings.defaultTokenCeiling || '200000');
   const [compact, setCompact] = useState(parseInt(app.settings.compactionThresholdTokens || '120000', 10) / 1000);
+  const [channelBudget, setChannelBudget] = useState(app.settings.channelDailyTokenBudget ?? '200000');
   useEffect(() => { setCeiling(app.settings.defaultTokenCeiling || '200000'); }, [app.settings.defaultTokenCeiling]);
+  useEffect(() => { setChannelBudget(app.settings.channelDailyTokenBudget ?? '200000'); }, [app.settings.channelDailyTokenBudget]);
   return (
     <div style={{ ...card, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
@@ -338,6 +340,16 @@ function ContextPane() {
             onMouseUp={() => void app.saveSettings({ compactionThresholdTokens: String(compact * 1000) })}
             style={{ flex: 1, accentColor: 'var(--accent)' }} />
           <span style={{ fontSize: 12.5, ...mono, color: 'var(--text)', width: 56, textAlign: 'right' }}>{compact}k</span>
+        </div>
+      </div>
+      <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 15 }}>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>Channel daily token budget</div>
+        <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>Default for agent replies in each group-chat channel per day (docs/group-chat.md §2); a channel&apos;s own setting overrides it. 0 = unlimited.</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 11 }}>
+          <input value={channelBudget} onChange={(e) => setChannelBudget(e.target.value.replace(/[^0-9]/g, ''))}
+            onBlur={() => void app.saveSettings({ channelDailyTokenBudget: channelBudget || '0' })}
+            style={{ width: 130, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 11px', color: 'var(--text)', fontSize: 13, ...mono, outline: 'none' }} />
+          <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>tokens per channel per day</span>
         </div>
       </div>
     </div>
