@@ -50,6 +50,10 @@ import { OrgRedTeamService } from './org-redteam.service';
 import { IncidentsController } from './incidents.controller';
 import { ActionsModule } from '../actions/actions.module';
 import { OrgTrustBridge } from './org-trust-bridge';
+import { OrgExperimentsService } from './org-experiments.service';
+import { OrgPredictionsService } from './org-predictions.service';
+import { OrgReconciliationService } from './org-reconciliation.service';
+import { ExperimentsController } from './experiments.controller';
 
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
@@ -99,11 +103,18 @@ import { OrgTrustBridge } from './org-trust-bridge';
  * Trust (docs/actions-and-trust.md, item 28): OrgTrustBridge binds the
  * action contract and the trust ledger (ActionsModule) to the audit chain,
  * signals, `two_key` approvals, review verdicts, incidents and the freeze.
+ * Experiments (docs/experiments.md, item 30): OrgExperimentsService runs
+ * changes as measured hypotheses (start, daily revert-rule check, verdict,
+ * revert) and holds structural ones in plans; OrgPredictionsService is the
+ * prediction ledger and registers the calibration the trust ledger reads
+ * (calibration-registry.ts); OrgReconciliationService compares claims with
+ * ground truth daily and feeds the brief and the auditor's sample;
+ * ExperimentsController adds the workspace routes.
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule, RegistryModule, ConnectionsModule, ActionsModule],
-  controllers: [OrgController, WorkspaceOrgController, BlueprintsController, CompaniesController, OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController, IncidentsController],
-  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController, OrgIncidentsService, OrgRedTeamService, OrgTrustBridge],
-  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgIncidentsService, OrgRedTeamService],
+  controllers: [OrgController, WorkspaceOrgController, BlueprintsController, CompaniesController, OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController, IncidentsController, ExperimentsController],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController, OrgIncidentsService, OrgRedTeamService, OrgTrustBridge, OrgPredictionsService, OrgExperimentsService, OrgReconciliationService],
+  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgIncidentsService, OrgRedTeamService, OrgExperimentsService, OrgPredictionsService, OrgReconciliationService],
 })
 export class OrgModule {}

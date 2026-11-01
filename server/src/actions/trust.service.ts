@@ -25,10 +25,12 @@ import { AgentsService } from '../agents/agents.service';
 import { TriggerBus, type OrgIncidentEvent } from '../chats/trigger-bus';
 import { ACTION_CLASSES, EXTERNAL_CLASSES, isActionClass, normalizeActionClass, type ActionClass } from './action-classes';
 import {
-  applyIncident, applyOutcome, calibrationOf, clampLevel, DEFAULT_CEILINGS, DEFAULT_START, describeMatrix, effectiveLevel,
+  applyIncident, applyOutcome, clampLevel, DEFAULT_CEILINGS, DEFAULT_START, describeMatrix, effectiveLevel,
   type LedgerChange, type LedgerRow, type TrustLevel, type TrustOutcome,
 } from './trust-policy';
 import { actionsTunable } from './actions-tunables';
+// The prediction ledger's calibration (item 30) through a dependency-free registry: no org-domain import.
+import { calibrationOf as registeredCalibration } from '../org/calibration-registry';
 
 export type TrustLevelRow = typeof trustLevels.$inferSelect;
 
@@ -44,8 +46,11 @@ export interface OrgContext { id: string; tunables: string; chiefOfStaffAgentId:
 export class TrustService {
   private readonly logger = new Logger(TrustService.name);
   hooks: TrustHooks = {};
-  /** The calibration hook (C7): replaced by the prediction ledger (item 30). */
-  calibrationOf: (agentId: string) => number | null = calibrationOf;
+  /** The calibration hook (C7): the prediction ledger's score (item 30,
+   *  docs/experiments.md §2.3) from the calibration registry — 0–1, or null
+   *  with too few resolved forecasts, which never blocks a promotion. A
+   *  score below `trust.calibrationBar` holds promotion back. */
+  calibrationOf: (workspaceId: string, agentId: string) => Promise<number | null> = registeredCalibration;
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
@@ -126,10 +131,11 @@ export class TrustService {
     await this.db.insert(trustRecords).values({ id: newId(), workspaceId, agentId, actionClass: cls, outcome, refType: ref.refType, refId: ref.refId, at: nowIso() });
     const r = await this.row(workspaceId, agentId, cls);
     const org = await this.orgOf(workspaceId);
+    const calibration = outcome === 'success' ? await this.calibrationOf(workspaceId, agentId).catch(() => null) : null;
     const { row, change } = applyOutcome(toLedger(r), outcome, {
       promoteAfterClean: actionsTunable(org, 'trust.promoteAfterClean'),
       demoteAfterRejections: actionsTunable(org, 'trust.demoteAfterRejections'),
-      calibration: this.calibrationOf(agentId),
+      calibration,
       calibrationBar: actionsTunable(org, 'trust.calibrationBar'),
     });
     await this.persist(r, row, change, outcome === 'reverted' || outcome === 'incident', outcome === 'reverted' ? 'revert' : outcome === 'incident' ? 'incident' : 'ledger');

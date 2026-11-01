@@ -1123,9 +1123,79 @@ in memory; the chief is never paused automatically; the freeze is enforced
 by item 28's contract through `isFrozen`; `memory.postmortemTriggers` grows
 bit 16 (default 31).
 
-### 30. Experiments and the prediction ledger (C5, C7, C9 reconciliation) *(planned)*
+### 30. Experiments and the prediction ledger (C5, C7, C9 reconciliation) *(done)*
 Changes as hypotheses with a metric, window and revert rule; forecasts
 scored for calibration; claimed versus measured reconciliation.
+
+*Shipped as (2 November 2026, branch `feat/experiments`):*
+
+- **Migration `0043-org-experiments`.** Adds the `org_experiments` and
+  `org_predictions` tables (account-scoped, mirrored in `schema.ts`).
+- **`server/src/org/org-experiments.service.ts`.**
+  - `propose` validates the proposal: a measured metric or a sourced key
+    result, the window inside the `experiments.windowDays` bound, the
+    change inside its own bound, and a revert recipe. Terminate is refused,
+    and a playbook may only be re-activated if it is retired.
+  - `govern` creates an `experiment` card in supervised mode, starts the
+    experiment at once in autonomous mode, or holds it in a plan with
+    `org_start_experiment` through `OrgCapitalService.addToolApplier`.
+  - `start` snapshots the baseline and applies the change through
+    `setTunable`, `setCadence`, `setRouting` or `activate` / `retire`, as
+    the actor `experiment`. A charter or structure change goes through a
+    `charter_change` or `reorg` card instead.
+  - `begin` starts measuring when that card is approved.
+  - `sweep` runs the daily revert-rule check (`experiment_harm`, a minor
+    incident) and, at `endsAt`, the noise-guarded verdict: keep, revert, or
+    extend and then revert.
+  - `decide` executes the revert recipe and writes the decision-log row,
+    the audit row and the `org_experiment` inbox event.
+  - `stop` / `conclude(force)` are the CEO's controls.
+  - Also: the brief's Experiments section with "unmeasured change", and
+    the retro agenda provider.
+- **`server/src/org/org-predictions.service.ts`.**
+  - `record`, with supersede.
+  - Check-in forecasts through the new `OrgIntentService.onCheckIn`.
+  - The first-run duration prompt (`contextFor`).
+  - `sweep` / `resolveSubject` resolve forecasts with Brier and normalized
+    absolute error.
+  - `calibration`, `report` and the brief's Calibration line.
+- **`server/src/org/calibration-registry.ts`.** `registerCalibrationProvider`
+  and `calibrationOf`, read by `TrustService.calibrationOf`, which is now
+  async with `(workspaceId, agentId)`. Promotion holds below
+  `trust.calibrationBar`, and a null score never blocks it.
+- **`server/src/org/org-reconciliation.service.ts`.** The daily sweep
+  checks overclaims and claimed numbers on sourced key results. It also
+  derives a check for tasks accepted by review and runs it through
+  `OrgSensingService.runAdHocCheck`, giving a `claim_mismatch` signal and a
+  minor incident. Finally it recomputes the brief's spend and accepted-task
+  counts from SQL aggregates (`report_drift`). It feeds the brief's
+  Reconciliation section and the auditor's material through
+  `OrgAuditorService.addMaterial`.
+- **Seams.** `BriefSection.position: 'improve'`; `reportIncident` accepts
+  `severity`, `refType`, `refId` and `cause`; the signal kinds `overclaim`,
+  `claim_mismatch` and `report_drift`; the approval kind `experiment`; the
+  "improvement as experiments" line in the planning prompt.
+- **`server/src/org/experiment-tunables.ts`.** Eight bounded keys in the
+  areas `experiments` and `predictions`.
+- **`server/src/org/experiments.controller.ts`.** Workspace routes: `GET|POST
+  experiments`, `GET experiments/:id`, `POST experiments/:id/start | stop |
+  keep | revert` (the CEO), `GET predictions?agentId=&status=`, `GET
+  calibration`, `GET reconciliation`, `POST reconciliation/run` (the CEO).
+- **Tools.** `org_propose_experiment`, `org_experiments`,
+  `org_forecast_outcome`, `org_calibration`.
+- **Docs.** `docs/experiments.md`.
+- **Tests.** `tests/backend-org-experiments.test.ts` (17 tests, including
+  item 28's promotion held below the calibration bar).
+
+Departures (`docs/experiments.md` §8):
+
+- The slice design is recorded but evaluated before/after.
+- Charter and structure experiments measure from the approval of their
+  change card, and revert through an inverse card.
+- Playbook experiments only switch reviewed versions.
+- Check-in forecasts are recorded only for sourced key results and agent
+  check-ins.
+- The latest reconciliation is kept on the audit chain.
 
 ### 31. Evals, the self-modification boundary, capacity and the owner's seat (C6, C8, C4, C12) *(planned)*
 Golden sets per role and gated rollout; the boundary as data; WIP limits,

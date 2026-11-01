@@ -31,8 +31,8 @@ import { meetScopes, parseScopes } from './scopes';
 import { resolveRoleHire } from './org-roles.service';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19; `blueprint` is OrgBlueprintsService's,
@@ -297,7 +297,9 @@ export class OrgApprovalsService {
       case 'cadence':
       case 'charter_change':
       case 'metric_source':
-      case 'two_key': {
+      case 'two_key':
+      // An experiment (docs/experiments.md §1.3) starts through OrgExperimentsService.
+      case 'experiment': {
         // Kinds another module owns (the meetings module's cadence, the memory module's charter change).
         const fn = this.appliers.get(kind);
         if (!fn) throw new BadRequestException(`${kind} approvals need the module that owns them`);
@@ -414,6 +416,7 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'charter_change': return `charter of ${String(payload.agentName ?? payload.agentId ?? 'a member')}: ${String(payload.lesson ?? payload.summary ?? 'change proposed by a retro').slice(0, 100)}`;
     case 'blueprint': return `staff "${String(payload.name ?? 'company')}" from its blueprint: ${Array.isArray(payload.hires) ? payload.hires.length : 0} hire(s)`;
     case 'metric_source': return `metric source "${String(payload.name ?? '')}" (${String(payload.kind ?? '')}${payload.target ? `: ${String(payload.target).slice(0, 80)}` : ''})`;
+    case 'experiment': return `experiment "${String(payload.title ?? '')}": ${String(payload.changeKind ?? '')} change, ${String(payload.metric ?? 'metric')} ${String(payload.direction ?? 'up') === 'down' ? '↓' : '↑'} ${String(payload.expected ?? '')} in ${String(payload.windowDays ?? '')}d`.slice(0, 200);
     case 'human_review': return `review of task "${String(payload.title ?? '')}" by ${String(payload.reviewerHumanId ?? 'a human')}`.slice(0, 160);
     case 'two_key': return `${payload.staged ? 'send staged' : 'run held'} ${String(payload.tool ?? 'action')} (${String(payload.class ?? '').replace(/_/g, ' ')}): ${String(payload.summary ?? '')}`.slice(0, 160);
     default: return kind;

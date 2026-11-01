@@ -111,7 +111,7 @@ export interface Replay {
 }
 
 const DAY_MS = 24 * 60 * 60_000;
-const STRUCTURAL_VERBS: Record<string, string> = { org_hire_agent: 'hire', org_reorg: 'reorg', org_terminate_agent: 'terminate', org_set_scope: 'scope widen', org_allocate_budget: 'budget', org_set_routing: 'routing', org_tune: 'tune' };
+const STRUCTURAL_VERBS: Record<string, string> = { org_hire_agent: 'hire', org_reorg: 'reorg', org_terminate_agent: 'terminate', org_set_scope: 'scope widen', org_allocate_budget: 'budget', org_set_routing: 'routing', org_tune: 'tune', org_start_experiment: 'experiment' };
 
 @Injectable()
 export class OrgCapitalService {
@@ -132,6 +132,12 @@ export class OrgCapitalService {
 
   /** OrgRuntimeService binds the one way a plan's action becomes a change. */
   bindApplier(fn: PlanApplier): void { this.applier = fn; }
+
+  private readonly toolAppliers = new Map<string, PlanApplier>();
+
+  /** A module whose own tool can be held in a plan (an experiment's start,
+   *  docs/experiments.md §1.3) applies its actions itself. */
+  addToolApplier(tool: string, fn: PlanApplier): void { this.toolAppliers.set(tool, fn); }
 
   // ---- cost per outcome ----
 
@@ -433,7 +439,7 @@ export class OrgCapitalService {
     const results: PlanActionResult[] = [];
     for (const a of actions) {
       try {
-        const output = await this.applier(orgId, a);
+        const output = await (this.toolAppliers.get(a.tool) ?? this.applier)(orgId, a);
         results.push({ tool: a.tool, summary: a.summary, ok: true, output: output.slice(0, 1_000) });
         await this.audit.append(orgId, { actor, action: 'plan_action_applied', refType: 'plan', refId: id, payload: { tool: a.tool, summary: a.summary.slice(0, 300) } });
       } catch (err) {

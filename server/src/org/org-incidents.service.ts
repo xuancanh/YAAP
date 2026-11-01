@@ -464,10 +464,11 @@ export class OrgIncidentsService implements ToolProviderHook {
     }
   }
 
-  /** A failed executable check after acceptance, or an owner's revert (items 27–28 call this). Major. */
-  async reportIncident(orgId: string, input: { kind: 'check_failed' | 'revert' | string; taskId?: string; agentId?: string | null; actionClass?: string | null; title: string; detail?: string; detectedBy?: IncidentDetector }): Promise<{ incident: OrgIncident; created: boolean }> {
+  /** A failed executable check after acceptance, or an owner's revert (items 27–28 call this). Major unless
+   *  the caller says otherwise (item 30's `claim_mismatch` and `experiment_harm` are minor). */
+  async reportIncident(orgId: string, input: { kind: 'check_failed' | 'revert' | string; taskId?: string; agentId?: string | null; actionClass?: string | null; title: string; detail?: string; detectedBy?: IncidentDetector; severity?: IncidentSeverity; refType?: string; refId?: string; cause?: string }): Promise<{ incident: OrgIncident; created: boolean }> {
     const task = input.taskId ? await this.tasks.get(orgId, input.taskId).catch(() => null) : null;
-    return this.open(orgId, { kind: input.kind, severity: 'major', title: input.title, detail: input.detail, cause: input.kind === 'revert' ? 'the owner reverted its work' : input.kind === 'check_failed' ? 'an executable check failed after acceptance' : lowerFirst(input.title), agentId: input.agentId ?? task?.assigneeAgentId ?? null, actionClass: input.actionClass ?? null, refType: task ? 'task' : 'report', refId: task?.id ?? undefined, detectedBy: input.detectedBy ?? 'system' });
+    return this.open(orgId, { kind: input.kind, severity: input.severity ?? 'major', title: input.title, detail: input.detail, cause: input.cause ?? (input.kind === 'revert' ? 'the owner reverted its work' : input.kind === 'check_failed' ? 'an executable check failed after acceptance' : lowerFirst(input.title)), agentId: input.agentId ?? task?.assigneeAgentId ?? null, actionClass: input.actionClass ?? null, refType: input.refType ?? (task ? 'task' : 'report'), refId: input.refId ?? task?.id ?? undefined, detectedBy: input.detectedBy ?? 'system' });
   }
 
   /** The CEO's complaint (route) or a member's report (tool): severity as given. */

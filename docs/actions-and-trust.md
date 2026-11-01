@@ -185,9 +185,11 @@ saying no in their own chat is a conversation, not a review.
 
 **Promotion.** `trust.promoteAfterClean` (default 10, bound 3–100) clean
 outcomes since the last change raise the level by one, never above the
-ceiling; once the prediction ledger exists (item 30), `calibrationOf(agentId)`
-must also clear `trust.calibrationBar` (0.7, 0–1). Today the hook returns
-null and is not applied.
+ceiling; the member's forecast calibration from the prediction ledger
+(item 30, `docs/experiments.md` §2.3, read through
+`server/src/org/calibration-registry.ts`) must also clear
+`trust.calibrationBar` (0.7, 0–1). A member with too few resolved forecasts
+has no score (null) and is not held back by it.
 
 **Demotion.** `trust.demoteAfterRejections` (3, 1–10) rejections in a row
 drop one level; an incident or a reported revert drops at once.

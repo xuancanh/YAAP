@@ -58,6 +58,8 @@ export const SIGNAL_KINDS = [
   'slo_breach', 'audit_finding', 'burn_forecast',
   // Sensing (docs/sensing.md §1.5): opened and resolved by OrgSensingService.
   'metric_stale',
+  // Reconciliation (docs/experiments.md §3): opened by OrgReconciliationService.
+  'overclaim', 'claim_mismatch', 'report_drift',
 ] as const;
 export type SignalKind = typeof SIGNAL_KINDS[number];
 

@@ -1589,3 +1589,80 @@ export const trustLevels = pgTable('trust_levels', {
   reason: text('reason').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 }, (t) => [uniqueIndex('idx_trust_levels_unique').on(t.workspaceId, t.agentId, t.actionClass)]);
+
+/** An experiment (docs/experiments.md §1, execution-plan item 30; C5 of
+ *  docs/autonomous-org-first-principles.md): a change declared as a
+ *  hypothesis with a measured metric (a metric source), a direction and an
+ *  expected effect, a window and a revert rule. `change` is JSON
+ *  `{ apply, revert }` — what the system applies at start and the recipe it
+ *  executes to undo it (snapshotted at start). `baseline` and `result` are
+ *  computed from samples only: `{ mean, n, sd?, from, to }` and
+ *  `{ mean, n, delta, relative, threshold, verdict }`. */
+export const orgExperiments = pgTable('org_experiments', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  unitId: text('unitId'),
+  title: text('title').notNull(),
+  hypothesis: text('hypothesis').notNull().default(''),
+  /** tunable | cadence | routing | playbook | charter | structure | other. */
+  changeKind: text('changeKind').notNull(),
+  change: text('change').notNull().default('{}'),
+  /** Required for every kind but `other`; a key result's source qualifies. */
+  metricSourceId: text('metricSourceId'),
+  /** up | down: which way is better. */
+  direction: text('direction').notNull().default('up'),
+  expectedEffect: real('expectedEffect').notNull().default(0),
+  /** relative (0.2 = +20 %) | absolute (in the metric's unit). */
+  effectKind: text('effectKind').notNull().default('relative'),
+  windowDays: integer('windowDays').notNull().default(14),
+  /** before_after | slice. */
+  design: text('design').notNull().default('before_after'),
+  slice: text('slice').notNull().default('{}'),
+  baseline: text('baseline').notNull().default('{}'),
+  result: text('result').notNull().default('{}'),
+  /** proposed | running | extended | kept | reverted | abandoned. */
+  status: text('status').notNull().default('proposed'),
+  /** JSON { worseBy, relative }: worse than baseline by more than this → revert at once. */
+  revertRule: text('revertRule').notNull().default('{}'),
+  extensions: integer('extensions').notNull().default(0),
+  /** user | human:<id> | chief | agent:<id>. */
+  proposedBy: text('proposedBy').notNull().default('user'),
+  /** The `experiment` card that let it start (supervised mode). */
+  approvalId: text('approvalId'),
+  /** A charter / structure experiment's change card (the existing approval path). */
+  changeApprovalId: text('changeApprovalId'),
+  startedAt: text('startedAt'),
+  endsAt: text('endsAt'),
+  /** The last daily early-stop check. */
+  lastCheckAt: text('lastCheckAt'),
+  decidedAt: text('decidedAt'),
+  decisionId: text('decisionId'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** A forecast in the prediction ledger (docs/experiments.md §2, C7):
+ *  `forecast` JSON `{ kind: number | probability | duration_runs | date,
+ *  value, low?, high?, unit? }`, resolved model-free into `outcome` and a
+ *  `score` — a loss in 0–1 (Brier for probabilities, normalized absolute
+ *  error otherwise). */
+export const orgPredictions = pgTable('org_predictions', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  agentId: text('agentId').notNull(),
+  /** task | key_result | experiment | hire | other. */
+  subjectKind: text('subjectKind').notNull(),
+  subjectId: text('subjectId').notNull().default(''),
+  question: text('question').notNull().default(''),
+  forecast: text('forecast').notNull().default('{}'),
+  /** tool | checkin | experiment. */
+  origin: text('origin').notNull().default('tool'),
+  resolvesAt: text('resolvesAt'),
+  outcome: text('outcome').notNull().default('{}'),
+  resolvedAt: text('resolvedAt'),
+  score: real('score'),
+  /** open | resolved | void. */
+  status: text('status').notNull().default('open'),
+  createdAt: text('createdAt').notNull(),
+});

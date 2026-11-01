@@ -224,9 +224,11 @@ Each run is an `org_audits` row with `trigger = 'redteam'` (the audit
 cadence ignores it), `redteam_start` / `redteam_end` audit rows (`executed: 0`)
 and an inbox line on the chief; spend is reserved like any run.
 
-**What remains for item 30:** the auditor reading ground truth (sensors and
-checks from item 27) rather than only the record, and reconciliation of
-claimed versus measured per key result and per task.
+**Item 30 adds:** the auditor reads ground truth (sensors and checks from
+item 27), not only the record. Reconciliation compares claimed with
+measured per key result and per task, and checks the brief's numbers. The
+gaps go into the auditor's sample, and `claim_mismatch` and
+`experiment_harm` are minor incidents. See `docs/experiments.md` §3.
 
 ## 6. API and tools
 

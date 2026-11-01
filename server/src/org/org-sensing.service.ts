@@ -634,6 +634,19 @@ export class OrgSensingService implements ToolProviderHook, OnModuleInit, OnModu
     return { outcome, results };
   }
 
+  /** Run one check derived elsewhere (reconciliation, docs/experiments.md §3)
+   *  against a task without storing it on the task: model-free, time-boxed,
+   *  audited as `check_adhoc`. */
+  async runAdHocCheck(orgId: string, taskId: string, check: Check, actor = 'system'): Promise<Omit<CheckResult, 'index'>> {
+    const org = await this.org.get(orgId);
+    const t = await this.tasks.get(orgId, taskId);
+    const timeoutMs = sensingTunable(org, 'acceptance.checkTimeoutSeconds') * 1_000;
+    let r: Omit<CheckResult, 'index' | 'check'>;
+    try { r = await withTimeout(this.evaluate(org, t, check, timeoutMs), timeoutMs + 500, 'the check'); } catch (err) { r = { status: 'error', detail: (err instanceof Error ? err.message : String(err)).slice(0, 500), evidence: {} }; }
+    await this.audit.append(orgId, { actor, action: 'check_adhoc', refType: 'task', refId: t.id, payload: { kind: check.kind, status: r.status, detail: r.detail.slice(0, 300) } });
+    return { check, ...r };
+  }
+
   /** OrgTasksService's acceptance gate: run the checks and say what they settle. */
   private async gate(orgId: string, task: OrgTask): Promise<AcceptanceVerdict> {
     const { outcome, results } = await this.runChecks(orgId, task.id, 'check');

@@ -168,10 +168,5 @@ export function applyIncident(row: LedgerRow, severity: 'minor' | 'major' | 'cri
   return { row: next, change: { from: row.level, to, reason: `${why} (${severity})` } };
 }
 
-/** The calibration hook (C7, item 30): the agent's forecast calibration in
- *  0–1 once the prediction ledger exists. Until then null, and promotion
- *  needs clean outcomes only. */
-export function calibrationOf(agentId: string): number | null {
-  void agentId;
-  return null;
-}
+/* Calibration (C7) comes from the prediction ledger (item 30) through
+ * org/calibration-registry.ts; TrustService passes it into applyOutcome. */

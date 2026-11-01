@@ -36,9 +36,11 @@ export interface Brief { orgId: string; at: string; text: string; items: BriefIt
 
 export interface BriefReplyDecision { n: number; decision: ApprovalDecision; note?: string }
 
-/** A section another module adds to the brief (incidents, docs/incidents.md
- *  §3, lead the brief): its lines, or [] to stay silent. */
-export interface BriefSection { position: 'first'; lines(orgId: string, since: string, now: Date): Promise<string[]> }
+/** A section another module adds to the brief: `first` leads it (incidents,
+ *  docs/incidents.md §3); `improve` follows the outcome sections
+ *  (experiments, calibration and reconciliation, docs/experiments.md §5).
+ *  Its lines, or [] to stay silent. */
+export interface BriefSection { position: 'first' | 'improve'; lines(orgId: string, since: string, now: Date): Promise<string[]> }
 
 @Injectable()
 export class OrgBriefService {
@@ -163,6 +165,12 @@ export class OrgBriefService {
         lines.push('', '## Plans awaiting your veto');
         for (const p of pending) lines.push(`- ${p.summary.slice(0, 300)} — est. $${p.estimateUsd.toFixed(2)}, applies ${p.applyAt ? p.applyAt.slice(11, 16) + ' UTC' : 'now'} (POST …/org/plans/${p.id}/veto to stop it)`);
       }
+    }
+
+    // 2d. The improve loop (docs/experiments.md §5): experiments, calibration, reconciliation gaps.
+    for (const sec of this.sections.filter((x) => x.position === 'improve')) {
+      const extra = await sec.lines(orgId, since, now).catch(() => [] as string[]);
+      if (extra.length) lines.push('', ...extra);
     }
 
     // 3. Anomalies

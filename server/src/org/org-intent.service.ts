@@ -61,6 +61,9 @@ export interface IntentEvent {
   detail: string;
 }
 export type IntentListener = (ev: IntentEvent) => void;
+/** Told after every key-result check-in is written (the prediction ledger,
+ *  docs/experiments.md §2: a confidence is a probability forecast). */
+export type CheckInListener = (ev: { orgId: string; goal: OrgGoal; checkin: OrgCheckin }) => Promise<void> | void;
 
 export interface RiskVerdict { goal: OrgGoal; atRisk: boolean; reasons: string[] }
 export interface RiskAssessment {
@@ -123,6 +126,7 @@ function clamp01(x: number): number { return Math.min(1, Math.max(0, x)); }
 @Injectable()
 export class OrgIntentService {
   private readonly listeners: IntentListener[] = [];
+  private readonly checkInListeners: CheckInListener[] = [];
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
@@ -139,6 +143,12 @@ export class OrgIntentService {
   onIntent(listener: IntentListener): () => void {
     this.listeners.push(listener);
     return () => { const i = this.listeners.indexOf(listener); if (i >= 0) this.listeners.splice(i, 1); };
+  }
+
+  /** Be told of every check-in (see CheckInListener). */
+  onCheckIn(fn: CheckInListener): () => void {
+    this.checkInListeners.push(fn);
+    return () => { const i = this.checkInListeners.indexOf(fn); if (i >= 0) this.checkInListeners.splice(i, 1); };
   }
 
   private emit(ev: IntentEvent): void {
@@ -222,6 +232,7 @@ export class OrgIntentService {
     await this.db.insert(orgCheckins).values(checkin);
     await this.audit.append(orgId, { actor, action: 'goal_checkin', refType: 'goal', refId: g.id, payload: { currentValue: checkin.currentValue, confidence: checkin.confidence, note: checkin.note.slice(0, 200) } });
     const goal = await this.org.updateGoal(orgId, g.id, { currentValue: checkin.currentValue, confidence: checkin.confidence, lastCheckInAt: now }, actor);
+    for (const fn of this.checkInListeners) await Promise.resolve(fn({ orgId, goal, checkin })).catch(() => undefined);
     return { goal, checkin };
   }
 

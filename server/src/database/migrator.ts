@@ -1529,6 +1529,66 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0043-org-experiments',
+    up: async (db) => {
+      // Experiments and the prediction ledger (docs/experiments.md,
+      // execution-plan item 30): changes declared as hypotheses with a
+      // measured metric, a window and a revert rule; forecasts scored
+      // model-free for calibration. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_experiments (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "unitId" TEXT,
+        "title" TEXT NOT NULL,
+        "hypothesis" TEXT NOT NULL DEFAULT '',
+        "changeKind" TEXT NOT NULL,
+        "change" TEXT NOT NULL DEFAULT '{}',
+        "metricSourceId" TEXT,
+        "direction" TEXT NOT NULL DEFAULT 'up',
+        "expectedEffect" REAL NOT NULL DEFAULT 0,
+        "effectKind" TEXT NOT NULL DEFAULT 'relative',
+        "windowDays" INTEGER NOT NULL DEFAULT 14,
+        "design" TEXT NOT NULL DEFAULT 'before_after',
+        "slice" TEXT NOT NULL DEFAULT '{}',
+        "baseline" TEXT NOT NULL DEFAULT '{}',
+        "result" TEXT NOT NULL DEFAULT '{}',
+        "status" TEXT NOT NULL DEFAULT 'proposed',
+        "revertRule" TEXT NOT NULL DEFAULT '{}',
+        "extensions" INTEGER NOT NULL DEFAULT 0,
+        "proposedBy" TEXT NOT NULL DEFAULT 'user',
+        "approvalId" TEXT,
+        "changeApprovalId" TEXT,
+        "startedAt" TEXT,
+        "endsAt" TEXT,
+        "lastCheckAt" TEXT,
+        "decidedAt" TEXT,
+        "decisionId" TEXT,
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_experiments_org_status ON org_experiments ("orgId", "status")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_predictions (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "agentId" TEXT NOT NULL,
+        "subjectKind" TEXT NOT NULL,
+        "subjectId" TEXT NOT NULL DEFAULT '',
+        "question" TEXT NOT NULL DEFAULT '',
+        "forecast" TEXT NOT NULL DEFAULT '{}',
+        "origin" TEXT NOT NULL DEFAULT 'tool',
+        "resolvesAt" TEXT,
+        "outcome" TEXT NOT NULL DEFAULT '{}',
+        "resolvedAt" TEXT,
+        "score" REAL,
+        "status" TEXT NOT NULL DEFAULT 'open',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_predictions_agent ON org_predictions ("orgId", "agentId", "status")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_predictions_subject ON org_predictions ("orgId", "subjectKind", "subjectId")`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

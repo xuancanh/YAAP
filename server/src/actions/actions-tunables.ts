@@ -14,7 +14,7 @@ export const ACTIONS_TUNABLES: Record<string, TunableDef> = {
   'actions.dedupeWindowMinutes': { default: 1_440, min: 5, max: 10_080, area: 'actions', description: 'Minutes within which a retry of a succeeded outward action returns the recorded result instead of acting twice.' },
   'trust.promoteAfterClean': { default: 10, min: 3, max: 100, area: 'trust', description: 'Clean outcomes in one action class since the last level change before the ledger raises that member one level (never above the owner\'s ceiling).' },
   'trust.demoteAfterRejections': { default: 3, min: 1, max: 10, area: 'trust', description: 'Rejections in a row (review sent back, co-signer or owner said no) before the ledger lowers that member one level.' },
-  'trust.calibrationBar': { default: 0.7, min: 0, max: 1, area: 'trust', description: 'Forecast calibration (0–1) a member needs for a promotion once the prediction ledger exists; ignored until then.' },
+  'trust.calibrationBar': { default: 0.7, min: 0, max: 1, area: 'trust', description: 'Forecast calibration (0–1, from the prediction ledger) a member needs for a promotion; a member with too few resolved forecasts has none and is not held back.' },
 };
 registerTunables(ACTIONS_TUNABLES);
 

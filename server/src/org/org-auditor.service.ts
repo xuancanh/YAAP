@@ -105,6 +105,10 @@ export function auditorQuality(cards: SpotCard[]): { answered: number; tp: numbe
   return { answered: answered.length, tp, fp, tn, fn, precision: tp + fp > 0 ? tp / (tp + fp) : null, recall: tp + fn > 0 ? tp / (tp + fn) : null };
 }
 
+/** Extra lines for an audit's sampled material (ground truth the doers did
+ *  not write: docs/experiments.md §3, the reconciliation gaps). */
+export type AuditMaterialProvider = (org: Organization, since: string) => Promise<string[]>;
+
 /** Told after every audit run with its findings (incidents, docs/incidents.md §2). */
 export type FindingsListener = (ev: { orgId: string; auditId: string; auditorAgentId: string; findings: AuditFinding[] }) => Promise<void> | void;
 
@@ -117,6 +121,14 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
   /** Test seam: the random source of the spot-check sample. */
   random: () => number = Math.random;
   private readonly findingsListeners: FindingsListener[] = [];
+
+  private readonly materialProviders: AuditMaterialProvider[] = [];
+
+  /** Add model-free material to every audit's sample (reconciliation gaps, docs/experiments.md §3). */
+  addMaterial(fn: AuditMaterialProvider): () => void {
+    this.materialProviders.push(fn);
+    return () => { const i = this.materialProviders.indexOf(fn); if (i >= 0) this.materialProviders.splice(i, 1); };
+  }
 
   /** Be told of each audit's findings (the incident for a critical one). */
   onFindings(fn: FindingsListener): () => void {
@@ -326,6 +338,10 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
     }
     lines.push('', `### Charter-drift candidates (${drift.length}) — recent task titles share no vocabulary with the charter; judge, do not assume`);
     lines.push(...(drift.length ? drift : ['- none']));
+    for (const fn of this.materialProviders) {
+      const extra = await fn(org, since).catch(() => [] as string[]);
+      if (extra.length) lines.push('', ...extra);
+    }
     return { material: lines.join('\n'), counts: { tasks: accepted.length, auditRows: rows.length, driftCandidates: drift.length, since }, accepted: accepted.map((t) => ({ id: t.id, title: t.title })) };
   }
 

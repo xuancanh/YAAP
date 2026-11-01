@@ -147,7 +147,7 @@ heartbeat knows what is urgent rather than only what is stale.
 
 ### Improve
 
-**C5. Experiments, not edits.** *Missing.*
+**C5. Experiments, not edits.** *Have* (item 30, `docs/experiments.md`).
 Retros produce lessons, playbooks and charter-change cards, but nothing
 measures whether a change helped. Needed: an **experiment** primitive.
 A change (charter, playbook, routing tier, cadence, tunable, structure)
@@ -165,7 +165,7 @@ A charter, playbook or model change is replayed against the set before
 it rolls out, and a regression blocks it. Dry-run planning exists for
 plans. This extends the same idea to how members do their work.
 
-**C7. Prediction ledger and calibration.** *Missing.*
+**C7. Prediction ledger and calibration.** *Have* (item 30, `docs/experiments.md`).
 Agents forecast: "this task takes 2 runs", "this key result reaches 60%
 by Friday", "this hire pays for itself in 30 days". Forecasts are stored
 and scored against outcomes. Calibration is the cheapest honest signal
@@ -190,7 +190,7 @@ audit finding.
 
 ### Audit
 
-**C9. Independent verification.** *Partial.*
+**C9. Independent verification.** *Have* (items 29 and 30).
 Model-free signals, SLOs, the hash-chained audit log, and an auditor on
 a different model family exist; since item 29 also the audit of the
 auditor (spot checks with precision and recall), rotation and red-team runs
@@ -320,12 +320,12 @@ one page and one spot-check. It rises again only after an incident.
 | C2 Effectors with action contract | Have (item 28) | action classes, idempotency keys, staging (mail drafts), outbound rate limits, two-key execution with a different-family co-signer — `docs/actions-and-trust.md`; calendar staging declared, not built |
 | C3 Executable acceptance | Have — shipped (item 27, `docs/sensing.md`) | four-field brief, cross-family review (item 15) |
 | C4 Coordination with capacity | Have, mostly | units, boards, meetings, heartbeat (items 15–21) |
-| C5 Experiments | Missing | decision log, retros (items 19, 22) |
+| C5 Experiments | Have (item 30, `docs/experiments.md`) | decision log, retros (items 19, 22), sensing (item 27), plans (item 23) |
 | C6 Evals and gated rollout | Missing | dry-run planning (item 23), accepted tasks |
-| C7 Prediction ledger | Missing | check-ins (item 18) |
+| C7 Prediction ledger | Have (item 30, `docs/experiments.md`) | check-ins (item 18), sensing (item 27), trust ledger (item 28) |
 | C8 Self-modification boundary | Partial | caps, tunables, plan preview (items 16, 18, 23) |
-| C9 Independent verification | Partial — spot checks, rotation, red team done (item 29); ground truth and reconciliation remain (item 30) | signals, SLOs, auditor, audit chain (item 20) |
-| C10 Trust ledger | Have (item 28) | levels 0–3 per agent × class under owner ceilings, promotion on clean streaks, demotion on incidents (item 29's bus), reverts and rejection streaks; supervised/autonomous is now a ceiling preset; the calibration bar waits for C7 (item 30) |
+| C9 Independent verification | Have — spot checks, rotation, red team (item 29); reconciliation of claimed versus measured and ground truth in the auditor's sample (item 30) | signals, SLOs, auditor, audit chain (item 20), sensing (item 27) |
+| C10 Trust ledger | Have (item 28) | levels 0–3 per agent × class under owner ceilings, promotion on clean streaks, demotion on incidents (item 29's bus), reverts and rejection streaks; supervised/autonomous is now a ceiling preset; promotion also needs calibration ≥ `trust.calibrationBar` once C7 has scored the member (item 30) |
 | C11 Incidents | Have (item 29) | breakers, signals, retros (items 15, 20, 22) |
 | C12 Owner's seat | Partial | brief, cards, vision, pulse, ask, replay (items 18–24) |
 
@@ -350,6 +350,26 @@ GitHub connection) run before review: all pass accepts the task by check,
 a failure returns it to the owner as a review round, an error falls back
 to model review; the board shows `verification: check | review | none` and
 the brief the share accepted by check. See `docs/sensing.md`.
+
+*Shipped (2 November 2026, item 30):* **C5**: a change (tunable, cadence,
+routing, playbook, charter, structure) is an experiment with a hypothesis,
+a metric source, a direction, an expected effect, a window and a revert
+rule. The baseline comes from samples. The system applies the change and
+reverts it through the tools' own code paths; charters and structure go
+through cards. The model-free verdict uses the mean difference with a
+noise guard: improved is kept, worse is reverted, and inconclusive is
+extended once and then reverted. A daily revert-rule check reverts at once
+and opens a minor incident. Every verdict lands in the decision log.
+Supervised experiments need a card; autonomous ones start within bounds,
+or after the veto window when structural. Direct changes show in the brief
+as "unmeasured". **C7**: forecasts come from the tool, a task's first run,
+key-result check-ins and experiment proposals. They are scored without a
+model against runs, samples and measured effects (Brier, normalized
+error). Calibration feeds the trust ledger's promotion bar and the brief.
+**C9**: a daily reconciliation catches confidence that outruns the measured
+pace, accepted work whose derived check fails, and brief numbers that
+disagree with the ledger. The gaps go into the auditor's sample. See
+`docs/experiments.md`.
 
 ## 8. Build order
 
