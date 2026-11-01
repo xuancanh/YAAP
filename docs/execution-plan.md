@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–26 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–26 done** — shipped between 31 October and 1 November 2026; items 27–31 shipped 2 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -1197,9 +1197,174 @@ Departures (`docs/experiments.md` §8):
   check-ins.
 - The latest reconciliation is kept on the audit chain.
 
-### 31. Evals, the self-modification boundary, capacity and the owner's seat (C6, C8, C4, C12) *(planned)*
+### 31. Evals, the self-modification boundary, capacity and the owner's seat (C6, C8, C4, C12) *(done)*
 Golden sets per role and gated rollout; the boundary as data; WIP limits,
 dependencies and deadline scheduling; decision defaults, delegated
 approvals and value accounting.
+
+*Shipped as (2 November 2026, branch `feat/evals`, rebased on item 30):*
+
+**Migration.** `0044-org-evals-boundary`, after 0042 and 0043. It adds:
+
+- `org_eval_cases` and `org_eval_runs`;
+- `org_delegations`;
+- `org_value_events`, unique on (goalId, kind, sampleId);
+- `org_tasks.dependsOn | dueAt`;
+- `org_goals.valuePerUnit | valueOnAchieve | valueNote`;
+- `org_approvals.recommendedAction | alternatives | reversibility |
+  confidence | deadline | defaultAction | decidedVia`.
+
+All are mirrored in `schema.ts`, and every new table carries `accountId`.
+
+**C8, the boundary** (`docs/boundary.md`).
+
+- `server/src/org/boundary.ts` holds the table, `ruleFor` and the pure
+  `checkBoundary`.
+- `server/src/org/org-boundary.service.ts` (`OrgBoundaryService`):
+  - binds the decision into `OrgService.gate` / `boundaryDecide`;
+  - on a never-attempt: a `boundary_violation` audit row, a critical
+    `audit_finding` signal and a minor `boundary_violation` incident;
+  - `experiment` routes to item 30 when `OrgExperimentsService` is present
+    (the refusal names `org_propose_experiment`); without it, an approval
+    card;
+  - `onCheck` / `recent` record every decision.
+- The fence (`OrgService.gate`) is called from:
+  - in `OrgService`: `setTunable`, `setRouting`, `setScopes`, `setBudget`,
+    `acceptCharter`, `update` (audit settings, the fan-out cap, the company
+    envelope), `setStatus`, `updateMember`, `terminateMember`;
+  - `applyHire`, `setCadence` and playbook `activate`;
+  - eval cases and delegations;
+  - `TrustService.setCeilings`, through the bridge's `boundary` hook;
+  - item 30's tunable experiments.
+- The route: `org_tune`, `org_hire_agent`, `org_set_scope`,
+  `org_terminate_agent`, `org_reorg`, `org_allocate_budget` and
+  `org_set_routing` ask first. A `card` outcome becomes an approval with
+  `boundary` on its payload, in every mode. In autonomous mode, raising the
+  company envelope is now such a card where it used to be an error.
+
+**C6, evals** (`docs/evals.md`).
+
+- `server/src/org/org-evals.service.ts`:
+  - harvest on `OrgTasksService.onAccepted`;
+  - `addCase` / `retireCase`;
+  - `run`: record-only replays through `TurnLoopService.setSandbox`, the
+    candidate in an aux-run context or on the session model, a baseline
+    cached per version hash, `reserve`/`settle` of the run cap;
+  - file checks graded against recorded `fs_write` calls, the rest by
+    `OrgRuntimeService.judge` (extracted from `independentTaskCheck`);
+  - gates: `OrgApprovalsService.onBeforeApply('charter_change' |
+    'routing')`, `OrgRuntimeService.setRolloutGate`,
+    `OrgPlaybooksService.setActivationGate`.
+
+**C4, capacity.**
+
+- `server/src/org/org-capacity.service.ts`:
+  - expected duration (median runs and hours per member × class, else per
+    class), shown on the board API as `expected`;
+  - the overview, and the planning-prompt block;
+  - `sweepDue`: `task_overdue` to the owner, then `task_overdue_lead`.
+- `OrgTasksService`:
+  - the `waiting` status;
+  - `resolveDeps` with cycle detection (`wouldCycle`);
+  - `releaseDependants`, which wakes with the new `OrgWakeReason`
+    `dependency`;
+  - `checkWip` (the chief's override is audited as `wip_override`);
+  - `claimBlocker`, so the runtime returns `skipped:waiting` or
+    `skipped:wip`;
+  - `annotate` (`waitingOn`, `expected`).
+- The heartbeat ranks overdue, then due-soon work first (`urgencyOf`).
+
+**C12, the owner's seat** (`docs/owners-seat.md`).
+
+- `server/src/org/decision-cards.ts`.
+- `OrgApprovalsService`:
+  - `cardFields` on `create`, `fillCard`;
+  - `onCreated`, `onBeforeApply`, `attach`;
+  - `delegateVia`;
+  - `decide(…, {via})` with a `delegated_decision` audit row.
+- `server/src/org/org-seat.service.ts`:
+  - `applyDefaults` on the minute tick;
+  - delegations and their matching (`delegationCovers`, `cardDelegable`);
+  - an agent-role decision through `judge`;
+  - `setGoalValue`, `syncValue`, `outcomes`;
+  - `sweepNoOutcome` and the chief's shrink note.
+- `OrgBriefService`. Section positions are `outcomes`, `first`,
+  `decisions`, `improve` and `end`. The order is Outcomes, then exceptions,
+  then decisions and *Decided for you*, then item 30's improve section, then
+  `# Activity` (Spend, Work, Autonomous actions, Pulse).
+
+**Runtime seams.** `OrgRuntimeService.addTicker`, `addPlanningNotes` and
+`setRolloutGate`.
+
+**Tunables** (`server/src/org/governance-tunables.ts`; areas `boundary`,
+`evals`, `capacity`, `seat`):
+
+- `boundary.experimentFallbackCard`;
+- `evals.casesPerRole | casesPerRun | runUsdCap | regressionMargin |
+  baselineCacheDays | harvestReviewMaxRounds | gate`;
+- `capacity.wipPerMember` 3 [1–20] `| historyDays | dueSoonHours |
+  overdueEscalateHours`;
+- `seat.deadlineHours | noOutcomeWeeks | defaultConfidence |
+  defaultApprove.<kind>` (reversible internal kinds only).
+
+**Routes** (`server/src/org/governance.controller.ts`, on
+`/api/workspaces/:id/org/…`):
+
+- `GET boundary`;
+- `GET|POST evals/cases`, `DELETE evals/cases/:caseId`, `POST evals/run`,
+  `GET evals/runs?roleKey=`;
+- `GET capacity`;
+- `GET|POST delegations`, `DELETE delegations/:delegationId`;
+- `GET outcomes`, `GET value-events?since=`;
+- `PUT goals/:goalId/value`.
+
+The decide route accepts a covered delegate, and the board route adds
+`waitingOn` and `expected`.
+
+**Tools** (`server/src/org/org-governance.tools.ts`, a `ToolProviderHook`,
+so they behave the same in every session kind):
+
+- `org_capacity`;
+- `org_eval_cases`;
+- `org_eval_role`;
+- `org_create_task` gains `dependsOn`, `dueAt` and `override`;
+- `org_assign` gains `override`;
+- the card tools gain `recommend`, `alternatives` and `confidence`.
+
+**Docs:** `docs/boundary.md`, `docs/evals.md`, `docs/owners-seat.md`,
+`docs/company-vision.md` §8, `docs/autonomous-org-first-principles.md` §4
+and §7, `docs/security.md` §b and §k.
+
+**Tests:**
+
+- `tests/backend-org-boundary.test.ts` (8);
+- `tests/backend-org-evals.test.ts` (8);
+- `tests/backend-org-capacity.test.ts` (6);
+- `tests/backend-org-seat.test.ts` (8);
+- the shared harness `tests/org-governance-harness.ts`.
+
+`tests/backend-org-mode.test.ts` changes one assertion: raising the company
+envelope is now a card, not an error.
+
+**Departures.**
+
+- "A copy of the member" is the member's own agent in a throwaway sandboxed
+  session, with the candidate charter in the run context. No temporary
+  agent is created.
+- "A strong reviewer verdict" is acceptance within
+  `evals.harvestReviewMaxRounds` rounds (default: the first).
+- Metric, HTTP and connection checks of a case are graded by the rubric
+  grader.
+- Retitling a member is a reorg within its unit. The `role` row has no
+  agent path yet.
+- An over-envelope agent or project allocation is still refused by the cap.
+- An agent role decides a delegated card once, when the card is created.
+- Charter acceptance by an agent actor is refused at the fence
+  (experiment). Charter changes reach agents only through approved cards.
+- WIP binds agent actors only. The CEO may assign past it.
+- A dependency counts as met only when it is `done`; a cancelled one keeps
+  its dependants waiting until the chief edits them.
+- Activity sections are grouped under one `# Activity` heading rather than
+  removed.
 
 ### 32. SPA for items 27–31 *(planned)*

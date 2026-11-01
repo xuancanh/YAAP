@@ -239,6 +239,18 @@ The CEO should spend ten minutes a day and feel in control.
   budget" and get a plan that is not executed.
 - **Replay.** Any day can be replayed from the audit chain: what woke,
   what was decided, what it cost.
+- **Exceptions, not approvals** (item 31, `docs/owners-seat.md`). Every
+  card says what the proposer recommends, the alternatives, how reversible
+  it is, how confident they are, and what happens at its deadline if the
+  CEO says nothing. Silence approves only reversible internal changes, and
+  only where the CEO allowed it. Kinds of cards can be delegated to a
+  person or an agent role (for example "money under $20: the controller").
+  The brief opens with outcomes measured in the world and the value they
+  realised against spend. A unit that moves nothing for weeks is told to
+  shrink, through an experiment or a proposal. What the company may change
+  about itself is one table (`docs/boundary.md`), and every change that
+  rolls out to how a member works is first replayed against that role's
+  golden set (`docs/evals.md`).
 
 ## 9. Companies as products
 

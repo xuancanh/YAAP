@@ -147,7 +147,22 @@ be **measured** rather than reported (`docs/sensing.md`): a metric source
 attestation) feeds a time series with provenance, a bound key result takes
 its value only from it, agents may propose a source but only you activate
 one, and a task's `done_when` can carry model-free **checks** that accept it
-without a reviewer when they pass. The Workspace
+without a reviewer when they pass. What the company may change about itself
+is one table (`docs/boundary.md`): tunables, cadences, routing and structure
+within a unit it changes alone; charters and cross-unit structure only
+through an experiment; the constitution, caps, the external floor and the
+company envelope only as a proposal to you; the auditor's settings and the
+kill switch never — an attempt is a finding and an incident. A charter,
+playbook or routing change is first replayed against the role's **golden
+set** of past accepted work in a record-only sandbox, and a regression
+blocks it (`docs/evals.md`). Members have WIP limits, tasks have
+dependencies and deadlines, and the heartbeat works overdue items first.
+Every decision card says what is recommended, the alternatives, how
+reversible it is and what happens at its deadline if you say nothing (only
+reversible internal changes you allowed default to yes); kinds of cards can
+be delegated to a person or a role such as a controller; the brief opens
+with measured outcomes and the value they realised against spend, and a unit
+that moves nothing is told to shrink (`docs/owners-seat.md`). The Workspace
 rail shows the company and each unit (channel, board, goals), then the org
 chart, approvals, spend, brief and audit;
 Settings → Workspace → Organization holds the mode, chief, envelope, cap and

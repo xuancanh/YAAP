@@ -138,7 +138,7 @@ tool", "the file exists and matches a schema", "the ticket is closed with
 a reply". Model review stays for what cannot be checked, and the board
 shows which tasks were verified by check and which by opinion.
 
-**C4. Coordination with capacity.** *Have, mostly.*
+**C4. Coordination with capacity.** *Have* (item 31: WIP limits, expected duration, dependencies, deadlines — `docs/owners-seat.md`, `org-capacity.service.ts`); was Have, mostly.
 Units, boards, claims, handoffs, channels, meetings with minutes and the
 gated heartbeat cover it. Missing: a **capacity model** (WIP limits per
 member, expected task duration from history), **dependencies as a
@@ -158,7 +158,7 @@ window recorded. At the end the system keeps it, reverts it or extends it,
 and writes the result to the decision log. This is the improve loop. Without
 it, "self-improving" means "self-changing".
 
-**C6. Evals per role, and gated rollout.** *Missing.*
+**C6. Evals per role, and gated rollout.** *Have* (item 31, `docs/evals.md`); was Missing.
 Needed: each role or charter keeps a small **golden set** of past tasks
 with known-good outcomes, harvested automatically from accepted work.
 A charter, playbook or model change is replayed against the set before
@@ -172,7 +172,7 @@ and scored against outcomes. Calibration is the cheapest honest signal
 of judgment quality. It feeds trust (C10) and tells the chief whose
 estimates to discount.
 
-**C8. Structural self-modification with a boundary.** *Partial.*
+**C8. Structural self-modification with a boundary.** *Have* (item 31, `docs/boundary.md`); was Partial.
 The chief hires, reorganizes, tunes cadences and thresholds, and routes
 models, all within caps, and plans now pass a veto window. Missing is
 an explicit **self-modification boundary**, written as data:
@@ -243,7 +243,7 @@ only the actions that need it, and the brief says what is degraded.
 
 ### Govern
 
-**C12. The owner's seat: exceptions, not approvals.** *Partial.*
+**C12. The owner's seat: exceptions, not approvals.** *Have* (item 31, `docs/owners-seat.md`); was Partial.
 The brief, decision cards, vision page, pulse, ask-the-company, plan
 preview and replay exist or are landing. What the first principles add:
 - each decision card carries a **recommendation, the alternatives,
@@ -319,15 +319,15 @@ one page and one spot-check. It rises again only after an incident.
 | C1 Sensing | Have — shipped (item 27, `docs/sensing.md`) | connections, loops, triggers (item 6), key results (item 18) |
 | C2 Effectors with action contract | Have (item 28) | action classes, idempotency keys, staging (mail drafts), outbound rate limits, two-key execution with a different-family co-signer — `docs/actions-and-trust.md`; calendar staging declared, not built |
 | C3 Executable acceptance | Have — shipped (item 27, `docs/sensing.md`) | four-field brief, cross-family review (item 15) |
-| C4 Coordination with capacity | Have, mostly | units, boards, meetings, heartbeat (items 15–21) |
+| C4 Coordination with capacity | Have (item 31) | units, boards, meetings, heartbeat (items 15–21); WIP limits with the chief's audited override, expected duration per class from history, dependencies as a graph (`waiting`, cycles refused, wake on completion), deadlines ranking the heartbeat and overdue signals |
 | C5 Experiments | Have (item 30, `docs/experiments.md`) | decision log, retros (items 19, 22), sensing (item 27), plans (item 23) |
-| C6 Evals and gated rollout | Missing | dry-run planning (item 23), accepted tasks |
+| C6 Evals and gated rollout | Have (item 31, `docs/evals.md`) | golden sets harvested from work accepted by check or first-round review; sandboxed (record-only) replays against a cached baseline; charter changes, new playbook versions and routing changes blocked on regression |
 | C7 Prediction ledger | Have (item 30, `docs/experiments.md`) | check-ins (item 18), sensing (item 27), trust ledger (item 28) |
-| C8 Self-modification boundary | Partial | caps, tunables, plan preview (items 16, 18, 23) |
+| C8 Self-modification boundary | Have (item 31, `docs/boundary.md`) | one table (alone · experiment · propose · never) consulted by every self-change path; a never-attempt is a critical finding and a minor incident; experiment-only changes route to item 30's `org_propose_experiment` |
 | C9 Independent verification | Have — spot checks, rotation, red team (item 29); reconciliation of claimed versus measured and ground truth in the auditor's sample (item 30) | signals, SLOs, auditor, audit chain (item 20), sensing (item 27) |
 | C10 Trust ledger | Have (item 28) | levels 0–3 per agent × class under owner ceilings, promotion on clean streaks, demotion on incidents (item 29's bus), reverts and rejection streaks; supervised/autonomous is now a ceiling preset; promotion also needs calibration ≥ `trust.calibrationBar` once C7 has scored the member (item 30) |
 | C11 Incidents | Have (item 29) | breakers, signals, retros (items 15, 20, 22) |
-| C12 Owner's seat | Partial | brief, cards, vision, pulse, ask, replay (items 18–24) |
+| C12 Owner's seat | Have (item 31, `docs/owners-seat.md`) | decision cards with recommendation, alternatives, reversibility, confidence, deadline and a default action (never approve-by-default for irreversible or money); delegated approvals to a person or an agent role; value events from measured key results; the brief opens with Outcomes; outcome-or-shrink signals |
 
 The honest reading: yaam-chat has built the **body** of an organization
 (structure, work, conversation, memory, money, rituals) and the first
