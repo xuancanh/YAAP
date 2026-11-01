@@ -20,6 +20,7 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { orgAudit } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
+import { currentAccountId } from '../accounts/account-context';
 
 export type OrgAuditRow = typeof orgAudit.$inferSelect;
 
@@ -59,7 +60,7 @@ export class OrgAuditService {
     let payload = JSON.stringify(entry.payload ?? {});
     if (payload.length > PAYLOAD_CAP) payload = JSON.stringify({ truncated: true, head: payload.slice(0, PAYLOAD_CAP - 40) });
     const base = {
-      id: newId(), accountId: 'single', orgId,
+      id: newId(), accountId: currentAccountId(), orgId,
       seq: (tail?.seq ?? 0) + 1,
       actor: entry.actor.slice(0, 80),
       action: entry.action.slice(0, 80),

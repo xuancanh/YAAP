@@ -628,6 +628,24 @@ export type TurnEvent =
   | { type: 'done' }
   | { type: 'error'; message: string };
 
+// ---- accounts (docs/accounts.md) ----
+export type AuthMode = 'single' | 'accounts';
+export type Plan = 'free' | 'hosted' | 'byo';
+export interface PlanLimits { maxAgents: number; maxLoops: number; hostedKeys: boolean; hostedUsd: number }
+export interface AccountUsageMonth { month: string; tokensIn: number; tokensOut: number; usd: number; hostedUsd: number; turns: number }
+export interface AccountSummary {
+  mode: AuthMode; id: string; email: string; name: string; plan: Plan; status: string; isAdmin: boolean;
+  limits: PlanLimits; usage: AccountUsageMonth; platformProviders: string[];
+  billing: { provider: string; manageUrl: string | null };
+}
+export interface AccountDetail extends AccountSummary {
+  keys: Array<{ provider: string; hasKey: boolean; types: number }>;
+}
+export type AuthMe =
+  | { mode: 'single'; authenticated: true; account: AccountSummary }
+  | { mode: 'accounts'; authenticated: true; account: AccountSummary }
+  | { mode: 'accounts'; authenticated: false };
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
   return res.json() as Promise<T>;
@@ -657,6 +675,16 @@ const enc = encodeURIComponent;
 
 export const api = {
   status: () => get<{ ok: boolean }>('/api/status'),
+
+  // accounts (docs/accounts.md): the session is an HttpOnly cookie, so these
+  // carry no token — the browser does.
+  authMe: () => get<AuthMe>('/api/auth/me'),
+  requestLink: (email: string) => send<{ ok: true; sent: boolean }>('/api/auth/request-link', 'POST', { email }),
+  logout: () => send<{ ok: true }>('/api/auth/logout', 'POST', {}),
+  account: () => get<AccountDetail>('/api/account'),
+  setAccountKey: (provider: string, apiKey: string) => send<AccountDetail>('/api/account/keys', 'PUT', { provider, apiKey }),
+  adminAccounts: () => get<Array<AccountSummary & { usage: AccountUsageMonth }>>('/api/admin/accounts'),
+  adminPatchAccount: (id: string, patch: { plan?: Plan; status?: 'active' | 'disabled' }) => send<AccountSummary>(`/api/admin/accounts/${enc(id)}`, 'PATCH', patch),
 
   // workspaces + workspace files
   workspaces: () => get<Workspace[]>('/api/workspaces'),

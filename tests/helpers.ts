@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/pglite';
 import * as schema from '../server/src/database/schema';
 import { runPgMigrations, Queryable } from '../server/src/database/migrator';
 import type { DrizzleDb } from '../server/src/database/database.module';
+import { scopeDb } from '../server/src/accounts/scoped-db';
 import type { StorageService } from '../server/src/storage/storage.service';
 import type { TurnContextService, TurnContext } from '../server/src/chats/turn-context.service';
 import type { SkillsService } from '../server/src/skills/skills.service';
@@ -24,10 +25,13 @@ export function pgliteQueryable(pg: PGlite): Queryable {
   };
 }
 
+/** The same account-scoped handle production injects (accounts/scoped-db.ts).
+ *  With no account bound — every existing test — queries resolve to the
+ *  single account, exactly as AUTH_MODE=single does. */
 export async function testDb(): Promise<DrizzleDb> {
   const pg = new PGlite();
   await runPgMigrations(pgliteQueryable(pg), { log: () => {} });
-  return drizzle(pg, { schema }) as unknown as DrizzleDb;
+  return scopeDb(drizzle(pg, { schema }) as unknown as DrizzleDb);
 }
 
 /** In-memory stand-in for the S3 StorageService (structural match). */

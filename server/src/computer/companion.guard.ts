@@ -11,6 +11,7 @@ import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import type { Request } from 'express';
 import { ComputerService } from './computer.service';
 import type { computerRunners } from '../database/schema';
+import { bindAccount } from '../accounts/account-context';
 
 export interface CompanionRequest extends Request {
   companion: typeof computerRunners.$inferSelect;
@@ -23,6 +24,9 @@ export class CompanionGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<CompanionRequest>();
     req.companion = await this.computer.authenticateCompanion(req.headers.authorization);
+    // The paired runner belongs to an account; the rest of the request (work
+    // queue, results, heartbeat) runs as that account (docs/accounts.md §3).
+    bindAccount(req.companion.accountId);
     return true;
   }
 }

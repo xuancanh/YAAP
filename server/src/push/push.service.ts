@@ -15,7 +15,7 @@
  *    node:crypto, no dependency). Push is off without VAPID keys; the UI
  *    toggle then explains how to generate them.
  */
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { eq, inArray } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
@@ -23,6 +23,7 @@ import type { DrizzleDb } from '../database/database.module';
 import { pushSubscriptions } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { AgentsService } from '../agents/agents.service';
+import { AccountsService } from '../accounts/accounts.service';
 import { isValidVapidPublicKey, sendWebPush } from './web-push';
 
 export interface SubscribeInput {
@@ -45,6 +46,8 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
     private readonly config: ConfigService,
     private readonly agents: AgentsService,
+    /** Optional: without it the sweep runs for the current (single) account. */
+    @Optional() private readonly accounts?: AccountsService,
   ) {}
 
   private get vapid() {
@@ -107,6 +110,19 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
     if (!this.enabled || this.sweeping) return 0;
     this.sweeping = true;
     try {
+      if (!this.accounts) return await this.sweepAccount(now);
+      // Once per active account, each under its own context: subscriptions
+      // and events are that tenant's alone (docs/accounts.md §3).
+      let delivered = 0;
+      await this.accounts.forEachAccount(async () => { delivered += await this.sweepAccount(now); });
+      return delivered;
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
+  private async sweepAccount(now: Date): Promise<number> {
+    {
       const subs = await this.list();
       if (subs.length === 0) return 0;
       const events = (await this.agents.undeliveredEvents(now, 'push')).slice(0, 20);
@@ -142,8 +158,6 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
       if (dead.size > 0) await this.db.delete(pushSubscriptions).where(inArray(pushSubscriptions.id, [...dead]));
       await this.agents.markEventsDelivered(delivered, now, 'push');
       return delivered.length;
-    } finally {
-      this.sweeping = false;
     }
   }
 }

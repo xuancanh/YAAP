@@ -8,6 +8,8 @@ import { Injectable, Inject, NotFoundException, BadRequestException, Optional } 
 import { randomBytes } from 'node:crypto';
 import { and, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
+import { AccountsService } from '../accounts/accounts.service';
+import { unscoped } from '../accounts/scoped-db';
 import type { DrizzleDb } from '../database/database.module';
 import { agents, agentEvents, agentTasks, chatSessions, chatTurns } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
@@ -86,6 +88,17 @@ export function emailSlugify(name: string): string {
 export type DeliveryChannel = 'telegram' | 'email' | 'push';
 const DELIVERY_COLUMNS = { telegram: 'deliveredAt', email: 'emailDeliveredAt', push: 'pushDeliveredAt' } as const;
 
+/** Enabled loops across a set of agents (plan cap, docs/accounts.md §4). */
+function enabledLoopCount(rows: Array<{ loops: string }>): number {
+  let n = 0;
+  for (const r of rows) {
+    try {
+      for (const l of JSON.parse(r.loops) as Array<{ enabled?: boolean }>) if (l?.enabled !== false) n++;
+    } catch { /* unparseable loops count as none */ }
+  }
+  return n;
+}
+
 @Injectable()
 export class AgentsService {
   constructor(
@@ -94,6 +107,9 @@ export class AgentsService {
     /** Optional so test constructors without a bus keep working; when
      *  present, every addTask announces itself (the `task` trigger). */
     @Optional() private readonly bus?: TriggerBus,
+    /** Optional likewise; when present, plan caps (agents, enabled loops)
+     *  are enforced on every write (docs/accounts.md §4). */
+    @Optional() private readonly accounts?: AccountsService,
   ) {}
 
   list() {
@@ -107,6 +123,11 @@ export class AgentsService {
   }
 
   async create(input: { name: string; charter?: string; provider?: string; model?: string; homeDir?: string; emoji?: string; colors?: [string, string]; role?: string; loops?: unknown[] }) {
+    if (this.accounts) {
+      const existing = await this.list();
+      await this.accounts.assertCanCreateAgent(existing.length);
+      await this.accounts.assertLoopCap(enabledLoopCount(existing) + enabledLoopCount([{ loops: JSON.stringify(input.loops ?? []) }]));
+    }
     const id = newId();
     const row = {
       id,
@@ -136,7 +157,9 @@ export class AgentsService {
    *  runs of anything else, '-2', '-3', … on collision. Never empty. */
   async uniqueEmailSlug(name: string): Promise<string> {
     const base = emailSlugify(name);
-    const taken = new Set((await this.db.select({ emailSlug: agents.emailSlug }).from(agents)).map((r) => r.emailSlug));
+    // Unscoped on purpose: the address is global, so the slug must be unique
+    // across every account, not just this one.
+    const taken = new Set((await unscoped(this.db).select({ emailSlug: agents.emailSlug }).from(agents)).map((r) => r.emailSlug));
     if (!taken.has(base)) return base;
     for (let n = 2; ; n++) {
       const candidate = `${base}-${n}`;
@@ -156,8 +179,10 @@ export class AgentsService {
     return rows;
   }
 
+  /** Unscoped on purpose: inbound mail arrives before any account is known;
+   *  the caller runs the rest under `row.accountId`. */
   async findByEmailSlug(slug: string) {
-    const rows = await this.db.select().from(agents).where(eq(agents.emailSlug, slug)).limit(1);
+    const rows = await unscoped(this.db).select().from(agents).where(eq(agents.emailSlug, slug)).limit(1);
     return rows.at(0) ?? null;
   }
 
@@ -176,7 +201,13 @@ export class AgentsService {
 
   async update(id: string, patch: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string }>) {
     await this.get(id);
-    if (patch.loops !== undefined) patch.loops = validateLoopsJson(patch.loops);
+    if (patch.loops !== undefined) {
+      patch.loops = validateLoopsJson(patch.loops);
+      if (this.accounts) {
+        const others = (await this.list()).filter((a) => a.id !== id);
+        await this.accounts.assertLoopCap(enabledLoopCount(others) + enabledLoopCount([{ loops: patch.loops }]));
+      }
+    }
     if (patch.workspaceFolder !== undefined) {
       const folder = patch.workspaceFolder.trim().replace(/^\/+|\/+$/g, '');
       // reuse the storage-key validation as the safety boundary

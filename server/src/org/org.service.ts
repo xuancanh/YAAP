@@ -16,6 +16,7 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
+import { currentAccountId } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
 import { OrgAuditService } from './org-audit.service';
 import { isNarrowing, parseScopes, scopeKind, widenedScopes } from './scopes';
@@ -85,7 +86,7 @@ export class OrgService {
     if (!chiefId) throw new BadRequestException('an organization needs a chief of staff: pass chiefOfStaffAgentId or chief');
     await this.agents.get(chiefId);
     const row: Organization = {
-      id: newId(), accountId: 'single', workspaceId: input.workspaceId, name,
+      id: newId(), accountId: currentAccountId(), workspaceId: input.workspaceId, name,
       mission: (input.mission ?? '').slice(0, 4_000), ceoUserNote: (input.ceoUserNote ?? '').slice(0, 4_000),
       chiefOfStaffAgentId: chiefId, status: 'active',
       monthlyBudgetUsd: Math.max(0, input.monthlyBudgetUsd ?? 0),
@@ -184,7 +185,7 @@ export class OrgService {
     }
     const scopes = parseScopes(input.scopes ?? []);
     const row: OrgMember = {
-      id: newId(), accountId: 'single', orgId, agentId: input.agentId,
+      id: newId(), accountId: currentAccountId(), orgId, agentId: input.agentId,
       title: (input.title ?? agent.role ?? '').slice(0, 80),
       reportsToAgentId: input.reportsToAgentId, depth, sponsor: 'user',
       scopes: JSON.stringify(scopes), status: 'active',
@@ -313,7 +314,7 @@ export class OrgService {
     await this.db.delete(orgGrants).where(and(eq(orgGrants.orgId, orgId), eq(orgGrants.agentId, agentId)));
     if (scopes.length === 0) return;
     await this.db.insert(orgGrants).values(scopes.map((value) => ({
-      id: newId(), accountId: 'single', orgId, agentId, kind: scopeKind(value), value, grantedBy, createdAt: nowIso(),
+      id: newId(), accountId: currentAccountId(), orgId, agentId, kind: scopeKind(value), value, grantedBy, createdAt: nowIso(),
     })));
   }
 
@@ -366,7 +367,7 @@ export class OrgService {
     await this.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 200);
     if (!title) throw new BadRequestException('goal title is required');
-    const row: OrgGoal = { id: newId(), accountId: 'single', orgId, title, description: (input.description ?? '').slice(0, 4_000), status: input.status ?? 'active', ownerAgentId: input.ownerAgentId ?? null, createdAt: nowIso() };
+    const row: OrgGoal = { id: newId(), accountId: currentAccountId(), orgId, title, description: (input.description ?? '').slice(0, 4_000), status: input.status ?? 'active', ownerAgentId: input.ownerAgentId ?? null, createdAt: nowIso() };
     await this.db.insert(orgGoals).values(row);
     await this.audit.append(orgId, { actor, action: 'goal_create', refType: 'goal', refId: row.id, payload: { title } });
     return row;
@@ -402,7 +403,7 @@ export class OrgService {
     const title = (input.title ?? '').trim().slice(0, 200);
     if (!title) throw new BadRequestException('project title is required');
     if (input.goalId) await this.goal(orgId, input.goalId);
-    const row: OrgProject = { id: newId(), accountId: 'single', orgId, goalId: input.goalId ?? null, title, status: 'active', ownerAgentId: input.ownerAgentId ?? null, createdAt: nowIso() };
+    const row: OrgProject = { id: newId(), accountId: currentAccountId(), orgId, goalId: input.goalId ?? null, title, status: 'active', ownerAgentId: input.ownerAgentId ?? null, createdAt: nowIso() };
     await this.db.insert(orgProjects).values(row);
     await this.audit.append(orgId, { actor, action: 'project_create', refType: 'project', refId: row.id, payload: { title, goalId: row.goalId } });
     return row;
@@ -437,7 +438,7 @@ export class OrgService {
     if (existing) {
       await this.db.update(orgBudgets).set({ monthlyUsd }).where(eq(orgBudgets.id, existing.id));
     } else {
-      await this.db.insert(orgBudgets).values({ id: newId(), accountId: 'single', orgId, scope: input.scope, refId: input.refId, monthlyUsd, reservedUsd: 0, spentUsd: 0, month: nowIso().slice(0, 7), warnedAt: null });
+      await this.db.insert(orgBudgets).values({ id: newId(), accountId: currentAccountId(), orgId, scope: input.scope, refId: input.refId, monthlyUsd, reservedUsd: 0, spentUsd: 0, month: nowIso().slice(0, 7), warnedAt: null });
     }
     if (input.scope === 'company') await this.db.update(organizations).set({ monthlyBudgetUsd: monthlyUsd }).where(eq(organizations.id, orgId));
     await this.audit.append(orgId, { actor: input.actor ?? 'user', action: 'budget_set', refType: input.scope, refId: input.refId, payload: { monthlyUsd } });

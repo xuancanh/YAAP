@@ -9,9 +9,10 @@
  * API keys resolved here live only for the request; they are never persisted
  * into turns or transcripts (FR-13.3).
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AiProvider } from '../ai/ai-provider.interface';
+import { AccountsService } from '../accounts/accounts.service';
 import { AiProviderFactory } from '../ai/providers.factory';
 import { AgentTypesService } from '../agent-types/agent-types.service';
 import { AgentsService } from '../agents/agents.service';
@@ -26,6 +27,9 @@ export interface TurnContext {
   baseUrl?: string;
   system: string;
   maxToolRounds: number;
+  /** True when the turn spends a platform key (hosted plan): its dollars
+   *  count against the account's monthly ceiling (docs/accounts.md §4). */
+  hosted?: boolean;
 }
 
 @Injectable()
@@ -37,12 +41,26 @@ export class TurnContextService {
     private readonly memory: AgentMemoryService,
     private readonly workspaces: WorkspacesService,
     private readonly config: ConfigService,
+    /** Optional so test constructors keep working; without it the type's own
+     *  key is the only key, as before accounts existed. */
+    @Optional() private readonly accounts?: AccountsService,
   ) {}
+
+  /** Which key this session's turns run on: the agent type's own key, or —
+   *  on the hosted plan, under its ceiling — a platform key. Throws the plan's
+   *  402 otherwise. The turn loop calls this before taking the busy lock so
+   *  a refused turn writes nothing. */
+  async resolveKey(session: Pick<ChatSession, 'agentTypeId'>): Promise<{ apiKey?: string; hosted: boolean }> {
+    const type = session.agentTypeId ? await this.agentTypes.resolve(session.agentTypeId) : undefined;
+    if (!this.accounts) return { apiKey: type?.apiKey ?? undefined, hosted: false };
+    return this.accounts.resolveProviderKey(type?.provider ?? 'echo', type?.apiKey);
+  }
 
   async build(session: ChatSession): Promise<TurnContext> {
     const type = session.agentTypeId ? await this.agentTypes.resolve(session.agentTypeId) : undefined;
     const providerName = type?.provider ?? 'echo';
     const provider = this.providers.resolve(providerName);
+    const key = this.accounts ? await this.accounts.resolveProviderKey(providerName, type?.apiKey) : { apiKey: type?.apiKey ?? undefined, hosted: false };
 
     const parts: string[] = [];
     if (type?.persona) parts.push(type.persona);
@@ -96,10 +114,11 @@ export class TurnContextService {
     return {
       provider,
       model: session.model || type?.model || '',
-      apiKey: type?.apiKey ?? undefined,
+      apiKey: key.apiKey,
       baseUrl: type?.baseUrl ?? this.providers.defaultBaseUrl(providerName),
       system: parts.join('\n\n'),
       maxToolRounds: this.config.get<number>('maxToolRounds') ?? 24,
+      hosted: key.hosted,
     };
   }
 }

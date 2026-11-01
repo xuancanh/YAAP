@@ -156,12 +156,38 @@ instructions" frame, `trigger-bus.ts` (`AgentsService.addTask` →
 webhook secret, `docs/triggers.md`, and `tests/backend-triggers.test.ts` +
 `web-tests/triggers.test.ts`.
 
-### 7. Paid cloud with tenancy *(todo)*
+### 7. Paid cloud with tenancy *(done)*
 `accountId` on every table, a `SessionAuthStrategy` (email + magic link, or
 the suite's account service when configured), per-account plan
 (`free|hosted|byo`), usage in dollars with the Phase-1 price table, BYO
 provider keys per account, hard stop on plan ceilings. Single-user mode stays
 the default for self-hosting: `AUTH_MODE=single` keeps `SINGLE_USER`.
+Shipped as: `server/src/accounts/` — `account-context.ts` (AsyncLocalStorage
+current account, `accountScoped()` column spread, `withAccount()`,
+`runWithAccount()`, the request middleware), `scoped-db.ts` (the
+account-scoped Drizzle handle every repository already injects; `unscoped()`
+for the named cross-account lookups), `accounts.service.ts` (accounts,
+hashed one-use magic links with per-address/IP rate limits, 30-day cookie
+sessions, plan limits, `account_usage` monthly rollup in micro-USD,
+`resolveProviderKey` → own key / platform key / 402), `session-auth.strategy`
++ `suite-jwt.strategy` (experimental, HS256) bound by `AUTH_MODE` in
+`app.module.ts`, `auth.controller` (`/api/auth/request-link|callback|me|
+logout`), `account.controller` (`GET /api/account`, `PUT /api/account/keys`,
+`/api/admin/accounts`), `plans.ts`, `billing-provider.ts` (`manual`);
+migration `0023-accounts` + `ensureAccountColumns()` boot sweep (also fences
+tables other branches add); `accounts/account_sessions/account_login_tokens/
+account_usage` tables, `app_settings` keyed `(accountId, key)`, skills unique
+per account; plan caps in `AgentsService.create/update`, the pre-lock 402 in
+`TurnLoopService.run` via `TurnContextService.resolveKey`, usage headers on
+the turn stream; per-account sweeps in `LoopsService`, `TelegramService`,
+`EmailService`, `PushService`, account-resolving `HooksController` and inbound
+mail; BYO keys on the account's agent types (not a separate table — one
+sealing path); `src/auth.tsx` + `SignIn.tsx` + Settings → Account; config
+`AUTH_MODE`, `ACCOUNTS_DEFAULT_PLAN`, `ADMIN_EMAILS`, `AUTH_FROM_ADDRESS`,
+`HOSTED_PLAN_USD`, `PLATFORM_*_KEY`, `SUITE_ACCOUNTS_URL|SECRET`;
+`docs/accounts.md`; `tests/backend-accounts.test.ts` (13) and
+`web-tests/account.test.ts`. Not done: OAuth sign-in, per-account storage
+prefixes, RLS, mid-turn ceiling checks, cross-instance link rate limits.
 
 ### 8. Shared agents *(todo)*
 Workspace members with roles (`owner|member|viewer`), per-member connection

@@ -2,6 +2,8 @@
  *  main pane · artifact panel, with the stacked mobile variant. */
 import { Component, Suspense, lazy, useState, type ReactNode } from 'react';
 import { AppProvider, useApp } from './store';
+import { AuthProvider, useAuth } from './auth';
+import { SignIn } from './components/SignIn';
 import { ActivityBar, BottomNav, Toast } from './components/Shell';
 import { WorkspacePill, HomeRail, WorkspaceRail, MarketRail, SettingsRail, SecondaryHeader, CompanyRail } from './components/Rails';
 import { ChatView } from './components/ChatView';
@@ -101,12 +103,26 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-export default function App() {
+/** Nothing below mounts until /api/auth/me has answered: in accounts mode an
+ *  unauthenticated visitor sees the sign-in screen instead of a wall of 401s;
+ *  in single mode (or with the API down) the app renders exactly as before. */
+function AuthGate() {
+  const auth = useAuth();
+  if (auth.mode === null) return null;
+  if (auth.mode === 'accounts' && !auth.authenticated) return <SignIn />;
   return (
     <AppProvider>
       <ErrorBoundary>
         <Layout />
       </ErrorBoundary>
     </AppProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
   );
 }

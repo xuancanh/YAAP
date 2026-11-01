@@ -34,6 +34,7 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { agentTypes, orgBudgets } from '../database/schema';
 import { nowIso } from '../common/ids.util';
+import { AccountsService } from '../accounts/accounts.service';
 import { AgentsService } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { deliveryFor } from '../workspaces/quiet-hours';
@@ -105,6 +106,10 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     @Optional() private readonly review?: ActionReviewService,
     @Optional() private readonly context?: TurnContextService,
     @Optional() private readonly providers?: AiProviderFactory,
+    /** Optional: with it the minute tick runs once per active account under
+     *  its context (docs/accounts.md §3); wakes inherit the context of the
+     *  request or run that queued them. */
+    @Optional() private readonly accounts?: AccountsService,
   ) {
     bus?.onOrgWake((ev) => this.wake(ev));
     if (this.enabled()) this.turns.setOrgTools(this);
@@ -126,8 +131,14 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     this.pendingWakes.clear(); this.rewakes.clear();
   }
 
-  /** Minute tick: briefs at their hour, approval expiry, charter drift. */
+  /** Minute tick: briefs at their hour, approval expiry, charter drift —
+   *  once per active account, each under its own context. */
   async tick(now: Date): Promise<void> {
+    if (!this.accounts) return this.tickAccount(now);
+    await this.accounts.forEachAccount(() => this.tickAccount(now));
+  }
+
+  private async tickAccount(now: Date): Promise<void> {
     try {
       await this.brief.sweep(now);
       for (const org of await this.org.list()) {

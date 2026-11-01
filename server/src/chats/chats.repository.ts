@@ -9,6 +9,7 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { chatMessages, chatSessions, chatTurns, loopState } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
+import { currentAccountId } from '../accounts/account-context';
 
 export type ChatSession = typeof chatSessions.$inferSelect;
 export type LoopStateRow = typeof loopState.$inferSelect;
@@ -75,6 +76,7 @@ export class ChatsRepository {
   async createSession(input: Partial<ChatSession> & { workspaceId: string }): Promise<ChatSession> {
     const now = nowIso();
     const row: ChatSession = {
+      accountId: currentAccountId(),
       id: newId(),
       workspaceId: input.workspaceId,
       agentId: input.agentId ?? null,
@@ -190,6 +192,7 @@ export class ChatsRepository {
     return this.db.transaction(async (tx) => {
       const now = nowIso();
       const row: ChatSession = {
+        accountId: currentAccountId(),
         id: newId(),
         workspaceId: src.workspaceId,
         agentId: src.agentId,

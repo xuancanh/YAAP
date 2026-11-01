@@ -19,6 +19,7 @@ import { and, eq } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
+import { currentAccountId } from '../accounts/account-context';
 import { agents, connections, connectionGrants } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { seal, open } from '../common/secretbox';
@@ -218,6 +219,7 @@ export class ConnectionsService implements GoogleHttp {
     const prior = existing ? (JSON.parse(existing.scopes) as string[]) : [];
     const scopes = [...new Set([...prior, ...(returned.length ? returned : meta.tierScopes('read'))])];
     const row: ConnectionRow = {
+      accountId: currentAccountId(),
       id: existing?.id ?? newId(),
       provider,
       accountEmail: email,

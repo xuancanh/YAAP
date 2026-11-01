@@ -732,7 +732,111 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    id: '0023-accounts',
+    up: async (db) => {
+      // Tenancy (docs/accounts.md, execution-plan item 7). The account tables
+      // first, then every existing table gains "accountId" with the single
+      // account as its backfill value — ensureAccountColumns() below does the
+      // ALTERs, and keeps doing them on every boot for tables created later.
+      await db.query(`CREATE TABLE IF NOT EXISTS accounts (
+        "id" TEXT PRIMARY KEY,
+        "email" TEXT NOT NULL DEFAULT '',
+        "name" TEXT NOT NULL DEFAULT '',
+        "status" TEXT NOT NULL DEFAULT 'pending',
+        "plan" TEXT NOT NULL DEFAULT 'free',
+        "createdAt" TEXT NOT NULL,
+        "lastSeenAt" TEXT
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_email ON accounts ("email") WHERE "email" <> ''`);
+      await db.query(`CREATE TABLE IF NOT EXISTS account_sessions (
+        "id" TEXT PRIMARY KEY,
+        "accountId" TEXT NOT NULL,
+        "tokenHash" TEXT NOT NULL,
+        "expiresAt" TEXT NOT NULL,
+        "userAgent" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_account_sessions_token ON account_sessions ("tokenHash")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_account_sessions_account ON account_sessions ("accountId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS account_login_tokens (
+        "id" TEXT PRIMARY KEY,
+        "accountId" TEXT NOT NULL,
+        "email" TEXT NOT NULL,
+        "tokenHash" TEXT NOT NULL,
+        "expiresAt" TEXT NOT NULL,
+        "usedAt" TEXT,
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_account_login_tokens_token ON account_login_tokens ("tokenHash")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS account_usage (
+        "accountId" TEXT NOT NULL,
+        "month" TEXT NOT NULL,
+        "tokensIn" INTEGER NOT NULL DEFAULT 0,
+        "tokensOut" INTEGER NOT NULL DEFAULT 0,
+        "usdMicros" INTEGER NOT NULL DEFAULT 0,
+        "hostedUsdMicros" INTEGER NOT NULL DEFAULT 0,
+        "turns" INTEGER NOT NULL DEFAULT 0,
+        "updatedAt" TEXT NOT NULL,
+        PRIMARY KEY ("accountId", "month")
+      )`);
+      // The single account: owner of every row that exists today, and the
+      // only account AUTH_MODE=single ever uses. BYO plan, no ceilings — a
+      // self-hosted install is its own platform.
+      await db.query(
+        `INSERT INTO accounts ("id", "email", "name", "status", "plan", "createdAt") VALUES ($1, '', 'Single user', 'active', 'byo', $2) ON CONFLICT ("id") DO NOTHING`,
+        [SINGLE_ACCOUNT_ID, new Date().toISOString()],
+      );
+      await ensureAccountColumns(db);
+      // app_settings was keyed by "key" alone; settings are per account now.
+      const pk = await db.query(
+        `SELECT 1 FROM information_schema.key_column_usage WHERE table_name = 'app_settings' AND column_name = 'accountId' AND constraint_name = 'app_settings_pkey'`,
+      );
+      if (pk.rows.length === 0) {
+        await db.query('ALTER TABLE app_settings DROP CONSTRAINT IF EXISTS app_settings_pkey');
+        await db.query('ALTER TABLE app_settings ADD PRIMARY KEY ("accountId", "key")');
+      }
+      // Skill names are unique per account scope, not globally: every
+      // account seeds its own built-ins.
+      await db.query('DROP INDEX IF EXISTS idx_skills_scope_agent_name');
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_account_scope_agent_name ON skills ("accountId", COALESCE("workspaceId", ''), COALESCE("agentId", ''), "name")`);
+    },
+  },
 ];
+
+/** Mirrors accounts/account-context.ts SINGLE_ACCOUNT; spelled out here so
+ *  the migrator stays dependency-free. */
+const SINGLE_ACCOUNT_ID = 'single';
+
+/** Tables that are the account boundary itself rather than inside it. Keep in
+ *  step with accounts/scoped-db.ts UNSCOPED_TABLES (minus the ones that
+ *  carry accountId as a plain column anyway). */
+const TABLES_WITHOUT_ACCOUNT_COLUMN = new Set(['__migrations', 'accounts']);
+
+/**
+ * Every application table carries "accountId" (docs/accounts.md §3). This
+ * walks the live schema and adds the column + index wherever they are
+ * missing, backfilling existing rows to the single account via the DEFAULT.
+ * Idempotent and run on every boot after the tracked migrations, so a table
+ * created by a later migration on another branch is fenced without anyone
+ * remembering to write the ALTER — they only add `...accountScoped()` to its
+ * schema.ts definition (the reflection test insists on that half).
+ */
+export async function ensureAccountColumns(db: Queryable): Promise<string[]> {
+  const res = await db.query(
+    `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`,
+  );
+  const added: string[] = [];
+  for (const { table_name: table } of res.rows as Array<{ table_name: string }>) {
+    if (TABLES_WITHOUT_ACCOUNT_COLUMN.has(table) || !/^[a-z_][a-z0-9_]*$/.test(table)) continue;
+    if (!(await hasColumn(db, table, 'accountId'))) {
+      await db.query(`ALTER TABLE "${table}" ADD COLUMN "accountId" TEXT NOT NULL DEFAULT '${SINGLE_ACCOUNT_ID}'`);
+      added.push(table);
+    }
+    await db.query(`CREATE INDEX IF NOT EXISTS "idx_${table}_account" ON "${table}" ("accountId")`);
+  }
+  return added;
+}
 
 /** Advisory-lock key serializing migration runs: two instances booting
  *  against the same database would otherwise both pass the hasColumn checks
@@ -755,6 +859,10 @@ export async function runPgMigrations(db: Queryable, logger: { log: (msg: string
       await db.query('INSERT INTO __migrations ("id", "appliedAt") VALUES ($1, $2)', [m.id, new Date().toISOString()]);
       logger.log(`applied migration ${m.id}`);
     }
+    // Account column sweep on every boot (not a tracked migration): tables
+    // created by migrations that landed after 0023 get fenced here.
+    const fenced = await ensureAccountColumns(db);
+    if (fenced.length > 0) logger.log(`added accountId to ${fenced.join(', ')}`);
     // Data repair on every boot (not a tracked migration): turns are created
     // 'running' and finalized in-process, so a crash mid-turn orphans them.
     // Reap them to 'error' so they stop rendering as live.

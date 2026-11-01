@@ -36,6 +36,7 @@ import { AgentsService, CUSTOM_TOOL_PREFIX } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { deliveryFor } from '../workspaces/quiet-hours';
 import { spendStatus } from '../workspaces/spend.util';
+import { AccountsService } from '../accounts/accounts.service';
 import { ConnectionsService } from '../connections/connections.service';
 import { ActionReviewService, ReviewRecord } from '../review/action-review.service';
 import { ComputerService } from '../computer/computer.service';
@@ -284,6 +285,9 @@ export class TurnLoopService implements OnModuleDestroy {
     @Optional() private readonly browser?: BrowserService,
     /** Optional so test constructors without computer control keep working. */
     @Optional() private readonly computer?: ComputerService,
+    /** Optional so test constructors without accounts keep working. With
+     *  it, every settled turn rolls into the account's month (docs/accounts.md §4). */
+    @Optional() private readonly accounts?: AccountsService,
   ) {}
 
   /** Graceful shutdown: abort every in-flight turn through the same path as
@@ -328,6 +332,12 @@ export class TurnLoopService implements OnModuleDestroy {
     const ws = await this.workspaces.get(session.workspaceId).catch(() => null);
     const spend = spendStatus(ws);
     if (spend.over && input.origin === 'loop') throw new ForbiddenException('workspace budget reached');
+    // The account's plan (docs/accounts.md §4): no key for the provider on a
+    // BYO plan, or the hosted ceiling spent, is a hard stop before the lock
+    // and before any row is written — a 402 with the reason, for every origin.
+    if (this.accounts && typeof (this.context as { resolveKey?: unknown }).resolveKey === 'function') {
+      await this.context.resolveKey(session);
+    }
     if (!this.locks.tryAcquire(sessionId)) throw new ConflictException('chat is busy');
     this.turnOrigins.set(sessionId, input.origin ?? 'user');
 
@@ -346,12 +356,18 @@ export class TurnLoopService implements OnModuleDestroy {
     let tokensIn = 0;
     let tokensOut = 0;
     let overheadChars = 0;
+    /** Which key paid for this turn and which model ran, for the account's
+     *  monthly rollup in `finally` (set once the context is built). */
+    let hosted = false;
+    let turnModel = session.model;
     const toolRecords: ToolRecord[] = [];
     /** Skills whose skill_* tool loaded this turn (execution-plan item 10):
      *  persisted on the turn so a later rating can reach them. */
     const skillsUsed: string[] = [];
     try {
       const ctx = await this.context.build(session);
+      hosted = ctx.hosted ?? false;
+      turnModel = ctx.model || turnModel;
       const history = await this.buildHistory(session.id, session.compactSummary, session.compactCutoff);
       // Attachments: inject workspace-file contents into the provider input —
       // text inline, images as vision parts (descriptors persist on the turn;
@@ -624,6 +640,8 @@ export class TurnLoopService implements OnModuleDestroy {
       // Every token the provider billed counts against the workspace month,
       // whether the turn ended well, stopped, or errored.
       if (ws && tokensIn + tokensOut > 0) await this.workspaces.addSpend(ws.id, tokensIn + tokensOut).catch(() => {});
+      // …and against the account's month, in dollars, for the plan ceiling.
+      if (this.accounts && tokensIn + tokensOut > 0) await this.accounts.recordUsage({ model: turnModel, tokensIn, tokensOut, hosted }).catch(() => {});
       this.turnOrigins.delete(sessionId);
       // The browser session is per turn: cookies, logins and the page itself
       // end here, whether the turn finished, stopped or errored.

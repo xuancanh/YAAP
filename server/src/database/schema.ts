@@ -20,9 +20,11 @@
  * structured fields are JSON strings — matching the reference app's column
  * conventions.
  */
-import { pgTable, text, integer, real } from 'drizzle-orm/pg-core';
+import { pgTable, text, integer, real, primaryKey } from 'drizzle-orm/pg-core';
+import { accountScoped } from '../accounts/account-context';
 
 export const workspaces = pgTable('workspaces', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   color: text('color').notNull().default('#F5C451'),
@@ -50,6 +52,7 @@ export const workspaces = pgTable('workspaces', {
 });
 
 export const agents = pgTable('agents', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   /** Avatar emoji + gradient color pair (JSON [from,to]) for the UI. */
@@ -90,6 +93,7 @@ export const agents = pgTable('agents', {
  *  from the user, from promoted chat turns, or from the agent itself
  *  (add_task) — often during scheduled loops. */
 export const agentTasks = pgTable('agent_tasks', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   agentId: text('agentId').notNull(),
   title: text('title').notNull(),
@@ -108,6 +112,7 @@ export const agentTasks = pgTable('agent_tasks', {
  *  notifications — loop runs, failures, budget stops — so nothing the agent
  *  does unattended is silent. */
 export const agentEvents = pgTable('agent_events', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   agentId: text('agentId').notNull(),
   /** loop_run | loop_error | budget_stop | info | action_pending |
@@ -147,6 +152,7 @@ export const agentEvents = pgTable('agent_events', {
  *  URL (unique); p256dh/auth are the client's RFC 8291 keys. A 404/410 from
  *  the push service deletes the row. */
 export const pushSubscriptions = pgTable('push_subscriptions', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   endpoint: text('endpoint').notNull(),
   p256dh: text('p256dh').notNull(),
@@ -156,6 +162,7 @@ export const pushSubscriptions = pgTable('push_subscriptions', {
 });
 
 export const agentTypes = pgTable('agent_types', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   provider: text('provider').notNull(),
@@ -172,6 +179,7 @@ export const agentTypes = pgTable('agent_types', {
 });
 
 export const chatSessions = pgTable('chat_sessions', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   workspaceId: text('workspaceId').notNull(),
   agentId: text('agentId'),
@@ -210,6 +218,7 @@ export const chatSessions = pgTable('chat_sessions', {
 });
 
 export const chatTurns = pgTable('chat_turns', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   sessionId: text('sessionId').notNull(),
   /** Monotonic position within the session. */
@@ -238,6 +247,7 @@ export const chatTurns = pgTable('chat_turns', {
 });
 
 export const skills = pgTable('skills', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   /** null = global skill visible to every workspace (FR-10.1). */
   workspaceId: text('workspaceId'),
@@ -278,6 +288,7 @@ export const skills = pgTable('skills', {
 /** One rating that landed on a turn which had loaded a skill: the raw rows
  *  behind the aggregate counters on `skills`, one per (skill, turn). */
 export const skillOutcomes = pgTable('skill_outcomes', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   skillId: text('skillId').notNull(),
   turnId: text('turnId').notNull(),
@@ -288,6 +299,7 @@ export const skillOutcomes = pgTable('skill_outcomes', {
 });
 
 export const mcpServers = pgTable('mcp_servers', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   url: text('url').notNull(),
@@ -311,6 +323,7 @@ export const mcpServers = pgTable('mcp_servers', {
  *  links to providers (google first). Tokens are sealed via secretbox and
  *  never leave the server. */
 export const connections = pgTable('connections', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   provider: text('provider').notNull(),
   accountEmail: text('accountEmail').notNull().default(''),
@@ -326,6 +339,7 @@ export const connections = pgTable('connections', {
 /** Per-agent activation grants for a connection: the connection is creation;
  *  a grant is explicit activation (three-gate model, docs/permissions.md). */
 export const connectionGrants = pgTable('connection_grants', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   connectionId: text('connectionId').notNull(),
   agentId: text('agentId').notNull(),
@@ -351,6 +365,7 @@ export const connectionGrants = pgTable('connection_grants', {
  * highest-value injection target in the product.
  */
 export const agentLessons = pgTable('agent_lessons', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   agentId: text('agentId').notNull(),
   text: text('text').notNull(),
@@ -374,6 +389,7 @@ export const agentLessons = pgTable('agent_lessons', {
  *  for mail and calendar triggers, and the timestamps the loop list shows.
  *  Keyed by `agentId:loopName`; a renamed loop starts a fresh cursor. */
 export const loopState = pgTable('loop_state', {
+  ...accountScoped(),
   loopKey: text('loopKey').primaryKey(),
   agentId: text('agentId').notNull(),
   loopName: text('loopName').notNull(),
@@ -388,11 +404,13 @@ export const loopState = pgTable('loop_state', {
 
 /** App-wide key/value settings: defaultPermissionMode, defaultAgentTypeId, … */
 export const appSettings = pgTable('app_settings', {
-  key: text('key').primaryKey(),
+  ...accountScoped(),
+  key: text('key').notNull(),
   value: text('value').notNull(),
-});
+}, (t) => [primaryKey({ columns: [t.accountId, t.key] })]);
 
 export const chatMessages = pgTable('chat_messages', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   sessionId: text('sessionId').notNull(),
   turnId: text('turnId').notNull(),
@@ -408,6 +426,7 @@ export const chatMessages = pgTable('chat_messages', {
  *  companion runner. Exactly one row at a time — pairing replaces it, and
  *  Disconnect deletes it, which revokes the token (only its sha256 is here). */
 export const computerRunners = pgTable('computer_runners', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   /** darwin | linux | win32 as the companion reports it. */
@@ -426,6 +445,7 @@ export const computerRunners = pgTable('computer_runners', {
 /** Audit row per computer action — the record of everything an agent did
  *  on the user's machine. Written when queued, updated when it settles. */
 export const computerActions = pgTable('computer_actions', {
+  ...accountScoped(),
   id: text('id').primaryKey(),
   runnerId: text('runnerId').notNull(),
   sessionId: text('sessionId').notNull().default(''),
@@ -718,3 +738,60 @@ export const orgMessages = pgTable('org_messages', {
   text: text('text').notNull(),
   createdAt: text('createdAt').notNull(),
 });
+// ---- accounts (docs/accounts.md) ----
+// The account infrastructure. `accounts` is the one table without an
+// accountId column (its id *is* the account); the other three carry
+// `accountId` as a plain foreign key and are read before any account is
+// bound, so scoped-db.ts leaves them alone (UNSCOPED_TABLES).
+
+/** One tenant. In AUTH_MODE=single there is exactly one row, id 'single',
+ *  created by migration 0023 and owning every pre-tenancy row. */
+export const accounts = pgTable('accounts', {
+  id: text('id').primaryKey(),
+  /** Lowercased, verified by the magic link. '' for the single account. */
+  email: text('email').notNull().default(''),
+  name: text('name').notNull().default(''),
+  /** pending (link requested, never signed in) | active | disabled. */
+  status: text('status').notNull().default('pending'),
+  /** free | hosted | byo (accounts/plans.ts). */
+  plan: text('plan').notNull().default('free'),
+  createdAt: text('createdAt').notNull(),
+  lastSeenAt: text('lastSeenAt'),
+});
+
+/** Browser sessions: the cookie holds a random token, the row its SHA-256. */
+export const accountSessions = pgTable('account_sessions', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull(),
+  tokenHash: text('tokenHash').notNull(),
+  expiresAt: text('expiresAt').notNull(),
+  userAgent: text('userAgent').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** Magic-link tokens: random, hashed at rest, one use, 15-minute expiry. */
+export const accountLoginTokens = pgTable('account_login_tokens', {
+  id: text('id').primaryKey(),
+  accountId: text('accountId').notNull(),
+  email: text('email').notNull(),
+  tokenHash: text('tokenHash').notNull(),
+  expiresAt: text('expiresAt').notNull(),
+  usedAt: text('usedAt'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** Monthly rollup per account, written by the turn loop as each turn
+ *  settles. Dollars are integer micro-USD so the ceiling comparison is exact.
+ *  `hostedUsdMicros` is the part billed to platform keys — the number the
+ *  hosted plan's ceiling is checked against. */
+export const accountUsage = pgTable('account_usage', {
+  accountId: text('accountId').notNull(),
+  /** 'YYYY-MM' (UTC). */
+  month: text('month').notNull(),
+  tokensIn: integer('tokensIn').notNull().default(0),
+  tokensOut: integer('tokensOut').notNull().default(0),
+  usdMicros: integer('usdMicros').notNull().default(0),
+  hostedUsdMicros: integer('hostedUsdMicros').notNull().default(0),
+  turns: integer('turns').notNull().default(0),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [primaryKey({ columns: [t.accountId, t.month] })]);

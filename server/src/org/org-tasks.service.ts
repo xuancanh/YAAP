@@ -15,6 +15,7 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { orgTasks, orgRuns, orgMessages, orgApprovals } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
+import { currentAccountId } from '../accounts/account-context';
 import { TriggerBus, OrgWakeReason } from '../chats/trigger-bus';
 import { OrgAuditService } from './org-audit.service';
 import { OrgService } from './org.service';
@@ -91,7 +92,7 @@ export class OrgTasksService {
     const brief = parseBrief(typeof input.brief === 'string' ? input.brief : (input.brief as Record<string, unknown> | undefined));
     const now = nowIso();
     const row: OrgTask = {
-      id: newId(), accountId: 'single', orgId, projectId: input.projectId ?? null, parentTaskId: input.parentTaskId ?? null,
+      id: newId(), accountId: currentAccountId(), orgId, projectId: input.projectId ?? null, parentTaskId: input.parentTaskId ?? null,
       title, brief: JSON.stringify(brief), status,
       assigneeAgentId: input.assigneeAgentId ?? null, claimedBy: null, claimedAt: null,
       reviewerAgentId: input.reviewerAgentId ?? null, reviewRounds: 0,
@@ -179,7 +180,7 @@ export class OrgTasksService {
     const t = await this.get(orgId, taskId);
     const text = (input.text ?? '').trim().slice(0, 8_000);
     if (!text) throw new BadRequestException('comment text is required');
-    const row: OrgMessage = { id: newId(), accountId: 'single', orgId, taskId, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, text, createdAt: nowIso() };
+    const row: OrgMessage = { id: newId(), accountId: currentAccountId(), orgId, taskId, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, text, createdAt: nowIso() };
     await this.db.insert(orgMessages).values(row);
     await this.audit.append(orgId, { actor: input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', action: 'task_comment', refType: 'task', refId: taskId, payload: { chars: text.length } });
     const owner = t.assigneeAgentId;
@@ -195,7 +196,7 @@ export class OrgTasksService {
     await this.org.get(orgId);
     const text = (input.text ?? '').trim().slice(0, 8_000);
     if (!text) throw new BadRequestException('message text is required');
-    const row: OrgMessage = { id: newId(), accountId: 'single', orgId, taskId: null, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, text, createdAt: nowIso() };
+    const row: OrgMessage = { id: newId(), accountId: currentAccountId(), orgId, taskId: null, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, text, createdAt: nowIso() };
     await this.db.insert(orgMessages).values(row);
     await this.audit.append(orgId, { actor: input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', action: 'message', refType: 'org', refId: orgId, payload: { chars: text.length } });
     return row;
@@ -271,7 +272,7 @@ export class OrgTasksService {
       .find((a) => (JSON.parse(a.payload) as { taskId?: string }).taskId === taskId);
     if (!pending) {
       await this.db.insert(orgApprovals).values({
-        id: newId(), accountId: 'single', orgId, kind: 'escalation',
+        id: newId(), accountId: currentAccountId(), orgId, kind: 'escalation',
         payload: JSON.stringify({ taskId, title: t.title, reason, ownerAgentId: org.chiefOfStaffAgentId, assigneeAgentId: t.assigneeAgentId }),
         requestedBy: actor, recommendation: '', status: 'pending', decidedAt: null, decisionNote: '', expiresAt: null, createdAt: nowIso(),
       });
@@ -284,7 +285,7 @@ export class OrgTasksService {
 
   async startRun(orgId: string, input: { taskId: string; agentId: string; sessionId?: string | null; wakeReason: OrgWakeReason; reservedUsd?: number }): Promise<OrgRun> {
     const row: OrgRun = {
-      id: newId(), accountId: 'single', orgId, taskId: input.taskId, agentId: input.agentId, sessionId: input.sessionId ?? null,
+      id: newId(), accountId: currentAccountId(), orgId, taskId: input.taskId, agentId: input.agentId, sessionId: input.sessionId ?? null,
       wakeReason: input.wakeReason, status: 'running', outcome: '', tokensIn: 0, tokensOut: 0, usd: 0, reservedUsd: input.reservedUsd ?? 0,
       startedAt: nowIso(), endedAt: null,
     };

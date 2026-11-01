@@ -16,6 +16,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from './schema';
 import { runPgMigrations } from './migrator';
 import { DRIZZLE_DB } from './database.constants';
+import { scopeDb } from '../accounts/scoped-db';
 
 export type DrizzleDb = NodePgDatabase<typeof schema>;
 
@@ -56,7 +57,9 @@ const drizzleProvider = {
     } finally {
       client.release();
     }
-    return drizzle(pool, { schema });
+    // Every repository sees the account-scoped handle (accounts/scoped-db.ts):
+    // the tenant boundary is a property of DRIZZLE_DB, not of each query.
+    return scopeDb(drizzle(pool, { schema }));
   },
 };
 

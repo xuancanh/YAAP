@@ -1,8 +1,8 @@
 # Shared accounts across the product suite: one domain package, one front door, no new microservice
 
-Status: **phases 0, 1, 2 and the phase-5 seam shipped**; phase 3 (the front
-door) and phase 4 remain planned, and phase 3 needs product decisions this
-document does not make. One design claim in §5 was wrong and is corrected
+Status: **phases 0, 1, 2 and phase 5 (as option (b), `yaam-chat/docs/accounts.md`)
+shipped**; phase 3 (the front door) and phase 4 remain planned, and phase 3
+needs product decisions this document does not make. One design claim in §5 was wrong and is corrected
 below where it appears. Spans five repos (`smart-knowledge-app`,
 `grove-server`, `knowledge-loom-ee`, `knowledge-loom-landing`,
 `knowledge-loom-admin`) plus `yaam-chat`. The question asked was whether
@@ -233,7 +233,18 @@ product declares the entitlements it requires, and the existing
 `USAGE_SERVICE` quota seam reads from `@loom/accounts` instead of
 `ee_subscriptions`. This is mostly deletion.
 
-### Phase 5 — `yaam-chat`, deliberately last *(seam done; tenancy not started)*
+### Phase 5 — `yaam-chat`, deliberately last *(shipped as (b) — see `yaam-chat/docs/accounts.md`)*
+
+*(Update, 1 Nov 2026: the competitor analysis re-ordered this from "optional"
+to "required before any sharing work" (`competitor-gap-analysis.md` §5 row 7),
+and option (b) shipped as execution-plan item 7: `accountId` on every table
+with a boot-time sweep that fences tables added later, an account-scoped
+Drizzle handle so repositories needed no per-query change, `AUTH_MODE=single`
+(the old behaviour, default) vs `accounts` (email magic-link sessions behind
+the same `AuthStrategy` seam), plans `free | hosted | byo` with server-side
+ceilings, and an experimental `SuiteJwtStrategy` that is this app's half of
+the phase-3 front door. The paragraphs below are the original reasoning,
+kept for the record.)*
 Two honest options:
 
 **(a) Leave it out.** It is positioned as single-user, self-hosted, run
@@ -274,7 +285,8 @@ A standalone auth microservice on the request path. Replacing Supabase — it is
 a fine IdP, and Phase 1 exists precisely so it stops being load-bearing for
 *identity modeling*. Merging the OSS and EE repos. SSO/SAML, org hierarchies,
 or seat-level RBAC before a customer asks. Migrating `yaam-chat`'s data model
-on speculation.
+on speculation — it was migrated once there was a product reason (a hosted
+tier, `competitor-gap-analysis.md` §5 row 7), not before.
 
 ## 7. Sequencing
 
@@ -321,4 +333,6 @@ strongest evidence that the seams they already had were the right ones.
 - `knowledge-loom-ee/server/src/extensions/accounts/backfill.ts` +
   `scripts/backfill-accounts.mjs` — the one-shot reconciliation
 - `yaam-chat/server/src/common/{auth-strategy.interface,token-auth.strategy,auth.guard}.ts`
-  — the swappable seam, still single-user
+  — the swappable seam; `yaam-chat/server/src/accounts/` — the tenancy behind
+  it (account context, scoped db, magic-link sessions, plans, the
+  experimental suite-JWT strategy), documented in `yaam-chat/docs/accounts.md`

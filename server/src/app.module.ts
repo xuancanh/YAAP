@@ -61,11 +61,15 @@ import { PortabilityModule } from './portability/portability.module';
 import { ComputerModule } from './computer/computer.module';
 import { RegistryModule } from './registry/registry.module';
 import { OrgModule } from './org/org.module';
+import { AccountsModule } from './accounts/accounts.module';
+import { SessionAuthStrategy } from './accounts/session-auth.strategy';
+import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, load: [configuration], validate: validateEnv }),
     DatabaseModule,
+    AccountsModule,
     StorageModule,
     StatusModule,
     WorkspacesModule,
@@ -94,8 +98,18 @@ import { OrgModule } from './org/org.module';
   providers: [
     // Identity is bound here and nowhere else: swapping this one provider
     // replaces the app's auth model without touching a controller
-    // (docs/shared-accounts.md, phase 5).
-    { provide: AUTH_STRATEGY, useClass: TokenAuthStrategy },
+    // (docs/shared-accounts.md, phase 5 — shipped as docs/accounts.md).
+    // AUTH_MODE=single → the shared token; accounts → the session cookie, or
+    // the suite's JWT when SUITE_ACCOUNTS_* are set (experimental).
+    TokenAuthStrategy,
+    {
+      provide: AUTH_STRATEGY,
+      inject: [ConfigService, TokenAuthStrategy, SessionAuthStrategy, SuiteJwtStrategy],
+      useFactory: (config: ConfigService, token: TokenAuthStrategy, session: SessionAuthStrategy, suite: SuiteJwtStrategy) => {
+        if (config.get<string>('authMode') !== 'accounts') return token;
+        return config.get<string>('suiteAccountsUrl') ? suite : session;
+      },
+    },
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_INTERCEPTOR, useClass: HttpLoggingInterceptor },
   ],
@@ -115,9 +129,16 @@ export class AppModule implements OnModuleInit {
         'TOKEN_ENCRYPTION_KEY is not set — tokens at rest will be stored as "plain:" (unencrypted). Set TOKEN_ENCRYPTION_KEY for any hosted deployment.',
       );
     }
-    if (!this.config.get<string>('apiToken')) {
+    const mode = this.config.get<string>('authMode') ?? 'single';
+    if (mode === 'accounts') {
+      const suite = this.config.get<string>('suiteAccountsUrl');
+      this.logger.log(`AUTH_MODE=accounts — ${suite ? `suite JWT strategy (experimental, ${suite})` : 'email magic-link sessions'}; every query is account-scoped`);
+      if (this.config.get<string>('emailSendProvider') === 'off') {
+        this.logger.warn('EMAIL_SEND_PROVIDER is off — sign-in links are logged, not mailed. Fine for dev; hosted deployments need a sender.');
+      }
+    } else if (!this.config.get<string>('apiToken')) {
       this.logger.warn(
-        'YAAM_API_TOKEN is not set — the API is unauthenticated (fine for single-user localhost). Set YAAM_API_TOKEN if the API is reachable beyond this machine.',
+        'YAAM_API_TOKEN is not set — the API is unauthenticated (fine for single-user localhost). Set YAAM_API_TOKEN if the API is reachable beyond this machine, or AUTH_MODE=accounts for sign-in.',
       );
     }
   }

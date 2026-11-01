@@ -3,16 +3,19 @@
 import { useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
+import { useAuth } from '../auth';
 import { ImportSkillMdButton, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { PublishButton } from './RegistryBits';
-import { api, PROVIDER_COLORS, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceUsage } from '../lib/api';
+import { api, PROVIDER_COLORS, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceUsage } from '../lib/api';
 import { KIND_LABEL } from '../lib/registry';
+import { PLAN_LABEL, capLine, ceilingPct, usageLine } from '../lib/account';
 import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../lib/push';
 import { fmtUsd } from '../lib/pricing';
 import { UsageBars, UsageRows } from './UsageChart';
 
 const PANE_META: Record<string, [string, string]> = {
+  account: ['Account', 'Who you are signed in as, your plan, this month in dollars against its ceiling, and the provider keys your agents run on.'],
   providers: ['Providers & agent types', 'Reusable presets: provider, default model, API key, and persona. A type with no key falls back to the Echo dev provider.'],
   mcp: ['MCP servers', 'Tools discovered from enabled MCP servers are offered to chats and gated by the Ask/Auto policy.'],
   skills: ['Skills & registries', 'Local skills are offered to the model as tools within the turn loop and as slash commands.'],
@@ -42,6 +45,10 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
 
 function ProvidersPane() {
   const app = useApp();
+  const auth = useAuth();
+  /** In accounts mode non-admins manage keys in Settings → Account; the
+   *  preset form here then has no key field (docs/accounts.md §6). */
+  const keysInAccount = auth.mode === 'accounts' && !auth.account?.isAdmin;
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ name: '', provider: 'anthropic', model: 'claude-sonnet-4-5', apiKey: '', baseUrl: '', persona: '' });
   const defaultId = app.settings.defaultAgentTypeId;
@@ -68,7 +75,8 @@ function ProvidersPane() {
       ))}
       {adding ? (
         <div style={{ ...card, display: 'flex', flexDirection: 'column', gap: 9 }}>
-          {([['name', 'Preset name'], ['model', 'Model id'], ['apiKey', 'API key (stored server-side)'], ['baseUrl', 'Base URL (optional, anthropic-compatible)'], ['persona', 'Persona system prompt (optional)']] as const).map(([k, ph]) => (
+          {keysInAccount && <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>Provider keys are managed in Settings → Account; this preset uses the key you set there.</div>}
+          {([['name', 'Preset name'], ['model', 'Model id'], ['apiKey', 'API key (stored server-side)'], ['baseUrl', 'Base URL (optional, anthropic-compatible)'], ['persona', 'Persona system prompt (optional)']] as const).filter(([k]) => k !== 'apiKey' || !keysInAccount).map(([k, ph]) => (
             <input key={k} value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} placeholder={ph}
               style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 11px', color: 'var(--text)', fontSize: 13, outline: 'none' }} />
           ))}
@@ -1288,6 +1296,115 @@ function MarketPane() {
   );
 }
 
+/** Settings → Account (docs/accounts.md §6). Single mode: says so and
+ *  stops. Accounts mode: identity, plan, the month against its ceiling,
+ *  the BYO keys form (the one place non-admins edit keys), sign-out, and
+ *  the admin plan switcher when ADMIN_EMAILS lists this address. */
+function AccountPane() {
+  const app = useApp();
+  const auth = useAuth();
+  const [detail, setDetail] = useState<AccountDetail | null>(null);
+  const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
+  const [admin, setAdmin] = useState<Array<{ id: string; email: string; plan: string; status: string; usage: { usd: number } }> | null>(null);
+  const reload = () => api.account().then(setDetail).catch(() => setDetail(null));
+  useEffect(() => { void reload(); }, []);
+  useEffect(() => { if (detail?.isAdmin && auth.mode === 'accounts') api.adminAccounts().then(setAdmin).catch(() => setAdmin(null)); }, [detail?.isAdmin, auth.mode]);
+
+  if (auth.mode !== 'accounts') {
+    return (
+      <div style={card}>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>Single-user mode</div>
+        <div style={{ color: 'var(--text-dim)', fontSize: 12.5, marginTop: 6, lineHeight: 1.5 }}>
+          This install runs with <span style={mono}>AUTH_MODE=single</span>: there are no sign-ins, every agent and chat belongs to the one local account, and provider keys live on your agent types (Settings → Providers). No plan, no ceiling beyond the workspace budget. Set <span style={mono}>AUTH_MODE=accounts</span> to turn on email sign-in and per-account plans.
+        </div>
+      </div>
+    );
+  }
+  if (!detail) return <div style={{ color: 'var(--text-faint)', fontSize: 13 }}>Loading…</div>;
+
+  const pct = ceilingPct(detail);
+  const row: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 13, padding: '6px 0', borderBottom: '1px solid var(--border)' };
+  const btn: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' };
+  const saveKey = async (provider: string) => {
+    const next = await api.setAccountKey(provider, keyDraft[provider] ?? '');
+    setDetail(next);
+    setKeyDraft((d) => ({ ...d, [provider]: '' }));
+    await app.refreshAgentTypes().catch(() => {});
+    app.showToast(keyDraft[provider] ? `${provider} key saved` : `${provider} key removed`);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>{detail.email || detail.id}</div>
+            <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 3 }}>{PLAN_LABEL[detail.plan]}{detail.isAdmin ? ' · admin' : ''}</div>
+          </div>
+          <button onClick={() => void auth.signOut()} style={btn}>Sign out</button>
+        </div>
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--text-dim)' }}>
+            <span>{usageLine(detail)}</span>
+            <span>{detail.usage.turns} turns · {capLine(app.agents.length, detail.limits.maxAgents, 'agents')}</span>
+          </div>
+          {pct !== null && (
+            <div style={{ height: 6, borderRadius: 4, background: 'var(--border)', marginTop: 8, overflow: 'hidden' }}>
+              <div style={{ width: `${pct}%`, height: '100%', background: pct >= 100 ? 'var(--red, #e5484d)' : 'var(--accent)' }} />
+            </div>
+          )}
+          {pct !== null && pct >= 100 && <div style={{ fontSize: 12, color: 'var(--red, #e5484d)', marginTop: 6 }}>Ceiling reached: turns on platform keys stop until the month turns. Add your own key below to keep going.</div>}
+          {detail.limits.hostedKeys && detail.platformProviders.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 6 }}>This deployment has no platform keys configured; add your own below.</div>}
+        </div>
+        {detail.billing.manageUrl && <a href={detail.billing.manageUrl} style={{ fontSize: 12.5, color: 'var(--accent)', display: 'inline-block', marginTop: 10 }}>Manage plan</a>}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Your provider keys</div>
+        <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5, marginBottom: 8 }}>
+          Stored sealed on the server, never echoed back. A key here applies to every agent type of that provider you have{detail.limits.hostedKeys ? ', and turns on your own key are not metered against the hosted ceiling' : ''}.
+        </div>
+        {detail.keys.map((k) => (
+          <div key={k.provider} style={row}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 110 }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: PROVIDER_COLORS[k.provider] ?? '#94a3b8' }} />
+              <span style={mono}>{k.provider}</span>
+              {k.hasKey && <span style={{ fontSize: 10, color: 'var(--green)', border: '1px solid var(--green)', borderRadius: 5, padding: '1px 6px' }}>key set</span>}
+              {!k.hasKey && detail.platformProviders.includes(k.provider) && detail.limits.hostedKeys && <span style={{ fontSize: 10, color: 'var(--text-faint)', border: '1px solid var(--text-faint)', borderRadius: 5, padding: '1px 6px' }}>platform</span>}
+            </div>
+            <div style={{ display: 'flex', gap: 6, flex: 1, justifyContent: 'flex-end' }}>
+              <input type="password" value={keyDraft[k.provider] ?? ''} onChange={(e) => setKeyDraft((d) => ({ ...d, [k.provider]: e.target.value }))} placeholder={k.hasKey ? 'replace key' : 'paste key'}
+                style={{ width: 200, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '6px 10px', color: 'var(--text)', fontSize: 12.5, outline: 'none' }} />
+              <button onClick={() => void saveKey(k.provider)} disabled={!keyDraft[k.provider] && !k.hasKey} style={btn}>{keyDraft[k.provider] ? 'Save' : k.hasKey ? 'Remove' : 'Save'}</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {detail.isAdmin && admin && (
+        <div style={card}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Accounts (admin)</div>
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginBottom: 8 }}>Plans are set by hand here until a billing provider is plugged in (docs/accounts.md §5).</div>
+          {admin.map((a) => (
+            <div key={a.id} style={row}>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.email || a.id} <span style={{ color: 'var(--text-faint)' }}>· {a.status} · ${a.usage.usd.toFixed(2)}</span></span>
+              <select value={a.plan} onChange={async (e) => {
+                await api.adminPatchAccount(a.id, { plan: e.target.value as AccountDetail['plan'] });
+                setAdmin(await api.adminAccounts());
+                if (a.id === detail.id) void reload();
+              }} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 8px', color: 'var(--text)', fontSize: 12.5 }}>
+                <option value="free">free</option>
+                <option value="hosted">hosted</option>
+                <option value="byo">byo</option>
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Settings → Security (execution-plan item 3): GET /api/security rendered
  *  — contact, the summary bullets, the policy link — so the hosted product
  *  shows the same policy the repo publishes. */
@@ -1347,6 +1464,7 @@ export function SettingsView({ pane }: { pane: string }) {
         <div style={{ fontSize: 21, fontWeight: 700, letterSpacing: '-.3px' }}>{title}</div>
         <div style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 4 }}>{sub}</div>
         <div style={{ marginTop: 22 }}>
+          {pane === 'account' && <AccountPane />}
           {pane === 'providers' && <ProvidersPane />}
           {pane === 'mcp' && <McpPane />}
           {pane === 'skills' && <SkillsPane />}

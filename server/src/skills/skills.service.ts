@@ -6,10 +6,12 @@
  * their workspace (FR-10.1). Built-ins are seeded on boot: recreated when
  * missing, but user edits to them stick (matched by name).
  */
-import { Injectable, Inject, NotFoundException, OnModuleInit, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, OnModuleInit, ConflictException, BadRequestException, Optional } from '@nestjs/common';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
+import { currentAccountId } from '../accounts/account-context';
+import { AccountsService } from '../accounts/accounts.service';
 import { skills, skillOutcomes } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { AiToolSpec } from '../ai/ai-provider.interface';
@@ -41,8 +43,17 @@ export const SKILL_TOOL_PREFIX = 'skill_';
 
 @Injectable()
 export class SkillsService implements OnModuleInit {
-  constructor(@Inject(DRIZZLE_DB) private readonly db: DrizzleDb) {}
+  constructor(
+    @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
+    /** Optional so test constructors keep working. With it, every account
+     *  gets its own built-ins the first time it signs in. */
+    @Optional() accounts?: AccountsService,
+  ) {
+    accounts?.onAccountActivated(() => this.seedBuiltins());
+  }
 
+  /** Boot seeds the single account (the context default); other accounts
+   *  are seeded by the activation hook under their own context. */
   async onModuleInit(): Promise<void> {
     await this.seedBuiltins();
   }
@@ -86,6 +97,7 @@ export class SkillsService implements OnModuleInit {
       throw new ConflictException(`a skill named "${input.name}" already exists`);
     }
     const row: SkillRow = {
+      accountId: currentAccountId(),
       id: newId(),
       workspaceId: input.workspaceId ?? null,
       name: input.name,

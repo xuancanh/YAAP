@@ -12,6 +12,7 @@ import type { DrizzleDb } from '../database/database.module';
 import { agentTypes } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { seal, open } from '../common/secretbox';
+import { currentAccountId } from '../accounts/account-context';
 
 type AgentTypeRow = typeof agentTypes.$inferSelect;
 
@@ -28,13 +29,16 @@ export class AgentTypesService {
 
   async create(input: { name: string; provider: string; model: string; models?: string[]; baseUrl?: string; apiKey?: string; persona?: string }) {
     const row = {
+      accountId: currentAccountId(),
       id: newId(),
       name: input.name,
       provider: input.provider,
       model: input.model,
       models: JSON.stringify(input.models ?? []),
       baseUrl: input.baseUrl ?? null,
-      apiKey: input.apiKey ? seal(input.apiKey) : null,
+      // No key given: inherit the account's existing key for this provider,
+      // so the Account pane's one key per provider covers later presets too.
+      apiKey: input.apiKey ? seal(input.apiKey) : await this.inheritedKey(input.provider),
       persona: input.persona ?? '',
       enabled: 1,
       createdAt: nowIso(),
@@ -60,6 +64,13 @@ export class AgentTypesService {
   async remove(id: string) {
     await this.db.delete(agentTypes).where(eq(agentTypes.id, id));
     return { ok: true };
+  }
+
+  /** The sealed key a new preset of `provider` starts with: the account's
+   *  existing key for that provider, re-sealed, or null. */
+  private async inheritedKey(provider: string): Promise<string | null> {
+    const key = await this.resolveKeyForProvider(provider);
+    return key ? seal(key) : null;
   }
 
   /** Server-internal: the opened key of the first enabled agent type of a

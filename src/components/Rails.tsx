@@ -306,6 +306,7 @@ export function MarketRail({ cat, setCat }: { cat: string; setCat: (c: string) =
 }
 
 export const SETTINGS_PANES = [
+  { id: 'account', label: 'Account', icon: P.shield },
   { id: 'providers', label: 'Providers & agent types', icon: P.rows },
   { id: 'mcp', label: 'MCP servers', icon: P.globe },
   { id: 'skills', label: 'Skills & registries', icon: P.star },

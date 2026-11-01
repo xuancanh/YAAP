@@ -64,8 +64,28 @@ const envSchema = z
     COMPUTER_CONTROL_ENABLED: z.enum(['true', 'false']).optional(),
     REGISTRY_URL: z.string().regex(/^$|^https?:\/\//, 'REGISTRY_URL must be an http(s) URL').optional(),
     REGISTRY_PUBLISH_TOKEN: z.string().optional(),
+    AUTH_MODE: z.enum(['single', 'accounts']).optional(),
+    ACCOUNTS_DEFAULT_PLAN: z.enum(['free', 'hosted', 'byo']).optional(),
+    ADMIN_EMAILS: z.string().optional(),
+    AUTH_FROM_ADDRESS: z.string().optional(),
+    HOSTED_PLAN_USD: z.string().regex(/^\d+(\.\d+)?$/, 'HOSTED_PLAN_USD must be a non-negative number').optional(),
+    PLATFORM_ANTHROPIC_KEY: z.string().optional(),
+    PLATFORM_OPENAI_KEY: z.string().optional(),
+    PLATFORM_GEMINI_KEY: z.string().optional(),
+    PLATFORM_DEEPSEEK_KEY: z.string().optional(),
+    SUITE_ACCOUNTS_URL: z.string().optional(),
+    SUITE_ACCOUNTS_SECRET: z.string().optional(),
   })
   .superRefine((env, ctx) => {
+    if (Boolean(env.SUITE_ACCOUNTS_URL) !== Boolean(env.SUITE_ACCOUNTS_SECRET)) {
+      ctx.addIssue({ code: 'custom', path: ['SUITE_ACCOUNTS_SECRET'], message: 'SUITE_ACCOUNTS_URL and SUITE_ACCOUNTS_SECRET must be set together' });
+    }
+    if (env.SUITE_ACCOUNTS_URL && env.AUTH_MODE !== 'accounts') {
+      ctx.addIssue({ code: 'custom', path: ['AUTH_MODE'], message: 'SUITE_ACCOUNTS_URL requires AUTH_MODE=accounts' });
+    }
+    if (env.AUTH_MODE === 'accounts' && env.NODE_ENV === 'production' && !env.TOKEN_ENCRYPTION_KEY) {
+      ctx.addIssue({ code: 'custom', path: ['TOKEN_ENCRYPTION_KEY'], message: 'TOKEN_ENCRYPTION_KEY is required when AUTH_MODE=accounts in production (per-account provider keys are sealed with it)' });
+    }
     // Selecting the cloudflare backend without its endpoint is a boot-time
     // mistake, not a runtime surprise: the runner would silently vanish.
     if (env.RUNNER_BACKEND === 'cloudflare' && !(env.RUNNER_CF_URL && env.RUNNER_CF_TOKEN)) {

@@ -33,6 +33,8 @@ import { ConflictException, HttpException, HttpStatus, Injectable, Logger, OnMod
 import { ConfigService } from '@nestjs/config';
 import { timingSafeEqual } from 'node:crypto';
 import { AgentsService } from '../agents/agents.service';
+import { AccountsService } from '../accounts/accounts.service';
+import { currentAccountId, runWithAccount } from '../accounts/account-context';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { ConnectionsService } from '../connections/connections.service';
 import type { CalendarEventSummary, MailSummary } from '../connections/connections.poll';
@@ -79,7 +81,7 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
   /** agentId:loopName → last fired minute stamp, so a loop fires once/minute. */
   private readonly lastRun = new Map<string, string>();
   /** Task-trigger debounce: agentId:loopName → the batch waiting to fire. */
-  private readonly pendingTasks = new Map<string, { agentId: string; loopName: string; tasks: TaskAddedEvent['task'][]; timer: ReturnType<typeof setTimeout> }>();
+  private readonly pendingTasks = new Map<string, { accountId: string; agentId: string; loopName: string; tasks: TaskAddedEvent['task'][]; timer: ReturnType<typeof setTimeout> }>();
   /** Webhook hits per hook in the trailing minute. */
   private readonly webhookHits = new Map<string, number[]>();
   /** How long a batch of task assignments waits before one run (tests shorten it). */
@@ -99,6 +101,9 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly connections?: ConnectionsService,
     /** Optional: without a bus, task triggers never fire. */
     @Optional() bus?: TriggerBus,
+    /** Optional: without accounts, the tick runs for the current (single)
+     *  account only; with them, once per active account under its context. */
+    @Optional() private readonly accounts?: AccountsService,
   ) {
     bus?.onTaskAdded((ev) => { void this.onTaskAdded(ev.agentId, ev.task); });
   }
@@ -125,7 +130,16 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** One tick = one pass per active account, each under its own context so
+   *  every agent list, session and event belongs to the right tenant
+   *  (docs/accounts.md §3). Without an AccountsService (tests) the pass runs
+   *  for the current account. */
   private async tickInner(now: Date): Promise<void> {
+    if (!this.accounts) return this.tickAccount(now);
+    await this.accounts.forEachAccount(() => this.tickAccount(now));
+  }
+
+  private async tickAccount(now: Date): Promise<void> {
     // auto-distillation (roadmap phase 1): every 10 minutes, distill agent
     // sessions that went idle with undistilled work.
     if (now.getMinutes() % 10 === 0) {
@@ -314,7 +328,8 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
         if (pending) { pending.tasks.push(task); continue; }
         const timer = setTimeout(() => { void this.flushTasks(key); }, this.taskDebounceMs);
         timer.unref?.();
-        this.pendingTasks.set(key, { agentId, loopName: loop.name, tasks: [task], timer });
+        // The batch fires from a timer: remember whose account it is.
+        this.pendingTasks.set(key, { accountId: currentAccountId(), agentId, loopName: loop.name, tasks: [task], timer });
       }
     } catch (err) {
       this.logger.warn(`task trigger failed: ${err instanceof Error ? err.message : err}`);
@@ -327,6 +342,10 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     if (!pending) return;
     this.pendingTasks.delete(key);
     clearTimeout(pending.timer);
+    await runWithAccount(pending.accountId, () => this.flushTasksInner(pending));
+  }
+
+  private async flushTasksInner(pending: { agentId: string; loopName: string; tasks: TaskAddedEvent['task'][] }): Promise<void> {
     const agent = await this.agents.get(pending.agentId).catch(() => null);
     if (!agent) return;
     const loop = parseLoops(agent.loops).find((l) => l.name === pending.loopName && l.trigger?.kind === 'task' && l.enabled !== false);

@@ -6,8 +6,9 @@
  * loop yields them, so the frontend renders tokens as they arrive (FR-3.2)
  * and POST /api/chats/:id/stop aborts mid-flight (FR-5.4).
  */
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Optional, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
+import { AccountsService } from '../accounts/accounts.service';
 import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { ChatsService } from './chats.service';
 import { TurnLoopService, ApprovalDecision } from './turn-loop.service';
@@ -59,6 +60,9 @@ export class ChatsController {
     private readonly turns: TurnLoopService,
     private readonly compaction: CompactionService,
     private readonly distillSvc: DistillService,
+    /** Optional so test constructors keep working; with it the turn stream
+     *  carries the account's month in headers (docs/accounts.md §4). */
+    @Optional() private readonly accounts?: AccountsService,
   ) {}
 
   @Get()
@@ -89,7 +93,11 @@ export class ChatsController {
 
   @Post(':id/turns')
   async sendTurn(@Param('id') id: string, @Body() dto: SendTurnDto, @Res() res: Response) {
+    // X-Yaam-Plan / -Usage-Usd / -Hosted-Usd / -Ceiling-Usd: the account's
+    // month at a glance, before the stream starts.
+    const usage = this.accounts ? await this.accounts.usageHeaders().catch(() => ({})) : {};
     res.writeHead(200, {
+      ...usage,
       'Content-Type': 'text/event-stream',
       // no-transform stops proxies (Cloudflare, CDNs) from recompressing the
       // stream; X-Accel-Buffering stops nginx/tunnel hops from batching SSE.

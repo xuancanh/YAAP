@@ -17,6 +17,7 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { orgApprovals } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
+import { currentAccountId } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
 import { SkillsService } from '../skills/skills.service';
 import { TriggerBus } from '../chats/trigger-bus';
@@ -109,7 +110,7 @@ export class OrgApprovalsService {
     const org = await this.org.get(orgId);
     if (!APPROVAL_KINDS.includes(input.kind)) throw new BadRequestException(`approval kind must be one of ${APPROVAL_KINDS.join(', ')}`);
     const row: OrgApproval = {
-      id: newId(), accountId: 'single', orgId, kind: input.kind,
+      id: newId(), accountId: currentAccountId(), orgId, kind: input.kind,
       payload: JSON.stringify(input.payload).slice(0, 60_000),
       requestedBy: input.requestedBy.slice(0, 80), recommendation: (input.recommendation ?? '').slice(0, 600),
       status: 'pending', decidedAt: null, decisionNote: '',

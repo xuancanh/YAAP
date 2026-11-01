@@ -22,11 +22,13 @@
  * The Bot API is spoken over plain fetch with an injectable fetchFn test
  * seam, like the provider adapters and the MCP client.
  */
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'node:crypto';
 import { SettingsService } from '../settings/settings.module';
 import { AgentsService } from '../agents/agents.service';
+import { AccountsService } from '../accounts/accounts.service';
+import { currentAccountId, runWithAccount } from '../accounts/account-context';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { ChatsRepository } from '../chats/chats.repository';
 import { TurnLoopService } from '../chats/turn-loop.service';
@@ -48,7 +50,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   private timer?: ReturnType<typeof setTimeout>;
   private sweepTimer?: ReturnType<typeof setInterval>;
   private sweeping = false;
-  private pairCode: { code: string; expires: number } | null = null;
+  /** One live pairing code per process, remembering which account minted it. */
+  private pairCode: { code: string; expires: number; accountId: string } | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -57,6 +60,9 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     private readonly workspaces: WorkspacesService,
     private readonly repo: ChatsRepository,
     private readonly turns: TurnLoopService,
+    /** Optional: without it, one account (the current one) owns the bot. With
+     *  it, the paired chat id decides whose agents a message reaches. */
+    @Optional() private readonly accounts?: AccountsService,
   ) {}
 
   private get token(): string {
@@ -93,7 +99,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
   /** Mint a short-lived pairing code the user sends to the bot as /pair. */
   mintPairCode(): { code: string; expiresInSeconds: number } {
     const code = randomBytes(4).toString('hex');
-    this.pairCode = { code, expires: Date.now() + PAIR_TTL_MS };
+    this.pairCode = { code, expires: Date.now() + PAIR_TTL_MS, accountId: currentAccountId() };
     return { code, expiresInSeconds: PAIR_TTL_MS / 1000 };
   }
 
@@ -127,22 +133,31 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     const chatId = u.message?.chat.id;
     if (!text || chatId === undefined) return;
 
-    const s = await this.settings.all();
-    const pairedChat = s.telegramChatId ?? '';
+    // Whose chat is this? With accounts, the paired chat id is looked up
+    // across every account's settings; without, the current account's.
+    const owner = this.accounts
+      ? await this.accounts.findAccountIdBySetting('telegramChatId', String(chatId))
+      : ((await this.settings.all()).telegramChatId === String(chatId) ? currentAccountId() : null);
 
-    if (String(chatId) !== pairedChat) {
+    if (owner === null) {
       // unknown sender: only the pairing handshake is acknowledged
       const m = /^\/pair\s+([a-f0-9]+)$/i.exec(text);
       if (m && this.pairCode && this.pairCode.code === m[1].toLowerCase() && Date.now() < this.pairCode.expires) {
+        const { accountId } = this.pairCode;
         this.pairCode = null;
-        await this.settings.put({ telegramChatId: String(chatId) });
+        await runWithAccount(accountId, () => this.settings.put({ telegramChatId: String(chatId) }));
         await this.send(chatId, 'Paired. Messages here go to your default agent; set or change it in the app under Settings → Channels.');
       } else {
         await this.send(chatId, 'This bot only talks to its owner. Open the app, go to Settings → Channels, generate a pairing code, and send: /pair <code>');
       }
       return;
     }
+    await runWithAccount(owner, () => this.handlePaired(chatId, text));
+  }
 
+  /** A message from the paired chat, under its account. */
+  private async handlePaired(chatId: number, text: string): Promise<void> {
+    const s = await this.settings.all();
     if (text === '/unpair') {
       await this.unpair();
       await this.send(chatId, 'Unpaired. Generate a new code in the app to reconnect.');
@@ -192,6 +207,18 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     if (!this.token || this.sweeping) return 0;
     this.sweeping = true;
     try {
+      if (!this.accounts) return await this.sweepAccount(now);
+      // Once per active account, under its context (docs/accounts.md §3).
+      let delivered = 0;
+      await this.accounts.forEachAccount(async () => { delivered += await this.sweepAccount(now); });
+      return delivered;
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
+  private async sweepAccount(now: Date): Promise<number> {
+    {
       const s = await this.settings.all();
       const chatId = Number(s.telegramChatId ?? '');
       if (!chatId) return 0;
@@ -213,8 +240,6 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       // Marked only after the send succeeded: a failed push retries next sweep.
       await this.agents.markEventsDelivered(batch.map((e) => e.id), now);
       return batch.length;
-    } finally {
-      this.sweeping = false;
     }
   }
 

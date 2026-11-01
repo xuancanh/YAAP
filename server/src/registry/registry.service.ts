@@ -30,6 +30,8 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { registryInstalls, registryItems, registryRatings } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
+import { currentAccountId } from '../accounts/account-context';
+import { unscoped } from '../accounts/scoped-db';
 import { fetchPublic } from '../common/url-guard';
 import { AgentsService, APP_CAPABILITIES, APP_FREE_CAPS } from '../agents/agents.service';
 import { SkillsService } from '../skills/skills.service';
@@ -423,7 +425,7 @@ export class RegistryService {
     }
     const row: RegistryItemRow = {
       id: newId(),
-      accountId: 'single',
+      accountId: currentAccountId(),
       kind: input.kind,
       slug: input.slug,
       name: input.name,
@@ -518,25 +520,35 @@ export class RegistryService {
     return { ...this.project(row), manifest: parseJson(row.manifest, {}) };
   }
 
-  /** The public feed (no auth): published local items, projection only. */
+  /** The public feed (no auth): published local items, projection only.
+   *  Unscoped on purpose: the feed is the deployment's, across every account
+   *  that published to it (docs/accounts.md §3); no account is bound on these
+   *  anonymous routes anyway. */
   async listPublic(): Promise<RegistryListItem[]> {
-    const rows = await this.db.select().from(registryItems)
+    const rows = await unscoped(this.db).select().from(registryItems)
       .where(and(eq(registryItems.published, 1), eq(registryItems.source, 'local')))
       .orderBy(desc(registryItems.updatedAt)).limit(PUBLIC_LIST_MAX);
     return rows.map((r) => this.project(r));
   }
 
   async getPublic(id: string): Promise<RegistryItemDetail> {
-    const row = await this.row(id);
+    const row = await this.publicRow(id);
     if (row.published !== 1) throw new NotFoundException(`registry item ${id}`);
     return { ...this.project(row), manifest: parseJson(row.manifest, {}) };
   }
 
   /** Anonymous counters from other instances (install / rate on the feed). */
   async bumpPublicInstall(id: string) {
-    const row = await this.row(id);
-    await this.db.update(registryItems).set({ installs: sql`${registryItems.installs} + 1` }).where(eq(registryItems.id, row.id));
+    const row = await this.publicRow(id);
+    await unscoped(this.db).update(registryItems).set({ installs: sql`${registryItems.installs} + 1` }).where(eq(registryItems.id, row.id));
     return { ok: true, installs: row.installs + 1 };
+  }
+
+  /** A published item by id across accounts, for the anonymous feed routes. */
+  private async publicRow(id: string): Promise<RegistryItemRow> {
+    const rows = await unscoped(this.db).select().from(registryItems).where(and(eq(registryItems.id, id), eq(registryItems.source, 'local'))).limit(1);
+    if (!rows[0]) throw new NotFoundException(`registry item ${id}`);
+    return rows[0];
   }
 
   private project(r: RegistryItemRow): RegistryListItem {
@@ -747,7 +759,7 @@ export class RegistryService {
     }
 
     const install: typeof registryInstalls.$inferSelect = {
-      id: newId(), accountId: 'single', itemId: id, version: review.version,
+      id: newId(), accountId: currentAccountId(), itemId: id, version: review.version,
       agentId: created.agentId ?? null, skillId: created.skillId ?? null, appId: created.appId ?? null,
       installedAt: nowIso(),
     };
@@ -801,8 +813,8 @@ export class RegistryService {
    *  no install here to attach it to). */
   async bumpPublicRating(id: string, rating: unknown) {
     if (rating !== 'up' && rating !== 'down') throw new BadRequestException('rating must be up or down');
-    const row = await this.row(id);
-    await this.db.update(registryItems)
+    const row = await this.publicRow(id);
+    await unscoped(this.db).update(registryItems)
       .set(rating === 'up' ? { ratingUp: sql`${registryItems.ratingUp} + 1` } : { ratingDown: sql`${registryItems.ratingDown} + 1` })
       .where(eq(registryItems.id, row.id));
     return { ok: true };
@@ -818,7 +830,7 @@ export class RegistryService {
     if (prev) {
       await this.db.update(registryRatings).set({ rating, note }).where(eq(registryRatings.id, prev.id));
     } else {
-      await this.db.insert(registryRatings).values({ id: newId(), accountId: 'single', itemId, installId, turnId, rating, note, createdAt: nowIso() });
+      await this.db.insert(registryRatings).values({ id: newId(), accountId: currentAccountId(), itemId, installId, turnId, rating, note, createdAt: nowIso() });
     }
     if (itemId.startsWith(REMOTE_PREFIX)) return; // the remote keeps its own counters
     const up = (rating === 'up' ? 1 : 0) - (prev?.rating === 'up' ? 1 : 0);

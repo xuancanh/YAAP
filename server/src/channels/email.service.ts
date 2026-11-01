@@ -26,11 +26,13 @@
  *    hours; or nothing (`off`, the default — mail is the noisiest channel).
  *    Delivery is tracked in its own `emailDeliveredAt` column.
  */
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { SettingsService } from '../settings/settings.module';
 import { AgentsService } from '../agents/agents.service';
+import { AccountsService } from '../accounts/accounts.service';
+import { currentAccountId, runWithAccount } from '../accounts/account-context';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { ChatsRepository } from '../chats/chats.repository';
 import { TurnLoopService } from '../chats/turn-loop.service';
@@ -121,7 +123,8 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
   set fetchFn(fn: typeof fetch) { this.sender = this.buildSender(fn); }
   /** Test seam: replace the sender wholesale. */
   sender: EmailSender;
-  private pairCode: { code: string; expires: number } | null = null;
+  /** One live pairing code per process, remembering which account minted it. */
+  private pairCode: { code: string; expires: number; accountId: string } | null = null;
   private prompted = new Map<string, number>();
   private sweepTimer?: ReturnType<typeof setInterval>;
   private sweeping = false;
@@ -133,6 +136,9 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
     private readonly workspaces: WorkspacesService,
     private readonly repo: ChatsRepository,
     private readonly turns: TurnLoopService,
+    /** Optional: without it, the current (single) account owns every
+     *  address; with it, the agent behind the address decides the account. */
+    @Optional() private readonly accounts?: AccountsService,
   ) {
     this.sender = this.buildSender(fetch);
   }
@@ -176,7 +182,7 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
 
   mintPairCode(): { code: string; expiresInSeconds: number } {
     const code = randomBytes(4).toString('hex');
-    this.pairCode = { code, expires: Date.now() + PAIR_TTL_MS };
+    this.pairCode = { code, expires: Date.now() + PAIR_TTL_MS, accountId: currentAccountId() };
     return { code, expiresInSeconds: PAIR_TTL_MS / 1000 };
   }
 
@@ -220,8 +226,13 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
     if (isAutomatedMail(mail)) return { outcome: 'ignored', reason: 'automated mail' };
 
     const slug = to.slice(0, to.indexOf('@'));
-    const agent = await this.agents.findByEmailSlug(slug);
+    const agent = await this.agents.findByEmailSlug(slug); // unscoped: resolves the account too
     if (!agent) return { outcome: 'ignored', reason: 'no such agent' };
+    // The agent's account owns the rest of the exchange (docs/accounts.md §3).
+    return runWithAccount(agent.accountId, () => this.handleInboundFor(mail, agent, to, from));
+  }
+
+  private async handleInboundFor(mail: InboundEmail, agent: NonNullable<Awaited<ReturnType<AgentsService['findByEmailSlug']>>>, to: string, from: string): Promise<InboundOutcome> {
     const fromHeader = { address: to, name: `${this.config.get<string>('emailFromName') ?? 'YAAM'} · ${agent.name}` };
 
     const s = await this.settings.all();
@@ -233,7 +244,7 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
       // the pairing handshake: a live code anywhere in subject or body pairs this sender
       const code = this.pairCode;
       const haystack = `${mail.subject ?? ''}\n${body}`.toLowerCase();
-      if (code && Date.now() < code.expires && new RegExp(`\\b${code.code}\\b`).test(haystack)) {
+      if (code && code.accountId === currentAccountId() && Date.now() < code.expires && new RegExp(`\\b${code.code}\\b`).test(haystack)) {
         this.pairCode = null;
         await this.settings.put({ emailOwnerAddresses: JSON.stringify([...owners, from]) });
         this.prompted.delete(from);
@@ -329,6 +340,18 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
     if (!this.enabled || !this.canSend || this.sweeping) return 0;
     this.sweeping = true;
     try {
+      if (!this.accounts) return await this.sweepAccount(now);
+      // Once per active account, under its context (docs/accounts.md §3).
+      let delivered = 0;
+      await this.accounts.forEachAccount(async () => { delivered += await this.sweepAccount(now); });
+      return delivered;
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
+  private async sweepAccount(now: Date): Promise<number> {
+    {
       const s = await this.settings.all();
       const owners = this.ownerAddresses(s);
       const mode = s.emailDigest ?? 'off';
@@ -371,8 +394,6 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
       // Marked only after every send succeeded: a failed push retries next sweep.
       await this.agents.markEventsDelivered(batch.map((e) => e.id), now, 'email');
       return batch.length;
-    } finally {
-      this.sweeping = false;
     }
   }
 

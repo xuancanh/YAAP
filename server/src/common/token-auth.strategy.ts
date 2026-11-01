@@ -1,64 +1,37 @@
 /**
  * TokenAuthStrategy — the shared-bearer-token identity this app has always
- * had, now behind the AuthStrategy seam.
+ * had, now behind the AuthStrategy seam. Bound when AUTH_MODE=single.
  *
  * A pragmatic trust boundary for a single-user self-hosted app: the API has
  * no users, but any website open in the user's browser could otherwise call
  * it cross-origin and spend LLM keys. When YAAM_API_TOKEN is unset every
  * request passes (single-user localhost default; AppModule logs a boot
- * warning). GET /api/status stays open so liveness probes work without
- * credentials, GET /api/security so the disclosure policy is readable
- * without one, POST /api/channels/email/inbound which carries its own
- * HMAC signature instead, and POST /api/hooks/:agentId/:loopName because
- * webhook senders carry a per-loop secret instead (docs/triggers.md).
+ * warning). The open routes are listed in isPublicRoute (auth-strategy
+ * .interface.ts), shared with every strategy: liveness, the security policy,
+ * the public registry feed, the HMAC-signed inbound mail webhook, the
+ * secret-bearing loop webhooks, the sign-in routes (which answer "single
+ * mode" here), and the desktop companion's four routes.
  *
- * A second bearer kind exists for exactly four paths: the desktop companion
+ * That last set is a second bearer kind for exactly four paths: the companion
  * (docs/computer-control.md) redeems a pairing code on POST /api/computer/pair
  * and then speaks its own token to /work, /result/:id and /heartbeat, checked
- * by `computer/companion.guard.ts`. Those paths — and only those — are
- * public to the app token so the companion guard can take over; the user
- * routes under /api/computer stay behind the app token.
+ * by `computer/companion.guard.ts`. Those paths — and only those — are public
+ * to the app token so the companion guard can take over; the user routes
+ * under /api/computer stay behind the app token.
  */
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
-import { AuthStrategy, SINGLE_USER } from './auth-strategy.interface';
+import { AuthStrategy, SINGLE_USER, isPublicRoute } from './auth-strategy.interface';
 
-/** The companion's routes: code-protected pairing, then companion-token
- *  routes guarded in the controller. Exported for the auth tests. */
-export function isCompanionRoute(method: string, path: string): boolean {
-  if (method === 'POST' && (path === '/api/computer/pair' || path === '/api/computer/heartbeat')) return true;
-  if (method === 'GET' && path === '/api/computer/work') return true;
-  return method === 'POST' && /^\/api\/computer\/result\/[A-Za-z0-9-]+$/.test(path);
-}
+export { isCompanionRoute } from './auth-strategy.interface';
 
 @Injectable()
 export class TokenAuthStrategy implements AuthStrategy {
   constructor(private readonly config: ConfigService) {}
 
   isPublic(request: Request): boolean {
-    if (request.method === 'GET') {
-      if (request.path === '/api/status' || request.path === '/api/security') return true;
-      // The public registry feed (docs/registry.md): read-only, items with
-      // published=1 and no personal data, so other instances can browse it.
-      if (/^\/api\/registry\/public(\/[^/]+)?\/?$/.test(request.path)) return true;
-    }
-    // The desktop companion's four routes carry their own bearer kind
-    // (computer/companion.guard.ts); GET /api/computer/work is among them.
-    if (isCompanionRoute(request.method, request.path)) return true;
-    if (request.method !== 'POST') return false;
-    // Remote publish carries REGISTRY_PUBLISH_TOKEN as its own bearer
-    // (RegistryService.acceptRemotePublish); the install/rate counters are
-    // anonymous by design — they count, they never read or write anything else.
-    if (/^\/api\/registry\/public(\/[^/]+\/(installed|rate))?\/?$/.test(request.path)) return true;
-    // The inbound-mail webhook authenticates itself with an HMAC over the
-    // body (channels/email.service.ts verifySignature), not the bearer token
-    // — the forwarder is a Cloudflare Worker, not the user's browser.
-    if (request.path === '/api/channels/email/inbound') return true;
-    // Webhook-triggered loops (docs/triggers.md): the caller is a third-party
-    // system, authenticated by the loop's own secret in LoopsService, not by
-    // the app token. Exactly two path segments after /api/hooks/.
-    return /^\/api\/hooks\/[^/]+\/[^/]+\/?$/.test(request.path);
+    return isPublicRoute(request);
   }
 
   authenticate(request: Request): string {

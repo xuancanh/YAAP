@@ -138,6 +138,15 @@ OpenAI-compatible `/audio/transcriptions` endpoint — the model reads the
 transcript, never the bytes — with optional read-aloud replies behind a
 setting (docs/voice.md).
 
+Accounts and tenancy (docs/accounts.md): every table carries `accountId` and
+the database handle is account-scoped, so one deployment can serve many
+people. `AUTH_MODE=single` (default) keeps today's one-user install exactly as
+it was; `AUTH_MODE=accounts` adds email magic-link sign-in, an Account pane,
+and plans — `free` (your keys, 3 agents, 3 loops), `hosted` (platform keys
+under a monthly dollar ceiling, default $15, enforced as a hard stop) and
+`byo` (your keys, no ceiling) — with billing left to a `BillingProvider` seam
+an admin drives by hand today.
+
 Proactivity controls (roadmap Phase 2, finished): per-workspace **quiet
 hours** with an interrupt policy (`queue` | `silent` | `allow-urgent`) — loops
 still run inside the window, their notifications wait or stay inbox-only; a

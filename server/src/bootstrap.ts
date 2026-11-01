@@ -10,10 +10,15 @@ import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
+import { accountContextMiddleware } from './accounts/account-context';
 
 export async function createApp(): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   app.setGlobalPrefix('api');
+  // First middleware: every request runs inside an account context store the
+  // AuthGuard fills in, so each query in the handler is scoped to the caller
+  // (docs/accounts.md §3). Must precede anything that could await.
+  app.use(accountContextMiddleware);
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   // Composer attachments upload base64-in-JSON, one file per request: ≤5MB
   // for files, ≤25MB for voice notes (docs/voice.md) ≈ 34MB on the wire —

@@ -117,6 +117,23 @@ attachment` for active content types, so an agent-written HTML file can
 never execute on the API or SPA origin. In-app previews go through the JSON
 `/preview` endpoint into a sandboxed iframe.
 
+**The account boundary.** Every table carries `accountId`
+(`docs/accounts.md` §3), and the Drizzle handle every repository injects is
+account-scoped: selects, updates and deletes are fenced to the account bound
+for the current async context, inserts are stamped with it, and a table takes
+part the moment it has the column — a boot-time sweep adds it to tables that
+lack it, and a reflection test fails when the schema half is forgotten. The
+context is set by the auth guard per request and by each background sweep per
+account it processes; webhook fires and inbound mail run under the account
+that owns the agent, and a pairing code only pairs into the account that
+minted it. The deliberate holes are small and named: `db.execute(sql…)` is
+unscoped (its call sites key on random ids), and `unscoped(db)` exists for the
+cross-account lookups that resolve an agent slug or a paired chat id to its
+owner. In `AUTH_MODE=single` the boundary is still there with one account in
+it. Sessions are random tokens stored as SHA-256 in an HttpOnly, SameSite=Lax
+cookie; magic links are one-use, 15 minutes, rate-limited. Not yet: per-account
+object-storage prefixes and Postgres RLS (`deployment.md` §2 layers 2–3).
+
 **Sandboxed iframes with a real CSP.** Every iframe we render — mini apps,
 chat artifacts, HTML and PDF previews — carries `sandbox="allow-scripts"`
 *and* a `default-src 'none'` Content-Security-Policy injected by
@@ -431,12 +448,13 @@ Honest list, as of this writing. Several map to execution-plan items.
   Linux and Windows companion back-ends are implemented from documentation
   and untested; the work queue is in-process and one companion per server
   (`docs/computer-control.md` §7–8).
-
-- **Single-user auth is the default and the only shipped model.** Every
-  request resolves to one identity (`SINGLE_USER`); tables are
-  workspace-scoped with no user column. Without `YAAM_API_TOKEN` the API is
-  unauthenticated, which is only acceptable bound to localhost. The
-  `AuthStrategy` seam exists; tenancy does not (plan item 7).
+- **Single-user mode is unauthenticated by default.** With
+  `AUTH_MODE=single` (the self-hosting default) and no `YAAM_API_TOKEN`, the
+  API accepts every caller as the one local account — acceptable only bound
+  to localhost. Tenancy itself shipped (`docs/accounts.md`, section c above);
+  the hosted deployment runs `AUTH_MODE=accounts`. Still open there: no
+  per-account object-storage prefixes, no Postgres RLS, and the hosted
+  ceiling is checked at turn start rather than mid-turn.
 - **No independent action review.** Gates are deterministic; nothing
   compares a proposed `gmail_send` to what the user asked for, and there is
   no sensitive-information check on outbound content (plan item 2).
@@ -514,6 +532,7 @@ From `git log`, newest first. Dates are commit dates.
 |---|---|---|
 | 2026-11-01 | this | Desktop computer control: paired outbound companion, hashed companion token on four routes (`CompanionGuard`), user-chosen narrow-only scopes, every `computer_*` tool Ask-gated in every mode with acting tools never remembered, loop/channel refusal, `computer_actions` audit, Pause/Disconnect/`COMPUTER_CONTROL_ENABLED` kill switches (`docs/computer-control.md`) |
 | 2026-11-01 | this | Autonomous company (plan item 14 A–C): atomic task claims, pre-call budget reservation with hard stop, approvals-only structural change, meet-rule scopes, charter drift detection, hash-chained `org_audit`, org kill switch and `COMPANIES_ENABLED` |
+| 2026-11-01 | accounts | Tenancy: `accountId` on every table with a boot-time sweep and a reflection test, account-scoped Drizzle handle, per-request/per-sweep account context; `AUTH_MODE=accounts` with hashed one-use magic links, HttpOnly session cookies, link rate limits; plans with server-side 402 ceilings; experimental suite-JWT strategy |
 | 2026-10-31 | this | Email channel (HMAC-signed inbound webhook, envelope-sender pairing, `<email>` framing, quarantined lessons) and web push (VAPID + aes128gcm on node:crypto); `POST /api/channels/email/inbound` the second non-GET public route |
 | 2026-10-31 | browser | Credential-free, viewable browser tool: Cloudflare Browser Rendering / local Playwright, incognito per turn, password-field refusal, SSRF guard on every request, `<page-content>` framing, `browser_act` mutation-class and loop-queued |
 | 2026-10-31 | this | `docs/security.md`, `SECURITY.md`, `GET /api/security`, `SECURITY_CONTACT` |

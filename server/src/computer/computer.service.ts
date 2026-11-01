@@ -36,6 +36,7 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { computerActions, computerRunners } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
+import { unscoped } from '../accounts/scoped-db';
 import { StorageService } from '../storage/storage.service';
 import { workspaceFileKey } from '../storage/storage.keys';
 import { AiToolSpec } from '../ai/ai-provider.interface';
@@ -262,7 +263,10 @@ export class ComputerService {
     const m = /^Bearer\s+(\S+)$/i.exec(authorization ?? '');
     if (!m) throw new UnauthorizedException('missing companion token');
     const presented = sha256Hex(m[1]);
-    const row = await this.runner();
+    // Unscoped on purpose: no account is bound on the companion routes; the
+    // runner row found by its token hash says which account the companion
+    // belongs to, and CompanionGuard binds it (docs/accounts.md §3).
+    const row = (await unscoped(this.db).select().from(computerRunners).where(eq(computerRunners.tokenHash, presented)).limit(1)).at(0);
     if (!row || row.tokenHash.length !== presented.length || !timingSafeEqual(Buffer.from(row.tokenHash), Buffer.from(presented))) {
       throw new UnauthorizedException('unknown companion token');
     }

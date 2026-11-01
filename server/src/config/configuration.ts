@@ -122,4 +122,32 @@ export default () => ({
   registryPublishToken: process.env.REGISTRY_PUBLISH_TOKEN || '',
   /** Estimated provider-input tokens that trigger auto-compaction (FR-7.3). */
   compactionThresholdTokens: parseInt(process.env.COMPACTION_THRESHOLD_TOKENS || '120000', 10),
+  /** Accounts (docs/accounts.md). `single` (default) = today's one-user
+   *  install: every row belongs to the 'single' account, YAAM_API_TOKEN is
+   *  the only credential. `accounts` = email magic-link sessions, one tenant
+   *  per account, plans and ceilings. */
+  authMode: process.env.AUTH_MODE || 'single',
+  /** Plan a freshly signed-up account starts on (accounts/plans.ts). */
+  accountsDefaultPlan: process.env.ACCOUNTS_DEFAULT_PLAN || 'free',
+  /** Comma-separated emails allowed on /api/admin/* (plan changes). */
+  adminEmails: process.env.ADMIN_EMAILS || '',
+  /** Sender of magic-link mail; default login@EMAIL_DOMAIN. Mail goes out
+   *  through the EMAIL_SEND_* provider; with it off, links are logged. */
+  authFromAddress: process.env.AUTH_FROM_ADDRESS || '',
+  /** Monthly USD ceiling for the hosted plan's platform-key usage. */
+  hostedPlanUsd: parseFloat(process.env.HOSTED_PLAN_USD || '15'),
+  /** Platform provider keys the hosted plan spends from. Empty = that
+   *  provider is BYO-only on every plan. */
+  platformKeys: {
+    anthropic: process.env.PLATFORM_ANTHROPIC_KEY || '',
+    openai: process.env.PLATFORM_OPENAI_KEY || '',
+    gemini: process.env.PLATFORM_GEMINI_KEY || '',
+    deepseek: process.env.PLATFORM_DEEPSEEK_KEY || '',
+  } as Record<string, string>,
+  /** Experimental: accept sessions minted by the suite's account service
+   *  (docs/shared-accounts.md phase 3) — an HS256 JWT in the Authorization
+   *  header, `sub` = account id. Both set = the suite strategy is bound
+   *  instead of the magic-link one. */
+  suiteAccountsUrl: process.env.SUITE_ACCOUNTS_URL || '',
+  suiteAccountsSecret: process.env.SUITE_ACCOUNTS_SECRET || '',
 });

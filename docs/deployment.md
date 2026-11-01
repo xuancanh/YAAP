@@ -18,6 +18,19 @@ who manages the machine:
   back up, or keep awake. The cloud is not remote access to a machine; it is
   the machine-less experience.
 
+**Where the code is (1 Nov 2026).** The tenancy the cloud needs shipped as
+`docs/accounts.md`: one codebase, `AUTH_MODE=single` for the desktop/self-run
+case (the one `single` account owns every row, nothing visible changes) and
+`AUTH_MODE=accounts` for the hosted deployment (email magic-link sessions,
+one tenant per account, every query account-scoped). The hosted tier is
+legible and sits under the competition's $20: `free` (your own keys, 3 agents,
+3 loops), `hosted` (our keys, `HOSTED_PLAN_USD` a month — default $15 — as a
+hard stop), `byo` (your keys, no ceiling). Of the three isolation layers in
+§2, layer 1 is live (the scoped database handle plus the per-request account
+context); layers 2 (RLS) and 3 (per-account storage prefixes) are still to
+do. Payments plug into the `BillingProvider` seam; today plans are set by an
+admin.
+
 ## 1. Free desktop app, single user
 
 Target: download, open, chat. No Docker, no daemons, no accounts; the only
