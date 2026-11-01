@@ -781,9 +781,14 @@ per-workspace agents migration), `OrgModeService.setMode`,
 `OrgIntentService.setVision` (`horizonDays` → `dueAt`, rules), `setProfile`
 and the org's `mission`, `setTunable` per key, `ensureCadenceDefaults` then
 `updateCadence` for `'light'` (standup and retro off on the root unit) or
-`'none'` (all off), the first hires through `proposeHire` (supervised) or
-`prepareHire` + `applyHire` under the agent cap (autonomous) — an unknown
-role is a `skipped` entry with a note, never a failure — and
+`'none'` (all off), the first hires — item 24's role catalog first (`role:<id>`, a bare role
+id or a title through `roleRef` / `OrgRolesService.get`, sent as
+`templateOrPack: 'role:<id>'` so `prepareHire` applies the role's charter,
+title, tier and scopes met with the chief's holdings; market packs by id or
+name as the fallback; the chief's own role never a report) through
+`proposeHire` (supervised) or `prepareHire` + `applyHire` under the agent
+cap (autonomous), the dropped scopes named in the note — an unknown role is
+a `skipped` entry with a note, never a failure — and
 `runtime.runPlanning` of the root unit fire-and-forget when `planNow` and a
 vision exist (`planning: 'queued' | 'not_requested' | 'unavailable'`); one
 `org_bootstrap` audit row lists it all; a workspace with an organization or
@@ -798,19 +803,24 @@ vision → profile → budget → rhythm → hires → review; cards are
 100%)` wide with no horizontal scroll on a phone; `existing={id, name}`
 starts at the mode step and only bootstraps), `src/lib/onboarding.ts`
 (`horizonToIso`, `wizardSteps`, `validateStep` / `validateAll`,
-`rankRoles` by profile-text overlap, `buildBootstrapBody` from what is on
-screen only, `buildSummary`, `successToast`, the mode / cadence / ritual
-copy), `src/lib/api.ts` (`bootstrapOrg`, `orgRoles` tolerant of 404 with
-`normalizeRoles` over either catalog shape, `BootstrapBody`,
-`BootstrapSummary`, `OrgRole`), `Rails.tsx` ("Add workspace" opens the
+`rankRoles` on the catalog's `fits` tags as the server ranks, `roleHireRef`
+(`role:<id>`), `roleCostLabel`, `hiresEstimate`, `buildBootstrapBody` from
+what is on screen only, `buildSummary`, `successToast`, the mode / cadence /
+ritual copy), `src/lib/api.ts` (`bootstrapOrg`, `orgRoles(wsId, profile?)`
+over `GET …/org/roles?profile=` tolerant of 404 with `normalizeRoles`,
+`BootstrapBody`, `BootstrapSummary`, `OrgRole` in the item 24 shape — id,
+title, charter, competencies, toolScopes, modelTier, estMonthlyUsd, fits,
+score, matched), `Rails.tsx` ("Add workspace" opens the
 wizard; the `window.prompt`-style inline input is gone), `SettingsView.tsx`
 (Organization card: "Enable company…" for a workspace in `off` mode). On
 success the wizard selects the workspace, opens the Vision pane and toasts
 "Company ready — <chief> is planning" when planning was queued. Tests:
 `tests/backend-org-bootstrap.test.ts` (7), `web-tests/onboarding.test.ts`
-(11). Departures: the chief picker lists existing agents only when the
+(12). Departures: the chief picker lists existing agents only when the
 wizard runs for an existing workspace (a new workspace owns no agents yet,
-per the per-workspace agents rule); the role catalog is item 24's route,
-so until it lands the hires step is hidden and `roles` are resolved against
-the market packs by id or name; tunables are accepted by the route but the
-wizard does not edit them (the Settings card does, with the fence).
+per the per-workspace agents rule); the hires step re-ranks server-side
+against the profile written so far when entered and shows the matched
+tags, tier, estimate and competencies per role, with the cost of the picked
+seats against the envelope; the hires step is hidden when the roles route
+is absent; tunables are accepted by the route but the wizard does not edit
+them (the Settings card does, with the fence).

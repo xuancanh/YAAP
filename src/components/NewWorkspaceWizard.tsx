@@ -15,7 +15,7 @@ import { I, P } from '../lib/icons';
 import { safeJsonParse } from '../lib/util';
 import { btn, faint, input, label, pill } from './org-ui';
 import {
-  buildBootstrapBody, buildSummary, CADENCE_CARDS, HORIZONS, initialWizardState, MAX_AGENT_CAP, MODE_CARDS, rankRoles, RITUAL_LINES, STEP_TITLES, successToast, validateAll, validateStep, wizardSteps,
+  buildBootstrapBody, buildSummary, CADENCE_CARDS, hiresEstimate, HORIZONS, initialWizardState, MAX_AGENT_CAP, MODE_CARDS, rankRoles, RITUAL_LINES, roleCostLabel, STEP_TITLES, successToast, validateAll, validateStep, wizardSteps,
   WORKSPACE_COLORS, type WizardState, type WizardStep,
 } from '../lib/onboarding';
 
@@ -53,6 +53,17 @@ export function NewWorkspaceWizard({ onClose, existing }: WizardProps) {
     void api.orgRoles(probeId).then((r) => setRoles(r && r.length ? r : null)).catch(() => setRoles(null));
     void api.orgCaps(probeId).then(setCaps).catch(() => setCaps(null));
   }, [probeId, app.companiesEnabled]);
+  // Entering the hires step re-ranks the catalog server-side against the
+  // profile written so far (item 24: `GET …/org/roles?profile=`); the client
+  // ranking below covers the gap and any failure.
+  const profileText = `${state.vision.title} ${state.vision.description} ${state.profile.values} ${state.profile.culture}`;
+  const [serverRanked, setServerRanked] = useState<OrgRole[] | null>(null);
+  useEffect(() => {
+    if (!probeId || !roles) { setServerRanked(null); return; }
+    let live = true;
+    void api.orgRoles(probeId, profileText.trim() || undefined).then((r) => { if (live) setServerRanked(r && r.length ? r : null); }).catch(() => { if (live) setServerRanked(null); });
+    return () => { live = false; };
+  }, [probeId, roles, profileText]);
   const opts = useMemo(() => ({ existing: isExisting, rolesAvailable: roles !== null }), [isExisting, roles]);
   const steps = useMemo(() => wizardSteps(state, opts), [state, opts]);
   const step: WizardStep = steps[Math.min(stepIx, steps.length - 1)];
@@ -111,9 +122,8 @@ export function NewWorkspaceWizard({ onClose, existing }: WizardProps) {
   };
 
   const set = <K extends keyof WizardState>(k: K, v: WizardState[K]) => setState((s) => ({ ...s, [k]: v }));
-  const profileText = `${state.vision.title} ${state.vision.description} ${state.profile.values} ${state.profile.culture}`;
-  const rankedRoles = useMemo(() => (roles ? rankRoles(roles, profileText) : []), [roles, profileText]);
-  const roleName = (id: string) => roles?.find((r) => r.id === id)?.name;
+  const rankedRoles = useMemo(() => (serverRanked ? serverRanked.filter((r) => r.id !== 'chief-of-staff') : roles ? rankRoles(roles, profileText) : []), [roles, serverRanked, profileText]);
+  const roleName = (id: string) => roles?.find((r) => r.id === id.replace(/^role:/, ''))?.title;
   const agentName = (id: string) => ownAgents.find((a) => a.id === id)?.name;
   const show = (k: string) => (touched ? errors[k] : undefined);
 
@@ -298,19 +308,29 @@ export function NewWorkspaceWizard({ onClose, existing }: WizardProps) {
 
           {step === 'hires' && roles && (
             <>
-              <div style={faint}>Roles from the catalog, ranked by your vision and profile. {state.mode === 'supervised' ? 'Each becomes an approval card; nothing exists until you approve it.' : 'Each is seated under the chief at once, within the agent cap.'} Up to five; the chief can hire more later.</div>
-              <div role="group" aria-label="First hires" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <div style={faint}>Roles from the catalog, ranked against your vision and profile (the matched tags are shown). {state.mode === 'supervised' ? 'Each becomes an approval card; nothing exists until you approve it.' : 'Each is seated under the chief at once, within the agent cap.'} A role starts with its catalog scopes met with the chief's own holdings, a charter written for this company, and the model tier shown. Up to five; the chief can hire more later.</div>
+              <div role="group" aria-label="First hires" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {rankedRoles.map((r) => {
                   const on = state.roles.includes(r.id);
+                  const full = !on && state.roles.length >= 5;
                   return (
-                    <button key={r.id} type="button" aria-pressed={on} title={r.summary ?? ''} disabled={!on && state.roles.length >= 5}
+                    <button key={r.id} type="button" aria-pressed={on} disabled={full} title={r.charter}
                       onClick={() => set('roles', on ? state.roles.filter((x) => x !== r.id) : [...state.roles, r.id])}
-                      style={{ ...pill(on ? 'var(--accent-dim)' : 'var(--panel-2)', on ? 'var(--text)' : 'var(--text-dim)'), fontSize: 12, padding: '5px 10px', cursor: 'pointer', borderColor: on ? 'var(--accent)' : 'var(--border-soft)', opacity: !on && state.roles.length >= 5 ? 0.5 : 1 }}>
-                      {r.name}{r.title && r.title !== r.name ? <span style={{ color: 'var(--text-faint)' }}> · {r.title}</span> : null}
+                      style={{ ...cardBtn(on), padding: '8px 12px', opacity: full ? 0.5 : 1, display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span aria-hidden style={{ width: 16, height: 16, borderRadius: 5, border: `1.5px solid ${on ? 'var(--accent)' : 'var(--border)'}`, background: on ? 'var(--accent)' : 'transparent', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{on && <I d={P.check} size={11} stroke="#fff" sw={3} />}</span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                          <span style={{ fontWeight: 600, fontSize: 12.5 }}>{r.title}</span>
+                          <span style={{ ...faint, fontSize: 11 }}>{roleCostLabel(r)}</span>
+                          {(r.matched ?? []).length > 0 && <span style={{ ...faint, fontSize: 11, color: 'var(--accent-hi)' }}>fits: {(r.matched ?? []).join(', ')}</span>}
+                        </span>
+                        <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(r.competencies ?? []).join(' · ')}</span>
+                      </span>
                     </button>
                   );
                 })}
               </div>
+              {state.roles.length > 0 && <div style={faint}>Estimated: ~${hiresEstimate(roles, state.roles).toFixed(0)}/month at list prices for part-time seats, inside the ${Math.max(0, Number(state.budget.monthlyUsd) || 0).toFixed(0)} envelope{hiresEstimate(roles, state.roles) > (Number(state.budget.monthlyUsd) || 0) ? ' — more than the envelope; the chief will have to trade seats or tiers' : ''}.</div>}
             </>
           )}
 

@@ -746,9 +746,16 @@ export interface BootstrapSummary {
   cadences: { mode: 'default' | 'light' | 'none'; disabled: number; total: number };
   hires: BootstrapHire[]; planning: 'queued' | 'not_requested' | 'unavailable'; notes: string[];
 }
-/** One entry of the role catalog (item 24, `GET …/org/roles`); normalised
- *  from whatever shape that route answers with, since it lands after this. */
-export interface OrgRole { id: string; name: string; title?: string; summary?: string }
+/** One entry of the role catalog (item 24, `GET …/org/roles?profile=`:
+ *  `{ profile, roles: Role[] }`, ranked by the profile text with the matched
+ *  `fits` tags). A hire names it as `role:<id>`. */
+export interface OrgRole {
+  id: string; title: string; charter: string; competencies: string[];
+  /** Meet-rule scope strings the role starts with; the chief's holdings cap them. */
+  toolScopes: string[];
+  modelTier: 'cheap' | 'standard' | 'strong' | string; estMonthlyUsd: number; fits: string[];
+  score?: number; matched?: string[];
+}
 export interface OrgSpendNode { usd: number; tokensIn: number; tokensOut: number; runs: number; monthlyUsd: number; reservedUsd: number }
 export interface OrgSpend {
   month: string; company: OrgSpendNode;
@@ -866,18 +873,24 @@ export type AuthMe =
   | { mode: 'accounts'; authenticated: true; account: AccountSummary }
   | { mode: 'accounts'; authenticated: false };
 
-/** Tolerant reader of the role catalog: an array or `{ roles: [...] }`, each
- *  row with an `id` (or `packId`) and a `name` (or `role`/`title`). */
+/** Tolerant reader of the role catalog: `{ roles: [...] }` (the route) or a
+ *  bare array; a row needs an `id` and a `title` (or `name`); list fields
+ *  default to empty so the wizard never reads undefined. */
 export function normalizeRoles(raw: unknown): OrgRole[] {
   const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && Array.isArray((raw as { roles?: unknown }).roles) ? (raw as { roles: unknown[] }).roles : [];
+  const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
   const out: OrgRole[] = [];
   for (const x of list) {
     if (!x || typeof x !== 'object') continue;
     const r = x as Record<string, unknown>;
-    const id = typeof r.id === 'string' ? r.id : typeof r.packId === 'string' ? r.packId : '';
-    const name = typeof r.name === 'string' ? r.name : typeof r.role === 'string' ? r.role : typeof r.title === 'string' ? r.title : '';
-    if (!id || !name) continue;
-    out.push({ id, name, title: typeof r.title === 'string' ? r.title : typeof r.role === 'string' ? r.role : undefined, summary: typeof r.summary === 'string' ? r.summary : typeof r.description === 'string' ? r.description : typeof r.tagline === 'string' ? r.tagline : undefined });
+    const id = typeof r.id === 'string' ? r.id : '';
+    const title = typeof r.title === 'string' ? r.title : typeof r.name === 'string' ? r.name : '';
+    if (!id || !title) continue;
+    out.push({
+      id, title, charter: typeof r.charter === 'string' ? r.charter : '', competencies: strs(r.competencies), toolScopes: strs(r.toolScopes),
+      modelTier: typeof r.modelTier === 'string' ? r.modelTier : 'standard', estMonthlyUsd: typeof r.estMonthlyUsd === 'number' ? r.estMonthlyUsd : 0, fits: strs(r.fits),
+      ...(typeof r.score === 'number' ? { score: r.score } : {}), ...(Array.isArray(r.matched) ? { matched: strs(r.matched) } : {}),
+    });
   }
   return out;
 }
@@ -1236,9 +1249,9 @@ export const api = {
   setWorkspaceOrg: (wsId: string, body: { mode: OrgMode; chiefOfStaffAgentId?: string; monthlyUsd?: number; agentCap?: number }) => send<WorkspaceOrg>(`/api/workspaces/${wsId}/org`, 'PUT', body),
   orgCaps: (wsId: string) => get<OrgCaps>(`/api/workspaces/${wsId}/org/caps`),
   bootstrapOrg: (wsId: string, body: BootstrapBody) => send<BootstrapSummary>(`/api/workspaces/${wsId}/org/bootstrap`, 'POST', body),
-  /** The role catalog (item 24). Null when the route is absent (404) or fails: the wizard hides the step. */
-  orgRoles: async (wsId: string): Promise<OrgRole[] | null> => {
-    const url = `/api/workspaces/${wsId}/org/roles`;
+  /** The role catalog (item 24) ranked by `profile` (the org's own when absent). Null when the route is absent (404) or fails: the wizard hides the step. */
+  orgRoles: async (wsId: string, profile?: string): Promise<OrgRole[] | null> => {
+    const url = `/api/workspaces/${wsId}/org/roles${profile ? `?profile=${encodeURIComponent(profile.slice(0, 2_000))}` : ''}`;
     const res = await fetch(url, { headers: authHeaders(url) }).catch(() => null);
     if (!res || !res.ok) return null;
     const raw = await res.json().catch(() => null) as unknown;

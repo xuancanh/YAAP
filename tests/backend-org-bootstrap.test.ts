@@ -1,5 +1,5 @@
 /** Company onboarding (execution plan item 25; docs/group-chat.md §5
- *  "Onboarding", docs/company-vision.md §1b): `POST
+ *  "Onboarding", docs/company-vision.md §1b, item 24's role catalog): `POST
  *  /api/workspaces/:id/org/bootstrap` does the whole setup in order — the
  *  chief (created or existing), the mode, the vision, the operating profile,
  *  the tunables within their fence, the ritual cadences, the first hires
@@ -31,6 +31,9 @@ import { OrgUnitsService } from '../server/src/org/org-units.service';
 import { OrgIntentService } from '../server/src/org/org-intent.service';
 import { OrgMeetingsService } from '../server/src/org/org-meetings.service';
 import { OrgBootstrapService } from '../server/src/org/org-bootstrap.service';
+import { OrgRolesService } from '../server/src/org/org-roles.service';
+import { roleById } from '../server/src/org/roles/catalog';
+import { DEFAULT_CHIEF_SCOPES } from '../server/src/org/org.service';
 import { OrgController } from '../server/src/org/org.controller';
 import { WorkspaceOrgController } from '../server/src/org/workspace-org.controller';
 import { TUNABLES, tunable } from '../server/src/org/org-tunables';
@@ -62,8 +65,9 @@ async function setup() {
   runtime.debounceMs = 15;
   const mode = new OrgModeService(org, workspaces, agents, runtime, approvals, audit, announcer);
   const orgs = new OrgController(org, tasks, approvals, audit, brief, runtime, config, units, undefined, undefined, undefined, intent);
-  const bootstrap = new OrgBootstrapService(org, workspaces, agents, mode, approvals, runtime, audit, intent, units, meetings);
-  const controller = new WorkspaceOrgController(mode, orgs, config, meetings, undefined, bootstrap);
+  const roles = new OrgRolesService();
+  const bootstrap = new OrgBootstrapService(org, workspaces, agents, mode, approvals, runtime, audit, intent, units, meetings, roles);
+  const controller = new WorkspaceOrgController(mode, orgs, config, meetings, undefined, undefined, undefined, undefined, undefined, bootstrap);
   const ws = (await workspaces.list())[0];
   return { db, agents, workspaces, audit, org, units, intent, approvals, meetings, runtime, mode, bootstrap, controller, ws, announced };
 }
@@ -78,7 +82,7 @@ test('full happy path: creates the chief with the profile in its charter, enable
     vision: { title: 'Be the newsletter people forward', description: 'A weekly letter on climate finance that busy people actually read.', horizonDays: 90, rules: 'No paid promotion.' },
     profile: PROFILE,
     tunables: { 'planning.objectivesPerVision': 2, 'intent.checkInCadenceDays': 14 },
-    cadences: 'light', roles: ['Marketer'], planNow: true,
+    cadences: 'light', roles: ['role:marketer'], planNow: true,
   });
   assert.equal(r.mode, 'supervised');
   assert.equal(r.chief.created, true); assert.equal(r.chief.name, 'Nova');
@@ -111,6 +115,7 @@ test('full happy path: creates the chief with the profile in its charter, enable
   assert.equal(r.hires.length, 1); assert.equal(r.hires[0].status, 'proposed'); assert.ok(r.hires[0].approvalId);
   const pending = await s.approvals.pending(r.orgId);
   assert.equal(pending.length, 1); assert.equal(pending[0].kind, 'hire');
+  assert.equal((JSON.parse(pending[0].payload) as { roleId?: string }).roleId, 'marketer');
   assert.ok(!(await s.agents.list()).some((a) => a.name === 'Marketer'));
   // planning queued, announced, audited
   assert.equal(r.planning, 'queued');
@@ -195,25 +200,43 @@ test('a workspace that already has a company is refused with a clear 400 and not
   assert.equal((await s.org.get(r2.orgId)).name, 'Lab');
 });
 
-test('roles the catalog does not know are skipped with a note; known packs are seated at once in autonomous mode within the agent cap', async () => {
+test('first hires come from the item 24 role catalog (role:<id>, a bare id or a title) with market packs as the fallback; unknown roles are skipped with a note; in autonomous mode they are seated at once within the agent cap with the meet-rule scopes', async () => {
   const s = await setup();
   const r = await s.bootstrap.bootstrap(s.ws.id, {
-    mode: 'autonomous', chief: { create: { name: 'Nova' } }, monthlyUsd: 20, agentCap: 2,
-    vision: { title: 'Grow' }, roles: ['role-from-item-24-that-is-not-here', 'Marketer', 'pro-support'],
+    mode: 'autonomous', chief: { create: { name: 'Nova' } }, monthlyUsd: 20, agentCap: 4,
+    vision: { title: 'Grow' }, roles: ['role-from-nowhere', 'role:engineer', 'Researcher', 'pro-support', 'role:support'],
   });
-  assert.equal(r.hires.length, 3);
+  assert.equal(r.hires.length, 5);
   assert.equal(r.hires[0].status, 'skipped'); assert.match(r.hires[0].note, /not in the role catalog/);
-  assert.equal(r.hires[1].status, 'hired'); assert.ok(r.hires[1].agentId);
-  const hired = await s.agents.get(r.hires[1].agentId!);
-  assert.equal(hired.name, 'Marketer');
-  const member = await s.org.member(r.orgId, hired.id);
-  assert.equal(member!.reportsToAgentId, r.chief.agentId); assert.equal(member!.depth, 2);
-  // the cap (2: chief + one) stops the third, with the reason
-  assert.equal(r.hires[2].status, 'skipped'); assert.match(r.hires[2].note, /agent cap \(2\)/);
-  assert.equal(await s.org.liveMemberCount(r.orgId), 2);
+  // role:engineer — the role's charter, title and scopes, met with the chief's holdings: run_js/run_python are dropped and named
+  assert.equal(r.hires[1].status, 'hired');
+  const engineer = await s.agents.get(r.hires[1].agentId!);
+  assert.equal(engineer.name, 'Engineer'); assert.equal(engineer.role, 'Engineer');
+  assert.match(engineer.charter, /Engineer of Default/);
+  const em = (await s.org.member(r.orgId, engineer.id))!;
+  assert.equal(em.reportsToAgentId, r.chief.agentId); assert.equal(em.depth, 2);
+  const granted = JSON.parse(em.scopes) as string[];
+  assert.deepEqual([...granted].sort(), [...DEFAULT_CHIEF_SCOPES].sort(), 'meet(chief holdings, role scopes)');
+  assert.ok(roleById('engineer')!.toolScopes.includes('tool:run_js'));
+  assert.ok(!granted.includes('tool:run_js'));
+  assert.match(r.hires[1].note, /dropped \(outside the chief's holdings\): tool:run_js, tool:run_python/);
+  // a bare title resolves through the catalog too
+  assert.equal(r.hires[2].status, 'hired');
+  assert.equal((await s.agents.get(r.hires[2].agentId!)).name, 'Researcher');
+  // the cap (4: chief + three) stops the fourth with the reason; the pack fallback is reached first
+  assert.equal(r.hires[3].status, 'hired'); assert.equal((await s.agents.get(r.hires[3].agentId!)).name, 'Support Desk');
+  assert.equal(r.hires[4].status, 'skipped'); assert.match(r.hires[4].note, /agent cap \(4\)/);
+  assert.equal(await s.org.liveMemberCount(r.orgId), 4);
   assert.equal((await s.approvals.pending(r.orgId)).length, 0, 'autonomous mode leaves no cards');
   const payload = JSON.parse((await s.audit.list(r.orgId, { action: 'org_bootstrap' }))[0].payload);
-  assert.deepEqual(payload.hires.map((h: { status: string }) => h.status), ['skipped', 'hired', 'skipped']);
+  assert.deepEqual(payload.hires.map((h: { status: string }) => h.status), ['skipped', 'hired', 'hired', 'hired', 'skipped']);
+  // the resolver itself: role first, pack second, the chief role never a report
+  assert.equal(s.bootstrap.resolveRole('role:analyst')!.templateOrPack, 'role:analyst');
+  assert.equal(s.bootstrap.resolveRole('Analyst')!.templateOrPack, 'role:analyst');
+  assert.equal(s.bootstrap.resolveRole('Marketer')!.templateOrPack, 'role:marketer');
+  assert.equal(s.bootstrap.resolveRole('pro-marketing')!.kind, 'pack');
+  assert.equal(s.bootstrap.resolveRole('role:chief-of-staff'), null);
+  assert.equal(s.bootstrap.resolveRole('role:nope'), null);
 });
 
 test('planNow without a vision reports planning as unavailable with the reason; the caps route carries the default veto window for the wizard', async () => {

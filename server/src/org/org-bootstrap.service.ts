@@ -14,9 +14,11 @@
  * refuses the whole call instead of leaving half a company), the ritual
  * cadences ('default' leaves the item 19 defaults, 'light' disables the
  * standup and the retro on the root unit, 'none' disables every cadence),
- * the first hires (role ids or pack names through the existing hire path:
- * approval cards in supervised mode, seated at once within caps in
- * autonomous mode; an unknown role is a note, never a failure) and, when
+ * the first hires (item 24's role catalog — `role:<id>`, a bare role id or
+ * title — through the existing hire path, with market packs by id or name as
+ * the fallback: approval cards in supervised mode, seated at once within caps
+ * in autonomous mode, scopes met with the chief's holdings either way; an
+ * unknown role is a note, never a failure) and, when
  * asked, the first planning session of the root unit (fire and forget:
  * `planning: 'queued'`).
  *
@@ -40,6 +42,8 @@ import { OrgApprovalsService } from './org-approvals.service';
 import { OrgRuntimeService } from './org-runtime.service';
 import { OrgAuditService } from './org-audit.service';
 import { checkTunable } from './org-tunables';
+import { OrgRolesService } from './org-roles.service';
+import { roleById, roleRef, ROLE_PREFIX } from './roles/catalog';
 
 export const CADENCE_MODES = ['default', 'light', 'none'] as const;
 export type CadenceMode = (typeof CADENCE_MODES)[number];
@@ -90,7 +94,18 @@ export class OrgBootstrapService {
     @Optional() private readonly intent?: OrgIntentService,
     @Optional() private readonly units?: OrgUnitsService,
     @Optional() private readonly meetings?: OrgMeetingsService,
+    @Optional() private readonly roles?: OrgRolesService,
   ) {}
+
+  /** `role:<id>`, a bare role id or a role title → the catalog hire
+   *  (`templateOrPack: 'role:<id>'`); else a market pack by id or name. */
+  resolveRole(role: string): { templateOrPack: string; title?: string; label: string; kind: 'role' | 'pack' } | null {
+    const catalog = roleRef(role) ?? (this.roles ? (() => { try { return this.roles!.get(role); } catch { return undefined; } })() : roleById(role));
+    if (catalog && catalog.id !== 'chief-of-staff') return { templateOrPack: `${ROLE_PREFIX}${catalog.id}`, title: catalog.title, label: catalog.title, kind: 'role' };
+    const pack = OrgApprovalsService.catalogItem(role);
+    if (pack) return { templateOrPack: pack.id, title: pack.role || undefined, label: pack.name, kind: 'pack' };
+    return null;
+  }
 
   async bootstrap(workspaceId: string, input: BootstrapInput, actor = 'user'): Promise<BootstrapSummary> {
     const ws = await this.workspaces.get(workspaceId);
@@ -177,19 +192,19 @@ export class OrgBootstrapService {
     const hires: BootstrapHire[] = [];
     const agentCap = input.agentCap ?? ws.orgAgentCap ?? 12;
     for (const role of roles) {
-      const pack = OrgApprovalsService.catalogItem(role);
-      if (!pack) { hires.push({ role, status: 'skipped', note: 'not in the role catalog on this server' }); continue; }
-      const hire = { templateOrPack: pack.id, title: pack.role || undefined, reportsToAgentId: chiefId, recommendation: 'first hire chosen during company onboarding', requestedBy: actor };
+      const resolved = this.resolveRole(role);
+      if (!resolved) { hires.push({ role, status: 'skipped', note: 'not in the role catalog on this server (GET …/org/roles lists it)' }); continue; }
+      const hire = { templateOrPack: resolved.templateOrPack, title: resolved.title, reportsToAgentId: chiefId, recommendation: 'first hire chosen during company onboarding', requestedBy: actor };
       try {
         if (input.mode === 'supervised') {
           const a = await this.approvals.proposeHire(orgId, hire);
-          hires.push({ role, status: 'proposed', note: `approval card for ${pack.name}`, approvalId: a.id });
+          hires.push({ role, status: 'proposed', note: `approval card for ${resolved.label}`, approvalId: a.id });
         } else {
           const count = await this.org.liveMemberCount(orgId);
           if (count >= agentCap) { hires.push({ role, status: 'skipped', note: `the agent cap (${agentCap}) is reached` }); continue; }
           const payload = await this.approvals.prepareHire(orgId, hire);
           const r = await this.approvals.applyHire(orgId, payload, actor, actor);
-          hires.push({ role, status: 'hired', note: `${r.name} seated under ${chiefName}`, agentId: r.agentId });
+          hires.push({ role, status: 'hired', note: `${r.name} seated under ${chiefName} with ${r.scopes.length} scope(s)${payload.outsideChiefHoldings.length ? `; dropped (outside the chief's holdings): ${payload.outsideChiefHoldings.join(', ')}` : ''}`, agentId: r.agentId });
         }
       } catch (err) {
         hires.push({ role, status: 'skipped', note: err instanceof Error ? err.message : String(err) });

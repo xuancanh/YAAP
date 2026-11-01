@@ -7,6 +7,7 @@
  *  sends is on screen in the review step. */
 import type { BootstrapBody, OrgCaps, OrgRole } from './api';
 
+
 export type RunMode = 'none' | 'supervised' | 'autonomous';
 export type CadenceMode = 'default' | 'light' | 'none';
 export type HorizonChoice = 30 | 90 | 180 | 365 | 'date';
@@ -139,14 +140,35 @@ export function validateAll(state: WizardState, opts: { existing: boolean; roles
   return out;
 }
 
-/** Rank the catalog roles by how many words of the profile + vision text
- *  they share (name, title, summary); ties keep catalog order. Roles with no
- *  overlap follow, in catalog order, so the list is never empty. */
+/** Rank the catalog roles against the profile + vision text the way the
+ *  server does (item 24 `rankRoles`: a `fits` tag mentioned whole or as a
+ *  stem scores one), with the title and competencies as tie-breakers; ties
+ *  keep catalog order and no role is dropped, so the list is never empty.
+ *  The chief's own role is not a first hire. */
 export function rankRoles(roles: OrgRole[], profileText: string): OrgRole[] {
-  const words = new Set(tokens(profileText));
-  if (words.size === 0) return roles.slice();
-  const score = (r: OrgRole) => tokens(`${r.name} ${r.title ?? ''} ${r.summary ?? ''}`).reduce((n, w) => n + (words.has(w) ? 1 : 0), 0);
-  return roles.map((r, i) => ({ r, i, s: score(r) })).sort((a, b) => b.s - a.s || a.i - b.i).map((x) => x.r);
+  const text = profileText.toLowerCase();
+  const words = new Set(tokens(text));
+  const hireable = roles.filter((r) => r.id !== 'chief-of-staff');
+  if (words.size === 0) return hireable;
+  const score = (r: OrgRole) => {
+    const fits = (r.fits ?? []).filter((tag) => tag !== 'any' && (words.has(tag) || text.includes(tag))).length;
+    const extra = tokens(`${r.title} ${(r.competencies ?? []).join(' ')}`).reduce((n, w) => n + (words.has(w) ? 1 : 0), 0);
+    return fits * 10 + extra;
+  };
+  return hireable.map((r, i) => ({ r, i, s: score(r) })).sort((a, b) => b.s - a.s || a.i - b.i).map((x) => x.r);
+}
+
+/** The `templateOrPack` a hire of this role sends: `role:<id>`. */
+export const roleHireRef = (roleId: string): string => (roleId.startsWith('role:') ? roleId : `role:${roleId}`);
+
+/** The chip's second line: tier and estimated cost. */
+export function roleCostLabel(r: Pick<OrgRole, 'modelTier' | 'estMonthlyUsd'>): string {
+  return `${r.modelTier} tier${r.estMonthlyUsd > 0 ? ` · ~$${r.estMonthlyUsd}/mo` : ''}`;
+}
+
+/** What the first hires would cost a month at the catalog's estimates. */
+export function hiresEstimate(roles: OrgRole[], picked: string[]): number {
+  return picked.reduce((n, id) => n + (roles.find((r) => roleHireRef(r.id) === roleHireRef(id))?.estMonthlyUsd ?? 0), 0);
 }
 
 const STOP = new Set(['the', 'and', 'a', 'an', 'of', 'to', 'for', 'in', 'on', 'with', 'we', 'our', 'is', 'are', 'be', 'that', 'this', 'it', 'as', 'by', 'or', 'not', 'never', 'always', 'at', 'from']);
@@ -172,7 +194,7 @@ export function buildBootstrapBody(state: WizardState, now = new Date()): Bootst
     body.vision = { title: state.vision.title.trim(), description: state.vision.description.trim(), ...(dueAt ? { dueAt } : {}), ...(state.vision.rules.trim() ? { rules: state.vision.rules.trim() } : {}) };
   }
   if (state.profile.values.trim() || state.profile.culture.trim()) body.profile = { values: state.profile.values.trim(), culture: state.profile.culture.trim() };
-  if (state.roles.length > 0) body.roles = state.roles.slice(0, 5);
+  if (state.roles.length > 0) body.roles = state.roles.slice(0, 5).map(roleHireRef);
   return body;
 }
 

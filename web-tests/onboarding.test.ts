@@ -4,7 +4,7 @@
  *  screen, the review summary, the toast and the tolerant role reader. */
 import { describe, expect, it } from 'vitest';
 import {
-  buildBootstrapBody, buildSummary, CADENCE_CARDS, horizonLabel, horizonToIso, initialWizardState, MODE_CARDS, rankRoles, successToast, validateAll, validateStep, wizardSteps,
+  buildBootstrapBody, buildSummary, CADENCE_CARDS, hiresEstimate, horizonLabel, horizonToIso, initialWizardState, MODE_CARDS, rankRoles, roleCostLabel, roleHireRef, successToast, validateAll, validateStep, wizardSteps,
 } from '../src/lib/onboarding';
 import { normalizeRoles, type OrgRole } from '../src/lib/api';
 
@@ -72,24 +72,37 @@ describe('validation', () => {
   });
 });
 
-describe('roles', () => {
+describe('roles (item 24 catalog)', () => {
+  const role = (id: string, title: string, fits: string[], competencies: string[] = [], over: Partial<OrgRole> = {}): OrgRole => ({ id, title, charter: `You are the ${title} of {company}.`, competencies, toolScopes: ['tool:fs_read'], modelTier: 'standard', estMonthlyUsd: 8, fits, ...over });
   const roles: OrgRole[] = [
-    { id: 'pro-marketing', name: 'Marketer', title: 'Marketing', summary: 'Create content, plan campaigns, track competitors.' },
-    { id: 'pro-support', name: 'Support Desk', title: 'Support', summary: 'Answer customers, triage tickets.' },
-    { id: 'pro-finance', name: 'Bookkeeper', title: 'Finance', summary: 'Invoices, ledgers, monthly close.' },
+    role('chief-of-staff', 'Chief of staff', ['any', 'company'], ['planning'], { modelTier: 'strong', estMonthlyUsd: 15 }),
+    role('researcher', 'Researcher', ['research', 'evidence', 'market'], ['source verification']),
+    role('marketer', 'Marketer', ['marketing', 'newsletter', 'content', 'audience'], ['campaigns']),
+    role('controller', 'Controller', ['finance', 'invoices', 'budget'], ['monthly close'], { modelTier: 'cheap', estMonthlyUsd: 4 }),
   ];
-  it('ranks roles by overlap with the profile and vision text, keeps catalog order on ties and never drops a role', () => {
-    const ranked = rankRoles(roles, 'A weekly newsletter: content and campaigns; never contact customers without approval.');
-    expect(ranked.map((r) => r.id)).toEqual(['pro-marketing', 'pro-support', 'pro-finance']);
-    expect(rankRoles(roles, 'invoices every month').map((r) => r.id)[0]).toBe('pro-finance');
-    expect(rankRoles(roles, '')).toEqual(roles);
-    expect(rankRoles(roles, 'zzz')).toEqual(roles);
+  it('ranks by fits tags the way the server does, never offers the chief as a hire, keeps catalog order on ties and drops nothing else', () => {
+    expect(rankRoles(roles, 'A weekly newsletter: content for a growing audience; cite your evidence.').map((r) => r.id)).toEqual(['marketer', 'researcher', 'controller']);
+    expect(rankRoles(roles, 'invoices every month').map((r) => r.id)[0]).toBe('controller');
+    expect(rankRoles(roles, '').map((r) => r.id)).toEqual(['researcher', 'marketer', 'controller']);
+    expect(rankRoles(roles, 'zzz').map((r) => r.id)).toEqual(['researcher', 'marketer', 'controller']);
+    // a competency word breaks a tie, a fits tag outweighs it
+    expect(rankRoles(roles, 'campaigns').map((r) => r.id)[0]).toBe('marketer');
+    expect(rankRoles(roles, 'campaigns research').map((r) => r.id)[0]).toBe('researcher');
   });
-  it('reads the catalog in either shape and skips rows without an id or a name', () => {
-    expect(normalizeRoles([{ id: 'a', name: 'A', tagline: 'does a' }, { packId: 'b', role: 'B' }, { id: 'c' }, null])).toEqual([
-      { id: 'a', name: 'A', title: undefined, summary: 'does a' }, { id: 'b', name: 'B', title: 'B', summary: undefined },
+  it('names a hire as role:<id>, labels the tier and cost, and sums the estimate', () => {
+    expect(roleHireRef('marketer')).toBe('role:marketer');
+    expect(roleHireRef('role:marketer')).toBe('role:marketer');
+    expect(roleCostLabel(roles[3])).toBe('cheap tier · ~$4/mo');
+    expect(roleCostLabel({ modelTier: 'standard', estMonthlyUsd: 0 })).toBe('standard tier');
+    expect(hiresEstimate(roles, ['marketer', 'role:controller', 'nope'])).toBe(12);
+  });
+  it('reads the route\'s { profile, roles } shape and a bare array, defaults the list fields, and skips rows without an id and a title', () => {
+    const got = normalizeRoles({ profile: 'x', roles: [{ id: 'researcher', title: 'Researcher', charter: 'c', competencies: ['a'], toolScopes: ['tool:fs_read'], modelTier: 'standard', estMonthlyUsd: 8, fits: ['research'], score: 1, matched: ['research'] }, { id: 'x' }, null, { id: 'y', name: 'Y' }] });
+    expect(got).toEqual([
+      { id: 'researcher', title: 'Researcher', charter: 'c', competencies: ['a'], toolScopes: ['tool:fs_read'], modelTier: 'standard', estMonthlyUsd: 8, fits: ['research'], score: 1, matched: ['research'] },
+      { id: 'y', title: 'Y', charter: '', competencies: [], toolScopes: [], modelTier: 'standard', estMonthlyUsd: 0, fits: [] },
     ]);
-    expect(normalizeRoles({ roles: [{ id: 'x', name: 'X', description: 'd' }] })[0].summary).toBe('d');
+    expect(normalizeRoles([{ id: 'a', title: 'A' }])).toHaveLength(1);
     expect(normalizeRoles(null)).toEqual([]);
     expect(normalizeRoles('nope')).toEqual([]);
   });
@@ -101,14 +114,14 @@ describe('bootstrap body and summary', () => {
     chief: { kind: 'create', name: ' Nova ', provider: 'anthropic', model: '' },
     vision: { title: ' Be forwarded ', description: 'A weekly letter.', horizon: 90, date: '', rules: 'No paid promotion.' },
     profile: { values: 'ship weekly', culture: 'terse, async' },
-    budget: { monthlyUsd: '40', agentCap: '8' }, cadences: 'light', roles: ['pro-marketing'], planNow: true,
+    budget: { monthlyUsd: '40', agentCap: '8' }, cadences: 'light', roles: ['marketer'], planNow: true,
   });
   it('builds the body only from what is on screen: trimmed, no empty optional fields, provider only when picked', () => {
     const body = buildBootstrapBody(full, now);
     expect(body).toEqual({
       mode: 'autonomous', chief: { create: { name: 'Nova', provider: 'anthropic' } }, monthlyUsd: 40, agentCap: 8, cadences: 'light', planNow: true,
       vision: { title: 'Be forwarded', description: 'A weekly letter.', dueAt: '2027-01-30T12:00:00.000Z', rules: 'No paid promotion.' },
-      profile: { values: 'ship weekly', culture: 'terse, async' }, roles: ['pro-marketing'],
+      profile: { values: 'ship weekly', culture: 'terse, async' }, roles: ['role:marketer'],
     });
     const bare = buildBootstrapBody(initialWizardState({ mode: 'supervised', chief: { kind: 'existing', agentId: 'a1' }, budget: { monthlyUsd: '', agentCap: '' }, planNow: false }), now);
     expect(bare).toEqual({ mode: 'supervised', chief: { agentId: 'a1' }, monthlyUsd: 0, agentCap: 12, cadences: 'default', planNow: false });
@@ -116,7 +129,7 @@ describe('bootstrap body and summary', () => {
     expect(() => buildBootstrapBody(initialWizardState({ mode: 'none' }), now)).toThrow(/no company/);
   });
   it('summarises what will be created in order, naming the agent, the caps and the hire path', () => {
-    const lines = buildSummary(full, { existing: false, caps: { maxDepth: 3, maxDirectReports: 5, defaultAgentCap: 12, rules: [], vetoWindowMinutes: 30 }, roleName: (id) => (id === 'pro-marketing' ? 'Marketer' : undefined) });
+    const lines = buildSummary(full, { existing: false, caps: { maxDepth: 3, maxDirectReports: 5, defaultAgentCap: 12, rules: [], vetoWindowMinutes: 30 }, roleName: (id) => (id === 'marketer' ? 'Marketer' : undefined) });
     expect(lines.map((l) => l.label)).toEqual(['Workspace', 'Run as', 'Chief of staff', 'Vision', 'Standing rules', 'Values', 'Culture', 'Budget', 'Caps', 'Rhythm', 'First hires', 'Then']);
     expect(lines.find((l) => l.label === 'Chief of staff')!.value).toBe('Nova (new, anthropic)');
     expect(lines.find((l) => l.label === 'Vision')!.value).toBe('Be forwarded · 90 days');

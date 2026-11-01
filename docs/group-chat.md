@@ -242,8 +242,11 @@ an existing one may also pick one of its agents), the mission and vision
 (one line, a paragraph, a horizon of 30/90/180/365 days or a date, standing
 rules), values and culture (the §1b operating profile, two short paragraphs),
 the budget and agent cap with the fence, the rhythm (default / light / none,
-one line per ritual), the first hires when `GET …/org/roles` answers (item
-24; hidden on 404), and a review of everything that will be created. One
+one line per ritual), the first hires from item 24's role catalog (`GET
+…/org/roles?profile=` ranked against the profile written so far; each
+sent as `role:<id>` and hired with the role's charter and its scopes met
+with the chief's; hidden when the route is absent), and a review of
+everything that will be created. One
 `POST /api/workspaces/:id/org/bootstrap` (`OrgBootstrapService`) then does
 the setup in order through the existing services — chief, `setMode`,
 `setVision`, `setProfile`, each tunable within its bound (checked before
