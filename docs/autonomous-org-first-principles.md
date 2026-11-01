@@ -371,6 +371,13 @@ pace, accepted work whose derived check fails, and brief numbers that
 disagree with the ledger. The gaps go into the auditor's sample. See
 `docs/experiments.md`.
 
+*On screen (2 November 2026, item 32 part one):* C1, C3, C2, C10, C11, C9,
+C5 and C7 are in the SPA — the Metrics, Incidents and Experiments panes
+(with calibration and reconciliation), Settings → Workspace → Trust and the
+agent's Trust tab, the owner's key on held and staged actions in Approvals
+and in chat, the health strip and the auditor's spot checks on Pulse (see
+`docs/execution-plan.md` items 27–30, "Shipped as, SPA").
+
 ## 8. Build order
 
 | Step | Capabilities | Why this order |

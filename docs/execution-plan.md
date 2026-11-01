@@ -1003,6 +1003,32 @@ the unit lead. A webhook source activated by approval gets its token from a
 CEO rotation, not from the approval result, which would land in the audit
 log. Connection sources and checks read Google connections only.
 
+*Shipped as, SPA (2 November 2026, branch `feat/spa3`, item 32 part one):*
+the **Metrics** pane (`src/components/OrgSensingView.tsx`,
+`#/ws/<id>/org/metrics`) — `GET …/org/metrics/sources` with kind, status
+(ok / error / stale / pending approval, colour and meaning on hover), the
+last value with the latest sample's provenance on hover
+(`provenanceLabel`), last fetch and cadence, the bound key results, a
+30-day samples sparkline (`GET …/samples?since=`, `normalizeSeries`) and
+the sample list; the CEO's add / edit form (HTTP JSON with credential
+headers only as `{{secret:NAME}}` checked client-side by `headerError`,
+write-only secret inputs and a **selector tester** that runs the server's
+grammar on a pasted response — `testSelector`; the connection-query menu;
+webhook; attested), **Poll now**, **Rotate token** and a create-time
+**token reveal** shown once with the ingest URL, delete; **Attest a value**
+(value, required note, optional time) for the CEO, board and employees. In
+the Vision pane each key result shows "measured by <source> · fetched …"
+(a link to the source) or a **self-reported** badge, and the CEO binds or
+unbinds it (`POST …/goals/:id/source`); the check-in form hides the value
+field for a measured key result and records confidence and a note only. The
+task drawer lists the checks with pass / fail / error / pending, detail and
+evidence, the outcome review would see (`checkSummary`) and **Run checks**
+(`GET|POST …/tasks/:id/checks[/run]`); board cards and the drawer show the
+done task's `verification` badge (✓ by check / by review / unverified —
+`verificationBadge`); the new-task form has a check builder for the seven
+kinds (`buildCheck` validates paths, selectors, regexes and the query
+menu). Pure helpers in `src/lib/org3.ts`, pinned by `web-tests/org3.test.ts`.
+
 ### 28. Action contract and the trust ledger (C2, C10) *(done)*
 Action classes, idempotency keys, staging, outbound rate limits, two-key
 execution for irreversible actions; per-member, per-class autonomy levels
@@ -1080,6 +1106,33 @@ reuses it); `keys` and `POST …/actions/:id/keys` are an addition to the
 listed routes so a private (non-org) workspace has an owner key; calendar
 staging is declared, not built; `ownDomains` is not filled yet.
 
+*Shipped as, SPA (2 November 2026, branch `feat/spa3`, item 32 part one):*
+Settings → Workspace → **Trust** (`src/components/OrgTrustView.tsx`): the
+agents × action classes grid from `GET /api/workspaces/:id/trust` —
+effective level / ceiling, clean count, rejection streak, a cap by the
+organization mode outlined, the last incident (`trustRows`); the owner's
+**Set ceilings** (`PUT …/trust/ceilings`, a confirm when lowering) and a
+per-cell override (levels above the ceiling disabled, a reason required —
+`POST …/trust/:agentId/:class`); the level and class legend
+(`LEVEL_LEGEND`, `CLASS_HINT`). The agent page's **Trust** tab: its levels,
+the legend, its held actions and its action log (`GET …/actions?agentId=&class=`)
+with status, class pill and the decision in words — acted, acted (you heard
+after), staged, held, frozen, co-signed, deduplicated, denied, refused
+(`actionDecisionLabel`) — the exact call and result, and **Report revert**
+with a note (`POST …/actions/:id/revert-report`). **Waiting for your key**:
+every held or staged action as a card with the class, why it waits (the
+level, a frozen class, the two-key rule with no other-family co-signer —
+`heldReason`), the exact call pretty-printed (`actionCallText`) and
+**Approve — run <tool> (my key)** / **Send the draft (my key)** and
+**Deny** (`POST …/actions/:id/keys`); it heads the Approvals pane (where
+`two_key` cards are folded into it and, in history, render the exact call)
+and the Trust section. Chat tool cards show the class pill
+(`toolClassHint`, or the class the held text names) and a "Held — waiting
+for your key" / "Staged as a draft" state with **Review and decide**, which
+loads the parked action by the id prefix in the result
+(`parseHeldToolResult`). The rail's Organization header counts keys waiting
+(amber) and the Approvals row badges them.
+
 ### 29. Incidents, degradation and independent audit (C11, C9) *(done)*
 Incidents with containment and postmortems; provider and connection
 degradation modes; audit of the auditor, rotation, red-team runs.
@@ -1122,6 +1175,32 @@ the auditor's spot-check cards, `auditorQuality`, the rotating `seat` and the
 in memory; the chief is never paused automatically; the freeze is enforced
 by item 28's contract through `isFrozen`; `memory.postmortemTriggers` grows
 bit 16 (default 31).
+
+*Shipped as, SPA (2 November 2026, branch `feat/spa3`, item 32 part one):*
+the **Incidents** pane (`src/components/OrgIncidentsView.tsx`,
+`#/ws/<id>/org/incidents`): open and contained incidents first, worst
+severity first (`sortIncidents`), each with its severity colour, kind,
+member, class and what is still contained; resolved ones behind a toggle; a
+drawer with the timeline in order — detection, every containment step with
+its result (undone steps struck through), contained, the postmortem meeting
+link, the resolution (`incidentTimeline`, `containmentLabel`) — **Contain
+more** (pause a member / freeze a class / supervised / pause the company,
+the button naming exactly what it will do) and **Resolve** with an "undo
+containment" checkbox listing what is still in force (CEO or board); the
+owner's **Report an incident** form (title, detail, member, severity with
+what it contains, optional class). The **health strip** (`GET …/org/health`,
+fetched with the workspace's org status as `orgHealth`): degraded providers
+and connections with since-when and retry time, frozen classes, members
+paused by an incident (`healthStrip`) — on Pulse and Incidents; the chat
+header of an affected agent reads "running on <fallback model> — <provider>
+degraded" from the turn's `degraded` field, or "<provider> degraded — the
+next turn runs on a fallback model" from health (`degradedChatNote`). On
+Pulse, **Who audits the auditor**: precision and recall from the latest
+answered spot checks, the no-rotation warning, the spot-check cards ("Do you
+agree with the auditor on this item?" agree / disagree with a note → `POST
+…/audits/:id/spotcheck/:itemId`), the last red-team run (held or breached,
+whom, when, a link to the incidents) and **Run red-team now** (CEO or
+board). The rail badges open incidents in red.
 
 ### 30. Experiments and the prediction ledger (C5, C7, C9 reconciliation) *(done)*
 Changes as hypotheses with a metric, window and revert rule; forecasts
@@ -1196,6 +1275,34 @@ Departures (`docs/experiments.md` §8):
 - Check-in forecasts are recorded only for sourced key results and agent
   check-ins.
 - The latest reconciliation is kept on the audit chain.
+
+*Shipped as, SPA (2 November 2026, branch `feat/spa3`, item 32 part one):*
+the **Experiments** pane (`src/components/OrgExperimentsView.tsx`,
+`#/ws/<id>/org/experiments`): running, proposed and (behind a toggle)
+decided experiments, each card with the hypothesis, the change in words
+(`changeSummary`), the metric linked to its source, the expected effect and
+direction (`effectLabel`), the revert rule, the window as a progress bar
+(`experimentProgress`), baseline versus current mean with n, the verdict
+sentence (`verdictText`) and links to its decision and approval card; the
+CEO's **Start / Keep / Revert / Stop**, each confirming what it will apply,
+and a **proposal form** with per-kind change fields (tunable picker with
+bounds, routing tier, cadence cron, playbook re-activate / retire, charter
+text, structure steps as JSON, other), the measured metric (a live source or
+a key result bound to one), direction, effect (% or units), window, revert
+threshold and unit, with the server's rules as hints first
+(`experimentHints`). **Calibration**: per member resolved, open, Brier,
+calibration against `trust.calibrationBar` (marked on each bar; below it
+"discount its estimates; promotion waits") and bias over / under
+(`calibrationLabel`), plus the open forecasts with links. **Reconciliation**:
+the latest sweep's gaps grouped claim mismatch / overclaim / claimed number
+/ report drift with deep links to the task or key result (`groupGaps`), what
+was checked, and **Run now** (CEO). The rail badges running experiments.
+Deep links `#/ws/<id>/org/metrics|incidents|experiments`; `orgFocus` kinds
+`source`, `incident`, `experiment`, `action` (`useFollowRef` follows them).
+Approval cards render `two_key`, `metric_source` and `experiment` kinds and,
+through `DecisionExtras`, any of item 31's optional decision fields
+(recommendation, alternatives, reversibility, confidence, deadline,
+default action) when a card carries them.
 
 ### 31. Evals, the self-modification boundary, capacity and the owner's seat (C6, C8, C4, C12) *(done)*
 Golden sets per role and gated rollout; the boundary as data; WIP limits,
@@ -1374,3 +1481,6 @@ Existing tests changed where the behaviour changed on purpose:
   removed.
 
 ### 32. SPA for items 27–31 *(planned)*
+Part one (items 27–30) is on branch `feat/spa3`: see the "Shipped as, SPA"
+paragraphs of items 27–30. Part two covers item 31; the approval cards
+already render its optional decision fields when present (`DecisionExtras`).
