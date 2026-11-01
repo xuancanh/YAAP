@@ -63,12 +63,15 @@ export interface TaskStatusEvent {
  *  once per incident by OrgIncidentsService; the trust ledger (item 28)
  *  drops the member's level for the action class on it. `actionClass` is
  *  null when the incident is not about one class of action. */
+export type OrgIncidentSeverity = 'minor' | 'major' | 'critical';
+
 export interface OrgIncidentEvent {
   orgId: string;
   incidentId: string;
   agentId: string | null;
   actionClass: string | null;
-  severity: 'minor' | 'major' | 'critical';
+  severity: OrgIncidentSeverity;
+  /** What happened, in the emitter's words (breaker_trip, failed_check, revert, owner_complaint, bounce, …). */
   kind: string;
 }
 

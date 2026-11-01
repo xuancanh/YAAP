@@ -65,6 +65,7 @@ import { OrgBriefService } from './org-brief.service';
 import { OrgAnnouncer } from './org-announcer';
 import { OrgAuditorService, auditorQuality, parseSpotCards } from './org-auditor.service';
 import { CONTAINMENT_LEVELS, incidentTunable } from './incident-tunables';
+import { normalizeActionClass } from '../actions/action-classes';
 import { OrgSensingService } from './org-sensing.service';
 
 export type OrgIncident = typeof orgIncidents.$inferSelect;
@@ -208,10 +209,14 @@ export class OrgIncidentsService implements ToolProviderHook {
   async frozenClasses(orgId: string): Promise<string[]> { return parseFrozen((await this.org.get(orgId)).frozenClasses); }
 
   /** Whether a critical incident froze this action class for the workspace.
-   *  TODO(item 28): the action-contract policy consults this before any
-   *  external action of the class runs, so a freeze refuses it at the source. */
+   *  Classes are the action contract's (docs/actions-and-trust.md §1); a
+   *  tool name is mapped to its class on both sides, so `gmail_send` asks
+   *  about `external_irreversible`. The action contract's policy consults
+   *  this (through OrgTrustBridge) before any call of an org member runs:
+   *  a frozen class is held for the owner's key whatever the trust level. */
   async isFrozen(orgId: string, actionClass: string): Promise<boolean> {
-    return (await this.frozenClasses(orgId)).includes(actionClass);
+    const cls = normalizeActionClass(actionClass);
+    return (await this.frozenClasses(orgId)).some((c) => normalizeActionClass(c) === cls);
   }
 
   // ---- opening and containment ----
@@ -291,7 +296,9 @@ export class OrgIncidentsService implements ToolProviderHook {
     ];
   }
 
-  private async freezeClass(org: Organization, cls: string, incidentId: string): Promise<ContainmentStep> {
+  private async freezeClass(org: Organization, named: string, incidentId: string): Promise<ContainmentStep> {
+    // Stored as the action contract's class (item 28), never a tool name.
+    const cls = normalizeActionClass(named) ?? named;
     const frozen = parseFrozen((await this.org.get(org.id)).frozenClasses);
     if (frozen.includes(cls)) return { action: 'freeze_class', at: nowIso(), result: `${cls} was already frozen`, reversible: false, data: { actionClass: cls } };
     await this.db.update(organizations).set({ frozenClasses: JSON.stringify([...frozen, cls]) }).where(eq(organizations.id, org.id));

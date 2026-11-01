@@ -118,7 +118,7 @@ from there. Owner confidence stays, as a judged forecast next to the
 measured value. Without this, the at-risk rules, the cost-per-outcome
 report and the auditor all reason over numbers the agents typed in.
 
-**C2. Effectors with an external-action contract.** *Partial.*
+**C2. Effectors with an external-action contract.** *Have (item 28, `docs/actions-and-trust.md`); was Partial.*
 Connections, the browser, the computer companion and the code runner
 exist, and the Ask/Auto policy plus the action reviewer gate them.
 Missing for unattended operation: every outward action carries an
@@ -208,7 +208,7 @@ auditor (spot checks with precision and recall), rotation and red-team runs
   injection through connected inboxes and documents and reports what got
   through.
 
-**C10. Trust ledger: earned autonomy.** *Missing.*
+**C10. Trust ledger: earned autonomy.** *Have (item 28, `docs/actions-and-trust.md`); was Missing.*
 This replaces the supervised/autonomous switch. For each member and each
 action class (C2), the ledger records successes, reverts, review
 rejections, incidents and calibration (C7). Autonomy levels follow from
@@ -317,7 +317,7 @@ one page and one spot-check. It rises again only after an incident.
 | Capability | Status | Built on |
 |---|---|---|
 | C1 Sensing | Have — shipped (item 27, `docs/sensing.md`) | connections, loops, triggers (item 6), key results (item 18) |
-| C2 Effectors with action contract | Partial | connections, browser, computer, reviewer (items 2, 4, 14), external floor |
+| C2 Effectors with action contract | Have (item 28) | action classes, idempotency keys, staging (mail drafts), outbound rate limits, two-key execution with a different-family co-signer — `docs/actions-and-trust.md`; calendar staging declared, not built |
 | C3 Executable acceptance | Have — shipped (item 27, `docs/sensing.md`) | four-field brief, cross-family review (item 15) |
 | C4 Coordination with capacity | Have, mostly | units, boards, meetings, heartbeat (items 15–21) |
 | C5 Experiments | Missing | decision log, retros (items 19, 22) |
@@ -325,7 +325,7 @@ one page and one spot-check. It rises again only after an incident.
 | C7 Prediction ledger | Missing | check-ins (item 18) |
 | C8 Self-modification boundary | Partial | caps, tunables, plan preview (items 16, 18, 23) |
 | C9 Independent verification | Partial — spot checks, rotation, red team done (item 29); ground truth and reconciliation remain (item 30) | signals, SLOs, auditor, audit chain (item 20) |
-| C10 Trust ledger | Missing | supervised/autonomous mode (item 16) |
+| C10 Trust ledger | Have (item 28) | levels 0–3 per agent × class under owner ceilings, promotion on clean streaks, demotion on incidents (item 29's bus), reverts and rejection streaks; supervised/autonomous is now a ceiling preset; the calibration bar waits for C7 (item 30) |
 | C11 Incidents | Have (item 29) | breakers, signals, retros (items 15, 20, 22) |
 | C12 Owner's seat | Partial | brief, cards, vision, pulse, ask, replay (items 18–24) |
 

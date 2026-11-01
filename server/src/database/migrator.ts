@@ -1405,6 +1405,75 @@ const MIGRATIONS: Migration[] = [
     },
   },
   {
+    id: '0040-org-trust',
+    up: async (db) => {
+      // The external-action contract and the trust ledger
+      // (docs/actions-and-trust.md, execution-plan item 28): the action log
+      // with its idempotency key, the ledger's records and levels, and the
+      // owner's ceilings per class on the workspace. Idempotent.
+      if (!(await hasColumn(db, 'workspaces', 'trustCeilings'))) {
+        await db.query(`ALTER TABLE workspaces ADD COLUMN "trustCeilings" TEXT NOT NULL DEFAULT '{}'`);
+      }
+      await db.query(`CREATE TABLE IF NOT EXISTS action_log (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "key" TEXT NOT NULL,
+        "workspaceId" TEXT NOT NULL,
+        "agentId" TEXT NOT NULL DEFAULT '',
+        "sessionId" TEXT NOT NULL,
+        "orgId" TEXT,
+        "tool" TEXT NOT NULL,
+        "class" TEXT NOT NULL,
+        "channel" TEXT NOT NULL DEFAULT '',
+        "inputHash" TEXT NOT NULL,
+        "input" TEXT NOT NULL DEFAULT '{}',
+        "status" TEXT NOT NULL DEFAULT 'started',
+        "decision" TEXT NOT NULL DEFAULT '',
+        "level" INTEGER,
+        "keys" TEXT NOT NULL DEFAULT '{}',
+        "stagedRef" TEXT NOT NULL DEFAULT '',
+        "result" TEXT NOT NULL DEFAULT '',
+        "resultHash" TEXT NOT NULL DEFAULT '',
+        "dedupeCount" INTEGER NOT NULL DEFAULT 0,
+        "revertedAt" TEXT,
+        "note" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL,
+        "finishedAt" TEXT
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_action_log_key ON action_log ("accountId", "key")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_action_log_ws_class ON action_log ("workspaceId", "class", "createdAt")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_action_log_agent ON action_log ("agentId", "createdAt")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS trust_records (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "workspaceId" TEXT NOT NULL,
+        "agentId" TEXT NOT NULL,
+        "actionClass" TEXT NOT NULL,
+        "outcome" TEXT NOT NULL,
+        "refType" TEXT NOT NULL DEFAULT '',
+        "refId" TEXT NOT NULL DEFAULT '',
+        "at" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_trust_records_agent ON trust_records ("workspaceId", "agentId", "actionClass", "at")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS trust_levels (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "workspaceId" TEXT NOT NULL,
+        "agentId" TEXT NOT NULL,
+        "actionClass" TEXT NOT NULL,
+        "level" INTEGER NOT NULL DEFAULT 0,
+        "ceiling" INTEGER NOT NULL DEFAULT 0,
+        "cleanCount" INTEGER NOT NULL DEFAULT 0,
+        "rejectStreak" INTEGER NOT NULL DEFAULT 0,
+        "lastIncidentAt" TEXT,
+        "lastChangedAt" TEXT,
+        "reason" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_trust_levels_unique ON trust_levels ("workspaceId", "agentId", "actionClass")`);
+    },
+  },
+  {
     id: '0041-org-incidents',
     up: async (db) => {
       // Incidents, degradation and audit independence (docs/incidents.md,

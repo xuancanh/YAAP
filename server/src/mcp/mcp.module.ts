@@ -204,7 +204,7 @@ export class McpService {
     this.clients.delete(id);
     const tools = await this.client(rows[0]).listTools();
     await this.db.update(mcpServers)
-      .set({ tools: JSON.stringify(tools.map((t) => ({ name: t.name, description: t.description ?? '', inputSchema: t.inputSchema }))) })
+      .set({ tools: JSON.stringify(tools.map((t) => ({ name: t.name, description: t.description ?? '', inputSchema: t.inputSchema, ...(t.readOnly ? { readOnly: true } : {}) }))) })
       .where(eq(mcpServers.id, id));
     return { tools };
   }
@@ -223,6 +223,20 @@ export class McpService {
           inputSchema: (t.inputSchema as Record<string, unknown>) ?? { type: 'object', properties: {} },
         });
       }
+    }
+    return out;
+  }
+
+  /** Tool names whose server declared them read-only (`readOnlyHint`), for
+   *  the action class (docs/actions-and-trust.md §1). The Ask gate is
+   *  unchanged: MCP never auto-runs in Ask mode. */
+  async readOnlyTools(): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const server of await this.list()) {
+      if (server.enabled !== 1) continue;
+      let tools: McpToolDef[];
+      try { tools = JSON.parse(server.tools) as McpToolDef[]; } catch { continue; }
+      for (const t of tools) if (t.readOnly === true) out.add(`${MCP_TOOL_PREFIX}${slug(server.name)}_${slug(t.name)}`);
     }
     return out;
   }

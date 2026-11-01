@@ -153,6 +153,18 @@ chart, approvals, spend, brief and audit;
 Settings → Workspace → Organization holds the mode, chief, envelope, cap and
 the pause button. `COMPANIES_ENABLED=false` hides it all.
 
+**Actions and trust** (`docs/actions-and-trust.md`): every tool call is
+classed by reversibility — read, internal write, external reversible,
+external irreversible, money — and every non-read call is logged with an
+idempotency key, so a retry never sends twice. Outward calls are
+rate-limited per channel, money is off by default, and a send an agent may
+not yet make alone is **staged** as a draft for your key. Each agent earns a
+**trust level** per class (0 proposes, 1 acts and you hear after, 2 acts with
+a peer check — an agent co-signer on another model family for irreversible
+and money — 3 acts) under ceilings you set; levels rise after clean streaks
+and drop at once on an incident, a revert or a run of rejections, in private
+chats and org runs alike. Supervised mode is a ceiling preset over it.
+
 **Group chat** (`docs/group-chat.md`): every workspace has Slack-style
 channels (`#general` by default), where people and agents converse. A
 mentioned agent wakes in its own per-channel session and its reply streams

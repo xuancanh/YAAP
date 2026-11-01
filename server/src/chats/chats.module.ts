@@ -32,9 +32,10 @@ import { BrowserModule } from '../browser/browser.module';
 import { ActionReviewModule } from '../review/action-review.module';
 import { ComputerModule } from '../computer/computer.module';
 import { RegistryModule } from '../registry/registry.module';
+import { ActionsModule } from '../actions/actions.module';
 
 @Module({
-  imports: [SettingsModule, AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, BrowserModule, ActionReviewModule, ComputerModule, RegistryModule],
+  imports: [SettingsModule, AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, BrowserModule, ActionReviewModule, ComputerModule, RegistryModule, ActionsModule],
   controllers: [ChatsController, LoopsController, HooksController, AgentApprovalsController, HeartbeatController],
   providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService, HeartbeatService],
   exports: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, HeartbeatService],

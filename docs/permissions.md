@@ -241,3 +241,34 @@ model}`) is stored on the tool call record of the turn, emitted on the
 "Reviewed · allowed / held for you / denied" on the tool card. Settings →
 Permissions has the on/off switch (`actionReview`, default on) and the model
 override (`reviewModel`).
+
+## 7. The trust ledger, and how Ask and Auto meet it
+
+Since execution-plan item 28 (`docs/actions-and-trust.md`) the unit of
+autonomy is not the chat's Ask/Auto switch nor the organization's
+supervised/autonomous mode but a **trust level 0–3 per agent and per action
+class** (`read`, `internal_write`, `external_reversible`,
+`external_irreversible`, `money`), earned from the agent's record and capped
+by ceilings the owner sets.
+
+| Where the turn runs | Who decides a mutating call |
+|---|---|
+| Ask mode, a person typing in the app | The person, as in §1–§6: every mutating call pauses (remembered grants still apply, except that an irreversible or money call is never answered from one) |
+| A channel turn (Telegram, email, an app's `agent.ask`) | The legacy gates: Ask mode, and the host denies every pause |
+| Auto mode, a person typing | The ledger: level 0 asks the person, level 1–3 act (an irreversible or money call at level 0–1 asks; at 2 a co-signer agent on another model family decides) |
+| A loop, a heartbeat, an org run (nobody at the keyboard) | The ledger: 0 holds the call for the owner's key (a send is staged as a draft), 1 acts and tells the owner after, 2 acts (irreversible and money with a co-signer), 3 acts |
+
+The deterministic gates of §1 stay the floor beneath all of it: activation
+precedes execution (a tool that is not granted does not exist), computer
+tools keep their own rules (user turns only, every acting call asks), and
+the independent reviewer of §6 still reads every call that would run without
+a fresh human decision, at every level. The ledger can make an agent more
+autonomous only within the ceiling the owner chose (defaults: money 0,
+irreversible 1, reversible 2), only after `trust.promoteAfterClean` clean
+outcomes, and it takes autonomy back at once on an incident, a reported
+revert or a rejection streak. Organization mode is a preset over the
+ceilings: `supervised` caps every outward class at 1.
+
+Every non-read call — in any of the rows above — is also written to the
+action log with an idempotency key (a retry never sends twice) and counted
+against the workspace's outbound rate limits.

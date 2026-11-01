@@ -76,10 +76,14 @@ pauses at least. The chief of staff is never paused automatically (the CEO
 decides); a member already paused is recorded as such and not "undone"
 later.
 
-The frozen classes live on `organizations.frozenClasses`;
-`OrgIncidentsService.isFrozen(orgId, class)` is the read the action-contract
-policy of item 28 consults before an external action runs (a TODO at the
-seam until it lands).
+The frozen classes live on `organizations.frozenClasses` as the action
+contract's class names (`external_irreversible`, …; a tool name an incident
+carries is mapped through `classOf`, so freezing after a `gmail_send`
+incident freezes `external_irreversible`). `OrgIncidentsService.isFrozen(orgId,
+class)` maps both sides the same way; the action contract of item 28 consults
+it through `OrgTrustBridge` before every non-read call of an org member, and a
+frozen class is held for the owner's key whatever the member's trust level,
+in every kind of session (`docs/actions-and-trust.md` §7).
 
 `POST …/incidents/:id/contain {action}` adds a step by hand: `pause_member`,
 `freeze_class`, `supervised` or `pause_org` (the kill switch).
@@ -157,7 +161,7 @@ per loop.
 { "status": "ok | degraded | incident", "orgStatus": "active", "mode": "supervised",
   "providers": [{ "provider": "anthropic", "state": "degraded", "until": "…", "failures": 3, "lastError": "…" }],
   "connections": [{ "connectionId": "…", "provider": "google", "accountEmail": "…", "reason": "…", "since": "…" }],
-  "frozenClasses": ["gmail_send"], "pausedByIncident": [{ "agentId": "…", "name": "Writer", "incidentId": "…" }],
+  "frozenClasses": ["external_irreversible"], "pausedByIncident": [{ "agentId": "…", "name": "Writer", "incidentId": "…" }],
   "openIncidents": [{ "id": "…", "kind": "breaker", "severity": "major", "status": "contained", "title": "…" }],
   "lines": ["- Provider anthropic: degraded until 14:20 UTC — …"] }
 ```
@@ -263,9 +267,9 @@ All on the shared registry (`org-tunables.ts`), so `org_tune` and
 
 ## 8. Departures
 
-- The action class of a connection incident is the tool name
-  (`gmail_send`); item 28's classes map onto it on rebase. `isExternalClass`
-  accepts both.
+- The action class recorded on a connection incident is the tool name
+  (`gmail_send`); the trust ledger and the freeze map it to item 28's class
+  (`normalizeActionClass`). `isExternalClass` accepts both.
 - Provider and connection health are in memory (a restart forgets a
   degradation; the incident and its audit rows persist). Provider health is
   per workspace; connection health per connection.
@@ -276,5 +280,3 @@ All on the shared registry (`org-tunables.ts`), so `org_tune` and
 - Rotation candidates are members titled "auditor" plus the configured seat;
   `organizations.auditorAgentId` stays the configured seat and
   `org_audits.auditorAgentId` records who actually audited.
-- The freeze is recorded and exposed but not yet enforced at the call site:
-  item 28's action contract consults `isFrozen`.

@@ -136,7 +136,9 @@ export class ActionReviewService {
     return { enabled: (all.actionReview ?? 'on') !== 'off', model: (all.reviewModel ?? '').trim() };
   }
 
-  async review(input: Omit<ReviewInput, 'sensitive'>, ctx: ReviewerContext): Promise<ReviewResult> {
+  /** `opts.model` pins the reviewing model (the agent co-signer of
+   *  docs/actions-and-trust.md §5 reads on its own model family). */
+  async review(input: Omit<ReviewInput, 'sensitive'>, ctx: ReviewerContext, opts: { model?: string } = {}): Promise<ReviewResult> {
     const sensitive = sensitivePrecheck(input.call.input);
     const full: ReviewInput = { ...input, sensitive };
     const usage = { inputTokens: 0, outputTokens: 0 };
@@ -149,7 +151,7 @@ export class ActionReviewService {
       model = 'test';
     } else {
       const { model: override } = await this.config();
-      model = override || cheapestModelFor(ctx.provider.name, ctx.baseUrl, ctx.model);
+      model = opts.model || override || cheapestModelFor(ctx.provider.name, ctx.baseUrl, ctx.model);
       try {
         let out = '';
         for await (const ev of ctx.provider.stream({

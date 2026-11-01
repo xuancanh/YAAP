@@ -19,7 +19,7 @@
  * unparseable arguments, and unknown tool names return an error result to the
  * model instead of executing.
  */
-import { Injectable, ConflictException, ForbiddenException, NotFoundException, OnModuleDestroy, Optional } from '@nestjs/common';
+import { Injectable, ConflictException, ForbiddenException, Logger, NotFoundException, OnApplicationBootstrap, OnModuleDestroy, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { ChatsRepository, ChatSession } from './chats.repository';
 import { ChatLocks } from './chat-locks';
@@ -43,6 +43,10 @@ import { ConnectionsService } from '../connections/connections.service';
 import { ActionReviewService, ReviewRecord } from '../review/action-review.service';
 import { ComputerService } from '../computer/computer.service';
 import { REMEMBERABLE_COMPUTER_TOOLS, summarizeInput as summarizeComputerInput } from '../computer/computer-scopes';
+import { ActionsService, type ActionCtx, type ActionRow, type CoSignVerdict } from '../actions/actions.service';
+import { stagingOf, TWO_KEY_CLASSES, unclassified, type ActionClass } from '../actions/action-classes';
+import { decide, type TrustDecision, type TrustLevel } from '../actions/trust-policy';
+import { CONNECTION_TOOLS } from '../connections/connections.tools';
 
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { ProviderHealthService } from '../ai/provider-health';
@@ -120,7 +124,7 @@ interface ToolRecord {
   tool: string;
   input: Record<string, unknown>;
   result: string;
-  approved: 'auto' | 'read-only' | 'remembered' | 'queued' | ApprovalDecision;
+  approved: 'auto' | 'read-only' | 'remembered' | 'queued' | 'deduplicated' | 'held' | 'staged' | ApprovalDecision;
   isError: boolean;
   /** Independent reviewer's verdict when the call was reviewed (docs/permissions.md §6). */
   review?: ReviewRecord;
@@ -284,8 +288,31 @@ const exactKey = (call: AiToolCall): string =>
  *  (dead client, lost UI) cannot park a turn — and the chat lock — forever. */
 const APPROVAL_TTL_MS = 10 * 60_000;
 
+/** The action contract's state for one call (docs/actions-and-trust.md):
+ *  its class, the action-log row, the trust decision (null = the legacy
+ *  Ask gates decide: a person in an Ask-mode chat, or a channel turn) and
+ *  the effective level it was made at. */
+interface ContractState {
+  cls: ActionClass;
+  row: ActionRow;
+  decision: TrustDecision | null;
+  level: TrustLevel | null;
+  /** A different-family agent co-signed: the reviewer is not asked twice. */
+  cosigned?: boolean;
+  /** Why the call is held, when it is not the level (a frozen class). */
+  why?: string;
+}
+
+/** `trust_status` — an org member reads its own trust levels; the chief sees everyone's. */
+const TRUST_STATUS_SPEC: AiToolSpec = {
+  name: 'trust_status',
+  description: 'Read your trust levels per action class (read, internal write, external reversible, external irreversible, money): 0 proposes only, 1 acts and the owner hears after, 2 acts with a peer check (a second agent key for irreversible and money), 3 acts with auditor sampling only. The chief of staff sees every member. Use it before outward work to know whether a send will go out, be staged as a draft, or wait for a key.',
+  inputSchema: { type: 'object', properties: {} },
+};
+
 @Injectable()
-export class TurnLoopService implements OnModuleDestroy {
+export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap {
+  private readonly logger = new Logger(TurnLoopService.name);
   /** Abort registry keyed by chat id (FR-8.3 / FR-5.4). */
   private readonly aborts = new Map<string, AbortController>();
   /** Pending Ask-mode approvals keyed by `${sessionId}:${callId}`. */
@@ -363,7 +390,44 @@ export class TurnLoopService implements OnModuleDestroy {
     /** Optional: provider degradation (docs/incidents.md §4, item 29) — every
      *  provider round reports its outcome so outages are noticed. */
     @Optional() private readonly health?: ProviderHealthService,
-  ) {}
+    /** Optional: the external-action contract and the trust ledger
+     *  (docs/actions-and-trust.md). Without it — older test constructors —
+     *  the Ask/Auto gates alone decide, as before item 28. */
+    @Optional() private readonly actions?: ActionsService,
+  ) {
+    if (actions) {
+      // A held call runs on the owner's key through the same executor a live turn uses.
+      actions.bindExecutor(async (sessionId, tool, input) => {
+        const s = await this.repo.getSession(sessionId);
+        if (!s) throw new Error(`session ${sessionId} is gone`);
+        return this.executeTool(s, tool, input);
+      });
+      actions.coSignRunner = (p) => this.runCoSigner(p);
+      this.addToolProvider({
+        specsFor: async (session) => {
+          if (!session.agentId) return [];
+          const ws = await actions.trust.workspaceRow(session.workspaceId).catch(() => null);
+          return ws && ws.orgMode !== 'off' ? [TRUST_STATUS_SPEC] : [];
+        },
+        owns: (name) => name === 'trust_status',
+        isReadOnly: () => true,
+        execute: async (session) => actions.trust.statusText(session.workspaceId, session.agentId ?? ''),
+        contextFor: async () => null,
+      });
+    }
+  }
+
+  /** Boot: name every tool the action-class registry does not know — it
+   *  runs as `external_reversible` (fail safe) until classified. */
+  onApplicationBootstrap(): void {
+    if (!this.actions) return;
+    const names = [
+      ...this.tools.specs().map((t) => t.name), ...AGENT_TOOLS.map((t) => t.name), ...CONNECTION_TOOLS.map((t) => t.name),
+      ...(this.runner?.specs() ?? []).map((t) => t.name), ...(this.browser?.specs() ?? []).map((t) => t.name),
+    ];
+    const unknown = unclassified(names);
+    if (unknown.length > 0) this.logger.warn(`action classes: ${unknown.length} tool(s) not in the registry run as external_reversible until classified: ${unknown.join(', ')}`);
+  }
 
   /** Graceful shutdown: abort every in-flight turn through the same path as
    *  /stop, so providers stop streaming and turns settle as 'stopped' before
@@ -495,6 +559,10 @@ export class TurnLoopService implements OnModuleDestroy {
         }
       }
       const approvals = parseApprovals(session.approvals);
+      // MCP tools a server declared read-only (readOnlyHint) class as `read`.
+      const mcpReadOnly = this.actions && typeof (this.mcp as { readOnlyTools?: unknown }).readOnlyTools === 'function'
+        ? await (this.mcp as unknown as { readOnlyTools(): Promise<Set<string>> }).readOnlyTools().catch(() => new Set<string>())
+        : new Set<string>();
       // Core tools + the workspace's enabled skills (FR-10.2) + tools
       // discovered from enabled MCP servers (FR-10.3).
       const restrictTo = (session.agentId && this.orgTools?.restrictTo) ? await this.orgTools.restrictTo(session) : null;
@@ -647,11 +715,86 @@ export class TurnLoopService implements OnModuleDestroy {
             ctl.abort();
             break;
           }
+          // The external-action contract (docs/actions-and-trust.md): every
+          // non-read call gets its class, an idempotency key and an action-log
+          // row; a retry of a succeeded outward call answers from the record;
+          // outside an Ask-mode chat with a person present the trust matrix
+          // decides — run, run and notify, ask, hold for the owner's key,
+          // stage (a draft) or a second agent key. Computer tools keep their
+          // own floor (user turns only, every call asks) and skip it.
+          let contract: ContractState | null = null;
+          if (this.actions && !this.computer?.owns(call.name)) {
+            const origin = input.origin ?? 'user';
+            const provider = this.providerOf(call.name);
+            const cls = this.actions.classify(call.name, call.input, {
+              readOnly: call.name.startsWith(MCP_TOOL_PREFIX) ? mcpReadOnly.has(call.name)
+                : provider && session.agentId ? provider.isReadOnly(call.name) : undefined,
+            });
+            if (cls !== 'read') {
+              const actx: ActionCtx = { sessionId: session.id, workspaceId: session.workspaceId, agentId: session.agentId ?? null, origin };
+              const key = this.actions.keyFor(actx, call.name, call.input);
+              const prior = await this.actions.byKey(key);
+              const seen = await this.actions.priorOutcome(prior, cls);
+              if (seen) {
+                const output = seen.kind === 'replay' ? await this.actions.replay(seen.row) : this.actions.waitingText(seen.row);
+                await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
+                history.push({ role: 'tool', content: output, toolCallId: call.id, isError: false });
+                toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: seen.kind === 'replay' ? 'deduplicated' : 'queued', isError: false });
+                yield { type: 'tool_result', id: call.id, name: call.name, output: output.slice(0, 500), isError: false };
+                continue;
+              }
+              let decision: TrustDecision | null = null;
+              let level: TrustLevel | null = null;
+              const hasStaging = Boolean(stagingOf(call.name)?.implemented && this.connections?.owns(call.name));
+              if (session.agentId) {
+                level = (await this.actions.trust.effective(session.workspaceId, session.agentId, cls)).effective;
+                // A person in an Ask-mode chat answers every mutating call
+                // anyway, and a channel turn is untrusted: the legacy gates decide there.
+                const legacy = origin === 'channel' || (origin === 'user' && session.permissionMode !== 'auto');
+                if (!legacy) decision = decide({ cls, level, humanPresent: origin === 'user', hasStaging });
+              }
+              // An incident froze this class for the member's organization
+              // (item 29): held for the owner's key whatever the level, in
+              // every kind of session.
+              const frozen = await this.actions.isFrozen(session.workspaceId, session.agentId ?? null, cls);
+              if (frozen) decision = 'hold';
+              const row = await this.actions.start(actx, { key, tool: call.name, input: call.input, cls, decision: frozen ? 'frozen' : decision ?? 'legacy', level, prior });
+              contract = { cls, row, decision, level, ...(frozen ? { why: `an incident froze ${cls.replace(/_/g, ' ')} actions for the organization` } : {}) };
+              if (decision === 'cosign') {
+                const cs = await this.actions.coSign(row, { name: call.name, input: call.input });
+                if (cs.result?.verdict === 'approve') {
+                  contract.cosigned = true;
+                } else if (cs.result?.verdict === 'deny') {
+                  const output = `Denied by the co-signer (a second agent on another model family): ${cs.result.reason} Do not retry the same call — explain to the user what you wanted to do, and let them decide.`;
+                  await this.actions.finish(row, { status: 'denied', note: cs.result.reason, keys: cs.keys });
+                  if (session.agentId) await this.actions.trust.record(session.workspaceId, session.agentId, cls, 'rejected', { refType: 'action', refId: row.id });
+                  await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
+                  history.push({ role: 'tool', content: output, toolCallId: call.id, isError: true });
+                  toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'deny', isError: true });
+                  yield { type: 'tool_result', id: call.id, name: call.name, output, isError: true };
+                  continue;
+                } else {
+                  // No independent key on another model family: the owner's key.
+                  contract.decision = origin === 'user' ? 'ask' : hasStaging ? 'stage' : 'hold';
+                  await this.actions.setDecision(row.id, `cosign→${contract.decision}`, cs.keys);
+                }
+              }
+              if (contract.decision === 'hold' || contract.decision === 'stage') {
+                const held = await this.holdOrStage(session, contract, call, skillsUsed);
+                await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: held.output, toolName: call.name });
+                history.push({ role: 'tool', content: held.output, toolCallId: call.id, isError: false });
+                toolRecords.push({ tool: call.name, input: call.input, result: held.output.slice(0, 2000), approved: held.approved, isError: false });
+                yield { type: 'tool_result', id: call.id, name: call.name, output: held.output.slice(0, 500), isError: false };
+                continue;
+              }
+            }
+          }
           // Loop turns are background turns: outward-facing (connection)
           // mutations and code execution queue as pending approvals in the
           // agent inbox, never silently execute — even in Auto mode
-          // (docs/integrations.md §5, docs/code-execution.md §5).
-          if (input.origin === 'loop' && session.agentId
+          // (docs/integrations.md §5, docs/code-execution.md §5). With the
+          // action contract on, the trust matrix above decides instead.
+          if (input.origin === 'loop' && session.agentId && !contract
             && ((this.connections?.owns(call.name) && this.connections.isReadOnly(call.name) === false)
               || this.runner?.owns(call.name)
               || (this.browser?.owns(call.name) && this.browser.isReadOnly(call.name) === false))) {
@@ -715,13 +858,14 @@ export class TurnLoopService implements OnModuleDestroy {
               }
               if (!isError) output = await this.wrapConnectionContent(session, output, addressee, actor, nameOf(addressee));
             }
+            if (contract) await this.actions?.finish(contract.row, { status: !allowed ? 'denied' : isError ? 'failed' : 'succeeded', result: output, keys: { owner: { by: addressee, approve: allowed, routed: true, at: new Date().toISOString() } } }).catch(() => undefined);
             await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: tool });
             history.push({ role: 'tool', content: output, toolCallId: call.id, isError });
             toolRecords.push({ tool, input: call.input, result: output.slice(0, 2000), approved: allowed ? 'allow-once' : 'deny', isError, usedConnectionOf: addressee });
             yield { type: 'tool_result', id: call.id, name: tool, output: output.slice(0, 500), isError };
             continue;
           }
-          const policy = this.checkPolicy(session, call, approvals);
+          const policy = this.contractPolicy(contract, this.checkPolicy(session, call, approvals));
           let { verdict } = policy;
           const { remember } = policy;
           // Independent reviewer (docs/permissions.md §6): a mutating call that
@@ -731,7 +875,7 @@ export class TurnLoopService implements OnModuleDestroy {
           // (already pausing) are not reviewed.
           let review: ReviewRecord | undefined;
           let reviewDenial: string | undefined;
-          if ((verdict === 'auto' || verdict === 'remembered') && policy.readOnly === false && this.review
+          if ((verdict === 'auto' || verdict === 'remembered') && policy.readOnly === false && this.review && !contract?.cosigned
             && (await this.review.config()).enabled) {
             const agent = session.agentId ? await this.agents.get(session.agentId).catch(() => null) : null;
             const r = await this.review.review({
@@ -789,11 +933,20 @@ export class TurnLoopService implements OnModuleDestroy {
             output = 'Denied by user.';
             isError = true;
           } else {
-            try {
-              output = await this.executeTool(session, call.name, call.input, skillsUsed);
-            } catch (err) {
-              output = `tool error: ${err instanceof Error ? err.message : String(err)}`;
+            // Outbound rate limits (docs/actions-and-trust.md §4) bite right
+            // before acting, after any human or agent key was given.
+            const rate = contract && this.actions ? await this.actions.rateCheck(session.workspaceId, contract.cls, contract.row.channel, contract.row.id) : { ok: true as const };
+            if (!rate.ok) {
+              output = await this.actions!.refuseRate(contract!.row, rate.reason, rate.limit);
               isError = true;
+              contract = null; // settled
+            } else {
+              try {
+                output = await this.executeTool(session, call.name, call.input, skillsUsed);
+              } catch (err) {
+                output = `tool error: ${err instanceof Error ? err.message : String(err)}`;
+                isError = true;
+              }
             }
             // Content fetched through a member's connection in a session others
             // can read is tagged so the model keeps it to its owner and
@@ -801,6 +954,14 @@ export class TurnLoopService implements OnModuleDestroy {
             if (!isError && connOwner !== null && hasMembers && (session.shared === 1 || connOwner !== actor)) {
               output = await this.wrapConnectionContent(session, output, connOwner, actor, nameOf(connOwner));
             }
+          }
+          if (contract && this.actions) {
+            const status = reviewDenial || decision === 'deny' ? 'denied' : isError ? 'failed' : 'succeeded';
+            const keys = status === 'succeeded' && TWO_KEY_CLASSES.includes(contract.cls) && verdict === 'ask'
+              ? { owner: { by: actor, approve: true, inline: true, at: new Date().toISOString() } }
+              : undefined;
+            await this.actions.finish(contract.row, { status, result: output, ...(reviewDenial ? { note: reviewDenial } : {}), ...(keys ? { keys } : {}) }).catch(() => undefined);
+            if (status === 'succeeded' && contract.decision === 'run_notify') await this.actions.notifyAfter(contract.row, output);
           }
           // A settled computer action: the screenshot rides along to the model
           // as a vision part on this tool result (never persisted in the
@@ -1081,7 +1242,7 @@ export class TurnLoopService implements OnModuleDestroy {
     session: ChatSession,
     call: AiToolCall,
     approvals: { tools: string[]; exact: string[] },
-  ): { verdict: 'auto' | 'read-only' | 'remembered' | 'ask'; remember: boolean; readOnly?: boolean } {
+  ): { verdict: 'auto' | 'read-only' | 'remembered' | 'ask'; remember: boolean; readOnly?: boolean; unknown?: boolean } {
     // Skills only load instructions — side-effect free, always read-only.
     // MCP calls are never auto-run in Ask mode (FR-4.2): the server behind
     // them is opaque, so they gate like mutations.
@@ -1095,7 +1256,7 @@ export class TurnLoopService implements OnModuleDestroy {
                 : this.computer?.owns(call.name) ? this.computer.isReadOnly(call.name)
                   : this.providerOf(call.name) ? (session.agentId ? this.providerOf(call.name)!.isReadOnly(call.name) : undefined)
                     : this.tools.isReadOnly(call.name);
-    if (readOnly === undefined) return { verdict: 'ask', remember: false }; // unknown tool: never auto-run
+    if (readOnly === undefined) return { verdict: 'ask', remember: false, unknown: true }; // unknown tool: never auto-run
     // Computer tools act on the user's own machine (docs/computer-control.md
     // §4): Auto mode never applies. The observational ones (screenshot, move,
     // scroll, list, read) may be remembered per chat; the acting ones —
@@ -1119,6 +1280,74 @@ export class TurnLoopService implements OnModuleDestroy {
       return { verdict: 'remembered', remember: true, readOnly };
     }
     return { verdict: 'ask', remember: true, readOnly };
+  }
+
+  /**
+   * The trust matrix over the Ask/Auto verdict (docs/actions-and-trust.md
+   * §7). With a decision: run → auto (the reviewer still reads it unless an
+   * agent co-signed); ask → a pause that is never remembered for the
+   * two-key classes. Without one (an Ask-mode chat with a person present, a
+   * channel turn) the legacy verdict stands, except that an irreversible or
+   * money call is never auto-run nor answered from a remembered grant.
+   */
+  private contractPolicy(
+    contract: ContractState | null,
+    legacy: { verdict: 'auto' | 'read-only' | 'remembered' | 'ask'; remember: boolean; readOnly?: boolean; unknown?: boolean },
+  ): { verdict: 'auto' | 'read-only' | 'remembered' | 'ask'; remember: boolean; readOnly?: boolean } {
+    // A name no owner recognises never auto-runs, whatever the level.
+    if (!contract || legacy.unknown) return legacy;
+    const twoKey = TWO_KEY_CLASSES.includes(contract.cls);
+    switch (contract.decision) {
+      case 'run': case 'run_notify': case 'cosign':
+        return { verdict: 'auto', remember: false, readOnly: false };
+      case 'ask':
+        return { verdict: 'ask', remember: !twoKey && legacy.remember, readOnly: false };
+      case null:
+        if (twoKey && (legacy.verdict === 'auto' || legacy.verdict === 'remembered' || legacy.verdict === 'read-only')) return { verdict: 'ask', remember: false, readOnly: false };
+        return twoKey ? { ...legacy, remember: false } : legacy;
+      default:
+        return legacy;
+    }
+  }
+
+  /** Park a call for the owner's key — staged first when the medium has a
+   *  twin (gmail_send → a Gmail draft), held as recorded otherwise. */
+  private async holdOrStage(session: ChatSession, contract: ContractState, call: AiToolCall, skillsUsed: string[]): Promise<{ output: string; approved: 'held' | 'staged' }> {
+    const actions = this.actions!;
+    let why = contract.why ?? `your trust level for it is ${contract.level ?? 0}${(this.turnOrigins.get(session.id) ?? 'user') !== 'user' ? ' and nobody is at the keyboard to approve it' : ''}`;
+    if (contract.decision === 'stage') {
+      // The draft itself is an outward (reversible) call on the same channel.
+      const rate = await actions.rateCheck(session.workspaceId, 'external_reversible', contract.row.channel, contract.row.id);
+      if (!rate.ok) return { output: await actions.refuseRate(contract.row, rate.reason, rate.limit), approved: 'held' };
+      try {
+        const staged = await actions.stage(contract.row, (twin) => this.executeTool(session, twin, call.input, skillsUsed));
+        if (staged) return { output: await actions.hold(contract.row, { level: contract.level, staged, why }), approved: 'staged' };
+      } catch (err) {
+        why += ` (staging failed: ${err instanceof Error ? err.message : String(err)})`;
+      }
+    }
+    return { output: await actions.hold(contract.row, { level: contract.level, why }), approved: 'held' };
+  }
+
+  /** The production co-signer (docs/actions-and-trust.md §5): one bounded,
+   *  tool-free read by a different member on its own model, over the exact
+   *  call, the company's rules and its own charter. Anything but `allow` is a
+   *  no; a reviewer that is off or unavailable is no key at all (the caller
+   *  then needs the owner's). */
+  private async runCoSigner(p: { coSignerAgentId: string; actorAgentId: string; workspaceId: string; call: { name: string; input: Record<string, unknown> }; cls: ActionClass; rules: string }): Promise<CoSignVerdict> {
+    if (!this.review || !(await this.review.config()).enabled) throw new Error('the action reviewer is off, so no agent can co-sign');
+    const coSigner = await this.agents.get(p.coSignerAgentId);
+    const actor = await this.agents.get(p.actorAgentId).catch(() => null);
+    const pseudo = { id: `cosign:${p.actorAgentId}`, workspaceId: p.workspaceId, agentId: p.coSignerAgentId, agentTypeId: null, initiatedBy: '' } as unknown as ChatSession;
+    const ctx = await this.context.build(pseudo);
+    const r = await this.review.review({
+      userRequest: `You are the second key for an ${p.cls.replace(/_/g, ' ')} action that ${actor?.name ?? 'another agent'} wants to take on the owner's behalf. Approve only if it is clearly within the company's rules and proportionate; when unsure, do not approve.`,
+      conversationSummary: p.rules || 'No standing rules were written; judge against ordinary care for an action that cannot be undone.',
+      agentCharter: (coSigner as { charter?: string }).charter || undefined,
+      call: p.call,
+      origin: 'loop',
+    }, { provider: ctx.provider, model: ctx.model, apiKey: ctx.apiKey, baseUrl: ctx.baseUrl }, { model: (coSigner as { model?: string }).model || ctx.model });
+    return { verdict: r.verdict === 'allow' ? 'approve' : 'deny', reason: r.reason, model: r.model };
   }
 
   private awaitDecision(sessionId: string, callId: string, signal: AbortSignal, routedTo?: string): Promise<ApprovalDecision> {

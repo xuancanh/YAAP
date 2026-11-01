@@ -409,6 +409,27 @@ export const GMAIL_TOOLS: ConnectionTool[] = [
   },
 ];
 
+/**
+ * Promote a staged draft (docs/actions-and-trust.md §3): send the draft the
+ * staging twin (gmail_draft / msmail_draft) created, by id. The owner's key
+ * or a sufficient trust level is what calls this — never a tool the model
+ * can name.
+ */
+export async function sendStagedDraft(conn: ConnectionRow, provider: 'google' | 'microsoft', draftId: string, http: GoogleHttp): Promise<string> {
+  if (!/^[\w=+/.-]+$/.test(draftId)) throw new Error('invalid draft id');
+  if (provider === 'google') {
+    const res = await http.googlePost(conn, `${GMAIL_DRAFTS_URL}/send`, { id: draftId }) as { id?: string };
+    return `Email sent from the staged draft (message id ${String(res.id ?? '?')}).`;
+  }
+  await http.googlePost(conn, `${GRAPH}/me/messages/${encodeURIComponent(draftId)}/send`, {});
+  return 'Email sent from the staged draft.';
+}
+
+/** The draft id a staging twin's result names (gmail_draft / msmail_draft output). */
+export function draftIdFrom(output: string): string | null {
+  return output.match(/draft id ([^\s)]+)\)/)?.[1] ?? output.match(/\(id ([^\s)]+)\)/)?.[1] ?? null;
+}
+
 // ---- drive (read/search over the user's Drive; exports create real
 // Docs/Sheets via drive.file, so the app can never touch files it did not
 // create itself) ----

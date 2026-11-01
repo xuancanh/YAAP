@@ -69,6 +69,10 @@ export const workspaces = pgTable('workspaces', {
    *  JSON { cron?, dailyRunCap?, staleMinutes? }; '{}' = the built-in
    *  defaults. Per-agent overrides sit on the agent's heartbeat loop. */
   heartbeatDefaults: text('heartbeatDefaults').notNull().default('{}'),
+  /** The owner's trust ceilings per action class (migration 0040,
+   *  docs/actions-and-trust.md §6): JSON { <class>: 0–3 }; '{}' = the
+   *  defaults in actions/trust-policy.ts. */
+  trustCeilings: text('trustCeilings').notNull().default('{}'),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -1505,3 +1509,83 @@ export const orgTaskChecks = pgTable('org_task_checks', {
   evidence: text('evidence').notNull().default('{}'),
   ranAt: text('ranAt').notNull(),
 });
+
+/** The external-action contract (migration 0040, docs/actions-and-trust.md
+ *  §2, execution-plan item 28): one row per non-read tool call, in every
+ *  session (private chats, channels, loops, heartbeats, org runs). `key` is
+ *  the idempotency key, hash(session, scope, tool, canonical input), unique
+ *  per account: a retry of a succeeded outward call inside the dedupe window
+ *  returns `result` instead of acting twice. */
+export const actionLog = pgTable('action_log', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  key: text('key').notNull(),
+  workspaceId: text('workspaceId').notNull(),
+  /** '' for a session with no durable agent. */
+  agentId: text('agentId').notNull().default(''),
+  sessionId: text('sessionId').notNull(),
+  orgId: text('orgId'),
+  tool: text('tool').notNull(),
+  /** read | internal_write | external_reversible | external_irreversible | money. */
+  class: text('class').notNull(),
+  /** The outbound channel for the rate limit (gmail, gcal, browser, mcp_<server>, …). */
+  channel: text('channel').notNull().default(''),
+  inputHash: text('inputHash').notNull(),
+  /** The call's input (JSON, bounded) — what a held action runs on the owner's key. */
+  input: text('input').notNull().default('{}'),
+  /** started | succeeded | failed | held | staged | refused | denied. */
+  status: text('status').notNull().default('started'),
+  /** The policy decision (trust-policy.ts TrustDecision) or the legacy verdict. */
+  decision: text('decision').notNull().default(''),
+  /** The effective trust level the decision was made at; null = no ledger (no agent). */
+  level: integer('level'),
+  /** JSON { owner?: {by, approve, at}, agent?: {agentId, family, verdict, reason, model}, singleFamily? }. */
+  keys: text('keys').notNull().default('{}'),
+  /** The staged twin's reference (a draft id) while status = staged. */
+  stagedRef: text('stagedRef').notNull().default(''),
+  result: text('result').notNull().default(''),
+  resultHash: text('resultHash').notNull().default(''),
+  /** Retries answered from the record instead of re-executing. */
+  dedupeCount: integer('dedupeCount').notNull().default(0),
+  /** The owner reported this action reverted (POST …/actions/:id/revert-report). */
+  revertedAt: text('revertedAt'),
+  note: text('note').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  finishedAt: text('finishedAt'),
+}, (t) => [uniqueIndex('idx_action_log_key').on(t.accountId, t.key)]);
+
+/** The trust ledger's evidence (C10): one row per outcome that counts for a
+ *  member in an action class. Append-only. */
+export const trustRecords = pgTable('trust_records', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  agentId: text('agentId').notNull(),
+  actionClass: text('actionClass').notNull(),
+  /** success | reverted | rejected | incident | deduplicated. */
+  outcome: text('outcome').notNull(),
+  /** action | task | incident | override. */
+  refType: text('refType').notNull().default(''),
+  refId: text('refId').notNull().default(''),
+  at: text('at').notNull(),
+});
+
+/** The trust ledger's state: one level per (workspace, agent, class), 0–3,
+ *  under the owner's ceiling. */
+export const trustLevels = pgTable('trust_levels', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  agentId: text('agentId').notNull(),
+  actionClass: text('actionClass').notNull(),
+  level: integer('level').notNull().default(0),
+  ceiling: integer('ceiling').notNull().default(0),
+  /** Clean outcomes since the last level change (promotion counter). */
+  cleanCount: integer('cleanCount').notNull().default(0),
+  /** Rejections in a row (demotion counter). */
+  rejectStreak: integer('rejectStreak').notNull().default(0),
+  lastIncidentAt: text('lastIncidentAt'),
+  lastChangedAt: text('lastChangedAt'),
+  reason: text('reason').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_trust_levels_unique').on(t.workspaceId, t.agentId, t.actionClass)]);

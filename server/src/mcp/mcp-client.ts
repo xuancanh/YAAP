@@ -10,6 +10,9 @@ export interface McpToolDef {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  /** The server's `annotations.readOnlyHint` (docs/actions-and-trust.md §1):
+   *  a declared read is classed `read`; everything else is outward. */
+  readOnly?: boolean;
 }
 
 interface JsonRpcResponse {
@@ -134,10 +137,11 @@ export class McpHttpClient {
   async listTools(): Promise<McpToolDef[]> {
     await this.initialize();
     const result = await this.withSessionRecovery(() => this.rpc('tools/list', {}));
-    return ((result.tools as McpToolDef[] | undefined) ?? []).map((t) => ({
+    return ((result.tools as Array<McpToolDef & { annotations?: { readOnlyHint?: unknown } }> | undefined) ?? []).map((t) => ({
       name: t.name,
       description: t.description,
       inputSchema: t.inputSchema ?? { type: 'object', properties: {} },
+      ...(t.annotations?.readOnlyHint === true ? { readOnly: true } : {}),
     }));
   }
 

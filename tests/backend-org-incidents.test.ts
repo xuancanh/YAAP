@@ -249,12 +249,12 @@ test('the CEO\'s critical report pauses the member, freezes its external action 
   assert.equal(await s.incidents.isFrozen(orgId, 'gmail_draft'), false);
   assert.equal((await s.workspaces.get(s.ws.id)).orgMode, 'supervised');
   const told = (await inbox(s, s.chief.id, 'org_incident'))[0];
-  assert.equal(told.title, 'Paused Writer, froze gmail_send for the workspace and switched the company to supervised after your report (Writer emailed a customer the wrong price); nothing external was sent.');
+  assert.equal(told.title, 'Paused Writer, froze external_irreversible for the workspace and switched the company to supervised after your report (Writer emailed a customer the wrong price); nothing external was sent.');
   assert.ok(s.announced.some((a) => /supervised mode after a critical incident/.test(a)));
   // health says it
   const h = await s.controller.health(s.ws.id);
   assert.equal(h.status, 'incident');
-  assert.deepEqual(h.frozenClasses, ['gmail_send']);
+  assert.deepEqual(h.frozenClasses, ['external_irreversible'], 'stored as the action contract\'s class (item 28)');
   assert.equal(h.pausedByIncident[0].agentId, s.writer.id);
   // resolution needs a note; undo reverses what is still in force
   await assert.rejects(s.controller.resolve(s.ws.id, v.id, { resolution: ' ' }), /resolution is required/);

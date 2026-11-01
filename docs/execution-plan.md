@@ -1003,11 +1003,82 @@ the unit lead. A webhook source activated by approval gets its token from a
 CEO rotation, not from the approval result, which would land in the audit
 log. Connection sources and checks read Google connections only.
 
-### 28. Action contract and the trust ledger (C2, C10) *(in progress)*
+### 28. Action contract and the trust ledger (C2, C10) *(done)*
 Action classes, idempotency keys, staging, outbound rate limits, two-key
 execution for irreversible actions; per-member, per-class autonomy levels
 earned from the record and dropped on incidents. Replaces the
 supervised/autonomous switch as the unit of autonomy.
+
+*Shipped as (2 November 2026, branch `feat/trust`):* `docs/actions-and-trust.md`
+(new). Migration `0040-org-trust` (`action_log` with `idx_action_log_key`
+unique on (accountId, key), `trust_records`, `trust_levels` unique on
+(workspaceId, agentId, actionClass), `workspaces.trustCeilings`), mirrored in
+`schema.ts`. `server/src/actions/`: `action-classes.ts` (the one registry —
+exact names, the money pattern, families, the owner's read-only flag for
+`org_` / `channel_` / `meeting_` and MCP `readOnlyHint`; unknown →
+`external_reversible`; input-aware `classOf` for calendar guests;
+`channelOf`, `STAGING` / `stagingOf`, `canonicalJson`, `idempotencyKey`,
+`unclassified`), `trust-policy.ts` (pure: levels, `DEFAULT_CEILINGS`,
+`DEFAULT_START`, the supervised preset, `effectiveLevel`, `decide`,
+`describeMatrix`, `applyOutcome`, `applyIncident`, the `calibrationOf` hook
+returning null), `actions-tunables.ts` (`actions.externalPerHour` 30 [1–500],
+`actions.irreversiblePerDay` 20 [0–200], `actions.moneyPerDay` 0 [0–50],
+`actions.dedupeWindowMinutes` 1 440 [5–10 080], `trust.promoteAfterClean` 10
+[3–100], `trust.demoteAfterRejections` 3 [1–10], `trust.calibrationBar` 0.7
+[0–1]; areas `actions` and `trust` added to `TunableDef`), `TrustService`
+(lazy rows at min(ceiling, start), `effective`, `record`, `incident` from
+`TriggerBus.onOrgIncident`, `setCeilings`, `override`, `overview`,
+`statusText`, `isOwnerOrCeo`; `trust_change` inbox events, pushed for an
+outward promotion, and audit through a hook), `ActionsService` (`byKey`,
+`priorOutcome` / `replay` / `waitingText`, `start` / `finish` feeding
+successes to the ledger, `rateCheck` / `refuseRate`, `hold`, `stage`,
+`ownerKey`, `pickCoSigner` with `familyOf`, `coSign` with the `coSignFn` test
+seam, `list`, `revertReport`, `notifyAfter`), `ActionsController`,
+`ActionsModule` (imported by `ChatsModule` and `OrgModule`).
+`chats/trigger-bus.ts`: `OrgIncidentEvent` with `emitOrgIncident` /
+`onOrgIncident` (the seam item 29 emits on). `chats/turn-loop.service.ts`:
+the contract block before the legacy loop queue (class, key, replay or
+waiting, the trust decision for Auto / loop / heartbeat / org-run turns,
+co-sign, hold or stage), `contractPolicy` over `checkPolicy`, the rate limit
+right before execution, the row settled after it, `holdOrStage`,
+`runCoSigner` (the co-signer's own model through `ActionReviewService.review`
+with a pinned model), the held-action executor, the `trust_status` provider
+and the boot warning for unclassified tools; `ToolRecord.approved` gains
+`deduplicated | held | staged`. `connections`: `sendStagedDraft`,
+`draftIdFrom`, `ConnectionsService.sendDraft`. `mcp`: `readOnlyHint` kept on
+discovery, `McpService.readOnlyTools`. `review`: `review(…, { model })`.
+`org`: approval kind `two_key` (applied through `onApply`, rejected through
+`onDecided`), `OrgTasksService.onReviewVerdict`, `OrgTrustBridge` (audit
+chain, `action_rate_limit` signals for the chief, `two_key` cards, review
+verdicts as ledger outcomes). Routes `GET /api/workspaces/:id/trust`, `PUT
+…/trust/ceilings`, `POST …/trust/:agentId/:class`, `GET …/actions?agentId=&class=&status=&limit=`,
+`POST …/actions/:actionId/revert-report`, `POST …/actions/:actionId/keys`;
+tool `trust_status`. Docs: `docs/security.md` §b rows (outward action, trust
+level, agent co-signer), §d and §k; `docs/permissions.md` §7;
+`docs/autonomous-org-first-principles.md` §4 and §7 (C2, C10 → Have).
+Rebased on items 27 and 29: migration order 0039 sensing, 0040 trust, 0041
+incidents; one `OrgIncidentEvent` definition; the freeze is enforced (an org
+member's call of a frozen class is held for the owner's key at any level, in
+every session kind, through `OrgTrustBridge` → `OrgIncidentsService.isFrozen`);
+incident and freeze class names go through `normalizeActionClass` (a tool name
+maps to its class; `frozenClasses` stores class names); an org member's
+revert report opens item 29's `revert` incident instead of a separate ledger
+revert. The red-team sandbox stays ahead of the contract block, so a record-only
+run never acts.
+Tests: `tests/backend-actions-trust.test.ts` (19).
+Departures: the policy matrix decides only where nobody is answering every
+call anyway — Ask mode with a person present and channel turns keep the
+legacy gates (with irreversible and money never remembered); computer tools
+keep their own floor and are not logged; an `internal_write` at level 1 acts
+without a per-call notification (the action log is its record); level 1
+notifies only unattended turns; level 3 does not switch off the per-call
+action reviewer (the auditor's sampling is item 29's); tool failures, inline
+Ask denials and reviewer verdicts are not ledger evidence; the incident
+seam's `agentId: null` changes nobody and `actionClass: null` every non-read
+class; one `action_log` row per key (a retry of a failed or stale attempt
+reuses it); `keys` and `POST …/actions/:id/keys` are an addition to the
+listed routes so a private (non-org) workspace has an owner key; calendar
+staging is declared, not built; `ownDomains` is not filled yet.
 
 ### 29. Incidents, degradation and independent audit (C11, C9) *(done)*
 Incidents with containment and postmortems; provider and connection

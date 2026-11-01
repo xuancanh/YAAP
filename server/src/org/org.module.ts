@@ -48,6 +48,8 @@ import { OrgSensingController, WorkspaceOrgSensingController, MetricsIngestContr
 import { OrgIncidentsService } from './org-incidents.service';
 import { OrgRedTeamService } from './org-redteam.service';
 import { IncidentsController } from './incidents.controller';
+import { ActionsModule } from '../actions/actions.module';
+import { OrgTrustBridge } from './org-trust-bridge';
 
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
@@ -94,11 +96,14 @@ import { IncidentsController } from './incidents.controller';
  * health and the tool-error streak, contains by severity, tells the owner,
  * schedules the postmortem and leads the brief; OrgRedTeamService runs the
  * record-only canary passes; IncidentsController adds the workspace routes.
+ * Trust (docs/actions-and-trust.md, item 28): OrgTrustBridge binds the
+ * action contract and the trust ledger (ActionsModule) to the audit chain,
+ * signals, `two_key` approvals, review verdicts, incidents and the freeze.
  */
 @Module({
-  imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule, RegistryModule, ConnectionsModule],
+  imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule, RegistryModule, ConnectionsModule, ActionsModule],
   controllers: [OrgController, WorkspaceOrgController, BlueprintsController, CompaniesController, OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController, IncidentsController],
-  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController, OrgIncidentsService, OrgRedTeamService],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController, OrgIncidentsService, OrgRedTeamService, OrgTrustBridge],
   exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgIncidentsService, OrgRedTeamService],
 })
 export class OrgModule {}

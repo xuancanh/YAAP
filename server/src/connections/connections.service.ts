@@ -33,7 +33,7 @@ import {
   GOOGLE_TOKEN_URL, GOOGLE_USERINFO_URL, GOOGLE_WRITE_SCOPES,
   MS_AUTH_URL, MS_BASE_SCOPES, MS_DRIVE_SCOPES, MS_MAIL_SCOPES, MS_READ_SCOPES,
   MS_TOKEN_URL, MS_USERINFO_URL, MS_WRITE_SCOPES,
-  GoogleHttp, capabilitiesFor,
+  GoogleHttp, capabilitiesFor, sendStagedDraft,
 } from './connections.tools';
 import { pollGcal, pollGmail, pollGraphCalendar, pollGraphMail, type CalendarEventSummary, type MailPollResult } from './connections.poll';
 
@@ -554,6 +554,17 @@ export class ConnectionsService implements GoogleHttp {
       }
       throw err;
     }
+  }
+
+  /** Send a staged draft by id on the same grant the draft was made with
+   *  (docs/actions-and-trust.md §3). `twin` names the staging tool
+   *  (gmail_draft / msmail_draft) so the provider and service match. */
+  async sendDraft(agentId: string, twin: string, draftId: string, opts: { initiator?: string } = {}): Promise<string> {
+    const tool = CONNECTION_TOOLS.find((t) => t.name === twin);
+    if (!tool || tool.service !== 'gmail') throw new Error(`${twin} has no draft to send`);
+    const granted = (await this.grantedConnections(agentId, opts.initiator ?? ''))[tool.provider];
+    if (!granted || granted.levels[tool.service] !== 'write') throw new Error(`no write grant on ${tool.provider} mail for this agent — the draft stays in Drafts`);
+    return sendStagedDraft(granted.conn, tool.provider, draftId, this);
   }
 
   // ---- event-trigger polling (docs/triggers.md) ----

@@ -438,10 +438,20 @@ export class OrgTasksService {
    *  REVIEW_ROUND_CAP rounds the task escalates to the user instead (an
    *  `escalation` approval card) and stays blocked; `escalate` does that
    *  at once. Self-review is refused. */
+  private readonly reviewListeners: ReviewVerdictListener[] = [];
+
+  /** Be told of every review verdict (the trust ledger, docs/actions-and-trust.md §6:
+   *  an accepted task is a clean outcome for its assignee, changes requested a rejection). */
+  onReviewVerdict(fn: ReviewVerdictListener): () => void {
+    this.reviewListeners.push(fn);
+    return () => { const i = this.reviewListeners.indexOf(fn); if (i >= 0) this.reviewListeners.splice(i, 1); };
+  }
+
   async review(orgId: string, taskId: string, input: { verdict: 'accept' | 'request_changes' | 'escalate'; note?: string; byAgentId?: string | null; runId?: string | null; byCheck?: boolean }): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     const actor = input.byCheck ? 'check' : input.byAgentId ? `agent:${input.byAgentId}` : 'user';
     if (input.byAgentId && input.byAgentId === t.assigneeAgentId) throw new BadRequestException('a task cannot be reviewed by its own assignee');
+    for (const fn of this.reviewListeners) await Promise.resolve(fn({ orgId, taskId, assigneeAgentId: t.assigneeAgentId, verdict: input.verdict, byAgentId: input.byAgentId ?? null })).catch(() => undefined);
     if (input.verdict === 'accept') {
       await this.db.update(orgTasks).set({ status: 'done', acceptedBy: 'review', claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
       await this.audit.append(orgId, { actor, action: 'review_accept', refType: 'task', refId: taskId, payload: { rounds: t.reviewRounds } });
@@ -536,6 +546,8 @@ export class OrgTasksService {
     this.bus?.emitOrgWake({ orgId, taskId, agentId, reason });
   }
 }
+
+export type ReviewVerdictListener = (ev: { orgId: string; taskId: string; assigneeAgentId: string | null; verdict: 'accept' | 'request_changes' | 'escalate'; byAgentId: string | null }) => unknown;
 
 /** Model family for the different-family reviewer rule: the provider, plus
  *  the leading token of the model id so two agents on one provider but on
