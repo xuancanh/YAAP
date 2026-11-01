@@ -35,7 +35,7 @@ test('empty query returns nothing; ILIKE wildcards are escaped', async () => {
   const s = await repo.createSession({ workspaceId: 'ws1', name: 'plain' });
   await repo.appendMessage({ sessionId: s.id, turnId: 't1', role: 'user', content: 'contains 100% literal percent' });
 
-  assert.deepEqual(await search.search('ws1', '  '), { sessions: [], messages: [], files: [] });
+  assert.deepEqual(await search.search('ws1', '  '), { sessions: [], messages: [], files: [], channelMessages: [] });
   const res = await search.search('ws1', '100%');
   assert.equal(res.messages.length, 1);
   const none = await search.search('ws1', '10_%');

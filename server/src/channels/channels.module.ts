@@ -11,6 +11,7 @@ import { ChatsModule } from '../chats/chats.module';
 import { AgentsModule } from '../agents/agents.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
 import { SettingsModule } from '../settings/settings.module';
+import { GroupChatModule } from '../groupchat/groupchat.module';
 
 @Controller('channels/telegram')
 export class TelegramController {
@@ -47,7 +48,7 @@ export class EmailController {
 }
 
 @Module({
-  imports: [ChatsModule, AgentsModule, WorkspacesModule, SettingsModule],
+  imports: [ChatsModule, AgentsModule, WorkspacesModule, SettingsModule, GroupChatModule],
   controllers: [TelegramController, EmailController],
   providers: [TelegramService, EmailService],
   exports: [EmailService],

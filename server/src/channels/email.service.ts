@@ -30,7 +30,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@ne
 import { ConfigService } from '@nestjs/config';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { SettingsService } from '../settings/settings.module';
-import { AgentsService } from '../agents/agents.service';
+import { AgentsService, eventHead, eventLink } from '../agents/agents.service';
 import { AccountsService } from '../accounts/accounts.service';
 import { currentAccountId, currentViewer, runWithAccount, runWithViewer, type Viewer } from '../accounts/account-context';
 import { SharedService } from '../shared/shared.service';
@@ -400,9 +400,10 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
       const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
       const base = (this.config.get<string>('publicAppUrl') ?? 'http://localhost:5175').replace(/\/+$/, '');
       const lines = batch.map((e) => {
-        const head = `${names.get(e.agentId) ?? 'Agent'} · ${e.title}`;
+        const head = eventHead(e, names);
         const body = e.body ? `\n${e.body.replace(/\s+/g, ' ').slice(0, 400)}` : '';
-        const link = e.sessionId ? `\n${base}/#/chat/${e.sessionId}` : '';
+        const url = eventLink(e, base);
+        const link = url ? `\n${url}` : '';
         return head + body + link;
       });
       const subject = mode === 'daily'
@@ -444,7 +445,7 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
         if (events.length === 0) continue;
         const address = (await this.shared.channels(ws.id, m.memberAccountId)).find((c) => c.kind === 'email')?.address || m.email || await this.shared.memberEmail(m.memberAccountId);
         if (!address) continue;
-        const text = events.map((e) => `${names.get(e.agentId) ?? 'Agent'} · ${e.title}\n${e.body.replace(/\s+/g, ' ').slice(0, 400)}${e.sessionId ? `\n${base}/#/chat/${e.sessionId}` : ''}`).join('\n\n')
+        const text = events.map((e) => `${eventHead(e, names)}\n${e.body.replace(/\s+/g, ' ').slice(0, 400)}${eventLink(e, base) ? `\n${eventLink(e, base)}` : ''}`).join('\n\n')
           + `\n\nAllow or deny from your inbox in the app: ${base}/#/home`;
         await this.sender.send({
           to: address,

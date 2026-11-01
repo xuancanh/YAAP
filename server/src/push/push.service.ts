@@ -22,7 +22,7 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { pushSubscriptions } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
-import { AgentsService } from '../agents/agents.service';
+import { AgentsService, eventHead, eventLink } from '../agents/agents.service';
 import { AccountsService } from '../accounts/accounts.service';
 import { currentAccountId } from '../accounts/account-context';
 import { SharedService } from '../shared/shared.service';
@@ -146,11 +146,11 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
       const delivered: string[] = [];
       for (const e of events) {
         const payload = JSON.stringify({
-          title: `${names.get(e.agentId) ?? 'Agent'} · ${e.title}`.slice(0, 120),
+          title: eventHead(e, names).slice(0, 120),
           body: e.body.replace(/\s+/g, ' ').slice(0, 240),
           tag: e.id,
           kind: e.kind,
-          url: e.sessionId ? `${base}/#/chat/${e.sessionId}` : `${base}/#/home`,
+          url: eventLink(e, base) || `${base}/#/home`,
         });
         let accepted = 0;
         for (const sub of subs) {

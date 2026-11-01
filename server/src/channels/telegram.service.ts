@@ -33,6 +33,11 @@ import { SharedService } from '../shared/shared.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { ChatsRepository } from '../chats/chats.repository';
 import { TurnLoopService } from '../chats/turn-loop.service';
+import { GroupChatService } from '../groupchat/groupchat.service';
+import { eventHead, eventLink } from '../agents/agents.service';
+
+/** `#slug text` from a paired chat posts into that channel (docs/group-chat.md §4). */
+export const CHANNEL_POST_RE = /^#([a-z0-9][a-z0-9-]{0,47})\s+([\s\S]+)$/i;
 
 interface TgUpdate {
   update_id: number;
@@ -67,6 +72,8 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly accounts?: AccountsService,
     /** Optional: per-member pairings in shared workspaces. */
     @Optional() private readonly shared?: SharedService,
+    /** Optional: `#slug text` posts into a group-chat channel. */
+    @Optional() private readonly groupchat?: GroupChatService,
   ) {}
 
   private get token(): string {
@@ -188,6 +195,21 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    // `#slug text` → a channel post as this person (docs/group-chat.md §4);
+    // the channel runtime wakes whoever the message mentions.
+    const chan = CHANNEL_POST_RE.exec(text);
+    if (chan && this.groupchat) {
+      const target = member ? await this.workspaces.get(member.workspaceId).catch(() => null) : (await this.workspaces.list())[0];
+      if (!target) return;
+      try {
+        const posted = await this.groupchat.postFromPairedChannel(target.id, chan[1].toLowerCase(), chan[2].trim());
+        await this.send(chatId, `Posted to #${chan[1].toLowerCase()} (${posted.id.slice(0, 8)}).`);
+      } catch (err) {
+        await this.send(chatId, `Could not post to #${chan[1].toLowerCase()}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
     const agentId = s.telegramDefaultAgentId ?? '';
     const agent = agentId ? await this.agents.get(agentId).catch(() => null) : null;
     if (!agent) {
@@ -286,13 +308,14 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     return delivered;
   }
 
-  private async render(batch: Array<{ kind: string; agentId: string; title: string; body: string; sessionId: string | null }>): Promise<string> {
+  private async render(batch: Array<{ kind: string; agentId: string; title: string; body: string; sessionId: string | null; payload?: string }>): Promise<string> {
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
     const base = (this.config.get<string>('publicAppUrl') ?? 'http://localhost:5175').replace(/\/+$/, '');
     return batch.map((e) => {
-      const head = `${this.glyph(e.kind)} ${names.get(e.agentId) ?? 'Agent'} · ${e.title}`;
+      const head = `${this.glyph(e.kind)} ${eventHead(e, names)}`;
       const body = e.body ? `\n${e.body.replace(/\s+/g, ' ').slice(0, 400)}` : '';
-      const link = e.sessionId ? `\n${base}/#/chat/${e.sessionId}` : '';
+      const url = eventLink(e, base);
+      const link = url ? `\n${url}` : '';
       const hint = e.kind === 'approval_request' ? '\nAllow or deny from your inbox in the app.' : '';
       return head + body + link + hint;
     }).join('\n\n');
@@ -304,6 +327,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
       case 'budget_stop': return '⛔';
       case 'action_pending': case 'approval_request': return '⏸';
       case 'loop_run': return '✅';
+      case 'mention': return '💬';
       default: return 'ℹ️';
     }
   }
