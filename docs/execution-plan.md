@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–18, 20 and 21 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–21 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -483,8 +483,33 @@ over `org-tunables.ts` (one registry, one store, one set of bounds);
 `HeartbeatService`. No SPA. Tests: `tests/backend-org-intent.test.ts`
 (11). Departures are noted in `docs/company-vision.md` §14.
 
-### 19. Rituals: meetings with minutes, standup, review, retro, board *(in progress)*
+### 19. Rituals: meetings with minutes, standup, review, retro, board *(done)*
 `docs/company-vision.md` §3, phase B. Decision log table lands here.
+
+*Shipped as (1 November 2026):* migration `0032-org-meetings`
+(`org_meetings`, `org_decisions` — the §6 decision log — and
+`org_cadences`); `server/src/org/org-meetings.service.ts` (meetings,
+attendees by unit, the model-free standup agenda with the "blocked needs an
+owner" rule, `materialise` → tasks / decision-log rows / audited risks /
+brief questions, cadence defaults per unit, cron bounds and `setCadence`,
+`limitsFor` over the `meeting.*` tunables of `meeting-tunables.ts` with the
+fence in code); `server/src/org/org-meeting-runtime.service.ts` (rounds with
+one turn per attendee in the `#<slug> · <agent>` session, the tools
+`meeting_speak | meeting_propose_action | meeting_propose_decision |
+meeting_raise_risk | meeting_ask_ceo | meeting_close`, human injection and
+the stop word, per-turn reserve/settle through `OrgRuntimeService`, the USD
+and daily caps, quiet-hours postponing, the kill switch, the minute tick
+firing cadences by mode, `/meeting`, `org_set_cadence` for the chief and
+unit leads — autonomous within bounds, a `cadence` approval card in
+supervised mode — and the operating profile in every prompt); the
+`MeetingChannels` seam on `OrgAnnouncer` bound by `GroupChatService`
+(`wake: false` posts), `#decision:` refs in `mentions.ts`, "Questions from
+meetings" in the brief; `GET|POST …/org/meetings`, `GET …/org/meetings/:id`,
+`POST …/org/meetings/:id/cancel`, `GET …/org/decisions`, `GET|PATCH
+…/org/cadences`, `GET …/chat/decisions/:id`. Tests:
+`tests/backend-org-meetings.test.ts` (11). Backend only; the SPA shows the
+threads as ordinary channel threads. Departures are listed in
+`docs/group-chat.md` §8.
 
 ### 20. Assurance: signals, SLOs and pulse, the auditor role *(done)*
 `docs/company-vision.md` §5, phase C.

@@ -2,10 +2,11 @@
 
 Status: **shipped, 1 November 2026** — execution-plan item 15 (§1–§4, §6:
 channels, wake rules, threads/files/tasks, delivery), item 16 (§5,
-organization mode) and item 17 (§7, units). Each section ends with a
-*Shipped as* note naming the code; `tests/backend-groupchat.test.ts` (13
-tests), `tests/backend-org-units.test.ts` (9) and
-`web-tests/channels.test.ts` cover it.
+organization mode), item 17 (§7, units) and item 19 (§8, meetings). Each
+section ends with a *Shipped as* note naming the code;
+`tests/backend-groupchat.test.ts` (13 tests), `tests/backend-org-units.test.ts`
+(9), `tests/backend-org-meetings.test.ts` (11) and `web-tests/channels.test.ts`
+cover it.
 Supersedes the "group session that wakes nobody" in
 `docs/autonomous-company.md` §4 (see the revision note there).
 
@@ -349,3 +350,51 @@ Departures from the text above: linked tasks are the goal's projects' tasks
 (there is no `org_tasks.goalId`); `org_set_goal`'s parent is optional for
 leads too; the root unit keeps the organization's name rather than tracking
 later workspace renames.
+
+## 8. Meetings: rituals that end in minutes
+
+**Status: shipped (1 November 2026, execution-plan item 19)** — the design
+is `docs/company-vision.md` §3 (and §1b for the tunables). A **meeting** is a
+thread in a unit channel: the facilitator posts the agenda as the thread
+root, then every agent attendee gets exactly one turn per round (at most
+three rounds; a standup has one) in its ordinary `#<slug> · <agent>` session
+with the meeting tools `meeting_speak`, `meeting_propose_action`,
+`meeting_propose_decision`, `meeting_raise_risk`, `meeting_ask_ceo`; the
+facilitator closes with `meeting_close`. People reply in the thread between
+rounds and are heard in the next one; "stop" / "end meeting" ends it. The
+**minutes** are a structured system message in the thread (attachment kind
+`minutes`), one line in the channel, and are executed without a model:
+actions → briefed tasks on the unit board (assigned when the facilitator may
+assign the owner under §7's rules, else the backlog), decisions → the
+decision log (`#decision:<id>` chips resolve like `#goal:`), risks → audit,
+questions → the brief's "Questions from meetings". Meeting posts never
+compute a wake set; `/meeting <kind> [#unit] [agenda…]` by a person starts
+one in that channel (or the named unit's) and wakes nobody else. Standup
+agendas are composed from the board (done / in progress / blocked per member;
+blocked without an owner → the lead) with no model call. Cadences per unit
+(standup weekdays 09:30, weekly review Fridays 16:00, retro every second
+Friday 16:30, the board meeting Mondays 09:00 for the root) fire from the
+minute tick by cron; the chief (any unit) and a lead (its own) reshape them
+with `org_set_cadence` within the bounds (never more fires a day than the
+daily cap, never inside quiet hours) — applied in autonomous mode, an
+approval card in supervised mode, a decision-log entry either way.
+
+*Shipped as:* migration `0032-org-meetings` (`org_meetings`, `org_decisions`,
+`org_cadences`); `server/src/org/org-meetings.service.ts` (rows, attendees,
+`standupAgenda`, `materialise`, `renderMinutes`, the decision log, cadence
+defaults / bounds / `setCadence`, `limitsFor` over the `meeting.*` tunables in
+`meeting-tunables.ts`); `server/src/org/org-meeting-runtime.service.ts` (the
+rounds, the tools, the tick, `/meeting`, `org_set_cadence`, the operating
+profile in every prompt) over the `MeetingChannels` half of the Announcer
+seam that `GroupChatService` binds (`postAs` with `wake: false`, `thread`,
+`channelInfo`); `channelSessionName` in `mentions.ts` shared with the channel
+runtime; the `cadence` approval kind with `OrgApprovalsService.onApply`;
+`GET|POST …/org/meetings`, `GET …/org/meetings/:id`, `POST …/cancel`,
+`GET …/org/decisions`, `GET|PATCH …/org/cadences`, `GET …/chat/decisions/:id`.
+Departures: crons are server-local like loops; "every 2nd Friday" is the
+Friday cron plus a 13-day minimum gap; the kill switch and the API cancel
+take effect at the next turn boundary (a turn is bounded anyway); a
+standup has no closing turn (its summary is composed); in supervised mode a
+board meeting fires only when an `org_humans` CEO or board row exists; the
+per-meeting caps read `organizations.tunables` when item 18 adds it and the
+defaults until then.

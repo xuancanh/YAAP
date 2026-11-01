@@ -439,3 +439,22 @@ a default with a bound: workspace `heartbeatDefaults`, agent overrides,
 and a fence in code (cadence ≥ 5 min, ≤ 48 runs a day, staleness 5 min..7
 days). Quiet hours defer the beat; the spend stop closes it. Details:
 `docs/triggers.md` "Heartbeat", `docs/integrations.md` §5a.
+
+**Phase B, rituals (item 19) — shipped 1 November 2026.** §3 is built as
+`docs/group-chat.md` §8 describes: meetings are unit-channel threads with a
+facilitator, an agenda, one turn per attendee per round (≤ 3), a per-meeting
+USD cap, a per-unit daily cap, quiet-hours postponing and the kill switch;
+minutes are posted, hash-chained into the audit log and executed into tasks,
+decision-log rows (§6's `org_decisions` lands here, with `#decision:` refs),
+audited risks and brief questions. Standups are composed from the board with
+no model. Cadences per unit are the §3 defaults, fired by the minute tick;
+`/meeting` starts one by hand. Per §1b, the round cap, USD cap, daily cap,
+attendee rule and kind set are `meeting.*` tunables with the fence in code
+(`server/src/org/meeting-tunables.ts`, registered on the shared
+`org-tunables.ts` registry and `organizations.tunables` column), the chief and unit
+leads reshape cadences with `org_set_cadence` (bounded, audited, logged as
+decisions, approval cards in supervised mode), and every meeting prompt
+carries the operating profile (values, culture, vision) when the
+organization has one. Not built: pinned minutes (a `minutes` attachment
+marks them), planning sessions as the §2 cascade (item 18), postmortem
+retros (item 22).
