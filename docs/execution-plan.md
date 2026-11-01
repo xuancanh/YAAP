@@ -482,6 +482,18 @@ over `org-tunables.ts` (one registry, one store, one set of bounds);
 `heartbeatReasons`/`heartbeatContext` registered on item 21's
 `HeartbeatService`. No SPA. Tests: `tests/backend-org-intent.test.ts`
 (11). Departures are noted in `docs/company-vision.md` §14.
+*Shipped as, SPA (1 November 2026, branch `feat/spa`):* the **Vision** pane
+(`src/components/OrgVisionView.tsx`, Company → Vision, `#/ws/<id>/org/vision`)
+— vision card (title, paragraph, horizon, rules; write / revise and re-plan),
+operating profile (values, culture), the strategy memo, "Plan now", the intent
+tree as objectives → key results with measured progress and owner confidence
+side by side, pace badge, at-risk flag with reason, owner, due, last check-in,
+inline check-in form and history, unit filter via `orgUnitId` with at-risk
+counts, a **Why** drawer (also on the board's task drawer) that walks task →
+key result → objective → vision and names the broken link; the **Tunables**
+editor in Settings → Workspace → Organization (grouped by area, default /
+bound / changed, `PUT …/org/tunables`, `slo.*` through `PATCH …/org/slo`);
+helpers in `src/lib/org.ts`, `web-tests/org.test.ts`.
 
 ### 19. Rituals: meetings with minutes, standup, review, retro, board *(done)*
 `docs/company-vision.md` §3, phase B. Decision log table lands here.
@@ -510,6 +522,21 @@ meetings" in the brief; `GET|POST …/org/meetings`, `GET …/org/meetings/:id`,
 `tests/backend-org-meetings.test.ts` (11). Backend only; the SPA shows the
 threads as ordinary channel threads. Departures are listed in
 `docs/group-chat.md` §8.
+*Shipped as, SPA (1 November 2026, branch `feat/spa`):* in `ChannelView` a
+meeting thread renders specially — a "Meeting · <kind> · running/done" header
+on the agenda root with rounds, cost, Open thread and Cancel, the `minutes`
+attachment as a structured card (summary, decisions as `#decision:` chips,
+actions linking to their tasks, risks, questions for the CEO), the thread
+composer saying replies are read at the next round, `#decision:<id>` chips
+resolved through `GET …/chat/decisions/:id` (`decisionRefs` /
+`decisionMentions` beside `goalRefs` in `src/lib/channels.ts`) and a `/meeting`
+hint in the composer; the **Meetings** pane (`src/components/OrgMeetingsView.tsx`,
+`#/ws/<id>/org/meetings`) — cadences per unit with the cron in words
+(`humanCron`) and editable, running meetings, meetings held opening their
+thread, "Start meeting" with kind / unit / agenda; the **Decisions** pane
+(`#/ws/<id>/org/decisions`) — the log with title, decision, rationale,
+alternatives, decided by, source (meeting / approval / cadence / autonomous)
+and a link to the meeting; rail unit groups show today's ritual.
 
 ### 20. Assurance: signals, SLOs and pulse, the auditor role *(done)*
 `docs/company-vision.md` §5, phase C.
@@ -547,6 +574,16 @@ org tool hook owns the `org_` prefix); the SLO window is a trailing 7 days
 so a sample is stable with few tasks a day; task class is derived from the
 brief by keyword (`class: <name>` in constraints wins) until item 23 stores
 one; the SPA is not touched.
+*Shipped as, SPA (1 November 2026, branch `feat/spa`):* the **Pulse** pane
+(`src/components/OrgPulseView.tsx`, Company → Pulse, `#/ws/<id>/org/pulse`) —
+the score with its 30-day inline-SVG sparkline (`sparkPath`, no chart
+library, the UsageChart approach), SLO tiles against targets and the health
+line, open signals grouped by severity with ack (note) / resolve and deep
+links to the task (board drawer), goal (vision page), member or unit they
+name (`orgFocus` in the store), the latest audits with findings and "Run
+audit now", spend against the envelope with a month-end projection, today's
+rituals; SLO targets and every assurance tunable edit from the Tunables
+editor in Settings → Workspace → Organization.
 
 ### 21. Connection context cards and suggested loops; gated heartbeat per agent *(done)*
 `docs/company-vision.md` §12–§13, with the §1b rule that every tunable is a
@@ -583,6 +620,12 @@ install tool (installs for reports go through the agent's loops PATCH),
 channel cards are not injected (no per-agent channel availability signal
 in the turn loop), and the org module's reasons/context providers are
 interfaces only.
+*Shipped as, SPA (1 November 2026, branch `feat/spa`):* the Heartbeat card
+and the card installs on the agent page were verified against the live
+`HeartbeatView` / `BeatResult` shapes (no change); Settings → Workspace gains
+a **Heartbeat defaults** row (cadence, daily run cap, stale minutes; `PATCH
+/api/workspaces/:id { heartbeatDefaults }`, the fence stated in the copy);
+`Workspace.heartbeatDefaults` on the client type.
 
 ### 22. Memory: playbooks, postmortems, ask-the-company *(planned)*
 `docs/company-vision.md` §6, phase D.

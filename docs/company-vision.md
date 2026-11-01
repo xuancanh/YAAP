@@ -459,3 +459,16 @@ organization has one; a facilitator's gated heartbeat (item 21) lists the
 rituals it runs today as a reason. Not built: pinned minutes (a `minutes` attachment
 marks them), planning sessions as the §2 cascade (item 18), postmortem
 retros (item 22).
+
+*The CEO's seat, SPA (1 November 2026, branch `feat/spa`).* §8 is on screen
+for what the backend has: the Company section gains **Vision** (§2: the
+vision, profile, strategy memo, Plan now, the intent tree with measured
+progress and owner confidence side by side, pace, risk, check-ins, the Why
+drawer), **Pulse** (§5: score and sparkline, SLO tiles, signals with ack /
+resolve and deep links, audits, spend vs envelope, today's rituals),
+**Meetings** (§3: cadences in words and editable, meetings held, Start
+meeting; meeting threads and minutes cards in the channel) and
+**Decisions** (§6: the log with rationale, alternatives, decider and source);
+the tunables (§1b) edit from Settings → Workspace → Organization and the
+heartbeat defaults (§13) from Settings → Workspace. Not on screen yet: Ask
+the company, Preview with the veto window and Replay (items 22–23).
