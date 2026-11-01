@@ -1,6 +1,6 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–16 done**, item 17 in progress — items 1–16 shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
+Status: **items 1–17 done** — shipped between 31 October and 1 November 2026; see each item's "Shipped as" line.
 `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
@@ -428,7 +428,26 @@ panes in the rail, the Settings → Workspace → Organization card, the
 `tests/backend-org-mode.test.ts` (10 tests). Old tool names are accepted for
 one release.
 
-### 17. Units: board, channel and goal tracker per org level *(todo)*
+### 17. Units: board, channel and goal tracker per org level *(done)*
 `docs/group-chat.md` §7: a unit per agent with direct reports, created and
 archived automatically; unit channel with chart-driven membership; unit board
 and goal tracker with roll-up; lead tools.
+
+*Shipped as (1 November 2026):* migration `0030-org-units` (`org_units`,
+`org_tasks.unitId|unitExplicit`, `org_goals.unitId|parentGoalId`, the
+`backfillOrgUnits` backfill with `#company` created when missing);
+`server/src/org/org-units.service.ts` (`ensureUnitFor`, `archiveIfEmpty`,
+`syncMembership` through `OrgService.onStructureChange`, `unitForAssignee`,
+`defaultUnitId`, `unitTree`, `goalProgress`/`goalTree`, `addGoal`,
+`unitReport`, `announceIn`) over the `UnitChannels` seam on `OrgAnnouncer`
+that `GroupChatService` binds; unit defaults and roll-up in
+`OrgTasksService`, unit-channel status lines through `emitTaskStatus`,
+`#goal:<id>` mentions and `GET …/chat/goals/:goalId/messages`; lead tools
+`org_set_goal`, `org_assign`, `org_create_task` (scoped), `org_unit_report`
+in `OrgRuntimeService`, unit-channel lines on autonomous hire/reorg/
+terminate; `GET|PATCH …/org/units…`, `…/goals/tree`, `unitId` filters; SPA:
+Company + unit groups in `WorkspaceRail`, `store.orgUnitId`, Board chips and
+roll-up, the goal tracker, org-chart unit boundaries, the unit-channel
+header and goal chips in `ChannelView`, `goalRefs`/`goalMentions` in
+`src/lib/channels.ts`. Tests: `tests/backend-org-units.test.ts` (9),
+`web-tests/channels.test.ts` (+2). Departures are noted at the end of §7.

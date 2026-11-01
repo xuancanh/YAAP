@@ -25,7 +25,14 @@ refused with the reason otherwise; each is audited as `auto_*` with the
 chief's `why`, announced in `#company` and listed in the brief; the chief
 also reviews the structure on board events and daily at the brief hour).
 Strategy, escalations and outward actions need the CEO in every mode; the
-kill switch and the budget hard-stop apply in every mode.
+kill switch and the budget hard-stop apply in every mode. **Units** (item
+17, `docs/group-chat.md` §7): every member with direct reports leads a unit
+derived from the chart — its own board (`org_tasks.unitId`), channel
+(`#<slug>`, membership following hires, reorgs and terminations) and goal
+subtree (`org_goals.unitId | parentGoalId`, progress from linked tasks and
+children) — and gets `org_set_goal`, `org_assign` / `org_create_task` scoped
+to itself and its reports, and `org_unit_report`; the root unit is the
+company with `#company`.
 
 *Research date: 31 October 2026. External facts come from the five notes in `research_notes/Autonomous AI company orchestration/` (Paperclip, hosted products, frameworks and papers, governance and economics, practice and UX). Competitor context for the single-agent products is in `reports/Personal agent competitor gap analysis.md` and is not repeated here. Our side comes from the README, `docs/execution-plan.md`, `docs/roadmap.md` §2, `docs/permissions.md`, `docs/agent-memory.md`, `docs/security.md`, `server/src/database/schema.ts`, `server/src/chats/turn-loop.service.ts`, `server/src/chats/loops.service.ts` and `git log`. Where a claim in the notes has no primary URL it is omitted or flagged in §7. This report is the design input for execution-plan item 14 and is written to be lifted into `docs/autonomous-company.md`.*
 

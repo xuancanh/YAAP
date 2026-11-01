@@ -92,8 +92,13 @@ cap, agent and project envelopes inside the company envelope, scopes never
 beyond the chief's own, nothing inherited) and are refused with the reason
 outside them — every action audited with the chief's reason, announced in
 `#company` and listed in the daily brief, and the chief reviews the
-structure when a task blocks or a goal lands and once a day. The Workspace
-rail shows the board, goals, org chart, approvals, spend, brief and audit;
+structure when a task blocks or a goal lands and once a day. Every member
+with direct reports leads a **unit** (`docs/group-chat.md` §7): its own
+board, a `#<slug>` channel whose membership follows the org chart, and a
+goal subtree with computed progress, plus unit-scoped `org_set_goal` /
+`org_assign` / `org_unit_report` tools. The Workspace
+rail shows the company and each unit (channel, board, goals), then the org
+chart, approvals, spend, brief and audit;
 Settings → Workspace → Organization holds the mode, chief, envelope, cap and
 the pause button. `COMPANIES_ENABLED=false` hides it all.
 

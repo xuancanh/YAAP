@@ -1,9 +1,10 @@
 # Group chat: channels, threads and agents that talk
 
 Status: **shipped, 1 November 2026** — execution-plan item 15 (§1–§4, §6:
-channels, wake rules, threads/files/tasks, delivery) and item 16 (§5,
-organization mode). Each section ends with a *Shipped as* note naming the
-code; `tests/backend-groupchat.test.ts` (13 tests) and
+channels, wake rules, threads/files/tasks, delivery), item 16 (§5,
+organization mode) and item 17 (§7, units). Each section ends with a
+*Shipped as* note naming the code; `tests/backend-groupchat.test.ts` (13
+tests), `tests/backend-org-units.test.ts` (9) and
 `web-tests/channels.test.ts` cover it.
 Supersedes the "group session that wakes nobody" in
 `docs/autonomous-company.md` §4 (see the revision note there).
@@ -152,8 +153,13 @@ has an active organisation (`orgFor`), else the assignee agent's kanban
 (`AgentsService.addTask` with `channelId`/`messageId`); both task services
 emit `TriggerBus.emitTaskStatus` on a status change and the group chat posts
 `Task [id] "title" → status` into the originating thread and a `task_update`
-SSE event. Not done: `#goal:<id>` references and the goal page's linked
-messages.
+SSE event. Goals (item 17): `#goal:<id>` (full id or a prefix of ≥ 4
+characters matching one goal) is parsed by `mentions.ts` `parseGoalRefs`,
+resolved in `GroupChatService.post` into a `{ kind: 'goal', id }` entry of
+the message's `mentions`, rendered as a chip in `ChannelView` that opens the
+goal tracker, and listed on the goal through
+`GET /api/workspaces/:id/chat/goals/:goalId/messages`
+(`GroupChatService.goalMessages`). System lines carry no references.
 
 ## 4. Delivery and presence
 
@@ -255,7 +261,8 @@ cross-workspace channels; no agent may add itself to a channel.
 
 ## 7. Units: a board, a channel and a goal tracker per org level
 
-Added 1 November 2026 (execution-plan item 17). Every agent with at least one
+**Status: shipped as (1 November 2026, execution-plan item 17)** — see the
+note at the end of the section. Every agent with at least one
 direct report leads a **unit**. The root unit is the company, led by the chief
 of staff, and its channel is `#company`. A unit is created automatically when
 an agent gains its first report (hire or reorg) and archived, data kept, when
@@ -283,3 +290,62 @@ its last report leaves.
 - **UI.** Under the workspace, the rail shows the company (`#company`, Board,
   Goals) and each unit as a collapsible group (`#channel`, Board, Goals); the
   org chart draws unit boundaries.
+
+*Shipped as:* migration `0030-org-units` (`org_units` with a unique
+`(orgId, leadAgentId)`, `org_tasks.unitId | unitExplicit`,
+`org_goals.unitId | parentGoalId`) and the exported `backfillOrgUnits`
+(pure SQL: a root unit per live org with `#company` created when missing,
+a unit per lead with reports, `unitId` on existing tasks and goals by the
+default rule — goals without an owner land in the root).
+`server/src/org/org-units.service.ts`: units are *derived* from the
+reports-to tree — `OrgService.onStructureChange` fires after `addMember`,
+`updateMember` (reporting line), `terminateMember` and `replaceChief`, so
+enrolment, hires (approved or autonomous), reorgs, terminations and a chief
+swap all run `syncMembership`, which creates (`ensureUnitFor`), archives
+(`archiveIfEmpty`, data kept, one row per lead ever, un-archived when the
+lead gains reports again), re-parents and re-roots (the root follows the
+chief's seat; its channel stays `#company`) and keeps every unit channel's
+membership equal to the chart (non-root: lead + direct reports, plus the
+owner and `org_humans` CEO/board; root: every live member, terminated ones
+removed). Channel operations go through the `UnitChannels` seam on
+`OrgAnnouncer` (bound by `GroupChatService`, which de-duplicates `#<slug>`
+against the workspace's channels — `#editor` taken → `#editor-2`); unbound,
+units exist without channels. The unit name defaults to "<lead>'s team" and
+the root to the organization's name; `PATCH …/units/:unitId` renames.
+Boards: `OrgTasksService.create` sets `unitId` by `defaultUnitId` (the unit
+led by the assignee's manager; an unassigned task a lead creates sits on its
+own board, one another agent creates on its manager's, anything else on the
+company's) unless `unitId` is given (`unitExplicit = 1`); `assign` re-homes
+only defaulted tasks; `list({ unitId, rollUp })` is the unit board and the
+roll-up. Status lines: `emitTaskStatus` now fires with `channelId: null` and
+`unitId` for tasks that did not come from a message and the group chat
+posts the one-liner into the unit channel. Goals: `OrgUnitsService.addGoal`
+defaults the unit (by owner, else the root) and refuses a `parentGoalId`
+outside the unit's ancestry; `goalProgress` / `goalTree` = done ÷ total of
+the tasks linked **through the goal's projects** (cancelled ignored),
+averaged with the mean of the child goals when both exist, `achieved` pins
+100%; `GET …/goals/tree` and `GET …/units/:unitId/goals/tree` (a unit's
+tree includes the units below it). Lead tools: a member that leads a
+non-root unit gets `org_set_goal` (its unit; parent must be visible),
+`org_assign` and `org_create_task`'s `assignee` restricted to itself and its
+direct reports (and to tasks on its board or owned inside it),
+`org_unit_report`; the chief has the same tools company-wide (`unit`
+argument) plus its manager set. Autonomous hires, reorgs and terminations
+post one line into the affected unit channels besides `#company`; a unit
+that empties closes with a "Unit archived" line before its channel is
+archived. API: `GET …/org/units` (tree with members and counts, also in
+`GET …/org` as `units`), `PATCH …/org/units/:unitId`,
+`GET …/org/units/:unitId/board?rollUp=`, `GET …/org/units/:unitId/goals/tree`,
+`?unitId=` on tasks and goals, `unitId`/`parentGoalId` on goal and task
+bodies. UI: `WorkspaceRail` shows Company (`#company`, Board, Goals) and a
+collapsible group per unit (lead avatar, `#<slug>`, Board, Goals) that open
+the panes scoped by `store.orgUnitId`; the Board pane has unit chips and a
+"roll up" toggle (on by default for the company, off for a unit); the Goals
+pane is the tracker (tree, progress bars, owner, unit, linked tasks and
+messages, inline status, "Add goal" with parent/unit/owner, "+ child goal");
+the org chart boxes every unit with its name, channel and counts; a unit
+channel's header says "Unit channel · <unit>" (`ChannelDetail.unit`).
+Departures from the text above: linked tasks are the goal's projects' tasks
+(there is no `org_tasks.goalId`); `org_set_goal`'s parent is optional for
+leads too; the root unit keeps the organization's name rather than tracking
+later workspace renames.
