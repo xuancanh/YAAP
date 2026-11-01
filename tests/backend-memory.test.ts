@@ -146,7 +146,7 @@ test('the digest reaches the system prompt — the half of the loop that was mis
   const ws = (await workspaces.list())[0];
   const context = new TurnContextService(
     { resolve: () => new ScriptedProvider([]), defaultBaseUrl: () => undefined } as unknown as AiProviderFactory,
-    { resolve: async () => undefined } as unknown as AgentTypesService,
+    { resolve: async () => undefined, list: async () => [] } as unknown as AgentTypesService,
     agents, memory, workspaces,
     { get: () => 24 } as unknown as ConfigService,
   );
