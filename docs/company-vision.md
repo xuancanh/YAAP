@@ -451,10 +451,11 @@ no model. Cadences per unit are the §3 defaults, fired by the minute tick;
 `/meeting` starts one by hand. Per §1b, the round cap, USD cap, daily cap,
 attendee rule and kind set are `meeting.*` tunables with the fence in code
 (`server/src/org/meeting-tunables.ts`, registered on the shared
-`org-tunables.ts` registry and `organizations.tunables` column), the chief and unit
+`org-tunables.ts` registry, so `org_tune` and `PUT …/org/tunables` reach them), the chief and unit
 leads reshape cadences with `org_set_cadence` (bounded, audited, logged as
 decisions, approval cards in supervised mode), and every meeting prompt
-carries the operating profile (values, culture, vision) when the
-organization has one. Not built: pinned minutes (a `minutes` attachment
+carries the operating profile (values, culture, the item-18 vision) when the
+organization has one; a facilitator's gated heartbeat (item 21) lists the
+rituals it runs today as a reason. Not built: pinned minutes (a `minutes` attachment
 marks them), planning sessions as the §2 cascade (item 18), postmortem
 retros (item 22).

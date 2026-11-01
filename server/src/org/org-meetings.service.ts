@@ -38,7 +38,7 @@ import { OrgUnitsService, type OrgUnit } from './org-units.service';
 import { OrgTasksService, type OrgTask } from './org-tasks.service';
 import { OrgAuditService } from './org-audit.service';
 import { OrgApprovalsService } from './org-approvals.service';
-import { meetingTunable, MEETING_TUNABLE_BOUNDS } from './meeting-tunables';
+import { meetingTunable, meetingKinds, MEETING_TUNABLES } from './meeting-tunables';
 
 export type OrgMeeting = typeof orgMeetings.$inferSelect;
 export type OrgDecision = typeof orgDecisions.$inferSelect;
@@ -158,8 +158,8 @@ export class OrgMeetingsService {
       roundCap: Math.min(MEETING_ROUND_CAP, meetingTunable(org, 'meeting.roundCap')),
       usdCap: meetingTunable(org, 'meeting.usdCap'),
       dailyCap: meetingTunable(org, 'meeting.dailyCap'),
-      attendees: meetingTunable(org, 'meeting.attendees'),
-      kinds: meetingTunable(org, 'meeting.kinds'),
+      attendees: meetingTunable(org, 'meeting.leadsOnly') >= 1 ? 'leads' : 'unit',
+      kinds: meetingKinds(org),
     };
   }
 
@@ -455,7 +455,7 @@ export class OrgMeetingsService {
       if (!cronMatches(cron, d)) continue;
       const day = d.toISOString().slice(0, 10);
       perDay.set(day, (perDay.get(day) ?? 0) + 1);
-      if (perDay.get(day)! > Math.max(1, limits.dailyCap)) return `refused: that cadence fires more than ${Math.max(1, limits.dailyCap)} time(s) a day (meeting.dailyCap, max ${MEETING_TUNABLE_BOUNDS['meeting.dailyCap'].max})`;
+      if (perDay.get(day)! > Math.max(1, limits.dailyCap)) return `refused: that cadence fires more than ${Math.max(1, limits.dailyCap)} time(s) a day (meeting.dailyCap, max ${MEETING_TUNABLES['meeting.dailyCap'].max})`;
       if (ws && isQuiet(ws, d).quiet) return `refused: that cadence fires inside the workspace's quiet hours (${d.toISOString().slice(11, 16)} UTC)`;
     }
     if (perDay.size === 0) return `refused: that cadence never fires in the coming ${CRON_SCAN_DAYS} days`;

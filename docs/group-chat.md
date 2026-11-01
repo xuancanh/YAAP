@@ -391,10 +391,14 @@ seam that `GroupChatService` binds (`postAs` with `wake: false`, `thread`,
 runtime; the `cadence` approval kind with `OrgApprovalsService.onApply`;
 `GET|POST …/org/meetings`, `GET …/org/meetings/:id`, `POST …/cancel`,
 `GET …/org/decisions`, `GET|PATCH …/org/cadences`, `GET …/chat/decisions/:id`.
-Departures: crons are server-local like loops; "every 2nd Friday" is the
-Friday cron plus a 13-day minimum gap; the kill switch and the API cancel
-take effect at the next turn boundary (a turn is bounded anyway); a
-standup has no closing turn (its summary is composed); in supervised mode a
-board meeting fires only when an `org_humans` CEO or board row exists; the
-per-meeting caps read `organizations.tunables` when item 18 adds it and the
-defaults until then.
+The round cap, USD cap, daily cap and the leads-only attendee rule are
+`meeting.*` tunables on the shared `org-tunables.ts` registry (so `org_tune`
+and `PUT …/org/tunables` reach them; `meeting.kinds` is a list in the same
+JSON); prompts carry the operating profile (vision from item 18, values,
+culture); a facilitator's heartbeat (item 21) opens for "a ritual you
+facilitate fires today". Departures: crons are server-local like loops;
+"every 2nd Friday" is the Friday cron plus a 13-day minimum gap; the kill
+switch and the API cancel take effect at the next turn boundary (a turn is
+bounded anyway); a standup has no closing turn (its summary is composed); in
+supervised mode a board meeting fires only when an `org_humans` CEO or board
+row exists.

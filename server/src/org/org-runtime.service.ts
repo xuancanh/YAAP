@@ -369,8 +369,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     } finally {
       this.running.delete(ctx.sessionId);
     }
-    const usd = (usdFor(model, tokensIn, tokensOut) ?? (tokensIn * FALLBACK_PRICE.input + tokensOut * FALLBACK_PRICE.output) / 1_000_000);
-    return { tokensIn, tokensOut, answer, error, usd };
+    return { tokensIn, tokensOut, answer, error, usd: this.costUsd(model, tokensIn, tokensOut) };
   }
 
   // ---- the gated heartbeat (docs/company-vision.md §13) ----

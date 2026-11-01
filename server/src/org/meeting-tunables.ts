@@ -1,77 +1,57 @@
 /**
  * Meeting tunables (docs/company-vision.md §1b, §3): every ritual number is
  * a per-org setting with a default and a bound. The defaults below are the
- * starting points; the chief adjusts them (within the bounds, which stay in
- * code) to the company's culture. Read from `organizations.tunables` (a JSON
- * column item 18 adds) defensively: a missing column or key is the default.
- *
- * TODO(item 18 rebase): replace `meetingTunable` with the shared
- * `tunable(org, key)` helper from `server/src/org/org-tunables.ts` once the
- * intent branch lands; the keys below are namespaced `meeting.*` to coexist.
+ * starting points; the chief adjusts them (`org_tune`, within the bounds,
+ * which stay in code) to the company's culture. The numeric keys register on
+ * the shared registry of `org-tunables.ts` at import, so `org_tune`,
+ * `PUT …/org/tunables` and this module read one `organizations.tunables`
+ * column with one set of bounds. `meeting.kinds` (a list, not a number) is
+ * read from the same JSON column here; the registry ignores non-numbers.
  */
 import type { MeetingKind } from './org-meetings.service';
+import { registerTunables, tunable, type TunableDef } from './org-tunables';
 
-export interface MeetingTunables {
-  /** Ritual kinds a cadence may fire for (a two-agent shop may hold no standup). */
-  'meeting.kinds': MeetingKind[];
-  /** Rounds per meeting (a standup is always one). */
-  'meeting.roundCap': number;
-  /** USD per meeting. */
-  'meeting.usdCap': number;
-  /** Meetings per unit per day. */
-  'meeting.dailyCap': number;
-  /** Who attends a ritual: the unit (lead + reports) or the leads only (lead + reports that lead units). */
-  'meeting.attendees': 'unit' | 'leads';
-}
-
-export const MEETING_TUNABLE_DEFAULTS: MeetingTunables = {
-  'meeting.kinds': ['planning', 'standup', 'weekly_review', 'retro', 'board', 'adhoc'],
-  'meeting.roundCap': 3,
-  'meeting.usdCap': 1.0,
-  'meeting.dailyCap': 4,
-  'meeting.attendees': 'unit',
+export const MEETING_TUNABLES: Record<string, TunableDef> = {
+  'meeting.roundCap': { default: 3, min: 1, max: 3, area: 'rituals', description: 'Rounds per meeting (a standup is always one).' },
+  'meeting.usdCap': { default: 1, min: 0.05, max: 10, area: 'rituals', description: 'USD a single meeting may spend.' },
+  'meeting.dailyCap': { default: 4, min: 0, max: 12, area: 'rituals', description: 'Meetings a unit may hold per day; a cadence may not fire more often.' },
+  'meeting.leadsOnly': { default: 0, min: 0, max: 1, area: 'rituals', description: '1: only reports that lead units attend a ritual; 0: the whole unit.' },
 };
+registerTunables(MEETING_TUNABLES);
 
-/** The safety fence (never moved by culture): rounds 1–3, $0.05–$10 a
- *  meeting, 0–12 meetings per unit per day. */
-export const MEETING_TUNABLE_BOUNDS = {
-  'meeting.roundCap': { min: 1, max: 3 },
-  'meeting.usdCap': { min: 0.05, max: 10 },
-  'meeting.dailyCap': { min: 0, max: 12 },
-} as const;
+export const ALL_MEETING_KINDS: MeetingKind[] = ['planning', 'standup', 'weekly_review', 'retro', 'board', 'adhoc'];
+const KINDS = new Set<string>(ALL_MEETING_KINDS);
 
-const KINDS = new Set(MEETING_TUNABLE_DEFAULTS['meeting.kinds']);
+type OrgLike = { tunables?: string | null } | null | undefined;
 
-function parseTunables(org: unknown): Record<string, unknown> {
-  const raw = (org as { tunables?: unknown } | null | undefined)?.tunables;
-  if (!raw) return {};
-  if (typeof raw === 'object') return raw as Record<string, unknown>;
-  try { const v = JSON.parse(String(raw)) as unknown; return v && typeof v === 'object' ? v as Record<string, unknown> : {}; } catch { return {}; }
+/** One numeric tunable through the shared registry (defaulted and clamped). */
+export function meetingTunable(org: unknown, key: keyof typeof MEETING_TUNABLES): number {
+  return tunable(asOrg(org), key);
 }
 
-/** One tunable, defaulted and clamped into its bound. */
-export function meetingTunable<K extends keyof MeetingTunables>(org: unknown, key: K): MeetingTunables[K] {
-  const v = parseTunables(org)[key];
-  const d = MEETING_TUNABLE_DEFAULTS[key];
-  if (v === undefined || v === null) return d;
-  switch (key) {
-    case 'meeting.kinds': return (Array.isArray(v) ? v.map(String).filter((k) => KINDS.has(k as MeetingKind)) : d) as MeetingTunables[K];
-    case 'meeting.attendees': return (v === 'leads' || v === 'unit' ? v : d) as MeetingTunables[K];
-    default: {
-      const b = MEETING_TUNABLE_BOUNDS[key as keyof typeof MEETING_TUNABLE_BOUNDS];
-      const n = Number(v);
-      return (Number.isFinite(n) ? Math.min(b.max, Math.max(b.min, n)) : d) as MeetingTunables[K];
-    }
-  }
+/** The ritual kinds this company holds (`meeting.kinds` in the same JSON;
+ *  unknown kinds dropped; missing → all). */
+export function meetingKinds(org: unknown): MeetingKind[] {
+  try {
+    const v = (JSON.parse(asOrg(org)?.tunables || '{}') as Record<string, unknown>)['meeting.kinds'];
+    return Array.isArray(v) ? (v.map(String).filter((k) => KINDS.has(k)) as MeetingKind[]) : ALL_MEETING_KINDS;
+  } catch { return ALL_MEETING_KINDS; }
 }
 
-/** The operating profile (§1b) as a meeting prompt reads it: values,
- *  culture, vision/mission — columns item 18 adds, read defensively. */
-export function operatingProfile(org: unknown): string {
-  const o = (org ?? {}) as { values?: unknown; culture?: unknown; vision?: unknown; mission?: unknown };
+function asOrg(org: unknown): OrgLike {
+  if (!org || typeof org !== 'object') return null;
+  const t = (org as { tunables?: unknown }).tunables;
+  return { tunables: typeof t === 'string' ? t : t && typeof t === 'object' ? JSON.stringify(t) : null };
+}
+
+/** The operating profile (§1b) as a meeting prompt reads it: the vision (the
+ *  active vision goal's title, when item 18 has one), else the mission;
+ *  values; culture — read defensively from the organization row. */
+export function operatingProfile(org: unknown, vision?: { title: string; dueAt?: string | null } | null): string {
+  const o = (org ?? {}) as { values?: unknown; culture?: unknown; mission?: unknown };
   const s = (v: unknown) => (typeof v === 'string' ? v.trim().slice(0, 1_500) : '');
   const lines = [
-    s(o.vision) ? `Vision: ${s(o.vision)}` : s(o.mission) ? `Mission: ${s(o.mission)}` : '',
+    vision?.title ? `Vision: ${vision.title.slice(0, 500)}${vision.dueAt ? ` (by ${vision.dueAt.slice(0, 10)})` : ''}` : s(o.mission) ? `Mission: ${s(o.mission)}` : '',
     s(o.values) ? `Values: ${s(o.values)}` : '',
     s(o.culture) ? `Culture: ${s(o.culture)}` : '',
   ].filter(Boolean);

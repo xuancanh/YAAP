@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConfigService } from '@nestjs/config';
 import { eq } from 'drizzle-orm';
-import { orgCadences, orgDecisions, workspaces } from '../server/src/database/schema';
+import { orgCadences, orgDecisions, organizations, workspaces } from '../server/src/database/schema';
 import type { DrizzleDb } from '../server/src/database/database.module';
 import { testDb, memStorage, ctxStub, skillsStub, mcpStub } from './helpers';
 import { ChatsRepository } from '../server/src/chats/chats.repository';
@@ -38,7 +38,8 @@ import { OrgAnnouncer } from '../server/src/org/org-announcer';
 import { OrgUnitsService } from '../server/src/org/org-units.service';
 import { OrgMeetingsService, parseMeetingCommand, parseMinutes, nextCronAfter, isValidCron } from '../server/src/org/org-meetings.service';
 import { OrgMeetingRuntime } from '../server/src/org/org-meeting-runtime.service';
-import { meetingTunable, operatingProfile } from '../server/src/org/meeting-tunables';
+import { meetingTunable, meetingKinds, operatingProfile } from '../server/src/org/meeting-tunables';
+import { TUNABLES, checkTunable } from '../server/src/org/org-tunables';
 import { OrgController } from '../server/src/org/org.controller';
 import { WorkspaceOrgController } from '../server/src/org/workspace-org.controller';
 import { GroupChatController } from '../server/src/groupchat/groupchat.controller';
@@ -92,7 +93,7 @@ async function setup(plan: Plan = () => say('ok'), opts: { db?: DrizzleDb } = {}
   const tasks = new OrgTasksService(db, org, audit, bus, units);
   const approvals = new OrgApprovalsService(db, org, tasks, agents, audit, undefined, bus);
   const meetings = new OrgMeetingsService(db, org, units, tasks, audit, agents, workspaces, approvals);
-  const brief = new OrgBriefService(db, org, tasks, approvals, audit, agents, workspaces, meetings);
+  const brief = new OrgBriefService(db, org, tasks, approvals, audit, agents, workspaces, undefined, undefined, undefined, meetings);
   const runtime = new OrgRuntimeService(db, org, tasks, approvals, audit, brief, turns, repo, agents, workspaces, config, announcer, bus, undefined, undefined, undefined, undefined, undefined, units);
   runtime.debounceMs = 15;
   const meetingRuntime = new OrgMeetingRuntime(db, meetings, org, units, audit, agents, workspaces, turns, repo, runtime, config, announcer, approvals);
@@ -397,11 +398,27 @@ test('the per-unit daily meeting cap (default 4) refuses the fifth meeting of a 
   assert.equal(meetingTunable({ tunables: JSON.stringify({ 'meeting.dailyCap': 50 }) }, 'meeting.dailyCap'), 12);
   assert.equal(meetingTunable({ tunables: JSON.stringify({ 'meeting.roundCap': 9 }) }, 'meeting.roundCap'), 3);
   assert.equal(meetingTunable({ tunables: JSON.stringify({ 'meeting.usdCap': 0 }) }, 'meeting.usdCap'), 0.05);
-  assert.deepEqual(meetingTunable({ tunables: { 'meeting.kinds': ['standup', 'nonsense'] } }, 'meeting.kinds'), ['standup']);
-  assert.equal(meetingTunable({}, 'meeting.attendees'), 'unit');
+  assert.deepEqual(meetingKinds({ tunables: JSON.stringify({ 'meeting.kinds': ['standup', 'nonsense'] }) }), ['standup']);
+  assert.equal(meetingKinds({}).length, 6);
+  assert.equal(meetingTunable({}, 'meeting.leadsOnly'), 0);
   assert.equal(meetingTunable(undefined, 'meeting.usdCap'), 1);
-  const limits = s.meetings.limitsFor({ ...(await s.org.get(orgId)), tunables: JSON.stringify({ 'meeting.roundCap': 1, 'meeting.usdCap': 0.5 }) } as never);
-  assert.deepEqual([limits.roundCap, limits.usdCap, limits.dailyCap], [1, 0.5, 4]);
+  // registered on the shared registry (org_tune and PUT …/org/tunables see them)
+  assert.equal(TUNABLES['meeting.usdCap'].area, 'rituals');
+  assert.deepEqual(checkTunable('meeting.roundCap', 5), { ok: false, reason: 'meeting.roundCap must stay within 1–3 (the safety floor; default 3)' });
+  const limits = s.meetings.limitsFor({ ...(await s.org.get(orgId)), tunables: JSON.stringify({ 'meeting.roundCap': 1, 'meeting.usdCap': 0.5, 'meeting.leadsOnly': 1 }) });
+  assert.deepEqual([limits.roundCap, limits.usdCap, limits.dailyCap, limits.attendees], [1, 0.5, 4, 'leads']);
+  // and the real column drives a meeting: one round, leads only
+  await s.db.update(organizations).set({ tunables: JSON.stringify({ 'meeting.roundCap': 1, 'meeting.leadsOnly': 1 }) }).where(eq(organizations.id, orgId));
+  const tuned = await s.meetingRuntime.start(orgId, { kind: 'planning', unitId: root.id, agenda: 'Tuned' });
+  await s.meetingRuntime.idle();
+  const t = await s.meetings.get(orgId, tuned.id);
+  assert.equal(t.status, 'cancelled', 'still the fifth meeting today: the daily cap holds');
+  await s.db.update(organizations).set({ tunables: JSON.stringify({ 'meeting.roundCap': 1, 'meeting.leadsOnly': 1, 'meeting.dailyCap': 12 }) }).where(eq(organizations.id, orgId));
+  const tuned2 = await s.meetingRuntime.start(orgId, { kind: 'planning', unitId: root.id, agenda: 'Tuned' });
+  await s.meetingRuntime.idle();
+  const t2 = await s.meetings.get(orgId, tuned2.id);
+  assert.equal(t2.status, 'done'); assert.equal(t2.rounds, 1);
+  assert.deepEqual(JSON.parse(t2.attendees).filter((a: { kind: string }) => a.kind === 'agent').map((a: { id: string }) => a.id), [s.chief.id], 'leads only: no report leads a unit');
 });
 
 // ---- 6. the USD cap ----
@@ -607,12 +624,10 @@ test('the organization\'s operating profile (values, culture, vision) is read de
   assert.equal(operatingProfile({ name: 'x' }), '');
   assert.equal(operatingProfile(null), '');
   assert.match(operatingProfile({ mission: 'A newsletter people pay for.', culture: 'Terse. Decide fast, review strictly.' }), /^Operating profile \(run this meeting in the company's style\):\nMission: A newsletter people pay for\.\nCulture: Terse\. Decide fast, review strictly\.$/);
-  assert.match(operatingProfile({ vision: 'V', mission: 'M', values: 'Honesty' }), /Vision: V\nValues: Honesty/);
+  assert.match(operatingProfile({ mission: 'M', values: 'Honesty' }, { title: 'V' }), /Vision: V\nValues: Honesty/);
   const s = await setup();
   const orgId = await enable(s);
-  // item 18's columns are not on this branch yet: the row is widened the way the DB will
-  const realGet = s.org.get.bind(s.org);
-  s.org.get = async (id: string) => ({ ...(await realGet(id)), values: 'Readers first; never pad.', culture: 'Terse meetings; one risk per person.' }) as never;
+  await s.db.update(organizations).set({ values: 'Readers first; never pad.', culture: 'Terse meetings; one risk per person.' }).where(eq(organizations.id, orgId));
   const root = await s.units.rootUnit(orgId);
   const m0 = await s.meetingRuntime.start(orgId, { kind: 'weekly_review', unitId: root.id });
   await s.meetingRuntime.idle();
@@ -621,6 +636,8 @@ test('the organization\'s operating profile (values, culture, vision) is read de
   for (const r of s.provider.requests) {
     assert.match(r.system ?? '', /# Meeting[\s\S]*Operating profile \(run this meeting in the company's style\):\nValues: Readers first; never pad\.\nCulture: Terse meetings; one risk per person\.\n\nAgenda:/);
   }
+  // with a vision (item 18) the profile leads with it
+  assert.match(operatingProfile({ mission: 'M', culture: 'C' }, { title: 'A newsletter 10k people pay for', dueAt: '2027-06-30' }), /^Operating profile[^\n]*\nVision: A newsletter 10k people pay for \(by 2027-06-30\)\nCulture: C$/);
   // without a profile: no section
   const s2 = await setup();
   const orgId2 = await enable(s2);

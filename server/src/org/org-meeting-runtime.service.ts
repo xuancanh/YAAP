@@ -52,6 +52,8 @@ import { OrgUnitsService, type OrgUnit } from './org-units.service';
 import { OrgAuditService } from './org-audit.service';
 import { OrgRuntimeService } from './org-runtime.service';
 import { OrgApprovalsService } from './org-approvals.service';
+import { OrgIntentService } from './org-intent.service';
+import { HeartbeatService } from '../chats/heartbeat.service';
 import { OrgAnnouncer } from './org-announcer';
 import {
   OrgMeetingsService, parseAttendees, parseMeetingCommand, parseMinutes, KIND_TITLES, MEETING_KINDS, STANDUP_ROUND_CAP,
@@ -128,9 +130,34 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     private readonly announcer: OrgAnnouncer,
     @Optional() private readonly approvals?: OrgApprovalsService,
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: the vision (item 18) for the operating profile in prompts. */
+    @Optional() private readonly intent?: OrgIntentService,
+    /** Optional: the gated heartbeat (item 21) — "a ritual you facilitate fires today" as a reason. */
+    @Optional() heartbeat?: HeartbeatService,
   ) {
     void this.db;
     if (this.enabled()) this.turns.addToolProvider(this);
+    heartbeat?.addReasonProvider({ name: 'meetings', reasons: (agentId, ctx) => this.heartbeatReasons(agentId, ctx.now) });
+  }
+
+  /** Why a facilitator's heartbeat should open: a cadence of a unit it leads
+   *  fires later today (its agenda is worth preparing). No model. */
+  async heartbeatReasons(agentId: string, now: Date): Promise<string[]> {
+    const out: string[] = [];
+    const dayEnd = new Date(now); dayEnd.setHours(23, 59, 59, 999);
+    for (const m of await this.managedOrgs(agentId)) {
+      const org = await this.org.get(m.orgId).catch(() => null);
+      if (!org) continue;
+      const kinds = new Set<string>(this.meetings.limitsFor(org).kinds);
+      const units = m.chief ? await this.units.units(org.id) : [m.unit!];
+      const mine = new Set(units.filter((u) => u.leadAgentId === agentId).map((u) => u.id));
+      for (const c of await this.meetings.cadences(org.id)) {
+        if (!c.enabled || !mine.has(c.unitId) || !kinds.has(c.kind) || !c.nextRunAt) continue;
+        const at = new Date(c.nextRunAt);
+        if (at >= now && at <= dayEnd) out.push(`you facilitate the ${KIND_TITLES[c.kind as MeetingKind] ?? c.kind} of ${units.find((u) => u.id === c.unitId)?.name ?? 'your unit'} at ${c.nextRunAt.slice(11, 16)} UTC today (the agenda is composed for you; org_set_cadence reshapes it)`);
+      }
+    }
+    return out.slice(0, 5);
   }
 
   enabled(): boolean { return this.config.get<boolean>('companiesEnabled') !== false; }
@@ -275,7 +302,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       return 'refused:daily_cap';
     }
     const usdCap = limits.usdCap;
-    const profile = operatingProfile(org);
+    const profile = operatingProfile(org, await this.intent?.vision(orgId).catch(() => null));
     const unit = m.unitId ? await this.units.get(orgId, m.unitId).catch(() => null) : null;
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
     const nm = (id: string) => names.get(id) ?? id.slice(0, 8);
