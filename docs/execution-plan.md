@@ -451,3 +451,24 @@ roll-up, the goal tracker, org-chart unit boundaries, the unit-channel
 header and goal chips in `ChannelView`, `goalRefs`/`goalMentions` in
 `src/lib/channels.ts`. Tests: `tests/backend-org-units.test.ts` (9),
 `web-tests/channels.test.ts` (+2). Departures are noted at the end of §7.
+
+### 18. Intent: vision, key results, check-ins, cascade *(in progress)*
+`docs/company-vision.md` §2 and §11 phase A.
+
+### 19. Rituals: meetings with minutes, standup, review, retro, board *(in progress)*
+`docs/company-vision.md` §3, phase B. Decision log table lands here.
+
+### 20. Assurance: signals, SLOs and pulse, the auditor role *(in progress)*
+`docs/company-vision.md` §5, phase C.
+
+### 21. Connection context cards and suggested loops; gated heartbeat per agent *(in progress)*
+`docs/company-vision.md` §12–§13.
+
+### 22. Memory: playbooks, postmortems, ask-the-company *(planned)*
+`docs/company-vision.md` §6, phase D.
+
+### 23. Capital and the CEO seat: cost per outcome, forecasts, routing, preview with veto window, replay *(planned)*
+`docs/company-vision.md` §7–§8, phase E.
+
+### 24. Blueprints: company export/import, registry, role catalog, hybrid human roles *(planned)*
+`docs/company-vision.md` §9, phase F.
