@@ -10,7 +10,7 @@
  * per-loop timezone. Keep the host in the timezone you want loops to follow
  * (TZ env var).
  */
-function matchField(field: string, value: number): boolean {
+export function matchField(field: string, value: number): boolean {
   for (const part of field.split(',')) {
     if (part === '*') return true;
     const step = /^\*\/(\d+)$/.exec(part);

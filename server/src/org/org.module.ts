@@ -62,6 +62,8 @@ import { OrgMirrorService } from './org-mirror.service';
 import { OrgGovernanceTools } from './org-governance.tools';
 import { GovernanceController } from './governance.controller';
 import { OrgChiefService } from './org-chief.service';
+import { OrgMeetingMinutesService } from './meeting-minutes.service';
+import { MeetingsCalendarService, WorkspaceMeetingsController } from './meetings-calendar';
 
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
@@ -132,8 +134,8 @@ import { OrgChiefService } from './org-chief.service';
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule, RegistryModule, ConnectionsModule, ActionsModule],
-  controllers: [OrgController, WorkspaceOrgController, BlueprintsController, CompaniesController, OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController, IncidentsController, ExperimentsController, GovernanceController],
-  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController, OrgIncidentsService, OrgRedTeamService, OrgTrustBridge, OrgPredictionsService, OrgExperimentsService, OrgReconciliationService, OrgBoundaryService, OrgEvalsService, OrgCapacityService, OrgSeatService, OrgGovernanceTools, OrgChiefService, OrgMirrorService],
-  exports: [OrgApprovalsService, OrgAuditService, OrgBriefService, OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgIncidentsService, OrgRedTeamService, OrgExperimentsService, OrgPredictionsService, OrgReconciliationService, OrgBoundaryService, OrgEvalsService, OrgCapacityService, OrgSeatService, OrgChiefService, OrgMirrorService],
+  controllers: [OrgController, WorkspaceOrgController, BlueprintsController, CompaniesController, OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController, IncidentsController, ExperimentsController, GovernanceController, WorkspaceMeetingsController],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController, OrgIncidentsService, OrgRedTeamService, OrgTrustBridge, OrgPredictionsService, OrgExperimentsService, OrgReconciliationService, OrgBoundaryService, OrgEvalsService, OrgCapacityService, OrgSeatService, OrgGovernanceTools, OrgChiefService, OrgMirrorService, OrgMeetingMinutesService, MeetingsCalendarService],
+  exports: [OrgApprovalsService, OrgAuditService, OrgBriefService, OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgIncidentsService, OrgRedTeamService, OrgExperimentsService, OrgPredictionsService, OrgReconciliationService, OrgBoundaryService, OrgEvalsService, OrgCapacityService, OrgSeatService, OrgChiefService, OrgMirrorService, OrgMeetingMinutesService, MeetingsCalendarService],
 })
 export class OrgModule {}
