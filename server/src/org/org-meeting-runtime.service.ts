@@ -60,6 +60,7 @@ import {
   type Minutes, type MeetingKind, type OrgMeeting, type Attendee,
 } from './org-meetings.service';
 import { operatingProfile } from './meeting-tunables';
+import { OrgMeetingMinutesService, type Narration, type WriteMinutesInput } from './meeting-minutes.service';
 
 export type MeetingRunResult = 'ran' | 'postponed' | 'cancelled' | `refused:${string}` | `skipped:${string}`;
 
@@ -160,6 +161,8 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     @Optional() private readonly intent?: OrgIntentService,
     /** Optional: the gated heartbeat (item 21) — "a ritual you facilitate fires today" as a reason. */
     @Optional() heartbeat?: HeartbeatService,
+    /** Optional: the minutes document at the end of every meeting (docs/meetings.md). */
+    @Optional() private readonly minutesDocs?: OrgMeetingMinutesService,
   ) {
     void this.db;
     if (this.enabled()) this.turns.addToolProvider(this);
@@ -282,6 +285,8 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     const attendees: Attendee[] = [...agents.slice(0, 8).map((id) => ({ kind: 'agent' as const, id })), { kind: 'human', id: humanId }];
     const m = await this.meetings.create(org.id, {
       kind: cmd.kind, unitId: unit?.id ?? null, channelId: targetChannel, agenda: cmd.agenda, attendees, facilitatorAgentId: facilitator,
+      // An ad-hoc meeting is named by its agenda (the minutes file is too).
+      title: cmd.kind === 'adhoc' && cmd.agenda ? adhocTitle(cmd.agenda) : undefined,
       createdBy: `human:${humanId}`,
     });
     void this.track(this.run(org.id, m.id));
@@ -397,7 +402,18 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       await this.audit.append(orgId, { actor: 'system', action: 'meeting_round', refType: 'meeting', refId: meetingId, payload: { round, usd: Number(usd.toFixed(6)), actions: minutes.actions.length, decisions: minutes.decisions.length } });
     }
     const current = await this.meetings.get(orgId, meetingId);
-    if (current.status === 'cancelled') return 'cancelled';
+    if (current.status === 'cancelled') {
+      // Cancelled after it started (the API, the kill switch): the minutes
+      // still record what was said and proposed — nothing is executed.
+      if (this.minutesDocs) {
+        minutes.endedBy = 'cancelled';
+        const input = await this.minutesInput({ orgId, workspaceId: org.workspaceId, m: { ...current, usd, rounds }, minutes, unit, channel: { id: channelId, slug: channel.slug }, rootId: root.id, names, usdLeft: usdCap - usd, closedBySummary: false, facilitatorId, channelAgents, cancelled: true });
+        const doc = await this.minutesDocs.write(input);
+        await this.meetings.update(orgId, meetingId, { minutes: JSON.stringify(minutes), summary: doc.summary.slice(0, 2_000), minutesPath: doc.path, usd: usd + doc.usd });
+        if (doc.path) await channels.postAs(channelId, { authorKind: 'system', text: `Meeting cancelled; minutes (nothing executed): /${doc.path}`, threadRootId: root.id, attachments: [{ path: doc.path, kind: 'file' }], wake: false }).catch(() => undefined);
+      }
+      return 'cancelled';
+    }
     if (endedBy === 'stopped') await channels.postAs(channelId, { authorKind: 'system', text: 'Meeting ended by a person; writing the minutes.', threadRootId: root.id, wake: false }).catch(() => undefined);
 
     // 3. The closing turn (skipped when stopped or over budget, and for a
@@ -412,25 +428,53 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
         if (minutes.summary) endedBy = 'closed';
       } else endedBy = 'usd_cap';
     }
-    if (!minutes.summary) minutes.summary = autoSummary(minutes, endedBy, nm);
+    const closedBySummary = Boolean(minutes.summary);
     minutes.endedBy = endedBy;
 
-    // 4. Minutes: materialise, post, announce, audit with the hash.
+    // 4. Minutes: narrate (the facilitator's summary, else one bounded call
+    //    on its model, else from the record), materialise, write the
+    //    document, post, announce, audit with the hash.
     const endedAt = nowIso();
     m = await this.meetings.update(orgId, meetingId, { usd, rounds });
+    let docInput: WriteMinutesInput | null = null;
+    let told: Narration | null = null;
+    if (this.minutesDocs) {
+      docInput = await this.minutesInput({ orgId, workspaceId: org.workspaceId, m: { ...m, endedAt }, minutes, unit, channel: { id: channelId, slug: channel.slug }, rootId: root.id, names, usdLeft: usdCap - usd, closedBySummary, facilitatorId, channelAgents });
+      told = await this.minutesDocs.narrate(docInput);
+      usd += told.usd;
+    }
+    if (!minutes.summary) minutes.summary = autoSummary(minutes, endedBy, nm);
     const { hash } = await this.meetings.materialise(orgId, { ...m, endedAt }, minutes, { threadRootId: root.id });
+    const doc = this.minutesDocs && docInput && told ? await this.minutesDocs.writeDoc({ ...docInput, meeting: { ...docInput.meeting, usd, rounds } }, told) : null;
+    const minutesPath = doc?.path ?? null;
     const text = this.meetings.renderMinutes({ ...m, usd, rounds }, minutes, names);
-    const posted = await channels.postAs(channelId, { authorKind: 'system', text, threadRootId: root.id, attachments: [{ path: `meetings/${meetingId}`, kind: 'minutes' }], wake: false });
-    await channels.postAs(channelId, { authorKind: 'system', text: `Minutes of ${m.title}: ${minutes.decisions.length} decision(s), ${minutes.actions.length} action(s), ${minutes.risks.length} risk(s), ${minutes.questions.length} question(s) for the CEO · $${usd.toFixed(2)} · thread ${root.id.slice(0, 8)}`, wake: false }).catch(() => undefined);
-    await this.meetings.update(orgId, meetingId, { status: 'done', endedAt });
-    await this.audit.append(orgId, { actor: 'system', action: 'meeting_end', refType: 'meeting', refId: meetingId, payload: { hash, endedBy, rounds, usd: Number(usd.toFixed(6)), decisions: minutes.decisions.length, actions: minutes.actions.length, risks: minutes.risks.length, questions: minutes.questions.length, minutesMessageId: posted.id } });
+    const posted = await channels.postAs(channelId, { authorKind: 'system', text, threadRootId: root.id, attachments: [{ path: `meetings/${meetingId}`, kind: 'minutes' }, ...(minutesPath ? [{ path: minutesPath, kind: 'file' }] : [])], wake: false });
+    await channels.postAs(channelId, { authorKind: 'system', text: `Minutes of ${m.title}: ${minutes.decisions.length} decision(s), ${minutes.actions.length} action(s), ${minutes.risks.length} risk(s), ${minutes.questions.length} question(s) for the CEO · $${usd.toFixed(2)} · thread ${root.id.slice(0, 8)}${minutesPath ? ` · Minutes: /${minutesPath}` : ''}`, attachments: minutesPath ? [{ path: minutesPath, kind: 'file' }] : undefined, wake: false }).catch(() => undefined);
+    await this.meetings.update(orgId, meetingId, { status: 'done', endedAt, usd, summary: minutes.summary.slice(0, 2_000), minutesPath });
+    await this.audit.append(orgId, { actor: 'system', action: 'meeting_end', refType: 'meeting', refId: meetingId, payload: { hash, endedBy, rounds, usd: Number(usd.toFixed(6)), decisions: minutes.decisions.length, actions: minutes.actions.length, risks: minutes.risks.length, questions: minutes.questions.length, minutesMessageId: posted.id, minutesPath, minutesBy: told?.source ?? null } });
     if (facilitatorId) {
       await this.agents.addEvent(facilitatorId, {
         kind: 'meeting', title: `Minutes: ${m.title} (${minutes.decisions.length} decision(s), ${minutes.actions.length} action(s))`.slice(0, 200),
-        body: minutes.summary.slice(0, 1_000), payload: JSON.stringify({ orgId, meetingId, channelId: m.channelId, threadRootId: root.id, hash }), origin: 'loop', channel: true, ...deliveryFor(ws, 'meeting'),
+        body: minutes.summary.slice(0, 1_000), payload: JSON.stringify({ orgId, meetingId, channelId: m.channelId, threadRootId: root.id, hash, minutesPath }), origin: 'loop', channel: true, ...deliveryFor(ws, 'meeting'),
       }).catch(() => undefined);
     }
     return 'ran';
+  }
+
+  /** What the minutes document needs: the thread as it ended and the
+   *  facilitator's channel session (its model writes the summary). */
+  private async minutesInput(x: {
+    orgId: string; workspaceId: string; m: OrgMeeting; minutes: Minutes; unit: OrgUnit | null; channel: { id: string; slug: string }; rootId: string;
+    names: Map<string, string>; usdLeft: number; closedBySummary: boolean; facilitatorId: string; channelAgents: Set<string>; cancelled?: boolean;
+  }): Promise<WriteMinutesInput> {
+    const channels = this.announcer.meetings!;
+    const transcript = await channels.thread(x.channel.id, x.rootId).catch(() => []);
+    const agent = x.facilitatorId ? await this.agents.get(x.facilitatorId).catch(() => null) : null;
+    const session = agent ? await this.channelSession(agent, x.channel.slug, x.m).catch(() => null) : null;
+    return {
+      orgId: x.orgId, workspaceId: x.workspaceId, meeting: x.m, minutes: x.minutes, unit: x.unit, rootUnit: Boolean(x.unit && x.unit.parentUnitId === null),
+      channel: x.channel, transcript, names: x.names, session, usdLeft: Math.max(0, x.usdLeft), closedBySummary: x.closedBySummary, cancelled: x.cancelled,
+    };
   }
 
   /** One attendee turn: reserve, run in the per-agent per-channel session,
@@ -669,6 +713,13 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
 
   /** The runtime's view of a meeting's minutes so far (tests, the API). */
   minutesOf(m: OrgMeeting): Minutes { return parseMinutes(m.minutes); }
+}
+
+/** "Meeting: <the agenda's first words>" (at most ~60 characters, mentions dropped). */
+export function adhocTitle(agenda: string): string {
+  const first = agenda.split(/\n/)[0].replace(/@[\w-]+/g, '').replace(/\s+/g, ' ').trim();
+  if (!first) return 'Meeting';
+  return `Meeting: ${first.length > 60 ? `${first.slice(0, 59).replace(/\s+\S*$/, '')}…` : first}`;
 }
 
 function defaultAgenda(kind: MeetingKind, unit: OrgUnit | null): string {

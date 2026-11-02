@@ -911,7 +911,8 @@ export const orgUnits = pgTable('org_units', {
  *  the minutes as its required output. `kind` planning | standup |
  *  weekly_review | retro | board | adhoc; `status` scheduled | running | done |
  *  cancelled | postponed. `attendees` is JSON `[{ kind: agent|human, id }]`;
- *  `minutes` is JSON `{ summary, decisions[], actions[], risks[], questions[] }`. */
+ *  `minutes` is JSON `{ summary, decisions[], actions[], risks[], questions[] }`;
+ *  `minutesPath` names the markdown minutes written at the end (docs/meetings.md). */
 export const orgMeetings = pgTable('org_meetings', {
   ...accountScoped(),
   id: text('id').primaryKey(),
@@ -934,6 +935,12 @@ export const orgMeetings = pgTable('org_meetings', {
   minutes: text('minutes').notNull().default(''),
   createdBy: text('createdBy').notNull().default('system'),
   createdAt: text('createdAt').notNull(),
+  /** The minutes document in the workspace tree (docs/meetings.md), e.g.
+   *  `org/meetings/2026/2026-11-02-company-standup.md`; null until written
+   *  (migration 0049). */
+  minutesPath: text('minutesPath'),
+  /** The minutes' summary in a line or a few, so lists need not parse JSON or files. */
+  summary: text('summary').notNull().default(''),
 });
 
 /** The decision log (docs/company-vision.md §6): what was decided, the

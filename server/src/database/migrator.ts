@@ -1782,6 +1782,22 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_follows_target ON follows ("targetKind", "targetId")`);
     },
   },
+  {
+    id: '0049-meeting-minutes',
+    up: async (db) => {
+      // Minutes at the end of every meeting (docs/meetings.md): the markdown
+      // document written to the workspace tree and its summary, kept on the
+      // meeting row so lists and the calendar read them without parsing the
+      // minutes JSON or the file. Idempotent.
+      if (!(await hasColumn(db, 'org_meetings', 'minutesPath'))) {
+        await db.query(`ALTER TABLE org_meetings ADD COLUMN "minutesPath" TEXT`);
+      }
+      if (!(await hasColumn(db, 'org_meetings', 'summary'))) {
+        await db.query(`ALTER TABLE org_meetings ADD COLUMN "summary" TEXT NOT NULL DEFAULT ''`);
+      }
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_meetings_channel ON org_meetings ("channelId")`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */
