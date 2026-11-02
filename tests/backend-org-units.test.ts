@@ -377,12 +377,13 @@ test('a unit lead gets org_set_goal, org_assign, org_unit_report and may assign 
   const names = (ss: Awaited<ReturnType<typeof s.runtime.specsFor>>) => ss.map((t) => t.name);
   const leadSpecs = names(await s.runtime.specsFor(writerSession));
   for (const t of ['org_set_goal', 'org_assign', 'org_unit_report', 'org_create_task']) assert.ok(leadSpecs.includes(t), `lead has ${t}`);
-  assert.ok(!leadSpecs.includes('org_hire_agent'), 'but not the chief\'s structural tools');
+  for (const t of ['org_hire_agent', 'org_pause_agent', 'org_update_member']) assert.ok(leadSpecs.includes(t), `a lead staffs its own unit with ${t}`);
+  for (const t of ['org_terminate_agent', 'org_set_scope', 'org_reorg', 'org_allocate_budget']) assert.ok(!leadSpecs.includes(t), `but not the chief's ${t}`);
   const memberSpecs = names(await s.runtime.specsFor(editorSession));
   assert.ok(!memberSpecs.includes('org_assign') && !memberSpecs.includes('org_set_goal'), 'a member without reports has no lead tools');
   const chiefSpecs = names(await s.runtime.specsFor(chiefSession));
   for (const t of ['org_set_goal', 'org_unit_report', 'org_assign', 'org_hire_agent']) assert.ok(chiefSpecs.includes(t));
-  assert.match((await s.runtime.contextFor(writerSession)) ?? '', /You lead a unit/);
+  assert.match((await s.runtime.contextFor(writerSession)) ?? '', /You head a function: org_create_task and org_assign work for yourself and your direct reports.*org_hire_agent hires a specialist/);
 
   // scope: assigning to a report works, outside the unit is refused
   const t = await s.tasks.create(orgId, { title: 'Collect sources', createdBy: `agent:${s.writer.id}` });
@@ -414,7 +415,9 @@ test('a unit lead gets org_set_goal, org_assign, org_unit_report and may assign 
   assert.match(report, /Three issues drafted/);
   assert.match(await s.runtime.execute(chiefSession, 'org_unit_report', { unit: 'writer' }), /# Writer's team/);
   assert.match(await s.runtime.execute(chiefSession, 'org_unit_report', {}), new RegExp(`# ${s.ws.name}`));
-  await assert.rejects(s.runtime.execute(writerSession, 'org_hire_agent', { templateOrPack: 'Marketer', title: 'x', why: 'y' }), /chief-of-staff tool/);
+  // a lead hires into its own unit (decision 1) but terminations stay the chief's
+  await assert.rejects(s.runtime.execute(writerSession, 'org_hire_agent', { templateOrPack: 'role:auditor', title: 'x', why: 'y' }), /never by a function it audits/);
+  await assert.rejects(s.runtime.execute(writerSession, 'org_terminate_agent', { agent: 'Alpha', why: 'y' }), /chief-of-staff tool/);
   assert.equal(s.runtime.isReadOnly('org_unit_report'), true);
   assert.equal(s.runtime.owns('org_set_goal'), true);
 });
