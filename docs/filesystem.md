@@ -95,8 +95,17 @@ Plain and predictable, checked in one place (`WorkspaceFs.assertCanWrite`):
 | everything else (artifacts)  | read/write       | read/write   | read/write |
 
 So: an agent's home is its own; collaboration happens in shared folders.
-Writes go through the existing approval policy as before (fs_write is not
-read-only).
+
+**This table is the gate for file writes.** `fs_write`, `fs_edit`,
+`fs_append`, `fs_delete`, `fs_restore` and `slides_create` run freely for
+every agent and chat — no approval pause in Ask mode, no hold in a loop,
+heartbeat, channel or org run, no trust-ledger ask, no action reviewer
+(`docs/permissions.md` §8): what the table allows is reversible (revisions,
+below) and attributed (author, the action log). What it refuses — another
+agent's home, any `.checkpoints/`, `.revisions/` — comes back to the agent as
+a tool error. Two exceptions: a turn driven by a mini app's `agent.ask`
+gates them like any mutation, and an incident freeze of `internal_write`
+holds them.
 
 ## Collaboration
 
@@ -113,6 +122,14 @@ clobber each other.
   `WorkspaceFs` first keeps the previous body at
   `workspaces/<ws>/.revisions/<sha1(path)>/<version>`, with author and time.
   The last 20 revisions per file are kept. Users can view and restore one.
+- **Deletes are reversible.** `delete` keeps the deleted body as a revision
+  (with the history before it) and removes only the live object and its
+  metadata row; it returns the kept version. `restore` brings the file back
+  as a new version, and a new write at a deleted path continues the
+  numbering after the kept history instead of overwriting it. Agents undo
+  with `fs_restore { path, version? }` (default: the newest kept revision);
+  `fs_delete` says which revision it kept. (Moving another file onto a
+  deleted path drops that deleted file's history.)
 - **Optimistic concurrency.** `fs_read` reports the version
   (`[version 4 · last edited by Ada, 2m ago]` header line). `fs_write` and
   `fs_edit` accept `expectedVersion`; on mismatch they fail with the current
@@ -180,7 +197,7 @@ Shipped as (backend): `server/src/files/` — `WorkspaceFs` (resolution,
   workspace that saw the edits). Deleting a workspace moves its agents'
   homes to the workspace they are re-homed into.
 - Agent tools: `fs_list`, `fs_read` (version header), `fs_write`,
-  `fs_edit`, `fs_append`, `fs_delete`, `fs_search` (optional `prefix`;
+  `fs_edit`, `fs_append`, `fs_delete`, `fs_restore`, `fs_search` (optional `prefix`;
   `/` = the whole workspace), `slides_create` — all through `WorkspaceFs`.
 
 ## Rich display

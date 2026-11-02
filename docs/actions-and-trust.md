@@ -45,6 +45,23 @@ calendar write with `attendees` (or `guests`, `invitees`) outside
 stays on the owner's calendar and is reversible. Today's calendar tools take
 no guests, so they class as reversible until one does.
 
+**Free internal work.** Part of `internal_write` never meets the matrix
+below: `FREE_INTERNAL_TOOLS` (`runsFreely()`) — the workspace file writes
+(`fs_write`, `fs_edit`, `fs_append`, `fs_delete`, `fs_restore`,
+`slides_create`), the agent's own records and proposals (`update_dashboard`,
+`save_app`, `add_task` / `update_task`, `delegate_task`, `draft_skill`,
+`revise_skill`, `save_tool`, `update_user_profile`) and the org's work record
+(`org_task_update`, `org_task_comment`, `org_create_task`, `org_assign`,
+`org_check_in`, `org_set_goal`, `org_set_key_result`, `org_review`,
+`org_request_review`, `org_escalate`, `org_message`, `org_report`,
+`org_strategy_memo`, `org_ack_signal`, `org_report_incident`,
+`org_forecast_outcome`, `channel_make_task`). They act at every level and in
+every kind of session, are not reviewed, and are still written to the action
+log with `decision: 'free'` and counted in the ledger; a frozen
+`internal_write` class still holds them. The reasons and the full relax/keep
+table are in `docs/permissions.md` §8. `run_js` / `run_python` and the
+governance `org_*` tools stay on the matrix.
+
 ## 2. Idempotency and the action log
 
 Every non-read call gets an **idempotency key**:
@@ -115,7 +132,7 @@ heartbeats and org runs are unattended.
 | Class | Level 0 | Level 1 | Level 2 | Level 3 |
 |---|---|---|---|---|
 | `read` | acts | acts | acts | acts |
-| `internal_write` | asks the person present · held for the owner's key unattended | acts | acts | acts |
+| `internal_write` (except free internal work, which always acts) | asks the person present · held for the owner's key unattended | acts | acts | acts |
 | `external_reversible` | asks the person present · held for the owner's key unattended | acts · acts and the owner hears after (unattended) | acts | acts |
 | `external_irreversible` | asks the person present · staged (draft) or held unattended | same as 0 | a second agent key (co-signer on another model family) | acts |
 | `money` | asks the person present · held unattended | same as 0 | a second agent key | acts |
@@ -123,7 +140,7 @@ heartbeats and org runs are unattended.
 The **action reviewer** (`docs/permissions.md` §6) still reads every call
 that acts without a fresh human decision at every level — it is the
 per-call floor, not the peer check of the ledger. A co-signed call is not
-reviewed twice.
+reviewed twice, and free internal work (§1) is not reviewed at all.
 
 **The owner's key.** With a person present it is the ordinary inline
 approval pause, never remembered for the two-key classes (the row records
@@ -206,6 +223,10 @@ level may not exceed the ceiling). Both are the owner's or the CEO's.
 
 ## 7. How it meets Ask/Auto and organization mode
 
+- **Free internal work** (§1, `docs/permissions.md` §8) acts in every
+  kind of session below — no pause, no hold, no reviewer — except a turn a
+  mini app drives through `agent.ask` (`confined`), where it gates like any
+  mutation; a frozen class still holds it.
 - **Ask mode with a person present** (and every channel turn): the legacy
   gates decide exactly as before — the person answers every mutating call —
   except that irreversible and money calls are never answered from a
@@ -264,7 +285,8 @@ actions module importing the org domain.
   every guest counts as outside.
 - A `two_key` org card that expires leaves its action `held`; the key can
   still be given on the route.
-- An org tool held at `internal_write` level 0 runs on the owner's key
-  outside the run that called it, where some org tools have no run context.
+- A governance org tool held at `internal_write` level 0 runs on the
+  owner's key outside the run that called it, where some org tools have no
+  run context (the work-record tools no longer hold: §1).
 - Level 3 does not switch off the per-call action reviewer; the auditor's
   sampling of level-3 work is item 29's.

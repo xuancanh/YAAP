@@ -110,14 +110,16 @@ and gets the full treatment:
   server-side at call time, never visible to the model, never exportable.
 
 ### For contrast: the pre-existing classes
-- Core tools (fs_*, web_*, …): shipped by us, activation implicit, execution
-  by readOnly policy. fs tools are scoped to the chat's file root (the
-  agent's own working folder), and `.checkpoints/` is write-protected even
-  from the agent itself.
+- Core tools (fs_*, web_*, …): shipped by us, activation implicit. File
+  tools resolve against the agent's home in the workspace tree; their
+  execution gate is the filesystem's own permission table, not an approval
+  (§8): another agent's home and `.checkpoints/` are write-protected, and
+  every overwrite and delete is restorable.
 - MCP tools: third-party servers; the user activates per server, execution
   always gates in Ask mode (opaque side effects).
 - Self-maintenance tools (update_dashboard, save_app, …): mutations of the
-  agent itself; excluded from blanket "always allow" grants (SELF_MOD).
+  agent itself; they run freely (§8) — creation is free, and what save_app
+  can reach is still the capability review (activation).
 - Proposal-only tools (update_user_profile, draft_skill, save_tool):
   auto-run even in Ask mode *because their entire effect is to queue
   something for user review*. The gate is the review, not the call.
@@ -134,7 +136,8 @@ and gets the full treatment:
   a disabled tool does not exist, whatever the mode.
 - Channel-originated turns (Telegram) are hard-floored at Ask + deny:
   approvals can only be given in the app, so a hijacked channel cannot
-  approve anything.
+  approve anything. Free internal work (§8) needs no approval and runs
+  there too (the channel is the owner's own, paired).
 
 ## 4. Review UX principles
 
@@ -195,8 +198,9 @@ affect it"). Ours is `ActionReviewService` (`server/src/review/`).
 
 **When it runs.** Only for calls that would otherwise execute *without a
 fresh human decision*: verdict `auto` (Auto mode) or `remembered` (a per-tool
-or exact-input grant) on a tool that is not read-only. Read-only tools and
-skill loads are never reviewed; confirm-always tools already pause and are not
+or exact-input grant) on a tool that is not read-only. Read-only tools,
+skill loads and free internal work (§8: workspace files, the agent's own
+records, the org's work record) are never reviewed; confirm-always tools already pause and are not
 reviewed twice; an Ask-mode pause is a human decision and needs no second
 reader. The deterministic gates stay the floor — the reviewer can only make
 things stricter.
@@ -262,7 +266,9 @@ The deterministic gates of §1 stay the floor beneath all of it: activation
 precedes execution (a tool that is not granted does not exist), computer
 tools keep their own rules (user turns only, every acting call asks), and
 the independent reviewer of §6 still reads every call that would run without
-a fresh human decision, at every level. The ledger can make an agent more
+a fresh human decision, at every level — except free internal work (§8),
+which runs in every row of the table above without a pause, a hold or a
+review. The ledger can make an agent more
 autonomous only within the ceiling the owner chose (defaults: money 0,
 irreversible 1, reversible 2), only after `trust.promoteAfterClean` clean
 outcomes, and it takes autonomy back at once on an incident, a reported
@@ -272,3 +278,63 @@ ceilings: `supervised` caps every outward class at 1.
 Every non-read call — in any of the rows above — is also written to the
 action log with an idempotency key (a retry never sends twice) and counted
 against the workspace's outbound rate limits.
+
+## 8. Agent file and workspace operations
+
+Agents work in files and on boards all day. Pausing, holding or reviewing
+each of those writes cost a model call and a person's attention per write,
+and protected nothing the workspace does not already protect: the
+filesystem refuses what an agent may not touch, keeps a revision of every
+overwrite *and delete*, and attributes every change. So **internal,
+reversible work runs freely** — in Ask chats, Auto chats, loops, heartbeats,
+org runs, channel turns and chats with no agent alike:
+
+- no Ask-mode approval pause, no remembered grant needed;
+- no trust-ledger ask, hold or stage, whatever the agent's `internal_write`
+  level;
+- no action reviewer (§6) — the cost and the latency are per write, and the
+  thing an injected instruction is after (leaving the workspace) is
+  reviewed at the outward call that would do it.
+
+What stays: the filesystem's permission table (`WorkspaceFs.assertCanWrite`:
+another agent's home, `.checkpoints/`, `.revisions/` are refused and the
+agent gets the refusal as a tool error); the action log (every call is a row
+with `decision: 'free'`, and the ledger counts it); an incident freeze of
+`internal_write` (still held for the owner's key); and the red-team canary
+(the record-only sandbox takes every call before any policy, so an injected
+file write carrying the nonce is still a breach). A turn a **mini app**
+drives through `agent.ask` is `confined`: there the free work gates like any
+mutation (and the host denies it), so an app cannot write its agent's
+LESSONS.md or a shared file through the agent — its own writes stay jailed
+to its folder by the bridge.
+
+The registry is `FREE_INTERNAL_TOOLS` in `server/src/actions/action-classes.ts`
+(`runsFreely`), applied in `TurnLoopService` (the call loop). Every name in
+it classes as `internal_write`; a test keeps outward, money, computer, code,
+MCP and governance tools out of it.
+
+| Tool(s) | Decision | How / why |
+|---|---|---|
+| `fs_list`, `fs_read`, `fs_search` | already free | reads |
+| `fs_write`, `fs_edit`, `fs_append`, `slides_create` | **relaxed** | WorkspaceFs decides the path (own home and shared folders such as `/org/`, `/channels/<slug>/` rw; other homes refused); every overwrite keeps a revision |
+| `fs_delete` | **relaxed** | now reversible: the deleted body is kept as a revision and `fs_restore` (new, also free) brings it back |
+| LESSONS.md, JOURNAL.md, `knowledge/` (agent memory) | **relaxed** | plain files in the agent's home, same rule |
+| `update_dashboard` | **relaxed** | the agent's own status page, rewritten every run (not versioned; nothing else depends on it) |
+| `save_app` | **relaxed** | creation is free (§1); elevated capabilities still park for the user, and an edit re-parks them |
+| `add_task`, `update_task`, `list_tasks` | already free | the agent's own board |
+| `delegate_task` | **relaxed** | a task on a colleague's board in the same workspace; the colleague's outward calls are gated as their own |
+| `draft_skill`, `revise_skill`, `save_tool`, `update_user_profile` | **relaxed** (were already free in Ask mode; now also unattended) | proposals only: activation is the user's review |
+| `org_task_update`, `org_task_comment`, `org_create_task`, `org_assign`, `org_request_review`, `org_review`, `org_escalate`, `org_check_in`, `org_set_goal`, `org_set_key_result`, `org_message`, `org_report`, `org_strategy_memo`, `org_ack_signal`, `org_report_incident`, `org_forecast_outcome`, `channel_make_task` | **relaxed** | the organization's own work record — attributed, on the hash-chained audit, undone by the next update; the org's own rules (who may assign, review rounds, the independent done-when check at acceptance) still apply inside the tools |
+| `channel_post`, `channel_read`, `channel_list`, `meeting_*` | already free | the providers mark them read-only: posts stay inside the workspace |
+| `org_read_*`, `org_intent`, `org_why`, `org_signals`, `org_pulse`, `org_costs`, `org_forecast`, `org_unit_report`, `org_review_structure` | already free | reads |
+| `org_hire_agent`, `org_terminate_agent`, `org_reorg`, `org_propose_strategy` | kept as they are | the turn loop treats them as read-only because `boundary.ts` gates them inside the tool: approval cards in supervised mode, experiments beyond one unit, the agent cap and envelope — unchanged |
+| `org_set_scope`, `org_pause_agent`, `org_update_member`, `org_allocate_budget`, `org_set_routing`, `org_tune`, `org_set_cadence`, `org_write_playbook`, `org_propose_*`, `org_eval_*`, `org_audit_*` | **kept gated** | governance: authority, money, models, the rules the org runs by (`boundary.ts` rows) — trust ledger + reviewer as before |
+| `run_js`, `run_python` | **kept gated** | the local sandbox has no network but reads the host's whole disk (Seatbelt default-allow reads), and the code may come from injected content |
+| `http_request`, agent HTTP tools (`tool_*`), `browser_act`, every `mcp_*` | **kept gated** | outward and opaque (`external_reversible` by default) |
+| `gmail_*` / `msmail_*` sends, calendar writes, Drive exports | **kept gated** | outward; sends stay confirm-always and two-key (staged at low trust) |
+| `computer_*` | **kept gated** | the user's own machine: user turns only, every acting call asks |
+| money-named tools | **kept gated** | `money`, two keys below level 3 |
+
+Not done here: an agent cannot list its deleted files (it names the path to
+`fs_restore`), and the Artifacts view has no "recently deleted" list yet —
+the restore route (`POST …/file/restore`) works for a deleted path.
