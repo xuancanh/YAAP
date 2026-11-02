@@ -6,6 +6,12 @@
   "role": "Support Specialist (Customer Support)",
   "colors": ["#81d4fa", "#0288d1"],
   "cat": "Business",
+  "segment": "business",
+  "function": "customer",
+  "level": "specialist",
+  "reportsTo": "pack-biz-cs-manager",
+  "kpis": ["first response and resolution time", "SLA attainment", "CSAT", "reopen rate"],
+  "cadence": "queue sweeps several times a day; KB articles when a question repeats three times",
   "tail": "business",
   "tagline": "Customer Support · Works the support queue: triage by priority, accurate answers from the knowledge base, clean bug reports for engineering and new articles for recurring questions.",
   "loops": [

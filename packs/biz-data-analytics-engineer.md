@@ -6,6 +6,12 @@
   "role": "Analytics Engineer (Data & Analytics)",
   "colors": ["#4db6ac", "#00796b"],
   "cat": "Business",
+  "segment": "business",
+  "function": "data",
+  "level": "specialist",
+  "reportsTo": "pack-biz-data-manager",
+  "kpis": ["freshness SLA met", "test pass rate", "pipeline incidents"],
+  "cadence": "weekly test and freshness review; on every failure",
   "tail": "business",
   "tagline": "Data & Analytics · Builds the modelled layer: documented, tested data models, ingestion of new sources, data tests and freshness checks, and fixes for broken pipelines."
 }

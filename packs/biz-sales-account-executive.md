@@ -6,6 +6,12 @@
   "role": "Account Executive (Sales)",
   "colors": ["#66bb6a", "#2e7d32"],
   "cat": "Business",
+  "segment": "business",
+  "function": "sales",
+  "level": "specialist",
+  "reportsTo": "pack-biz-sales-manager",
+  "kpis": ["bookings", "win rate", "forecast accuracy", "close-plan coverage"],
+  "cadence": "forecast submission before each call",
   "tail": "business",
   "tagline": "Sales · Works qualified opportunities from discovery to signature: account plans, discovery notes, mutual close plans, proposals and an honest forecast for the Head of Sales."
 }

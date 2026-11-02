@@ -19,6 +19,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Education",
+  "segment": "personal",
   "price": "free",
   "tagline": "From literature review to camera-ready — citation-disciplined lit reviews, grant proposals with a real aims page, and rebuttal letters that win over Reviewer 2.",
   "caps": [
@@ -87,6 +88,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Small Business",
+  "segment": "personal",
   "price": "free",
   "tagline": "The desk that fills roles — intake that finds the real spec, candidate pipelines per role, search craft that works, screen notes with bias hygiene built in, and clients updated before they ask.",
   "caps": [
@@ -150,6 +152,9 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "leadership",
+  "level": "leadership",
   "price": "free",
   "tagline": "The company's independent, read-only auditor — samples accepted work against its done-when and the company's values, re-reads scope and spend decisions, and reports the pattern to #company.",
   "caps": [
@@ -213,6 +218,17 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "customer",
+  "level": "specialist",
+  "reportsTo": "pack-biz-cs-manager",
+  "kpis": [
+   "retention of the book",
+   "health score",
+   "renewal rate",
+   "expansion"
+  ],
+  "cadence": "health check monthly per account; QBRs quarterly; renewal readiness at 90/60/30 days",
   "price": "free",
   "tagline": "Customer Success · Owns a book of accounts: success plans, health checks, business reviews, renewal readiness and save plans, with every risk written down early.",
   "caps": [
@@ -281,6 +297,22 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "customer",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "CSAT",
+   "first response time",
+   "time to resolution",
+   "SLA attainment",
+   "backlog age",
+   "GRR / NRR",
+   "churn",
+   "health score",
+   "onboarding time to value"
+  ],
+  "cadence": "queue review (daily), weekly review (Mon), report (Fri), health and renewals review (monthly; 90/60/30 days out), escalations per S1/S2, KPI audit (monthly)",
   "price": "free",
   "tagline": "Customer Success & Support · Runs the customer function: SLA and queue reviews, account health and renewals, escalations, retention key results and a weekly report to the chief of staff.",
   "caps": [
@@ -390,6 +422,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "customer",
+  "level": "specialist",
+  "reportsTo": "pack-biz-cs-manager",
+  "kpis": [
+   "time to value",
+   "onboarding completion",
+   "first-week usage"
+  ],
+  "cadence": "per new customer; checklist updated weekly",
   "price": "free",
   "tagline": "Customer Success · Gets new customers to first value fast: kickoff plans, implementation checklists, training sessions and a clean handoff to the CSM with time to value measured.",
   "caps": [
@@ -453,6 +495,17 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "customer",
+  "level": "specialist",
+  "reportsTo": "pack-biz-cs-manager",
+  "kpis": [
+   "first response and resolution time",
+   "SLA attainment",
+   "CSAT",
+   "reopen rate"
+  ],
+  "cadence": "queue sweeps several times a day; KB articles when a question repeats three times",
   "price": "free",
   "tagline": "Customer Support · Works the support queue: triage by priority, accurate answers from the knowledge base, clean bug reports for engineering and new articles for recurring questions.",
   "caps": [
@@ -522,6 +575,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "data",
+  "level": "specialist",
+  "reportsTo": "pack-biz-data-manager",
+  "kpis": [
+   "freshness SLA met",
+   "test pass rate",
+   "pipeline incidents"
+  ],
+  "cadence": "weekly test and freshness review; on every failure",
   "price": "free",
   "tagline": "Data & Analytics · Builds the modelled layer: documented, tested data models, ingestion of new sources, data tests and freshness checks, and fixes for broken pipelines.",
   "caps": [
@@ -585,6 +648,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "data",
+  "level": "specialist",
+  "reportsTo": "pack-biz-data-manager",
+  "kpis": [
+   "request turnaround",
+   "dashboard usage",
+   "answers reproducible on re-run"
+  ],
+  "cadence": "per request; KPI packs weekly or monthly on request",
   "price": "free",
   "tagline": "Data & Analytics · Answers business questions: ad hoc analyses tied to a decision, dashboards people use, KPI packs for function heads and metric explanations in plain words.",
   "caps": [
@@ -648,6 +721,18 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "data",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "request turnaround",
+   "freshness SLA met",
+   "data test pass rate",
+   "dashboard adoption",
+   "metric definition coverage (key results with an approved source)"
+  ],
+  "cadence": "request intake Mon, daily quality check, weekly review, report Fri, monthly audit and metric governance",
   "price": "free",
   "tagline": "Data & Analytics · Runs the data function: request intake, metric governance and one source of truth, data-quality reviews, freshness and turnaround KPIs, and a weekly report to the chief of staff.",
   "caps": [
@@ -752,6 +837,15 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "data",
+  "level": "specialist",
+  "reportsTo": "pack-biz-data-manager",
+  "kpis": [
+   "experiments read out validly",
+   "forecast calibration"
+  ],
+  "cadence": "per experiment window; forecasts per planning cycle",
   "price": "free",
   "tagline": "Data & Analytics · Designs experiments with power and guardrails, reads results honestly, builds forecasts with ranges and segments customers - for decisions, not decoration.",
   "caps": [
@@ -815,6 +909,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "design",
+  "level": "specialist",
+  "reportsTo": "pack-biz-design-manager",
+  "kpis": [
+   "brand consistency of sampled output",
+   "asset turnaround",
+   "template reuse"
+  ],
+  "cadence": "per request; monthly consistency review",
   "price": "free",
   "tagline": "Design · Keeps the brand coherent: brand guidelines, campaign and launch assets from briefs, decks and templates, and brand-consistency reviews across the company's output.",
   "caps": [
@@ -878,6 +982,18 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "design",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "usability task success",
+   "WCAG 2.2 AA conformance",
+   "design-system adoption",
+   "design cycle time",
+   "rework rate"
+  ],
+  "cadence": "intake Mon, crit Wed, weekly review, report Fri, design-system review monthly, monthly audit",
   "price": "free",
   "tagline": "Design · Runs the design function: intake and prioritisation, the weekly crit, design-system governance, usability and accessibility KPIs, and a weekly report to the chief of staff.",
   "caps": [
@@ -982,6 +1098,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "design",
+  "level": "specialist",
+  "reportsTo": "pack-biz-design-manager",
+  "kpis": [
+   "task success in usability tests",
+   "time on task",
+   "handoff completeness"
+  ],
+  "cadence": "per design task; usability round before handoff",
   "price": "free",
   "tagline": "Design · Designs flows people can use: problem framing, user flows and states, prototypes as mini apps, usability tests and engineering-ready handoff specs.",
   "caps": [
@@ -1050,6 +1176,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "design",
+  "level": "specialist",
+  "reportsTo": "pack-biz-design-manager",
+  "kpis": [
+   "glossary consistency",
+   "error-message coverage",
+   "content-audit issues closed"
+  ],
+  "cadence": "per flow; monthly content audit",
   "price": "free",
   "tagline": "Design · Writes the words in the product: microcopy for every state, error messages that help, the voice and terminology guide, and content audits of live screens.",
   "caps": [
@@ -1113,6 +1249,18 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "engineering",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "DORA (deployment frequency, lead time for changes, change failure rate, MTTR)",
+   "sprint say/do",
+   "escaped defects",
+   "review turnaround",
+   "on-call load"
+  ],
+  "cadence": "sprint planning at sprint start, weekly review Mon, retro at sprint end, report Fri, postmortem per major incident, release readiness per release, monthly audit",
   "price": "free",
   "tagline": "Engineering · Runs the engineering function: delivery key results, sprint planning and retros, DORA metrics, incident reviews and release readiness, with a weekly report to the chief of staff.",
   "caps": [
@@ -1222,6 +1370,17 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "engineering",
+  "level": "specialist",
+  "reportsTo": "pack-biz-engineering-manager",
+  "kpis": [
+   "escaped defects",
+   "regression pass rate",
+   "flaky tests",
+   "critical-flow coverage"
+  ],
+  "cadence": "per sprint and per release sign-off",
   "price": "free",
   "tagline": "Engineering · Guards quality: risk-based test plans, automated regression suites, exploratory sessions, bug reports that reproduce, and release sign-off with escaped-defect tracking.",
   "caps": [
@@ -1290,6 +1449,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "engineering",
+  "level": "specialist",
+  "reportsTo": "pack-biz-engineering-manager",
+  "kpis": [
+   "first-review acceptance",
+   "estimate accuracy",
+   "regressions introduced"
+  ],
+  "cadence": "per task; design note before non-trivial work",
   "price": "free",
   "tagline": "Engineering · Builds features and fixes in small, tested, reviewable changes: technical design notes, implementation, code review and honest estimates for the Head of Engineering.",
   "caps": [
@@ -1358,6 +1527,18 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "engineering",
+  "level": "specialist",
+  "reportsTo": "pack-biz-engineering-manager",
+  "kpis": [
+   "SLO attainment",
+   "error budget burn",
+   "MTTR",
+   "actionable-page ratio",
+   "out-of-hours pages"
+  ],
+  "cadence": "daily reliability check, handoff per on-call shift, monthly alert review",
   "price": "free",
   "tagline": "Engineering · Keeps the system up: SLOs and error budgets, alert hygiene, runbooks, on-call handoffs, incident response and capacity checks for the Head of Engineering.",
   "caps": [
@@ -1432,6 +1613,17 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "finance",
+  "level": "specialist",
+  "reportsTo": "pack-biz-finance-manager",
+  "kpis": [
+   "close tasks on time",
+   "reconciliations tied",
+   "exceptions aged",
+   "payables matched"
+  ],
+  "cadence": "close calendar (WD1-WD5), payment-run prep",
   "price": "free",
   "tagline": "Finance · Keeps the ledger true: reconciliations, accruals and journals with support, payables preparation and the close tasks the Head of Finance assigns.",
   "caps": [
@@ -1495,6 +1687,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "finance",
+  "level": "specialist",
+  "reportsTo": "pack-biz-finance-manager",
+  "kpis": [
+   "DSO",
+   "AR over 60 days",
+   "invoice right-first-time"
+  ],
+  "cadence": "invoice run per billing date, weekly collections (Tue), monthly accuracy check",
   "price": "free",
   "tagline": "Finance · Gets the company paid: accurate invoices from contracts, AR ageing, a polite dunning ladder and credit-note requests, measured on DSO.",
   "caps": [
@@ -1564,6 +1766,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "finance",
+  "level": "specialist",
+  "reportsTo": "pack-biz-finance-manager",
+  "kpis": [
+   "forecast accuracy",
+   "variance explained",
+   "scenario turnaround"
+  ],
+  "cadence": "monthly reforecast and variance commentary, quarterly unit economics",
   "price": "free",
   "tagline": "Finance · Plans and forecasts: driver-based budgets, monthly reforecasts, variance commentary, scenario models and unit economics for the Head of Finance.",
   "caps": [
@@ -1632,6 +1844,21 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "finance",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "days to close",
+   "forecast accuracy",
+   "DSO",
+   "DPO",
+   "net burn and runway",
+   "budget variance",
+   "reconciliation exceptions",
+   "agent cost per accepted task"
+  ],
+  "cadence": "weekly review (Mon), weekly cash review (Wed), weekly report (Fri), close kickoff WD1, BvA after close, monthly KPI audit, quarterly reforecast",
   "price": "free",
   "tagline": "Finance · Runs the finance function: month-end close, budget vs actuals, cash and runway, finance key results and a weekly report to the chief of staff.",
   "caps": [
@@ -1746,6 +1973,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "it-security",
+  "level": "specialist",
+  "reportsTo": "pack-biz-it-security-manager",
+  "kpis": [
+   "remediation within SLA",
+   "alert false-positive rate",
+   "phishing failure rate"
+  ],
+  "cadence": "weekly vulnerability triage, quarterly phishing test",
   "price": "free",
   "tagline": "IT & Security · Triages security alerts and scanner findings, rates severity, tracks remediation to SLA, runs phishing simulations and writes the threat notes the team acts on.",
   "caps": [
@@ -1809,6 +2046,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "it-security",
+  "level": "specialist",
+  "reportsTo": "pack-biz-it-security-manager",
+  "kpis": [
+   "control test pass rate",
+   "evidence on time",
+   "vendor reviews current"
+  ],
+  "cadence": "monthly evidence collection, yearly policy review",
   "price": "free",
   "tagline": "IT & Security · Keeps the controls matrix and evidence for SOC 2 or ISO 27001, maintains security policies, and runs vendor security reviews before anyone signs.",
   "caps": [
@@ -1872,6 +2119,17 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "it-security",
+  "level": "specialist",
+  "reportsTo": "pack-biz-it-security-manager",
+  "kpis": [
+   "ticket SLA",
+   "patch compliance",
+   "MFA coverage",
+   "leaver removal time"
+  ],
+  "cadence": "daily ticket triage",
   "price": "free",
   "tagline": "IT & Security · Runs joiner, mover and leaver checklists, keeps the device and SaaS inventory, tracks patch and MFA coverage, and works the IT ticket queue to its SLA.",
   "caps": [
@@ -1941,6 +2199,20 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "it-security",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "patch compliance",
+   "MTTR by severity",
+   "MFA coverage",
+   "access review completion",
+   "ticket SLA",
+   "phishing failure rate",
+   "control pass rate"
+  ],
+  "cadence": "weekly vulnerability + unit review (Mon), weekly report (Fri), monthly control audit, quarterly access review; incidents on demand",
   "price": "free",
   "tagline": "IT & Security · Runs IT and security: cascades objectives into patch, access and MFA key results, runs access and vulnerability reviews, coordinates incidents and reports weekly to the chief of staff.",
   "caps": [
@@ -2050,6 +2322,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "legal",
+  "level": "specialist",
+  "reportsTo": "pack-biz-legal-manager",
+  "kpis": [
+   "DSRs within deadline",
+   "regulatory deadlines met",
+   "records of processing current"
+  ],
+  "cadence": "weekly regulatory calendar (Mon), quarterly records review, PIA before launches",
   "price": "free",
   "tagline": "Legal · Keeps the company compliant: records of processing, privacy impact assessments, data subject requests, the regulatory calendar and policy reviews.",
   "caps": [
@@ -2124,6 +2406,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "legal",
+  "level": "specialist",
+  "reportsTo": "pack-biz-legal-manager",
+  "kpis": [
+   "turnaround (days with legal)",
+   "deviations flagged",
+   "obligations captured"
+  ],
+  "cadence": "per request against service targets",
   "price": "free",
   "tagline": "Legal · Turns contracts fast and within the clause playbook: NDA and template drafting, third-party paper redlines, issues lists for the business and an obligations register.",
   "caps": [
@@ -2187,6 +2479,18 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "legal",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "contract turnaround",
+   "matters open and aged",
+   "playbook conformance",
+   "regulatory deadlines met",
+   "risk register coverage"
+  ],
+  "cadence": "daily intake triage, weekly review (Mon), weekly report (Fri), monthly KPI audit, quarterly risk register and playbook review",
   "price": "free",
   "tagline": "Legal · Runs the legal function: matter intake and triage, the clause playbook, contract turnaround, a quarterly risk register and a weekly report to the chief of staff - drafts for human counsel, nev",
   "caps": [
@@ -2301,6 +2605,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "marketing",
+  "level": "specialist",
+  "reportsTo": "pack-biz-marketing-manager",
+  "kpis": [
+   "content-assisted conversions and pipeline",
+   "engagement",
+   "newsletter open/click rate"
+  ],
+  "cadence": "per piece; content performance review monthly",
   "price": "free",
   "tagline": "Marketing · Plans and drafts the content that earns attention: briefs, articles, guides, newsletters and repurposed assets, in the company's voice with every claim sourced.",
   "caps": [
@@ -2369,6 +2683,18 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "marketing",
+  "level": "specialist",
+  "reportsTo": "pack-biz-marketing-manager",
+  "kpis": [
+   "MQLs",
+   "SQLs",
+   "pipeline sourced",
+   "cost per lead / SQL",
+   "CAC by channel"
+  ],
+  "cadence": "funnel readout weekly (Mon); paid optimisation weekly; lead scoring review monthly",
   "price": "free",
   "tagline": "Marketing · Turns budget into qualified pipeline: campaign plans, paid and email programmes, lead scoring and a weekly funnel readout with CAC by channel.",
   "caps": [
@@ -2438,6 +2764,19 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "marketing",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "pipeline sourced",
+   "SQLs",
+   "MQL-to-SQL conversion",
+   "CAC / cost per SQL",
+   "organic traffic",
+   "share of voice"
+  ],
+  "cadence": "weekly review (Mon), report (Fri), campaign calendar (monthly, 25th), channel and CAC review (monthly), launch readiness per tiered launch, KPI audit (monthly)",
   "price": "free",
   "tagline": "Marketing · Runs the marketing function: cascades objectives into pipeline and demand key results, plans the campaign calendar, reviews channels and CAC, and reports weekly to the chief of staff.",
   "caps": [
@@ -2547,6 +2886,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "marketing",
+  "level": "specialist",
+  "reportsTo": "pack-biz-marketing-manager",
+  "kpis": [
+   "launch adoption",
+   "win rate vs competitors",
+   "enablement coverage"
+  ],
+  "cadence": "per launch; positioning on segment or win-rate change; competitor briefs quarterly",
   "price": "free",
   "tagline": "Marketing · Positioning, messaging, launches and enablement: turns what product ships into a story buyers understand and sales can tell, and tracks competitors.",
   "caps": [
@@ -2610,6 +2959,15 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "marketing",
+  "level": "specialist",
+  "reportsTo": "pack-biz-marketing-manager",
+  "kpis": [
+   "organic clicks and conversions",
+   "rankings for target queries"
+  ],
+  "cadence": "keyword map quarterly; technical audit quarterly; rankings report monthly",
   "price": "free",
   "tagline": "Marketing · Grows organic search: keyword research tied to intent, briefs for writers, technical audits, and a monthly rankings and organic traffic report.",
   "caps": [
@@ -2673,6 +3031,19 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "operations",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "process cycle time",
+   "SLA adherence",
+   "cost per unit",
+   "SOP coverage",
+   "automation rate",
+   "vendor spend vs budget"
+  ],
+  "cadence": "weekly review (Mon), weekly report (Fri), monthly KPI audit + process review, quarterly vendor review and QBR",
   "price": "free",
   "tagline": "Operations · Runs the operations function: cascades objectives into cycle-time, SLA and cost key results, keeps SOPs and vendors in order, audits processes and reports weekly to the chief of staff.",
   "caps": [
@@ -2782,6 +3153,17 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "operations",
+  "level": "specialist",
+  "reportsTo": "pack-biz-ops-manager",
+  "kpis": [
+   "cycle time",
+   "first-pass yield",
+   "automation rate",
+   "SOP coverage"
+  ],
+  "cadence": "on task; maps and SOPs on review interval",
   "price": "free",
   "tagline": "Operations · Maps how work really flows, measures cycle time and rework, writes SOPs people follow, and proposes automations with a measured before and after.",
   "caps": [
@@ -2845,6 +3227,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "operations",
+  "level": "specialist",
+  "reportsTo": "pack-biz-ops-manager",
+  "kpis": [
+   "vendor spend vs budget",
+   "renewals decided before notice",
+   "seat utilisation"
+  ],
+  "cadence": "monthly renewals scan",
   "price": "free",
   "tagline": "Operations · Keeps the vendor register, runs purchase requests and vendor comparisons, tracks renewals and notice dates, and prepares negotiation briefs for a human to sign off.",
   "caps": [
@@ -2914,6 +3306,15 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "operations",
+  "level": "specialist",
+  "reportsTo": "pack-biz-ops-manager",
+  "kpis": [
+   "milestones on time",
+   "RAID items owned"
+  ],
+  "cadence": "weekly program status (Thu)",
   "price": "free",
   "tagline": "Operations · Coordinates cross-functional programs: charters, milestone plans, RAID logs and a weekly status that says what is late and who owns the fix.",
   "caps": [
@@ -2983,6 +3384,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "people",
+  "level": "specialist",
+  "reportsTo": "pack-biz-people-manager",
+  "kpis": [
+   "training completion",
+   "mandatory training on time",
+   "applied-skill signals"
+  ],
+  "cadence": "gap analysis per cycle, monthly mandatory-training tracking",
   "price": "free",
   "tagline": "People & HR · Builds capability: skills gap analysis, learning plans, manager training and mandatory training tracking, measured on completion and applied skill.",
   "caps": [
@@ -3046,6 +3457,20 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "people",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "time to hire",
+   "offer acceptance",
+   "stage conversion",
+   "quality of hire",
+   "regretted attrition",
+   "eNPS/engagement",
+   "onboarding completion"
+  ],
+  "cadence": "hiring pipeline review + weekly review (Mon), weekly report (Fri), monthly KPI audit, quarterly engagement review, performance cycle twice yearly",
   "price": "free",
   "tagline": "People & HR · Runs the people function: hiring pipeline review, performance cycles, engagement, people key results and a weekly report to the chief of staff - with humans deciding pay and exits.",
   "caps": [
@@ -3155,6 +3580,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "people",
+  "level": "specialist",
+  "reportsTo": "pack-biz-people-manager",
+  "kpis": [
+   "onboarding completion",
+   "request time to answer",
+   "payroll inputs on time"
+  ],
+  "cadence": "weekly starters/leavers check (Mon), payroll cut-off",
   "price": "free",
   "tagline": "People & HR · Runs the employee lifecycle paperwork: onboarding and offboarding checklists, HR records, policy answers and payroll inputs, accurate and confidential.",
   "caps": [
@@ -3224,6 +3659,17 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "people",
+  "level": "specialist",
+  "reportsTo": "pack-biz-people-manager",
+  "kpis": [
+   "time to hire",
+   "candidate response time",
+   "stage conversion",
+   "offer acceptance"
+  ],
+  "cadence": "per requisition: intake, screening as applications arrive, interview loops",
   "price": "free",
   "tagline": "People & HR · Fills open roles fairly and fast: intake with the hiring manager, inclusive job ads, sourcing, structured screens and scorecards, and candidate updates on time.",
   "caps": [
@@ -3292,6 +3738,19 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "product",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "activation",
+   "retention",
+   "feature adoption",
+   "NPS",
+   "roadmap delivery predictability",
+   "discovery throughput"
+  ],
+  "cadence": "weekly review (Mon), report (Fri), discovery (fortnightly), roadmap review (quarterly + on major evidence), launch review before and 14-30 days after, KPI audit (monthly)",
   "price": "free",
   "tagline": "Product · Runs the product function: outcome key results, the quarterly roadmap and prioritisation, a steady discovery cadence, launch reviews and a weekly report to the chief of staff.",
   "caps": [
@@ -3401,6 +3860,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "product",
+  "level": "specialist",
+  "reportsTo": "pack-biz-product-manager",
+  "kpis": [
+   "feedback themes triaged",
+   "release notes per release",
+   "metrics pack on time"
+  ],
+  "cadence": "feedback triage weekly (Tue); release notes per release; roadmap comms per roadmap review; metrics pack monthly",
   "price": "free",
   "tagline": "Product · Keeps the product machine running: feedback triage from every channel, release notes, roadmap communication and the product metrics pack.",
   "caps": [
@@ -3470,6 +3939,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "product",
+  "level": "specialist",
+  "reportsTo": "pack-biz-product-manager",
+  "kpis": [
+   "backlog readiness (two sprints refined)",
+   "spec rework rate",
+   "accepted stories vs committed"
+  ],
+  "cadence": "backlog refinement weekly / before sprint planning; acceptance per story",
   "price": "free",
   "tagline": "Product · Keeps the backlog ready: specs with success metrics, testable acceptance criteria, refined and ordered stories, and clear answers for engineering during the sprint.",
   "caps": [
@@ -3533,6 +4012,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "product",
+  "level": "specialist",
+  "reportsTo": "pack-biz-product-manager",
+  "kpis": [
+   "studies completed",
+   "opportunities validated or killed",
+   "customer conversations per week"
+  ],
+  "cadence": "per study; feeds the fortnightly discovery session",
   "price": "free",
   "tagline": "Product · Plans and runs user studies: research plans, interview guides, usability tests and syntheses that turn conversations into decisions, with participants' privacy protected.",
   "caps": [
@@ -3596,6 +4085,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "revops",
+  "level": "specialist",
+  "reportsTo": "pack-biz-revops-manager",
+  "kpis": [
+   "forecast model error",
+   "attribution coverage",
+   "GRR/NRR by cohort"
+  ],
+  "cadence": "weekly pipeline analytics, monthly attribution and cohorts",
   "price": "free",
   "tagline": "Revenue Operations · Builds the numbers behind the revenue engine: pipeline analytics, source attribution, cohort and retention analysis, and the historical model behind the system forecast.",
   "caps": [
@@ -3659,6 +4158,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "revops",
+  "level": "specialist",
+  "reportsTo": "pack-biz-revops-manager",
+  "kpis": [
+   "CRM completeness",
+   "lead routing time",
+   "changes released without rollback"
+  ],
+  "cadence": "weekly hygiene sweep (Mon)",
   "price": "free",
   "tagline": "Revenue Operations · Keeps the CRM clean and trusted: data hygiene sweeps, lead routing rules, field and stage configuration under change control, and reports everyone reads the same way.",
   "caps": [
@@ -3728,6 +4237,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "revops",
+  "level": "specialist",
+  "reportsTo": "pack-biz-revops-manager",
+  "kpis": [
+   "quote turnaround",
+   "effective discount",
+   "exception rate"
+  ],
+  "cadence": "per quote; monthly discount analysis",
   "price": "free",
   "tagline": "Revenue Operations · Reviews quotes and order forms against pricing policy, prepares discount and non-standard term requests for the right approver, and tracks deal-desk turnaround and discount levels",
   "caps": [
@@ -3786,6 +4305,19 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "revops",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "forecast accuracy",
+   "CRM completeness",
+   "funnel conversion and velocity",
+   "lead routing time",
+   "quota attainment distribution",
+   "NRR attribution coverage"
+  ],
+  "cadence": "funnel review (Mon), forecast governance (Wed, before the sales call), weekly report (Fri), monthly data/KPI audit, annual/quarterly territory and quota plan",
   "price": "free",
   "tagline": "Revenue Operations · Runs RevOps: one funnel and one forecast across marketing, sales and customer success, governs the CRM, plans territories and quotas, and reports weekly to the chief of staff.",
   "caps": [
@@ -3895,6 +4427,17 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "sales",
+  "level": "specialist",
+  "reportsTo": "pack-biz-sales-manager",
+  "kpis": [
+   "bookings",
+   "win rate",
+   "forecast accuracy",
+   "close-plan coverage"
+  ],
+  "cadence": "forecast submission before each call",
   "price": "free",
   "tagline": "Sales · Works qualified opportunities from discovery to signature: account plans, discovery notes, mutual close plans, proposals and an honest forecast for the Head of Sales.",
   "caps": [
@@ -3968,6 +4511,16 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "sales",
+  "level": "specialist",
+  "reportsTo": "pack-biz-sales-manager",
+  "kpis": [
+   "technical win rate",
+   "POC success",
+   "questionnaire turnaround"
+  ],
+  "cadence": "per deal",
   "price": "free",
   "tagline": "Sales · The technical side of the deal: demo plans, proof-of-concept scopes with success criteria, security questionnaires and RFP answers from an approved answer library.",
   "caps": [
@@ -4031,6 +4584,19 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "sales",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": [
+   "bookings / new ARR",
+   "pipeline created",
+   "coverage",
+   "win rate",
+   "cycle length",
+   "forecast accuracy"
+  ],
+  "cadence": "pipeline review + weekly review (Mon), forecast call (Thu), report (Fri), deal & KPI audit (monthly), retro (quarter)",
   "price": "free",
   "tagline": "Sales · Runs the sales function: turns company objectives into bookings key results, runs the pipeline review and forecast call, audits deals and reports weekly to the chief of staff.",
   "caps": [
@@ -4140,6 +4706,17 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "sales",
+  "level": "specialist",
+  "reportsTo": "pack-biz-sales-manager",
+  "kpis": [
+   "qualified meetings",
+   "pipeline created",
+   "lead response time",
+   "lead-to-meeting conversion"
+  ],
+  "cadence": "daily lead triage",
   "price": "free",
   "tagline": "Sales · Builds pipeline: researches accounts against the ideal customer profile, drafts personalised outbound sequences, qualifies inbound leads and hands meetings to Account Executives.",
   "caps": [
@@ -4209,6 +4786,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Home & Money",
+  "segment": "personal",
   "price": "free",
   "tagline": "The car, kept on purpose — service schedules that arrive on time, a history file that raises resale value, running costs visible, and honest research when it's time to buy or sell.",
   "caps": [
@@ -4283,6 +4861,9 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Business",
+  "segment": "business",
+  "function": "leadership",
+  "level": "leadership",
   "price": "free",
   "tagline": "Runs a company's operating system — planning, reviews, decisions, handoffs and the CEO brief — derived from the company's own profile. Conductor first; proposes, never decides the one-way doors.",
   "caps": [
@@ -4437,6 +5018,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Care & Community",
+  "segment": "personal",
   "price": "free",
   "tagline": "The week of ministry, organized — sermon prep with real structure, pastoral care that never forgets a follow-up, services planned to the minute, and volunteers who feel seen.",
   "caps": [
@@ -4505,6 +5087,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Hobbies & Leisure",
+  "segment": "personal",
   "price": "free",
   "tagline": "The collection, catalogued like it deserves — condition-graded inventory, valuation research with dates and sources, a want list that hunts, and the documentation insurers actually accept.",
   "caps": [
@@ -4568,6 +5151,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Education",
+  "segment": "personal",
   "price": "free",
   "tagline": "Courses that teach and sell — curriculum designed backwards from learner outcomes, cohorts run without chaos, launches sequenced properly, and testimonials harvested while the win is warm.",
   "caps": [
@@ -4636,6 +5220,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Hobbies & Leisure",
+  "segment": "personal",
   "price": "free",
   "tagline": "A creative practice that actually practices — writing projects with momentum, deliberate practice plans for any craft, and prompts when the well runs dry.",
   "caps": [
@@ -4694,6 +5279,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Writing & Media",
+  "segment": "personal",
   "price": "free",
   "tagline": "The creator business behind the content — a calendar that survives real life, hooks and scripts that hold attention, sponsorship deals priced and tracked, and analytics that actually change next month",
   "caps": [
@@ -4763,6 +5349,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Workplace",
+  "segment": "personal",
   "price": "free",
   "tagline": "Deliverables that look intentional — decks with a narrative spine, documents with structure, one-pagers that fit on one page, and a house style that stays consistent.",
   "caps": [
@@ -4826,6 +5413,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Small Business",
+  "segment": "personal",
   "price": "free",
   "tagline": "The online shop, run like a shop — listings that convert, reviews managed, reorder points that prevent stockouts, and season planning that starts early enough to matter.",
   "caps": [
@@ -4900,6 +5488,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Education",
+  "segment": "personal",
   "price": "free",
   "tagline": "Teaching prep that respects your evenings — lesson plans with real learning arcs, rubrics students understand, differentiated materials, and parent messages that build allies.",
   "caps": [
@@ -4968,6 +5557,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Family & Care",
+  "segment": "personal",
   "price": "free",
   "tagline": "Caring for an aging parent without drowning — the care team in one file, appointments coordinated across providers, the family kept honestly in sync, and the caregiver's own oxygen mask remembered.",
   "caps": [
@@ -5036,6 +5626,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Events & Travel",
+  "segment": "personal",
   "price": "free",
   "tagline": "Parties, weddings, and meetups run like projects — guest lists, vendors, budgets, and a day-of run sheet nobody has to improvise.",
   "caps": [
@@ -5120,6 +5711,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Workplace",
+  "segment": "personal",
   "price": "free",
   "tagline": "The chief-of-staff layer — a morning briefing worth reading, meetings prepped and debriefed, commitments tracked to done, and travel that just works.",
   "caps": [
@@ -5199,6 +5791,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Small Business",
+  "segment": "personal",
   "price": "free",
   "tagline": "The coaching practice, held properly — engagement files with goals and session threads, prep that surfaces the pattern, 360 feedback synthesized honestly, and the coaching-therapy line kept bright.",
   "caps": [
@@ -5262,6 +5855,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Family & Care",
+  "segment": "personal",
   "price": "free",
   "tagline": "The family's operating system — one calendar picture, a chores rota that survives arguments, school admin handled, and no birthday ever forgotten.",
   "caps": [
@@ -5336,6 +5930,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Property & Field",
+  "segment": "personal",
   "price": "free",
   "tagline": "The holding, run on a calendar instead of a panic — season work that arrives on time, field and flock records that compound, input costs visible, and market days prepped to sell out.",
   "caps": [
@@ -5405,6 +6000,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Health & Growth",
+  "segment": "personal",
   "price": "free",
   "tagline": "Training plans that survive real life — progressive programs, honest tracking, and adjustments instead of guilt. Not medical advice.",
   "caps": [
@@ -5474,6 +6070,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Property & Field",
+  "segment": "personal",
   "price": "free",
   "tagline": "The small fleet, kept moving — every vehicle's schedule radared, drivers rostered legally, route day-sheets that survive the road, and the cost-per-mile that prices every job.",
   "caps": [
@@ -5543,6 +6140,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Small Business",
+  "segment": "personal",
   "price": "free",
   "tagline": "The business side of working for yourself — proposals that win, scopes that protect, invoices that get chased, and a client memory that compounds.",
   "caps": [
@@ -5617,6 +6215,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Hobbies & Leisure",
+  "segment": "personal",
   "price": "free",
   "tagline": "The campaign, remembered and prepped — a world bible that never forgets an NPC, session prep built on strong starts and situations, encounters balanced honestly, and recaps that keep the table's story",
   "caps": [
@@ -5685,6 +6284,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Hobbies & Leisure",
+  "segment": "personal",
   "price": "free",
   "tagline": "Family history done like a historian — a research log where every fact has a source, archive strategies per country and era, the questions to ask elders while you still can, and brick walls attacked m",
   "caps": [
@@ -5753,6 +6353,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Events & Travel",
+  "segment": "personal",
   "price": "free",
   "tagline": "Never scramble for a gift again — ideas captured all year, occasions remembered with lead time, and research that finds the thing they'll actually love.",
   "caps": [
@@ -5817,6 +6418,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Home & Money",
+  "segment": "personal",
   "price": "free",
   "tagline": "The house, maintained on purpose — renovation projects run on the board, seasonal maintenance that arrives on schedule, and plants that stay alive.",
   "caps": [
@@ -5886,6 +6488,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Property & Field",
+  "segment": "personal",
   "price": "free",
   "tagline": "The rental that runs itself — listings tuned honestly, the guest message sequence that earns five stars, turnovers on a runbook, and pricing that follows the season instead of guessing it.",
   "caps": [
@@ -5955,6 +6558,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Legal & Finance",
+  "segment": "personal",
   "price": "free",
   "tagline": "The book of business, worked properly — client policy files in order, renewals radared across the whole book, review meetings prepped with questions, and claims supported through the maze. Organizatio",
   "caps": [
@@ -6024,6 +6628,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Property & Field",
+  "segment": "personal",
   "price": "free",
   "tagline": "Design projects delivered, not just dreamed — briefs that find the real client, concepts presented properly, sourcing tracked through every lead time, and install days that run on a sheet.",
   "caps": [
@@ -6087,6 +6692,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Health & Growth",
+  "segment": "personal",
   "price": "free",
   "tagline": "The search, run like a pipeline — tailored resumes, a kanban of every application, interview prep with receipts, and follow-ups that don't fall through.",
   "caps": [
@@ -6155,6 +6761,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Writing & Media",
+  "segment": "personal",
   "price": "free",
   "tagline": "The reporting trade's back office — pitches that land, interviews prepped with question ladders, every claim sourced or cut, and public-records requests that actually come back.",
   "caps": [
@@ -6218,6 +6825,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Property & Field",
+  "segment": "personal",
   "price": "free",
   "tagline": "Small-portfolio landlording, run properly — lease renewals that never ambush, rent tracked to the day, maintenance triaged, and tenant messages that are firm, fair, and on the record.",
   "caps": [
@@ -6292,6 +6900,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Health & Growth",
+  "segment": "personal",
   "price": "free",
   "tagline": "A language learned by using it — graded conversation practice with corrections that teach, a vocab deck that spaces itself, and an immersion diet matched to your actual level.",
   "caps": [
@@ -6366,6 +6975,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Care & Community",
+  "segment": "personal",
   "price": "free",
   "tagline": "The library, run with intention — collection development with criteria instead of vibes, programs that fill rooms, the reference interview honored, and outreach that brings the community in.",
   "caps": [
@@ -6429,6 +7039,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Home & Money",
+  "segment": "personal",
   "price": "free",
   "tagline": "The paperwork side of being alive, handled — daily briefings, renewal tracking, appointment prep, and errands batched so they actually happen.",
   "caps": [
@@ -6508,6 +7119,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Home & Money",
+  "segment": "personal",
   "price": "free",
   "tagline": "Weeknight dinners without the nightly scramble — menus that fit your real week, grocery lists that match, and a pantry that gets used up.",
   "caps": [
@@ -6587,6 +7199,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Home & Money",
+  "segment": "personal",
   "price": "free",
   "tagline": "A clear-eyed view of household money — budgets that survive contact with reality, subscription audits, bill calendars, and savings goals. Never investment advice.",
   "caps": [
@@ -6666,6 +7279,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Home & Money",
+  "segment": "personal",
   "price": "free",
   "tagline": "Moving house without the meltdown — the T-8-weeks protocol, the address-change list every institution forgets, box-level inventory, and a moving day that runs on a sheet.",
   "caps": [
@@ -6740,6 +7354,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Family & Care",
+  "segment": "personal",
   "price": "free",
   "tagline": "The logistics of the first years, carried for you — registry research, feeding and sleep logs that show patterns, the appointment trail, and a milestone memory that writes itself. Never medical advice",
   "caps": [
@@ -6808,6 +7423,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Care & Community",
+  "segment": "personal",
   "price": "free",
   "tagline": "Mission work with an operations spine — grants found and drafted, donors thanked within 48 hours, volunteers coordinated, and board reports that take an evening, not a week.",
   "caps": [
@@ -6882,6 +7498,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Legal & Finance",
+  "segment": "personal",
   "price": "free",
   "tagline": "The matter, in order — document organization with exhibit discipline, deadlines computed and double-flagged, citations checked, and intake summaries that save the attorney's first hour. Everything for",
   "caps": [
@@ -6945,6 +7562,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Family & Care",
+  "segment": "personal",
   "price": "free",
   "tagline": "Everything the pet needs, remembered — vet schedules and records, training plans that stick, and a health log the vet will thank you for.",
   "caps": [
@@ -7003,6 +7621,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Writing & Media",
+  "segment": "personal",
   "price": "free",
   "tagline": "The show, run like a show — an episode pipeline from idea to published, guests booked and prepped properly, show notes that serve listeners and search, and sponsorships tracked to the read.",
   "caps": [
@@ -7072,6 +7691,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Care & Community",
+  "segment": "personal",
   "price": "free",
   "tagline": "The front desk of a small practice, organized — intake that arrives complete, recalls that actually recall, schedules that breathe, and patient messages in the right register. Admin only, never clinic",
   "caps": [
@@ -7140,6 +7760,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Education",
+  "segment": "personal",
   "price": "free",
   "tagline": "The teaching-and-service side of academia, handled — syllabi that prevent disputes, grading with consistent rubrics, the rec-letter backlog cleared, and office hours that scale.",
   "caps": [
@@ -7208,6 +7829,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Hobbies & Leisure",
+  "segment": "personal",
   "price": "free",
   "tagline": "A reading life with a memory — the list that never loses a recommendation, spoiler-safe companionship mid-book, and book-club questions that start real conversations.",
   "caps": [
@@ -7271,6 +7893,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Property & Field",
+  "segment": "personal",
   "price": "free",
   "tagline": "The agent's back office — listings that sell without crossing fair-housing lines, comps researched properly, open houses that convert, and a pipeline where no lead goes cold.",
   "caps": [
@@ -7345,6 +7968,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Small Business",
+  "segment": "personal",
   "price": "free",
   "tagline": "The numbers-and-people side of running a restaurant — menu engineering that finds the profit, food costs computed honestly, rotas that respect the rush, and review replies worth reading.",
   "caps": [
@@ -7419,6 +8043,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Education",
+  "segment": "personal",
   "price": "free",
   "tagline": "Leading a school without drowning in it — staff comms that land, observation feedback that grows teachers, escalations handled fairly, and the paper trail that protects everyone.",
   "caps": [
@@ -7487,6 +8112,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Care & Community",
+  "segment": "personal",
   "price": "free",
   "tagline": "The admin side of care work, lightened — objective case-note structure, a resource directory that's actually current, coordination across services, and the caseload's weight made visible.",
   "caps": [
@@ -7550,6 +8176,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Health & Growth",
+  "segment": "personal",
   "price": "free",
   "tagline": "Learn it properly — study plans that fit the calendar, explanations that actually land, practice quizzes, and spaced repetition that does the remembering.",
   "caps": [
@@ -7618,6 +8245,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Legal & Finance",
+  "segment": "personal",
   "price": "free",
   "tagline": "The season, survived on systems — per-client document checklists, the missing-docs chase that runs itself, workpapers organized for review, and the filing calendar radared. Organization only, never ta",
   "caps": [
@@ -7687,6 +8315,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Writing & Media",
+  "segment": "personal",
   "price": "free",
   "tagline": "Documentation that meets readers where they're stuck — docs audited against real user journeys, references that answer precisely, tutorials that survive beginners, and release notes people actually re",
   "caps": [
@@ -7750,6 +8379,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Property & Field",
+  "segment": "personal",
   "price": "free",
   "tagline": "The paperwork side of the trade, off your evenings — quotes with honest margins, job cards that keep crews moving, materials lists that arrive complete, and invoices that get paid.",
   "caps": [
@@ -7819,6 +8449,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Writing & Media",
+  "segment": "personal",
   "price": "free",
   "tagline": "The professional translator's workbench — terminology that stays consistent across years of work, a draft-and-revise workflow with a cold eye, and the localization judgment machines don't have.",
   "caps": [
@@ -7882,6 +8513,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Events & Travel",
+  "segment": "personal",
   "price": "free",
   "tagline": "Your trips, planned and remembered — research, itineraries, budgets, packing lists, and a countdown that makes sure nothing is forgotten.",
   "caps": [
@@ -7955,6 +8587,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Education",
+  "segment": "personal",
   "price": "free",
   "tagline": "The tutoring practice, run properly — per-student progress files, session plans that build, parent updates that earn renewals, and the billing side handled.",
   "caps": [
@@ -8023,6 +8656,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Hobbies & Leisure",
+  "segment": "personal",
   "price": "free",
   "tagline": "A wardrobe that works — the closet inventoried honestly, a capsule that actually mixes, outfits planned to weather and calendar, and shopping that fills gaps instead of impulses.",
   "caps": [
@@ -8086,6 +8720,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Events & Travel",
+  "segment": "personal",
   "price": "free",
   "tagline": "The wedding, planned like it matters and run like a project — the twelve-month timeline, vendor contracts tracked, the seating politics solved, and a day that runs without the couple noticing the mach",
   "caps": [
@@ -8165,6 +8800,7 @@ export const AUTHORED_PACKS = [
   "stars": "5.0",
   "installs": "curated pack",
   "cat": "Health & Growth",
+  "segment": "personal",
   "price": "free",
   "tagline": "A gentle daily check-in, journaling that goes somewhere, sleep and habit design — a companion, not a clinician.",
   "caps": [

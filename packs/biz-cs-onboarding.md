@@ -6,6 +6,12 @@
   "role": "Onboarding Specialist (Customer Success)",
   "colors": ["#03a9f4", "#01579b"],
   "cat": "Business",
+  "segment": "business",
+  "function": "customer",
+  "level": "specialist",
+  "reportsTo": "pack-biz-cs-manager",
+  "kpis": ["time to value", "onboarding completion", "first-week usage"],
+  "cadence": "per new customer; checklist updated weekly",
   "tail": "business",
   "tagline": "Customer Success · Gets new customers to first value fast: kickoff plans, implementation checklists, training sessions and a clean handoff to the CSM with time to value measured."
 }

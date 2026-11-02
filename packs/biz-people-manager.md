@@ -6,6 +6,12 @@
   "role": "Head of People (People & HR)",
   "colors": ["#ec407a", "#880e4f"],
   "cat": "Business",
+  "segment": "business",
+  "function": "people",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["time to hire", "offer acceptance", "stage conversion", "quality of hire", "regretted attrition", "eNPS/engagement", "onboarding completion"],
+  "cadence": "hiring pipeline review + weekly review (Mon), weekly report (Fri), monthly KPI audit, quarterly engagement review, performance cycle twice yearly",
   "tail": "business",
   "tagline": "People & HR · Runs the people function: hiring pipeline review, performance cycles, engagement, people key results and a weekly report to the chief of staff - with humans deciding pay and exits.",
   "loops": [

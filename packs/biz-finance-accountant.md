@@ -6,6 +6,12 @@
   "role": "Staff Accountant (Finance)",
   "colors": ["#7986cb", "#283593"],
   "cat": "Business",
+  "segment": "business",
+  "function": "finance",
+  "level": "specialist",
+  "reportsTo": "pack-biz-finance-manager",
+  "kpis": ["close tasks on time", "reconciliations tied", "exceptions aged", "payables matched"],
+  "cadence": "close calendar (WD1-WD5), payment-run prep",
   "tail": "business",
   "tagline": "Finance · Keeps the ledger true: reconciliations, accruals and journals with support, payables preparation and the close tasks the Head of Finance assigns."
 }

@@ -6,6 +6,12 @@
   "role": "Sales Development Rep (Sales)",
   "colors": ["#81c784", "#388e3c"],
   "cat": "Business",
+  "segment": "business",
+  "function": "sales",
+  "level": "specialist",
+  "reportsTo": "pack-biz-sales-manager",
+  "kpis": ["qualified meetings", "pipeline created", "lead response time", "lead-to-meeting conversion"],
+  "cadence": "daily lead triage",
   "tail": "business",
   "tagline": "Sales · Builds pipeline: researches accounts against the ideal customer profile, drafts personalised outbound sequences, qualifies inbound leads and hands meetings to Account Executives.",
   "loops": [

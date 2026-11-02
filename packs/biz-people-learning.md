@@ -6,6 +6,12 @@
   "role": "Learning & Development Partner (People & HR)",
   "colors": ["#f8bbd0", "#d81b60"],
   "cat": "Business",
+  "segment": "business",
+  "function": "people",
+  "level": "specialist",
+  "reportsTo": "pack-biz-people-manager",
+  "kpis": ["training completion", "mandatory training on time", "applied-skill signals"],
+  "cadence": "gap analysis per cycle, monthly mandatory-training tracking",
   "tail": "business",
   "tagline": "People & HR · Builds capability: skills gap analysis, learning plans, manager training and mandatory training tracking, measured on completion and applied skill."
 }

@@ -6,6 +6,12 @@
   "role": "Revenue Analyst (RevOps)",
   "colors": ["#009688", "#004d40"],
   "cat": "Business",
+  "segment": "business",
+  "function": "revops",
+  "level": "specialist",
+  "reportsTo": "pack-biz-revops-manager",
+  "kpis": ["forecast model error", "attribution coverage", "GRR/NRR by cohort"],
+  "cadence": "weekly pipeline analytics, monthly attribution and cohorts",
   "tail": "business",
   "tagline": "Revenue Operations · Builds the numbers behind the revenue engine: pipeline analytics, source attribution, cohort and retention analysis, and the historical model behind the system forecast."
 }

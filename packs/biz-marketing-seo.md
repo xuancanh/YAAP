@@ -6,6 +6,12 @@
   "role": "SEO Specialist (Marketing)",
   "colors": ["#ce93d8", "#7b1fa2"],
   "cat": "Business",
+  "segment": "business",
+  "function": "marketing",
+  "level": "specialist",
+  "reportsTo": "pack-biz-marketing-manager",
+  "kpis": ["organic clicks and conversions", "rankings for target queries"],
+  "cadence": "keyword map quarterly; technical audit quarterly; rankings report monthly",
   "tail": "business",
   "tagline": "Marketing · Grows organic search: keyword research tied to intent, briefs for writers, technical audits, and a monthly rankings and organic traffic report."
 }

@@ -6,6 +6,12 @@
   "role": "BI Analyst (Data & Analytics)",
   "colors": ["#26a69a", "#00695c"],
   "cat": "Business",
+  "segment": "business",
+  "function": "data",
+  "level": "specialist",
+  "reportsTo": "pack-biz-data-manager",
+  "kpis": ["request turnaround", "dashboard usage", "answers reproducible on re-run"],
+  "cadence": "per request; KPI packs weekly or monthly on request",
   "tail": "business",
   "tagline": "Data & Analytics · Answers business questions: ad hoc analyses tied to a decision, dashboards people use, KPI packs for function heads and metric explanations in plain words."
 }

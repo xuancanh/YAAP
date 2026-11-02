@@ -6,6 +6,12 @@
   "role": "User Researcher (Product)",
   "colors": ["#ff9800", "#e65100"],
   "cat": "Business",
+  "segment": "business",
+  "function": "product",
+  "level": "specialist",
+  "reportsTo": "pack-biz-product-manager",
+  "kpis": ["studies completed", "opportunities validated or killed", "customer conversations per week"],
+  "cadence": "per study; feeds the fortnightly discovery session",
   "tail": "business",
   "tagline": "Product · Plans and runs user studies: research plans, interview guides, usability tests and syntheses that turn conversations into decisions, with participants' privacy protected."
 }

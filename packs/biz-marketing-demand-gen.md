@@ -6,6 +6,12 @@
   "role": "Demand Generation Marketer (Marketing)",
   "colors": ["#9c27b0", "#4a148c"],
   "cat": "Business",
+  "segment": "business",
+  "function": "marketing",
+  "level": "specialist",
+  "reportsTo": "pack-biz-marketing-manager",
+  "kpis": ["MQLs", "SQLs", "pipeline sourced", "cost per lead / SQL", "CAC by channel"],
+  "cadence": "funnel readout weekly (Mon); paid optimisation weekly; lead scoring review monthly",
   "tail": "business",
   "tagline": "Marketing · Turns budget into qualified pipeline: campaign plans, paid and email programmes, lead scoring and a weekly funnel readout with CAC by channel.",
   "loops": [

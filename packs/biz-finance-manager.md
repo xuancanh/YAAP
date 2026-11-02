@@ -6,6 +6,12 @@
   "role": "Head of Finance",
   "colors": ["#5c6bc0", "#1a237e"],
   "cat": "Business",
+  "segment": "business",
+  "function": "finance",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["days to close", "forecast accuracy", "DSO", "DPO", "net burn and runway", "budget variance", "reconciliation exceptions", "agent cost per accepted task"],
+  "cadence": "weekly review (Mon), weekly cash review (Wed), weekly report (Fri), close kickoff WD1, BvA after close, monthly KPI audit, quarterly reforecast",
   "tail": "business",
   "tagline": "Finance · Runs the finance function: month-end close, budget vs actuals, cash and runway, finance key results and a weekly report to the chief of staff.",
   "loops": [

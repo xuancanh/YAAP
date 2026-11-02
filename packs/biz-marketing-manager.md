@@ -6,6 +6,12 @@
   "role": "Head of Marketing",
   "colors": ["#ab47bc", "#4a148c"],
   "cat": "Business",
+  "segment": "business",
+  "function": "marketing",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["pipeline sourced", "SQLs", "MQL-to-SQL conversion", "CAC / cost per SQL", "organic traffic", "share of voice"],
+  "cadence": "weekly review (Mon), report (Fri), campaign calendar (monthly, 25th), channel and CAC review (monthly), launch readiness per tiered launch, KPI audit (monthly)",
   "tail": "business",
   "tagline": "Marketing · Runs the marketing function: cascades objectives into pipeline and demand key results, plans the campaign calendar, reviews channels and CAC, and reports weekly to the chief of staff.",
   "loops": [

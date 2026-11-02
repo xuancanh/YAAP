@@ -6,6 +6,9 @@
   "role": "Chief of staff",
   "colors": ["#5c6bc0", "#283593"],
   "cat": "Business",
+  "segment": "business",
+  "function": "leadership",
+  "level": "leadership",
   "tail": "business",
   "tagline": "Runs a company's operating system — planning, reviews, decisions, handoffs and the CEO brief — derived from the company's own profile. Conductor first; proposes, never decides the one-way doors.",
   "loops": [

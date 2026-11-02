@@ -6,6 +6,12 @@
   "role": "Head of Customer Success & Support",
   "colors": ["#29b6f6", "#01579b"],
   "cat": "Business",
+  "segment": "business",
+  "function": "customer",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["CSAT", "first response time", "time to resolution", "SLA attainment", "backlog age", "GRR / NRR", "churn", "health score", "onboarding time to value"],
+  "cadence": "queue review (daily), weekly review (Mon), report (Fri), health and renewals review (monthly; 90/60/30 days out), escalations per S1/S2, KPI audit (monthly)",
   "tail": "business",
   "tagline": "Customer Success & Support · Runs the customer function: SLA and queue reviews, account health and renewals, escalations, retention key results and a weekly report to the chief of staff.",
   "loops": [

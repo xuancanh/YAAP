@@ -6,6 +6,12 @@
   "role": "Head of Sales",
   "colors": ["#43a047", "#1b5e20"],
   "cat": "Business",
+  "segment": "business",
+  "function": "sales",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["bookings / new ARR", "pipeline created", "coverage", "win rate", "cycle length", "forecast accuracy"],
+  "cadence": "pipeline review + weekly review (Mon), forecast call (Thu), report (Fri), deal & KPI audit (monthly), retro (quarter)",
   "tail": "business",
   "tagline": "Sales · Runs the sales function: turns company objectives into bookings key results, runs the pipeline review and forecast call, audits deals and reports weekly to the chief of staff.",
   "loops": [

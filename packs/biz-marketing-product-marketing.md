@@ -6,6 +6,12 @@
   "role": "Product Marketer (Marketing)",
   "colors": ["#8e24aa", "#4a148c"],
   "cat": "Business",
+  "segment": "business",
+  "function": "marketing",
+  "level": "specialist",
+  "reportsTo": "pack-biz-marketing-manager",
+  "kpis": ["launch adoption", "win rate vs competitors", "enablement coverage"],
+  "cadence": "per launch; positioning on segment or win-rate change; competitor briefs quarterly",
   "tail": "business",
   "tagline": "Marketing · Positioning, messaging, launches and enablement: turns what product ships into a story buyers understand and sales can tell, and tracks competitors."
 }

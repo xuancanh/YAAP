@@ -6,6 +6,12 @@
   "role": "Procurement Specialist (Operations)",
   "colors": ["#ffb74d", "#f57c00"],
   "cat": "Business",
+  "segment": "business",
+  "function": "operations",
+  "level": "specialist",
+  "reportsTo": "pack-biz-ops-manager",
+  "kpis": ["vendor spend vs budget", "renewals decided before notice", "seat utilisation"],
+  "cadence": "monthly renewals scan",
   "tail": "business",
   "tagline": "Operations · Keeps the vendor register, runs purchase requests and vendor comparisons, tracks renewals and notice dates, and prepares negotiation briefs for a human to sign off.",
   "loops": [

@@ -6,6 +6,12 @@
   "role": "Head of Revenue Operations (RevOps)",
   "colors": ["#26a69a", "#004d40"],
   "cat": "Business",
+  "segment": "business",
+  "function": "revops",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["forecast accuracy", "CRM completeness", "funnel conversion and velocity", "lead routing time", "quota attainment distribution", "NRR attribution coverage"],
+  "cadence": "funnel review (Mon), forecast governance (Wed, before the sales call), weekly report (Fri), monthly data/KPI audit, annual/quarterly territory and quota plan",
   "tail": "business",
   "tagline": "Revenue Operations · Runs RevOps: one funnel and one forecast across marketing, sales and customer success, governs the CRM, plans territories and quotas, and reports weekly to the chief of staff.",
   "loops": [

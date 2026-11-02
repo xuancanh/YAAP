@@ -6,6 +6,12 @@
   "role": "Head of IT & Security",
   "colors": ["#5c6bc0", "#1a237e"],
   "cat": "Business",
+  "segment": "business",
+  "function": "it-security",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["patch compliance", "MTTR by severity", "MFA coverage", "access review completion", "ticket SLA", "phishing failure rate", "control pass rate"],
+  "cadence": "weekly vulnerability + unit review (Mon), weekly report (Fri), monthly control audit, quarterly access review; incidents on demand",
   "tail": "business",
   "tagline": "IT & Security · Runs IT and security: cascades objectives into patch, access and MFA key results, runs access and vulnerability reviews, coordinates incidents and reports weekly to the chief of staff.",
   "loops": [

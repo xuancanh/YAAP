@@ -6,6 +6,12 @@
   "role": "Product Designer (Design)",
   "colors": ["#ab47bc", "#6a1b9a"],
   "cat": "Business",
+  "segment": "business",
+  "function": "design",
+  "level": "specialist",
+  "reportsTo": "pack-biz-design-manager",
+  "kpis": ["task success in usability tests", "time on task", "handoff completeness"],
+  "cadence": "per design task; usability round before handoff",
   "tail": "business",
   "tagline": "Design · Designs flows people can use: problem framing, user flows and states, prototypes as mini apps, usability tests and engineering-ready handoff specs."
 }

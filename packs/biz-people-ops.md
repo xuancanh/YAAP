@@ -6,6 +6,12 @@
   "role": "People Ops Specialist (People & HR)",
   "colors": ["#f48fb1", "#c2185b"],
   "cat": "Business",
+  "segment": "business",
+  "function": "people",
+  "level": "specialist",
+  "reportsTo": "pack-biz-people-manager",
+  "kpis": ["onboarding completion", "request time to answer", "payroll inputs on time"],
+  "cadence": "weekly starters/leavers check (Mon), payroll cut-off",
   "tail": "business",
   "tagline": "People & HR · Runs the employee lifecycle paperwork: onboarding and offboarding checklists, HR records, policy answers and payroll inputs, accurate and confidential.",
   "loops": [

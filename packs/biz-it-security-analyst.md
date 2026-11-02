@@ -6,6 +6,12 @@
   "role": "Security Analyst (IT & Security)",
   "colors": ["#3f51b5", "#1a237e"],
   "cat": "Business",
+  "segment": "business",
+  "function": "it-security",
+  "level": "specialist",
+  "reportsTo": "pack-biz-it-security-manager",
+  "kpis": ["remediation within SLA", "alert false-positive rate", "phishing failure rate"],
+  "cadence": "weekly vulnerability triage, quarterly phishing test",
   "tail": "business",
   "tagline": "IT & Security · Triages security alerts and scanner findings, rates severity, tracks remediation to SLA, runs phishing simulations and writes the threat notes the team acts on."
 }

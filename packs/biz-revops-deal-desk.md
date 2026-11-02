@@ -6,6 +6,12 @@
   "role": "Deal Desk Analyst (RevOps)",
   "colors": ["#80cbc4", "#00796b"],
   "cat": "Business",
+  "segment": "business",
+  "function": "revops",
+  "level": "specialist",
+  "reportsTo": "pack-biz-revops-manager",
+  "kpis": ["quote turnaround", "effective discount", "exception rate"],
+  "cadence": "per quote; monthly discount analysis",
   "tail": "business",
   "tagline": "Revenue Operations · Reviews quotes and order forms against pricing policy, prepares discount and non-standard term requests for the right approver, and tracks deal-desk turnaround and discount levels."
 }

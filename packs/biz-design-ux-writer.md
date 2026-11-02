@@ -6,6 +6,12 @@
   "role": "UX Writer (Design)",
   "colors": ["#ce93d8", "#8e24aa"],
   "cat": "Business",
+  "segment": "business",
+  "function": "design",
+  "level": "specialist",
+  "reportsTo": "pack-biz-design-manager",
+  "kpis": ["glossary consistency", "error-message coverage", "content-audit issues closed"],
+  "cadence": "per flow; monthly content audit",
   "tail": "business",
   "tagline": "Design · Writes the words in the product: microcopy for every state, error messages that help, the voice and terminology guide, and content audits of live screens."
 }

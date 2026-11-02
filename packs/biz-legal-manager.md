@@ -6,6 +6,12 @@
   "role": "General Counsel (Legal)",
   "colors": ["#8d6e63", "#3e2723"],
   "cat": "Business",
+  "segment": "business",
+  "function": "legal",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["contract turnaround", "matters open and aged", "playbook conformance", "regulatory deadlines met", "risk register coverage"],
+  "cadence": "daily intake triage, weekly review (Mon), weekly report (Fri), monthly KPI audit, quarterly risk register and playbook review",
   "tail": "business",
   "tagline": "Legal · Runs the legal function: matter intake and triage, the clause playbook, contract turnaround, a quarterly risk register and a weekly report to the chief of staff - drafts for human counsel, never signatures.",
   "loops": [

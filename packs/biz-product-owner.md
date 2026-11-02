@@ -6,6 +6,12 @@
   "role": "Product Owner (Product)",
   "colors": ["#ffb74d", "#ef6c00"],
   "cat": "Business",
+  "segment": "business",
+  "function": "product",
+  "level": "specialist",
+  "reportsTo": "pack-biz-product-manager",
+  "kpis": ["backlog readiness (two sprints refined)", "spec rework rate", "accepted stories vs committed"],
+  "cadence": "backlog refinement weekly / before sprint planning; acceptance per story",
   "tail": "business",
   "tagline": "Product · Keeps the backlog ready: specs with success metrics, testable acceptance criteria, refined and ordered stories, and clear answers for engineering during the sprint."
 }

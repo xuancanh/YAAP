@@ -6,6 +6,12 @@
   "role": "Customer Success Manager (Customer Success)",
   "colors": ["#4fc3f7", "#0277bd"],
   "cat": "Business",
+  "segment": "business",
+  "function": "customer",
+  "level": "specialist",
+  "reportsTo": "pack-biz-cs-manager",
+  "kpis": ["retention of the book", "health score", "renewal rate", "expansion"],
+  "cadence": "health check monthly per account; QBRs quarterly; renewal readiness at 90/60/30 days",
   "tail": "business",
   "tagline": "Customer Success · Owns a book of accounts: success plans, health checks, business reviews, renewal readiness and save plans, with every risk written down early."
 }

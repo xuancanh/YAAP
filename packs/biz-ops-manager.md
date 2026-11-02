@@ -6,6 +6,12 @@
   "role": "Head of Operations",
   "colors": ["#ff9800", "#e65100"],
   "cat": "Business",
+  "segment": "business",
+  "function": "operations",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["process cycle time", "SLA adherence", "cost per unit", "SOP coverage", "automation rate", "vendor spend vs budget"],
+  "cadence": "weekly review (Mon), weekly report (Fri), monthly KPI audit + process review, quarterly vendor review and QBR",
   "tail": "business",
   "tagline": "Operations · Runs the operations function: cascades objectives into cycle-time, SLA and cost key results, keeps SOPs and vendors in order, audits processes and reports weekly to the chief of staff.",
   "loops": [

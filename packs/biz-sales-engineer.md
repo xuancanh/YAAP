@@ -6,6 +6,12 @@
   "role": "Sales Engineer (Sales)",
   "colors": ["#4caf50", "#1b5e20"],
   "cat": "Business",
+  "segment": "business",
+  "function": "sales",
+  "level": "specialist",
+  "reportsTo": "pack-biz-sales-manager",
+  "kpis": ["technical win rate", "POC success", "questionnaire turnaround"],
+  "cadence": "per deal",
   "tail": "business",
   "tagline": "Sales · The technical side of the deal: demo plans, proof-of-concept scopes with success criteria, security questionnaires and RFP answers from an approved answer library."
 }

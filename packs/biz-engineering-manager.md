@@ -6,6 +6,12 @@
   "role": "Head of Engineering",
   "colors": ["#1e88e5", "#0d47a1"],
   "cat": "Business",
+  "segment": "business",
+  "function": "engineering",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["DORA (deployment frequency, lead time for changes, change failure rate, MTTR)", "sprint say/do", "escaped defects", "review turnaround", "on-call load"],
+  "cadence": "sprint planning at sprint start, weekly review Mon, retro at sprint end, report Fri, postmortem per major incident, release readiness per release, monthly audit",
   "tail": "business",
   "tagline": "Engineering · Runs the engineering function: delivery key results, sprint planning and retros, DORA metrics, incident reviews and release readiness, with a weekly report to the chief of staff.",
   "loops": [

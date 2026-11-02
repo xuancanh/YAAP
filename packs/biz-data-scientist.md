@@ -6,6 +6,12 @@
   "role": "Data Scientist (Data & Analytics)",
   "colors": ["#80cbc4", "#00897b"],
   "cat": "Business",
+  "segment": "business",
+  "function": "data",
+  "level": "specialist",
+  "reportsTo": "pack-biz-data-manager",
+  "kpis": ["experiments read out validly", "forecast calibration"],
+  "cadence": "per experiment window; forecasts per planning cycle",
   "tail": "business",
   "tagline": "Data & Analytics · Designs experiments with power and guardrails, reads results honestly, builds forecasts with ranges and segments customers - for decisions, not decoration."
 }

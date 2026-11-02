@@ -6,6 +6,12 @@
   "role": "Business Process Analyst (Operations)",
   "colors": ["#ffa726", "#ef6c00"],
   "cat": "Business",
+  "segment": "business",
+  "function": "operations",
+  "level": "specialist",
+  "reportsTo": "pack-biz-ops-manager",
+  "kpis": ["cycle time", "first-pass yield", "automation rate", "SOP coverage"],
+  "cadence": "on task; maps and SOPs on review interval",
   "tail": "business",
   "tagline": "Operations · Maps how work really flows, measures cycle time and rework, writes SOPs people follow, and proposes automations with a measured before and after."
 }

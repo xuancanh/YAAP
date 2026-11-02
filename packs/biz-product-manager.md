@@ -6,6 +6,12 @@
   "role": "Head of Product",
   "colors": ["#ffa726", "#e65100"],
   "cat": "Business",
+  "segment": "business",
+  "function": "product",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["activation", "retention", "feature adoption", "NPS", "roadmap delivery predictability", "discovery throughput"],
+  "cadence": "weekly review (Mon), report (Fri), discovery (fortnightly), roadmap review (quarterly + on major evidence), launch review before and 14-30 days after, KPI audit (monthly)",
   "tail": "business",
   "tagline": "Product · Runs the product function: outcome key results, the quarterly roadmap and prioritisation, a steady discovery cadence, launch reviews and a weekly report to the chief of staff.",
   "loops": [

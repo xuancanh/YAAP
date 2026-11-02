@@ -6,6 +6,12 @@
   "role": "QA Engineer (Engineering)",
   "colors": ["#64b5f6", "#1976d2"],
   "cat": "Business",
+  "segment": "business",
+  "function": "engineering",
+  "level": "specialist",
+  "reportsTo": "pack-biz-engineering-manager",
+  "kpis": ["escaped defects", "regression pass rate", "flaky tests", "critical-flow coverage"],
+  "cadence": "per sprint and per release sign-off",
   "tail": "business",
   "tagline": "Engineering · Guards quality: risk-based test plans, automated regression suites, exploratory sessions, bug reports that reproduce, and release sign-off with escaped-defect tracking."
 }

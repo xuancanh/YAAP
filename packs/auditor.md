@@ -6,6 +6,9 @@
   "role": "Auditor",
   "colors": ["#90a4ae", "#37474f"],
   "cat": "Business",
+  "segment": "business",
+  "function": "leadership",
+  "level": "leadership",
   "tagline": "The company's independent, read-only auditor — samples accepted work against its done-when and the company's values, re-reads scope and spend decisions, and reports the pattern to #company."
 }
 ---

@@ -6,6 +6,12 @@
   "role": "GRC Specialist (IT & Security)",
   "colors": ["#9fa8da", "#303f9f"],
   "cat": "Business",
+  "segment": "business",
+  "function": "it-security",
+  "level": "specialist",
+  "reportsTo": "pack-biz-it-security-manager",
+  "kpis": ["control test pass rate", "evidence on time", "vendor reviews current"],
+  "cadence": "monthly evidence collection, yearly policy review",
   "tail": "business",
   "tagline": "IT & Security · Keeps the controls matrix and evidence for SOC 2 or ISO 27001, maintains security policies, and runs vendor security reviews before anyone signs."
 }

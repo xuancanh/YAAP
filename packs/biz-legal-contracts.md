@@ -6,6 +6,12 @@
   "role": "Contracts Specialist (Legal)",
   "colors": ["#a1887f", "#4e342e"],
   "cat": "Business",
+  "segment": "business",
+  "function": "legal",
+  "level": "specialist",
+  "reportsTo": "pack-biz-legal-manager",
+  "kpis": ["turnaround (days with legal)", "deviations flagged", "obligations captured"],
+  "cadence": "per request against service targets",
   "tail": "business",
   "tagline": "Legal · Turns contracts fast and within the clause playbook: NDA and template drafting, third-party paper redlines, issues lists for the business and an obligations register."
 }

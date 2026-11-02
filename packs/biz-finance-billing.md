@@ -6,6 +6,12 @@
   "role": "Billing Specialist (Finance)",
   "colors": ["#9fa8da", "#303f9f"],
   "cat": "Business",
+  "segment": "business",
+  "function": "finance",
+  "level": "specialist",
+  "reportsTo": "pack-biz-finance-manager",
+  "kpis": ["DSO", "AR over 60 days", "invoice right-first-time"],
+  "cadence": "invoice run per billing date, weekly collections (Tue), monthly accuracy check",
   "tail": "business",
   "tagline": "Finance · Gets the company paid: accurate invoices from contracts, AR ageing, a polite dunning ladder and credit-note requests, measured on DSO.",
   "loops": [

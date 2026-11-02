@@ -6,6 +6,12 @@
   "role": "Recruiter (People & HR)",
   "colors": ["#f06292", "#ad1457"],
   "cat": "Business",
+  "segment": "business",
+  "function": "people",
+  "level": "specialist",
+  "reportsTo": "pack-biz-people-manager",
+  "kpis": ["time to hire", "candidate response time", "stage conversion", "offer acceptance"],
+  "cadence": "per requisition: intake, screening as applications arrive, interview loops",
   "tail": "business",
   "tagline": "People & HR · Fills open roles fairly and fast: intake with the hiring manager, inclusive job ads, sourcing, structured screens and scorecards, and candidate updates on time."
 }

@@ -6,6 +6,12 @@
   "role": "FP&A Analyst (Finance)",
   "colors": ["#3f51b5", "#1a237e"],
   "cat": "Business",
+  "segment": "business",
+  "function": "finance",
+  "level": "specialist",
+  "reportsTo": "pack-biz-finance-manager",
+  "kpis": ["forecast accuracy", "variance explained", "scenario turnaround"],
+  "cadence": "monthly reforecast and variance commentary, quarterly unit economics",
   "tail": "business",
   "tagline": "Finance · Plans and forecasts: driver-based budgets, monthly reforecasts, variance commentary, scenario models and unit economics for the Head of Finance."
 }

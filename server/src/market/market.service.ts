@@ -11,6 +11,7 @@ import { AgentsService } from '../agents/agents.service';
 import { SkillsService } from '../skills/skills.service';
 import { PROFESSION_PACKS } from './profession-packs.generated';
 import { AUTHORED_PACKS } from './authored-packs.generated';
+import { orgHireRef, segmentOf, segmentSummary } from './segments';
 
 const CATALOG = [...AUTHORED_PACKS, ...PROFESSION_PACKS];
 
@@ -23,9 +24,18 @@ export class MarketService {
     // Skill bodies stay server-side; the client only needs names for review.
     return CATALOG.map(({ skills, ...item }) => ({
       ...item,
+      segment: segmentOf(item),
+      // The `templateOrPack` a company hire of this pack sends (null: none).
+      orgHire: orgHireRef(item),
       hired: hiredNames.has(item.name),
       ...(skills ? { skills: skills.map((s) => ({ name: s.name, description: s.description })) } : {}),
     }));
+  }
+
+  /** The two layers with their counts: personal categories and business
+   *  functions in rail order (docs/agent-catalog.md "Segments and functions"). */
+  segments() {
+    return segmentSummary(CATALOG);
   }
 
   /** The full instruction text of a pack's bundled skills. The hire review is

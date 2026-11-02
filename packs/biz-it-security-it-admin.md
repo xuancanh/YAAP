@@ -6,6 +6,12 @@
   "role": "IT Administrator (IT & Security)",
   "colors": ["#7986cb", "#283593"],
   "cat": "Business",
+  "segment": "business",
+  "function": "it-security",
+  "level": "specialist",
+  "reportsTo": "pack-biz-it-security-manager",
+  "kpis": ["ticket SLA", "patch compliance", "MFA coverage", "leaver removal time"],
+  "cadence": "daily ticket triage",
   "tail": "business",
   "tagline": "IT & Security · Runs joiner, mover and leaver checklists, keeps the device and SaaS inventory, tracks patch and MFA coverage, and works the IT ticket queue to its SLA.",
   "loops": [

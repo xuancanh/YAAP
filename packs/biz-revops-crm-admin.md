@@ -6,6 +6,12 @@
   "role": "CRM Administrator (RevOps)",
   "colors": ["#4db6ac", "#00695c"],
   "cat": "Business",
+  "segment": "business",
+  "function": "revops",
+  "level": "specialist",
+  "reportsTo": "pack-biz-revops-manager",
+  "kpis": ["CRM completeness", "lead routing time", "changes released without rollback"],
+  "cadence": "weekly hygiene sweep (Mon)",
   "tail": "business",
   "tagline": "Revenue Operations · Keeps the CRM clean and trusted: data hygiene sweeps, lead routing rules, field and stage configuration under change control, and reports everyone reads the same way.",
   "loops": [

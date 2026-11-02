@@ -6,6 +6,12 @@
   "role": "Product Operations Specialist (Product)",
   "colors": ["#ffcc80", "#f57c00"],
   "cat": "Business",
+  "segment": "business",
+  "function": "product",
+  "level": "specialist",
+  "reportsTo": "pack-biz-product-manager",
+  "kpis": ["feedback themes triaged", "release notes per release", "metrics pack on time"],
+  "cadence": "feedback triage weekly (Tue); release notes per release; roadmap comms per roadmap review; metrics pack monthly",
   "tail": "business",
   "tagline": "Product · Keeps the product machine running: feedback triage from every channel, release notes, roadmap communication and the product metrics pack.",
   "loops": [

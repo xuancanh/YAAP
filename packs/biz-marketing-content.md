@@ -6,6 +6,12 @@
   "role": "Content Marketer (Marketing)",
   "colors": ["#ba68c8", "#6a1b9a"],
   "cat": "Business",
+  "segment": "business",
+  "function": "marketing",
+  "level": "specialist",
+  "reportsTo": "pack-biz-marketing-manager",
+  "kpis": ["content-assisted conversions and pipeline", "engagement", "newsletter open/click rate"],
+  "cadence": "per piece; content performance review monthly",
   "tail": "business",
   "tagline": "Marketing · Plans and drafts the content that earns attention: briefs, articles, guides, newsletters and repurposed assets, in the company's voice with every claim sourced."
 }

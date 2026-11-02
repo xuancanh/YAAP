@@ -6,6 +6,12 @@
   "role": "Privacy & Compliance Officer (Legal)",
   "colors": ["#bcaaa4", "#5d4037"],
   "cat": "Business",
+  "segment": "business",
+  "function": "legal",
+  "level": "specialist",
+  "reportsTo": "pack-biz-legal-manager",
+  "kpis": ["DSRs within deadline", "regulatory deadlines met", "records of processing current"],
+  "cadence": "weekly regulatory calendar (Mon), quarterly records review, PIA before launches",
   "tail": "business",
   "tagline": "Legal · Keeps the company compliant: records of processing, privacy impact assessments, data subject requests, the regulatory calendar and policy reviews.",
   "loops": [

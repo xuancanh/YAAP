@@ -6,6 +6,12 @@
   "role": "Head of Design",
   "colors": ["#8e24aa", "#4a148c"],
   "cat": "Business",
+  "segment": "business",
+  "function": "design",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["usability task success", "WCAG 2.2 AA conformance", "design-system adoption", "design cycle time", "rework rate"],
+  "cadence": "intake Mon, crit Wed, weekly review, report Fri, design-system review monthly, monthly audit",
   "tail": "business",
   "tagline": "Design · Runs the design function: intake and prioritisation, the weekly crit, design-system governance, usability and accessibility KPIs, and a weekly report to the chief of staff.",
   "loops": [

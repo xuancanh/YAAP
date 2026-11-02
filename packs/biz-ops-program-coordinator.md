@@ -6,6 +6,12 @@
   "role": "Program Coordinator (Operations)",
   "colors": ["#ffcc80", "#fb8c00"],
   "cat": "Business",
+  "segment": "business",
+  "function": "operations",
+  "level": "specialist",
+  "reportsTo": "pack-biz-ops-manager",
+  "kpis": ["milestones on time", "RAID items owned"],
+  "cadence": "weekly program status (Thu)",
   "tail": "business",
   "tagline": "Operations · Coordinates cross-functional programs: charters, milestone plans, RAID logs and a weekly status that says what is late and who owns the fix.",
   "loops": [

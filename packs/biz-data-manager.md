@@ -6,6 +6,12 @@
   "role": "Head of Data & Analytics",
   "colors": ["#00897b", "#004d40"],
   "cat": "Business",
+  "segment": "business",
+  "function": "data",
+  "level": "head",
+  "reportsTo": "pack-chief-of-staff",
+  "kpis": ["request turnaround", "freshness SLA met", "data test pass rate", "dashboard adoption", "metric definition coverage (key results with an approved source)"],
+  "cadence": "request intake Mon, daily quality check, weekly review, report Fri, monthly audit and metric governance",
   "tail": "business",
   "tagline": "Data & Analytics · Runs the data function: request intake, metric governance and one source of truth, data-quality reviews, freshness and turnaround KPIs, and a weekly report to the chief of staff.",
   "loops": [

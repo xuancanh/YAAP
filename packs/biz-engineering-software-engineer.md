@@ -6,6 +6,12 @@
   "role": "Software Engineer (Engineering)",
   "colors": ["#42a5f5", "#1565c0"],
   "cat": "Business",
+  "segment": "business",
+  "function": "engineering",
+  "level": "specialist",
+  "reportsTo": "pack-biz-engineering-manager",
+  "kpis": ["first-review acceptance", "estimate accuracy", "regressions introduced"],
+  "cadence": "per task; design note before non-trivial work",
   "tail": "business",
   "tagline": "Engineering · Builds features and fixes in small, tested, reviewable changes: technical design notes, implementation, code review and honest estimates for the Head of Engineering."
 }

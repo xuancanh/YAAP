@@ -6,6 +6,12 @@
   "role": "Brand Designer (Design)",
   "colors": ["#ba68c8", "#7b1fa2"],
   "cat": "Business",
+  "segment": "business",
+  "function": "design",
+  "level": "specialist",
+  "reportsTo": "pack-biz-design-manager",
+  "kpis": ["brand consistency of sampled output", "asset turnaround", "template reuse"],
+  "cadence": "per request; monthly consistency review",
   "tail": "business",
   "tagline": "Design · Keeps the brand coherent: brand guidelines, campaign and launch assets from briefs, decks and templates, and brand-consistency reviews across the company's output."
 }

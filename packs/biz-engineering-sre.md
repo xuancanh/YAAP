@@ -6,6 +6,12 @@
   "role": "Site Reliability Engineer (Engineering)",
   "colors": ["#2196f3", "#0d47a1"],
   "cat": "Business",
+  "segment": "business",
+  "function": "engineering",
+  "level": "specialist",
+  "reportsTo": "pack-biz-engineering-manager",
+  "kpis": ["SLO attainment", "error budget burn", "MTTR", "actionable-page ratio", "out-of-hours pages"],
+  "cadence": "daily reliability check, handoff per on-call shift, monthly alert review",
   "tail": "business",
   "tagline": "Engineering · Keeps the system up: SLOs and error budgets, alert hygiene, runbooks, on-call handoffs, incident response and capacity checks for the Head of Engineering.",
   "loops": [
