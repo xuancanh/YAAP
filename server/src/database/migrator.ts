@@ -1820,6 +1820,37 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_meetings_thread ON org_meetings ("threadRootId")`);
     },
   },
+  {
+    id: '0051-chat-auto-archive',
+    up: async (db) => {
+      // Auto-archive of finished-task chats (docs/chat-archiving.md): the
+      // task a chat works on (an org task or a kanban task), the chat's own
+      // auto-archive setting (null = follow the agent / workspace default,
+      // 0 = off, n = days after the task is finished) and the agent's default
+      // for its new task chats. Then the existing per-task org sessions
+      // (`Org · <org> · <task title>`) are linked to their task through the
+      // runs that used them. An index for the paged chat list (the rail).
+      // Idempotent.
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('chat_sessions', 'autoArchiveDays', 'INTEGER');
+      await add('chat_sessions', 'taskKind', 'TEXT');
+      await add('chat_sessions', 'taskId', 'TEXT');
+      await add('agents', 'chatAutoArchiveDays', 'INTEGER');
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_rail ON chat_sessions ("workspaceId", "agentId", "updatedAt")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_task ON chat_sessions ("taskId")`);
+      await db.query(`
+        UPDATE chat_sessions s SET "taskKind" = 'org', "taskId" = t."id"
+          FROM org_runs r
+          JOIN org_tasks t ON t."id" = r."taskId"
+          JOIN organizations o ON o."id" = t."orgId"
+         WHERE r."sessionId" = s."id"
+           AND s."taskId" IS NULL
+           AND s."name" = 'Org · ' || o."name" || ' · ' || LEFT(t."title", 48)
+      `);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

@@ -36,6 +36,61 @@ export class ChatsRepository {
     return rows.filter((s) => s.shared === 1 || s.initiatedBy === viewer.memberAccountId);
   }
 
+  /** The rail's filter (docs/chat-archiving.md "The rail"): a workspace's
+   *  direct-message sessions the current actor may see — never a channel's
+   *  hidden working session (`#slug · Agent` or tagged `channel`). `agentId`
+   *  null = the workspace's agent-less chats; `loops` 'only' = the agent's
+   *  loop / heartbeat sessions (`Loop · …`), 'exclude' = everything else. */
+  private railWhere(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; loops?: 'only' | 'exclude' | 'any'; q?: string }) {
+    const conds = [
+      eq(chatSessions.workspaceId, workspaceId),
+      opts.archived ? isNotNull(chatSessions.archivedAt) : isNull(chatSessions.archivedAt),
+      sql`NOT (${chatSessions.name} LIKE '#%' AND ${chatSessions.name} LIKE '% · %')`,
+      sql`${chatSessions.tags} NOT LIKE '%"channel"%'`,
+    ];
+    if (opts.agentId !== undefined) conds.push(opts.agentId === null ? isNull(chatSessions.agentId) : eq(chatSessions.agentId, opts.agentId));
+    if (opts.loops === 'only') conds.push(sql`${chatSessions.name} LIKE 'Loop · %'`);
+    if (opts.loops === 'exclude') conds.push(notLike(chatSessions.name, 'Loop · %'));
+    const q = (opts.q ?? '').trim().toLowerCase();
+    if (q) {
+      const pat = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      conds.push(sql`(LOWER(${chatSessions.name}) LIKE ${pat} OR LOWER(${chatSessions.autoTitle}) LIKE ${pat} OR LOWER(${chatSessions.tags}) LIKE ${pat})`);
+    }
+    const viewer = currentViewer();
+    if (viewer && viewer.role !== 'owner') conds.push(or(eq(chatSessions.shared, 1), eq(chatSessions.initiatedBy, viewer.memberAccountId))!);
+    return and(...conds);
+  }
+
+  /** One page of the rail, newest first with pinned chats on top. The
+   *  cursor is the last row's `pinned|updatedAt|id` (opaque to clients). */
+  async pageSessions(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; loops?: 'only' | 'exclude' | 'any'; q?: string; limit?: number; cursor?: string | null } = {}): Promise<{ items: ChatSession[]; nextCursor: string | null }> {
+    const limit = Math.max(1, Math.min(200, Math.floor(opts.limit ?? 20)));
+    const conds = [this.railWhere(workspaceId, opts)];
+    const cur = decodeCursor(opts.cursor);
+    if (cur) {
+      conds.push(sql`(${chatSessions.pinned} < ${cur.pinned} OR (${chatSessions.pinned} = ${cur.pinned} AND (${chatSessions.updatedAt} < ${cur.updatedAt} OR (${chatSessions.updatedAt} = ${cur.updatedAt} AND ${chatSessions.id} < ${cur.id}))))`);
+    }
+    const rows = await this.db.select().from(chatSessions).where(and(...conds))
+      .orderBy(sql`${chatSessions.pinned} DESC`, sql`${chatSessions.updatedAt} DESC`, sql`${chatSessions.id} DESC`)
+      .limit(limit + 1);
+    const items = rows.slice(0, limit);
+    const last = items.at(-1);
+    return { items, nextCursor: rows.length > limit && last ? encodeCursor(last) : null };
+  }
+
+  /** How many rail sessions each agent has (key '' = no agent), split into
+   *  chats and loop / heartbeat sessions. */
+  async railCounts(workspaceId: string, opts: { archived?: boolean; q?: string } = {}): Promise<Map<string, { chats: number; loops: number }>> {
+    const rows = await this.db.select({
+      agentId: chatSessions.agentId,
+      loops: sql<number>`SUM(CASE WHEN ${chatSessions.name} LIKE 'Loop · %' THEN 1 ELSE 0 END)`,
+      total: sql<number>`COUNT(*)`,
+    }).from(chatSessions).where(this.railWhere(workspaceId, { ...opts, loops: 'any' })).groupBy(chatSessions.agentId);
+    const out = new Map<string, { chats: number; loops: number }>();
+    for (const r of rows) out.set(r.agentId ?? '', { chats: Number(r.total) - Number(r.loops), loops: Number(r.loops) });
+    return out;
+  }
+
   /** Whether the current actor may open this session at all. */
   canView(session: Pick<ChatSession, 'shared' | 'initiatedBy'>): boolean {
     const viewer = currentViewer();
@@ -119,6 +174,9 @@ export class ChatsRepository {
       // unless shared either).
       initiatedBy: input.initiatedBy ?? (currentViewer()?.memberAccountId ?? ''),
       shared: input.shared ?? 0,
+      autoArchiveDays: input.autoArchiveDays ?? null,
+      taskKind: input.taskKind ?? null,
+      taskId: input.taskId ?? null,
       createdAt: now,
       updatedAt: now,
     };
@@ -240,6 +298,9 @@ export class ChatsRepository {
         distilledAt: null,
         initiatedBy: currentViewer()?.memberAccountId ?? '',
         shared: 0,
+        autoArchiveDays: null,
+        taskKind: null,
+        taskId: null,
         createdAt: now,
         updatedAt: now,
       };
@@ -398,4 +459,18 @@ export class ChatsRepository {
     `);
     return fuzzy.rows as Array<{ sessionId: string; sessionName: string; role: string; content: string; createdAt: string }>;
   }
+}
+
+/** The rail cursor: the last row's sort key, base64url so clients treat it as opaque. */
+function encodeCursor(s: Pick<ChatSession, 'pinned' | 'updatedAt' | 'id'>): string {
+  return Buffer.from(JSON.stringify([s.pinned, s.updatedAt, s.id])).toString('base64url');
+}
+
+function decodeCursor(raw: string | null | undefined): { pinned: number; updatedAt: string; id: string } | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
+    if (Array.isArray(v) && typeof v[0] === 'number' && typeof v[1] === 'string' && typeof v[2] === 'string') return { pinned: v[0], updatedAt: v[1], id: v[2] };
+  } catch { /* a malformed cursor reads as the first page */ }
+  return null;
 }

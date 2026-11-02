@@ -876,7 +876,12 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     const ws = await this.workspaces.get(org.workspaceId).catch(() => null);
     const name = `${SESSION_PREFIX}${org.name} · ${task.title.slice(0, 48)}`;
     const existing = (await this.repo.listSessions(org.workspaceId)).find((s) => s.agentId === agentId && s.name === name);
-    const session = existing ?? await this.repo.createSession({ workspaceId: org.workspaceId, agentId, name, permissionMode: 'auto' });
+    // The per-task session is linked to its task and starts with the agent's
+    // auto-archive default (docs/chat-archiving.md); a session from before
+    // the link existed is linked on its next run.
+    const agentArchiveDays = (agent as { chatAutoArchiveDays?: number | null }).chatAutoArchiveDays ?? null;
+    const session = existing ?? await this.repo.createSession({ workspaceId: org.workspaceId, agentId, name, permissionMode: 'auto', taskKind: 'org', taskId, autoArchiveDays: agentArchiveDays });
+    if (existing && !existing.taskId) await this.repo.updateSession(existing.id, { taskKind: 'org', taskId, autoArchiveDays: existing.autoArchiveDays ?? agentArchiveDays }).catch(() => undefined);
     if (this.turns.isBusy(session.id)) {
       await this.settle(orgId, { agentId, projectId: task.projectId }, estimate, 0);
       if (claimed) await this.tasks.release(orgId, taskId, run.id, 'todo');

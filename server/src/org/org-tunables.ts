@@ -20,7 +20,7 @@ export interface TunableDef {
   /** One line for the CEO and the chief. */
   description: string;
   /** Who else reads it, for the settings card. */
-  area: 'intent' | 'planning' | 'rituals' | 'assurance' | 'heartbeat' | 'brief' | 'capital' | 'memory' | 'sensing' | 'incidents' | 'actions' | 'trust' | 'experiments' | 'predictions' | 'boundary' | 'evals' | 'capacity' | 'seat' | 'chief';
+  area: 'intent' | 'planning' | 'rituals' | 'assurance' | 'heartbeat' | 'brief' | 'capital' | 'memory' | 'sensing' | 'incidents' | 'actions' | 'trust' | 'experiments' | 'predictions' | 'boundary' | 'evals' | 'capacity' | 'seat' | 'chief' | 'chat';
 }
 
 /** The registry: item 18's keys here, other items' keys through registerTunables. */

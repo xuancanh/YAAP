@@ -10,7 +10,7 @@ import { Body, Controller, Delete, Get, Optional, Param, Patch, Post, Query, Res
 import type { Response } from 'express';
 import { AccountsService } from '../accounts/accounts.service';
 import { actorId } from '../accounts/account-context';
-import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
 import { ChatsService } from './chats.service';
 import { TurnLoopService, ApprovalDecision } from './turn-loop.service';
 import { CompactionService } from './compaction.service';
@@ -40,6 +40,9 @@ class UpdateChatDto {
   /** Shared workspaces: visible to every member (true) or the creator and
    *  the owner only (false). */
   @IsOptional() @IsBoolean() shared?: boolean;
+  /** Auto-archive (docs/chat-archiving.md): days after the linked task is
+   *  finished; 0 = off; null = the workspace default. */
+  @IsOptional() @ValidateIf((_o, v) => v !== null) @IsInt() @Min(0) @Max(365) autoArchiveDays?: number | null;
 }
 
 class SendTurnDto {
@@ -72,6 +75,34 @@ export class ChatsController {
   @Get()
   list(@Query('workspaceId') workspaceId: string, @Query('archived') archived?: string) {
     return this.chats.list(workspaceId, archived === 'true');
+  }
+
+  /** The Home rail (docs/chat-archiving.md): `limits` is `agentId:count`
+   *  pairs (comma-separated; '' = agent-less) for groups showing more than
+   *  `perAgent`. */
+  @Get('rail')
+  rail(@Query('workspaceId') workspaceId: string, @Query('perAgent') perAgent?: string, @Query('limits') limits?: string, @Query('q') q?: string) {
+    const parsed: Record<string, number> = {};
+    for (const pair of (limits ?? '').split(',')) {
+      const i = pair.lastIndexOf(':');
+      if (i < 0) continue;
+      const n = Number(pair.slice(i + 1));
+      if (Number.isFinite(n) && n > 0) parsed[pair.slice(0, i)] = n;
+    }
+    return this.chats.rail(workspaceId, { perAgent: perAgent ? Number(perAgent) || undefined : undefined, limits: parsed, q });
+  }
+
+  /** One page of chats: `agentId` ('none' = agent-less; omitted = all),
+   *  `loops` only | exclude, `archived`, `q`, `limit`, `cursor`. */
+  @Get('page')
+  page(@Query('workspaceId') workspaceId: string, @Query('agentId') agentId?: string, @Query('archived') archived?: string,
+    @Query('loops') loops?: string, @Query('q') q?: string, @Query('limit') limit?: string, @Query('cursor') cursor?: string) {
+    return this.chats.page(workspaceId, {
+      agentId: agentId === undefined || agentId === '' ? undefined : agentId === 'none' ? null : agentId,
+      archived: archived === 'true',
+      loops: loops === 'only' || loops === 'exclude' ? loops : 'any',
+      q, limit: limit ? Number(limit) || undefined : undefined, cursor: cursor || null,
+    });
   }
 
   @Post() create(@Body() dto: CreateChatDto) { return this.chats.create(dto); }

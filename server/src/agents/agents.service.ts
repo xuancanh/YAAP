@@ -292,7 +292,7 @@ export class AgentsService {
     return ensureAgentHome(this.db, this.storage, row);
   }
 
-  async update(id: string, input: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string; agentTypeId: string | null; applyToChats: boolean }>) {
+  async update(id: string, input: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string; agentTypeId: string | null; applyToChats: boolean; chatAutoArchiveDays: number | null }>) {
     await this.get(id);
     // homeDir is allocated at creation and moves only with the agent
     // (docs/filesystem.md): never set through an update.
@@ -311,6 +311,10 @@ export class AgentsService {
       if (!ok) throw new BadRequestException('colors must be a JSON pair of hex colours, e.g. ["#8b8cf0","#5cc2f2"]');
     }
     if (patch.model !== undefined) patch.model = patch.model.trim().slice(0, 120);
+    if (patch.chatAutoArchiveDays !== undefined && patch.chatAutoArchiveDays !== null) {
+      const d = Number(patch.chatAutoArchiveDays);
+      if (!Number.isInteger(d) || d < 0 || d > 365) throw new BadRequestException('chatAutoArchiveDays must be 0–365 days (0 = off) or null for the workspace default');
+    }
     // The model setting (agent type + model): the type gives provider, key and
     // base URL. Changing it can carry over to the agent's existing chats.
     if (patch.agentTypeId !== undefined) {

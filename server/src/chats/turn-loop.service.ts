@@ -477,6 +477,14 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     return true;
   }
 
+  /** Whether any tool call of this session is paused on an approval (the
+   *  auto-archive sweep never archives such a chat). */
+  hasPendingApproval(sessionId: string): boolean {
+    const prefix = `${sessionId}:`;
+    for (const key of this.pending.keys()) if (key.startsWith(prefix)) return true;
+    return false;
+  }
+
   /** Whether an approval is still open, and for whom (the inbox's decide route). */
   pendingApproval(sessionId: string, callId: string): { open: boolean; routedTo?: string } {
     const key = `${sessionId}:${callId}`;

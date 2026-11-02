@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Optional, Param, Patch, Post, Query } from '@nestjs/common';
-import { IsArray, IsBoolean, IsIn, IsOptional, IsString, ValidateIf } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
 import { AgentsService } from './agents.service';
 import { AgentMemoryService } from './agent-memory.service';
 import { ConnectionsService } from '../connections/connections.service';
@@ -44,6 +44,9 @@ class UpdateAgentDto {
   @IsOptional() @ValidateIf((_o, v) => v !== null) @IsString() agentTypeId?: string | null;
   /** With agentTypeId/model: also switch the agent's existing chats. */
   @IsOptional() @IsBoolean() applyToChats?: boolean;
+  /** Default auto-archive for the agent's new task chats (docs/chat-archiving.md):
+   *  days after the task is finished; 0 = off; null = the workspace default. */
+  @IsOptional() @ValidateIf((_o, v) => v !== null) @IsInt() @Min(0) @Max(365) chatAutoArchiveDays?: number | null;
 }
 
 class MoveAgentDto {

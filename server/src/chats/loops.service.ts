@@ -40,6 +40,7 @@ import { ConnectionsService, ConnectionDegradedError } from '../connections/conn
 import type { CalendarEventSummary, MailSummary } from '../connections/connections.poll';
 import { ChatsRepository, LoopStateRow } from './chats.repository';
 import { TurnLoopService } from './turn-loop.service';
+import { ChatArchiveService } from './chat-archive.service';
 import { DistillService } from './distill.service';
 import { cronMatches } from './cron.util';
 import { deliveryFor } from '../workspaces/quiet-hours';
@@ -104,6 +105,8 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     /** Optional: without accounts, the tick runs for the current (single)
      *  account only; with them, once per active account under its context. */
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: without it finished-task chats are never auto-archived. */
+    @Optional() private readonly archive?: ChatArchiveService,
   ) {
     bus?.onTaskAdded((ev) => { void this.onTaskAdded(ev.agentId, ev.task); });
   }
@@ -145,6 +148,13 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     if (now.getMinutes() % 10 === 0) {
       await this.distillSweep(now).catch((err) => {
         this.logger.warn(`distill sweep failed: ${err instanceof Error ? err.message : err}`);
+      });
+    }
+    // auto-archive (docs/chat-archiving.md): once an hour, archive the chats
+    // whose task has been finished for their window.
+    if (now.getMinutes() === 23 && this.archive) {
+      await this.archive.sweep(now).catch((err) => {
+        this.logger.warn(`auto-archive sweep failed: ${err instanceof Error ? err.message : err}`);
       });
     }
     const stamp = now.toISOString().slice(0, 16); // minute resolution

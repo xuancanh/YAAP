@@ -875,7 +875,7 @@ export interface OrgIntentNode extends OrgGoal {
 }
 export interface OrgVisionInfo { vision: OrgGoal | null; rules: string; values: string; culture: string }
 export interface OrgProfile { values: string; culture: string; rules: string; mission: string }
-export type TunableArea = 'intent' | 'planning' | 'rituals' | 'assurance' | 'heartbeat' | 'brief';
+export type TunableArea = 'intent' | 'planning' | 'rituals' | 'assurance' | 'heartbeat' | 'brief' | 'chat';
 /** GET …/org/tunables — every tunable with its default, bound, area and the org's effective/stored value. */
 export interface OrgTunable { key: string; default: number; min: number; max: number; description: string; area: TunableArea; value: number; stored: number | null }
 export interface OrgCheckin { id: string; orgId: string; goalId: string; actor: string; currentValue: number | null; confidence: number | null; note: string; createdAt: string }

@@ -26,6 +26,34 @@ export class ChatsService {
     return this.repo.listSessions(workspaceId, { archived });
   }
 
+  /** The Home rail in one call (docs/chat-archiving.md "The rail"): per agent
+   *  (key '' = the workspace's agent-less chats) the chat count, the first
+   *  `limits[key] ?? perAgent` chats (pinned first, newest next) with the
+   *  cursor of the next page, and the loop / heartbeat sessions folded into
+   *  one row; plus the archived count. With `q`, only matching chats count
+   *  and show, so a search reaches into collapsed groups. */
+  async rail(workspaceId: string, opts: { perAgent?: number; limits?: Record<string, number>; q?: string } = {}) {
+    const perAgent = Math.max(1, Math.min(100, Math.floor(opts.perAgent ?? 5)));
+    const q = (opts.q ?? '').trim();
+    const counts = await this.repo.railCounts(workspaceId, { q });
+    const groups = await Promise.all([...counts.entries()].map(async ([key, c]) => {
+      const agentId = key || null;
+      const limit = Math.max(1, Math.min(500, Math.floor(opts.limits?.[key] ?? perAgent)));
+      const page = c.chats > 0 ? await this.repo.pageSessions(workspaceId, { agentId, loops: 'exclude', q, limit }) : { items: [], nextCursor: null };
+      const loops = c.loops > 0 ? await this.repo.pageSessions(workspaceId, { agentId, loops: 'only', q, limit: 20 }) : { items: [], nextCursor: null };
+      return { agentId, total: c.chats, items: page.items, nextCursor: page.nextCursor, loops: { total: c.loops, items: loops.items } };
+    }));
+    let archivedTotal = 0;
+    for (const c of (await this.repo.railCounts(workspaceId, { archived: true, q })).values()) archivedTotal += c.chats + c.loops;
+    return { groups, archivedTotal };
+  }
+
+  /** One page of the rail: an agent's chats ('none' = agent-less), its loop
+   *  sessions, or the archive. */
+  page(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; loops?: 'only' | 'exclude' | 'any'; q?: string; limit?: number; cursor?: string | null }) {
+    return this.repo.pageSessions(workspaceId, opts);
+  }
+
   /** A member of a shared workspace may open shared sessions and their own;
    *  a private session of someone else is a 404 to them, not a 403 — its
    *  existence is theirs to disclose. */
@@ -58,7 +86,7 @@ export class ChatsService {
     return this.repo.createSession(input);
   }
 
-  async update(id: string, patch: Partial<Pick<ChatSession, 'name' | 'draft' | 'permissionMode' | 'thinkingEffort' | 'model' | 'agentTypeId' | 'tokenCeiling' | 'cwd'>> & { pinned?: boolean; tags?: string[] }) {
+  async update(id: string, patch: Partial<Pick<ChatSession, 'name' | 'draft' | 'permissionMode' | 'thinkingEffort' | 'model' | 'agentTypeId' | 'tokenCeiling' | 'cwd' | 'autoArchiveDays'>> & { pinned?: boolean; tags?: string[] }) {
     await this.get(id);
     const set: Record<string, unknown> = { ...patch };
     if (patch.pinned !== undefined) set.pinned = patch.pinned ? 1 : 0;
@@ -152,6 +180,13 @@ export class ChatsService {
       origin: 'promote',
       sessionId: id,
     });
+    // A chat with no task yet becomes this task's chat (docs/chat-archiving.md):
+    // it can auto-archive once the task is finished and the chat is quiet.
+    if (!session.taskId) {
+      const agent = await this.agents.get(session.agentId).catch(() => null);
+      const days = (agent as { chatAutoArchiveDays?: number | null } | null)?.chatAutoArchiveDays ?? null;
+      await this.repo.updateSession(id, { taskKind: 'agent', taskId: task.id, autoArchiveDays: session.autoArchiveDays ?? days });
+    }
     const handoff = { task: `[${task.id.slice(0, 8)}] ${task.title}`.slice(0, 140), taskId: task.id, at: nowIso() };
     await this.repo.updateTurn(turnId, { taskHandoff: JSON.stringify(handoff) });
     return handoff;

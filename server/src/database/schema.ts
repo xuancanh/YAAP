@@ -130,6 +130,11 @@ export const agents = pgTable('agents', {
   heartbeatCron: text('heartbeatCron').notNull().default(''),
   heartbeatDailyRunCap: integer('heartbeatDailyRunCap'),
   heartbeatStaleMinutes: integer('heartbeatStaleMinutes'),
+  /** The agent's default auto-archive for its new task chats
+   *  (docs/chat-archiving.md): null = the workspace's `chat.autoArchiveDays`,
+   *  0 = off, n = days after the task is finished. Copied onto a task chat
+   *  when it is created. */
+  chatAutoArchiveDays: integer('chatAutoArchiveDays'),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -283,6 +288,15 @@ export const chatSessions = pgTable('chat_sessions', {
    *  (1) or only its creator and the owner (0). */
   initiatedBy: text('initiatedBy').notNull().default(''),
   shared: integer('shared').notNull().default(0),
+  /** Auto-archive (docs/chat-archiving.md, migration 0051): days after the
+   *  linked task is finished (and the chat has gone quiet) before the sweep
+   *  archives the chat. null = follow the workspace's `chat.autoArchiveDays`
+   *  tunable; 0 = off. Only chats linked to a task are ever swept. */
+  autoArchiveDays: integer('autoArchiveDays'),
+  /** The task this chat works on: 'org' (org_tasks) | 'agent' (agent_tasks,
+   *  the kanban board) | null. */
+  taskKind: text('taskKind'),
+  taskId: text('taskId'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });

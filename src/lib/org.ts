@@ -207,8 +207,8 @@ export function sloTiles(today: { cycleTimeHours: number | null; firstReviewAcce
 
 // ---- tunables (§1b) ----
 
-export const AREA_LABEL: Record<TunableArea, string> = { intent: 'Intent', planning: 'Planning', rituals: 'Rituals', assurance: 'Assurance', heartbeat: 'Heartbeat', brief: 'Brief' };
-const AREA_ORDER: TunableArea[] = ['intent', 'planning', 'rituals', 'assurance', 'heartbeat', 'brief'];
+export const AREA_LABEL: Record<TunableArea, string> = { intent: 'Intent', planning: 'Planning', rituals: 'Rituals', assurance: 'Assurance', heartbeat: 'Heartbeat', brief: 'Brief', chat: 'Chats' };
+const AREA_ORDER: TunableArea[] = ['intent', 'planning', 'rituals', 'assurance', 'heartbeat', 'brief', 'chat'];
 
 /** Tunables grouped by area in a fixed order, keys sorted within. */
 export function groupTunables(list: OrgTunable[]): Array<{ area: TunableArea; rows: OrgTunable[] }> {

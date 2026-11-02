@@ -79,6 +79,8 @@ export const TOOL_CLASSES: Record<string, Classifier> = {
   trust_status: 'read',
   // follows (follows/follows.tools.ts): only the agent's own follow rows change — free, no approval
   follow: 'read', unfollow: 'read', list_follows: 'read',
+  // chat auto-archive (chats/chat-archive.service.ts): only the agent's own chats' setting changes — free, no approval
+  set_chat_auto_archive: 'read',
   // code runner: a sandbox with no credentials; the workspace is what it writes
   run_js: 'internal_write', run_python: 'internal_write',
   // browser (credential-free, incognito per turn): reads read; a click or keystroke can submit a form
@@ -122,7 +124,7 @@ export const FREE_INTERNAL_TOOLS: ReadonlySet<string> = new Set([
   ...WORKSPACE_FILE_WRITES,
   // agent self-maintenance and proposals (turn-loop.service.ts AGENT_TOOLS)
   'update_dashboard', 'save_app', 'delegate_task', 'add_task', 'update_task',
-  'draft_skill', 'revise_skill', 'save_tool', 'update_user_profile',
+  'draft_skill', 'revise_skill', 'save_tool', 'update_user_profile', 'set_chat_auto_archive',
   // the organization's work record (board, goals, check-ins, timelines, reviews)
   'org_message', 'org_create_task', 'org_assign', 'org_task_update', 'org_task_comment',
   'org_request_review', 'org_review', 'org_escalate', 'org_check_in', 'org_set_goal', 'org_set_key_result',
