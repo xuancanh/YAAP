@@ -11,6 +11,7 @@ import { ChannelView } from './components/ChannelView';
 import { FilesView } from './components/FilesView';
 import { AppsGallery } from './components/AppsView';
 import { ArtifactPanel } from './components/ArtifactPanel';
+import { useMarketNav } from './lib/market';
 
 /** Heavyweight views load on demand; ChatView stays eager (the hot path). */
 const AgentsDirectory = lazy(() => import('./components/AgentsView').then((m) => ({ default: m.AgentsDirectory })));
@@ -45,7 +46,6 @@ function WorkspaceOff() {
 
 function Layout() {
   const app = useApp();
-  const [marketCat, setMarketCat] = useState('All');
   const [settingsPane, setSettingsPane] = useState(() => new URLSearchParams(window.location.search).get('pane') ?? 'providers');
 
   const sec = app.section;
@@ -53,6 +53,8 @@ function Layout() {
   // panes render in the Workspace section's main pane; the files live in
   // their own Artifacts section.
   const orgOn = app.companiesEnabled && app.wsOrg !== null && app.wsOrg.mode !== 'off';
+  // The Market's Personal | Business switch defaults to Business for a company.
+  const market = useMarketNav(orgOn);
   const orgOpen = sec === 'workspace' && orgOn;
   const detailActive =
     ((sec === 'home' || sec === 'artifacts') && app.mobileChatOpen) ||
@@ -60,8 +62,9 @@ function Layout() {
   const showSecondary = app.stacked ? !detailActive : true;
   const showMain = app.stacked ? !showSecondary : true;
 
-  const secTitle = sec === 'home' ? 'Channels & chats' : sec === 'workspace' ? 'Company' : sec === 'artifacts' ? 'Artifacts' : sec === 'market' ? 'Categories' : 'Settings';
-  const hasSecondary = sec !== 'overview' && sec !== 'agents' && sec !== 'apps' && sec !== 'inbox'; // Home, the agent directory, apps gallery and the Inbox are full-width
+  const secTitle = sec === 'home' ? 'Channels & chats' : sec === 'workspace' ? 'Company' : sec === 'artifacts' ? 'Artifacts' : sec === 'market' ? 'Market' : 'Settings';
+  const hasSecondary = sec !== 'overview' && sec !== 'agents' && sec !== 'apps' && sec !== 'inbox' // Home, the agent directory, apps gallery and the Inbox are full-width
+    && !(sec === 'market' && app.stacked); // on a phone the Market view carries its own segment switch and chips
 
   return (
     <div data-theme={app.theme} style={{ height: '100vh', display: 'flex', position: 'relative', background: 'var(--bg)', color: 'var(--text)', fontSize: 14, overflow: 'hidden', paddingBottom: app.stacked ? 58 : 0 }}>
@@ -74,7 +77,7 @@ function Layout() {
           {sec === 'home' && <HomeRail />}
           {sec === 'workspace' && <WorkspaceRail />}
           {sec === 'artifacts' && <ArtifactsRail />}
-          {sec === 'market' && <MarketRail cat={marketCat} setCat={setMarketCat} />}
+          {sec === 'market' && <MarketRail nav={market.nav} setNav={market.setNav} />}
           {sec === 'settings' && <SettingsRail pane={settingsPane} setPane={setSettingsPane} />}
         </aside>
       )}
@@ -91,7 +94,7 @@ function Layout() {
           {sec === 'workspace' && (orgOpen ? <Suspense fallback={viewFallback}><OrganizationView /></Suspense> : <WorkspaceOff />)}
           {sec === 'artifacts' && <FilesView />}
           {sec === 'inbox' && <Suspense fallback={viewFallback}><InboxView /></Suspense>}
-          {sec === 'market' && <Suspense fallback={viewFallback}><MarketView cat={marketCat} setCat={setMarketCat} /></Suspense>}
+          {sec === 'market' && <Suspense fallback={viewFallback}><MarketView nav={market.nav} setNav={market.setNav} /></Suspense>}
           {sec === 'settings' && <Suspense fallback={viewFallback}><SettingsView pane={settingsPane} /></Suspense>}
         </main>
       )}

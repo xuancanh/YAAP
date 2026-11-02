@@ -10,23 +10,9 @@ import { NewWorkspaceWizard } from './NewWorkspaceWizard';
 import { ArtifactTree } from './ArtifactTree';
 import { createFile, createFolder, workspaceSource } from '../lib/artifacts';
 import { COMPANY_GROUPS } from '../lib/inbox';
+import { bizFunctions, bySegment, marketCats, SEGMENT_LABEL, type MarketNav, type MarketSegment } from '../lib/market';
 
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '2px 18px 8px' };
-
-/** Rail chip order: professional clusters first, then personal life; anything
- *  the catalog adds beyond this list appends at the end. */
-const CAT_ORDER = [
-  'Workplace', 'Product & Engineering', 'Education', 'Legal & Finance', 'Writing & Media',
-  'Care & Community', 'Property & Field', 'Small Business',
-  'Family & Care', 'Home & Money', 'Health & Growth', 'Events & Travel', 'Hobbies & Leisure',
-];
-
-/** Category list for the market rails, in canonical order, 'All' first. Lives
- *  here (not in MarketView) so the rail doesn't pull the lazy view's chunk. */
-export function marketCats(market: Array<{ cat: string }>): string[] {
-  const found = Array.from(new Set(market.map((m) => m.cat)));
-  return ['All', ...CAT_ORDER.filter((c) => found.includes(c)), ...found.filter((c) => !CAT_ORDER.includes(c))];
-}
 
 function timeAgo(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -481,19 +467,39 @@ export function WorkspaceRail() {
   );
 }
 
-export function MarketRail({ cat, setCat }: { cat: string; setCat: (c: string) => void }) {
+/** The Market rail: the Personal | Business switch, then the personal
+ *  categories or the business functions, each with its count. */
+export function MarketRail({ nav, setNav }: { nav: MarketNav; setNav: (patch: Partial<MarketNav>) => void }) {
   const app = useApp();
-  const cats = marketCats(app.market);
+  const row = (key: string, label: React.ReactNode, count: number, active: boolean, onClick: () => void) => (
+    <button key={key} onClick={onClick} aria-current={active ? 'true' : undefined}
+      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', border: 'none', font: 'inherit', padding: '7px 9px', borderRadius: 8, cursor: 'pointer', fontSize: 12.5, margin: '1px 0', background: active ? 'var(--accent-dim)' : 'none', color: active ? 'var(--text)' : 'var(--text-dim)' }}>
+      <span style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{count}</span>
+    </button>
+  );
+  const personal = bySegment(app.market, 'personal');
+  const fns = bizFunctions(app.market);
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '2px 8px 12px' }}>
-      {cats.map((c) => (
-        <div key={c} onClick={() => setCat(c)} style={{ display: 'flex', alignItems: 'center', padding: '7px 9px', borderRadius: 8, cursor: 'pointer', fontSize: 12.5, margin: '1px 0', background: c === cat ? 'var(--accent-dim)' : 'none', color: c === cat ? 'var(--text)' : 'var(--text-dim)' }}>
-          <span style={{ flex: 1 }}>{c}</span>
-          <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{c === 'All' ? app.market.length : app.market.filter((m) => m.cat === c).length}</span>
-        </div>
-      ))}
+      <div role="tablist" aria-label="Market segment" style={{ display: 'flex', gap: 4, padding: 3, margin: '0 2px 8px', borderRadius: 10, background: 'var(--panel-2)', border: '1px solid var(--border-soft)' }}>
+        {(['personal', 'business'] as MarketSegment[]).map((s) => (
+          <button key={s} role="tab" aria-selected={nav.segment === s} onClick={() => setNav({ segment: s })}
+            style={{ flex: 1, border: 'none', font: 'inherit', fontSize: 12.5, fontWeight: 700, padding: '6px 8px', borderRadius: 8, cursor: 'pointer', background: nav.segment === s ? 'var(--panel)' : 'none', color: nav.segment === s ? 'var(--text)' : 'var(--text-dim)', boxShadow: nav.segment === s ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,.15))' : 'none' }}>
+            {SEGMENT_LABEL[s]} <span style={{ fontWeight: 500, color: 'var(--text-faint)' }}>{bySegment(app.market, s).length}</span>
+          </button>
+        ))}
+      </div>
+      {nav.segment === 'personal'
+        ? marketCats(app.market).map((c) => row(c, c, c === 'All' ? personal.length : personal.filter((m) => m.cat === c).length, c === nav.cat, () => setNav({ cat: c })))
+        : <>
+          {row('all', 'All functions', fns.reduce((n, f) => n + f.count, 0), nav.fn === '', () => setNav({ fn: '' }))}
+          {fns.map((f) => row(f.id, <><span aria-hidden style={{ width: 8, height: 8, borderRadius: 3, background: f.color, flex: 'none' }} />{f.label}</>, f.count, nav.fn === f.id, () => setNav({ fn: f.id })))}
+        </>}
       <div style={{ margin: '14px 8px 0', padding: 12, border: '1px solid var(--border-soft)', borderRadius: 11, background: 'var(--panel-2)', fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-        Registry profiles get a capability review before install — imported loops enable immediately.
+        {nav.segment === 'business'
+          ? 'Hire a function head and it hires its own team. Every hire shows its playbooks and loops for review first.'
+          : 'Registry profiles get a capability review before install — imported loops enable immediately.'}
       </div>
     </div>
   );

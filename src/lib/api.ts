@@ -527,6 +527,19 @@ export interface MarketItem {
   hired: boolean;
   /** Profession packs: skills installed (agent-private) on hire. */
   skills?: Array<{ name: string; description: string }>;
+  // The two-layer market (docs/agent-catalog.md "Segments and functions");
+  // optional: an item without a segment is personal.
+  segment?: 'personal' | 'business';
+  /** Business: the job function id (src/lib/market.ts BIZ_FUNCTIONS). */
+  function?: string;
+  level?: 'head' | 'specialist' | 'leadership';
+  /** Business: the pack id of the manager it reports to. */
+  reportsTo?: string;
+  kpis?: string[];
+  cadence?: string;
+  /** What "Hire into the company" sends as `templateOrPack` (`role:<id>` or
+   *  a pack id); null or absent when the pack has no company hire. */
+  orgHire?: string | null;
 }
 
 // ---- market registry (docs/registry.md) ----
