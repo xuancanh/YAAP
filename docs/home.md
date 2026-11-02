@@ -17,6 +17,8 @@ there, as **All agents** (section `agents`, `?section=agents`).
 Code:
 
 - `server/src/home/home.service.ts` (`HomeService`), `home.controller.ts`, `home.types.ts`
+- `server/src/home/agent-status.ts` (the per-agent status Home shares with
+  the agent overview and the org mission control, `docs/mission-control.md`)
 - `src/components/HomeView.tsx` (data, live updates, decisions, navigation)
 - `src/components/HomeBoard.tsx` (the page, presentational)
 - `src/lib/home.ts` (the copy and the link targets, pure)
@@ -135,9 +137,29 @@ happen:
 - an unread loop error or budget stop since the agent last ran;
 - a no-progress breaker on one of its tasks (two runs or more without
   progress);
-- its provider is degraded.
+- its provider is degraded (listed, but on its own it does not turn the
+  tile red: the turn falls back to another provider).
 
 **All agents** opens the full directory.
+
+**One status everywhere.** The tile's state comes from
+`server/src/home/agent-status.ts` (`agentStatuses`), the same helper behind
+an agent's Dashboard tab and the org chart's mission control
+(`docs/mission-control.md`), so an agent is never "working" on one screen
+and "blocked" on another. The precedence is error, paused, blocked,
+working, idle:
+
+- **error**: one of the loud errors above, other than a degraded provider;
+- **paused**: its seat or the whole company is paused;
+- **blocked**: nothing in progress, and one of its tasks is blocked;
+- **working**: a task in progress or claimed, a review it owes, a task on
+  its own board marked doing, or a turn running right now (the in-process
+  live-turn registry, `server/src/chats/live-turns.ts`);
+- **idle**: none of these.
+
+A blocked tile says what the task waits on: the latest blocker line, read
+by `blockerOf` (an escalation to you, an escalation to a teammate, a task
+it depends on), not the raw blockers list.
 
 **6. Activity.** Notable events of the week: tasks done or blocked,
 people, decisions, meetings held, incidents, files created or edited, and

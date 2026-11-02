@@ -268,6 +268,7 @@ for why.
 - [autonomous-company.md](docs/autonomous-company.md): research behind the task board, org runtime and tools.
 - [chief-of-staff.md](docs/chief-of-staff.md): the Chief of Staff's charter and derived operating system.
 - [home.md](docs/home.md): Home, the owner's mission control.
+- [mission-control.md](docs/mission-control.md): an agent's Dashboard tab and the org chart as mission control, on the status Home uses.
 - [owners-seat.md](docs/owners-seat.md): decision cards, defaults at deadline, delegation.
 - [group-chat.md](docs/group-chat.md): channels, threads, organization mode, units, meetings.
 - [follows.md](docs/follows.md): following threads and tasks.
