@@ -38,12 +38,15 @@ import { OrgController } from '../server/src/org/org.controller';
 import { WorkspaceOrgController } from '../server/src/org/workspace-org.controller';
 import { TUNABLES, tunable } from '../server/src/org/org-tunables';
 import { setAddressLookup } from '../server/src/common/url-guard';
+import { SkillsService } from '../server/src/skills/skills.service';
+import { workspaceFileKey } from '../server/src/storage/storage.keys';
+import { CHIEF_PACK_ID } from '../server/src/org/chief-os';
 
 setAddressLookup(async () => [{ address: '93.184.216.34', family: 4 }]);
 
 async function setup() {
   const db = await testDb();
-  const { stub } = memStorage();
+  const { stub, map } = memStorage();
   const bus = new TriggerBus();
   const agents = new AgentsService(db, stub, bus);
   const workspaces = new WorkspacesService(db, stub);
@@ -66,10 +69,11 @@ async function setup() {
   const mode = new OrgModeService(org, workspaces, agents, runtime, approvals, audit, announcer);
   const orgs = new OrgController(org, tasks, approvals, audit, brief, runtime, config, units, undefined, undefined, undefined, intent);
   const roles = new OrgRolesService();
-  const bootstrap = new OrgBootstrapService(org, workspaces, agents, mode, approvals, runtime, audit, intent, units, meetings, roles);
+  const skills = new SkillsService(db);
+  const bootstrap = new OrgBootstrapService(org, workspaces, agents, mode, approvals, runtime, audit, intent, units, meetings, roles, skills, stub);
   const controller = new WorkspaceOrgController(mode, orgs, config, meetings, undefined, undefined, undefined, undefined, undefined, bootstrap);
   const ws = (await workspaces.list())[0];
-  return { db, agents, workspaces, audit, org, units, intent, approvals, meetings, runtime, mode, bootstrap, controller, ws, announced };
+  return { db, agents, workspaces, audit, org, units, intent, approvals, meetings, runtime, mode, bootstrap, controller, ws, announced, skills, storage: stub, files: map };
 }
 
 const PROFILE = { values: 'ship weekly, never guess at numbers', culture: 'terse, async; never contact customers without approval' };
@@ -126,7 +130,10 @@ test('full happy path: creates the chief with the profile in its charter, enable
   assert.equal(payload.chief.created, true); assert.equal(payload.planning, 'queued'); assert.equal(payload.cadences.mode, 'light');
   assert.ok((await s.audit.list(r.orgId, { action: 'vision_set' })).length === 1);
   assert.ok((await s.audit.list(r.orgId, { action: 'profile_set' })).length === 1);
-  assert.equal((await s.audit.list(r.orgId, { action: 'tunable_set' })).length, 2);
+  // the two chosen tunables, plus what the operating system derived from the profile (the chosen keys win)
+  assert.ok(!r.operatingSystem.tunables.some((t) => t.key === 'planning.objectivesPerVision' || t.key === 'intent.checkInCadenceDays'));
+  assert.equal((await s.audit.list(r.orgId, { action: 'tunable_set' })).length, 2 + r.operatingSystem.tunables.length);
+  assert.equal(payload.operatingSystem.stage, r.operatingSystem.stage);
   await new Promise((res) => setTimeout(res, 60));
 });
 
@@ -158,7 +165,7 @@ test('cadence modes: none disables every ritual, default leaves them all on', as
   assert.equal((await a.audit.list(ra.orgId, { action: 'cadence_update' })).length, none.length);
 
   const b = await setup();
-  const rb = await b.bootstrap.bootstrap(b.ws.id, { mode: 'supervised', chief: { create: { name: 'Loud' } }, monthlyUsd: 0 });
+  const rb = await b.bootstrap.bootstrap(b.ws.id, { mode: 'supervised', chief: { create: { name: 'Loud' } }, monthlyUsd: 0, cadences: 'default' });
   const all = await b.meetings.cadences(rb.orgId);
   assert.equal(rb.cadences.mode, 'default'); assert.equal(rb.cadences.disabled, 0);
   assert.ok(all.length >= 4 && all.every((c) => c.enabled === 1));
@@ -264,4 +271,62 @@ test('the chief and every first hire belong to the bootstrapped workspace; a chi
   assert.ok(hired.length >= 1, 'at least one role hire was seated');
   for (const h of hired) assert.equal((await s.agents.get(h.agentId!)).workspaceId, target.id, `${h.role} lives in the target workspace`);
   assert.equal((await s.agents.list({ workspaceId: s.ws.id })).map((a) => a.id).join(), elsewhere.id, 'the default workspace gained nothing');
+});
+
+test('the chief of staff\'s operating system: derived from the profile, written as tunables within their bounds, the root rituals fitted to it (the default cadence mode), the pack\'s skills and loops on the chief and the ledger seeded under /org/ without clobbering', async () => {
+  const s = await setup();
+  // a file the CEO already wrote is kept
+  await s.storage.put(workspaceFileKey(s.ws.id, 'org/decisions.md'), Buffer.from('# Ours'));
+  const r = await s.bootstrap.bootstrap(s.ws.id, {
+    mode: 'supervised', chief: { create: { name: 'Nova' } }, monthlyUsd: 10,
+    vision: { title: 'Be forwarded', description: 'A pre-seed newsletter for climate finance people.' },
+    profile: { values: 'move fast; experiment boldly; never guess at numbers', culture: 'terse, async, written updates' },
+  });
+  assert.equal(r.cadences.mode, 'profile');
+  assert.equal(r.operatingSystem.stage, 'early');
+  assert.equal(r.operatingSystem.cultureType, 'adhocracy');
+  assert.equal(r.operatingSystem.archetype, 'generalist');
+  const row = await s.org.get(r.orgId);
+  assert.equal(tunable(row, 'chief.proxyLevel'), 0);
+  assert.equal(tunable(row, 'chief.handoffSlaHours'), 8);
+  assert.equal(tunable(row, 'planning.objectivesPerVision'), 2);
+  assert.ok(r.operatingSystem.tunables.length >= 5);
+  const why = (await s.audit.list(r.orgId, { action: 'tunable_set' })).map((a) => JSON.parse(a.payload).rationale as string);
+  assert.ok(why.every((w) => /derived from the operating profile/.test(w)));
+  // the root unit's rituals as derived: the standup stays (adhocracy), the leadership meeting is monthly, the retro stays
+  const root = await s.units.rootUnit(r.orgId);
+  const cad = (await s.meetings.cadences(r.orgId)).filter((c) => c.unitId === root.id);
+  assert.equal(cad.find((c) => c.kind === 'board')!.cron, '0 9 1-7 * 1');
+  assert.equal(cad.find((c) => c.kind === 'standup')!.enabled, 1);
+  assert.equal(r.cadences.retimed, 1);
+  // the chief's kit: every pack skill, private to it, and the four loops
+  const pack = OrgApprovalsService.catalogItem(CHIEF_PACK_ID)!;
+  const own = (await s.skills.list(undefined, r.chief.agentId)).filter((x) => x.agentId === r.chief.agentId).map((x) => x.name);
+  assert.equal(r.operatingSystem.skills, pack.skills!.length);
+  for (const sk of pack.skills!) assert.ok(own.includes(sk.name), sk.name);
+  const loops = JSON.parse((await s.agents.get(r.chief.agentId)).loops) as Array<{ name: string; cron: string }>;
+  assert.deepEqual(loops.map((l) => l.name), ['Operating-system sweep', 'Weekly business review pack', 'Monthly operating review', 'Quarterly planning kickoff']);
+  assert.equal(loops[0].cron, '30 7 * * 1-5', 'an hour before the 8:00 brief');
+  assert.equal(tunable(row, 'chief.preReadHours'), 48, 'never guessing at numbers is rigour: pre-reads two days ahead');
+  assert.equal(loops[1].cron, '0 16 * * 3', 'the pre-read deadline before the Friday weekly review');
+  // the charter is the rich one
+  assert.match((await s.agents.get(r.chief.agentId)).charter, /What you never do/);
+  // the ledger, never over an existing file
+  assert.ok(r.operatingSystem.artifacts.includes('/org/operating-system.md'));
+  assert.ok(!r.operatingSystem.artifacts.includes('/org/decisions.md'));
+  assert.equal(s.files.get(workspaceFileKey(s.ws.id, 'org/decisions.md'))!.toString(), '# Ours');
+  const os = s.files.get(workspaceFileKey(s.ws.id, 'org/operating-system.md'))!.toString();
+  assert.match(os, /Stage: \*\*early\*\*/); assert.match(os, /Culture type: \*\*adhocracy\*\*/);
+  assert.match(s.files.get(workspaceFileKey(s.ws.id, 'org/values.md'))!.toString(), /never guess at numbers \| none yet/);
+  assert.match(s.files.get(workspaceFileKey(s.ws.id, 'org/calendar.md'))!.toString(), /Leadership meeting \| Default \| `0 9 1-7 \* 1`/);
+
+  // an existing agent as chief keeps its own charter but gains the playbooks; explicit answers win; a bad answer refuses the call
+  const b = await setup();
+  const atlas = await b.agents.create({ name: 'Atlas', charter: 'You run things.', workspaceId: b.ws.id });
+  await assert.rejects(() => b.bootstrap.bootstrap(b.ws.id, { mode: 'supervised', chief: { agentId: atlas.id }, monthlyUsd: 0, profile: { stage: 'huge' as never } }), /profile\.stage/);
+  const rb = await b.bootstrap.bootstrap(b.ws.id, { mode: 'autonomous', chief: { agentId: atlas.id }, monthlyUsd: 0, profile: { values: 'compliance', stage: 'scale', cultureType: 'market' } });
+  assert.equal(rb.operatingSystem.stage, 'scale'); assert.equal(rb.operatingSystem.cultureType, 'market'); assert.equal(rb.operatingSystem.archetype, 'stand-in');
+  assert.equal((await b.agents.get(atlas.id)).charter, 'You run things.');
+  assert.ok(rb.operatingSystem.skills > 0);
+  assert.equal(tunable(await b.org.get(rb.orgId), 'chief.proxyLevel'), 2);
 });
