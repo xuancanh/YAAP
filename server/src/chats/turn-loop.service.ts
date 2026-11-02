@@ -87,11 +87,28 @@ export const RESTRICT_OWN_SKILLS = 'skill_*';
 /** The generic shape of the org hook, for other domains that offer tools to
  *  agents (the group chat's channel tools, docs/group-chat.md §2). Registered
  *  with `addToolProvider`; consulted after the org hook, never instead of it. */
+/** What a provider's executor may use beyond the call's input: the turn's
+ *  abort signal (the chat's Stop), a progress sink streamed to the client as
+ *  `tool_progress`, and the session's file root. All absent when the call
+ *  runs outside a live turn (a held action released by the owner). */
+export interface ToolExecCtx {
+  signal?: AbortSignal;
+  progress?: (text: string) => void;
+  fileRoot?: () => Promise<FileRoot>;
+}
+
 export interface ToolProviderHook {
   specsFor(session: ChatSession): Promise<AiToolSpec[]>;
   owns(name: string): boolean;
   isReadOnly(name: string): boolean;
-  execute(session: ChatSession, name: string, input: Record<string, unknown>): Promise<string>;
+  execute(session: ChatSession, name: string, input: Record<string, unknown>, ctx?: ToolExecCtx): Promise<string>;
+  /** The owner opted this call into running without a gate (code_agent's
+   *  per-agent opt-in, docs/coding-harnesses.md §5): it runs like the free
+   *  internal work of docs/permissions.md §8 — logged, frozen by an incident. */
+  runsFreely?(session: ChatSession, call: AiToolCall, origin: TurnOrigin): Promise<boolean>;
+  /** Without the action contract, a loop turn queues this call in the agent
+   *  inbox instead of running it (code execution, like run_js). */
+  queuesInLoops?(name: string): boolean;
   contextFor(session: ChatSession): Promise<string | null>;
   onToolCall?(sessionId: string, call: AiToolCall): string | null;
   /** Told after every executed tool call of an agent session with whether
@@ -115,6 +132,9 @@ export type TurnEvent =
    *  the action contract logged the call — its class, its action_log row, and
    *  whether it was held or staged for the owner's key. */
   | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ReviewRecord; actionClass?: string; actionId?: string; held?: 'held' | 'staged' }
+  /** A long-running tool reports what it is doing (code_agent's CLI steps,
+   *  docs/coding-harnesses.md §3); the card shows the latest lines. */
+  | { type: 'tool_progress'; id: string; name: string; text: string }
   /** The workspace's monthly spend stop is reached (phase 2.5): user turns
    *  still run, the client shows the badge; loop turns are refused instead. */
   | { type: 'budget'; month: string; spentTokens: number; budgetTokens: number }
@@ -350,6 +370,8 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
   private readonly extraProviders: ToolProviderHook[] = [];
   /** How long a paused approval waits before auto-deny (test seam). */
   approvalTtlMs = APPROVAL_TTL_MS;
+  /** sessionId → the progress sink of the tool call running now. */
+  private readonly progressSinks = new Map<string, (text: string) => void>();
   /** sessionId → the record-only recorder (see SandboxRecorder). */
   private readonly sandboxes = new Map<string, SandboxRecorder>();
 
@@ -776,7 +798,10 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
           // every kind of session: no pause, no ledger ask or hold, no
           // reviewer (docs/permissions.md §8). It is still logged and counted,
           // and an incident freeze still holds it.
-          const free = runsFreely(call.name) && !input.confined;
+          const optedIn = !runsFreely(call.name) && session.agentId && !input.confined
+            ? await this.providerOf(call.name)?.runsFreely?.(session, call, input.origin ?? 'user').catch(() => false) ?? false
+            : false;
+          const free = (runsFreely(call.name) || optedIn) && !input.confined;
           if (this.actions && !this.computer?.owns(call.name)) {
             const origin = input.origin ?? 'user';
             const provider = this.providerOf(call.name);
@@ -855,6 +880,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
           if (input.origin === 'loop' && session.agentId && !contract
             && ((this.connections?.owns(call.name) && this.connections.isReadOnly(call.name) === false)
               || this.runner?.owns(call.name)
+              || this.providerOf(call.name)?.queuesInLoops?.(call.name)
               || (this.browser?.owns(call.name) && this.browser.isReadOnly(call.name) === false))) {
             const summary = JSON.stringify(call.input).slice(0, 280);
             await this.agents.addEvent(session.agentId, {
@@ -1003,10 +1029,24 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
               isError = true;
               contract = null; // settled
             } else {
-              try {
-                output = await this.executeTool(session, call.name, call.input, skillsUsed);
-              } catch (err) {
-                output = `tool error: ${err instanceof Error ? err.message : String(err)}`;
+              // Run the tool while streaming whatever progress it reports.
+              const queue: string[] = [];
+              let wake: (() => void) | null = null;
+              this.progressSinks.set(sessionId, (text) => { if (queue.length < 200) queue.push(text.slice(0, 300)); wake?.(); });
+              let settled = false;
+              const running = this.executeTool(session, call.name, call.input, skillsUsed)
+                .then((o) => ({ ok: true as const, o }), (err: unknown) => ({ ok: false as const, err }))
+                .finally(() => { settled = true; wake?.(); });
+              while (!settled || queue.length > 0) {
+                if (queue.length === 0) await new Promise<void>((r) => { wake = r; if (settled || queue.length > 0) r(); });
+                wake = null;
+                while (queue.length > 0) yield { type: 'tool_progress', id: call.id, name: call.name, text: queue.shift()! };
+              }
+              this.progressSinks.delete(sessionId);
+              const ran = await running;
+              if (ran.ok) output = ran.o;
+              else {
+                output = `tool error: ${ran.err instanceof Error ? ran.err.message : String(ran.err)}`;
                 isError = true;
               }
             }
@@ -1158,7 +1198,11 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     const provider = this.providerOf(name);
     if (provider) {
       if (!session.agentId) throw new Error(`${name} is only available to durable agents`);
-      return provider.execute(session, name, input);
+      return provider.execute(session, name, input, {
+        signal: this.aborts.get(session.id)?.signal,
+        progress: this.progressSinks.get(session.id),
+        fileRoot: () => this.fileRootFor(session),
+      });
     }
     if (name.startsWith(CUSTOM_TOOL_PREFIX)) {
       if (!session.agentId) throw new Error(`unknown tool: ${name}`);

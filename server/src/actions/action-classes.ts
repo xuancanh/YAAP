@@ -83,6 +83,11 @@ export const TOOL_CLASSES: Record<string, Classifier> = {
   set_chat_auto_archive: 'read',
   // code runner: a sandbox with no credentials; the workspace is what it writes
   run_js: 'internal_write', run_python: 'internal_write',
+  // coding-agent CLIs (harness/harness.service.ts): execute code like run_js, in
+  // a temp copy of a workspace folder, syncing back through WorkspaceFs — kept
+  // gated (never in FREE_INTERNAL_TOOLS); the owner's per-agent opt-in is the
+  // provider's runsFreely, not this registry
+  code_agent: 'internal_write',
   // browser (credential-free, incognito per turn): reads read; a click or keystroke can submit a form
   browser_open: 'read', browser_read: 'read', browser_screenshot: 'read', browser_act: 'external_reversible',
   // Google connections (connections.tools.ts)

@@ -38,7 +38,7 @@ export function isOwnerOnlyRoute(method: string, path: string): boolean {
   if (/^\/api\/workspaces$/.test(p)) return true;
   if (/^\/api\/workspaces\/[^/]+$/.test(p)) return true;
   if (/^\/api\/workspaces\/[^/]+\/(members|invites|flow-rules)(\/|$)/.test(p)) return true;
-  if (/^\/api\/(settings|agent-types|mcp|skills|connections|computer|registry|market|push|admin)(\/|$)/.test(p)) return true;
+  if (/^\/api\/(settings|agent-types|mcp|skills|connections|computer|harness|registry|market|push|admin)(\/|$)/.test(p)) return true;
   if (/^\/api\/agents$/.test(p)) return true;
   if (/^\/api\/agents\/[^/]+$/.test(p)) return true;
   if (/^\/api\/agents\/[^/]+\/(lessons|tools|import|apps|loops)(\/|$)/.test(p)) return true;
