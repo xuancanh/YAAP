@@ -769,6 +769,7 @@ migrator on PGlite.
 | Evals and the seat | `org_eval_cases`, `org_eval_runs`, `org_delegations`, `org_value_events` (0044) |
 | Files | `workspace_files`, `workspace_file_revisions` (0047) |
 | Follows | `follows` (0048) |
+| Task keys | `task_key_counters`; the prefix on `org_units.taskKey` and `agents.taskKey`, the key on `org_tasks.key` and `agent_tasks.key` (0052, [tasks-keys.md](tasks-keys.md)) |
 
 The other migrations only add columns or backfill (for example 0038 assigns
 agents to workspaces). Mini apps have no table: their definitions are on the
