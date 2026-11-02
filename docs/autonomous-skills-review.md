@@ -17,12 +17,13 @@ step reads. **GAP** = no owner, trigger or artifact. **BROKEN** = the skill
 exists but cannot run (a tool not offered in that session, a hand-off
 nobody receives).
 
-Tool availability, as the runtime offers it after this change:
+Tool availability, as the runtime offers it after this change and the
+CEO's decisions (§4):
 
 | Role | Loops, heartbeat, chat | Task run | Reviewer run | Meeting |
 |---|---|---|---|---|
-| Specialist (member) | common board/intent tools, `org_task_update` / `org_task_comment` / `org_request_review`, playbooks and decisions, metric reads and task checks, `org_forecast_outcome`, `org_incidents` (own) / `org_report_incident`, `org_capacity`, `org_experiments`, `fs_*` | same | + `org_review`, `org_escalate` | `meeting_*` |
-| Function head (unit lead) | the member set + `org_assign`, `org_set_goal`, `org_set_key_result`, `org_unit_report`, `org_pulse`, `org_costs`, `org_forecast`, `org_escalate` (its unit's tasks), `org_eval_cases`, `org_calibration`, `org_propose_experiment`, `org_propose_metric_source`, `org_set_cadence`, `org_incidents` (own and its reports') | same | + `org_review` | `meeting_*` (facilitator: `meeting_close`) |
+| Specialist (member) | common board/intent tools, `org_task_update` / `org_task_comment` / `org_request_review`, `org_escalate` (to its manager), `org_costs` / `org_forecast` (read-only), playbooks and decisions, metric reads and task checks, `org_forecast_outcome`, `org_incidents` (own) / `org_report_incident`, `org_capacity`, `org_experiments`, `fs_*` | same | + `org_review` | `meeting_*` |
+| Function head (unit lead, or "Head of …" under the chief) | the member set + `org_assign`, `org_set_goal`, `org_set_key_result`, `org_unit_report`, `org_pulse`, `org_escalate` (its unit's tasks; to the chief, or `to: "ceo"`), `org_hire_agent` / `org_pause_agent` / `org_update_member` (its own reporting line), `org_eval_cases`, `org_calibration`, `org_propose_experiment`, `org_propose_metric_source`, `org_set_cadence`, `org_incidents` (own and its reports') | same | + `org_review` | `meeting_*` (facilitator: `meeting_close`) |
 | Chief of staff | everything except the auditor's two recording verbs | same | same | same |
 | Auditor (audit run) | — | — | — | read-only: board, goals, `org_intent`, `org_audit_query`, `org_signals`, `org_pulse`, `org_decisions`, `org_metric_sources`, `org_metric_read`, `fs_list` / `fs_read` / `fs_search`, its own playbooks, + `org_audit_finding`, `org_audit_close` |
 
@@ -76,13 +77,14 @@ providers' `specsFor`.
 | Step | Owning skill | Trigger | Tools | Artifact | Status |
 |---|---|---|---|---|---|
 | Capacity gap | head `<fn>-team-management` 5 | head loops | `org_capacity` | — | OK |
-| Hire case | head `<fn>-team-management` 5 | — | `org_create_task` (backlog) | case task | OK |
-| CoS decision | chief `function-reports-intake` 3–4 | heartbeat lists head requests | `org_hire_agent role:<id>` | card or plan | OK |
-| CEO decision card | runtime (`org_hire_agent` → approval in supervised) | — | — | card with default | OK |
+| Hire | head `<fn>-team-management` 5 | head loops | `org_hire_agent role:<fn>-<slug>` (own unit, cap, unit envelope) | card (supervised) or member | OK (decision 1: was a backlog case for the chief) |
+| CoS review | chief `function-reports-intake` 3–4 | inbox notice + group log on every head hire/pause; sweep | `org_audit_query`, `org_capacity`, `org_costs` | comment, issue, lifecycle case | OK (reviews, no longer executes) |
+| CEO decision card | runtime (`org_hire_agent` → approval in supervised, head or chief) | — | — | card with default | OK |
 | First staffing of a new workspace | chief `member-lifecycle-review` 2 | onboarding; monthly | `org_review_structure`, `org_hire_agent` | `/org/staffing/<yyyy-mm>.md` | OK (was GAP) |
 | Onboarding the hire | chief `member-lifecycle-review` 3 → head `<fn>-team-management` 6 → member built-in `org-member-onboarding` | after each hire | `org_create_task`, `org_assign`, `fs_read` | `~/onboarding.md`, `/org/<fn>/team.md` | OK (was GAP) |
 | Probation / eval | chief `member-lifecycle-review` 4–5 | monthly | `org_pulse`, `org_calibration`, `org_eval_role` | staffing file | OK (was GAP) |
-| Pause / terminate / model change | chief `member-lifecycle-review` 5–6 | monthly | `org_pause_agent`, `org_terminate_agent`, `org_update_member` | card or plan | OK (was GAP) |
+| Pause / model change | head `<fn>-team-management` 5 (its reports); chief `member-lifecycle-review` 5–6 | head loops; monthly | `org_pause_agent`, `org_update_member` | card or plan; chief told | OK (decision 1) |
+| Terminate | chief `member-lifecycle-review` 5 | monthly | `org_terminate_agent` | card or plan | OK (was GAP) |
 
 ### (e) Self-improvement
 
@@ -103,7 +105,7 @@ providers' `specsFor`.
 | Scope and spend | Auditor `audit-scope-and-spend` | same | `org_audit_query`, `org_pulse` | findings | OK |
 | Values → mechanism | chief `values-mechanism-audit` (proposes); Auditor `audit-values-and-culture` (verifies) | monthly; audit | `fs_read /org/values.md`, `org_audit_query` | findings | OK (independent half was GAP) |
 | Culture drift | same | same | `org_pulse`, `org_decisions` | findings | OK |
-| Head-requested assurance | head `<fn>-kpi-audit` ("Assurance request:" task) → chief intake 6 → Auditor `audit-ledger-and-metrics` 1 | audit cadence | `org_read_board` | findings citing the request | OK (was BROKEN: nobody received the request) |
+| Head-requested assurance | head `<fn>-kpi-audit` ("Assurance request:" task) → chief intake 6 → Auditor `audit-ledger-and-metrics` 1 | an open request brings the audit forward after `audit.assuranceDebounceHours` (decision 3); else the cadence | `org_read_board` | findings citing the request | OK (was BROKEN: nobody received the request) |
 
 ### (g) Cross-functional handoffs
 
@@ -113,7 +115,7 @@ providers' `specsFor`.
 | SDR → AE | SDR `meeting-handoff` | AE `discovery-call-prep` | Head of Sales | OK |
 | Sales → CS (closed-won) | AE `closed-won-handoff` (new) | CS onboarding `kickoff-plan` reads `/org/customer/handoffs/<account>.md` | heads + chief | OK (was BROKEN: the receiver read a handoff no one wrote) |
 | Product ↔ design ↔ engineering | `prd-spec`, `design-handoff-spec` | `engineering-sprint-planning` 3, `design-intake-triage` | heads | OK |
-| Finance budget cycle | heads' okr-planning (envelope), `finance-budget-vs-actuals` 3 asks owners | FP&A `driver-based-budget`, `monthly-reforecast` | Head of Finance | OK (was BROKEN: FP&A named capital tools specialists lack; now works from `/org/finance/spend/`) |
+| Finance budget cycle | heads' okr-planning (envelope), `finance-budget-vs-actuals` 3 asks owners | FP&A `driver-based-budget`, `monthly-reforecast` (reads `org_costs` / `org_forecast` live) | Head of Finance | OK (was BROKEN: FP&A named capital tools specialists lacked; decision 2 offers them to every member) |
 | Legal review | any member's backlog request (`org-member-workflow` 5) | `legal-intake-triage` | Head of Legal + chief | OK |
 | Any request between functions | built-in `org-member-workflow` 5 (requester) | `org-member-workflow` 6 + head `<fn>-weekly-review` handoffs step | chief `handoff-sla-monitor` | OK (was GAP: no provider-side skill, no SLA agreement) |
 
@@ -130,6 +132,7 @@ providers' `specsFor`.
 | Failure | Owning skill | Trigger | Status |
 |---|---|---|---|
 | Blocked task | member `org-member-workflow` 4; chief `escalation-and-blocker-sweep` 2 | heartbeat; sweep | OK (was GAP) |
+| Escalation chain | `org-member-workflow` 8: specialist → head (`Escalation:` task), head → chief (default) or CEO (`to: "ceo"`), chief → CEO | `org_escalate` | OK (decision 4) |
 | Abandoned task | `org-member-workflow` 7; sweep 3 | sweep | OK (was GAP) |
 | Provider / connection failure | runtime opens a minor incident; `org-member-workflow` 4; sweep 5 | sweep | OK (was GAP) |
 | No progress / loop breaker | runtime blocks; sweep 4 | sweep | OK (was GAP) |
@@ -183,9 +186,10 @@ providers' `specsFor`.
 7. Heads could not read their reports' incidents (`org_incidents` showed a
    lead only its own), so their postmortem skills could not start → leads now
    see their direct reports' incidents.
-8. FP&A named `org_costs`/`org_forecast`, which specialists are not offered →
-   the Head of Finance files a monthly extract at
-   `/org/finance/spend/<yyyy-mm>.md`, which FP&A reads.
+8. FP&A named `org_costs`/`org_forecast`, which specialists were not
+   offered → first worked around with a monthly extract at
+   `/org/finance/spend/<yyyy-mm>.md`; since decision 2 every member reads
+   the tools directly and the file is an optional monthly record.
 9. The improvement loop had producers and no reader: experiment results,
    calibration, repeated lessons, playbook retirement, golden-set coverage →
    chief `learning-loop-review`.
@@ -219,7 +223,7 @@ providers' `specsFor`.
 17. Eight heads carry a `<fn>-operating-cadence` skill whose first step
     duplicates `<fn>-weekly-review` step 1; harmless, left.
 18. The built-in org skills are global (every agent sees three more skill
-    tools); each says it does not apply outside a company.
+    tools); each says it does not apply outside a company. Kept by decision 5.
 
 ## 3. What changed
 
@@ -262,27 +266,78 @@ where the offered sets or the built-in count changed
 (`backend-org.test.ts`, `backend-org-assurance.test.ts`,
 `backend-skills.test.ts`, `helpers.ts` skills stub).
 
-## 4. Decisions for the CEO
+## 4. Decisions for the CEO — resolved
 
-These need a policy call, so they were not implemented.
+The CEO decided all five; the first four are implemented (runtime in
+`server/src/org/`, skills in `packs/*.md` and the built-ins), the fifth keeps
+the code as it is.
 
-1. **Heads hiring within their subtree.** Today only the chief hires
-   (`org_hire_agent`); heads bring cases. Letting a head hire a specialist
-   into its own unit within the agent cap and its envelope would cut a hop
-   from the staffing loop, at the cost of the chief's single view of
-   headcount.
-2. **Capital reads for finance specialists.** `org_costs`/`org_forecast` are
-   offered to the chief and unit leads. FP&A now works from the Head of
-   Finance's monthly extract; opening the reads to the finance function (or
-   to all members) would make it live, and would widen who sees spend per
-   member.
-3. **On-demand audits.** An `Assurance request:` waits for the next audit on
-   `auditCadenceDays`. The boundary keeps audit settings out of every agent's
-   reach (`never`); an open assurance request could instead shorten the wait
-   automatically (a runtime trigger, not an agent power). Is that wanted?
-4. **Direct escalation by specialists.** Specialists raise to their head by
-   blocking the task; only heads, reviewers and the chief escalate to the
-   CEO. Keep that, or let any member escalate its own task?
-5. **Global vs company-only built-in skills.** The three org built-ins are
-   visible to every agent, in and out of companies. Scoping built-ins to org
-   members needs a small skills-service change.
+1. **Function heads hire within their unit — yes.** A head (a unit lead, or a
+   member under the chief titled as a catalog `<fn>-manager`, so a new head
+   can hire its first specialist; `OrgRuntimeService.headOf`) gets
+   `org_hire_agent`, `org_pause_agent` and `org_update_member` for its own
+   reporting line. A head hire: reportsTo the head or one of its reports;
+   a role of its function (`role:<fn>-<slug>`), a generalist role or a
+   template, never another head, the chief or the auditor
+   (`headHireRefusal`); the agent cap counting pending hire cards; the
+   unit's envelope (the allocations to the objectives of its unit and the
+   units below, against the agent envelopes its line holds; the company
+   envelope when it has none) and the company envelope; scopes met with the
+   head's own holdings (`grantorAgentId`, re-met at apply). It routes through
+   `boundary.ts` exactly like the chief's (`hire:unit`, actor `agent:<head>`):
+   a card for the CEO in supervised mode, at once within the fences in
+   autonomous mode (`auto_hire`, actor the head). The chief keeps its view
+   of headcount: every head hire, pause and settings change sends it an
+   inbox notice (origin `org`, which its heartbeat surfaces) and a group-log
+   line. Skills: the 13 heads' `<fn>-team-management` step 5 hires, pauses
+   and re-tools directly (step 6 onboards its own hires); the chief's
+   `function-reports-intake` and `member-lifecycle-review` review the heads'
+   staffing instead of executing it; the charters (role catalog, chief pack)
+   say the same. Termination, scope widening, reorgs and envelopes stay the
+   chief's.
+2. **Spend reads for every member — yes.** `org_costs` and `org_forecast`
+   (read-only) are offered to every member; a member sees the company view
+   unless it names a unit. Nothing that commits or moves money is offered
+   (`org_allocate_budget`, `org_set_routing`, `org_tune` stay the chief's;
+   the tests check none leaks). FP&A reads the tools directly; the Head of
+   Finance's `/org/finance/spend/<yyyy-mm>.md` is now an optional record.
+3. **On-demand audits — yes, as a runtime trigger.**
+   `OrgAuditorService.assuranceDue`: once the oldest open `Assurance
+   request:` task filed since the last audit is
+   `audit.assuranceDebounceHours` old, the tick runs an audit with trigger
+   `assurance` (its prompt says why). The window is the debounce: every
+   request filed in it is answered by that one audit, and a later request
+   waits its own window. The tunable (default 6 h, bound 1–168) sits under
+   `audit.*`, so it is never an agent's to change; onboarding derives it
+   from the profile (2 h when speed is a value, 24 h for a control or rigour
+   culture, 4 h early, else 6 h). Heads' kpi-audit skills and the chief's
+   intake say a request no longer needs chasing.
+4. **Escalation chain — specialists to their head, heads to the chief or the
+   CEO.** `org_escalate` is offered to every member. A specialist's blocks
+   the task and puts one open `Escalation: <title>` task on its manager's
+   board (a repeat is a comment that wakes it again) with an inbox event; no
+   CEO card. It cannot pass `to: "ceo"`. A head's goes the same way to the
+   chief by default, or with `to: "ceo"` to the CEO as a decision card. The
+   default is the chief because most of what a head cannot settle (another
+   function's priority, a hire across units, more envelope) is the chief's
+   to decide or to frame; `to: "ceo"` is for decisions only the CEO can make:
+   money beyond the envelope, a policy, strategy or values call, an external
+   commitment, a change the boundary reserves for the owner. The chief's
+   goes to the CEO. Skills: the built-in `org-member-workflow` step 8, the
+   heads' CEO-only escalations now say `to: "ceo"`, the deal desk escalates
+   through its manager, and the chief's intake and sweep answer `Escalation:`
+   tasks.
+5. **Built-in skills stay global — no change.** The three org built-ins
+   remain visible to every agent; each says it does not apply outside a
+   company.
+
+Tests: `tests/backend-org-chief.test.ts` (the role-aware tool check with the
+new sets; a head's hire within its line, outside it, another function, a
+head role, the auditor, the cap and the unit envelope refused; supervised
+cards requested by the head with its holdings; pause and settings with the
+chief told; the escalation chain), `tests/backend-org-assurance.test.ts`
+(the debounce, one audit for many requests, the tunable's boundary and
+profile derivation), `tests/backend-org-capital.test.ts` and
+`tests/backend-org.test.ts` (every member reads spend, none of the spend
+writers leak).
+

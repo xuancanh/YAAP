@@ -52,10 +52,16 @@ The charter has five parts (report: "Four taxonomies…", "Four limits…",
    a unit lead): the objective through `org_set_goal unit=…`, or a briefed
    task. It does the work itself only when nobody owns the function ("if 80%
    of a job is one function, it is that function's"). The heads report to
-   the chief weekly under `/org/<function>/reports/` and file hire, pause and
-   re-tooling cases as backlog tasks for it (`docs/agent-catalog.md`
-   "Business catalog"); the chief reads the reports into the weekly review
-   and decides each case within the boundary or puts it to the CEO.
+   the chief weekly under `/org/<function>/reports/` and staff their own
+   units: a head hires, pauses and re-tools its own reports within the agent
+   cap and its unit's envelope, through the boundary, and the chief is told
+   of each (`docs/agent-catalog.md` "Business catalog";
+   `docs/autonomous-skills-review.md` §4, decision 1). The chief reads the
+   reports into the weekly review, reviews the heads' staffing, answers what
+   they escalate to it (`org_escalate` defaults to the chief for a head), and
+   decides the cases that remain its own — a function's first head, hires
+   across units, terminations, more envelope — within the boundary or puts
+   them to the CEO.
 4. **Three tiers** (below).
 5. **Five failures** with their countermeasures (§6).
 
@@ -163,7 +169,9 @@ the chief only and model-free.
 - **Function owners** to route to (unit leads, "Head of …" and "… manager"
   titles), with a pointer to their reports under `/org/<function>/reports/`.
 - **Requests from function heads**: backlog tasks a head filed for the
-  chief (hire and pause cases, asks), oldest first.
+  chief (cases that stay the chief's, asks) and the `Escalation:` tasks a
+  head raised to it, oldest first. The heads' own hires, pauses and settings
+  changes arrive as inbox notices (origin `org`) and lines in the group log.
 
 A handoff that breached since the chief's last beat is a reason to wake;
 breaches already seen stay in the context only, so a stuck handoff does not
@@ -186,9 +194,10 @@ skills use only tools the server offers (`org_*`, plus `fs_read`/`fs_write`
 for the ledger):
 
 `operating-system-setup`, `function-reports-intake` (the heads' weekly
-reports and backlog cases: scorecard and risks from the reports with the
-report cited, incomplete cases sent back, hires through `org_hire_agent
-role:<id>` under the head, the rest to the CEO), `annual-planning`, `quarterly-planning` (grading,
+reports, escalations and cases: scorecard and risks from the reports with the
+report cited, the heads' own hires and pauses reviewed rather than redone,
+incomplete cases sent back, `Escalation:` tasks answered or taken to the CEO,
+the rest to the CEO), `annual-planning`, `quarterly-planning` (grading,
 the OKR cascade through function managers, a dependency map with
 acceptance), `weekly-business-review` (open items first, exceptions only,
 controllable inputs, "unknown" over invented causes), `exec-meeting-prep`
@@ -201,8 +210,10 @@ drift with numbers, gaps as questions), `ritual-retirement-review`,
 the remaining loops (docs/autonomous-skills-review.md):
 `escalation-and-blocker-sweep` (blocked, abandoned and breaker-stopped work,
 degraded providers, cards nearing their deadline and default while the CEO
-is away), `member-lifecycle-review` (first staffing, onboarding owner after
-each hire, probation, eval-gated model changes, pause and termination),
+is away), `member-lifecycle-review` (first staffing — the heads, whose
+specialists are then their own hires — the heads' staffing changes reviewed,
+onboarding owner after each hire, probation, eval-gated model changes, pause
+and termination),
 `learning-loop-review` (experiments, calibration, lessons into playbooks,
 golden sets) and `org-files-hygiene` (the ledger and the function folders
 complete, linked, archived, free of secrets).

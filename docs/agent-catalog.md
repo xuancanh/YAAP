@@ -274,8 +274,8 @@ set the chief of staff hires from.
   KPI definitions, act on the gaps), `<fn>-report` (the weekly function
   report: RAG with an explicit rule, metrics against target, risks, asks),
   `<fn>-team-management` (four-field briefs with checks, WIP from
-  `org_capacity`, reviews, written coaching, hire and pause cases for the
-  chief), plus 2-4 process skills for the function's own rituals (pipeline
+  `org_capacity`, reviews, written coaching, and the unit's own hires,
+  pauses and model changes, the chief told of each), plus 2-4 process skills for the function's own rituals (pipeline
   review and forecast call, month-end close, sprint planning and retro,
   queue review, hiring pipeline review, access review, ...). Loops carry
   the default cadence.
@@ -286,16 +286,34 @@ set the chief of staff hires from.
 playbooks use the lead's tool set (`org_set_goal`, `org_set_key_result`,
 `org_check_in`, `org_create_task`, `org_assign`, `org_review`,
 `org_escalate`, `org_unit_report`, `org_signals`, `org_capacity`,
+`org_costs`, `org_forecast`,
 `org_calibration`, `org_metric_read`, `org_set_cadence`,
 `org_write_playbook`, `org_propose_experiment`,
 `org_propose_metric_source`, `org_forecast_outcome`, `org_message`, ...).
-Structure stays with the chief: a head never calls `org_hire_agent`,
-`org_pause_agent`, `org_update_member` or `org_report`; it writes the case
-(role id, why, cost, alternatives, recommendation, confidence) as a backlog
-task for the chief, and CEO-only decisions go through `org_escalate` (offered
-to a head in its own loops too, for tasks on its unit's board). Every member
-keeps its tasks true outside a task run as well (`org_task_update`,
-`org_task_comment`, `org_request_review`), and three built-in skills carry
+A head staffs its own unit (docs/autonomous-skills-review.md §4, decision
+1): `org_hire_agent` for a specialist of its function (`role:<fn>-<slug>`,
+reporting to the head or one of its reports), `org_pause_agent` and
+`org_update_member` for its own reporting line. A head hire goes through the
+boundary like the chief's, with the head as the actor (supervised: a card
+for the CEO; autonomous: at once within caps), is bounded by the agent cap
+and the unit's envelope (the allocations to its objectives; the company
+envelope when it has none), never names another function's role, another
+head, the chief or the auditor, and its scopes meet the head's own holdings.
+The chief is told of every hire, pause and settings change (an inbox notice
+and a line in the group log) and reviews them in `function-reports-intake`.
+The rest of structure stays the chief's: a head never calls
+`org_terminate_agent`, `org_set_scope`, `org_reorg`, `org_allocate_budget`
+or `org_report`; it brings those as a backlog case. Escalation goes one step
+up the chain (decision 4): a specialist's `org_escalate` blocks its task and
+puts an `Escalation:` task on its head's board; a head's goes to the chief by
+default, or with `to: "ceo"` straight to the CEO as a decision card — only
+for a decision only the CEO can make (money beyond the envelope, a policy,
+strategy or values call, an external commitment, a change the boundary
+reserves for the owner); the chief's goes to the CEO. Every member reads
+spend with `org_costs` and `org_forecast` (read-only, decision 2; nothing
+that commits or moves money is offered). Every member keeps its tasks true
+outside a task run as well (`org_task_update`, `org_task_comment`,
+`org_request_review`), and three built-in skills carry
 what every member shares: `org-member-workflow` (status, handoffs between
 functions on both sides, blocks, failures, escalation), `org-member-onboarding`
 and `org-unit-retro` (docs/autonomous-skills-review.md). The

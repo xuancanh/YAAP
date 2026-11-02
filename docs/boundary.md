@@ -92,8 +92,10 @@ reach it:
   - `proceed` continues down the mode's usual path.
 
   The tools are `org_tune`, `org_hire_agent`, `org_set_scope`,
-  `org_terminate_agent`, `org_reorg`, `org_allocate_budget` and
-  `org_set_routing`. The route runs before a plan captures the action, so a
+  `org_terminate_agent`, `org_reorg`, `org_allocate_budget`,
+  `org_set_routing` and `org_update_member`. A function head's
+  `org_hire_agent` and `org_update_member` take the same route (see
+  "Function heads" below). The route runs before a plan captures the action, so a
   previewed plan never holds a change that would be refused when it applies.
 
 Decisions are kept in a short in-memory log, `OrgBoundaryService.recent`,
@@ -135,3 +137,35 @@ Four rows govern it:
 The chief cannot change its own settings, and a model change carries over to
 the member's existing chats unless `applyToChats` is false. The CEO changes
 any of these directly on the agent's Settings tab.
+
+## Function heads (added 2 November 2026)
+
+The CEO decided (docs/autonomous-skills-review.md §4, decision 1) that a
+function head staffs its own unit. A head is the lead of a non-root unit, or
+a member reporting to the chief whose title is a function head's in the role
+catalog (`<fn>-manager`, e.g. "Head of Sales"), so a new head hires its first
+specialist. Its tools and their rows:
+
+| Tool | Row | Extra fences (in code, every mode) |
+|---|---|---|
+| `org_hire_agent` | `hire:unit` (alone), actor `agent:<head>` | reportsTo the head or one of its reports; a role of its own function or a generalist role or template, never another head, the chief or the auditor; the agent cap (counting pending hire cards); the unit's envelope — the allocations to the objectives of its unit and the units below, against the agent envelopes its reporting line holds — and the company envelope; scopes meet the head's own holdings (`grantorAgentId` on the card, re-met at apply) |
+| `org_pause_agent` | none (a narrowing) | its own reporting line only |
+| `org_update_member` | the `member_*` rows above | its own reporting line only |
+
+Supervised mode makes the hire a card for the CEO (`requestedBy` the head),
+as for the chief; autonomous mode applies it within the fences and records
+`auto_hire` with the head as actor. The chief keeps the one view of
+headcount: every head hire, pause and settings change sends it an inbox
+notice (origin `org`, which the heartbeat surfaces) and a line in the group
+log. Terminations, scope widening, reorgs and envelopes stay the chief's.
+
+## On-demand audits (added 2 November 2026)
+
+Decision 3: an open task titled `Assurance request: …` brings the next audit
+forward. This is a runtime trigger in `OrgAuditorService.tick`, not an agent
+power: once the oldest such request filed since the last audit is
+`audit.assuranceDebounceHours` old (default 6, bound 1–168, derived from the
+profile at onboarding: 2 when speed is a value, 24 for a control or rigour
+culture, 4 early, else 6), one audit runs with trigger `assurance` and
+answers every request filed in the window. The key sits under `audit.*`, so
+it is `never` an agent's to change, like the cadence it shortens.
