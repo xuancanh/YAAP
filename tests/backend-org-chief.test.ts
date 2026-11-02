@@ -145,7 +145,8 @@ test('the Chief of Staff pack: Business category, deep skills that name only org
   const all = pack.skills!.map((x) => x.instructions).join('\n');
   assert.match(all, /function manager/);
   assert.match(all, /\/org\/<function>\/reports\//, 'the heads\' weekly reports are read');
-  assert.match(all, /role:<fn>-<specialist>/, 'the heads\' hire cases are decided through the hire path');
+  assert.match(all, /Review the heads' own staffing; do not redo it/, 'the heads hire into their own units and the chief reviews (decision 1)');
+  assert.doesNotMatch(all, /a head never hires/);
   assert.match(all, /unknown — investigating/);
   assert.match(all, /\/org\/decisions\.md/);
 });
@@ -316,12 +317,20 @@ test('the business skill set closes its loops: the chief sweeps blocks and revie
     assert.match(body('okr-planning'), /\/org\/handoffs\.md/, `${h.id} agrees its dependencies`);
     assert.match(body('weekly-review'), /\/org\/handoffs\.md/, `${h.id} answers handoffs`);
     assert.match(body('team-management'), /Onboard every new member/, `${h.id} onboards`);
+    assert.match(body('team-management'), /Staff the unit yourself.*org_hire_agent.*org_pause_agent.*org_update_member/, `${h.id} hires and pauses in its own unit (decision 1)`);
+    assert.doesNotMatch(body('team-management'), /Never call hire or pause tools yourself/);
     assert.match(body('kpi-audit'), /Assurance request:/, `${h.id} files assurance requests the auditor can find`);
   }
   const auditor = AUTHORED_PACKS.find((p) => p.id === 'pack-auditor')!;
   assert.ok(auditor.skills!.some((x) => x.name === 'audit-ledger-and-metrics' && /Assurance request:/.test(x.instructions)));
   assert.ok(auditor.skills!.some((x) => x.name === 'audit-values-and-culture'));
   for (const n of ['org-member-workflow', 'org-member-onboarding', 'org-unit-retro']) assert.ok(BUILTIN_SKILLS.some((b) => b.name === n), `builtin ${n}`);
+  // decision 2: FP&A reads spend live; decision 4: the member workflow escalates one step up the chain
+  const fpa = AUTHORED_PACKS.find((p) => p.id === 'pack-biz-finance-fpa')!.skills!.map((x) => x.instructions).join('\n');
+  assert.match(fpa, /org_costs/); assert.match(fpa, /org_forecast/);
+  const workflow = BUILTIN_SKILLS.find((b) => b.name === 'org-member-workflow')!.instructions;
+  assert.match(workflow, /A specialist escalates to its head, never past it/);
+  assert.match(workflow, /to: "ceo"/);
 });
 
 // ---- the CEO's decisions (docs/autonomous-skills-review.md §4) ----

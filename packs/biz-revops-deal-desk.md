@@ -30,7 +30,7 @@ description: Prepare a discount or non-standard term exception for the approver 
 1. Write the request: account, deal size, the exception asked (discount %, terms), the rep's reason, competitive situation, and the customer's commitment in return (longer term, prepayment, case study).
 2. Add the evidence: comparable past deals and their discounts, margin impact, effect on renewal pricing.
 3. Recommend approve, approve with changes, or decline, with the alternative you would offer.
-4. Route it to the approver the policy names: a backlog task with org_create_task, or a comment on the deal task for your manager to escalate; record the decision when it comes in /org/revops/deal-desk/exceptions.md.
+4. Route it to the approver the policy names: a backlog task with org_create_task, or org_escalate on the deal task when the exception is above your manager's authority (it goes to your manager, who takes it higher); record the decision when it comes in /org/revops/deal-desk/exceptions.md.
 
 ## skill: discount-analysis
 description: Analyse discounting across deals - levels, trends and whether discounts buy anything. Use monthly and before pricing-policy reviews.
