@@ -15,7 +15,7 @@ import { EventEmitter } from 'node:events';
 
 export interface TaskAddedEvent {
   agentId: string;
-  task: { id: string; title: string; note: string; origin: string; sessionId: string | null; createdAt: string };
+  task: { id: string; key?: string | null; title: string; note: string; origin: string; sessionId: string | null; createdAt: string };
 }
 
 export type OrgWakeReason = 'assignment' | 'comment' | 'approval' | 'review' | 'manual' | 'trigger' | 'rewake' | 'dependency';
@@ -47,6 +47,8 @@ export interface OrgBoardEvent {
 export interface TaskStatusEvent {
   source: 'agent' | 'org';
   taskId: string;
+  /** The task key (docs/tasks-keys.md), when the task has one. */
+  key?: string | null;
   title: string;
   status: string;
   previous: string;

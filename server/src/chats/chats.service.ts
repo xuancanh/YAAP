@@ -10,6 +10,7 @@ import { nowIso } from '../common/ids.util';
 import { AgentsService } from '../agents/agents.service';
 import { SkillsService } from '../skills/skills.service';
 import { RegistryService } from '../registry/registry.service';
+import { taskRef } from '../common/task-keys';
 
 @Injectable()
 export class ChatsService {
@@ -188,7 +189,7 @@ export class ChatsService {
       const days = (agent as { chatAutoArchiveDays?: number | null } | null)?.chatAutoArchiveDays ?? null;
       await this.repo.updateSession(id, { taskKind: 'agent', taskId: task.id, autoArchiveDays: session.autoArchiveDays ?? days });
     }
-    const handoff = { task: `[${task.id.slice(0, 8)}] ${task.title}`.slice(0, 140), taskId: task.id, at: nowIso() };
+    const handoff = { task: `${taskRef(task)} ${task.title}`.slice(0, 140), taskId: task.id, at: nowIso() };
     await this.repo.updateTurn(turnId, { taskHandoff: JSON.stringify(handoff) });
     return handoff;
   }

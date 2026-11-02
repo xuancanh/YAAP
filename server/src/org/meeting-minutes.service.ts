@@ -138,7 +138,7 @@ export function renderMinutesMarkdown(doc: MinutesDoc): string {
   else {
     lines.push('| Action | Owner | Due | Done when | Task |', '|---|---|---|---|---|');
     for (const a of minutes.actions) {
-      const task = a.taskId ? `[${a.taskId.slice(0, 8)}](#/ws/${doc.workspaceId}/org/board?task=${a.taskId})` : '—';
+      const task = a.taskId ? `[${a.taskKey || a.taskId.slice(0, 8)}](#/ws/${doc.workspaceId}/org/board?task=${a.taskId})` : '—';
       const title = a.verdict === 'rejected' ? `${a.title} (rejected by ${a.verdictName || 'a person'})` : a.verdict === 'approved' ? `${a.title} (approved by ${a.verdictName || 'a person'})` : a.title;
       lines.push(`| ${cell(title)} | ${cell(a.owner || 'unowned')} | ${a.due ? cell(a.due.slice(0, 10)) : '—'} | ${cell(a.done_when || '—')} | ${task} |`);
     }
@@ -148,7 +148,7 @@ export function renderMinutesMarkdown(doc: MinutesDoc): string {
   for (const q of minutes.questions) lines.push(`- Question for the CEO: ${q.question} (${nm(q.by)})${q.answer ? ` — answered: ${q.answer}` : ''}`);
   for (const r of minutes.risks) lines.push(`- Risk: ${r.text} (${nm(r.by)})`);
   const parked = minutes.parked ?? [];
-  if (parked.length) lines.push('', '## Parking lot', '', ...parked.map((p) => `- ${p.text} (${nm(p.by)})${p.taskId ? ` · backlog [${p.taskId.slice(0, 8)}](#/ws/${doc.workspaceId}/org/board?task=${p.taskId})` : ''}`));
+  if (parked.length) lines.push('', '## Parking lot', '', ...parked.map((p) => `- ${p.text} (${nm(p.by)})${p.taskId ? ` · backlog [${p.taskKey || p.taskId.slice(0, 8)}](#/ws/${doc.workspaceId}/org/board?task=${p.taskId})` : ''}`));
   const lessons = minutes.lessons ?? [];
   if (lessons.length) lines.push('', '## Lessons', '', ...lessons.map((l) => `- [${l.audience}] ${l.text} (${nm(l.by)})`));
   lines.push('', '## Next meeting', '', doc.nextMeeting ?? '_None scheduled — `/meeting` in the channel starts one._');

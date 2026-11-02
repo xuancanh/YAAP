@@ -44,6 +44,7 @@ import { parseMeetingCommand } from '../org/org-meetings.service';
 import { WorkspaceEventBus } from './workspace-events';
 import { FollowsService, threadTarget, type Follower } from '../follows/follows.service';
 import { parseDecisionRefs, parseGoalRefs, parseMentions, slugify, type Mention, type MentionableMember } from './mentions';
+import { taskRef } from '../common/task-keys';
 
 export type Channel = typeof channels.$inferSelect;
 export type ChannelMember = typeof channelMembers.$inferSelect;
@@ -412,7 +413,7 @@ export class GroupChatService {
       const root = (await this.db.select().from(channelMessages).where(and(eq(channelMessages.id, opts.thread), eq(channelMessages.channelId, channelId))).limit(1)).at(0);
       if (!root) throw new NotFoundException(`message ${opts.thread}`);
       const replies = await this.db.select().from(channelMessages).where(eq(channelMessages.threadRootId, root.id));
-      return { messages: [root, ...replies.sort(byTime)], replies: {}, hasMore: false };
+      return { messages: await this.withTaskKeys([root, ...replies.sort(byTime)]), replies: {}, hasMore: false };
     }
     const conds = [eq(channelMessages.channelId, channelId), isNull(channelMessages.threadRootId)];
     if (opts.before) {
@@ -428,7 +429,20 @@ export class GroupChatService {
         .from(channelMessages).where(inArray(channelMessages.threadRootId, rows.map((r) => r.id))).groupBy(channelMessages.threadRootId);
       for (const a of agg) if (a.root) replies[a.root] = { count: Number(a.count), lastAt: a.lastAt };
     }
-    return { messages: rows, replies, hasMore };
+    return { messages: await this.withTaskKeys(rows), replies, hasMore };
+  }
+
+  /** Messages made into tasks carry the task's key (docs/tasks-keys.md) for
+   *  the "task ENG-12" button. */
+  private async withTaskKeys(rows: ChannelMessage[]): Promise<Array<ChannelMessage & { taskKey?: string | null }>> {
+    const ids = [...new Set(rows.map((r) => r.taskId).filter((x): x is string => !!x))];
+    if (!ids.length) return rows;
+    const keys = new Map<string, string>();
+    for (const table of ['org_tasks', 'agent_tasks'] as const) {
+      const res = await this.db.execute(sql`SELECT "id", "key" FROM ${sql.raw(table)} WHERE "id" IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`);
+      for (const r of ((res as { rows?: unknown[] }).rows ?? []) as Array<{ id: string; key: string | null }>) if (r.key) keys.set(r.id, r.key);
+    }
+    return rows.map((r) => (r.taskId && keys.has(r.taskId) ? { ...r, taskKey: keys.get(r.taskId)! } : r));
   }
 
   async message(messageId: string): Promise<ChannelMessage> {
@@ -648,7 +662,7 @@ export class GroupChatService {
     const updated = { ...m, taskId: task.id };
     this.events.emit({ type: 'channel_message', workspaceId: c.workspaceId, channelId: c.id, message: updated });
     const who = assignee ? ` for ${agentMembers.find((x) => x.memberId === assignee)?.name ?? 'an agent'}` : '';
-    await this.postSystem(c.id, `Task [${task.id.slice(0, 8)}] "${task.title}" created${who} on the ${kind === 'org' ? 'company board' : 'kanban'} · ${task.status}`, thread);
+    await this.postSystem(c.id, `Task ${taskRef(task)} "${task.title}" created${who} on the ${kind === 'org' ? 'company board' : 'kanban'} · ${task.status}`, thread);
     this.events.emit({ type: 'task_update', workspaceId: c.workspaceId, channelId: c.id, taskId: task.id, status: task.status, messageId: m.id, title: task.title });
     return { kind, task, message: updated };
   }
@@ -667,7 +681,7 @@ export class GroupChatService {
     if (!c || c.archivedAt) return;
     const origin = ev.channelId && ev.messageId ? await this.message(ev.messageId).catch(() => null) : null;
     const thread = origin ? (origin.threadRootId ?? origin.id) : null;
-    await this.postSystem(c.id, `Task [${ev.taskId.slice(0, 8)}] "${ev.title}" → ${ev.status.replace(/_/g, ' ')}`, thread);
+    await this.postSystem(c.id, `Task ${ev.key || ev.taskId.slice(0, 8)} "${ev.title}" → ${ev.status.replace(/_/g, ' ')}`, thread);
     this.events.emit({ type: 'task_update', workspaceId: c.workspaceId, channelId: c.id, taskId: ev.taskId, status: ev.status, messageId: ev.messageId, title: ev.title });
   }
 

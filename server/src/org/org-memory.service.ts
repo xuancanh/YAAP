@@ -57,6 +57,7 @@ import { OrgSignalsService } from './org-signals.service';
 import { OrgPlaybooksService, parseRoles } from './org-playbooks.service';
 import { OrgKnowledgeService } from './org-knowledge.service';
 import { memoryTunable, postmortemTriggerOn, type PostmortemTrigger } from './memory-tunables';
+import { taskRef } from '../common/task-keys';
 
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -253,7 +254,7 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
       const t = await this.tasks.get(orgId, refId);
       const b = parseBrief(t.brief);
       title = `Postmortem · ${t.title}`;
-      subject = `Task [${t.id.slice(0, 8)}] "${t.title}" — status ${t.status}, owner ${nm(t.assigneeAgentId)}, ${t.reviewRounds} review round(s), blockers: ${listOf(t.blockers).join('; ') || 'none'}.\nOutcome wanted: ${b.outcome || '(not stated)'}. Done when: ${b.done_when || '(not stated)'}.`;
+      subject = `Task ${taskRef(t)} "${t.title}" — status ${t.status}, owner ${nm(t.assigneeAgentId)}, ${t.reviewRounds} review round(s), blockers: ${listOf(t.blockers).join('; ') || 'none'}.\nOutcome wanted: ${b.outcome || '(not stated)'}. Done when: ${b.done_when || '(not stated)'}.`;
       taskIds.push(t.id);
     } else if (refType === 'goal') {
       const g = await this.org.goal(orgId, refId);
@@ -464,7 +465,7 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
         const roles = Array.isArray(input.roles) ? input.roles.map(String) : [];
         const r = await this.playbooks.write(org.id, { title: str('title'), body: str('body'), roles, why: str('why'), authorAgentId: agentId, sourceTaskId: ctx?.taskId || null }).catch((err: unknown) => { throw new Error(err instanceof Error ? err.message : String(err)); });
         if (ctx) ctx.progress = true;
-        return `Playbook "${r.playbook.title}" v${r.playbook.version} written (${r.playbook.name}; ${r.created ? 'new' : 'a new version'}) and sent to review: task [${r.task.id.slice(0, 8)}], reviewer ${r.task.reviewerAgentId ? names.get(r.task.reviewerAgentId) ?? r.task.reviewerAgentId.slice(0, 8) : 'none available — the CEO reviews'}. It becomes callable as skill_${r.playbook.name.replace(/-/g, '_')} for ${parseRoles(r.playbook.roles).join(', ') || 'every role'} when the review accepts it; until then keep working without it.`;
+        return `Playbook "${r.playbook.title}" v${r.playbook.version} written (${r.playbook.name}; ${r.created ? 'new' : 'a new version'}) and sent to review: task ${taskRef(r.task)}, reviewer ${r.task.reviewerAgentId ? names.get(r.task.reviewerAgentId) ?? r.task.reviewerAgentId.slice(0, 8) : 'none available — the CEO reviews'}. It becomes callable as skill_${r.playbook.name.replace(/-/g, '_')} for ${parseRoles(r.playbook.roles).join(', ') || 'every role'} when the review accepts it; until then keep working without it.`;
       }
       case 'org_playbooks': {
         const status = str('status') || 'active';

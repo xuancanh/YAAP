@@ -23,6 +23,7 @@ import { TriggerBus } from '../chats/trigger-bus';
 import { hashWebhookSecret, validateLoopDef, type LoopDef } from '../chats/loop-def';
 import { cardById, loopForUse, type CardGrantLevel } from '../connections/cards';
 import { FollowsService, agentTaskTarget, type Follower } from '../follows/follows.service';
+import { nextAgentTaskKey, queryableOf, resolveTaskRef, taskRef } from '../common/task-keys';
 
 /** A self-built mini app (FR-11.5): a self-contained HTML tool the agent
  *  writes for itself via save_app. Rendered only in a network-blocked
@@ -364,8 +365,10 @@ export class AgentsService {
     if ((await this.listTasks(agentId)).length >= TASK_LIMIT) {
       throw new BadRequestException(`task limit (${TASK_LIMIT}) reached — clear done tasks first`);
     }
+    // The key (docs/tasks-keys.md): the next number of the agent's prefix.
+    const key = await nextAgentTaskKey(queryableOf(this.db), agentId).catch(() => null);
     const row = {
-      id: newId(), agentId, title,
+      id: newId(), agentId, key, title,
       note: (input.note ?? '').slice(0, 2_000),
       status: 'todo', origin: input.origin ?? 'user',
       sessionId: input.sessionId ?? null,
@@ -378,7 +381,7 @@ export class AgentsService {
     this.bus?.emitTaskAdded({ agentId, task: row });
     // Follows (docs/follows.md): the owning agent and whoever put it there.
     if (this.follows && owner.workspaceId) {
-      const target = agentTaskTarget(owner.workspaceId, row.id, row.title);
+      const target = agentTaskTarget(owner.workspaceId, row.id, row.title, row.key);
       await this.follows.autoFollow(target, { kind: 'agent', id: agentId }, 'owner');
       const creator = input.createdBy !== undefined ? input.createdBy : row.origin === 'user' ? { kind: 'user' as const, id: actorId() } : null;
       if (creator && !(creator.kind === 'agent' && creator.id === agentId)) await this.follows.autoFollow(target, creator, 'started');
@@ -412,7 +415,7 @@ export class AgentsService {
     // A task made from a channel message reports its status back into that
     // thread (docs/group-chat.md §3) — the group chat listens on the bus.
     if (set.status && set.status !== rows[0].status && updated.channelId) {
-      this.bus?.emitTaskStatus({ source: 'agent', taskId, title: updated.title, status: updated.status, previous: rows[0].status, channelId: updated.channelId, messageId: updated.messageId, agentId });
+      this.bus?.emitTaskStatus({ source: 'agent', taskId, key: updated.key, title: updated.title, status: updated.status, previous: rows[0].status, channelId: updated.channelId, messageId: updated.messageId, agentId });
     }
     if (this.follows && set.status && set.status !== rows[0].status) await this.taskStatusActivity(agentId, updated, rows[0].status, (patch.reason ?? '').trim(), by ?? { kind: 'user', id: actorId() });
     return updated;
@@ -424,7 +427,7 @@ export class AgentsService {
     if (!ws || !this.follows) return;
     const closed = (s: string) => s === 'done' || s === 'abandoned';
     const reopened = closed(previous) && !closed(t.status);
-    await this.follows.recordActivity(agentTaskTarget(ws, t.id, t.title), {
+    await this.follows.recordActivity(agentTaskTarget(ws, t.id, t.title, t.key), {
       actor: by,
       summary: `moved to ${t.status}${reason ? `: ${reason}` : ''}`,
       attention: t.status === 'blocked' ? `blocked${reason ? `: ${reason}` : ''}` : reopened ? 'reopened' : null,
@@ -439,12 +442,17 @@ export class AgentsService {
     return { ok: true };
   }
 
-  /** Tool-call variant: the model addresses tasks by the 8-char id prefix it
-   *  saw in list_tasks. */
-  async updateTaskByPrefix(agentId: string, idPrefix: string, patch: { title?: string; note?: string; status?: string; reason?: string }) {
-    const match = (await this.listTasks(agentId)).filter((t) => t.id.startsWith(idPrefix));
-    if (match.length !== 1) throw new BadRequestException(`task id "${idPrefix}" matches ${match.length} tasks — use the id from list_tasks`);
-    return this.updateTask(agentId, match[0].id, patch, { kind: 'agent', id: agentId });
+  /** A task on the agent's board by key (EVL-3, any case — what list_tasks
+   *  shows), full id or id prefix (docs/tasks-keys.md). */
+  async resolveTask(agentId: string, ref: string) {
+    try { return resolveTaskRef(await this.listTasks(agentId), ref, { hint: 'use the key from list_tasks, e.g. EVL-3' }); } catch (err) { throw new BadRequestException((err as Error).message); }
+  }
+
+  /** Tool-call variant: the model addresses tasks by the key it saw in
+   *  list_tasks (an id or id prefix still works). */
+  async updateTaskByPrefix(agentId: string, ref: string, patch: { title?: string; note?: string; status?: string; reason?: string }) {
+    const t = await this.resolveTask(agentId, ref);
+    return this.updateTask(agentId, t.id, patch, { kind: 'agent', id: agentId });
   }
 
   /** Board summary for the agent's tool calls: bounded, text-shaped. */
@@ -454,7 +462,7 @@ export class AgentsService {
     const lines = tasks
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1))
       .slice(0, 100)
-      .map((t) => `[${t.id.slice(0, 8)}] (${t.status}) ${t.title}${t.note ? ` — ${t.note.slice(0, 120)}` : ''}`);
+      .map((t) => `${taskRef(t)} (${t.status}) ${t.title}${t.note ? ` — ${t.note.slice(0, 120)}` : ''}`);
     return lines.join('\n');
   }
 

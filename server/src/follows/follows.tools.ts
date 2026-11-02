@@ -13,8 +13,8 @@ import type { AiToolSpec } from '../ai/ai-provider.interface';
 import { FollowsService, labelOf, type FollowTargetKind } from './follows.service';
 
 const KIND_ID = {
-  kind: { type: 'string', enum: ['thread', 'task'], description: 'thread: a channel thread (any message id in it, as channel_read shows it); task: an org task or a kanban task (the short id from the board).' },
-  id: { type: 'string', description: 'The message id or task id (the 8-character prefix is enough when it is unique).' },
+  kind: { type: 'string', enum: ['thread', 'task'], description: 'thread: a channel thread (any message id in it, as channel_read shows it); task: an org task or a kanban task, by its key (ENG-12) as the board shows it.' },
+  id: { type: 'string', description: 'The message id, or the task key (e.g. ENG-12; an id prefix still works).' },
 };
 
 export const FOLLOW_TOOLS: AiToolSpec[] = [

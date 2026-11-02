@@ -30,6 +30,7 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { agentEvents, agents, follows, organizations, workspaces } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
+import { normalizeTaskKey } from '../common/task-keys';
 import { currentAccountId } from '../accounts/account-context';
 import { deliveryFor } from '../workspaces/quiet-hours';
 import { followTunable } from './follow-tunables';
@@ -379,20 +380,22 @@ export class FollowsService {
       return threadTarget(workspaceId, hit.slug, rootId, root?.text ?? '');
     }
     if (kind === 'task' || kind === 'org_task' || kind === 'agent_task') {
+      // A key (ENG-12, any case) names one task in the workspace (docs/tasks-keys.md).
+      const key = normalizeTaskKey(id) ?? '';
       const org = kind === 'agent_task' ? [] : (await this.db.execute(sql`
-        SELECT t."id", t."title" FROM org_tasks t JOIN organizations o ON o."id" = t."orgId"
-        WHERE o."workspaceId" = ${workspaceId} AND (t."id" = ${id} OR t."id" LIKE ${like}) LIMIT 3
-      `)).rows as Array<{ id: string; title: string }>;
+        SELECT t."id", t."key", t."title" FROM org_tasks t JOIN organizations o ON o."id" = t."orgId"
+        WHERE o."workspaceId" = ${workspaceId} AND (t."id" = ${id} OR t."id" LIKE ${like} OR t."key" = ${key}) LIMIT 3
+      `)).rows as Array<{ id: string; key: string | null; title: string }>;
       const own = kind === 'org_task' ? [] : (await this.db.execute(sql`
-        SELECT t."id", t."title", t."agentId" FROM agent_tasks t JOIN agents a ON a."id" = t."agentId"
-        WHERE a."workspaceId" = ${workspaceId} AND (t."id" = ${id} OR t."id" LIKE ${like}) LIMIT 3
-      `)).rows as Array<{ id: string; title: string; agentId: string }>;
+        SELECT t."id", t."key", t."title", t."agentId" FROM agent_tasks t JOIN agents a ON a."id" = t."agentId"
+        WHERE a."workspaceId" = ${workspaceId} AND (t."id" = ${id} OR t."id" LIKE ${like} OR t."key" = ${key}) LIMIT 3
+      `)).rows as Array<{ id: string; key: string | null; title: string; agentId: string }>;
       const all = [...org.map((t) => ({ ...t, kind: 'org_task' as const })), ...own.map((t) => ({ ...t, kind: 'agent_task' as const }))];
-      const exact = all.filter((t) => t.id === id);
+      const exact = all.filter((t) => t.id === id || (key && t.key === key));
       const hits = exact.length ? exact : all;
-      if (hits.length !== 1) throw new NotFoundException(hits.length ? `task id "${id}" matches ${hits.length} tasks — use more of it` : `no task "${id}" in this workspace`);
+      if (hits.length !== 1) throw new NotFoundException(hits.length ? `task "${id}" matches ${hits.length} tasks — use its key` : `no task "${id}" in this workspace`);
       const t = hits[0];
-      return t.kind === 'org_task' ? orgTaskTarget(workspaceId, t.id, t.title) : agentTaskTarget(workspaceId, t.id, t.title);
+      return t.kind === 'org_task' ? orgTaskTarget(workspaceId, t.id, t.title, t.key) : agentTaskTarget(workspaceId, t.id, t.title, t.key);
     }
     throw new BadRequestException('kind must be thread or task');
   }
@@ -409,11 +412,18 @@ export class FollowsService {
 
 /** How the digest and the reasons name a target. */
 export function labelOf(kind: FollowTargetKind, id: string, title: string): string {
-  const t = title ? ` "${title.slice(0, 80)}"` : '';
+  // A task's title carries its key (docs/tasks-keys.md): `ENG-12 Title`.
+  const keyed = kind !== 'thread' ? /^([A-Z][A-Z0-9]{1,5}-\d+) (.*)$/s.exec(title) : null;
+  const ref = keyed ? keyed[1] : `[${id.slice(0, 8)}]`;
+  const body = keyed ? keyed[2] : title;
+  const t = body ? ` "${body.slice(0, 80)}"` : '';
   if (kind === 'thread') return `thread${t || ` ${id.slice(0, 8)}`} (${id.slice(0, 8)})`;
-  if (kind === 'org_task') return `task [${id.slice(0, 8)}]${t}`;
-  return `board task [${id.slice(0, 8)}]${t}`;
+  if (kind === 'org_task') return `task ${ref}${t}`;
+  return `board task ${ref}${t}`;
 }
+
+/** A task's follow title: `ENG-12 Title` (the key leads, docs/tasks-keys.md). */
+function keyedTitle(title: string, key?: string | null): string { return key ? `${key} ${title}` : title; }
 
 export function threadTarget(workspaceId: string, slug: string, rootId: string, rootText: string): FollowTarget {
   return { kind: 'thread', id: rootId, workspaceId, title: `#${slug}: ${rootText.replace(/\s+/g, ' ').trim().slice(0, 60)}`, link: `#/ws/${workspaceId}/channel/${slug}/${rootId}` };
@@ -424,12 +434,12 @@ export function orgTaskLink(workspaceId: string, taskId: string): string {
   return `#/ws/${workspaceId}/org/board?task=${encodeURIComponent(taskId)}`;
 }
 
-export function orgTaskTarget(workspaceId: string, taskId: string, title: string): FollowTarget {
-  return { kind: 'org_task', id: taskId, workspaceId, title, link: orgTaskLink(workspaceId, taskId) };
+export function orgTaskTarget(workspaceId: string, taskId: string, title: string, key?: string | null): FollowTarget {
+  return { kind: 'org_task', id: taskId, workspaceId, title: keyedTitle(title, key), link: orgTaskLink(workspaceId, taskId) };
 }
 
-export function agentTaskTarget(workspaceId: string, taskId: string, title: string): FollowTarget {
-  return { kind: 'agent_task', id: taskId, workspaceId, title, link: '' };
+export function agentTaskTarget(workspaceId: string, taskId: string, title: string, key?: string | null): FollowTarget {
+  return { kind: 'agent_task', id: taskId, workspaceId, title: keyedTitle(title, key), link: '' };
 }
 
 /** `agent:<id>` / `human:<id>` / `user` → a follower (the user = `userId`);

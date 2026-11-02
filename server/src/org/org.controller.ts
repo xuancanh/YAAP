@@ -145,7 +145,11 @@ export class AllocationDto { @IsString() goalId!: string; @IsNumber() @Min(0) mo
 export class DryRunDto { @IsOptional() @IsString() prompt?: string; @IsOptional() @IsObject() assume?: { monthlyUsd?: number } }
 export class VetoDto { @IsOptional() @IsString() note?: string }
 
-export class UnitDto { @IsString() name!: string }
+export class UnitDto {
+  @IsOptional() @IsString() name?: string;
+  /** The board's task key prefix (docs/tasks-keys.md): 2–6 letters/digits. */
+  @IsOptional() @IsString() taskKey?: string;
+}
 
 export class ProjectDto {
   @IsOptional() @IsString() title?: string;
@@ -285,7 +289,12 @@ export class OrgController {
   // ---- units (docs/group-chat.md §7) ----
   private unitsOr(): OrgUnitsService { if (!this.units) throw new NotFoundException('units are not available'); return this.units; }
   @Get(':id/units') async units_(@Param('id') id: string) { this.guard(); return this.unitsOr().unitTree(id); }
-  @Patch(':id/units/:unitId') async renameUnit(@Param('id') id: string, @Param('unitId') unitId: string, @Body() dto: UnitDto) { this.guard(); return this.unitsOr().rename(id, unitId, dto.name, this.actor()); }
+  @Patch(':id/units/:unitId') async renameUnit(@Param('id') id: string, @Param('unitId') unitId: string, @Body() dto: UnitDto) {
+    this.guard();
+    let u = dto.name !== undefined ? await this.unitsOr().rename(id, unitId, dto.name, this.actor()) : await this.unitsOr().get(id, unitId);
+    if (dto.taskKey !== undefined) u = await this.unitsOr().setTaskKey(id, unitId, dto.taskKey, this.actor());
+    return u;
+  }
   @Get(':id/units/:unitId/board') unitBoard(@Param('id') id: string, @Param('unitId') unitId: string, @Query('rollUp') rollUp?: string, @Query('status') status?: string) {
     this.guard(); return this.tasks.list(id, { unitId, rollUp: rollUp === 'true', status: status || undefined }).then((rows) => rows.map((t) => ({ ...t, verification: verificationOf(t) })));
   }

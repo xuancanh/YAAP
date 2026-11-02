@@ -46,6 +46,7 @@ import type {
 } from './home.types';
 import { collapseRoutine, describeRun, loopNameOf, mergeUpcoming, runTitle, type RunCall } from './home-activity';
 import { agentStatuses, sortTeam, toHomeAgent } from './agent-status';
+import { taskLabel } from '../common/task-keys';
 
 const DAY_MS = 24 * 60 * 60_000;
 /** A visit within this of the previous one continues the same session. */
@@ -353,7 +354,7 @@ export class HomeService {
     const nameOf = (id: string | null | undefined) => (id ? names.get(id) ?? '' : '');
     if (org) {
       for (const t of orgTasks.filter((x) => (x.status === 'done' || x.status === 'blocked') && x.updatedAt >= horizon)) {
-        out.push({ id: `task:${t.id}:${t.status}`, at: t.updatedAt, kind: 'task', title: `${t.status === 'done' ? 'Done' : 'Blocked'}: ${t.title}`, detail: t.status === 'blocked' ? clip(t.blockers, 160) : '', actor: nameOf(t.assigneeAgentId), ref: { type: 'task', id: t.id } });
+        out.push({ id: `task:${t.id}:${t.status}`, at: t.updatedAt, kind: 'task', title: `${t.status === 'done' ? 'Done' : 'Blocked'}: ${taskLabel(t)}`, detail: t.status === 'blocked' ? clip(t.blockers, 160) : '', actor: nameOf(t.assigneeAgentId), ref: { type: 'task', id: t.id } });
       }
       if (this.audit) {
         for (const r of (await this.audit.list(org.id, { limit: 200 })).filter((x) => x.createdAt >= horizon)) {
@@ -383,7 +384,7 @@ export class HomeService {
     } else {
       for (const a of agents) {
         for (const t of (await this.agents.listTasks(a.id)).filter((x) => (x.status === 'done' || x.status === 'blocked') && x.updatedAt >= horizon)) {
-          out.push({ id: `atask:${t.id}`, at: t.updatedAt, kind: 'task', title: `${t.status === 'done' ? 'Done' : 'Blocked'}: ${t.title}`, detail: '', actor: a.name, ref: { type: 'agent', id: a.id } });
+          out.push({ id: `atask:${t.id}`, at: t.updatedAt, kind: 'task', title: `${t.status === 'done' ? 'Done' : 'Blocked'}: ${taskLabel(t)}`, detail: '', actor: a.name, ref: { type: 'agent', id: a.id } });
         }
       }
     }
@@ -401,7 +402,7 @@ export class HomeService {
     const routine: Parameters<typeof collapseRoutine>[0] = [];
     const taskRef = (id: string | null) => {
       if (!id) return null;
-      const t = orgTasks.find((x) => x.id === id || x.id.startsWith(id));
+      const t = orgTasks.find((x) => x.id === id || x.id.startsWith(id) || (!!x.key && x.key === id.toUpperCase()));
       return t ? { type: 'task', id: t.id } : null;
     };
     for (const { agent: a, e } of runEvents) {
@@ -495,7 +496,7 @@ export class HomeService {
         }
       }
       for (const t of orgTasks.filter((x) => x.dueAt && x.dueAt <= week && x.status !== 'done' && x.status !== 'cancelled')) {
-        out.push({ id: `task:${t.id}`, at: t.dueAt!, kind: 'deadline', title: t.title, detail: t.dueAt! < nowIso ? 'overdue' : t.status.replace(/_/g, ' '), ref: { type: 'task', id: t.id } });
+        out.push({ id: `task:${t.id}`, at: t.dueAt!, kind: 'deadline', title: taskLabel(t), detail: t.dueAt! < nowIso ? 'overdue' : t.status.replace(/_/g, ' '), ref: { type: 'task', id: t.id } });
       }
       if (this.approvals) {
         for (const a of (await this.approvals.pending(org.id)).filter((x) => x.deadline && x.deadline <= week)) {

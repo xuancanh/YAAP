@@ -46,6 +46,7 @@ import { registerCalibrationProvider } from './calibration-registry';
 import { experimentTunable } from './experiment-tunables';
 import { TUNABLES, tunable } from './org-tunables';
 import { OrgMirrorService } from './org-mirror.service';
+import { taskRef } from '../common/task-keys';
 
 export type OrgPrediction = typeof orgPredictions.$inferSelect;
 export const SUBJECT_KINDS = ['task', 'key_result', 'experiment', 'hire', 'other'] as const;
@@ -381,7 +382,7 @@ export class OrgPredictionsService implements ToolProviderHook, OnModuleInit, On
     if (mine.some((p) => parseObj(p.forecast).kind === 'duration_runs')) return null;
     const runs = (await this.tasks.runs(ctx.orgId, { taskId: t.id, limit: 10 })).filter((r) => r.agentId === session.agentId);
     if (runs.length > 1) return null;
-    return `## Forecast (once)\nBefore you start [${t.id.slice(0, 8)}] "${t.title}": how many runs (wakes, this one included) will it take you to get it accepted? Record it with org_forecast_outcome {subject: {kind: "task", id: "${t.id.slice(0, 8)}"}, question: "runs to done", forecast: {kind: "duration_runs", value: N}}. It is scored against the actual runs; your calibration tells the chief whose estimates to trust.`;
+    return `## Forecast (once)\nBefore you start ${taskRef(t)} "${t.title}": how many runs (wakes, this one included) will it take you to get it accepted? Record it with org_forecast_outcome {subject: {kind: "task", id: "${t.id.slice(0, 8)}"}, question: "runs to done", forecast: {kind: "duration_runs", value: N}}. It is scored against the actual runs; your calibration tells the chief whose estimates to trust.`;
   }
 
   async execute(session: ChatSession, name: string, input: Record<string, unknown>): Promise<string> {

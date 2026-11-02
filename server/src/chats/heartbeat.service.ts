@@ -42,6 +42,7 @@ import { LoopsService, type LoopRunStatus } from './loops.service';
 import type { LoopDef } from './loop-def';
 import { effectiveHeartbeat, validateHeartbeatCron, validateHeartbeatDefaults, type HeartbeatTunables } from './heartbeat-config';
 import { FollowsService } from '../follows/follows.service';
+import { taskRef } from '../common/task-keys';
 
 /** The loop name every heartbeat run carries ("Loop · heartbeat" session). */
 export const HEARTBEAT_LOOP_NAME = 'heartbeat';
@@ -286,11 +287,11 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
     const before = new Date(ctx.now.getTime() - ctx.tunables.staleMinutes * 60_000).toISOString();
     const blockedBefore = new Date(ctx.now.getTime() - 4 * ctx.tunables.staleMinutes * 60_000).toISOString();
     const rows = (await this.db.execute(sql`
-      SELECT "id", "title", "status", "updatedAt" FROM agent_tasks
+      SELECT "id", "key", "title", "status", "updatedAt" FROM agent_tasks
       WHERE "agentId" = ${agentId} AND (("status" IN ('todo', 'doing') AND "updatedAt" <= ${before}) OR ("status" = 'blocked' AND "updatedAt" <= ${blockedBefore}))
       ORDER BY "updatedAt" ASC LIMIT ${REASONS_PER_SOURCE + 1}
-    `)).rows as unknown as Array<{ id: string; title: string; status: string; updatedAt: string }>;
-    const lines = rows.slice(0, REASONS_PER_SOURCE).map((t) => `Task [${t.id.slice(0, 8)}] "${t.title.slice(0, 80)}" is ${t.status === 'doing' ? 'in progress' : t.status === 'blocked' ? 'blocked (check whether it can move now)' : 'to do'} and untouched since ${t.updatedAt.slice(0, 16).replace('T', ' ')}`);
+    `)).rows as unknown as Array<{ id: string; key: string | null; title: string; status: string; updatedAt: string }>;
+    const lines = rows.slice(0, REASONS_PER_SOURCE).map((t) => `Task ${taskRef(t)} "${t.title.slice(0, 80)}" is ${t.status === 'doing' ? 'in progress' : t.status === 'blocked' ? 'blocked (check whether it can move now)' : 'to do'} and untouched since ${t.updatedAt.slice(0, 16).replace('T', ' ')}`);
     if (rows.length > REASONS_PER_SOURCE) lines[REASONS_PER_SOURCE - 1] += ' (and more on your board)';
     return lines;
   }

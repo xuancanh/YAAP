@@ -49,6 +49,7 @@ import type { AiToolSpec } from '../ai/ai-provider.interface';
 import { GroupChatService, type Channel, type ChannelMessage, type NamedMember } from './groupchat.service';
 import { channelSessionName, handleOf, unresolvedMentions } from './mentions';
 import { WorkspaceEventBus } from './workspace-events';
+import { taskRef } from '../common/task-keys';
 
 export const CHAIN_ROUND_CAP = 3;
 export const UNPROMPTED_PER_MESSAGE = 2;
@@ -529,7 +530,7 @@ export class ChannelRuntimeService implements ToolProviderHook {
         if (candidates.length !== 1) throw new Error(`message id "${prefix}" matches ${candidates.length} messages in #${c.slug}`);
         const assignee = typeof input.assignee === 'string' && input.assignee.trim() ? input.assignee.trim() : agentId;
         const res = await this.groupchat.makeTask(c.id, candidates[0].id, { title: typeof input.title === 'string' ? input.title : undefined, assigneeAgentId: assignee, by: { kind: 'agent', id: agentId } });
-        return `Task [${res.task.id.slice(0, 8)}] "${res.task.title}" created on the ${res.kind === 'org' ? 'company board' : 'kanban'} (${res.task.status}); the thread was told.`;
+        return `Task ${taskRef(res.task)} "${res.task.title}" created on the ${res.kind === 'org' ? 'company board' : 'kanban'} (${res.task.status}); the thread was told.`;
       }
       default:
         throw new Error(`unknown tool: ${name}`);

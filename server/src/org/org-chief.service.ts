@@ -50,7 +50,7 @@ export interface OperatingSystemState {
   rituals: Array<{ kind: string; title: string; unit: string; at: string; preReadDue: string }>;
   overdueDecisions: Array<{ id: string; kind: string; summary: string; waitedHours: number; deadline: string | null }>;
   staleRisks: Array<{ ref: string; title: string; source: 'key_result' | 'objective' | 'signal'; staleDays: number }>;
-  breachedHandoffs: Array<{ taskId: string; title: string; from: string; to: string; status: string; waitedHours: number; breachedAt: string }>;
+  breachedHandoffs: Array<{ taskId: string; key?: string | null; title: string; from: string; to: string; status: string; waitedHours: number; breachedAt: string }>;
   functionOwners: Array<{ name: string; title: string; unit: string }>;
   /** Backlog tasks a function head filed for the chief (hire, pause and
    *  re-tooling cases, decisions, asks from its weekly report), oldest first. */
@@ -148,7 +148,7 @@ export class OrgChiefService {
         const since = Date.parse(t.updatedAt);
         if (!Number.isFinite(since) || nowMs - since < slaMs) continue;
         const from = [...home].map((u) => unitName.get(u) ?? u).join(' / ');
-        breachedHandoffs.push({ taskId: t.id, title: t.title, from: `${names.get(requester) ?? requester.slice(0, 8)} (${from})`, to: unitName.get(t.unitId) ?? t.unitId, status: t.status, waitedHours: Math.floor((nowMs - since) / H), breachedAt: new Date(since + slaMs).toISOString() });
+        breachedHandoffs.push({ taskId: t.id, key: t.key, title: t.title, from: `${names.get(requester) ?? requester.slice(0, 8)} (${from})`, to: unitName.get(t.unitId) ?? t.unitId, status: t.status, waitedHours: Math.floor((nowMs - since) / H), breachedAt: new Date(since + slaMs).toISOString() });
       }
       breachedHandoffs.sort((a, b) => b.waitedHours - a.waitedHours);
     }
@@ -187,7 +187,7 @@ export class OrgChiefService {
     for (const org of await this.chiefOf(agentId)) {
       const st = await this.state(org.id, now);
       for (const h of st.breachedHandoffs.filter((x) => Date.parse(x.breachedAt) > since).slice(0, 3)) {
-        out.push(`handoff breached: task [${h.taskId.slice(0, 8)}] "${h.title}" from ${h.from} has waited ${h.waitedHours}h in ${h.to} (chief.handoffSlaHours ${chiefTunable(org, 'chief.handoffSlaHours')}h) — run your handoff-sla-monitor playbook; route it, don't resolve it`);
+        out.push(`handoff breached: task ${h.key || `[${h.taskId.slice(0, 8)}]`} "${h.title}" from ${h.from} has waited ${h.waitedHours}h in ${h.to} (chief.handoffSlaHours ${chiefTunable(org, 'chief.handoffSlaHours')}h) — run your handoff-sla-monitor playbook; route it, don't resolve it`);
       }
     }
     return out;
@@ -227,7 +227,7 @@ export function describeState(st: OperatingSystemState): string {
   if (st.rituals.length) lines.push('Rituals coming up (their owners run them; you own the pre-reads):', ...st.rituals.slice(0, 6).map((r) => `- ${r.title} of ${r.unit} at ${at(r.at)}; pre-reads due ${at(r.preReadDue)}`));
   if (st.overdueDecisions.length) lines.push('Decisions waiting on the CEO past the overdue window (put them first in the brief; never decide them yourself):', ...st.overdueDecisions.slice(0, 6).map((d) => `- [${d.id.slice(0, 8)}] ${d.kind}: ${d.summary} — waited ${d.waitedHours}h${d.deadline ? `, default at ${at(d.deadline)}` : ''}`));
   if (st.staleRisks.length) lines.push('Stale risks (no check-in or acknowledgement within chief.riskReviewDays; ask the owner to re-score, do not re-score for them):', ...st.staleRisks.slice(0, 6).map((r) => `- [${r.ref.slice(0, r.ref.indexOf(':') + 9)}] ${r.source.replace('_', ' ')} "${r.title}" — ${r.staleDays} day(s)`));
-  if (st.breachedHandoffs.length) lines.push('Breached handoffs (route to the owner, then the shared manager or /org/issues.md):', ...st.breachedHandoffs.slice(0, 6).map((h) => `- [${h.taskId.slice(0, 8)}] "${h.title}" from ${h.from} → ${h.to}, ${h.status.replace('_', ' ')} for ${h.waitedHours}h`));
+  if (st.breachedHandoffs.length) lines.push('Breached handoffs (route to the owner, then the shared manager or /org/issues.md):', ...st.breachedHandoffs.slice(0, 6).map((h) => `- ${h.key || `[${h.taskId.slice(0, 8)}]`} "${h.title}" from ${h.from} → ${h.to}, ${h.status.replace('_', ' ')} for ${h.waitedHours}h`));
   if (st.headRequests.length) lines.push('Requests from function heads in your backlog (hire, pause and re-tooling cases, asks; decide within the boundary or put them to the CEO — run function-reports-intake):', ...st.headRequests.slice(0, 6).map((r) => `- [${r.taskId.slice(0, 8)}] "${r.title}" from ${r.from}, ${r.waitedHours}h old`));
   if (st.emptyRituals?.length) lines.push('Rituals empty for chief.sunsetEmptyCycles cycles in a row (skipped, or no decision or action) — run ritual-retirement-review: propose, never retire:', ...st.emptyRituals.slice(0, 6).map((r) => `- ${r.title} of ${r.unit}: ${r.streak} empty cycle(s)`));
   if (st.functionOwners.length) lines.push(`Function owners (route function-level work to them; their weekly reports are under /org/<function>/reports/): ${st.functionOwners.map((o) => `${o.name} (${o.title}${o.unit ? `, ${o.unit}` : ''})`).join('; ')}.`);

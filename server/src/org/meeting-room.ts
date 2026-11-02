@@ -22,7 +22,7 @@ import type { MeetingKind, Minutes } from './org-meetings.service';
 export type AttendanceState = 'waiting' | 'speaking' | 'spoke' | 'passed' | 'idle';
 
 /** A previous meeting's action item, as the next ritual opens with it. */
-export interface OpenItem { title: string; owner: string; taskId: string | null; state: 'done' | 'late' | 'blocked' | 'open' | 'dropped'; status: string; due: string | null }
+export interface OpenItem { title: string; owner: string; taskId: string | null; taskKey?: string | null; state: 'done' | 'late' | 'blocked' | 'open' | 'dropped'; status: string; due: string | null }
 
 export interface AgendaProposal { text: string; why: string; byKind: 'agent' | 'human'; by: string; at: string }
 
@@ -154,7 +154,7 @@ export function openItemsText(items: OpenItem[], kindTitle: string): string {
   const label: Record<OpenItem['state'], string> = { done: 'done', late: 'late', blocked: 'blocked', open: 'still open', dropped: 'dropped' };
   const order: OpenItem['state'][] = ['blocked', 'late', 'open', 'done', 'dropped'];
   const sorted = [...items].sort((a, b) => order.indexOf(a.state) - order.indexOf(b.state));
-  return [`**${OPEN_ITEMS_TITLE}** (${kindTitle}; reviewed first):`, ...sorted.map((i) => `- ${i.title} — ${i.owner || 'unowned'}: ${label[i.state]}${i.due ? ` (due ${i.due.slice(0, 10)})` : ''}${i.taskId ? ` [${i.taskId.slice(0, 8)}]` : ''}`)].join('\n');
+  return [`**${OPEN_ITEMS_TITLE}** (${kindTitle}; reviewed first):`, ...sorted.map((i) => `- ${i.title} — ${i.owner || 'unowned'}: ${label[i.state]}${i.due ? ` (due ${i.due.slice(0, 10)})` : ''}${i.taskId ? ` ${i.taskKey || `[${i.taskId.slice(0, 8)}]`}` : ''}`)].join('\n');
 }
 
 /** What a pre-read found, for the auto-skip rule. */

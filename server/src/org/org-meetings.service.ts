@@ -40,6 +40,7 @@ import { OrgAuditService } from './org-audit.service';
 import { OrgApprovalsService } from './org-approvals.service';
 import { meetingTunable, meetingKinds, MEETING_TUNABLES } from './meeting-tunables';
 import { classifyOpenItem, parseRoom, type MeetingRoom, type OpenItem, type PreReadCounts } from './meeting-room';
+import { taskRef } from '../common/task-keys';
 
 export type OrgMeeting = typeof orgMeetings.$inferSelect;
 export type OrgDecision = typeof orgDecisions.$inferSelect;
@@ -66,12 +67,12 @@ export interface Attendee { kind: 'agent' | 'human'; id: string }
  *  a rejected proposal is kept in the minutes but not executed. */
 export interface ProposalVerdict { verdict?: 'approved' | 'rejected'; verdictBy?: string; verdictName?: string }
 /** `due`: an ISO deadline when the proposer gave one; set on the board task. */
-export interface MinutesAction extends ProposalVerdict { title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string; messageId?: string; due?: string | null }
+export interface MinutesAction extends ProposalVerdict { title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string; /** The task's key (docs/tasks-keys.md). */ taskKey?: string | null; messageId?: string; due?: string | null }
 export interface MinutesDecision extends ProposalVerdict { title: string; decision: string; alternatives: string; rationale: string; by: string; decisionId?: string; messageId?: string }
 export interface MinutesRisk { text: string; by: string }
 export interface MinutesQuestion { question: string; by: string; messageId?: string; answer?: string; answeredBy?: string }
 /** An off-topic point the facilitator parked (`meeting_park`): in the minutes and a backlog task. */
-export interface MinutesParked { text: string; by: string; taskId?: string }
+export interface MinutesParked { text: string; by: string; taskId?: string; taskKey?: string | null }
 /** A lesson from a retro (docs/company-vision.md §6, item 22): text with an
  *  audience, optionally a charter change for a member (a CEO approval card)
  *  and a playbook change (a revise task for its owner). Materialised by
@@ -295,7 +296,7 @@ export class OrgMeetingsService {
     for (const a of parseMinutes(prev.minutes).actions) {
       if (a.verdict === 'rejected') continue;
       const t = a.taskId ? await this.tasks.get(orgId, a.taskId).catch(() => null) : null;
-      out.push({ title: a.title, owner: a.owner.replace(/ \(backlog for the chief\)$/, ''), taskId: a.taskId ?? null, state: classifyOpenItem(t, agreedAt), status: t?.status ?? 'unknown', due: t?.dueAt ?? a.due ?? null });
+      out.push({ title: a.title, owner: a.owner.replace(/ \(backlog for the chief\)$/, ''), taskId: a.taskId ?? null, taskKey: t?.key ?? a.taskKey ?? null, state: classifyOpenItem(t, agreedAt), status: t?.status ?? 'unknown', due: t?.dueAt ?? a.due ?? null });
     }
     return out.slice(0, 20);
   }
@@ -322,7 +323,7 @@ export class OrgMeetingsService {
     lines.push(`- Scorecard: ${checkIns.length ? checkIns.slice(0, 8).map((g) => `${g.title}${val(g)}${g.atRisk ? ' (at risk)' : ' (on pace)'}`).join('; ') : 'no check-in since the last meeting'}`);
     if (atRisk.length) lines.push(`- At risk: ${atRisk.slice(0, 6).map((g) => `${g.title}${g.atRiskReason ? ` — ${g.atRiskReason.slice(0, 120)}` : ''}`).join('; ')}`);
     lines.push(`- Board: ${moved.length ? `${moved.length} task(s) moved, ${done.length} done${done.length ? ` (${done.slice(0, 6).map((t) => t.title).join('; ')})` : ''}` : 'nothing moved'}`);
-    lines.push(`- Blocked: ${blocked.length ? blocked.slice(0, 6).map((t) => `[${t.id.slice(0, 8)}] ${t.title} — ${nm(t.assigneeAgentId)}`).join('; ') : 'nothing'}`);
+    lines.push(`- Blocked: ${blocked.length ? blocked.slice(0, 6).map((t) => `${taskRef(t)} ${t.title} — ${nm(t.assigneeAgentId)}`).join('; ') : 'nothing'}`);
     return { text: lines.join('\n'), counts: { deltas: moved.length, blocked: blocked.length, checkIns: checkIns.length, atRisk: atRisk.length } };
   }
 
@@ -425,7 +426,7 @@ export class OrgMeetingsService {
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
     if (!unit) {
       const tasks = (await this.tasks.list(orgId)).filter((t) => !['done', 'cancelled'].includes(t.status)).slice(0, 30);
-      return tasks.length ? tasks.map((t) => `[${t.id.slice(0, 8)}] (${t.status}) ${t.title} — ${t.assigneeAgentId ? names.get(t.assigneeAgentId) ?? 'agent' : 'nobody'}`).join('\n') : 'The board is empty.';
+      return tasks.length ? tasks.map((t) => `${taskRef(t)} (${t.status}) ${t.title} — ${t.assigneeAgentId ? names.get(t.assigneeAgentId) ?? 'agent' : 'nobody'}`).join('\n') : 'The board is empty.';
     }
     return this.units.unitReport(orgId, unit.id, names);
   }
@@ -464,7 +465,7 @@ export class OrgMeetingsService {
         assigneeAgentId: assignee, status: assignee ? 'todo' : 'backlog', createdBy: `agent:${a.by || facilitator}`, dueAt: a.due ?? null,
         unitId: meeting.unitId ?? undefined, channelId: meeting.channelId, messageId: opts.threadRootId ?? meeting.threadRootId,
       }).catch(() => null);
-      if (t) { a.taskId = t.id; if (!assignee && a.owner) a.owner = `${a.owner} (backlog for the chief)`; }
+      if (t) { a.taskId = t.id; a.taskKey = t.key; if (!assignee && a.owner) a.owner = `${a.owner} (backlog for the chief)`; }
     }
     for (const d of minutes.decisions) {
       if (d.decisionId || d.verdict === 'rejected') continue;
@@ -483,7 +484,7 @@ export class OrgMeetingsService {
         assigneeAgentId: null, status: 'backlog', createdBy: `agent:${p.by || facilitator}`,
         unitId: meeting.unitId ?? undefined, channelId: meeting.channelId, messageId: opts.threadRootId ?? meeting.threadRootId,
       }).catch(() => null);
-      if (t) p.taskId = t.id;
+      if (t) { p.taskId = t.id; p.taskKey = t.key; }
     }
     for (const r of minutes.risks) await this.audit.append(orgId, { actor: `agent:${r.by || facilitator}`, action: 'meeting_risk', refType: 'meeting', refId: meeting.id, payload: { text: r.text.slice(0, 600) } });
     for (const fn of this.materialisers) await fn(orgId, meeting, minutes).catch((err: unknown) => this.audit.append(orgId, { actor: 'system', action: 'meeting_materialise_failed', refType: 'meeting', refId: meeting.id, payload: { error: String(err instanceof Error ? err.message : err).slice(0, 300) } }).then(() => undefined));
@@ -500,11 +501,11 @@ export class OrgMeetingsService {
     const lines = [`**Minutes — ${meeting.title}** (${minutes.endedBy === 'stopped' ? 'ended early' : `${meeting.rounds} round${meeting.rounds === 1 ? '' : 's'}`}, $${meeting.usd.toFixed(2)}${tokens ? `, ${tokens.toLocaleString('en-US')} tokens` : ''})`];
     if (minutes.summary) lines.push('', minutes.summary.slice(0, 2_000));
     lines.push('', `Decisions (${minutes.decisions.length})`, ...(minutes.decisions.length ? minutes.decisions.map((d) => `- ${d.title}: ${d.decision}${d.decisionId ? ` · #decision:${d.decisionId.slice(0, 8)}` : ''}${verdict(d)}`) : ['- none']));
-    lines.push('', `Actions (${minutes.actions.length})`, ...(minutes.actions.length ? minutes.actions.map((a) => `- ${a.title} — ${a.owner || 'unowned'}${a.taskId ? ` · task [${a.taskId.slice(0, 8)}]` : ''}${verdict(a)}`) : ['- none']));
+    lines.push('', `Actions (${minutes.actions.length})`, ...(minutes.actions.length ? minutes.actions.map((a) => `- ${a.title} — ${a.owner || 'unowned'}${a.taskId ? ` · task ${a.taskKey || `[${a.taskId.slice(0, 8)}]`}` : ''}${verdict(a)}`) : ['- none']));
     lines.push('', `Risks (${minutes.risks.length})`, ...(minutes.risks.length ? minutes.risks.map((r) => `- ${r.text} (${nm(r.by)})`) : ['- none']));
     lines.push('', `Questions for the CEO (${minutes.questions.length})`, ...(minutes.questions.length ? minutes.questions.map((q) => `- ${q.question} (${nm(q.by)})${q.answer ? ` — answered: ${q.answer}` : ''}`) : ['- none']));
     const parked = minutes.parked ?? [];
-    if (parked.length) lines.push('', `Parking lot (${parked.length})`, ...parked.map((p) => `- ${p.text}${p.taskId ? ` · backlog [${p.taskId.slice(0, 8)}]` : ''}`));
+    if (parked.length) lines.push('', `Parking lot (${parked.length})`, ...parked.map((p) => `- ${p.text}${p.taskId ? ` · backlog ${p.taskKey || `[${p.taskId.slice(0, 8)}]`}` : ''}`));
     const lessons = minutes.lessons ?? [];
     if (lessons.length) lines.push('', `Lessons (${lessons.length})`, ...lessons.map((l) => `- [${l.audience}] ${l.text}${l.proposedCharterChange ? ` · charter change for ${nm(l.proposedCharterChange.agent)}${l.proposedCharterChange.approvalId ? ` (approval ${l.proposedCharterChange.approvalId.slice(0, 8)})` : ''}` : ''}${l.proposedPlaybookChange ? ` · playbook ${l.proposedPlaybookChange.playbookId.slice(0, 8)}${l.proposedPlaybookChange.taskId ? ` → task [${l.proposedPlaybookChange.taskId.slice(0, 8)}]` : ''}` : ''} (${nm(l.by)})`));
     return lines.join('\n');
@@ -688,7 +689,7 @@ function dedupe(list: Attendee[]): Attendee[] {
   return list.filter((a) => { const k = `${a.kind}:${a.id}`; if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
-function short(t: OrgTask): string { return `[${t.id.slice(0, 8)}] ${t.title}`; }
+function short(t: OrgTask): string { return `${taskRef(t)} ${t.title}`; }
 function lastBlocker(t: OrgTask): string {
   try { const v = JSON.parse(t.blockers || '[]') as unknown[]; return String(v.at(-1) ?? 'no reason given'); } catch { return 'no reason given'; }
 }

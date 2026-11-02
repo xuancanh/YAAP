@@ -52,6 +52,7 @@ import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '.
 import { ProviderHealthService } from '../ai/provider-health';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 import { liveTurns } from './live-turns';
+import { taskRef } from '../common/task-keys';
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
 
@@ -186,7 +187,7 @@ const AGENT_TOOLS: AiToolSpec[] = [
   },
   {
     name: 'list_tasks',
-    description: 'Read your kanban board: every task with its short id, status (todo / doing / blocked / done / abandoned), and title. Check it at the start of scheduled loops and heartbeats, and keep every task in the status that is true now.',
+    description: 'Read your kanban board: every task with its key (e.g. EVL-3), status (todo / doing / blocked / done / abandoned), and title. Check it at the start of scheduled loops and heartbeats, and keep every task in the status that is true now.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -203,11 +204,11 @@ const AGENT_TOOLS: AiToolSpec[] = [
   },
   {
     name: 'update_task',
-    description: 'Update one of your tasks by the short id from list_tasks. Keep the board true: doing when you start, done when finished, blocked when it waits on something outside you (a person, an approval, another task — say what in reason), abandoned when it is no longer worth doing (say why in reason), todo to put it back. Never leave a task in doing that you are not working on.',
+    description: 'Update one of your tasks by its key from list_tasks (e.g. EVL-3); refer to tasks by key everywhere. Keep the board true: doing when you start, done when finished, blocked when it waits on something outside you (a person, an approval, another task — say what in reason), abandoned when it is no longer worth doing (say why in reason), todo to put it back. Never leave a task in doing that you are not working on.',
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'The short task id shown by list_tasks.' },
+        id: { type: 'string', description: 'The task key shown by list_tasks (e.g. EVL-3; case does not matter).' },
         status: { type: 'string', enum: ['todo', 'doing', 'blocked', 'done', 'abandoned'] },
         reason: { type: 'string', description: 'Required for blocked (what it waits on) and abandoned (why it is no longer worth doing).' },
         title: { type: 'string' },
@@ -1202,7 +1203,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             origin: this.turnOrigins.get(session.id) ?? 'user',
             ...deliveryFor(targetWs, 'info'),
           }).catch(() => {});
-          return `Task [${task.id.slice(0, 8)}] added to ${target.name}'s board.`;
+          return `Task ${taskRef(task)} added to ${target.name}'s board.`;
         }
         case 'search_history': {
           const hits = await this.repo.searchAgentMessages(agentId, String(input.query ?? ''));
@@ -1256,7 +1257,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             note: typeof input.note === 'string' ? input.note : undefined,
             origin: 'agent',
           });
-          return `Task [${task.id.slice(0, 8)}] added to todo: ${task.title}`;
+          return `Task ${taskRef(task)} added to todo: ${task.title}`;
         }
         default: {
           const task = await this.agents.updateTaskByPrefix(agentId, String(input.id ?? ''), {
@@ -1265,7 +1266,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             note: typeof input.note === 'string' ? input.note : undefined,
             reason: typeof input.reason === 'string' ? input.reason : undefined,
           });
-          return `Task [${task.id.slice(0, 8)}] is now (${task.status}) ${task.title}`;
+          return `Task ${taskRef(task)} is now (${task.status}) ${task.title}`;
         }
       }
     }

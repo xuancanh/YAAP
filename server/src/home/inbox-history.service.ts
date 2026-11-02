@@ -36,6 +36,7 @@ import { accounts, actionLog, agents as agentsTable, follows, orgApprovals, orgA
 import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
 import { OrgService } from '../org/org.service';
 import { summarize } from '../org/org-approvals.service';
+import { taskLabel } from '../common/task-keys';
 
 export const HISTORY_KINDS = ['approvals', 'keys', 'escalations', 'plans', 'mytasks', 'incidents', 'following'] as const;
 export type HistoryKind = typeof HISTORY_KINDS[number];
@@ -387,7 +388,7 @@ export class InboxHistoryService {
       const by = t.acceptedBy === 'check' ? { kind: 'system' as const, name: 'the checks' } : a ? this.actor(ctx, a.actor) : { kind: 'system' as const, name: 'the system' };
       const mine = t.assigneeHumanId === ctx.me;
       return {
-        key: `t:${t.id}`, kind: 'mytasks', title: mine ? t.title : `Review: ${t.title}`,
+        key: `t:${t.id}`, kind: 'mytasks', title: mine ? taskLabel(t) : `Review: ${taskLabel(t)}`,
         detail: `${mine ? 'assigned to you' : 'you were the reviewer'}${t.acceptedBy ? ` · accepted by ${t.acceptedBy}` : ''}`,
         outcome: t.status === 'done' ? 'done' : 'cancelled', by, withoutYou: false, at: t.updatedAt,
         link: { type: 'task', id: t.id },

@@ -147,7 +147,7 @@ export class OverviewService {
       const startedAt = t.claimedAt ?? null;
       const wrote = startedAt ? myFiles.filter((f) => f.updatedAt >= startedAt).map((f) => f.path) : [];
       return {
-        id: t.id, source: 'org', title: t.title, status: t.status, outcome: brief.outcome ?? '', doneWhen: brief.done_when ?? '',
+        id: t.id, key: t.key, source: 'org', title: t.title, status: t.status, outcome: brief.outcome ?? '', doneWhen: brief.done_when ?? '',
         startedAt, updatedAt: t.updatedAt, createdAt: t.createdAt, dueAt: t.dueAt,
         lastComment: withComment ? await commentOf(t) : null,
         files: [...new Set([...safe<string[]>(t.fileScope, []), ...wrote])].slice(0, 8),
@@ -156,7 +156,7 @@ export class OverviewService {
     };
     const own = await this.agents.listTasks(agentId).catch(() => []);
     const ownCard = (t: (typeof own)[number]): OverviewTask => ({
-      id: t.id, source: 'agent', title: t.title, status: t.status, outcome: t.note ?? '', doneWhen: '', startedAt: null, updatedAt: t.updatedAt, createdAt: t.createdAt,
+      id: t.id, key: t.key, source: 'agent', title: t.title, status: t.status, outcome: t.note ?? '', doneWhen: '', startedAt: null, updatedAt: t.updatedAt, createdAt: t.createdAt,
       dueAt: null, lastComment: null, files: [], acceptedBy: '', assigneeName: agent.name,
     });
     const mine = c.orgTasks.filter((t) => t.assigneeAgentId === agentId);

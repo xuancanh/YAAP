@@ -47,6 +47,7 @@ import { deliveryFor } from '../workspaces/quiet-hours';
 import { spendStatus } from '../workspaces/spend.util';
 import { TriggerBus, TaskAddedEvent } from './trigger-bus';
 import { DEFAULT_LEAD_MINUTES, hashWebhookSecret, pollMinutesOf, type CalendarTrigger, type LoopDef, type MailTrigger } from './loop-def';
+import { taskRef } from '../common/task-keys';
 
 export type { LoopDef } from './loop-def';
 
@@ -364,7 +365,7 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     if (!agent) return;
     const loop = parseLoops(agent.loops).find((l) => l.name === pending.loopName && l.trigger?.kind === 'task' && l.enabled !== false);
     if (!loop) return; // removed or paused while the batch waited
-    const lines = pending.tasks.map((t) => `- [${t.id.slice(0, 8)}] ${t.title}${t.note ? ` — ${t.note.replace(/\s+/g, ' ').slice(0, 200)}` : ''} (from: ${t.origin})`);
+    const lines = pending.tasks.map((t) => `- ${taskRef(t)} ${t.title}${t.note ? ` — ${t.note.replace(/\s+/g, ' ').slice(0, 200)}` : ''} (from: ${t.origin})`);
     await this.fire(agent.id, agent.name, loop, {
       kind: 'task',
       summary: `${pending.tasks.length} task(s) assigned to the board`,

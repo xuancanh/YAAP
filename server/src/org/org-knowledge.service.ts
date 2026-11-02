@@ -39,6 +39,7 @@ import { OrgAuditService } from './org-audit.service';
 import { OrgRuntimeService, type RunCtx } from './org-runtime.service';
 import { parseMinutes } from './org-meetings.service';
 import { memoryTunable } from './memory-tunables';
+import { matchTaskRef, taskLabel } from '../common/task-keys';
 
 export type CitationKind = 'task' | 'decision' | 'goal' | 'meeting' | 'audit';
 export const CITATION_KINDS: readonly CitationKind[] = ['task', 'decision', 'goal', 'meeting', 'audit'];
@@ -257,7 +258,7 @@ export class OrgKnowledgeService {
     let answer = text;
     for (const f of found) {
       let hit: Citation | null = null;
-      if (f.kind === 'task') { const t = byPrefix(tasks, f.ref); if (t) hit = { kind: 'task', id: t.id, title: t.title }; }
+      if (f.kind === 'task') { const ts = matchTaskRef(tasks, f.ref); const t = ts.length === 1 ? ts[0] : undefined; if (t) hit = { kind: 'task', id: t.id, title: taskLabel(t) }; }
       else if (f.kind === 'goal') { const g = byPrefix(goals, f.ref); if (g) hit = { kind: 'goal', id: g.id, title: g.title }; }
       else if (f.kind === 'decision') { const d = byPrefix(decisions, f.ref); if (d) hit = { kind: 'decision', id: d.id, title: d.title }; }
       else if (f.kind === 'meeting') { const m = byPrefix(meetings, f.ref); if (m) hit = { kind: 'meeting', id: m.id, title: m.title }; }
@@ -310,7 +311,7 @@ export class OrgKnowledgeService {
     const one = <T extends { id: string }>(rows: T[]): T | undefined => { const hits = rows.filter((r) => r.id === id || (id.length >= 6 && r.id.startsWith(id))); return hits.length === 1 ? hits[0] : undefined; };
     switch (kind) {
       case 'goal': { const g = one(await this.org.goals(orgId)); return g ? node('goal', g.id, `${g.kind.replace('_', ' ')}: ${g.title}`, g.status, g.createdAt) : null; }
-      case 'task': { const t = one(await this.tasks.list(orgId)); return t ? node('task', t.id, t.title, t.status, t.updatedAt) : null; }
+      case 'task': { const ts = matchTaskRef(await this.tasks.list(orgId), id); const t = ts.length === 1 ? ts[0] : undefined; return t ? node('task', t.id, taskLabel(t), t.status, t.updatedAt) : null; }
       case 'project': { const p = one(await this.org.projects(orgId)); return p ? node('project', p.id, p.title, p.status, p.createdAt) : null; }
       case 'decision': { const x = one(await this.db.select().from(orgDecisions).where(eq(orgDecisions.orgId, orgId))); return x ? node('decision', x.id, x.title, undefined, x.createdAt) : null; }
       case 'meeting': { const m = one(await this.db.select().from(orgMeetings).where(eq(orgMeetings.orgId, orgId))); return m ? node('meeting', m.id, m.title, m.status, m.endedAt ?? m.createdAt) : null; }

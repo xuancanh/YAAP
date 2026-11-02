@@ -29,6 +29,8 @@ export interface OverviewStatus extends HomeAgent {
 /** A task on the agent's page: an org task card, or one from its own board. */
 export interface OverviewTask {
   id: string;
+  /** The task key (docs/tasks-keys.md), e.g. ENG-12; null on a row from before keys. */
+  key?: string | null;
   /** `org` opens with app.openOrgTask; `agent` is on the agent's Tasks tab. */
   source: 'org' | 'agent';
   title: string;

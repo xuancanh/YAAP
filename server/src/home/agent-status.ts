@@ -30,6 +30,7 @@ import type { Organization } from '../org/org.service';
 import type { OrgTask, OrgTasksService } from '../org/org-tasks.service';
 import { liveTurns as defaultLive, type LiveTurn, type LiveTurnRegistry } from '../chats/live-turns';
 import type { HomeAgent, HomeAgentError, HomeAgentState } from './home.types';
+import { isTaskKey } from '../common/task-keys';
 
 const DAY_MS = 24 * 60 * 60_000;
 /** Errors older than this no longer mark an agent as failing. */
@@ -62,13 +63,13 @@ export interface BlockerInfo {
  * latest reason, and who or what it waits on. Pure.
  */
 export function blockerOf(t: Pick<OrgTask, 'id' | 'blockers' | 'dependsOn' | 'updatedAt'>, ctx: {
-  tasksById: Map<string, Pick<OrgTask, 'id' | 'title' | 'status' | 'assigneeAgentId'>>;
+  tasksById: Map<string, Pick<OrgTask, 'id' | 'title' | 'status' | 'assigneeAgentId'> & { key?: string | null }>;
   names: Map<string, string>;
   /** A pending CEO escalation card exists for this task. */
   escalatedToCeo?: boolean;
 }): BlockerInfo {
   const lines = parseList(t.blockers);
-  const byPrefix = (id: string) => ctx.tasksById.get(id) ?? [...ctx.tasksById.values()].find((x) => id.length >= 8 && x.id.startsWith(id));
+  const byPrefix = (id: string) => ctx.tasksById.get(id) ?? [...ctx.tasksById.values()].find((x) => (id.length >= 8 && x.id.startsWith(id)) || (!!x.key && x.key === id.toUpperCase()));
   const idByName = (name: string) => [...ctx.names.entries()].find(([, n]) => n.toLowerCase() === name.trim().toLowerCase())?.[0] ?? null;
   const since = t.updatedAt;
   for (const line of lines.slice().reverse()) {
@@ -79,7 +80,7 @@ export function blockerOf(t: Pick<OrgTask, 'id' | 'blockers' | 'dependsOn' | 'up
     }
     const ceo = /^escalated: ([\s\S]*)$/.exec(line);
     if (ceo) return { reason: clip(ceo[1], 240), waitsOn: { kind: 'ceo', id: null, name: 'You', taskId: null }, since };
-    const dep = /^[0-9a-f-]{8,}$/i.test(line.trim()) ? byPrefix(line.trim()) : undefined;
+    const dep = /^[0-9a-f-]{8,}$/i.test(line.trim()) || isTaskKey(line) ? byPrefix(line.trim()) : undefined;
     if (dep && dep.status !== 'done' && dep.status !== 'cancelled') return taskWait(dep, ctx.names, since, `Waits on "${clip(dep.title, 120)}"`);
   }
   for (const id of parseList(t.dependsOn)) {
@@ -145,7 +146,7 @@ export interface AgentStatus extends HomeAgent {
   /** When the current task started, as near as the board says (its claim, else its last update). */
   doingSince: string | null;
   /** Its blocked org tasks, each with what it waits on. */
-  blocked: Array<{ taskId: string; title: string; blocker: BlockerInfo }>;
+  blocked: Array<{ taskId: string; key?: string | null; title: string; blocker: BlockerInfo }>;
   /** Of those, the ones waiting on you (the CEO). */
   waitingOnYou: number;
   /** Open org tasks (the WIP count). */
@@ -240,7 +241,7 @@ export async function agentStatuses(deps: StatusDeps, input: StatusInput): Promi
       ?? orgTasks.filter((t) => t.status === 'in_review' && t.reviewerAgentId === a.id)[0];
     const blockedTasks = mine.filter((t) => t.status === 'blocked');
     const blockedTask = blockedTasks[0];
-    const blockedRows = blockedTasks.map((t) => ({ taskId: t.id, title: t.title, blocker: blockerOf(t, { tasksById, names, escalatedToCeo: input.ceoEscalations?.has(t.id) }) }));
+    const blockedRows = blockedTasks.map((t) => ({ taskId: t.id, key: t.key, title: t.title, blocker: blockerOf(t, { tasksById, names, escalatedToCeo: input.ceoEscalations?.has(t.id) }) }));
     let doing = '';
     let taskId: string | null = null;
     if (doingTask) { doing = doingTask.status === 'in_review' ? `Reviewing "${doingTask.title}"` : doingTask.title; taskId = doingTask.id; }

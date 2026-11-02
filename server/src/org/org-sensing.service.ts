@@ -61,6 +61,7 @@ import { OrgRuntimeService } from './org-runtime.service';
 import { sensingTunable } from './sensing-tunables';
 import { describeCheck, normalizeConnectionQuery, selectNumber, selectValue, serviceOfQuery, type Check, type CheckStatus, type ConnectionQuerySpec } from './org-checks';
 import { OrgMirrorService } from './org-mirror.service';
+import { taskRef } from '../common/task-keys';
 
 export type MetricSource = typeof orgMetricSources.$inferSelect;
 export type MetricSample = typeof orgMetricSamples.$inferSelect;
@@ -108,8 +109,8 @@ const TOOL_NAMES = new Set(['org_metric_sources', 'org_metric_read', 'org_propos
 const MEMBER_TOOLS: AiToolSpec[] = [
   { name: 'org_metric_sources', description: 'The company\'s metric sources — where key results get their measured values (an HTTP endpoint, a webhook, a connection query, a human attestation): name, kind, status (ok / error / stale / pending_approval), last value and when it was fetched, which key results it measures. Ground truth: a number from a source beats a number anyone typed.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
   { name: 'org_metric_read', description: 'Read the samples of one metric source (newest last, at most 50) with their provenance: value, when it was observed, what was fetched.', inputSchema: { type: 'object', properties: { source: { type: 'string', description: 'Source id, id prefix or name.' }, since: { type: 'string', description: 'ISO date; default the last 30 days.' }, org: { type: 'string' } }, required: ['source'] } },
-  { name: 'org_task_checks', description: 'The executable checks of a task (its done_when made testable) and their latest results: pass, fail, error or pending, with the detail.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: 'Defaults to your current task.' }, org: { type: 'string' } } } },
-  { name: 'org_run_checks', description: 'Run a task\'s checks now (the owner, its reviewer or the chief) to see where it stands before requesting review. Reads only: nothing is accepted or changed, the results are recorded. org_request_review runs them again and accepts the task when they all pass.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: 'Defaults to your current task.' }, org: { type: 'string' } } } },
+  { name: 'org_task_checks', description: 'The executable checks of a task (its done_when made testable) and their latest results: pass, fail, error or pending, with the detail.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: 'The task key, e.g. ENG-12; defaults to your current task.' }, org: { type: 'string' } } } },
+  { name: 'org_run_checks', description: 'Run a task\'s checks now (the owner, its reviewer or the chief) to see where it stands before requesting review. Reads only: nothing is accepted or changed, the results are recorded. org_request_review runs them again and accepts the task when they all pass.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: 'The task key, e.g. ENG-12; defaults to your current task.' }, org: { type: 'string' } } } },
 ];
 const PROPOSE_TOOL: AiToolSpec = {
   name: 'org_propose_metric_source',
@@ -792,16 +793,16 @@ export class OrgSensingService implements ToolProviderHook, OnModuleInit, OnModu
       case 'org_task_checks': {
         const t = await taskOf();
         const rows = await this.taskChecks(org.id, t.id);
-        if (rows.length === 0) return `Task [${t.id.slice(0, 8)}] has no checks: its done_when is judged by review.`;
-        return [`Checks of [${t.id.slice(0, 8)}] "${t.title}":`, ...rows.map((r) => `${r.index + 1}. ${describeCheck(r.check)} — ${r.status}: ${r.detail}`)].join('\n');
+        if (rows.length === 0) return `Task ${taskRef(t)} has no checks: its done_when is judged by review.`;
+        return [`Checks of ${taskRef(t)} "${t.title}":`, ...rows.map((r) => `${r.index + 1}. ${describeCheck(r.check)} — ${r.status}: ${r.detail}`)].join('\n');
       }
       case 'org_run_checks': {
         const t = await taskOf();
         if (!isChief && t.assigneeAgentId !== agentId && t.reviewerAgentId !== agentId) throw new Error('only the task owner, its reviewer or the chief runs its checks');
         const r = await this.runChecks(org.id, t.id, actor);
-        if (r.outcome === 'none') return `Task [${t.id.slice(0, 8)}] has no checks.`;
+        if (r.outcome === 'none') return `Task ${taskRef(t)} has no checks.`;
         if (ctx) ctx.progress = true;
-        return [`Checks of [${t.id.slice(0, 8)}]: ${r.outcome === 'pass' ? 'all pass — org_request_review will accept the task' : r.outcome === 'fail' ? 'some fail — fix them before requesting review' : 'some could not run — review will judge'}.`, ...r.results.map((x) => `${x.index + 1}. ${describeCheck(x.check)} — ${x.status}: ${x.detail}`)].join('\n');
+        return [`Checks of ${taskRef(t)}: ${r.outcome === 'pass' ? 'all pass — org_request_review will accept the task' : r.outcome === 'fail' ? 'some fail — fix them before requesting review' : 'some could not run — review will judge'}.`, ...r.results.map((x) => `${x.index + 1}. ${describeCheck(x.check)} — ${x.status}: ${x.detail}`)].join('\n');
       }
     }
     throw new Error(`unknown tool: ${name}`);

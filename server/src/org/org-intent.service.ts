@@ -35,6 +35,7 @@ import { OrgService, type OrgGoal, type Organization } from './org.service';
 import { OrgUnitsService, blendProgress, type GoalNode } from './org-units.service';
 import { OrgAuditService } from './org-audit.service';
 import { tunable } from './org-tunables';
+import { matchTaskRef } from '../common/task-keys';
 
 export type OrgCheckin = typeof orgCheckins.$inferSelect;
 export type Pace = 'onPace' | 'behind' | 'unknown';
@@ -348,7 +349,9 @@ export class OrgIntentService {
     let goalId: string | null = ref.goalId ?? null;
     let linked = true;
     if (ref.taskId) {
-      const t = (await this.db.select().from(orgTasks).where(and(eq(orgTasks.orgId, orgId), eq(orgTasks.id, ref.taskId))).limit(1)).at(0);
+      const rows = await this.db.select().from(orgTasks).where(eq(orgTasks.orgId, orgId));
+      const hits = matchTaskRef(rows, ref.taskId);
+      const t = hits.length === 1 ? hits[0] : undefined;
       if (!t) throw new NotFoundException(`task ${ref.taskId}`);
       chain.push({ kind: 'task', id: t.id, title: t.title, status: t.status });
       const project = t.projectId ? (await this.db.select().from(orgProjects).where(eq(orgProjects.id, t.projectId)).limit(1)).at(0) : undefined;

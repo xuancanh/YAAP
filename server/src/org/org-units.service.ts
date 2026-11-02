@@ -33,6 +33,7 @@ import { AgentsService } from '../agents/agents.service';
 import { OrgService, type GoalIntentFields, type OrgGoal, type OrgMember } from './org.service';
 import { OrgAuditService } from './org-audit.service';
 import { OrgAnnouncer } from './org-announcer';
+import { ensureUnitPrefix, queryableOf, renamePrefix, taskRef } from '../common/task-keys';
 
 export type OrgUnit = typeof orgUnits.$inferSelect;
 
@@ -211,8 +212,11 @@ export class OrgUnitsService {
         : await channels.ensureUnitChannel(org.workspaceId, slug, slug, { topic: `Unit channel of ${name}: ${leadName} and its reports.`, agentIds: [leadAgentId, ...reports], humanIds: humans });
       channelId = ch.id; slug = ch.slug;
     }
-    const row: OrgUnit = { accountId: currentAccountId(), id: newId(), orgId, leadAgentId, parentUnitId: null, name, slug, channelId, archivedAt: null, createdAt: nowIso() };
+    const row: OrgUnit = { accountId: currentAccountId(), id: newId(), orgId, leadAgentId, parentUnitId: null, name, slug, channelId, archivedAt: null, taskKey: null, createdAt: nowIso() };
     await this.db.insert(orgUnits).values(row);
+    // The board's task key prefix (docs/tasks-keys.md), claimed up front so
+    // the SPA knows it before the first task.
+    row.taskKey = (await ensureUnitPrefix(queryableOf(this.db), row.id).catch(() => null))?.prefix ?? null;
     await this.audit.append(orgId, { actor: 'system', action: 'unit_create', refType: 'unit', refId: row.id, payload: { leadAgentId, name, slug, root: isRoot } });
     return row;
   }
@@ -339,6 +343,16 @@ export class OrgUnitsService {
     return { ...u, name: n };
   }
 
+  /** Rename the board's task key prefix (docs/tasks-keys.md): new tasks
+   *  take it; existing ones keep their keys. Unique in the workspace. */
+  async setTaskKey(orgId: string, unitId: string, prefix: string, actor = 'user'): Promise<OrgUnit> {
+    const u = await this.get(orgId, unitId);
+    let p: string;
+    try { p = await renamePrefix(queryableOf(this.db), { kind: 'unit', id: u.id }, prefix); } catch (err) { throw new BadRequestException((err as Error).message); }
+    if (p !== u.taskKey) await this.audit.append(orgId, { actor, action: 'unit_task_key', refType: 'unit', refId: u.id, payload: { taskKey: p, previous: u.taskKey } });
+    return { ...u, taskKey: p };
+  }
+
   /** One system line into the (non-root) unit channels of `agentIds` — what
    *  an autonomous hire or reorg posts besides `#company`. */
   async announceIn(orgId: string, agentIds: string[], text: string): Promise<string[]> {
@@ -360,7 +374,13 @@ export class OrgUnitsService {
 
   async unitTree(orgId: string): Promise<UnitNode[]> {
     await this.rootUnit(orgId).catch(() => undefined);
-    const units = await this.units(orgId);
+    let units = await this.units(orgId);
+    // Every board shows its task key prefix (docs/tasks-keys.md); one made
+    // before keys gets it now.
+    if (units.some((u) => !u.taskKey)) {
+      for (const u of units.filter((x) => !x.taskKey)) await ensureUnitPrefix(queryableOf(this.db), u.id).catch(() => null);
+      units = await this.units(orgId);
+    }
     const members = (await this.org.members(orgId)).filter((m) => m.status !== 'terminated');
     const tasks = await this.db.select().from(orgTasks).where(eq(orgTasks.orgId, orgId));
     const goals = await this.org.goals(orgId);
@@ -461,7 +481,7 @@ export class OrgUnitsService {
     const byStatus = new Map<string, number>();
     for (const t of tasks) byStatus.set(t.status, (byStatus.get(t.status) ?? 0) + 1);
     lines.push(tasks.length === 0 ? '- no tasks on this board' : `- ${tasks.length} task(s): ${[...byStatus.entries()].map(([s, n]) => `${n} ${s.replace('_', ' ')}`).join(', ')}`);
-    for (const t of tasks.filter((t) => !['done', 'cancelled'].includes(t.status)).slice(0, 20)) lines.push(`  - [${t.id.slice(0, 8)}] (${t.status}) ${t.title} — ${nm(t.assigneeAgentId)}`);
+    for (const t of tasks.filter((t) => !['done', 'cancelled'].includes(t.status)).slice(0, 20)) lines.push(`  - ${taskRef(t)} (${t.status}) ${t.title} — ${nm(t.assigneeAgentId)}`);
     lines.push('', '## Goals');
     const tree = await this.goalTree(orgId, { unitId: u.id });
     const walk = (nodes: GoalNode[], depth: number) => {

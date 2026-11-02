@@ -23,6 +23,7 @@ import { OrgService } from './org.service';
 import { OrgUnitsService } from './org-units.service';
 import { AgentsService } from '../agents/agents.service';
 import { normalizeChecks, parseChecks, type Check } from './org-checks';
+import { nextOrgTaskKey, queryableOf, resolveTaskRef, taskLabel, taskRef } from '../common/task-keys';
 
 export type OrgTask = typeof orgTasks.$inferSelect;
 export type OrgRun = typeof orgRuns.$inferSelect;
@@ -145,20 +146,21 @@ export class OrgTasksService {
 
   // ---- follows (docs/follows.md) ----
 
-  private async followTarget(orgId: string, t: Pick<OrgTask, 'id' | 'title'>) {
+  private async followTarget(orgId: string, t: Pick<OrgTask, 'id' | 'title'> & { key?: string | null }) {
     const org = await this.org.get(orgId).catch(() => null);
-    return org ? orgTaskTarget(org.workspaceId, t.id, t.title) : null;
+    const key = t.key !== undefined ? t.key : (await this.get(orgId, t.id).catch(() => null))?.key;
+    return org ? orgTaskTarget(org.workspaceId, t.id, t.title, key) : null;
   }
 
   /** Auto-follow; never throws, never resubscribes an unfollow. */
-  private async autoFollow(orgId: string, t: Pick<OrgTask, 'id' | 'title'>, who: Follower | null, reason: Exclude<FollowReason, 'manual'>): Promise<void> {
+  private async autoFollow(orgId: string, t: Pick<OrgTask, 'id' | 'title'> & { key?: string | null }, who: Follower | null, reason: Exclude<FollowReason, 'manual'>): Promise<void> {
     if (!this.follows || !who) return;
     const target = await this.followTarget(orgId, t);
     if (target) await this.follows.autoFollow(target, who, reason);
   }
 
   /** Activity on a task for its followers (never the actor). */
-  private async track(orgId: string, t: Pick<OrgTask, 'id' | 'title'>, act: FollowActivity): Promise<void> {
+  private async track(orgId: string, t: Pick<OrgTask, 'id' | 'title'> & { key?: string | null }, act: FollowActivity): Promise<void> {
     if (!this.follows) return;
     const target = await this.followTarget(orgId, t);
     if (target) await this.follows.recordActivity(target, act);
@@ -231,7 +233,7 @@ export class OrgTasksService {
       await this.audit.append(orgId, { actor: opts.actor, action: 'wip_override', refType: 'agent', refId: agentId, payload: { open: open.length, limit: opts.limit, taskId: opts.taskId ?? null, reason: opts.override.slice(0, 300) } });
       return;
     }
-    throw new BadRequestException(`refused: the member already holds ${open.length} open task(s), the WIP limit is ${opts.limit} (capacity.wipPerMember) — open: ${open.slice(0, 10).map((t) => `[${t.id.slice(0, 8)}] ${t.title} (${t.status})`).join('; ')}. Finish or hand back one first${opts.actor === 'chief' ? ', or pass override with a reason' : ''}.`);
+    throw new BadRequestException(`refused: the member already holds ${open.length} open task(s), the WIP limit is ${opts.limit} (capacity.wipPerMember) — open: ${open.slice(0, 10).map((t) => `${taskRef(t)} ${t.title} (${t.status})`).join('; ')}. Finish or hand back one first${opts.actor === 'chief' ? ', or pass override with a reason' : ''}.`);
   }
 
   /** Resolve and validate dependencies for a task: known ids (or 8-char
@@ -242,15 +244,16 @@ export class OrgTasksService {
     const all = await this.list(orgId);
     const out: string[] = [];
     for (const ref of list.filter(Boolean).slice(0, 20)) {
-      const hits = all.filter((t) => t.id === ref || t.id.startsWith(ref));
-      if (hits.length !== 1) throw new BadRequestException(`dependency "${ref}" matches ${hits.length} tasks`);
-      if (hits[0].id === taskId) throw new BadRequestException('a task cannot depend on itself');
-      if (!out.includes(hits[0].id)) out.push(hits[0].id);
+      let hit: OrgTask;
+      try { hit = resolveTaskRef(all, ref); } catch (err) { throw new BadRequestException(`dependency ${(err as Error).message}`); }
+      if (hit.id === taskId) throw new BadRequestException('a task cannot depend on itself');
+      if (!out.includes(hit.id)) out.push(hit.id);
     }
     if (taskId) {
       const edges = new Map(all.map((t) => [t.id, parseDeps(t.dependsOn)]));
       const cycle = wouldCycle(taskId, out, edges);
-      if (cycle) throw new BadRequestException(`refused: that dependency makes a cycle (${cycle.map((id) => id.slice(0, 8)).join(' → ')})`);
+      const byId = new Map(all.map((t) => [t.id, t]));
+      if (cycle) throw new BadRequestException(`refused: that dependency makes a cycle (${cycle.map((id) => (byId.get(id) ? taskRef(byId.get(id)!) : id.slice(0, 8))).join(' → ')})`);
     }
     return out;
   }
@@ -266,7 +269,7 @@ export class OrgTasksService {
    *  limit of active (claimed, in progress) tasks. Null = it may. */
   async claimBlocker(orgId: string, t: OrgTask, agentId: string, wipLimit: number): Promise<string | null> {
     const unmet = await this.unmetDeps(orgId, t);
-    if (unmet.length) return `waiting on ${unmet.map((x) => `[${x.id.slice(0, 8)}] ${x.title}`).join(', ')}`;
+    if (unmet.length) return `waiting on ${unmet.map((x) => `${taskRef(x)} ${x.title}`).join(', ')}`;
     const active = (await this.list(orgId)).filter((x) => x.assigneeAgentId === agentId && x.id !== t.id && ['claimed', 'in_progress'].includes(x.status));
     if (active.length >= wipLimit) return `wip: ${active.length} active task(s), limit ${wipLimit}`;
     return null;
@@ -310,14 +313,15 @@ export class OrgTasksService {
     return t;
   }
 
-  /** Resolve a task by id or 8-char prefix (what the model sees on the board). */
-  async byPrefix(orgId: string, idOrPrefix: string): Promise<OrgTask> {
-    const p = (idOrPrefix ?? '').trim();
-    if (!p) throw new BadRequestException('taskId is required');
-    const all = (await this.list(orgId)).filter((t) => t.id === p || t.id.startsWith(p));
-    if (all.length !== 1) throw new BadRequestException(`task id "${p}" matches ${all.length} tasks`);
-    return all[0];
+  /** Resolve a task by key (ENG-12, any case — what the model sees on the
+   *  board), full id or id prefix (docs/tasks-keys.md). */
+  async byPrefix(orgId: string, ref: string): Promise<OrgTask> {
+    if (!(ref ?? '').trim()) throw new BadRequestException('taskId is required');
+    try { return resolveTaskRef(await this.list(orgId), ref); } catch (err) { throw new BadRequestException((err as Error).message); }
   }
+
+  /** Alias of byPrefix: a task by key, id or id prefix. */
+  resolve(orgId: string, ref: string): Promise<OrgTask> { return this.byPrefix(orgId, ref); }
 
   async create(orgId: string, input: {
     title: string; brief?: Partial<TaskBrief> | string; projectId?: string | null; parentTaskId?: string | null;
@@ -359,9 +363,11 @@ export class OrgTasksService {
       if (input.unitId) { unitId = (await this.units.get(orgId, input.unitId)).id; unitExplicit = 1; }
       else unitId = await this.units.defaultUnitId(orgId, { assigneeAgentId: input.assigneeAgentId, createdBy: input.createdBy }).catch(() => null);
     }
+    // The key (docs/tasks-keys.md): the next number of the board's prefix.
+    const key = await nextOrgTaskKey(queryableOf(this.db), orgId, unitId).catch(() => null);
     const now = nowIso();
     const row: OrgTask = {
-      id: newId(), accountId: currentAccountId(), orgId, projectId: input.projectId ?? null, parentTaskId: input.parentTaskId ?? null,
+      id: newId(), accountId: currentAccountId(), orgId, key, projectId: input.projectId ?? null, parentTaskId: input.parentTaskId ?? null,
       title, brief: JSON.stringify(brief), status,
       assigneeAgentId: input.assigneeAgentId ?? null, assigneeHumanId: null, claimedBy: null, claimedAt: null,
       reviewerAgentId: input.reviewerAgentId ?? null, reviewerHumanId: null, reviewRounds: 0,
@@ -375,7 +381,7 @@ export class OrgTasksService {
       createdAt: now, updatedAt: now,
     };
     await this.db.insert(orgTasks).values(row);
-    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId, class: row.class, ...(checks.length ? { checks: checks.length } : {}), ...(dependsOn.length ? { dependsOn } : {}), ...(dueAt ? { dueAt } : {}) } });
+    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { key, title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId, class: row.class, ...(checks.length ? { checks: checks.length } : {}), ...(dependsOn.length ? { dependsOn } : {}), ...(dueAt ? { dueAt } : {}) } });
     if (row.assigneeAgentId && status === 'todo' && org.status === 'active') this.emitWake(orgId, row.id, row.assigneeAgentId, 'assignment');
     await this.autoFollow(orgId, row, followerFromActor(row.createdBy, actorId()), 'started');
     if (row.assigneeAgentId) await this.autoFollow(orgId, row, { kind: 'agent', id: row.assigneeAgentId }, 'assignee');
@@ -445,14 +451,14 @@ export class OrgTasksService {
     const { updatedAt: _u, ...logged } = set; void _u;
     if (Object.keys(logged).length > 0) await this.audit.append(orgId, { actor, action: 'task_update', refType: 'task', refId: taskId, payload: logged });
     // A task that just became blocked is a board event the autonomous chief reviews (docs/group-chat.md §5).
-    if (patch.status === 'blocked' && t.status !== 'blocked') this.bus?.emitOrgBoard({ orgId, kind: 'blocked', refId: taskId, detail: `"${t.title}" is blocked${patch.blockers?.length ? `: ${patch.blockers.at(-1)}` : ''}` });
+    if (patch.status === 'blocked' && t.status !== 'blocked') this.bus?.emitOrgBoard({ orgId, kind: 'blocked', refId: taskId, detail: `${taskRef(t)} "${t.title}" is blocked${patch.blockers?.length ? `: ${patch.blockers.at(-1)}` : ''}` });
     const updated = await this.get(orgId, taskId);
     if (updated.status === 'done' && t.status !== 'done') await this.releaseDependants(orgId, taskId);
     if (t.status === 'waiting' && updated.status === 'todo' && updated.assigneeAgentId && await this.org.isActive(orgId)) this.emitWake(orgId, taskId, updated.assigneeAgentId, 'dependency');
     // Status back into the originating channel thread (docs/group-chat.md §3),
     // or into the unit channel when the task did not come from a message (§7).
     if (patch.status !== undefined && patch.status !== t.status && (updated.channelId || updated.unitId)) {
-      this.bus?.emitTaskStatus({ source: 'org', taskId, title: updated.title, status: updated.status, previous: t.status, channelId: updated.channelId, messageId: updated.messageId, agentId: updated.assigneeAgentId, unitId: updated.unitId });
+      this.bus?.emitTaskStatus({ source: 'org', taskId, key: updated.key, title: updated.title, status: updated.status, previous: t.status, channelId: updated.channelId, messageId: updated.messageId, agentId: updated.assigneeAgentId, unitId: updated.unitId });
     }
     if (patch.assigneeAgentId && patch.assigneeAgentId !== t.assigneeAgentId) await this.autoFollow(orgId, updated, { kind: 'agent', id: patch.assigneeAgentId }, 'assignee');
     if (patch.reviewerAgentId && patch.reviewerAgentId !== t.reviewerAgentId) await this.autoFollow(orgId, updated, { kind: 'agent', id: patch.reviewerAgentId }, 'reviewer');
@@ -610,7 +616,7 @@ export class OrgTasksService {
         await this.accepted(orgId, taskId, 'check', t.reviewRounds);
         const done = await this.get(orgId, taskId);
         await this.trackStatus(orgId, done, t.status, followerFromActor(by, actorId()), { detail: 'accepted by check' });
-        if (done.channelId || done.unitId) this.bus?.emitTaskStatus({ source: 'org', taskId, title: done.title, status: 'done', previous: t.status, channelId: done.channelId, messageId: done.messageId, agentId: done.assigneeAgentId, unitId: done.unitId });
+        if (done.channelId || done.unitId) this.bus?.emitTaskStatus({ source: 'org', taskId, key: done.key, title: done.title, status: 'done', previous: t.status, channelId: done.channelId, messageId: done.messageId, agentId: done.assigneeAgentId, unitId: done.unitId });
         return done;
       }
       if (verdict.outcome === 'fail') {
@@ -714,12 +720,12 @@ export class OrgTasksService {
     if (!pending) {
       await this.db.insert(orgApprovals).values({
         id: newId(), accountId: currentAccountId(), orgId, kind: 'escalation',
-        payload: JSON.stringify({ taskId, title: t.title, reason, ownerAgentId: org.chiefOfStaffAgentId, assigneeAgentId: t.assigneeAgentId }),
+        payload: JSON.stringify({ taskId, taskKey: t.key, title: t.title, reason, ownerAgentId: org.chiefOfStaffAgentId, assigneeAgentId: t.assigneeAgentId }),
         requestedBy: actor, recommendation: '', status: 'pending', decidedAt: null, decisionNote: '', expiresAt: null, createdAt: nowIso(),
       });
     }
     await this.audit.append(orgId, { actor, action: 'task_escalate', refType: 'task', refId: taskId, payload: { reason: reason.slice(0, 300) } });
-    this.bus?.emitOrgBoard({ orgId, kind: 'escalation', refId: taskId, detail: `"${t.title}" escalated: ${reason.slice(0, 200)}` });
+    this.bus?.emitOrgBoard({ orgId, kind: 'escalation', refId: taskId, detail: `${taskRef(t)} "${t.title}" escalated: ${reason.slice(0, 200)}` });
     const blocked = await this.get(orgId, taskId);
     await this.trackStatus(orgId, blocked, t.status, followerFromActor(actor, actorId()), { detail: `escalated: ${reason.slice(0, 200)}` });
     return blocked;
@@ -748,17 +754,17 @@ export class OrgTasksService {
     } else {
       const unit = this.units ? await this.units.ledBy(orgId, input.toAgentId).catch(() => null) : null;
       escalation = await this.create(orgId, {
-        title: `Escalation: ${t.title}`.slice(0, 200),
+        title: `Escalation: ${taskLabel(t)}`.slice(0, 200),
         brief: {
-          outcome: `A decision or an unblock for task [${t.id.slice(0, 8)}] "${t.title}".`,
+          outcome: `A decision or an unblock for task ${taskRef(t)} "${t.title}".`,
           context: `Escalated by its ${t.assigneeAgentId === input.fromAgentId ? 'owner' : 'reviewer or lead'}: ${reason}`,
           constraints: 'Decide within your own authority; take it higher with org_escalate (a head: to the chief, or to the CEO for a decision only the CEO can make) rather than deciding beyond it.',
-          done_when: `Task [${t.id.slice(0, 8)}] can move again: your answer is on its timeline (org_task_comment) and it is unblocked, reassigned or escalated further.`,
+          done_when: `Task ${taskRef(t)} can move again: your answer is on its timeline (org_task_comment) and it is unblocked, reassigned or escalated further.`,
         },
         parentTaskId: t.id, assigneeAgentId: input.toAgentId, status: 'todo', createdBy: input.actor, unitId: unit?.id ?? null,
       });
     }
-    await this.agents?.addEvent(input.toAgentId, { kind: 'escalation', title: `Escalation: ${t.title}`.slice(0, 200), body: reason, payload: JSON.stringify({ orgId, taskId: t.id, escalationTaskId: escalation.id }), origin: 'org' }).catch(() => undefined);
+    await this.agents?.addEvent(input.toAgentId, { kind: 'escalation', title: `Escalation: ${taskLabel(t)}`.slice(0, 200), body: reason, payload: JSON.stringify({ orgId, taskId: t.id, escalationTaskId: escalation.id }), origin: 'org' }).catch(() => undefined);
     await this.audit.append(orgId, { actor: input.actor, action: 'task_escalate', refType: 'task', refId: taskId, payload: { reason, to: input.toAgentId, escalationTaskId: escalation.id } });
     const blocked = await this.get(orgId, taskId);
     await this.trackStatus(orgId, blocked, t.status, { kind: 'agent', id: input.fromAgentId }, { detail: `escalated to ${input.toName}: ${reason}` });
@@ -804,6 +810,7 @@ export class OrgTasksService {
   async boardForModel(orgId: string, agentNames: Map<string, string>, opts: { assigneeAgentId?: string } = {}): Promise<string> {
     const tasks = (await this.list(orgId)).filter((t) => !opts.assigneeAgentId || t.assigneeAgentId === opts.assigneeAgentId);
     if (tasks.length === 0) return 'The board is empty.';
+    const byId = new Map((await this.list(orgId)).map((t) => [t.id, t]));
     const order = Object.fromEntries(TASK_STATUSES.map((s, i) => [s, i])) as Record<string, number>;
     return tasks
       .filter((t) => t.status !== 'cancelled')
@@ -813,7 +820,7 @@ export class OrgTasksService {
         const b = parseBrief(t.brief);
         const who = t.assigneeAgentId ? agentNames.get(t.assigneeAgentId) ?? t.assigneeAgentId.slice(0, 8) : t.assigneeHumanId ? `human ${t.assigneeHumanId.slice(0, 8)}` : 'unassigned';
         const deps = parseDeps(t.dependsOn);
-        return `[${t.id.slice(0, 8)}] (${t.status}) ${t.title} — owner: ${who}${t.reviewRounds ? ` · review round ${t.reviewRounds}` : ''}${t.dueAt ? ` · due ${t.dueAt.slice(0, 16).replace('T', ' ')}` : ''}${deps.length ? ` · depends on ${deps.map((d) => d.slice(0, 8)).join(', ')}` : ''}${b.outcome ? ` · outcome: ${b.outcome.slice(0, 100)}` : ''}`;
+        return `${taskRef(t)} (${t.status}) ${t.title} — owner: ${who}${t.reviewRounds ? ` · review round ${t.reviewRounds}` : ''}${t.dueAt ? ` · due ${t.dueAt.slice(0, 16).replace('T', ' ')}` : ''}${deps.length ? ` · depends on ${deps.map((d) => { const x = byId.get(d); return x ? taskRef(x) : d.slice(0, 8); }).join(', ')}` : ''}${b.outcome ? ` · outcome: ${b.outcome.slice(0, 100)}` : ''}`;
       })
       .join('\n');
   }
