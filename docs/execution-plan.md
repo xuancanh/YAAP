@@ -1,11 +1,14 @@
 # Execution plan: closing the competitor gaps, all of them
 
-Status: **items 1–26 done** — shipped between 31 October and 1 November 2026; items 27–31 shipped 2 November 2026; see each item's "Shipped as" line.
-`docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
+Status: **all 33 items done** — items 1–26 shipped between 31 October and 1 November 2026, items 27–33 on 2 November 2026; see each item's "Shipped as" line. Work shipped after item 33 is listed under "After item 33" at the end.
+
+Last updated: 2026-11-02
+
+Source: `docs/competitor-gap-analysis.md` §5. The owner's decision: execute every
 item, deprioritise none, and add desktop computer control (previously on the
 "do not build" list) as a must. Payments, phone calls and WhatsApp stay out.
 A second thread — autonomous companies of agents — has its own research and
-design (`docs/autonomous-company.md`, pending) and is item 14 here.
+design (`docs/autonomous-company.md`, phases A–D shipped) and is item 14 here.
 
 Each item below ships as one or more commits on `main`, with tests in
 `tests/` (node:test over PGlite) and, where the UI changes, `web-tests/`.
@@ -766,7 +769,6 @@ own, the provider's strong model, "cheapest" — and pinned tier models). The
 `routing`, `tune` and `cadence` approval kinds render as cards. The board
 shows the task class.
 
-### 24. Blueprints: company export/import, registry, role catalog, hybrid human roles *(planned)*
 ### 24. Blueprints: company export/import, registry, role catalog, hybrid human roles *(done)*
 `docs/company-vision.md` §9, phase F.
 
@@ -1564,3 +1566,20 @@ screen):*
 
 Items 22, 27, 30, 31 and 32 above describe these panes as shipped; they
 remain the record of what was built, superseded on screen by this item.
+
+## After item 33
+
+Shipped on 2 November 2026 outside the numbered items:
+
+- **The workspace filesystem** (`docs/filesystem.md`): one tree per
+  workspace with agent homes and shared folders, `WorkspaceFs`, the `fs_*`
+  tools, revisions and restore. The SPA's Artifacts section and an agent's
+  Artifacts tab (formerly Files) show it; the component is still
+  `src/components/FilesView.tsx`.
+- **Follows** (`docs/follows.md`): agents and people follow threads and
+  tasks; changes reach agents' heartbeats and people's Inbox → **Following**
+  filter; a Follow / Following toggle on threads and org tasks.
+- **Home is the owner's mission control** (`docs/home.md`): one aggregate
+  endpoint and the first screen in a workspace; the agent directory is
+  **All agents** (`?section=agents`).
+- **A deep link to one org task**, and Home's cadences in words.
