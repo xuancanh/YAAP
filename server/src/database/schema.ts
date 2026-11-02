@@ -1835,3 +1835,42 @@ export const workspaceFileRevisions = pgTable('workspace_file_revisions', {
   updatedByName: text('updatedByName').notNull().default(''),
   updatedAt: text('updatedAt').notNull(),
 }, (t) => [uniqueIndex('idx_workspace_file_revisions_version').on(t.workspaceId, t.path, t.version)]);
+
+/** Follows (docs/follows.md, migration 0048): an agent or a person follows a
+ *  channel thread (`targetId` = the root message id), an org task or an
+ *  agent kanban task. Auto-follow writes `reason` (started, commented, owner,
+ *  assignee, reviewer, mentioned); a manual follow writes `manual`. An
+ *  unfollow sets `mutedAt` and keeps the row, so auto-follow never
+ *  resubscribes. The activity columns are the follower's compact "new since
+ *  you last looked": how many updates (`unseenCount`), the latest one and
+ *  who made it, and `attentionAt` when one of them needs the follower
+ *  (blocked, review requested, reopened, a comment naming it) — the
+ *  heartbeat's follow reason reads that, debounced through `wokeAt`.
+ *  `closedAt` is when the target closed (done / cancelled / abandoned). */
+export const follows = pgTable('follows', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  /** agent | user. */
+  followerKind: text('followerKind').notNull(),
+  followerId: text('followerId').notNull(),
+  /** thread | org_task | agent_task. */
+  targetKind: text('targetKind').notNull(),
+  targetId: text('targetId').notNull(),
+  /** started | commented | owner | assignee | reviewer | mentioned | manual. */
+  reason: text('reason').notNull().default('manual'),
+  title: text('title').notNull().default(''),
+  /** SPA deep link (`#/ws/…`) for notifications. */
+  link: text('link').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  mutedAt: text('mutedAt'),
+  lastSeenAt: text('lastSeenAt'),
+  unseenCount: integer('unseenCount').notNull().default(0),
+  lastActivityAt: text('lastActivityAt'),
+  lastActivity: text('lastActivity').notNull().default(''),
+  lastActorName: text('lastActorName').notNull().default(''),
+  attentionAt: text('attentionAt'),
+  attention: text('attention').notNull().default(''),
+  wokeAt: text('wokeAt'),
+  closedAt: text('closedAt'),
+}, (t) => [uniqueIndex('idx_follows_unique').on(t.followerKind, t.followerId, t.targetKind, t.targetId)]);

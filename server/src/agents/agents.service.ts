@@ -22,6 +22,7 @@ import { AiToolSpec } from '../ai/ai-provider.interface';
 import { TriggerBus } from '../chats/trigger-bus';
 import { hashWebhookSecret, validateLoopDef, type LoopDef } from '../chats/loop-def';
 import { cardById, loopForUse, type CardGrantLevel } from '../connections/cards';
+import { FollowsService, agentTaskTarget, type Follower } from '../follows/follows.service';
 
 /** A self-built mini app (FR-11.5): a self-contained HTML tool the agent
  *  writes for itself via save_app. Rendered only in a network-blocked
@@ -144,6 +145,9 @@ export class AgentsService {
     /** Optional likewise; when present, plan caps (agents, enabled loops)
      *  are enforced on every write (docs/accounts.md §4). */
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: follows of board tasks (docs/follows.md) — the owner and
+     *  the creator follow; status changes reach the other followers. */
+    @Optional() public follows?: FollowsService,
   ) {}
 
   /** Every agent of the account, or only the given workspace's (the SPA
@@ -349,8 +353,8 @@ export class AgentsService {
     return this.db.select().from(agentTasks).where(eq(agentTasks.agentId, agentId));
   }
 
-  async addTask(agentId: string, input: { title: string; note?: string; origin?: string; sessionId?: string; channelId?: string | null; messageId?: string | null }) {
-    await this.get(agentId);
+  async addTask(agentId: string, input: { title: string; note?: string; origin?: string; sessionId?: string; channelId?: string | null; messageId?: string | null; createdBy?: Follower | null }) {
+    const owner = await this.get(agentId);
     const title = (input.title ?? '').trim().slice(0, 200);
     if (!title) throw new BadRequestException('task title is required');
     if ((await this.listTasks(agentId)).length >= TASK_LIMIT) {
@@ -368,10 +372,17 @@ export class AgentsService {
     };
     await this.db.insert(agentTasks).values(row);
     this.bus?.emitTaskAdded({ agentId, task: row });
+    // Follows (docs/follows.md): the owning agent and whoever put it there.
+    if (this.follows && owner.workspaceId) {
+      const target = agentTaskTarget(owner.workspaceId, row.id, row.title);
+      await this.follows.autoFollow(target, { kind: 'agent', id: agentId }, 'owner');
+      const creator = input.createdBy !== undefined ? input.createdBy : row.origin === 'user' ? { kind: 'user' as const, id: actorId() } : null;
+      if (creator && !(creator.kind === 'agent' && creator.id === agentId)) await this.follows.autoFollow(target, creator, 'started');
+    }
     return row;
   }
 
-  async updateTask(agentId: string, taskId: string, patch: { title?: string; note?: string; status?: string; reason?: string }) {
+  async updateTask(agentId: string, taskId: string, patch: { title?: string; note?: string; status?: string; reason?: string }, by?: Follower) {
     const rows = await this.db.select().from(agentTasks).where(eq(agentTasks.id, taskId)).limit(1);
     if (!rows[0] || rows[0].agentId !== agentId) throw new NotFoundException(`task ${taskId}`);
     const set: Record<string, string> = { updatedAt: nowIso() };
@@ -399,7 +410,22 @@ export class AgentsService {
     if (set.status && set.status !== rows[0].status && updated.channelId) {
       this.bus?.emitTaskStatus({ source: 'agent', taskId, title: updated.title, status: updated.status, previous: rows[0].status, channelId: updated.channelId, messageId: updated.messageId, agentId });
     }
+    if (this.follows && set.status && set.status !== rows[0].status) await this.taskStatusActivity(agentId, updated, rows[0].status, (patch.reason ?? '').trim(), by ?? { kind: 'user', id: actorId() });
     return updated;
+  }
+
+  /** A board task changed status: tell its followers (docs/follows.md). */
+  private async taskStatusActivity(agentId: string, t: typeof agentTasks.$inferSelect, previous: string, reason: string, by: Follower): Promise<void> {
+    const ws = (await this.db.select({ workspaceId: agents.workspaceId }).from(agents).where(eq(agents.id, agentId)).limit(1)).at(0)?.workspaceId;
+    if (!ws || !this.follows) return;
+    const closed = (s: string) => s === 'done' || s === 'abandoned';
+    const reopened = closed(previous) && !closed(t.status);
+    await this.follows.recordActivity(agentTaskTarget(ws, t.id, t.title), {
+      actor: by,
+      summary: `moved to ${t.status}${reason ? `: ${reason}` : ''}`,
+      attention: t.status === 'blocked' ? `blocked${reason ? `: ${reason}` : ''}` : reopened ? 'reopened' : null,
+      closed: closed(t.status) ? true : reopened ? false : undefined,
+    });
   }
 
   async deleteTask(agentId: string, taskId: string) {
@@ -414,7 +440,7 @@ export class AgentsService {
   async updateTaskByPrefix(agentId: string, idPrefix: string, patch: { title?: string; note?: string; status?: string; reason?: string }) {
     const match = (await this.listTasks(agentId)).filter((t) => t.id.startsWith(idPrefix));
     if (match.length !== 1) throw new BadRequestException(`task id "${idPrefix}" matches ${match.length} tasks — use the id from list_tasks`);
-    return this.updateTask(agentId, match[0].id, patch);
+    return this.updateTask(agentId, match[0].id, patch, { kind: 'agent', id: agentId });
   }
 
   /** Board summary for the agent's tool calls: bounded, text-shaped. */

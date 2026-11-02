@@ -1748,6 +1748,40 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_file_revisions_version ON workspace_file_revisions ("workspaceId", "path", "version")`);
     },
   },
+  {
+    id: '0048-follows',
+    up: async (db) => {
+      // Follows (docs/follows.md): who follows which channel thread, org task
+      // or agent kanban task — agents and people alike — and the compact
+      // "new since you last looked" state each follower carries. An unfollow
+      // is `mutedAt` (the row stays) so auto-follow never resubscribes.
+      await db.query(`CREATE TABLE IF NOT EXISTS follows (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "workspaceId" TEXT NOT NULL,
+        "followerKind" TEXT NOT NULL,
+        "followerId" TEXT NOT NULL,
+        "targetKind" TEXT NOT NULL,
+        "targetId" TEXT NOT NULL,
+        "reason" TEXT NOT NULL DEFAULT 'manual',
+        "title" TEXT NOT NULL DEFAULT '',
+        "link" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL,
+        "mutedAt" TEXT,
+        "lastSeenAt" TEXT,
+        "unseenCount" INTEGER NOT NULL DEFAULT 0,
+        "lastActivityAt" TEXT,
+        "lastActivity" TEXT NOT NULL DEFAULT '',
+        "lastActorName" TEXT NOT NULL DEFAULT '',
+        "attentionAt" TEXT,
+        "attention" TEXT NOT NULL DEFAULT '',
+        "wokeAt" TEXT,
+        "closedAt" TEXT
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_follows_unique ON follows ("followerKind", "followerId", "targetKind", "targetId")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_follows_target ON follows ("targetKind", "targetId")`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

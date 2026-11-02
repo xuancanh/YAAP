@@ -42,6 +42,7 @@ import { OrgAnnouncer } from '../org/org-announcer';
 import { OrgMeetingRuntime } from '../org/org-meeting-runtime.service';
 import { parseMeetingCommand } from '../org/org-meetings.service';
 import { WorkspaceEventBus } from './workspace-events';
+import { FollowsService, threadTarget, type Follower } from '../follows/follows.service';
 import { parseDecisionRefs, parseGoalRefs, parseMentions, slugify, type Mention, type MentionableMember } from './mentions';
 
 export type Channel = typeof channels.$inferSelect;
@@ -98,6 +99,9 @@ export class GroupChatService {
     @Optional() announcer?: OrgAnnouncer,
     /** Optional: `/meeting …` in a channel starts a meeting (docs/group-chat.md §8). */
     @Optional() private readonly meetings?: OrgMeetingRuntime,
+    /** Optional: thread follows (docs/follows.md) — starters, repliers and
+     *  mentioned agents follow; replies reach the other followers. */
+    @Optional() public follows?: FollowsService,
   ) {
     this.workspaces.onCreated(async (ws) => { await this.ensureGeneral(ws.id); });
     bus?.onTaskStatus((ev) => { void this.onTaskStatus(ev).catch(() => undefined); });
@@ -480,6 +484,7 @@ export class GroupChatService {
     if (input.authorKind === 'human') await this.markRead(c.id, row.id, authorId).catch(() => undefined);
     this.events.emit({ type: 'channel_message', workspaceId: c.workspaceId, channelId: c.id, message: row });
     if (input.authorKind !== 'system') await this.notifyHumans(c, row, mentions).catch(() => undefined);
+    if (input.authorKind !== 'system' && input.wake !== false && this.follows) await this.threadFollows(c, row, mentions).catch(() => undefined);
     // `/meeting …` by a person starts a meeting and wakes nobody else (§8).
     if (input.authorKind === 'human' && parseMeetingCommand(text)) {
       if (!this.meetings) await this.postSystem(c.id, 'Meetings need organization mode.', threadRootId).catch(() => undefined);
@@ -634,7 +639,7 @@ export class GroupChatService {
       kind = 'agent';
       if (!assignee) assignee = m.authorKind === 'agent' ? m.authorId : (agentMembers[0]?.memberId ?? null);
       if (!assignee) throw new BadRequestException('this channel has no agent to assign the task to');
-      const t = await this.agents.addTask(assignee, { title, note, origin: input.by.kind === 'agent' ? 'agent' : 'user', channelId: c.id, messageId: m.id });
+      const t = await this.agents.addTask(assignee, { title, note, origin: input.by.kind === 'agent' ? 'agent' : 'user', channelId: c.id, messageId: m.id, createdBy: { kind: input.by.kind === 'agent' ? 'agent' : 'user', id: input.by.id } });
       task = { id: t.id, title: t.title, status: t.status };
     }
     await this.db.update(channelMessages).set({ taskId: task.id }).where(eq(channelMessages.id, m.id));
@@ -662,6 +667,33 @@ export class GroupChatService {
     const thread = origin ? (origin.threadRootId ?? origin.id) : null;
     await this.postSystem(c.id, `Task [${ev.taskId.slice(0, 8)}] "${ev.title}" → ${ev.status.replace(/_/g, ' ')}`, thread);
     this.events.emit({ type: 'task_update', workspaceId: c.workspaceId, channelId: c.id, taskId: ev.taskId, status: ev.status, messageId: ev.messageId, title: ev.title });
+  }
+
+  // ---- follows (docs/follows.md) ----
+
+  /** A reply makes its thread followed by the root's author (started) and
+   *  the replier (commented); a mentioned agent follows the thread it was
+   *  mentioned in. The reply is activity for every other follower — but no
+   *  follow wake for the agents the mention already wakes, and no follow
+   *  event for the people the mention already notified. */
+  private async threadFollows(c: Channel, m: ChannelMessage, mentions: Mention[]): Promise<void> {
+    const follows = this.follows!;
+    const agentsMentioned = mentions.filter((x) => x.kind === 'agent' && !(m.authorKind === 'agent' && m.authorId === x.id)).map((x) => x.id);
+    if (!m.threadRootId && agentsMentioned.length === 0) return;
+    const root = m.threadRootId ? await this.message(m.threadRootId).catch(() => null) : m;
+    if (!root) return;
+    const who = (x: ChannelMessage): Follower | null => (x.authorKind === 'agent' || x.authorKind === 'human') && x.authorId ? { kind: x.authorKind === 'agent' ? 'agent' : 'user', id: x.authorId } : null;
+    const target = threadTarget(c.workspaceId, c.slug, root.id, root.text);
+    await follows.autoFollow(target, who(root), 'started');
+    if (m.threadRootId) await follows.autoFollow(target, who(m), 'commented');
+    for (const id of agentsMentioned) await follows.autoFollow(target, { kind: 'agent', id }, 'mentioned');
+    if (!m.threadRootId) return;
+    await follows.recordActivity(target, {
+      actor: who(m),
+      summary: `replied: ${m.text}`,
+      alreadyWoken: agentsMentioned,
+      alreadyNotified: mentions.filter((x) => x.kind === 'human').map((x) => x.id),
+    });
   }
 
   // ---- notifications (docs/group-chat.md §4) ----

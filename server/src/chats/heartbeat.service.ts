@@ -41,6 +41,7 @@ import { cronMatches } from './cron.util';
 import { LoopsService, type LoopRunStatus } from './loops.service';
 import type { LoopDef } from './loop-def';
 import { effectiveHeartbeat, validateHeartbeatCron, validateHeartbeatDefaults, type HeartbeatTunables } from './heartbeat-config';
+import { FollowsService } from '../follows/follows.service';
 
 /** The loop name every heartbeat run carries ("Loop · heartbeat" session). */
 export const HEARTBEAT_LOOP_NAME = 'heartbeat';
@@ -120,6 +121,9 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
     private readonly loops: LoopsService,
     private readonly config: ConfigService,
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: follows (docs/follows.md) — a gated, debounced reason when
+     *  something the agent follows needs it, and the "Following" section. */
+    @Optional() public follows?: FollowsService,
   ) {}
 
   onModuleInit(): void {
@@ -225,10 +229,13 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
     if (runsToday >= tunables.dailyRunCap) return finish('cap', reasons, { runsDay: today, runsToday });
 
     const context = await this.contextFor(agentId, ctx);
-    const prompt = heartbeatPrompt(reasons, agent.charter, context);
+    const following = this.follows ? await this.follows.digest(agentId, now).catch(() => ({ text: '', ids: [] as string[] })) : { text: '', ids: [] as string[] };
+    const prompt = heartbeatPrompt(reasons, agent.charter, context, following.text);
     const loop: LoopDef = { name: HEARTBEAT_LOOP_NAME, cron: tunables.cron, prompt };
     const status: LoopRunStatus = await this.loops.runLoop(agent.id, agent.name, loop);
     if (status !== 'ran') return finish(status, reasons, { runsDay: today, runsToday });
+    // The beat read what is new on what it follows: it is seen now.
+    await this.follows?.markSeen(following.ids, now).catch(() => undefined);
     return finish('ran', reasons, { lastRunAt: now.toISOString(), runsDay: today, runsToday: runsToday + 1 });
   }
 
@@ -240,6 +247,9 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
       () => this.staleTasks(agentId, ctx),
       () => this.unhandledEvents(agentId, ctx),
       () => this.unansweredMentions(agentId, ctx),
+      // Followed threads and tasks that need the agent (docs/follows.md):
+      // debounced per agent; never what a mention already wakes it for.
+      () => (this.follows ? this.follows.wakeReasons(agentId, ctx.now) : Promise.resolve([])),
       ...this.reasonProviders.map((p) => () => p.reasons(agentId, ctx)),
     ];
     for (const source of sources) {
@@ -396,12 +406,13 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
  *  charter (its purpose) and the company's operating profile when a context
  *  provider supplied one — all framed so the agent checks the items and
  *  stops, rather than inventing work. */
-export function heartbeatPrompt(reasons: string[], charter: string, context: string): string {
+export function heartbeatPrompt(reasons: string[], charter: string, context: string, following = ''): string {
   const parts = [
     `Heartbeat. You were woken because:\n${reasons.map((r) => `- ${r}`).join('\n')}\nCheck each item, act with your tools, then stop. Do not invent work. Keep your board true with update_task: doing when you work on a task, done when finished, blocked (with what it waits on) when you cannot move it, abandoned (with why) when it is no longer worth doing.`,
   ];
   const purpose = (charter ?? '').trim();
   if (purpose) parts.push(`Your charter (check your work against it):\n${purpose.slice(0, 1_200)}`);
+  if (following.trim()) parts.push(`Following — new since your last beat (threads and tasks you follow; follow, unfollow and list_follows manage them — unfollow what no longer concerns you):\n${following.trim()}`);
   if (context.trim()) parts.push(`How this company works (its operating profile — values, culture, vision, goals; follow it in what you prioritise and how you communicate):\n${context.trim()}`);
   return parts.join('\n\n');
 }

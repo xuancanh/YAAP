@@ -1178,6 +1178,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             note: `Delegated by ${me?.name ?? 'an agent'}.${typeof input.note === 'string' && input.note ? ` ${input.note}` : ''}`,
             origin: 'agent',
             sessionId: session.id,
+            createdBy: { kind: 'agent', id: agentId },
           });
           const targetWs = await this.workspaces.get(session.workspaceId).catch(() => null);
           await this.agents.addEvent(target.id, {

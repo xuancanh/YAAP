@@ -15,7 +15,8 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { orgTasks, orgRuns, orgMessages, orgApprovals } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
-import { currentAccountId } from '../accounts/account-context';
+import { actorId, currentAccountId } from '../accounts/account-context';
+import { FollowsService, followerFromActor, orgTaskTarget, type FollowActivity, type Follower, type FollowReason } from '../follows/follows.service';
 import { TriggerBus, OrgWakeReason } from '../chats/trigger-bus';
 import { OrgAuditService } from './org-audit.service';
 import { OrgService } from './org.service';
@@ -135,9 +136,49 @@ export class OrgTasksService {
     @Optional() private readonly units?: OrgUnitsService,
     /** Optional: addressed inbox events for human employees (item 24). */
     @Optional() private readonly agents?: AgentsService,
+    /** Optional: task follows (docs/follows.md) — creator, owner, assignee,
+     *  reviewer and commenters follow; changes reach the other followers. */
+    @Optional() public follows?: FollowsService,
   ) {}
 
   private acceptanceGate?: AcceptanceGate;
+
+  // ---- follows (docs/follows.md) ----
+
+  private async followTarget(orgId: string, t: Pick<OrgTask, 'id' | 'title'>) {
+    const org = await this.org.get(orgId).catch(() => null);
+    return org ? orgTaskTarget(org.workspaceId, t.id, t.title) : null;
+  }
+
+  /** Auto-follow; never throws, never resubscribes an unfollow. */
+  private async autoFollow(orgId: string, t: Pick<OrgTask, 'id' | 'title'>, who: Follower | null, reason: Exclude<FollowReason, 'manual'>): Promise<void> {
+    if (!this.follows || !who) return;
+    const target = await this.followTarget(orgId, t);
+    if (target) await this.follows.autoFollow(target, who, reason);
+  }
+
+  /** Activity on a task for its followers (never the actor). */
+  private async track(orgId: string, t: Pick<OrgTask, 'id' | 'title'>, act: FollowActivity): Promise<void> {
+    if (!this.follows) return;
+    const target = await this.followTarget(orgId, t);
+    if (target) await this.follows.recordActivity(target, act);
+  }
+
+  /** A status change as follow activity: blocked, review requested and
+   *  reopened need the followers; done and cancelled close the target. */
+  private async trackStatus(orgId: string, t: OrgTask, previous: string, actor: Follower | null, opts: { detail?: string; alreadyWoken?: string[] } = {}): Promise<void> {
+    if (previous === t.status) return;
+    const closed = (s: string) => s === 'done' || s === 'cancelled';
+    const reopened = closed(previous) && !closed(t.status);
+    const detail = opts.detail ?? (t.status === 'blocked' ? parseList(t.blockers).at(-1) ?? '' : '');
+    await this.track(orgId, t, {
+      actor,
+      summary: `moved to ${t.status.replace(/_/g, ' ')}${detail ? `: ${detail}` : ''}`,
+      attention: t.status === 'blocked' ? `blocked${detail ? `: ${detail}` : ''}` : t.status === 'in_review' ? 'review requested' : reopened ? 'reopened' : null,
+      alreadyWoken: opts.alreadyWoken,
+      closed: closed(t.status) ? true : reopened ? false : undefined,
+    });
+  }
 
   /** OrgSensingService binds the check runner here (docs/sensing.md §3). */
   setAcceptanceGate(gate: AcceptanceGate | undefined): void { this.acceptanceGate = gate; }
@@ -336,6 +377,9 @@ export class OrgTasksService {
     await this.db.insert(orgTasks).values(row);
     await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId, class: row.class, ...(checks.length ? { checks: checks.length } : {}), ...(dependsOn.length ? { dependsOn } : {}), ...(dueAt ? { dueAt } : {}) } });
     if (row.assigneeAgentId && status === 'todo' && org.status === 'active') this.emitWake(orgId, row.id, row.assigneeAgentId, 'assignment');
+    await this.autoFollow(orgId, row, followerFromActor(row.createdBy, actorId()), 'started');
+    if (row.assigneeAgentId) await this.autoFollow(orgId, row, { kind: 'agent', id: row.assigneeAgentId }, 'assignee');
+    if (row.reviewerAgentId) await this.autoFollow(orgId, row, { kind: 'agent', id: row.reviewerAgentId }, 'reviewer');
     return row;
   }
 
@@ -410,6 +454,9 @@ export class OrgTasksService {
     if (patch.status !== undefined && patch.status !== t.status && (updated.channelId || updated.unitId)) {
       this.bus?.emitTaskStatus({ source: 'org', taskId, title: updated.title, status: updated.status, previous: t.status, channelId: updated.channelId, messageId: updated.messageId, agentId: updated.assigneeAgentId, unitId: updated.unitId });
     }
+    if (patch.assigneeAgentId && patch.assigneeAgentId !== t.assigneeAgentId) await this.autoFollow(orgId, updated, { kind: 'agent', id: patch.assigneeAgentId }, 'assignee');
+    if (patch.reviewerAgentId && patch.reviewerAgentId !== t.reviewerAgentId) await this.autoFollow(orgId, updated, { kind: 'agent', id: patch.reviewerAgentId }, 'reviewer');
+    await this.trackStatus(orgId, updated, t.status, followerFromActor(actor, actorId()), { alreadyWoken: t.status === 'waiting' && updated.status === 'todo' && updated.assigneeAgentId ? [updated.assigneeAgentId] : undefined });
     return updated;
   }
 
@@ -426,6 +473,8 @@ export class OrgTasksService {
     await this.db.update(orgTasks).set({ assigneeAgentId: agentId, assigneeHumanId: null, status: waiting ? 'waiting' : 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
     await this.audit.append(orgId, { actor, action: 'task_assign', refType: 'task', refId: taskId, payload: { agentId, previous: t.assigneeAgentId ?? t.assigneeHumanId, unitId, ...(waiting ? { waiting: true } : {}) } });
     if (!waiting && await this.org.isActive(orgId)) this.emitWake(orgId, taskId, agentId, 'assignment');
+    await this.autoFollow(orgId, t, { kind: 'agent', id: agentId }, 'assignee');
+    if (agentId !== t.assigneeAgentId) await this.track(orgId, t, { actor: followerFromActor(actor, actorId()), summary: `assigned to ${(await this.agents?.get(agentId).catch(() => null))?.name ?? 'an agent'}`, alreadyWoken: [agentId] });
     return this.get(orgId, taskId);
   }
 
@@ -445,6 +494,8 @@ export class OrgTasksService {
     await this.db.update(orgTasks).set({ assigneeAgentId: null, assigneeHumanId: memberAccountId, status: 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
     await this.audit.append(orgId, { actor, action: 'task_assign_human', refType: 'task', refId: taskId, payload: { memberAccountId, previous: t.assigneeAgentId ?? t.assigneeHumanId, unitId } });
     await this.notifyHuman(orgId, memberAccountId, { kind: 'org_task', title: `Task assigned to you: ${t.title}`.slice(0, 200), body: parseBrief(t.brief).outcome, payload: { orgId, taskId, action: 'assigned' } });
+    await this.autoFollow(orgId, t, { kind: 'user', id: memberAccountId }, 'assignee');
+    await this.track(orgId, t, { actor: followerFromActor(actor, actorId()), summary: 'assigned to a person', alreadyNotified: [memberAccountId] });
     return this.get(orgId, taskId);
   }
 
@@ -495,7 +546,7 @@ export class OrgTasksService {
   /** A comment on a task. Wakes the task's owner only when the author is
    *  somebody else (the user, the chief, a reviewer) — never on a mention,
    *  never the author itself, never anyone else named in the text. */
-  async comment(orgId: string, taskId: string, input: { text: string; fromAgentId?: string | null; runId?: string | null; wake?: boolean }): Promise<OrgMessage> {
+  async comment(orgId: string, taskId: string, input: { text: string; fromAgentId?: string | null; runId?: string | null; wake?: boolean; system?: boolean }): Promise<OrgMessage> {
     const t = await this.get(orgId, taskId);
     const text = (input.text ?? '').trim().slice(0, 8_000);
     if (!text) throw new BadRequestException('comment text is required');
@@ -504,9 +555,17 @@ export class OrgTasksService {
     await this.audit.append(orgId, { actor: input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', action: 'task_comment', refType: 'task', refId: taskId, payload: { chars: text.length } });
     const owner = t.assigneeAgentId;
     const wake = input.wake ?? true;
+    let woke = false;
     if (wake && owner && owner !== (input.fromAgentId ?? null) && !['done', 'cancelled'].includes(t.status) && await this.org.isActive(orgId)) {
       this.emitWake(orgId, taskId, owner, 'comment');
+      woke = true;
     }
+    // Follows: the commenter follows (a person's comment is one that wakes;
+    // the null-author lines the system writes with wake: false are not), and
+    // every other follower hears of it — attention for an agent it names.
+    const by: Follower | null = input.fromAgentId ? { kind: 'agent', id: input.fromAgentId } : input.wake !== false && !input.system ? { kind: 'user', id: actorId() } : null;
+    await this.autoFollow(orgId, t, by, 'commented');
+    await this.track(orgId, t, { actor: by, summary: `commented: ${text}`, mentionText: text, alreadyWoken: woke && owner ? [owner] : undefined });
     return row;
   }
 
@@ -550,6 +609,7 @@ export class OrgTasksService {
         await this.comment(orgId, taskId, { text: `Accepted by check: ${verdict.detail}`.slice(0, 8_000), fromAgentId: null, wake: false });
         await this.accepted(orgId, taskId, 'check', t.reviewRounds);
         const done = await this.get(orgId, taskId);
+        await this.trackStatus(orgId, done, t.status, followerFromActor(by, actorId()), { detail: 'accepted by check' });
         if (done.channelId || done.unitId) this.bus?.emitTaskStatus({ source: 'org', taskId, title: done.title, status: 'done', previous: t.status, channelId: done.channelId, messageId: done.messageId, agentId: done.assigneeAgentId, unitId: done.unitId });
         return done;
       }
@@ -578,7 +638,10 @@ export class OrgTasksService {
       }
       await this.audit.append(orgId, { actor: input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', action: 'review_request', refType: 'task', refId: taskId, payload: { reviewerHumanId: humanReviewer } });
       await this.notifyHuman(orgId, humanReviewer, { kind: 'org_review', title: `Review requested: ${t.title}`.slice(0, 200), body: input.note, payload: { orgId, taskId, action: 'review' } });
-      return this.get(orgId, taskId);
+      await this.autoFollow(orgId, t, { kind: 'user', id: humanReviewer }, 'reviewer');
+      const inReview = await this.get(orgId, taskId);
+      await this.track(orgId, inReview, { actor: input.fromAgentId ? { kind: 'agent', id: input.fromAgentId } : { kind: 'user', id: actorId() }, summary: `review requested${input.note ? `: ${input.note}` : ''}`, attention: 'review requested', alreadyNotified: [humanReviewer] });
+      return inReview;
     }
     let reviewer = t.reviewerAgentId;
     if (!reviewer || reviewer === t.assigneeAgentId) {
@@ -594,7 +657,10 @@ export class OrgTasksService {
     if (input.note) await this.comment(orgId, taskId, { text: `Review requested: ${input.note}`, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, wake: false });
     await this.audit.append(orgId, { actor: input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', action: 'review_request', refType: 'task', refId: taskId, payload: { reviewerAgentId: reviewer } });
     if (reviewer && await this.org.isActive(orgId)) this.emitWake(orgId, taskId, reviewer, 'review');
-    return this.get(orgId, taskId);
+    if (reviewer) await this.autoFollow(orgId, t, { kind: 'agent', id: reviewer }, 'reviewer');
+    const inReview = await this.get(orgId, taskId);
+    await this.trackStatus(orgId, inReview, t.status === 'in_review' ? '' : t.status, input.fromAgentId ? { kind: 'agent', id: input.fromAgentId } : { kind: 'user', id: actorId() }, { detail: input.note ?? '', alreadyWoken: reviewer ? [reviewer] : undefined });
+    return inReview;
   }
 
   /** The reviewer's verdict. `accept` → done; `request_changes` → back to
@@ -621,7 +687,9 @@ export class OrgTasksService {
       await this.audit.append(orgId, { actor, action: 'review_accept', refType: 'task', refId: taskId, payload: { rounds: t.reviewRounds } });
       if (input.note) await this.comment(orgId, taskId, { text: `Accepted: ${input.note}`, fromAgentId: input.byAgentId ?? null, runId: input.runId ?? null, wake: false });
       await this.accepted(orgId, taskId, 'review', t.reviewRounds);
-      return this.get(orgId, taskId);
+      const done = await this.get(orgId, taskId);
+      await this.trackStatus(orgId, done, t.status, input.byAgentId ? { kind: 'agent', id: input.byAgentId } : input.byCheck ? null : { kind: 'user', id: actorId() }, { detail: `accepted${input.note ? `: ${input.note}` : ''}` });
+      return done;
     }
     const rounds = t.reviewRounds + 1;
     if (input.verdict === 'escalate' || rounds > REVIEW_ROUND_CAP) {
@@ -630,7 +698,7 @@ export class OrgTasksService {
     }
     await this.db.update(orgTasks).set({ status: 'todo', reviewRounds: rounds, claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
     await this.audit.append(orgId, { actor, action: 'review_request_changes', refType: 'task', refId: taskId, payload: { rounds } });
-    await this.comment(orgId, taskId, { text: `Changes requested (round ${rounds}/${REVIEW_ROUND_CAP}): ${input.note ?? ''}`.trim(), fromAgentId: input.byAgentId ?? null, runId: input.runId ?? null, wake: true });
+    await this.comment(orgId, taskId, { text: `Changes requested (round ${rounds}/${REVIEW_ROUND_CAP}): ${input.note ?? ''}`.trim(), fromAgentId: input.byAgentId ?? null, runId: input.runId ?? null, wake: true, system: input.byCheck });
     return this.get(orgId, taskId);
   }
 
@@ -652,7 +720,9 @@ export class OrgTasksService {
     }
     await this.audit.append(orgId, { actor, action: 'task_escalate', refType: 'task', refId: taskId, payload: { reason: reason.slice(0, 300) } });
     this.bus?.emitOrgBoard({ orgId, kind: 'escalation', refId: taskId, detail: `"${t.title}" escalated: ${reason.slice(0, 200)}` });
-    return this.get(orgId, taskId);
+    const blocked = await this.get(orgId, taskId);
+    await this.trackStatus(orgId, blocked, t.status, followerFromActor(actor, actorId()), { detail: `escalated: ${reason.slice(0, 200)}` });
+    return blocked;
   }
 
   /**
@@ -690,7 +760,9 @@ export class OrgTasksService {
     }
     await this.agents?.addEvent(input.toAgentId, { kind: 'escalation', title: `Escalation: ${t.title}`.slice(0, 200), body: reason, payload: JSON.stringify({ orgId, taskId: t.id, escalationTaskId: escalation.id }), origin: 'org' }).catch(() => undefined);
     await this.audit.append(orgId, { actor: input.actor, action: 'task_escalate', refType: 'task', refId: taskId, payload: { reason, to: input.toAgentId, escalationTaskId: escalation.id } });
-    return { task: await this.get(orgId, taskId), escalation, reused: Boolean(open) };
+    const blocked = await this.get(orgId, taskId);
+    await this.trackStatus(orgId, blocked, t.status, { kind: 'agent', id: input.fromAgentId }, { detail: `escalated to ${input.toName}: ${reason}` });
+    return { task: blocked, escalation, reused: Boolean(open) };
   }
 
   // ---- runs ----

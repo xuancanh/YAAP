@@ -27,6 +27,7 @@
  *  OrgModule         → /api/orgs                      (autonomous company, docs/autonomous-company.md)
  *  SharedModule      → /api/workspaces/:id/members|invites|flow-rules, /api/invites (shared workspaces, docs/shared-agents.md)
  *  GroupChatModule   → /api/workspaces/:id/chat/channels, /api/workspaces/:id/events (group chat, docs/group-chat.md)
+ *  FollowsModule     → /api/workspaces/:id/follows    (follow threads and tasks, docs/follows.md; global)
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
@@ -68,6 +69,7 @@ import { OrgModule } from './org/org.module';
 import { AccountsModule } from './accounts/accounts.module';
 import { SharedModule } from './shared/shared.module';
 import { GroupChatModule } from './groupchat/groupchat.module';
+import { FollowsModule, FollowsToolsModule } from './follows/follows.module';
 import { WorkspaceAccessGuard } from './shared/workspace-access.guard';
 import { SessionAuthStrategy } from './accounts/session-auth.strategy';
 import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
@@ -80,6 +82,7 @@ import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
     SharedModule,
     StorageModule,
     FilesModule,
+    FollowsModule,
     StatusModule,
     WorkspacesModule,
     AgentTypesModule,
@@ -104,6 +107,7 @@ import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
     RegistryModule,
     OrgModule,
     GroupChatModule,
+    FollowsToolsModule,
   ],
   providers: [
     // Identity is bound here and nowhere else: swapping this one provider

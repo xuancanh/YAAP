@@ -77,6 +77,8 @@ export const TOOL_CLASSES: Record<string, Classifier> = {
   update_user_profile: 'internal_write',
   // the trust ledger's own read tool
   trust_status: 'read',
+  // follows (follows/follows.tools.ts): only the agent's own follow rows change — free, no approval
+  follow: 'read', unfollow: 'read', list_follows: 'read',
   // code runner: a sandbox with no credentials; the workspace is what it writes
   run_js: 'internal_write', run_python: 'internal_write',
   // browser (credential-free, incognito per turn): reads read; a click or keystroke can submit a form
