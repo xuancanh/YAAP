@@ -19,6 +19,7 @@
  * to the app token so the companion guard can take over; the user routes
  * under /api/computer stay behind the app token.
  */
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
@@ -37,7 +38,15 @@ export class TokenAuthStrategy implements AuthStrategy {
   authenticate(request: Request): string {
     const token = this.config.get<string>('apiToken');
     if (!token) return SINGLE_USER;
-    if (request.headers.authorization === `Bearer ${token}`) return SINGLE_USER;
+    if (sameSecret(request.headers.authorization ?? '', `Bearer ${token}`)) return SINGLE_USER;
     throw new UnauthorizedException('missing or invalid bearer token');
   }
+}
+
+/** Constant-time comparison: hashing first gives equal-length buffers, so
+ *  neither the content nor the length of the token leaks through timing. */
+function sameSecret(given: string, expected: string): boolean {
+  const a = createHash('sha256').update(given).digest();
+  const b = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(a, b);
 }
