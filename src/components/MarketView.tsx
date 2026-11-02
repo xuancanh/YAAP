@@ -86,7 +86,7 @@ function SegmentSwitch({ nav, setNav }: { nav: MarketNav; setNav: (patch: Partia
 }
 
 const chip = (active: boolean): React.CSSProperties => ({
-  padding: '6px 14px', borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', font: 'inherit',
+  font: 'inherit', padding: '6px 14px', borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
   border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`, background: active ? 'var(--accent)' : 'var(--panel)', color: active ? '#fff' : 'var(--text-dim)',
 });
 
@@ -704,7 +704,7 @@ export function HireModal() {
               {!orgOn && (
                 <div style={{ fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
                   This workspace does not run a company. {app.companiesEnabled
-                    ? <><button onClick={() => { app.setHireId(null); app.go('workspace'); }} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--accent-hi)', fontWeight: 600, cursor: 'pointer', font: 'inherit' }}>Start a company</button> to hire it into a team with a reporting line.</>
+                    ? <><button onClick={() => { app.setHireId(null); app.go('workspace'); }} style={{ font: 'inherit', background: 'none', border: 'none', padding: 0, color: 'var(--accent-hi)', fontWeight: 600, cursor: 'pointer' }}>Start a company</button> to hire it into a team with a reporting line.</>
                     : 'Companies are not enabled on this server, so business agents join standalone.'}
                 </div>
               )}
