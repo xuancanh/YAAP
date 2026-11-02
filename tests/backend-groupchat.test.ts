@@ -16,7 +16,7 @@ import { ConfigService } from '@nestjs/config';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import * as schema from '../server/src/database/schema';
-import { agentEvents, agentTasks, channelMessages, channels, chatMessages, workspaces } from '../server/src/database/schema';
+import { agentEvents, agentTasks, channelMembers, channelMessages, channels, chatMessages, workspaces } from '../server/src/database/schema';
 import { runPgMigrations } from '../server/src/database/migrator';
 import type { DrizzleDb } from '../server/src/database/database.module';
 import { scopeDb } from '../server/src/accounts/scoped-db';
@@ -45,7 +45,7 @@ import { OrgAnnouncer } from '../server/src/org/org-announcer';
 import { ChannelRuntimeService, PAUSED_LINE, BUDGET_LINE, UNPROMPTED_RATE_MS, agentRoundsSinceHuman, type RelevanceInput } from '../server/src/groupchat/channel-runtime.service';
 import { GroupChatController } from '../server/src/groupchat/groupchat.controller';
 import { WorkspaceEventBus, type WorkspaceEvent } from '../server/src/groupchat/workspace-events';
-import { parseMentions, handleOf, slugify } from '../server/src/groupchat/mentions';
+import { parseMentions, handleOf, slugify, unresolvedMentions } from '../server/src/groupchat/mentions';
 import type { AiProvider, AiRequest, AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import { setAddressLookup } from '../server/src/common/url-guard';
 
@@ -60,9 +60,11 @@ const lastUser = (req: AiRequest): string => [...req.messages].reverse().find((m
 class ReplyProvider implements AiProvider {
   readonly name = 'scripted';
   readonly requests: AiRequest[] = [];
-  constructor(private readonly plan: (me: string, text: string, round: number, req: AiRequest) => AiStreamEvent[]) {}
+  constructor(private readonly plan: (me: string, text: string, round: number, req: AiRequest) => AiStreamEvent[], private readonly delay: (me: string) => number = () => 0) {}
   async *stream(req: AiRequest): AsyncGenerator<AiStreamEvent> {
     this.requests.push(req);
+    const ms = this.delay(whoAmI(req));
+    if (ms > 0) await new Promise((r) => setTimeout(r, ms));
     const round = req.messages.filter((m) => m.role === 'tool').length;
     for (const ev of this.plan(whoAmI(req), lastUser(req), round, req)) yield ev;
     yield { type: 'usage', inputTokens: 100, outputTokens: 50 };
@@ -87,14 +89,14 @@ function sharedStub(workspaceId: string, owner: string): SharedService {
   } as unknown as SharedService;
 }
 
-async function setup(plan: (me: string, text: string, round: number, req: AiRequest) => AiStreamEvent[] = () => say('ok'), opts: { shared?: boolean; db?: DrizzleDb } = {}) {
+async function setup(plan: (me: string, text: string, round: number, req: AiRequest) => AiStreamEvent[] = () => say('ok'), opts: { shared?: boolean; db?: DrizzleDb; delay?: (me: string) => number } = {}) {
   const db = opts.db ?? await testDb();
   const { stub } = memStorage();
   const bus = new TriggerBus();
   const agents = new AgentsService(db, stub, bus);
   const workspaces = new WorkspacesService(db, stub);
   const repo = new ChatsRepository(db);
-  const provider = new ReplyProvider(plan);
+  const provider = new ReplyProvider(plan, opts.delay);
   const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub(), agents, workspaces);
   const events = new WorkspaceEventBus();
   const settings = new SettingsService(db);
@@ -203,6 +205,44 @@ test('mention parsing resolves @handles, first names and email aliases against m
   assert.deepEqual(parseMentions('(@Research-Writer!) and @ResearchLead', members), [{ kind: 'agent', id: 'a3' }, { kind: 'agent', id: 'a2' }]);
   assert.equal(handleOf('Zoë  Q. Álvarez'), 'zoe-q-alvarez');
   assert.equal(slugify('  Product  Launch!! '), 'product-launch');
+});
+
+test('mention parsing resolves multi-word display names as agents write them, in any script and markdown, longest name first', () => {
+  // The dev-DB failure: two agents share a first word, so `@Tutor Lead`
+  // (the form agents write) resolved to nobody and woke nobody.
+  const team = [
+    { kind: 'agent' as const, id: 'lead', name: 'Tutor Lead' },
+    { kind: 'agent' as const, id: 'eng', name: 'Tutor Engineer' },
+    { kind: 'agent' as const, id: 'cos', name: 'Chief of staff' },
+    { kind: 'agent' as const, id: 'alpha', name: 'Unit Test Alpha' },
+    { kind: 'agent' as const, id: 'writer', name: 'Unit Test Writer' },
+  ];
+  const ids = (text: string, members: Array<{ kind: 'agent' | 'human'; id: string; name: string }> = team) => parseMentions(text, members).map((m) => m.id);
+  assert.deepEqual(ids('Done.\n\n@Tutor Engineer: the bar now holds'), ['eng']);
+  assert.deepEqual(ids('**`14e8fb19` — the executor exists. `@Tutor Lead`**'), ['lead']);
+  assert.deepEqual(ids('`@Chief of staff` you then, and @Unit Test Alpha, that comment'), ['cos', 'alpha']);
+  assert.deepEqual(ids("@Unit Test Alpha's 06:03 note"), ['alpha']);
+  assert.deepEqual(ids('cc @TUTOR ENGINEER, @tutor-lead and @chief-of-staff.'), ['eng', 'lead', 'cos']);
+  assert.deepEqual(ids('@**Tutor Lead** and [@Unit Test Writer](#x) and _@Tutor Engineer_'), ['lead', 'writer', 'eng']);
+  assert.deepEqual(ids('@tutor alone is still ambiguous'), []);
+  assert.deepEqual(ids('mail tutor@Tutor Lead.com is an address, not a mention'), []);
+  assert.deepEqual(ids('```\n@Tutor Lead in a code sample\n```\nnobody'), [], 'fenced code mentions nobody');
+  // a name that prefixes another: the longest wins, the short one still works alone
+  const pre = [{ kind: 'agent' as const, id: 't', name: 'Tutor' }, { kind: 'agent' as const, id: 'tl', name: 'Tutor Lead' }];
+  assert.deepEqual(ids('@Tutor Lead go', pre), ['tl']);
+  assert.deepEqual(ids('@Tutor, go', pre), ['t']);
+  assert.deepEqual(ids('@Tutoring is not a member', pre), []);
+  // names in other scripts and with emoji
+  const intl = [
+    { kind: 'agent' as const, id: 'duc', name: 'Đức Anh' },
+    { kind: 'agent' as const, id: 'ming', name: '小明' },
+    { kind: 'agent' as const, id: 'robo', name: '🤖 Robo' },
+  ];
+  assert.deepEqual(ids('@Đức Anh ơi, hỏi @小明 và @🤖 Robo nhé', intl), ['duc', 'ming', 'robo']);
+  assert.deepEqual(ids('@duc-anh and @robo', intl), ['duc', 'robo']);
+  assert.equal(handleOf('Đức Anh'), 'duc-anh');
+  // unresolved tokens are reported, resolved ones are not
+  assert.deepEqual(unresolvedMentions('@chief-of-staff and @Tutor Lead, also @nobody.', team.filter((m) => m.id !== 'cos')), ['@chief-of-staff', '@nobody']);
 });
 
 // ---- 3. mentioned agents wake; replies persist with the run id ----
@@ -362,6 +402,82 @@ test('agent-to-agent chains stop after three rounds per thread with the paused l
   assert.equal(again.filter((m) => m.text === PAUSED_LINE).length, 2);
   // a reply to a reply stays in the root's thread
   assert.ok(again.every((m) => m.id === root.id || m.threadRootId === root.id));
+});
+
+test('an agent reply that tags another agent by display name ("@Tutor Lead") wakes it, and the woken agent knows an agent tagged it', async () => {
+  // dev DB: Tutor Engineer's "`@Tutor Lead`" was stored with mentions [] —
+  // both names start with "Tutor" — and Tutor Lead never replied.
+  const s = await setup((me) => say(me === 'Tutor Engineer' ? 'Harness is green. `@Tutor Lead` — your scenarios next.' : `${me}: on it`));
+  const eng = await s.agents.create({ name: 'Tutor Engineer' });
+  const lead = await s.agents.create({ name: 'Tutor Lead' });
+  await s.groupchat.addMember(s.general.id, { kind: 'agent', id: eng.id });
+  await s.groupchat.addMember(s.general.id, { kind: 'agent', id: lead.id });
+  const root = await s.groupchat.post(s.general.id, { text: '@Tutor Engineer status?', authorKind: 'human' });
+  assert.deepEqual(JSON.parse(root.mentions), [{ kind: 'agent', id: eng.id }]);
+  await s.runtime.idle();
+  const thread = (await s.groupchat.messages(s.general.id, { thread: root.id })).messages;
+  assert.deepEqual(thread.filter((m) => m.authorKind === 'agent').map((m) => m.authorId), [eng.id, lead.id], 'the tagged agent replied in the thread');
+  assert.deepEqual(JSON.parse(thread[1].mentions), [{ kind: 'agent', id: lead.id }]);
+  const leadReq = s.provider.requests.find((r) => whoAmI(r) === 'Tutor Lead')!;
+  assert.match(lastUser(leadReq), /^\[#general, in a thread\] Tutor Engineer: Harness is green/);
+  assert.match(leadReq.system ?? '', /Tutor Engineer, another agent in this channel, mentioned you/);
+  assert.match(leadReq.system ?? '', /Owner: @Tutor Engineer status\?/, 'the history carries the thread that led here');
+  assert.match(leadReq.system ?? '', /@tutor-engineer/, 'the roster tells the agent how to tag members');
+});
+
+test('a tag inside a channel_post (outside any wake) wakes the agent the same way; the tool result says who was woken and which tags named nobody', async () => {
+  const s = await setup((me) => say(`${me}: reviewed`));
+  const eng = await s.agents.create({ name: 'Tutor Engineer' });
+  const lead = await s.agents.create({ name: 'Tutor Lead' });
+  await s.agents.create({ name: 'Chief of staff' }); // not a member of #general
+  await s.groupchat.addMember(s.general.id, { kind: 'agent', id: eng.id });
+  await s.groupchat.addMember(s.general.id, { kind: 'agent', id: lead.id });
+  const session = await s.repo.createSession({ workspaceId: s.ws.id, agentId: eng.id, name: 'heartbeat' });
+  const out = await s.runtime.execute(session, 'channel_post', { channel: 'general', text: '**Executor landed.** @Tutor Lead please review; @chief-of-staff FYI' });
+  assert.match(out, /Posted to #general/);
+  assert.match(out, /Woke Tutor Lead/);
+  assert.match(out, /@chief-of-staff.*not a member of #general.*nobody was woken/);
+  await s.runtime.idle();
+  const top = (await s.groupchat.messages(s.general.id)).messages;
+  assert.equal(top.length, 1);
+  const thread = (await s.groupchat.messages(s.general.id, { thread: top[0].id })).messages;
+  assert.equal(thread.length, 2);
+  assert.equal(thread[1].authorId, lead.id, 'the tagged agent replied under the post');
+  assert.equal(thread[1].text, 'Tutor Lead: reviewed');
+  // a self-tag is not a wake, and is said so
+  const self = await s.runtime.execute(session, 'channel_post', { channel: 'general', text: 'note to @Tutor Engineer (me)' });
+  assert.doesNotMatch(self, /Woke/);
+  await s.runtime.idle();
+  assert.equal(s.provider.requests.length, 1);
+});
+
+test('an agent tagged while it is still replying is queued and answers after, instead of being dropped', async () => {
+  // Alpha and Beta are tagged together; Alpha answers first and tags Beta,
+  // whose first turn is still running.
+  const s = await setup((me, text) => say(me === 'Alpha' ? 'over to you @beta' : `beta saw: ${text.slice(0, 80)}`), { delay: (me) => (me === 'Beta' ? 120 : 0) });
+  const alpha = await s.agents.create({ name: 'Alpha' });
+  const beta = await s.agents.create({ name: 'Beta' });
+  await s.groupchat.addMember(s.general.id, { kind: 'agent', id: alpha.id });
+  await s.groupchat.addMember(s.general.id, { kind: 'agent', id: beta.id });
+  const root = await s.groupchat.post(s.general.id, { text: '@alpha @beta kick off', authorKind: 'human' });
+  await s.runtime.idle();
+  const thread = (await s.groupchat.messages(s.general.id, { thread: root.id })).messages;
+  assert.equal(thread.filter((m) => m.authorKind === 'system' && /still replying/.test(m.text)).length, 0, 'no drop');
+  const betaRows = thread.filter((m) => m.authorId === beta.id);
+  assert.equal(betaRows.length, 2, 'Beta answered both the person and Alpha');
+  assert.match(betaRows[0].text, /Owner: @alpha @beta kick off/);
+  assert.match(betaRows[1].text, /Alpha: over to you @beta/);
+});
+
+test('a stale membership of an agent from another workspace is not a mention target', async () => {
+  const s = await setup();
+  const scout = await s.agents.create({ name: 'Research Scout' });
+  await s.groupchat.addMember(s.general.id, { kind: 'agent', id: scout.id });
+  const ws2 = await s.workspaces.create({ name: 'Elsewhere' });
+  const other = await s.agents.create({ name: 'Research Writer', workspaceId: ws2.id });
+  await s.db.insert(channelMembers).values({ accountId: 'single', id: 'stale-1', channelId: s.general.id, memberKind: 'agent', memberId: other.id, role: 'member', notify: 'mentions', unprompted: 0, joinedAt: new Date().toISOString() });
+  const m = await s.groupchat.post(s.general.id, { text: '@research and @Research Writer', authorKind: 'human' });
+  assert.deepEqual(JSON.parse(m.mentions), [{ kind: 'agent', id: scout.id }], 'only this workspace\'s agents resolve; "@research" is not made ambiguous by the stale row');
 });
 
 // ---- 6. approvals route to the human author ----

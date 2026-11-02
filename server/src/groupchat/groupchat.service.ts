@@ -379,13 +379,16 @@ export class GroupChatService {
     return { ok: true };
   }
 
-  /** Members as mention targets (humans carry their email local part). */
+  /** Members as mention targets (humans carry their email local part). An
+   *  agent row left over from another workspace is no target: agents belong
+   *  to exactly one workspace, and a stale row must not make a tag ambiguous. */
   async mentionables(channelId: string): Promise<MentionableMember[]> {
-    const rows = await this.members(channelId);
+    const c = await this.get(channelId);
+    const foreign = new Set((await this.agents.list()).filter((a) => a.workspaceId && a.workspaceId !== c.workspaceId).map((a) => a.id));
+    const rows = (await this.members(channelId)).filter((m) => !(m.memberKind === 'agent' && foreign.has(m.memberId)));
     const emails = new Map<string, string>();
     if (this.shared) {
-      const ws = await this.get(channelId);
-      for (const m of await this.shared.members(ws.workspaceId).catch(() => [])) if (m.email) emails.set(m.memberAccountId, m.email.split('@')[0]);
+      for (const m of await this.shared.members(c.workspaceId).catch(() => [])) if (m.email) emails.set(m.memberAccountId, m.email.split('@')[0]);
     }
     return rows.map((m) => ({
       kind: m.memberKind as 'agent' | 'human', id: m.memberId, name: m.name,
