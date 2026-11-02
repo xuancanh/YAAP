@@ -1,12 +1,15 @@
-/** An agent's Dashboard tab (docs/mission-control.md): the status sentence in
- *  each state, the live tool call, Now, Blocked with what each waits on and
- *  how to unblock it, Up next, the compact form for the mission control's
- *  side panel, and the agent's own notes folded. */
+/** An agent's page (docs/mission-control.md): the header names the cause of
+ *  an error and links its run; what needs you comes first; the signals turn
+ *  amber and red at their thresholds; the work list is one card with tabs
+ *  and rows that expand in place; the activity is capped; the compact form
+ *  for the mission control's side panel; six tabs, and every old tab name
+ *  still lands. */
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AgentOverview, OverviewBlocked, OverviewTask } from '../src/lib/api';
-import { AgentDashboard, type DashboardActions } from '../src/components/AgentDashboard';
-import { elapsed, nextWake, statusText, waitsOnWords } from '../src/lib/overview';
+import type { AgentOverview, HomeActivity, NeedsYouItem, OverviewBlocked, OverviewTask } from '../src/lib/api';
+import { AgentDashboard, AgentHeader, type DashboardActions } from '../src/components/AgentDashboard';
+import { ACTIVITY_CAP, elapsed, mergedActivity, nextWake, signals, statusText, waitsOnWords } from '../src/lib/overview';
+import { AGENT_TABS, resolveAgentTab } from '../src/lib/agent-tabs';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -22,6 +25,9 @@ const blocked = (over: Partial<OverviewBlocked> = {}): OverviewBlocked => ({
   ...task({ id: 'b1', title: 'Pricing page copy', status: 'blocked', lastComment: null, files: [] }),
   blocker: { reason: 'Need the final price', waitsOn: { kind: 'ceo', id: null, name: 'You', taskId: null }, since: iso(-90) }, ...over,
 });
+const need = (over: Partial<NeedsYouItem> = {}): NeedsYouItem => ({
+  id: 'event:e1', kind: 'action', title: 'Writer wants to run fs_write', detail: 'drafts/issue-2.md', at: iso(-18 * 60), eventId: 'e1', approvalId: null, taskId: null, sessionId: 's9', ...over,
+});
 
 function fixture(over: Partial<AgentOverview> = {}, status: Partial<AgentOverview['status']> = {}): AgentOverview {
   return {
@@ -33,6 +39,7 @@ function fixture(over: Partial<AgentOverview> = {}, status: Partial<AgentOvervie
       lastActiveAt: iso(-2), lastBeatAt: iso(-20), isChief: false, errors: [], live: null, doingSince: iso(-120), waitingOnYou: 0, blockedCount: 0, open: 2,
       lastRunAt: iso(-20), memberStatus: 'active', ...status,
     },
+    cause: null, needsYou: [],
     heartbeat: { enabled: true, cron: '*/30 * * * *', nextDueAt: iso(14), lastBeatAt: iso(-20), lastRunAt: iso(-20), lastReason: '', runsToday: 4, dailyRunCap: 12 },
     nextLoop: null,
     now: task(), blocked: [], queue: [task({ id: 'q1', title: 'Plan the December issue', status: 'todo', outcome: '' }), task({ id: 'q2', title: 'Write the welcome email', status: 'todo', outcome: '' })],
@@ -45,7 +52,7 @@ function fixture(over: Partial<AgentOverview> = {}, status: Partial<AgentOvervie
       reports: [{ id: 'e', name: 'Editor', emoji: '📝', colors: '["#555","#666"]', title: 'Editor', state: 'blocked', doing: 'Blocked on "Edit the launch post"', taskId: 'x', lastBeatAt: iso(-8), open: 1, liveLabel: '' }],
       humans: [], unit: { id: 'u', name: 'Writing', slug: 'writing' },
     },
-    health: { errors: [], spend: { todayUsd: 0.42, d30Usd: 6.1, monthUsd: 4, monthCapUsd: 10 }, trust: [{ actionClass: 'read', effective: 3, ceiling: 3 }], wip: { open: 2, limit: 3 } },
+    health: { errors: [], spend: { todayUsd: 0.42, d30Usd: 6.1, monthUsd: 4, monthCapUsd: 10, series: [{ day: '2026-11-01', usd: 0.2 }, { day: '2026-11-02', usd: 0.42 }] }, trust: [{ actionClass: 'read', effective: 3, ceiling: 3 }], wip: { open: 2, limit: 3 } },
     dashboard: '## My notes\n- shipping drafts', partial: [],
     ...over,
   };
@@ -54,116 +61,280 @@ function fixture(over: Partial<AgentOverview> = {}, status: Partial<AgentOvervie
 function actions(): DashboardActions & { calls: string[] } {
   const calls: string[] = [];
   const rec = (name: string) => (...args: unknown[]) => { calls.push(`${name}:${args.map((a) => (typeof a === 'object' && a && 'id' in a ? (a as { id: string }).id : String(a))).join(',')}`); };
+  const recAsync = (name: string) => async (...args: unknown[]) => { rec(name)(...args); };
   return {
     calls,
     openTask: rec('openTask'), openAgent: rec('openAgent'), openFile: rec('openFile'), openFollow: rec('openFollow'), openTab: rec('openTab'), openActivity: rec('openActivity'),
-    chat: rec('chat'), beatNow: rec('beatNow'), togglePause: rec('togglePause'), openApprovals: rec('openApprovals'),
-    comment: async (taskId, text) => { calls.push(`comment:${taskId},${text}`); },
-    reassign: async (taskId, agentId) => { calls.push(`reassign:${taskId},${agentId}`); },
+    openSession: rec('openSession'), chat: rec('chat'), beatNow: rec('beatNow'), togglePause: rec('togglePause'), openApprovals: rec('openApprovals'),
+    comment: recAsync('comment'), reassign: recAsync('reassign'), actOnEvent: recAsync('actOnEvent'), decideEvent: recAsync('decideEvent'),
   };
 }
 
 const heading = () => screen.getByTestId('agent-sentence').textContent;
+const level = (id: string) => screen.getByTestId(`signal-${id}`).dataset.level;
 
-describe('the status sentence', () => {
-  it('working: the task and how long it has been on it, the live tool call, the quick actions', () => {
+describe('the header', () => {
+  it('working: the pill, the task and how long, the live tool call, the quick actions and the overflow menu', () => {
     const act = actions();
-    render(<AgentDashboard o={fixture({}, { live: { sessionId: 's', sessionName: 'Loop · heartbeat', origin: 'loop', startedAt: iso(-3), tool: 'fs_write', toolLabel: 'writing org/sales/reports/2026-W45.md', toolAt: iso(-1), calls: 4 } })} now={NOW} act={act} />);
+    const exported: string[] = [];
+    const o = fixture({}, { live: { sessionId: 's', sessionName: 'Loop · heartbeat', origin: 'loop', startedAt: iso(-3), tool: 'fs_write', toolLabel: 'writing org/sales/reports/2026-W45.md', toolAt: iso(-1), calls: 4 } });
+    render(<AgentHeader who={{ name: 'Writer', emoji: '✍️', colors: '["#111","#222"]', role: 'Writer', model: 'claude-sonnet' }} o={o} now={NOW} act={act}
+      menu={[{ label: 'Import memory…', onSelect: () => exported.push('import') }, { label: 'Export AGENT.json', href: '/x.json', download: true }, { label: 'Publish to the market…', onSelect: () => exported.push('publish') }]} />);
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Writer');
+    expect(screen.getByTestId('agent-header').textContent).toContain('claude-sonnet');
+    expect(screen.getByTestId('agent-pill').textContent).toBe('Working, live');
     expect(heading()).toBe('Working on Draft three newsletter issues · 2 h in');
-    expect(screen.getByTestId('agent-status').dataset.state).toBe('working');
     expect(screen.getByTestId('agent-live').textContent).toContain('writing org/sales/reports/2026-W45.md');
     expect(screen.getByTestId('agent-live').textContent).toContain('4 calls');
     fireEvent.click(screen.getByRole('button', { name: 'Beat now' }));
     fireEvent.click(screen.getByRole('button', { name: 'Chat' }));
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     expect(act.calls).toEqual(['beatNow:', 'chat:', 'togglePause:']);
+    // Import, Export and Publish live in the overflow menu, not as big buttons
+    expect(screen.queryByRole('button', { name: 'Import memory…' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Import memory…', 'Export AGENT.json', 'Publish to the market…']);
+    expect(screen.getByRole('menuitem', { name: 'Export AGENT.json' }).getAttribute('href')).toBe('/x.json');
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to the market…' }));
+    expect(exported).toEqual(['publish']);
+    expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it('blocked: how many, and how many wait on you', () => {
+  it('erroring: the sentence names the cause, links the failing run and says how to fix it', () => {
+    const act = actions();
+    const errors = [
+      { kind: 'turn' as const, message: 'The last turn failed and recorded no reason', at: iso(-30), sessionId: 's1' },
+      { kind: 'loop' as const, message: 'tool round limit (24) reached', at: iso(-29), sessionId: 's1' },
+    ];
+    const o = fixture({
+      cause: { kind: 'loop', message: 'tool round limit (24) reached', at: iso(-29), sessionId: 's1', taskId: null, fix: { text: 'It used all 24 tool rounds in one turn. Split the work into smaller steps, or raise the server\'s MAX_TOOL_ROUNDS.', tab: null } },
+      health: { ...fixture().health, errors },
+    }, { state: 'error', errors });
+    render(<AgentDashboard o={o} now={NOW} act={act} />);
+    expect(screen.getByTestId('agent-pill').textContent).toBe('Erroring');
+    expect(heading()).toBe('Tool round limit (24) reached');
+    const cause = screen.getByTestId('agent-cause');
+    expect(cause.textContent).toContain('It used all 24 tool rounds');
+    fireEvent.click(within(cause).getByRole('button', { name: 'See the run' }));
+    expect(act.calls).toEqual(['openSession:s1']);
+    expect(within(cause).queryByRole('button', { name: 'Fix it' })).toBeNull();
+    cleanup();
+    const act2 = actions();
+    const o2 = fixture({ cause: { kind: 'turn', message: 'provider rejected model claude-opus-4-5', at: iso(-5), sessionId: null, taskId: null, fix: { text: 'The provider does not accept this model. Pick another one.', tab: 'Settings:General' } } },
+      { state: 'error', errors: [{ kind: 'turn', message: 'provider rejected model claude-opus-4-5', at: iso(-5) }] });
+    render(<AgentDashboard o={o2} now={NOW} act={act2} />);
+    expect(heading()).toBe('Provider rejected model claude-opus-4-5');
+    fireEvent.click(screen.getByRole('button', { name: 'Fix it' }));
+    expect(act2.calls).toEqual(['openTab:Settings:General']);
+  });
+
+  it('blocked, idle and paused say it in one line', () => {
     const o = fixture({ now: null, blocked: [blocked(), blocked({ id: 'b2', title: 'Logo', blocker: { reason: 'Which tone?', waitsOn: { kind: 'agent', id: 'c', name: 'Chief', taskId: null }, since: iso(-30) } }), blocked({ id: 'b3', title: 'Legal', blocker: { reason: 'legal review', waitsOn: { kind: 'unknown', id: null, name: '', taskId: null }, since: iso(-30) } })] },
       { state: 'blocked', doing: 'Blocked on "Pricing page copy"', blockedCount: 3, waitingOnYou: 1, doingSince: null });
-    render(<AgentDashboard o={o} now={NOW} act={actions()} />);
+    const { unmount } = render(<AgentDashboard o={o} now={NOW} act={actions()} />);
     expect(heading()).toBe('Blocked on 3 tasks · waiting on you for 1');
-  });
-
-  it('idle: when it next wakes', () => {
-    render(<AgentDashboard o={fixture({ now: null, queue: [] }, { state: 'idle', doing: '', taskId: null, doingSince: null })} now={NOW} act={actions()} />);
-    expect(heading()).toBe('Idle: next heartbeat in 14 min');
-    expect(screen.getByTestId('section-now').textContent).toContain('Not on a task right now.');
-  });
-
-  it('paused and erroring', () => {
-    const { unmount } = render(<AgentDashboard o={fixture({ now: null }, { state: 'paused', memberStatus: 'paused' })} now={NOW} act={actions()} />);
-    expect(heading()).toBe('Paused: nothing runs until you resume it');
+    unmount();
+    const idle = render(<AgentDashboard o={fixture({ now: null, queue: [] }, { state: 'idle', doing: '', taskId: null, doingSince: null })} now={NOW} act={actions()} />);
+    expect(heading()).toBe('Next heartbeat in 14 min');
+    expect(screen.getByTestId('section-work').textContent).toContain('Not on a task right now.');
+    idle.unmount();
+    render(<AgentDashboard o={fixture({ now: null }, { state: 'paused', memberStatus: 'paused' })} now={NOW} act={actions()} />);
+    expect(heading()).toBe('Nothing runs until you resume it');
     expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Beat now' }) as HTMLButtonElement).disabled).toBe(true);
-    unmount();
-    const errors = [{ kind: 'turn' as const, message: 'provider rejected model claude-opus-4-5', at: iso(-5) }];
-    render(<AgentDashboard o={fixture({ health: { ...fixture().health, errors } }, { state: 'error', errors })} now={NOW} act={actions()} />);
-    expect(heading()).toBe('Erroring: provider rejected model claude-opus-4-5');
-    expect(screen.getByTestId('section-health').textContent).toContain('provider rejected model claude-opus-4-5');
   });
 });
 
-describe('the sections', () => {
-  it('Now: outcome, done-when, the last comment and its files; the title opens the task', () => {
+describe('needs you', () => {
+  it('comes first, right under the signals, with its actions inline', async () => {
     const act = actions();
-    render(<AgentDashboard o={fixture()} now={NOW} act={act} />);
-    const now = screen.getByTestId('agent-now');
-    expect(now.textContent).toContain('Three drafts in drafts/');
-    expect(now.textContent).toContain('Done when Editor accepts all three');
-    expect(now.textContent).toContain('First draft is up');
-    fireEvent.click(within(now).getByRole('button', { name: 'drafts/issue-1.md' }));
-    fireEvent.click(within(now).getByRole('button', { name: 'Draft three newsletter issues' }));
-    expect(act.calls).toEqual(['openFile:drafts/issue-1.md', 'openTask:t1']);
+    const o = fixture({ needsYou: [
+      need(),
+      need({ id: 'event:e2', kind: 'connection', title: 'Writer asks to use your Gmail', eventId: 'e2', sessionId: null }),
+      need({ id: 'approval:a1', kind: 'escalation', title: 'Escalated: Pricing page copy', eventId: null, approvalId: 'a1', taskId: 'b1', sessionId: null }),
+    ] });
+    render(<AgentDashboard o={o} now={NOW} act={act} />);
+    const needs = screen.getByTestId('section-needs-you');
+    const work = screen.getByTestId('section-work');
+    const signalsEl = screen.getByTestId('agent-signals');
+    expect(signalsEl.compareDocumentPosition(needs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(needs.compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId('section-health').compareDocumentPosition(needs) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(within(needs).getAllByTestId('needs-you-row')).toHaveLength(3);
+    expect(needs.textContent).toContain('Queued action, 18 h ago: drafts/issue-2.md');
+    fireEvent.click(within(needs).getByRole('button', { name: 'Approve' }));
+    fireEvent.click(within(needs).getByRole('button', { name: 'Deny' }));
+    fireEvent.click(within(needs).getByRole('button', { name: 'Decide' }));
+    fireEvent.click(within(needs).getByRole('button', { name: 'Writer wants to run fs_write' }));
+    await screen.findByRole('button', { name: 'Approve' });
+    expect(act.calls).toEqual(['actOnEvent:e1,approve', 'decideEvent:e2,deny', 'openApprovals:', 'openSession:s9']);
   });
 
-  it('Blocked: what each waits on, Decide for yours, Answer posts on the task, Reassign picks a teammate', async () => {
-    const act = actions();
-    const o = fixture({ blocked: [blocked(), blocked({ id: 'b2', title: 'Logo', blocker: { reason: 'Which tone?', waitsOn: { kind: 'agent', id: 'c', name: 'Chief', taskId: null }, since: iso(-30) } })] });
-    render(<AgentDashboard o={o} now={NOW} act={act} teammates={[{ id: 'c', name: 'Chief' }, { id: 'w', name: 'Writer' }]} />);
-    const section = screen.getByTestId('section-blocked');
-    expect(section.textContent).toContain('Waiting on you');
-    expect(section.textContent).toContain('Waiting on Chief');
-    expect(section.textContent).toContain('Need the final price');
-    fireEvent.click(within(section).getByRole('button', { name: 'Decide' }));
-    fireEvent.click(within(section).getAllByRole('button', { name: 'Answer' })[0]);
-    fireEvent.change(screen.getByLabelText('Answer on Pricing page copy'), { target: { value: 'Price is $20' } });
-    fireEvent.click(within(section).getByRole('button', { name: 'Send' }));
-    await screen.findAllByRole('button', { name: 'Answer' });
-    fireEvent.click(within(section).getAllByRole('button', { name: 'Reassign' })[1]);
-    const select = screen.getByLabelText('Reassign Logo') as HTMLSelectElement;
-    expect([...select.options].map((x) => x.textContent)).toEqual(['Reassign to…', 'Chief'], 'not the agent itself');
-    fireEvent.change(select, { target: { value: 'c' } });
-    await screen.findAllByRole('button', { name: 'Reassign' });
-    expect(act.calls).toEqual(['openApprovals:', 'comment:b1,Price is $20', 'reassign:b2,c']);
-  });
-
-  it('Up next is in order; goals, team, health; routine runs collapse; the notes are folded', () => {
+  it('is not there when nothing waits on you', () => {
     render(<AgentDashboard o={fixture()} now={NOW} act={actions()} />);
-    const queue = screen.getByTestId('section-queue');
-    expect(within(queue).getAllByRole('listitem').map((li) => li.textContent)).toEqual([expect.stringContaining('1Plan the December issue'), expect.stringContaining('2Write the welcome email')]);
-    expect(screen.getByTestId('section-goals').textContent).toContain('300 / 1000 subs');
+    expect(screen.queryByTestId('section-needs-you')).toBeNull();
+  });
+});
+
+describe('the signals', () => {
+  it('turn amber and red at their thresholds', () => {
+    const base = fixture();
+    const at = (wip: { open: number; limit: number }, monthUsd: number, monthCapUsd: number | null) => signals({ ...base, health: { ...base.health, wip, spend: { ...base.health.spend, monthUsd, monthCapUsd } } }, NOW);
+    const by = (list: ReturnType<typeof signals>, id: string) => list.find((s) => s.id === id)!;
+    expect(by(at({ open: 2, limit: 3 }, 1, 3), 'wip').level).toBe('ok');
+    expect(by(at({ open: 3, limit: 3 }, 1, 3), 'wip').level).toBe('warn');
+    const over = by(at({ open: 8, limit: 3 }, 1, 3), 'wip');
+    expect([over.level, over.value, over.note]).toEqual(['bad', '8/3', '5 over limit']);
+    expect(by(at({ open: 2, limit: 3 }, 1, 3), 'budget').level).toBe('ok');
+    const near = by(at({ open: 2, limit: 3 }, 2.77, 3), 'budget');
+    expect([near.level, near.value, near.note]).toEqual(['warn', '$2.77', 'of $3.00']);
+    expect(by(at({ open: 2, limit: 3 }, 3.2, 3), 'budget').level).toBe('bad');
+    expect(by(at({ open: 2, limit: 3 }, 3.2, null), 'budget')).toMatchObject({ label: 'Spend', level: 'quiet' });
+    expect(by(signals({ ...base, blocked: [blocked()] }, NOW), 'blocked')).toMatchObject({ level: 'bad', note: '1 on you' });
+    expect(by(signals({ ...base, blocked: [blocked({ blocker: { reason: '', waitsOn: { kind: 'agent', id: 'c', name: 'Chief', taskId: null }, since: iso(-5) } })] }, NOW), 'blocked').level).toBe('warn');
+    expect(by(signals({ ...base, status: { ...base.status, errors: [] }, health: { ...base.health, errors: [{ kind: 'breaker', message: 'No progress', at: iso(-5) }] } }, NOW), 'errors')).toMatchObject({ level: 'bad', value: '1' });
+    expect(by(signals({ ...base, health: { ...base.health, errors: [{ kind: 'provider', message: 'degraded', at: iso(-5) }] } }, NOW), 'errors').level).toBe('warn');
+    expect(signals({ ...base, health: { ...base.health, wip: null } }, NOW).some((s) => s.id === 'wip')).toBe(false);
+  });
+
+  it('show on the page, and a click filters the work list', () => {
+    const o = fixture({ blocked: [blocked()], health: { ...fixture().health, wip: { open: 8, limit: 3 }, spend: { ...fixture().health.spend, monthUsd: 2.77, monthCapUsd: 3 } } });
+    render(<AgentDashboard o={o} now={NOW} act={actions()} />);
+    expect(level('wip')).toBe('bad');
+    expect(level('budget')).toBe('warn');
+    expect(level('blocked')).toBe('bad');
+    expect(screen.getByTestId('work-tab-now').getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByTestId('signal-blocked'));
+    expect(screen.getByTestId('work-tab-blocked').getAttribute('aria-selected')).toBe('true');
+    expect(within(screen.getByTestId('section-work')).getByText('Pricing page copy')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('signal-queue'));
+    expect(screen.getByTestId('work-tab-next').getAttribute('aria-selected')).toBe('true');
+  });
+});
+
+describe('the work card', () => {
+  it('one line a task; a click expands it in place with the outcome, done-when, last comment and files', () => {
+    const act = actions();
+    const long = 'A very long outcome. '.repeat(20);
+    render(<AgentDashboard o={fixture({ now: task({ outcome: long }) })} now={NOW} act={act} />);
+    const work = screen.getByTestId('section-work');
+    expect(within(work).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Now', 'Blocked', 'Up next2', 'Done1']);
+    expect(within(work).queryByTestId('work-detail')).toBeNull();
+    fireEvent.click(within(work).getByRole('button', { name: /Draft three newsletter issues/ }));
+    const detail = within(work).getByTestId('work-detail');
+    expect(detail.textContent).toContain('Done when');
+    expect(detail.textContent).toContain('Editor accepts all three');
+    expect(detail.textContent).toContain('First draft is up');
+    expect(within(detail).getAllByRole('button', { name: 'more' }).length).toBeGreaterThan(0);
+    fireEvent.click(within(detail).getByRole('button', { name: 'drafts/issue-1.md' }));
+    fireEvent.click(within(detail).getByRole('button', { name: 'Open task' }));
+    expect(act.calls).toEqual(['openFile:drafts/issue-1.md', 'openTask:t1']);
+    fireEvent.click(within(work).getByTestId('work-tab-next'));
+    expect(within(work).getAllByTestId('work-row').map((r) => r.textContent)).toEqual([expect.stringContaining('1Plan the December issue'), expect.stringContaining('2Write the welcome email')]);
+  });
+
+  it('Blocked: what each waits on; no reason recorded asks; Answer, Reassign, Decide', async () => {
+    const act = actions();
+    const o = fixture({ blocked: [
+      blocked(),
+      blocked({ id: 'b2', title: 'Logo', blocker: { reason: 'Which tone?', waitsOn: { kind: 'agent', id: 'c', name: 'Chief', taskId: null }, since: iso(-30) } }),
+      blocked({ id: 'b3', title: 'Legal', blocker: { reason: '', waitsOn: { kind: 'unknown', id: null, name: '', taskId: null }, since: iso(-30) } }),
+    ] });
+    render(<AgentDashboard o={o} now={NOW} act={act} teammates={[{ id: 'c', name: 'Chief' }, { id: 'w', name: 'Writer' }]} />);
+    const work = screen.getByTestId('section-work');
+    fireEvent.click(within(work).getByTestId('work-tab-blocked'));
+    expect(work.textContent).toContain('Waiting on you');
+    expect(work.textContent).toContain('Waiting on Chief');
+    expect(work.textContent).toContain('no reason recorded');
+    expect(work.textContent).not.toContain('No reason given');
+    // the row without a reason: Ask opens the answer box
+    fireEvent.click(within(work).getByRole('button', { name: 'Ask' }));
+    fireEvent.change(screen.getByLabelText('Answer on Legal'), { target: { value: 'What does legal need?' } });
+    fireEvent.click(within(work).getByRole('button', { name: 'Send' }));
+    await screen.findByRole('button', { name: 'Ask' });
+    // the one on you: Decide
+    fireEvent.click(within(work).getByRole('button', { name: /Pricing page copy/ }));
+    fireEvent.click(within(work).getByRole('button', { name: 'Decide' }));
+    // the one on Chief: Reassign picks a teammate, not the agent itself
+    fireEvent.click(within(work).getByRole('button', { name: /^Logo/ }));
+    fireEvent.click(within(work).getByRole('button', { name: 'Reassign' }));
+    const select = screen.getByLabelText('Reassign Logo') as HTMLSelectElement;
+    expect([...select.options].map((x) => x.textContent)).toEqual(['Reassign to…', 'Chief']);
+    fireEvent.change(select, { target: { value: 'c' } });
+    await screen.findByRole('button', { name: 'Reassign' });
+    expect(act.calls).toEqual(['comment:b3,What does legal need?', 'openApprovals:', 'reassign:b2,c']);
+  });
+});
+
+describe('activity and the side column', () => {
+  it('one merged timeline capped at ten rows, Show all, filters', () => {
+    const recent: HomeActivity[] = Array.from({ length: 13 }, (_, i) => ({ id: `m${i}`, at: iso(-100 - i), kind: i % 2 ? 'task' : 'decision', title: `Item ${i}`, detail: '', actor: 'Writer', ref: { type: 'task', id: `t${i}` } }));
+    const o = fixture({ recent: [...fixture().recent, ...recent] });
+    expect(mergedActivity(o)).toHaveLength(15);
+    expect(mergedActivity(o)[0].title).toBe('Wrote drafts/issue-1.md');
+    const act = actions();
+    render(<AgentDashboard o={o} now={NOW} act={act} />);
+    const section = screen.getByTestId('section-activity');
+    expect(within(section).getAllByTestId('activity-row')).toHaveLength(ACTIVITY_CAP);
+    fireEvent.click(within(section).getByRole('button', { name: 'Show all 15' }));
+    expect(within(section).getAllByTestId('activity-row')).toHaveLength(15);
+    fireEvent.click(within(section).getByRole('button', { name: 'Files' }));
+    expect(within(section).getAllByTestId('activity-row')).toHaveLength(1);
+    fireEvent.click(within(section).getByRole('button', { name: 'Wrote drafts/issue-1.md' }));
+    fireEvent.click(within(section).getByRole('button', { name: 'Runs' }));
+    expect(section.textContent).toContain('10 heartbeat checks, nothing new');
+    expect(act.calls).toEqual(['openFile:drafts/issue-1.md']);
+  });
+
+  it('team, health with the spend sparkline, goals; no trust chips, no recent conversations; the notes are folded', () => {
+    render(<AgentDashboard o={fixture()} now={NOW} act={actions()} />);
     const team = screen.getByTestId('section-team').textContent!;
-    expect(team).toContain('Manager · Chief of staff');
+    expect(team).toContain('Chief');
+    expect(team).toContain('manager');
     expect(team).toContain('Editor');
-    expect(team).toContain('Leads Writing · #writing');
-    const health = screen.getByTestId('section-health').textContent!;
-    expect(health).toContain('No errors');
-    expect(health).toContain('WIP 2/3');
-    expect(health).toContain('$4.00 of $10.00');
-    expect(screen.getByTestId('section-recent').textContent).toContain('10 heartbeat checks, nothing new');
+    expect(team).toContain('Leads Writing (#writing)');
+    const health = screen.getByTestId('section-health');
+    expect(health.textContent).toContain('No errors');
+    expect(health.textContent).toContain('$4.00 of $10.00');
+    expect(within(health).getByTestId('spend-sparkline')).toBeTruthy();
+    expect(health.textContent).not.toContain('read: auto');
+    expect(screen.getByTestId('section-goals').textContent).toContain('300 / 1000 subs');
+    expect(screen.queryByText('Recent conversations')).toBeNull();
     expect((screen.getByTestId('agent-notes') as HTMLDetailsElement).open).toBe(false);
   });
 
-  it('compact: the header, Now, Blocked and the next three, without the quick actions', () => {
-    render(<AgentDashboard o={fixture({ blocked: [blocked()] })} now={NOW} act={actions()} compact />);
+  it('compact: the status, signals and work, without the quick actions, health or inline actions', () => {
+    const act = actions();
+    render(<AgentDashboard o={fixture({ now: null, blocked: [blocked()] }, { state: 'blocked', blockedCount: 1, waitingOnYou: 1 })} now={NOW} act={act} compact />);
     expect(screen.getByTestId('agent-dashboard').dataset.compact).toBe('true');
     expect(screen.queryByRole('button', { name: 'Beat now' })).toBeNull();
     expect(screen.queryByTestId('section-health')).toBeNull();
-    expect(screen.getByText('Pricing page copy')).toBeTruthy();
+    expect(screen.getByTestId('work-tab-blocked').getAttribute('aria-selected')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: /Pricing page copy/ }));
     expect(screen.queryByRole('button', { name: 'Answer' })).toBeNull();
-    expect(screen.getByText(/WIP 2\/3/)).toBeTruthy();
+    expect(act.calls).toEqual(['openTask:b1']);
+    expect(screen.getByTestId('signal-wip').textContent).toContain('2/3');
+  });
+});
+
+describe('the tabs', () => {
+  it('six tabs; old names and ?tab= deep links land on the new tab and section', () => {
+    expect([...AGENT_TABS]).toEqual(['Overview', 'Work', 'Chats', 'Artifacts', 'Memory', 'Settings']);
+    expect(resolveAgentTab('Dashboard')).toEqual({ tab: 'Overview', section: null });
+    expect(resolveAgentTab('Tasks')).toEqual({ tab: 'Work', section: 'Tasks' });
+    expect(resolveAgentTab('Schedule')).toEqual({ tab: 'Work', section: 'Schedule' });
+    expect(resolveAgentTab('Mini apps')).toEqual({ tab: 'Settings', section: 'Mini apps' });
+    expect(resolveAgentTab('Skills & tools')).toEqual({ tab: 'Settings', section: 'Skills & tools' });
+    expect(resolveAgentTab('Trust')).toEqual({ tab: 'Settings', section: 'Trust' });
+    expect(resolveAgentTab('Files')).toEqual({ tab: 'Artifacts', section: null });
+    expect(resolveAgentTab('Settings')).toEqual({ tab: 'Settings', section: null });
+    expect(resolveAgentTab('chats')).toEqual({ tab: 'Chats', section: null });
+    expect(resolveAgentTab('Memory')).toEqual({ tab: 'Memory', section: null });
+    expect(resolveAgentTab('Settings:Trust')).toEqual({ tab: 'Settings', section: 'Trust' });
+    expect(resolveAgentTab('Settings:Model')).toEqual({ tab: 'Settings', section: 'General' });
+    expect(resolveAgentTab('Work:Schedule')).toEqual({ tab: 'Work', section: 'Schedule' });
+    expect(resolveAgentTab('Nope')).toBeNull();
+    expect(resolveAgentTab(null)).toBeNull();
   });
 });
 
@@ -176,5 +347,6 @@ describe('the words', () => {
     expect(waitsOnWords({ kind: 'task', id: null, name: 'Get the logo', taskId: 'x' })).toBe('Waiting on “Get the logo”');
     expect(waitsOnWords({ kind: 'unknown', id: null, name: '', taskId: null })).toBe('');
     expect(statusText(fixture({ now: null }, { state: 'working', doing: '', live: { sessionId: 's', sessionName: 'Weekly report', origin: 'user', startedAt: iso(-1), tool: null, toolLabel: '', toolAt: null, calls: 0 } }), NOW)).toBe('Working · in Weekly report');
+    expect(statusText(fixture({ cause: { kind: 'loop', message: 'tool round limit (24) reached', at: iso(-1), sessionId: null, taskId: null, fix: null } }, { state: 'error', errors: [{ kind: 'turn', message: 'The last turn failed', at: iso(-1) }] }), NOW)).toBe('Erroring: tool round limit (24) reached');
   });
 });

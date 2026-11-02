@@ -1902,7 +1902,7 @@ export type HomeAgentState = 'working' | 'idle' | 'blocked' | 'paused' | 'error'
 export interface HomeAgent {
   id: string; name: string; emoji: string; colors: string; title: string; state: HomeAgentState; doing: string; taskId: string | null;
   lastActiveAt: string | null; lastBeatAt: string | null; isChief: boolean;
-  errors: Array<{ kind: 'turn' | 'loop' | 'breaker' | 'provider' | 'budget'; message: string; at: string }>;
+  errors: Array<{ kind: 'turn' | 'loop' | 'breaker' | 'provider' | 'budget'; message: string; at: string; sessionId?: string | null; taskId?: string | null }>;
 }
 export type HomeActivityKind = 'task' | 'hire' | 'decision' | 'meeting' | 'incident' | 'file' | 'agent';
 /** One agent loop run (a heartbeat beat), raw. */
@@ -1966,12 +1966,24 @@ export interface OverviewGoal {
   currentValue: number | null; targetValue: number | null; unitLabel: string; dueAt: string | null;
 }
 export interface TeamTile { id: string; name: string; emoji: string; colors: string; title: string; state: HomeAgentState; doing: string; taskId: string | null; lastBeatAt: string | null; open: number; liveLabel: string }
+/** Why the agent is erroring: the loudest error, its run, a fix (`tab` is an agent-page tab, 'Settings:General'). */
+export interface OverviewCause {
+  kind: HomeAgent['errors'][number]['kind']; message: string; at: string;
+  sessionId: string | null; taskId: string | null; fix: { text: string; tab: string | null } | null;
+}
+/** Something waiting on the owner. */
+export interface NeedsYouItem {
+  id: string; kind: 'action' | 'connection' | 'escalation' | 'approval'; title: string; detail: string; at: string;
+  eventId: string | null; approvalId: string | null; taskId: string | null; sessionId: string | null;
+}
 /** GET /api/agents/:id/overview. */
 export interface AgentOverview {
   agentId: string; workspaceId: string; generatedAt: string;
   agent: { id: string; name: string; emoji: string; colors: string; title: string; role: string; provider: string; model: string; isChief: boolean; hasReports: boolean };
   inCompany: boolean;
   status: OverviewStatus;
+  cause: OverviewCause | null;
+  needsYou: NeedsYouItem[];
   heartbeat: { enabled: boolean; cron: string; nextDueAt: string | null; lastBeatAt: string | null; lastRunAt: string | null; lastReason: string; runsToday: number; dailyRunCap: number } | null;
   nextLoop: { name: string; at: string; cron: string } | null;
   now: OverviewTask | null; blocked: OverviewBlocked[]; queue: OverviewTask[]; reviews: OverviewTask[]; follows: OverviewFollow[]; done: OverviewTask[];
@@ -1981,7 +1993,7 @@ export interface AgentOverview {
   team: { manager: TeamTile | null; reports: TeamTile[]; humans: Array<{ memberAccountId: string; title: string }>; unit: { id: string; name: string; slug: string } | null };
   health: {
     errors: HomeAgent['errors'];
-    spend: { todayUsd: number | null; d30Usd: number | null; monthUsd: number | null; monthCapUsd: number | null };
+    spend: { todayUsd: number | null; d30Usd: number | null; monthUsd: number | null; monthCapUsd: number | null; series: Array<{ day: string; usd: number }> };
     trust: Array<{ actionClass: string; effective: number; ceiling: number }>;
     wip: { open: number; limit: number } | null;
   };

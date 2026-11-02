@@ -1,7 +1,7 @@
 /** The words and the structure of the overviews (docs/mission-control.md):
  *  an agent's status sentence, what a blocker waits on, the next wake, and
  *  the org mission control's filters, hierarchy and waiting chains. Pure. */
-import type { AgentOverview, BlockerInfo, HomeAgentState, MissionControl, MissionNode } from './api';
+import type { AgentOverview, BlockerInfo, HomeActivity, HomeAgentState, MissionControl, MissionNode } from './api';
 import { when } from './home';
 
 export const STATE_COLOR: Record<HomeAgentState, string> = { working: 'var(--blue)', idle: 'var(--green)', blocked: 'var(--amber)', paused: 'var(--text-faint)', error: 'var(--red)' };
@@ -40,12 +40,12 @@ export function waitsOnWords(w: BlockerInfo['waitsOn']): string {
  * can set the subject apart: "Working on" · "Draft three newsletter issues" ·
  * "2 h in". Precedence follows the state (agent-status.ts).
  */
-export function statusSentence(o: Pick<AgentOverview, 'status' | 'now' | 'blocked' | 'heartbeat' | 'nextLoop'>, now = new Date()): { lead: string; subject: string; tail: string } {
+export function statusSentence(o: Pick<AgentOverview, 'status' | 'now' | 'blocked' | 'heartbeat' | 'nextLoop'> & { cause?: AgentOverview['cause'] }, now = new Date()): { lead: string; subject: string; tail: string } {
   const s = o.status;
   switch (s.state) {
     case 'error': {
       const loud = s.errors.find((e) => e.kind !== 'provider') ?? s.errors[0];
-      return { lead: 'Erroring', subject: '', tail: loud ? loud.message : 'the last run failed' };
+      return { lead: 'Erroring', subject: '', tail: o.cause?.message || loud?.message || 'the last run failed' };
     }
     case 'paused':
       return { lead: 'Paused', subject: '', tail: s.memberStatus === 'paused' ? 'nothing runs until you resume it' : 'the company is paused' };
@@ -192,4 +192,94 @@ export function totalsLine(t: MissionControl['totals']): string {
   if (t.idle) parts.push(`${t.idle} idle`);
   if (t.paused) parts.push(`${t.paused} paused`);
   return parts.join(', ') || 'No members yet';
+}
+
+// ---- the agent page: signals, the work list, the activity ----
+
+export type WorkTab = 'now' | 'blocked' | 'next' | 'reviews' | 'done';
+export type SignalLevel = 'ok' | 'warn' | 'bad' | 'quiet';
+export interface Signal {
+  id: 'doing' | 'blocked' | 'queue' | 'wip' | 'budget' | 'errors';
+  label: string;
+  value: string;
+  note: string;
+  level: SignalLevel;
+  /** Where a click goes: a work tab, or the health panel. */
+  target: WorkTab | 'health';
+}
+
+/** Budget: amber from 80% of the cap, red at it. WIP: amber at the limit, red over. */
+export const BUDGET_WARN = 0.8;
+
+const money = (n: number) => `$${n.toFixed(2)}`;
+
+/** The strip under the header: a few numbers that turn amber or red when off. Pure. */
+export function signals(o: Pick<AgentOverview, 'now' | 'blocked' | 'queue' | 'status' | 'health'>, now = new Date()): Signal[] {
+  const out: Signal[] = [];
+  const s = o.status;
+  out.push({
+    id: 'doing', label: 'Doing', value: o.now || s.live ? '1' : '0',
+    note: s.live ? 'turn running' : o.now ? (s.doingSince ? `${elapsed(s.doingSince, now)} in` : 'on a task') : 'nothing',
+    level: o.now || s.live ? 'ok' : 'quiet', target: 'now',
+  });
+  const onYou = o.blocked.filter((b) => b.blocker.waitsOn.kind === 'ceo').length;
+  out.push({
+    id: 'blocked', label: 'Blocked', value: String(o.blocked.length),
+    note: onYou ? `${onYou} on you` : o.blocked.length ? 'waiting' : 'none',
+    level: onYou ? 'bad' : o.blocked.length ? 'warn' : 'quiet', target: 'blocked',
+  });
+  out.push({ id: 'queue', label: 'Queue', value: String(o.queue.length), note: o.queue.length ? 'up next' : 'empty', level: 'quiet', target: 'next' });
+  const w = o.health.wip;
+  if (w) {
+    out.push({
+      id: 'wip', label: 'WIP', value: `${w.open}/${w.limit}`,
+      note: w.open > w.limit ? `${w.open - w.limit} over limit` : w.open === w.limit ? 'at limit' : 'under limit',
+      level: w.open > w.limit ? 'bad' : w.open === w.limit ? 'warn' : 'ok', target: 'now',
+    });
+  }
+  const sp = o.health.spend;
+  const cap = sp.monthCapUsd ?? 0;
+  if (sp.monthUsd !== null && cap > 0) {
+    const r = sp.monthUsd / cap;
+    out.push({ id: 'budget', label: 'Budget', value: money(sp.monthUsd), note: `of ${money(cap)}`, level: r >= 1 ? 'bad' : r >= BUDGET_WARN ? 'warn' : 'ok', target: 'health' });
+  } else if (sp.monthUsd !== null || sp.d30Usd !== null) {
+    out.push({ id: 'budget', label: 'Spend', value: money(sp.monthUsd ?? sp.d30Usd ?? 0), note: sp.monthUsd !== null ? 'this month, no cap' : '30 days, no cap', level: 'quiet', target: 'health' });
+  }
+  const errs = o.health.errors;
+  const red = errs.filter((e) => e.kind !== 'provider').length;
+  out.push({ id: 'errors', label: 'Errors', value: String(errs.length), note: errs.length ? (red ? 'last 2 days' : 'provider degraded') : 'last 2 days', level: red ? 'bad' : errs.length ? 'warn' : 'ok', target: 'health' });
+  return out;
+}
+
+/** The work tab the page opens on: what it is doing, else what is stuck, else what is next. */
+export function defaultWorkTab(o: Pick<AgentOverview, 'now' | 'blocked' | 'queue' | 'reviews'>): WorkTab {
+  if (o.now) return 'now';
+  if (o.blocked.length) return 'blocked';
+  if (o.queue.length) return 'next';
+  if (o.reviews.length) return 'reviews';
+  return 'now';
+}
+
+export type ActivityFilter = 'all' | 'runs' | 'tasks' | 'files' | 'comments';
+export const ACTIVITY_FILTERS: Array<{ id: ActivityFilter; label: string }> = [
+  { id: 'all', label: 'All' }, { id: 'runs', label: 'Runs' }, { id: 'tasks', label: 'Tasks' }, { id: 'files', label: 'Files' }, { id: 'comments', label: 'Comments' },
+];
+/** Rows shown before "Show all". */
+export const ACTIVITY_CAP = 10;
+
+/** One timeline: its runs (routine ones collapsed), tasks moved, comments, and the files it wrote. Newest first. Pure. */
+export function mergedActivity(o: Pick<AgentOverview, 'recent' | 'files' | 'agent'>): HomeActivity[] {
+  const seen = new Set<string>();
+  const rows: HomeActivity[] = [
+    ...o.recent,
+    ...o.files.map((f): HomeActivity => ({ id: `file:${f.path}`, at: f.updatedAt, kind: 'file', title: `Wrote ${f.path}`, detail: f.version > 1 ? `version ${f.version}` : '', actor: o.agent.name, ref: { type: 'file', id: f.path } })),
+  ];
+  return rows.filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true))).sort((a, b) => b.at.localeCompare(a.at));
+}
+
+export function activityKind(a: HomeActivity): Exclude<ActivityFilter, 'all'> {
+  if (a.kind === 'file') return 'files';
+  if (a.kind === 'task') return 'tasks';
+  if (a.kind === 'decision') return 'comments';
+  return 'runs';
 }

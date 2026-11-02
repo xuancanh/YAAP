@@ -1,20 +1,21 @@
 /** Agents: the directory grid, the create-agent dialog, and the per-agent
- *  home page — tabbed like YAAM: Dashboard (what it is doing, docs/mission-control.md; its own notes folded below),
- *  Mini apps (self-built, embeddable), Chats, Memory (file brain), Settings. */
+ *  page (docs/mission-control.md): the header (who it is, what it is doing,
+ *  Chat / Beat now / Pause, more in a menu) above six tabs: Overview, Work
+ *  (Tasks, Schedule), Chats, Artifacts, Memory (file brain) and Settings
+ *  (General, Skills & tools, Mini apps, Trust). Old tab names still resolve
+ *  (src/lib/agent-tabs.ts). */
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
 import { ImportSkillMdButton, MemoryImportModal, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
-import { PublishButton } from './RegistryBits';
-import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentJsonV2, type AgentLesson, type AgentTask, type AgentUsage, type Connection, type ContextCard, type FileEntry, type FilePreview, type HeartbeatView, type LoopState, type Skill } from '../lib/api';
-import { UsageBars, UsageRows } from './UsageChart';
-import { fmtUsd } from '../lib/pricing';
-import { fmtTokens } from '../lib/util';
+import { PublishButton, PublishModal } from './RegistryBits';
+import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentJsonV2, type AgentLesson, type AgentTask, type Connection, type ContextCard, type FileEntry, type FilePreview, type HeartbeatView, type LoopState, type Skill } from '../lib/api';
 import { KEEP_FILE, agentSource, normPath, workspaceSource } from '../lib/artifacts';
 import { ArtifactTree } from './ArtifactTree';
 import { ArtifactPane } from './FilesView';
-import { AgentOverviewPanel } from './AgentDashboard';
+import { AgentHeader, AgentOverviewBody, useAgentPage } from './AgentDashboard';
+import { AGENT_TABS, SETTINGS_SECTIONS, WORK_SECTIONS, resolveAgentTab, type AgentTab, type SettingsSection, type WorkSection } from '../lib/agent-tabs';
 import { nextFire, untilLabel } from '../lib/cron';
 import { RUNS_WHEN, lastFiredLabel, runsWhenOf, triggerGlyph, triggerLabel, type Loop, type LoopTrigger, type RunsWhen } from '../lib/triggers';
 
@@ -1343,12 +1344,24 @@ function MemoryTab({ a }: { a: Agent }) {
   );
 }
 
-const TABS = ['Dashboard', 'Tasks', 'Schedule', 'Memory', 'Mini apps', 'Skills & tools', 'Trust', 'Chats', 'Artifacts', 'Settings'] as const;
-/** Old tab names still accepted by `?tab=` and in-app deep links. */
-const TAB_ALIASES: Record<string, string> = { Files: 'Artifacts' };
 /** The agent's trust levels, its action log and held actions (item 28, SPA item 32). */
 const AgentTrustTab = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.AgentTrustTab })));
-type HomeTab = (typeof TABS)[number];
+
+/** A tab's sub-sections (Work: Tasks, Schedule; Settings: General, Skills & tools, Mini apps, Trust). */
+function SubNav<T extends string>({ items, value, onChange, counts = {}, label: name }: { items: readonly T[]; value: T; onChange: (v: T) => void; counts?: Partial<Record<T, number>>; label: string }) {
+  return (
+    <div role="tablist" aria-label={name} data-testid={`subnav-${name.toLowerCase()}`} style={{ display: 'inline-flex', gap: 2, marginTop: 16, padding: 3, borderRadius: 10, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', maxWidth: '100%', overflowX: 'auto' }}>
+      {items.map((it) => (
+        <button key={it} role="tab" aria-selected={value === it} onClick={() => onChange(it)} style={{
+          background: value === it ? 'var(--panel)' : 'none', border: value === it ? '1px solid var(--border)' : '1px solid transparent', borderRadius: 7,
+          color: value === it ? 'var(--text)' : 'var(--text-dim)', fontWeight: value === it ? 600 : 500, fontSize: 12, padding: '5px 11px', cursor: 'pointer', whiteSpace: 'nowrap',
+        }}>
+          {it}{counts[it] ? <span style={{ marginLeft: 5, fontSize: 10.5, color: 'var(--text-faint)' }}>{counts[it]}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export function AgentHome() {
   const app = useApp();
@@ -1359,129 +1372,89 @@ export function AgentHome() {
     ...app.workspaces.filter((w) => w.orgMode !== 'off' && w.chiefOfStaffAgentId === a?.id).map((w) => w.name),
     ...(app.wsOrg && app.wsOrg.mode !== 'off' && app.wsOrg.chiefOfStaffAgentId === a?.id ? [app.workspaces.find((w) => w.id === app.wsOrg!.workspaceId)?.name ?? 'this workspace'] : []),
   ]));
-  const [tab, setTab] = useState<HomeTab>('Dashboard');
+  const [tab, setTab] = useState<AgentTab>('Overview');
+  const [workSection, setWorkSection] = useState<WorkSection>('Tasks');
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('General');
   const [openApp, setOpenApp] = useState<AgentApp | null>(null);
   const [reviewApp, setReviewApp] = useState<AgentApp | null>(null);
   const [tasks, setTasks] = useState<AgentTask[]>([]);
-  const [events, setEvents] = useState<AgentEvent[]>([]);
-  const [usage, setUsage] = useState<AgentUsage | null>(null);
   const [chatQuery, setChatQuery] = useState('');
   const [editingCharter, setEditingCharter] = useState(false);
   const [charterDraft, setCharterDraft] = useState('');
   const [importing, setImporting] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const stats = a ? app.agentStats[a.id] : undefined;
   const agentId = a?.id;
 
+  /** Go to a tab by any name it has had: 'Work', 'Settings:Trust', 'Trust', 'Dashboard' (agent-tabs.ts). */
+  const goTo = useCallback((name: string | null | undefined): boolean => {
+    const t = resolveAgentTab(name);
+    if (!t) return false;
+    setTab(t.tab);
+    if (t.tab === 'Work' && t.section) setWorkSection(t.section as WorkSection);
+    if (t.tab === 'Settings') setSettingsSection((t.section as SettingsSection | null) ?? 'General');
+    return true;
+  }, []);
+  const page = useAgentPage(agentId ?? '', goTo);
+
   // ?tab= deep link (screenshot verification); consumed on the first open
-  const urlTab = useRef<HomeTab | null>((() => {
-    const raw = new URLSearchParams(window.location.search).get('tab');
-    const q = raw ? TAB_ALIASES[raw] ?? raw : raw;
-    return TABS.includes(q as HomeTab) ? (q as HomeTab) : null;
-  })());
+  const urlTab = useRef<string | null>(new URLSearchParams(window.location.search).get('tab'));
   useEffect(() => {
     if (!agentId) return; // agents not loaded yet — keep the deep link intact
-    setTab(urlTab.current ?? 'Dashboard');
+    if (!goTo(urlTab.current)) { setTab('Overview'); setWorkSection('Tasks'); setSettingsSection('General'); }
     urlTab.current = null;
     setEditingCharter(false);
     setChatQuery('');
-  }, [agentId]);
+  }, [agentId, goTo]);
   // In-app deep link (e.g. the chat's "needs a grant" hint): one-shot tab
   // request from the store, works even when this agent page is already open.
   useEffect(() => {
-    const want = app.agentTabRequest ? TAB_ALIASES[app.agentTabRequest] ?? app.agentTabRequest : null;
-    if (want && TABS.includes(want as HomeTab)) {
-      setTab(want as HomeTab);
-      app.setAgentTabRequest(null);
-    }
+    if (app.agentTabRequest && goTo(app.agentTabRequest)) app.setAgentTabRequest(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.agentTabRequest]);
   useEffect(() => {
-    if (agentId) {
-      void api.agentTasks(agentId).then(setTasks).catch(() => setTasks([]));
-      void api.agentEvents(agentId).then(setEvents).catch(() => setEvents([]));
-      void api.agentUsage(agentId, 30).then(setUsage).catch(() => setUsage(null));
-    } else {
-      setTasks([]);
-      setEvents([]);
-      setUsage(null);
-    }
+    if (agentId) void api.agentTasks(agentId).then(setTasks).catch(() => setTasks([]));
+    else setTasks([]);
   }, [agentId]);
 
   if (!a) return null;
   const reloadTasks = () => void api.agentTasks(a.id).then(setTasks).catch(() => {});
-  const reloadEvents = () => void api.agentEvents(a.id).then(setEvents).catch(() => {});
-  const actOnEvent = async (ev: AgentEvent, decision: 'approve' | 'dismiss') => {
-    try {
-      const res = await api.actOnAgentEvent(a.id, ev.id, decision);
-      app.showToast(decision === 'dismiss' ? 'Dismissed' : res.ok ? 'Approved — action ran' : `Action failed: ${res.error ?? 'unknown error'}`);
-    } catch (err) {
-      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'action failed');
-    }
-    reloadEvents();
-  };
-  /** A routed approval (docs/shared-agents.md §3): another member's turn
-   *  wants to use *your* connection; only you see this and only you decide. */
-  const decideEvent = async (ev: AgentEvent, decision: 'allow' | 'deny') => {
-    try {
-      const res = await api.decideAgentEvent(a.id, ev.id, decision);
-      app.showToast(!res.resolved ? 'That request had already expired' : decision === 'allow' ? 'Allowed — the turn continues' : 'Denied');
-    } catch (err) {
-      app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'decision failed');
-    }
-    reloadEvents();
-  };
   const apps = parseApps(a);
   const loops = (() => { try { return JSON.parse(a.loops) as Loop[]; } catch { return []; } })();
   const activeLoops = loops.filter((l) => l.enabled !== false);
   const openTasks = tasks.filter((t) => t.status !== 'done');
-  /** Events that wait on a person: a queued action, a routed connection request. */
-  const waiting = events.filter((ev) => ev.kind === 'action_pending' || ev.kind === 'approval_request');
   const conversations = app.sessions
     .filter((s) => s.agentId === a.id)
     .sort((x, y) => (x.updatedAt < y.updatedAt ? 1 : -1));
   const filteredChats = chatQuery.trim()
     ? conversations.filter((c) => (c.name || c.autoTitle).toLowerCase().includes(chatQuery.trim().toLowerCase()))
     : conversations;
-  const counts: Partial<Record<HomeTab, number>> = {
-    Tasks: openTasks.length, Schedule: activeLoops.length, 'Mini apps': apps.length, Chats: conversations.length,
-  };
+  const counts: Partial<Record<AgentTab, number>> = { Work: openTasks.length, Chats: conversations.length };
+  const pending = page.o?.needsYou.length ?? 0;
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto' }}>
-      <div style={{ maxWidth: 920, margin: '0 auto', padding: '24px 26px 60px' }}>
-        <button onClick={() => { app.setSelectedAgent(null); app.go('overview'); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 12.5, cursor: 'pointer', padding: 0, marginBottom: 16 }}>
+    <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+      <div style={{ maxWidth: 1040, margin: '0 auto', padding: app.stacked ? '16px 16px 60px' : '24px 26px 60px' }}>
+        <button onClick={() => { app.setSelectedAgent(null); app.go('overview'); }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 12.5, cursor: 'pointer', padding: 0, marginBottom: 14 }}>
           <I d={P.chevL} size={14} />All agents
         </button>
 
-        {/* identity header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 15, flexWrap: 'wrap' }}>
-          <div style={{ width: 54, height: 54, borderRadius: 15, background: grad(a.colors), display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 26 }}>{a.emoji}</div>
-          <div style={{ flex: 1, minWidth: 160 }}>
-            <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-.3px' }}>{a.name}</div>
-            <div style={{ color: 'var(--text-dim)', fontSize: 12.5, marginTop: 2 }}>
-              {chiefOf.length > 0 && <span title="This agent leads the organization of the named workspace (docs/group-chat.md §5)" style={{ color: 'var(--accent-hi)', fontWeight: 600 }}>Chief of staff of {chiefOf.join(', ')} · </span>}
-              {a.role || 'Durable agent'}
-              <span style={{ fontFamily: 'var(--mono)', color: 'var(--text-faint)', fontSize: 11.5 }}> · {a.model || a.provider} · {stats?.rating !== null && stats?.rating !== undefined ? `${stats.rating}% approval` : 'unrated'} · {(((stats?.tokensIn ?? 0) + (stats?.tokensOut ?? 0)) / 1000).toFixed(1)}k tokens{usage && usage.totals.turns > 0 ? ` · ${fmtUsd(usage.totals.usd)} / 30d` : ''}</span>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={() => setImporting(true)} title="Bring memory from Claude, Muse, Hermes or OpenClaw into this agent as proposals" style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '8px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7 }}>
-              <I d={P.download} size={14} style={{ transform: 'rotate(180deg)' }} />Import
-            </button>
-            <a href={api.agentExportUrl(a.id)} download title="AGENT.json v2: identity, loops, apps, lessons, skills, open tasks (no profile)" style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 9, padding: '8px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, textDecoration: 'none' }}>
-              <I d={P.download} size={14} />Export
-            </a>
-            <PublishButton target={{ kind: 'agent', agentId: a.id }} defaultName={a.name} defaultDescription={a.role} />
-            <button onClick={() => void app.newChat(a.id)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: '8px 15px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7 }}>
-              <I d={P.plus} size={14} />New conversation
-            </button>
-          </div>
-        </div>
+        {/* who it is, what it is doing (docs/mission-control.md), the quick actions */}
+        <AgentHeader
+          who={{ name: a.name, emoji: a.emoji, colors: a.colors, role: a.role, model: a.model || a.provider }}
+          o={page.o} now={page.now} busy={page.busy} act={page.act}
+          aside={chiefOf.length > 0 ? <div title="This agent leads the organization of the named workspace (docs/group-chat.md §5)" style={{ color: 'var(--accent-hi)', fontWeight: 600, fontSize: 12, marginTop: 2 }}>Chief of staff of {chiefOf.join(', ')}</div> : undefined}
+          menu={[
+            { label: 'Import memory…', title: 'Bring memory from Claude, Muse, Hermes or OpenClaw into this agent as proposals', onSelect: () => setImporting(true) },
+            { label: 'Export AGENT.json', title: 'AGENT.json v2: identity, loops, apps, lessons, skills, open tasks (no profile)', href: api.agentExportUrl(a.id), download: true },
+            { label: 'Publish to the market…', title: 'Publish this agent to the Community market', onSelect: () => setPublishing(true) },
+          ]}
+        />
 
         {/* tab bar */}
-        <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border)', overflowX: 'auto', marginTop: 20 }}>
-          {TABS.map((t) => (
-            <button key={t} onClick={() => setTab(t)} style={{
+        <div role="tablist" aria-label="Agent" style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border)', overflowX: 'auto', marginTop: 18 }}>
+          {AGENT_TABS.map((t) => (
+            <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} style={{
               background: 'none', border: 'none', cursor: 'pointer', padding: '7px 13px 9px', fontSize: 12.5,
               fontWeight: tab === t ? 600 : 500, whiteSpace: 'nowrap',
               color: tab === t ? 'var(--text)' : 'var(--text-dim)',
@@ -1489,87 +1462,27 @@ export function AgentHome() {
               marginBottom: -1,
             }}>
               {t}
-              {counts[t] ? <span style={{ marginLeft: 6, fontSize: 10, color: t === 'Tasks' ? 'var(--amber)' : 'var(--text-faint)' }}>{counts[t]}</span> : null}
+              {t === 'Overview' && pending > 0 ? <span title={`${pending} waiting on you`} style={{ marginLeft: 6, fontSize: 10, color: 'var(--amber)', fontWeight: 700 }}>{pending}</span> : null}
+              {counts[t] ? <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>{counts[t]}</span> : null}
             </button>
           ))}
         </div>
 
-        {tab === 'Dashboard' && (
+        {tab === 'Overview' && (
           <div style={{ marginTop: 18 }}>
-            {/* docs/mission-control.md: what it is doing, blocked on, next and done; its team and health; its own notes folded below. */}
-            <AgentOverviewPanel agentId={a.id} onOpenTab={(t) => { const want = TAB_ALIASES[t] ?? t; if (TABS.includes(want as HomeTab)) setTab(want as HomeTab); }} extra={(waiting.length > 0 || (usage && usage.totals.turns > 0) || conversations.length > 0) ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                {waiting.length > 0 && (
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
-                      <span style={{ fontSize: 13, fontWeight: 650 }}>Waiting on you</span>
-                      <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>actions it queued and connections it asks to use</span>
-                    </div>
-                    <div style={{ ...card, padding: '6px 8px' }}>
-                      {waiting.map((ev) => (
-                        <div key={ev.id} onClick={() => ev.sessionId && app.openSession(ev.sessionId)}
-                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, cursor: ev.sessionId ? 'pointer' : 'default' }}>
-                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: ev.kind === 'loop_error' || ev.kind === 'action_failed' || ev.kind === 'budget_stop' || ev.kind === 'approval_denied' ? 'var(--red)' : ev.kind === 'action_pending' || ev.kind === 'approval_request' ? 'var(--amber)' : 'var(--green)', flex: 'none' }} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</div>
-                            {ev.body && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.body}</div>}
-                          </div>
-                          {ev.kind === 'action_pending' && (
-                            <span style={{ display: 'flex', gap: 6, flex: 'none' }} onClick={(e) => e.stopPropagation()}>
-                              <button onClick={() => void actOnEvent(ev, 'approve')} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
-                              <button onClick={() => void actOnEvent(ev, 'dismiss')} style={{ background: 'none', color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Dismiss</button>
-                            </span>
-                          )}
-                          {ev.kind === 'approval_request' && (
-                            <span style={{ display: 'flex', gap: 6, flex: 'none', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
-                              <span title="Routed to you: this turn would use your connection" style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--amber)', border: '1px solid var(--amber)', borderRadius: 4, padding: '0 5px' }}>for you</span>
-                              <button onClick={() => void decideEvent(ev, 'allow')} style={{ background: 'var(--green)', color: '#04140d', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Allow</button>
-                              <button onClick={() => void decideEvent(ev, 'deny')} style={{ background: 'none', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Deny</button>
-                            </span>
-                          )}
-                          <span style={{ fontSize: 9.5, color: 'var(--text-faint)', flex: 'none', fontFamily: 'var(--mono)' }}>{ago(ev.createdAt)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {usage && usage.totals.turns > 0 && (
-                  <details>
-                    <summary style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8, cursor: 'pointer' }}>
-                      <span style={{ fontSize: 13, fontWeight: 650 }}>Usage, 30 days</span>
-                      <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
-                        {fmtTokens(usage.totals.tokensIn + usage.totals.tokensOut)} tokens · {fmtUsd(usage.totals.usd)} at list prices
-                        {usage.unpricedModels.length > 0 ? ` · unpriced: ${usage.unpricedModels.join(', ')}` : ''}
-                      </span>
-                    </summary>
-                    <div style={{ ...card, padding: '12px 14px' }}>
-                      <UsageBars series={usage.series} height={64} />
-                      <div style={{ marginTop: 10, borderTop: '1px solid var(--border-soft)', paddingTop: 8 }}>
-                        <UsageRows rows={usage.byKind} onOpen={(id) => app.openSession(id)} />
-                      </div>
-                    </div>
-                  </details>
-                )}
-                {conversations.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 8 }}>Recent conversations</div>
-                    <div style={{ ...card, padding: '6px 8px' }}>
-                      {conversations.slice(0, 5).map((c) => <ConversationRow key={c.id} s={c} onOpen={() => app.openSession(c.id)} />)}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : undefined} />
+            <AgentOverviewBody page={page} />
           </div>
         )}
-        {tab === 'Tasks' && <TasksBoard a={a} tasks={tasks} reload={reloadTasks} />}
-        {tab === 'Schedule' && <ScheduleTab a={a} />}
+        {tab === 'Work' && <SubNav label="Work" items={WORK_SECTIONS} value={workSection} onChange={setWorkSection} counts={{ Tasks: openTasks.length, Schedule: activeLoops.length }} />}
+        {tab === 'Settings' && <SubNav label="Settings" items={SETTINGS_SECTIONS} value={settingsSection} onChange={setSettingsSection} counts={{ 'Mini apps': apps.length }} />}
+        {tab === 'Work' && workSection === 'Tasks' && <TasksBoard a={a} tasks={tasks} reload={reloadTasks} />}
+        {tab === 'Work' && workSection === 'Schedule' && <ScheduleTab a={a} />}
         {tab === 'Memory' && <MemoryTab a={a} />}
-        {tab === 'Skills & tools' && <SkillsToolsTab a={a} />}
+        {tab === 'Settings' && settingsSection === 'Skills & tools' && <SkillsToolsTab a={a} />}
         {tab === 'Artifacts' && <AgentArtifactsTab a={a} />}
-        {tab === 'Trust' && (app.workspaceId ? <Suspense fallback={<div style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>Loading…</div>}><AgentTrustTab agentId={a.id} wsId={a.workspaceId || app.workspaceId} /></Suspense> : <div style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>Open a workspace to see this agent's trust levels.</div>)}
+        {tab === 'Settings' && settingsSection === 'Trust' && <div style={{ marginTop: 18 }}>{app.workspaceId ? <Suspense fallback={<div style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>Loading…</div>}><AgentTrustTab agentId={a.id} wsId={a.workspaceId || app.workspaceId} /></Suspense> : <div style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>Open a workspace to see this agent's trust levels.</div>}</div>}
 
-        {tab === 'Mini apps' && (
+        {tab === 'Settings' && settingsSection === 'Mini apps' && (
           <div style={{ marginTop: 18 }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 10 }}>
               <span style={label}>Mini apps · {apps.length}/12</span>
@@ -1643,7 +1556,7 @@ export function AgentHome() {
           </div>
         )}
 
-        {tab === 'Settings' && (
+        {tab === 'Settings' && settingsSection === 'General' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
             <IdentityCard a={a} />
             <ModelCard a={a} />
@@ -1736,6 +1649,7 @@ export function AgentHome() {
       {openApp && <AppViewer agentId={a.id} miniApp={openApp} onClose={() => setOpenApp(null)} />}
       {reviewApp && <CapReviewModal agentId={a.id} miniApp={reviewApp} onClose={() => setReviewApp(null)} />}
       {importing && <MemoryImportModal a={a} onClose={() => setImporting(false)} />}
+      {publishing && <PublishModal target={{ kind: 'agent', agentId: a.id }} defaultName={a.name} defaultDescription={a.role} onClose={() => setPublishing(false)} />}
     </div>
   );
 }
