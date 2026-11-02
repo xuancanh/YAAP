@@ -197,9 +197,17 @@ controllable inputs, "unknown" over invented causes), `exec-meeting-prep`
 `ceo-daily-brief`, `handoff-sla-monitor`, `risk-register` (with pre-mortems
 before one-way doors), `values-mechanism-audit` (the five mechanism families,
 drift with numbers, gaps as questions), `ritual-retirement-review`,
-`investor-update` (draft only) and `reorg-proposal`.
+`investor-update` (draft only), `reorg-proposal`, and the four that close
+the remaining loops (docs/autonomous-skills-review.md):
+`escalation-and-blocker-sweep` (blocked, abandoned and breaker-stopped work,
+degraded providers, cards nearing their deadline and default while the CEO
+is away), `member-lifecycle-review` (first staffing, onboarding owner after
+each hire, probation, eval-gated model changes, pause and termination),
+`learning-loop-review` (experiments, calibration, lessons into playbooks,
+golden sets) and `org-files-hygiene` (the ledger and the function folders
+complete, linked, archived, free of secrets).
 
-Its loops: the weekday **operating-system sweep** (intake, brief, handoffs)
+Its loops: the weekday **operating-system sweep** (intake, blocks, brief, handoffs)
 an hour before the brief,
 the **weekly business review pack** at the pre-read deadline before the root
 unit's weekly review (moved off the weekend), the **monthly operating

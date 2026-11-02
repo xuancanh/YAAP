@@ -292,7 +292,13 @@ playbooks use the lead's tool set (`org_set_goal`, `org_set_key_result`,
 Structure stays with the chief: a head never calls `org_hire_agent`,
 `org_pause_agent`, `org_update_member` or `org_report`; it writes the case
 (role id, why, cost, alternatives, recommendation, confidence) as a backlog
-task for the chief, and CEO-only decisions go through `org_escalate`. The
+task for the chief, and CEO-only decisions go through `org_escalate` (offered
+to a head in its own loops too, for tasks on its unit's board). Every member
+keeps its tasks true outside a task run as well (`org_task_update`,
+`org_task_comment`, `org_request_review`), and three built-in skills carry
+what every member shares: `org-member-workflow` (status, handoffs between
+functions on both sides, blocks, failures, escalation), `org-member-onboarding`
+and `org-unit-retro` (docs/autonomous-skills-review.md). The
 weekly report is a file in `/org/<fn>/reports/` plus an `org_message`
 summary; audit findings go in `/org/<fn>/audits/` (the independent
 `org_audit_finding` stays the Auditor's).
