@@ -60,6 +60,8 @@ export interface LiveTool {
   /** The action contract (docs/actions-and-trust.md): the call's class, its
    *  action_log row and whether it waits for the owner's key. */
   actionClass?: string; actionId?: string; held?: 'held' | 'staged';
+  /** Progress lines a long-running tool streamed (code_agent), newest last. */
+  progress?: string[];
 }
 export type LiveItem =
   /** The message just sent, shown until the server has persisted it (the
@@ -885,6 +887,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
             i.kind === 'tool' && i.id === ev.id
               ? { ...i, status: ev.isError ? (ev.output.includes('Denied') ? 'denied' : 'error') : 'done', result: ev.output, review: ev.review ?? i.review, actionClass: ev.actionClass, actionId: ev.actionId, held: ev.held }
               : i
+          )));
+        } else if (ev.type === 'tool_progress') {
+          patch((items) => items.map((i) => (
+            i.kind === 'tool' && i.id === ev.id ? { ...i, progress: [...(i.progress ?? []).slice(-49), ev.text] } : i
           )));
         } else if (ev.type === 'browser') {
           // a page rendered: the Browser tab shows it as the model sees it

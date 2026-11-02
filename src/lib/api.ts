@@ -498,6 +498,33 @@ export interface ComputerAction {
 export const REMEMBERABLE_COMPUTER_TOOLS = new Set(['computer_screenshot', 'computer_move', 'computer_scroll', 'computer_list_dir', 'computer_read_file']);
 export const isComputerTool = (name: string): boolean => name.startsWith('computer_');
 
+// ---- coding agents (docs/coding-harnesses.md) ----
+
+export type HarnessId = 'claude_code' | 'codex' | 'pi' | 'deepseek';
+export type HarnessMode = 'read_only' | 'edit' | 'full';
+/** One harness's settings as the server serves them: never the key, only whether one is stored. */
+export interface HarnessConfig {
+  enabled: boolean;
+  binaryPath: string;
+  auth: 'api_key' | 'cli_login';
+  hasApiKey: boolean;
+  baseUrl: string;
+  provider: string;
+  model: string;
+  maxTurns: number;
+  timeoutS: number;
+  costCapUsd: number;
+  mode: HarnessMode;
+  osSandbox: boolean;
+  agents: 'all' | string[];
+  freeAgents: string[];
+}
+/** What a settings save may send: the key in clear ('' clears it), never read back. */
+export type HarnessPatch = Partial<Omit<HarnessConfig, 'hasApiKey'>> & { apiKey?: string };
+export interface HarnessStatus { found: boolean; path: string | null; version: string | null; detail: string; checkedAt: string }
+export interface HarnessRow { id: HarnessId; label: string; binary: string; config: HarnessConfig; status: HarnessStatus }
+export interface HarnessView { harnesses: HarnessRow[]; osSandbox: 'seatbelt' | 'bwrap' | null }
+
 export interface RunnerStatus {
   backend: 'local' | 'cloudflare' | null;
   languages: Array<'javascript' | 'python'>;
@@ -1106,6 +1133,8 @@ export type TurnEvent =
   | { type: 'thinking'; text: string }
   | { type: 'tool_call'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; id: string; name: string; output: string; isError: boolean; review?: ToolReview; actionClass?: string; actionId?: string; held?: 'held' | 'staged' }
+  /** A long-running tool's progress line (code_agent's CLI steps). */
+  | { type: 'tool_progress'; id: string; name: string; text: string }
   | { type: 'approval_required'; callId: string; tool: string; input: Record<string, unknown>; review?: ToolReview; routedTo?: { memberAccountId: string; name: string } }
   | { type: 'usage'; inputTokens: number; outputTokens: number }
   /** The workspace's monthly spend stop is reached; the turn still runs. */
@@ -1632,6 +1661,10 @@ export const api = {
     send<{ ok: boolean }>(`/api/connections/${id}/grants/${agentId}${service ? `?service=${service}` : ''}`, 'DELETE'),
   // code runner (docs/code-execution.md) — read-only: the backend is env-configured
   runnerStatus: () => get<RunnerStatus>('/api/runner/status'),
+  // coding agents (docs/coding-harnesses.md): owner-only writes; the key is write-only
+  harnesses: () => get<HarnessView>('/api/harness'),
+  updateHarness: (id: HarnessId, patch: HarnessPatch) => send<HarnessView>(`/api/harness/${id}`, 'PUT', patch),
+  detectHarness: (id: HarnessId) => send<HarnessStatus>(`/api/harness/${id}/detect`, 'POST'),
   // browser tool (docs/browser-tool.md) — read-only: the backend is env-configured
   browserStatus: () => get<BrowserStatus>('/api/browser/status'),
   // desktop computer control (docs/computer-control.md)

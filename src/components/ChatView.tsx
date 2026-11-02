@@ -53,7 +53,9 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
   };
   const [color, label] = map[t.status] ?? map.done;
   const computer = isComputerTool(t.name);
-  const arg = computer ? computerSummary(t.name, t.input) : typeof t.input?.path === 'string' ? t.input.path : typeof t.input?.url === 'string' ? t.input.url : typeof t.input?.query === 'string' ? t.input.query : '';
+  const arg = computer ? computerSummary(t.name, t.input)
+    : t.name === 'code_agent' ? `${String(t.input?.harness ?? '')}${typeof t.input?.folder === 'string' ? ` · ${t.input.folder}` : ''} — ${String(t.input?.task ?? '').slice(0, 120)}`
+    : typeof t.input?.path === 'string' ? t.input.path : typeof t.input?.url === 'string' ? t.input.url : typeof t.input?.query === 'string' ? t.input.query : '';
   const canRemember = !computer || REMEMBERABLE_COMPUTER_TOOLS.has(t.name);
   // The action contract (docs/actions-and-trust.md): the class and action_log
   // row the server put on the result, and whether it waits for the owner's key.
@@ -102,6 +104,11 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', animation: 'pulse 1s infinite' }} />
           Running {t.name}…
         </div>
+      )}
+      {t.status === 'running' && t.progress && t.progress.length > 0 && (
+        <pre data-testid="tool-progress" style={{ margin: 0, padding: '8px 13px', borderTop: '1px solid var(--border-soft)', background: 'var(--code)', ...mono, fontSize: 11.5, lineHeight: 1.5, color: 'var(--text-dim)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 160, overflowY: 'auto' }}>
+          {t.progress.slice(-8).join('\n')}
+        </pre>
       )}
       {t.status === 'pending' && t.routedTo && (
         <div style={{ padding: '11px 13px', borderTop: '1px solid var(--border-soft)', fontSize: 12, color: 'var(--amber)', display: 'flex', alignItems: 'center', gap: 8, fontWeight: 500 }}>

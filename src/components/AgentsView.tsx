@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } fro
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AgentAutoArchiveCard } from './ChatAutoArchive';
+import { AgentCodingAgents } from './CodingAgents';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
 import { ImportSkillMdButton, MemoryImportModal, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { PublishButton, PublishModal } from './RegistryBits';
@@ -1056,6 +1057,8 @@ function SkillsToolsTab({ a }: { a: Agent }) {
         </div>
       </div>
       {promoting && <PromoteSkillModal a={a} skill={promoting} onDone={() => refresh(a.id)} onClose={() => setPromoting(null)} />}
+
+      <AgentCodingAgents agentId={a.id} />
 
       <div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>

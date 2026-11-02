@@ -627,6 +627,7 @@ export const SETTINGS_PANES = [
   { id: 'channels', label: 'Channels', icon: P.chat },
   { id: 'connections', label: 'Connections', icon: P.globe },
   { id: 'runner', label: 'Code runner & browser', icon: P.shield },
+  { id: 'harness', label: 'Coding agents', icon: P.bolt },
   { id: 'computer', label: 'Computer', icon: P.window },
   { id: 'market', label: 'Market', icon: P.market },
   { id: 'security', label: 'Security', icon: P.shield },

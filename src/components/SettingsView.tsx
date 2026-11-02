@@ -28,11 +28,14 @@ const PANE_META: Record<string, [string, string]> = {
   usage: ['Usage', 'Tokens and dollars over the last 30 days — per agent, per loop, per day — and the price table behind the estimate.'],
   channels: ['Channels', 'Talk to your agents where you already are — Telegram, email, and push to this device, paired to you alone.'],
   connections: ['Connections', 'Link external services (Google Calendar first). Connecting grants nothing — you approve access per agent.'],
+  harness: ['Coding agents', 'Claude Code, Codex, Pi and DeepSeek as the code_agent tool: multi-step coding in a private copy of a workspace folder, synced back as the agent. Gated like code execution unless you opt an agent in.'],
   runner: ['Code runner & browser', 'Where run_js / run_python execute and where browser_open / browser_act render. Both are disposable and approval-gated; the browser is credential-free and visible to you.'],
   computer: ['Computer', 'Let agents act on your own computer through a paired companion you run. Every action is approved by you, scoped to what you granted, and recorded here.'],
   market: ['Market', 'The Community registry: which hosted registry this instance browses, whether Publish can push there, and what you have published.'],
   security: ['Security', 'The threat model this product is held to, as published in docs/security.md — and where to report a vulnerability.'],
 };
+
+const CodingAgentsPane = lazy(() => import('./CodingAgents').then((m) => ({ default: m.CodingAgentsPane })));
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 13, background: 'var(--panel)', padding: '15px 17px' };
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -1948,6 +1951,7 @@ export function SettingsView({ pane }: { pane: string }) {
           {pane === 'channels' && <ChannelsPane />}
           {pane === 'connections' && <ConnectionsPane />}
           {pane === 'runner' && <RunnerPane />}
+          {pane === 'harness' && <Suspense fallback={null}><CodingAgentsPane /></Suspense>}
           {pane === 'computer' && <ComputerPane />}
           {pane === 'market' && <MarketPane />}
           {pane === 'security' && <SecurityPane />}
