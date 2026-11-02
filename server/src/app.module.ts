@@ -4,6 +4,7 @@
  *  ConfigModule (global)   — typed config factory (env)
  *  DatabaseModule (global) — Drizzle + Postgres, boot-time idempotent migrations
  *  StorageModule (global)  — S3-compatible object storage for workspace files
+ *  FilesModule (global)    — WorkspaceFs over it: homes, versions, revisions (docs/filesystem.md)
  *
  *  StatusModule      → GET  /api/status
  *  WorkspacesModule  → CRUD /api/workspaces        (scoping + memory, §12)
@@ -40,6 +41,7 @@ import { TokenAuthStrategy } from './common/token-auth.strategy';
 import { HttpLoggingInterceptor } from './common/http-logging.interceptor';
 import { DatabaseModule } from './database/database.module';
 import { StorageModule } from './storage/storage.module';
+import { FilesModule } from './files/files.module';
 import { StatusModule } from './status/status.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { AgentTypesModule } from './agent-types/agent-types.module';
@@ -77,6 +79,7 @@ import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
     AccountsModule,
     SharedModule,
     StorageModule,
+    FilesModule,
     StatusModule,
     WorkspacesModule,
     AgentTypesModule,

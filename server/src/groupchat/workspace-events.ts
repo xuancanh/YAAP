@@ -5,7 +5,8 @@
  * message, an agent starting to reply (typing), the tokens of its reply as
  * they stream, a task linked to a message changing status, a channel's
  * settings or membership changing, and an approval a channel wake needs from
- * one specific person. Listeners are per workspace and fire-and-forget; a
+ * one specific person — and, beyond channels, every change to a workspace
+ * file made through WorkspaceFs (docs/filesystem.md "Activity"). Listeners are per workspace and fire-and-forget; a
  * throwing listener never breaks the write that emitted the event.
  */
 import { Injectable } from '@nestjs/common';
@@ -39,7 +40,11 @@ export type WorkspaceEvent =
   /** A channel wake paused on an Ask approval. Visible only to `forActor`
    *  (the human who started the turn, or the member whose connection the
    *  tool would use); the client filters by its own actor id. */
-  | { type: 'channel_approval'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; sessionId: string; callId: string; tool: string; input: Record<string, unknown>; forActor: string; forName: string };
+  | { type: 'channel_approval'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; sessionId: string; callId: string; tool: string; input: Record<string, unknown>; forActor: string; forName: string }
+  /** A workspace file was written, deleted or moved (docs/filesystem.md
+   *  "Activity"). `path` is workspace-relative; a move emits the old path
+   *  (`deleted`, `movedTo`) and then the new one. */
+  | { type: 'file.changed'; workspaceId: string; path: string; version: number; by: { kind: 'user' | 'agent' | 'system'; id: string; name: string }; deleted?: boolean; movedTo?: string };
 
 @Injectable()
 export class WorkspaceEventBus {

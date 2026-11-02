@@ -96,7 +96,11 @@ export const agents = pgTable('agents', {
   /** The agent type (provider, key, base URL) the agent runs on; its model
    *  field picks the model within it. Null = resolve by provider. */
   agentTypeId: text('agentTypeId'),
-  /** Optional file-brain home folder path (LESSONS.md / JOURNAL.md / knowledge/). */
+  /** The agent's home in its workspace's tree (docs/filesystem.md):
+   *  `agents/<handle>`, workspace-relative. The handle is the name slugified
+   *  and made unique within the workspace at creation, kept on rename. A
+   *  row still at the old default `agents/<id>` (or null) has its brain under
+   *  the legacy `agents/<id>/` prefix until the boot migration moves it. */
   homeDir: text('homeDir'),
   /** Markdown home dashboard (FR-11.5). */
   dashboard: text('dashboard').notNull().default(''),
@@ -1791,3 +1795,43 @@ export const orgValueEvents = pgTable('org_value_events', {
   at: text('at').notNull(),
   createdAt: text('createdAt').notNull(),
 }, (t) => [uniqueIndex('idx_org_value_events_ref').on(t.goalId, t.kind, t.sampleId)]);
+
+/** File metadata for the workspace filesystem (docs/filesystem.md
+ *  "Collaboration", migration 0047): one row per file written through
+ *  WorkspaceFs. `version` starts at 1 and bumps on every write — the
+ *  optimistic-concurrency token fs_write/fs_edit and the editor send back as
+ *  `expectedVersion`. Objects written outside WorkspaceFs have no row. */
+export const workspaceFiles = pgTable('workspace_files', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  /** Workspace-relative, no leading slash. */
+  path: text('path').notNull(),
+  version: integer('version').notNull().default(1),
+  size: integer('size').notNull().default(0),
+  contentType: text('contentType').notNull().default(''),
+  /** user | agent | system. */
+  updatedByKind: text('updatedByKind').notNull().default('system'),
+  updatedById: text('updatedById').notNull().default(''),
+  updatedByName: text('updatedByName').notNull().default(''),
+  updatedAt: text('updatedAt').notNull(),
+  createdByKind: text('createdByKind').notNull().default('system'),
+  createdById: text('createdById').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_workspace_files_path').on(t.workspaceId, t.path)]);
+
+/** A kept previous body of a file (docs/filesystem.md "Revisions"): the
+ *  bytes live at `workspaces/<ws>/.revisions/<sha1(path)>/<version>`; the
+ *  author fields are whoever wrote that version. The newest 20 per file. */
+export const workspaceFileRevisions = pgTable('workspace_file_revisions', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  path: text('path').notNull(),
+  version: integer('version').notNull(),
+  size: integer('size').notNull().default(0),
+  updatedByKind: text('updatedByKind').notNull().default('system'),
+  updatedById: text('updatedById').notNull().default(''),
+  updatedByName: text('updatedByName').notNull().default(''),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_workspace_file_revisions_version').on(t.workspaceId, t.path, t.version)]);

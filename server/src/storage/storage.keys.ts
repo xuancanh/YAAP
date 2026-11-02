@@ -6,6 +6,8 @@
  * strictly (no traversal, no absolute paths, printable segments only) —
  * object keys are the security boundary between workspaces.
  */
+import { createHash } from 'node:crypto';
+
 const SEGMENT = /^[A-Za-z0-9._-]+$/;
 
 /** Validate a user-supplied relative path: no traversal, printable segments. */
@@ -34,15 +36,33 @@ export function relativePath(workspaceId: string, key: string): string {
   return key.slice(workspacePrefix(workspaceId).length);
 }
 
-/** Durable-agent file brains live under their own prefix (FR-11.3). */
-export function agentPrefix(agentId: string): string {
+/** Validate a workspace-relative path and return it normalized (no leading
+ *  or trailing slash). '' (the workspace root) is allowed here; keys are not
+ *  built from it. */
+export function cleanRelativePath(path: string): string {
+  return path.split('/').some((s) => s.length > 0) ? cleanSegments(path) : '';
+}
+
+/** Where WorkspaceFs keeps previous bodies, inside the workspace prefix.
+ *  Never listed, searched, read or written through a path. */
+export const REVISIONS_DIR = '.revisions';
+
+/** True for workspace-relative paths that are internal bookkeeping. */
+export function isHiddenPath(path: string): boolean {
+  return path === REVISIONS_DIR || path.startsWith(`${REVISIONS_DIR}/`);
+}
+
+/** Where a kept previous body of `path` lives (docs/filesystem.md
+ *  "Revisions"): hashed so a file's history is one flat folder whatever its
+ *  depth, and so a move re-keys by rename of one folder. */
+export function revisionKey(workspaceId: string, path: string, version: number): string {
+  const hash = createHash('sha1').update(path).digest('hex');
+  return `${workspacePrefix(workspaceId)}${REVISIONS_DIR}/${hash}/${version}`;
+}
+
+/** The pre-filesystem prefix of an agent's file brain (`agents/<id>/`, at
+ *  the bucket root). Read only by the boot migration that moves it into the
+ *  agent's home (docs/filesystem.md "Migration"). */
+export function legacyAgentPrefix(agentId: string): string {
   return `agents/${agentId}/`;
-}
-
-export function agentFileKey(agentId: string, path: string): string {
-  return agentPrefix(agentId) + cleanSegments(path);
-}
-
-export function agentRelativePath(agentId: string, key: string): string {
-  return key.slice(agentPrefix(agentId).length);
 }

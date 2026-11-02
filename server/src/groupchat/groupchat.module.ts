@@ -16,12 +16,13 @@ import { OrgModule } from '../org/org.module';
 import { GroupChatService } from './groupchat.service';
 import { ChannelRuntimeService } from './channel-runtime.service';
 import { GroupChatController } from './groupchat.controller';
-import { WorkspaceEventBus } from './workspace-events';
 
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SettingsModule, OrgModule],
   controllers: [GroupChatController],
-  providers: [GroupChatService, ChannelRuntimeService, WorkspaceEventBus],
-  exports: [GroupChatService, ChannelRuntimeService, WorkspaceEventBus],
+  // WorkspaceEventBus comes from the global FilesModule (file changes ride
+  // the same stream).
+  providers: [GroupChatService, ChannelRuntimeService],
+  exports: [GroupChatService, ChannelRuntimeService],
 })
 export class GroupChatModule {}

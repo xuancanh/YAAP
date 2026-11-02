@@ -1708,6 +1708,45 @@ const MIGRATIONS: Migration[] = [
         await db.query(`ALTER TABLE chat_sessions ADD COLUMN "ceilingKind" TEXT NOT NULL DEFAULT 'context'`);
       }
     },
+  },  {
+    id: '0047-workspace-files',
+    up: async (db) => {
+      // The workspace filesystem (docs/filesystem.md): per-file metadata for
+      // every write through WorkspaceFs — version, size, who made and who
+      // last changed it — and the revision index (the previous bodies live
+      // in storage under .revisions/). Objects written outside WorkspaceFs
+      // still list from storage; they simply have no row yet. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS workspace_files (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "workspaceId" TEXT NOT NULL,
+        "path" TEXT NOT NULL,
+        "version" INTEGER NOT NULL DEFAULT 1,
+        "size" INTEGER NOT NULL DEFAULT 0,
+        "contentType" TEXT NOT NULL DEFAULT '',
+        "updatedByKind" TEXT NOT NULL DEFAULT 'system',
+        "updatedById" TEXT NOT NULL DEFAULT '',
+        "updatedByName" TEXT NOT NULL DEFAULT '',
+        "updatedAt" TEXT NOT NULL,
+        "createdByKind" TEXT NOT NULL DEFAULT 'system',
+        "createdById" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_files_path ON workspace_files ("workspaceId", "path")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS workspace_file_revisions (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "workspaceId" TEXT NOT NULL,
+        "path" TEXT NOT NULL,
+        "version" INTEGER NOT NULL,
+        "size" INTEGER NOT NULL DEFAULT 0,
+        "updatedByKind" TEXT NOT NULL DEFAULT 'system',
+        "updatedById" TEXT NOT NULL DEFAULT '',
+        "updatedByName" TEXT NOT NULL DEFAULT '',
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_file_revisions_version ON workspace_file_revisions ("workspaceId", "path", "version")`);
+    },
   },
 ];
 
