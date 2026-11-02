@@ -9,10 +9,11 @@ import { actorId, currentAccountId, currentViewer } from '../accounts/account-co
 import { eq, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { agents, workspaces } from '../database/schema';
+import { agents, workspaceFileRevisions, workspaceFiles, workspaces } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
 import { workspacePrefix } from '../storage/storage.keys';
+import { moveAgentHome } from '../files/agent-home';
 import { validateQuietHours } from './quiet-hours';
 import { validateHeartbeatDefaults } from '../chats/heartbeat-config';
 import { monthKey, spendStatus, SpendStatus } from './spend.util';
@@ -224,8 +225,17 @@ export class WorkspacesService {
     // workspace (an agent always has an owner — execution-plan item 26).
     const rest = (await this.db.select({ id: workspaces.id, createdAt: workspaces.createdAt }).from(workspaces))
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+    // Their homes live in this workspace's tree (docs/filesystem.md), so they
+    // move first — the prefix delete below would take them with it.
+    if (rest[0]) {
+      for (const a of await this.db.select().from(agents).where(eq(agents.workspaceId, id))) {
+        await moveAgentHome(this.db, this.storage, a, rest[0].id).catch(() => {});
+      }
+    }
     await this.db.update(agents).set({ workspaceId: rest[0]?.id ?? '' }).where(eq(agents.workspaceId, id));
     await this.storage.deletePrefix(workspacePrefix(id));
+    await this.db.delete(workspaceFiles).where(eq(workspaceFiles.workspaceId, id));
+    await this.db.delete(workspaceFileRevisions).where(eq(workspaceFileRevisions.workspaceId, id));
     return { ok: true };
   }
 }

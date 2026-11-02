@@ -10,10 +10,9 @@ import { ChatsRepository } from '../server/src/chats/chats.repository';
 import { TurnLoopService } from '../server/src/chats/turn-loop.service';
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
-import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
+import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider, agentKey } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import { RateLimiter } from '../server/src/appbridge/bridge-limits';
-import { agentFileKey } from '../server/src/storage/storage.keys';
 import { AppLlmService, LLM_TOKENS_PER_DAY } from '../server/src/appbridge/app-llm.service';
 import { AiProviderFactory } from '../server/src/ai/providers.factory';
 import { AgentTypesService } from '../server/src/agent-types/agent-types.service';
@@ -163,7 +162,7 @@ test('rate limits are real: bursts pass, a sustained loop is cut off, classes ar
 test('reads leave provenance: first read logs, then every 25th, and it names what was read', async () => {
   const { bridge, agents, agent, map } = await setup();
   const entry = await appWithCaps(agents, agent.id, ['files.read']);
-  map.set(agentFileKey(agent.id, 'reports/weekly.md'), Buffer.from('# week'));
+  map.set(agentKey(agent, 'reports/weekly.md'), Buffer.from('# week'));
 
   await bridge.fileRead(agent.id, entry.id, 'reports/weekly.md');
   let events = await agents.listEvents(agent.id);
@@ -261,7 +260,7 @@ test('files.propose promotes into the agent folder but never over the brain, app
 
   const ok = await bridge.filePropose(agent.id, entry.id, 'exports/cleaned.csv', 'a,b\n1,2\n');
   assert.equal(ok.path, 'exports/cleaned.csv', 'a proposal lands where the user can see it, not in the app jail');
-  assert.equal(map.get(agentFileKey(agent.id, 'exports/cleaned.csv'))?.toString(), 'a,b\n1,2\n');
+  assert.equal(map.get(agentKey(agent, 'exports/cleaned.csv'))?.toString(), 'a,b\n1,2\n');
 
   // the whole point of jailing writes was that an app must not author what an
   // agent later reads and obeys — approval does not buy past that
@@ -278,7 +277,7 @@ test('files.propose promotes into the agent folder but never over the brain, app
 test('files.watch reports change since a timestamp, and reads page past the preview cap', async () => {
   const { bridge, agents, agent, map } = await setup();
   const entry = await appWithCaps(agents, agent.id, ['files.read']);
-  map.set(agentFileKey(agent.id, 'reports/big.txt'), Buffer.from('x'.repeat(250_000)));
+  map.set(agentKey(agent, 'reports/big.txt'), Buffer.from('x'.repeat(250_000)));
 
   // without this a dashboard freezes at open time — the reason files.read exists
   const first = await bridge.filesWatch(agent.id, entry.id, 'reports/');

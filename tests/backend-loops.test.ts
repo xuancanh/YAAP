@@ -15,7 +15,7 @@ import { ToolsService } from '../server/src/chats/tools.service';
 import { AgentsService } from '../server/src/agents/agents.service';
 import { WorkspacesService } from '../server/src/workspaces/workspaces.service';
 import { StorageService } from '../server/src/storage/storage.service';
-import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
+import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider, agentKey } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import { setAddressLookup } from '../server/src/common/url-guard';
 
@@ -80,7 +80,7 @@ test('a matching loop fires a real turn and journals the run (FR-11.6)', async (
   const messages = await repo.listMessages(loopSession!.id);
   assert.ok(messages.some((m) => m.role === 'assistant' && m.content.includes('all green')));
 
-  const journal = (await stub.get(`agents/${agent.id}/JOURNAL.md`))!.toString('utf8');
+  const journal = (await stub.get(agentKey(agent, 'JOURNAL.md')))!.toString('utf8');
   assert.match(journal, /Loop "Nightly check" ran\. Checked everything; all green\./);
 
   // same minute again: no double fire
@@ -123,9 +123,9 @@ test('distill appends bounded journal + lesson entries to the brain (FR-11.4)', 
 
   const res = await distill.distill(session.id);
   assert.equal(res.ok, true);
-  const journal = (await stub.get(`agents/${agent.id}/JOURNAL.md`))!.toString('utf8');
+  const journal = (await stub.get(agentKey(agent, 'JOURNAL.md')))!.toString('utf8');
   assert.match(journal, /Shipped the draft-flush change/);
-  const lessons = (await stub.get(`agents/${agent.id}/LESSONS.md`))!.toString('utf8');
+  const lessons = (await stub.get(agentKey(agent, 'LESSONS.md')))!.toString('utf8');
   assert.match(lessons, /## Active/);
   assert.match(lessons, /busy lock before rewriting history/);
 });
@@ -136,7 +136,7 @@ test('brain appends stay size-bounded (NFR-4)', async () => {
   for (let i = 0; i < 80; i++) {
     await agents.appendJournal(agent.id, `entry ${i} ${'x'.repeat(1900)}`);
   }
-  const journal = (await stub.get(`agents/${agent.id}/JOURNAL.md`))!.toString('utf8');
+  const journal = (await stub.get(agentKey(agent, 'JOURNAL.md')))!.toString('utf8');
   assert.ok(journal.length <= 100_000 + 200, `journal is ${journal.length} bytes`);
   assert.match(journal, /entry 79/); // newest kept
   assert.doesNotMatch(journal, /entry 1 /); // oldest trimmed
@@ -330,7 +330,7 @@ test('auto-distillation sweep distills idle changed sessions exactly once (phase
   // an hour later it is idle: distilled once
   const later = new Date(Date.now() + 2 * 60 * 60_000);
   assert.equal(await loops.distillSweep(later), 1);
-  const journal = (await stub.get(`agents/${a.id}/JOURNAL.md`))!.toString('utf8');
+  const journal = (await stub.get(agentKey(a, 'JOURNAL.md')))!.toString('utf8');
   assert.match(journal, /Helped plan the key rotation/);
 
   // unchanged since: not distilled again
@@ -430,13 +430,13 @@ test('lastRun stamps of removed loops are pruned, so a re-added loop refires in 
 test('brain checkpoints: daily snapshot before the first change, pruned to 14 days (phase 3)', async () => {
   const { agents, stub } = await setup([]);
   const a = await agents.create({ name: 'Keeper' });
-  const before = (await stub.get(`agents/${a.id}/JOURNAL.md`))!.toString('utf8');
+  const before = (await stub.get(agentKey(a, 'JOURNAL.md')))!.toString('utf8');
 
   await agents.appendJournal(a.id, 'first entry of the day');
   await agents.appendJournal(a.id, 'second entry of the day');
 
   const date = new Date().toISOString().slice(0, 10);
-  const cp = await stub.get(`agents/${a.id}/.checkpoints/${date}/JOURNAL.md`);
+  const cp = await stub.get(agentKey(a, `.checkpoints/${date}/JOURNAL.md`));
   assert.ok(cp, 'checkpoint written before the first change');
   assert.equal(cp!.toString('utf8'), before, 'checkpoint holds the pre-change content, once per day');
   assert.doesNotMatch(cp!.toString('utf8'), /first entry/, 'second append did not overwrite the checkpoint');
@@ -490,7 +490,7 @@ test('agent chats operate on the agent working folder; checkpoints are write-pro
   for await (const ev of turns.run(s.id, { text: 'write the plan' })) events.push(ev as never);
 
   // file landed in the agent's own folder, not the workspace store
-  assert.ok(await stub.get(`agents/${a.id}/notes/plan.md`), 'wrote inside the agent working folder');
+  assert.ok(await stub.get(agentKey(a, 'notes/plan.md')), 'wrote inside the agent working folder');
   assert.equal(await stub.get('workspaces/ws1/notes/plan.md'), null);
   // the rollback history refused the write
   const tamper = events.find((e) => e.type === 'tool_result' && e.output?.includes('rollback'));
@@ -551,7 +551,7 @@ test('concurrent brain-file appends serialize per agent — no entry is lost', a
   const a = await agents.create({ name: 'Scribe' });
   await Promise.all(Array.from({ length: 10 }, (_, i) => agents.appendJournal(a.id, `concurrent entry ${i}`)));
 
-  const journal = (await stub.get(`agents/${a.id}/JOURNAL.md`))!.toString('utf8');
+  const journal = (await stub.get(agentKey(a, 'JOURNAL.md')))!.toString('utf8');
   for (let i = 0; i < 10; i++) assert.ok(journal.includes(`concurrent entry ${i}`), `entry ${i} retained`);
 });
 

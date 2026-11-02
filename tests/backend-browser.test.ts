@@ -113,7 +113,7 @@ test('tool contract: three read-only tools, browser_act mutating, absent without
   await off.ready();
   assert.equal(off.status().backend, null);
   assert.deepEqual(off.specs(), []);
-  await assert.rejects(off.execute({ sessionId: 's', fileRoot: { kind: 'workspace', id: 'ws1' } }, 'browser_open', { url: 'https://a.test' }), /browser is not available/);
+  await assert.rejects(off.execute({ sessionId: 's', fileRoot: { workspaceId: 'ws1', home: '' } }, 'browser_open', { url: 'https://a.test' }), /browser is not available/);
 
   const svc = service(new FakeBackend({}));
   assert.deepEqual(svc.specs().map((s) => s.name), ['browser_open', 'browser_read', 'browser_act', 'browser_screenshot']);
@@ -159,7 +159,7 @@ test('browser_open returns wrapped text + numbered elements, stores the screensh
     const { stub, map } = memStorage();
     const backend = new FakeBackend({ 'https://example.test/': { title: 'Example Login', html: LOGIN_HTML } });
     const svc = service(backend, stub);
-    const ctx = { sessionId: 'chat1', fileRoot: { kind: 'agent' as const, id: 'ag1' } };
+    const ctx = { sessionId: 'chat1', fileRoot: { workspaceId: 'ws1', home: 'agents/ag1' } };
 
     const out = await svc.execute(ctx, 'browser_open', { url: 'https://example.test/' });
     assert.match(out, /^<page-content source="https:\/\/example\.test\/">/);
@@ -168,8 +168,8 @@ test('browser_open returns wrapped text + numbered elements, stores the screensh
     assert.match(out, /\[1\] link "Help centre" → https:\/\/example\.test\/help/);
     assert.match(out, /\[3\] input password name="password" \(Password\) — credential field, the user must fill this/);
     assert.match(out, /Screenshot: browser\/chat1\/1\.png \(step 1\)/);
-    assert.ok(map.has('agents/ag1/browser/chat1/1.png'), 'PNG stored under the chat\'s file root');
-    assert.deepEqual(map.get('agents/ag1/browser/chat1/1.png'), PNG);
+    assert.ok(map.has('workspaces/ws1/agents/ag1/browser/chat1/1.png'), 'PNG stored under the chat\'s file root');
+    assert.deepEqual(map.get('workspaces/ws1/agents/ag1/browser/chat1/1.png'), PNG);
 
     const events = svc.takeEvents('chat1');
     assert.deepEqual(events, [{ type: 'browser', sessionId: 'chat1', url: 'https://example.test/', title: 'Example Login', screenshotPath: 'browser/chat1/1.png', step: 1 }]);
@@ -180,7 +180,7 @@ test('browser_open returns wrapped text + numbered elements, stores the screensh
     const out2 = await svc.execute(ctx, 'browser_act', { action: 'click', target: 1 });
     assert.match(out2, /^After click on \[1\]:/);
     assert.match(out2, /source="https:\/\/example\.test\/help"/);
-    assert.ok(map.has('agents/ag1/browser/chat1/2.png'));
+    assert.ok(map.has('workspaces/ws1/agents/ag1/browser/chat1/2.png'));
     assert.equal(backend.sessions, 1, 'one session per turn');
 
     // browser_read is wrapped too, and screenshot stores a step
@@ -205,7 +205,7 @@ test('typing into a password / otp / card field is refused with guidance for the
   try {
     const backend = new FakeBackend({ 'https://example.test/': { title: 'Example Login', html: LOGIN_HTML } });
     const svc = service(backend, memStorage().stub);
-    const ctx = { sessionId: 'chat2', fileRoot: { kind: 'workspace' as const, id: 'ws1' } };
+    const ctx = { sessionId: 'chat2', fileRoot: { workspaceId: 'ws1', home: '' } };
     await svc.execute(ctx, 'browser_open', { url: 'https://example.test/' });
     const before = backend.calls.length;
 
@@ -232,7 +232,7 @@ test('every navigation passes the SSRF guard: private literals, private resoluti
   const html = '<title>Hop</title><a href="http://169.254.169.254/latest/meta-data/">metadata</a><a href="https://intranet.test/">intranet</a>';
   const backend = new FakeBackend({ 'https://public.test/': { title: 'Hop', html } });
   const svc = service(backend, memStorage().stub);
-  const ctx = { sessionId: 'chat3', fileRoot: { kind: 'workspace' as const, id: 'ws1' } };
+  const ctx = { sessionId: 'chat3', fileRoot: { workspaceId: 'ws1', home: '' } };
 
   await assert.rejects(svc.execute(ctx, 'browser_open', { url: 'http://127.0.0.1:8790/api/status' }), /private\/internal hosts/);
   await assert.rejects(svc.execute(ctx, 'browser_open', { url: 'http://localhost/' }), /private\/internal hosts/);
@@ -271,7 +271,7 @@ test('cloudflare backend: snapshot → page, link click re-renders, GET form sub
       }) as typeof fetch,
     });
     const svc = service(backend, memStorage().stub);
-    const ctx = { sessionId: 'chat4', fileRoot: { kind: 'workspace' as const, id: 'ws1' } };
+    const ctx = { sessionId: 'chat4', fileRoot: { workspaceId: 'ws1', home: '' } };
 
     const out = await svc.execute(ctx, 'browser_open', { url: 'https://example.test/' });
     assert.equal(seen[0].endpoint, 'snapshot');

@@ -1,8 +1,8 @@
 /**
  * AgentsService — durable agent identities (§11): global persistent agents
- * with a charter, provider/model defaults, and an optional file-brain home
- * folder. The brain (LESSONS.md / JOURNAL.md / knowledge/) and mini apps are
- * follow-up work; this scaffold owns the profile CRUD and pending feedback.
+ * with a charter, provider/model defaults, and a home folder in their
+ * workspace's tree (`agents/<handle>/`, docs/filesystem.md) holding the file
+ * brain (LESSONS.md / JOURNAL.md / knowledge/), app state and checkpoints.
  */
 import { Injectable, Inject, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
@@ -12,10 +12,11 @@ import { AccountsService } from '../accounts/accounts.service';
 import { actorId, currentAccountId } from '../accounts/account-context';
 import { unscoped } from '../accounts/scoped-db';
 import type { DrizzleDb } from '../database/database.module';
-import { agents, agentEvents, agentTasks, agentTypes, channelMembers, channels, chatSessions, chatTurns, heartbeatState, orgMembers, organizations, workspaces } from '../database/schema';
+import { agents, agentEvents, agentTasks, agentTypes, channelMembers, channels, chatSessions, chatTurns, heartbeatState, orgMembers, organizations, workspaceFiles, workspaces } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { StorageService } from '../storage/storage.service';
-import { agentFileKey, agentPrefix } from '../storage/storage.keys';
+import { workspaceFileKey } from '../storage/storage.keys';
+import { allocateHome, deleteAgentHome, ensureAgentHome, homeKey, moveAgentHome, type AgentHome } from '../files/agent-home';
 import { assertPublicUrl, fetchPublic } from '../common/url-guard';
 import { AiToolSpec } from '../ai/ai-provider.interface';
 import { TriggerBus } from '../chats/trigger-bus';
@@ -199,7 +200,9 @@ export class AgentsService {
       charter: input.charter ?? '',
       provider: input.provider ?? 'anthropic',
       model: input.model ?? '',
-      homeDir: input.homeDir ?? `agents/${id}`,
+      // The home (docs/filesystem.md): `agents/<handle>` in the workspace's
+      // tree, unique there, kept on rename. Not caller-chosen.
+      homeDir: await allocateHome(this.db, workspaceId, input.name),
       dashboard: '',
       apps: '[]',
       loops: JSON.stringify(input.loops ?? []),
@@ -214,7 +217,7 @@ export class AgentsService {
       createdAt: nowIso(),
     };
     await this.db.insert(agents).values(row);
-    await this.seedBrain(row.id, row.name);
+    await this.seedBrain(row);
     return row;
   }
 
@@ -255,20 +258,42 @@ export class AgentsService {
 
   /** Seed the transparent file brain (FR-11.3) so the fs view has structure
    *  from day one. */
-  private async seedBrain(id: string, name: string): Promise<void> {
+  private async seedBrain(row: { id: string; name: string; workspaceId: string; homeDir: string }): Promise<void> {
+    const name = row.name;
+    const home = await this.home(row);
     const files: Array<[string, string]> = [
       ['LESSONS.md', `# LESSONS.md\n\n${name} has not recorded lessons yet.\nCompleted work distills into size-bounded appends here.\n`],
       ['JOURNAL.md', `# JOURNAL.md\n\nFreshly created. The journal fills as ${name} completes scheduled and interactive work.\n`],
       ['knowledge/README.md', `# knowledge/\n\nUser- and agent-maintained reference files live here.\n`],
     ];
     for (const [path, content] of files) {
-      await this.storage.put(agentFileKey(id, path), Buffer.from(content, 'utf8'), 'text/markdown').catch(() => {});
+      await this.storage.put(homeKey(home, path), Buffer.from(content, 'utf8'), 'text/markdown').catch(() => {});
     }
+  }
+
+  /** Top-level shared folders of a workspace's tree (everything but
+   *  agents/), from the files written through WorkspaceFs — for the system
+   *  prompt, so it costs one indexed query rather than a bucket listing. */
+  async sharedFolders(workspaceId: string): Promise<string[]> {
+    const rows = await this.db.select({ path: workspaceFiles.path }).from(workspaceFiles).where(eq(workspaceFiles.workspaceId, workspaceId));
+    const top = new Set(rows.map((r) => r.path.split('/')).filter((seg) => seg.length > 1 && seg[0] !== 'agents').map((seg) => seg[0]));
+    return [...top].sort().slice(0, 20);
+  }
+
+  /** The agent's home folder (docs/filesystem.md): where its brain, app
+   *  state and checkpoints live, moved out of the legacy prefix on first
+   *  use if the boot migration has not got there. */
+  async home(agentOrId: string | { id: string; name: string; workspaceId: string; homeDir: string | null }): Promise<AgentHome> {
+    const row = typeof agentOrId === 'string' ? await this.get(agentOrId) : agentOrId;
+    return ensureAgentHome(this.db, this.storage, row);
   }
 
   async update(id: string, input: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string; agentTypeId: string | null; applyToChats: boolean }>) {
     await this.get(id);
-    const { applyToChats, ...patch } = input as typeof input & { agentTypeId?: string | null };
+    // homeDir is allocated at creation and moves only with the agent
+    // (docs/filesystem.md): never set through an update.
+    const { applyToChats, homeDir: _homeDir, ...patch } = input as typeof input & { agentTypeId?: string | null };
+    void _homeDir;
     if (patch.name !== undefined) {
       patch.name = patch.name.trim();
       if (!patch.name || patch.name.length > 60) throw new BadRequestException('name must be 1–60 characters');
@@ -305,7 +330,7 @@ export class AgentsService {
     if (patch.workspaceFolder !== undefined) {
       const folder = patch.workspaceFolder.trim().replace(/^\/+|\/+$/g, '');
       // reuse the storage-key validation as the safety boundary
-      if (folder) agentFileKey('probe', folder);
+      if (folder) workspaceFileKey('probe', folder);
       patch.workspaceFolder = folder;
     }
     await this.db.update(agents).set(patch as Partial<typeof agents.$inferInsert>).where(eq(agents.id, id));
@@ -586,6 +611,8 @@ export class AgentsService {
       throw new BadRequestException(`${agent.name} is a member of ${org?.name ?? 'an organization'} — remove it from the organization before moving it`);
     }
     const from = agent.workspaceId;
+    // The home moves with it: a fresh handle in the target workspace.
+    await moveAgentHome(this.db, this.storage, agent, workspaceId);
     await this.db.update(agents).set({ workspaceId }).where(eq(agents.id, id));
     await this.db.update(chatSessions).set({ workspaceId }).where(eq(chatSessions.agentId, id));
     if (from) {
@@ -604,10 +631,11 @@ export class AgentsService {
   }
 
   async remove(id: string) {
+    const row = (await this.db.select().from(agents).where(eq(agents.id, id)).limit(1))[0];
     await this.db.delete(agents).where(eq(agents.id, id));
     await this.db.delete(agentTasks).where(eq(agentTasks.agentId, id));
     await this.db.delete(heartbeatState).where(eq(heartbeatState.agentId, id)).catch(() => {});
-    await this.storage.deletePrefix(agentPrefix(id)).catch(() => {});
+    if (row) await deleteAgentHome(this.db, this.storage, row).catch(() => {});
     return { ok: true };
   }
 
@@ -634,9 +662,10 @@ export class AgentsService {
     const APPEND_CAP = 2_000;
     const FILE_CAP = 100_000;
     const KEEP = 80_000;
-    const key = agentFileKey(agentId, file);
+    const home = await this.home(agentId);
+    const key = homeKey(home, file);
     const existing = await this.storage.get(key).catch(() => null);
-    if (existing) await this.checkpointBrainFile(agentId, file, existing).catch(() => {});
+    if (existing) await this.checkpointBrainFile(home, file, existing).catch(() => {});
     let text = existing ? existing.toString('utf8') : header;
     text = `${text.trimEnd()}\n\n${entry.slice(0, APPEND_CAP).trim()}\n`;
     if (text.length > FILE_CAP) text = `${header}(older entries trimmed)\n\n…${text.slice(text.length - KEEP)}`;
@@ -646,16 +675,16 @@ export class AgentsService {
   /** Brain checkpoints (phase 3): before the first change of a day, snapshot
    *  the file to .checkpoints/<date>/<file> so growth is never a one-way
    *  door. The newest 14 days are kept; restore = copy a checkpoint back. */
-  private async checkpointBrainFile(agentId: string, file: string, current: Buffer): Promise<void> {
+  private async checkpointBrainFile(home: AgentHome, file: string, current: Buffer): Promise<void> {
     const date = nowIso().slice(0, 10);
-    const cpKey = agentFileKey(agentId, `.checkpoints/${date}/${file}`);
+    const cpKey = homeKey(home, `.checkpoints/${date}/${file}`);
     if ((await this.storage.get(cpKey).catch(() => null)) !== null) return; // one per day
     await this.storage.put(cpKey, current, 'text/markdown');
     // prune: keep the newest 14 checkpoint days
-    const all = await this.storage.list(`${agentPrefix(agentId)}.checkpoints/`).catch(() => []);
+    const all = await this.storage.list(`${home.prefix}.checkpoints/`).catch(() => []);
     const days = [...new Set(all.map((o) => o.key.split('/.checkpoints/')[1]?.split('/')[0]).filter(Boolean))].sort();
     for (const old of days.slice(0, Math.max(0, days.length - 14))) {
-      await this.storage.deletePrefix(`${agentPrefix(agentId)}.checkpoints/${old}/`).catch(() => {});
+      await this.storage.deletePrefix(`${home.prefix}.checkpoints/${old}/`).catch(() => {});
     }
   }
 

@@ -28,9 +28,9 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { agentLessons } from '../database/schema';
+import { agentLessons, agents } from '../database/schema';
 import { StorageService } from '../storage/storage.service';
-import { agentFileKey } from '../storage/storage.keys';
+import { ensureAgentHome, homeKey } from '../files/agent-home';
 
 /** Where a lesson was learned. Trust follows the surface, never the text. */
 export type LessonSource = 'chat' | 'loop' | 'channel' | 'app' | 'feedback' | 'import';
@@ -334,7 +334,10 @@ export class AgentMemoryService {
         + 'teach its agent could write its own instructions.\n\n'
         + `${quarantined.map(fmt).join('\n')}\n`;
     }
-    await this.storage.put(agentFileKey(agentId, 'LESSONS.md'), Buffer.from(out, 'utf8'), 'text/markdown')
+    const agent = (await this.db.select().from(agents).where(eq(agents.id, agentId)).limit(1))[0];
+    if (!agent) return;
+    const home = await ensureAgentHome(this.db, this.storage, agent);
+    await this.storage.put(homeKey(home, 'LESSONS.md'), Buffer.from(out, 'utf8'), 'text/markdown')
       .catch(() => {});
   }
 }

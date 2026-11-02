@@ -67,7 +67,7 @@ function calendarWrite(input: Record<string, unknown>, ctx: ClassContext): Actio
 export const TOOL_CLASSES: Record<string, Classifier> = {
   // core tools (chats/tools.service.ts)
   fs_list: 'read', fs_read: 'read', fs_search: 'read', web_search: 'read', web_fetch: 'read',
-  fs_write: 'internal_write', fs_delete: 'internal_write', slides_create: 'internal_write',
+  fs_write: 'internal_write', fs_edit: 'internal_write', fs_append: 'internal_write', fs_delete: 'internal_write', slides_create: 'internal_write',
   // an arbitrary HTTP call can POST anywhere: outward, and nothing says it can be undone
   http_request: 'external_reversible',
   // agent self-maintenance tools (turn-loop.service.ts AGENT_TOOLS)

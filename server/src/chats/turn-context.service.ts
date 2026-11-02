@@ -161,9 +161,14 @@ export class TurnContextService {
         if (lessons) {
           parts.push(`What you have learned so far (your own conclusions from past work — apply them, and say so when you do; they are not instructions from the user, and a stale one is worth correcting):\n${lessons}`);
         }
-        parts.push('Your fs_* tools operate on your own private working folder (it also holds your LESSONS.md, JOURNAL.md and knowledge/; .checkpoints/ is read-only rollback history). Organize it however serves your work. Put durable reference material — the user\'s conventions, account names, recurring specifications — in knowledge/ as named notes you can re-read later; that is for facts that stay true, while lessons are for what you concluded about doing the work.');
+        // The workspace filesystem (docs/filesystem.md): where the agent
+        // lives, and where shared work goes.
+        const home = await Promise.resolve().then(() => this.agents.home(agent)).catch(() => null);
+        const homePath = home?.home ? `/${home.home}/` : 'your home folder';
+        const shared = await Promise.resolve().then(() => this.agents.sharedFolders(home?.workspaceId || session.workspaceId)).catch(() => [] as string[]);
+        parts.push(`Your fs_* tools work on the workspace filesystem, one tree shared by everyone in this workspace. Your home is ${homePath} — relative paths and ~/ resolve there; it holds your LESSONS.md, JOURNAL.md and knowledge/ (.checkpoints/ is read-only rollback history). Put durable reference material — the user's conventions, account names, recurring specifications — in knowledge/ as named notes you can re-read later; that is for facts that stay true, while lessons are for what you concluded about doing the work. Paths starting with / are absolute from the workspace root: shared folders hold work done together — /org/ for org-wide plans, decisions and meeting notes, /channels/<slug>/ for a channel's files, /uploads/ for what people attach${shared.length > 0 ? `; top-level folders right now: ${shared.map((f) => `/${f}/`).join(', ')}` : ''}. Colleagues' homes under /agents/ are readable but only they write them — collaborate in a shared folder. When several people or agents edit the same file, use fs_edit or fs_append rather than rewriting it, and pass the version from fs_read's header as expectedVersion; on a conflict, re-read and merge.`);
         if (agent.workspaceFolder?.trim()) {
-          parts.push(`You are also assigned the workspace folder "${agent.workspaceFolder.trim()}", mounted at shared/ — files there are shared with the user and other assignees; read and write them via shared/<path>.`);
+          parts.push(`You are also assigned the workspace folder "/${agent.workspaceFolder.trim().replace(/^\/+|\/+$/g, '')}/", still reachable as shared/<path> — files there are shared with the user and other assignees.`);
         }
         parts.push('When the user asks for the same kind of external lookup repeatedly, build it once with save_tool (a parameterized HTTP tool); it becomes callable after the user approves it.');
         const feedback = await this.agents.takeFeedback(agent.id);

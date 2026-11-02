@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Optional, Param, Patch, Post, Query } from '@nestjs/common';
 import { IsArray, IsBoolean, IsIn, IsOptional, IsString, ValidateIf } from 'class-validator';
 import { AgentsService } from './agents.service';
 import { AgentMemoryService } from './agent-memory.service';
@@ -6,7 +6,9 @@ import { ConnectionsService } from '../connections/connections.service';
 import { cardById } from '../connections/cards';
 import { RunnerService } from '../runner/runner.service';
 import { StorageService } from '../storage/storage.service';
-import { agentFileKey, agentPrefix, agentRelativePath, workspaceFileKey } from '../storage/storage.keys';
+import { workspaceFileKey } from '../storage/storage.keys';
+import { WorkspaceFs, resolvePath } from '../files/workspace-fs.service';
+import { fsHttp } from '../files/fs-http';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 import { TranscriptionService, isAudioUpload } from '../voice/transcription.service';
 
@@ -85,7 +87,13 @@ export class AgentsController {
     private readonly runner: RunnerService,
     private readonly memory: AgentMemoryService,
     private readonly voice: TranscriptionService,
-  ) {}
+    /** Optional so test constructors without it keep working (unversioned). */
+    @Optional() fs?: WorkspaceFs,
+  ) {
+    this.fs = fs ?? new WorkspaceFs(storage);
+  }
+
+  private readonly fs: WorkspaceFs;
 
   /** `?workspaceId=` lists that workspace's agents (the SPA always passes
    *  one); without it, every agent of the account. */
@@ -176,46 +184,51 @@ export class AgentsController {
   @Delete(':id/tasks/:taskId') deleteTask(@Param('id') id: string, @Param('taskId') taskId: string) { return this.agents.deleteTask(id, taskId); }
   // AGENT.json export/import: PortabilityController (server/src/portability/).
 
-  // ---- file brain (FR-11.3): same S3 store, agent-scoped prefix ----
+  // ---- file brain (FR-11.3): the agent's home in its workspace's tree ----
+  // (docs/filesystem.md "API": these routes stay and map onto the home, so
+  // paths here are home-relative; shared/… is the assigned folder.)
 
   @Get(':id/files')
-  async listFiles(@Param('id') id: string, @Query('workspaceId') workspaceId?: string) {
-    const agent = await this.agents.get(id);
-    const objects = await this.storage.list(agentPrefix(id));
-    const out = objects.map((o) => ({ path: agentRelativePath(id, o.key), size: o.size, lastModified: o.lastModified }));
+  async listFiles(@Param('id') id: string) {
+    const { agent, workspaceId, home } = await this.homeOf(id);
+    const out = (await this.fs.list(workspaceId, home)).map((f) => ({ ...f, path: f.path.slice(home.length + 1) }));
     // the assigned workspace folder appears under shared/ (same view the
     // agent's own fs tools have)
-    const folder = agent.workspaceFolder?.trim();
-    if (folder && workspaceId) {
-      const prefix = `${workspaceFileKey(workspaceId, folder)}/`;
-      for (const o of await this.storage.list(prefix)) {
-        out.push({ path: `shared/${o.key.slice(prefix.length)}`, size: o.size, lastModified: o.lastModified });
+    const folder = agent.workspaceFolder?.trim().replace(/^\/+|\/+$/g, '');
+    if (folder) {
+      for (const f of await this.fs.list(workspaceId, folder).catch(() => [])) {
+        out.push({ ...f, path: `shared/${f.path.slice(folder.length + 1)}` });
       }
     }
     return out;
   }
 
   @Post(':id/files')
-  async putFile(@Param('id') id: string, @Body() body: { path: string; contentBase64: string; contentType?: string; durationSeconds?: number }) {
-    await this.agents.get(id);
-    const key = this.key(id, body.path);
+  async putFile(@Param('id') id: string, @Body() body: { path: string; contentBase64: string; contentType?: string; durationSeconds?: number; expectedVersion?: number }) {
+    const target = await this.resolve(id, body.path);
     const bytes = Buffer.from(body.contentBase64 ?? '', 'base64');
     // Voice notes (docs/voice.md): same bounds + transcript sidecar as the workspace endpoint.
     const audio = isAudioUpload(body.path, body.contentType);
     if (audio) this.voice.assertAudioBounds(body.path, bytes, body.contentType);
-    await this.storage.put(key, bytes, body.contentType);
-    if (!audio) return { ok: true, path: body.path };
+    const by = await this.fs.userActor();
+    const expectedVersion = typeof body.expectedVersion === 'number' ? body.expectedVersion : undefined;
+    const meta = await fsHttp(() => this.fs.write(target.workspaceId, target.path, bytes, { by, contentType: body.contentType, expectedVersion }));
+    if (!audio) return { ok: true, path: body.path, version: meta.version };
     const duration = typeof body.durationSeconds === 'number' ? body.durationSeconds : undefined;
+    const key = workspaceFileKey(target.workspaceId, target.path);
     const { transcript, durationHint } = await this.voice.transcribeUpload(key, body.path, bytes, body.contentType, duration);
-    return { ok: true, path: body.path, transcript, durationHint };
+    return { ok: true, path: body.path, version: meta.version, transcript, durationHint };
   }
 
   @Get(':id/preview')
-  async preview(@Param('id') id: string, @Query('path') path: string, @Query('workspaceId') workspaceId?: string) {
-    const body = await this.storage.get(await this.resolveKey(id, path ?? '', workspaceId));
-    if (body === null) throw new NotFoundException(`file ${path}`);
+  async preview(@Param('id') id: string, @Query('path') path: string) {
+    const target = await this.resolve(id, path ?? '');
+    const file = await this.fs.read(target.workspaceId, target.path);
+    if (file === null) throw new NotFoundException(`file ${path}`);
+    const body = file.body;
     const kind = previewKindFor(path ?? '');
-    const base = { path, kind, size: body.length, contentType: contentTypeFor(path ?? '') };
+    const meta = file.meta ? { version: file.meta.version, updatedBy: file.meta.updatedBy, updatedAt: file.meta.updatedAt } : {};
+    const base = { path, kind, size: body.length, contentType: contentTypeFor(path ?? ''), ...meta };
     if (kind === 'markdown' || kind === 'html' || kind === 'text') {
       return { ...base, text: body.toString('utf8').slice(0, 200_000) };
     }
@@ -225,30 +238,32 @@ export class AgentsController {
 
   @Delete(':id/file')
   async deleteFile(@Param('id') id: string, @Query('path') path: string) {
-    await this.agents.get(id);
-    await this.storage.delete(this.key(id, path ?? ''));
+    const target = await this.resolve(id, path ?? '');
+    const by = await this.fs.userActor();
+    await fsHttp(() => this.fs.delete(target.workspaceId, target.path, { by }));
     return { ok: true };
   }
 
-  private key(id: string, path: string): string {
+  /** The agent, its workspace and its home folder (400 if it has no home:
+   *  an agent without a workspace). */
+  private async homeOf(id: string) {
+    const agent = await this.agents.get(id);
+    const home = await this.agents.home(agent);
+    if (!home.home) throw new BadRequestException(`${agent.name} has no workspace, so no home folder yet`);
+    return { agent, workspaceId: home.workspaceId, home: home.home };
+  }
+
+  /** A home-relative path (or shared/<rest> into the assigned folder) as a
+   *  workspace-relative one. */
+  private async resolve(id: string, path: string): Promise<{ workspaceId: string; path: string }> {
+    const { agent, workspaceId, home } = await this.homeOf(id);
+    const folder = agent.workspaceFolder?.trim().replace(/^\/+|\/+$/g, '') || undefined;
     try {
-      return agentFileKey(id, path);
+      const resolved = resolvePath({ home, sharedFolder: folder }, path.replace(/^\/+/, ''));
+      if (!resolved) throw new Error('empty path');
+      return { workspaceId, path: resolved };
     } catch (err) {
       throw new BadRequestException(err instanceof Error ? err.message : 'invalid path');
     }
-  }
-
-  /** shared/<rest> resolves into the agent's assigned workspace folder. */
-  private async resolveKey(id: string, path: string, workspaceId?: string): Promise<string> {
-    const agent = await this.agents.get(id);
-    const folder = agent.workspaceFolder?.trim();
-    if (folder && workspaceId && path.startsWith('shared/')) {
-      try {
-        return workspaceFileKey(workspaceId, `${folder}/${path.slice('shared/'.length)}`);
-      } catch (err) {
-        throw new BadRequestException(err instanceof Error ? err.message : 'invalid path');
-      }
-    }
-    return this.key(id, path);
   }
 }

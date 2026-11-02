@@ -54,6 +54,12 @@ export function memStorage() {
   return { stub: stub as unknown as StorageService, map };
 }
 
+/** The storage key of `path` in an agent's home (docs/filesystem.md):
+ *  `workspaces/<ws>/agents/<handle>/<path>`. */
+export function agentKey(agent: { workspaceId: string; homeDir: string | null }, path: string): string {
+  return `workspaces/${agent.workspaceId}/${agent.homeDir}/${path}`;
+}
+
 /** TurnContextService stub returning a fixed provider. */
 export function ctxStub(provider: AiProvider, overrides: Partial<TurnContext> = {}): TurnContextService {
   return {

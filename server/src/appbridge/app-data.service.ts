@@ -29,7 +29,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { StorageService } from '../storage/storage.service';
-import { agentFileKey } from '../storage/storage.keys';
+import { homeKey } from '../files/agent-home';
 import { AppBridgeService } from './app-bridge.service';
 
 /** Per collection. Past this an app wants the SQLite path, not this one. */
@@ -79,11 +79,11 @@ export class AppDataService {
     private readonly storage: StorageService,
   ) {}
 
-  private key(agentId: string, appId: string, collection: string): string {
+  private async key(agentId: string, appId: string, collection: string): Promise<string> {
     if (!NAME_RE.test(collection)) {
       throw new BadRequestException('collection must be 1-40 chars of letters, digits, _ or -');
     }
-    return agentFileKey(agentId, `apps/${appId}/data/${collection}.json`);
+    return homeKey(await this.bridge.home(agentId), `apps/${appId}/data/${collection}.json`);
   }
 
   private async load(key: string): Promise<DataRow[]> {
@@ -102,7 +102,7 @@ export class AppDataService {
     if (!row || typeof row !== 'object' || Array.isArray(row)) {
       throw new BadRequestException('row must be an object');
     }
-    const key = this.key(agentId, appId, collection);
+    const key = await this.key(agentId, appId, collection);
     const rows = await this.load(key);
     const incoming = { ...(row as Record<string, unknown>) };
     const id = typeof incoming.id === 'string' && incoming.id ? incoming.id : `r${Date.now()}${rows.length}`;
@@ -124,7 +124,7 @@ export class AppDataService {
 
   async query(agentId: string, appId: string, collection: string, q: DataQuery = {}) {
     await this.bridge.gate(agentId, appId, 'data', 'data.query');
-    const rows = await this.load(this.key(agentId, appId, collection));
+    const rows = await this.load(await this.key(agentId, appId, collection));
     let out = q.where ? rows.filter((r) => matches(r, q.where!)) : rows.slice();
 
     if (q.order) {
@@ -143,7 +143,7 @@ export class AppDataService {
 
   async remove(agentId: string, appId: string, collection: string, id: string) {
     await this.bridge.gate(agentId, appId, 'data', 'data.delete');
-    const key = this.key(agentId, appId, collection);
+    const key = await this.key(agentId, appId, collection);
     const rows = await this.load(key);
     const next = rows.filter((r) => r.id !== id);
     if (next.length === rows.length) throw new NotFoundException(`row ${id}`);

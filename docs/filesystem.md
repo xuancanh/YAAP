@@ -125,6 +125,37 @@ Workspace routes (paths are workspace-relative, no leading slash needed):
 The agent routes (`/api/agents/:id/files`, `/preview`, `/file`) stay and map
 onto the agent's home in its workspace, so existing clients keep working.
 
+Shipped as (backend): `server/src/files/` — `WorkspaceFs` (resolution,
+`assertCanWrite`, versioned writes, edit/append/move/delete/restore, list),
+`agent-home.ts` (handles, lazy + boot migration, move/delete of homes),
+`fs-http.ts` (error → HTTP). Details the sections above leave open:
+
+- `POST …/files` returns `{ ok, path, version, updatedBy, updatedAt }`
+  (the new version). Without `expectedVersion` the write is unconditional;
+  `expectedVersion: 0` means "must not exist yet". Empty content is allowed
+  (a new folder is `<folder>/.keep`).
+- 409 body: `{ statusCode: 409, message, path, expectedVersion,
+  currentVersion, updatedBy?, updatedAt? }`. A refused write (another
+  agent's home, any `.checkpoints/`) is 403; a bad path 400.
+- `POST …/file/move` moves a file or every file under a folder, refuses to
+  overwrite, and carries metadata and revisions along; returns `{ ok, from,
+  to, moved }`. Restore returns `{ ok, path, version, … }`.
+- `GET …/file/revision` returns the `FilePreview` plus `version`,
+  `updatedBy`, `updatedAt` of that revision.
+- Event: `{ type: 'file.changed', workspaceId, path, version, by: { kind,
+  id, name } }`, `path` workspace-relative; deletes carry `deleted: true`
+  (version 0) and a move emits the old path with `deleted, movedTo` then the
+  new path.
+- User writes record `updatedBy { kind: 'user', id: actorId() }` (the
+  member's account id in a shared workspace).
+- Moving an agent to another workspace allocates a fresh handle there;
+  revisions and authorship of its files stay behind (they belong to the
+  workspace that saw the edits). Deleting a workspace moves its agents'
+  homes to the workspace they are re-homed into.
+- Agent tools: `fs_list`, `fs_read` (version header), `fs_write`,
+  `fs_edit`, `fs_append`, `fs_delete`, `fs_search` (optional `prefix`;
+  `/` = the whole workspace), `slides_create` — all through `WorkspaceFs`.
+
 ## Rich display
 
 The Artifacts view renders by kind: Markdown through the chat renderer

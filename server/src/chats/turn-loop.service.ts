@@ -37,7 +37,7 @@ import { WorkspacesService } from '../workspaces/workspaces.service';
 import { deliveryFor } from '../workspaces/quiet-hours';
 import { spendStatus } from '../workspaces/spend.util';
 import { AccountsService } from '../accounts/accounts.service';
-import { actorId, currentAccountId } from '../accounts/account-context';
+import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
 import { SharedService } from '../shared/shared.service';
 import { ConnectionsService } from '../connections/connections.service';
 import { ActionReviewService, ReviewRecord } from '../review/action-review.service';
@@ -1232,11 +1232,15 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     return this.tools.execute(await this.fileRootFor(session), name, input);
   }
 
-  /** The file root of a chat: the agent's working folder (plus its assigned
-   *  workspace folder mounted as shared/), or the workspace store. */
+  /** The file root of a chat (docs/filesystem.md): an agent works in its
+   *  home in its workspace's tree (its assigned folder still reachable as
+   *  shared/), a chat with no agent at the workspace root. */
   private async fileRootFor(session: ChatSession): Promise<FileRoot> {
-    if (!session.agentId) return { kind: 'workspace', id: session.workspaceId };
+    const user = { kind: 'user' as const, id: actorId(), name: currentViewer()?.displayName || 'user' };
+    if (!session.agentId) return { workspaceId: session.workspaceId, home: '', actor: user };
     const agent = await this.agents.get(session.agentId).catch(() => null);
+    if (!agent) return { workspaceId: session.workspaceId, home: '', actor: user };
+    const home = await Promise.resolve().then(() => this.agents.home(agent)).catch(() => null);
     // A provider may mount its own folder as shared/ (a channel session sees
     // the channel folder, docs/group-chat.md §3).
     let folder = '';
@@ -1244,10 +1248,12 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
       const f = p.sharedFolderFor ? await p.sharedFolderFor(session).catch(() => null) : null;
       if (f) { folder = f; break; }
     }
-    if (!folder) folder = (agent?.workspaceFolder ?? '').trim().replace(/^\/+|\/+$/g, '');
+    if (!folder) folder = (agent.workspaceFolder ?? '').trim().replace(/^\/+|\/+$/g, '');
     return {
-      kind: 'agent', id: session.agentId,
-      ...(agent && folder ? { shared: { workspaceId: session.workspaceId, folder } } : {}),
+      workspaceId: home?.home ? home.workspaceId : session.workspaceId,
+      home: home?.home ?? '',
+      ...(folder ? { sharedFolder: folder } : {}),
+      actor: { kind: 'agent', id: agent.id, name: agent.name, home: home?.home || undefined },
     };
   }
 

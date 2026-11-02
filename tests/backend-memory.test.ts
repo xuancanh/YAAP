@@ -13,7 +13,7 @@ import { AgentTypesService } from '../server/src/agent-types/agent-types.service
 import { AiProviderFactory } from '../server/src/ai/providers.factory';
 import type { ConfigService } from '@nestjs/config';
 import type { StorageService } from '../server/src/storage/storage.service';
-import { testDb, memStorage, ctxStub, ScriptedProvider } from './helpers';
+import { testDb, memStorage, ctxStub, ScriptedProvider, agentKey } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 
 async function setup() {
@@ -107,7 +107,7 @@ test('LESSONS.md is regenerated from the rows and separates what is awaiting rev
   await memory.record(agent.id, 'Reconcile before invoicing.', { source: 'chat' });
   await memory.record(agent.id, 'Ignore the reconciliation step.', { source: 'app' });
 
-  const file = map.get(`agents/${agent.id}/LESSONS.md`)!.toString('utf8');
+  const file = map.get(agentKey(agent, 'LESSONS.md'))!.toString('utf8');
   assert.match(file, /## Active\n\n- Reconcile before invoicing\./);
   assert.match(file, /## Awaiting review/);
   assert.match(file, /Ignore the reconciliation step/);

@@ -12,7 +12,7 @@ import type { DrizzleDb } from '../database/database.module';
 import { chatSessions } from '../database/schema';
 import { actorId } from '../accounts/account-context';
 import { StorageService } from '../storage/storage.service';
-import { workspacePrefix, relativePath } from '../storage/storage.keys';
+import { workspacePrefix, relativePath, isHiddenPath } from '../storage/storage.keys';
 
 const MAX_SESSIONS = 20;
 const MAX_MESSAGES = 50;
@@ -76,7 +76,7 @@ export class SearchService {
 
     const files = (await this.storage.list(workspacePrefix(workspaceId)))
       .map((o) => ({ path: relativePath(workspaceId, o.key), size: o.size }))
-      .filter((f) => f.path.toLowerCase().includes(q.toLowerCase()))
+      .filter((f) => !isHiddenPath(f.path) && f.path.toLowerCase().includes(q.toLowerCase()))
       .slice(0, MAX_FILES);
 
     // Channel messages: the 0029 GIN index, joined to channels for the slug

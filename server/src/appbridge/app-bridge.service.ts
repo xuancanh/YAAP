@@ -5,7 +5,7 @@
  * save_app edit (which re-parks elevated grants) takes effect immediately.
  *
  * Scoping rules, enforced here regardless of what the host page asked for:
- *  - storage + file writes land only under agents/<id>/apps/<appId>/ — an
+ *  - storage + file writes land only under <home>/apps/<appId>/ — an
  *    app can never write where the agent keeps its brain (self-injection);
  *  - reads see exactly what the agent's own fs tools see (own folder plus
  *    the assigned shared/ mount), nothing else;
@@ -18,7 +18,8 @@ import { WorkspacesService } from '../workspaces/workspaces.service';
 import { ChatsRepository } from '../chats/chats.repository';
 import { TurnLoopService } from '../chats/turn-loop.service';
 import { StorageService } from '../storage/storage.service';
-import { agentFileKey, agentPrefix, agentRelativePath, workspaceFileKey } from '../storage/storage.keys';
+import { workspaceFileKey } from '../storage/storage.keys';
+import { homeKey } from '../files/agent-home';
 import { previewKindFor } from '../storage/preview.util';
 import { RateLimiter, ReadTally } from './bridge-limits';
 
@@ -80,6 +81,11 @@ export class AppBridgeService {
     if (line) await this.agents.addEvent(agentId, { kind: 'info', title: line }).catch(() => {});
   }
 
+  /** The agent's home folder (app state and data live under apps/ there). */
+  home(agentId: string) {
+    return this.agents.home(agentId);
+  }
+
   approve(agentId: string, appId: string, capabilities: string[]) {
     return this.agents.approveAppCaps(agentId, appId, capabilities);
   }
@@ -88,7 +94,7 @@ export class AppBridgeService {
 
   async storageGet(agentId: string, appId: string) {
     await this.gate(agentId, appId, 'storage', 'storage.get');
-    const body = await this.storage.get(agentFileKey(agentId, `apps/${appId}/state.json`));
+    const body = await this.storage.get(homeKey(await this.agents.home(agentId), `apps/${appId}/state.json`));
     if (!body) return { state: null };
     try { return { state: JSON.parse(body.toString('utf8')) as unknown }; } catch { return { state: null }; }
   }
@@ -97,7 +103,7 @@ export class AppBridgeService {
     await this.gate(agentId, appId, 'storage', 'storage.set');
     const json = JSON.stringify(state ?? null);
     if (json.length > STATE_CAP) throw new BadRequestException(`state exceeds ${STATE_CAP} bytes`);
-    await this.storage.put(agentFileKey(agentId, `apps/${appId}/state.json`), Buffer.from(json), 'application/json');
+    await this.storage.put(homeKey(await this.agents.home(agentId), `apps/${appId}/state.json`), Buffer.from(json), 'application/json');
     return { ok: true };
   }
 
@@ -107,8 +113,9 @@ export class AppBridgeService {
     const entry = await this.gate(agentId, appId, 'files.read', 'files.list');
     const agent = await this.agents.get(agentId);
     const out: Array<{ path: string; size: number; lastModified?: string }> = [];
-    for (const o of await this.storage.list(agentPrefix(agentId))) {
-      out.push({ path: agentRelativePath(agentId, o.key), size: o.size, lastModified: o.lastModified });
+    const home = await this.agents.home(agent);
+    for (const o of await this.storage.list(home.prefix)) {
+      out.push({ path: o.key.slice(home.prefix.length), size: o.size, lastModified: o.lastModified });
     }
     const folder = agent.workspaceFolder?.trim();
     if (folder && workspaceId) {
@@ -137,7 +144,7 @@ export class AppBridgeService {
     } else if (clean.startsWith('shared/')) {
       throw new NotFoundException('no shared folder is assigned to this agent');
     } else {
-      key = agentFileKey(agentId, clean);
+      key = homeKey(await this.agents.home(agent), clean);
     }
     const body = await this.storage.get(key);
     if (body === null) throw new NotFoundException(`file ${clean}`);
@@ -161,7 +168,7 @@ export class AppBridgeService {
     // writes never leave the app's own folder — the agent's brain files are
     // instructions, and apps must not be able to author instructions
     const scoped = `apps/${appId}/${clean}`;
-    await this.storage.put(agentFileKey(agentId, scoped), Buffer.from(content, 'utf8'));
+    await this.storage.put(homeKey(await this.agents.home(agentId), scoped), Buffer.from(content, 'utf8'));
     await this.agents.addEvent(agentId, { kind: 'info', title: `App "${entry.name}" wrote ${scoped}` }).catch(() => {});
     return { ok: true, path: scoped };
   }
@@ -194,7 +201,7 @@ export class AppBridgeService {
         `"${clean}" is part of the agent's brain — apps may not author what an agent reads as instructions, approved or not`,
       );
     }
-    await this.storage.put(agentFileKey(agentId, clean), Buffer.from(content, 'utf8'));
+    await this.storage.put(homeKey(await this.agents.home(agentId), clean), Buffer.from(content, 'utf8'));
     await this.agents.addEvent(agentId, {
       kind: 'info',
       title: `App "${entry.name}" saved ${clean} to the agent's folder (you approved it)`,
