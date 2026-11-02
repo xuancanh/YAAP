@@ -214,6 +214,34 @@ test('business roles: one strong <fn>-manager per function under the chief, spec
   for (const p of AUTHORED_PACKS.filter((x) => x.id.startsWith('pack-biz-'))) assert.ok(ROLES.some((r) => r.packId === p.id), `${p.id} has a role`);
 });
 
+test('the Market\'s "Hire into the company": a hire card proposed by catalog ref resolves like the chief\'s (role charter, pack playbooks, reporting line); a raw card stays raw', async () => {
+  const s = await setup();
+  const { orgId } = await enable(s, 'supervised');
+  // the head, by its role ref (the market's orgHire for pack-biz-finance-manager)
+  const card = await s.controller.propose(s.ws.id, { kind: 'hire', payload: { templateOrPack: 'role:finance-manager', name: 'Head of Finance' }, recommendation: 'Hire Head of Finance from the Market.' });
+  const p = JSON.parse(card.payload) as { packId: string; roleId: string; charter: string; reportsToAgentId: string; skills: string[]; title: string };
+  assert.equal(card.kind, 'hire'); assert.equal(card.status, 'pending');
+  assert.equal(p.packId, 'pack-biz-finance-manager'); assert.equal(p.roleId, 'finance-manager'); assert.equal(p.title, 'Head of Finance');
+  assert.match(p.charter, /^You are the Head of Finance of /);
+  assert.equal(p.reportsToAgentId, s.chief.id, 'a head reports to the chief');
+  assert.ok(p.skills.includes('finance-month-end-close'), 'the pack playbooks ride along');
+  const { result } = await s.approvals.decide(orgId, card.id, 'approve');
+  const headId = String(result!.agentId);
+  const installed = (await s.skills.list(undefined, headId)).filter((k) => k.agentId === headId).map((k) => k.name);
+  assert.ok(installed.includes('finance-month-end-close'), `installed: ${installed.join(',')}`);
+  // a specialist under the head the market picked as its default
+  const fpa = await s.controller.propose(s.ws.id, { kind: 'hire', payload: { templateOrPack: 'role:finance-fpa', name: 'FP&A Analyst', reportsToAgentId: headId } });
+  assert.equal((JSON.parse(fpa.payload) as { reportsToAgentId: string }).reportsToAgentId, headId);
+  // a business pack with no role hires as the pack
+  const audit = await s.controller.propose(s.ws.id, { kind: 'hire', payload: { templateOrPack: 'pack-auditor' } });
+  assert.equal((JSON.parse(audit.payload) as { packId: string }).packId, 'pack-auditor');
+  // refused like the chief's: an unknown role never becomes a card
+  await assert.rejects(s.controller.propose(s.ws.id, { kind: 'hire', payload: { templateOrPack: 'role:wizard' } }), /not a catalog role/);
+  // a hand-written card without a catalog ref keeps the old path
+  const raw = await s.controller.propose(s.ws.id, { kind: 'hire', payload: { name: 'Temp', charter: 'You help.' } });
+  assert.deepEqual(JSON.parse(raw.payload), { name: 'Temp', charter: 'You help.' });
+});
+
 // ---- 2. the format ----
 
 test('validateBlueprint: strict shape; refuses oversize, > 20 roles, depth > 3, fan-out > 5, unknown fields, two roots, cycles, bad scopes and non-SKILL.md playbooks; hire order and units derive from the chart', () => {

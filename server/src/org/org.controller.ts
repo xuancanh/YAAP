@@ -399,7 +399,24 @@ export class OrgController {
     return this.approvals.list(id, { status: status || undefined });
   }
   /** The user may also raise a proposal by hand (e.g. an external action to record). */
-  @Post(':id/approvals') propose(@Param('id') id: string, @Body() dto: ProposalDto) { this.guard(); return this.approvals.create(id, { kind: dto.kind, payload: dto.payload, requestedBy: 'user', recommendation: dto.recommendation }); }
+  @Post(':id/approvals') propose(@Param('id') id: string, @Body() dto: ProposalDto) {
+    this.guard();
+    // A hire named by catalog ref (`role:<id>` or a pack, from the Hire
+    // dialog or the Market) is validated and resolved like the chief's own
+    // proposal: depth and fan-out checked now, scopes met with the chief's
+    // holdings, the role's charter and the pack's playbooks on the card.
+    const p = dto.payload ?? {};
+    if (dto.kind === 'hire' && typeof p.templateOrPack === 'string' && p.templateOrPack.trim()) {
+      const str = (k: string) => { const v = p[k]; return typeof v === 'string' && v.trim() ? v.trim() : undefined; };
+      return this.approvals.proposeHire(id, {
+        templateOrPack: p.templateOrPack.trim(), name: str('name'), title: str('title'), charter: str('charter'), reportsToAgentId: str('reportsToAgentId'),
+        scopes: Array.isArray(p.scopes) ? p.scopes.filter((s): s is string => typeof s === 'string') : undefined,
+        provider: str('provider'), model: str('model'), monthlyBudgetUsd: typeof p.monthlyBudgetUsd === 'number' ? p.monthlyBudgetUsd : undefined,
+        requestedBy: 'user', recommendation: dto.recommendation,
+      });
+    }
+    return this.approvals.create(id, { kind: dto.kind, payload: dto.payload, requestedBy: 'user', recommendation: dto.recommendation });
+  }
   @Post(':id/approvals/:approvalId/decide') async decide(@Param('id') id: string, @Param('approvalId') approvalId: string, @Body() dto: DecideDto) {
     this.guard();
     const a = await this.approvals.get(id, approvalId);
