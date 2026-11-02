@@ -3,10 +3,14 @@
  *  (decided-without-you marked apart), when — with the Inbox's filters, a
  *  search, a date window, "Decided without you", Load more and empty states;
  *  a row opens its record and offers the existing undo routes. */
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { HistoryItem } from '../src/lib/api';
 import { historyBy, historyFrom, historyTarget, outcomeColor } from '../src/lib/inbox';
+
+// The lazy History chunk and the 250 ms search debounce can outlast the
+// default 1 s on a cold, loaded runner.
+configure({ asyncUtilTimeout: 4_000 });
 
 const fake: Record<string, unknown> = {};
 vi.mock('../src/store', () => ({ useApp: () => fake, grad: () => 'none' }));
