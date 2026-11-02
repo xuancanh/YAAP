@@ -7,6 +7,8 @@ import { api, type ChatSession, type OrgUnitNode } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 import { atRiskByUnit, firesOn, MEETING_KIND_TITLES } from '../lib/org';
 import { NewWorkspaceWizard } from './NewWorkspaceWizard';
+import { ArtifactTree } from './ArtifactTree';
+import { createFile, createFolder, workspaceSource } from '../lib/artifacts';
 
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '2px 18px 8px' };
 
@@ -115,58 +117,48 @@ function SessionRow({ s }: { s: ChatSession }) {
   );
 }
 
-const fileGlyph = (name: string, isFolder: boolean) =>
-  isFolder ? '📁' : name.endsWith('.md') ? '📄' : name.endsWith('.json') ? '⚙️' : name.endsWith('.html') ? '🧩' : name.match(/\.(png|jpg|jpeg|gif|svg|webp)$/) ? '🖼️' : '📄';
-
-/** The file tree for whichever fs (workspace or one agent) is currently
- *  loaded in the store — the rail keeps a single fs open, accordion-style. */
-function FileTree({ indent }: { indent: number }) {
+/** The Artifacts tree (docs/filesystem.md) for the workspace loaded in the
+ *  store: Shared folders, then each agent's home with its avatar, plus the
+ *  New file / New folder actions and live re-listing on `file.changed`. */
+function ArtifactsSection() {
   const app = useApp();
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({ knowledge: true, uploads: true });
-
-  const rows = useMemo(() => {
-    const folders = new Set<string>();
-    for (const f of app.fileList) {
-      const parts = f.path.split('/');
-      for (let i = 1; i < parts.length; i++) folders.add(parts.slice(0, i).join('/'));
-    }
-    const out: Array<{ path: string; name: string; depth: number; isFolder: boolean; parent: string | null }> = [];
-    for (const folder of [...folders].sort()) {
-      const depth = folder.split('/').length - 1;
-      out.push({ path: folder, name: folder.split('/').pop() + '/', depth, isFolder: true, parent: depth === 0 ? null : folder.split('/').slice(0, -1).join('/') });
-    }
-    for (const f of app.fileList) {
-      const parts = f.path.split('/');
-      const depth = parts.length - 1;
-      out.push({ path: f.path, name: parts[parts.length - 1], depth, isFolder: false, parent: depth === 0 ? null : parts.slice(0, -1).join('/') });
-    }
-    out.sort((a, b) => a.path.localeCompare(b.path));
-    return out.filter((n) => {
-      let p = n.parent;
-      while (p) {
-        if (!expanded[p]) return false;
-        p = p.includes('/') ? p.split('/').slice(0, -1).join('/') : null;
-      }
-      return true;
+  const wsId = app.fileTarget?.kind === 'workspace' ? app.fileTarget.id : null;
+  const source = useMemo(() => (wsId ? workspaceSource(wsId) : null), [wsId]);
+  const refreshFiles = app.refreshFiles;
+  const onWorkspaceEvent = app.onWorkspaceEvent;
+  useEffect(() => {
+    if (!wsId) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const off = onWorkspaceEvent((ev) => {
+      if (ev.type !== 'file.changed' && ev.type !== 'file_changed') return;
+      clearTimeout(timer);
+      timer = setTimeout(() => void refreshFiles(), 400);
     });
-  }, [app.fileList, expanded]);
-
-  if (app.fileList.length === 0) {
-    return <div style={{ padding: '4px 10px 6px', paddingLeft: indent, fontSize: 11.5, color: 'var(--text-faint)' }}>No files yet.</div>;
-  }
+    return () => { off(); clearTimeout(timer); };
+  }, [wsId, onWorkspaceEvent, refreshFiles]);
+  const here = app.currentFile && app.currentFile.includes('/') ? app.currentFile.slice(0, app.currentFile.lastIndexOf('/')) : '';
+  const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' };
   return (
     <>
-      {rows.map((n) => (
-        <div key={n.path}
-          onClick={() => n.isFolder ? setExpanded((e) => ({ ...e, [n.path]: !e[n.path] })) : app.openFile(app.fileTarget!, n.path)}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', paddingLeft: indent + n.depth * 13, borderRadius: 7, cursor: 'pointer', background: !n.isFolder && n.path === app.currentFile && app.homeView === 'file' ? 'var(--accent-dim)' : 'none' }}>
-          {n.isFolder
-            ? <I d={P.chevD} size={11} stroke="var(--text-faint)" style={{ transform: expanded[n.path] ? 'rotate(0deg)' : 'rotate(-90deg)', flex: 'none' }} />
-            : <span style={{ width: 11, flex: 'none' }} />}
-          <span style={{ flex: 'none', fontSize: 11.5 }}>{fileGlyph(n.name, n.isFolder)}</span>
-          <span style={{ flex: 1, fontSize: 12, fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: n.path === app.currentFile && app.homeView === 'file' ? 'var(--accent-hi)' : 'var(--text-dim)' }}>{n.name}</span>
-        </div>
-      ))}
+      <div style={{ ...sectionLabel, padding: '10px 10px 4px', display: 'flex', alignItems: 'center', gap: 4 }}>
+        <span style={{ flex: 1 }}>Artifacts</span>
+        {app.orgPane && <button onClick={() => app.setOrgPane(null)} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 10.5, cursor: 'pointer', padding: '0 6px 0 0', textTransform: 'none', letterSpacing: 0 }}>show</button>}
+        {source && wsId && (
+          <>
+            <button title={`New file${here ? ` in /${here}/` : ''}`} aria-label="New file" style={iconBtn}
+              onClick={() => void createFile(source, here, app.showToast).then(async (p) => { if (p) { await refreshFiles(); app.openFile({ kind: 'workspace', id: wsId }, p); } })}>
+              <I d={P.plus} size={14} />
+            </button>
+            <button title={`New folder${here ? ` in /${here}/` : ''}`} aria-label="New folder" style={iconBtn}
+              onClick={() => void createFolder(source, here, app.showToast).then(async (p) => { if (p) await refreshFiles(); })}>
+              <I d={P.folder} size={13} />
+            </button>
+          </>
+        )}
+      </div>
+      <ArtifactTree entries={app.fileList} agents={app.agents} grouped
+        selected={app.currentFile}
+        onOpen={(p) => app.openFile(app.fileTarget!, p)} />
     </>
   );
 }
@@ -419,7 +411,7 @@ function UnitGroup({ node, depth }: { node: OrgUnitNode; depth: number }) {
   );
 }
 
-/** The Workspace tab's rail: the shared file store tree, and — when the
+/** The Workspace tab's rail: the Artifacts tree, and — when the
  *  workspace runs in organization mode — its company panes. */
 export function WorkspaceRail() {
   const app = useApp();
@@ -460,14 +452,10 @@ export function WorkspaceRail() {
           {panes.filter((n) => n.id !== 'board' && n.id !== 'goals').map((n) => (
             <PaneRow key={n.id} id={n.id} label={n.label} icon={n.icon} active={n.id === app.orgPane} badge={badgeOf(n.id)?.n} badgeColor={badgeOf(n.id)?.color} badgeTitle={badgeOf(n.id)?.title} onClick={() => { app.setOrgPane(n.id); app.setMobileDetail(true); }} />
           ))}
-          <div style={{ ...sectionLabel, padding: '10px 10px 6px', display: 'flex', alignItems: 'center' }}>
-            <span style={{ flex: 1 }}>Files</span>
-            {app.orgPane && <button onClick={() => app.setOrgPane(null)} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 10.5, cursor: 'pointer', padding: 0, textTransform: 'none', letterSpacing: 0 }}>show</button>}
-          </div>
         </div>
       )}
       {/* ---- organization panes — end ---- */}
-      <FileTree indent={8} />
+      <ArtifactsSection />
     </div>
   );
 }
