@@ -8,7 +8,7 @@ import { ChatsService } from '../server/src/chats/chats.service';
 import { TurnLoopService, TurnEvent } from '../server/src/chats/turn-loop.service';
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
-import { testDb, memStorage, ctxStub, skillsStub, agentsStub, mcpStub, mcpWriterStub, ScriptedProvider, wsStub } from './helpers';
+import { testDb, memStorage, ctxStub, skillsStub, agentsStub, mcpWriterStub, ScriptedProvider, wsStub } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import {
   ActionReviewService, sensitivePrecheck, luhnValid, ibanValid, cheapestModelFor, REVIEW_MAX_TOKENS, ReviewInput,
