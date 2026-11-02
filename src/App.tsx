@@ -5,7 +5,7 @@ import { AppProvider, useApp } from './store';
 import { AuthProvider, useAuth } from './auth';
 import { SignIn } from './components/SignIn';
 import { ActivityBar, BottomNav, Toast } from './components/Shell';
-import { WorkspacePill, HomeRail, WorkspaceRail, MarketRail, SettingsRail, SecondaryHeader } from './components/Rails';
+import { WorkspacePill, HomeRail, WorkspaceRail, ArtifactsRail, MarketRail, SettingsRail, SecondaryHeader } from './components/Rails';
 import { ChatView } from './components/ChatView';
 import { ChannelView } from './components/ChannelView';
 import { FilesView } from './components/FilesView';
@@ -25,6 +25,22 @@ const viewFallback = (
   <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-faint)', fontSize: 13 }}>Loading…</div>
 );
 
+/** The Workspace section without organization mode: nothing to run yet. */
+function WorkspaceOff() {
+  const app = useApp();
+  const btn: React.CSSProperties = { background: 'var(--panel-2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 9, padding: '7px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' };
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: 'var(--text-faint)', padding: 40, textAlign: 'center' }}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>Organization mode is off</div>
+      <div style={{ fontSize: 13, maxWidth: 380, lineHeight: 1.55 }}>Turn it on in Settings → Workspace to run this workspace as a company. Files people and agents build live in Artifacts.</div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button style={btn} onClick={() => app.go('artifacts')}>Open Artifacts</button>
+        <button style={btn} onClick={() => app.go('settings')}>Settings</button>
+      </div>
+    </div>
+  );
+}
+
 function Layout() {
   const app = useApp();
   const [marketCat, setMarketCat] = useState('All');
@@ -32,15 +48,17 @@ function Layout() {
 
   const sec = app.section;
   // The workspace is the company (docs/group-chat.md §5): its organization
-  // panes render in the Workspace section's main pane instead of the files.
-  const orgOpen = sec === 'workspace' && app.orgPane !== null && app.companiesEnabled && app.wsOrg !== null && app.wsOrg.mode !== 'off';
+  // panes render in the Workspace section's main pane; the files live in
+  // their own Artifacts section.
+  const orgOn = app.companiesEnabled && app.wsOrg !== null && app.wsOrg.mode !== 'off';
+  const orgOpen = sec === 'workspace' && orgOn;
   const detailActive =
-    ((sec === 'home' || sec === 'workspace') && app.mobileChatOpen) ||
+    ((sec === 'home' || sec === 'artifacts') && app.mobileChatOpen) ||
     ((sec === 'settings' || orgOpen) && app.mobileDetail);
   const showSecondary = app.stacked ? !detailActive : true;
   const showMain = app.stacked ? !showSecondary : true;
 
-  const secTitle = sec === 'home' ? 'Channels & chats' : sec === 'workspace' ? 'Workspace' : sec === 'market' ? 'Categories' : 'Settings';
+  const secTitle = sec === 'home' ? 'Channels & chats' : sec === 'workspace' ? 'Workspace' : sec === 'artifacts' ? 'Artifacts' : sec === 'market' ? 'Categories' : 'Settings';
   const hasSecondary = sec !== 'overview' && sec !== 'apps'; // fleet overview + apps gallery are full-width
 
   return (
@@ -49,10 +67,11 @@ function Layout() {
 
       {showSecondary && hasSecondary && (
         <aside style={{ width: app.stacked ? '100%' : app.mediumDock ? 250 : 292, flex: 'none', background: 'var(--panel)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          {(sec === 'home' || sec === 'workspace' || sec === 'settings') && <WorkspacePill />}
+          {(sec === 'home' || sec === 'workspace' || sec === 'artifacts' || sec === 'settings') && <WorkspacePill />}
           <SecondaryHeader title={secTitle} />
           {sec === 'home' && <HomeRail />}
           {sec === 'workspace' && <WorkspaceRail />}
+          {sec === 'artifacts' && <ArtifactsRail />}
           {sec === 'market' && <MarketRail cat={marketCat} setCat={setMarketCat} />}
           {sec === 'settings' && <SettingsRail pane={settingsPane} setPane={setSettingsPane} />}
         </aside>
@@ -66,7 +85,8 @@ function Layout() {
           {sec === 'home' && app.homeView === 'agent' && <Suspense fallback={viewFallback}>{app.selectedAgent ? <AgentHome /> : <AgentsDirectory />}</Suspense>}
           {sec === 'overview' && <Suspense fallback={viewFallback}><AgentsDirectory /></Suspense>}
           {sec === 'apps' && <AppsGallery />}
-          {sec === 'workspace' && (orgOpen ? <Suspense fallback={viewFallback}><OrganizationView /></Suspense> : <FilesView />)}
+          {sec === 'workspace' && (orgOpen ? <Suspense fallback={viewFallback}><OrganizationView /></Suspense> : <WorkspaceOff />)}
+          {sec === 'artifacts' && <FilesView />}
           {sec === 'market' && <Suspense fallback={viewFallback}><MarketView cat={marketCat} setCat={setMarketCat} /></Suspense>}
           {sec === 'settings' && <Suspense fallback={viewFallback}><SettingsView pane={settingsPane} /></Suspense>}
         </main>

@@ -64,7 +64,10 @@ export interface GroupedTree { shared: TreeNode[]; agents: AgentHome[] }
  *  `agents/`, plus root files) and **Agents** (each `agents/<handle>/`,
  *  matched to its agent by `homeDir`; unmatched homes keep the folder name). */
 export function groupTree(nodes: TreeNode[], agents: Agent[]): GroupedTree {
-  const shared = nodes.filter((n) => !(n.isFolder && n.path === 'agents'));
+  // /org/ — the company's shared folder, where its records are mirrored
+  // (docs/filesystem.md) — leads the Shared group.
+  const shared = nodes.filter((n) => !(n.isFolder && n.path === 'agents'))
+    .sort((a, b) => Number(b.isFolder && b.path === 'org') - Number(a.isFolder && a.path === 'org'));
   const agentsDir = nodes.find((n) => n.isFolder && n.path === 'agents');
   const homes: AgentHome[] = (agentsDir?.children ?? []).filter((n) => n.isFolder).map((node) => {
     const agent = agents.find((a) => normPath(a.homeDir) === node.path) ?? null;

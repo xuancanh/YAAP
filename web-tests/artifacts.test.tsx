@@ -115,7 +115,7 @@ describe('tree grouping', () => {
 
   it('splits Shared (everything outside agents/, plus root files) from Agents (homes by homeDir)', () => {
     const g = groupTree(buildTree(entries), agents);
-    expect(g.shared.map((n) => n.path)).toEqual(['channels', 'org', 'reports', 'README.md']);
+    expect(g.shared.map((n) => n.path)).toEqual(['org', 'channels', 'reports', 'README.md']); // /org/ leads
     expect(g.agents.map((h) => [h.node.path, h.agent?.id ?? null, h.label])).toEqual([
       ['agents/ada', 'a1', 'Ada'],
       ['agents/ghost', null, 'ghost'],

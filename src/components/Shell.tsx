@@ -6,6 +6,7 @@ const NAV: Array<{ id: Section; label: string; icon: string[] }> = [
   { id: 'overview', label: 'Home', icon: P.bot },
   { id: 'home', label: 'Chat', icon: P.chat },
   { id: 'workspace', label: 'Workspace', icon: P.folder },
+  { id: 'artifacts', label: 'Artifacts', icon: P.files },
   { id: 'apps', label: 'Apps', icon: P.window },
   { id: 'market', label: 'Market', icon: P.market },
 ];

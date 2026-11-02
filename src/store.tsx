@@ -18,17 +18,21 @@ import { isChannelSession, parseChannelHash } from './lib/channels';
 export type WorkspaceEntry = Workspace & { shared?: SharedWorkspace };
 import type { PriceTable } from './lib/pricing';
 
-export type Section = 'home' | 'overview' | 'workspace' | 'apps' | 'market' | 'settings';
+export type Section = 'home' | 'overview' | 'workspace' | 'artifacts' | 'apps' | 'market' | 'settings';
 /** The organization panes under the Workspace section (docs/group-chat.md
  *  §5: the workspace is the company; there is no separate Company section). */
-export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'ask' | 'plans' | 'replay' | 'capital' | 'playbooks' | 'mytasks'
-  | 'metrics' | 'incidents' | 'experiments' | 'outcomes' | 'evals';
-export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'ask', 'plans', 'replay', 'capital', 'playbooks', 'mytasks', 'metrics', 'incidents', 'experiments', 'outcomes', 'evals'];
+export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'plans' | 'replay' | 'capital' | 'mytasks'
+  | 'incidents';
+export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents'];
+/** Panes folded into Artifacts (playbooks, experiments, evals, outcomes and
+ *  metrics are mirrored as files under /org/; docs/filesystem.md): a link to
+ *  one of them opens the Artifacts section instead. */
+export const ORG_PANES_IN_ARTIFACTS = ['ask', 'playbooks', 'metrics', 'experiments', 'outcomes', 'evals'];
 /** Something a pane should open or scroll to once loaded (a signal row's
  *  deep link, docs/company-vision.md §5): a task on the board, a goal on the
- *  vision page, a meeting thread, a plan, a playbook, a replay day (the id is
- *  the YYYY-MM-DD). Consumed by the pane. */
-export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'playbook' | 'replay' | 'source' | 'incident' | 'experiment' | 'action' | 'unit'; id: string }
+ *  vision page, a meeting thread, a plan, a replay day (the id is the
+ *  YYYY-MM-DD). Consumed by the pane. */
+export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'replay' | 'incident' | 'action'; id: string }
 const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
 /** What the main pane shows while in the Home section: a conversation, a
  *  group-chat channel, an agent's home page (or the directory when no agent
@@ -175,7 +179,7 @@ interface Store {
   companiesEnabled: boolean;
   /** GET /api/workspaces/:id/org for the current workspace; null while loading or when companies are disabled. */
   wsOrg: WorkspaceOrg | null; refreshWsOrg: () => Promise<void>;
-  /** Which organization pane the Workspace section shows; null = the files. */
+  /** Which organization pane the Workspace section shows; null = the board. */
   orgPane: OrgPane | null; setOrgPane: (v: OrgPane | null) => void;
   /** The unit the Board / Goals panes are scoped to (docs/group-chat.md §7); null = the company. */
   orgUnitId: string | null; setOrgUnitId: (v: string | null) => void;
@@ -189,7 +193,7 @@ interface Store {
    *  connections, frozen classes, open incidents), actions held or staged for
    *  the owner's key, and running experiments — fetched with wsOrg for the
    *  rail badges, the Pulse health strip and the chat header. */
-  orgHealth: OrgHealth | null; orgHeldActions: number; orgRunningExperiments: number;
+  orgHealth: OrgHealth | null; orgHeldActions: number;
   orgFocus: OrgFocus | null; setOrgFocus: (v: OrgFocus | null) => void;
 
   // group chat (docs/group-chat.md, execution plan item 15)
@@ -229,11 +233,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [section, setSection] = useState<Section>(() => {
     const p = new URLSearchParams(window.location.search);
     const q = p.get('section');
-    if (q === 'market' || q === 'settings' || q === 'overview' || q === 'workspace' || q === 'apps') return q;
+    if (q === 'market' || q === 'settings' || q === 'overview' || q === 'workspace' || q === 'artifacts' || q === 'apps') return q;
+    if (p.get('org') && ORG_PANES_IN_ARTIFACTS.includes(p.get('org')!)) return 'artifacts';
     if (q === 'company') return 'workspace'; // legacy: the company lives under the workspace now
     // legacy: ?section=agents without a specific agent is the fleet overview
     if (q === 'agents' && !p.get('agent')) return 'overview';
-    if (q === 'files') return 'workspace';
+    if (q === 'files') return 'artifacts';
     if (q === 'chats' || (q === 'agents' && p.get('agent'))) return 'home';
     return 'overview'; // the fleet overview is the landing page
   });
@@ -299,7 +304,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [orgPendingPlans, setOrgPendingPlans] = useState(0);
   const [orgHealth, setOrgHealth] = useState<OrgHealth | null>(null);
   const [orgHeldActions, setOrgHeldActions] = useState(0);
-  const [orgRunningExperiments, setOrgRunningExperiments] = useState(0);
   const [orgFocus, setOrgFocus] = useState<OrgFocus | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentChannel, setCurrentChannel] = useState<string | null>(null);
@@ -331,10 +335,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const deepLink = useRef<string | null>(/^#\/chat\/([\w-]+)$/.exec(window.location.hash)?.[1] ?? null);
   // Organization deep links (#company announcements, the brief):
   // #/ws/<workspaceId>/org/<pane> opens that pane of that workspace.
-  const orgLink = useRef<{ workspaceId: string; pane: OrgPane } | null>(null);
-  const parseOrgLink = (hash: string) => {
+  const orgLink = useRef<{ workspaceId: string; pane: OrgPane | 'artifacts' } | null>(null);
+  const parseOrgLink = (hash: string): { workspaceId: string; pane: OrgPane | 'artifacts' } | null => {
     const m = /^#\/ws\/([\w-]+)\/org\/(\w+)$/.exec(hash);
-    return m && isOrgPane(m[2]) ? { workspaceId: m[1], pane: m[2] } : null;
+    if (!m) return null;
+    if (ORG_PANES_IN_ARTIFACTS.includes(m[2])) return { workspaceId: m[1], pane: 'artifacts' };
+    return isOrgPane(m[2]) ? { workspaceId: m[1], pane: m[2] } : null;
   };
   if (orgLink.current === null && !deepLink.current) orgLink.current = parseOrgLink(window.location.hash);
   // …and from group-chat mentions: #/ws/<id>/channel/<slug>[/<messageId>]
@@ -439,22 +445,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshMcp = useCallback(async () => setMcp(await api.mcp()), []);
   const refreshMarket = useCallback(async () => setMarket(await api.market(workspaceId || undefined)), [workspaceId]);
   const refreshWsOrg = useCallback(async () => {
-    if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgRunningExperiments(0); return; }
+    if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); return; }
     const st = await api.workspaceOrg(workspaceId).catch((): WorkspaceOrg | null => null);
     setWsOrg(st);
     // The intent tree and the cadences ride along for the rail (at-risk
     // counts, today's ritual); the workspace event bus carries no org events
     // yet, so the panes poll lightly while on screen and call this on writes.
     if (st && st.mode !== 'off' && st.orgId) {
-      const [intent, cadences, plans, health, held, staged, running] = await Promise.all([
+      const [intent, cadences, plans, health, held, staged] = await Promise.all([
         api.orgIntent(workspaceId).catch((): OrgIntentNode[] => []), api.orgCadences(workspaceId).catch((): OrgCadence[] => []), api.orgPlans(workspaceId, 'pending').catch((): unknown[] => []),
         api.orgHealth(workspaceId).catch((): OrgHealth | null => null),
         api.workspaceActions(workspaceId, { status: 'held', limit: 200 }).catch((): unknown[] => []), api.workspaceActions(workspaceId, { status: 'staged', limit: 200 }).catch((): unknown[] => []),
-        api.orgExperiments(workspaceId).catch((): Array<{ status: string }> => []),
       ]);
       setOrgIntent(intent); setOrgCadences(cadences); setOrgPendingPlans(plans.length);
-      setOrgHealth(health); setOrgHeldActions(held.length + staged.length); setOrgRunningExperiments(running.filter((e) => e.status === 'running' || e.status === 'extended').length);
-    } else { setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgRunningExperiments(0); }
+      setOrgHealth(health); setOrgHeldActions(held.length + staged.length);
+    } else { setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); }
   }, [workspaceId, companiesEnabled]);
   useEffect(() => {
     api.orgsStatus().then((s) => setCompaniesEnabled(s.enabled)).catch(() => setCompaniesEnabled(false));
@@ -606,7 +611,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openFile = useCallback((target: FileTarget, path: string | null) => {
-    if (target.kind === 'workspace') { setSection('workspace'); setOrgPane(null); }
+    if (target.kind === 'workspace') setSection('artifacts');
     else { setSection('home'); setHomeView('file'); }
     setFileTarget(target);
     setCurrentFile(path);
@@ -642,9 +647,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setWorkspaceId(wanted.workspaceId);
       setCurrentId(null);
     }
-    setSection('workspace');
-    setOrgPane(wanted.pane);
-    setMobileDetail(true);
+    if (wanted.pane === 'artifacts') setSection('artifacts');
+    else { setSection('workspace'); setOrgPane(wanted.pane); setMobileDetail(true); }
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
   }, [workspaces, workspaceId]);
 
@@ -1011,7 +1015,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgRunningExperiments, orgFocus, setOrgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgFocus, setOrgFocus,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
@@ -1030,7 +1034,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgRunningExperiments, orgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgFocus,
     channels, refreshChannels, currentChannel, channelFocus, openChannel, onWorkspaceEvent,
   ]);
 

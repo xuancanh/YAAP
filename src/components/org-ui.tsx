@@ -87,12 +87,20 @@ export function Drawer({ onClose, children, width = 560 }: { onClose: () => void
 /** Follow a reference to the pane that shows it (docs/company-vision.md §6,
  *  §8): a task opens the board drawer, a decision the log, a goal the vision
  *  page, a meeting its thread, a plan the Plans pane, an audit row or a day
- *  the Replay pane (`id` is the YYYY-MM-DD), a member its home page; a metric
- *  source, an incident or an experiment its pane (items 27–30), a held action
- *  the Approvals pane's key list. Used by
+ *  the Replay pane (`id` is the YYYY-MM-DD), a member its home page; an
+ *  incident its pane, a playbook, an experiment or a metric source its file
+ *  under /org/ in Artifacts, a held action the Approvals pane's key list. Used by
  *  citation chips, the Related drawer and the replay timeline. */
 export function useFollowRef() {
   const app = useApp();
+  /** Playbooks, experiments and metrics are files under /org/ (docs/filesystem.md):
+   *  open the matching one in Artifacts, or the section when it is not there yet. */
+  const openOrgFile = (prefix: string, key?: string) => {
+    const target = { kind: 'workspace' as const, id: app.workspaceId };
+    const hit = app.fileList.find((f) => f.path === prefix)
+      ?? (key ? app.fileList.find((f) => f.path.startsWith(prefix) && f.path.slice(prefix.length).startsWith(key)) : undefined);
+    app.openFile(target, hit?.path ?? null);
+  };
   return (kind: string, id: string) => {
     app.setMobileDetail(true);
     if (kind === 'task') { app.setOrgFocus({ kind: 'task', id }); app.setOrgPane('board'); }
@@ -100,11 +108,11 @@ export function useFollowRef() {
     else if (kind === 'goal' || kind === 'objective' || kind === 'key_result' || kind === 'vision') { app.setOrgFocus({ kind: 'goal', id }); app.setOrgUnitId(null); app.setOrgPane('vision'); }
     else if (kind === 'meeting') { app.setOrgFocus({ kind: 'meeting', id }); app.setOrgPane('meetings'); }
     else if (kind === 'plan') { app.setOrgFocus({ kind: 'plan', id }); app.setOrgPane('plans'); }
-    else if (kind === 'playbook') { app.setOrgFocus({ kind: 'playbook', id }); app.setOrgPane('playbooks'); }
+    else if (kind === 'playbook') openOrgFile('org/playbooks/', id);
     else if (kind === 'day' || kind === 'replay') { app.setOrgFocus({ kind: 'replay', id }); app.setOrgPane('replay'); }
-    else if (kind === 'source' || kind === 'metric_source') { app.setOrgFocus({ kind: 'source', id }); app.setOrgPane('metrics'); }
+    else if (kind === 'source' || kind === 'metric_source') openOrgFile('org/metrics.md');
     else if (kind === 'incident') { app.setOrgFocus({ kind: 'incident', id }); app.setOrgPane('incidents'); }
-    else if (kind === 'experiment') { app.setOrgFocus({ kind: 'experiment', id }); app.setOrgPane('experiments'); }
+    else if (kind === 'experiment') openOrgFile('org/experiments/', id.slice(0, 8));
     else if (kind === 'action') { app.setOrgFocus({ kind: 'action', id }); app.setOrgPane('approvals'); }
     else if (kind === 'audit') app.setOrgPane('audit');
     else if (kind === 'signal') app.setOrgPane('pulse');

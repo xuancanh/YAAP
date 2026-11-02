@@ -25,29 +25,23 @@ const PulsePane = lazy(() => import('./OrgPulseView').then((m) => ({ default: m.
 const MeetingsPane = lazy(() => import('./OrgMeetingsView').then((m) => ({ default: m.MeetingsPane })));
 const DecisionsPane = lazy(() => import('./OrgMeetingsView').then((m) => ({ default: m.DecisionsPane })));
 const WhyDrawer = lazy(() => import('./OrgVisionView').then((m) => ({ default: m.WhyDrawer })));
-/** Memory, capital, blueprints and hybrid staff (items 22–24). */
-const AskPane = lazy(() => import('./OrgMemoryView').then((m) => ({ default: m.AskPane })));
-const PlaybooksPane = lazy(() => import('./OrgMemoryView').then((m) => ({ default: m.PlaybooksPane })));
+/** Memory, capital, blueprints and hybrid staff (items 22–24); playbooks are files under /org/playbooks/ in Artifacts. */
 const RelatedDrawer = lazy(() => import('./OrgMemoryView').then((m) => ({ default: m.RelatedDrawer })));
 const PlansPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.PlansPane })));
 const ReplayPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.ReplayPane })));
 const CapitalPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.CapitalPane })));
 const MyTasksPane = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.MyTasksPane })));
 const HireDialog = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.HireDialog })));
-/** Sensing, the trust ledger, incidents and experiments (items 27–30, SPA item 32). */
-const MetricsPane = lazy(() => import('./OrgSensingView').then((m) => ({ default: m.MetricsPane })));
+/** Sensing checks, the trust ledger and incidents (items 27–30, SPA item 32); metrics and experiments are files under /org/ in Artifacts. */
 const TaskChecksPanel = lazy(() => import('./OrgSensingView').then((m) => ({ default: m.TaskChecksPanel })));
 const ChecksBuilder = lazy(() => import('./OrgSensingView').then((m) => ({ default: m.ChecksBuilder })));
 const IncidentsPane = lazy(() => import('./OrgIncidentsView').then((m) => ({ default: m.IncidentsPane })));
-const ExperimentsPane = lazy(() => import('./OrgExperimentsView').then((m) => ({ default: m.ExperimentsPane })));
 const HeldActions = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.HeldActions })));
 const ActionCallPreview = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.ActionCallPreview })));
-/** Evals, outcomes, capacity and the cards' eval line (item 31, SPA item 32 part two). */
-const EvalsPane = lazy(() => import('./OrgGovernanceView').then((m) => ({ default: m.EvalsPane })));
-const OutcomesPane = lazy(() => import('./OrgGovernanceView').then((m) => ({ default: m.OutcomesPane })));
+/** Capacity and the cards' eval line (item 31); evals and outcomes are files under /org/ in Artifacts. */
 const CapacityStrip = lazy(() => import('./OrgGovernanceView').then((m) => ({ default: m.CapacityStrip })));
 const CardEvalLine = lazy(() => import('./OrgGovernanceView').then((m) => ({ default: m.CardEvalLine })));
-const LAZY_PANES = new Set(['vision', 'pulse', 'meetings', 'decisions', 'ask', 'plans', 'replay', 'capital', 'playbooks', 'mytasks', 'metrics', 'incidents', 'experiments', 'outcomes', 'evals']);
+const LAZY_PANES = new Set(['vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents']);
 
 const STATUS_COLOR: Record<OrgTaskStatus, string> = {
   backlog: 'var(--text-faint)', waiting: 'var(--text-dim)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
@@ -108,17 +102,11 @@ export function OrganizationView() {
             {view === 'pulse' && <PulsePane org={org} />}
             {view === 'meetings' && <MeetingsPane org={org} />}
             {view === 'decisions' && <DecisionsPane org={org} />}
-            {view === 'ask' && <AskPane org={org} />}
-            {view === 'playbooks' && <PlaybooksPane org={org} />}
             {view === 'plans' && <PlansPane org={org} />}
             {view === 'replay' && <ReplayPane org={org} />}
             {view === 'capital' && <CapitalPane org={org} />}
             {view === 'mytasks' && <MyTasksPane org={org} />}
-            {view === 'metrics' && <MetricsPane org={org} />}
             {view === 'incidents' && <IncidentsPane org={org} />}
-            {view === 'experiments' && <ExperimentsPane org={org} />}
-            {view === 'outcomes' && <OutcomesPane org={org} />}
-            {view === 'evals' && <EvalsPane org={org} />}
           </Suspense>
         )}
       </div>
@@ -791,7 +779,7 @@ function ApprovalArtifact({ kind, p, nm, wsId }: { kind: string; p: Record<strin
       <div style={{ ...mono, overflowWrap: 'anywhere' }}>{String(p.target ?? '')}</div>
       {p.why ? <div style={faint}>Why: {String(p.why)}</div> : null}
       <details><summary style={{ cursor: 'pointer', ...faint }}>Config</summary><pre style={{ ...mono, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--panel-2)', padding: 8, borderRadius: 8 }}>{JSON.stringify(p.config ?? {}, null, 2)}</pre></details>
-      <div style={faint}>A source defines what counts as truth: only you make one live. A referenced secret must be set first (Metrics → Edit).</div>
+      <div style={faint}>A source defines what counts as truth: only you make one live. A referenced secret must be set first.</div>
     </div>
   );
   if (kind === 'experiment') return (

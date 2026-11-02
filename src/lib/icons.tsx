@@ -50,6 +50,8 @@ export const P = {
   moon: ['M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z'],
   globe: ['M12 3a9 9 0 100 18 9 9 0 000-18', 'M3 12h18', 'M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18'],
   file: ['M6 2h9l5 5v15H6z', 'M14 2v6h6'],
+  /** Stacked documents: the Artifacts section (Workspace keeps the folder). */
+  files: ['M8 3h8l4 4v12H8z', 'M15 3v5h5', 'M5 7v14h11'],
   term: ['M4 5h16v14H4z', 'M7 9l3 3-3 3M13 15h4'],
   compass: ['M12 3a9 9 0 100 18 9 9 0 000-18', 'M15 9l-2 5-4 1 2-5z'],
   window: ['M4 4h16v16H4z', 'M4 9h16M9 9v11'],

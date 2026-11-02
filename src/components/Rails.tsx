@@ -142,7 +142,6 @@ function ArtifactsSection() {
     <>
       <div style={{ ...sectionLabel, padding: '10px 10px 4px', display: 'flex', alignItems: 'center', gap: 4 }}>
         <span style={{ flex: 1 }}>Artifacts</span>
-        {app.orgPane && <button onClick={() => app.setOrgPane(null)} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 10.5, cursor: 'pointer', padding: '0 6px 0 0', textTransform: 'none', letterSpacing: 0 }}>show</button>}
         {source && wsId && (
           <>
             <button title={`New file${here ? ` in /${here}/` : ''}`} aria-label="New file" style={iconBtn}
@@ -333,19 +332,13 @@ export const ORG_PANES: Array<{ id: OrgPane; label: string; icon: string[] }> = 
   { id: 'meetings', label: 'Meetings', icon: P.chat },
   { id: 'decisions', label: 'Decisions', icon: P.check },
   // Memory, capital, hybrid staff (docs/company-vision.md §6–§9, items 22–24).
-  { id: 'ask', label: 'Ask', icon: P.search },
   { id: 'plans', label: 'Plans', icon: P.rows },
   { id: 'capital', label: 'Capital', icon: P.bolt },
   { id: 'replay', label: 'Replay', icon: P.retry },
-  { id: 'playbooks', label: 'Playbooks', icon: P.file },
   { id: 'mytasks', label: 'My tasks', icon: P.board },
-  // Sensing, incidents, experiments (items 27–30, SPA item 32).
-  { id: 'metrics', label: 'Metrics', icon: P.sun },
+  // Incidents (item 29). Playbooks, experiments, evals, outcomes and metrics
+  // are mirrored as files under /org/ in Artifacts (docs/filesystem.md).
   { id: 'incidents', label: 'Incidents', icon: P.warn },
-  { id: 'experiments', label: 'Experiments', icon: P.retry },
-  // The owner's seat and evals (item 31).
-  { id: 'outcomes', label: 'Outcomes', icon: P.star },
-  { id: 'evals', label: 'Evals', icon: P.check },
   { id: 'chart', label: 'Org chart', icon: P.bot },
   { id: 'approvals', label: 'Approvals', icon: P.shield },
   { id: 'spend', label: 'Spend', icon: P.bolt },
@@ -411,9 +404,10 @@ function UnitGroup({ node, depth }: { node: OrgUnitNode; depth: number }) {
   );
 }
 
-/** The Workspace tab's rail: the Artifacts tree, and — when the
- *  workspace runs in organization mode — its company panes. */
-export function WorkspaceRail() {
+/** The Artifacts tab's rail: the workspace tree (docs/filesystem.md) —
+ *  Shared folders with /org/ first (the company's mirrored records live
+ *  there), then each agent's home. */
+export function ArtifactsRail() {
   const app = useApp();
   useEffect(() => {
     if (app.fileTarget?.kind !== 'workspace' && app.workspaceId) {
@@ -422,6 +416,17 @@ export function WorkspaceRail() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.workspaceId, app.fileTarget?.kind]);
+  return (
+    <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
+      <ArtifactsSection />
+    </div>
+  );
+}
+
+/** The Workspace tab's rail: when the workspace runs in organization mode,
+ *  its company panes; the files have their own Artifacts tab. */
+export function WorkspaceRail() {
+  const app = useApp();
   const org = app.companiesEnabled && app.wsOrg && app.wsOrg.mode !== 'off' ? app.wsOrg : null;
   const panes = org ? ORG_PANES.filter((n) => n.id !== 'approvals' || org.mode !== 'autonomous' || org.pendingApprovals > 0 || app.orgHeldActions > 0) : [];
   const openIncidents = app.orgHealth?.openIncidents.length ?? 0;
@@ -430,7 +435,6 @@ export function WorkspaceRail() {
     if (id === 'approvals' && app.orgHeldActions > 0) return { n: app.orgHeldActions, title: `${app.orgHeldActions} action(s) waiting for your key` };
     if (id === 'plans' && app.orgPendingPlans > 0) return { n: app.orgPendingPlans, title: `${app.orgPendingPlans} plan(s) awaiting your veto` };
     if (id === 'incidents' && openIncidents > 0) return { n: openIncidents, color: 'var(--red)', title: `${openIncidents} open incident(s)` };
-    if (id === 'experiments' && app.orgRunningExperiments > 0) return { n: app.orgRunningExperiments, color: 'var(--accent)', title: `${app.orgRunningExperiments} running` };
     return undefined;
   };
   return (
@@ -455,7 +459,8 @@ export function WorkspaceRail() {
         </div>
       )}
       {/* ---- organization panes — end ---- */}
-      <ArtifactsSection />
+      {!org && <div style={{ padding: '6px 10px', fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.5 }}>Organization mode is off for this workspace — turn it on in Settings → Workspace.</div>}
+      <PaneRow id="open-artifacts" label="Open Artifacts" icon={P.files} active={false} onClick={() => app.go('artifacts')} />
     </div>
   );
 }
