@@ -520,22 +520,8 @@ export class HomeService {
     return mergeUpcoming(out.sort((a, b) => a.at.localeCompare(b.at))).slice(0, 12);
   }
 
-  /** The tool calls of each loop run: the run's turn is the latest turn of
-   *  its loop session that started before the run was recorded. */
-  private async runCalls(events: Array<{ id: string; sessionId: string | null; createdAt: string }>, horizon: string): Promise<Map<string, RunCall[]>> {
-    const out = new Map<string, RunCall[]>();
-    const sessions = [...new Set(events.map((e) => e.sessionId).filter((x): x is string => Boolean(x)))];
-    if (sessions.length === 0) return out;
-    const turns = await this.db.select({ sessionId: chatTurns.sessionId, createdAt: chatTurns.createdAt, toolCalls: chatTurns.toolCalls })
-      .from(chatTurns).where(and(inArray(chatTurns.sessionId, sessions), gte(chatTurns.createdAt, horizon)));
-    const bySession = new Map<string, typeof turns>();
-    for (const t of turns) { const l = bySession.get(t.sessionId) ?? []; l.push(t); bySession.set(t.sessionId, l); }
-    for (const l of bySession.values()) l.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    for (const e of events) {
-      const turn = e.sessionId ? bySession.get(e.sessionId)?.find((t) => t.createdAt <= e.createdAt) : undefined;
-      if (turn) out.set(e.id, safe<RunCall[]>(turn.toolCalls, []));
-    }
-    return out;
+  private runCalls(events: Array<{ id: string; sessionId: string | null; createdAt: string }>, horizon: string): Promise<Map<string, RunCall[]>> {
+    return loopRunCalls(this.db, events, horizon);
   }
 
   // ---- 9. recent artifacts ----
@@ -544,6 +530,25 @@ export class HomeService {
     if (!this.fs) return [];
     return (await this.fs.recent(workspaceId, ARTIFACT_LIMIT)).map((f) => ({ path: f.path, version: f.version, size: f.size, updatedAt: f.updatedAt, updatedBy: f.updatedBy }));
   }
+}
+
+/** The tool calls of each loop run: the run's turn is the latest turn of its
+ *  loop session that started before the run was recorded. Shared with the
+ *  agent overview (overview.service.ts). */
+export async function loopRunCalls(db: DrizzleDb, events: Array<{ id: string; sessionId: string | null; createdAt: string }>, horizon: string): Promise<Map<string, RunCall[]>> {
+  const out = new Map<string, RunCall[]>();
+  const sessions = [...new Set(events.map((e) => e.sessionId).filter((x): x is string => Boolean(x)))];
+  if (sessions.length === 0) return out;
+  const turns = await db.select({ sessionId: chatTurns.sessionId, createdAt: chatTurns.createdAt, toolCalls: chatTurns.toolCalls })
+    .from(chatTurns).where(and(inArray(chatTurns.sessionId, sessions), gte(chatTurns.createdAt, horizon)));
+  const bySession = new Map<string, typeof turns>();
+  for (const t of turns) { const l = bySession.get(t.sessionId) ?? []; l.push(t); bySession.set(t.sessionId, l); }
+  for (const l of bySession.values()) l.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  for (const e of events) {
+    const turn = e.sessionId ? bySession.get(e.sessionId)?.find((t) => t.createdAt <= e.createdAt) : undefined;
+    if (turn) out.set(e.id, safe<RunCall[]>(turn.toolCalls, []));
+  }
+  return out;
 }
 
 function emptyRecap(): HomeRecap {
