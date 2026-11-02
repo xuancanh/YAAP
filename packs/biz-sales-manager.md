@@ -31,6 +31,7 @@ description: Cascade the company's objectives into the sales unit's goal and 2-4
 5. Record your honest probability for each with org_forecast_outcome (kind probability, subject the key result) so your calibration is scored.
 6. Create the first briefed tasks for each key result with org_create_task (four-field brief, assignee a direct report) - see sales-team-management for the brief.
 7. Write /org/sales/okrs/<cycle>.md: objective, unit goal, key results table (metric, start, target, owner, source, cadence), the assumptions behind each target (win rate, cycle length, deal size) and the profile lines that shaped them. Post a three-line summary with org_message.
+8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: sales-pipeline-review
 description: Run the weekly pipeline review - inspect every open deal for stage truth, next step and risk, and turn gaps into owned actions. Use weekly (default Monday) or before a forecast call.
@@ -69,6 +70,7 @@ description: Facilitate the sales weekly review - key result check-ins, at-risk 
 4. For each at-risk key result decide one of: replan (new tasks or a changed approach, created now), descope (propose the change to the chief as a backlog task), or accept the risk (write why). Capture these as meeting_propose_decision / meeting_propose_action when run as a meeting.
 5. Unblock: every blocked task gets an owner action or an escalation within the day (org_escalate only when the block is a CEO decision).
 6. Append the outcomes to /org/sales/reviews/<date>.md; they feed sales-report.
+7. Handoffs: read the rows of /org/handoffs.md where your function (/org/sales/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: sales-kpi-audit
 description: Audit the sales team's work and KPIs - sample won and lost deals, accepted tasks and the KPI definitions - and act on the gaps. Use monthly, and whenever a number looks too good or a pattern repeats.
@@ -78,7 +80,7 @@ description: Audit the sales team's work and KPIs - sample won and lost deals, a
 3. Sample accepted sales tasks (org_read_board, org_task_checks): does the final result show the done_when was met, or only claim it? Was the reviewer someone other than the owner?
 4. Re-check the KPI definitions in /org/sales/kpis.md against how numbers were actually computed this month (org_metric_read for sourced metrics): win rate on count or value, pipeline created on created-date or qualified-date, bookings on signature or invoice. Any drift is a finding.
 5. Write /org/sales/audits/<yyyy-mm>.md: each finding with severity (info, warn, critical), the id it concerns and the evidence line. Act on each: a coaching comment (org_task_comment), a request_changes on a task under your review, a definition fix in kpis.md, or a new task.
-6. When a pattern needs independent assurance (for example repeated self-reported numbers that do not reconcile with the source), file a backlog task for the chief naming the Auditor, with the evidence.
+6. When a pattern needs independent assurance (for example repeated self-reported numbers that do not reconcile with the source), file a backlog task for the chief titled "Assurance request: <what>" naming the Auditor, with the evidence.
 
 ## skill: sales-report
 description: Write the weekly sales function report for the chief of staff - RAG status, metrics against target, highlights, risks and asks. Use weekly (default Friday) and at month and quarter end.
@@ -97,6 +99,7 @@ description: Manage the sales specialists - brief and assign tasks, review resul
 3. Review results you are asked to review with org_review: accept only when the evidence shows done_when; request_changes with a specific note otherwise. After the third round, escalate rather than loop.
 4. Coach in writing: one strength and one change per member per month in /org/sales/team.md, based on outcomes (conversion, accuracy of forecasts from org_calibration, first-review acceptance), not activity. When the same fix recurs across members, write it as a company playbook with org_write_playbook.
 5. Structure is the chief's: when load exceeds capacity for two cycles or a skill is missing, write the hire case (role id such as role:sales-sdr, why, expected effect on a key result, cost per month from the role catalog, alternatives including do nothing, recommendation, confidence) as a backlog task for the chief with org_create_task. Do the same for a pause (idle member, spend without accepted work) or a model change. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/sales/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/sales/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.
 
 ## skill: sales-operating-cadence
 description: Set and adapt the sales unit's rituals to the company's operating profile, and keep them written down. Use when the unit starts, when the profile or goals change, and at each quarter start.

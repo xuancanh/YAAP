@@ -31,6 +31,7 @@ description: Cascade the company's objectives into the product unit's goal and 2
 5. Record your honest probability per key result with org_forecast_outcome.
 6. Create the first briefed tasks (discovery, specs, instrumentation) with org_create_task, assignee a direct report; work for engineering or design goes through their leads as backlog tasks.
 7. Write /org/product/okrs/<cycle>.md: objective, unit goal, key results table, the bets (initiatives) expected to move each, assumptions and the profile lines behind them. Post a three-line summary with org_message.
+8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: product-roadmap-review
 description: Review and reprioritise the roadmap each quarter (and on major new evidence) with explicit scoring and written trade-offs. Use at quarter start, before planning, and when a big customer, market or metric change lands.
@@ -69,6 +70,7 @@ description: Facilitate the product weekly review - key result check-ins, metric
 4. Review roadmap progress: committed items on track, at risk or slipped, using engineering's board; ask leads via org_task_comment rather than guessing.
 5. Check in on every key result with org_check_in (value from the source, confidence with reason).
 6. For each at-risk key result decide replan, descope (backlog task for the chief) or accept; append outcomes to /org/product/reviews/<date>.md.
+7. Handoffs: read the rows of /org/handoffs.md where your function (/org/product/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: product-kpi-audit
 description: Audit product work and KPIs - sample specs, decisions, launches and metric definitions - and act on the gaps. Use monthly and when a metric moves suspiciously.
@@ -78,7 +80,7 @@ description: Audit product work and KPIs - sample specs, decisions, launches and
 3. Sample decisions in /org/product/decisions.md and org_decisions: were alternatives and evidence recorded; did later data confirm or contradict them?
 4. Check metric definitions in /org/product/kpis.md against the computed values (org_metric_read): activation event, retention cohort window, eligible population for adoption. Drift or broken instrumentation is a finding.
 5. Sample accepted tasks (org_read_board, org_task_checks) for evidence of done_when and independent review.
-6. Write /org/product/audits/<yyyy-mm>.md (severity, id, evidence), act on each (coaching comment, request_changes, definition fix, task) and file a backlog task for the chief naming the Auditor for patterns that need independent assurance.
+6. Write /org/product/audits/<yyyy-mm>.md (severity, id, evidence), act on each (coaching comment, request_changes, definition fix, task) and file a backlog task for the chief titled "Assurance request: <what>" naming the Auditor for patterns that need independent assurance.
 
 ## skill: product-report
 description: Write the weekly product function report for the chief of staff - RAG status, product metrics, roadmap delivery, risks and asks. Use weekly (default Friday) and at quarter end.
@@ -97,6 +99,7 @@ description: Manage the product specialists - brief and assign, review specs and
 3. Review with org_review: accept only on evidence; request_changes with a specific note; escalate after the third round.
 4. Coach monthly in /org/product/team.md from outcomes (spec rework rate, first-review acceptance, calibration from org_calibration). Repeated fixes become a playbook via org_write_playbook; use org_eval_cases to see what good looks like for a role.
 5. When capacity or a skill is missing for two cycles, write the hire case (role id such as role:product-user-researcher, why, effect on a key result, cost per month, alternatives including do nothing, recommendation, confidence) as a backlog task for the chief. Same for a pause or model change. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/product/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/product/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.
 
 ## skill: product-operating-cadence
 description: Set and adapt the product unit's rituals to the operating profile and keep them written down. Use when the unit starts, when the profile or goals change, and each quarter.

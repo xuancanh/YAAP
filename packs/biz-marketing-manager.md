@@ -31,6 +31,7 @@ description: Cascade the company's objectives into the marketing unit's goal and
 5. Record your honest probability for each key result with org_forecast_outcome so your calibration is scored.
 6. Create the first briefed tasks per key result with org_create_task (assignee a direct report), using the brief in marketing-team-management.
 7. Write /org/marketing/okrs/<cycle>.md: objective, unit goal, key result table (metric, start, target, owner, source, cadence), the funnel assumptions behind each target (traffic to lead, lead to MQL, MQL to SQL, SQL to won) and the profile lines that shaped them. Post a three-line summary with org_message.
+8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: marketing-campaign-calendar
 description: Plan next month's campaign calendar - themes, campaigns, owners, channels, budget and the key result each serves. Use monthly (default the 25th) and when a launch date moves.
@@ -69,6 +70,7 @@ description: Facilitate the marketing weekly review - key result check-ins, funn
 4. Check in on every key result with org_check_in: current value from its source and a confidence 0-1 with a one-line reason. Owners check in on their own; nudge late ones with org_task_comment.
 5. For each at-risk key result decide: replan (new tasks now), descope (backlog task for the chief) or accept the risk (with why). In a meeting, record them with meeting_propose_decision and meeting_propose_action.
 6. Unblock every blocked task within the day; append outcomes to /org/marketing/reviews/<date>.md for the report.
+7. Handoffs: read the rows of /org/handoffs.md where your function (/org/marketing/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: marketing-kpi-audit
 description: Audit marketing's work and KPIs - sample campaigns, accepted tasks and attribution - and act on the gaps. Use monthly, and whenever a number looks too good.
@@ -78,7 +80,7 @@ description: Audit marketing's work and KPIs - sample campaigns, accepted tasks 
 3. Sample accepted tasks (org_read_board, org_task_checks): does the result show done_when was met, was the reviewer different from the owner, did published copy match the approved draft?
 4. Re-check KPI definitions in /org/marketing/kpis.md against what was computed: MQL criteria, SQL acceptance by sales, CAC (which costs included), attribution model. Drift is a finding.
 5. Write /org/marketing/audits/<yyyy-mm>.md with each finding (severity info, warn, critical; the id; the evidence) and act: coaching comment, request_changes, a definition fix, or a task.
-6. File a backlog task for the chief naming the Auditor when a pattern needs independent assurance (for example lead numbers that never reconcile with sales).
+6. File a backlog task for the chief titled "Assurance request: <what>" naming the Auditor when a pattern needs independent assurance (for example lead numbers that never reconcile with sales).
 
 ## skill: marketing-report
 description: Write the weekly marketing function report for the chief of staff - RAG status, funnel against target, spend and CAC, risks and asks. Use weekly (default Friday) and at month and quarter end.
@@ -97,6 +99,7 @@ description: Manage the marketing specialists - brief and assign tasks, review d
 3. Review with org_review: accept only when the evidence meets done_when and the claims are sourced; request_changes with a specific note; escalate after the third round.
 4. Coach in writing monthly in /org/marketing/team.md: one strength, one change per member, based on outcomes (conversion, first-review acceptance, forecast calibration from org_calibration). Recurring fixes become a company playbook via org_write_playbook.
 5. When load exceeds capacity for two cycles or a skill is missing, write the hire case (role id such as role:marketing-demand-gen, why, effect on a key result, cost per month, alternatives including an agency or do nothing, recommendation, confidence) as a backlog task for the chief with org_create_task. Same for a pause or model change. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/marketing/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/marketing/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.
 
 ## skill: marketing-operating-cadence
 description: Set and adapt the marketing unit's rituals to the company's operating profile and keep them written down. Use when the unit starts, when the profile or goals change, and each quarter.

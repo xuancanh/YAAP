@@ -31,6 +31,7 @@ description: Cascade the company's objectives into the operations unit's goal an
 5. Record your honest probability for each with org_forecast_outcome (kind probability) so your calibration is scored.
 6. Create the first briefed tasks with org_create_task (assignee a direct report), as in ops-team-management.
 7. Write /org/operations/okrs/<cycle>.md: objective, unit goal, key results table (metric, start, target, owner, source, cadence), the assumptions behind each target (volumes, staffing, vendor terms) and the profile lines that shaped them. Post a three-line summary with org_message.
+8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: ops-process-review
 description: Review the company's processes - SOP inventory, bottlenecks and the improvement backlog - and pick what to fix next. Use monthly, after an audit flags a process, or when an SLA starts slipping.
@@ -70,6 +71,7 @@ description: Facilitate the operations weekly review - key result check-ins, SLA
 4. Review the week's SLA breaches and process failures: for each, the cause in one line and whether it is a one-off or a pattern for ops-process-review.
 5. For each at-risk key result decide: replan (new tasks now), descope (propose to the chief as a backlog task) or accept the risk (write why). In a meeting use meeting_propose_action and meeting_propose_decision.
 6. Unblock every blocked task with an owner action within the day; org_escalate only when the block is a CEO decision. Append outcomes to /org/operations/reviews/<date>.md.
+7. Handoffs: read the rows of /org/handoffs.md where your function (/org/operations/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: ops-kpi-audit
 description: Audit the operations team's work and KPIs - sample accepted tasks, process changes and the KPI definitions - and act on the gaps. Use monthly, and when a number looks too good.
@@ -79,7 +81,7 @@ description: Audit the operations team's work and KPIs - sample accepted tasks, 
 3. Sample process changes made last month: was there a measured before and after, was the SOP updated, did the process owner agree, did the change stick (check the metric again with org_metric_read)?
 4. Re-check the KPI definitions in /org/operations/kpis.md against how numbers were computed: cycle time from which event to which, SLA measured on calendar or business hours, cost per unit including or excluding vendor fees. Any drift is a finding.
 5. Write /org/operations/audits/<yyyy-mm>.md: each finding with severity (info, warn, critical), the id it concerns and the evidence line. Act on each with a coaching comment (org_task_comment), a request_changes under your review, a definition fix, or a new task.
-6. When a pattern needs independent assurance, file a backlog task for the chief naming the Auditor, with the evidence.
+6. When a pattern needs independent assurance, file a backlog task for the chief titled "Assurance request: <what>" naming the Auditor, with the evidence.
 
 ## skill: ops-report
 description: Write the weekly operations report for the chief of staff - RAG status, KPIs against target, risks and asks. Use weekly (default Friday) and at month and quarter end.
@@ -98,6 +100,7 @@ description: Manage the operations specialists - brief and assign tasks, review 
 3. Review with org_review when you are the reviewer: accept only on evidence; request_changes with a specific note; escalate after the third round.
 4. Coach in writing each month in /org/operations/team.md: one strength, one change per member, based on outcomes (first-review acceptance, forecast accuracy from org_calibration, measured process gains). A fix that recurs across members becomes a company playbook (org_write_playbook).
 5. Structure is the chief's: when load exceeds capacity for two cycles or a skill is missing, write the case (role id such as role:ops-procurement, why, expected effect on a key result, cost per month from the role catalog, alternatives including do nothing, recommendation, confidence) as a backlog task for the chief with org_create_task. Same for a pause or a model change. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/operations/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/operations/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.
 
 ## skill: ops-operating-cadence
 description: Set and adapt the operations unit's rituals to the company's operating profile and keep them written down. Use when the unit starts, when the profile or goals change, and each quarter.

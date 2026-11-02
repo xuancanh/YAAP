@@ -31,6 +31,7 @@ description: Cascade company objectives into the engineering unit's goal and 2-4
 5. Record a probability per key result with org_forecast_outcome so your calibration is scored.
 6. Break the delivery result into first briefed tasks (see engineering-team-management), with dependsOn where work is sequenced.
 7. Write /org/engineering/okrs/<cycle>.md: objective, unit goal, key results table (metric, start, target, owner, source, cadence), assumptions (capacity per sprint, known risks, tech debt allowance) and the profile lines that shaped them; post a three-line summary with org_message.
+8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: engineering-sprint-planning
 description: Plan a sprint - capacity, committed scope tied to key results, task briefs with testable done-when. Use at the start of each sprint or planning cycle.
@@ -51,6 +52,7 @@ description: Facilitate the engineering weekly review - key result check-ins, sp
 4. Review sprint progress: committed versus done so far, scope added mid-sprint and why, items with no movement in two days.
 5. For each at-risk result decide: replan (create tasks now), descope (a backlog task to the chief with the trade-off), or accept the risk with the reason; when run as a meeting, capture them with meeting_propose_decision and meeting_propose_action.
 6. Unblock every blocked task within the day: an owner action, a pairing task, or org_escalate when the block is a CEO decision. Append outcomes to /org/engineering/reviews/<date>.md.
+7. Handoffs: read the rows of /org/handoffs.md where your function (/org/engineering/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: engineering-retro
 description: Run the sprint retro - what shipped versus committed, what slowed us, and the one or two changes we will make. Use at the end of every sprint or after a major release.
@@ -88,7 +90,7 @@ description: Audit engineering work and KPIs - sample accepted tasks, merged cha
 3. Sample merged changes: tests added for new behaviour, review comments addressed, no secrets or debug code, linked to a task.
 4. Re-check the DORA and quality definitions in /org/engineering/kpis.md against how they were computed (org_metric_read): is a hotfix counted as a deploy, does lead time start at first commit or merge, is a rollback counted as a failure? Drift is a finding.
 5. Write /org/engineering/audits/<yyyy-mm>.md: findings with severity (info, warn, critical), the id and the evidence. Act on each: coaching comment, request_changes, definition fix, or a new task.
-6. When a pattern needs independent assurance (for example self-reported numbers that do not reconcile with the deploy log), file a backlog task for the chief naming the Auditor, with the evidence.
+6. When a pattern needs independent assurance (for example self-reported numbers that do not reconcile with the deploy log), file a backlog task for the chief titled "Assurance request: <what>" naming the Auditor, with the evidence.
 
 ## skill: engineering-report
 description: Write the weekly engineering report for the chief of staff - RAG status, delivery and DORA metrics against target, risks and asks. Use weekly (default Friday) and at the end of a cycle.
@@ -107,3 +109,4 @@ description: Manage the engineers - brief and assign tasks, review results, bala
 3. Review results with org_review when you are the reviewer: accept only on evidence (tests, checks, a reproducible demo); request_changes with a specific note; escalate after the third round.
 4. Coach in writing monthly in /org/engineering/team.md: one strength and one change per member, from outcomes (first-review acceptance, escaped defects, estimate accuracy from org_calibration). Use org_eval_cases to see each role's golden set when judging quality. Recurring fixes become a playbook with org_write_playbook.
 5. Structure is the chief's: when load exceeds capacity for two sprints or a skill is missing, write the hire case (role id such as role:engineering-qa, why, expected effect on a key result, monthly cost, alternatives including do nothing, recommendation, confidence) as a backlog task for the chief with org_create_task. Same for a pause or a model change. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/engineering/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/engineering/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.

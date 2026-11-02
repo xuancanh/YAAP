@@ -32,6 +32,7 @@ description: Cascade the company's objectives into the legal unit's goal and 2-4
 5. Record your honest probability for each with org_forecast_outcome (kind probability).
 6. Create the first briefed tasks per key result with org_create_task (assignee a direct report).
 7. Write /org/legal/okrs/<cycle>.md: objective, unit goal, key results table, assumptions (request volume, mix of standard and bespoke), and the profile lines that shaped them. Post a three-line summary with org_message.
+8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: legal-intake-triage
 description: Triage every incoming legal request - classify, size, prioritise, route, and set the expectation with the requester. Use daily (or on the unit's cadence) and whenever an urgent request arrives.
@@ -79,6 +80,7 @@ description: Facilitate the legal unit's weekly review - key result check-ins, m
 4. Review the regulatory calendar for the next 60 days (filings, renewals, policy reviews) and confirm each has an owner and a task.
 5. For each at-risk result decide: replan, descope (backlog task for the chief) or accept (write why). In a meeting, use meeting_propose_decision and meeting_propose_action.
 6. Append outcomes to /org/legal/reviews/<date>.md; they feed legal-report.
+7. Handoffs: read the rows of /org/handoffs.md where your function (/org/legal/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: legal-kpi-audit
 description: Audit the legal team's work and KPIs - sample executed contracts, closed matters and accepted tasks against the playbook - and act on the gaps. Use monthly, and when conformance looks too good.
@@ -87,7 +89,7 @@ description: Audit the legal team's work and KPIs - sample executed contracts, c
 2. Contracts: does the executed version match the last reviewed draft, is every deviation from the playbook approved by the right level with a record, are obligations (renewal dates, notice periods, data processing terms) captured in /org/legal/obligations.md?
 3. Advice matters: was the question answered within target, was the answer sourced (law, contract clause, policy) and caveated, was outside counsel recommended where it should have been?
 4. Definitions: re-check /org/legal/kpis.md against how numbers were computed (turnaround start and stop, what counts as a deviation). Drift is a finding.
-5. Write /org/legal/audits/<yyyy-mm>.md with severity (info, warn, critical), the id concerned and the evidence. Act on each: request_changes, a coaching comment, a playbook fix or a new task. A pattern needing independent assurance becomes a backlog task for the chief naming the Auditor.
+5. Write /org/legal/audits/<yyyy-mm>.md with severity (info, warn, critical), the id concerned and the evidence. Act on each: request_changes, a coaching comment, a playbook fix or a new task. A pattern needing independent assurance becomes a backlog task for the chief titled "Assurance request: <what>" naming the Auditor.
 
 ## skill: legal-report
 description: Write the weekly legal function report for the chief of staff - RAG status, metrics against target, top risks and asks. Use weekly (default Friday) and at quarter end.
@@ -106,3 +108,4 @@ description: Manage the legal specialists - brief and assign matters, review dra
 3. Review with org_review: accept only when the draft conforms to the playbook or every deviation is flagged with its approver; request_changes with a specific note; escalate after the third round.
 4. Coach in writing: one strength and one change per member per month in /org/legal/team.md, from outcomes (turnaround, first-review acceptance, conformance). A recurring fix becomes a company playbook with org_write_playbook.
 5. Structure is the chief's: write hire, pause or model-change cases (role id such as role:legal-contracts, why, expected effect on a key result, cost per month, alternatives including outside counsel or do nothing, recommendation, confidence) as a backlog task for the chief with org_create_task. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/legal/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/legal/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.

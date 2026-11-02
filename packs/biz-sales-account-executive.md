@@ -58,3 +58,11 @@ description: Submit your weekly forecast - commit, best case and pipeline per de
 3. Total commit, best case and pipeline; state the gap to your target and the specific deals or new pipeline that would close it.
 4. Record your commit as a forecast with org_forecast_outcome when your manager has asked for it, so your accuracy is measured.
 5. Save to /org/sales/forecast/submissions/<owner>-<date>.md and comment the totals on the forecast task with org_task_comment.
+
+## skill: closed-won-handoff
+description: Hand a closed-won account to customer success with everything that was promised, so onboarding starts from the deal and not from scratch. Use the day a deal is marked closed-won.
+
+1. Gather from the deal record and your files (/org/sales/): the signed scope and order form, the success metric the buyer agreed to, the stakeholders (economic buyer, champion, admin, technical contact) with their roles, every promise made in the cycle (features, dates, integrations, discounts, custom terms) and the open risks (a concession, a sceptical stakeholder, a competitor still in place).
+2. Write /org/customer/handoffs/<account>.md: account and contract dates; what was bought; the success metric and the first value milestone the buyer expects; stakeholders; promises, each marked standard or exception (an exception names who approved it); risks; links to the deal notes. Never promise in the handoff what the deal did not include.
+3. File the handoff as a backlog task for the Head of Customer Success (org_create_task: title "Request for customer: onboard <account>", outcome a kickoff held and an onboarding plan saved, done_when naming the file above, dueAt within the closed-won → customer success SLA in /org/handoffs.md).
+4. Stay on it until onboarding owns it: answer the onboarding specialist's questions on the task (org_task_comment) the same day, and join the kickoff only when the plan asks for you. The handoff is done when customer success has accepted the task; a breach is the chief's to route, not yours to work around by onboarding the customer yourself.

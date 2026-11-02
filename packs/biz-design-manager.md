@@ -30,6 +30,7 @@ description: Cascade company objectives into the design unit's goal and 2-4 key 
 4. org_set_key_result for each: metric, startValue measured now (from the last usability round or audit, never guessed), targetValue, unitLabel, dueAt, owner (yourself or a report: the Product Designer for task success, the UX Writer for content clarity), source when one exists (propose one with org_propose_metric_source otherwise), checkInCadenceDays from the profile.
 5. Record a probability for each with org_forecast_outcome.
 6. Create the first briefed tasks (design-team-management) and write /org/design/okrs/<cycle>.md: objective, goal, key results table, assumptions and the profile lines behind them; post a summary with org_message.
+7. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: design-intake-triage
 description: Triage incoming design requests against goals and capacity - accept, clarify, defer or decline each - and keep the queue visible. Use weekly (default Monday) or when requests pile up.
@@ -66,6 +67,7 @@ description: Facilitate the design weekly review - key result check-ins, queue h
 3. Check in on each key result with org_check_in: measured value and confidence 0-1 with a reason.
 4. Review the queue: work in progress per designer, items waiting on feedback, deadlines at risk.
 5. For each at-risk result decide replan, descope (backlog task to the chief) or accept, and unblock blocked tasks within the day (org_escalate only for CEO decisions). Append outcomes to /org/design/reviews/<date>.md.
+6. Handoffs: read the rows of /org/handoffs.md where your function (/org/design/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: design-kpi-audit
 description: Audit design work and KPIs - sample shipped work for system use, accessibility and rework, and check metric definitions. Use monthly.
@@ -74,7 +76,7 @@ description: Audit design work and KPIs - sample shipped work for system use, ac
 2. For each shipped design check: system components used, WCAG checks (contrast, focus order, labels, target size), content follows the voice guide, and whether it was reopened after shipping.
 3. For accepted tasks check done_when evidence (prototype link, test results) and that the reviewer was not the owner.
 4. Re-check KPI definitions in /org/design/kpis.md against how numbers were computed this month (org_metric_read when sourced).
-5. Write /org/design/audits/<yyyy-mm>.md with findings (severity, id, evidence) and act on each: coaching comment, request_changes, a system fix task. Patterns needing independent assurance go to the chief as a backlog task naming the Auditor.
+5. Write /org/design/audits/<yyyy-mm>.md with findings (severity, id, evidence) and act on each: coaching comment, request_changes, a system fix task. Patterns needing independent assurance go to the chief as a backlog task titled "Assurance request: <what>" naming the Auditor.
 
 ## skill: design-report
 description: Write the weekly design report for the chief of staff - RAG status, KPIs against target, highlights, risks and asks. Use weekly (default Friday).
@@ -92,3 +94,4 @@ description: Manage the designers and writers - brief, assign, review, coach, an
 3. Review with org_review when you are the reviewer; accept on evidence, request changes with specific notes, escalate after the third round.
 4. Coach monthly in /org/design/team.md: one strength and one change per member, from outcomes (rework rate, test results, first-review acceptance). Recurring fixes become a playbook with org_write_playbook.
 5. When load exceeds capacity for two cycles or a craft is missing, write the hire case (role id such as role:design-ux-writer, why, effect on a key result, monthly cost, alternatives including do nothing, recommendation, confidence) as a backlog task for the chief with org_create_task. Same for a pause. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/design/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/design/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.

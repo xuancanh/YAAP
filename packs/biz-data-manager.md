@@ -30,6 +30,7 @@ description: Cascade company objectives into the data unit's goal and 2-4 key re
 4. org_set_key_result for each: metric, startValue measured now, targetValue, unitLabel, dueAt, owner (yourself or a report: the Analytics Engineer for freshness and tests, the BI Analyst for turnaround and adoption), and a source; propose missing sources with org_propose_metric_source. checkInCadenceDays from the profile.
 5. Record a probability per key result with org_forecast_outcome.
 6. Create the first briefed tasks and write /org/data/okrs/<cycle>.md: objective, goal, key results table, assumptions, profile lines; post a summary with org_message.
+7. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: data-request-intake
 description: Triage analytics requests by decision value - clarify the question, size it, prioritise and route. Use weekly (default Monday) or when requests pile up.
@@ -66,6 +67,7 @@ description: Facilitate the data weekly review - key result check-ins, request q
 3. Check in on each key result with org_check_in: measured value and confidence 0-1 with a reason.
 4. Review the request queue (age, overdue items) and the week's quality failures.
 5. Decide replan, descope (backlog task to the chief) or accept for each at-risk result; unblock blocked tasks within the day. Append to /org/data/reviews/<date>.md.
+6. Handoffs: read the rows of /org/handoffs.md where your function (/org/data/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: data-kpi-audit
 description: Audit data work and KPIs - sample delivered analyses for reproducibility and correctness, and check metric sources. Use monthly.
@@ -74,7 +76,7 @@ description: Audit data work and KPIs - sample delivered analyses for reproducib
 2. For each analysis: is the query saved and re-runnable, does it use the catalogued definition, do totals reconcile with the source, are caveats stated, did it answer the decision asked?
 3. For accepted tasks: done_when evidence and an independent reviewer.
 4. Re-check KPI definitions in /org/data/kpis.md (turnaround measured from request or from acceptance, freshness per table or per source) against how they were computed.
-5. Write /org/data/audits/<yyyy-mm>.md with findings (severity, id, evidence) and act: coaching, request_changes, definition fixes, tasks. Patterns needing independent assurance go to the chief as a backlog task naming the Auditor.
+5. Write /org/data/audits/<yyyy-mm>.md with findings (severity, id, evidence) and act: coaching, request_changes, definition fixes, tasks. Patterns needing independent assurance go to the chief as a backlog task titled "Assurance request: <what>" naming the Auditor.
 
 ## skill: data-report
 description: Write the weekly data report for the chief of staff - RAG status, KPIs against target, notable findings, risks and asks. Use weekly (default Friday).
@@ -92,3 +94,4 @@ description: Manage the analysts and engineers - brief, assign, review, coach an
 3. Review with org_review: accept on reproducible evidence, request changes with specific notes, escalate after the third round.
 4. Coach monthly in /org/data/team.md from outcomes (first-review acceptance, rework, forecast calibration from org_calibration). Recurring fixes become a playbook with org_write_playbook. When the Data Scientist designs an experiment worth running, you propose it with org_propose_experiment.
 5. When demand exceeds capacity for two cycles or a skill is missing, write the hire case (role id such as role:data-analytics-engineer, why, effect on a key result, monthly cost, alternatives including do nothing, recommendation, confidence) as a backlog task for the chief with org_create_task. Same for a pause. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/data/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/data/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.

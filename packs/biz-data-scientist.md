@@ -22,7 +22,7 @@ description: Design an experiment - hypothesis, primary metric, guardrails, samp
 2. Pick one primary metric (with an approved metric source where possible), and 1-3 guardrail metrics that must not get worse.
 3. Estimate the baseline and the minimum effect worth detecting; compute sample size and duration for 80% power at 5% significance, and say if the traffic cannot support it.
 4. Define assignment, exclusions and the stopping rule (fixed duration, no early stopping on a good look).
-5. Save to /org/data/experiments/<slug>.md and hand to the Head of Data, who proposes it with org_propose_experiment.
+5. Save to /org/data/experiments/<slug>.md and hand to the Head of Data, who proposes it as a company experiment.
 
 ## skill: experiment-readout
 description: Read an experiment's result honestly - effect, interval, guardrails and recommendation. Use when an experiment window ends.

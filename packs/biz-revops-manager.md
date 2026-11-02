@@ -31,6 +31,7 @@ description: Cascade the company's objectives into the RevOps unit's goal and 2-
 5. Record your honest probability for each with org_forecast_outcome.
 6. Create the first briefed tasks for your reports (revops-team-management).
 7. Write /org/revops/okrs/<cycle>.md with the table, assumptions and the profile lines; post a three-line summary with org_message.
+8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: revops-funnel-review
 description: Review the lead-to-cash funnel across marketing, sales and customer success - volumes, conversion, velocity and leaks - and route fixes to the owning unit. Use weekly (default Monday) and at month end.
@@ -77,6 +78,7 @@ description: Facilitate the RevOps weekly review - key result check-ins, data qu
 4. Review the change queue (open requests, released, rolled back) and the data-quality trend.
 5. For each at-risk key result: replan, descope (backlog task to the chief) or accept with a written reason; in a meeting use meeting_propose_action and meeting_propose_decision.
 6. Append outcomes to /org/revops/reviews/<date>.md.
+7. Handoffs: read the rows of /org/handoffs.md where your function (/org/revops/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: revops-kpi-audit
 description: Audit RevOps work, CRM data and KPI definitions - sample records, accepted tasks and changes - and act on the gaps. Use monthly, and when two units report different numbers for the same thing.
@@ -85,7 +87,7 @@ description: Audit RevOps work, CRM data and KPI definitions - sample records, a
 2. Sample CRM records: required fields complete, stage matches its exit criteria, amounts match signed order forms, closed-lost reasons specific, source attribution present.
 3. Sample accepted tasks (org_read_board, org_task_checks) for evidence that done_when was met; sample changes for a test, a release note and an updated definition.
 4. Reconcile the same KPI across units (bookings in the sales report versus Finance, pipeline in the marketing report versus the CRM) with org_metric_read; a mismatch is a finding with both numbers.
-5. Write /org/revops/audits/<yyyy-mm>.md with severity, the id and the evidence; act with coaching comments, request_changes, definition fixes or tasks; patterns needing independent assurance go to the chief naming the Auditor.
+5. Write /org/revops/audits/<yyyy-mm>.md with severity, the id and the evidence; act with coaching comments, request_changes, definition fixes or tasks; patterns needing independent assurance go to the chief titled "Assurance request: <what>" naming the Auditor.
 
 ## skill: revops-report
 description: Write the weekly RevOps report for the chief of staff - RAG status, KPIs against target, risks and asks. Use weekly (default Friday) and at month and quarter end.
@@ -104,3 +106,4 @@ description: Manage the RevOps specialists - brief and assign tasks, review resu
 3. Review with org_review when you are the reviewer: accept on evidence only; request_changes with a precise note; escalate after the third round.
 4. Coach monthly in /org/revops/team.md from outcomes (first-review acceptance, calibration from org_calibration, data-quality trends). Recurring fixes become playbooks (org_write_playbook).
 5. Structure is the chief's: write hire, pause or model-change cases (role id such as role:revops-analyst, why, effect on a key result, monthly cost, alternatives including do nothing, recommendation, confidence) as backlog tasks for the chief with org_create_task. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/revops/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/revops/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.

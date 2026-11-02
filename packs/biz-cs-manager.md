@@ -31,6 +31,7 @@ description: Cascade the company's objectives into the customer unit's goal and 
 5. Record your honest probability per key result with org_forecast_outcome.
 6. Create the first briefed tasks per key result with org_create_task (assignee a direct report).
 7. Write /org/customer/okrs/<cycle>.md: objective, unit goal, key results table (metric, start, target, owner, source, cadence), assumptions (ticket volume, renewal base, seasonality) and the profile lines behind them. Post a three-line summary with org_message.
+8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: cs-queue-review
 description: Review the support queue - volume, SLA risk, backlog age, themes - and rebalance before breaches happen. Use daily (default morning) or whenever volume spikes.
@@ -69,6 +70,7 @@ description: Facilitate the customer weekly review - key result check-ins, SLA a
 4. Check in on every key result with org_check_in (value from the source, confidence with reason); owners check in on their own.
 5. For each at-risk key result decide replan, descope (backlog task for the chief) or accept with why; in a meeting use meeting_propose_decision and meeting_propose_action.
 6. Send the top three ticket themes to product as a backlog task with counts and examples; append outcomes to /org/customer/reviews/<date>.md.
+7. Handoffs: read the rows of /org/handoffs.md where your function (/org/customer/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: cs-kpi-audit
 description: Audit the customer team's work and KPIs - sample tickets, accepted tasks, health scores and definitions - and act on the gaps. Use monthly and when a number looks too good.
@@ -78,7 +80,7 @@ description: Audit the customer team's work and KPIs - sample tickets, accepted 
 3. Sample accepted tasks (org_read_board, org_task_checks): does the result meet done_when; was the reviewer someone other than the owner?
 4. Spot-check health scores against the raw inputs for five accounts, and churned accounts last month: were they red beforehand? A churn from green is a finding about the health model.
 5. Re-check KPI definitions in /org/customer/kpis.md (business hours or calendar, which tickets count, how retention treats downgrades) against what was computed (org_metric_read).
-6. Write /org/customer/audits/<yyyy-mm>.md (severity, id, evidence) and act: coaching comment, request_changes, a definition or knowledge base fix, a task. File a backlog task for the chief naming the Auditor for patterns that need independent assurance.
+6. Write /org/customer/audits/<yyyy-mm>.md (severity, id, evidence) and act: coaching comment, request_changes, a definition or knowledge base fix, a task. File a backlog task for the chief titled "Assurance request: <what>" naming the Auditor for patterns that need independent assurance.
 
 ## skill: cs-report
 description: Write the weekly customer function report for the chief of staff - RAG status, support and retention metrics against target, risks and asks. Use weekly (default Friday) and at month and quarter end.
@@ -97,6 +99,7 @@ description: Manage the customer specialists - brief and assign, review, coach o
 3. Review with org_review: accept only on evidence; request_changes with a specific note; escalate after the third round.
 4. Coach monthly in /org/customer/team.md from outcomes (CSAT per member, reopen rate, first-review acceptance, forecast calibration from org_calibration). Recurring fixes become a playbook via org_write_playbook; knowledge gaps become knowledge base tasks.
 5. When volume exceeds capacity for two weeks (SLA slipping despite rebalancing) or a skill is missing, write the hire case (role id such as role:cs-support, why, effect on a key result, cost per month, alternatives including deflection content or do nothing, recommendation, confidence) as a backlog task for the chief. Same for a pause or model change. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/customer/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/customer/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.
 
 ## skill: cs-operating-cadence
 description: Set and adapt the customer unit's rituals and SLA targets to the operating profile and keep them written down. Use when the unit starts, when the profile or customer base changes, and each quarter.

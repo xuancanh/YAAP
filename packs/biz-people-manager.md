@@ -31,6 +31,7 @@ description: Cascade the company's objectives into the people unit's goal and 2-
 5. Record your honest probability for each with org_forecast_outcome (kind probability).
 6. Create the first briefed tasks per key result with org_create_task (assignee a direct report).
 7. Write /org/people/okrs/<cycle>.md: objective, unit goal, key results table, assumptions (hiring volume, funnel ratios), and the profile lines that shaped them. Post a three-line summary with org_message.
+8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: people-hiring-pipeline-review
 description: Review every open requisition and its candidate funnel weekly - stage ages, conversion, bottlenecks and candidate experience - and turn gaps into owned actions. Use weekly (default Monday).
@@ -70,6 +71,7 @@ description: Facilitate the people unit's weekly review - key result check-ins, 
 4. For each at-risk result decide: replan, descope (backlog task for the chief) or accept (write why). In a meeting, use meeting_propose_decision and meeting_propose_action.
 5. Scan the operating queues: new starters in the next two weeks with incomplete onboarding steps, open employee requests older than the service target, policy questions waiting. Every blocked task gets an action within the day.
 6. Append outcomes to /org/people/reviews/<date>.md; they feed people-report.
+7. Handoffs: read the rows of /org/handoffs.md where your function (/org/people/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: people-kpi-audit
 description: Audit the people team's work and KPIs - sample hires, onboarding records, requests and definitions - and act on the gaps. Use monthly, and whenever a number looks off.
@@ -79,7 +81,7 @@ description: Audit the people team's work and KPIs - sample hires, onboarding re
 3. Onboarding: were accounts, equipment, paperwork and right-to-work checks done before or on day one; was the 30-day check-in held?
 4. Requests and records: answered within the target, consistent with the policy in /org/people/policies/, personal data stored only where it should be and no wider.
 5. Definitions: re-check /org/people/kpis.md against how numbers were computed (time to hire start and end points, regretted attrition denominator, anonymity threshold). Drift is a finding.
-6. Write /org/people/audits/<yyyy-mm>.md with severity (info, warn, critical), the id it concerns and the evidence, without personal details beyond what the finding needs. Act on each; a pattern needing independent assurance becomes a backlog task for the chief naming the Auditor.
+6. Write /org/people/audits/<yyyy-mm>.md with severity (info, warn, critical), the id it concerns and the evidence, without personal details beyond what the finding needs. Act on each; a pattern needing independent assurance becomes a backlog task for the chief titled "Assurance request: <what>" naming the Auditor.
 
 ## skill: people-report
 description: Write the weekly people function report for the chief of staff - RAG status, metrics against target, risks and asks - in aggregate. Use weekly (default Friday) and at quarter end.
@@ -98,6 +100,7 @@ description: Manage the people specialists - brief and assign tasks, review, coa
 3. Review with org_review: accept only when the evidence shows done_when and confidentiality was kept; request_changes with a specific note; escalate after the third round.
 4. Coach in writing: one strength and one change per member per month in /org/people/team.md, from outcomes (candidate response times, first-review acceptance, onboarding completion). A recurring fix becomes a company playbook with org_write_playbook.
 5. Structure is the chief's: write hire, pause or model-change cases (role id such as role:people-recruiter, why, expected effect on a key result, cost per month, alternatives including do nothing, recommendation, confidence) as a backlog task for the chief with org_create_task. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/people/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/people/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.
 
 ## skill: people-operating-cadence
 description: Set and adapt the people unit's rituals to the operating profile and the hiring plan, and keep them written down. Use when the unit starts, when the profile changes, and at each quarter start.

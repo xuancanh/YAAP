@@ -32,6 +32,7 @@ description: Cascade the company's objectives into the finance unit's goal and 2
 5. Record your honest probability for each with org_forecast_outcome (kind probability, subject the key result).
 6. Create the first briefed tasks per key result with org_create_task (assignee a direct report), using the brief in finance-team-management.
 7. Write /org/finance/okrs/<cycle>.md: objective, unit goal, key results table (metric, start, target, owner, source, cadence), the assumptions behind each target and the profile lines that shaped them. Post a three-line summary with org_message.
+8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: finance-month-end-close
 description: Run the month-end close - checklist, calendar, reconciliations, accruals and flux review - and sign off only when every balance is supported. Use on the first working day after month end until the close is signed off.
@@ -47,7 +48,7 @@ description: Run the month-end close - checklist, calendar, reconciliations, acc
 description: Produce the monthly budget-vs-actuals by cost centre, explain variances, and reforecast the year. Use after each close (default WD8) and when a material change hits the plan.
 
 1. Take closed actuals from the close file and the approved budget from /org/finance/budget/<year>.md; never use preliminary numbers without labelling them.
-2. Build the table by cost centre and line: budget, actual, variance (amount and %), year to date. Include the agent workforce: org_costs for spend by objective, agent and task class, and org_forecast for the month-end projection against each envelope.
+2. Build the table by cost centre and line: budget, actual, variance (amount and %), year to date. Include the agent workforce: org_costs for spend by objective, agent and task class, and org_forecast for the month-end projection against each envelope. Save that extract (spend by objective, agent and task class, the projection, the date read) to /org/finance/spend/<yyyy-mm>.md: it is what the FP&A Analyst budgets and reforecasts from, since only you hold the capital reads.
 3. Explain every variance above the threshold: timing (will reverse), permanent (will not), or volume/price. Ask the owning function with org_task_comment or a briefed task when you do not know; do not guess the reason.
 4. Reforecast: roll actuals into the full-year view with the FP&A Analyst, changing only assumptions that evidence supports; show the original budget, the prior forecast and the new forecast side by side.
 5. Save /org/finance/bva/<yyyy-mm>.md. Where spend runs ahead of progress on an objective (org_costs flags it), raise it in finance-report asks; an envelope change is the chief's call, so bring the case as a backlog task, never move it yourself.
@@ -70,6 +71,7 @@ description: Facilitate the finance weekly review - key result check-ins, close 
 4. For each at-risk result decide: replan (new tasks now), descope (proposed to the chief as a backlog task) or accept (write why). In a meeting, record them with meeting_propose_decision and meeting_propose_action.
 5. Review the operating queues briefly: AR overdue over 60 days, bills due this week awaiting human approval, open reconciliation exceptions. Every blocked task gets an action or an escalation within the day.
 6. Append outcomes to /org/finance/reviews/<date>.md; they feed finance-report.
+7. Handoffs: read the rows of /org/handoffs.md where your function (/org/finance/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: finance-kpi-audit
 description: Audit the finance team's work and KPIs - sample journals, reconciliations, invoices and accepted tasks against their support - and act on the gaps. Use monthly after the close, and whenever a number looks too clean.
@@ -79,7 +81,7 @@ description: Audit the finance team's work and KPIs - sample journals, reconcili
 3. Reconciliations: does the reconciled balance tie to the ledger and the statement, are reconciling items explained and dated, are old items aged honestly?
 4. Invoices and collections: does each invoice match its contract terms (price, quantity, period), was dunning applied as policy says, were credit notes approved?
 5. KPI definitions: re-check /org/finance/kpis.md against how numbers were computed this month (org_metric_read for sourced metrics): DSO formula and period, days to close counted in working days, variance on budget or forecast. Drift is a finding.
-6. Write /org/finance/audits/<yyyy-mm>.md: each finding with severity (info, warn, critical), the id it concerns and the evidence. Act on each: request_changes on a task under your review, a coaching comment, a kpis.md fix or a new task. A pattern that needs independent assurance (for example unsupported journals from one member) becomes a backlog task for the chief naming the Auditor, with the evidence.
+6. Write /org/finance/audits/<yyyy-mm>.md: each finding with severity (info, warn, critical), the id it concerns and the evidence. Act on each: request_changes on a task under your review, a coaching comment, a kpis.md fix or a new task. A pattern that needs independent assurance (for example unsupported journals from one member) becomes a backlog task for the chief titled "Assurance request: <what>" naming the Auditor, with the evidence.
 
 ## skill: finance-report
 description: Write the weekly finance function report for the chief of staff - RAG status, metrics against target, cash and runway, risks and asks. Use weekly (default Friday) and at month and quarter end.
@@ -98,6 +100,7 @@ description: Manage the finance specialists - brief and assign tasks, review, co
 3. Keep segregation of duties: the preparer of an entry never reviews it. Review with org_review: accept only when the support shows done_when; request_changes with a specific note otherwise; escalate after the third round.
 4. Coach in writing: one strength and one change per member per month in /org/finance/team.md, from outcomes (first-review acceptance, forecast calibration via org_calibration, close tasks on time). A fix that recurs becomes a company playbook with org_write_playbook.
 5. Structure is the chief's: when close keeps slipping on capacity or a skill is missing, write the hire case (role id such as role:finance-accountant, why, expected effect on a key result, cost per month from the role catalog, alternatives including do nothing, recommendation, confidence) as a backlog task for the chief with org_create_task. Do the same for a pause or a model change. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/finance/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/finance/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.
 
 ## skill: finance-operating-cadence
 description: Set and adapt the finance unit's rituals to the operating profile and the close calendar, and keep them written down. Use when the unit starts, when the profile changes, and at year start.

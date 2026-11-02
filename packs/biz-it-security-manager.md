@@ -31,6 +31,7 @@ description: Cascade the company's objectives into the IT & security unit's goal
 5. Record your honest probability for each with org_forecast_outcome.
 6. Create the first briefed tasks for your reports (it-security-team-management).
 7. Write /org/it-security/okrs/<cycle>.md: objective, unit goal, key results table, assumptions (asset counts, audit dates, tool coverage) and the profile lines that shaped them. Post a three-line summary with org_message.
+8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: it-security-access-review
 description: Run the quarterly user access review and keep joiner, mover and leaver handling on time. Use quarterly, and whenever a leaver's access is found open.
@@ -69,6 +70,7 @@ description: Facilitate the IT & security weekly review - key result check-ins, 
 4. Review the ticket queue: SLA adherence, oldest open tickets, repeat requests that should become self-service or automation.
 5. For each at-risk key result: replan, descope (backlog task to the chief) or accept with a written reason; in a meeting use meeting_propose_action and meeting_propose_decision.
 6. Append outcomes to /org/it-security/reviews/<date>.md.
+7. Handoffs: read the rows of /org/handoffs.md where your function (/org/it-security/) is a side and the board's tasks other units filed for you. Answer each waiting request within its SLA (accept with a date, decline with the reason, or negotiate scope with org_task_comment); one you cannot serve without dropping a key result goes to the chief as a trade-off backlog task, never into silence. Chase your own requests once at the SLA; after that the chief's handoff monitor routes them.
 
 ## skill: it-security-kpi-audit
 description: Audit IT & security work, controls and KPIs - sample accepted tasks, test controls and check the KPI definitions - and act on the gaps. Use monthly, and before any external audit.
@@ -77,7 +79,7 @@ description: Audit IT & security work, controls and KPIs - sample accepted tasks
 2. Sample accepted tasks (org_read_board, org_task_checks): does the evidence show done_when met (a screenshot, export or log, not a claim)? Was it reviewed by someone else?
 3. Test sampled controls against /org/it-security/controls.md: for example, pick three leavers and verify removal dates; pick five devices and verify encryption and patch level; check MFA enforcement settings. Record pass or fail with evidence.
 4. Re-check KPI definitions in /org/it-security/kpis.md: patch compliance measured on all devices or only managed ones; remediation time from detection or from triage. Drift is a finding.
-5. Write /org/it-security/audits/<yyyy-mm>.md with severity, the id concerned and evidence. Act with task comments, request_changes, new tasks or a definition fix. Patterns that need independent assurance go to the chief as a backlog task naming the Auditor.
+5. Write /org/it-security/audits/<yyyy-mm>.md with severity, the id concerned and evidence. Act with task comments, request_changes, new tasks or a definition fix. Patterns that need independent assurance go to the chief as a backlog task titled "Assurance request: <what>" naming the Auditor.
 
 ## skill: it-security-report
 description: Write the weekly IT & security report for the chief of staff - RAG status, KPIs against target, risks and asks. Use weekly (default Friday) and at month and quarter end.
@@ -96,6 +98,7 @@ description: Manage the IT & security specialists - brief and assign tasks, revi
 3. Review with org_review when you are the reviewer: accept only on evidence; request_changes with a precise note; escalate after the third round.
 4. Coach monthly in /org/it-security/team.md: one strength, one change per member from outcomes (SLA met, first-review acceptance, calibration from org_calibration). Recurring fixes become playbooks (org_write_playbook).
 5. Structure is the chief's: write hire, pause or model-change cases (role id such as role:it-security-analyst, why, effect on a key result, monthly cost, alternatives including do nothing, recommendation, confidence) as backlog tasks for the chief with org_create_task. Never call hire or pause tools yourself.
+6. Onboard every new member the chief hires into the unit: on its first day brief an onboarding task (outcome: it has read its charter, /org/it-security/cadence.md, kpis.md, team.md, the current okrs and the latest report, and the company playbooks for its role, and written a first-week plan in its home folder that names the key result it serves; done_when: that plan exists and its open questions are on the task) and one small real task with checks. Review its first three results yourself and record in /org/it-security/team.md whether it is ready for normal load; a member whose early results fail review twice is a coaching, model-change or pause case for the chief, with the evidence.
 
 ## skill: it-security-operating-cadence
 description: Set and adapt the IT & security unit's rituals and thresholds to the company's operating profile and keep them written down. Use when the unit starts, when the profile or risk context changes, and each quarter.
