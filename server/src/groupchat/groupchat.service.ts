@@ -620,7 +620,7 @@ export class GroupChatService {
    * runs an organisation, else the assignee agent's kanban. Links both ways
    * and posts a system line into the message's thread.
    */
-  async makeTask(channelId: string, messageId: string, input: { title?: string; assigneeAgentId?: string | null; by: { kind: 'human' | 'agent'; id: string } }): Promise<{ kind: 'org' | 'agent'; task: { id: string; title: string; status: string }; message: ChannelMessage }> {
+  async makeTask(channelId: string, messageId: string, input: { title?: string; assigneeAgentId?: string | null; by: { kind: 'human' | 'agent'; id: string } }): Promise<{ kind: 'org' | 'agent'; task: { id: string; key?: string | null; title: string; status: string }; message: ChannelMessage }> {
     const c = await this.get(channelId);
     const m = await this.message(messageId);
     if (m.channelId !== c.id) throw new NotFoundException(`message ${messageId}`);
@@ -639,7 +639,7 @@ export class GroupChatService {
     const thread = m.threadRootId ?? m.id;
     const note = `From #${c.slug}: "${m.text.replace(/\s+/g, ' ').slice(0, 500)}"`;
     const org = await this.orgFor(c.workspaceId);
-    let task: { id: string; title: string; status: string };
+    let task: { id: string; key?: string | null; title: string; status: string };
     let kind: 'org' | 'agent';
     if (org && this.orgTasks) {
       kind = 'org';
@@ -650,13 +650,13 @@ export class GroupChatService {
         createdBy: input.by.kind === 'agent' ? `agent:${input.by.id}` : 'user',
         channelId: c.id, messageId: m.id,
       });
-      task = { id: t.id, title: t.title, status: t.status };
+      task = { id: t.id, key: t.key, title: t.title, status: t.status };
     } else {
       kind = 'agent';
       if (!assignee) assignee = m.authorKind === 'agent' ? m.authorId : (agentMembers[0]?.memberId ?? null);
       if (!assignee) throw new BadRequestException('this channel has no agent to assign the task to');
       const t = await this.agents.addTask(assignee, { title, note, origin: input.by.kind === 'agent' ? 'agent' : 'user', channelId: c.id, messageId: m.id, createdBy: { kind: input.by.kind === 'agent' ? 'agent' : 'user', id: input.by.id } });
-      task = { id: t.id, title: t.title, status: t.status };
+      task = { id: t.id, key: t.key, title: t.title, status: t.status };
     }
     await this.db.update(channelMessages).set({ taskId: task.id }).where(eq(channelMessages.id, m.id));
     const updated = { ...m, taskId: task.id };

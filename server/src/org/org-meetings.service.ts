@@ -417,7 +417,7 @@ export class OrgMeetingsService {
     }
     const unowned = board.filter((t) => !t.assigneeAgentId && !['done', 'cancelled'].includes(t.status));
     if (unowned.length) lines.push('', `Unowned on this board: ${unowned.map(short).join('; ')}`);
-    if (reassigned.length) lines.push(`Blocked without an owner → ${nm(unit.leadAgentId)} now owns: ${reassigned.map((id) => `[${id.slice(0, 8)}]`).join(', ')}.`);
+    if (reassigned.length) lines.push(`Blocked without an owner → ${nm(unit.leadAgentId)} now owns: ${reassigned.map((id) => { const x = all.find((t) => t.id === id); return x ? taskRef(x) : `[${id.slice(0, 8)}]`; }).join(', ')}.`);
     return { agenda: lines.join('\n'), reassigned };
   }
 

@@ -42,9 +42,9 @@ export function taskRef(t: { id: string; key?: string | null }): string {
   return t.key || t.id.slice(0, 8);
 }
 
-/** `ENG-12 Title` — the one-line name of a task everywhere. */
+/** `ENG-12 Title` — the one-line name of a task everywhere (the bare title for a task from before keys). */
 export function taskLabel(t: { id: string; key?: string | null; title: string }): string {
-  return `${taskRef(t)} ${t.title}`;
+  return t.key ? `${t.key} ${t.title}` : t.title;
 }
 
 // ---- derivation ----
@@ -84,19 +84,21 @@ export function functionOfTitle(title: string | null | undefined): string | null
   return null;
 }
 
-const STOP = new Set(['inc', 'llc', 'ltd', 'co', 'corp', 'corporation', 'company', 'gmbh', 'plc', 'the', 'of', 'and', 'for', 's', 'team', 'unit', 'group', 'head', 'lead', 'manager', 'director', 'chief', 'vp']);
+const STOP = new Set(['inc', 'llc', 'ltd', 'co', 'corp', 'corporation', 'company', 'gmbh', 'plc', 'the', 'of', 'and', 'for', 's', 'team', 'unit', 'group']);
+/** Role words dropped from a lead's title (Head of Research → RES), not from handles (evidence-lead → EVL). */
+const ROLE_WORDS = new Set(['head', 'lead', 'manager', 'director', 'chief', 'vp', 'senior', 'principal']);
 
 /**
  * A prefix from a name: one word ≤ 4 letters whole (Jong → JONG), a longer
  * one its first three (Research → RES); two words the first two letters of
  * the first and the first of the second (evidence-lead → EVL); three or more
  * the initials, at most four (Acme Widget Works → AWW). Filler words (Inc,
- * team, head, of…) drop out unless nothing else is left. Null when the name
+ * team, of…; and head, lead, manager… in a lead's title) drop out unless nothing else is left. Null when the name
  * has no letters.
  */
-export function prefixFromName(name: string | null | undefined): string | null {
-  const all = (name ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  const kept = all.filter((w) => !STOP.has(w));
+export function prefixFromName(name: string | null | undefined, opts: { dropRoleWords?: boolean } = {}): string | null {
+  const all = (name ?? '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const kept = all.filter((w) => !STOP.has(w) && !(opts.dropRoleWords && ROLE_WORDS.has(w)));
   const words = (kept.length ? kept : all).map((w, i) => (i === 0 ? w.replace(/^[0-9]+/, '') : w)).filter(Boolean);
   if (!words.length || !/^[a-z]/.test(words[0])) return null;
   let p: string;
@@ -115,7 +117,7 @@ export function unitPrefixBase(u: { root: boolean; orgName?: string | null; lead
   if (u.root) return prefixFromName(u.orgName) ?? 'CO';
   const fn = functionOfTitle(u.leadTitle);
   if (fn && FUNCTION_PREFIX[fn]) return FUNCTION_PREFIX[fn];
-  return prefixFromName(u.leadTitle) ?? prefixFromName(u.leadName) ?? prefixFromName(u.unitName) ?? 'TEAM';
+  return prefixFromName(u.leadTitle, { dropRoleWords: true }) ?? prefixFromName(u.leadName) ?? prefixFromName(u.unitName) ?? 'TEAM';
 }
 
 /** The agent's handle: the last segment of `agents/<handle>`, else its slugified name. */
@@ -235,11 +237,11 @@ export async function nextTaskNumber(q: KeyQueryable, scopeId: string, prefix: s
   return Number(n);
 }
 
-interface UnitRow { id: string; orgId: string; parentUnitId: string | null; name: string; taskKey: string | null; accountId: string; workspaceId: string; orgName: string; leadTitle: string | null; leadName: string | null }
+interface UnitRow { id: string; orgId: string; parentUnitId: string | null; leadAgentId: string; chiefId: string | null; name: string; taskKey: string | null; accountId: string; workspaceId: string; orgName: string; leadTitle: string | null; leadName: string | null }
 
 async function unitRow(q: KeyQueryable, unitId: string): Promise<UnitRow | null> {
   return ((await q.query(`
-    SELECT u."id", u."orgId", u."parentUnitId", u."name", u."taskKey", u."accountId", o."workspaceId", o."name" AS "orgName", m."title" AS "leadTitle", a."name" AS "leadName"
+    SELECT u."id", u."orgId", u."parentUnitId", u."leadAgentId", o."chiefOfStaffAgentId" AS "chiefId", u."name", u."taskKey", u."accountId", o."workspaceId", o."name" AS "orgName", m."title" AS "leadTitle", a."name" AS "leadName"
       FROM org_units u JOIN organizations o ON o."id" = u."orgId"
       LEFT JOIN org_members m ON m."orgId" = u."orgId" AND m."agentId" = u."leadAgentId"
       LEFT JOIN agents a ON a."id" = u."leadAgentId"
@@ -252,7 +254,8 @@ export async function ensureUnitPrefix(q: KeyQueryable, unitId: string): Promise
   if (!u) return null;
   const scopeId = u.workspaceId || `org:${u.orgId}`;
   if (u.taskKey) return { prefix: u.taskKey, scopeId };
-  const root = u.parentUnitId === null;
+  // The root is the chief's unit (a new unit's parent is set after it is made).
+  const root = u.chiefId ? u.leadAgentId === u.chiefId : u.parentUnitId === null;
   const prefix = await claimPrefix(q, { kind: 'unit', id: u.id, scopeId, accountId: u.accountId, base: unitPrefixBase({ root, orgName: u.orgName, leadTitle: u.leadTitle, leadName: u.leadName, unitName: u.name }), alsoOwnedBy: root ? [u.orgId] : [] });
   const set = await q.query(`UPDATE org_units SET "taskKey" = $2 WHERE "id" = $1 AND ("taskKey" IS NULL OR "taskKey" = '') RETURNING "taskKey"`, [u.id, prefix]);
   if (set.rows.length) return { prefix, scopeId };

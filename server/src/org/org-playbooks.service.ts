@@ -138,7 +138,7 @@ export class OrgPlaybooksService {
    * task opens with a reviewer other than the author; `syncReviews` activates
    * the version when that task is accepted.
    */
-  async write(orgId: string, input: { title: string; body: string; roles?: string[]; why: string; authorAgentId: string; sourceTaskId?: string | null }): Promise<{ playbook: OrgPlaybook; task: { id: string; reviewerAgentId: string | null }; created: boolean }> {
+  async write(orgId: string, input: { title: string; body: string; roles?: string[]; why: string; authorAgentId: string; sourceTaskId?: string | null }): Promise<{ playbook: OrgPlaybook; task: { id: string; key?: string | null; reviewerAgentId: string | null }; created: boolean }> {
     const org = await this.org.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 120);
     const body = (input.body ?? '').trim().slice(0, BODY_CAP);
@@ -196,7 +196,7 @@ export class OrgPlaybooksService {
     await this.db.update(orgPlaybooks).set({ reviewTaskId: task.id, updatedAt: nowIso() }).where(eq(orgPlaybooks.id, row.id));
     await this.audit.append(orgId, { actor: `agent:${input.authorAgentId}`, action: existing ? 'playbook_revise' : 'playbook_write', refType: 'playbook', refId: row.id, payload: { title, name, version: row.version, roles, reviewTaskId: task.id, reviewerAgentId: reviewed.reviewerAgentId, why, chars: body.length } });
     this.mirror?.playbookChanged(orgId, row.id);
-    return { playbook: await this.get(orgId, row.id), task: { id: task.id, reviewerAgentId: reviewed.reviewerAgentId }, created: !existing };
+    return { playbook: await this.get(orgId, row.id), task: { id: task.id, key: task.key, reviewerAgentId: reviewed.reviewerAgentId }, created: !existing };
   }
 
   /** Playbooks in review whose task closed: `done` activates the version,
