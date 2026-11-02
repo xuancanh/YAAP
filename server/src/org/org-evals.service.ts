@@ -56,6 +56,7 @@ import { OrgPlaybooksService, type OrgPlaybook } from './org-playbooks.service';
 import { describeCheck, normalizeChecks, parseChecks, selectValue, type Check } from './org-checks';
 import { isTier, parseRouting, tierModel, type ModelTier } from './org-routing';
 import { govTunable } from './governance-tunables';
+import { OrgMirrorService } from './org-mirror.service';
 
 export type OrgEvalCase = typeof orgEvalCases.$inferSelect;
 export type OrgEvalRun = typeof orgEvalRuns.$inferSelect;
@@ -129,6 +130,8 @@ export class OrgEvalsService {
     private readonly runtime: OrgRuntimeService,
     private readonly approvals: OrgApprovalsService,
     @Optional() private readonly playbooks?: OrgPlaybooksService,
+    /** Optional: mirrors each role's golden set and runs to /org/evals/<role>.md. */
+    @Optional() private readonly mirror?: OrgMirrorService,
   ) {
     tasks.onAccepted((ev) => this.harvest(ev.orgId, ev.task, ev.by, ev.rounds).then(() => undefined));
     approvals.onBeforeApply('charter_change', (orgId, a, payload) => this.gateCard(orgId, a, payload));
@@ -310,11 +313,16 @@ export class OrgEvalsService {
   private async insertRun(orgId: string, roleKey: string, kind: 'candidate' | 'baseline', candidate: Candidate, hash: string, caseIds: string[], requestedBy: string): Promise<OrgEvalRun> {
     const row: OrgEvalRun = { accountId: currentAccountId(), id: newId(), orgId, roleKey, kind, candidate: JSON.stringify(candidate).slice(0, 60_000), versionHash: hash, cases: JSON.stringify(caseIds), results: '[]', passRate: null, baselinePassRate: null, baselineRunId: null, verdict: '', usd: 0, requestedBy: requestedBy.slice(0, 120), startedAt: nowIso(), endedAt: null, status: 'running' };
     await this.db.insert(orgEvalRuns).values(row);
+    if (kind === 'candidate') this.mirror?.evalsChanged(orgId, roleKey);
     return row;
   }
 
   private async finishRun(id: string, patch: { results: CaseResult[]; passRate: number | null; baselinePassRate: number | null; baselineRunId: string | null; verdict: EvalVerdict | ''; usd: number; status: 'done' | 'failed' }): Promise<void> {
     await this.db.update(orgEvalRuns).set({ results: JSON.stringify(patch.results).slice(0, 60_000), passRate: patch.passRate, baselinePassRate: patch.baselinePassRate, baselineRunId: patch.baselineRunId, verdict: patch.verdict, usd: Number(patch.usd.toFixed(6)), status: patch.status, endedAt: nowIso() }).where(eq(orgEvalRuns.id, id));
+    if (this.mirror) {
+      const r = (await this.db.select({ orgId: orgEvalRuns.orgId, roleKey: orgEvalRuns.roleKey }).from(orgEvalRuns).where(eq(orgEvalRuns.id, id)).limit(1)).at(0);
+      if (r) this.mirror.evalsChanged(r.orgId, r.roleKey);
+    }
   }
 
   async getRun(orgId: string, id: string): Promise<OrgEvalRun> {

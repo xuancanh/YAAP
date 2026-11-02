@@ -65,6 +65,7 @@ import { OrgCapitalService, type PlanAction } from './org-capital.service';
 import { OrgIncidentsService } from './org-incidents.service';
 import { OrgBriefService } from './org-brief.service';
 import { OrgAnnouncer } from './org-announcer';
+import { OrgMirrorService } from './org-mirror.service';
 import { OrgPredictionsService } from './org-predictions.service';
 import { isTier, MODEL_TIERS, parseRouting } from './org-routing';
 import { TUNABLES, checkTunable, tunable } from './org-tunables';
@@ -176,6 +177,8 @@ export class OrgExperimentsService implements ToolProviderHook, OnModuleInit, On
     @Optional() private readonly meetingRuntime?: OrgMeetingRuntime,
     @Optional() private readonly announcer?: OrgAnnouncer,
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: mirrors each experiment to /org/experiments/ (docs/filesystem.md). */
+    @Optional() private readonly mirror?: OrgMirrorService,
   ) {
     if (!this.enabled()) return;
     this.turns?.addToolProvider(this);
@@ -302,6 +305,7 @@ export class OrgExperimentsService implements ToolProviderHook, OnModuleInit, On
       startedAt: null, endsAt: null, lastCheckAt: null, decidedAt: null, decisionId: null, createdAt: now,
     };
     await this.db.insert(orgExperiments).values(row);
+    this.mirror?.experimentChanged(orgId, row.id);
     await this.audit.append(orgId, { actor, action: 'experiment_propose', refType: 'experiment', refId: row.id, payload: { title, changeKind, apply, metricSourceId, direction, expectedEffect, effectKind, windowDays, design, revertRule } });
     // The proposer's expected effect is a forecast in the ledger (docs/experiments.md §2).
     const forecaster = this.agentOf(org, actor);
@@ -452,6 +456,7 @@ export class OrgExperimentsService implements ToolProviderHook, OnModuleInit, On
         requestedBy: actor, recommendation: row.hypothesis.slice(0, 600),
       });
       await this.db.update(orgExperiments).set({ approvalId: a.id }).where(eq(orgExperiments.id, row.id));
+      this.mirror?.experimentChanged(orgId, row.id);
       return { row: await this.get(orgId, row.id), how: 'approval', approvalId: a.id };
     }
     if (STRUCTURAL.has(row.changeKind)) {
@@ -490,6 +495,7 @@ export class OrgExperimentsService implements ToolProviderHook, OnModuleInit, On
       const revert = await this.inverseOf(org, row.changeKind, fresh);
       const card = await this.changeCard(org, row, fresh, 'apply');
       await this.db.update(orgExperiments).set({ changeApprovalId: card, approvalId: opts.approvalId ?? row.approvalId, baseline: JSON.stringify(baseline), change: JSON.stringify({ apply: fresh, revert }) }).where(eq(orgExperiments.id, row.id));
+      this.mirror?.experimentChanged(orgId, row.id);
       await this.audit.append(orgId, { actor, action: 'experiment_change_card', refType: 'experiment', refId: row.id, payload: { approvalId: card, changeKind: row.changeKind } });
       return this.get(orgId, row.id);
     }
@@ -499,6 +505,7 @@ export class OrgExperimentsService implements ToolProviderHook, OnModuleInit, On
       status: 'running', startedAt: now.toISOString(), endsAt, lastCheckAt: now.toISOString(), baseline: JSON.stringify(baseline),
       change: JSON.stringify({ apply: fresh, revert }), approvalId: opts.approvalId ?? row.approvalId,
     }).where(eq(orgExperiments.id, row.id));
+    this.mirror?.experimentChanged(orgId, row.id);
     await this.announceStart(org, row, baseline, endsAt, actor);
     return this.get(orgId, row.id);
   }
@@ -515,6 +522,7 @@ export class OrgExperimentsService implements ToolProviderHook, OnModuleInit, On
     const revert = (change.revert as Record<string, unknown> | undefined) ?? await this.inverseOf(org, row.changeKind, apply);
     const endsAt = new Date(now.getTime() + row.windowDays * DAY).toISOString();
     await this.db.update(orgExperiments).set({ status: 'running', startedAt: now.toISOString(), endsAt, lastCheckAt: now.toISOString(), baseline: JSON.stringify(baseline), change: JSON.stringify({ apply, revert }) }).where(eq(orgExperiments.id, row.id));
+    this.mirror?.experimentChanged(orgId, row.id);
     await this.announceStart(org, row, baseline, endsAt, actor);
     return this.get(orgId, row.id);
   }
@@ -686,6 +694,7 @@ export class OrgExperimentsService implements ToolProviderHook, OnModuleInit, On
     if (row.extensions < experimentTunable(org, 'experiments.maxExtensions')) {
       const endsAt = new Date(Date.parse(row.endsAt ?? now.toISOString()) + row.windowDays * DAY).toISOString();
       await this.db.update(orgExperiments).set({ status: 'extended', extensions: row.extensions + 1, endsAt, result: JSON.stringify({ ...result, note: 'inconclusive — extended once by its window' }) }).where(eq(orgExperiments.id, row.id));
+      this.mirror?.experimentChanged(orgId, row.id);
       await this.audit.append(orgId, { actor, action: 'experiment_extend', refType: 'experiment', refId: row.id, payload: { delta: v.delta, threshold: v.threshold, n: window.n, baselineN: baseline.n, endsAt, extensions: row.extensions + 1 } });
       if (org.chiefOfStaffAgentId) await this.agents.addEvent(org.chiefOfStaffAgentId, { kind: 'org_experiment', title: `Experiment extended: "${row.title}" — inconclusive so far (delta ${fmt(v.delta)}, noise ±${fmt(v.threshold)}, n=${window.n}); new end ${endsAt.slice(0, 10)}`.slice(0, 200), payload: JSON.stringify({ orgId, experimentId: row.id, status: 'extended' }), origin: 'loop' }).catch(() => undefined);
       return this.get(orgId, row.id);
@@ -714,6 +723,7 @@ export class OrgExperimentsService implements ToolProviderHook, OnModuleInit, On
       decidedBy: actor === 'system' ? 'experiment' : actor, unitId: row.unitId, refType: 'experiment', refId: row.id,
     });
     await this.db.update(orgExperiments).set({ status, result: JSON.stringify(result), decidedAt: now.toISOString(), decisionId: decision?.id ?? null }).where(eq(orgExperiments.id, row.id));
+    this.mirror?.experimentChanged(org.id, row.id);
     await this.audit.append(org.id, { actor, action: `experiment_${status === 'kept' ? 'keep' : status === 'reverted' ? 'revert' : 'abandon'}`, refType: 'experiment', refId: row.id, payload: { verdict: result.verdict, delta: result.delta, relative: result.relative, n: result.n, threshold: result.threshold, met: result.met, revertApprovalId: result.revertApprovalId ?? null } });
     if (org.chiefOfStaffAgentId) {
       await this.agents.addEvent(org.chiefOfStaffAgentId, { kind: 'org_experiment', title: `Experiment ${status}: "${row.title}" — ${result.verdict}`.slice(0, 200), body: numbers.slice(0, 1_000), payload: JSON.stringify({ orgId: org.id, experimentId: row.id, status, verdict: result.verdict }), origin: 'loop' }).catch(() => undefined);
@@ -767,6 +777,7 @@ export class OrgExperimentsService implements ToolProviderHook, OnModuleInit, On
 
   private async abandon(orgId: string, row: OrgExperiment, actor: string, note: string): Promise<OrgExperiment> {
     await this.db.update(orgExperiments).set({ status: 'abandoned', decidedAt: nowIso(), result: JSON.stringify({ note }) }).where(eq(orgExperiments.id, row.id));
+    this.mirror?.experimentChanged(orgId, row.id);
     await this.audit.append(orgId, { actor, action: 'experiment_abandon', refType: 'experiment', refId: row.id, payload: { note: note.slice(0, 300), status: row.status } });
     await this.predictions?.resolveSubject(orgId, 'experiment', row.id, this.now()).catch(() => undefined);
     return this.get(orgId, row.id);

@@ -50,6 +50,7 @@ import { amountUsdOf, isMoneyCard, reversibilityOf } from './decision-cards';
 import { ruleFor, type SelfChange } from './boundary';
 import { roleKeyOf } from './org-evals.service';
 import { govTunable } from './governance-tunables';
+import { OrgMirrorService } from './org-mirror.service';
 
 export type OrgDelegation = typeof orgDelegations.$inferSelect;
 export type OrgValueEvent = typeof orgValueEvents.$inferSelect;
@@ -114,7 +115,10 @@ export class OrgSeatService {
     @Optional() private readonly signals?: OrgSignalsService,
     @Optional() private readonly units?: OrgUnitsService,
     @Optional() private readonly capital?: OrgCapitalService,
+    /** Optional: mirrors the outcomes table to /org/outcomes.md (docs/filesystem.md). */
+    @Optional() private readonly mirror?: OrgMirrorService,
   ) {
+    mirror?.setOutcomesSource((orgId) => this.outcomes(orgId));
     approvals.onCreated((orgId, a) => this.onCard(orgId, a));
     approvals.setDelegateResolver(async (orgId, a, who) => ((await this.isHumanDelegate(orgId, a, who)) ? `delegate:human:${who}` : null));
     brief?.addSection({ position: 'outcomes', lines: (orgId, _since, now) => this.outcomeLines(orgId, now) });
@@ -286,6 +290,7 @@ export class OrgSeatService {
       await this.audit.append(orgId, { actor, action: 'goal_value_set', refType: 'goal', refId: g.id, payload: set });
     }
     await this.syncValue(orgId).catch(() => undefined);
+    this.mirror?.outcomesChanged(orgId);
     return this.org.goal(orgId, g.id);
   }
 
@@ -324,6 +329,8 @@ export class OrgSeatService {
         n++;
       }
     }
+    // New value recorded: refresh the mirror (outcomes() re-syncs, finds nothing new, and stops there).
+    if (n > 0) this.mirror?.outcomesChanged(orgId);
     return n;
   }
 

@@ -45,6 +45,7 @@ import { OrgBriefService } from './org-brief.service';
 import { registerCalibrationProvider } from './calibration-registry';
 import { experimentTunable } from './experiment-tunables';
 import { TUNABLES, tunable } from './org-tunables';
+import { OrgMirrorService } from './org-mirror.service';
 
 export type OrgPrediction = typeof orgPredictions.$inferSelect;
 export const SUBJECT_KINDS = ['task', 'key_result', 'experiment', 'hire', 'other'] as const;
@@ -114,6 +115,8 @@ export class OrgPredictionsService implements ToolProviderHook, OnModuleInit, On
     @Optional() private readonly units?: OrgUnitsService,
     @Optional() private readonly brief?: OrgBriefService,
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: an experiment's forecasts show in its /org/experiments/ mirror. */
+    @Optional() private readonly mirror?: OrgMirrorService,
   ) {
     if (!this.enabled()) return;
     this.turns?.addToolProvider(this);
@@ -184,6 +187,7 @@ export class OrgPredictionsService implements ToolProviderHook, OnModuleInit, On
       origin: (input.origin ?? 'tool').slice(0, 20), resolvesAt, outcome: '{}', resolvedAt: null, score: null, status: 'open', createdAt: nowIso(),
     };
     await this.db.insert(orgPredictions).values(row);
+    if (subjectKind === 'experiment' && subjectId) this.mirror?.experimentChanged(orgId, subjectId);
     await this.audit.append(orgId, { actor: `agent:${input.agentId}`, action: 'forecast', refType: 'prediction', refId: row.id, payload: { subjectKind, subjectId, forecast, resolvesAt, origin: row.origin } });
     return row;
   }
@@ -289,6 +293,7 @@ export class OrgPredictionsService implements ToolProviderHook, OnModuleInit, On
     const status = score === null ? 'void' : 'resolved';
     const out = { ...outcome, ...(signed !== undefined ? { signed: round(signed) } : {}) };
     await this.db.update(orgPredictions).set({ status, score, outcome: JSON.stringify(out), resolvedAt: nowIso() }).where(eq(orgPredictions.id, p.id));
+    if (p.subjectKind === 'experiment' && p.subjectId) this.mirror?.experimentChanged(p.orgId, p.subjectId);
     await this.audit.append(p.orgId, { actor: 'system', action: status === 'resolved' ? 'forecast_resolved' : 'forecast_void', refType: 'prediction', refId: p.id, payload: { agentId: p.agentId, subjectKind: p.subjectKind, subjectId: p.subjectId, score, outcome: out } });
     return status;
   }

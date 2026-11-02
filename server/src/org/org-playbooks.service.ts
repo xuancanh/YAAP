@@ -30,6 +30,7 @@ import { SkillsService, SKILL_TOOL_PREFIX } from '../skills/skills.service';
 import { OrgService, type OrgMember } from './org.service';
 import { OrgTasksService } from './org-tasks.service';
 import { OrgAuditService } from './org-audit.service';
+import { OrgMirrorService } from './org-mirror.service';
 import { OrgAnnouncer } from './org-announcer';
 
 export type OrgPlaybook = typeof orgPlaybooks.$inferSelect;
@@ -75,6 +76,8 @@ export class OrgPlaybooksService {
     /** Optional: without it a playbook is a record with no callable skill. */
     @Optional() private readonly skills?: SkillsService,
     @Optional() private readonly announcer?: OrgAnnouncer,
+    /** Optional: mirrors each playbook to /org/playbooks/<name>.md (docs/filesystem.md). */
+    @Optional() private readonly mirror?: OrgMirrorService,
   ) {}
 
   // ---- reads ----
@@ -192,6 +195,7 @@ export class OrgPlaybooksService {
     const reviewed = await this.tasks.requestReview(orgId, task.id, { note: `Playbook "${title}" v${row.version} — ${why}`, fromAgentId: input.authorAgentId, agentModels: models });
     await this.db.update(orgPlaybooks).set({ reviewTaskId: task.id, updatedAt: nowIso() }).where(eq(orgPlaybooks.id, row.id));
     await this.audit.append(orgId, { actor: `agent:${input.authorAgentId}`, action: existing ? 'playbook_revise' : 'playbook_write', refType: 'playbook', refId: row.id, payload: { title, name, version: row.version, roles, reviewTaskId: task.id, reviewerAgentId: reviewed.reviewerAgentId, why, chars: body.length } });
+    this.mirror?.playbookChanged(orgId, row.id);
     return { playbook: await this.get(orgId, row.id), task: { id: task.id, reviewerAgentId: reviewed.reviewerAgentId }, created: !existing };
   }
 
@@ -213,13 +217,13 @@ export class OrgPlaybooksService {
             await this.db.update(orgPlaybooks).set({ status: 'draft', updatedAt: nowIso() }).where(eq(orgPlaybooks.id, p.id));
             await this.audit.append(orgId, { actor: 'system', action: 'playbook_blocked_by_eval', refType: 'playbook', refId: p.id, payload: { version: p.version, summary: g.summary.slice(0, 400) } });
             if (p.ownerAgentId) await this.agents.addEvent(p.ownerAgentId, { kind: 'info', title: `Playbook "${p.title}" v${p.version} was not activated: it regressed in evals`, body: g.summary.slice(0, 1_000), payload: JSON.stringify({ orgId, playbookId: p.id }), origin: 'loop' }).catch(() => undefined);
-            out.push({ id: p.id, status: 'draft' });
+            out.push({ id: p.id, status: 'draft' }); this.mirror?.playbookChanged(orgId, p.id);
             continue;
           }
         }
         await this.activate(orgId, p.id, `review:${t.reviewerAgentId ?? 'user'}`); out.push({ id: p.id, status: 'active' });
       }
-      else if (t.status === 'cancelled') { await this.db.update(orgPlaybooks).set({ status: 'draft', updatedAt: nowIso() }).where(eq(orgPlaybooks.id, p.id)); await this.audit.append(orgId, { actor: 'system', action: 'playbook_review_cancelled', refType: 'playbook', refId: p.id, payload: { taskId: t.id } }); out.push({ id: p.id, status: 'draft' }); }
+      else if (t.status === 'cancelled') { await this.db.update(orgPlaybooks).set({ status: 'draft', updatedAt: nowIso() }).where(eq(orgPlaybooks.id, p.id)); await this.audit.append(orgId, { actor: 'system', action: 'playbook_review_cancelled', refType: 'playbook', refId: p.id, payload: { taskId: t.id } }); out.push({ id: p.id, status: 'draft' }); this.mirror?.playbookChanged(orgId, p.id); }
     }
     return out;
   }
@@ -244,6 +248,7 @@ export class OrgPlaybooksService {
     const owner = p.ownerAgentId ? await this.agents.get(p.ownerAgentId).catch(() => null) : null;
     await this.announcer?.announce(org.workspaceId, `Playbook active: "${p.title}" v${p.version} (${SKILL_TOOL_PREFIX}${p.name.replace(/-/g, '_')})${owner ? ` by ${owner.name}` : ''}${parseRoles(p.roles).length ? ` — for ${parseRoles(p.roles).join(', ')}` : ''}.`).catch(() => undefined);
     if (p.ownerAgentId) await this.agents.addEvent(p.ownerAgentId, { kind: 'info', title: `Playbook "${p.title}" v${p.version} is active`, body: `Reviewed and accepted; its skill is callable for ${parseRoles(p.roles).join(', ') || 'every role'}.`, payload: JSON.stringify({ orgId, playbookId: id }), origin: 'loop' }).catch(() => undefined);
+    this.mirror?.playbookChanged(orgId, id);
     return this.get(orgId, id);
   }
 
@@ -252,6 +257,7 @@ export class OrgPlaybooksService {
     if (p.skillId) await this.db.update(skills).set({ enabled: 0 }).where(eq(skills.id, p.skillId));
     await this.db.update(orgPlaybooks).set({ status: 'retired', updatedAt: nowIso() }).where(eq(orgPlaybooks.id, id));
     await this.audit.append(orgId, { actor, action: 'playbook_retire', refType: 'playbook', refId: id, payload: { name: p.name, version: p.version, why: why.slice(0, 300) } });
+    this.mirror?.playbookChanged(orgId, id);
     return this.get(orgId, id);
   }
 
@@ -288,6 +294,7 @@ export class OrgPlaybooksService {
       const rated = s.upCount + s.downCount;
       const o: PlaybookOutcomes = { uses: s.useCount, up: s.upCount, down: s.downCount, successRate: rated > 0 ? s.upCount / rated : null, lastUsedAt: s.lastUsedAt, refreshedAt: nowIso() };
       await this.db.update(orgPlaybooks).set({ outcomes: JSON.stringify(o) }).where(eq(orgPlaybooks.id, p.id));
+      this.mirror?.playbookChanged(orgId, p.id);
       n++;
     }
     return n;

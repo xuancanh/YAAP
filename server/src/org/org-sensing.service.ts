@@ -60,6 +60,7 @@ import { OrgUnitsService } from './org-units.service';
 import { OrgRuntimeService } from './org-runtime.service';
 import { sensingTunable } from './sensing-tunables';
 import { describeCheck, normalizeConnectionQuery, selectNumber, selectValue, serviceOfQuery, type Check, type CheckStatus, type ConnectionQuerySpec } from './org-checks';
+import { OrgMirrorService } from './org-mirror.service';
 
 export type MetricSource = typeof orgMetricSources.$inferSelect;
 export type MetricSample = typeof orgMetricSamples.$inferSelect;
@@ -151,6 +152,8 @@ export class OrgSensingService implements ToolProviderHook, OnModuleInit, OnModu
     @Optional() private readonly connections?: ConnectionsService,
     @Optional() private readonly storage?: StorageService,
     @Optional() private readonly accounts?: AccountsService,
+    /** Optional: mirrors the sources and their latest readings to /org/metrics.md. */
+    @Optional() private readonly mirror?: OrgMirrorService,
   ) {
     if (!this.enabled()) return;
     this.turns?.addToolProvider(this);
@@ -408,6 +411,7 @@ export class OrgSensingService implements ToolProviderHook, OnModuleInit, OnModu
       for (const s of (await this.signals.list(org.id, { kind: 'metric_stale' })).filter((x) => x.refId === src.id && x.status !== 'resolved')) await this.signals.resolve(org.id, s.id, 'system').catch(() => undefined);
     }
     await this.measureKeyResults(org.id, src.id, latest);
+    this.mirror?.metricsChanged(org.id);
     return row;
   }
 
