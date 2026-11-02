@@ -41,6 +41,7 @@ import { setAddressLookup } from '../server/src/common/url-guard';
 import { SkillsService } from '../server/src/skills/skills.service';
 import { WorkspaceFs } from '../server/src/files/workspace-fs.service';
 import { workspaceFileKey } from '../server/src/storage/storage.keys';
+import { OrgLayoutService } from '../server/src/org/org-layout.service';
 import { CHIEF_PACK_ID } from '../server/src/org/chief-os';
 
 setAddressLookup(async () => [{ address: '93.184.216.34', family: 4 }]);
@@ -71,7 +72,8 @@ async function setup() {
   const orgs = new OrgController(org, tasks, approvals, audit, brief, runtime, config, units, undefined, undefined, undefined, intent);
   const roles = new OrgRolesService();
   const skills = new SkillsService(db);
-  const bootstrap = new OrgBootstrapService(org, workspaces, agents, mode, approvals, runtime, audit, intent, units, meetings, roles, skills, stub, new WorkspaceFs(stub, db));
+  const fs = new WorkspaceFs(stub, db);
+  const bootstrap = new OrgBootstrapService(org, workspaces, agents, mode, approvals, runtime, audit, intent, units, meetings, roles, skills, stub, fs, new OrgLayoutService(db, fs));
   const controller = new WorkspaceOrgController(mode, orgs, config, meetings, undefined, undefined, undefined, undefined, undefined, bootstrap);
   const ws = (await workspaces.list())[0];
   return { db, agents, workspaces, audit, org, units, intent, approvals, meetings, runtime, mode, bootstrap, controller, ws, announced, skills, storage: stub, files: map };
@@ -319,7 +321,10 @@ test('the chief of staff\'s operating system: derived from the profile, written 
   const os = s.files.get(workspaceFileKey(s.ws.id, 'org/operating-system.md'))!.toString();
   assert.match(os, /Stage: \*\*early\*\*/); assert.match(os, /Culture type: \*\*adhocracy\*\*/);
   assert.match(s.files.get(workspaceFileKey(s.ws.id, 'org/values.md'))!.toString(), /never guess at numbers \| none yet/);
-  assert.match(s.files.get(workspaceFileKey(s.ws.id, 'org/calendar.md'))!.toString(), /Leadership meeting \| Default \| `0 9 1-7 \* 1`/);
+  // the generated indexes follow the ledger: the calendar from the cadences, in words, the README, the root's rituals
+  assert.match(s.files.get(workspaceFileKey(s.ws.id, 'org/calendar.md'))!.toString(), /\| Board meeting \| [^|]+\(#company\) \| first Monday of each month at 09:00 \(`0 9 1-7 \* 1`\) \|/);
+  assert.ok(r.operatingSystem.artifacts.includes('/org/calendar.md') && r.operatingSystem.artifacts.includes('/org/README.md') && r.operatingSystem.artifacts.includes('/org/rituals/company.md'), r.operatingSystem.artifacts.join(', '));
+  assert.match(os, /## Why the root rituals look like this/);
 
   // an existing agent as chief keeps its own charter but gains the playbooks; explicit answers win; a bad answer refuses the call
   const b = await setup();

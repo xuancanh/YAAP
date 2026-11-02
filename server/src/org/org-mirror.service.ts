@@ -24,6 +24,7 @@ import type { DrizzleDb } from '../database/database.module';
 import { agents, organizations, orgEvalCases, orgEvalRuns, orgExperiments, orgMetricSamples, orgMetricSources, orgPlaybooks, orgPredictions } from '../database/schema';
 import { WorkspaceFs, type FsActor } from '../files/workspace-fs.service';
 import { AccountsService } from '../accounts/accounts.service';
+import { orgPath, slugify } from '../files/layout';
 
 type Playbook = typeof orgPlaybooks.$inferSelect;
 type Experiment = typeof orgExperiments.$inferSelect;
@@ -43,18 +44,14 @@ export interface OutcomeRow {
 export const MIRROR_AUTHOR: FsActor = { kind: 'system', id: 'system', name: 'company records' };
 const NOTE = '_Mirrored from the company records — read-only here; changes are made through the agents\' tools and overwrite this file._';
 
-// ---- paths ----
+// ---- paths (server/src/files/layout.ts) ----
 
-/** A file-name-safe slug: lowercase words joined by '-', at most 48 chars. */
-export function slugify(s: string, fallback = 'untitled'): string {
-  const out = s.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48).replace(/-+$/, '');
-  return out || fallback;
-}
-export const playbookPath = (p: Pick<Playbook, 'name' | 'id'>): string => `org/playbooks/${slugify(p.name, p.id.slice(0, 8))}.md`;
-export const experimentPath = (e: Pick<Experiment, 'id' | 'title'>): string => `org/experiments/${e.id.slice(0, 8)}-${slugify(e.title)}.md`;
-export const evalsPath = (roleKey: string): string => `org/evals/${slugify(roleKey, 'role')}.md`;
-export const OUTCOMES_PATH = 'org/outcomes.md';
-export const METRICS_PATH = 'org/metrics.md';
+export { slugify };
+export const playbookPath = (p: Pick<Playbook, 'name' | 'id'>): string => orgPath.playbook(p);
+export const experimentPath = (e: Pick<Experiment, 'id' | 'title'>): string => orgPath.experiment(e);
+export const evalsPath = (roleKey: string): string => orgPath.evals(roleKey);
+export const OUTCOMES_PATH = orgPath.outcomes;
+export const METRICS_PATH = orgPath.metrics;
 
 // ---- rendering (pure) ----
 

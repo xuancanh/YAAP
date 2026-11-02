@@ -107,13 +107,14 @@ test('loops and the ledger: loop times follow the brief hour and the pre-read de
   assert.deepEqual((pack.loops ?? []).map((l) => l.name), loops.map((l) => l.name));
   const plan = deriveOperatingSystem({ values: 'Honesty; ship weekly', culture: 'async, written', size: 4 });
   const files = seedArtifacts(plan, { orgName: 'Letters', vision: 'Be forwarded', values: { 'chief.handoffSlaHours': 8 }, cadences: [{ unit: 'Letters', root: true, kind: 'weekly_review', cron: '0 16 * * 5', enabled: true }], owners: [{ name: 'Mara', title: 'Sales manager' }], date: '2026-11-02' });
-  assert.deepEqual(files.map((f) => f.path), ['org/operating-system.md', 'org/decisions.md', 'org/risks.md', 'org/scorecard.md', 'org/calendar.md', 'org/issues.md', 'org/handoffs.md', 'org/values.md']);
+  // the calendar is not seeded: OrgLayoutService generates it from the cadences
+  assert.deepEqual(files.map((f) => f.path), ['org/operating-system.md', 'org/decisions.md', 'org/risks.md', 'org/scorecard.md', 'org/issues.md', 'org/handoffs.md', 'org/values.md']);
   const byPath = new Map(files.map((f) => [f.path, f.body]));
   assert.match(byPath.get('org/operating-system.md')!, /Stage: \*\*early\*\*/);
   assert.match(byPath.get('org/operating-system.md')!, /chief\.handoffSlaHours` \| 8 \|/);
   assert.match(byPath.get('org/decisions.md')!, /Decider/);
   assert.match(byPath.get('org/scorecard.md')!, /unknown — investigating/);
-  assert.match(byPath.get('org/calendar.md')!, /CEO \(the chief keeps the record\)/, 'the chief never owns the ritual');
+  assert.match(byPath.get('org/operating-system.md')!, /## Why the root rituals look like this\n\n- Standup: /);
   assert.match(byPath.get('org/handoffs.md')!, /Mara \| 8 h/);
   assert.match(byPath.get('org/values.md')!, /\| Honesty \| none yet \| — \| drift candidate/);
 });

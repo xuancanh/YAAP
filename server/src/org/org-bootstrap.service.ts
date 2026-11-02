@@ -31,9 +31,10 @@
  * within its bound (audited like any other); the chief receives the Chief of
  * Staff pack's skills and loops (packs/chief-of-staff.md, loop times from
  * the brief hour and the weekly review) and the ledger is seeded under
- * `/org/` (operating-system, decisions, risks, scorecard, calendar, issues,
- * handoffs, values) through the workspace filesystem — never over a file
- * that exists.
+ * `/org/` (operating-system, decisions, risks, scorecard, issues, handoffs,
+ * values) through the workspace filesystem — never over a file that exists —
+ * and the generated indexes follow (OrgLayoutService: /org/README.md,
+ * calendar.md and rituals/ from the cadences, goals/, function READMEs).
  *
  * Nothing here is a hidden default: every value the chief will read comes
  * from the body, and what the body leaves out stays at the documented
@@ -61,6 +62,7 @@ import { SkillsService } from '../skills/skills.service';
 import { StorageService } from '../storage/storage.service';
 import { workspaceFileKey } from '../storage/storage.keys';
 import { WorkspaceFs } from '../files/workspace-fs.service';
+import { OrgLayoutService } from './org-layout.service';
 import { CHIEF_PACK_ID, CULTURE_TYPES, STAGES, chiefLoops, deriveOperatingSystem, seedArtifacts, type CultureType, type OperatingSystemPlan, type Stage } from './chief-os';
 
 export const CADENCE_MODES = ['profile', 'default', 'light', 'none'] as const;
@@ -129,6 +131,9 @@ export class OrgBootstrapService {
     /** Optional: the workspace filesystem (docs/filesystem.md) — with it the
      *  seed files carry a version and an author like any other artifact. */
     @Optional() private readonly fs?: WorkspaceFs,
+    /** Optional: the generated indexes (README, calendar, rituals, goals,
+     *  function READMEs) written right after the ledger. */
+    @Optional() private readonly layout?: OrgLayoutService,
   ) {}
 
   /** `role:<id>`, a bare role id or a role title → the catalog hire
@@ -273,7 +278,8 @@ export class OrgBootstrapService {
     // 8. The chief's kit and the ledger: the pack's skills and loops, and the
     // operating-system files under /org/.
     const kit = await this.installChiefKit(orgId, chiefId, notes);
-    const artifacts = await this.seedLedger(orgId, workspaceId, plan, input, root?.id ?? null, notes);
+    const artifacts = await this.seedLedger(orgId, workspaceId, plan, input, notes);
+    if (this.layout) artifacts.push(...(await this.layout.refresh(orgId).catch((err: unknown) => { notes.push(`the /org/ indexes were not written: ${err instanceof Error ? err.message : String(err)}`); return [] as string[]; })).map((p) => `/${p}`));
     const operatingSystem: BootstrapSummary['operatingSystem'] = { stage: plan.stage, cultureType: plan.cultureType, archetype: plan.archetype, tunables: osTuned, skills: kit.skills, loops: kit.loops, artifacts };
 
     // 9. The first planning session, fire and forget.
@@ -341,18 +347,15 @@ export class OrgBootstrapService {
 
   /** The ledger's starting files (chief-os.ts `seedArtifacts`), written
    *  only where no file exists yet; returns the `/org/…` paths written. */
-  private async seedLedger(orgId: string, workspaceId: string, plan: OperatingSystemPlan, input: BootstrapInput, rootId: string | null, notes: string[]): Promise<string[]> {
+  private async seedLedger(orgId: string, workspaceId: string, plan: OperatingSystemPlan, input: BootstrapInput, notes: string[]): Promise<string[]> {
     if (!this.storage && !this.fs) { notes.push('file storage unavailable: the /org/ ledger was not seeded'); return []; }
     const org = await this.org.get(orgId);
-    const unitRows = this.units ? await this.units.units(orgId).catch(() => []) : [];
-    const unitName = new Map(unitRows.map((u) => [u.id, u.name]));
-    const cadences = this.meetings ? (await this.meetings.cadences(orgId)).map((c) => ({ unit: unitName.get(c.unitId) ?? 'the company', root: c.unitId === rootId, kind: c.kind, cron: c.cron, enabled: c.enabled === 1 })) : [];
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
     const owners = (await this.org.members(orgId)).filter((m) => m.status === 'active' && m.agentId !== org.chiefOfStaffAgentId).map((m) => ({ name: names.get(m.agentId) ?? m.agentId.slice(0, 8), title: m.title || 'member' }));
     const files = seedArtifacts(plan, {
       orgName: org.name, vision: input.vision?.title ?? null, mission: org.mission || null,
       values: Object.fromEntries(plan.tunables.map((t) => [t.key, tunable(org, t.key)])),
-      cadences, owners, date: new Date().toISOString().slice(0, 10),
+      owners, date: new Date().toISOString().slice(0, 10),
     });
     const written: string[] = [];
     for (const f of files) {

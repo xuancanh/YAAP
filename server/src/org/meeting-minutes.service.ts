@@ -18,7 +18,7 @@
  *     minutes created), open questions and risks, lessons, the next meeting
  *     from the cadence;
  *  3. writes it through WorkspaceFs (author: the facilitator agent, else
- *     `system`): a unit's meeting → `/org/meetings/<yyyy>/<yyyy-mm-dd>-<unit>-<kind>.md`,
+ *     `system`): a unit's meeting → `/org/meetings/<unit>/<yyyy>/<yyyy-mm-dd>-<kind>.md`,
  *     a meeting with no unit (a `/meeting` in an ordinary channel) →
  *     `/<channel folder>/meetings/<yyyy-mm-dd>-<title>.md` (the folder is
  *     `channels/<slug>` unless the channel says otherwise).
@@ -39,7 +39,7 @@ import { streamSignal } from '../ai/provider-timeout';
 import { OrgRuntimeService } from './org-runtime.service';
 import { OrgMeetingsService, KIND_TITLES, nextCronAfter, parseAttendees, type MeetingKind, type Minutes, type OrgMeeting } from './org-meetings.service';
 import type { OrgUnit } from './org-units.service';
-import { slugify } from './org-mirror.service';
+import { channelPath, localDay, orgPath } from '../files/layout';
 
 /** Output tokens for the one minutes call. */
 export const MINUTES_MAX_TOKENS = 700;
@@ -75,23 +75,23 @@ export interface MinutesDoc {
 // ---- pure helpers ----
 
 const pad = (n: number): string => String(n).padStart(2, '0');
-/** `yyyy-mm-dd` in server-local time. */
-export function localDay(d: Date): string { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+/** `yyyy-mm-dd` in server-local time (server/src/files/layout.ts). */
+export { localDay };
 /** `HH:MM` in server-local time. */
 export function localTime(d: Date): string { return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /**
- * Where a meeting's minutes go (workspace-relative, no leading slash).
- * A unit's meeting: `org/meetings/<yyyy>/<yyyy-mm-dd>-<unit-slug>-<kind>.md`;
+ * Where a meeting's minutes go (workspace-relative, no leading slash), from
+ * the one layout (server/src/files/layout.ts).
+ * A unit's meeting: `org/meetings/<unit-slug>/<yyyy>/<yyyy-mm-dd>-<kind>.md`;
  * otherwise the channel's folder: `<folder>/meetings/<yyyy-mm-dd>-<title-slug>.md`.
  */
 export function minutesPathFor(input: { kind: string; title: string; at: string; unitSlug?: string | null; channelFolder?: string | null; channelSlug?: string | null }): string {
   const d = new Date(input.at);
-  const day = localDay(Number.isNaN(d.getTime()) ? new Date() : d);
-  if (input.unitSlug) return `org/meetings/${day.slice(0, 4)}/${day}-${slugify(input.unitSlug, 'unit')}-${slugify(input.kind.replace(/_/g, '-'), 'meeting')}.md`;
-  const folder = (input.channelFolder || (input.channelSlug ? `channels/${input.channelSlug}` : 'channels/meetings')).replace(/^\/+|\/+$/g, '');
-  return `${folder}/meetings/${day}-${slugify(input.title, 'meeting')}.md`;
+  const day = Number.isNaN(d.getTime()) ? new Date() : d;
+  if (input.unitSlug) return orgPath.minutes(input.unitSlug, day, input.kind);
+  return channelPath.minutes(input.channelFolder, input.channelSlug, day, input.title);
 }
 
 /** The same path with a disambiguating suffix (a second meeting the same day). */

@@ -1,6 +1,6 @@
 /** Minutes at the end of every meeting and the meetings calendar
  *  (docs/meetings.md): a markdown document written through WorkspaceFs —
- *  `/org/meetings/<yyyy>/<day>-<unit>-<kind>.md` for a unit's ritual,
+ *  `/org/meetings/<unit>/<yyyy>/<day>-<kind>.md` for a unit's ritual,
  *  `/channels/<slug>/meetings/<day>-<title>.md` for a `/meeting` in an
  *  ordinary channel — authored by the facilitator; the summary is the
  *  facilitator's closing note, else one bounded call on its model, else
@@ -118,7 +118,7 @@ const thread = async (s: S, channelId: string, rootId: string) => (await s.group
 
 test('minutes paths, narrative parsing, the model-free discussion and the ad-hoc title', () => {
   const at = new Date(2026, 10, 2, 9, 30).toISOString(); // local 2 Nov 2026 09:30
-  assert.equal(minutesPathFor({ kind: 'weekly_review', title: 'x', at, unitSlug: 'company' }), 'org/meetings/2026/2026-11-02-company-weekly-review.md');
+  assert.equal(minutesPathFor({ kind: 'weekly_review', title: 'x', at, unitSlug: 'company' }), 'org/meetings/company/2026/2026-11-02-weekly-review.md');
   assert.equal(minutesPathFor({ kind: 'adhoc', title: 'Meeting: Launch plan!', at, channelSlug: 'launch' }), 'channels/launch/meetings/2026-11-02-meeting-launch-plan.md');
   assert.equal(minutesPathFor({ kind: 'adhoc', title: 'Sync', at, channelSlug: 'x', channelFolder: 'teams/x/' }), 'teams/x/meetings/2026-11-02-sync.md');
   assert.equal(withSuffix('org/meetings/2026/a.md', '0930'), 'org/meetings/2026/a-0930.md');
@@ -152,7 +152,7 @@ test('expandCron walks days in server-local time like cronMatches; retros keep a
 
 // ---- an org ritual: the facilitator's summary ----
 
-test('a unit ritual ends with minutes at /org/meetings/<yyyy>/<day>-<unit>-<kind>.md, authored by the facilitator; the row keeps path and summary; the thread and the channel link it', async () => {
+test('a unit ritual ends with minutes at /org/meetings/<unit>/<yyyy>/<day>-<kind>.md, authored by the facilitator; the row keeps path and summary; the thread and the channel link it', async () => {
   const s = await setup((me, round, closing, _req, toolRound) => {
     if (closing) return toolRound === 0 ? call('meeting_close', { summary: 'We ship issue 1 on Friday.' }) : say('Closed.');
     if (toolRound > 0) return say(`${me} done.`);
@@ -170,7 +170,7 @@ test('a unit ritual ends with minutes at /org/meetings/<yyyy>/<day>-<unit>-<kind
   const m = await s.meetings.get(orgId, m0.id);
   assert.equal(m.status, 'done');
   const day = localDay(new Date(m.startedAt!));
-  assert.equal(m.minutesPath, `org/meetings/${day.slice(0, 4)}/${day}-${root.slug}-planning.md`);
+  assert.equal(m.minutesPath, `org/meetings/${root.slug}/${day.slice(0, 4)}/${day}-planning.md`);
   assert.equal(m.summary, 'We ship issue 1 on Friday.');
   assert.equal(s.provider.requests.filter(isMinutesCall).length, 0, 'the facilitator wrote the summary: no extra call');
   const md = (await readFile(s, m.minutesPath!))!;
@@ -223,7 +223,7 @@ test('without a closing summary (a standup) one bounded call on the facilitator\
   assert.equal(m.summary, 'The model summary: Writer drafts, Editor reviews.');
   assert.equal(parseMinutes(m.minutes).summary, m.summary, 'the stored (hashed) minutes carry the model summary');
   const md = (await readFile(s, m.minutesPath!))!;
-  assert.match(m.minutesPath!, new RegExp(`^org/meetings/\\d{4}/\\d{4}-\\d{2}-\\d{2}-${root.slug}-standup\\.md$`));
+  assert.match(m.minutesPath!, new RegExp(`^org/meetings/${root.slug}/\\d{4}/\\d{4}-\\d{2}-\\d{2}-standup\\.md$`));
   assert.match(md, /## Discussion\n\n- Writer is blocked on the style guide\.\n- Editor will unblock today\./);
   assert.match(md, /written by Chief's model from the thread/);
   assert.match(md, /## Next meeting\n\nStandup: \w{3} \d{4}-\d{2}-\d{2} 09:30 \(server time, cadence `30 9 \* \* 1-5`\)/);

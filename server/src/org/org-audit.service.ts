@@ -44,6 +44,11 @@ export function auditHash(row: Pick<OrgAuditRow, 'orgId' | 'seq' | 'actor' | 'ac
 export class OrgAuditService {
   /** Per-org append queue (see header). */
   private readonly queues = new Map<string, Promise<unknown>>();
+  /** Told after each append lands (the /org/ indexes refresh from it); a
+   *  listener never fails or delays the append. */
+  private readonly listeners: Array<(orgId: string, entry: AuditEntry) => void> = [];
+
+  onAppend(fn: (orgId: string, entry: AuditEntry) => void): void { this.listeners.push(fn); }
 
   constructor(@Inject(DRIZZLE_DB) private readonly db: DrizzleDb) {}
 
@@ -52,6 +57,7 @@ export class OrgAuditService {
     const next = prev.catch(() => undefined).then(() => this.write(orgId, entry));
     this.queues.set(orgId, next);
     void next.finally(() => { if (this.queues.get(orgId) === next) this.queues.delete(orgId); });
+    if (this.listeners.length) void next.then(() => { for (const fn of this.listeners) { try { fn(orgId, entry); } catch { /* a listener never fails the append */ } } }, () => undefined);
     return next;
   }
 

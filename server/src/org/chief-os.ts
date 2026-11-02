@@ -15,7 +15,8 @@
  *    diagnosis into tunable values (goal count, pre-read deadline, handoff
  *    SLA, escalation timers, the archetype dial), the root unit's ritual
  *    cadences and the chief's own loops; `seedArtifacts` writes the ledger's
- *    starting files under `/org/`.
+ *    starting files under `/org/` (paths from server/src/files/layout.ts;
+ *    /org/calendar.md is generated from the cadences by OrgLayoutService).
  *
  * The third part, the bounded mandate, is the chief's charter
  * (roles/catalog.ts) and the boundary (boundary.ts). The mapping from
@@ -25,6 +26,7 @@
  */
 import { CHIEF_TUNABLES, PROXY_LEVELS, type ProxyLevel } from './chief-tunables';
 import { TUNABLES } from './org-tunables';
+import { orgPath } from '../files/layout';
 // The assurance keys (audit.assuranceDebounceHours) join the registry at import.
 import './org-assurance-tunables';
 
@@ -195,20 +197,20 @@ export interface SeedContext {
   mission?: string | null;
   /** Effective tunable values for the operating-system table. */
   values: Record<string, number>;
-  /** Cadences as they stand after onboarding. */
-  cadences: Array<{ unit: string; root: boolean; kind: string; cron: string; enabled: boolean }>;
+  /** Cadences as they stand after onboarding (the calendar itself is
+   *  generated from the cadence rows; kept for callers that pass them). */
+  cadences?: Array<{ unit: string; root: boolean; kind: string; cron: string; enabled: boolean }>;
   /** Function owners (unit leads, managers) by name and title. */
   owners: Array<{ name: string; title: string }>;
   date: string;
 }
 
 const KIND_TITLE: Record<string, string> = { standup: 'Standup', weekly_review: 'Weekly business review', retro: 'Retro', board: 'Leadership meeting', planning: 'Planning' };
-const KIND_PURPOSE: Record<string, string> = { standup: 'escalate: priority and stuck', weekly_review: 'inspect: the scorecard, exceptions only', retro: 'learn: what to change', board: 'decide: issues and decisions, scorecard first', planning: 'allocate: objectives and key results' };
-const KIND_OUTPUT: Record<string, string> = { standup: 'blockers routed to owners', weekly_review: 'issues list, follow-ups', retro: 'lessons, playbook and charter changes', board: 'decisions into /org/decisions.md, owned to-dos', planning: 'objectives, key results, owners' };
 
 /** The ledger's starting files, as workspace-relative paths (`org/…`, which
  *  agents reach as `/org/…`). Written once at onboarding, never over a file
- *  that exists; afterwards the chief keeps them. */
+ *  that exists; afterwards the chief keeps them. The calendar is not among
+ *  them: OrgLayoutService generates /org/calendar.md from the cadences. */
 export function seedArtifacts(plan: OperatingSystemPlan, ctx: SeedContext): Array<{ path: string; body: string }> {
   const v = (k: string) => ctx.values[k] ?? TUNABLES[k]?.default;
   const cultureWords = Object.values(plan.cultureMatches).flat();
@@ -244,18 +246,26 @@ export function seedArtifacts(plan: OperatingSystemPlan, ctx: SeedContext): Arra
     '',
     plan.commsDefault,
     '',
+    '## Why the root rituals look like this',
+    '',
+    ...plan.rituals.map((r) => `- ${KIND_TITLE[r.kind]}: ${r.why}.`),
+    '',
     '## The ledger',
+    '',
+    '/org/README.md is the index of the whole folder.',
     '',
     '| Artifact | What it holds | Source of truth |',
     '|---|---|---|',
-    '| Goal registry | objectives, key results, owners, confidence | the intent tree (org_intent) |',
+    '| /org/goals/ | objectives, key results, owners, confidence, check-ins | the intent tree (org_intent), generated |',
     '| /org/scorecard.md | 5–15 numbers with owner, target, on/off track | metric sources and check-ins |',
     '| /org/issues.md | off-track items and breached handoffs for the weekly meeting | this file |',
     '| /org/decisions.md | the decision log with one decider each | this file and org_decisions |',
-    '| /org/calendar.md | every forum with its purpose, owner and output | org cadences |',
+    '| /org/calendar.md | every forum with its purpose, owner, output and empty cycles | the cadences, generated (notes at its end are kept) |',
+    '| /org/rituals/<unit>.md | a unit\'s rituals and attendees | the cadences and the org chart, generated |',
     '| /org/risks.md | the risk register | this file |',
     '| /org/handoffs.md | handoff SLAs between functions | this file |',
     '| /org/values.md | values → mechanism map | this file |',
+    '| /org/reports/, /org/briefs/, /org/planning/ | the weekly review pack, the daily brief, the quarter\'s planning pack | the chief |',
     '',
   ].join('\n');
 
@@ -286,22 +296,6 @@ export function seedArtifacts(plan: OperatingSystemPlan, ctx: SeedContext): Arra
     '',
     '| Number | Owner | Target | This week | Last 6 weeks | On track? | Note |',
     '|---|---|---|---|---|---|---|',
-    '',
-  ].join('\n');
-
-  const owner = (c: SeedContext['cadences'][number]) => (c.root ? 'CEO (the chief keeps the record)' : `lead of ${c.unit}`);
-  const calendar = [
-    `# Review calendar — ${ctx.orgName}`,
-    '',
-    `*Every forum states one purpose, has an owner other than the chief, and produces an output artifact. Pre-reads are due ${v('chief.preReadHours')} h before (chief.preReadHours). A forum whose output is empty for ${v('chief.sunsetEmptyCycles')} cycles is proposed for retirement (chief.sunsetEmptyCycles).*`,
-    '',
-    '| Forum | Unit | Cadence (server time) | Purpose | Owner | Output | Empty cycles |',
-    '|---|---|---|---|---|---|---|',
-    ...ctx.cadences.map((c) => `| ${KIND_TITLE[c.kind] ?? c.kind} | ${c.unit} | ${c.enabled ? `\`${c.cron}\`` : 'off'} | ${KIND_PURPOSE[c.kind] ?? ''} | ${owner(c)} | ${KIND_OUTPUT[c.kind] ?? ''} | 0 |`),
-    '',
-    '## Why the root rituals look like this',
-    '',
-    ...plan.rituals.map((r) => `- ${KIND_TITLE[r.kind]}: ${r.why}.`),
     '',
   ].join('\n');
 
@@ -338,13 +332,12 @@ export function seedArtifacts(plan: OperatingSystemPlan, ctx: SeedContext): Arra
   ].join('\n');
 
   return [
-    { path: 'org/operating-system.md', body: os },
-    { path: 'org/decisions.md', body: decisions },
-    { path: 'org/risks.md', body: risks },
-    { path: 'org/scorecard.md', body: scorecard },
-    { path: 'org/calendar.md', body: calendar },
-    { path: 'org/issues.md', body: issues },
-    { path: 'org/handoffs.md', body: handoffs },
-    { path: 'org/values.md', body: valuesMap },
+    { path: orgPath.operatingSystem, body: os },
+    { path: orgPath.decisions, body: decisions },
+    { path: orgPath.risks, body: risks },
+    { path: orgPath.scorecard, body: scorecard },
+    { path: orgPath.issues, body: issues },
+    { path: orgPath.handoffs, body: handoffs },
+    { path: orgPath.values, body: valuesMap },
   ];
 }
