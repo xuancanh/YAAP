@@ -40,7 +40,7 @@ describe('steps', () => {
   it('has a plain-language consequence on every mode card and a blurb on every cadence card', () => {
     expect(MODE_CARDS.map((c) => c.mode)).toEqual(['none', 'supervised', 'autonomous']);
     for (const c of MODE_CARDS) expect(c.consequence.length).toBeGreaterThan(20);
-    expect(CADENCE_CARDS.map((c) => c.mode)).toEqual(['default', 'light', 'none']);
+    expect(CADENCE_CARDS.map((c) => c.mode)).toEqual(['profile', 'default', 'light', 'none']);
     expect(CADENCE_CARDS.find((c) => c.mode === 'light')!.blurb).toMatch(/no standup/);
   });
 });
@@ -124,7 +124,7 @@ describe('bootstrap body and summary', () => {
       profile: { values: 'ship weekly', culture: 'terse, async' }, roles: ['role:marketer'],
     });
     const bare = buildBootstrapBody(initialWizardState({ mode: 'supervised', chief: { kind: 'existing', agentId: 'a1' }, budget: { monthlyUsd: '', agentCap: '' }, planNow: false }), now);
-    expect(bare).toEqual({ mode: 'supervised', chief: { agentId: 'a1' }, monthlyUsd: 0, agentCap: 12, cadences: 'default', planNow: false });
+    expect(bare).toEqual({ mode: 'supervised', chief: { agentId: 'a1' }, monthlyUsd: 0, agentCap: 12, cadences: 'profile', planNow: false });
     expect('vision' in bare).toBe(false);
     expect(() => buildBootstrapBody(initialWizardState({ mode: 'none' }), now)).toThrow(/no company/);
   });

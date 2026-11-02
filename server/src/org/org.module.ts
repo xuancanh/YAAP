@@ -60,6 +60,7 @@ import { OrgCapacityService } from './org-capacity.service';
 import { OrgSeatService } from './org-seat.service';
 import { OrgGovernanceTools } from './org-governance.tools';
 import { GovernanceController } from './governance.controller';
+import { OrgChiefService } from './org-chief.service';
 
 /**
  * Organization mode (docs/group-chat.md §5, item 16) adds OrgModeService,
@@ -123,11 +124,15 @@ import { GovernanceController } from './governance.controller';
  * model; OrgSeatService holds decision-card defaults, delegations and value
  * accounting (docs/owners-seat.md); OrgGovernanceTools offers their tools and
  * GovernanceController their routes.
+ * The chief of staff (docs/chief-of-staff.md): OrgChiefService computes the
+ * operating system's state (rituals due, overdue decisions, stale risks,
+ * breached handoffs) for the chief's heartbeat; onboarding seeds the ledger
+ * and the derived tunables through OrgBootstrapService.
  */
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule, RegistryModule, ConnectionsModule, ActionsModule],
   controllers: [OrgController, WorkspaceOrgController, BlueprintsController, CompaniesController, OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController, IncidentsController, ExperimentsController, GovernanceController],
-  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController, OrgIncidentsService, OrgRedTeamService, OrgTrustBridge, OrgPredictionsService, OrgExperimentsService, OrgReconciliationService, OrgBoundaryService, OrgEvalsService, OrgCapacityService, OrgSeatService, OrgGovernanceTools],
-  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgIncidentsService, OrgRedTeamService, OrgExperimentsService, OrgPredictionsService, OrgReconciliationService, OrgBoundaryService, OrgEvalsService, OrgCapacityService, OrgSeatService],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController, OrgIncidentsService, OrgRedTeamService, OrgTrustBridge, OrgPredictionsService, OrgExperimentsService, OrgReconciliationService, OrgBoundaryService, OrgEvalsService, OrgCapacityService, OrgSeatService, OrgGovernanceTools, OrgChiefService],
+  exports: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgIncidentsService, OrgRedTeamService, OrgExperimentsService, OrgPredictionsService, OrgReconciliationService, OrgBoundaryService, OrgEvalsService, OrgCapacityService, OrgSeatService, OrgChiefService],
 })
 export class OrgModule {}

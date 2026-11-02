@@ -9,7 +9,7 @@ import type { BootstrapBody, OrgCaps, OrgRole } from './api';
 
 
 export type RunMode = 'none' | 'supervised' | 'autonomous';
-export type CadenceMode = 'default' | 'light' | 'none';
+export type CadenceMode = 'profile' | 'default' | 'light' | 'none';
 export type HorizonChoice = 30 | 90 | 180 | 365 | 'date';
 
 export const WORKSPACE_COLORS = ['#F5C451', '#8b8cf0', '#5cc2f2', '#6fcf97', '#f08b8b', '#f0a35c', '#c58bf0', '#8bd3f0'];
@@ -23,6 +23,7 @@ export const MODE_CARDS: ModeCard[] = [
 
 export interface CadenceCard { mode: CadenceMode; title: string; blurb: string }
 export const CADENCE_CARDS: CadenceCard[] = [
+  { mode: 'profile', title: 'Fit to my profile', blurb: 'The chief of staff derives the rituals from your stage, values and culture; you can edit every one.' },
   { mode: 'default', title: 'Default rhythm', blurb: 'Daily standup, Friday review and retro, Monday board.' },
   { mode: 'light', title: 'Light', blurb: 'Friday review and Monday board only — no standup, no retro.' },
   { mode: 'none', title: 'No rituals', blurb: 'Nothing scheduled; you or the chief call meetings by hand.' },
@@ -62,7 +63,7 @@ export function initialWizardState(over: Partial<WizardState> = {}): WizardState
     vision: { title: '', description: '', horizon: 90, date: '', rules: '' },
     profile: { values: '', culture: '' },
     budget: { monthlyUsd: '20', agentCap: '12' },
-    cadences: 'default', roles: [], planNow: true,
+    cadences: 'profile', roles: [], planNow: true,
     ...over,
   };
 }

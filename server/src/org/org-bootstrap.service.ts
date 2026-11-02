@@ -13,7 +13,9 @@
  * fence enforced — and checked *before* anything is created, so a bad value
  * refuses the whole call instead of leaving half a company), the ritual
  * cadences ('default' leaves the item 19 defaults, 'light' disables the
- * standup and the retro on the root unit, 'none' disables every cadence),
+ * standup and the retro on the root unit, 'none' disables every cadence,
+ * 'profile' — the default — holds the root unit's rituals the operating
+ * profile derives, docs/chief-of-staff.md §3),
  * the first hires (item 24's role catalog — `role:<id>`, a bare role id or
  * title — through the existing hire path, with market packs by id or name as
  * the fallback: approval cards in supervised mode, seated at once within caps
@@ -21,6 +23,16 @@
  * unknown role is a note, never a failure) and, when
  * asked, the first planning session of the root unit (fire and forget:
  * `planning: 'queued'`).
+ *
+ * The chief of staff's operating system (docs/chief-of-staff.md §3):
+ * `deriveOperatingSystem` reads the stage, the culture type and the norms
+ * from the profile and derives the goal count, the timers and the archetype
+ * dial; each derived value the body did not set is written as a tunable
+ * within its bound (audited like any other); the chief receives the Chief of
+ * Staff pack's skills and loops (packs/chief-of-staff.md, loop times from
+ * the brief hour and the weekly review) and the ledger is seeded under
+ * `/org/` (operating-system, decisions, risks, scorecard, calendar, issues,
+ * handoffs, values) — never over a file that exists.
  *
  * Nothing here is a hidden default: every value the chief will read comes
  * from the body, and what the body leaves out stays at the documented
@@ -41,11 +53,15 @@ import { OrgMeetingsService } from './org-meetings.service';
 import { OrgApprovalsService } from './org-approvals.service';
 import { OrgRuntimeService } from './org-runtime.service';
 import { OrgAuditService } from './org-audit.service';
-import { checkTunable } from './org-tunables';
+import { checkTunable, tunable } from './org-tunables';
 import { OrgRolesService } from './org-roles.service';
 import { roleById, roleRef, ROLE_PREFIX } from './roles/catalog';
+import { SkillsService } from '../skills/skills.service';
+import { StorageService } from '../storage/storage.service';
+import { workspaceFileKey } from '../storage/storage.keys';
+import { CHIEF_PACK_ID, CULTURE_TYPES, STAGES, chiefLoops, deriveOperatingSystem, seedArtifacts, type CultureType, type OperatingSystemPlan, type Stage } from './chief-os';
 
-export const CADENCE_MODES = ['default', 'light', 'none'] as const;
+export const CADENCE_MODES = ['profile', 'default', 'light', 'none'] as const;
 export type CadenceMode = (typeof CADENCE_MODES)[number];
 /** 'light' keeps the weekly review and the board; these two go quiet. */
 export const LIGHT_DISABLED_KINDS = ['standup', 'retro'];
@@ -57,7 +73,9 @@ export interface BootstrapInput {
   monthlyUsd: number;
   agentCap?: number;
   vision?: { title: string; description?: string; horizonDays?: number; dueAt?: string | null; rules?: string };
-  profile?: { values?: string; culture?: string };
+  /** `stage` and `cultureType` are the CEO's own answers; without them the
+   *  operating system reads both from the words (chief-os.ts). */
+  profile?: { values?: string; culture?: string; stage?: Stage; cultureType?: CultureType };
   tunables?: Record<string, number>;
   cadences?: CadenceMode;
   roles?: string[];
@@ -75,7 +93,14 @@ export interface BootstrapSummary {
   vision: { goalId: string; title: string; dueAt: string | null } | null;
   profile: { values: boolean; culture: boolean };
   tunables: Array<{ key: string; from: number; to: number }>;
-  cadences: { mode: CadenceMode; disabled: number; total: number };
+  cadences: { mode: CadenceMode; disabled: number; retimed: number; total: number };
+  /** The chief's operating system as derived and seeded (docs/chief-of-staff.md §3). */
+  operatingSystem: {
+    stage: Stage; cultureType: CultureType; archetype: string;
+    tunables: Array<{ key: string; from: number; to: number }>;
+    skills: number; loops: Array<{ name: string; cron: string; enabled: boolean }>;
+    artifacts: string[];
+  };
   hires: BootstrapHire[];
   planning: 'queued' | 'not_requested' | 'unavailable';
   notes: string[];
@@ -95,6 +120,10 @@ export class OrgBootstrapService {
     @Optional() private readonly units?: OrgUnitsService,
     @Optional() private readonly meetings?: OrgMeetingsService,
     @Optional() private readonly roles?: OrgRolesService,
+    /** Optional: the chief's pack skills (packs/chief-of-staff.md). */
+    @Optional() private readonly skills?: SkillsService,
+    /** Optional: the ledger's starting files under `/org/`. */
+    @Optional() private readonly storage?: StorageService,
   ) {}
 
   /** `role:<id>`, a bare role id or a role title → the catalog hire
@@ -114,11 +143,13 @@ export class OrgBootstrapService {
     if (input.mode !== 'supervised' && input.mode !== 'autonomous') throw new BadRequestException('mode must be supervised or autonomous');
     if (!Number.isFinite(input.monthlyUsd) || input.monthlyUsd < 0) throw new BadRequestException('monthlyUsd must be a non-negative number');
     if (input.agentCap !== undefined && (!Number.isInteger(input.agentCap) || input.agentCap < 1 || input.agentCap > MAX_ORG_AGENT_CAP)) throw new BadRequestException(`agentCap must be an integer between 1 and ${MAX_ORG_AGENT_CAP}`);
-    const cadenceMode: CadenceMode = input.cadences ?? 'default';
+    const cadenceMode: CadenceMode = input.cadences ?? 'profile';
     if (!CADENCE_MODES.includes(cadenceMode)) throw new BadRequestException(`cadences must be one of ${CADENCE_MODES.join(', ')}`);
     if (input.vision && !(input.vision.title ?? '').trim()) throw new BadRequestException('the vision needs a title (one line)');
     if (input.vision?.horizonDays !== undefined && (!Number.isFinite(input.vision.horizonDays) || input.vision.horizonDays < 1 || input.vision.horizonDays > 3_650)) throw new BadRequestException('horizonDays must be between 1 and 3650');
     if (input.vision?.dueAt && !Number.isFinite(Date.parse(input.vision.dueAt))) throw new BadRequestException('vision.dueAt must be an ISO date');
+    if (input.profile?.stage !== undefined && !STAGES.includes(input.profile.stage)) throw new BadRequestException(`profile.stage must be one of ${STAGES.join(', ')}`);
+    if (input.profile?.cultureType !== undefined && !CULTURE_TYPES.includes(input.profile.cultureType)) throw new BadRequestException(`profile.cultureType must be one of ${CULTURE_TYPES.join(', ')}`);
     // The fence first: a tunable outside its bound refuses the call before anything exists.
     const tunables = Object.entries(input.tunables ?? {});
     for (const [key, value] of tunables) {
@@ -178,15 +209,37 @@ export class OrgBootstrapService {
     const tuned: BootstrapSummary['tunables'] = [];
     for (const [key, value] of tunables) tuned.push(await this.org.setTunable(orgId, key, value, { actor, why: 'chosen during company onboarding', decidedBy: actor }));
 
+    // 5b. The chief's operating system, derived from the profile: every
+    // value the body did not set is written as a tunable within its bound.
+    const plan = deriveOperatingSystem({
+      values: input.profile?.values, culture: input.profile?.culture, mission: input.vision?.description, vision: input.vision?.title,
+      size: 1 + (st.enrolled?.length ?? 0) + roles.length, stage: input.profile?.stage, cultureType: input.profile?.cultureType,
+    });
+    const osTuned: BootstrapSummary['operatingSystem']['tunables'] = [];
+    const given = new Set(tunables.map(([k]) => k));
+    for (const t of plan.tunables) {
+      if (given.has(t.key) || tunable(await this.org.get(orgId), t.key) === t.value) continue;
+      osTuned.push(await this.org.setTunable(orgId, t.key, t.value, { actor, why: `derived from the operating profile at onboarding: ${t.why}`, decidedBy: actor }));
+    }
+
     // 6. Rituals.
-    const cadences: BootstrapSummary['cadences'] = { mode: cadenceMode, disabled: 0, total: 0 };
+    const cadences: BootstrapSummary['cadences'] = { mode: cadenceMode, disabled: 0, retimed: 0, total: 0 };
+    const root = this.units ? await this.units.rootUnit(orgId).catch(() => null) : null;
     if (this.meetings) {
       await this.meetings.ensureCadenceDefaults(orgId);
       const rows = await this.meetings.cadences(orgId);
       cadences.total = rows.length;
-      const root = this.units ? await this.units.rootUnit(orgId).catch(() => null) : null;
       const quiet = cadenceMode === 'none' ? rows : cadenceMode === 'light' ? rows.filter((c) => LIGHT_DISABLED_KINDS.includes(c.kind) && (!root || c.unitId === root.id)) : [];
       for (const c of quiet) { await this.meetings.updateCadence(orgId, c.id, { enabled: false }, actor); cadences.disabled++; }
+      // 'profile': the root unit holds the rituals the operating system derived.
+      if (cadenceMode === 'profile' && root) {
+        for (const r of plan.rituals) {
+          const c = rows.find((x) => x.unitId === root.id && x.kind === r.kind);
+          if (!c) continue;
+          if (r.cron === null) { await this.meetings.updateCadence(orgId, c.id, { enabled: false }, actor); cadences.disabled++; }
+          else if (r.cron !== c.cron) { await this.meetings.updateCadence(orgId, c.id, { cron: r.cron }, actor); cadences.retimed++; }
+        }
+      }
     } else if (cadenceMode !== 'default') notes.push('meetings unavailable: cadences were left as they are');
 
     // 7. The first hires, through the one hire path.
@@ -212,7 +265,13 @@ export class OrgBootstrapService {
       }
     }
 
-    // 8. The first planning session, fire and forget.
+    // 8. The chief's kit and the ledger: the pack's skills and loops, and the
+    // operating-system files under /org/.
+    const kit = await this.installChiefKit(orgId, chiefId, notes);
+    const artifacts = await this.seedLedger(orgId, workspaceId, plan, input, root?.id ?? null, notes);
+    const operatingSystem: BootstrapSummary['operatingSystem'] = { stage: plan.stage, cultureType: plan.cultureType, archetype: plan.archetype, tunables: osTuned, skills: kit.skills, loops: kit.loops, artifacts };
+
+    // 9. The first planning session, fire and forget.
     let planning: BootstrapSummary['planning'] = 'not_requested';
     if (input.planNow) {
       const root = this.units ? await this.units.rootUnit(orgId).catch(() => null) : null;
@@ -227,11 +286,80 @@ export class OrgBootstrapService {
 
     const summary: BootstrapSummary = {
       workspaceId, orgId, mode: input.mode, chief: { agentId: chiefId, name: chiefName, created }, enrolled: st.enrolled?.length ?? 0,
-      vision, profile, tunables: tuned, cadences, hires, planning, notes,
+      vision, profile, tunables: tuned, cadences, operatingSystem, hires, planning, notes,
     };
     await this.audit.append(orgId, { actor, action: 'org_bootstrap', refType: 'org', refId: orgId, payload: {
-      mode: input.mode, chief: summary.chief, vision: vision?.goalId ?? null, profile, tunables: tuned.map((t) => t.key), cadences, hires: hires.map((h) => ({ role: h.role, status: h.status })), planning, notes,
+      mode: input.mode, chief: summary.chief, vision: vision?.goalId ?? null, profile, tunables: tuned.map((t) => t.key), cadences,
+      operatingSystem: { stage: plan.stage, cultureType: plan.cultureType, archetype: plan.archetype, tunables: osTuned.map((t) => t.key), skills: kit.skills, loops: kit.loops.length, artifacts }, hires: hires.map((h) => ({ role: h.role, status: h.status })), planning, notes,
     } });
     return summary;
+  }
+
+  /** The Chief of Staff pack's skills (private to the chief, skipped when it
+   *  already has one by that name) and its loops, timed from the company's
+   *  brief hour and the root unit's weekly review. A loop the plan's cap
+   *  refuses is installed switched off, with a note. */
+  private async installChiefKit(orgId: string, chiefId: string, notes: string[]): Promise<{ skills: number; loops: Array<{ name: string; cron: string; enabled: boolean }> }> {
+    const pack = OrgApprovalsService.catalogItem(CHIEF_PACK_ID);
+    let skills = 0;
+    if (pack && this.skills) {
+      for (const s of pack.skills ?? []) {
+        if (!s.instructions) continue;
+        try { await this.skills.create({ name: s.name, description: s.description, instructions: s.instructions, agentId: chiefId }); skills++; } catch { /* the chief already has a skill by that name */ }
+      }
+    } else notes.push('skills unavailable: the chief of staff pack\'s playbooks were not installed');
+    const org = await this.org.get(orgId);
+    const root = this.units ? await this.units.rootUnit(orgId).catch(() => null) : null;
+    const weekly = root && this.meetings ? (await this.meetings.cadences(orgId)).find((c) => c.unitId === root.id && c.kind === 'weekly_review' && c.enabled === 1)?.cron ?? null : null;
+    const wanted = chiefLoops({ briefHour: org.briefHour, weeklyReviewCron: weekly, preReadHours: tunable(org, 'chief.preReadHours') });
+    const installed: Array<{ name: string; cron: string; enabled: boolean }> = [];
+    for (const loop of wanted) {
+      let current: Array<{ name?: string }>;
+      try { current = JSON.parse((await this.agents.get(chiefId)).loops || '[]') as Array<{ name?: string }>; } catch { current = []; }
+      if (current.some((l) => l.name === loop.name)) continue;
+      try {
+        await this.agents.update(chiefId, { loops: JSON.stringify([...current, loop]) });
+        installed.push({ name: loop.name, cron: loop.cron, enabled: true });
+      } catch (err) {
+        // Most often the plan's loop cap: keep the loop, switched off, for the CEO to enable.
+        try {
+          await this.agents.update(chiefId, { loops: JSON.stringify([...current, { ...loop, enabled: false }]) });
+          installed.push({ name: loop.name, cron: loop.cron, enabled: false });
+          notes.push(`loop "${loop.name}" installed switched off: ${err instanceof Error ? err.message : String(err)}`);
+        } catch (err2) {
+          notes.push(`loop "${loop.name}" not installed: ${err2 instanceof Error ? err2.message : String(err2)}`);
+        }
+      }
+    }
+    return { skills, loops: installed };
+  }
+
+  /** The ledger's starting files (chief-os.ts `seedArtifacts`), written
+   *  only where no file exists yet; returns the `/org/…` paths written. */
+  private async seedLedger(orgId: string, workspaceId: string, plan: OperatingSystemPlan, input: BootstrapInput, rootId: string | null, notes: string[]): Promise<string[]> {
+    if (!this.storage) { notes.push('file storage unavailable: the /org/ ledger was not seeded'); return []; }
+    const org = await this.org.get(orgId);
+    const unitRows = this.units ? await this.units.units(orgId).catch(() => []) : [];
+    const unitName = new Map(unitRows.map((u) => [u.id, u.name]));
+    const cadences = this.meetings ? (await this.meetings.cadences(orgId)).map((c) => ({ unit: unitName.get(c.unitId) ?? 'the company', root: c.unitId === rootId, kind: c.kind, cron: c.cron, enabled: c.enabled === 1 })) : [];
+    const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
+    const owners = (await this.org.members(orgId)).filter((m) => m.status === 'active' && m.agentId !== org.chiefOfStaffAgentId).map((m) => ({ name: names.get(m.agentId) ?? m.agentId.slice(0, 8), title: m.title || 'member' }));
+    const files = seedArtifacts(plan, {
+      orgName: org.name, vision: input.vision?.title ?? null, mission: org.mission || null,
+      values: Object.fromEntries(plan.tunables.map((t) => [t.key, tunable(org, t.key)])),
+      cadences, owners, date: new Date().toISOString().slice(0, 10),
+    });
+    const written: string[] = [];
+    for (const f of files) {
+      const key = workspaceFileKey(workspaceId, f.path);
+      try {
+        if (await this.storage.get(key)) continue;
+        await this.storage.put(key, Buffer.from(f.body, 'utf8'), 'text/markdown');
+        written.push(`/${f.path}`);
+      } catch (err) {
+        notes.push(`/${f.path} was not written: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return written;
   }
 }
