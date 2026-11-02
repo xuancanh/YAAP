@@ -35,6 +35,8 @@ const ReplayPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default:
 const CapitalPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.CapitalPane })));
 const MyTasksPane = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.MyTasksPane })));
 const HireDialog = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.HireDialog })));
+/** The org chart's mission control (docs/mission-control.md). */
+const MissionControlPane = lazy(() => import('./OrgMissionControl').then((m) => ({ default: m.MissionControlPane })));
 /** Sensing checks, the trust ledger and incidents (items 27–30, SPA item 32); metrics and experiments are files under /org/ in Artifacts. */
 const TaskChecksPanel = lazy(() => import('./OrgSensingView').then((m) => ({ default: m.TaskChecksPanel })));
 const ChecksBuilder = lazy(() => import('./OrgSensingView').then((m) => ({ default: m.ChecksBuilder })));
@@ -138,7 +140,23 @@ function PaneTabs({ view }: { view: OrgPane }) {
 
 // ---- org chart ----
 
+/** The org chart opens as mission control (docs/mission-control.md); the
+ *  structure editor below is one click away ("Edit structure"). */
 function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    return (
+      <div>
+        <button style={{ ...btn(), marginBottom: 12 }} onClick={() => setEditing(false)}>Back to mission control</button>
+        <OrgStructure org={org} reload={reload} />
+      </div>
+    );
+  }
+  return <Suspense fallback={<div style={faint}>Loading…</div>}><MissionControlPane org={org} onEditStructure={() => setEditing(true)} /></Suspense>;
+}
+
+/** The structure editor: members with their scopes, pause and terminate, add and hire, the humans, unit boundaries. */
+function OrgStructure({ org, reload }: { org: OrgDetail; reload: () => Promise<void> }) {
   const app = useApp();
   const names = useAgentNames();
   const [adding, setAdding] = useState(false);
