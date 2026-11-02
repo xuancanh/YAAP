@@ -51,6 +51,7 @@ import { CONNECTION_TOOLS } from '../connections/connections.tools';
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { ProviderHealthService } from '../ai/provider-health';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
+import { liveTurns } from './live-turns';
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
 
@@ -560,6 +561,8 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     /** Skills whose skill_* tool loaded this turn (execution-plan item 10):
      *  persisted on the turn so a later rating can reach them. */
     const skillsUsed: string[] = [];
+    // Live status (docs/mission-control.md): this agent is mid-turn; each tool call updates it.
+    liveTurns.begin({ sessionId, turnId: turn.id, agentId: session.agentId ?? null, workspaceId: session.workspaceId, origin: input.origin ?? 'user', sessionName: session.name || session.autoTitle || '' });
     try {
       const ctx = await this.context.build(session);
       hosted = ctx.hosted ?? false;
@@ -692,6 +695,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
 
         for (const call of calls) {
           if (ctl.signal.aborted) break;
+          liveTurns.tool(sessionId, call.name, call.input);
           // A record-only sandbox (the red-team run, docs/incidents.md §5.3):
           // nothing executes, queues, routes or reaches a reviewer; the call
           // is recorded and the model sees the recorder's stub result.
@@ -1073,6 +1077,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
       if (ws && tokensIn + tokensOut > 0) await this.workspaces.addSpend(ws.id, tokensIn + tokensOut).catch(() => {});
       // …and against the account's month, in dollars, for the plan ceiling.
       if (this.accounts && tokensIn + tokensOut > 0) await this.accounts.recordUsage({ model: turnModel, tokensIn, tokensOut, hosted }).catch(() => {});
+      liveTurns.end(sessionId);
       this.turnOrigins.delete(sessionId);
       this.turnActors.delete(sessionId);
       // The browser session is per turn: cookies, logins and the page itself

@@ -18,7 +18,7 @@ import { ConfigService } from '@nestjs/config';
 import { and, eq, gte, inArray } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { appSettings, chatSessions, chatTurns, heartbeatState, orgUnits } from '../database/schema';
+import { appSettings, chatTurns, orgUnits } from '../database/schema';
 import { actorId } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -45,6 +45,7 @@ import type {
   HomeActivity, HomeAgent, HomeArtifact, HomeData, HomeGoal, HomeHealth, HomeKeyResult, HomeNeed, HomeRecap, HomeRecapItem, HomeSpend, HomeUpcoming,
 } from './home.types';
 import { collapseRoutine, describeRun, loopNameOf, mergeUpcoming, runTitle, type RunCall } from './home-activity';
+import { agentStatuses, sortTeam, toHomeAgent } from './agent-status';
 
 const DAY_MS = 24 * 60 * 60_000;
 /** A visit within this of the previous one continues the same session. */
@@ -53,8 +54,6 @@ export const SESSION_GAP_MS = 30 * 60_000;
 export const NEEDS_LIMIT = 12;
 const ACTIVITY_LIMIT = 40;
 const ARTIFACT_LIMIT = 8;
-/** Errors older than this no longer mark an agent as failing. */
-const ERROR_WINDOW_MS = 2 * DAY_MS;
 
 type AgentRow = Awaited<ReturnType<AgentsService['list']>>[number];
 type Rag = 'red' | 'amber' | 'green' | 'grey';
@@ -340,77 +339,10 @@ export class HomeService {
 
   // ---- 5. team ----
 
+  /** The shared per-agent status (agent-status.ts), as Home's tiles in Home's order. */
   private async team(workspaceId: string, org: Organization | null, orgOn: boolean, agents: AgentRow[], orgTasks: OrgTask[], members: Array<{ agentId: string; status: string; title: string }>, now: Date): Promise<HomeAgent[]> {
-    const memberOf = new Map(members.map((m) => [m.agentId, m]));
-    const cutoff = new Date(now.getTime() - ERROR_WINDOW_MS).toISOString();
-    // The latest turn per agent: an errored one (a model the provider rejects, a key that fails) is loud.
-    const sessions = await this.db.select({ id: chatSessions.id, agentId: chatSessions.agentId }).from(chatSessions).where(eq(chatSessions.workspaceId, workspaceId));
-    const agentOfSession = new Map(sessions.filter((s) => s.agentId).map((s) => [s.id, s.agentId as string]));
-    const latestTurn = new Map<string, { status: string; error: string | null; createdAt: string }>();
-    if (agentOfSession.size > 0) {
-      const turns = await this.db.select({ sessionId: chatTurns.sessionId, status: chatTurns.status, error: chatTurns.error, createdAt: chatTurns.createdAt })
-        .from(chatTurns).where(and(inArray(chatTurns.sessionId, [...agentOfSession.keys()]), gte(chatTurns.createdAt, cutoff)));
-      for (const t of turns) {
-        const agentId = agentOfSession.get(t.sessionId)!;
-        const cur = latestTurn.get(agentId);
-        if (!cur || t.createdAt > cur.createdAt) latestTurn.set(agentId, t);
-      }
-    }
-    const beats = agents.length
-      ? await this.db.select({ agentId: heartbeatState.agentId, lastBeatAt: heartbeatState.lastBeatAt, lastRunAt: heartbeatState.lastRunAt }).from(heartbeatState).where(inArray(heartbeatState.agentId, agents.map((a) => a.id))).catch(() => [])
-      : [];
-    const beatOf = new Map(beats.map((b) => [b.agentId, b]));
-    const degraded = this.providerHealth ? this.providerHealth.list(workspaceId) : [];
-    const runs = org && this.tasks ? await this.tasks.runs(org.id, { limit: 200 }).catch(() => []) : [];
-
-    const out: HomeAgent[] = [];
-    for (const a of agents) {
-      const m = memberOf.get(a.id);
-      if (m?.status === 'terminated') continue;
-      const errors: HomeAgent['errors'] = [];
-      const lt = latestTurn.get(a.id);
-      if (lt && lt.status === 'error') errors.push({ kind: 'turn', message: clip(lt.error || 'The last turn failed', 280), at: lt.createdAt });
-      const events = await this.agents.listEvents(a.id, 20);
-      const lastGood = events.find((e) => e.kind === 'loop_run');
-      for (const e of events.filter((x) => (x.kind === 'loop_error' || x.kind === 'budget_stop') && x.createdAt >= cutoff && !x.readAt).slice(0, 2)) {
-        if (e.kind === 'loop_error' && lastGood && lastGood.createdAt > e.createdAt) continue; // recovered since
-        errors.push({ kind: e.kind === 'budget_stop' ? 'budget' : 'loop', message: clip(`${e.title}${e.body ? `: ${e.body}` : ''}`, 280), at: e.createdAt });
-      }
-      const mine = orgTasks.filter((t) => t.assigneeAgentId === a.id);
-      for (const t of mine.filter((x) => x.noProgressCount >= 2 && x.status !== 'done' && x.status !== 'cancelled').slice(0, 1)) {
-        errors.push({ kind: 'breaker', message: `No progress after ${t.noProgressCount} runs on "${clip(t.title, 80)}"`, at: t.lastRunAt ?? t.updatedAt });
-      }
-      const providerKey = a.provider || '';
-      for (const p of degraded.filter((d) => providerKey && (d.provider === providerKey || providerKey.startsWith(d.provider)))) {
-        errors.push({ kind: 'provider', message: `${p.provider} is ${p.state}${p.lastError ? `: ${clip(p.lastError, 200)}` : ''}`, at: p.since });
-      }
-
-      const doingTask = mine.filter((t) => t.status === 'in_progress' || t.status === 'claimed').sort((x, y) => y.updatedAt.localeCompare(x.updatedAt))[0]
-        ?? orgTasks.filter((t) => t.status === 'in_review' && t.reviewerAgentId === a.id)[0];
-      const blockedTask = mine.find((t) => t.status === 'blocked');
-      let doing = '';
-      let taskId: string | null = null;
-      if (doingTask) { doing = doingTask.status === 'in_review' ? `Reviewing "${doingTask.title}"` : doingTask.title; taskId = doingTask.id; }
-      else if (blockedTask) { doing = `Blocked on "${blockedTask.title}"${blockedTask.blockers ? `: ${clip(blockedTask.blockers, 120)}` : ''}`; taskId = blockedTask.id; }
-      else {
-        const own = (await this.agents.listTasks(a.id)).filter((t) => t.status === 'doing' || t.status === 'blocked').sort((x, y) => y.updatedAt.localeCompare(x.updatedAt))[0];
-        if (own) doing = own.status === 'blocked' ? `Blocked on "${own.title}"` : own.title;
-      }
-      const paused = m?.status === 'paused' || (orgOn && org?.status === 'paused');
-      const blocked = !doingTask && (Boolean(blockedTask) || doing.startsWith('Blocked'));
-      const state: HomeAgent['state'] = errors.some((e) => e.kind === 'turn' || e.kind === 'breaker' || e.kind === 'loop' || e.kind === 'budget') ? 'error'
-        : paused ? 'paused' : blocked ? 'blocked' : doing ? 'working' : 'idle';
-      const beat = beatOf.get(a.id);
-      const lastRun = runs.filter((r) => r.agentId === a.id).map((r) => r.startedAt).sort().at(-1) ?? null;
-      const lastActiveAt = [lt?.createdAt ?? null, beat?.lastRunAt ?? null, lastRun, events.find((e) => e.kind === 'loop_run')?.createdAt ?? null]
-        .filter((x): x is string => Boolean(x)).sort().at(-1) ?? null;
-      out.push({
-        id: a.id, name: a.name, emoji: a.emoji, colors: a.colors, title: m?.title || a.role || '', state, doing, taskId,
-        lastActiveAt, lastBeatAt: beat?.lastBeatAt ?? null, errors, isChief: Boolean(org?.chiefOfStaffAgentId && org.chiefOfStaffAgentId === a.id),
-      });
-    }
-    const order: Record<HomeAgent['state'], number> = { error: 0, blocked: 1, working: 2, paused: 3, idle: 4 };
-    return out.sort((x, y) => Number(y.isChief) - Number(x.isChief) || order[x.state] - order[y.state] || x.name.localeCompare(y.name));
+    const list = await agentStatuses({ db: this.db, agents: this.agents, providerHealth: this.providerHealth, tasks: this.tasks }, { workspaceId, org, orgOn, agents, orgTasks, members, now });
+    return sortTeam(list.map(toHomeAgent));
   }
 
   // ---- 6. activity ----
