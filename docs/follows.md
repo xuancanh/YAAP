@@ -61,7 +61,11 @@ runtime wakes them). Nobody is woken twice.
 
 **People** get one addressed inbox event (`kind: 'follow'`, agent id
 `follow:<workspaceId>`, payload `{ link, targetKind, targetId }`) per
-target: the first update after they last looked. Later updates only count
+target. The link opens the target itself: a thread at
+`#/ws/<id>/channel/<slug>/<rootId>`, an org task at
+`#/ws/<id>/org/board?task=<taskId>` (the board with the task's drawer,
+docs/home.md "Links"); rows written with the older board-only link are
+brought up to date on the next activity. One event per target: the first update after they last looked. Later updates only count
 until they open the thread or the task (the SPA marks it seen) or act on it
 themselves. Quiet hours apply as for every event; a person already notified
 by a mention gets no follow event for the same message.
@@ -131,3 +135,12 @@ The channel thread panel and the org task drawer show a **Follow /
 Following** toggle with the followers' avatars (`FollowToggle.tsx`);
 opening one marks it seen. The agent kanban card has no detail view and
 shows none.
+
+**The Inbox.** A **Following** filter (`InboxView.tsx`, `src/lib/inbox.ts`)
+lists every live follow from `GET …/follows/mine`: the title, the latest
+change and who made it, the unseen count and a "Needs you" marker, those
+needing the person first, then the ones with news, newest first. **All**
+carries the follows with news. Opening one opens the thread or the task
+and marks it seen (`POST …/follows/seen`). A follow counts in the Inbox
+badge and in "waiting on you" only while its change needs the person
+(`attentionAt`), never for an ordinary reply.

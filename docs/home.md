@@ -20,7 +20,10 @@ Code:
 - `src/components/HomeView.tsx` (data, live updates, decisions, navigation)
 - `src/components/HomeBoard.tsx` (the page, presentational)
 - `src/lib/home.ts` (the copy and the link targets, pure)
-- tests: `tests/backend-home.test.ts`, `web-tests/home.test.tsx`
+- `server/src/home/home-activity.ts` (what a loop run did, routine runs
+  collapsed, rituals merged; pure)
+- tests: `tests/backend-home.test.ts`, `web-tests/home.test.tsx`,
+  `web-tests/home-activity.test.tsx`
 
 ## One request
 
@@ -37,9 +40,9 @@ already own each fact:
 | Since you were last here | org tasks done since the visit, the org audit (`auto_*`, `approval_default`, `delegated_decision`, `member_add`, `member_pause`, `member_terminate`), the decision log, `OrgBriefService.latest`, `OrgSloService.pulse`, `WorkspaceFs.recent` |
 | Goals | `OrgIntentService.intentTree` |
 | Team | agents, org members, the board, the latest chat turn per agent, agent events, `heartbeat_state`, org runs, `ProviderHealthService` |
-| Activity | the board, the audit, meetings, incidents, agent events, `WorkspaceFs.recent` |
+| Activity | the board, the audit, meetings, incidents, agent events (a loop run's tool calls from its turn in `chat_turns`), `WorkspaceFs.recent` |
 | Spend and health | `OrgRuntimeService.spendTree`, `OrgCapitalService.forecast`, `UsageService.workspaceUsage`, the workspace token budget, incidents, `OrgAuditorService.list` |
-| Coming up | scheduled meetings, enabled cadences, task deadlines, card deadlines, plan apply times, agent loop crons in the next day |
+| Coming up | scheduled meetings, enabled cadences (with their unit), task deadlines, card deadlines, plan apply times, agent loop crons in the next day |
 | Recent files | `WorkspaceFs.recent` (new: `workspace_files` by `updatedAt`) |
 
 Each section is computed on its own. If one fails, its name goes into
@@ -140,6 +143,30 @@ happen:
 people, decisions, meetings held, incidents, files created or edited, and
 agent loop runs. Filter chips appear for the kinds present.
 
+Most loop runs are heartbeats that find nothing to do, so a run is news
+only when it did something. The server reads the run's tool calls (the
+latest turn of its loop session before the run was recorded) and calls it
+notable when a call that went through:
+
+- moved a task to a new status (`org_task_update`, `update_task` with a
+  status), created, assigned, reviewed, took, commented on or escalated
+  one;
+- posted in a channel or sent a message;
+- wrote, edited or deleted a file, other than the notes an agent keeps for
+  itself on every beat (`JOURNAL.md`, `LESSONS.md`, `NOTES.md`,
+  `MEMORY.md`, `DASHBOARD.md` and the like);
+- changed the company (a hire, a pause, a tunable, a cadence, a goal or key
+  result, a report, an incident), or acted outward (mail, calendar, HTTP).
+
+Reading, a note on its own task, the dashboard and sandbox code are
+routine. A notable run is its own row, titled by what it did ("Heartbeat:
+moved task 91ef6d61 to blocked, posted in #company, wrote launch.md") and
+linked to the task it changed. Routine runs collapse into one line per
+agent per day ("Unit Test Writer · 10 heartbeat checks, nothing new") that
+folds out into the runs (the latest 30). A failed run is a `loop_error` and
+is never collapsed. The **Agent runs** chip lists every run raw, notable or
+not.
+
 **7. Spend and health.** Today's spend and the month's spend against the
 company envelope, with the month-end forecast. The meter turns amber or
 red with the forecast state. Below that:
@@ -151,6 +178,19 @@ red with the forecast state. Below that:
 
 **8. Coming up.** Meetings, rituals, deadlines, card deadlines and plan
 apply times for the week, plus loops due in the next day, grouped by day.
+
+Rituals and loops carry their cron, and the page puts it in words in the
+viewer's time zone: "Fridays at 4:00 PM", "every weekday at 9:30 AM", "1st
+of each month at 8:00 AM", "every 2 hours". Crons are server-local; the
+time comes from the next fire the server computed, and the weekday moves
+with it when the server's day is not the viewer's. Anything odder shows
+the raw cron.
+
+Every unit gets the default cadences (standup, weekly review, retro), so a
+company with two units used to list each ritual twice at the same minute.
+The same title at the same time is one row that names the units: "Weekly
+review · Sales, Engineering". The server merges them, and the page merges
+again whatever still matches.
 
 **9. Recent files.** The last files written in the workspace, with who
 wrote them. A file opens in Artifacts.
@@ -175,6 +215,24 @@ Home is simpler without a company:
 A line invites the owner to start a company, which opens the onboarding
 wizard. An empty workspace gets **Start a company with a Chief of Staff**
 or **Create one agent**.
+
+## Links
+
+A single org task opens through its deep link,
+`#/ws/<workspaceId>/org/board?task=<taskId>` (`src/lib/links.ts`; the
+server writes the same shape, `orgTaskLink` in
+`server/src/follows/follows.service.ts`). It opens the Company section,
+the board and the task's drawer. When the task is not on the loaded board
+(another unit, or done or cancelled), the board fetches it with
+`GET /api/workspaces/:id/org/tasks/:taskId` (an id or its short prefix).
+
+- The link stays in the address while the drawer is open, so reload
+  reopens it. Opening a card pushes the link; closing the drawer pushes the
+  board, so back and forward move between them. Leaving the board drops it.
+- `app.openOrgTask(taskId)` is the one way in: Home (Needs you for an
+  escalation, activity, decisions), the Inbox (Following, My tasks),
+  follow notifications, channel task chips and minutes, signal and
+  why-chain rows, reference buttons and the escalation card.
 
 ## Live
 
