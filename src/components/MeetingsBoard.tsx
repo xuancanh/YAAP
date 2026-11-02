@@ -1,0 +1,246 @@
+/** Meetings as a list and a calendar (docs/meetings.md "The calendar"), for
+ *  the Company section's Meetings pane (the company or one unit) and a
+ *  channel's Meetings tab. One source: GET …/meetings — the meetings held
+ *  (with their minutes) and the cadences' upcoming occurrences, each named by
+ *  its unit. List: upcoming, then past. Calendar: a month grid, or the week's
+ *  agenda at phone width. A past meeting opens its minutes in Artifacts; an
+ *  upcoming one opens its details. */
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useApp } from '../store';
+import { api, type CalendarMeeting, type CalendarResponse } from '../lib/api';
+import { cadenceText } from '../lib/home';
+import { MEETING_KIND_TITLES } from '../lib/org';
+import { addDays, byDay, clock, dayKey, monthGrid, rangeFor, shortTitle, splitList, startOfDay, weekDays, whenText } from '../lib/meetings';
+import { card, btn, pill, faint, linkBtn, label } from './org-ui';
+
+type View = 'list' | 'calendar';
+const VIEW_KEY = 'meetings.view';
+const STATUS_COLOR: Record<string, string> = { upcoming: 'var(--accent)', running: 'var(--green)', scheduled: 'var(--amber)', postponed: 'var(--amber)', done: 'var(--text-faint)', cancelled: 'var(--red)' };
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DAY_MS = 24 * 60 * 60_000;
+
+function readView(): View {
+  try { return localStorage.getItem(VIEW_KEY) === 'calendar' ? 'calendar' : 'list'; } catch { return 'list'; }
+}
+function saveView(v: View): void {
+  try { localStorage.setItem(VIEW_KEY, v); } catch { /* per-viewer convenience only */ }
+}
+
+const statusLabel = (m: CalendarMeeting) => (m.status === 'upcoming' ? 'upcoming' : m.status);
+
+export function MeetingsBoard({ wsId, unitId, channel, showUnit = true }: { wsId: string; unitId?: string | null; channel?: string | null; showUnit?: boolean }) {
+  const app = useApp();
+  const phone = Boolean(app.stacked);
+  const [view, setViewState] = useState<View>(readView);
+  const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
+  const [data, setData] = useState<CalendarResponse | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [selected, setSelected] = useState<CalendarMeeting | null>(null);
+  const [dayOpen, setDayOpen] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const setView = (v: View) => { setViewState(v); saveView(v); setSelected(null); setDayOpen(null); };
+  const calMode: 'month' | 'week' = phone ? 'week' : 'month';
+  // The list covers the last 60 and the next 30 days (fixed when mounted).
+  const [listRange] = useState(() => { const now = Date.now(); return { from: new Date(now - 60 * DAY_MS), to: new Date(now + 30 * DAY_MS) }; });
+  const range = useMemo(() => (view === 'calendar' ? rangeFor(calMode, anchor) : listRange), [view, calMode, anchor, listRange]);
+  const load = useCallback(async () => {
+    try {
+      setData(await api.meetings(wsId, { unitId, channel, from: range.from.toISOString(), to: range.to.toISOString() }));
+      setFailed(null);
+    } catch (e) { setFailed(e instanceof Error ? e.message : 'could not load the meetings'); }
+  }, [wsId, unitId, channel, range]);
+  useEffect(() => { void load(); const t = setInterval(() => { void load(); }, 60_000); return () => clearInterval(t); }, [load]);
+
+  const open = (m: CalendarMeeting) => {
+    if (m.minutesPath && m.status !== 'running') { app.openFile({ kind: 'workspace', id: wsId }, m.minutesPath); return; }
+    setSelected(m);
+  };
+  const openThread = (m: CalendarMeeting) => { if (m.channelSlug) app.openChannel(m.channelSlug, m.threadRootId); };
+  const items = data?.meetings ?? [];
+
+  const header = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+      <div style={{ fontSize: 13.5, fontWeight: 700, flex: 1, minWidth: 120 }}>Meetings</div>
+      <div role="group" aria-label="View" style={{ display: 'flex', gap: 2, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: 2 }}>
+        {(['list', 'calendar'] as View[]).map((v) => (
+          <button key={v} aria-pressed={view === v} onClick={() => setView(v)} style={{ background: view === v ? 'var(--accent)' : 'none', color: view === v ? '#fff' : 'var(--text-dim)', border: 'none', borderRadius: 6, padding: '3px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize' }}>{v}</button>
+        ))}
+      </div>
+    </div>
+  );
+
+  if (data && !data.hasOrg) {
+    return <div style={card}>{header}<div style={faint}>Meetings run in organization mode: enable it in Settings → Workspace → Organization, then <code>/meeting</code> in a channel starts one.</div></div>;
+  }
+
+  return (
+    <div style={{ ...card, minWidth: 0 }}>
+      {header}
+      {failed && <div style={{ ...faint, color: 'var(--red)' }}>{failed}</div>}
+      {!data && !failed && <div style={faint}>Loading…</div>}
+      {data && view === 'list' && <ListView items={items} open={open} openThread={openThread} showUnit={showUnit} showAll={showAll} setShowAll={setShowAll} />}
+      {data && view === 'calendar' && (
+        <CalendarView mode={calMode} anchor={anchor} setAnchor={(d) => { setAnchor(d); setDayOpen(null); }} items={items} open={open} dayOpen={dayOpen} setDayOpen={setDayOpen} showUnit={showUnit} />
+      )}
+      {selected && <Details m={selected} onClose={() => setSelected(null)} openThread={openThread} openMinutes={(p) => app.openFile({ kind: 'workspace', id: wsId }, p)} />}
+    </div>
+  );
+}
+
+function Row({ m, open, openThread, showUnit }: { m: CalendarMeeting; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; showUnit: boolean }) {
+  return (
+    <div data-testid="meeting-row" style={{ display: 'flex', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border-soft)', alignItems: 'flex-start', minWidth: 0 }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_COLOR[m.status] ?? 'var(--border)', flex: 'none', marginTop: 6 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
+          <button onClick={() => open(m)} style={{ ...linkBtn, fontSize: 13, color: 'var(--text)', textAlign: 'left', overflowWrap: 'anywhere' }}>{m.title}</button>
+          <span style={pill(m.status === 'upcoming' ? 'var(--accent-dim)' : undefined, 'var(--text)')}>{statusLabel(m)}</span>
+          {showUnit && m.unitName && !m.title.includes(m.unitName) && <span style={pill()}>{m.unitName}</span>}
+        </div>
+        <div style={{ ...faint, marginTop: 2, overflowWrap: 'anywhere' }}>
+          {whenText(m.at)}
+          {m.cron ? <> · {cadenceText(m.cron, m.at)}</> : null}
+          {m.facilitator ? <> · {m.facilitator.name}</> : null}
+          {m.status === 'done' ? <> · {m.decisions} decision(s) · {m.actions} action(s)</> : null}
+        </div>
+        {m.summary && <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.summary}</div>}
+      </div>
+      <div style={{ display: 'flex', gap: 5, flex: 'none' }}>
+        {m.minutesPath && <button style={btn()} onClick={() => open(m)} title={`Open /${m.minutesPath}`}>Minutes</button>}
+        {m.threadRootId && m.channelSlug && <button style={btn()} onClick={() => openThread(m)} title="Open the meeting thread">Thread</button>}
+        {!m.minutesPath && !m.threadRootId && <button style={btn()} onClick={() => open(m)}>Details</button>}
+      </div>
+    </div>
+  );
+}
+
+function ListView({ items, open, openThread, showUnit, showAll, setShowAll }: { items: CalendarMeeting[]; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; showUnit: boolean; showAll: boolean; setShowAll: (v: boolean) => void }) {
+  const { upcoming, past } = splitList(items);
+  const shownUpcoming = showAll ? upcoming : upcoming.slice(0, 8);
+  return (
+    <div>
+      <div style={{ ...label, marginTop: 4 }}>Upcoming ({upcoming.length})</div>
+      {upcoming.length === 0 && <div style={{ ...faint, padding: '6px 0' }}>Nothing scheduled in the next 30 days.</div>}
+      {shownUpcoming.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} showUnit={showUnit} />)}
+      {upcoming.length > shownUpcoming.length && <button style={{ ...linkBtn, marginTop: 6 }} onClick={() => setShowAll(true)}>Show {upcoming.length - shownUpcoming.length} more</button>}
+      <div style={{ ...label, marginTop: 12 }}>Past ({past.length})</div>
+      {past.length === 0 && <div style={{ ...faint, padding: '6px 0' }}>No meeting held in the last 60 days. <code>/meeting</code> in a channel starts one.</div>}
+      {past.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} showUnit={showUnit} />)}
+    </div>
+  );
+}
+
+function Chip({ m, open, showUnit }: { m: CalendarMeeting; open: (m: CalendarMeeting) => void; showUnit: boolean }) {
+  const title = showUnit ? shortTitle(m) : shortTitle(m).replace(` · ${m.unitName ?? ''}`, '');
+  return (
+    <button onClick={() => open(m)} title={`${whenText(m.at)} · ${m.title}${m.minutesPath ? ' — open the minutes' : ''}`}
+      style={{ display: 'block', width: '100%', textAlign: 'left', background: 'var(--panel-2)', border: 'none', borderLeft: `3px solid ${STATUS_COLOR[m.status] ?? 'var(--border)'}`, borderRadius: 4, padding: '1px 4px', marginTop: 2, fontSize: 10.5, color: 'var(--text)', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, opacity: m.status === 'cancelled' ? 0.6 : 1 }}>
+      <span style={{ color: 'var(--text-faint)' }}>{clock(m.at)}</span> {title}
+    </button>
+  );
+}
+
+function CalendarView({ mode, anchor, setAnchor, items, open, dayOpen, setDayOpen, showUnit }: {
+  mode: 'month' | 'week'; anchor: Date; setAnchor: (d: Date) => void; items: CalendarMeeting[]; open: (m: CalendarMeeting) => void;
+  dayOpen: string | null; setDayOpen: (k: string | null) => void; showUnit: boolean;
+}) {
+  const days = useMemo(() => byDay(items), [items]);
+  const today = dayKey(new Date());
+  const step = (n: number) => setAnchor(mode === 'week' ? addDays(anchor, 7 * n) : new Date(anchor.getFullYear(), anchor.getMonth() + n, 1));
+  const title = mode === 'week'
+    ? (() => { const w = weekDays(anchor); return `${w[0].toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} – ${w[6].toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`; })()
+    : anchor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const nav = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+      <button style={btn()} aria-label="Previous" onClick={() => step(-1)}>‹</button>
+      <button style={btn()} onClick={() => setAnchor(startOfDay(new Date()))}>Today</button>
+      <button style={btn()} aria-label="Next" onClick={() => step(1)}>›</button>
+      <div style={{ fontSize: 13, fontWeight: 600, marginLeft: 4, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} aria-live="polite">{title}</div>
+    </div>
+  );
+  if (mode === 'week') {
+    return (
+      <div data-testid="week-agenda">
+        {nav}
+        {weekDays(anchor).map((d) => {
+          const k = dayKey(d);
+          const list = days.get(k) ?? [];
+          return (
+            <div key={k} style={{ display: 'flex', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border-soft)', minWidth: 0 }}>
+              <div style={{ width: 44, flex: 'none', textAlign: 'center' }}>
+                <div style={{ ...faint, fontSize: 10.5 }}>{d.toLocaleDateString(undefined, { weekday: 'short' })}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: k === today ? 'var(--accent-hi)' : 'var(--text)' }}>{d.getDate()}</div>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {list.length === 0 && <div style={{ ...faint, paddingTop: 6 }}>—</div>}
+                {list.map((m) => (
+                  <button key={m.id} onClick={() => open(m)} style={{ display: 'flex', gap: 8, width: '100%', textAlign: 'left', background: 'none', border: 'none', borderLeft: `3px solid ${STATUS_COLOR[m.status] ?? 'var(--border)'}`, padding: '3px 8px', marginTop: 3, color: 'var(--text)', cursor: 'pointer', minWidth: 0 }}>
+                    <span style={{ ...faint, flex: 'none' }}>{clock(m.at)}</span>
+                    <span style={{ fontSize: 12.5, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{showUnit ? m.title : m.title.replace(` · ${m.unitName ?? ''}`, '')}</span>
+                    {m.minutesPath && <span style={{ ...faint, flex: 'none', marginLeft: 'auto' }}>minutes</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+  const grid = monthGrid(anchor);
+  const month = anchor.getMonth();
+  const MAX = 3;
+  return (
+    <div data-testid="month-grid">
+      {nav}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 2 }}>
+        {WEEKDAYS.map((w) => <div key={w} style={{ ...label, textAlign: 'center', padding: '2px 0' }}>{w}</div>)}
+        {grid.flat().map((d) => {
+          const k = dayKey(d);
+          const list = days.get(k) ?? [];
+          const inMonth = d.getMonth() === month;
+          return (
+            <div key={k} data-day={k} style={{ minHeight: 78, minWidth: 0, border: '1px solid var(--border-soft)', borderRadius: 6, padding: 3, background: k === today ? 'var(--accent-dim)' : 'var(--panel)', opacity: inMonth ? 1 : 0.5 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: k === today ? 'var(--accent-hi)' : 'var(--text-dim)' }}>{d.getDate()}</div>
+              {list.slice(0, MAX).map((m) => <Chip key={m.id} m={m} open={open} showUnit={showUnit} />)}
+              {list.length > MAX && <button style={{ ...linkBtn, fontSize: 10.5, marginTop: 2 }} onClick={() => setDayOpen(dayOpen === k ? null : k)}>+{list.length - MAX} more</button>}
+            </div>
+          );
+        })}
+      </div>
+      {dayOpen && (
+        <div style={{ marginTop: 10 }}>
+          <div style={label}>{new Date(`${dayOpen}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+          {(days.get(dayOpen) ?? []).map((m) => <Chip key={m.id} m={m} open={open} showUnit={showUnit} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Details({ m, onClose, openThread, openMinutes }: { m: CalendarMeeting; onClose: () => void; openThread: (m: CalendarMeeting) => void; openMinutes: (path: string) => void }) {
+  const agents = m.attendees.filter((a) => a.kind === 'agent').map((a) => a.name);
+  const people = m.attendees.filter((a) => a.kind === 'human').map((a) => a.name);
+  return (
+    <div role="dialog" aria-label={`${m.title} details`} style={{ marginTop: 10, border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', background: 'var(--panel-2)', minWidth: 0 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700, overflowWrap: 'anywhere' }}>{m.title}</div>
+          <div style={{ ...faint, marginTop: 2 }}>{MEETING_KIND_TITLES[m.kind] ?? m.kind} · {statusLabel(m)}{m.unitName ? ` · ${m.unitName}` : ''}{m.channelSlug ? ` · #${m.channelSlug}` : ''}</div>
+        </div>
+        <button style={btn()} onClick={onClose} aria-label="Close details">✕</button>
+      </div>
+      <div style={{ display: 'grid', gap: 4, marginTop: 8, fontSize: 12.5 }}>
+        <div><span style={faint}>When </span>{whenText(m.at)}{m.cron ? ` · ${cadenceText(m.cron, m.at)}` : ''}</div>
+        {m.facilitator && <div><span style={faint}>Facilitator </span>{m.facilitator.name}</div>}
+        {(agents.length > 0 || people.length > 0) && <div style={{ overflowWrap: 'anywhere' }}><span style={faint}>Attendees </span>{[...agents, ...people].join(', ')}</div>}
+        {m.summary && <div style={{ color: 'var(--text-dim)' }}>{m.summary}</div>}
+        {m.status === 'upcoming' && <div style={faint}>From the cadence; it starts on its own (the agenda is composed then). Change it under Cadences.</div>}
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+        {m.minutesPath && <button style={btn(true)} onClick={() => openMinutes(m.minutesPath!)}>Open minutes</button>}
+        {m.threadRootId && m.channelSlug && <button style={btn()} onClick={() => openThread(m)}>Open thread</button>}
+      </div>
+    </div>
+  );
+}

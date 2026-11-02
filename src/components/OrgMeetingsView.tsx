@@ -1,22 +1,22 @@
 /** Meetings and Decisions (docs/company-vision.md §3, §6; docs/group-chat.md
  *  §8; execution plan item 19). Meetings: the cadences per unit with their
- *  cron in words and editable, the meetings held (opening the channel
- *  thread each one is), and "Start meeting" with kind, unit and agenda.
+ *  cron in words and editable, the meetings as a list and a calendar
+ *  (MeetingsBoard: upcoming occurrences and the meetings held, each with its
+ *  minutes file — docs/meetings.md), and "Start meeting" with kind, unit and agenda.
  *  Decisions: the decision log — what was decided, the alternatives, the
  *  rationale, who decided, where it came from, with a link to the meeting. */
 /* eslint-disable react-refresh/only-export-components */
 import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { useApp } from '../store';
 import { api, MEETING_KINDS, type MeetingKind, type OrgCadence, type OrgDecision, type OrgDetail, type OrgMeeting } from '../lib/api';
-import { I, P } from '../lib/icons';
 import { fmtUsd } from '../lib/pricing';
-import { decidedByLabel, decisionSource, firesOn, humanCron, MEETING_KIND_TITLES, parseMinutes } from '../lib/org';
+import { decidedByLabel, decisionSource, firesOn, humanCron, MEETING_KIND_TITLES } from '../lib/org';
 import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar, UnitChips } from './org-ui';
+import { MeetingsBoard } from './MeetingsBoard';
 
 const RelatedDrawer = lazy(() => import('./OrgMemoryView').then((m) => ({ default: m.RelatedDrawer })));
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
-const STATUS_COLOR: Record<string, string> = { running: 'var(--green)', done: 'var(--text-faint)', scheduled: 'var(--amber)', postponed: 'var(--amber)', cancelled: 'var(--red)' };
 
 /** Open the thread a meeting is (in its unit channel). */
 export function useOpenMeeting() {
@@ -36,14 +36,13 @@ export function MeetingsPane({ org }: { org: OrgDetail }) {
   const names = useAgentNames();
   const openMeeting = useOpenMeeting();
   const [meetings, setMeetings] = useState<OrgMeeting[] | null>(null);
-  const [status, setStatus] = useState('');
   const [starting, setStarting] = useState(false);
   const unitId = isCompany ? null : current?.id ?? null;
   const refresh = useCallback(async () => {
-    setMeetings(await api.orgMeetings(wsId, { unitId, status: status || undefined }).catch((): OrgMeeting[] => []));
+    setMeetings(await api.orgMeetings(wsId, { unitId }).catch((): OrgMeeting[] => []));
     void app.refreshWsOrg();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wsId, unitId, status]);
+  }, [wsId, unitId]);
   useEffect(() => { void refresh(); const t = setInterval(() => { void refresh(); }, 30_000); return () => clearInterval(t); }, [refresh]);
   // A deep link names a meeting: open its thread once the list has it.
   useEffect(() => {
@@ -109,42 +108,7 @@ export function MeetingsPane({ org }: { org: OrgDetail }) {
           );
         })}
       </div>
-      <div style={card}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700 }}>Held</div>
-          <span style={{ ...faint, flex: 1 }}>{meetings?.length ?? 0} meeting(s)</span>
-          <select aria-label="Status filter" value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...input, width: 'auto', padding: '3px 6px' }}>
-            <option value="">all</option>{['running', 'done', 'cancelled', 'postponed', 'scheduled'].map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
-        {meetings === null && <div style={faint}>Loading…</div>}
-        {meetings && meetings.length === 0 && <div style={faint}>No meeting yet. Start one, or wait for a cadence; <code>/meeting</code> in a unit channel starts one by hand.</div>}
-        {(meetings ?? []).map((m) => {
-          const minutes = parseMinutes(m.minutes);
-          const fac = m.facilitatorAgentId ? names.get(m.facilitatorAgentId) : undefined;
-          return (
-            <div key={m.id} style={{ display: 'flex', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border-soft)', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              <span style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_COLOR[m.status] ?? 'var(--border)', flex: 'none', marginTop: 6 }} />
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button onClick={() => openMeeting(m)} style={{ ...linkBtn, fontSize: 13, color: 'var(--text)', textAlign: 'left' }}>{m.title || MEETING_KIND_TITLES[m.kind]}</button>
-                  <span style={pill()}>{MEETING_KIND_TITLES[m.kind] ?? m.kind}</span>
-                  <span style={pill(STATUS_COLOR[m.status], m.status === 'done' ? 'var(--text)' : '#fff')}>{m.status}</span>
-                  {isCompany && <span style={pill()}>{unitName(m.unitId)}</span>}
-                </div>
-                <div style={{ ...faint, marginTop: 2 }}>
-                  {fac ? <>facilitated by {fac.name} · </> : null}{m.status === 'done' ? `${m.rounds} round(s) · ${fmtUsd(m.usd)} · ${minutes.decisions.length} decision(s) · ${minutes.actions.length} action(s) · ${minutes.questions.length} question(s) for you` : m.createdBy === 'cadence' ? 'from the cadence' : `by ${m.createdBy}`} · {ago(m.endedAt ?? m.startedAt ?? m.createdAt)}
-                </div>
-                {m.status === 'done' && minutes.summary && <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{minutes.summary}</div>}
-              </div>
-              <div style={{ display: 'flex', gap: 5, flex: 'none' }}>
-                <button style={btn()} onClick={() => openMeeting(m)} title="Open the thread in the unit channel"><I d={P.chat} size={13} /></button>
-                {(m.status === 'running' || m.status === 'scheduled' || m.status === 'postponed') && <button style={btn(false, true)} onClick={() => void act(() => api.cancelOrgMeeting(wsId, m.id), 'Meeting cancelled')}>Cancel</button>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <MeetingsBoard wsId={wsId} unitId={unitId} showUnit={isCompany} />
     </div>
   );
 }

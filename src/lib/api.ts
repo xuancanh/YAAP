@@ -894,7 +894,20 @@ export interface OrgMeeting {
   id: string; orgId: string; unitId: string | null; channelId: string | null; threadRootId: string | null; kind: MeetingKind; title: string; agenda: string;
   facilitatorAgentId: string | null; attendees: string; status: MeetingStatus; scheduledFor: string | null; startedAt: string | null; endedAt: string | null;
   rounds: number; usd: number; minutes: string; createdBy: string; createdAt: string;
+  /** The minutes document in the workspace tree (docs/meetings.md); null until the meeting ends. */
+  minutesPath?: string | null; summary?: string;
 }
+/** One row of GET …/meetings (docs/meetings.md "The calendar"): a meeting
+ *  held or scheduled, or an upcoming occurrence of a cadence (`source: 'cadence'`). */
+export interface CalendarMeeting {
+  id: string; source: 'meeting' | 'cadence'; meetingId: string | null; cadenceId: string | null;
+  kind: string; title: string; unitId: string | null; unitName: string | null; channelId: string | null; channelSlug: string | null;
+  status: MeetingStatus | 'upcoming'; at: string; endedAt: string | null;
+  facilitator: { id: string; name: string } | null; attendees: Array<{ kind: 'agent' | 'human'; id: string; name: string }>;
+  minutesPath: string | null; summary: string; cron: string | null; threadRootId: string | null;
+  decisions: number; actions: number; rounds: number; usd: number;
+}
+export interface CalendarResponse { from: string; to: string; now: string; hasOrg: boolean; meetings: CalendarMeeting[] }
 /** The decision log (docs/company-vision.md §6); referenced as `#decision:<id>`. */
 export interface OrgDecision {
   id: string; orgId: string; unitId: string | null; meetingId: string | null; approvalId: string | null; title: string; decision: string; alternatives: string; rationale: string;
@@ -1682,6 +1695,16 @@ export const api = {
     if (opts.status) q.set('status', opts.status);
     const qs = q.toString();
     return get<OrgMeeting[]>(`/api/workspaces/${wsId}/org/meetings${qs ? `?${qs}` : ''}`);
+  },
+  /** The meetings list and calendar (docs/meetings.md): past meetings and upcoming cadence occurrences. */
+  meetings: (wsId: string, opts: { unitId?: string | null; channel?: string | null; from?: string; to?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.unitId) q.set('unitId', opts.unitId);
+    if (opts.channel) q.set('channel', opts.channel);
+    if (opts.from) q.set('from', opts.from);
+    if (opts.to) q.set('to', opts.to);
+    const qs = q.toString();
+    return get<CalendarResponse>(`/api/workspaces/${wsId}/meetings${qs ? `?${qs}` : ''}`);
   },
   orgMeeting: (wsId: string, meetingId: string) => get<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings/${enc(meetingId)}`),
   startOrgMeeting: (wsId: string, body: { kind: MeetingKind; unitId?: string; channelId?: string; agenda?: string; title?: string }) => send<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings`, 'POST', body),

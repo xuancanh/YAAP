@@ -2,7 +2,8 @@
  *  list with author chips / system lines / live agent replies, the thread
  *  panel, approval cards addressed to this person, the composer with
  *  @mention autocomplete and drag-drop uploads into the channel folder, the
- *  Files tab, and channel settings (topic, members, budget, archive). */
+ *  Meetings tab (list and calendar, docs/meetings.md), the Files tab, and
+ *  channel settings (topic, members, budget, archive). */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
@@ -14,13 +15,14 @@ import { fmtUsd } from '../lib/pricing';
 import { MEETING_KIND_TITLES, minutesMeetingId, parseMinutes } from '../lib/org';
 import { AUDIENCE_COLOR, audienceLabel } from '../lib/org2';
 import { FollowToggle } from './FollowToggle';
+import { MeetingsBoard } from './MeetingsBoard';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 };
 const field: React.CSSProperties = { width: '100%', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 11px', color: 'var(--text)', fontSize: 13, outline: 'none' };
 const smallBtn: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' };
 
-type Tab = 'messages' | 'files' | 'settings';
+type Tab = 'messages' | 'meetings' | 'files' | 'settings';
 interface LiveReply { liveId: string; agentId: string; threadRootId: string | null; replyRootId?: string; text: string; done: boolean }
 interface Approval { sessionId: string; callId: string; tool: string; input: Record<string, unknown>; agentId: string; threadRootId: string | null; forName: string }
 
@@ -364,7 +366,7 @@ export function ChannelView() {
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <style>{'.chan-msg .chan-actions{opacity:0;transition:opacity .12s}.chan-msg:hover .chan-actions{opacity:1}'}</style>
-      <header style={{ flex: 'none', borderBottom: '1px solid var(--border)', padding: '11px 16px', display: 'flex', alignItems: 'center', gap: 11, background: 'var(--panel)' }}>
+      <header style={{ flex: 'none', borderBottom: '1px solid var(--border)', padding: '11px 16px', display: 'flex', alignItems: 'center', gap: 11, background: 'var(--panel)', flexWrap: app.stacked ? 'wrap' : undefined }}>
         {app.stacked && (
           <button onClick={() => app.setMobileChatOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: 4, display: 'flex', flex: 'none' }}><I d={P.chevL} size={20} /></button>
         )}
@@ -385,8 +387,8 @@ export function ChannelView() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 4, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: 3 }}>
-          {(['messages', 'files', 'settings'] as Tab[]).map((t) => (
-            <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? 'var(--accent)' : 'none', color: tab === t ? '#fff' : 'var(--text-dim)', border: 'none', borderRadius: 7, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize' }}>{t}</button>
+          {(['messages', 'meetings', 'files', 'settings'] as Tab[]).map((t) => (
+            <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? 'var(--accent)' : 'none', color: tab === t ? '#fff' : 'var(--text-dim)', border: 'none', borderRadius: 7, padding: app.stacked ? '5px 7px' : '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize' }}>{t}</button>
           ))}
         </div>
       </header>
@@ -437,6 +439,7 @@ export function ChannelView() {
         </div>
       )}
 
+      {tab === 'meetings' && <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', minWidth: 0 }}><MeetingsBoard wsId={wsId} channel={slug} /></div>}
       {tab === 'files' && <FilesTab wsId={wsId} slug={slug} folder={channel.folder} files={files} reload={() => void api.channelFiles(wsId, slug).then(setFiles).catch(() => {})} />}
       {tab === 'settings' && detail && <SettingsTab detail={detail} onChange={(d) => { setDetail(d); void app.refreshChannels(); }} />}
     </div>
