@@ -10,6 +10,17 @@ describe('Markdown', () => {
     expect(container.querySelector('code')).toHaveTextContent('code');
   });
 
+  it('renders resolved @mentions as chips — plain, bold or in backticks, as agents write them', () => {
+    const mentions = (s: string) => (s.includes('@Tutor Lead') ? [{ start: s.indexOf('@Tutor Lead'), end: s.indexOf('@Tutor Lead') + 11, kind: 'agent' as const }] : []);
+    const { container } = render(<Markdown text={'Ping @Tutor Lead now. **`@Tutor Lead`** again; @nobody stays text'} mentions={mentions} />);
+    const chips = container.querySelectorAll('[data-mention]');
+    expect(chips).toHaveLength(2);
+    expect(chips[0]).toHaveTextContent('@Tutor Lead');
+    expect(chips[0].getAttribute('data-mention')).toBe('agent');
+    expect(container.querySelector('code')).toBeNull();
+    expect(container).toHaveTextContent('@nobody stays text');
+  });
+
   it('renders https links as anchors', () => {
     const { container } = render(<Markdown text="see [docs](https://example.com/a)" />);
     const a = container.querySelector('a');

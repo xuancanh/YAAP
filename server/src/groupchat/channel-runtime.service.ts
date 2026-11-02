@@ -327,8 +327,8 @@ export class ChannelRuntimeService implements ToolProviderHook {
     const key = `${c.id}:${threadRootId}`;
     if (!opts.unprompted) this.replying.set(key, (this.replying.get(key) ?? 0) + 1);
     const liveId = newId();
-    const emit = (delta: string, done = false) => this.events.emit({ type: 'channel_stream', workspaceId: c.workspaceId, channelId: c.id, threadRootId: trigger.threadRootId, agentId: agent.id, liveId, delta, done });
-    this.events.emit({ type: 'channel_typing', workspaceId: c.workspaceId, channelId: c.id, threadRootId: trigger.threadRootId, agentId: agent.id, liveId, on: true });
+    const emit = (delta: string, done = false) => this.events.emit({ type: 'channel_stream', workspaceId: c.workspaceId, channelId: c.id, threadRootId: trigger.threadRootId, replyRootId: threadRootId, agentId: agent.id, liveId, delta, done });
+    this.events.emit({ type: 'channel_typing', workspaceId: c.workspaceId, channelId: c.id, threadRootId: trigger.threadRootId, replyRootId: threadRootId, agentId: agent.id, liveId, on: true });
     // One turn at a time per agent per channel (one session): a tag that
     // lands while the agent is still replying — two agents tagging it at
     // once, or a tag back mid-turn — waits for that turn, then runs.
@@ -399,7 +399,7 @@ export class ChannelRuntimeService implements ToolProviderHook {
         const n = (this.replying.get(key) ?? 1) - 1;
         if (n <= 0) this.replying.delete(key); else this.replying.set(key, n);
       }
-      this.events.emit({ type: 'channel_typing', workspaceId: c.workspaceId, channelId: c.id, threadRootId: trigger.threadRootId, agentId: agent.id, liveId, on: false });
+      this.events.emit({ type: 'channel_typing', workspaceId: c.workspaceId, channelId: c.id, threadRootId: trigger.threadRootId, replyRootId: threadRootId, agentId: agent.id, liveId, on: false });
     }
   }
 

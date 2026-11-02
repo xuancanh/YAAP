@@ -423,6 +423,11 @@ test('an agent reply that tags another agent by display name ("@Tutor Lead") wak
   assert.match(leadReq.system ?? '', /Tutor Engineer, another agent in this channel, mentioned you/);
   assert.match(leadReq.system ?? '', /Owner: @Tutor Engineer status\?/, 'the history carries the thread that led here');
   assert.match(leadReq.system ?? '', /@tutor-engineer/, 'the roster tells the agent how to tag members');
+  // live events say which thread each reply lands in: the first was tagged
+  // at top level, the second inside the thread — both land under the root
+  const streams = s.log.filter((e): e is Extract<WorkspaceEvent, { type: 'channel_stream' }> => e.type === 'channel_stream');
+  assert.ok(streams.some((e) => e.agentId === eng.id && e.threadRootId === null && e.replyRootId === root.id));
+  assert.ok(streams.some((e) => e.agentId === lead.id && e.threadRootId === root.id && e.replyRootId === root.id));
 });
 
 test('a tag inside a channel_post (outside any wake) wakes the agent the same way; the tool result says who was woken and which tags named nobody', async () => {

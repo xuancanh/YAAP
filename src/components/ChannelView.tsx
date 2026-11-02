@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
 import { api, type Agent, type ChannelDetail, type ChannelFile, type ChannelMember, type ChannelMessage, type OrgDecision, type OrgMeeting, type WorkspaceEvent } from '../lib/api';
-import { applyMention, decisionRefs, groupThreads, initials, meetingCommandHint, mentionQuery, mentionSuggestions, type MentionCandidate } from '../lib/channels';
+import { applyMention, decisionRefs, groupThreads, initials, liveInThread, meetingCommandHint, mentionQuery, mentionSuggestions, messageMentionSpans, type MentionCandidate } from '../lib/channels';
 import { Markdown, type RefResolver } from '../lib/md';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
@@ -20,7 +20,7 @@ const field: React.CSSProperties = { width: '100%', background: 'var(--panel-2)'
 const smallBtn: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' };
 
 type Tab = 'messages' | 'files' | 'settings';
-interface LiveReply { liveId: string; agentId: string; threadRootId: string | null; text: string; done: boolean }
+interface LiveReply { liveId: string; agentId: string; threadRootId: string | null; replyRootId?: string; text: string; done: boolean }
 interface Approval { sessionId: string; callId: string; tool: string; input: Record<string, unknown>; agentId: string; threadRootId: string | null; forName: string }
 
 function timeOf(iso: string): string {
@@ -51,7 +51,7 @@ export function ChannelView() {
   const [threadMsgs, setThreadMsgs] = useState<ChannelMessage[]>([]);
   const [tab, setTab] = useState<Tab>('messages');
   const [live, setLive] = useState<LiveReply[]>([]);
-  const [typing, setTyping] = useState<Record<string, { agentId: string; threadRootId: string | null }>>({});
+  const [typing, setTyping] = useState<Record<string, { agentId: string; threadRootId: string | null; replyRootId?: string }>>({});
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [files, setFiles] = useState<ChannelFile[]>([]);
   // Meetings held in this channel (docs/group-chat.md §8): the thread root
@@ -179,13 +179,13 @@ export function ChannelView() {
         }
         if (m.authorKind !== 'system') void api.markChannelRead(wsId, channel.slug, m.id).then(() => app.refreshChannels()).catch(() => {});
       } else if (ev.type === 'channel_typing') {
-        setTyping((t) => { const n = { ...t }; if (ev.on) n[ev.liveId] = { agentId: ev.agentId, threadRootId: ev.threadRootId }; else delete n[ev.liveId]; return n; });
+        setTyping((t) => { const n = { ...t }; if (ev.on) n[ev.liveId] = { agentId: ev.agentId, threadRootId: ev.threadRootId, replyRootId: ev.replyRootId }; else delete n[ev.liveId]; return n; });
         if (!ev.on) setLive((l) => l.filter((x) => x.liveId !== ev.liveId));
       } else if (ev.type === 'channel_stream') {
         setLive((l) => {
           const i = l.findIndex((x) => x.liveId === ev.liveId);
           if (ev.done) return i < 0 ? l : l.filter((x) => x.liveId !== ev.liveId);
-          if (i < 0) return [...l, { liveId: ev.liveId, agentId: ev.agentId, threadRootId: ev.threadRootId, text: ev.delta, done: false }];
+          if (i < 0) return [...l, { liveId: ev.liveId, agentId: ev.agentId, threadRootId: ev.threadRootId, replyRootId: ev.replyRootId, text: ev.delta, done: false }];
           return l.map((x, j) => (j === i ? { ...x, text: x.text + ev.delta } : x));
         });
       } else if (ev.type === 'channel_approval') {
@@ -278,7 +278,7 @@ export function ChannelView() {
               <button onClick={() => void makeTask(m)} title="Make a task from this message" style={ghostBtn}><I d={P.board} size={13} />Make task</button>
             </span>
           </div>
-          {minutesOf ? <MinutesCard wsId={wsId} meetingId={minutesOf} fallback={m.text} refs={refs} onDecision={openDecision} onTask={(id) => { app.setOrgFocus({ kind: 'task', id }); app.setOrgPane('board'); app.go('workspace'); app.setMobileDetail(true); }} /> : <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={m.text} refs={refs} compact /></div>}
+          {minutesOf ? <MinutesCard wsId={wsId} meetingId={minutesOf} fallback={m.text} refs={refs} onDecision={openDecision} onTask={(id) => { app.setOrgFocus({ kind: 'task', id }); app.setOrgPane('board'); app.go('workspace'); app.setMobileDetail(true); }} /> : <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={m.text} refs={refs} compact mentions={(s) => messageMentionSpans(s, m.mentions, mentionables).map((x) => ({ start: x.start, end: x.end, kind: x.member.kind }))} /></div>}
           {atts.filter((a) => a.kind !== 'minutes').length > 0 && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
               {atts.filter((a) => a.kind !== 'minutes').map((a, i) => (
@@ -299,6 +299,16 @@ export function ChannelView() {
                 {opts.replies} {opts.replies === 1 ? 'reply' : 'replies'}{opts.lastReplyAt ? <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}> · {timeOf(opts.lastReplyAt)}</span> : null}
               </button>
             )}
+            {!opts.inThread && thread !== m.id && (() => {
+              // An agent tagged inside this thread is replying there: say so
+              // in the main list, where its live reply is not drawn.
+              const inThread = [...new Set(Object.values(typing).filter((t) => t.threadRootId === m.id).map((t) => agentOf(t.agentId)?.name ?? 'An agent'))];
+              return inThread.length > 0 ? (
+                <button onClick={() => setThread(m.id)} style={{ background: 'none', border: 'none', color: 'var(--green)', fontSize: 12, cursor: 'pointer', padding: 0 }}>
+                  {inThread.join(', ')} {inThread.length === 1 ? 'is' : 'are'} replying in the thread…
+                </button>
+              ) : null;
+            })()}
           </div>
         </div>
       </div>
@@ -413,8 +423,8 @@ export function ChannelView() {
                 {renderMessage(threadRoot, { inThread: true })}
                 <div style={{ height: 1, background: 'var(--border-soft)', margin: '8px 0' }} />
                 {threadMsgs.slice(1).map((m) => renderMessage(m, { inThread: true }))}
-                {live.filter((l) => l.threadRootId === thread).map(renderLive)}
-                {Object.values(typing).filter((t) => t.threadRootId === thread && !live.some((l) => l.agentId === t.agentId && l.threadRootId === thread)).map(renderTyping)}
+                {live.filter((l) => liveInThread(l, thread)).map(renderLive)}
+                {Object.values(typing).filter((t) => liveInThread(t, thread) && !live.some((l) => l.agentId === t.agentId && liveInThread(l, thread))).map(renderTyping)}
                 {approvals.filter((a) => a.threadRootId === thread).map(renderApproval)}
               </div>
               <Composer wsId={wsId} slug={slug} folder={channel.folder} mentionables={mentionables} threadRootId={thread} compact orgMode={orgChannel}

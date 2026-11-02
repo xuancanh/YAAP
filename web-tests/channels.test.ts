@@ -1,7 +1,52 @@
 /** Group-chat helpers (docs/group-chat.md): the @mention autocomplete
  *  parser, thread grouping, deep links and channel-session detection. */
 import { describe, expect, it } from 'vitest';
-import { applyMention, channelHash, goalMentions, goalRefs, groupThreads, handleOf, initials, isChannelSession, mentionQuery, mentionSuggestions, parseChannelHash } from '../src/lib/channels';
+import { applyMention, channelHash, goalMentions, goalRefs, groupThreads, handleOf, initials, isChannelSession, liveInThread, mentionQuery, mentionSuggestions, messageMentionSpans, parseChannelHash } from '../src/lib/channels';
+
+describe('agent-to-agent tags (mirror of server/src/groupchat/mentions.ts)', () => {
+  const team = [
+    { kind: 'agent' as const, id: 'lead', name: 'Tutor Lead' },
+    { kind: 'agent' as const, id: 'eng', name: 'Tutor Engineer' },
+    { kind: 'agent' as const, id: 'cos', name: 'Chief of staff' },
+    { kind: 'agent' as const, id: 'duc', name: 'Đức Anh' },
+    { kind: 'agent' as const, id: 'ming', name: '小明' },
+  ];
+  const tagged = (text: string, ids: string[] = team.map((m) => m.id)) =>
+    messageMentionSpans(text, JSON.stringify(ids.map((id) => ({ kind: 'agent', id }))), team).map((s) => [text.slice(s.start, s.end), s.member.id]);
+
+  it('resolves display names the way agents write them, longest name first, as the server does', () => {
+    expect(tagged('**`@Tutor Lead`** and @Tutor Engineer: and `@Chief of staff`')).toEqual([['@Tutor Lead', 'lead'], ['@Tutor Engineer', 'eng'], ['@Chief of staff', 'cos']]);
+    expect(tagged('@tutor-lead, @ChiefOfStaff')).toEqual([['@tutor-lead', 'lead'], ['@ChiefOfStaff', 'cos']]);
+    expect(tagged('@Đức Anh ơi, @小明')).toEqual([['@Đức Anh', 'duc'], ['@小明', 'ming']]);
+    expect(tagged('@tutor is ambiguous; a@Tutor Lead is an address')).toEqual([]);
+    expect(tagged('```\n@Tutor Lead\n```')).toEqual([]);
+  });
+
+  it('chips only what the server resolved for that message', () => {
+    expect(tagged('@Tutor Lead and @Tutor Engineer', ['eng'])).toEqual([['@Tutor Engineer', 'eng']]);
+    expect(tagged('@Tutor Lead', [])).toEqual([]);
+  });
+
+  it('autocompletes names in any script and inserts a handle the server resolves', () => {
+    expect(mentionQuery('hỏi @Đứ')).toEqual({ start: 4, filter: 'đứ' });
+    expect(mentionSuggestions('đứ', team).map((m) => m.id)).toEqual(['duc']);
+    expect(mentionSuggestions('小', team).map((m) => m.id)).toEqual(['ming']);
+    expect(handleOf('Đức Anh')).toBe('duc-anh');
+    expect(applyMention('@Đứ', 0, 3, 'Đức Anh').text).toBe('@duc-anh ');
+    // a name with no Latin spelling is inserted as written
+    expect(applyMention('@小', 0, 2, '小明').text).toBe('@小明 ');
+  });
+
+  it('draws a live reply in the thread it lands in, also when the tag was top level', () => {
+    // a person tagged an agent at top level: the reply lands in that message's thread
+    expect(liveInThread({ threadRootId: null, replyRootId: 'm1' }, 'm1')).toBe(true);
+    // an agent tagged inside a thread
+    expect(liveInThread({ threadRootId: 'm1', replyRootId: 'm1' }, 'm1')).toBe(true);
+    expect(liveInThread({ threadRootId: 'm1' }, 'm1')).toBe(true);
+    expect(liveInThread({ threadRootId: null, replyRootId: 'm2' }, 'm1')).toBe(false);
+    expect(liveInThread({ threadRootId: null }, null)).toBe(false);
+  });
+});
 
 const members = [
   { kind: 'agent' as const, id: 'a1', name: 'Scout' },

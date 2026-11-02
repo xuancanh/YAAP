@@ -22,14 +22,38 @@
  *
  * Inline: `code`, **bold**, *italic*, ~~strike~~, [text](url), autolinked
  * URLs, ![alt](src), and `#goal:`/`#decision:`/`#task:`/`#meeting:`/`#audit:`
- * reference chips when a `refs` resolver is given.
+ * reference chips when a `refs` resolver is given; resolved `@mentions` as
+ * chips when a `mentions` finder is given (a code span that is exactly one
+ * mention included — agents often write `` `@Name` ``).
  */
 import { memo, useState, type CSSProperties, type ReactNode } from 'react';
 
 export type RefKind = 'goal' | 'decision' | 'task' | 'meeting' | 'audit';
 export type RefResolver = (kind: RefKind, id: string) => { label: string; onClick?: () => void } | null;
 
-interface Ctx { refs?: RefResolver; compact?: boolean }
+/** Finds the resolved `@mentions` in a run of plain text (group chat): each
+ *  span is drawn as a chip. */
+export type MentionFinder = (text: string) => Array<{ start: number; end: number; kind: 'agent' | 'human' }>;
+
+interface Ctx { refs?: RefResolver; compact?: boolean; mentions?: MentionFinder }
+
+const mentionStyle: CSSProperties = { display: 'inline', background: 'var(--accent-dim)', color: 'var(--accent-hi)', borderRadius: 4, padding: '0 3px', fontWeight: 600 };
+
+/** Plain text with its resolved `@mentions` as chips. */
+function withMentions(text: string, key: string, ctx: Ctx): ReactNode[] {
+  const spans = ctx.mentions && text.includes('@') ? ctx.mentions(text) : [];
+  if (spans.length === 0) return [text];
+  const out: ReactNode[] = [];
+  let last = 0;
+  spans.forEach((s, j) => {
+    if (s.start < last) return;
+    if (s.start > last) out.push(text.slice(last, s.start));
+    out.push(<span key={`${key}-at${j}`} data-mention={s.kind} style={mentionStyle}>{text.slice(s.start, s.end)}</span>);
+    last = s.end;
+  });
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
 
 const SAFE_LINK = /^(https?:\/\/|mailto:)/i;
 const SAFE_IMG = /^(https?:\/\/|data:image\/(png|jpe?g|gif|webp|svg\+xml);)/i;
@@ -59,9 +83,16 @@ export function inline(text: string, keyBase: string, ctx: Ctx = {}): ReactNode[
   // shared global regex would have its lastIndex reset mid-loop.
   const re = new RegExp(INLINE_RE.source, 'g');
   while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(text.slice(last, m.index));
+    if (m.index > last) out.push(...withMentions(text.slice(last, m.index), `${keyBase}-t${i}`, ctx));
     const tok = m[0]; const key = `${keyBase}-${i++}`;
-    if (m[1]) out.push(<code key={key} style={codeStyle}>{tok.slice(1, -1)}</code>);
+    if (m[1]) {
+      // `@Name` in backticks is how agents often write a tag: a code span
+      // that is exactly one resolved mention renders as its chip.
+      const body = tok.slice(1, -1);
+      const only = ctx.mentions && body.startsWith('@') ? ctx.mentions(body) : [];
+      if (only.length === 1 && only[0].start === 0 && only[0].end === body.length) out.push(...withMentions(body, key, ctx));
+      else out.push(<code key={key} style={codeStyle}>{body}</code>);
+    }
     else if (m[2]) out.push(<strong key={key}>{inline(tok.slice(2, -2), key, ctx)}</strong>);
     else if (m[3]) out.push(<em key={key}>{inline(tok.slice(1, -1), key, ctx)}</em>);
     else if (m[4]) out.push(<s key={key} style={{ color: 'var(--text-dim)' }}>{inline(tok.slice(2, -2), key, ctx)}</s>);
@@ -82,7 +113,7 @@ export function inline(text: string, keyBase: string, ctx: Ctx = {}): ReactNode[
     }
     last = m.index + tok.length;
   }
-  if (last < text.length) out.push(text.slice(last));
+  if (last < text.length) out.push(...withMentions(text.slice(last), `${keyBase}-t${i}`, ctx));
   return out;
 }
 
@@ -404,10 +435,12 @@ export interface MarkdownProps {
   compact?: boolean;
   /** Streaming: render a caret after the last block. */
   streaming?: boolean;
+  /** Draw resolved `@mentions` as chips (group chat). */
+  mentions?: MentionFinder;
 }
 
-export const Markdown = memo(function Markdown({ text, refs, compact, streaming }: MarkdownProps) {
-  const ctx: Ctx = { refs, compact };
+export const Markdown = memo(function Markdown({ text, refs, compact, streaming, mentions }: MarkdownProps) {
+  const ctx: Ctx = { refs, compact, mentions };
   const blocks = parseBlocks(text);
   return (
     <div className="md" style={{ minWidth: 0, overflowWrap: 'anywhere' }}>

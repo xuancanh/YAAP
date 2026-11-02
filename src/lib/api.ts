@@ -674,8 +674,8 @@ export interface ChannelFile { path: string; name: string; size: number; lastMod
 export type WorkspaceEvent =
   | { type: 'hello'; workspaceId: string }
   | { type: 'channel_message'; workspaceId: string; channelId: string; message: ChannelMessage }
-  | { type: 'channel_typing'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; liveId: string; on: boolean }
-  | { type: 'channel_stream'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; liveId: string; delta: string; done?: boolean }
+  | { type: 'channel_typing'; workspaceId: string; channelId: string; threadRootId: string | null; replyRootId?: string; agentId: string; liveId: string; on: boolean }
+  | { type: 'channel_stream'; workspaceId: string; channelId: string; threadRootId: string | null; replyRootId?: string; agentId: string; liveId: string; delta: string; done?: boolean }
   | { type: 'task_update'; workspaceId: string; channelId: string; taskId: string; status: string; messageId: string | null; title: string }
   | { type: 'channel_update'; workspaceId: string; channelId: string }
   /** docs/filesystem.md "Activity": a write through WorkspaceFs. */

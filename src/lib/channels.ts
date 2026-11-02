@@ -1,33 +1,41 @@
 /**
  * Group-chat helpers (docs/group-chat.md): pure functions the ChannelView
- * and the rail share — mention autocomplete parsing, thread grouping, deep
- * links, and which chat sessions are channel sessions (hidden from the DM
- * list). Mirrors server/src/groupchat/mentions.ts for handles.
+ * and the rail share — mention autocomplete parsing, mention chips, thread
+ * grouping, deep links, and which chat sessions are channel sessions (hidden
+ * from the DM list). Mirrors server/src/groupchat/mentions.ts for handles and
+ * mention resolution: keep the two in step.
  */
 import type { ChannelMessage } from './api';
 
-/** A member's @handle: lowercase, non-alphanumerics collapsed to `-`. */
+const FOLD: Record<string, string> = { 'đ': 'd', 'ł': 'l', 'ø': 'o', 'æ': 'ae', 'œ': 'oe', 'ß': 'ss', 'þ': 'th', 'ð': 'd', 'ı': 'i' };
+
+/** A member's @handle: lowercase, accents folded, non-alphanumerics collapsed to `-`. */
 export function handleOf(name: string): string {
-  return name.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return name.toLowerCase().replace(/[đłøæœßþðı]/g, (ch) => FOLD[ch] ?? ch).normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
 /** The `@query` being typed at the caret, if any: where it starts and the
- *  partial handle (without the `@`). Null when the caret is not in one. */
+ *  partial name (without the `@`, any script). Null when the caret is not in one. */
 export function mentionQuery(text: string, caret: number = text.length): { start: number; filter: string } | null {
   const before = text.slice(0, caret);
-  const m = /(^|[\s(])@([\w.-]*)$/.exec(before);
+  const m = /(^|[\s(])@([\p{L}\p{N}\p{M}_.-]*)$/u.exec(before);
   if (!m) return null;
   return { start: before.length - m[2].length - 1, filter: m[2].toLowerCase() };
 }
 
 export interface MentionCandidate { kind: 'agent' | 'human'; id: string; name: string }
 
-/** Candidates whose handle (or a word of it) starts with the filter, best first. */
+/** Candidates whose handle (or a word of it) starts with the filter, best
+ *  first; a filter with no Latin spelling (`小`) matches the name as written. */
 export function mentionSuggestions(filter: string, members: MentionCandidate[], limit = 8): MentionCandidate[] {
   const f = handleOf(filter);
+  const raw = filter.trim().toLowerCase();
   const rank = (m: MentionCandidate): number => {
+    if (!raw) return 1;
+    const name = m.name.toLowerCase();
+    if (!f) return name.startsWith(raw) ? 0 : name.includes(raw) ? 2 : 9;
     const h = handleOf(m.name);
-    if (!f) return 1;
     if (h.startsWith(f)) return 0;
     if (h.split('-').some((w) => w.startsWith(f))) return 1;
     if (h.includes(f)) return 2;
@@ -36,12 +44,87 @@ export function mentionSuggestions(filter: string, members: MentionCandidate[], 
   return members.map((m) => ({ m, r: rank(m) })).filter((x) => x.r < 9).sort((a, b) => a.r - b.r || a.m.name.localeCompare(b.m.name)).slice(0, limit).map((x) => x.m);
 }
 
-/** Replace the `@query` at `start` with the member's handle plus a space;
- *  returns the new text and where the caret should land. */
+/** Replace the `@query` at `start` with the member's handle (its name as
+ *  written when it has no Latin spelling) plus a space; returns the new text
+ *  and where the caret should land. */
 export function applyMention(text: string, start: number, caret: number, name: string): { text: string; caret: number } {
-  const insert = `@${handleOf(name)} `;
+  const insert = `@${handleOf(name) || name.trim()} `;
   const next = text.slice(0, start) + insert + text.slice(caret);
   return { text: next, caret: start + insert.length };
+}
+
+// ---- mention resolution (mirror of server/src/groupchat/mentions.ts) ----
+
+const WORD_CH = /[\p{L}\p{N}\p{M}]/u;
+const TOKEN_AT = /^[\p{L}\p{N}_][\p{L}\p{N}\p{M}_.-]*/u;
+const LEAD_MARKS = /^[*_~`]{1,3}/;
+
+export interface MentionSpan { start: number; end: number; members: MentionCandidate[] }
+
+function maskFences(text: string): string {
+  return text.replace(/(^|\n)(```|~~~)[^\n]*\n[\s\S]*?(\n\2[^\n]*(?=\n|$)|$)/g, (block) => block.replace(/[^\n]/g, ' '));
+}
+
+/** Every `@mention` in the text, in order, with the members it resolves to:
+ *  the longest display name after `@` first, then the handle forms. */
+export function mentionSpans(text: string, members: MentionCandidate[]): MentionSpan[] {
+  const masked = maskFences(text);
+  const named = members.map((m) => ({
+    m,
+    names: [m.name].map((x) => x.trim().normalize('NFC')).filter(Boolean).map((raw) => ({ len: raw.length, low: raw.toLowerCase() })),
+    full: handleOf(m.name),
+    first: handleOf(m.name).split('-')[0] ?? '',
+  }));
+  const out: MentionSpan[] = [];
+  for (let at = masked.indexOf('@'); at >= 0; at = masked.indexOf('@', at + 1)) {
+    const before = at > 0 ? masked[at - 1] : '';
+    if (before && (before === '@' || WORD_CH.test(before))) continue;
+    let from = at + 1;
+    const marks = LEAD_MARKS.exec(masked.slice(from));
+    if (marks) from += marks[0].length;
+    let best = 0; let hit: MentionCandidate[] = [];
+    for (const h of named) {
+      for (const n of h.names) {
+        if (n.len < best || masked.slice(from, from + n.len).toLowerCase() !== n.low) continue;
+        const next = masked[from + n.len];
+        if (next && WORD_CH.test(next) && WORD_CH.test(n.low[n.low.length - 1] ?? '')) continue;
+        if (n.len > best) { best = n.len; hit = []; }
+        if (!hit.includes(h.m)) hit.push(h.m);
+      }
+    }
+    if (hit.length > 0) { out.push({ start: at, end: from + best, members: hit }); continue; }
+    const tok = TOKEN_AT.exec(masked.slice(from));
+    if (!tok) continue;
+    const raw = tok[0].replace(/[.,;:!?-]+$/, '');
+    const token = handleOf(raw);
+    let found: typeof named = [];
+    if (token) {
+      const flat = token.replace(/-/g, '');
+      found = named.filter((h) => h.full === token || h.full.replace(/-/g, '') === flat);
+      if (found.length === 0) {
+        const byFirst = named.filter((h) => h.first === token);
+        if (byFirst.length === 1) found = byFirst;
+      }
+    }
+    out.push({ start: at, end: from + raw.length, members: found.map((h) => h.m) });
+  }
+  return out;
+}
+
+/** The mention chips of a stored message: spans of the text that name a
+ *  member the server resolved for it (its `mentions` JSON) — so a chip
+ *  appears exactly where a tag woke an agent or notified a person. */
+export function messageMentionSpans(text: string, mentionsJson: string, members: MentionCandidate[]): Array<{ start: number; end: number; member: MentionCandidate }> {
+  let resolved: Array<{ kind?: string; id?: string }> = [];
+  try { const v = JSON.parse(mentionsJson || '[]') as unknown; if (Array.isArray(v)) resolved = v as typeof resolved; } catch { /* no chips */ }
+  const ids = new Set(resolved.filter((m) => m && (m.kind === 'agent' || m.kind === 'human')).map((m) => `${m.kind}:${m.id}`));
+  if (ids.size === 0 || !text.includes('@')) return [];
+  const out: Array<{ start: number; end: number; member: MentionCandidate }> = [];
+  for (const s of mentionSpans(text, members)) {
+    const member = s.members.find((m) => ids.has(`${m.kind}:${m.id}`));
+    if (member) out.push({ start: s.start, end: s.end, member });
+  }
+  return out;
 }
 
 export interface ThreadGroup<M extends Pick<ChannelMessage, 'id' | 'threadRootId' | 'createdAt'> = ChannelMessage> {
@@ -153,4 +236,12 @@ export function meetingCommandHint(text: string): { kind: string; unitSlug: stri
   let unitSlug: string | null = null;
   if (tokens.length && /^#[a-z0-9][a-z0-9-]*$/i.test(tokens[0])) unitSlug = tokens.shift()!.slice(1).toLowerCase();
   return { kind, unitSlug, agenda: tokens.join(' '), complete };
+}
+
+/** Where a live agent reply belongs (docs/group-chat.md §2): it lands in the
+ *  thread `replyRootId` — the triggering message's thread, or the message
+ *  itself when that was top level. The thread panel shows every live reply
+ *  landing in it; the main list shows the ones triggered at top level. */
+export function liveInThread(l: { threadRootId: string | null; replyRootId?: string }, thread: string | null): boolean {
+  return Boolean(thread) && (l.replyRootId ?? l.threadRootId) === thread;
 }

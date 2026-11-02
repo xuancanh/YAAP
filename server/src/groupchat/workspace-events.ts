@@ -30,11 +30,13 @@ export interface ChannelMessageShape {
 
 export type WorkspaceEvent =
   | { type: 'channel_message'; workspaceId: string; channelId: string; message: ChannelMessageShape }
-  /** An agent run started for a channel message: show the typing indicator. */
-  | { type: 'channel_typing'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; liveId: string; on: boolean }
+  /** An agent run started for a channel message: show the typing indicator.
+   *  `threadRootId` is the triggering message's thread (null = it was top
+   *  level); `replyRootId` is the thread the reply will land in. */
+  | { type: 'channel_typing'; workspaceId: string; channelId: string; threadRootId: string | null; replyRootId?: string; agentId: string; liveId: string; on: boolean }
   /** Reply tokens as they stream; `done` closes the live message (the
    *  persisted row arrives as its own channel_message). */
-  | { type: 'channel_stream'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; liveId: string; delta: string; done?: boolean }
+  | { type: 'channel_stream'; workspaceId: string; channelId: string; threadRootId: string | null; replyRootId?: string; agentId: string; liveId: string; delta: string; done?: boolean }
   | { type: 'task_update'; workspaceId: string; channelId: string; taskId: string; status: string; messageId: string | null; title: string }
   | { type: 'channel_update'; workspaceId: string; channelId: string }
   /** A channel wake paused on an Ask approval. Visible only to `forActor`
