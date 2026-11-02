@@ -532,20 +532,25 @@ export class HomeService {
   }
 }
 
-/** The tool calls of each loop run: the run's turn is the latest turn of its
- *  loop session that started before the run was recorded. Shared with the
- *  agent overview (overview.service.ts). */
-export async function loopRunCalls(db: DrizzleDb, events: Array<{ id: string; sessionId: string | null; createdAt: string }>, horizon: string): Promise<Map<string, RunCall[]>> {
+/** The tool calls of each loop run. A run records its turn id in the event
+ *  payload; older events without one fall back to the latest turn of the
+ *  loop session that started before the run was recorded (ambiguous when
+ *  two runs land in the same millisecond). Shared with the agent overview
+ *  (overview.service.ts). */
+export async function loopRunCalls(db: DrizzleDb, events: Array<{ id: string; sessionId: string | null; createdAt: string; payload?: string | null }>, horizon: string): Promise<Map<string, RunCall[]>> {
   const out = new Map<string, RunCall[]>();
   const sessions = [...new Set(events.map((e) => e.sessionId).filter((x): x is string => Boolean(x)))];
   if (sessions.length === 0) return out;
-  const turns = await db.select({ sessionId: chatTurns.sessionId, createdAt: chatTurns.createdAt, toolCalls: chatTurns.toolCalls })
+  const turns = await db.select({ id: chatTurns.id, sessionId: chatTurns.sessionId, createdAt: chatTurns.createdAt, toolCalls: chatTurns.toolCalls })
     .from(chatTurns).where(and(inArray(chatTurns.sessionId, sessions), gte(chatTurns.createdAt, horizon)));
   const bySession = new Map<string, typeof turns>();
   for (const t of turns) { const l = bySession.get(t.sessionId) ?? []; l.push(t); bySession.set(t.sessionId, l); }
   for (const l of bySession.values()) l.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const byId = new Map(turns.map((t) => [t.id, t]));
   for (const e of events) {
-    const turn = e.sessionId ? bySession.get(e.sessionId)?.find((t) => t.createdAt <= e.createdAt) : undefined;
+    const recorded = safe<{ turnId?: string }>(e.payload, {}).turnId;
+    const turn = (recorded ? byId.get(recorded) : undefined)
+      ?? (e.sessionId ? bySession.get(e.sessionId)?.find((t) => t.createdAt <= e.createdAt) : undefined);
     if (turn) out.set(e.id, safe<RunCall[]>(turn.toolCalls, []));
   }
   return out;

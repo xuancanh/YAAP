@@ -478,8 +478,10 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     const prompt = fired ? `${base}\n\n${frameTrigger(fired, now)}` : base;
 
     let answer = '';
+    let turnId: string | undefined;
     try {
       for await (const ev of this.turns.run(session.id, { text: prompt, origin: 'loop' })) {
+        if (ev.type === 'turn') turnId = ev.turnId;
         if (ev.type === 'answer') answer += ev.text;
         if (ev.type === 'error') throw new Error(ev.message);
       }
@@ -503,6 +505,8 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
       title: `Loop "${loop.name}" ran`,
       body: fired ? `Triggered by ${fired.summary}. ${summary}` : summary,
       sessionId: session.id,
+      // the run's turn, so readers pair the run with its tool calls exactly
+      ...(turnId ? { payload: JSON.stringify({ turnId }) } : {}),
       origin: 'loop',
       ...deliveryFor(ws, 'loop_run', new Date()),
     }).catch(() => {});

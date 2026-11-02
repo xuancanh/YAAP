@@ -242,7 +242,7 @@ test('activity: routine heartbeat runs collapse into one line per agent per day;
   const beat = async (calls: Array<{ tool: string; input: Record<string, unknown>; isError?: boolean }>, answer: string) => {
     const turn = await s.repo.createTurn(session.id, { text: 'Scheduled loop firing: "heartbeat".' });
     await s.repo.updateTurn(turn.id, { status: 'done', toolCalls: JSON.stringify(calls) });
-    await s.agents.addEvent(s.writer.id, { kind: 'loop_run', title: 'Loop "heartbeat" ran', body: answer, sessionId: session.id, origin: 'loop' });
+    await s.agents.addEvent(s.writer.id, { kind: 'loop_run', title: 'Loop "heartbeat" ran', body: answer, sessionId: session.id, origin: 'loop', payload: JSON.stringify({ turnId: turn.id }) });
   };
   await beat([{ tool: 'list_tasks', input: {} }, { tool: 'channel_read', input: { channel: 'general' } }], 'Nothing changed.');
   await beat([{ tool: 'org_read_board', input: {} }, { tool: 'fs_append', input: { path: 'JOURNAL.md', content: 'checked' } }, { tool: 'update_task', input: { id: 'k1', note: 'still waiting' } }], 'Still blocked.');
