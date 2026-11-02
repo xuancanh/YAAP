@@ -433,7 +433,8 @@ three rounds; a standup has one) in its ordinary `#<slug> · <agent>` session
 with the meeting tools `meeting_speak`, `meeting_propose_action`,
 `meeting_propose_decision`, `meeting_raise_risk`, `meeting_ask_ceo`; the
 facilitator closes with `meeting_close`. People reply in the thread between
-rounds and are heard in the next one; "stop" / "end meeting" ends it. The
+rounds and are heard in the next one (at the next turn once they joined the
+room); "stop" / "end meeting" ends it. The
 **minutes** are a structured system message in the thread (attachment kind
 `minutes`), one line in the channel, and are executed without a model:
 actions → briefed tasks on the unit board (assigned when the facilitator may
@@ -506,3 +507,26 @@ meeting's minutes say nothing was executed. `GET /api/workspaces/:id/meetings
 ?unitId=&channel=&from=&to=` lists the meetings held and the cadences'
 upcoming occurrences, named by unit; the Company → Meetings pane and every
 channel's new **Meetings** tab show them as a list and a calendar.
+
+**The meeting room (2 November 2026, `docs/meetings.md` "Before", "During",
+"After").** Rituals are prepared `meeting.prepMinutes` ahead — the
+facilitator's pre-read compiled from the record (check-ins, at-risk goals,
+what moved, what is blocked), agenda proposals open to attendees
+(`meeting_propose_agenda`) and people — and the people attending get a
+"starts in N min · Join" reminder; a ritual with nothing on its agenda skips
+itself with no model call (status `skipped`) and its empty streak feeds the
+chief's ritual-retirement review (`chief.sunsetEmptyCycles`). Each ritual
+opens with the last meeting's action items (done / late / blocked / open,
+from their tasks; actions may carry a `due` that reaches the task). Agenda
+items are time-boxed (`meeting.itemMinutes`); the facilitator moves on
+(`meeting_next_item`) and parks off-topic points (`meeting_park` → the
+minutes and a backlog task); attendees with nothing to add call
+`meeting_pass` (no message; a round where everyone passes ends the rounds);
+rounds after the first hear only those with an open thread
+(`meeting.selectiveRounds`). A person who joins the room is heard at the
+next turn; the CEO approves or rejects proposals and answers questions
+inline; Extend / Skip item / End steer it. The room is `org_meetings.room`
+(migration `0050-meeting-room`, with `tokensIn` / `tokensOut`), streamed as
+`meeting_update` and the speaker's `channel_stream`; tokens and $ show in
+the room, the list and the minutes. Start meeting is in Company → Meetings
+and every channel's Meetings tab.
