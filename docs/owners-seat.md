@@ -170,3 +170,9 @@ system makes no automatic cut. Movement resolves the signal.
   card is created. A card that was answered "ask" waits for a human.
 - **Brief headings.** The "activity counts" are the existing Spend, Work,
   Autonomous actions and Pulse sections, moved under a `# Activity` heading.
+
+## Home
+
+The owner meets these cards first on Home (`docs/home.md`): each decision
+card shows its recommendation, reversibility, confidence and what happens
+at its deadline if nobody answers, and can be decided there.
