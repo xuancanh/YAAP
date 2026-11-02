@@ -49,6 +49,9 @@ export interface CalendarMeeting {
   actions: number;
   rounds: number;
   usd: number;
+  /** Tokens the meeting's turns and minutes call used (docs/meetings.md "Cost"). */
+  tokensIn: number;
+  tokensOut: number;
 }
 
 export interface CalendarResponse { from: string; to: string; now: string; hasOrg: boolean; meetings: CalendarMeeting[] }
@@ -196,17 +199,19 @@ export class MeetingsCalendarService {
         unitId: m.unitId, unitName: unitName(unit), channelId: m.channelId, channelSlug: m.channelId ? slugs.get(m.channelId) ?? null : null,
         status: m.status as MeetingStatus, at, endedAt: m.endedAt, facilitator: facilitator(m.facilitatorAgentId), attendees: named(parseAttendees(m.attendees)),
         minutesPath: m.minutesPath ?? null, summary: m.summary || minutes.summary || '', cron: null, threadRootId: m.threadRootId,
-        decisions: minutes.decisions.length, actions: minutes.actions.length, rounds: m.rounds, usd: m.usd,
+        decisions: minutes.decisions.length, actions: minutes.actions.length, rounds: m.rounds, usd: m.usd, tokensIn: m.tokensIn ?? 0, tokensOut: m.tokensOut ?? 0,
       });
     }
     for (const { c, at, unit } of upcoming) {
       const iso = at.toISOString();
+      // A prepared meeting (docs/meetings.md "Before") stands for its occurrence.
+      if (rows.some((m) => m.createdBy === 'cadence' && m.unitId === unit.id && m.kind === c.kind && m.scheduledFor && Math.abs(Date.parse(m.scheduledFor) - at.getTime()) < 60_000)) continue;
       const lead = c.kind === 'board' ? org.chiefOfStaffAgentId : unit.leadAgentId;
       out.push({
         id: `cadence:${c.id}:${iso}`, source: 'cadence', meetingId: null, cadenceId: c.id, kind: c.kind, title: `${KIND_TITLES[c.kind as MeetingKind] ?? c.kind} · ${unitName(unit)}`,
         unitId: unit.id, unitName: unitName(unit), channelId: unit.channelId, channelSlug: unit.channelId ? slugs.get(unit.channelId) ?? null : null,
         status: 'upcoming', at: iso, endedAt: null, facilitator: facilitator(lead ?? null), attendees: named(unitAttendees.get(unit.id) ?? []),
-        minutesPath: null, summary: '', cron: c.cron, threadRootId: null, decisions: 0, actions: 0, rounds: 0, usd: 0,
+        minutesPath: null, summary: '', cron: c.cron, threadRootId: null, decisions: 0, actions: 0, rounds: 0, usd: 0, tokensIn: 0, tokensOut: 0,
       });
     }
     out.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : (a.unitName ?? '').localeCompare(b.unitName ?? '')));

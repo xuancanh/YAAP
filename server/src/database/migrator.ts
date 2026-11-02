@@ -1798,6 +1798,28 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_meetings_channel ON org_meetings ("channelId")`);
     },
   },
+  {
+    id: '0050-meeting-room',
+    up: async (db) => {
+      // The meeting room (docs/meetings.md "During"): the live state of a
+      // meeting — agenda items and the current one, rounds and their cap,
+      // who spoke / passed / is speaking, the people present, the parking
+      // lot, agenda proposals, the pre-read, verdicts on proposals and
+      // answers to questions — as JSON on the row; and the tokens its turns
+      // and minutes call used, so the cost reads in tokens as well as USD.
+      // Idempotent.
+      if (!(await hasColumn(db, 'org_meetings', 'room'))) {
+        await db.query(`ALTER TABLE org_meetings ADD COLUMN "room" TEXT NOT NULL DEFAULT ''`);
+      }
+      if (!(await hasColumn(db, 'org_meetings', 'tokensIn'))) {
+        await db.query(`ALTER TABLE org_meetings ADD COLUMN "tokensIn" INTEGER NOT NULL DEFAULT 0`);
+      }
+      if (!(await hasColumn(db, 'org_meetings', 'tokensOut'))) {
+        await db.query(`ALTER TABLE org_meetings ADD COLUMN "tokensOut" INTEGER NOT NULL DEFAULT 0`);
+      }
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_meetings_thread ON org_meetings ("threadRootId")`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

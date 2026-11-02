@@ -57,7 +57,7 @@ export interface TranscriptLine { authorKind: string; authorId: string; text: st
 export type MinutesSource = 'facilitator' | 'model' | 'record';
 
 export interface MinutesDoc {
-  meeting: Pick<OrgMeeting, 'id' | 'kind' | 'title' | 'agenda' | 'rounds' | 'usd' | 'startedAt' | 'endedAt' | 'createdAt' | 'facilitatorAgentId' | 'threadRootId'>;
+  meeting: Pick<OrgMeeting, 'id' | 'kind' | 'title' | 'agenda' | 'rounds' | 'usd' | 'startedAt' | 'endedAt' | 'createdAt' | 'facilitatorAgentId' | 'threadRootId'> & { tokensIn?: number; tokensOut?: number };
   minutes: Minutes;
   unit: { name: string; slug: string; root: boolean } | null;
   channelSlug: string | null;
@@ -99,7 +99,7 @@ export function withSuffix(path: string, suffix: string): string { return path.r
 
 const cell = (s: string): string => s.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
 const ENDED: Record<string, string> = {
-  closed: 'closed by the facilitator', rounds: 'after the last round', usd_cap: 'at the meeting budget cap', stopped: 'ended early by a person', cancelled: 'cancelled before the end — nothing in these minutes was executed',
+  closed: 'closed by the facilitator', rounds: 'after the last round', passed: 'everyone passed', items: 'the agenda was done', ended: 'ended by a person', skipped: 'skipped — nothing on the agenda', usd_cap: 'at the meeting budget cap', stopped: 'ended early by a person', cancelled: 'cancelled before the end — nothing in these minutes was executed',
 };
 
 /** Minutes as markdown (docs/meetings.md "The minutes document"). Pure. */
@@ -118,7 +118,7 @@ export function renderMinutesMarkdown(doc: MinutesDoc): string {
     `| Meeting | ${cell(kind)} · ${cell(where)} |`,
     `| Facilitator | ${cell(doc.facilitator || '—')} |`,
     `| Attendees | ${cell([doc.agents.length ? `${doc.agents.join(', ')} (agents)` : '', doc.people.length ? `${doc.people.join(', ')} (people)` : ''].filter(Boolean).join('; ') || '—')} |`,
-    `| Ended | ${cell(ENDED[minutes.endedBy ?? ''] ?? minutes.endedBy ?? '—')} · ${m.rounds} round${m.rounds === 1 ? '' : 's'} · $${m.usd.toFixed(2)} |`,
+    `| Ended | ${cell(ENDED[minutes.endedBy ?? ''] ?? minutes.endedBy ?? '—')} · ${m.rounds} round${m.rounds === 1 ? '' : 's'} · $${m.usd.toFixed(2)}${(m.tokensIn ?? 0) + (m.tokensOut ?? 0) ? ` · ${((m.tokensIn ?? 0) + (m.tokensOut ?? 0)).toLocaleString('en-US')} tokens (${(m.tokensIn ?? 0).toLocaleString('en-US')} in, ${(m.tokensOut ?? 0).toLocaleString('en-US')} out)` : ''} |`,
   ];
   if (m.threadRootId && doc.channelSlug) lines.push(`| Thread | #${doc.channelSlug} · ${m.threadRootId.slice(0, 8)} |`);
   lines.push('', '## Agenda', '', (m.agenda || '').trim() || '_No agenda was set._');
@@ -128,8 +128,8 @@ export function renderMinutesMarkdown(doc: MinutesDoc): string {
   lines.push('', `## Decisions${suffix}`, '');
   if (minutes.decisions.length === 0) lines.push('_None._');
   for (const d of minutes.decisions) {
-    lines.push(`- **${d.title}** — ${d.decision}`);
-    lines.push(`  - Decided by ${nm(d.by)}${d.decisionId ? ` · decision log \`#decision:${d.decisionId.slice(0, 8)}\`` : ''}`);
+    lines.push(`- **${d.title}** — ${d.decision}${d.verdict === 'rejected' ? ' _(rejected — not logged)_' : ''}`);
+    lines.push(`  - ${d.verdict ? `Proposed by ${nm(d.by)}; ${d.verdict} by ${d.verdictName || 'a person'}` : `Decided by ${nm(d.by)}`}${d.decisionId ? ` · decision log \`#decision:${d.decisionId.slice(0, 8)}\`` : ''}`);
     if (d.rationale) lines.push(`  - Why: ${d.rationale}`);
     if (d.alternatives) lines.push(`  - Alternatives: ${d.alternatives}`);
   }
@@ -139,13 +139,16 @@ export function renderMinutesMarkdown(doc: MinutesDoc): string {
     lines.push('| Action | Owner | Due | Done when | Task |', '|---|---|---|---|---|');
     for (const a of minutes.actions) {
       const task = a.taskId ? `[${a.taskId.slice(0, 8)}](#/ws/${doc.workspaceId}/org/board?task=${a.taskId})` : '—';
-      lines.push(`| ${cell(a.title)} | ${cell(a.owner || 'unowned')} | — | ${cell(a.done_when || '—')} | ${task} |`);
+      const title = a.verdict === 'rejected' ? `${a.title} (rejected by ${a.verdictName || 'a person'})` : a.verdict === 'approved' ? `${a.title} (approved by ${a.verdictName || 'a person'})` : a.title;
+      lines.push(`| ${cell(title)} | ${cell(a.owner || 'unowned')} | ${a.due ? cell(a.due.slice(0, 10)) : '—'} | ${cell(a.done_when || '—')} | ${task} |`);
     }
   }
   lines.push('', '## Open questions and risks', '');
   if (minutes.questions.length === 0 && minutes.risks.length === 0) lines.push('_None._');
-  for (const q of minutes.questions) lines.push(`- Question for the CEO: ${q.question} (${nm(q.by)})`);
+  for (const q of minutes.questions) lines.push(`- Question for the CEO: ${q.question} (${nm(q.by)})${q.answer ? ` — answered: ${q.answer}` : ''}`);
   for (const r of minutes.risks) lines.push(`- Risk: ${r.text} (${nm(r.by)})`);
+  const parked = minutes.parked ?? [];
+  if (parked.length) lines.push('', '## Parking lot', '', ...parked.map((p) => `- ${p.text} (${nm(p.by)})${p.taskId ? ` · backlog [${p.taskId.slice(0, 8)}](#/ws/${doc.workspaceId}/org/board?task=${p.taskId})` : ''}`));
   const lessons = minutes.lessons ?? [];
   if (lessons.length) lines.push('', '## Lessons', '', ...lessons.map((l) => `- [${l.audience}] ${l.text} (${nm(l.by)})`));
   lines.push('', '## Next meeting', '', doc.nextMeeting ?? '_None scheduled — `/meeting` in the channel starts one._');
@@ -211,7 +214,7 @@ export interface WriteMinutesInput {
   cancelled?: boolean;
 }
 
-export interface Narration { source: MinutesSource; discussion: string[]; usd: number; humanNames: Map<string, string> }
+export interface Narration { source: MinutesSource; discussion: string[]; usd: number; humanNames: Map<string, string>; tokensIn?: number; tokensOut?: number }
 export interface WrittenMinutes { path: string | null; summary: string; source: MinutesSource; usd: number; markdown: string }
 
 @Injectable()
@@ -250,12 +253,13 @@ export class OrgMeetingMinutesService {
     if (input.closedBySummary && minutes.summary) return { source: 'facilitator', discussion: fromRecord(), usd: 0, humanNames };
     const told = await this.callModel(input, nameOf).catch((err: unknown) => { this.logger.warn(`minutes call failed: ${err instanceof Error ? err.message : err}`); return null; });
     const usd = told?.usd ?? 0;
+    const tokens = { tokensIn: told?.tokensIn ?? 0, tokensOut: told?.tokensOut ?? 0 };
     if (told?.narrative) {
       minutes.summary = told.narrative.summary;
-      return { source: 'model', discussion: told.narrative.discussion.length ? told.narrative.discussion : fromRecord(), usd, humanNames };
+      return { source: 'model', discussion: told.narrative.discussion.length ? told.narrative.discussion : fromRecord(), usd, humanNames, ...tokens };
     }
     minutes.summary = recordSummary(minutes, nm, input.cancelled);
-    return { source: 'record', discussion: fromRecord(), usd, humanNames };
+    return { source: 'record', discussion: fromRecord(), usd, humanNames, ...tokens };
   }
 
   /** Step 2, after materialising (task and decision ids are known): render
@@ -291,7 +295,7 @@ export class OrgMeetingMinutesService {
   }
 
   /** The one bounded minutes call on the facilitator's model. */
-  private async callModel(input: WriteMinutesInput, nameOf: (kind: string, id: string) => string): Promise<{ narrative: { summary: string; discussion: string[] } | null; usd: number } | null> {
+  private async callModel(input: WriteMinutesInput, nameOf: (kind: string, id: string) => string): Promise<{ narrative: { summary: string; discussion: string[] } | null; usd: number; tokensIn?: number; tokensOut?: number } | null> {
     const { meeting: m, minutes } = input;
     const facilitator = m.facilitatorAgentId;
     if (!facilitator || (!this.narrator && (!this.context || !input.session))) return null;
@@ -331,7 +335,7 @@ export class OrgMeetingMinutesService {
       usd = this.runtime.costUsd(ctx.model, tokensIn, tokensOut);
       await this.runtime.settle(input.orgId, { agentId: facilitator, projectId: null }, estimate, usd).catch(() => undefined);
     }
-    return { narrative: parseNarrative(out.slice(0, 16_000)), usd };
+    return { narrative: parseNarrative(out.slice(0, 16_000)), usd, tokensIn, tokensOut };
   }
 
   /** Write the document; a second meeting at the same path the same day gets a suffix. */

@@ -46,9 +46,19 @@ export interface UnitChannels {
  */
 export interface MeetingChannels {
   channelInfo(channelId: string): Promise<{ id: string; slug: string; workspaceId: string; archivedAt: string | null }>;
-  postAs(channelId: string, input: { authorKind: 'agent' | 'system'; authorId?: string; text: string; threadRootId?: string | null; attachments?: Array<{ path: string; kind: string }>; runId?: string | null; wake?: boolean }): Promise<{ id: string; createdAt: string }>;
+  /** `human`: a person's answer posted from the room (docs/meetings.md "During"). */
+  postAs(channelId: string, input: { authorKind: 'agent' | 'system' | 'human'; authorId?: string; text: string; threadRootId?: string | null; attachments?: Array<{ path: string; kind: string }>; runId?: string | null; wake?: boolean }): Promise<{ id: string; createdAt: string }>;
   thread(channelId: string, rootId: string): Promise<Array<{ id: string; authorKind: string; authorId: string; text: string; createdAt: string }>>;
+  /** Live events for the room (optional): the speaker's typing and streamed
+   *  reply on the channel stream events (`replyRootId` = the meeting thread),
+   *  and `meeting_update` when the room changes. */
+  live?(ev: MeetingLiveEvent): void;
 }
+
+export type MeetingLiveEvent =
+  | { type: 'channel_typing'; workspaceId: string; channelId: string; threadRootId: string | null; replyRootId?: string; agentId: string; liveId: string; on: boolean }
+  | { type: 'channel_stream'; workspaceId: string; channelId: string; threadRootId: string | null; replyRootId?: string; agentId: string; liveId: string; delta: string; done?: boolean }
+  | { type: 'meeting_update'; workspaceId: string; channelId: string; meetingId: string; threadRootId: string | null; status: string };
 
 export const ORG_ANNOUNCER = Symbol('ORG_ANNOUNCER');
 

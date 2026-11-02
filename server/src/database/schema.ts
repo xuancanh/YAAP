@@ -941,6 +941,13 @@ export const orgMeetings = pgTable('org_meetings', {
   minutesPath: text('minutesPath'),
   /** The minutes' summary in a line or a few, so lists need not parse JSON or files. */
   summary: text('summary').notNull().default(''),
+  /** The live room as JSON (docs/meetings.md "During", migration 0050):
+   *  agenda items, the current item, rounds, attendance, people present,
+   *  parking lot, agenda proposals, pre-read, verdicts and answers. */
+  room: text('room').notNull().default(''),
+  /** Tokens the meeting's turns and its minutes call used (migration 0050). */
+  tokensIn: integer('tokensIn').notNull().default(0),
+  tokensOut: integer('tokensOut').notNull().default(0),
 });
 
 /** The decision log (docs/company-vision.md §6): what was decided, the

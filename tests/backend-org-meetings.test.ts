@@ -132,6 +132,7 @@ test('a meeting is a thread: agenda root, one turn per attendee per round (cap 3
     return say(`${me} has nothing to add in round ${round}.`);
   });
   const orgId = await enable(s);
+  await s.org.setTunable(orgId, 'meeting.selectiveRounds', 0); // everyone every round (selective rounds have their own test)
   const root = await s.units.rootUnit(orgId);
   const company = await s.groupchat.bySlug(s.ws.id, COMPANY_SLUG);
   const m0 = await s.meetingRuntime.start(orgId, { kind: 'planning', unitId: root.id, agenda: 'Plan issue 1.', createdBy: 'user' });
@@ -224,6 +225,7 @@ test('a human message in the thread is injected into the next round; "stop" ends
     return say(`${me} in round ${round}.`);
   });
   orgId = await enable(s);
+  await s.org.setTunable(orgId, 'meeting.selectiveRounds', 0); // everyone every round, as before
   const root = await s.units.rootUnit(orgId);
   companyId = (await s.groupchat.bySlug(s.ws.id, COMPANY_SLUG)).id;
   await s.meetingRuntime.start(orgId, { kind: 'weekly_review', unitId: root.id });
@@ -245,6 +247,7 @@ test('a human message in the thread is injected into the next round; "stop" ends
     return say(`${me} in round ${round}.`);
   });
   orgId2 = await enable(s2);
+  await s2.org.setTunable(orgId2, 'meeting.selectiveRounds', 0);
   company2 = (await s2.groupchat.bySlug(s2.ws.id, COMPANY_SLUG)).id;
   const m1 = await s2.meetingRuntime.start(orgId2, { kind: 'retro', unitId: (await s2.units.rootUnit(orgId2)).id });
   await s2.meetingRuntime.idle();
@@ -316,6 +319,7 @@ test('a standup agenda is composed from the board without a model call — per m
 test('cadence defaults appear with each unit (board for the root only), fire by cron on the tick for active orgs, and obey the mode: supervised runs the conversations but a board meeting needs a human CEO or board seat', async () => {
   const s = await setup(() => say('ok'));
   const orgId = await enable(s, 'supervised');
+  await s.org.setTunable(orgId, 'meeting.prepMinutes', 0); await s.org.setTunable(orgId, 'meeting.reminderMinutes', 0); await s.org.setTunable(orgId, 'meeting.autoSkip', 0); // this test is about firing
   const root = await s.units.rootUnit(orgId);
   const defaults = await s.meetings.cadences(orgId);
   assert.deepEqual(defaults.filter((c) => c.unitId === root.id).map((c) => `${c.kind} ${c.cron}`).sort(), ['board 0 9 * * 1', 'retro 30 16 * * 5', 'standup 30 9 * * 1-5', 'weekly_review 0 16 * * 5']);

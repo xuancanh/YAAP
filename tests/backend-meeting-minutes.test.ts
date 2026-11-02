@@ -163,6 +163,7 @@ test('a unit ritual ends with minutes at /org/meetings/<unit>/<yyyy>/<day>-<kind
     return say(`${me} speaking in round ${round}.`);
   });
   const orgId = await enable(s);
+  await s.org.setTunable(orgId, 'meeting.selectiveRounds', 0);
   const root = await s.units.rootUnit(orgId);
   const company = await s.groupchat.bySlug(s.ws.id, COMPANY_SLUG);
   const m0 = await s.meetingRuntime.start(orgId, { kind: 'planning', unitId: root.id, agenda: 'Plan issue 1.', createdBy: 'user' });

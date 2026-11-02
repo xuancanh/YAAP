@@ -39,6 +39,9 @@ export type WorkspaceEvent =
   | { type: 'channel_stream'; workspaceId: string; channelId: string; threadRootId: string | null; replyRootId?: string; agentId: string; liveId: string; delta: string; done?: boolean }
   | { type: 'task_update'; workspaceId: string; channelId: string; taskId: string; status: string; messageId: string | null; title: string }
   | { type: 'channel_update'; workspaceId: string; channelId: string }
+  /** A meeting's room changed (docs/meetings.md "During"): the round, the
+   *  speaker, attendance, the agenda item, verdicts, the cost. Clients refetch it. */
+  | { type: 'meeting_update'; workspaceId: string; channelId: string; meetingId: string; threadRootId: string | null; status: string }
   /** A channel wake paused on an Ask approval. Visible only to `forActor`
    *  (the human who started the turn, or the member whose connection the
    *  tool would use); the client filters by its own actor id. */

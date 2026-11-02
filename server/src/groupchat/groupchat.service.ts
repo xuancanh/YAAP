@@ -132,6 +132,8 @@ export class GroupChatService {
         return { id: m.id, createdAt: m.createdAt };
       },
       thread: async (channelId, rootId) => (await this.messages(channelId, { thread: rootId })).messages.map((m) => ({ id: m.id, authorKind: m.authorKind, authorId: m.authorId, text: m.text, createdAt: m.createdAt })),
+      // The meeting room's live events (docs/meetings.md "During").
+      live: (ev) => { this.events.emit(ev); },
     });
   }
 

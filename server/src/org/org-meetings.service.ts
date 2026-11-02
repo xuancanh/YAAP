@@ -39,6 +39,7 @@ import { OrgTasksService, type OrgTask } from './org-tasks.service';
 import { OrgAuditService } from './org-audit.service';
 import { OrgApprovalsService } from './org-approvals.service';
 import { meetingTunable, meetingKinds, MEETING_TUNABLES } from './meeting-tunables';
+import { classifyOpenItem, parseRoom, type MeetingRoom, type OpenItem, type PreReadCounts } from './meeting-room';
 
 export type OrgMeeting = typeof orgMeetings.$inferSelect;
 export type OrgDecision = typeof orgDecisions.$inferSelect;
@@ -46,22 +47,31 @@ export type OrgCadence = typeof orgCadences.$inferSelect;
 
 export const MEETING_KINDS = ['planning', 'standup', 'weekly_review', 'retro', 'board', 'adhoc'] as const;
 export type MeetingKind = typeof MEETING_KINDS[number];
-export const MEETING_STATUSES = ['scheduled', 'running', 'done', 'cancelled', 'postponed'] as const;
+/** `skipped`: a scheduled ritual with an empty agenda skipped itself (docs/meetings.md "Before"). */
+export const MEETING_STATUSES = ['scheduled', 'running', 'done', 'cancelled', 'postponed', 'skipped'] as const;
 export type MeetingStatus = typeof MEETING_STATUSES[number];
 
 /** Rounds per meeting (§3: at most three — the fence; the org's
  *  `meeting.roundCap` tunable chooses inside it; a standup is one). */
 export const MEETING_ROUND_CAP = 3;
+/** The absolute fence with Extend (the round cap plus `meeting.extendRounds`, at most two). */
+export const MEETING_ROUND_FENCE = MEETING_ROUND_CAP + 2;
 export const STANDUP_ROUND_CAP = 1;
 /** Retros are "every 2nd Friday": the cron says Friday, this says which. */
 export const RETRO_MIN_GAP_DAYS = 13;
 
 export interface Attendee { kind: 'agent' | 'human'; id: string }
 
-export interface MinutesAction { title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string }
-export interface MinutesDecision { title: string; decision: string; alternatives: string; rationale: string; by: string; decisionId?: string }
+/** A person's verdict on a proposal in the room (docs/meetings.md "During"):
+ *  a rejected proposal is kept in the minutes but not executed. */
+export interface ProposalVerdict { verdict?: 'approved' | 'rejected'; verdictBy?: string; verdictName?: string }
+/** `due`: an ISO deadline when the proposer gave one; set on the board task. */
+export interface MinutesAction extends ProposalVerdict { title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string; messageId?: string; due?: string | null }
+export interface MinutesDecision extends ProposalVerdict { title: string; decision: string; alternatives: string; rationale: string; by: string; decisionId?: string; messageId?: string }
 export interface MinutesRisk { text: string; by: string }
-export interface MinutesQuestion { question: string; by: string }
+export interface MinutesQuestion { question: string; by: string; messageId?: string; answer?: string; answeredBy?: string }
+/** An off-topic point the facilitator parked (`meeting_park`): in the minutes and a backlog task. */
+export interface MinutesParked { text: string; by: string; taskId?: string }
 /** A lesson from a retro (docs/company-vision.md §6, item 22): text with an
  *  audience, optionally a charter change for a member (a CEO approval card)
  *  and a playbook change (a revise task for its owner). Materialised by
@@ -81,7 +91,8 @@ export interface Minutes {
   risks: MinutesRisk[];
   questions: MinutesQuestion[];
   lessons?: MinutesLesson[];
-  /** Why the meeting ended: closed | stopped | usd_cap | rounds. */
+  parked?: MinutesParked[];
+  /** Why the meeting ended: closed | stopped | ended | usd_cap | rounds | passed | items | skipped | cancelled. */
   endedBy?: string;
 }
 
@@ -117,11 +128,11 @@ export function nextCronAfter(expr: string, from: Date): Date | null {
 }
 
 export function parseMinutes(raw: string | null | undefined): Minutes {
-  const empty: Minutes = { summary: '', decisions: [], actions: [], risks: [], questions: [], lessons: [] };
+  const empty: Minutes = { summary: '', decisions: [], actions: [], risks: [], questions: [], lessons: [], parked: [] };
   if (!raw) return empty;
   try {
     const v = JSON.parse(raw) as Partial<Minutes>;
-    return { ...empty, ...v, decisions: v.decisions ?? [], actions: v.actions ?? [], risks: v.risks ?? [], questions: v.questions ?? [], lessons: v.lessons ?? [] };
+    return { ...empty, ...v, decisions: v.decisions ?? [], actions: v.actions ?? [], risks: v.risks ?? [], questions: v.questions ?? [], lessons: v.lessons ?? [], parked: v.parked ?? [] };
   } catch { return empty; }
 }
 
@@ -226,16 +237,114 @@ export class OrgMeetingsService {
       kind: input.kind, title, agenda: (input.agenda ?? '').slice(0, 8_000), facilitatorAgentId: facilitator,
       attendees: JSON.stringify(attendees.slice(0, 12)), status: 'scheduled', scheduledFor: input.scheduledFor ?? null,
       startedAt: null, endedAt: null, rounds: 0, usd: 0, minutes: '', createdBy: input.createdBy ?? 'system', createdAt: nowIso(), minutesPath: null, summary: '',
+      room: '', tokensIn: 0, tokensOut: 0,
     };
     await this.db.insert(orgMeetings).values(row);
     await this.audit.append(orgId, { actor: row.createdBy, action: 'meeting_create', refType: 'meeting', refId: row.id, payload: { kind: row.kind, unitId: row.unitId, attendees: attendees.length } });
     return row;
   }
 
-  async update(orgId: string, meetingId: string, patch: Partial<Pick<OrgMeeting, 'status' | 'threadRootId' | 'startedAt' | 'endedAt' | 'rounds' | 'usd' | 'minutes' | 'agenda' | 'scheduledFor' | 'title' | 'minutesPath' | 'summary'>>): Promise<OrgMeeting> {
+  async update(orgId: string, meetingId: string, patch: Partial<Pick<OrgMeeting, 'status' | 'threadRootId' | 'startedAt' | 'endedAt' | 'rounds' | 'usd' | 'minutes' | 'agenda' | 'scheduledFor' | 'title' | 'minutesPath' | 'summary' | 'tokensIn' | 'tokensOut'>>): Promise<OrgMeeting> {
     await this.get(orgId, meetingId);
     await this.db.update(orgMeetings).set(patch).where(eq(orgMeetings.id, meetingId));
     return this.get(orgId, meetingId);
+  }
+
+  /** Replace the attendee list (a person who joins the room, docs/meetings.md "During"). */
+  async setAttendees(orgId: string, meetingId: string, attendees: Attendee[]): Promise<void> {
+    await this.get(orgId, meetingId);
+    await this.db.update(orgMeetings).set({ attendees: JSON.stringify(dedupe(attendees).slice(0, 16)) }).where(eq(orgMeetings.id, meetingId));
+  }
+
+  /** Per-meeting chain of room writes: the runtime and the people's controls
+   *  read-modify-write one JSON column, one at a time. */
+  private readonly roomLocks = new Map<string, Promise<unknown>>();
+
+  /** Change the meeting's room (docs/meetings.md "During") under its lock;
+   *  `fn` mutates the parsed room (and may return a value). */
+  async patchRoom<T = void>(orgId: string, meetingId: string, fn: (room: MeetingRoom, m: OrgMeeting) => T | Promise<T>): Promise<{ room: MeetingRoom; result: T }> {
+    const prev = this.roomLocks.get(meetingId) ?? Promise.resolve();
+    const next = prev.catch(() => undefined).then(async () => {
+      const m = await this.get(orgId, meetingId);
+      const room = parseRoom(m.room);
+      const result = await fn(room, m);
+      await this.db.update(orgMeetings).set({ room: JSON.stringify(room) }).where(eq(orgMeetings.id, meetingId));
+      return { room, result };
+    });
+    this.roomLocks.set(meetingId, next);
+    try { return await next; } finally { if (this.roomLocks.get(meetingId) === next) this.roomLocks.delete(meetingId); }
+  }
+
+  // ---- before and after: the previous meeting, its open items, the pre-read ----
+
+  /** The last meeting of the same unit and kind that was held (done), before `m`. */
+  async previousOf(orgId: string, m: Pick<OrgMeeting, 'id' | 'unitId' | 'kind' | 'channelId'>): Promise<OrgMeeting | null> {
+    if (m.kind === 'adhoc') return null;
+    const rows = (await this.list(orgId, { unitId: m.unitId ?? undefined, status: 'done', limit: 100 }))
+      .filter((x) => x.id !== m.id && x.kind === m.kind && x.unitId === m.unitId && (m.unitId !== null || x.channelId === m.channelId));
+    rows.sort((a, b) => ((a.startedAt ?? a.createdAt) > (b.startedAt ?? b.createdAt) ? -1 : 1));
+    return rows[0] ?? null;
+  }
+
+  /** The previous meeting's action items, classified from the board tasks
+   *  they became: done, blocked, late (not moved since), open, dropped. */
+  async openItems(orgId: string, prev: OrgMeeting | null): Promise<OpenItem[]> {
+    if (!prev) return [];
+    const agreedAt = prev.endedAt ?? prev.startedAt ?? prev.createdAt;
+    const out: OpenItem[] = [];
+    for (const a of parseMinutes(prev.minutes).actions) {
+      if (a.verdict === 'rejected') continue;
+      const t = a.taskId ? await this.tasks.get(orgId, a.taskId).catch(() => null) : null;
+      out.push({ title: a.title, owner: a.owner.replace(/ \(backlog for the chief\)$/, ''), taskId: a.taskId ?? null, state: classifyOpenItem(t, agreedAt), status: t?.status ?? 'unknown', due: t?.dueAt ?? a.due ?? null });
+    }
+    return out.slice(0, 20);
+  }
+
+  /**
+   * The facilitator's pre-read for a ritual, composed without a model
+   * (docs/meetings.md "Before"): goal check-ins and at-risk goals since the
+   * last meeting of this kind (the scorecard deltas), what moved on the
+   * board, what is blocked. The counts drive the auto-skip rule.
+   */
+  async preRead(orgId: string, unit: OrgUnit | null, since: string): Promise<{ text: string; counts: PreReadCounts }> {
+    const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
+    const nm = (id: string | null) => (id ? names.get(id) ?? id.slice(0, 8) : 'nobody');
+    const root = unit ? unit.parentUnitId === null : true;
+    const goals = (await this.org.goals(orgId).catch(() => [])).filter((g) => g.status === 'active' && (root || g.unitId === unit?.id));
+    const checkIns = goals.filter((g) => g.lastCheckInAt && g.lastCheckInAt > since);
+    const atRisk = goals.filter((g) => g.atRisk === 1);
+    const tasks = (await this.tasks.list(orgId)).filter((t) => root || t.unitId === unit?.id);
+    const moved = tasks.filter((t) => t.updatedAt > since);
+    const done = moved.filter((t) => t.status === 'done');
+    const blocked = tasks.filter((t) => t.status === 'blocked');
+    const val = (g: typeof goals[number]) => (g.currentValue !== null && g.targetValue !== null ? ` ${g.currentValue}/${g.targetValue}${g.unitLabel ? ` ${g.unitLabel}` : ''}` : '');
+    const lines: string[] = [`**Pre-read** (compiled by the facilitator from the record, since ${since.slice(0, 16).replace('T', ' ')} UTC):`];
+    lines.push(`- Scorecard: ${checkIns.length ? checkIns.slice(0, 8).map((g) => `${g.title}${val(g)}${g.atRisk ? ' (at risk)' : ' (on pace)'}`).join('; ') : 'no check-in since the last meeting'}`);
+    if (atRisk.length) lines.push(`- At risk: ${atRisk.slice(0, 6).map((g) => `${g.title}${g.atRiskReason ? ` — ${g.atRiskReason.slice(0, 120)}` : ''}`).join('; ')}`);
+    lines.push(`- Board: ${moved.length ? `${moved.length} task(s) moved, ${done.length} done${done.length ? ` (${done.slice(0, 6).map((t) => t.title).join('; ')})` : ''}` : 'nothing moved'}`);
+    lines.push(`- Blocked: ${blocked.length ? blocked.slice(0, 6).map((t) => `[${t.id.slice(0, 8)}] ${t.title} — ${nm(t.assigneeAgentId)}`).join('; ') : 'nothing'}`);
+    return { text: lines.join('\n'), counts: { deltas: moved.length, blocked: blocked.length, checkIns: checkIns.length, atRisk: atRisk.length } };
+  }
+
+  /**
+   * How many of the latest meetings of a unit's ritual in a row produced
+   * nothing — skipped, or held without a decision or an action that stood
+   * (the chief's ritual-retirement review counts these against
+   * `chief.sunsetEmptyCycles`).
+   */
+  async emptyStreak(orgId: string, unitId: string | null, kind: string): Promise<number> {
+    const rows = (await this.list(orgId, { unitId: unitId ?? undefined, limit: 200 }))
+      .filter((x) => x.kind === kind && x.unitId === unitId && (x.status === 'done' || x.status === 'skipped'))
+      .sort((a, b) => ((a.startedAt ?? a.scheduledFor ?? a.createdAt) > (b.startedAt ?? b.scheduledFor ?? b.createdAt) ? -1 : 1));
+    let n = 0;
+    for (const x of rows) {
+      if (x.status === 'done') {
+        const mins = parseMinutes(x.minutes);
+        if (mins.decisions.some((d) => d.verdict !== 'rejected') || mins.actions.some((a) => a.verdict !== 'rejected')) break;
+      }
+      n++;
+    }
+    return n;
   }
 
   /** Cancel a meeting (the API path; the runtime stops at the next turn). */
@@ -347,23 +456,34 @@ export class OrgMeetingsService {
     const unitName = meeting.unitId ? (await this.units.get(orgId, meeting.unitId).catch(() => null))?.name : null;
     const context = `From the ${KIND_TITLES[meeting.kind as MeetingKind] ?? 'meeting'} "${meeting.title}"${unitName ? ` of ${unitName}` : ''} on ${(meeting.startedAt ?? meeting.createdAt).slice(0, 10)}${meeting.agenda ? `. Agenda: ${meeting.agenda.slice(0, 600)}` : ''}`;
     for (const a of minutes.actions) {
-      if (a.taskId) continue;
+      if (a.taskId || a.verdict === 'rejected') continue;
       const owner = resolve(a.owner);
       const assignee = owner && mayAssign(owner) ? owner.agentId : null;
       const t = await this.tasks.create(orgId, {
         title: a.title, brief: { outcome: a.outcome || a.title, context, constraints: '', done_when: a.done_when },
-        assigneeAgentId: assignee, status: assignee ? 'todo' : 'backlog', createdBy: `agent:${a.by || facilitator}`,
+        assigneeAgentId: assignee, status: assignee ? 'todo' : 'backlog', createdBy: `agent:${a.by || facilitator}`, dueAt: a.due ?? null,
         unitId: meeting.unitId ?? undefined, channelId: meeting.channelId, messageId: opts.threadRootId ?? meeting.threadRootId,
       }).catch(() => null);
       if (t) { a.taskId = t.id; if (!assignee && a.owner) a.owner = `${a.owner} (backlog for the chief)`; }
     }
     for (const d of minutes.decisions) {
-      if (d.decisionId) continue;
+      if (d.decisionId || d.verdict === 'rejected') continue;
       const row = await this.logDecision(orgId, {
         title: d.title, decision: d.decision, alternatives: d.alternatives, rationale: d.rationale,
-        decidedBy: `agent:${d.by || facilitator}`, unitId: meeting.unitId, meetingId: meeting.id, refType: 'meeting', refId: meeting.id,
+        // A person who approved it in the room is its decider.
+        decidedBy: d.verdict === 'approved' && d.verdictBy ? d.verdictBy : `agent:${d.by || facilitator}`, unitId: meeting.unitId, meetingId: meeting.id, refType: 'meeting', refId: meeting.id,
       });
       d.decisionId = row.id;
+    }
+    // The parking lot: each point a backlog task on the unit board.
+    for (const p of minutes.parked ?? []) {
+      if (p.taskId) continue;
+      const t = await this.tasks.create(orgId, {
+        title: `Parked: ${p.text}`.slice(0, 200), brief: { outcome: p.text, context: `${context}. Parked in the meeting as off-topic.`, constraints: '', done_when: 'Decided where it belongs, or dropped' },
+        assigneeAgentId: null, status: 'backlog', createdBy: `agent:${p.by || facilitator}`,
+        unitId: meeting.unitId ?? undefined, channelId: meeting.channelId, messageId: opts.threadRootId ?? meeting.threadRootId,
+      }).catch(() => null);
+      if (t) p.taskId = t.id;
     }
     for (const r of minutes.risks) await this.audit.append(orgId, { actor: `agent:${r.by || facilitator}`, action: 'meeting_risk', refType: 'meeting', refId: meeting.id, payload: { text: r.text.slice(0, 600) } });
     for (const fn of this.materialisers) await fn(orgId, meeting, minutes).catch((err: unknown) => this.audit.append(orgId, { actor: 'system', action: 'meeting_materialise_failed', refType: 'meeting', refId: meeting.id, payload: { error: String(err instanceof Error ? err.message : err).slice(0, 300) } }).then(() => undefined));
@@ -375,12 +495,16 @@ export class OrgMeetingsService {
   /** Minutes as the channel reads them (docs/group-chat.md §8). */
   renderMinutes(meeting: OrgMeeting, minutes: Minutes, names: Map<string, string>): string {
     const nm = (id: string) => names.get(id) ?? id.slice(0, 8);
-    const lines = [`**Minutes — ${meeting.title}** (${minutes.endedBy === 'stopped' ? 'ended early' : `${meeting.rounds} round${meeting.rounds === 1 ? '' : 's'}`}, $${meeting.usd.toFixed(2)})`];
+    const tokens = (meeting.tokensIn ?? 0) + (meeting.tokensOut ?? 0);
+    const verdict = (v: ProposalVerdict) => (v.verdict ? ` · ${v.verdict} by ${v.verdictName || 'a person'}` : '');
+    const lines = [`**Minutes — ${meeting.title}** (${minutes.endedBy === 'stopped' ? 'ended early' : `${meeting.rounds} round${meeting.rounds === 1 ? '' : 's'}`}, $${meeting.usd.toFixed(2)}${tokens ? `, ${tokens.toLocaleString('en-US')} tokens` : ''})`];
     if (minutes.summary) lines.push('', minutes.summary.slice(0, 2_000));
-    lines.push('', `Decisions (${minutes.decisions.length})`, ...(minutes.decisions.length ? minutes.decisions.map((d) => `- ${d.title}: ${d.decision}${d.decisionId ? ` · #decision:${d.decisionId.slice(0, 8)}` : ''}`) : ['- none']));
-    lines.push('', `Actions (${minutes.actions.length})`, ...(minutes.actions.length ? minutes.actions.map((a) => `- ${a.title} — ${a.owner || 'unowned'}${a.taskId ? ` · task [${a.taskId.slice(0, 8)}]` : ''}`) : ['- none']));
+    lines.push('', `Decisions (${minutes.decisions.length})`, ...(minutes.decisions.length ? minutes.decisions.map((d) => `- ${d.title}: ${d.decision}${d.decisionId ? ` · #decision:${d.decisionId.slice(0, 8)}` : ''}${verdict(d)}`) : ['- none']));
+    lines.push('', `Actions (${minutes.actions.length})`, ...(minutes.actions.length ? minutes.actions.map((a) => `- ${a.title} — ${a.owner || 'unowned'}${a.taskId ? ` · task [${a.taskId.slice(0, 8)}]` : ''}${verdict(a)}`) : ['- none']));
     lines.push('', `Risks (${minutes.risks.length})`, ...(minutes.risks.length ? minutes.risks.map((r) => `- ${r.text} (${nm(r.by)})`) : ['- none']));
-    lines.push('', `Questions for the CEO (${minutes.questions.length})`, ...(minutes.questions.length ? minutes.questions.map((q) => `- ${q.question} (${nm(q.by)})`) : ['- none']));
+    lines.push('', `Questions for the CEO (${minutes.questions.length})`, ...(minutes.questions.length ? minutes.questions.map((q) => `- ${q.question} (${nm(q.by)})${q.answer ? ` — answered: ${q.answer}` : ''}`) : ['- none']));
+    const parked = minutes.parked ?? [];
+    if (parked.length) lines.push('', `Parking lot (${parked.length})`, ...parked.map((p) => `- ${p.text}${p.taskId ? ` · backlog [${p.taskId.slice(0, 8)}]` : ''}`));
     const lessons = minutes.lessons ?? [];
     if (lessons.length) lines.push('', `Lessons (${lessons.length})`, ...lessons.map((l) => `- [${l.audience}] ${l.text}${l.proposedCharterChange ? ` · charter change for ${nm(l.proposedCharterChange.agent)}${l.proposedCharterChange.approvalId ? ` (approval ${l.proposedCharterChange.approvalId.slice(0, 8)})` : ''}` : ''}${l.proposedPlaybookChange ? ` · playbook ${l.proposedPlaybookChange.playbookId.slice(0, 8)}${l.proposedPlaybookChange.taskId ? ` → task [${l.proposedPlaybookChange.taskId.slice(0, 8)}]` : ''}` : ''} (${nm(l.by)})`));
     return lines.join('\n');
@@ -391,7 +515,7 @@ export class OrgMeetingsService {
     const since = new Date(Date.now() - days * 24 * 60 * 60_000).toISOString();
     const out: Array<{ meetingId: string; title: string; question: string; by: string; at: string }> = [];
     for (const m of (await this.list(orgId, { status: 'done', limit: 100 })).filter((x) => (x.endedAt ?? x.createdAt) >= since)) {
-      for (const q of parseMinutes(m.minutes).questions) out.push({ meetingId: m.id, title: m.title, question: q.question, by: q.by, at: m.endedAt ?? m.createdAt });
+      for (const q of parseMinutes(m.minutes).questions.filter((x) => !x.answer)) out.push({ meetingId: m.id, title: m.title, question: q.question, by: q.by, at: m.endedAt ?? m.createdAt });
     }
     return out;
   }

@@ -9,6 +9,7 @@
  * read from the same JSON column here; the registry ignores non-numbers.
  */
 import type { MeetingKind } from './org-meetings.service';
+import type { ProfileDiagnosis } from './chief-os';
 import { registerTunables, tunable, type TunableDef } from './org-tunables';
 
 export const MEETING_TUNABLES: Record<string, TunableDef> = {
@@ -16,6 +17,13 @@ export const MEETING_TUNABLES: Record<string, TunableDef> = {
   'meeting.usdCap': { default: 1, min: 0.05, max: 10, area: 'rituals', description: 'USD a single meeting may spend.' },
   'meeting.dailyCap': { default: 4, min: 0, max: 12, area: 'rituals', description: 'Meetings a unit may hold per day; a cadence may not fire more often.' },
   'meeting.leadsOnly': { default: 0, min: 0, max: 1, area: 'rituals', description: '1: only reports that lead units attend a ritual; 0: the whole unit.' },
+  // The meeting room (docs/meetings.md "During", "Before"):
+  'meeting.selectiveRounds': { default: 1, min: 0, max: 1, area: 'rituals', description: '1: rounds after the first hear only the attendees with an open thread (named since their turn, given an action, their question answered) and the facilitator; 0: everyone every round.' },
+  'meeting.itemMinutes': { default: 10, min: 1, max: 60, area: 'rituals', description: 'Minutes each agenda item may take before the meeting moves to the next one.' },
+  'meeting.extendRounds': { default: 1, min: 0, max: 2, area: 'rituals', description: 'Rounds a person may add to a running meeting with Extend (still under the USD cap).' },
+  'meeting.prepMinutes': { default: 120, min: 0, max: 1440, area: 'rituals', description: 'Minutes before a scheduled ritual that it is prepared: the pre-read compiled and agenda proposals open (0: prepared at the start).' },
+  'meeting.reminderMinutes': { default: 10, min: 0, max: 120, area: 'rituals', description: 'Minutes before a scheduled ritual that the people attending get a "starts in N min · Join" reminder (0: none).' },
+  'meeting.autoSkip': { default: 1, min: 0, max: 1, area: 'rituals', description: '1: a scheduled ritual with nothing on its agenda (no deltas, open items, blocked tasks or proposals) skips itself without a model call; 0: it always runs.' },
 };
 registerTunables(MEETING_TUNABLES);
 
@@ -56,4 +64,24 @@ export function operatingProfile(org: unknown, vision?: { title: string; dueAt?:
     s(o.culture) ? `Culture: ${s(o.culture)}` : '',
   ].filter(Boolean);
   return lines.length ? `Operating profile (run this meeting in the company's style):\n${lines.join('\n')}` : '';
+}
+
+/**
+ * The meeting room's tunables derived from the operating profile (the
+ * report's culture → mechanism map; a heuristic, stated as one): a company
+ * that values speed gets short agenda items, no extra rounds and empty
+ * rituals skipped; a rigour- or control-minded one long preparation and
+ * longer items; a clan culture hears everyone every round. Pure; the
+ * operating-system derivation (`chief-os.ts`) appends these to its plan.
+ */
+export function deriveMeetingTunables(d: Pick<ProfileDiagnosis, 'stage' | 'cultureType' | 'speed' | 'rigor' | 'writing'>): Array<{ key: string; value: number; why: string }> {
+  const c = d.cultureType;
+  const formal = d.rigor || c === 'hierarchy';
+  return [
+    { key: 'meeting.itemMinutes', value: d.speed ? 5 : formal ? 15 : 10, why: d.speed ? 'speed is a value: each agenda item gets five minutes' : formal ? 'items are worked through with care: fifteen minutes each' : 'ten minutes per agenda item' },
+    { key: 'meeting.selectiveRounds', value: c === 'clan' ? 0 : 1, why: c === 'clan' ? 'a consensus culture hears everyone every round' : 'after the first round only those with an open thread speak' },
+    { key: 'meeting.extendRounds', value: d.speed ? 0 : c === 'clan' ? 2 : 1, why: d.speed ? 'a meeting ends on time; there is no extra round' : c === 'clan' ? 'room for one more pass at consensus' : 'one extra round when the room asks for it' },
+    { key: 'meeting.prepMinutes', value: formal ? 1440 : d.speed || d.stage === 'early' ? 60 : 240, why: formal ? 'pre-reads and agenda proposals open a day ahead' : d.speed || d.stage === 'early' ? 'an hour of preparation is enough for a small, fast team' : 'the pre-read and agenda open a few hours ahead' },
+    { key: 'meeting.autoSkip', value: c === 'hierarchy' && !d.speed ? 0 : 1, why: c === 'hierarchy' && !d.speed ? 'rituals are held as scheduled, even when quiet' : 'a ritual with nothing on its agenda skips itself (written context carries the update)' },
+  ];
 }

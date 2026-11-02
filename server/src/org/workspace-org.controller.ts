@@ -14,7 +14,8 @@
  *  capital (docs/company-vision.md §7–§8): GET costs?period=&unitId= · GET forecast · GET|PUT routing · GET|PUT allocations · GET plans?status= · GET plans/:planId · POST plans/:planId/veto | /apply-now · POST plan/dry-run · GET replay?day=
  *
  *  meetings (docs/company-vision.md §3, item 19): GET /org/meetings?unitId=&status= · POST /org/meetings { kind, unitId?, agenda?, attendees? } (starts now)
- *           GET /org/meetings/:meetingId · POST /org/meetings/:meetingId/cancel · GET /org/decisions?unitId= · GET /org/cadences · PATCH /org/cadences/:cadenceId { cron, enabled }
+ *           GET /org/meetings/:meetingId · POST /org/meetings/:meetingId/cancel ·
+ *           the room (docs/meetings.md): POST …/:meetingId/join · /control { action: extend|skip|end } · /verdict { kind, index, verdict } · /answer { index, answer } · /agenda { text, why? } · GET /org/decisions?unitId= · GET /org/cadences · PATCH /org/cadences/:cadenceId { cron, enabled }
  *  memory (docs/company-vision.md §6, item 22): GET /org/decisions/search?q=&unitId= · POST /org/ask { question } (CEO, board, observers) · GET /org/recall?q= ·
  *           GET /org/graph?ref=<kind:id>&depth=1|2 · GET /org/playbooks?role=&status=
  *
@@ -58,6 +59,17 @@ export class MeetingDto {
   @IsOptional() @IsString() facilitatorAgentId?: string;
 }
 
+/** The room (docs/meetings.md "During"): a person's control, verdict, answer or agenda proposal. */
+export class MeetingControlDto { @IsIn(['extend', 'skip', 'end']) action!: 'extend' | 'skip' | 'end' }
+export class MeetingVerdictDto {
+  @IsIn(['decision', 'action']) kind!: 'decision' | 'action';
+  @IsInt() @Min(0) index!: number;
+  @IsIn(['approve', 'reject']) verdict!: 'approve' | 'reject';
+  @IsOptional() @IsString() note?: string;
+}
+export class MeetingAnswerDto { @IsInt() @Min(0) index!: number; @IsString() answer!: string }
+export class MeetingAgendaDto { @IsString() text!: string; @IsOptional() @IsString() why?: string }
+
 export class CadenceDto {
   @IsOptional() @IsString() cron?: string;
   @IsOptional() @IsBoolean() enabled?: boolean;
@@ -95,6 +107,8 @@ export class WorkspaceOrgController {
   ) {}
 
   private knowledgeOr(): OrgKnowledgeService { if (!this.knowledge) throw new NotFoundException('company memory is not available'); return this.knowledge; }
+
+  private roomOr(): OrgMeetingRuntime { if (!this.meetingRuntime) throw new NotFoundException('meetings are not available'); return this.meetingRuntime; }
 
   private meetingsOr(): OrgMeetingsService { if (!this.meetings) throw new NotFoundException('meetings are not available'); return this.meetings; }
 
@@ -225,6 +239,11 @@ export class WorkspaceOrgController {
     return this.meetingRuntime.start(orgId, { ...dto, createdBy: this.orgs.actorName() });
   }
   @Get('meetings/:meetingId') async meeting(@Param('id') id: string, @Param('meetingId') meetingId: string) { return this.meetingsOr().get(await this.oid(id), meetingId); }
+  @Post('meetings/:meetingId/join') async joinMeeting(@Param('id') id: string, @Param('meetingId') meetingId: string) { return this.roomOr().join(await this.oid(id), meetingId, { id: actorId() }); }
+  @Post('meetings/:meetingId/control') async controlMeeting(@Param('id') id: string, @Param('meetingId') meetingId: string, @Body() dto: MeetingControlDto) { return this.roomOr().control(await this.oid(id), meetingId, { id: actorId() }, dto.action); }
+  @Post('meetings/:meetingId/verdict') async meetingVerdict(@Param('id') id: string, @Param('meetingId') meetingId: string, @Body() dto: MeetingVerdictDto) { return this.roomOr().verdict(await this.oid(id), meetingId, { id: actorId() }, dto); }
+  @Post('meetings/:meetingId/answer') async meetingAnswer(@Param('id') id: string, @Param('meetingId') meetingId: string, @Body() dto: MeetingAnswerDto) { return this.roomOr().answer(await this.oid(id), meetingId, { id: actorId() }, dto); }
+  @Post('meetings/:meetingId/agenda') async meetingAgenda(@Param('id') id: string, @Param('meetingId') meetingId: string, @Body() dto: MeetingAgendaDto) { return this.roomOr().proposeAgenda(await this.oid(id), meetingId, { kind: 'human', id: actorId() }, dto); }
   @Post('meetings/:meetingId/cancel') async cancelMeeting(@Param('id') id: string, @Param('meetingId') meetingId: string) { return this.meetingsOr().cancel(await this.oid(id), meetingId, this.orgs.actorName()); }
   @Get('decisions') async decisions(@Param('id') id: string, @Query('unitId') unitId?: string) { return this.meetingsOr().decisions(await this.oid(id), { unitId: unitId || null }); }
   @Get('cadences') async cadences(@Param('id') id: string) { const orgId = await this.oid(id); await this.meetingsOr().ensureCadenceDefaults(orgId); return this.meetingsOr().cadences(orgId); }

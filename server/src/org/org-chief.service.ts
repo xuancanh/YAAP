@@ -55,6 +55,10 @@ export interface OperatingSystemState {
   /** Backlog tasks a function head filed for the chief (hire, pause and
    *  re-tooling cases, decisions, asks from its weekly report), oldest first. */
   headRequests: Array<{ taskId: string; title: string; from: string; waitedHours: number }>;
+  /** Rituals whose latest cycles in a row were empty — skipped, or held
+   *  without a decision or action — at or past `chief.sunsetEmptyCycles`:
+   *  candidates for the ritual-retirement review (docs/meetings.md "Before"). */
+  emptyRituals?: Array<{ kind: string; title: string; unit: string; streak: number }>;
 }
 
 @Injectable()
@@ -161,7 +165,18 @@ export class OrgChiefService {
       .map((t) => ({ taskId: t.id, title: t.title, from: names.get(t.createdBy.slice('agent:'.length)) ?? 'a function head', waitedHours: Math.max(0, Math.floor((nowMs - Date.parse(t.createdAt)) / H)) }))
       .sort((a, b) => b.waitedHours - a.waitedHours);
 
-    return { orgId, orgName: org.name, proxyLevel: proxyLevelOf(org), rituals, overdueDecisions, staleRisks, breachedHandoffs, functionOwners, headRequests };
+    // Empty rituals: consecutive skipped or output-free meetings per cadence.
+    const emptyRituals: NonNullable<OperatingSystemState['emptyRituals']> = [];
+    if (this.meetings) {
+      const sunset = chiefTunable(org, 'chief.sunsetEmptyCycles');
+      for (const c of await this.meetings.cadences(orgId)) {
+        if (!c.enabled) continue;
+        const streak = await this.meetings.emptyStreak(orgId, c.unitId, c.kind).catch(() => 0);
+        if (streak >= sunset) emptyRituals.push({ kind: c.kind, title: KIND_TITLES[c.kind as MeetingKind] ?? c.kind, unit: unitName.get(c.unitId) ?? 'the company', streak });
+      }
+    }
+
+    return { orgId, orgName: org.name, proxyLevel: proxyLevelOf(org), rituals, overdueDecisions, staleRisks, breachedHandoffs, functionOwners, headRequests, emptyRituals };
   }
 
   /** Wake the chief for a handoff that breached since its last beat (a
@@ -214,6 +229,7 @@ export function describeState(st: OperatingSystemState): string {
   if (st.staleRisks.length) lines.push('Stale risks (no check-in or acknowledgement within chief.riskReviewDays; ask the owner to re-score, do not re-score for them):', ...st.staleRisks.slice(0, 6).map((r) => `- [${r.ref.slice(0, r.ref.indexOf(':') + 9)}] ${r.source.replace('_', ' ')} "${r.title}" — ${r.staleDays} day(s)`));
   if (st.breachedHandoffs.length) lines.push('Breached handoffs (route to the owner, then the shared manager or /org/issues.md):', ...st.breachedHandoffs.slice(0, 6).map((h) => `- [${h.taskId.slice(0, 8)}] "${h.title}" from ${h.from} → ${h.to}, ${h.status.replace('_', ' ')} for ${h.waitedHours}h`));
   if (st.headRequests.length) lines.push('Requests from function heads in your backlog (hire, pause and re-tooling cases, asks; decide within the boundary or put them to the CEO — run function-reports-intake):', ...st.headRequests.slice(0, 6).map((r) => `- [${r.taskId.slice(0, 8)}] "${r.title}" from ${r.from}, ${r.waitedHours}h old`));
+  if (st.emptyRituals?.length) lines.push('Rituals empty for chief.sunsetEmptyCycles cycles in a row (skipped, or no decision or action) — run ritual-retirement-review: propose, never retire:', ...st.emptyRituals.slice(0, 6).map((r) => `- ${r.title} of ${r.unit}: ${r.streak} empty cycle(s)`));
   if (st.functionOwners.length) lines.push(`Function owners (route function-level work to them; their weekly reports are under /org/<function>/reports/): ${st.functionOwners.map((o) => `${o.name} (${o.title}${o.unit ? `, ${o.unit}` : ''})`).join('; ')}.`);
   if (lines.length === 1) lines.push('Nothing overdue: no ritual in the lookahead, no decision past due, no stale risk, no breached handoff.');
   lines.push('The ledger lives under /org/ (operating-system.md, scorecard.md, issues.md, decisions.md, calendar.md, risks.md, handoffs.md, values.md).');
