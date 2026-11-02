@@ -146,6 +146,49 @@ export const followViewSchema = z.object({
   followers: z.array(z.object({ followerKind: z.enum(['agent', 'user']), followerId: z.string(), reason: z.string(), createdAt: z.string() })),
 });
 
+/** Home (docs/home.md): one aggregate the page iterates section by section —
+ *  drift in any list should warn, never blank the page. */
+const homeRefSchema = z.object({ type: z.string(), id: z.string() }).nullable();
+export const homeDataSchema = z.object({
+  workspaceId: z.string(),
+  generatedAt: z.string(),
+  since: z.string(),
+  firstVisit: z.boolean(),
+  company: z.object({
+    orgId: z.string(), name: z.string(), mode: z.enum(['off', 'supervised', 'autonomous']), status: z.enum(['active', 'paused']),
+    chiefAgentId: z.string().nullable(), chiefName: z.string().nullable(), memberCount: z.number(),
+  }).nullable(),
+  headline: z.object({ tasksDone: z.number(), needsYou: z.number(), todayUsd: z.number().nullable(), monthUsd: z.number().nullable(), monthCapUsd: z.number().nullable() }),
+  needs: z.array(z.object({
+    id: z.string(), kind: z.enum(['approval', 'escalation', 'held_action', 'plan', 'incident', 'signal', 'queued_action']), subkind: z.string(),
+    title: z.string(), detail: z.string(), severity: z.enum(['critical', 'high', 'normal']), createdAt: z.string(),
+    deadline: z.string().nullable(), defaultAction: z.enum(['approve', 'deny', 'apply', '']), recommendation: z.string(), recommendedAction: z.string(),
+    reversibility: z.string(), confidence: z.number().nullable(), requestedBy: z.string(), ref: z.record(z.string(), z.string()),
+    actions: z.array(z.enum(['approve', 'reject', 'veto', 'apply_now', 'ack', 'dismiss'])),
+  })),
+  recap: z.object({
+    tasksDone: z.number(), tasksBlocked: z.number(), decisionsCount: z.number(), artifactsChanged: z.number(),
+    decisions: z.array(z.object({ at: z.string(), kind: z.string(), title: z.string(), detail: z.string(), ref: homeRefSchema })),
+    people: z.array(z.object({ at: z.string(), kind: z.string(), title: z.string(), detail: z.string(), ref: homeRefSchema })),
+    brief: z.object({ at: z.string(), text: z.string() }).nullable(),
+    pulse: z.object({ score: z.number(), breaches: z.number() }).nullable(),
+  }),
+  goals: z.array(z.object({
+    id: z.string(), title: z.string(), progress: z.number(), rag: z.enum(['red', 'amber', 'green', 'grey']), atRisk: z.boolean(),
+    keyResults: z.array(z.object({ id: z.string(), title: z.string(), progress: z.number(), rag: z.enum(['red', 'amber', 'green', 'grey']) })),
+  })),
+  team: z.array(z.object({
+    id: z.string(), name: z.string(), emoji: z.string(), colors: z.string(), state: z.enum(['working', 'idle', 'blocked', 'paused', 'error']), doing: z.string(),
+    errors: z.array(z.object({ kind: z.string(), message: z.string(), at: z.string() })),
+  })),
+  activity: z.array(z.object({ id: z.string(), at: z.string(), kind: z.string(), title: z.string(), detail: z.string(), actor: z.string(), ref: homeRefSchema })),
+  spend: z.object({ todayUsd: z.number().nullable(), monthUsd: z.number().nullable(), monthCapUsd: z.number().nullable(), projectedUsd: z.number().nullable() }),
+  health: z.object({ status: z.enum(['ok', 'degraded', 'incident']), openIncidents: z.array(z.object({ id: z.string(), title: z.string() })), providers: z.array(z.object({ provider: z.string() })) }),
+  upcoming: z.array(z.object({ id: z.string(), at: z.string(), kind: z.string(), title: z.string(), ref: homeRefSchema })),
+  artifacts: z.array(z.object({ path: z.string(), version: z.number(), updatedAt: z.string() })),
+  partial: z.array(z.string()),
+});
+
 /** Validate `value` against `schema`; on mismatch warn and keep the raw
  *  value — drift should be visible, never fatal. Returns `value` unchanged
  *  either way (schemas strip unknown keys, so we never hand parsed output

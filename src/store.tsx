@@ -21,7 +21,8 @@ import type { PriceTable } from './lib/pricing';
 
 /** `workspace` is the Company section (the id stays for URLs); `inbox` is
  *  everything waiting on the CEO (src/lib/inbox.ts). */
-export type Section = 'home' | 'overview' | 'inbox' | 'workspace' | 'artifacts' | 'apps' | 'market' | 'settings';
+/** 'overview' is Home, the owner's mission control (docs/home.md); 'agents' the full agent directory it links to. */
+export type Section = 'home' | 'overview' | 'agents' | 'inbox' | 'workspace' | 'artifacts' | 'apps' | 'market' | 'settings';
 /** The organization panes under the Workspace section (docs/group-chat.md
  *  §5: the workspace is the company; there is no separate Company section). */
 export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'plans' | 'replay' | 'capital' | 'mytasks'
@@ -242,13 +243,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const org = p.get('org');
     if (org && ORG_PANES_IN_ARTIFACTS.includes(org)) return 'artifacts';
     if (isOrgPane(org) && paneHome(org).section === 'inbox') return 'inbox';
-    if (q === 'market' || q === 'settings' || q === 'overview' || q === 'inbox' || q === 'workspace' || q === 'artifacts' || q === 'apps') return q;
+    if (q === 'market' || q === 'settings' || q === 'overview' || (q === 'agents' && !p.get('agent')) || q === 'inbox' || q === 'workspace' || q === 'artifacts' || q === 'apps') return q;
     if (q === 'company') return 'workspace'; // legacy: the company lives under the workspace now
-    // legacy: ?section=agents without a specific agent is the fleet overview
-    if (q === 'agents' && !p.get('agent')) return 'overview';
     if (q === 'files') return 'artifacts';
     if (q === 'chats' || (q === 'agents' && p.get('agent'))) return 'home';
-    return 'overview'; // the fleet overview is the landing page
+    return 'overview'; // Home is the landing page
   });
   const [homeView, setHomeView] = useState<HomeView>(() => {
     const q = new URLSearchParams(window.location.search).get('section');

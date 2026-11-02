@@ -41,7 +41,7 @@ export function ActivityBar() {
     <nav style={{ width: 62, flex: 'none', background: 'var(--panel)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 0 14px', gap: 4 }}>
       <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg,var(--accent),var(--blue))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: '#fff', fontSize: 14, marginBottom: 8 }}>Y</div>
       {nav.map((n) => (
-        <button key={n.id} onClick={() => app.go(n.id)} style={btn(app.section === n.id)} aria-label={n.label}>
+        <button key={n.id} onClick={() => app.go(n.id)} style={btn(app.section === n.id || (n.id === 'overview' && app.section === 'agents'))} aria-label={n.label}>
           <I d={n.icon} size={19} sw={1.9} />
           <span style={{ fontSize: 9 }}>{n.label}</span>
           {n.badge !== undefined && <Badge n={n.badge} />}
@@ -69,7 +69,7 @@ export function BottomNav() {
   return (
     <nav style={{ position: 'fixed', left: 0, right: 0, bottom: 0, height: 58, background: 'var(--panel)', borderTop: '1px solid var(--border)', display: 'flex', zIndex: 70 }}>
       {[...nav, { id: 'settings' as Section, label: 'Settings', icon: P.gear, badge: undefined }].map((n) => (
-        <button key={n.id} onClick={() => app.go(n.id)} style={btn(app.section === n.id)} aria-label={n.label}>
+        <button key={n.id} onClick={() => app.go(n.id)} style={btn(app.section === n.id || (n.id === 'overview' && app.section === 'agents'))} aria-label={n.label}>
           <I d={n.icon} size={20} sw={1.9} />
           <span style={{ fontSize: 9, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.label}</span>
           {n.badge !== undefined && <Badge n={n.badge} />}

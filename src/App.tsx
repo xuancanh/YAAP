@@ -19,6 +19,7 @@ const NewAgentDialog = lazy(() => import('./components/AgentsView').then((m) => 
 const MarketView = lazy(() => import('./components/MarketView').then((m) => ({ default: m.MarketView })));
 const HireModal = lazy(() => import('./components/MarketView').then((m) => ({ default: m.HireModal })));
 const OrganizationView = lazy(() => import('./components/OrganizationView').then((m) => ({ default: m.OrganizationView })));
+const HomeView = lazy(() => import('./components/HomeView').then((m) => ({ default: m.HomeView })));
 const InboxView = lazy(() => import('./components/InboxView').then((m) => ({ default: m.InboxView })));
 const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
 
@@ -60,7 +61,7 @@ function Layout() {
   const showMain = app.stacked ? !showSecondary : true;
 
   const secTitle = sec === 'home' ? 'Channels & chats' : sec === 'workspace' ? 'Company' : sec === 'artifacts' ? 'Artifacts' : sec === 'market' ? 'Categories' : 'Settings';
-  const hasSecondary = sec !== 'overview' && sec !== 'apps' && sec !== 'inbox'; // fleet overview, apps gallery and the Inbox are full-width
+  const hasSecondary = sec !== 'overview' && sec !== 'agents' && sec !== 'apps' && sec !== 'inbox'; // Home, the agent directory, apps gallery and the Inbox are full-width
 
   return (
     <div data-theme={app.theme} style={{ height: '100vh', display: 'flex', position: 'relative', background: 'var(--bg)', color: 'var(--text)', fontSize: 14, overflow: 'hidden', paddingBottom: app.stacked ? 58 : 0 }}>
@@ -84,7 +85,8 @@ function Layout() {
           {sec === 'home' && app.homeView === 'channel' && <ChannelView />}
           {sec === 'home' && app.homeView === 'file' && <FilesView />}
           {sec === 'home' && app.homeView === 'agent' && <Suspense fallback={viewFallback}>{app.selectedAgent ? <AgentHome /> : <AgentsDirectory />}</Suspense>}
-          {sec === 'overview' && <Suspense fallback={viewFallback}><AgentsDirectory /></Suspense>}
+          {sec === 'overview' && <Suspense fallback={viewFallback}><HomeView /></Suspense>}
+          {sec === 'agents' && <Suspense fallback={viewFallback}><AgentsDirectory /></Suspense>}
           {sec === 'apps' && <AppsGallery />}
           {sec === 'workspace' && (orgOpen ? <Suspense fallback={viewFallback}><OrganizationView /></Suspense> : <WorkspaceOff />)}
           {sec === 'artifacts' && <FilesView />}

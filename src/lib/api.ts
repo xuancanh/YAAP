@@ -16,6 +16,7 @@ import {
   transcriptSchema,
   hireResultSchema,
   followViewSchema,
+  homeDataSchema,
 } from './schemas';
 
 export interface Workspace {
@@ -1777,7 +1778,60 @@ export const api = {
   orgOutcomes: (wsId: string) => get<OutcomeRow[]>(`/api/workspaces/${wsId}/org/outcomes`),
   orgValueEvents: (wsId: string, since?: string) => get<ValueEvent[]>(`/api/workspaces/${wsId}/org/value-events${since ? `?since=${enc(since)}` : ''}`),
   setOrgGoalValue: (wsId: string, goalId: string, body: { valuePerUnit?: number | null; valueOnAchieve?: number | null; valueNote?: string }) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals/${enc(goalId)}/value`, 'PUT', body),
+  /** Home (docs/home.md): the owner's mission control in one request. Without `since` the server records the visit. */
+  home: (wsId: string, since?: string) => get<HomeData>(`/api/workspaces/${wsId}/home${since ? `?since=${enc(since)}` : ''}`, homeDataSchema),
 };
+
+// ---- Home (docs/home.md; server/src/home/home.types.ts) ----
+export type HomeNeedAction = 'approve' | 'reject' | 'veto' | 'apply_now' | 'ack' | 'dismiss';
+export type HomeNeedKind = 'approval' | 'escalation' | 'held_action' | 'plan' | 'incident' | 'signal' | 'queued_action';
+export interface HomeNeed {
+  id: string; kind: HomeNeedKind; subkind: string; title: string; detail: string; severity: 'critical' | 'high' | 'normal'; createdAt: string;
+  deadline: string | null; defaultAction: 'approve' | 'deny' | 'apply' | ''; recommendation: string; recommendedAction: string; reversibility: string;
+  confidence: number | null; requestedBy: string;
+  ref: { approvalId?: string; actionId?: string; planId?: string; incidentId?: string; signalId?: string; agentId?: string; eventId?: string; taskId?: string; sessionId?: string };
+  actions: HomeNeedAction[];
+}
+export interface HomeRef { type: string; id: string }
+export interface HomeRecapItem { at: string; kind: 'auto' | 'default' | 'delegate' | 'decision' | 'hire' | 'pause' | 'terminate'; title: string; detail: string; ref: HomeRef | null }
+export interface HomeRecap {
+  tasksDone: number; tasksBlocked: number; decisions: HomeRecapItem[]; decisionsCount: number; people: HomeRecapItem[]; artifactsChanged: number;
+  brief: { at: string; text: string } | null; pulse: { score: number; breaches: number } | null;
+}
+export type HomeRag = 'red' | 'amber' | 'green' | 'grey';
+export interface HomeKeyResult { id: string; title: string; currentValue: number | null; targetValue: number | null; unitLabel: string; progress: number; confidence: number | null; atRisk: boolean; atRiskReason: string; rag: HomeRag; dueAt: string | null }
+export interface HomeGoal { id: string; title: string; ownerName: string | null; progress: number; confidence: number | null; atRisk: boolean; atRiskReason: string; rag: HomeRag; dueAt: string | null; keyResults: HomeKeyResult[] }
+export type HomeAgentState = 'working' | 'idle' | 'blocked' | 'paused' | 'error';
+export interface HomeAgent {
+  id: string; name: string; emoji: string; colors: string; title: string; state: HomeAgentState; doing: string; taskId: string | null;
+  lastActiveAt: string | null; lastBeatAt: string | null; isChief: boolean;
+  errors: Array<{ kind: 'turn' | 'loop' | 'breaker' | 'provider' | 'budget'; message: string; at: string }>;
+}
+export type HomeActivityKind = 'task' | 'hire' | 'decision' | 'meeting' | 'incident' | 'file' | 'agent';
+export interface HomeActivity { id: string; at: string; kind: HomeActivityKind; title: string; detail: string; actor: string; ref: HomeRef | null }
+export interface HomeSpend {
+  todayUsd: number | null; monthUsd: number | null; monthCapUsd: number | null; projectedUsd: number | null;
+  forecastState: 'onTrack' | 'warn' | 'stop' | null; tokens: { spent: number; budget: number; over: boolean } | null;
+}
+export interface HomeHealth {
+  status: 'ok' | 'degraded' | 'incident';
+  openIncidents: Array<{ id: string; title: string; severity: string; status: string; openedAt: string }>;
+  providers: Array<{ provider: string; state: string; lastError: string }>;
+  audit: { id: string; at: string; status: string; findings: number; top: Array<{ severity: string; title: string }>; summary: string } | null;
+}
+export interface HomeUpcoming { id: string; at: string; kind: 'meeting' | 'ritual' | 'deadline' | 'decision' | 'loop' | 'plan'; title: string; detail: string; ref: HomeRef | null }
+export interface HomeArtifact { path: string; version: number; size: number; updatedAt: string; updatedBy: { kind: string; id: string; name: string } }
+export interface HomeCompany { orgId: string; name: string; mode: OrgMode; status: 'active' | 'paused'; chiefAgentId: string | null; chiefName: string | null; memberCount: number }
+/** GET /api/workspaces/:id/home. */
+export interface HomeData {
+  workspaceId: string; generatedAt: string; since: string; firstVisit: boolean;
+  company: HomeCompany | null;
+  headline: { tasksDone: number; needsYou: number; todayUsd: number | null; monthUsd: number | null; monthCapUsd: number | null };
+  needs: HomeNeed[]; recap: HomeRecap; goals: HomeGoal[]; team: HomeAgent[]; activity: HomeActivity[];
+  spend: HomeSpend; health: HomeHealth; upcoming: HomeUpcoming[]; artifacts: HomeArtifact[];
+  /** Sections that failed to load on the server. */
+  partial: string[];
+}
 
 export interface AppLlmResult {
   text: string;
