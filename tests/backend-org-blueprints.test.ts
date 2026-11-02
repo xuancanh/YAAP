@@ -43,6 +43,7 @@ import { OrgIntentService } from '../server/src/org/org-intent.service';
 import { OrgRolesService, modelForTier } from '../server/src/org/org-roles.service';
 import { OrgBlueprintsService } from '../server/src/org/org-blueprints.service';
 import { ROLES, rankRoles, roleById, tierOfModel } from '../server/src/org/roles/catalog';
+import { AUTHORED_PACKS } from '../server/src/market/authored-packs.generated';
 import { BLUEPRINT_FORMAT, hireOrder, unitsOf, validateBlueprint, type Blueprint } from '../server/src/org/blueprints/format';
 import { BlueprintsController } from '../server/src/org/blueprints/blueprints.controller';
 import { CompaniesController } from '../server/src/org/blueprints/companies.controller';
@@ -185,6 +186,32 @@ test('role hire: org_hire_agent with role:<id> resolves the charter, title, scop
   // a pack hire still works untouched
   const pack = await s.approvals.prepareHire(orgId, { templateOrPack: 'Marketer', requestedBy: 'chief' });
   assert.equal(pack.packId !== null, true); assert.equal(pack.roleId, undefined);
+  // a business role keeps the role's charter and tier and brings its authored pack's playbooks
+  const head = await s.approvals.prepareHire(orgId, { templateOrPack: 'role:sales-manager', requestedBy: 'chief' });
+  assert.equal(head.roleId, 'sales-manager'); assert.equal(head.packId, 'pack-biz-sales-manager'); assert.equal(head.modelTier, 'strong');
+  assert.equal(head.name, 'Head of Sales'); assert.match(head.charter, /^You are the Head of Sales of /);
+  assert.ok(head.skills!.includes('sales-pipeline-review') && head.skills!.includes('sales-report'), `skills: ${head.skills!.join(',')}`);
+});
+
+test('business roles: one strong <fn>-manager per function under the chief, specialists under their manager, each naming an authored Business pack', () => {
+  const managers = ROLES.filter((r) => r.id.endsWith('-manager'));
+  assert.ok(managers.length >= 13, `${managers.length} function managers`);
+  for (const m of managers) {
+    assert.equal(m.reportsToHint, 'chief-of-staff', m.id); assert.equal(m.modelTier, 'strong', m.id);
+    const reports = ROLES.filter((r) => r.reportsToHint === m.id);
+    assert.ok(reports.length >= 2 && reports.length <= 4, `${m.id} has ${reports.length} specialists`);
+  }
+  const titles = new Set<string>();
+  for (const r of ROLES) {
+    assert.ok(!titles.has(r.title.toLowerCase()), `duplicate title ${r.title}`); titles.add(r.title.toLowerCase());
+    if (r.reportsToHint) assert.ok(roleById(r.reportsToHint), `${r.id} reports to a known role`);
+    if (!r.packId) continue;
+    const pack = AUTHORED_PACKS.find((p) => p.id === r.packId);
+    assert.ok(pack, `${r.id} names a pack`); assert.equal(pack!.cat, 'Business');
+    assert.ok(r.fits.every((t) => t.length >= 3 && !['research', 'content', 'marketing', 'team', 'company', 'any'].includes(t)), `${r.id} fits stay function-specific`);
+  }
+  // every authored business pack has its role
+  for (const p of AUTHORED_PACKS.filter((x) => x.id.startsWith('pack-biz-'))) assert.ok(ROLES.some((r) => r.packId === p.id), `${p.id} has a role`);
 });
 
 // ---- 2. the format ----

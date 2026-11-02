@@ -33,6 +33,8 @@ export interface WizardProps {
   existing?: { id: string; name: string };
 }
 
+const ROLES_SHOWN = 12;
+
 export function NewWorkspaceWizard({ onClose, existing }: WizardProps) {
   const app = useApp();
   const [state, setState] = useState<WizardState>(() => initialWizardState(existing ? { name: existing.name } : {}));
@@ -125,6 +127,10 @@ export function NewWorkspaceWizard({ onClose, existing }: WizardProps) {
 
   const set = <K extends keyof WizardState>(k: K, v: WizardState[K]) => setState((s) => ({ ...s, [k]: v }));
   const rankedRoles = useMemo(() => (serverRanked ? serverRanked.filter((r) => r.id !== 'chief-of-staff') : roles ? rankRoles(roles, profileText) : []), [roles, serverRanked, profileText]);
+  // The catalog grew a business set (a head and specialists per function):
+  // show the best-ranked dozen plus anything picked, the rest on request.
+  const [allRoles, setAllRoles] = useState(false);
+  const shownRoles = allRoles ? rankedRoles : rankedRoles.filter((r, i) => i < ROLES_SHOWN || state.roles.includes(r.id));
   const roleName = (id: string) => roles?.find((r) => r.id === id.replace(/^role:/, ''))?.title;
   const agentName = (id: string) => ownAgents.find((a) => a.id === id)?.name;
   const show = (k: string) => (touched ? errors[k] : undefined);
@@ -312,7 +318,7 @@ export function NewWorkspaceWizard({ onClose, existing }: WizardProps) {
             <>
               <div style={faint}>Roles from the catalog, ranked against your vision and profile (the matched tags are shown). {state.mode === 'supervised' ? 'Each becomes an approval card; nothing exists until you approve it.' : 'Each is seated under the chief at once, within the agent cap.'} A role starts with its catalog scopes met with the chief's own holdings, a charter written for this company, and the model tier shown. Up to five; the chief can hire more later.</div>
               <div role="group" aria-label="First hires" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {rankedRoles.map((r) => {
+                {shownRoles.map((r) => {
                   const on = state.roles.includes(r.id);
                   const full = !on && state.roles.length >= 5;
                   return (
@@ -332,6 +338,9 @@ export function NewWorkspaceWizard({ onClose, existing }: WizardProps) {
                   );
                 })}
               </div>
+              {!allRoles && rankedRoles.length > shownRoles.length && (
+                <button type="button" onClick={() => setAllRoles(true)} style={{ ...btn(), alignSelf: 'flex-start' }}>Show all {rankedRoles.length} roles</button>
+              )}
               {state.roles.length > 0 && <div style={faint}>Estimated: ~${hiresEstimate(roles, state.roles).toFixed(0)}/month at list prices for part-time seats, inside the ${Math.max(0, Number(state.budget.monthlyUsd) || 0).toFixed(0)} envelope{hiresEstimate(roles, state.roles) > (Number(state.budget.monthlyUsd) || 0) ? ' — more than the envelope; the chief will have to trade seats or tiers' : ''}.</div>}
             </>
           )}

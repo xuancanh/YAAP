@@ -227,7 +227,7 @@ export class OrgApprovalsService {
     const org = await this.org.get(orgId);
     const chief = org.chiefOfStaffAgentId ? await this.org.member(orgId, org.chiefOfStaffAgentId) : null;
     const holdings = this.org.scopesOf(chief);
-    const pack = OrgApprovalsService.catalogItem(input.templateOrPack);
+    let pack = OrgApprovalsService.catalogItem(input.templateOrPack);
     const reportsTo = input.reportsToAgentId ?? org.chiefOfStaffAgentId;
     if (!reportsTo) throw new BadRequestException('reportsToAgentId is required');
     const manager = await this.org.member(orgId, reportsTo);
@@ -240,6 +240,9 @@ export class OrgApprovalsService {
     // template path: the role's charter, title, scopes and model tier.
     const role = resolveRoleHire(input.templateOrPack, { orgName: org.name, name: input.name, title: input.title, scopes: input.scopes, provider: input.provider, model: input.model });
     if (!role && input.templateOrPack.trim().toLowerCase().startsWith('role:')) throw new BadRequestException(`"${input.templateOrPack}" is not a catalog role (GET …/org/roles lists them)`);
+    // A business role names its authored pack (Role.packId): the hire keeps the
+    // role's charter, title, scopes and tier and brings the pack's playbooks.
+    if (!pack && role?.packId) pack = OrgApprovalsService.catalogItem(role.packId);
     const requested = parseScopes(role?.scopes ?? input.scopes ?? []);
     const scopes = meetScopes(holdings, requested);
     const name = (input.name ?? role?.name ?? pack?.name ?? input.templateOrPack).trim().slice(0, 60);

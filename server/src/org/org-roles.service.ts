@@ -20,6 +20,8 @@ export interface RoleHireTemplate {
   /** A concrete model when the tier implies one for the provider; '' keeps the agent default. */
   model: string;
   estMonthlyUsd: number;
+  /** The role's authored pack (Role.packId): its skills install on the hire. */
+  packId?: string;
 }
 
 /** The model a tier maps to for a provider — one tier table, item 23's
@@ -46,6 +48,7 @@ export function resolveRoleHire(templateOrPack: string, input: { orgName: string
     modelTier: role.modelTier,
     model: input.model ?? modelForTier(role.modelTier, input.provider),
     estMonthlyUsd: role.estMonthlyUsd,
+    ...(role.packId ? { packId: role.packId } : {}),
   };
 }
 
