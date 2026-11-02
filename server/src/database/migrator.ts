@@ -10,6 +10,8 @@
  * Runs against anything with a pg-shaped `query()` — the node-postgres Pool
  * in production, PGlite in tests.
  */
+import { backfillTaskKeys } from '../common/task-keys';
+
 export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
 }
@@ -1818,6 +1820,35 @@ const MIGRATIONS: Migration[] = [
         await db.query(`ALTER TABLE org_meetings ADD COLUMN "tokensOut" INTEGER NOT NULL DEFAULT 0`);
       }
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_meetings_thread ON org_meetings ("threadRootId")`);
+    },
+  },  {
+    id: '0052-task-keys',
+    up: async (db) => {
+      // Task keys (docs/tasks-keys.md): Jira-style `ENG-12` names. A prefix
+      // per board (org_units.taskKey, agents.taskKey), one counter row per
+      // prefix and workspace (task_key_counters; the next number is one
+      // atomic UPDATE … RETURNING), and the key on every task — backfilled
+      // board by board in creation order. Idempotent.
+      if (!(await hasColumn(db, 'org_units', 'taskKey'))) await db.query(`ALTER TABLE org_units ADD COLUMN "taskKey" TEXT`);
+      if (!(await hasColumn(db, 'agents', 'taskKey'))) await db.query(`ALTER TABLE agents ADD COLUMN "taskKey" TEXT`);
+      if (!(await hasColumn(db, 'org_tasks', 'key'))) await db.query(`ALTER TABLE org_tasks ADD COLUMN "key" TEXT`);
+      if (!(await hasColumn(db, 'agent_tasks', 'key'))) await db.query(`ALTER TABLE agent_tasks ADD COLUMN "key" TEXT`);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS task_key_counters (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "scopeId" TEXT NOT NULL,
+          "prefix" TEXT NOT NULL,
+          "ownerKind" TEXT NOT NULL,
+          "ownerId" TEXT NOT NULL,
+          "next" INTEGER NOT NULL DEFAULT 0,
+          "createdAt" TEXT NOT NULL,
+          PRIMARY KEY ("scopeId", "prefix")
+        )
+      `);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_task_key_counters_owner ON task_key_counters ("ownerId")`);
+      await backfillTaskKeys(db);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_tasks_key ON org_tasks ("orgId", "key")`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_tasks_key ON agent_tasks ("agentId", "key")`);
     },
   },
   {

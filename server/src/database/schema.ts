@@ -123,6 +123,9 @@ export const agents = pgTable('agents', {
    *  (channels/email.service.ts). Derived from the name once, kept stable on
    *  rename, unique across agents; '' until the email channel assigns it. */
   emailSlug: text('emailSlug').notNull().default(''),
+  /** Task key prefix of the agent's own board (docs/tasks-keys.md), from
+   *  its handle (evidence-lead → EVL); assigned on first use. */
+  taskKey: text('taskKey'),
   /** The gated heartbeat (docs/triggers.md "Heartbeat", migration 0034):
    *  on by default for every agent; cadence '' and null caps mean "the
    *  workspace's heartbeatDefaults, then the built-in" (heartbeat-config.ts). */
@@ -145,6 +148,8 @@ export const agentTasks = pgTable('agent_tasks', {
   ...accountScoped(),
   id: text('id').primaryKey(),
   agentId: text('agentId').notNull(),
+  /** Task key (docs/tasks-keys.md): `<agent prefix>-<n>`, e.g. EVL-3. */
+  key: text('key'),
   title: text('title').notNull(),
   note: text('note').notNull().default(''),
   /** todo | doing | done. */
@@ -917,6 +922,9 @@ export const orgUnits = pgTable('org_units', {
   /** The unit channel (`#<slug>`); null when the group chat is not bound. */
   channelId: text('channelId'),
   archivedAt: text('archivedAt'),
+  /** Task key prefix of this board (docs/tasks-keys.md): ENG, SALES, the
+   *  company's for the root; assigned on first use, editable by the owner. */
+  taskKey: text('taskKey'),
   createdAt: text('createdAt').notNull(),
 }, (t) => [uniqueIndex('idx_org_units_lead').on(t.orgId, t.leadAgentId)]);
 
@@ -1045,6 +1053,9 @@ export const orgTasks = pgTable('org_tasks', {
   id: text('id').primaryKey(),
   accountId: text('accountId').notNull().default('single'),
   orgId: text('orgId').notNull(),
+  /** Task key (docs/tasks-keys.md): `<board prefix>-<n>`, e.g. ENG-12;
+   *  unique in the workspace, kept when the task moves to another unit. */
+  key: text('key'),
   projectId: text('projectId'),
   parentTaskId: text('parentTaskId'),
   title: text('title').notNull(),
@@ -1098,6 +1109,23 @@ export const orgTasks = pgTable('org_tasks', {
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });
+
+/** Task key counters (docs/tasks-keys.md): one row per board prefix in a
+ *  workspace (`scopeId`); `next` is the last number handed out — a new task
+ *  takes `next + 1` in one UPDATE … RETURNING, so concurrent creates never
+ *  share a number, and nothing is reused. The row's owner is the board
+ *  (unit, agent, or the org before it has units) that claimed the prefix;
+ *  a renamed board keeps its old row, so old keys stay unique. */
+export const taskKeyCounters = pgTable('task_key_counters', {
+  ...accountScoped(),
+  scopeId: text('scopeId').notNull(),
+  prefix: text('prefix').notNull(),
+  /** unit | agent | org. */
+  ownerKind: text('ownerKind').notNull(),
+  ownerId: text('ownerId').notNull(),
+  next: integer('next').notNull().default(0),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [primaryKey({ columns: [t.scopeId, t.prefix] })]);
 
 /** One row per wake that became a run. */
 export const orgRuns = pgTable('org_runs', {
