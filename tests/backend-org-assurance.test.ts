@@ -409,7 +409,7 @@ test('the auditor samples accepted tasks and scope/spend rows, runs read-only on
   assert.match(req.system ?? '', /Write issue 12/);
   assert.match(req.system ?? '', /Almost there/);
   assert.match(req.system ?? '', /scope_widen/);
-  assert.deepEqual((req.tools ?? []).map((x) => x.name).sort(), ['org_audit_close', 'org_audit_finding', 'org_audit_query', 'org_pulse', 'org_read_board', 'org_read_goal', 'org_signals']);
+  assert.deepEqual((req.tools ?? []).map((x) => x.name).sort(), ['fs_list', 'fs_read', 'fs_search', 'org_audit_close', 'org_audit_finding', 'org_audit_query', 'org_intent', 'org_pulse', 'org_read_board', 'org_read_goal', 'org_signals'], 'read-only: its own set plus the shared files and the intent tree');
   const turns = await s.repo.listTurns(sess.id);
   const records = JSON.parse(turns[0].toolCalls) as Array<{ tool: string; isError: boolean; result: string }>;
   const sneaky = records.find((r) => r.tool === 'org_create_task')!;

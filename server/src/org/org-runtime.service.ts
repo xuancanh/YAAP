@@ -68,7 +68,7 @@ import { AgentsService } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { deliveryFor } from '../workspaces/quiet-hours';
 import { ChatsRepository, ChatSession } from '../chats/chats.repository';
-import { TurnLoopService, OrgToolsHook } from '../chats/turn-loop.service';
+import { TurnLoopService, OrgToolsHook, RESTRICT_OWN_SKILLS } from '../chats/turn-loop.service';
 import { TurnContextService } from '../chats/turn-context.service';
 import { HeartbeatService } from '../chats/heartbeat.service';
 import { TriggerBus, OrgWakeEvent, OrgWakeReason, OrgBoardEvent } from '../chats/trigger-bus';
@@ -722,7 +722,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     const nKr = tunable(org, 'planning.keyResultsPerObjective');
     const produce = isChief
       ? `Produce the strategy: for the vision, up to ${nObj} company objectives (org_set_goal; hand each to a unit with the unit argument when a lead exists for it — that lead then plans its own key results), each with about ${nKr} key results (org_set_key_result: metric, target, due date, owner, and the metric source that measures it when one exists — org_metric_sources; propose one with org_propose_metric_source when none does, because a self-reported number is a claim), the first tasks (org_create_task with the four-field brief, a class, checks wherever done_when can be tested without judgment, assigned), and the structural changes the plan needs (org_hire_agent, org_reorg, org_allocate_budget — your mode's rules apply: approval cards in supervised mode, caps in autonomous mode). Allocate the envelope per objective: each org_allocate_budget names the objectiveId it funds and, in buys, which key results that money buys, so a cut is a scope decision. If a task class costs more than it is worth, org_set_routing it to a cheaper tier. If the company's thresholds or cadences do not fit this work, org_tune them within bounds with a reason. Revise what exists rather than duplicating it; abandon what no longer serves (org_set_goal is additive, so say so in the memo). Finish with org_strategy_memo: one paragraph — the objectives, who owns what, what each envelope buys (per objective), the risks, and the questions only the CEO can answer.`
-      : `Produce your unit's plan: for each objective handed to you, about ${nKr} key results (org_set_key_result: metric, target, due date, an owner among you and your reports, and a metric source when one measures it) and the first tasks (org_create_task with the four-field brief and checks wherever done_when can be tested, assigned to yourself or a report). Revise existing key results rather than duplicating them; use org_check_in to update any you own. Work your unit cannot do goes to the chief of staff as an unassigned task. End with a two-line summary.`;
+      : `Produce your unit's plan (if you carry a planning playbook — a skill named <function>-okr-planning — load it first and follow it): for each objective handed to you, about ${nKr} key results (org_set_key_result: metric, target, due date, an owner among you and your reports, and a metric source when one measures it) and the first tasks (org_create_task with the four-field brief and checks wherever done_when can be tested, assigned to yourself or a report). Revise existing key results rather than duplicating them; use org_check_in to update any you own. Work your unit cannot do goes to the chief of staff as an unassigned task. End with a two-line summary.`;
     for (const fn of this.planningNotes) { const extra = await fn(org, unit.id, isChief).catch(() => [] as string[]); if (extra.length) lines.push(extra.join('\n')); }
     // Improvement as experiments (docs/experiments.md §1.5): the default path for a change that should move a metric.
     const improve = 'Improvement is an experiment, not an edit: for any change meant to move a metric (a tunable, a cadence, routing, a playbook, a charter, the structure), propose it with org_propose_experiment — the hypothesis, the metric source it should move (org_metric_sources), the direction, the expected effect and the window — so it is applied, measured against the baseline and kept or reverted automatically. A direct change is still allowed but the brief flags it as an unmeasured change. Forecast what you can (org_forecast_outcome); your calibration is scored.';
@@ -1211,15 +1211,19 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       const specs = [...COMMON_TOOLS, ...TASK_TOOLS];
       if (ctx.reviewer || ctx.isChief) specs.push(...REVIEW_TOOLS);
       if (ctx.isChief) specs.push(...MANAGER_TOOLS.filter((t) => !REVIEW_TOOLS.includes(t)), ...LEAD_TOOLS.filter((t) => !MANAGER_TOOLS.includes(t)));
-      else if (await leadOf([ctx.orgId])) specs.push(...LEAD_TOOLS);
+      else if (await leadOf([ctx.orgId])) specs.push(...LEAD_TOOLS, ...(ctx.reviewer ? [] : [ESCALATE_TOOL]));
       return specs;
     }
     const memberships = (await this.org.membershipsOf(session.agentId)).filter((m) => m.status === 'active');
     if (memberships.length === 0) return [];
     const chiefOf = (await Promise.all(memberships.map((m) => this.org.get(m.orgId).catch(() => null)))).some((o) => o?.chiefOfStaffAgentId === session.agentId);
     if (chiefOf) return [...COMMON_TOOLS, ...TASK_TOOLS, ...REVIEW_TOOLS, ...MANAGER_TOOLS.filter((t) => !REVIEW_TOOLS.includes(t)), ...LEAD_TOOLS.filter((t) => !MANAGER_TOOLS.includes(t))];
-    // A unit lead (docs/group-chat.md §7) gets the unit-scoped set.
-    return (await leadOf(memberships.map((m) => m.orgId))) ? [...COMMON_TOOLS, ...LEAD_TOOLS] : [...COMMON_TOOLS];
+    // Outside a task run (a loop, the heartbeat, a chat) every member keeps
+    // its own tasks true: the heartbeat names them and asks for
+    // org_task_update / org_request_review (taskId required here). A unit
+    // lead (docs/group-chat.md §7) gets the unit-scoped set, and escalates a
+    // task of its unit to the CEO from its own loops (the weekly review).
+    return (await leadOf(memberships.map((m) => m.orgId))) ? [...COMMON_TOOLS, ...TASK_TOOLS, ...LEAD_TOOLS, ESCALATE_TOOL] : [...COMMON_TOOLS, ...TASK_TOOLS];
   }
 
   async execute(session: ChatSession, rawName: string, input: Record<string, unknown>): Promise<string> {
@@ -1471,6 +1475,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       }
       case 'org_escalate': {
         const t = await taskOf();
+        if (!isChief && !ctx?.reviewer && t.assigneeAgentId !== agentId && t.reviewerAgentId !== agentId && !(leadUnit && t.unitId === leadUnit.id)) throw new Error('refused: you may escalate your own task, a task you review, or a task on your unit\'s board');
         await this.tasks.escalate(org.id, t.id, str('reason') || 'escalated', actor);
         if (ctx) ctx.progress = true;
         return `Task [${t.id.slice(0, 8)}] is blocked and escalated to the CEO (an approval card).`;
@@ -2073,14 +2078,18 @@ const COMMON_TOOLS: AiToolSpec[] = [
 /** The auditor's set (docs/company-vision.md §5.3): reads plus the two
  *  recording verbs. Offered only inside an audit run. */
 const AUDIT_TOOLS: AiToolSpec[] = [
-  COMMON_TOOLS[0], COMMON_TOOLS[1],
+  COMMON_TOOLS[0], COMMON_TOOLS[1], COMMON_TOOLS.find((t) => t.name === 'org_intent')!,
   { name: 'org_audit_query', description: 'Read the hash-chained audit log: filter by action (review_accept, scope_widen, spend_commit, run_end, auto_hire, …) or refId.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, refId: { type: 'string' }, limit: { type: 'number' } } } },
   { name: 'org_signals', description: 'All open signals of the company.', inputSchema: { type: 'object', properties: { severity: { type: 'string', enum: ['info', 'warn', 'critical'] } } } },
   { name: 'org_pulse', description: 'The company pulse: score, SLOs against targets, spend vs envelope.', inputSchema: { type: 'object', properties: {} } },
   { name: 'org_audit_finding', description: 'Record one audit finding. kind: e.g. done_when_unmet, unjustified_scope, unjustified_spend, charter_drift, breaker_pattern, other. refType/refId name what it is about (task, agent, run, approval). Findings become signals for the chief; critical ones reach the CEO.', inputSchema: { type: 'object', properties: { severity: { type: 'string', enum: ['info', 'warn', 'critical'] }, kind: { type: 'string' }, refType: { type: 'string' }, refId: { type: 'string' }, title: { type: 'string' }, detail: { type: 'string' } }, required: ['severity', 'title'] } },
   { name: 'org_audit_close', description: 'Close the audit with a short summary (what was sampled, what holds, what does not). Call it last.', inputSchema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] } },
 ];
-const AUDIT_TOOL_NAMES = new Set(AUDIT_TOOLS.map((t) => t.name));
+/** What an audit run accepts: its own set, plus reads offered by the other
+ *  providers — the shared files (the ledger under /org/ and the functions'
+ *  reports it verifies), the decision log, the metric sources a reported
+ *  number must reconcile with — and the auditor's own playbooks. */
+const AUDIT_TOOL_NAMES = new Set([...AUDIT_TOOLS.map((t) => t.name), 'fs_list', 'fs_read', 'fs_search', 'org_decisions', 'org_metric_sources', 'org_metric_read', RESTRICT_OWN_SKILLS]);
 
 /** Unit leads (docs/group-chat.md §7): the unit-scoped set. The chief gets
  *  these too, company-wide (`unit` names which unit). */
@@ -2105,6 +2114,9 @@ const REVIEW_TOOLS: AiToolSpec[] = [
   { name: 'org_review', description: 'Record your review of a task you were asked to review: accept (done), request_changes (back to its owner with your note; 3 rounds then it escalates to the CEO), or escalate now.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, verdict: { type: 'string', enum: ['accept', 'request_changes', 'escalate'] }, note: { type: 'string' } }, required: ['verdict'] } },
   { name: 'org_escalate', description: 'Block a task and raise it to the CEO as a decision card with a reason.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, reason: { type: 'string' } }, required: ['reason'] } },
 ];
+
+/** A unit lead raises a task of its unit to the CEO from its loops too. */
+const ESCALATE_TOOL = REVIEW_TOOLS[1];
 
 const MANAGER_TOOLS: AiToolSpec[] = [
   ...REVIEW_TOOLS,

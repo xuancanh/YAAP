@@ -71,6 +71,7 @@ export function ctxStub(provider: AiProvider, overrides: Partial<TurnContext> = 
 export function skillsStub(): SkillsService {
   return {
     toolSpecs: async () => [],
+    list: async () => [],
     resolveTool: async () => undefined,
     invocation: () => '',
     draftSkill: async () => 'Skill "stub" drafted. The user reviews and approves it before it becomes available; do not assume you can call it yet.',
@@ -83,6 +84,7 @@ export function skillsStub(): SkillsService {
 export function mcpStub(): McpService {
   return {
     toolSpecs: async () => [],
+    list: async () => [],
     execute: async (name: string) => { throw new Error(`unknown tool: ${name}`); },
   } as unknown as McpService;
 }

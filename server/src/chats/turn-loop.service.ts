@@ -78,6 +78,10 @@ export interface OrgToolsHook {
   restrictTo?(session: ChatSession): Promise<Set<string> | null>;
 }
 
+/** A member of a `restrictTo` set: the run may also load the agent's own
+ *  (private) skills, e.g. the auditor's playbooks in its read-only run. */
+export const RESTRICT_OWN_SKILLS = 'skill_*';
+
 /** The generic shape of the org hook, for other domains that offer tools to
  *  agents (the group chat's channel tools, docs/group-chat.md §2). Registered
  *  with `addToolProvider`; consulted after the org hook, never instead of it. */
@@ -580,7 +584,14 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
         : new Set<string>();
       // Core tools + the workspace's enabled skills (FR-10.2) + tools
       // discovered from enabled MCP servers (FR-10.3).
-      const restrictTo = (session.agentId && this.orgTools?.restrictTo) ? await this.orgTools.restrictTo(session) : null;
+      let restrictTo = (session.agentId && this.orgTools?.restrictTo) ? await this.orgTools.restrictTo(session) : null;
+      // A restricted run may still load the agent's own playbooks (its
+      // private skills only return instructions), when the set asks for it.
+      if (restrictTo?.has(RESTRICT_OWN_SKILLS) && session.agentId) {
+        const own = (await this.skills.list(session.workspaceId, session.agentId)).filter((x) => x.agentId === session.agentId && x.enabled === 1 && x.draft !== 1);
+        restrictTo = new Set([...restrictTo, ...own.map((x) => SKILL_TOOL_PREFIX + x.name.replace(/-/g, '_'))]);
+        restrictTo.delete(RESTRICT_OWN_SKILLS);
+      }
       const toolSpecs = [
         ...this.tools.specs(),
         ...(session.agentId ? AGENT_TOOLS : []),

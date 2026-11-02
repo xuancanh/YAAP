@@ -726,8 +726,9 @@ export class OrgSensingService implements ToolProviderHook, OnModuleInit, OnModu
     if (!this.enabled() || !session.agentId) return [];
     const memberships = (await this.org.membershipsOf(session.agentId)).filter((m) => m.status === 'active');
     if (memberships.length === 0) return [];
-    // The auditor's read-only run and other restricted runs keep their own set.
-    if (this.runtime?.runningCtx(session.id)?.audit) return [];
+    // The auditor's read-only run gets the reads it reconciles reported
+    // numbers against; its restricted set refuses everything else.
+    if (this.runtime?.runningCtx(session.id)?.audit) return MEMBER_TOOLS.filter((t) => t.name === 'org_metric_sources' || t.name === 'org_metric_read');
     for (const m of memberships) {
       const o = await this.org.get(m.orgId).catch(() => null);
       if (o?.chiefOfStaffAgentId === session.agentId || (this.units && await this.units.isLead(m.orgId, session.agentId))) return [...MEMBER_TOOLS, PROPOSE_TOOL];

@@ -238,6 +238,7 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
     const prompt = [
       `You were woken as the auditor of "${org.name}" (trigger: ${trigger}). Audit the material in your context: ${sample.counts.tasks} accepted task(s), ${sample.counts.auditRows} scope/spend/autonomous audit row(s) and ${sample.counts.driftCandidates} charter-drift candidate(s) since ${since.slice(0, 16).replace('T', ' ')}.`,
       'For each accepted task, judge whether the final comment shows done_when was met and whether the work honours the company\'s values; for each scope widening and autonomous action, whether the recorded reason justifies it; for each spend row, whether it is proportionate; for each drift candidate, whether the work matches the charter. Record every problem with org_audit_finding (cite the id). If something holds, say so in the summary rather than inventing a finding. Finish with org_audit_close.',
+      'Your playbooks (your skill_* tools) hold the procedure: load the ones that fit before you judge. You may also read the shared files (fs_list, fs_read, fs_search: the ledger under /org/ and the functions\' reports), the decision log (org_decisions) and the metric sources (org_metric_sources, org_metric_read), and the board for open tasks titled "Assurance request:" that the chief or a function head filed for you.',
       pick.single ? 'Note: no model family other than the workers\' was available; this is a single-model audit and the report will say so.' : '',
     ].filter(Boolean).join('\n\n');
 
