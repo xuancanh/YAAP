@@ -18,7 +18,7 @@ import { ConfigService } from '@nestjs/config';
 import { and, eq, gte, inArray } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { appSettings, chatSessions, chatTurns, heartbeatState } from '../database/schema';
+import { appSettings, chatSessions, chatTurns, heartbeatState, orgUnits } from '../database/schema';
 import { actorId } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -44,6 +44,7 @@ import { OrgRuntimeService } from '../org/org-runtime.service';
 import type {
   HomeActivity, HomeAgent, HomeArtifact, HomeData, HomeGoal, HomeHealth, HomeKeyResult, HomeNeed, HomeRecap, HomeRecapItem, HomeSpend, HomeUpcoming,
 } from './home.types';
+import { collapseRoutine, describeRun, loopNameOf, mergeUpcoming, runTitle, type RunCall } from './home-activity';
 
 const DAY_MS = 24 * 60 * 60_000;
 /** A visit within this of the previous one continues the same session. */
@@ -454,11 +455,33 @@ export class HomeService {
         }
       }
     }
+    // Agent events. A loop run (the heartbeat, mostly) is news only when it
+    // did something: those stand alone, described by what they did; the
+    // routine ones collapse into one line per agent per day.
+    const runEvents: Array<{ agent: AgentRow; e: Awaited<ReturnType<AgentsService['listEvents']>>[number] }> = [];
     for (const a of agents) {
-      for (const e of (await this.agents.listEvents(a.id, 15)).filter((x) => x.createdAt >= horizon && ['loop_run', 'loop_error', 'brief', 'action_done', 'action_failed', 'budget_stop'].includes(x.kind))) {
+      for (const e of (await this.agents.listEvents(a.id, 120)).filter((x) => x.createdAt >= horizon && ['loop_run', 'loop_error', 'brief', 'action_done', 'action_failed', 'budget_stop'].includes(x.kind))) {
+        if (e.kind === 'loop_run') { runEvents.push({ agent: a, e }); continue; }
         out.push({ id: `event:${e.id}`, at: e.createdAt, kind: 'agent', title: e.title, detail: clip(e.body, 160), actor: a.name, ref: { type: 'agent', id: a.id } });
       }
     }
+    const callsOf = await this.runCalls(runEvents.map((r) => r.e), horizon);
+    const routine: Parameters<typeof collapseRoutine>[0] = [];
+    const taskRef = (id: string | null) => {
+      if (!id) return null;
+      const t = orgTasks.find((x) => x.id === id || x.id.startsWith(id));
+      return t ? { type: 'task', id: t.id } : null;
+    };
+    for (const { agent: a, e } of runEvents) {
+      const loop = loopNameOf(e.title);
+      const s = describeRun(callsOf.get(e.id) ?? []);
+      if (s.notable) {
+        out.push({ id: `event:${e.id}`, at: e.createdAt, kind: 'agent', title: runTitle(loop, s), detail: clip(e.body, 160), actor: a.name, ref: taskRef(s.taskId) ?? { type: 'agent', id: a.id }, loop });
+      } else {
+        routine.push({ agentId: a.id, agentName: a.name, loop, run: { id: `event:${e.id}`, at: e.createdAt, title: e.title, detail: clip(e.body, 160) } });
+      }
+    }
+    out.push(...collapseRoutine(routine));
     if (this.fs) {
       for (const f of (await this.fs.recent(workspaceId, 15)).filter((x) => x.updatedAt >= horizon)) {
         out.push({ id: `file:${f.path}:${f.version}`, at: f.updatedAt, kind: 'file', title: `${f.version > 1 ? 'Edited' : 'Created'} ${f.path}`, detail: `version ${f.version}`, actor: f.updatedBy.name, ref: { type: 'file', id: f.path } });
@@ -530,8 +553,13 @@ export class HomeService {
         for (const m of await this.meetings.list(org.id, { status: 'scheduled', limit: 20 })) {
           if (m.scheduledFor && m.scheduledFor >= nowIso) out.push({ id: `meeting:${m.id}`, at: m.scheduledFor, kind: 'meeting', title: m.title, detail: m.kind.replace(/_/g, ' '), ref: { type: 'meeting', id: m.id } });
         }
+        // Every unit gets the default cadences, so a company of two units has
+        // two weekly reviews at the same minute: one row, naming both units.
+        const units = new Map((await this.db.select({ id: orgUnits.id, name: orgUnits.name, parentUnitId: orgUnits.parentUnitId }).from(orgUnits).where(eq(orgUnits.orgId, org.id)))
+          .map((u) => [u.id, u.parentUnitId === null ? 'Company' : u.name]));
         for (const c of (await this.meetings.cadences(org.id)).filter((x) => x.enabled && x.nextRunAt && x.nextRunAt >= nowIso && x.nextRunAt <= week)) {
-          out.push({ id: `ritual:${c.id}`, at: c.nextRunAt!, kind: 'ritual', title: titleOfRitual(c.kind), detail: c.cron, ref: null });
+          const unit = units.get(c.unitId);
+          out.push({ id: `ritual:${c.id}`, at: c.nextRunAt!, kind: 'ritual', title: titleOfRitual(c.kind), detail: unit ?? '', cron: c.cron, units: unit ? [unit] : [], ref: null });
         }
       }
       for (const t of orgTasks.filter((x) => x.dueAt && x.dueAt <= week && x.status !== 'done' && x.status !== 'cancelled')) {
@@ -553,11 +581,29 @@ export class HomeService {
         if (l.enabled === false || !l.cron) continue;
         const at = nextCronFire(l.cron, now);
         if (at && at.toISOString() <= new Date(now.getTime() + DAY_MS).toISOString()) {
-          out.push({ id: `loop:${a.id}:${l.name}`, at: at.toISOString(), kind: 'loop', title: `${a.name}: ${l.name}`, detail: l.cron, ref: { type: 'agent', id: a.id } });
+          out.push({ id: `loop:${a.id}:${l.name}`, at: at.toISOString(), kind: 'loop', title: `${a.name}: ${l.name}`, detail: '', cron: l.cron, ref: { type: 'agent', id: a.id } });
         }
       }
     }
-    return out.sort((a, b) => a.at.localeCompare(b.at)).slice(0, 12);
+    return mergeUpcoming(out.sort((a, b) => a.at.localeCompare(b.at))).slice(0, 12);
+  }
+
+  /** The tool calls of each loop run: the run's turn is the latest turn of
+   *  its loop session that started before the run was recorded. */
+  private async runCalls(events: Array<{ id: string; sessionId: string | null; createdAt: string }>, horizon: string): Promise<Map<string, RunCall[]>> {
+    const out = new Map<string, RunCall[]>();
+    const sessions = [...new Set(events.map((e) => e.sessionId).filter((x): x is string => Boolean(x)))];
+    if (sessions.length === 0) return out;
+    const turns = await this.db.select({ sessionId: chatTurns.sessionId, createdAt: chatTurns.createdAt, toolCalls: chatTurns.toolCalls })
+      .from(chatTurns).where(and(inArray(chatTurns.sessionId, sessions), gte(chatTurns.createdAt, horizon)));
+    const bySession = new Map<string, typeof turns>();
+    for (const t of turns) { const l = bySession.get(t.sessionId) ?? []; l.push(t); bySession.set(t.sessionId, l); }
+    for (const l of bySession.values()) l.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    for (const e of events) {
+      const turn = e.sessionId ? bySession.get(e.sessionId)?.find((t) => t.createdAt <= e.createdAt) : undefined;
+      if (turn) out.set(e.id, safe<RunCall[]>(turn.toolCalls, []));
+    }
+    return out;
   }
 
   // ---- 9. recent artifacts ----

@@ -27,6 +27,9 @@ import { OrgModeService } from '../server/src/org/org-mode.service';
 import { OrgAnnouncer } from '../server/src/org/org-announcer';
 import type { OrgIntentService } from '../server/src/org/org-intent.service';
 import type { OrgCapitalService } from '../server/src/org/org-capital.service';
+import type { OrgMeetingsService } from '../server/src/org/org-meetings.service';
+import { collapseRoutine, describeRun, mergeUpcoming, routineTitle } from '../server/src/home/home-activity';
+import { orgUnits } from '../server/src/database/schema';
 import type { ActionsService } from '../server/src/actions/actions.service';
 import type { ProviderHealthService } from '../server/src/ai/provider-health';
 import { HomeService, SESSION_GAP_MS, nextCronFire, ragOf, rankNeeds } from '../server/src/home/home.service';
@@ -35,7 +38,7 @@ import type { HomeNeed } from '../server/src/home/home.types';
 import { SettingsService } from '../server/src/settings/settings.module';
 import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
 
-type Stubs = { intent?: OrgIntentService; capital?: OrgCapitalService; actions?: ActionsService; health?: ProviderHealthService };
+type Stubs = { intent?: OrgIntentService; capital?: OrgCapitalService; actions?: ActionsService; health?: ProviderHealthService; meetings?: OrgMeetingsService };
 
 async function setup(stubs: Stubs = {}) {
   const db = await testDb();
@@ -59,7 +62,7 @@ async function setup(stubs: Stubs = {}) {
   const fs = new WorkspaceFs(stub, db);
   const home = new HomeService(
     db, workspaces, agents, config, fs, stubs.actions, undefined, stubs.health,
-    org, tasks, approvals, audit, brief, stubs.intent, undefined, undefined, undefined, undefined, stubs.capital, undefined, runtime,
+    org, tasks, approvals, audit, brief, stubs.intent, undefined, undefined, undefined, stubs.meetings, stubs.capital, undefined, runtime,
   );
   const ws = (await workspaces.list())[0];
   const chief = await agents.create({ name: 'Chief', charter: 'You run the company.' });
@@ -229,4 +232,87 @@ test('pure helpers: RAG, ranking and the next cron fire', () => {
   const next = nextCronFire('0 9 * * *', from)!;
   assert.equal(next.getHours(), 9); assert.equal(next.getMinutes(), 0); assert.equal(next.getDate(), 2);
   assert.equal(nextCronFire('not a cron', from), null);
+});
+
+test('activity: routine heartbeat runs collapse into one line per agent per day; a run that did something stands alone, described by what it did', async () => {
+  const s = await setup();
+  const st = await s.mode.setMode(s.ws.id, { mode: 'autonomous', chiefOfStaffAgentId: s.chief.id });
+  const t = await s.tasks.create(st.orgId!, { title: 'Write launch post', assigneeAgentId: s.writer.id });
+  const session = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.writer.id, name: 'Loop · heartbeat' });
+  const beat = async (calls: Array<{ tool: string; input: Record<string, unknown>; isError?: boolean }>, answer: string) => {
+    const turn = await s.repo.createTurn(session.id, { text: 'Scheduled loop firing: "heartbeat".' });
+    await s.repo.updateTurn(turn.id, { status: 'done', toolCalls: JSON.stringify(calls) });
+    await s.agents.addEvent(s.writer.id, { kind: 'loop_run', title: 'Loop "heartbeat" ran', body: answer, sessionId: session.id, origin: 'loop' });
+  };
+  await beat([{ tool: 'list_tasks', input: {} }, { tool: 'channel_read', input: { channel: 'general' } }], 'Nothing changed.');
+  await beat([{ tool: 'org_read_board', input: {} }, { tool: 'fs_append', input: { path: 'JOURNAL.md', content: 'checked' } }, { tool: 'update_task', input: { id: 'k1', note: 'still waiting' } }], 'Still blocked.');
+  await beat([], 'Nothing to do.');
+  await beat([{ tool: 'org_task_update', input: { taskId: t.id.slice(0, 8), status: 'blocked', note: 'waits on legal' } }, { tool: 'channel_post', input: { channel: 'company', text: 'blocked' } }, { tool: 'fs_write', input: { path: 'drafts/launch.md', content: 'x' } }, { tool: 'gmail_send', input: {}, isError: true }], 'Blocked on legal.');
+  const h = await s.home.home(s.ws.id);
+  const runs = h.activity.filter((a) => a.kind === 'agent');
+  assert.equal(runs.length, 2, 'one summary line and one notable run');
+  const summary = runs.find((a) => a.runs)!;
+  assert.equal(summary.title, 'Writer · 3 heartbeat checks, nothing new');
+  assert.equal(summary.runs!.count, 3);
+  assert.equal(summary.runs!.items.length, 3);
+  assert.deepEqual(summary.runs!.loops, ['heartbeat']);
+  assert.deepEqual(summary.ref, { type: 'agent', id: s.writer.id });
+  const notable = runs.find((a) => a.loop)!;
+  assert.equal(notable.title, `Heartbeat: moved task ${t.id.slice(0, 8)} to blocked, posted in #company, wrote launch.md`);
+  assert.deepEqual(notable.ref, { type: 'task', id: t.id }, 'the run links the task it changed');
+  assert.equal(notable.actor, 'Writer');
+  assert.ok(!h.activity.some((a) => a.title === 'Loop "heartbeat" ran'), 'no raw routine rows');
+});
+
+test('coming up: a ritual every unit holds at the same time is one row naming the units; cadences carry their cron', async () => {
+  const s = await setup();
+  const st = await s.mode.setMode(s.ws.id, { mode: 'autonomous', chiefOfStaffAgentId: s.chief.id });
+  const orgId = st.orgId!;
+  const now = new Date();
+  const at = new Date(now.getTime() + 2 * 86_400_000).toISOString();
+  const later = new Date(now.getTime() + 2 * 86_400_000 + 30 * 60_000).toISOString();
+  const unit = (id: string, name: string, parent: string | null) => ({ accountId: 'single', id, orgId, leadAgentId: `lead-${id}`, parentUnitId: parent, name, slug: id, channelId: null, archivedAt: null, createdAt: now.toISOString() });
+  await s.db.delete(orgUnits);
+  await s.db.insert(orgUnits).values([unit('root', 'Acme', null), unit('eng', 'Engineering', 'root'), unit('sales', 'Sales', 'root')]);
+  const cad = (id: string, unitId: string, kind: string, cron: string, nextRunAt: string) => ({ id, orgId, unitId, kind, cron, enabled: 1, nextRunAt, lastRunAt: null, createdAt: now.toISOString() });
+  const meetings = {
+    list: async () => [],
+    cadences: async () => [
+      cad('c1', 'eng', 'weekly_review', '0 16 * * 5', at), cad('c2', 'sales', 'weekly_review', '0 16 * * 5', at),
+      cad('c3', 'eng', 'retro', '30 16 * * 5', later), cad('c4', 'sales', 'retro', '30 16 * * 5', later), cad('c5', 'root', 'retro', '30 16 * * 5', later),
+    ],
+    decisions: async () => [],
+  } as unknown as OrgMeetingsService;
+  const home = new HomeService(
+    s.db, s.workspaces, s.agents, s.config, s.fs, undefined, undefined, undefined,
+    s.org, s.tasks, s.approvals, s.audit, s.brief, undefined, undefined, undefined, undefined, meetings, undefined, undefined, s.runtime,
+  );
+  const h = await home.home(s.ws.id);
+  const rituals = h.upcoming.filter((u) => u.kind === 'ritual');
+  assert.equal(rituals.length, 2, 'one row per ritual and time');
+  const review = rituals.find((u) => u.title === 'Weekly review')!;
+  assert.deepEqual(review.units, ['Engineering', 'Sales']);
+  assert.equal(review.detail, 'Engineering, Sales');
+  assert.equal(review.cron, '0 16 * * 5');
+  assert.deepEqual(rituals.find((u) => u.title === 'Retro')!.units, ['Engineering', 'Sales', 'Company']);
+  assert.ok(!h.upcoming.some((u) => /\* \*/.test(u.detail)), 'no raw cron in the detail');
+});
+
+test('pure helpers: what a run did, routine collapsing per agent and day, merging the same thing at the same time', () => {
+  assert.deepEqual(describeRun([{ tool: 'fs_read', input: { path: 'a.md' } }, { tool: 'fs_append', input: { path: '/agents/w/LESSONS.md' } }, { tool: 'update_dashboard', input: {} }]), { notable: false, phrases: [], taskId: null });
+  assert.equal(describeRun([{ tool: 'org_escalate', input: { taskId: 'abcd1234' } }]).taskId, 'abcd1234');
+  assert.deepEqual(describeRun([{ tool: 'fs_edit', input: { path: 'a/x.md' } }, { tool: 'fs_edit', input: { path: 'b/y.md' } }, { tool: 'add_task', input: {} }]).phrases, ['created a task', 'changed 2 files']);
+  assert.equal(describeRun([{ tool: 'channel_post', input: { channel: 'general' }, isError: true }]).notable, false, 'a failed call did nothing');
+  assert.equal(routineTitle('Ada', ['heartbeat'], 1), 'Ada · 1 heartbeat check, nothing new');
+  assert.equal(routineTitle('Ada', ['digest'], 2), 'Ada · 2 "digest" runs, nothing new');
+  assert.equal(routineTitle('Ada', ['digest', 'heartbeat'], 4), 'Ada · 4 loop runs, nothing new');
+  const run = (agentId: string, at: string) => ({ agentId, agentName: agentId, loop: 'heartbeat', run: { id: `${agentId}${at}`, at, title: '', detail: '' } });
+  const rows = collapseRoutine([run('a', '2026-11-02T09:00:00Z'), run('a', '2026-11-02T10:00:00Z'), run('a', '2026-11-01T10:00:00Z'), run('b', '2026-11-02T09:30:00Z')]);
+  assert.equal(rows.length, 3);
+  const a2 = rows.find((r) => r.id === 'routine:a:2026-11-02')!;
+  assert.equal(a2.at, '2026-11-02T10:00:00Z');
+  assert.equal(a2.runs!.from, '2026-11-02T09:00:00Z');
+  const up = (id: string, title: string, at: string, units?: string[]) => ({ id, at, kind: 'ritual' as const, title, detail: units?.join(', ') ?? '', ref: null, units });
+  const merged = mergeUpcoming([up('1', 'Retro', 'T1', ['Sales']), up('2', 'Retro', 'T1', ['Engineering']), up('3', 'Retro', 'T2', ['Sales']), up('4', 'Standup', 'T1', ['Sales'])]);
+  assert.deepEqual(merged.map((m) => [m.id, m.detail]), [['1', 'Sales, Engineering'], ['3', 'Sales'], ['4', 'Sales']]);
 });

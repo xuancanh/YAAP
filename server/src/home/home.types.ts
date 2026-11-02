@@ -89,7 +89,15 @@ export interface HomeAgent {
 }
 
 export type HomeActivityKind = 'task' | 'hire' | 'decision' | 'meeting' | 'incident' | 'file' | 'agent';
-export interface HomeActivity { id: string; at: string; kind: HomeActivityKind; title: string; detail: string; actor: string; ref: { type: string; id: string } | null }
+/** One agent loop run (a heartbeat beat), raw. */
+export interface HomeRun { id: string; at: string; title: string; detail: string }
+export interface HomeActivity {
+  id: string; at: string; kind: HomeActivityKind; title: string; detail: string; actor: string; ref: { type: string; id: string } | null;
+  /** A loop run that did something notable: the loop's name (the row says what it did). */
+  loop?: string;
+  /** Routine loop runs of one agent in one day, collapsed into this row. */
+  runs?: { count: number; loops: string[]; from: string; items: HomeRun[] };
+}
 
 export interface HomeSpend {
   todayUsd: number | null;
@@ -109,7 +117,13 @@ export interface HomeHealth {
   audit: { id: string; at: string; status: string; findings: number; top: Array<{ severity: string; title: string }>; summary: string } | null;
 }
 
-export interface HomeUpcoming { id: string; at: string; kind: 'meeting' | 'ritual' | 'deadline' | 'decision' | 'loop' | 'plan'; title: string; detail: string; ref: { type: string; id: string } | null }
+export interface HomeUpcoming {
+  id: string; at: string; kind: 'meeting' | 'ritual' | 'deadline' | 'decision' | 'loop' | 'plan'; title: string; detail: string; ref: { type: string; id: string } | null;
+  /** The cadence (rituals, loops): five-field cron in server-local time; the page puts it in words. */
+  cron?: string;
+  /** Rituals: the units holding it at this time (one row for all of them). */
+  units?: string[];
+}
 
 export interface HomeArtifact { path: string; version: number; size: number; updatedAt: string; updatedBy: { kind: string; id: string; name: string } }
 
