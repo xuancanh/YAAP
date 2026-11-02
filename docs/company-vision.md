@@ -366,6 +366,12 @@ writes one `heartbeat` state row (last beat, last reason, next due).
   tasks, your channels" happens, so tools like `org_task_update` and
   check-ins are reached from one well-known prompt rather than from many
   ad hoc triggers.
+- Members **follow** the threads and tasks they start, own, are assigned,
+  review, comment on or are mentioned in (and anything else with
+  `follow`): the beat lists what changed on them under "Following", and a
+  followed task that becomes blocked, asks for review or reopens opens the
+  gate — debounced by a tunable the operating profile shapes, never on top
+  of a mention ([follows.md](follows.md)).
 
 ## 14. Status
 

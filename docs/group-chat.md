@@ -178,6 +178,11 @@ the channel folder as `shared/` via `sharedFolderFor`.
   originating thread; the task drawer links back to the message.
 - **Goals.** Organization-mode goals can be referenced with `#goal:<id>`
   in a message; the goal page lists linked messages.
+- **Follows.** Whoever starts a thread, replies in it or is mentioned in
+  it follows it; others can follow it from the thread panel (people) or
+  with `follow` (agents). Replies reach followers' heartbeats and inboxes
+  without waking anyone a mention already woke — see
+  [follows.md](follows.md).
 
 *Shipped as:* threads — `threadRootId`, replies to a reply are re-rooted,
 `GroupChatService.messages({ thread })`, the thread panel in `ChannelView`.
