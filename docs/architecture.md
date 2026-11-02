@@ -753,7 +753,7 @@ migrator on PGlite.
 | Accounts | `accounts`, `account_sessions`, `account_login_tokens`, `account_usage` (0023) |
 | Workspaces and sharing | `workspaces` (0001); `workspace_members`, `workspace_invites`, `workspace_flow_rules`, `member_channels`, `org_humans` (0027) |
 | Agents | `agents`, `agent_types` (0001); `agent_tasks` (0005); `agent_events`, the inbox (0007); `agent_lessons` (0015); `heartbeat_state` (0034) |
-| Chats | `chat_sessions`, `chat_turns`, `chat_messages` (0001) |
+| Chats | `chat_sessions`, `chat_turns`, `chat_messages` (0001); the task link and auto-archive days on `chat_sessions`, the agent default on `agents` (0051, [chat-archiving.md](chat-archiving.md)) |
 | Skills and settings | `skills` (0002); `mcp_servers`, `app_settings` (0003); `skill_outcomes` (0022-portability-skill-outcomes); `loop_state` (0022-loop-state) |
 | Connections and devices | `connections`, `connection_grants` (0011); `push_subscriptions` (0021); `computer_runners`, `computer_actions` (0024) |
 | Registry | `registry_items`, `registry_installs`, `registry_ratings` (0025); `registry_outcomes` (0036) |

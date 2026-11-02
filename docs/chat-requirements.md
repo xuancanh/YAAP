@@ -34,6 +34,24 @@ sessions plus a file "brain".
   filtering.
 - **FR-1.6** Chat sessions persist across restarts; on hydration a chat is
   restored ready to continue (no live provider request in flight).
+- **FR-1.7** A chat can be **linked to the task** it works on (an org task's
+  run session, a chat a turn was promoted from, or one the agent links). A
+  linked chat **auto-archives** a set number of days after its task is done,
+  cancelled or abandoned and the chat has gone quiet — never while pinned,
+  running, waiting on an approval, or holding a recent unread event. The days
+  come from the workspace tunable `chat.autoArchiveDays` (default 7), the
+  agent's default for its task chats, or the chat's own setting (header menu,
+  or the agent's `set_chat_auto_archive` tool on its own chats); each sweep
+  leaves an explaining inbox event, and archived chats restore as in FR-1.4.
+  See [chat-archiving.md](chat-archiving.md).
+- **FR-1.8** The chat rail is **paged**: per agent the newest chats load
+  first with "Show more"; loop and heartbeat sessions fold into one row per
+  agent; the archive pages too. Search runs on the server and reaches every
+  chat.
+- **FR-1.9** Agent groups in the rail are **collapsed by default**, except the
+  open chat's group and groups with unread activity or a pending approval;
+  the header shows those badges and the chat count; collapse choices persist
+  per viewer, with Collapse all / Expand all.
 
 ## 2. Composer & input
 
