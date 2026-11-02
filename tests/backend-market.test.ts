@@ -39,6 +39,30 @@ test('the catalog carries the profession packs, with skill bodies stripped from 
   assert.equal(new Set(all.map((p) => p.name)).size, all.length, 'unique names');
 });
 
+test('the business catalog: function heads and specialists carry the business tail, Business category and the head playbooks', () => {
+  const biz = AUTHORED_PACKS.filter((p) => p.id.startsWith('pack-biz-'));
+  const heads = biz.filter((p) => p.id.endsWith('-manager'));
+  assert.ok(heads.length >= 13 && biz.length >= heads.length * 3, `${heads.length} heads, ${biz.length} packs`);
+  for (const p of biz) {
+    assert.equal(p.cat, 'Business', p.id);
+    assert.match(p.charter, /You work as a member of a company of agents/, `${p.id} has the business tail`);
+    assert.doesNotMatch(p.charter, /Ask for missing personal context/, `${p.id} has no personal tail`);
+    assert.ok(p.skills!.length >= 3 && p.skills!.length <= 10, `${p.id}: ${p.skills!.length} skills`);
+    assert.ok(p.caps.includes('org'), `${p.id} shows the org capability`);
+  }
+  for (const h of heads) {
+    const fn = h.id.replace(/^pack-biz-/, '').replace(/-manager$/, '');
+    const names = h.skills!.map((s) => s.name);
+    for (const core of ['okr-planning', 'weekly-review', 'kpi-audit', 'report', 'team-management']) assert.ok(names.includes(`${fn}-${core}`), `${h.id} has ${fn}-${core}`);
+    assert.ok(h.loops.length >= 2, `${h.id} has cadence loops`);
+    // mechanisms adapt: planning reads the operating profile instead of hard-coding the cadence
+    assert.match(h.skills!.find((s) => s.name === `${fn}-okr-planning`)!.instructions, /org_intent/);
+  }
+  // the personal packs keep their tail
+  assert.match(AUTHORED_PACKS.find((p) => p.id === 'pack-trip-planner')!.charter, /Ask for missing personal context/);
+  assert.doesNotMatch(AUTHORED_PACKS.find((p) => p.id === 'pack-auditor')!.charter, /You work as a member of a company of agents/);
+});
+
 test('hiring an authored casual pack installs its skills and loops', async () => {
   const { market, skills } = await setup();
   const { agent } = await market.hire('pack-trip-planner');
