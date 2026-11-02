@@ -1846,6 +1846,10 @@ export const api = {
   setOrgGoalValue: (wsId: string, goalId: string, body: { valuePerUnit?: number | null; valueOnAchieve?: number | null; valueNote?: string }) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals/${enc(goalId)}/value`, 'PUT', body),
   /** Home (docs/home.md): the owner's mission control in one request. Without `since` the server records the visit. */
   home: (wsId: string, since?: string) => get<HomeData>(`/api/workspaces/${wsId}/home${since ? `?since=${enc(since)}` : ''}`, homeDataSchema),
+  /** An agent's Dashboard (docs/mission-control.md): what it is doing, blocked on, next, done; its team and health. */
+  agentOverview: (agentId: string) => get<AgentOverview>(`/api/agents/${enc(agentId)}/overview`),
+  /** The org chart's mission control (docs/mission-control.md). */
+  missionControl: (wsId: string) => get<MissionControl>(`/api/workspaces/${wsId}/org/mission-control`),
 };
 
 // ---- Home (docs/home.md; server/src/home/home.types.ts) ----
@@ -1910,6 +1914,69 @@ export interface HomeData {
   needs: HomeNeed[]; recap: HomeRecap; goals: HomeGoal[]; team: HomeAgent[]; activity: HomeActivity[];
   spend: HomeSpend; health: HomeHealth; upcoming: HomeUpcoming[]; artifacts: HomeArtifact[];
   /** Sections that failed to load on the server. */
+  partial: string[];
+}
+
+// ---- the overviews (docs/mission-control.md; server/src/home/overview.types.ts) ----
+export interface BlockerInfo {
+  reason: string;
+  waitsOn: { kind: 'ceo' | 'agent' | 'task' | 'unknown'; id: string | null; name: string; taskId: string | null };
+  since: string;
+}
+export interface OverviewLive { sessionId: string; sessionName: string; origin: string; startedAt: string; tool: string | null; toolLabel: string; toolAt: string | null; calls: number }
+export interface OverviewStatus extends HomeAgent {
+  live: OverviewLive | null; doingSince: string | null; waitingOnYou: number; blockedCount: number; open: number; lastRunAt: string | null; memberStatus: string | null;
+}
+export interface OverviewTask {
+  id: string; source: 'org' | 'agent'; title: string; status: string; outcome: string; doneWhen: string;
+  startedAt: string | null; updatedAt: string; createdAt: string; dueAt: string | null;
+  lastComment: { at: string; from: string; text: string } | null; files: string[]; acceptedBy: string; assigneeName: string;
+}
+export interface OverviewBlocked extends OverviewTask { blocker: BlockerInfo }
+export interface OverviewFollow { id: string; targetKind: string; targetId: string; title: string; attention: string; unseen: number; lastActivityAt: string | null; lastActorName: string }
+export interface OverviewGoal {
+  id: string; kind: string; title: string; progress: number; confidence: number | null; rag: HomeRag; atRisk: boolean; atRiskReason: string;
+  currentValue: number | null; targetValue: number | null; unitLabel: string; dueAt: string | null;
+}
+export interface TeamTile { id: string; name: string; emoji: string; colors: string; title: string; state: HomeAgentState; doing: string; taskId: string | null; lastBeatAt: string | null; open: number; liveLabel: string }
+/** GET /api/agents/:id/overview. */
+export interface AgentOverview {
+  agentId: string; workspaceId: string; generatedAt: string;
+  agent: { id: string; name: string; emoji: string; colors: string; title: string; role: string; provider: string; model: string; isChief: boolean; hasReports: boolean };
+  inCompany: boolean;
+  status: OverviewStatus;
+  heartbeat: { enabled: boolean; cron: string; nextDueAt: string | null; lastBeatAt: string | null; lastRunAt: string | null; lastReason: string; runsToday: number; dailyRunCap: number } | null;
+  nextLoop: { name: string; at: string; cron: string } | null;
+  now: OverviewTask | null; blocked: OverviewBlocked[]; queue: OverviewTask[]; reviews: OverviewTask[]; follows: OverviewFollow[]; done: OverviewTask[];
+  files: Array<{ path: string; version: number; updatedAt: string }>;
+  recent: HomeActivity[];
+  goals: OverviewGoal[];
+  team: { manager: TeamTile | null; reports: TeamTile[]; humans: Array<{ memberAccountId: string; title: string }>; unit: { id: string; name: string; slug: string } | null };
+  health: {
+    errors: HomeAgent['errors'];
+    spend: { todayUsd: number | null; d30Usd: number | null; monthUsd: number | null; monthCapUsd: number | null };
+    trust: Array<{ actionClass: string; effective: number; ceiling: number }>;
+    wip: { open: number; limit: number } | null;
+  };
+  dashboard: string;
+  partial: string[];
+}
+export interface MissionNode extends OverviewStatus {
+  agentId: string; reportsToAgentId: string | null; leadsUnitId: string | null;
+  wip: { open: number; limit: number };
+  spend: { todayUsd: number; monthUsd: number; monthCapUsd: number };
+  waits: Array<{ taskId: string; title: string; waitsOn: BlockerInfo['waitsOn']; reason: string; since: string }>;
+  liveLabel: string;
+}
+/** GET /api/workspaces/:id/org/mission-control. */
+export interface MissionControl {
+  workspaceId: string; orgId: string; generatedAt: string;
+  company: { name: string; status: string; mode: string; chiefAgentId: string | null };
+  totals: { working: number; blocked: number; idle: number; paused: number; error: number; tasksInFlight: number; waitingOnYou: number; spendTodayUsd: number | null; monthUsd: number | null; monthCapUsd: number | null };
+  units: Array<{ id: string; name: string; slug: string; leadAgentId: string; parentUnitId: string | null; openTasks: number }>;
+  nodes: MissionNode[];
+  humans: Array<{ id: string; memberAccountId: string; title: string; reportsToAgentId: string | null }>;
+  edges: Array<{ from: string; to: string; taskId: string; title: string }>;
   partial: string[];
 }
 

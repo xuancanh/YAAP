@@ -1,5 +1,5 @@
 /** Agents: the directory grid, the create-agent dialog, and the per-agent
- *  home page — tabbed like YAAM: Dashboard (agent-maintained markdown),
+ *  home page — tabbed like YAAM: Dashboard (what it is doing, docs/mission-control.md; its own notes folded below),
  *  Mini apps (self-built, embeddable), Chats, Memory (file brain), Settings. */
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
@@ -11,10 +11,10 @@ import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type
 import { UsageBars, UsageRows } from './UsageChart';
 import { fmtUsd } from '../lib/pricing';
 import { fmtTokens } from '../lib/util';
-import { Markdown } from '../lib/md';
 import { KEEP_FILE, agentSource, normPath, workspaceSource } from '../lib/artifacts';
 import { ArtifactTree } from './ArtifactTree';
 import { ArtifactPane } from './FilesView';
+import { AgentOverviewPanel } from './AgentDashboard';
 import { nextFire, untilLabel } from '../lib/cron';
 import { RUNS_WHEN, lastFiredLabel, runsWhenOf, triggerGlyph, triggerLabel, type Loop, type LoopTrigger, type RunsWhen } from '../lib/triggers';
 
@@ -1434,6 +1434,8 @@ export function AgentHome() {
   const loops = (() => { try { return JSON.parse(a.loops) as Loop[]; } catch { return []; } })();
   const activeLoops = loops.filter((l) => l.enabled !== false);
   const openTasks = tasks.filter((t) => t.status !== 'done');
+  /** Events that wait on a person: a queued action, a routed connection request. */
+  const waiting = events.filter((ev) => ev.kind === 'action_pending' || ev.kind === 'approval_request');
   const conversations = app.sessions
     .filter((s) => s.agentId === a.id)
     .sort((x, y) => (x.updatedAt < y.updatedAt ? 1 : -1));
@@ -1493,99 +1495,73 @@ export function AgentHome() {
         </div>
 
         {tab === 'Dashboard' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {[
-                { v: String(openTasks.length), l: 'open tasks', go: 'Tasks' as HomeTab },
-                { v: String(activeLoops.length), l: 'active loops', go: 'Schedule' as HomeTab },
-                { v: String(apps.length), l: 'mini apps', go: 'Mini apps' as HomeTab },
-                { v: String(conversations.length), l: 'conversations', go: 'Chats' as HomeTab },
-              ].map((c) => (
-                <button key={c.l} onClick={() => setTab(c.go)} style={{ ...card, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                  <span style={{ fontSize: 17, fontWeight: 700 }}>{c.v}</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{c.l}</span>
-                </button>
-              ))}
-            </div>
-            <HeartbeatCard a={a} />
-            <div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
-                <span style={label}>Dashboard</span>
-                <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>maintained by {a.name} (update_dashboard)</span>
-              </div>
-              <div style={{ ...card, padding: a.dashboard.trim() ? '10px 20px 14px' : 22 }}>
-                {a.dashboard.trim() ? (
-                  <div style={{ fontSize: 13, color: 'var(--text)' }}><Markdown text={a.dashboard} /></div>
-                ) : (
-                  <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
-                    No dashboard yet. {a.name} builds and maintains this page itself — start a conversation and ask it
-                    to set up its dashboard (it uses the <span style={{ fontFamily: 'var(--mono)' }}>update_dashboard</span> tool and refreshes it as its work evolves).
+          <div style={{ marginTop: 18 }}>
+            {/* docs/mission-control.md: what it is doing, blocked on, next and done; its team and health; its own notes folded below. */}
+            <AgentOverviewPanel agentId={a.id} onOpenTab={(t) => { const want = TAB_ALIASES[t] ?? t; if (TABS.includes(want as HomeTab)) setTab(want as HomeTab); }} extra={(waiting.length > 0 || (usage && usage.totals.turns > 0) || conversations.length > 0) ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {waiting.length > 0 && (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 650 }}>Waiting on you</span>
+                      <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>actions it queued and connections it asks to use</span>
+                    </div>
+                    <div style={{ ...card, padding: '6px 8px' }}>
+                      {waiting.map((ev) => (
+                        <div key={ev.id} onClick={() => ev.sessionId && app.openSession(ev.sessionId)}
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, cursor: ev.sessionId ? 'pointer' : 'default' }}>
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: ev.kind === 'loop_error' || ev.kind === 'action_failed' || ev.kind === 'budget_stop' || ev.kind === 'approval_denied' ? 'var(--red)' : ev.kind === 'action_pending' || ev.kind === 'approval_request' ? 'var(--amber)' : 'var(--green)', flex: 'none' }} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</div>
+                            {ev.body && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.body}</div>}
+                          </div>
+                          {ev.kind === 'action_pending' && (
+                            <span style={{ display: 'flex', gap: 6, flex: 'none' }} onClick={(e) => e.stopPropagation()}>
+                              <button onClick={() => void actOnEvent(ev, 'approve')} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
+                              <button onClick={() => void actOnEvent(ev, 'dismiss')} style={{ background: 'none', color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Dismiss</button>
+                            </span>
+                          )}
+                          {ev.kind === 'approval_request' && (
+                            <span style={{ display: 'flex', gap: 6, flex: 'none', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+                              <span title="Routed to you: this turn would use your connection" style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--amber)', border: '1px solid var(--amber)', borderRadius: 4, padding: '0 5px' }}>for you</span>
+                              <button onClick={() => void decideEvent(ev, 'allow')} style={{ background: 'var(--green)', color: '#04140d', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Allow</button>
+                              <button onClick={() => void decideEvent(ev, 'deny')} style={{ background: 'none', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Deny</button>
+                            </span>
+                          )}
+                          <span style={{ fontSize: 9.5, color: 'var(--text-faint)', flex: 'none', fontFamily: 'var(--mono)' }}>{ago(ev.createdAt)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {usage && usage.totals.turns > 0 && (
+                  <details>
+                    <summary style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8, cursor: 'pointer' }}>
+                      <span style={{ fontSize: 13, fontWeight: 650 }}>Usage, 30 days</span>
+                      <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
+                        {fmtTokens(usage.totals.tokensIn + usage.totals.tokensOut)} tokens · {fmtUsd(usage.totals.usd)} at list prices
+                        {usage.unpricedModels.length > 0 ? ` · unpriced: ${usage.unpricedModels.join(', ')}` : ''}
+                      </span>
+                    </summary>
+                    <div style={{ ...card, padding: '12px 14px' }}>
+                      <UsageBars series={usage.series} height={64} />
+                      <div style={{ marginTop: 10, borderTop: '1px solid var(--border-soft)', paddingTop: 8 }}>
+                        <UsageRows rows={usage.byKind} onOpen={(id) => app.openSession(id)} />
+                      </div>
+                    </div>
+                  </details>
+                )}
+                {conversations.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 8 }}>Recent conversations</div>
+                    <div style={{ ...card, padding: '6px 8px' }}>
+                      {conversations.slice(0, 5).map((c) => <ConversationRow key={c.id} s={c} onOpen={() => app.openSession(c.id)} />)}
+                    </div>
                   </div>
                 )}
               </div>
-            </div>
-            {usage && usage.totals.turns > 0 && (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
-                  <span style={label}>Usage · 30 days</span>
-                  <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
-                    {fmtTokens(usage.totals.tokensIn + usage.totals.tokensOut)} tokens · {fmtUsd(usage.totals.usd)} at list prices
-                    {usage.unpricedModels.length > 0 ? ` · unpriced: ${usage.unpricedModels.join(', ')}` : ''}
-                  </span>
-                </div>
-                <div style={{ ...card, padding: '12px 14px' }}>
-                  <UsageBars series={usage.series} height={64} />
-                  <div style={{ marginTop: 10, borderTop: '1px solid var(--border-soft)', paddingTop: 8 }}>
-                    <UsageRows rows={usage.byKind} onOpen={(id) => app.openSession(id)} />
-                  </div>
-                </div>
-              </div>
-            )}
-            {events.length > 0 && (
-              <div>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 8 }}>
-                  <span style={label}>Activity</span>
-                  <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>proactive work is never silent — every loop run and failure lands here</span>
-                </div>
-                <div style={{ ...card, padding: '6px 8px' }}>
-                  {events.slice(0, 6).map((ev) => (
-                    <div key={ev.id} onClick={() => ev.sessionId && app.openSession(ev.sessionId)}
-                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, cursor: ev.sessionId ? 'pointer' : 'default' }}>
-                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: ev.kind === 'loop_error' || ev.kind === 'action_failed' || ev.kind === 'budget_stop' || ev.kind === 'approval_denied' ? 'var(--red)' : ev.kind === 'action_pending' || ev.kind === 'approval_request' ? 'var(--amber)' : 'var(--green)', flex: 'none' }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</div>
-                        {ev.body && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.body}</div>}
-                      </div>
-                      {ev.kind === 'action_pending' && (
-                        <span style={{ display: 'flex', gap: 6, flex: 'none' }} onClick={(e) => e.stopPropagation()}>
-                          <button onClick={() => void actOnEvent(ev, 'approve')} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Approve</button>
-                          <button onClick={() => void actOnEvent(ev, 'dismiss')} style={{ background: 'none', color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Dismiss</button>
-                        </span>
-                      )}
-                      {ev.kind === 'approval_request' && (
-                        <span style={{ display: 'flex', gap: 6, flex: 'none', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
-                          <span title="Routed to you: this turn would use your connection" style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--amber)', border: '1px solid var(--amber)', borderRadius: 4, padding: '0 5px' }}>for you</span>
-                          <button onClick={() => void decideEvent(ev, 'allow')} style={{ background: 'var(--green)', color: '#04140d', border: 'none', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Allow</button>
-                          <button onClick={() => void decideEvent(ev, 'deny')} style={{ background: 'none', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 7, padding: '4px 12px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>Deny</button>
-                        </span>
-                      )}
-                      <span style={{ fontSize: 9.5, color: 'var(--text-faint)', flex: 'none', fontFamily: 'var(--mono)' }}>{ago(ev.createdAt)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {conversations.length > 0 && (
-              <div>
-                <div style={{ ...label, marginBottom: 8 }}>Recent conversations</div>
-                <div style={{ ...card, padding: '6px 8px' }}>
-                  {conversations.slice(0, 5).map((c) => <ConversationRow key={c.id} s={c} onOpen={() => app.openSession(c.id)} />)}
-                </div>
-              </div>
-            )}
+            ) : undefined} />
           </div>
         )}
-
         {tab === 'Tasks' && <TasksBoard a={a} tasks={tasks} reload={reloadTasks} />}
         {tab === 'Schedule' && <ScheduleTab a={a} />}
         {tab === 'Memory' && <MemoryTab a={a} />}
