@@ -261,7 +261,7 @@ function PermissionsPane() {
       <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 11 }}>Default permission mode</div>
       <div style={{ display: 'flex', gap: 8 }}>
         {[
-          { key: 'ask', label: 'Ask', desc: 'Mutations, exec, HTTP & MCP pause for approval' },
+          { key: 'ask', label: 'Ask', desc: 'Outward actions, exec, HTTP & MCP pause for approval; workspace files and boards never do' },
           { key: 'auto', label: 'Auto', desc: 'Tools run without prompting' },
         ].map((mc) => (
           <div key={mc.key} onClick={() => void app.saveSettings({ defaultPermissionMode: mc.key })}
@@ -278,7 +278,7 @@ function PermissionsPane() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 14, fontWeight: 600 }}>Independent action reviewer</div>
-            <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>A second, tool-free model call checks every mutating action that would run without you (Auto mode, remembered approvals) against what you asked. Secrets in the input always hold the action.</div>
+            <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>A second, tool-free model call checks every mutating action that would run without you (Auto mode, remembered approvals) against what you asked. Workspace file writes and board updates skip it: they are internal and every change can be restored. Secrets in the input always hold the action.</div>
           </div>
           <button onClick={() => void app.saveSettings({ actionReview: (app.settings.actionReview ?? 'on') === 'off' ? 'on' : 'off' })}
             style={{ background: (app.settings.actionReview ?? 'on') === 'off' ? 'var(--panel-2)' : 'var(--accent-dim)', color: 'var(--text)', border: `1px solid ${(app.settings.actionReview ?? 'on') === 'off' ? 'var(--border)' : 'var(--accent)'}`, borderRadius: 8, padding: '6px 13px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>

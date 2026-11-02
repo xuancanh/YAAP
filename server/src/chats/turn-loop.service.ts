@@ -44,7 +44,7 @@ import { ActionReviewService, ReviewRecord } from '../review/action-review.servi
 import { ComputerService } from '../computer/computer.service';
 import { REMEMBERABLE_COMPUTER_TOOLS, summarizeInput as summarizeComputerInput } from '../computer/computer-scopes';
 import { ActionsService, type ActionCtx, type ActionRow, type CoSignVerdict } from '../actions/actions.service';
-import { stagingOf, TWO_KEY_CLASSES, unclassified, type ActionClass } from '../actions/action-classes';
+import { runsFreely, stagingOf, TWO_KEY_CLASSES, unclassified, type ActionClass } from '../actions/action-classes';
 import { decide, type TrustDecision, type TrustLevel } from '../actions/trust-policy';
 import { CONNECTION_TOOLS } from '../connections/connections.tools';
 
@@ -482,7 +482,11 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     return { open: this.pending.has(key), routedTo: this.routed.get(key) };
   }
 
-  async *run(sessionId: string, input: { text: string; attachments?: unknown[]; origin?: TurnOrigin }): AsyncGenerator<TurnEvent> {
+  /** `confined`: the turn is driven by something that must not act through
+   *  the agent — a mini app's `agent.ask` (docs/miniapp-capabilities.md): the
+   *  free internal work of docs/permissions.md §8 gates like any mutation
+   *  there, so an app cannot write the agent's brain or shared files. */
+  async *run(sessionId: string, input: { text: string; attachments?: unknown[]; origin?: TurnOrigin; confined?: boolean }): AsyncGenerator<TurnEvent> {
     const session = await this.repo.getSession(sessionId);
     if (!session) throw new NotFoundException(`chat ${sessionId}`);
     // The workspace's monthly spend stop (phase 2.5). Background turns are
@@ -754,6 +758,12 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
           // stage (a draft) or a second agent key. Computer tools keep their
           // own floor (user turns only, every call asks) and skip it.
           let contract: ContractState | null = null;
+          // Internal, reversible work (files through WorkspaceFs, the agent's
+          // own records and proposals, the org's work record) runs freely in
+          // every kind of session: no pause, no ledger ask or hold, no
+          // reviewer (docs/permissions.md §8). It is still logged and counted,
+          // and an incident freeze still holds it.
+          const free = runsFreely(call.name) && !input.confined;
           if (this.actions && !this.computer?.owns(call.name)) {
             const origin = input.origin ?? 'user';
             const provider = this.providerOf(call.name);
@@ -782,14 +792,15 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
                 // A person in an Ask-mode chat answers every mutating call
                 // anyway, and a channel turn is untrusted: the legacy gates decide there.
                 const legacy = origin === 'channel' || (origin === 'user' && session.permissionMode !== 'auto');
-                if (!legacy) decision = decide({ cls, level, humanPresent: origin === 'user', hasStaging });
+                if (!legacy && !free) decision = decide({ cls, level, humanPresent: origin === 'user', hasStaging });
               }
+              if (free) decision = 'run';
               // An incident froze this class for the member's organization
               // (item 29): held for the owner's key whatever the level, in
               // every kind of session.
               const frozen = await this.actions.isFrozen(session.workspaceId, session.agentId ?? null, cls);
               if (frozen) decision = 'hold';
-              const row = await this.actions.start(actx, { key, tool: call.name, input: call.input, cls, decision: frozen ? 'frozen' : decision ?? 'legacy', level, prior });
+              const row = await this.actions.start(actx, { key, tool: call.name, input: call.input, cls, decision: frozen ? 'frozen' : free ? 'free' : decision ?? 'legacy', level, prior });
               contract = { cls, row, decision, level, ...(frozen ? { why: `an incident froze ${cls.replace(/_/g, ' ')} actions for the organization` } : {}) };
               if (decision === 'cosign') {
                 const cs = await this.actions.coSign(row, { name: call.name, input: call.input });
@@ -899,17 +910,21 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             yield { type: 'tool_result', id: call.id, name: tool, output: output.slice(0, 500), isError, ...contractTag };
             continue;
           }
-          const policy = this.contractPolicy(contract, this.checkPolicy(session, call, approvals));
+          const policy = free
+            ? { verdict: 'auto' as const, remember: false, readOnly: false }
+            : this.contractPolicy(contract, this.checkPolicy(session, call, approvals));
           let { verdict } = policy;
           const { remember } = policy;
           // Independent reviewer (docs/permissions.md §6): a mutating call that
           // would run WITHOUT a fresh human decision — Auto mode, or a
           // remembered approval — gets a second, tool-free read against what
           // the user actually asked. Read-only tools and confirm-always tools
-          // (already pausing) are not reviewed.
+          // (already pausing) are not reviewed, and neither is free internal
+          // work (§8): it is reversible, and an injected instruction that
+          // goes on to act outward is read at that outward call.
           let review: ReviewRecord | undefined;
           let reviewDenial: string | undefined;
-          if ((verdict === 'auto' || verdict === 'remembered') && policy.readOnly === false && this.review && !contract?.cosigned
+          if ((verdict === 'auto' || verdict === 'remembered') && policy.readOnly === false && !free && this.review && !contract?.cosigned
             && (await this.review.config()).enabled) {
             const agent = session.agentId ? await this.agents.get(session.agentId).catch(() => null) : null;
             const r = await this.review.review({

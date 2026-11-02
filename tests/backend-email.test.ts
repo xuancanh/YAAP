@@ -149,8 +149,8 @@ test('unpaired sender: one pairing auto-reply, then silence; a valid code pairs 
 
 test('paired mail runs an Ask-mode channel turn: body wrapped as untrusted <email>, gated tool auto-denied, reply threaded through the sender', async () => {
   const toolRound: AiStreamEvent[] = [
-    { type: 'answer', text: 'Let me write that file. ' },
-    { type: 'tool_call', id: 'c1', name: 'fs_write', input: { path: 'x.md', content: 'hi' } },
+    { type: 'answer', text: 'Let me post that. ' },
+    { type: 'tool_call', id: 'c1', name: 'http_request', input: { url: 'https://example.com/hook', method: 'POST', body: 'hi' } },
     { type: 'done' },
   ];
   const finalRound: AiStreamEvent[] = [{ type: 'answer', text: 'Noted anyway.' }, { type: 'done' }];
@@ -185,7 +185,7 @@ test('paired mail runs an Ask-mode channel turn: body wrapped as untrusted <emai
   assert.equal(reply.headers?.['In-Reply-To'], '<m1@example.com>');
   assert.equal(reply.headers?.['References'], '<m0@example.com> <m1@example.com>');
   assert.match(reply.text, /Noted anyway/);
-  assert.match(reply.text, /skipped fs_write/);
+  assert.match(reply.text, /skipped http_request/);
   assert.match(reply.text, /only run from the app/);
   assert.ok(reply.text.includes(`https://yaam.example/#/chat/${session.id}`), 'footer deep-links the session');
   assert.match(reply.html ?? '', /<div[^>]*>[\s\S]*Noted anyway/);

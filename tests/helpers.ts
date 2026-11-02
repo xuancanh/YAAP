@@ -89,6 +89,22 @@ export function mcpStub(): McpService {
   } as unknown as McpService;
 }
 
+/** An MCP stub with one mutating tool, `mcp_notes_write`, that writes
+ *  `{path, content}` into the workspace `ws1` of the given storage: the
+ *  stand-in for "a mutation that is still gated" now that workspace file
+ *  writes run freely (docs/permissions.md §8). */
+export function mcpWriterStub(storage: { put(key: string, body: Buffer): Promise<void> }): McpService {
+  return {
+    toolSpecs: async () => [],
+    list: async () => [],
+    execute: async (name: string, input: Record<string, unknown>) => {
+      if (name !== 'mcp_notes_write') throw new Error(`unknown tool: ${name}`);
+      await storage.put(`workspaces/ws1/${String(input.path)}`, Buffer.from(String(input.content ?? '')));
+      return `wrote ${String(input.path)}`;
+    },
+  } as unknown as McpService;
+}
+
 /** WorkspacesService stub for TurnLoopService tests; records profile
  *  proposals so tests can assert on the consent flow. */
 export function wsStub(): WorkspacesService & { proposals: unknown[] } {

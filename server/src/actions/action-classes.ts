@@ -67,7 +67,7 @@ function calendarWrite(input: Record<string, unknown>, ctx: ClassContext): Actio
 export const TOOL_CLASSES: Record<string, Classifier> = {
   // core tools (chats/tools.service.ts)
   fs_list: 'read', fs_read: 'read', fs_search: 'read', web_search: 'read', web_fetch: 'read',
-  fs_write: 'internal_write', fs_edit: 'internal_write', fs_append: 'internal_write', fs_delete: 'internal_write', slides_create: 'internal_write',
+  fs_write: 'internal_write', fs_edit: 'internal_write', fs_append: 'internal_write', fs_delete: 'internal_write', fs_restore: 'internal_write', slides_create: 'internal_write',
   // an arbitrary HTTP call can POST anywhere: outward, and nothing says it can be undone
   http_request: 'external_reversible',
   // agent self-maintenance tools (turn-loop.service.ts AGENT_TOOLS)
@@ -92,6 +92,47 @@ export const TOOL_CLASSES: Record<string, Classifier> = {
   msmail_draft: 'external_reversible', msmail_send: 'external_irreversible',
   msdrive_search: 'read', msdrive_read: 'read', msdrive_export_doc: 'external_reversible', msdrive_export_sheet: 'external_reversible',
 };
+
+/**
+ * Internal, reversible work that runs freely for every agent and every chat
+ * (docs/permissions.md §8 "Agent file and workspace operations"): no Ask
+ * pause, no trust-ledger ask or hold, no co-signer, no action reviewer. The
+ * action log still records each call (decision `free`), the ledger still
+ * counts it, and an incident freeze of `internal_write` still holds it.
+ *
+ * - File writes go through WorkspaceFs, whose permission table is the gate
+ *   (own home and shared folders rw; other agents' homes, `.checkpoints/`
+ *   and `.revisions/` refused) and whose revisions make every overwrite and
+ *   delete restorable.
+ * - Agent self-maintenance writes only the agent's own records, or queues a
+ *   proposal whose activation is a separate human review (skills, tools,
+ *   profile facts, elevated mini-app capabilities).
+ * - Work-record tools write the organization's own board, goals, check-ins
+ *   and timelines — internal, attributed and audited, undone by the next update.
+ *
+ * Every name here must class as `internal_write` or `read`; outward,
+ * irreversible, money, computer, MCP, browser, code-execution and governance
+ * tools (structure, scopes, budgets, routing, tunables, playbooks, evals —
+ * boundary.ts) are never in it.
+ */
+export const WORKSPACE_FILE_WRITES: ReadonlySet<string> = new Set(['fs_write', 'fs_edit', 'fs_append', 'fs_delete', 'fs_restore', 'slides_create']);
+export const FREE_INTERNAL_TOOLS: ReadonlySet<string> = new Set([
+  ...WORKSPACE_FILE_WRITES,
+  // agent self-maintenance and proposals (turn-loop.service.ts AGENT_TOOLS)
+  'update_dashboard', 'save_app', 'delegate_task', 'add_task', 'update_task',
+  'draft_skill', 'revise_skill', 'save_tool', 'update_user_profile',
+  // the organization's work record (board, goals, check-ins, timelines, reviews)
+  'org_message', 'org_create_task', 'org_assign', 'org_task_update', 'org_task_comment',
+  'org_request_review', 'org_review', 'org_escalate', 'org_check_in', 'org_set_goal', 'org_set_key_result',
+  'org_ack_signal', 'org_report', 'org_strategy_memo', 'org_report_incident', 'org_forecast_outcome',
+  // group chat: a task from a channel message
+  'channel_make_task',
+]);
+
+/** Whether a call is internal, reversible work that runs without a gate. */
+export function runsFreely(toolName: string): boolean {
+  return FREE_INTERNAL_TOOLS.has(toolName);
+}
 
 /** Tool families by prefix, after exact names. The computer acts on the
  *  user's own machine: every computer tool is irreversible (and refused

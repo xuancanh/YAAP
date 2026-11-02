@@ -268,7 +268,7 @@ export class AppBridgeService {
     let answer = '';
     const denied: string[] = [];
     try {
-      for await (const ev of this.turns.run(session.id, { text: `[from mini app "${entry.name}"] ${text}` })) {
+      for await (const ev of this.turns.run(session.id, { text: `[from mini app "${entry.name}"] ${text}`, confined: true })) {
         if (ev.type === 'answer') answer += ev.text;
         if (ev.type === 'approval_required') {
           denied.push(ev.tool);

@@ -442,7 +442,7 @@ test('brain checkpoints: daily snapshot before the first change, pruned to 14 da
   assert.doesNotMatch(cp!.toString('utf8'), /first entry/, 'second append did not overwrite the checkpoint');
 });
 
-test('delegate_task hands work to a colleague agent board + inbox; gated in ask mode (phase 5)', async () => {
+test('delegate_task hands work to a colleague agent board + inbox; internal work, it runs without a pause (phase 5, permissions §8)', async () => {
   const delegateRound: AiStreamEvent[] = [
     { type: 'tool_call', id: 'd1', name: 'delegate_task', input: { agent: 'ledger', title: 'Reconcile July invoices', note: 'Numbers from the sweep.' } },
     { type: 'done' },
@@ -455,13 +455,9 @@ test('delegate_task hands work to a colleague agent board + inbox; gated in ask 
 
   let paused = false;
   for await (const ev of turns.run(session.id, { text: 'hand the invoices to ledger' })) {
-    if (ev.type === 'approval_required') {
-      paused = true;
-      assert.equal(ev.tool, 'delegate_task');
-      turns.resolveApproval(session.id, ev.callId, 'allow-once');
-    }
+    if (ev.type === 'approval_required') paused = true;
   }
-  assert.ok(paused, 'delegation is a mutation: it pauses in ask mode');
+  assert.ok(!paused, 'delegation is internal work: no pause in ask mode');
 
   const tasks = await agents.listTasks(to.id);
   assert.equal(tasks.length, 1);

@@ -6,7 +6,7 @@ import { ChatsService } from '../server/src/chats/chats.service';
 import { TurnLoopService, TurnEvent } from '../server/src/chats/turn-loop.service';
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
-import { testDb, memStorage, ctxStub, skillsStub, agentsStub, mcpStub, ScriptedProvider, wsStub } from './helpers';
+import { testDb, memStorage, ctxStub, skillsStub, agentsStub, mcpStub, mcpWriterStub, ScriptedProvider, wsStub } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import { ConnectionsService } from '../server/src/connections/connections.service';
 import { RunnerService } from '../server/src/runner/runner.service';
@@ -16,7 +16,7 @@ import { seal } from '../server/src/common/secretbox';
 
 const writeRound: AiStreamEvent[] = [
   { type: 'answer', text: 'Writing the file. ' },
-  { type: 'tool_call', id: 'c1', name: 'fs_write', input: { path: 'notes.md', content: 'hello' } },
+  { type: 'tool_call', id: 'c1', name: 'mcp_notes_write', input: { path: 'notes.md', content: 'hello' } },
   { type: 'usage', inputTokens: 5, outputTokens: 5 },
   { type: 'done' },
 ];
@@ -34,7 +34,7 @@ async function setup(rounds: AiStreamEvent[][]) {
   const provider = new ScriptedProvider(rounds);
   const agents = agentsStub();
   const ws = wsStub();
-  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(provider), skillsStub(), stub, mcpStub(), agents, ws);
+  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(provider), skillsStub(), stub, mcpWriterStub(stub), agents, ws);
   return { repo, chats, turns, provider, map, agents, ws };
 }
 
@@ -80,7 +80,7 @@ test('ask mode: read-only runs, mutation pauses; deny feeds an error result to t
 
   const events = await collect(turns.run(s.id, { text: 'go' }), (ev) => {
     if (ev.type === 'approval_required') {
-      assert.equal(ev.tool, 'fs_write');
+      assert.equal(ev.tool, 'mcp_notes_write');
       turns.resolveApproval(s.id, ev.callId, 'deny');
     }
   });
@@ -88,8 +88,8 @@ test('ask mode: read-only runs, mutation pauses; deny feeds an error result to t
   // fs_list ran without an approval pause
   const listResult = events.find((e) => e.type === 'tool_result' && e.name === 'fs_list');
   assert.ok(listResult && !listResult.isError);
-  // fs_write was denied and surfaced as an error result
-  const writeResult = events.find((e) => e.type === 'tool_result' && e.name === 'fs_write');
+  // the gated write was denied and surfaced as an error result
+  const writeResult = events.find((e) => e.type === 'tool_result' && e.name === 'mcp_notes_write');
   assert.ok(writeResult?.isError);
   assert.match(writeResult!.output, /Denied by user/);
   // the model received the denial in the next round
@@ -360,7 +360,7 @@ test('concurrent turn on the same chat is refused by the busy lock (FR-7.5)', as
   await collect(gen);
 });
 
-test('agent chats offer self-maintenance tools; save_app gates in ask mode and is never blanket-allowed (§11)', async () => {
+test('agent chats offer self-maintenance tools; save_app runs without a pause in ask mode — creation is free, activation is the review (§11, permissions §8)', async () => {
   const appRound: AiStreamEvent[] = [
     { type: 'tool_call', id: 'a1', name: 'save_app', input: { name: 'Tracker', html: '<html>x</html>' } },
     { type: 'done' },
@@ -370,21 +370,34 @@ test('agent chats offer self-maintenance tools; save_app gates in ask mode and i
 
   let paused = 0;
   await collect(turns.run(s.id, { text: 'build me a tracker' }), (ev) => {
-    if (ev.type === 'approval_required') {
-      paused++;
-      assert.equal(ev.tool, 'save_app');
-      turns.resolveApproval(s.id, ev.callId, 'allow-tool');
-    }
+    if (ev.type === 'approval_required') paused++;
   });
 
-  assert.equal(paused, 1, 'save_app paused for approval in ask mode');
+  assert.equal(paused, 0, 'save_app no longer pauses: elevated capabilities still park for review');
   const toolNames = (provider.requests[0].tools ?? []).map((t) => t.name);
   assert.ok(toolNames.includes('save_app') && toolNames.includes('update_dashboard'));
   assert.deepEqual(agents.calls.map((c) => c.method), ['saveApp']);
   assert.equal(agents.calls[0].args[0], 'ag1');
-  // SELF_MOD tools never receive a blanket allow-tool grant (FR-4.5)
+  // nothing was remembered: there was no grant to give
   const approvals = JSON.parse((await chats.get(s.id)).approvals) as { tools?: string[] };
   assert.ok(!(approvals.tools ?? []).includes('save_app'));
+});
+
+test('ask mode: workspace file writes run without a pause, in a chat with no agent too (permissions §8)', async () => {
+  const fsRound: AiStreamEvent[] = [
+    { type: 'tool_call', id: 'w1', name: 'fs_write', input: { path: 'notes.md', content: 'hello' } },
+    { type: 'tool_call', id: 'w2', name: 'fs_append', input: { path: 'notes.md', content: 'more' } },
+    { type: 'tool_call', id: 'w3', name: 'fs_edit', input: { path: 'notes.md', old: 'hello', new: 'hi' } },
+    { type: 'done' },
+  ];
+  const { chats, turns, map, repo } = await setup([fsRound, finalRound]);
+  const s = await chats.create({ workspaceId: 'ws1' });
+  let paused = 0;
+  await collect(turns.run(s.id, { text: 'note it' }), (ev) => { if (ev.type === 'approval_required') paused++; });
+  assert.equal(paused, 0);
+  assert.equal(map.get('workspaces/ws1/notes.md')?.toString(), 'hi\nmore');
+  const [turn] = await repo.listTurns(s.id);
+  assert.deepEqual((JSON.parse(turn.toolCalls) as Array<{ approved: string }>).map((r) => r.approved), ['auto', 'auto', 'auto']);
 });
 
 test('agent tools are absent from chats without a durable agent (§11)', async () => {

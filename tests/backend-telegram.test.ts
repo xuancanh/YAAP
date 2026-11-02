@@ -67,8 +67,8 @@ test('unknown chats only get pairing instructions; a valid code pairs exactly on
 
 test('paired messages run an Ask-mode turn for the default agent; gated tools deny with a pointer to the app', async () => {
   const toolRound: AiStreamEvent[] = [
-    { type: 'answer', text: 'Let me write that file. ' },
-    { type: 'tool_call', id: 'c1', name: 'fs_write', input: { path: 'x.md', content: 'hi' } },
+    { type: 'answer', text: 'Let me post that. ' },
+    { type: 'tool_call', id: 'c1', name: 'http_request', input: { url: 'https://example.com/hook', method: 'POST', body: 'hi' } },
     { type: 'done' },
   ];
   const finalRound: AiStreamEvent[] = [{ type: 'answer', text: 'Noted anyway.' }, { type: 'done' }];
@@ -89,7 +89,7 @@ test('paired messages run an Ask-mode turn for the default agent; gated tools de
   assert.equal(session.permissionMode, 'ask', 'channel sessions never run in auto mode');
   const reply = sent.at(-1)!.text;
   assert.match(reply, /Noted anyway/);
-  assert.match(reply, /skipped fs_write/);
+  assert.match(reply, /skipped http_request/);
   assert.match(reply, /only run from the app/);
 
   // /unpair closes the channel

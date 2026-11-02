@@ -489,7 +489,7 @@ test('a stale membership of an agent from another workspace is not a mention tar
 
 test('an Ask approval inside a channel wake is addressed to the human who posted — in the channel stream and their inbox — and the turn ran as them', async () => {
   const s = await setup((me, text, round) => (round === 0 && text.includes('write')
-    ? [{ type: 'tool_call', id: 'c1', name: 'fs_write', input: { path: 'shared/notes.md', content: 'hi' } }]
+    ? [{ type: 'tool_call', id: 'c1', name: 'http_request', input: { url: 'https://example.com/hook', method: 'POST', body: 'hi' } }]
     : say('done')), { shared: true });
   const scout = await s.agents.create({ name: 'Scout' });
   await s.groupchat.addMember(s.general.id, { kind: 'agent', id: scout.id });
@@ -499,7 +499,7 @@ test('an Ask approval inside a channel wake is addressed to the human who posted
     if (ev.type === 'channel_approval') {
       assert.equal(ev.forActor, 'bob', 'addressed to the poster');
       assert.equal(ev.forName, 'Bob');
-      assert.equal(ev.tool, 'fs_write');
+      assert.equal(ev.tool, 'http_request');
       // anybody else cannot see it as theirs; Bob answers
       assert.equal(s.turns.resolveApproval(ev.sessionId, ev.callId, 'deny', 'bob'), true);
     }
@@ -512,9 +512,9 @@ test('an Ask approval inside a channel wake is addressed to the human who posted
   const inbox = (await s.db.select().from(agentEvents)).find((e) => e.kind === 'approval_request' || e.kind === 'approval_expired');
   assert.ok(inbox, 'and so did Bob\'s inbox');
   assert.equal(inbox!.forMemberAccountId, 'bob');
-  assert.match(inbox!.title, /Scout asks to run fs_write in #general/);
+  assert.match(inbox!.title, /Scout asks to run http_request in #general/);
   const thread = (await s.groupchat.messages(s.general.id, { thread: root.id })).messages;
-  assert.ok(thread.some((m) => m.authorKind === 'system' && /waiting for Bob's approval to run fs_write/.test(m.text)));
+  assert.ok(thread.some((m) => m.authorKind === 'system' && /waiting for Bob's approval to run http_request/.test(m.text)));
   assert.equal(thread.at(-1)!.text, 'done');
   // the channel session's user message is attributed to Bob: the turn ran as him
   const session = (await s.repo.listSessions(s.ws.id)).find((x) => x.name === '#general · Scout')!;

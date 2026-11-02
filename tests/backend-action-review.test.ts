@@ -8,7 +8,7 @@ import { ChatsService } from '../server/src/chats/chats.service';
 import { TurnLoopService, TurnEvent } from '../server/src/chats/turn-loop.service';
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
-import { testDb, memStorage, ctxStub, skillsStub, agentsStub, mcpStub, ScriptedProvider, wsStub } from './helpers';
+import { testDb, memStorage, ctxStub, skillsStub, agentsStub, mcpStub, mcpWriterStub, ScriptedProvider, wsStub } from './helpers';
 import { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import {
   ActionReviewService, sensitivePrecheck, luhnValid, ibanValid, cheapestModelFor, REVIEW_MAX_TOKENS, ReviewInput,
@@ -134,7 +134,7 @@ test('config(): on by default, off when the setting says so, model override read
 
 const writeRound: AiStreamEvent[] = [
   { type: 'answer', text: 'Writing. ' },
-  { type: 'tool_call', id: 'c1', name: 'fs_write', input: { path: 'notes.md', content: 'hello' } },
+  { type: 'tool_call', id: 'c1', name: 'mcp_notes_write', input: { path: 'notes.md', content: 'hello' } },
   { type: 'usage', inputTokens: 5, outputTokens: 5 },
   { type: 'done' },
 ];
@@ -155,7 +155,7 @@ async function setup(rounds: AiStreamEvent[][], settings: Record<string, string>
   const seen: ReviewInput[] = [];
   let next: { verdict: 'allow' | 'ask' | 'deny'; reason: string } = { verdict: 'allow', reason: 'In scope.' };
   review.reviewFn = async (input) => { seen.push(input); return next; };
-  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(provider), skillsStub(), stub, mcpStub(), agents, wsStub(),
+  const turns = new TurnLoopService(repo, new ChatLocks(), tools, ctxStub(provider), skillsStub(), stub, mcpWriterStub(stub), agents, wsStub(),
     undefined, undefined, undefined, review);
   return { repo, chats, turns, provider, map, agents, review, seen, setVerdict: (v: typeof next) => { next = v; } };
 }
@@ -175,7 +175,7 @@ test('auto mode: allow → the call runs and the verdict is recorded on the tool
 
   assert.equal(seen.length, 1);
   assert.equal(seen[0].userRequest, 'write hello to notes.md');
-  assert.equal(seen[0].call.name, 'fs_write');
+  assert.equal(seen[0].call.name, 'mcp_notes_write');
   assert.equal(seen[0].origin, 'user');
   assert.ok(map.has('workspaces/ws1/notes.md'));
   const result = events.find((e) => e.type === 'tool_result');
@@ -252,7 +252,7 @@ test('loop origin: ask becomes deny (nobody can answer) and an inbox event recor
   assert.ok(ev, 'an agent event was written');
   const evInput = ev!.args[1] as { kind: string; title: string; body: string; payload: string };
   assert.equal(evInput.kind, 'info');
-  assert.equal(evInput.title, 'Action held by reviewer: fs_write');
+  assert.equal(evInput.title, 'Action held by reviewer: mcp_notes_write');
   assert.match(evInput.body, /Unrelated to the loop prompt/);
   assert.equal(JSON.parse(evInput.payload).verdict, 'ask');
 });
@@ -262,7 +262,7 @@ test('read-only tools and Ask-mode pauses are never reviewed; remembered approva
   const { chats, turns, seen } = await setup([readRound, writeRound, finalRound, writeRound, finalRound]);
   const s = await chats.create({ workspaceId: 'ws1' });
 
-  // Ask mode, first turn: fs_list auto-runs (read-only, unreviewed); fs_write
+  // Ask mode, first turn: fs_list auto-runs (read-only, unreviewed); the MCP write
   // pauses for a fresh human decision (unreviewed) and is remembered per tool.
   await collect(turns.run(s.id, { text: 'first' }), (ev) => {
     if (ev.type === 'approval_required') turns.resolveApproval(s.id, ev.callId, 'allow-tool');
@@ -272,7 +272,7 @@ test('read-only tools and Ask-mode pauses are never reviewed; remembered approva
   // Second turn: the remembered grant would run without a human — reviewed.
   const events = await collect(turns.run(s.id, { text: 'again' }));
   assert.equal(seen.length, 1);
-  assert.equal(seen[0].call.name, 'fs_write');
+  assert.equal(seen[0].call.name, 'mcp_notes_write');
   const result = events.find((e) => e.type === 'tool_result');
   assert.equal(result?.review?.verdict, 'allow');
 });
@@ -311,7 +311,7 @@ test('reviewer tokens count into the turn usage; the reviewer sees recent tool c
   const provider = new ScriptedProvider([writeRound, reviewRound, finalRound]);
   const review = new ActionReviewService(settingsStub());
   const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider, { system: 'SECRET SYSTEM PROMPT' }),
-    skillsStub(), stub, mcpStub(), agentsStub(), wsStub(), undefined, undefined, undefined, review);
+    skillsStub(), stub, mcpWriterStub(stub), agentsStub(), wsStub(), undefined, undefined, undefined, review);
   const s = await chats.create({ workspaceId: 'ws1' });
   await chats.update(s.id, { permissionMode: 'auto' });
 
