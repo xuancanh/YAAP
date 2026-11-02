@@ -372,9 +372,9 @@ test('hiring: org_hire_agent creates an approval, not an agent; approval creates
 
   // a template hire needs a charter; an unknown pack without one is refused
   await assert.rejects(s.runtime.execute(chiefSession, 'org_hire_agent', { templateOrPack: 'Nobody', title: 'x' }), /needs a charter/);
-  // a specialist cannot hire
+  // a specialist cannot hire (only the chief and function heads do)
   const writerSession = await s.repo.createSession({ workspaceId: s.ws.id, agentId: (await s.org.members(o.id)).find((m) => m.agentId !== chiefId)!.agentId, name: 'w' });
-  await assert.rejects(s.runtime.execute(writerSession, 'org_hire_agent', { templateOrPack: 'Marketer', title: 'x' }), /chief-of-staff tool/);
+  await assert.rejects(s.runtime.execute(writerSession, 'org_hire_agent', { templateOrPack: 'Marketer', title: 'x' }), /for the chief of staff and function heads/);
 
   const { approval, result } = await s.approvals.decide(o.id, pending[0].id, 'approve', 'go');
   assert.equal(approval.status, 'approved');
@@ -576,7 +576,7 @@ test('triggers and members: org_create_task from a member\'s own session lands i
   const { o, chiefId, writer } = await company(s);
   const loopSession = await s.repo.createSession({ workspaceId: s.ws.id, agentId: writer.id, name: 'Loop · Mail', permissionMode: 'auto' });
   const specs = await s.runtime.specsFor(loopSession);
-  assert.deepEqual(specs.map((x) => x.name).sort(), ['org_ack_signal', 'org_check_in', 'org_create_task', 'org_intent', 'org_message', 'org_read_board', 'org_read_goal', 'org_request_review', 'org_signals', 'org_task_comment', 'org_task_update', 'org_why'], 'a member keeps its own tasks true outside a task run');
+  assert.deepEqual(specs.map((x) => x.name).sort(), ['org_ack_signal', 'org_check_in', 'org_costs', 'org_create_task', 'org_escalate', 'org_forecast', 'org_intent', 'org_message', 'org_read_board', 'org_read_goal', 'org_request_review', 'org_signals', 'org_task_comment', 'org_task_update', 'org_why'], 'a member keeps its own tasks true outside a task run, escalates to its manager and reads spend');
   const out = await s.runtime.execute(loopSession, 'org_create_task', { title: 'Reply to the sponsor', outcome: 'A reply draft', done_when: 'Draft in shared/' });
   assert.match(out, /created in backlog/);
   assert.deepEqual(s.runtime.pendingWakeKeys(), [], 'backlog items wake nobody');

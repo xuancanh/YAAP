@@ -98,6 +98,8 @@ import { govTunable } from './governance-tunables';
 import { urgencyOf } from './org-capacity.service';
 import { PROFESSION_PACKS } from '../market/profession-packs.generated';
 import { AUTHORED_PACKS } from '../market/authored-packs.generated';
+import { ROLES, roleRef } from './roles/catalog';
+import { CHIEF_PACK_ID } from './chief-os';
 
 export type RunResult = 'ran' | 'budget_stop' | 'refused' | `skipped:${string}`;
 
@@ -732,10 +734,15 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
 
   /** The common tail of every executed autonomous action: audit with the
    *  chief's reason, an inbox line on the chief, `#company`. */
-  private async recordAuto(org: Organization, action: AutoAction, summary: string, reason: string, payload: Record<string, unknown>, ctx: RunCtx | null): Promise<void> {
-    await this.audit.append(org.id, { actor: 'chief', action: `auto_${action}`, refType: 'org', refId: org.id, payload: { ...payload, summary: summary.slice(0, 300), reason: reason.slice(0, 600) } });
+  private async recordAuto(org: Organization, action: AutoAction, summary: string, reason: string, payload: Record<string, unknown>, ctx: RunCtx | null, actor = 'chief'): Promise<void> {
+    await this.audit.append(org.id, { actor, action: `auto_${action}`, refType: 'org', refId: org.id, payload: { ...payload, summary: summary.slice(0, 300), reason: reason.slice(0, 600) } });
     if (ctx) ctx.progress = true;
-    if (org.chiefOfStaffAgentId) {
+    // A function head's act: the chief is told as the head's manager-of-record.
+    if (actor.startsWith('agent:')) {
+      const headId = actor.slice('agent:'.length);
+      const headName = (await this.agents.get(headId).catch(() => null))?.name ?? 'A head';
+      await this.notifyChief(org, headId, `${headName} (head) — autonomous ${action.replace('_', ' ')}: ${summary}`, reason);
+    } else if (org.chiefOfStaffAgentId) {
       await this.agents.addEvent(org.chiefOfStaffAgentId, {
         kind: 'info', title: `Autonomous ${action.replace('_', ' ')}: ${summary}`.slice(0, 200), body: reason.slice(0, 1_000),
         payload: JSON.stringify({ orgId: org.id, action }), origin: 'loop',
@@ -743,7 +750,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     }
     const verb = action === 'hire' ? 'Hired' : action === 'reorg' ? 'Reorganized' : action === 'scope_widen' ? 'Scope widened' : action === 'budget' ? 'Budget allocated' : action === 'routing' ? 'Routing changed' : 'Terminated';
     await this.announcer.announce(org.workspaceId, `${verb}: ${summary}${reason ? ` — ${reason}` : ''}`);
-    await this.emitAuto({ orgId: org.id, action, summary, reason, payload, actor: 'chief' });
+    await this.emitAuto({ orgId: org.id, action, summary, reason, payload, actor });
   }
 
   // ---- wakes ----
@@ -1171,8 +1178,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       lines.push(`- "${org.name}" (${org.status}${chief ? ', you are the chief of staff' : `, you are ${m.title || 'a member'}`}). ${org.mission ? `Mission: ${org.mission.slice(0, 300)}` : ''}`);
       if (chief && await this.isAutonomous(org)) lines.push('  As chief of staff you decompose goals into briefed tasks (org_create_task, org_assign), review results (org_review), keep the board moving (org_read_board, org_escalate) and report (org_report). This company is in autonomous mode: org_hire_agent, org_reorg, org_set_scope, org_allocate_budget and org_terminate_agent act at once within caps (depth, fan-out, agent cap, company envelope, your own scopes) and are refused with the reason outside them; give a one-line why each time. Strategy still needs the CEO. Keep the roster small.');
       else if (chief) lines.push('  As chief of staff you decompose goals into briefed tasks (org_create_task, org_assign), review results (org_review), keep the board moving (org_read_board, org_escalate) and report (org_report). Hiring, scope widening, reorgs, budget raises and terminations are proposals the CEO approves in the app — they never take effect on your say-so. Keep the roster small.');
-      else if (this.units && await this.units.isLead(org.id, session.agentId)) lines.push('  You lead a unit: org_create_task and org_assign work for yourself and your direct reports, org_set_goal sets a goal for your unit (a child of a goal you can see), org_unit_report shows your unit\'s board and goal progress. Work outside your unit goes to the chief of staff as a backlog task.');
-      else lines.push('  org_create_task puts work into the backlog for the chief of staff to triage; org_read_board shows the board; org_message posts to the group log (wakes nobody).');
+      else if (await this.headOf(org.id, session.agentId)) lines.push(`  You head a function${this.units && await this.units.isLead(org.id, session.agentId) ? ': org_create_task and org_assign work for yourself and your direct reports, org_set_goal sets a goal for your unit (a child of a goal you can see), org_unit_report shows your unit\'s board and goal progress' : ''}. You staff it yourself: org_hire_agent hires a specialist of your function into your own unit (role:<fn>-<slug>, reportsTo you or one of your reports) within the agent cap and your unit's envelope — ${await this.isAutonomous(org) ? 'at once within caps, why required' : 'an approval card for the CEO'}; org_pause_agent and org_update_member manage your own reports. The chief of staff is told of each. org_escalate takes a blocked task to the chief of staff (default) or, with to: "ceo", to the CEO — only for a decision only the CEO can make. Work outside your unit goes to the chief of staff as a backlog task.`);
+      else lines.push('  org_create_task puts work into the backlog for the chief of staff to triage; org_read_board shows the board; org_message posts to the group log (wakes nobody); org_escalate raises a blocked task of yours to your manager (your head); org_costs and org_forecast show spend (read-only).');
       if (this.intent) lines.push('  Intent: org_intent shows the vision → objectives → key results tree; org_why shows what a task or goal serves; org_check_in records the current value and your confidence (0–1) on a key result you own.');
     }
     return lines.join('\n');
@@ -1206,24 +1213,66 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     if (!this.enabled() || !session.agentId) return [];
     const ctx = this.running.get(session.id);
     const leadOf = async (orgIds: string[]) => { for (const id of orgIds) if (this.units && await this.units.isLead(id, session.agentId!)) return true; return false; };
+    const headIn = async (orgIds: string[]) => { for (const id of orgIds) if (await this.headOf(id, session.agentId!)) return true; return false; };
     if (ctx?.audit) return [...AUDIT_TOOLS];
     if (ctx) {
       const specs = [...COMMON_TOOLS, ...TASK_TOOLS];
       if (ctx.reviewer || ctx.isChief) specs.push(...REVIEW_TOOLS);
-      if (ctx.isChief) specs.push(...MANAGER_TOOLS.filter((t) => !REVIEW_TOOLS.includes(t)), ...LEAD_TOOLS.filter((t) => !MANAGER_TOOLS.includes(t)));
-      else if (await leadOf([ctx.orgId])) specs.push(...LEAD_TOOLS, ...(ctx.reviewer ? [] : [ESCALATE_TOOL]));
-      return specs;
+      if (ctx.isChief) specs.push(...MANAGER_TOOLS, ...LEAD_TOOLS);
+      else {
+        if (await leadOf([ctx.orgId])) specs.push(...LEAD_TOOLS);
+        if (await headIn([ctx.orgId])) specs.push(...HEAD_TOOLS);
+      }
+      // Every member: the escalation chain (to its manager) and the spend reads.
+      return uniqueSpecs([...specs, ...MEMBER_EXTRA_TOOLS]);
     }
     const memberships = (await this.org.membershipsOf(session.agentId)).filter((m) => m.status === 'active');
     if (memberships.length === 0) return [];
     const chiefOf = (await Promise.all(memberships.map((m) => this.org.get(m.orgId).catch(() => null)))).some((o) => o?.chiefOfStaffAgentId === session.agentId);
-    if (chiefOf) return [...COMMON_TOOLS, ...TASK_TOOLS, ...REVIEW_TOOLS, ...MANAGER_TOOLS.filter((t) => !REVIEW_TOOLS.includes(t)), ...LEAD_TOOLS.filter((t) => !MANAGER_TOOLS.includes(t))];
+    if (chiefOf) return uniqueSpecs([...COMMON_TOOLS, ...TASK_TOOLS, ...REVIEW_TOOLS, ...MANAGER_TOOLS, ...LEAD_TOOLS]);
     // Outside a task run (a loop, the heartbeat, a chat) every member keeps
     // its own tasks true: the heartbeat names them and asks for
     // org_task_update / org_request_review (taskId required here). A unit
-    // lead (docs/group-chat.md §7) gets the unit-scoped set, and escalates a
-    // task of its unit to the CEO from its own loops (the weekly review).
-    return (await leadOf(memberships.map((m) => m.orgId))) ? [...COMMON_TOOLS, ...TASK_TOOLS, ...LEAD_TOOLS, ESCALATE_TOOL] : [...COMMON_TOOLS, ...TASK_TOOLS];
+    // lead (docs/group-chat.md §7) gets the unit-scoped set; a function head
+    // also hires, pauses and re-tools its own reports (decision 1 of
+    // docs/autonomous-skills-review.md §4). Every member escalates up its
+    // chain (org_escalate: to its manager; a head to the chief or the CEO)
+    // and reads spend (org_costs / org_forecast, read-only).
+    const orgIds = memberships.map((m) => m.orgId);
+    return uniqueSpecs([...COMMON_TOOLS, ...TASK_TOOLS, ...((await leadOf(orgIds)) ? LEAD_TOOLS : []), ...((await headIn(orgIds)) ? HEAD_TOOLS : []), ...MEMBER_EXTRA_TOOLS]);
+  }
+
+  /**
+   * A function head (decision 1, docs/autonomous-skills-review.md §4): the
+   * lead of a non-root unit, or a member reporting to the chief whose title
+   * is a function head's in the role catalog (`<fn>-manager`, e.g. "Head of
+   * Sales") — a new head with no reports yet still hires its first. `fn` is
+   * its function slug when the title names one. Null for the chief and the
+   * auditor.
+   */
+  async headOf(orgId: string, agentId: string): Promise<{ unit: OrgUnit | null; fn: string | null } | null> {
+    const org = await this.org.get(orgId).catch(() => null);
+    if (!org || org.chiefOfStaffAgentId === agentId || org.auditorAgentId === agentId) return null;
+    const m = await this.org.member(orgId, agentId);
+    if (!m || m.status !== 'active') return null;
+    const unit = this.units ? await this.units.isLead(orgId, agentId) : null;
+    const fn = headFunction(m.title);
+    if (unit) return { unit, fn };
+    return fn && m.reportsToAgentId === org.chiefOfStaffAgentId ? { unit: null, fn } : null;
+  }
+
+  /** A head's structural act reaches the chief, who keeps the one view of
+   *  headcount: an inbox event the heartbeat surfaces (origin `org`, not a
+   *  loop) and a line in the group log. */
+  private async notifyChief(org: Organization, headAgentId: string, title: string, body: string, opts: { inbox?: boolean } = {}): Promise<void> {
+    if (!org.chiefOfStaffAgentId || org.chiefOfStaffAgentId === headAgentId) return;
+    if (opts.inbox !== false) {
+      await this.agents.addEvent(org.chiefOfStaffAgentId, {
+        kind: 'info', title: title.slice(0, 200), body: body.slice(0, 1_000),
+        payload: JSON.stringify({ orgId: org.id, headAgentId }), origin: 'org',
+      }).catch(() => {});
+    }
+    await this.tasks.post(org.id, { text: title.slice(0, 500), fromAgentId: headAgentId }).catch(() => undefined);
   }
 
   async execute(session: ChatSession, rawName: string, input: Record<string, unknown>): Promise<string> {
@@ -1305,6 +1354,31 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       let cur: OrgMember | undefined = m;
       for (let i = 0; cur && i < 10; i++) { if (cur.reportsToAgentId === agentId) return; cur = all.find((x) => x.agentId === cur!.reportsToAgentId); }
       throw new Error(`${names.get(m.agentId) ?? m.agentId} is not in your reporting line`);
+    };
+
+    // A function head (decision 1): hires, pauses and re-tools its own
+    // reporting line, bounded like the chief's acts plus its unit's envelope.
+    let headMemo: Awaited<ReturnType<OrgRuntimeService['headOf']>> | undefined;
+    const headInfo = async () => (headMemo !== undefined ? headMemo : (headMemo = isChief ? null : await this.headOf(org.id, agentId)));
+    const requireChiefOrHead = async () => { if (!isChief && !(await headInfo())) throw new Error(`${name} is for the chief of staff and function heads (for their own reports)`); };
+    /** The reporting line under `rootId` (itself included). */
+    const lineOf = async (rootId: string): Promise<Set<string>> => {
+      const all = (await this.org.members(org.id)).filter((x) => x.status !== 'terminated');
+      const out = new Set([rootId]);
+      for (let grew = true; grew;) { grew = false; for (const x of all) if (x.reportsToAgentId && out.has(x.reportsToAgentId) && !out.has(x.agentId)) { out.add(x.agentId); grew = true; } }
+      return out;
+    };
+    /** A head's hire must fit its unit's envelope: the allocations to the
+     *  objectives of its unit (and the units under it). With none, the
+     *  company envelope is the bound (checkAllocation). */
+    const checkUnitEnvelope = async (head: { unit: OrgUnit | null }, monthlyUsd: number) => {
+      if (monthlyUsd <= 0 || !head.unit || !this.units) return;
+      const unitIds = new Set(await this.units.subtree(org.id, head.unit.id));
+      const unitEnvelope = (await this.org.allocations(org.id)).filter((a) => a.unitId && unitIds.has(a.unitId)).reduce((sum, a) => sum + a.monthlyUsd, 0);
+      if (unitEnvelope <= 0) return;
+      const line = await lineOf(agentId);
+      const held = (await this.org.budgets(org.id)).filter((b) => b.scope === 'agent' && line.has(b.refId)).reduce((sum, b) => sum + b.monthlyUsd, 0);
+      if (held + monthlyUsd > unitEnvelope + 1e-9) throw new Error(`refused: $${monthlyUsd.toFixed(2)}/month would put your unit's agent envelopes at $${(held + monthlyUsd).toFixed(2)}, above its envelope of $${unitEnvelope.toFixed(2)} (the allocations to its objectives) — ask the chief for an allocation (org_escalate) or hire without a budget`);
     };
 
     const isAuditor = org.auditorAgentId === agentId;
@@ -1474,11 +1548,30 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         return `Review recorded: ${finalVerdict}${finalVerdict !== verdict ? ' (downgraded by the independent check)' : ''}. Task [${t.id.slice(0, 8)}] is now ${after.status}${after.status === 'blocked' ? ' — escalated to the CEO' : ''}${after.reviewRounds >= REVIEW_ROUND_CAP ? ` (round ${after.reviewRounds} of ${REVIEW_ROUND_CAP})` : ''}.`;
       }
       case 'org_escalate': {
+        // The escalation chain (decision 4, docs/autonomous-skills-review.md §4):
+        // a specialist raises to its manager (its head); a head to the chief
+        // (default) or, for a decision only the CEO can make, to the CEO; the
+        // chief to the CEO.
         const t = await taskOf();
         if (!isChief && !ctx?.reviewer && t.assigneeAgentId !== agentId && t.reviewerAgentId !== agentId && !(leadUnit && t.unitId === leadUnit.id)) throw new Error('refused: you may escalate your own task, a task you review, or a task on your unit\'s board');
-        await this.tasks.escalate(org.id, t.id, str('reason') || 'escalated', actor);
+        const reason = str('reason') || 'escalated';
+        const to = str('to').trim().toLowerCase();
+        if (to && to !== 'ceo' && to !== 'chief') throw new Error('to must be "chief" or "ceo"');
+        const head = await headInfo();
+        if (to === 'ceo' && !isChief && !head) throw new Error('refused: a specialist escalates to its head (org_escalate without `to`); the head takes it to the chief or the CEO');
+        const toCeo = async () => {
+          await this.tasks.escalate(org.id, t.id, reason, actor);
+          if (ctx) ctx.progress = true;
+          return `Task [${t.id.slice(0, 8)}] is blocked and escalated to the CEO (an approval card).`;
+        };
+        if (isChief || to === 'ceo') return toCeo();
+        // A head goes to the chief; anyone else to its manager (the chief when it reports to the chief).
+        const target = head ? org.chiefOfStaffAgentId : member.reportsToAgentId ?? org.chiefOfStaffAgentId;
+        if (!target || target === agentId) return toCeo();
+        const r = await this.tasks.escalateTo(org.id, t.id, { toAgentId: target, toName: names.get(target) ?? target.slice(0, 8), reason, actor, fromAgentId: agentId, runId: ctx?.runId ?? null });
         if (ctx) ctx.progress = true;
-        return `Task [${t.id.slice(0, 8)}] is blocked and escalated to the CEO (an approval card).`;
+        const who = target === org.chiefOfStaffAgentId ? `the chief of staff (${names.get(target) ?? 'chief'})` : `your head, ${names.get(target) ?? target.slice(0, 8)}`;
+        return `Task [${t.id.slice(0, 8)}] is blocked and escalated to ${who}: ${r.reused ? `added to its open escalation [${r.escalation.id.slice(0, 8)}]` : `escalation task [${r.escalation.id.slice(0, 8)}] is on its board`}. It decides, unblocks or takes it higher${head ? '' : ' (to the chief or the CEO)'}.`;
       }
       // ---- intent (docs/company-vision.md §2) ----
       case 'org_intent': {
@@ -1615,34 +1708,58 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         return this.units.unitReport(org.id, unit.id, names);
       }
       case 'org_hire_agent': {
-        requireChief();
+        await requireChiefOrHead();
+        const head = await headInfo();
         const reportsTo = str('reportsTo') ? (await agentOf('reportsTo')).agentId : agentId;
+        const monthlyBudgetUsd = typeof input.monthlyBudgetUsd === 'number' ? input.monthlyBudgetUsd : undefined;
+        if (head) {
+          // A function head hires into its own unit: under itself or one of its
+          // reports, a role of its own function, within the agent cap and its
+          // unit's envelope — checked in every mode, so a card is never un-approvable.
+          if (reportsTo !== agentId && !(await lineOf(agentId)).has(reportsTo)) throw new Error(`refused: a head hires into its own unit — ${names.get(reportsTo) ?? reportsTo.slice(0, 8)} is outside your reporting line (reportsTo yourself or one of your reports; hires elsewhere are the chief's)`);
+          const refusal = headHireRefusal(head.fn, str('templateOrPack'));
+          if (refusal) throw new Error(refusal);
+          const count = await this.org.liveMemberCount(org.id);
+          const pendingHires = (await this.approvals.pending(org.id)).filter((a) => a.kind === 'hire').length;
+          if (count + pendingHires >= agentCap) throw new Error(`refused: the company already has ${count} member(s)${pendingHires ? ` and ${pendingHires} pending hire(s)` : ''}, the agent cap is ${agentCap} (the CEO raises it in Settings → Workspace → Organization; tell the chief with org_escalate if the unit needs it)`);
+          if (monthlyBudgetUsd && monthlyBudgetUsd > 0) {
+            await checkUnitEnvelope(head, monthlyBudgetUsd);
+            await checkAllocation('agent', '__new__', monthlyBudgetUsd);
+          }
+        }
         const hire = {
           templateOrPack: str('templateOrPack'), name: str('name') || undefined, title: str('title') || undefined, charter: str('charter') || undefined,
           reportsToAgentId: reportsTo, scopes: Array.isArray(input.scopes) ? input.scopes.map(String) : [],
           provider: str('provider') || undefined, model: str('model') || undefined,
-          monthlyBudgetUsd: typeof input.monthlyBudgetUsd === 'number' ? input.monthlyBudgetUsd : undefined,
-          recommendation: why || undefined, requestedBy: 'chief', card: cardInput,
+          monthlyBudgetUsd,
+          recommendation: why || undefined, requestedBy: actor, card: cardInput,
+          ...(head ? { grantorAgentId: agentId } : {}),
         };
+        const me = names.get(agentId) ?? 'a head';
         // A hire lands under one manager: within one unit (alone, within caps).
         const routedHire = await boundaryRoute({ kind: 'hire', withinUnit: true, key: reportsTo, summary: `hire ${hire.name ?? hire.templateOrPack}` }, { kind: 'hire', payload: {} });
-        if (routedHire) return routedHire;
+        if (routedHire) {
+          if (head) await this.notifyChief(org, agentId, `${me} (head) asked to hire ${hire.name ?? hire.title ?? hire.templateOrPack}: ${routedHire}`, why);
+          return routedHire;
+        }
         if (!autonomous) {
           const a = await this.approvals.proposeHire(org.id, hire);
           const p = JSON.parse(a.payload) as { scopes: string[]; outsideChiefHoldings: string[] };
-          return `Hire proposed (approval ${a.id.slice(0, 8)}). Nothing exists until the CEO approves it in the app. Scopes it would get: ${p.scopes.join(', ') || 'none'}${p.outsideChiefHoldings.length ? `; dropped because you do not hold them: ${p.outsideChiefHoldings.join(', ')}` : ''}.`;
+          // The card already lands in the chief's inbox (approvals.create); the group log names the head.
+          if (head) await this.notifyChief(org, agentId, `${me} (head) proposed a hire for the CEO: ${hire.name ?? hire.title ?? hire.templateOrPack}, reporting to ${names.get(reportsTo) ?? 'it'} (approval ${a.id.slice(0, 8)})`, why, { inbox: false });
+          return `Hire proposed (approval ${a.id.slice(0, 8)}). Nothing exists until the CEO approves it in the app${head ? '; the chief of staff is told' : ''}. Scopes it would get: ${p.scopes.join(', ') || 'none'}${p.outsideChiefHoldings.length ? `; dropped because you do not hold them: ${p.outsideChiefHoldings.join(', ')}` : ''}.`;
         }
         requireWhy();
         // Caps, each with its reason: depth and fan-out are checked by prepareHire/addMember.
         const count = await this.org.liveMemberCount(org.id);
         if (count >= agentCap) throw new Error(`refused: the company already has ${count} member(s), the agent cap is ${agentCap} (the CEO raises it in Settings → Workspace → Organization)`);
         const payload = await this.approvals.prepareHire(org.id, hire).catch((err: unknown) => { throw new Error(`refused: ${err instanceof Error ? err.message : String(err)}`); });
-        if (payload.monthlyBudgetUsd) await checkAllocation('agent', '__new__', payload.monthlyBudgetUsd);
+        if (payload.monthlyBudgetUsd && !head) await checkAllocation('agent', '__new__', payload.monthlyBudgetUsd);
         if (previewing) return capture(`${payload.name} as ${payload.title}${payload.packName ? ` (${payload.packName} pack)` : ''}, reporting to ${names.get(reportsTo) ?? 'the chief'}${payload.monthlyBudgetUsd ? `, $${payload.monthlyBudgetUsd.toFixed(2)}/month` : ''} — ${why}`, payload.monthlyBudgetUsd ?? 0);
-        const result = await this.approvals.applyHire(org.id, payload, 'chief', 'chief');
-        await this.recordAuto(org, 'hire', `${result.name} as ${payload.title}${payload.packName ? ` (${payload.packName} pack)` : ''}, reporting to ${names.get(reportsTo) ?? 'the chief'}${payload.monthlyBudgetUsd ? `, $${payload.monthlyBudgetUsd.toFixed(2)}/month` : ''}`, why, { agentId: result.agentId, scopes: result.scopes, depth: result.depth, packId: payload.packId, monthlyBudgetUsd: payload.monthlyBudgetUsd ?? 0 }, ctx);
+        const result = await this.approvals.applyHire(org.id, payload, actor, actor);
+        await this.recordAuto(org, 'hire', `${result.name} as ${payload.title}${payload.packName ? ` (${payload.packName} pack)` : ''}, reporting to ${names.get(reportsTo) ?? 'the chief'}${head ? `, hired by ${me}` : ''}${payload.monthlyBudgetUsd ? `, $${payload.monthlyBudgetUsd.toFixed(2)}/month` : ''}`, why, { agentId: result.agentId, scopes: result.scopes, depth: result.depth, packId: payload.packId, monthlyBudgetUsd: payload.monthlyBudgetUsd ?? 0, ...(head ? { hiredBy: agentId } : {}) }, ctx, actor);
         await this.units?.announceIn(org.id, [result.agentId], `${result.name} joined this unit as ${payload.title}, reporting to ${names.get(reportsTo) ?? 'the chief'}.`);
-        return `Hired ${result.name} (${payload.title}) at depth ${result.depth}, reporting to ${reportsTo === agentId ? 'you' : names.get(reportsTo) ?? reportsTo.slice(0, 8)}. Scopes: ${result.scopes.join(', ') || 'none'}${payload.outsideChiefHoldings.length ? `; dropped because you do not hold them: ${payload.outsideChiefHoldings.join(', ')}` : ''}. No memory, connections or loops inherited. Audited and announced in #company.`;
+        return `Hired ${result.name} (${payload.title}) at depth ${result.depth}, reporting to ${reportsTo === agentId ? 'you' : names.get(reportsTo) ?? reportsTo.slice(0, 8)}. Scopes: ${result.scopes.join(', ') || 'none'}${payload.outsideChiefHoldings.length ? `; dropped because you do not hold them: ${payload.outsideChiefHoldings.join(', ')}` : ''}. No memory, connections or loops inherited. Audited and announced in #company${head ? '; the chief of staff is told' : ''}.`;
       }
       case 'org_set_scope': {
         requireChief();
@@ -1668,12 +1785,13 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         return `Widening needs the CEO: approval ${a.id.slice(0, 8)} proposes +${res.widened.join(', ')}. Current scopes stay until it is approved.`;
       }
       case 'org_pause_agent': {
-        requireChief();
+        await requireChiefOrHead();
         const m = await agentOf('agent');
         await inSubtree(m);
         await this.org.setMemberStatus(org.id, m.agentId, 'paused', actor);
         this.cancelWakesFor(org.id, m.agentId);
-        return `${names.get(m.agentId)} is paused; queued wakes dropped. Resuming is a CEO action or a reorg proposal.`;
+        if (!isChief) await this.notifyChief(org, agentId, `${names.get(agentId) ?? 'A head'} (head) paused ${names.get(m.agentId) ?? m.agentId.slice(0, 8)}`, why);
+        return `${names.get(m.agentId)} is paused; queued wakes dropped. Resuming is a CEO action or a reorg proposal${isChief ? '' : ' (the chief of staff is told)'}.`;
       }
       case 'org_terminate_agent': {
         requireChief();
@@ -1787,14 +1905,14 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       }
       // ---- capital (docs/company-vision.md §7) ----
       case 'org_costs': {
-        requireChiefOrLead();
+        // Every member reads spend (decision 2): read-only; a lead defaults to
+        // its unit, anyone else sees the company unless it names a unit.
         if (!this.capital) throw new Error('costs are not available on this server');
         const period = str('period') === 'all' ? 'all' : 'month';
         const unit = str('unit') ? await this.unitByRef(org.id, str('unit')) : leadUnit;
         return this.capital.describeCosts(await this.capital.costByGoal(org.id, { period, unitId: unit?.id ?? null }));
       }
       case 'org_forecast': {
-        requireChiefOrLead();
         if (!this.capital) throw new Error('forecasts are not available on this server');
         return this.capital.describeForecast(await this.capital.forecast(org.id));
       }
@@ -1827,7 +1945,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         // The chief manages its reports' settings (docs/boundary.md member_* rows):
         // identity and heartbeat alone; model alone after the eval gate
         // (a card in supervised mode, like routing); folder access only by proposal.
-        requireChief();
+        // A function head does the same for its own reporting line; the chief is told.
+        await requireChiefOrHead();
         const m = await agentOf('agent');
         await inSubtree(m);
         if (!why) throw new Error('why is required: the decision log carries it');
@@ -1859,15 +1978,17 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         const summary = `${target.name}: ${parts.join('; ')}`;
         const change: MemberSettingsChange = { agentId: m.agentId, agentName: target.name, patch, heartbeat, applyToChats: input.applyToChats !== false, why, summary };
         const card = { kind: 'member_settings' as ApprovalKind, payload: change as unknown as Record<string, unknown> };
+        // A head's card or refusal-free proposal reaches the chief too (an applied change does through recordAuto).
+        const told = async (text: string): Promise<string> => { if (!isChief) await this.notifyChief(org, agentId, `${names.get(agentId) ?? 'A head'} (head) proposed a settings change — ${summary}`, `${why}\n${text}`); return text; };
         // the strictest part decides: folder (propose) → model → identity/heartbeat
-        if (patch.workspaceFolder !== undefined) { const r = await boundaryRoute({ kind: 'member_folder', key: m.agentId, summary }, card); if (r) return r; }
-        if (modelChange) { const r = await boundaryRoute({ kind: 'member_model', key: m.agentId, summary }, card); if (r) return r; }
-        if (heartbeat && Object.keys(heartbeat).length) { const r = await boundaryRoute({ kind: 'member_heartbeat', key: m.agentId, summary }, card); if (r) return r; }
-        if (parts.includes('identity')) { const r = await boundaryRoute({ kind: 'member_identity', key: m.agentId, summary }, card); if (r) return r; }
+        if (patch.workspaceFolder !== undefined) { const r = await boundaryRoute({ kind: 'member_folder', key: m.agentId, summary }, card); if (r) return told(r); }
+        if (modelChange) { const r = await boundaryRoute({ kind: 'member_model', key: m.agentId, summary }, card); if (r) return told(r); }
+        if (heartbeat && Object.keys(heartbeat).length) { const r = await boundaryRoute({ kind: 'member_heartbeat', key: m.agentId, summary }, card); if (r) return told(r); }
+        if (parts.includes('identity')) { const r = await boundaryRoute({ kind: 'member_identity', key: m.agentId, summary }, card); if (r) return told(r); }
         if (previewing && modelChange) return capture(`${summary} — ${why}`);
         if (modelChange && !autonomous) {
-          const a = await this.approvals.create(org.id, { kind: 'member_settings', payload: card.payload, requestedBy: 'chief', recommendation: why, card: cardInput });
-          return `Model change proposed (approval ${a.id.slice(0, 8)}): ${summary}. ${target.name} keeps its current model until the CEO approves.`;
+          const a = await this.approvals.create(org.id, { kind: 'member_settings', payload: card.payload, requestedBy: actor, recommendation: why, card: cardInput });
+          return told(`Model change proposed (approval ${a.id.slice(0, 8)}): ${summary}. ${target.name} keeps its current model until the CEO approves.`);
         }
         if (modelChange) {
           // The rollout gate (docs/evals.md §3): the member's golden set replays on the new model first.
@@ -1875,7 +1996,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
           if (gate?.blocked) throw new Error(`refused: blocked by evals — ${gate.summary}`);
         }
         await this.applyMemberSettings(org.id, change, actor);
-        await this.recordAuto(org, 'member_settings', summary, why, change as unknown as Record<string, unknown>, ctx);
+        await this.recordAuto(org, 'member_settings', summary, why, change as unknown as Record<string, unknown>, ctx, actor);
         if (ctx) ctx.progress = true;
         return `Updated ${summary}.${modelChange ? (change.applyToChats ? ' Its existing chats switch too.' : ' New chats use it; existing chats keep their model.') : ''} Audited as a decision.`;
       }
@@ -2099,7 +2220,7 @@ const LEAD_TOOLS: AiToolSpec[] = [
   { name: 'org_unit_report', description: 'Your unit\'s board (tasks by status, open work by owner) and goal tree with progress. The chief passes `unit` to read any unit; default is the company.', inputSchema: { type: 'object', properties: { unit: { type: 'string' }, org: { type: 'string' } } } },
   { name: 'org_pulse', description: 'The company pulse (docs/company-vision.md §5.2): a 0–100 score, cycle time, first-review acceptance, decision latency and cost per accepted task against their targets, spend vs envelope, goals owned. Read-only.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
   // Capital (docs/company-vision.md §7): cost per outcome and the forecast, read-only.
-  { name: 'org_costs', description: 'Cost per outcome: spend rolled up task → key result → objective → vision for this month (or all time), each objective\'s share of its envelope against its measured progress (flagged when spend runs ahead of progress), spend by task class and by agent. A lead sees its unit; the chief passes `unit` or sees the company.', inputSchema: { type: 'object', properties: { period: { type: 'string', enum: ['month', 'all'] }, unit: { type: 'string' }, org: { type: 'string' } } } },
+  { name: 'org_costs', description: 'Cost per outcome: spend rolled up task → key result → objective → vision for this month (or all time), each objective\'s share of its envelope against its measured progress (flagged when spend runs ahead of progress), spend by task class and by agent. A lead sees its unit; the chief and every other member see the company or pass `unit`. Read-only: no member commits or moves money with it.', inputSchema: { type: 'object', properties: { period: { type: 'string', enum: ['month', 'all'] }, unit: { type: 'string' }, org: { type: 'string' } } } },
   { name: 'org_forecast', description: 'Burn-rate forecast: month-end spend projected from the trailing days for the company, each agent, each project and each objective\'s allocation, with onTrack | warn | stop against the envelope. The projection, not the balance, is what warns.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
   { name: 'org_set_key_result', description: 'Set a measurable key result under an objective you can see: a metric, a start and target value, a due date and an owner (yourself or a direct report; the chief: anyone) who will check in on a cadence. Progress is measured from check-ins; a key result behind its linear pace, without an active owner, overdue for check-in or losing confidence twice in a row is flagged at risk.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, objectiveId: { type: 'string', description: 'The objective (goal id or prefix) it serves.' }, metric: { type: 'string', description: 'What is measured, e.g. "subscribers".' }, targetValue: { type: 'number' }, startValue: { type: 'number', description: 'Defaults to 0.' }, unitLabel: { type: 'string', description: 'e.g. "%", "USD", "issues".' }, dueAt: { type: 'string', description: 'ISO date.' }, owner: { type: 'string', description: 'Member name.' }, checkInCadenceDays: { type: 'number', description: 'Default 7.' }, source: { type: 'string', description: 'A live metric source (id, prefix or name; org_metric_sources) that measures it: its value then comes only from the source, and check-ins carry confidence. Omit and it is self-reported.' }, description: { type: 'string' }, org: { type: 'string' } }, required: ['title', 'objectiveId', 'targetValue', 'dueAt', 'owner'] } },
 ];
@@ -2112,23 +2233,62 @@ const TASK_TOOLS: AiToolSpec[] = [
 
 const REVIEW_TOOLS: AiToolSpec[] = [
   { name: 'org_review', description: 'Record your review of a task you were asked to review: accept (done), request_changes (back to its owner with your note; 3 rounds then it escalates to the CEO), or escalate now.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, verdict: { type: 'string', enum: ['accept', 'request_changes', 'escalate'] }, note: { type: 'string' } }, required: ['verdict'] } },
-  { name: 'org_escalate', description: 'Block a task and raise it to the CEO as a decision card with a reason.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, reason: { type: 'string' } }, required: ['reason'] } },
+  { name: 'org_escalate', description: 'Block a task and raise it one step up the chain with a reason. A specialist raises to its manager (its head): an `Escalation:` task on the head\'s board, which wakes it. A function head raises to the chief of staff by default (to: "chief"), or with to: "ceo" straight to the CEO as a decision card — only for a decision only the CEO can make (money beyond the envelope, a policy, strategy or values call, an external commitment, a change the boundary reserves for the owner). The chief raises to the CEO.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, reason: { type: 'string', description: 'The question to decide, the options and your recommendation.' }, to: { type: 'string', enum: ['chief', 'ceo'], description: 'Heads only: "chief" (default) or "ceo".' } }, required: ['reason'] } },
 ];
 
-/** A unit lead raises a task of its unit to the CEO from its loops too. */
+/** Every member escalates up its chain (its own task, a task it reviews, a
+ *  lead's unit board): a specialist to its head, a head to the chief or the CEO. */
 const ESCALATE_TOOL = REVIEW_TOOLS[1];
+
+/** First occurrence wins: the role sets overlap (the chief holds them all). */
+function uniqueSpecs(specs: AiToolSpec[]): AiToolSpec[] {
+  const seen = new Set<string>();
+  return specs.filter((t) => (seen.has(t.name) ? false : (seen.add(t.name), true)));
+}
+
+/** A function head's function from its title ("Head of Sales" → `sales`):
+ *  the role catalog's `<fn>-manager` rows. Null for any other title. */
+export function headFunction(title: string | null | undefined): string | null {
+  const q = (title ?? '').trim().toLowerCase();
+  if (!q) return null;
+  const r = ROLES.find((x) => x.id.endsWith('-manager') && x.packId && x.title.toLowerCase() === q);
+  return r ? r.id.slice(0, -'-manager'.length) : null;
+}
+
+/**
+ * Why a function head may not make this hire, or null (decision 1,
+ * docs/autonomous-skills-review.md §4): a head staffs its own function — its
+ * specialists (`role:<fn>-<slug>`, the `pack-biz-<fn>-*` packs) or a
+ * generalist role or template — never another head, the chief, the auditor
+ * (its independence) or another function's specialists (that function's head
+ * hires them, or the chief).
+ */
+export function headHireRefusal(fn: string | null, templateOrPack: string): string | null {
+  const ref = (templateOrPack ?? '').trim();
+  const role = roleRef(ref);
+  const pack = role ? undefined : OrgApprovalsService.catalogItem(ref);
+  const own = fn ? ROLES.filter((r) => r.reportsToHint === `${fn}-manager`).map((r) => `role:${r.id}`) : [];
+  const hint = own.length ? ` Your function's roles: ${own.join(', ')}.` : '';
+  const id = role?.id ?? pack?.id ?? '';
+  if (role?.id === 'chief-of-staff' || pack?.id === CHIEF_PACK_ID) return `refused: a head does not hire a chief of staff.${hint}`;
+  if (role?.id === 'auditor' || pack?.id === 'pack-auditor') return `refused: the auditor is hired by the chief or the CEO, never by a function it audits.${hint}`;
+  if ((role && role.id.endsWith('-manager') && role.packId) || /^pack-biz-.+-manager$/.test(pack?.id ?? '')) return `refused: a head hires specialists, not other heads — a new function head is the chief's hire.${hint}`;
+  if (fn && role?.reportsToHint && role.reportsToHint !== `${fn}-manager`) return `refused: ${role.title} belongs to another function (${role.reportsToHint.replace(/-manager$/, '')}); its head or the chief hires it.${hint}`;
+  if (fn && /^pack-biz-/.test(id) && !id.startsWith(`pack-biz-${fn}-`)) return `refused: "${pack?.name ?? id}" belongs to another function; its head or the chief hires it.${hint}`;
+  return null;
+}
 
 const MANAGER_TOOLS: AiToolSpec[] = [
   ...REVIEW_TOOLS,
   LEAD_TOOLS[0],
-  { name: 'org_hire_agent', description: 'Hire a new member from a catalog pack (e.g. "Researcher", "Marketer"), a catalog role ("role:<id>" — researcher, writer-editor, analyst, engineer, designer, marketer, support, controller, auditor, project-lead, or a business function: <function>-manager such as sales-manager, finance-manager, engineering-manager, and its specialists such as sales-sdr, finance-fpa; GET …/org/roles lists them; the role brings its charter, scopes and model tier, a function role also its pack\'s playbooks) or a template (name + charter). Supervised mode: creates an approval card for the CEO and no agent exists until approved. Autonomous mode: executes at once within caps (depth ≤ 3, ≤ 5 reports, agent cap, company envelope) or is refused with the reason; why is required. Requested scopes are intersected with your own holdings; nothing is inherited.', inputSchema: { type: 'object', properties: { templateOrPack: { type: 'string' }, name: { type: 'string' }, title: { type: 'string' }, charter: { type: 'string', description: 'Template hires only.' }, reportsTo: { type: 'string', description: 'Member name; defaults to you.' }, scopes: { type: 'array', items: { type: 'string' }, description: 'tool:<name>, connection:<service>:<read|write>, skill:<name>, folder:<path>' }, provider: { type: 'string' }, model: { type: 'string' }, monthlyBudgetUsd: { type: 'number' }, why: { type: 'string', description: 'Your one-line recommendation.' }, org: { type: 'string' } }, required: ['templateOrPack', 'title'] } },
+  { name: 'org_hire_agent', description: 'Hire a new member from a catalog pack (e.g. "Researcher", "Marketer"), a catalog role ("role:<id>" — researcher, writer-editor, analyst, engineer, designer, marketer, support, controller, auditor, project-lead, or a business function: <function>-manager such as sales-manager, finance-manager, engineering-manager, and its specialists such as sales-sdr, finance-fpa; GET …/org/roles lists them; the role brings its charter, scopes and model tier, a function role also its pack\'s playbooks) or a template (name + charter). Supervised mode: creates an approval card for the CEO and no agent exists until approved. Autonomous mode: executes at once within caps (depth ≤ 3, ≤ 5 reports, agent cap, company envelope) or is refused with the reason; why is required. Requested scopes are intersected with your own holdings; nothing is inherited. A function head hires only into its own unit (reportsTo itself or one of its reports; its function\'s roles, role:<fn>-<slug>), within the agent cap and its unit\'s envelope (the allocations to its objectives; the company envelope when it has none), routed exactly like the chief\'s hires; the chief of staff is told of every one.', inputSchema: { type: 'object', properties: { templateOrPack: { type: 'string' }, name: { type: 'string' }, title: { type: 'string' }, charter: { type: 'string', description: 'Template hires only.' }, reportsTo: { type: 'string', description: 'Member name; defaults to you.' }, scopes: { type: 'array', items: { type: 'string' }, description: 'tool:<name>, connection:<service>:<read|write>, skill:<name>, folder:<path>' }, provider: { type: 'string' }, model: { type: 'string' }, monthlyBudgetUsd: { type: 'number' }, why: { type: 'string', description: 'Your one-line recommendation.' }, org: { type: 'string' } }, required: ['templateOrPack', 'title'] } },
   { name: 'org_set_scope', description: 'Set a report\'s scopes. Narrowing applies immediately; widening creates an approval card for the CEO (supervised) or applies at once (autonomous, why required). You can never grant what you do not hold.', inputSchema: { type: 'object', properties: { agent: { type: 'string' }, scopes: { type: 'array', items: { type: 'string' } }, why: { type: 'string' }, org: { type: 'string' } }, required: ['agent', 'scopes'] } },
-  { name: 'org_pause_agent', description: 'Pause a report immediately (a narrowing): its queued wakes are dropped and it runs no tasks until resumed by the CEO.', inputSchema: { type: 'object', properties: { agent: { type: 'string' }, org: { type: 'string' } }, required: ['agent'] } },
+  { name: 'org_pause_agent', description: 'Pause a report immediately (a narrowing): its queued wakes are dropped and it runs no tasks until resumed by the CEO. A function head pauses only members of its own reporting line; the chief of staff is told.', inputSchema: { type: 'object', properties: { agent: { type: 'string' }, org: { type: 'string' } }, required: ['agent'] } },
   { name: 'org_terminate_agent', description: 'Terminate a report: an approval card in supervised mode, immediate in autonomous mode (why required). Its reports move up one level.', inputSchema: { type: 'object', properties: { agent: { type: 'string' }, why: { type: 'string' }, org: { type: 'string' } }, required: ['agent', 'why'] } },
   { name: 'org_reorg', description: 'Structural changes: move a member under another, retitle, pause, resume, terminate. Supervised: an approval card. Autonomous: applied in order within depth/fan-out caps, stopping at the first refusal. Include a cost/benefit line in why.', inputSchema: { type: 'object', properties: { changes: { type: 'array', items: { type: 'object', properties: { op: { type: 'string', enum: ['move', 'retitle', 'pause', 'resume', 'terminate'] }, agent: { type: 'string' }, reportsTo: { type: 'string' }, title: { type: 'string' } }, required: ['op', 'agent'] } }, why: { type: 'string' }, org: { type: 'string' } }, required: ['changes', 'why'] } },
   { name: 'org_propose_strategy', description: 'PROPOSE goals → projects → first tasks (approval card). Nothing moves to todo until the CEO approves.', inputSchema: { type: 'object', properties: { goals: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, projects: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, tasks: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, brief: { type: 'object', properties: brief4 }, assigneeAgentId: { type: 'string' } }, required: ['title'] } } }, required: ['title'] } } }, required: ['title'] } }, why: { type: 'string' }, org: { type: 'string' } }, required: ['goals', 'why'] } },
   { name: 'org_allocate_budget', description: 'Allocate USD per month to an agent or project envelope. Lowering is immediate. Raising: an approval card (supervised), or immediate while agent+project envelopes stay within the company envelope (autonomous, why required; in a planning run or review it is previewed for the CEO\'s veto window). The company envelope itself is the CEO\'s. Name the objective the envelope funds (objectiveId) and what the money buys (buys: which key results) so a cut is a scope decision.', inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: ['company', 'agent', 'project'] }, agent: { type: 'string' }, projectId: { type: 'string' }, monthlyUsd: { type: 'number' }, objectiveId: { type: 'string', description: 'The objective (goal id or prefix) this envelope funds.' }, buys: { type: 'string', description: 'What the money buys: the key results it carries.' }, why: { type: 'string' }, org: { type: 'string' } }, required: ['scope', 'monthlyUsd'] } },
-  { name: 'org_update_member', description: 'Change a report\'s own settings: identity (name, role, emoji, colors as two hex colours), its model (agentType: an enabled agent type by name, and/or model), its heartbeat ({enabled, cron}), or its assigned workspace folder. Identity and heartbeat apply at once. A model change replays the member\'s golden set first (blocked on regression) and is an approval card in supervised mode. A folder change is always a proposal for the CEO. why is required and becomes the decision record.', inputSchema: { type: 'object', properties: { agent: { type: 'string', description: 'Member name.' }, name: { type: 'string' }, role: { type: 'string' }, emoji: { type: 'string' }, colors: { type: 'array', items: { type: 'string' } }, agentType: { type: 'string' }, model: { type: 'string' }, heartbeat: { type: 'object', properties: { enabled: { type: 'boolean' }, cron: { type: 'string' } } }, workspaceFolder: { type: 'string' }, applyToChats: { type: 'boolean', description: 'Model changes: also switch the member\'s existing chats (default true).' }, why: { type: 'string' }, recommend: { type: 'string' }, org: { type: 'string' } }, required: ['agent', 'why'] } },
+  { name: 'org_update_member', description: 'Change a report\'s own settings: identity (name, role, emoji, colors as two hex colours), its model (agentType: an enabled agent type by name, and/or model), its heartbeat ({enabled, cron}), or its assigned workspace folder. Identity and heartbeat apply at once. A model change replays the member\'s golden set first (blocked on regression) and is an approval card in supervised mode. A folder change is always a proposal for the CEO. why is required and becomes the decision record. A function head changes only members of its own reporting line; the chief of staff is told.', inputSchema: { type: 'object', properties: { agent: { type: 'string', description: 'Member name.' }, name: { type: 'string' }, role: { type: 'string' }, emoji: { type: 'string' }, colors: { type: 'array', items: { type: 'string' } }, agentType: { type: 'string' }, model: { type: 'string' }, heartbeat: { type: 'object', properties: { enabled: { type: 'boolean' }, cron: { type: 'string' } } }, workspaceFolder: { type: 'string' }, applyToChats: { type: 'boolean', description: 'Model changes: also switch the member\'s existing chats (default true).' }, why: { type: 'string' }, recommend: { type: 'string' }, org: { type: 'string' } }, required: ['agent', 'why'] } },
   { name: 'org_set_routing', description: 'Route a task class (triage | research | synthesis | review | ops | general) to a model tier (cheap | standard | strong) to trade quality for cost per class; a model the CEO pinned on an agent still wins. Autonomous: applies at once (previewed in a planning run or review); supervised: an approval card. why is required and becomes the decision record. org_costs and org_pulse show spend by class.', inputSchema: { type: 'object', properties: { class: { type: 'string' }, tier: { type: 'string', enum: ['cheap', 'standard', 'strong'] }, why: { type: 'string' }, org: { type: 'string' } }, required: ['class', 'tier', 'why'] } },
   { name: 'org_review_structure', description: 'Review the company\'s structure: idle and overloaded members, unassigned goals, unowned and blocked tasks, headroom against the agent cap and the company envelope. Read-only; act with the other tools.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
   { name: 'org_audit_query', description: 'Read the hash-chained audit log: filter by action (task_assign, scope_widen, spend_commit, run_end, …) or refId.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, refId: { type: 'string' }, limit: { type: 'number' }, org: { type: 'string' } } } },
@@ -2136,6 +2296,11 @@ const MANAGER_TOOLS: AiToolSpec[] = [
   { name: 'org_tune', description: 'Adjust one of the company\'s tunables (thresholds and cadences: at-risk pace tolerance, confidence drops, overdue cadences, default check-in cadence, planning debounce/cooldown, …) to fit the work and the culture. Within its bound only — the bound is the safety floor. Autonomous: applies at once; supervised: an approval card. why is required and becomes the decision record.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'e.g. intent.paceTolerance (org_intent lists the current values).' }, value: { type: 'number' }, why: { type: 'string' }, org: { type: 'string' } }, required: ['key', 'value', 'why'] } },
   { name: 'org_strategy_memo', description: 'End a planning session with the strategy memo: one paragraph — the objectives, who owns what, what the envelope buys, the risks, the questions only the CEO can answer. Stored as the company\'s latest memo, posted to #company, audited.', inputSchema: { type: 'object', properties: { text: { type: 'string' }, org: { type: 'string' } }, required: ['text'] } },
 ];
+
+/** A function head's lifecycle tools for its own reporting line (decision 1). */
+const HEAD_TOOLS: AiToolSpec[] = MANAGER_TOOLS.filter((t) => ['org_hire_agent', 'org_pause_agent', 'org_update_member'].includes(t.name));
+/** Every member: the escalation chain and the spend reads (decision 2: read-only, nothing that writes or commits spend). */
+const MEMBER_EXTRA_TOOLS: AiToolSpec[] = [ESCALATE_TOOL, ...LEAD_TOOLS.filter((t) => t.name === 'org_costs' || t.name === 'org_forecast')];
 
 /** Old names kept for one release (docs/group-chat.md §5): accepted, not offered. */
 /** Decision-card fields (docs/owners-seat.md §1) on every tool that can become a card. */

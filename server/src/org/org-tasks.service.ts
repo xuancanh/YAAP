@@ -655,6 +655,44 @@ export class OrgTasksService {
     return this.get(orgId, taskId);
   }
 
+  /**
+   * The escalation chain below the CEO (decision 4 of
+   * docs/autonomous-skills-review.md §4): a member raises a task to the
+   * member above it — a specialist to its head, a head to the chief. The
+   * task blocks with the reason on its timeline; the target gets one open
+   * `Escalation:` task on its board per escalated task (a repeat is a
+   * comment on it that wakes it again) and an inbox event. No approval card
+   * and no board event for the chief: the CEO path is `escalate`.
+   */
+  async escalateTo(orgId: string, taskId: string, input: { toAgentId: string; toName: string; reason: string; actor: string; fromAgentId: string; runId?: string | null }): Promise<{ task: OrgTask; escalation: OrgTask; reused: boolean }> {
+    const t = await this.get(orgId, taskId);
+    const reason = input.reason.slice(0, 300);
+    const blockers = [...parseList(t.blockers), `escalated to ${input.toName}: ${reason}`.slice(0, 300)].slice(-20);
+    await this.db.update(orgTasks).set({ status: 'blocked', blockers: JSON.stringify(blockers), claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.comment(orgId, t.id, { text: `Escalated to ${input.toName}: ${reason}`, fromAgentId: input.fromAgentId, runId: input.runId ?? null });
+    const open = (await this.list(orgId)).find((x) => x.parentTaskId === t.id && x.assigneeAgentId === input.toAgentId && x.title.startsWith('Escalation:') && !['done', 'cancelled'].includes(x.status));
+    let escalation: OrgTask;
+    if (open) {
+      await this.comment(orgId, open.id, { text: `Escalated again: ${reason}`, fromAgentId: input.fromAgentId, runId: input.runId ?? null, wake: true });
+      escalation = open;
+    } else {
+      const unit = this.units ? await this.units.ledBy(orgId, input.toAgentId).catch(() => null) : null;
+      escalation = await this.create(orgId, {
+        title: `Escalation: ${t.title}`.slice(0, 200),
+        brief: {
+          outcome: `A decision or an unblock for task [${t.id.slice(0, 8)}] "${t.title}".`,
+          context: `Escalated by its ${t.assigneeAgentId === input.fromAgentId ? 'owner' : 'reviewer or lead'}: ${reason}`,
+          constraints: 'Decide within your own authority; take it higher with org_escalate (a head: to the chief, or to the CEO for a decision only the CEO can make) rather than deciding beyond it.',
+          done_when: `Task [${t.id.slice(0, 8)}] can move again: your answer is on its timeline (org_task_comment) and it is unblocked, reassigned or escalated further.`,
+        },
+        parentTaskId: t.id, assigneeAgentId: input.toAgentId, status: 'todo', createdBy: input.actor, unitId: unit?.id ?? null,
+      });
+    }
+    await this.agents?.addEvent(input.toAgentId, { kind: 'escalation', title: `Escalation: ${t.title}`.slice(0, 200), body: reason, payload: JSON.stringify({ orgId, taskId: t.id, escalationTaskId: escalation.id }), origin: 'org' }).catch(() => undefined);
+    await this.audit.append(orgId, { actor: input.actor, action: 'task_escalate', refType: 'task', refId: taskId, payload: { reason, to: input.toAgentId, escalationTaskId: escalation.id } });
+    return { task: await this.get(orgId, taskId), escalation, reused: Boolean(open) };
+  }
+
   // ---- runs ----
 
   async startRun(orgId: string, input: { taskId: string; agentId: string; sessionId?: string | null; wakeReason: OrgWakeReason; reservedUsd?: number }): Promise<OrgRun> {

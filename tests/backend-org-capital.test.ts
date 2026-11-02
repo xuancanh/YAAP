@@ -164,7 +164,8 @@ test('task class: set by the creator or derived by the one shared heuristic (cla
   assert.match(text, /- Grow the list: \$8\.00 \(16% of the company \$50\.00 envelope\) for 0% of 1 key result\(s\) measured/);
   assert.match(text, /By class: synthesis \$5\.00, research \$3\.00, review \$2\.00, ops \$1\.00\./);
   const editorSession = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.editor.id, name: 'editor chat' });
-  await assert.rejects(s.runtime.execute(editorSession, 'org_costs', {}), /chief of staff and unit leads/);
+  // every member reads spend (decision 2 of docs/autonomous-skills-review.md §4): the company view, read-only
+  assert.match(await s.runtime.execute(editorSession, 'org_costs', {}), /^Spend this month: \$11\.00/);
   // the spend tree and the pulse show USD by class too
   assert.deepEqual((await s.runtime.spendTree(orgId)).byClass, { research: 3, synthesis: 5, review: 2, ops: 1 });
   assert.deepEqual((await s.slo.compute(orgId)).spendByClassUsd, { research: 3, synthesis: 5, review: 2, ops: 1 });
@@ -605,7 +606,7 @@ test('replay composes a day from the audit chain, runs, signals, approvals and p
 
 // ---- 8. the plan in the brief and the tools on offer ----
 
-test('a pending plan shows in the brief with its veto route; org_costs / org_forecast are offered to leads and the chief, org_set_routing to the chief only; every capital threshold is a registered tunable with a bound', async () => {
+test('a pending plan shows in the brief with its veto route; org_costs / org_forecast are offered to every member (read-only), org_set_routing to the chief only; every capital threshold is a registered tunable with a bound', async () => {
   const s = await setup([hireRound, answer]);
   const orgId = await enable(s);
   await s.runtime.runChiefReview(orgId, ['test'], 'manual');
@@ -619,7 +620,9 @@ test('a pending plan shows in the brief with its veto route; org_costs / org_for
   const names = async (session: Awaited<ReturnType<typeof s.repo.createSession>>) => (await s.runtime.specsFor(session)).map((t) => t.name);
   const lead = await names(writerSession); const member = await names(alphaSession); const chief = await names(chiefSession);
   assert.ok(lead.includes('org_costs') && lead.includes('org_forecast') && !lead.includes('org_set_routing'));
-  assert.ok(!member.includes('org_costs') && !member.includes('org_forecast'));
+  assert.ok(member.includes('org_costs') && member.includes('org_forecast'), 'every member reads spend');
+  for (const t of ['org_set_routing', 'org_allocate_budget', 'org_hire_agent', 'org_tune']) assert.ok(!member.includes(t), `no spend-moving tool leaks to a member: ${t}`);
+  assert.match(await s.runtime.execute(alphaSession, 'org_forecast', {}), /^Forecast for/);
   assert.ok(chief.includes('org_costs') && chief.includes('org_forecast') && chief.includes('org_set_routing'));
   assert.match(await s.runtime.execute(writerSession, 'org_forecast', {}), /^Forecast for/);
   assert.match(await s.runtime.execute(writerSession, 'org_costs', {}), /^Spend this month/);

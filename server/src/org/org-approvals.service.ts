@@ -61,6 +61,9 @@ export interface HireInput {
   provider?: string; model?: string; monthlyBudgetUsd?: number; recommendation?: string; requestedBy: string;
   /** The decision-card fields (docs/owners-seat.md §1). */
   card?: CardInput;
+  /** Whose holdings the requested scopes meet: the chief by default, a
+   *  function head for its own hire (it never grants what it does not hold). */
+  grantorAgentId?: string;
 }
 
 export interface HirePayload {
@@ -85,6 +88,8 @@ export interface HirePayload {
   monthlyBudgetUsd?: number;
   /** Skill names the pack would install, for the card. */
   skills?: string[];
+  /** A function head hiring into its own unit: whose holdings bound the scopes (absent: the chief). */
+  grantorAgentId?: string;
 }
 
 export type ReorgChange =
@@ -225,8 +230,9 @@ export class OrgApprovalsService {
    *  and the autonomous path, docs/group-chat.md §5). */
   async prepareHire(orgId: string, input: HireInput): Promise<HirePayload> {
     const org = await this.org.get(orgId);
-    const chief = org.chiefOfStaffAgentId ? await this.org.member(orgId, org.chiefOfStaffAgentId) : null;
-    const holdings = this.org.scopesOf(chief);
+    const grantor = input.grantorAgentId ?? org.chiefOfStaffAgentId;
+    const holder = grantor ? await this.org.member(orgId, grantor) : null;
+    const holdings = this.org.scopesOf(holder);
     let pack = OrgApprovalsService.catalogItem(input.templateOrPack);
     const reportsTo = input.reportsToAgentId ?? org.chiefOfStaffAgentId;
     if (!reportsTo) throw new BadRequestException('reportsToAgentId is required');
@@ -255,6 +261,7 @@ export class OrgApprovalsService {
       provider: input.provider, model: input.model ?? (role?.model || undefined), monthlyBudgetUsd: input.monthlyBudgetUsd,
       skills: pack?.skills?.map((s) => s.name),
       ...(role ? { roleId: role.roleId, modelTier: role.modelTier } : {}),
+      ...(input.grantorAgentId && input.grantorAgentId !== org.chiefOfStaffAgentId ? { grantorAgentId: input.grantorAgentId } : {}),
     };
     return payload;
   }
@@ -411,9 +418,11 @@ export class OrgApprovalsService {
    *  within caps — OrgRuntimeService checks them first). */
   async applyHire(orgId: string, p: HirePayload, actor: string, grantedBy: string): Promise<{ agentId: string; name: string; scopes: string[]; depth: number }> {
     const org = await this.org.get(orgId);
-    // Re-meet at apply time: the chief's holdings may have narrowed since.
-    const chief = org.chiefOfStaffAgentId ? await this.org.member(orgId, org.chiefOfStaffAgentId) : null;
-    const scopes = meetScopes(this.org.scopesOf(chief), parseScopes(p.requestedScopes ?? p.scopes ?? []));
+    // Re-meet at apply time: the grantor's (the chief's, or the hiring
+    // head's) holdings may have narrowed since.
+    const grantorId = p.grantorAgentId ?? org.chiefOfStaffAgentId;
+    const grantor = grantorId ? await this.org.member(orgId, grantorId) : null;
+    const scopes = meetScopes(this.org.scopesOf(grantor), parseScopes(p.requestedScopes ?? p.scopes ?? []));
     await this.org.gate(orgId, { kind: 'hire', withinUnit: true, key: p.reportsToAgentId, summary: `hire ${p.name}` }, actor);
     const pack = p.packId ? OrgApprovalsService.catalogItem(p.packId) : undefined;
     const taken = new Set((await this.agents.list()).map((a) => a.name));

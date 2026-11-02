@@ -19,7 +19,7 @@ import { defaultChiefCharter } from '../server/src/org/org.service';
 import { OrgApprovalsService } from '../server/src/org/org-approvals.service';
 import { OrgChiefService, describeState } from '../server/src/org/org-chief.service';
 import { AUTHORED_PACKS } from '../server/src/market/authored-packs.generated';
-import { setup, enable, sessionOf } from './org-governance-harness';
+import { setup, enable, sessionOf, inbox } from './org-governance-harness';
 import { memStorage } from './helpers';
 import { ToolsService } from '../server/src/chats/tools.service';
 import { RESTRICT_OWN_SKILLS } from '../server/src/chats/turn-loop.service';
@@ -262,11 +262,13 @@ test('every tool a business skill names exists and is offered to the role that r
   const auditor = await offered(auditSession);
   s.runtime.endAuxRun(auditSession.id);
 
-  // the boundary the catalog states: a head never gets the chief's structure tools, the auditor never writes
-  for (const t of ['org_hire_agent', 'org_pause_agent', 'org_update_member', 'org_report', 'org_audit_finding']) assert.ok(!head.has(t), `a head has no ${t}`);
+  // the boundary the catalog states: a head staffs its own unit (hire, pause, re-tool its reports) but
+  // never gets the chief's other structure tools; the auditor never writes
+  for (const t of ['org_terminate_agent', 'org_set_scope', 'org_reorg', 'org_allocate_budget', 'org_set_routing', 'org_report', 'org_audit_finding']) assert.ok(!head.has(t), `a head has no ${t}`);
+  for (const t of ['org_hire_agent', 'org_pause_agent', 'org_update_member']) assert.ok(head.has(t), `a head manages its own reports with ${t}`);
   for (const t of ['org_task_update', 'org_task_comment', 'org_request_review', 'org_escalate', 'org_set_key_result', 'org_set_cadence']) assert.ok(head.has(t), `a head has ${t} in its loops`);
-  for (const t of ['org_task_update', 'org_request_review', 'org_task_comment']) assert.ok(specialist.has(t), `a specialist keeps its task true from the heartbeat (${t})`);
-  for (const t of ['org_costs', 'org_set_goal', 'org_assign', 'org_propose_experiment']) assert.ok(!specialist.has(t), `a specialist has no ${t}`);
+  for (const t of ['org_task_update', 'org_request_review', 'org_task_comment', 'org_escalate', 'org_costs', 'org_forecast']) assert.ok(specialist.has(t), `a specialist has ${t} (its task, the chain up, the spend reads)`);
+  for (const t of ['org_set_goal', 'org_assign', 'org_propose_experiment', 'org_hire_agent', 'org_pause_agent', 'org_update_member', 'org_allocate_budget', 'org_set_routing']) assert.ok(!specialist.has(t), `a specialist has no ${t}`);
   for (const t of ['org_audit_finding', 'org_audit_close', 'fs_read', 'org_metric_read', 'org_decisions', 'org_intent']) assert.ok(auditor.has(t), `the auditor reads with ${t}`);
   for (const t of ['fs_write', 'fs_edit', 'org_create_task', 'org_message', 'org_task_comment']) assert.ok(!auditor.has(t), `the auditor's run never offers ${t}`);
 
@@ -284,10 +286,10 @@ test('every tool a business skill names exists and is offered to the role that r
   // the cross-cutting org playbooks every member carries: a head runs all three
   for (const b of BUILTIN_SKILLS.filter((x) => x.name.startsWith('org-'))) for (const t of toolsNamed(b.instructions)) if (!head.has(t)) missing.push(`builtin ${b.name}: ${t}`);
   assert.deepEqual(missing, []);
-  // a head escalates from its loops only what is its unit's
+  // a head escalates from its loops only what is its unit's (to the CEO when it says so)
   const writerLoop = await sessionOf(s, s.writer.id);
   const ours = await s.tasks.create(orgId, { title: 'Pick the launch date', createdBy: `agent:${s.writer.id}`, assigneeAgentId: s.editor.id });
-  assert.match(await s.runtime.execute(writerLoop, 'org_escalate', { taskId: ours.id, reason: 'needs the CEO' }), /escalated to the CEO/);
+  assert.match(await s.runtime.execute(writerLoop, 'org_escalate', { taskId: ours.id, reason: 'needs the CEO', to: 'ceo' }), /escalated to the CEO/);
   const theirs = await s.tasks.create(orgId, { title: 'Company offsite', createdBy: 'chief' });
   await assert.rejects(s.runtime.execute(writerLoop, 'org_escalate', { taskId: theirs.id, reason: 'x' }), /your unit's board/);
   // a head sees its reports' incidents (it runs their postmortems); a member only its own
@@ -320,4 +322,102 @@ test('the business skill set closes its loops: the chief sweeps blocks and revie
   assert.ok(auditor.skills!.some((x) => x.name === 'audit-ledger-and-metrics' && /Assurance request:/.test(x.instructions)));
   assert.ok(auditor.skills!.some((x) => x.name === 'audit-values-and-culture'));
   for (const n of ['org-member-workflow', 'org-member-onboarding', 'org-unit-retro']) assert.ok(BUILTIN_SKILLS.some((b) => b.name === n), `builtin ${n}`);
+});
+
+// ---- the CEO's decisions (docs/autonomous-skills-review.md §4) ----
+
+/** A company where Writer heads Sales (title "Head of Sales") with Editor reporting to it. */
+async function salesCompany(modeName: 'supervised' | 'autonomous') {
+  const s = await setup();
+  const orgId = await enable(s, modeName);
+  await s.org.updateMember(orgId, s.writer.id, { title: 'Head of Sales' });
+  await s.org.updateMember(orgId, s.editor.id, { reportsToAgentId: s.writer.id });
+  await s.units.syncMembership(orgId);
+  return { s, orgId, head: await sessionOf(s, s.writer.id), specialist: await sessionOf(s, s.editor.id), chief: await sessionOf(s, s.chief.id) };
+}
+
+test('decision 1: a function head hires into its own unit through the boundary (actor = the head, the chief told); outside its line, another function, a head role, the cap and its unit envelope are refused', async () => {
+  const { s, orgId, head, specialist } = await salesCompany('autonomous');
+  assert.deepEqual(await s.runtime.headOf(orgId, s.writer.id).then((h) => h && { fn: h.fn, lead: Boolean(h.unit) }), { fn: 'sales', lead: true });
+  assert.equal(await s.runtime.headOf(orgId, s.editor.id), null, 'a specialist is no head');
+  assert.equal(await s.runtime.headOf(orgId, s.chief.id), null, 'the chief has the company set');
+  // within its subtree: hired at once, the head is the actor, the boundary was asked, the chief is told
+  const out = await s.runtime.execute(head, 'org_hire_agent', { templateOrPack: 'role:sales-sdr', title: 'SDR', why: 'inbound leads wait a day' });
+  assert.match(out, /Hired SDR \(SDR\) at depth 3, reporting to you\..*the chief of staff is told/);
+  const sdr = (await s.org.members(orgId)).find((m) => m.title === 'SDR')!;
+  assert.equal(sdr.reportsToAgentId, s.writer.id);
+  const auto = (await s.audit.list(orgId, { action: 'auto_hire' }))[0];
+  assert.equal(auto.actor, `agent:${s.writer.id}`);
+  assert.ok(s.checks.some((c) => c.change.kind === 'hire' && c.actor === `agent:${s.writer.id}`), 'routed through the boundary as the head');
+  assert.ok((await inbox(s, s.chief.id, 'info')).some((e) => /Writer \(head\) — autonomous hire: SDR as SDR/.test(e.title)), 'the chief is told');
+  assert.ok((await s.tasks.messages(orgId)).some((m) => m.fromAgentId === s.writer.id && /autonomous hire/.test(m.text)), 'and the group log names it');
+  // the head re-tools and pauses its own reports; the chief is told of the pause
+  assert.match(await s.runtime.execute(head, 'org_update_member', { agent: 'Editor', emoji: '✍️', why: 'a clearer face' }), /Updated Editor: identity/);
+  assert.match(await s.runtime.execute(head, 'org_pause_agent', { agent: 'SDR', why: 'no leads this week' }), /is paused.*the chief of staff is told/);
+  assert.ok((await inbox(s, s.chief.id, 'info')).some((e) => /Writer \(head\) paused SDR/.test(e.title)));
+  await assert.rejects(s.runtime.execute(head, 'org_pause_agent', { agent: 'Chief' }), /not in your reporting line/);
+  // outside its reporting line, another function's role, another head, the auditor
+  await assert.rejects(s.runtime.execute(head, 'org_hire_agent', { templateOrPack: 'role:sales-account-executive', title: 'AE', reportsTo: 'Chief', why: 'x' }), /outside your reporting line/);
+  await assert.rejects(s.runtime.execute(head, 'org_hire_agent', { templateOrPack: 'role:marketing-content', title: 'Writer 2', why: 'x' }), /belongs to another function.*role:sales-sdr/);
+  await assert.rejects(s.runtime.execute(head, 'org_hire_agent', { templateOrPack: 'role:finance-manager', title: 'CFO', why: 'x' }), /not other heads/);
+  await assert.rejects(s.runtime.execute(head, 'org_hire_agent', { templateOrPack: 'role:auditor', title: 'Auditor', why: 'x' }), /never by a function it audits/);
+  // a specialist cannot hire or pause
+  await assert.rejects(s.runtime.execute(specialist, 'org_hire_agent', { templateOrPack: 'role:sales-sdr', title: 'SDR 2', why: 'x' }), /for the chief of staff and function heads/);
+  await assert.rejects(s.runtime.execute(specialist, 'org_pause_agent', { agent: 'SDR' }), /for the chief of staff and function heads/);
+  // the unit's envelope: the allocations to its objectives bound its agent envelopes
+  const unit = (await s.units.isLead(orgId, s.writer.id))!;
+  const objective = await s.units.addGoal(orgId, { title: 'Fill the pipeline', unitId: unit.id });
+  await s.org.setAllocation(orgId, { goalId: objective.id, monthlyUsd: 5 });
+  await assert.rejects(s.runtime.execute(head, 'org_hire_agent', { templateOrPack: 'role:sales-engineer', title: 'SE', monthlyBudgetUsd: 8, why: 'demos' }), /above its envelope of \$5\.00/);
+  assert.match(await s.runtime.execute(head, 'org_hire_agent', { templateOrPack: 'role:sales-engineer', title: 'SE', monthlyBudgetUsd: 4, why: 'demos' }), /Hired SE/);
+  // the agent cap
+  const live = await s.org.liveMemberCount(orgId);
+  await s.mode.setMode(s.ws.id, { mode: 'autonomous', chiefOfStaffAgentId: s.chief.id, monthlyUsd: 50, agentCap: live });
+  await assert.rejects(s.runtime.execute(head, 'org_hire_agent', { templateOrPack: 'role:sales-account-executive', title: 'AE', why: 'deals' }), /agent cap is \d+/);
+});
+
+test('decision 1, supervised: a head\'s hire is a card for the CEO requested by the head, its scopes met with the head\'s own holdings', async () => {
+  const { s, orgId, head } = await salesCompany('supervised');
+  await s.org.setScopes(orgId, s.writer.id, ['tool:fs_read'], { actor: 'user', force: true });
+  const out = await s.runtime.execute(head, 'org_hire_agent', { templateOrPack: 'role:sales-sdr', title: 'SDR', scopes: ['tool:fs_read', 'tool:fs_write'], why: 'inbound leads wait' });
+  assert.match(out, /Hire proposed \(approval [0-9a-f]{8}\).*the chief of staff is told/);
+  const [card] = (await s.approvals.pending(orgId)).filter((a) => a.kind === 'hire');
+  assert.equal(card.requestedBy, `agent:${s.writer.id}`);
+  const payload = JSON.parse(card.payload) as { grantorAgentId?: string; scopes: string[]; reportsToAgentId: string };
+  assert.equal(payload.grantorAgentId, s.writer.id);
+  assert.equal(payload.reportsToAgentId, s.writer.id);
+  assert.ok(!payload.scopes.includes('tool:fs_write'), 'a head never grants what it does not hold');
+  assert.ok((await s.tasks.messages(orgId)).some((m) => m.fromAgentId === s.writer.id && /proposed a hire/.test(m.text)), 'the chief sees it in the group log (and the card in its inbox)');
+  const { result } = await s.approvals.decide(orgId, card.id, 'approve', 'go');
+  const hired = (await s.org.member(orgId, String(result!.agentId)))!;
+  assert.equal(hired.reportsToAgentId, s.writer.id);
+  assert.ok(!s.org.scopesOf(hired).includes('tool:fs_write'));
+});
+
+test('decision 4: the escalation chain — a specialist raises to its head (a board task, no CEO card), a head to the chief by default or to the CEO when it says so', async () => {
+  const { s, orgId, head, specialist } = await salesCompany('autonomous');
+  const cards = async () => (await s.db.select().from(orgApprovals).where(eq(orgApprovals.orgId, orgId))).filter((a) => a.kind === 'escalation').length;
+  const mine = await s.tasks.create(orgId, { title: 'Quote for Acme', createdBy: `agent:${s.writer.id}`, assigneeAgentId: s.editor.id });
+  const out = await s.runtime.execute(specialist, 'org_escalate', { taskId: mine.id, reason: 'Acme asks for 30% off — above my authority' });
+  assert.match(out, /escalated to your head, Writer: escalation task \[[0-9a-f]{8}\] is on its board/);
+  assert.equal((await s.tasks.get(orgId, mine.id)).status, 'blocked');
+  const [esc] = (await s.tasks.list(orgId)).filter((t) => t.parentTaskId === mine.id);
+  assert.equal(esc.assigneeAgentId, s.writer.id);
+  assert.match(esc.title, /^Escalation: Quote for Acme/);
+  assert.equal(await cards(), 0, 'no card for the CEO');
+  // a repeat joins the open escalation
+  assert.match(await s.runtime.execute(specialist, 'org_escalate', { taskId: mine.id, reason: 'still waiting' }), /added to its open escalation/);
+  assert.equal((await s.tasks.list(orgId)).filter((t) => t.parentTaskId === mine.id).length, 1);
+  // a specialist cannot skip its head
+  await assert.rejects(s.runtime.execute(specialist, 'org_escalate', { taskId: mine.id, reason: 'x', to: 'ceo' }), /escalates to its head/);
+  // the head: to the chief by default …
+  const theirs = await s.tasks.create(orgId, { title: 'Discount policy', createdBy: `agent:${s.writer.id}`, assigneeAgentId: s.writer.id });
+  assert.match(await s.runtime.execute(head, 'org_escalate', { taskId: theirs.id, reason: 'we need a discount policy' }), /escalated to the chief of staff \(Chief\)/);
+  const [toChief] = (await s.tasks.list(orgId)).filter((t) => t.parentTaskId === theirs.id);
+  assert.equal(toChief.assigneeAgentId, s.chief.id);
+  assert.equal(await cards(), 0);
+  // … or to the CEO, a decision card
+  assert.match(await s.runtime.execute(head, 'org_escalate', { taskId: theirs.id, reason: 'a 30% discount commits the company', to: 'ceo' }), /escalated to the CEO/);
+  assert.equal(await cards(), 1);
+  await assert.rejects(s.runtime.execute(head, 'org_escalate', { taskId: theirs.id, reason: 'x', to: 'board' }), /to must be "chief" or "ceo"/);
 });
