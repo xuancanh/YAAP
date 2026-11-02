@@ -36,7 +36,7 @@ description: Cascade the company's objectives into the IT & security unit's goal
 4. For each, org_set_key_result with metric, startValue measured today, targetValue, unitLabel, dueAt and owner (yourself or a direct report: the IT Administrator for patching, MFA and tickets; the Security Analyst for remediation time; the GRC Specialist for control pass rate). Attach a metric source (MDM, scanner, identity provider) when one exists; else propose one with org_propose_metric_source and mark the result self-reported. checkInCadenceDays from the profile (7 by default; 3-4 before an audit window).
 5. Record your honest probability for each with org_forecast_outcome.
 6. Create the first briefed tasks for your reports (it-security-team-management).
-7. Write /org/it-security/okrs/<cycle>.md: objective, unit goal, key results table, assumptions (asset counts, audit dates, tool coverage) and the profile lines that shaped them. Post a three-line summary with org_message.
+7. Write /org/it-security/okrs/<yyyy>-Q<n>.md: objective, unit goal, key results table, assumptions (asset counts, audit dates, tool coverage) and the profile lines that shaped them. Post a three-line summary with org_message.
 8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: it-security-access-review

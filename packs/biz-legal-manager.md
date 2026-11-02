@@ -37,7 +37,7 @@ description: Cascade the company's objectives into the legal unit's goal and 2-4
 4. For each, org_set_key_result with metric, startValue (measured today), targetValue, unitLabel, dueAt and owner (yourself or a direct report: the Contracts Specialist for turnaround and conformance, the Privacy & Compliance Officer for deadlines met). Attach a source (org_metric_sources) when the contract or matter system feeds one; else propose one with org_propose_metric_source. Set checkInCadenceDays from the profile (7 by default).
 5. Record your honest probability for each with org_forecast_outcome (kind probability).
 6. Create the first briefed tasks per key result with org_create_task (assignee a direct report).
-7. Write /org/legal/okrs/<cycle>.md: objective, unit goal, key results table, assumptions (request volume, mix of standard and bespoke), and the profile lines that shaped them. Post a three-line summary with org_message.
+7. Write /org/legal/okrs/<yyyy>-Q<n>.md: objective, unit goal, key results table, assumptions (request volume, mix of standard and bespoke), and the profile lines that shaped them. Post a three-line summary with org_message.
 8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: legal-intake-triage

@@ -101,7 +101,7 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
     instructions: `You were just hired into a company of agents. Run this on your first wake (usually an onboarding task from your head). Outside a company (no org_* tools) this skill does not apply.
 
 1. The company: org_intent for the vision, objectives, key results and operating profile (values and culture set your cadence, rigour and tone); fs_read /org/operating-system.md and /org/values.md for how decisions are made and what the company holds itself to.
-2. Your function: fs_list /org/ to find your function's folder, then fs_read its cadence.md, kpis.md, team.md, the current okrs/ file and the latest reports/ file. Note the key results your role serves and the rituals you attend.
+2. Your function: fs_read /org/README.md for what lives where, then your function's folder, named like your role (role cs-csm → /org/cs/): its README.md, cadence.md, kpis.md, team.md, the current okrs/<yyyy>-Q<n>.md and the latest reports/<yyyy>-W<ww>.md. Your unit's rituals and attendees are in /org/rituals/<unit>.md. Note the key results your role serves and the rituals you attend.
 3. Your role: re-read your charter; org_playbooks filtered to your role (a company playbook beats your own when both cover the same work); org_capacity for your WIP limit; org_read_board with mine=true for what is already yours.
 4. Write ~/onboarding.md in your home folder: what the function is trying to achieve this period (the key results, with their ids), who your manager is and how they review, the rituals you attend, your first-week plan (the first task, what done looks like, what you will learn first) and your open questions.
 5. Ask the open questions once, all together, on your onboarding task (org_task_comment). Do not guess at numbers, customers or decisions the record does not hold.
@@ -113,12 +113,12 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
     description: 'For unit leads and the chief of staff in a company of agents: facilitate a retro or postmortem meeting that ends in at most two owned changes, kept lessons and a check of last time\'s actions',
     instructions: `You facilitate your unit's retro (or a postmortem the company scheduled after an incident). Outside a company (no org_* tools) this skill does not apply.
 
-1. Before the meeting, gather facts: org_unit_report for what shipped against what was committed, first-review acceptance and review rounds, blocked and abandoned work; org_incidents for the period; the last retro's file in your function folder (fs_read /org/<function>/retros/) and whether its actions were done.
+1. Before the meeting, gather facts: org_unit_report for what shipped against what was committed, first-review acceptance and review rounds, blocked and abandoned work; org_incidents for the period; the last retro's minutes (the newest …-retro.md under /org/meetings/<unit>/<yyyy>/) and whether its actions were done.
 2. Open with the facts, not opinions (meeting_speak), then ask every attendee for one thing that helped and one that hurt. Quiet members are asked by name.
 3. Group the causes (unclear briefs, review bottleneck, dependencies on other units, interrupts, tool or provider failures) and keep at most two changes. Each becomes meeting_propose_action with an owner and a date. A change that should move a metric is proposed afterwards as an experiment (org_propose_experiment); a repeatable fix becomes a playbook (org_write_playbook).
 4. A lesson the company should keep is meeting_propose_lesson with its audience (member, unit or company); a risk is meeting_raise_risk; a question only the CEO can answer is meeting_ask_ceo.
 5. A postmortem is blameless: the timeline with evidence, the impact in numbers, the contributing causes down to something the company controls, and actions to prevent, detect and mitigate, at least one due within the next cycle.
-6. On the closing turn call meeting_close with the summary. Afterwards save /org/<function>/retros/<date>.md (facts, changes with owners, lessons, last time's actions: done, working or dropped with the reason).
+6. On the closing turn call meeting_close with the summary; the minutes are written to /org/meetings/<unit>/<yyyy>/<yyyy-mm-dd>-retro.md when the meeting ends. Afterwards fs_append to them a Follow-up section: last time's actions, each done, working or dropped with the reason.
 7. Adapt the ritual: a retro that produced no change or lesson for several cycles running is proposed for a lighter cadence (org_set_cadence, the why naming the evidence and the operating profile). Done when every change has an owner and a date.`,
   },
 ];

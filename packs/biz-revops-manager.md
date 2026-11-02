@@ -36,7 +36,7 @@ description: Cascade the company's objectives into the RevOps unit's goal and 2-
 4. For each, org_set_key_result with metric, startValue measured today, targetValue, unitLabel, dueAt and owner (yourself or a direct report: the CRM Administrator for completeness and routing, the Revenue Analyst for accuracy and funnel metrics, the Deal Desk Analyst for deal-cycle measures). Attach a metric source (CRM report or warehouse query) or propose one with org_propose_metric_source. checkInCadenceDays from the profile (7 by default).
 5. Record your honest probability for each with org_forecast_outcome.
 6. Create the first briefed tasks for your reports (revops-team-management).
-7. Write /org/revops/okrs/<cycle>.md with the table, assumptions and the profile lines; post a three-line summary with org_message.
+7. Write /org/revops/okrs/<yyyy>-Q<n>.md with the table, assumptions and the profile lines; post a three-line summary with org_message.
 8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: revops-funnel-review

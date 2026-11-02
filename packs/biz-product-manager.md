@@ -36,13 +36,13 @@ description: Cascade the company's objectives into the product unit's goal and 2
 4. For each, org_set_key_result with metric, startValue measured today, targetValue, unitLabel, dueAt and owner (yourself or a direct report: the Product Owner for predictability, the User Researcher for discovery throughput). Attach the analytics source from org_metric_sources or propose one with org_propose_metric_source. Set checkInCadenceDays from the profile (7 by default; 14 for retention with slow signal).
 5. Record your honest probability per key result with org_forecast_outcome.
 6. Create the first briefed tasks (discovery, specs, instrumentation) with org_create_task, assignee a direct report; work for engineering or design goes through their leads as backlog tasks.
-7. Write /org/product/okrs/<cycle>.md: objective, unit goal, key results table, the bets (initiatives) expected to move each, assumptions and the profile lines behind them. Post a three-line summary with org_message.
+7. Write /org/product/okrs/<yyyy>-Q<n>.md: objective, unit goal, key results table, the bets (initiatives) expected to move each, assumptions and the profile lines behind them. Post a three-line summary with org_message.
 8. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: product-roadmap-review
 description: Review and reprioritise the roadmap each quarter (and on major new evidence) with explicit scoring and written trade-offs. Use at quarter start, before planning, and when a big customer, market or metric change lands.
 
-1. Gather candidates: the current roadmap /org/product/roadmap.md, the opportunity backlog, top customer themes from /org/customer/, sales loss reasons from /org/sales/, engineering's tech debt list and the key results at risk (org_intent).
+1. Gather candidates: the current roadmap /org/product/roadmap.md, the opportunity backlog, top customer themes from /org/cs/, sales loss reasons from /org/sales/, engineering's tech debt list and the key results at risk (org_intent).
 2. Score each candidate with RICE (reach per quarter, impact 0.25-3, confidence %, effort in person-weeks from engineering's estimate) and note the key result it serves; anything serving no key result needs a stated strategic reason or is dropped.
 3. Read capacity: engineering's planned capacity for the quarter (ask its lead via a backlog task or /org/engineering/), minus keep-the-lights-on and debt allocation (by default 20-30%, flexed by the profile).
 4. Draft the roadmap as Now (committed this quarter), Next (likely), Later (exploring), with the items cut and why. Commit only what fits capacity with a buffer.
