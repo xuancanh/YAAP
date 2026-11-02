@@ -293,7 +293,7 @@ export class OrgMirrorService implements OnApplicationBootstrap {
     const count = async (what: string, fn: () => Promise<boolean>) => {
       try { if (await fn()) n++; } catch (err) { this.logger.warn(`org mirror backfill of ${what} failed: ${err instanceof Error ? err.message : err}`); }
     };
-    let orgs: Array<{ id: string }> = [];
+    let orgs: Array<{ id: string }>;
     try { orgs = await this.db.select({ id: organizations.id }).from(organizations); } catch (err) {
       this.logger.warn(`org mirror backfill could not list organizations: ${err instanceof Error ? err.message : err}`);
       return 0;
