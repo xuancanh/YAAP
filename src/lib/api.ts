@@ -682,6 +682,13 @@ export interface FollowView {
   reason: string | null;
   followers: Array<{ followerKind: 'agent' | 'user'; followerId: string; reason: string; createdAt: string }>;
 }
+/** One of the caller's follows with what is new on it (`GET …/follows/mine`). */
+export interface FollowRow {
+  id: string; workspaceId: string; followerKind: 'agent' | 'user'; followerId: string; targetKind: FollowTargetKind; targetId: string;
+  reason: string; title: string; link: string; createdAt: string; mutedAt: string | null; lastSeenAt: string | null;
+  unseenCount: number; lastActivity: string; lastActorName: string; lastActivityAt: string | null;
+  attentionAt: string | null; attention: string; closedAt: string | null;
+}
 export type WorkspaceEvent =
   | { type: 'hello'; workspaceId: string }
   | { type: 'channel_message'; workspaceId: string; channelId: string; message: ChannelMessage }
@@ -1312,6 +1319,7 @@ export const api = {
     send<FollowView>(`/api/workspaces/${wsId}/follows`, 'POST', { targetKind, targetId }, followViewSchema),
   unfollow: (wsId: string, targetKind: FollowTargetKind, targetId: string) =>
     send<FollowView>(`/api/workspaces/${wsId}/follows/unfollow`, 'POST', { targetKind, targetId }, followViewSchema),
+  followsMine: (wsId: string) => get<FollowRow[]>(`/api/workspaces/${wsId}/follows/mine`),
   markFollowSeen: (wsId: string, targetKind: FollowTargetKind, targetId: string) =>
     send<{ ok: true }>(`/api/workspaces/${wsId}/follows/seen`, 'POST', { targetKind, targetId }),
 
@@ -1614,6 +1622,8 @@ export const api = {
     const qs = q.toString();
     return get<OrgTask[]>(`/api/workspaces/${wsId}/org/tasks${qs ? `?${qs}` : ''}`);
   },
+  /** One task by id or short prefix, whatever its status or unit (the task deep link). */
+  orgTask: (wsId: string, taskId: string) => get<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${enc(taskId)}`),
   addOrgTask: (wsId: string, body: { title: string; brief?: Partial<OrgTaskBrief>; projectId?: string | null; assigneeAgentId?: string | null; unitId?: string; checks?: TaskCheck[]; dependsOn?: string[]; dueAt?: string | null }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks`, 'POST', body),
   updateOrgTask: (wsId: string, taskId: string, patch: { title?: string; brief?: Partial<OrgTaskBrief>; status?: OrgTaskStatus; blockers?: string[]; dependsOn?: string[]; dueAt?: string | null }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}`, 'PATCH', patch),
   assignOrgTask: (wsId: string, taskId: string, agentId: string) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}/assign`, 'POST', { agentId }),
@@ -1808,7 +1818,15 @@ export interface HomeAgent {
   errors: Array<{ kind: 'turn' | 'loop' | 'breaker' | 'provider' | 'budget'; message: string; at: string }>;
 }
 export type HomeActivityKind = 'task' | 'hire' | 'decision' | 'meeting' | 'incident' | 'file' | 'agent';
-export interface HomeActivity { id: string; at: string; kind: HomeActivityKind; title: string; detail: string; actor: string; ref: HomeRef | null }
+/** One agent loop run (a heartbeat beat), raw. */
+export interface HomeRun { id: string; at: string; title: string; detail: string }
+export interface HomeActivity {
+  id: string; at: string; kind: HomeActivityKind; title: string; detail: string; actor: string; ref: HomeRef | null;
+  /** A loop run that did something notable: the loop's name. */
+  loop?: string;
+  /** Routine loop runs of one agent in one day, collapsed into this row. */
+  runs?: { count: number; loops: string[]; from: string; items: HomeRun[] };
+}
 export interface HomeSpend {
   todayUsd: number | null; monthUsd: number | null; monthCapUsd: number | null; projectedUsd: number | null;
   forecastState: 'onTrack' | 'warn' | 'stop' | null; tokens: { spent: number; budget: number; over: boolean } | null;
@@ -1819,7 +1837,13 @@ export interface HomeHealth {
   providers: Array<{ provider: string; state: string; lastError: string }>;
   audit: { id: string; at: string; status: string; findings: number; top: Array<{ severity: string; title: string }>; summary: string } | null;
 }
-export interface HomeUpcoming { id: string; at: string; kind: 'meeting' | 'ritual' | 'deadline' | 'decision' | 'loop' | 'plan'; title: string; detail: string; ref: HomeRef | null }
+export interface HomeUpcoming {
+  id: string; at: string; kind: 'meeting' | 'ritual' | 'deadline' | 'decision' | 'loop' | 'plan'; title: string; detail: string; ref: HomeRef | null;
+  /** Rituals and loops: the five-field cron (server-local), put in words by the page. */
+  cron?: string;
+  /** Rituals: the units holding it at this time. */
+  units?: string[];
+}
 export interface HomeArtifact { path: string; version: number; size: number; updatedAt: string; updatedBy: { kind: string; id: string; name: string } }
 export interface HomeCompany { orgId: string; name: string; mode: OrgMode; status: 'active' | 'paused'; chiefAgentId: string | null; chiefName: string | null; memberCount: number }
 /** GET /api/workspaces/:id/home. */

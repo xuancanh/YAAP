@@ -326,7 +326,7 @@ export function WhyDrawer({ wsId, goalId, taskId, title, onClose }: { wsId: stri
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { void api.orgWhy(wsId, taskId ? { taskId } : { goalId }).then((w) => { setWhy(w); setErr(null); }).catch((e) => setErr(e instanceof Error ? e.message : 'failed')); }, [wsId, goalId, taskId]);
   const openLink = (l: WhyChain['chain'][number]) => {
-    if (l.kind === 'task') { app.setOrgFocus({ kind: 'task', id: l.id }); app.setOrgPane('board'); } else { app.setOrgFocus({ kind: 'goal', id: l.id }); app.setOrgUnitId(null); app.setOrgPane('vision'); }
+    if (l.kind === 'task') app.openOrgTask(l.id); else { app.setOrgFocus({ kind: 'goal', id: l.id }); app.setOrgUnitId(null); app.setOrgPane('vision'); }
     onClose();
   };
   // Shown top-down: vision first, the asked-about item last.

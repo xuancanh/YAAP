@@ -355,6 +355,11 @@ export class OrgController {
     return this.tasks.list(id, { projectId: projectId || undefined, status: status || undefined, unitId: unitId || undefined, rollUp: rollUp === 'true' })
       .then((rows) => this.tasks.annotate(id, rows)).then((rows) => rows.map((t) => ({ ...t, verification: verificationOf(t) })));
   }
+  /** One task by id or its short prefix, whatever its status or unit (the task deep link, docs/home.md). */
+  @Get(':id/tasks/:taskId') task(@Param('id') id: string, @Param('taskId') taskId: string) {
+    this.guard();
+    return this.tasks.byPrefix(id, taskId).then((t) => this.tasks.annotate(id, [t])).then(([t]) => ({ ...t, verification: verificationOf(t) }));
+  }
   @Post(':id/tasks') addTask(@Param('id') id: string, @Body() dto: TaskDto) {
     this.guard();
     return this.tasks.create(id, { title: dto.title ?? '', brief: dto.brief, projectId: dto.projectId, parentTaskId: dto.parentTaskId, status: dto.status, assigneeAgentId: dto.assigneeAgentId, reviewerAgentId: dto.reviewerAgentId, fileScope: dto.fileScope, unitId: dto.unitId, class: dto.class, checks: dto.checks, dependsOn: dto.dependsOn, dueAt: dto.dueAt, createdBy: 'user' });

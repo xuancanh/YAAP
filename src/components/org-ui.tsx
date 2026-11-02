@@ -103,7 +103,7 @@ export function useFollowRef() {
   };
   return (kind: string, id: string) => {
     app.setMobileDetail(true);
-    if (kind === 'task') { app.setOrgFocus({ kind: 'task', id }); app.setOrgPane('board'); }
+    if (kind === 'task') app.openOrgTask(id);
     else if (kind === 'decision') { app.setOrgFocus({ kind: 'decision', id }); app.setOrgPane('decisions'); }
     else if (kind === 'goal' || kind === 'objective' || kind === 'key_result' || kind === 'vision') { app.setOrgFocus({ kind: 'goal', id }); app.setOrgUnitId(null); app.setOrgPane('vision'); }
     else if (kind === 'meeting') { app.setOrgFocus({ kind: 'meeting', id }); app.setOrgPane('meetings'); }

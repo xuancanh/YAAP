@@ -172,6 +172,7 @@ export class WorkspaceOrgController {
   @Patch('projects/:projectId') async updateProject(@Param('id') id: string, @Param('projectId') projectId: string, @Body() dto: ProjectDto) { return this.orgs.updateProject(await this.oid(id), projectId, dto); }
 
   @Get('tasks') async board(@Param('id') id: string, @Query('projectId') projectId?: string, @Query('status') status?: string, @Query('unitId') unitId?: string, @Query('rollUp') rollUp?: string) { return this.orgs.board(await this.oid(id), projectId, status, unitId, rollUp); }
+  @Get('tasks/:taskId') async task(@Param('id') id: string, @Param('taskId') taskId: string) { return this.orgs.task(await this.oid(id), taskId); }
   @Post('tasks') async addTask(@Param('id') id: string, @Body() dto: TaskDto) { return this.orgs.addTask(await this.oid(id), dto); }
   @Patch('tasks/:taskId') async updateTask(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TaskDto) { return this.orgs.updateTask(await this.oid(id), taskId, dto); }
   @Post('tasks/:taskId/assign') async assign(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: AssignDto) { return this.orgs.assign(await this.oid(id), taskId, dto); }

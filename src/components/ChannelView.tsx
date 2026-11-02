@@ -158,7 +158,7 @@ export function ChannelView() {
       return { label: g?.title ?? `goal ${id.slice(0, 8)}`, onClick: () => openGoal(g?.id ?? id) };
     }
     if (kind === 'decision') return { label: decisionNames[id] ?? `decision ${id.slice(0, 8)}`, onClick: () => openDecision(id) };
-    if (kind === 'task' && orgChannel) return { label: `task ${id.slice(0, 8)}`, onClick: () => { app.setOrgFocus({ kind: 'task', id }); app.setOrgPane('board'); app.go('workspace'); app.setMobileDetail(true); } };
+    if (kind === 'task' && orgChannel) return { label: `task ${id.slice(0, 8)}`, onClick: () => app.openOrgTask(id) };
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [goals, decisionNames, orgChannel, openDecision, rootUnitId, app]);
@@ -235,7 +235,7 @@ export function ChannelView() {
   const openTask = (m: ChannelMessage) => {
     if (!m.taskId) return;
     // Organisation mode: the board pane under the Workspace section (item 16).
-    if (detail?.orgMode && app.companiesEnabled) { app.go('workspace'); app.setOrgPane('board'); return; }
+    if (detail?.orgMode && app.companiesEnabled) { app.openOrgTask(m.taskId); return; }
     const agent = m.authorKind === 'agent' ? m.authorId : members.find((x) => x.memberKind === 'agent')?.memberId;
     if (agent) app.openAgent(agent, 'Tasks');
   };
@@ -279,7 +279,7 @@ export function ChannelView() {
               <button onClick={() => void makeTask(m)} title="Make a task from this message" style={ghostBtn}><I d={P.board} size={13} />Make task</button>
             </span>
           </div>
-          {minutesOf ? <MinutesCard wsId={wsId} meetingId={minutesOf} fallback={m.text} refs={refs} onDecision={openDecision} onTask={(id) => { app.setOrgFocus({ kind: 'task', id }); app.setOrgPane('board'); app.go('workspace'); app.setMobileDetail(true); }} /> : <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={m.text} refs={refs} compact mentions={(s) => messageMentionSpans(s, m.mentions, mentionables).map((x) => ({ start: x.start, end: x.end, kind: x.member.kind }))} /></div>}
+          {minutesOf ? <MinutesCard wsId={wsId} meetingId={minutesOf} fallback={m.text} refs={refs} onDecision={openDecision} onTask={(id) => app.openOrgTask(id)} /> : <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={m.text} refs={refs} compact mentions={(s) => messageMentionSpans(s, m.mentions, mentionables).map((x) => ({ start: x.start, end: x.end, kind: x.member.kind }))} /></div>}
           {atts.filter((a) => a.kind !== 'minutes').length > 0 && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
               {atts.filter((a) => a.kind !== 'minutes').map((a, i) => (

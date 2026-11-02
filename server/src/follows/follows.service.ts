@@ -107,8 +107,8 @@ export class FollowsService {
 
   /**
    * Auto-follow: idempotent, and never against an unfollow — an existing row
-   * (muted or not) is left as it is, except that a missing title or link is
-   * filled in. Empty follower ids (a system actor) are ignored.
+   * (muted or not) is left as it is, except that a missing title is filled
+   * in and the link is brought up to date. Empty follower ids (a system actor) are ignored.
    */
   async autoFollow(target: FollowTarget, who: Follower | null | undefined, reason: Exclude<FollowReason, 'manual'>): Promise<void> {
     if (!who || !who.id || !target.id || !target.workspaceId) return;
@@ -117,7 +117,7 @@ export class FollowsService {
       if (existing) {
         const patch: Partial<Follow> = {};
         if (!existing.title && target.title) patch.title = target.title.slice(0, 200);
-        if (!existing.link && target.link) patch.link = target.link;
+        if (target.link && existing.link !== target.link) patch.link = target.link; // links made before the task deep link
         if (Object.keys(patch).length) await this.db.update(follows).set(patch).where(eq(follows.id, existing.id));
         return;
       }
@@ -227,6 +227,7 @@ export class FollowsService {
         if (act.closed === true && !r.closedAt) patch.closedAt = now;
         if (act.closed === false && r.closedAt) patch.closedAt = null;
         if (target.title && target.title !== r.title) patch.title = target.title.slice(0, 200);
+        if (target.link && target.link !== r.link) patch.link = target.link;
         const isActor = act.actor && r.followerKind === act.actor.kind && r.followerId === act.actor.id;
         if (!r.mutedAt) {
           if (isActor) {
@@ -259,7 +260,7 @@ export class FollowsService {
       forMemberAccountId: r.followerId === currentAccountId() ? '' : r.followerId,
       kind: 'follow', title: `Following · ${label}`.slice(0, 200),
       body: `${actorName}: ${summary}`.slice(0, 1_000),
-      payload: JSON.stringify({ link: r.link || target.link || '', from: 'Following', targetKind: r.targetKind, targetId: r.targetId }),
+      payload: JSON.stringify({ link: target.link || r.link || '', from: 'Following', targetKind: r.targetKind, targetId: r.targetId }),
       sessionId: null, readAt: null, createdAt: nowIso(),
       deliverAfter: delivery.deliverAfter, silent: delivery.silent ? 1 : 0,
       origin: 'user', channel: 1, deliveredAt: null,
@@ -418,8 +419,13 @@ export function threadTarget(workspaceId: string, slug: string, rootId: string, 
   return { kind: 'thread', id: rootId, workspaceId, title: `#${slug}: ${rootText.replace(/\s+/g, ' ').trim().slice(0, 60)}`, link: `#/ws/${workspaceId}/channel/${slug}/${rootId}` };
 }
 
+/** The SPA deep link to one org task: the Company board with its drawer open. */
+export function orgTaskLink(workspaceId: string, taskId: string): string {
+  return `#/ws/${workspaceId}/org/board?task=${encodeURIComponent(taskId)}`;
+}
+
 export function orgTaskTarget(workspaceId: string, taskId: string, title: string): FollowTarget {
-  return { kind: 'org_task', id: taskId, workspaceId, title, link: `#/ws/${workspaceId}/org/board` };
+  return { kind: 'org_task', id: taskId, workspaceId, title, link: orgTaskLink(workspaceId, taskId) };
 }
 
 export function agentTaskTarget(workspaceId: string, taskId: string, title: string): FollowTarget {

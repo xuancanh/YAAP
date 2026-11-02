@@ -29,7 +29,7 @@ import { WorkspaceEventBus } from '../server/src/groupchat/workspace-events';
 import { OrgAuditService } from '../server/src/org/org-audit.service';
 import { OrgService } from '../server/src/org/org.service';
 import { OrgTasksService } from '../server/src/org/org-tasks.service';
-import { FollowsService, type Follower } from '../server/src/follows/follows.service';
+import { FollowsService, orgTaskLink, type Follower } from '../server/src/follows/follows.service';
 import { FollowsTools, FOLLOW_TOOLS } from '../server/src/follows/follows.tools';
 import { FollowsController } from '../server/src/follows/follows.controller';
 import { FOLLOW_TUNABLES } from '../server/src/follows/follow-tunables';
@@ -385,4 +385,21 @@ test('people: the controller follows, unfollows and marks seen as the caller, in
   assert.equal(v.following, false);
   assert.deepEqual(v.followers.map((f) => f.followerId), [atlas.id]);
   await assert.rejects(ctl.view('nope', 'thread', root.id), /workspace nope/);
+});
+
+test('task links: an org task follow links to the task itself (the board with its drawer); old board links are brought up to date', async () => {
+  const s = await setup();
+  const { o, writer } = await company(s);
+  assert.equal(orgTaskLink('ws1', 'abc-123'), '#/ws/ws1/org/board?task=abc-123');
+  const t = await s.tasks.create(o.id, { title: 'Ship the page', assigneeAgentId: writer.id, createdBy: 'user' });
+  const mine = (await rowOf(s, USER, t.id))!;
+  assert.equal(mine.link, `#/ws/${s.ws.id}/org/board?task=${t.id}`);
+  // a row written before the deep link existed carries the bare board link
+  await s.db.update(follows).set({ link: `#/ws/${s.ws.id}/org/board` }).where(eq(follows.id, mine.id));
+  await s.tasks.comment(o.id, t.id, { text: 'Draft is up', fromAgentId: writer.id });
+  assert.equal((await rowOf(s, USER, t.id))!.link, `#/ws/${s.ws.id}/org/board?task=${t.id}`);
+  // the person's inbox event carries the task link
+  const evs = (await s.db.select().from(agentEvents).where(eq(agentEvents.agentId, `follow:${s.ws.id}`))).filter((e) => e.kind === 'follow');
+  assert.ok(evs.length >= 1);
+  assert.equal(JSON.parse(evs.at(-1)!.payload).link, `#/ws/${s.ws.id}/org/board?task=${t.id}`);
 });

@@ -12,6 +12,7 @@ import {
   type OrgIntentNode, type OrgCadence, type OrgHealth,
 } from './lib/api';
 import { isChannelSession, parseChannelHash } from './lib/channels';
+import { orgTaskHash, parseOrgHash } from './lib/links';
 import { paneHome, type InboxFilter } from './lib/inbox';
 
 /** A workspace in the picker: one of ours, or one shared with us (then
@@ -200,6 +201,12 @@ interface Store {
   orgHealth: OrgHealth | null; orgHeldActions: number;
   /** My open org tasks and reviews (Inbox). */
   orgMyTasks: number;
+  /** Things I follow whose latest change needs me (docs/follows.md): they count in the Inbox badge. */
+  followAttention: number;
+  /** Open one org task: the Company board with its drawer, through the task
+   *  deep link (`#/ws/<id>/org/board?task=<id>`) so back, forward and reload
+   *  work. Fetches the task when it is not on the loaded board. */
+  openOrgTask: (taskId: string) => void;
   inboxFilter: InboxFilter; setInboxFilter: (f: InboxFilter) => void;
   orgFocus: OrgFocus | null; setOrgFocus: (v: OrgFocus | null) => void;
 
@@ -320,6 +327,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setOrgPaneRaw(home.pane);
   }, []);
   const [orgMyTasks, setOrgMyTasks] = useState(0);
+  const [followAttention, setFollowAttention] = useState(0);
   const [orgUnitId, setOrgUnitId] = useState<string | null>(null);
   const [orgIntent, setOrgIntent] = useState<OrgIntentNode[]>([]);
   const [orgCadences, setOrgCadences] = useState<OrgCadence[]>([]);
@@ -356,13 +364,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // session-pick effect below honours it once the list contains it.
   const deepLink = useRef<string | null>(/^#\/chat\/([\w-]+)$/.exec(window.location.hash)?.[1] ?? null);
   // Organization deep links (#company announcements, the brief):
-  // #/ws/<workspaceId>/org/<pane> opens that pane of that workspace.
-  const orgLink = useRef<{ workspaceId: string; pane: OrgPane | 'artifacts' } | null>(null);
-  const parseOrgLink = (hash: string): { workspaceId: string; pane: OrgPane | 'artifacts' } | null => {
-    const m = /^#\/ws\/([\w-]+)\/org\/(\w+)$/.exec(hash);
+  // #/ws/<workspaceId>/org/<pane> opens that pane of that workspace, and
+  // #/ws/<workspaceId>/org/board?task=<taskId> one task's drawer on the board.
+  const orgLink = useRef<{ workspaceId: string; pane: OrgPane | 'artifacts'; taskId: string | null } | null>(null);
+  const parseOrgLink = (hash: string): { workspaceId: string; pane: OrgPane | 'artifacts'; taskId: string | null } | null => {
+    const m = parseOrgHash(hash);
     if (!m) return null;
-    if (ORG_PANES_IN_ARTIFACTS.includes(m[2])) return { workspaceId: m[1], pane: 'artifacts' };
-    return isOrgPane(m[2]) ? { workspaceId: m[1], pane: m[2] } : null;
+    if (m.taskId) return { workspaceId: m.workspaceId, pane: 'board', taskId: m.taskId };
+    if (ORG_PANES_IN_ARTIFACTS.includes(m.pane)) return { workspaceId: m.workspaceId, pane: 'artifacts', taskId: null };
+    return isOrgPane(m.pane) ? { workspaceId: m.workspaceId, pane: m.pane, taskId: null } : null;
   };
   if (orgLink.current === null && !deepLink.current) orgLink.current = parseOrgLink(window.location.hash);
   // …and from group-chat mentions: #/ws/<id>/channel/<slug>[/<messageId>]
@@ -467,23 +477,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshMcp = useCallback(async () => setMcp(await api.mcp()), []);
   const refreshMarket = useCallback(async () => setMarket(await api.market(workspaceId || undefined)), [workspaceId]);
   const refreshWsOrg = useCallback(async () => {
-    if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); return; }
+    if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); setFollowAttention(0); return; }
     const st = await api.workspaceOrg(workspaceId).catch((): WorkspaceOrg | null => null);
     setWsOrg(st);
     // The intent tree and the cadences ride along for the rail (at-risk
     // counts, today's ritual); the workspace event bus carries no org events
     // yet, so the panes poll lightly while on screen and call this on writes.
     if (st && st.mode !== 'off' && st.orgId) {
-      const [intent, cadences, plans, health, held, staged, mine] = await Promise.all([
+      const [intent, cadences, plans, health, held, staged, mine, follows] = await Promise.all([
         api.orgIntent(workspaceId).catch((): OrgIntentNode[] => []), api.orgCadences(workspaceId).catch((): OrgCadence[] => []), api.orgPlans(workspaceId, 'pending').catch((): unknown[] => []),
         api.orgHealth(workspaceId).catch((): OrgHealth | null => null),
         api.workspaceActions(workspaceId, { status: 'held', limit: 200 }).catch((): unknown[] => []), api.workspaceActions(workspaceId, { status: 'staged', limit: 200 }).catch((): unknown[] => []),
         api.orgMyTasks(workspaceId).catch(() => null),
+        api.followsMine(workspaceId).catch(() => []),
       ]);
+      // Followed changes count in the badge only when they need me.
+      setFollowAttention(follows.filter((f) => f.attentionAt && !f.mutedAt).length);
       setOrgIntent(intent); setOrgCadences(cadences); setOrgPendingPlans(plans.length);
       setOrgHealth(health); setOrgHeldActions(held.length + staged.length);
       setOrgMyTasks(mine ? [...mine.assigned, ...mine.reviewing].filter((t) => t.status !== 'done' && t.status !== 'cancelled').length : 0);
-    } else { setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); }
+    } else { setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); setFollowAttention(0); }
   }, [workspaceId, companiesEnabled]);
   useEffect(() => {
     api.orgsStatus().then((s) => setCompaniesEnabled(s.enabled)).catch(() => setCompaniesEnabled(false));
@@ -671,10 +684,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setWorkspaceId(wanted.workspaceId);
       setCurrentId(null);
     }
+    if (wanted.taskId) {
+      // The task link stays in the address bar while its drawer is open, so
+      // reload reopens it; the board clears it when the drawer closes.
+      setOrgUnitId(null);
+      setOrgFocus({ kind: 'task', id: wanted.taskId });
+      setOrgPane('board');
+      setMobileDetail(true);
+      return;
+    }
     if (wanted.pane === 'artifacts') setSection('artifacts');
     else { setOrgPane(wanted.pane); setMobileDetail(true); }
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
   }, [workspaces, workspaceId]);
+
+  const openOrgTask = useCallback((taskId: string) => {
+    if (!workspaceId || !taskId) return;
+    const hash = orgTaskHash(workspaceId, taskId);
+    if (window.location.hash === hash) {
+      // Already the address: no hashchange will fire, so open it directly.
+      setOrgUnitId(null); setOrgFocus({ kind: 'task', id: taskId }); setOrgPane('board'); setMobileDetail(true);
+      return;
+    }
+    window.location.hash = hash; // a history entry; the hashchange handler opens it
+  }, [workspaceId, setOrgPane]);
 
   const pickWorkspace = useCallback((id: string) => {
     // The header must change before the first request for the new workspace.
@@ -1039,7 +1072,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, inboxFilter, setInboxFilter, orgFocus, setOrgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, openOrgTask, inboxFilter, setInboxFilter, orgFocus, setOrgFocus,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
@@ -1058,7 +1091,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, inboxFilter, orgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, openOrgTask, inboxFilter, orgFocus,
     channels, refreshChannels, currentChannel, channelFocus, openChannel, onWorkspaceEvent,
   ]);
 

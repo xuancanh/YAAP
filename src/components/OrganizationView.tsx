@@ -6,9 +6,10 @@
  *  audit (runs and the hash-chained log). Enabling, the mode, the chief and
  *  the caps live in Settings → Workspace → Organization; the group log moved
  *  to the `#company` channel. */
-import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useApp, type OrgPane } from '../store';
 import { tabsOf } from '../lib/inbox';
+import { orgTaskHash, taskOfHash } from '../lib/links';
 import {
   api, ORG_TASK_STATUSES, type Agent, type ChannelMessage, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgGoalNode, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
   type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type OrgUnitNode, type WorkspaceMember, type TaskCheck, type OrgDelegation, type CardEval,
@@ -343,17 +344,56 @@ function Board({ org }: { org: OrgDetail }) {
   const [rollUp, setRollUp] = useState<Record<string, boolean>>({});
   const unitKey = current?.id ?? 'all';
   const rolled = rollUp[unitKey] ?? isCompany;
+  const [loaded, setLoaded] = useState(false);
   const reload = useCallback(async () => {
     const opts = !current ? {} : rolled && isCompany ? {} : { unitId: current.id, rollUp: rolled };
     setTasks(await api.orgTasks(org.workspaceId, opts).catch(() => []));
+    setLoaded(true);
   }, [org.workspaceId, current, rolled, isCompany]);
   useEffect(() => { void reload(); const t = setInterval(() => { void reload(); }, 15_000); return () => clearInterval(t); }, [reload]);
-  // A signal row or a minutes card deep-linked a task: open its drawer once it is on the board.
+  // A task link (#/ws/<id>/org/board?task=<id>), a signal row or a minutes
+  // card asked for one task: open its drawer once the board has loaded, and
+  // fetch the task when it is not on this board (another unit, or closed).
+  const focusId = app.orgFocus?.kind === 'task' ? app.orgFocus.id : null;
   useEffect(() => {
-    if (app.orgFocus?.kind !== 'task') return;
-    const t = tasks.find((x) => x.id === app.orgFocus!.id || x.id.startsWith(app.orgFocus!.id));
-    if (t) { setOpen(t); setShowCold(true); app.setOrgFocus(null); }
-  }, [tasks, app]);
+    if (!focusId || !loaded) return;
+    const t = tasks.find((x) => x.id === focusId || x.id.startsWith(focusId));
+    app.setOrgFocus(null);
+    // Opened from inside the app (a signal row, a minutes card): put it in the address too.
+    if (taskOfHash(window.location.hash) !== focusId) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${orgTaskHash(org.workspaceId, focusId)}`);
+    if (t) { setOpen(t); if (t.status === 'done' || t.status === 'cancelled') setShowCold(true); return; }
+    let live = true;
+    api.orgTask(org.workspaceId, focusId)
+      .then((found) => { if (live) setOpen(found); })
+      .catch(() => { if (live) app.showToast(`Task ${focusId.slice(0, 8)} was not found`); });
+    return () => { live = false; };
+  }, [focusId, loaded, tasks, app, org.workspaceId]);
+  // The open drawer is in the address bar (back, forward and reload work);
+  // the address moving off it (back) closes the drawer.
+  const openTask = (t: OrgTask) => {
+    setOpen(t);
+    const hash = orgTaskHash(org.workspaceId, t.id);
+    if (window.location.hash !== hash) window.history.pushState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
+  };
+  const closeTask = () => {
+    setOpen(null);
+    if (taskOfHash(window.location.hash)) window.history.pushState(null, '', `${window.location.pathname}${window.location.search}`);
+  };
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    const onHash = () => { if (!taskOfHash(window.location.hash)) setOpen(null); };
+    window.addEventListener('hashchange', onHash);
+    window.addEventListener('popstate', onHash);
+    return () => {
+      mounted.current = false;
+      window.removeEventListener('hashchange', onHash);
+      window.removeEventListener('popstate', onHash);
+      // Leaving the board: a task link left behind would reopen on reload.
+      // (Deferred: StrictMode's remount is not a leave.)
+      setTimeout(() => { if (!mounted.current && taskOfHash(window.location.hash)) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`); }, 0);
+    };
+  }, []);
   const cols = ORG_TASK_STATUSES.filter((s) => showCold || (s !== 'done' && s !== 'cancelled'));
   const members = org.members.filter((m) => m.status === 'active');
   const lead = current ? names.get(current.leadAgentId) : undefined;
@@ -396,7 +436,7 @@ function Board({ org }: { org: OrgDetail }) {
               const unit = t.unitId ? byId.get(t.unitId) : root;
               const foreign = unit && unit.id !== current?.id;
               return (
-                <div key={t.id} onClick={() => setOpen(t)} style={{ ...card, padding: '8px 10px', marginBottom: 6, cursor: 'pointer' }}>
+                <div key={t.id} onClick={() => openTask(t)} style={{ ...card, padding: '8px 10px', marginBottom: 6, cursor: 'pointer' }}>
                   <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>{t.title}</div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                     {a ? <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }}><Avatar a={a} size={14} />{a.name}</span> : t.assigneeHumanId ? <span style={pill('var(--blue)', '#fff')} title="A human employee owns this task">🧑 {app.nameOf(t.assigneeHumanId)}</span> : <span style={pill()}>unassigned</span>}
@@ -418,7 +458,7 @@ function Board({ org }: { org: OrgDetail }) {
           </div>
         ))}
       </div>
-      {open && <TaskDrawer org={org} task={tasks.find((t) => t.id === open.id) ?? open} members={members} onClose={() => setOpen(null)} reload={reload} />}
+      {open && <TaskDrawer org={org} task={tasks.find((t) => t.id === open.id) ?? open} members={members} onClose={closeTask} reload={reload} />}
     </div>
   );
 }
@@ -837,7 +877,7 @@ function ApprovalArtifact({ kind, p, nm, wsId }: { kind: string; p: Record<strin
     return <div style={{ fontSize: 12.5 }}>{goals.map((g, i) => <div key={i} style={{ marginBottom: 4 }}><b>{g.title}</b>{g.description ? ` — ${g.description}` : ''}{(g.projects ?? []).map((pr, j) => <div key={j} style={{ paddingLeft: 12 }}>▸ {pr.title}{(pr.tasks ?? []).map((t, k) => <div key={k} style={{ paddingLeft: 14, color: 'var(--text-dim)' }}>· {t.title}</div>)}</div>)}</div>)}</div>;
   }
   if (kind === 'terminate') return <div style={{ fontSize: 12.5 }}>Terminate <b>{String(p.agentName ?? nm(p.agentId))}</b>{p.reason ? ` — ${String(p.reason)}` : ''}. Its reports move up one level; the agent itself stays.</div>;
-  if (kind === 'escalation') return <div style={{ fontSize: 12.5 }}>Task <b>{String(p.title)}</b> ({nm(p.assigneeAgentId)}): {String(p.reason)}. Approve to reopen it with your note; reject to cancel it.</div>;
+  if (kind === 'escalation') return <div style={{ fontSize: 12.5 }}>Task <b>{String(p.title)}</b> ({nm(p.assigneeAgentId)}): {String(p.reason)}. Approve to reopen it with your note; reject to cancel it. {p.taskId ? <RefButton kind="task" id={String(p.taskId)} label="Open the task" /> : null}</div>;
   // Items 22–24: the human review card, a retro's charter change with its diff, a blueprint's hires, routing, a tunable, a cadence.
   if (kind === 'human_review') return (
     <div style={{ fontSize: 12.5, display: 'grid', gap: 4 }}>
