@@ -19,6 +19,7 @@ const NewAgentDialog = lazy(() => import('./components/AgentsView').then((m) => 
 const MarketView = lazy(() => import('./components/MarketView').then((m) => ({ default: m.MarketView })));
 const HireModal = lazy(() => import('./components/MarketView').then((m) => ({ default: m.HireModal })));
 const OrganizationView = lazy(() => import('./components/OrganizationView').then((m) => ({ default: m.OrganizationView })));
+const InboxView = lazy(() => import('./components/InboxView').then((m) => ({ default: m.InboxView })));
 const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
 
 const viewFallback = (
@@ -58,8 +59,8 @@ function Layout() {
   const showSecondary = app.stacked ? !detailActive : true;
   const showMain = app.stacked ? !showSecondary : true;
 
-  const secTitle = sec === 'home' ? 'Channels & chats' : sec === 'workspace' ? 'Workspace' : sec === 'artifacts' ? 'Artifacts' : sec === 'market' ? 'Categories' : 'Settings';
-  const hasSecondary = sec !== 'overview' && sec !== 'apps'; // fleet overview + apps gallery are full-width
+  const secTitle = sec === 'home' ? 'Channels & chats' : sec === 'workspace' ? 'Company' : sec === 'artifacts' ? 'Artifacts' : sec === 'market' ? 'Categories' : 'Settings';
+  const hasSecondary = sec !== 'overview' && sec !== 'apps' && sec !== 'inbox'; // fleet overview, apps gallery and the Inbox are full-width
 
   return (
     <div data-theme={app.theme} style={{ height: '100vh', display: 'flex', position: 'relative', background: 'var(--bg)', color: 'var(--text)', fontSize: 14, overflow: 'hidden', paddingBottom: app.stacked ? 58 : 0 }}>
@@ -87,6 +88,7 @@ function Layout() {
           {sec === 'apps' && <AppsGallery />}
           {sec === 'workspace' && (orgOpen ? <Suspense fallback={viewFallback}><OrganizationView /></Suspense> : <WorkspaceOff />)}
           {sec === 'artifacts' && <FilesView />}
+          {sec === 'inbox' && <Suspense fallback={viewFallback}><InboxView /></Suspense>}
           {sec === 'market' && <Suspense fallback={viewFallback}><MarketView cat={marketCat} setCat={setMarketCat} /></Suspense>}
           {sec === 'settings' && <Suspense fallback={viewFallback}><SettingsView pane={settingsPane} /></Suspense>}
         </main>

@@ -12,13 +12,16 @@ import {
   type OrgIntentNode, type OrgCadence, type OrgHealth,
 } from './lib/api';
 import { isChannelSession, parseChannelHash } from './lib/channels';
+import { paneHome, type InboxFilter } from './lib/inbox';
 
 /** A workspace in the picker: one of ours, or one shared with us (then
  *  `shared` names the owner and our role; docs/shared-agents.md). */
 export type WorkspaceEntry = Workspace & { shared?: SharedWorkspace };
 import type { PriceTable } from './lib/pricing';
 
-export type Section = 'home' | 'overview' | 'workspace' | 'artifacts' | 'apps' | 'market' | 'settings';
+/** `workspace` is the Company section (the id stays for URLs); `inbox` is
+ *  everything waiting on the CEO (src/lib/inbox.ts). */
+export type Section = 'home' | 'overview' | 'inbox' | 'workspace' | 'artifacts' | 'apps' | 'market' | 'settings';
 /** The organization panes under the Workspace section (docs/group-chat.md
  *  §5: the workspace is the company; there is no separate Company section). */
 export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'plans' | 'replay' | 'capital' | 'mytasks'
@@ -194,6 +197,9 @@ interface Store {
    *  the owner's key, and running experiments — fetched with wsOrg for the
    *  rail badges, the Pulse health strip and the chat header. */
   orgHealth: OrgHealth | null; orgHeldActions: number;
+  /** My open org tasks and reviews (Inbox). */
+  orgMyTasks: number;
+  inboxFilter: InboxFilter; setInboxFilter: (f: InboxFilter) => void;
   orgFocus: OrgFocus | null; setOrgFocus: (v: OrgFocus | null) => void;
 
   // group chat (docs/group-chat.md, execution plan item 15)
@@ -233,8 +239,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [section, setSection] = useState<Section>(() => {
     const p = new URLSearchParams(window.location.search);
     const q = p.get('section');
-    if (q === 'market' || q === 'settings' || q === 'overview' || q === 'workspace' || q === 'artifacts' || q === 'apps') return q;
-    if (p.get('org') && ORG_PANES_IN_ARTIFACTS.includes(p.get('org')!)) return 'artifacts';
+    const org = p.get('org');
+    if (org && ORG_PANES_IN_ARTIFACTS.includes(org)) return 'artifacts';
+    if (isOrgPane(org) && paneHome(org).section === 'inbox') return 'inbox';
+    if (q === 'market' || q === 'settings' || q === 'overview' || q === 'inbox' || q === 'workspace' || q === 'artifacts' || q === 'apps') return q;
     if (q === 'company') return 'workspace'; // legacy: the company lives under the workspace now
     // legacy: ?section=agents without a specific agent is the fleet overview
     if (q === 'agents' && !p.get('agent')) return 'overview';
@@ -292,12 +300,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [hireId, setHireId] = useState<string | null>(null);
   const [companiesEnabled, setCompaniesEnabled] = useState(false);
   const [wsOrg, setWsOrg] = useState<WorkspaceOrg | null>(null);
-  const [orgPane, setOrgPane] = useState<OrgPane | null>(() => {
+  const [orgPane, setOrgPaneRaw] = useState<OrgPane | null>(() => {
     const p = new URLSearchParams(window.location.search);
     const pane = p.get('org');
-    if (isOrgPane(pane)) return pane;
+    if (isOrgPane(pane) && paneHome(pane).section === 'workspace') return pane;
     return p.get('section') === 'company' ? 'board' : null;
   });
+  const [inboxFilter, setInboxFilter] = useState<InboxFilter>(() => {
+    const pane = new URLSearchParams(window.location.search).get('org');
+    const home = isOrgPane(pane) ? paneHome(pane) : null;
+    return home?.section === 'inbox' ? home.filter : 'all';
+  });
+  /** Open a pane where it lives now: approvals and my tasks in the Inbox,
+   *  everything else in the Company section (null = back to its default). */
+  const setOrgPane = useCallback((v: OrgPane | null) => {
+    if (v === null) { setOrgPaneRaw(null); return; }
+    const home = paneHome(v);
+    if (home.section === 'inbox') { setSection('inbox'); setInboxFilter(home.filter); return; }
+    setSection('workspace');
+    setOrgPaneRaw(home.pane);
+  }, []);
+  const [orgMyTasks, setOrgMyTasks] = useState(0);
   const [orgUnitId, setOrgUnitId] = useState<string | null>(null);
   const [orgIntent, setOrgIntent] = useState<OrgIntentNode[]>([]);
   const [orgCadences, setOrgCadences] = useState<OrgCadence[]>([]);
@@ -445,21 +468,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshMcp = useCallback(async () => setMcp(await api.mcp()), []);
   const refreshMarket = useCallback(async () => setMarket(await api.market(workspaceId || undefined)), [workspaceId]);
   const refreshWsOrg = useCallback(async () => {
-    if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); return; }
+    if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); return; }
     const st = await api.workspaceOrg(workspaceId).catch((): WorkspaceOrg | null => null);
     setWsOrg(st);
     // The intent tree and the cadences ride along for the rail (at-risk
     // counts, today's ritual); the workspace event bus carries no org events
     // yet, so the panes poll lightly while on screen and call this on writes.
     if (st && st.mode !== 'off' && st.orgId) {
-      const [intent, cadences, plans, health, held, staged] = await Promise.all([
+      const [intent, cadences, plans, health, held, staged, mine] = await Promise.all([
         api.orgIntent(workspaceId).catch((): OrgIntentNode[] => []), api.orgCadences(workspaceId).catch((): OrgCadence[] => []), api.orgPlans(workspaceId, 'pending').catch((): unknown[] => []),
         api.orgHealth(workspaceId).catch((): OrgHealth | null => null),
         api.workspaceActions(workspaceId, { status: 'held', limit: 200 }).catch((): unknown[] => []), api.workspaceActions(workspaceId, { status: 'staged', limit: 200 }).catch((): unknown[] => []),
+        api.orgMyTasks(workspaceId).catch(() => null),
       ]);
       setOrgIntent(intent); setOrgCadences(cadences); setOrgPendingPlans(plans.length);
       setOrgHealth(health); setOrgHeldActions(held.length + staged.length);
-    } else { setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); }
+      setOrgMyTasks(mine ? [...mine.assigned, ...mine.reviewing].filter((t) => t.status !== 'done' && t.status !== 'cancelled').length : 0);
+    } else { setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); }
   }, [workspaceId, companiesEnabled]);
   useEffect(() => {
     api.orgsStatus().then((s) => setCompaniesEnabled(s.enabled)).catch(() => setCompaniesEnabled(false));
@@ -648,7 +673,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCurrentId(null);
     }
     if (wanted.pane === 'artifacts') setSection('artifacts');
-    else { setSection('workspace'); setOrgPane(wanted.pane); setMobileDetail(true); }
+    else { setOrgPane(wanted.pane); setMobileDetail(true); }
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
   }, [workspaces, workspaceId]);
 
@@ -1015,7 +1040,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgFocus, setOrgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, inboxFilter, setInboxFilter, orgFocus, setOrgFocus,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
@@ -1034,7 +1059,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, inboxFilter, orgFocus,
     channels, refreshChannels, currentChannel, channelFocus, openChannel, onWorkspaceEvent,
   ]);
 

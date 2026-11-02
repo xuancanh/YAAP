@@ -7,7 +7,8 @@
  *  the caps live in Settings → Workspace → Organization; the group log moved
  *  to the `#company` channel. */
 import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
-import { useApp } from '../store';
+import { useApp, type OrgPane } from '../store';
+import { tabsOf } from '../lib/inbox';
 import {
   api, ORG_TASK_STATUSES, type Agent, type ChannelMessage, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgGoalNode, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
   type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type OrgUnitNode, type WorkspaceMember, type TaskCheck, type OrgDelegation, type CardEval,
@@ -89,6 +90,7 @@ export function OrganizationView() {
         <button onClick={toggle} style={btn(false, org.status === 'active')} title={org.status === 'active' ? 'Kill switch: stop every wake and run' : 'Resume wakes and runs'}>{org.status === 'active' ? 'Pause company' : 'Resume'}</button>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 18 }}>
+        <PaneTabs view={view} />
         {view === 'chart' && <OrgChart org={org} reload={reload} />}
         {view === 'board' && <Board org={org} />}
         {view === 'goals' && <Goals org={org} reload={reload} />}
@@ -110,6 +112,24 @@ export function OrganizationView() {
           </Suspense>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Merged panes (src/lib/inbox.ts COMPANY_GROUPS): Pulse | Brief, Spend | Capital, Audit | Replay. */
+const TAB_LABEL: Partial<Record<OrgPane, string>> = { pulse: 'Pulse', brief: 'Brief', spend: 'Spend', capital: 'Capital', audit: 'Audit', replay: 'Replay' };
+function PaneTabs({ view }: { view: OrgPane }) {
+  const app = useApp();
+  const tabs = tabsOf(view);
+  if (!tabs) return null;
+  return (
+    <div role="tablist" style={{ display: 'flex', gap: 4, marginBottom: 14, borderBottom: '1px solid var(--border-soft)' }}>
+      {tabs.map((t) => (
+        <button key={t} role="tab" aria-selected={t === view} onClick={() => app.setOrgPane(t)}
+          style={{ background: 'none', border: 'none', borderBottom: `2px solid ${t === view ? 'var(--accent)' : 'transparent'}`, color: t === view ? 'var(--text)' : 'var(--text-dim)', padding: '6px 10px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
+          {TAB_LABEL[t] ?? t}
+        </button>
+      ))}
     </div>
   );
 }
@@ -680,7 +700,8 @@ function GoalRow({ g, org, depth, names, unitOf, currentUnitId, act, addChild }:
 
 // ---- approvals ----
 
-function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void> }) {
+/** The approvals queue — rendered by the Inbox (src/components/InboxView.tsx). */
+export function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promise<void> }) {
   const app = useApp();
   const names = useAgentNames();
   const [rows, setRows] = useState<OrgApproval[]>([]);

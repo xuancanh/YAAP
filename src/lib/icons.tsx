@@ -52,6 +52,10 @@ export const P = {
   file: ['M6 2h9l5 5v15H6z', 'M14 2v6h6'],
   /** Stacked documents: the Artifacts section (Workspace keeps the folder). */
   files: ['M8 3h8l4 4v12H8z', 'M15 3v5h5', 'M5 7v14h11'],
+  /** A tray: the Inbox. */
+  inbox: ['M4 13l2.5-8h11L20 13v6H4z', 'M4 13h5l1 2h4l1-2h5'],
+  /** A building: the Company section. */
+  building: ['M5 21V4h9v17M14 9h5v12M3 21h18', 'M8 8h3M8 12h3M8 16h3'],
   term: ['M4 5h16v14H4z', 'M7 9l3 3-3 3M13 15h4'],
   compass: ['M12 3a9 9 0 100 18 9 9 0 000-18', 'M15 9l-2 5-4 1 2-5z'],
   window: ['M4 4h16v16H4z', 'M4 9h16M9 9v11'],

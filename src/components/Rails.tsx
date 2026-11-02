@@ -9,6 +9,7 @@ import { atRiskByUnit, firesOn, MEETING_KIND_TITLES } from '../lib/org';
 import { NewWorkspaceWizard } from './NewWorkspaceWizard';
 import { ArtifactTree } from './ArtifactTree';
 import { createFile, createFolder, workspaceSource } from '../lib/artifacts';
+import { COMPANY_GROUPS } from '../lib/inbox';
 
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '2px 18px 8px' };
 
@@ -320,31 +321,36 @@ export function HomeRail() {
   );
 }
 
-/** The organization panes under the workspace (docs/group-chat.md §5). The
- *  group log moved to the `#company` channel; Approvals hides in autonomous
- *  mode unless something is pending. */
-export const ORG_PANES: Array<{ id: OrgPane; label: string; icon: string[] }> = [
-  { id: 'board', label: 'Board', icon: P.board },
-  { id: 'goals', label: 'Goals', icon: P.star },
-  // The CEO's seat (docs/company-vision.md §8, items 18–20).
-  { id: 'vision', label: 'Vision', icon: P.compass },
-  { id: 'pulse', label: 'Pulse', icon: P.sun },
-  { id: 'meetings', label: 'Meetings', icon: P.chat },
-  { id: 'decisions', label: 'Decisions', icon: P.check },
-  // Memory, capital, hybrid staff (docs/company-vision.md §6–§9, items 22–24).
-  { id: 'plans', label: 'Plans', icon: P.rows },
-  { id: 'capital', label: 'Capital', icon: P.bolt },
-  { id: 'replay', label: 'Replay', icon: P.retry },
-  { id: 'mytasks', label: 'My tasks', icon: P.board },
-  // Incidents (item 29). Playbooks, experiments, evals, outcomes and metrics
-  // are mirrored as files under /org/ in Artifacts (docs/filesystem.md).
-  { id: 'incidents', label: 'Incidents', icon: P.warn },
-  { id: 'chart', label: 'Org chart', icon: P.bot },
-  { id: 'approvals', label: 'Approvals', icon: P.shield },
-  { id: 'spend', label: 'Spend', icon: P.bolt },
-  { id: 'brief', label: 'Brief', icon: P.sysLines },
-  { id: 'audit', label: 'Audit', icon: P.clock },
-];
+/** Icons of the Company rail's entries (groups in src/lib/inbox.ts). */
+const PANE_ICON: Partial<Record<OrgPane, string[]>> = {
+  vision: P.compass, goals: P.star, plans: P.rows, decisions: P.check,
+  pulse: P.sun, meetings: P.chat, incidents: P.warn,
+  chart: P.bot, spend: P.bolt, audit: P.clock,
+};
+
+/** Collapse state of the Company rail's groups, per viewer (localStorage, best effort). */
+const GROUPS_KEY = 'yaam-company-groups';
+function useCollapsed(): [Record<string, boolean>, (id: string) => void] {
+  const [state, setState] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem(GROUPS_KEY) ?? '{}') as Record<string, boolean>; } catch { return {}; }
+  });
+  const toggle = (id: string) => setState((prev) => {
+    const next = { ...prev, [id]: !prev[id] };
+    try { localStorage.setItem(GROUPS_KEY, JSON.stringify(next)); } catch { /* storage unavailable: keep it in memory */ }
+    return next;
+  });
+  return [state, toggle];
+}
+
+function GroupLabel({ id, label, collapsed, onToggle }: { id: string; label: string; collapsed: boolean; onToggle: () => void }) {
+  return (
+    <button type="button" data-testid={`company-group-${id}`} aria-expanded={!collapsed} onClick={onToggle}
+      style={{ ...sectionLabel, display: 'flex', alignItems: 'center', gap: 6, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '10px 10px 4px', textAlign: 'left' }}>
+      <span style={{ flex: 1 }}>{label}</span>
+      <I d={P.chevD} size={11} style={{ transform: collapsed ? 'rotate(-90deg)' : 'none', transition: 'transform .12s' }} />
+    </button>
+  );
+}
 
 function PaneRow({ id, label, icon, active, badge, badgeColor = 'var(--amber)', badgeTitle, onClick, indent = 0 }: { id: string; label: string; icon: string[]; active: boolean; badge?: number; badgeColor?: string; badgeTitle?: string; onClick: () => void; indent?: number }) {
   return (
@@ -423,44 +429,54 @@ export function ArtifactsRail() {
   );
 }
 
-/** The Workspace tab's rail: when the workspace runs in organization mode,
- *  its company panes; the files have their own Artifacts tab. */
+/** The Company tab's rail (the Workspace section): the company's panes in
+ *  collapsible groups — Teams (each unit's #channel, Board, Goals),
+ *  Direction, Operations, People & money, Oversight. What waits on the CEO
+ *  (approvals, keys, my tasks) lives in the Inbox; the files in Artifacts. */
 export function WorkspaceRail() {
   const app = useApp();
+  const [collapsed, toggle] = useCollapsed();
   const org = app.companiesEnabled && app.wsOrg && app.wsOrg.mode !== 'off' ? app.wsOrg : null;
-  const panes = org ? ORG_PANES.filter((n) => n.id !== 'approvals' || org.mode !== 'autonomous' || org.pendingApprovals > 0 || app.orgHeldActions > 0) : [];
+  if (!org) {
+    return (
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
+        <div style={{ padding: '6px 10px', fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.5 }}>Organization mode is off for this workspace — turn it on in Settings → Workspace.</div>
+        <PaneRow id="open-artifacts" label="Open Artifacts" icon={P.files} active={false} onClick={() => app.go('artifacts')} />
+      </div>
+    );
+  }
   const openIncidents = app.orgHealth?.openIncidents.length ?? 0;
+  const view = app.orgPane ?? 'board';
   const badgeOf = (id: OrgPane): { n: number; color?: string; title: string } | undefined => {
-    if (id === 'approvals' && org && org.pendingApprovals > 0) return { n: org.pendingApprovals, title: `${org.pendingApprovals} card(s) to decide` };
-    if (id === 'approvals' && app.orgHeldActions > 0) return { n: app.orgHeldActions, title: `${app.orgHeldActions} action(s) waiting for your key` };
     if (id === 'plans' && app.orgPendingPlans > 0) return { n: app.orgPendingPlans, title: `${app.orgPendingPlans} plan(s) awaiting your veto` };
     if (id === 'incidents' && openIncidents > 0) return { n: openIncidents, color: 'var(--red)', title: `${openIncidents} open incident(s)` };
     return undefined;
   };
+  const open = (pane: OrgPane, unit: string | null = app.orgUnitId) => { app.setOrgUnitId(unit); app.setOrgPane(pane); app.setMobileDetail(true); };
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
-      {/* ---- organization panes (execution plan item 16) — begin ---- */}
-      {org && (
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ ...sectionLabel, padding: '2px 10px 6px', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{ flex: 1 }}>Organization</span>
-            {openIncidents > 0 && <span title={`${openIncidents} open incident(s)`} onClick={() => { app.setOrgPane('incidents'); app.setMobileDetail(true); }} style={{ fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'var(--red)', borderRadius: 8, padding: '0 6px', cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}>{openIncidents} incident{openIncidents === 1 ? '' : 's'}</span>}
-            {app.orgHeldActions > 0 && <span title={`${app.orgHeldActions} action(s) held or staged, waiting for your key`} onClick={() => { app.setOrgPane('approvals'); app.setMobileDetail(true); }} style={{ fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '0 6px', cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}>{app.orgHeldActions} key{app.orgHeldActions === 1 ? '' : 's'}</span>}
-            {app.orgPendingPlans > 0 && <span title={`${app.orgPendingPlans} plan(s) awaiting your veto`} onClick={() => { app.setOrgPane('plans'); app.setMobileDetail(true); }} style={{ fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '0 6px', cursor: 'pointer', textTransform: 'none', letterSpacing: 0 }}>{app.orgPendingPlans} plan{app.orgPendingPlans === 1 ? '' : 's'}</span>}
-            <span title={org.orgStatus === 'paused' ? 'Paused (kill switch)' : `${org.mode} mode`} style={{ fontSize: 9.5, fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: org.orgStatus === 'paused' ? '#fff' : 'var(--text-dim)', background: org.orgStatus === 'paused' ? 'var(--red)' : 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '0 6px' }}>{org.orgStatus === 'paused' ? 'paused' : org.mode}</span>
-          </div>
-          {/* Units (docs/group-chat.md §7): the company, then one collapsible group per live unit — #channel, Board, Goals. */}
-          {(org.units ?? []).map((u) => <UnitGroup key={u.id} node={u} depth={0} />)}
-          {(org.units ?? []).length === 0 && panes.filter((n) => n.id === 'board' || n.id === 'goals').map((n) => <PaneRow key={n.id} id={n.id} label={n.label} icon={n.icon} active={n.id === app.orgPane && app.orgUnitId === null} onClick={() => { app.setOrgUnitId(null); app.setOrgPane(n.id); app.setMobileDetail(true); }} />)}
-          <div style={{ height: 6 }} />
-          {panes.filter((n) => n.id !== 'board' && n.id !== 'goals').map((n) => (
-            <PaneRow key={n.id} id={n.id} label={n.label} icon={n.icon} active={n.id === app.orgPane} badge={badgeOf(n.id)?.n} badgeColor={badgeOf(n.id)?.color} badgeTitle={badgeOf(n.id)?.title} onClick={() => { app.setOrgPane(n.id); app.setMobileDetail(true); }} />
-          ))}
+      <div style={{ ...sectionLabel, padding: '2px 10px 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ flex: 1 }}>Organization</span>
+        <span title={org.orgStatus === 'paused' ? 'Paused (kill switch)' : `${org.mode} mode`} style={{ fontSize: 9.5, fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: org.orgStatus === 'paused' ? '#fff' : 'var(--text-dim)', background: org.orgStatus === 'paused' ? 'var(--red)' : 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '0 6px' }}>{org.orgStatus === 'paused' ? 'paused' : org.mode}</span>
+      </div>
+      {COMPANY_GROUPS.map((g) => (
+        <div key={g.id}>
+          <GroupLabel id={g.id} label={g.label} collapsed={Boolean(collapsed[g.id])} onToggle={() => toggle(g.id)} />
+          {!collapsed[g.id] && g.id === 'teams' && (
+            <>
+              {/* Units (docs/group-chat.md §7): the company, then one collapsible group per live unit — #channel, Board, Goals. */}
+              {(org.units ?? []).map((u) => <UnitGroup key={u.id} node={u} depth={0} />)}
+              {(org.units ?? []).length === 0 && <PaneRow id="board" label="Board" icon={P.board} active={view === 'board' && app.orgUnitId === null} onClick={() => open('board', null)} />}
+            </>
+          )}
+          {!collapsed[g.id] && g.entries.map((e) => {
+            const b = badgeOf(e.pane);
+            const active = app.section === 'workspace' && (e.tabs ? e.tabs.includes(view) : view === e.pane) && (e.pane !== 'goals' || app.orgUnitId === null);
+            return <PaneRow key={e.pane} id={e.pane} label={e.label} icon={PANE_ICON[e.pane] ?? P.board} active={active} badge={b?.n} badgeColor={b?.color} badgeTitle={b?.title}
+              onClick={() => open(e.pane, e.pane === 'goals' ? null : app.orgUnitId)} />;
+          })}
         </div>
-      )}
-      {/* ---- organization panes — end ---- */}
-      {!org && <div style={{ padding: '6px 10px', fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.5 }}>Organization mode is off for this workspace — turn it on in Settings → Workspace.</div>}
-      <PaneRow id="open-artifacts" label="Open Artifacts" icon={P.files} active={false} onClick={() => app.go('artifacts')} />
+      ))}
     </div>
   );
 }
