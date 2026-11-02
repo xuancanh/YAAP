@@ -119,6 +119,8 @@ export interface Agent {
   homeDir: string | null;
   /** Assigned workspace folder, mounted into its chats as shared/. */
   workspaceFolder: string;
+  /** Default auto-archive for its new task chats: days; 0 = off; null = the workspace default. */
+  chatAutoArchiveDays?: number | null;
   dashboard: string;
   loops: string; // JSON array of LoopDef (src/lib/triggers.ts): { name, cron?, trigger?, … }
   apps: string; // JSON array of AgentApp
@@ -269,9 +271,31 @@ export interface ChatSession {
    *  whether every member may see it (1) or only its creator and the owner. */
   initiatedBy?: string;
   shared?: number;
+  /** Auto-archive (docs/chat-archiving.md): days after the linked task is
+   *  finished; 0 = off; null = the workspace default. */
+  autoArchiveDays?: number | null;
+  /** The task this chat works on: 'org' | 'agent' (kanban) | null. */
+  taskKind?: string | null;
+  taskId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+/** One agent's group in the Home rail (GET /api/chats/rail): `agentId`
+ *  null = the workspace's agent-less chats. */
+export interface ChatRailGroup {
+  agentId: string | null;
+  /** Chats in the group (loop / heartbeat sessions not counted). */
+  total: number;
+  items: ChatSession[];
+  nextCursor: string | null;
+  /** The agent's loop / heartbeat sessions, folded into one row. */
+  loops: { total: number; items: ChatSession[] };
+  /** Chats with an approval waiting in the inbox. */
+  approvalIds: string[];
+}
+export interface ChatRail { groups: ChatRailGroup[]; archivedTotal: number }
+export interface ChatPage { items: ChatSession[]; nextCursor: string | null }
 
 export interface ChatMessage {
   id: string;
@@ -1420,6 +1444,22 @@ export const api = {
   // chats
   chats: (workspaceId: string) => get<ChatSession[]>(`/api/chats?workspaceId=${enc(workspaceId)}`, chatSessionListSchema),
   chat: (id: string) => get<ChatSession>(`/api/chats/${id}`, chatSessionSchema),
+  /** The Home rail: per agent the first page of chats, the loop row and the counts. */
+  chatRail: (workspaceId: string, opts: { limits?: Record<string, number>; q?: string; perAgent?: number } = {}) => {
+    const limits = Object.entries(opts.limits ?? {}).map(([k, n]) => `${k}:${n}`).join(',');
+    return get<ChatRail>(`/api/chats/rail?workspaceId=${enc(workspaceId)}${limits ? `&limits=${enc(limits)}` : ''}${opts.q ? `&q=${enc(opts.q)}` : ''}${opts.perAgent ? `&perAgent=${opts.perAgent}` : ''}`);
+  },
+  /** One page of chats: an agent's ('none' = agent-less), its loops, or the archive. */
+  chatPage: (workspaceId: string, opts: { agentId?: string | null; archived?: boolean; loops?: 'only' | 'exclude'; q?: string; limit?: number; cursor?: string | null } = {}) => {
+    const p = new URLSearchParams({ workspaceId });
+    if (opts.agentId !== undefined) p.set('agentId', opts.agentId === null ? 'none' : opts.agentId);
+    if (opts.archived) p.set('archived', 'true');
+    if (opts.loops) p.set('loops', opts.loops);
+    if (opts.q) p.set('q', opts.q);
+    if (opts.limit) p.set('limit', String(opts.limit));
+    if (opts.cursor) p.set('cursor', opts.cursor);
+    return get<ChatPage>(`/api/chats/page?${p.toString()}`);
+  },
   createChat: (input: { workspaceId: string; name?: string; agentId?: string; agentTypeId?: string; model?: string; cwd?: string; tokenCeiling?: number }) =>
     send<ChatSession>('/api/chats', 'POST', input, chatSessionSchema),
   updateChat: (id: string, patch: Record<string, unknown>) => send<ChatSession>(`/api/chats/${id}`, 'PATCH', patch, chatSessionSchema),

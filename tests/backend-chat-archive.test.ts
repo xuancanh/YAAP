@@ -298,9 +298,15 @@ test('the rail: per-agent first page, cursor pages, loops folded, channel sessio
   const gone = await mk('Archived one', 50);
   await s.chats.archive(gone.id);
 
+  const waiting = await mk('Needs a yes', 5_000);
+  await s.agents.addEvent(s.agent.id, { kind: 'action_pending', title: 'Send it?', sessionId: waiting.id });
+  await s.chats.archive(waiting.id);
+  await s.chats.restore(waiting.id);
+  await s.db.update(chatSessions).set({ updatedAt: new Date(NOW.getTime() - 5_000 * 60_000).toISOString() }).where(eq(chatSessions.id, waiting.id));
   const rail = await ctl.rail(s.ws.id);
+  assert.deepEqual(rail.groups.find((x) => x.agentId === s.agent.id)!.approvalIds, [waiting.id], 'chats waiting on an approval');
   const g = rail.groups.find((x) => x.agentId === s.agent.id)!;
-  assert.equal(g.total, 13, '12 chats + the pinned one; loops and channel sessions not counted');
+  assert.equal(g.total, 14, '12 chats + the pinned one + the waiting one; loops and channel sessions not counted');
   assert.deepEqual(g.items.map((c) => c.name), ['Old but pinned', 'Chat 0', 'Chat 1', 'Chat 2', 'Chat 3']);
   assert.ok(g.nextCursor);
   assert.equal(g.loops.total, 2);
@@ -316,8 +322,8 @@ test('the rail: per-agent first page, cursor pages, loops folded, channel sessio
     seen.push(...page.items.map((c) => c.id));
     cursor = page.nextCursor;
   }
-  assert.equal(seen.length, 13);
-  assert.equal(new Set(seen).size, 13);
+  assert.equal(seen.length, 14);
+  assert.equal(new Set(seen).size, 14);
   assert.equal(seen[0], pinned.id);
   // the rail keeps a group's loaded count on refresh
   const wider = await ctl.rail(s.ws.id, undefined, `${s.agent.id}:9`);

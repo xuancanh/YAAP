@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type OrgPane } from '../store';
-import { api, type ChatSession, type OrgUnitNode } from '../lib/api';
+import { api, type ChatRail, type ChatSession, type OrgUnitNode } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 import { atRiskByUnit, firesOn, MEETING_KIND_TITLES } from '../lib/org';
 import { NewWorkspaceWizard } from './NewWorkspaceWizard';
@@ -82,7 +82,7 @@ export function WorkspacePill() {
   );
 }
 
-function SessionRow({ s }: { s: ChatSession }) {
+function SessionRow({ s, approval = false }: { s: ChatSession; approval?: boolean }) {
   const app = useApp();
   const tags = safeJsonParse<string[]>(s.tags, []);
   const active = s.id === app.currentId && app.homeView === 'chat';
@@ -91,6 +91,7 @@ function SessionRow({ s }: { s: ChatSession }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         {s.pinned === 1 && <I d={P.pin} size={11} fill="var(--amber)" style={{ flex: 'none' }} />}
         <span style={{ flex: 1, fontSize: 12.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name || s.autoTitle || 'New chat'}</span>
+        {approval && <span title="Waiting on your approval" aria-label="Waiting on your approval" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--red)', flex: 'none' }} />}
         {app.me?.hasMembers && s.shared === 1 && <span title="Shared with every member of this workspace" style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 4, padding: '0 5px', flex: 'none' }}>shared</span>}
         {app.me?.hasMembers && s.shared !== 1 && s.initiatedBy && s.initiatedBy !== app.me.actorId && <span title={`Private session of ${app.nameOf(s.initiatedBy)}`} style={{ fontSize: 9.5, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 5px', flex: 'none' }}>{app.nameOf(s.initiatedBy)}</span>}
         <span style={{ fontSize: 10, color: 'var(--text-faint)', flex: 'none' }}>{timeAgo(s.updatedAt)}</span>
@@ -149,37 +150,90 @@ function ArtifactsSection() {
   );
 }
 
-/** One root in the combined rail — everything about a single agent: identity
- *  row (opens the agent home), its conversations, and its isolated folder. */
-function AgentGroup({ id, name, emoji, avatar, items, count, isAgent }: {
-  id: string; name: string; emoji: string; avatar: string; items: ChatSession[]; count: number; isAgent: boolean;
-}) {
-  const app = useApp();
-  const [open, setOpen] = useState(true);
-  const agentActive = isAgent && app.selectedAgent === id && app.homeView === 'agent';
+/** Collapse state of the Home rail's agent groups, per viewer (localStorage,
+ *  best effort): `true` = opened by hand, `false` = closed by hand; absent =
+ *  the default (closed, unless the group holds the open chat or wants you). */
+const RAIL_GROUPS_KEY = 'yaam-rail-groups';
+function useRailCollapse(): [Record<string, boolean>, (next: Record<string, boolean>) => void] {
+  const [state, setState] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem(RAIL_GROUPS_KEY) ?? '{}') as Record<string, boolean>; } catch { return {}; }
+  });
+  const save = (next: Record<string, boolean>) => {
+    setState(next);
+    try { localStorage.setItem(RAIL_GROUPS_KEY, JSON.stringify(next)); } catch { /* storage unavailable: keep it in memory */ }
+  };
+  return [state, save];
+}
 
+interface RailGroupView {
+  key: string; id: string; name: string; emoji: string; avatar: string; isAgent: boolean;
+  total: number; items: ChatSession[]; loops: { total: number; items: ChatSession[] };
+  hasMore: boolean; approvals: Set<string>; unread: number;
+}
+
+/** One root in the combined rail — everything about a single agent: identity
+ *  row (opens the agent home) with its unread / approval badges and chat
+ *  count, then — when open — its newest chats, "Show more", and its loop /
+ *  heartbeat sessions folded into one row. */
+function AgentGroup({ g, open, onToggle, searching }: { g: RailGroupView; open: boolean; onToggle: () => void; searching: boolean }) {
+  const app = useApp();
+  const [loopsOpen, setLoopsOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const agentActive = g.isAgent && app.selectedAgent === g.id && app.homeView === 'agent';
+  const remaining = Math.max(0, g.total - g.items.length);
+  const showLoops = loopsOpen || searching || g.loops.items.some((s) => s.id === app.currentId && app.homeView === 'chat');
+  const more = async () => {
+    setLoading(true);
+    try { await app.loadMoreChats(g.key); } catch { app.showToast('Could not load more chats'); } finally { setLoading(false); }
+  };
+  const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex', flex: 'none' };
   return (
-    <div style={{ marginTop: 4 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 8px', borderRadius: 9, cursor: 'pointer', background: agentActive ? 'var(--accent-dim)' : 'none' }}
-        onClick={() => { if (isAgent) app.openAgent(id); else setOpen(!open); }}>
-        <div style={{ width: 24, height: 24, borderRadius: 7, background: avatar, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 12.5 }}>{emoji}</div>
-        <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-        {isAgent && (app.unread[id] ?? 0) > 0 && (
-          <span title="Unread activity from loops and proactive work" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px' }}>{app.unread[id]}</span>
+    <div style={{ marginTop: 4 }} data-testid={`rail-group-${g.key || 'workspace'}`}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 9, cursor: 'pointer', background: agentActive ? 'var(--accent-dim)' : 'none', minWidth: 0 }}
+        onClick={() => { if (g.isAgent) app.openAgent(g.id); else onToggle(); }}>
+        <div style={{ width: 24, height: 24, borderRadius: 7, background: g.avatar, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 12.5 }}>{g.emoji}</div>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
+        {g.unread > 0 && (
+          <span title="Unread activity from loops and proactive work" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px', flex: 'none' }}>{g.unread}</span>
         )}
-        <span style={{ fontSize: 10.5, color: 'var(--text-faint)', background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px' }}>{count}</span>
-        <button onClick={(e) => { e.stopPropagation(); void app.newChat(isAgent ? id : null); }} title="New chat" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' }}>
+        {g.approvals.size > 0 && (
+          <span title={`${g.approvals.size} chat(s) waiting on your approval`} style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--red)', borderRadius: 8, padding: '1px 6px', flex: 'none' }}>{g.approvals.size}</span>
+        )}
+        <span title={`${g.total} chat${g.total === 1 ? '' : 's'}`} style={{ fontSize: 10.5, color: 'var(--text-faint)', background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px', flex: 'none' }}>{g.total}</span>
+        <button onClick={(e) => { e.stopPropagation(); void app.newChat(g.isAgent ? g.id : null); }} title="New chat" aria-label={`New chat with ${g.name}`} style={iconBtn}>
           <I d={P.plus} size={14} />
         </button>
-        <button onClick={(e) => { e.stopPropagation(); setOpen(!open); }} title={open ? 'Collapse' : 'Expand'} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex' }}>
-          <I d={P.chevD} size={12} style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
+        <button onClick={(e) => { e.stopPropagation(); onToggle(); }} title={open ? 'Collapse' : 'Expand'} aria-label={`${open ? 'Collapse' : 'Expand'} ${g.name}`} aria-expanded={open} style={iconBtn}>
+          <I d={P.chevD} size={12} style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .12s' }} />
         </button>
       </div>
       {open && (
         <div style={{ paddingLeft: 10, borderLeft: '1px solid var(--border-soft)', marginLeft: 19 }}>
-          {items.map((s) => <SessionRow key={s.id} s={s} />)}
-          {items.length === 0 && <div style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--text-faint)' }}>No conversations.</div>}
-
+          {g.items.map((s) => <SessionRow key={s.id} s={s} approval={g.approvals.has(s.id)} />)}
+          {g.items.length === 0 && g.loops.total === 0 && <div style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--text-faint)' }}>No conversations.</div>}
+          {!searching && g.hasMore && remaining > 0 && (
+            <button type="button" onClick={() => void more()} disabled={loading}
+              style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', color: 'var(--accent-hi)', fontSize: 11.5, fontWeight: 600, padding: '5px 10px', cursor: loading ? 'default' : 'pointer' }}>
+              {loading ? 'Loading…' : `Show more (${remaining})`}
+            </button>
+          )}
+          {g.loops.total > 0 && (
+            <>
+              <div role="button" tabIndex={0} onClick={() => setLoopsOpen(!loopsOpen)} onKeyDown={(e) => { if (e.key === 'Enter') setLoopsOpen(!loopsOpen); }}
+                title="Scheduled loops and heartbeat runs, one row per agent"
+                style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 9, cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12 }}>
+                <I d={P.clock} size={12} style={{ flex: 'none' }} />
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Heartbeat runs</span>
+                <span style={{ fontSize: 10, color: 'var(--text-faint)', flex: 'none' }}>{g.loops.total}</span>
+                <I d={P.chevD} size={11} style={{ transform: showLoops ? 'none' : 'rotate(-90deg)', transition: 'transform .12s', flex: 'none' }} />
+              </div>
+              {showLoops && (
+                <div style={{ paddingLeft: 8 }}>
+                  {g.loops.items.map((s) => <SessionRow key={s.id} s={s} approval={g.approvals.has(s.id)} />)}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -245,32 +299,71 @@ export function HomeRail() {
   const app = useApp();
   const [search, setSearch] = useState('');
   const [archOpen, setArchOpen] = useState(false);
-  const q = search.toLowerCase();
+  const [explicit, saveExplicit] = useRailCollapse();
+  const q = search.trim().toLowerCase();
+  // Search runs on the server (the rail is paged), so it finds chats in
+  // collapsed groups and beyond the loaded pages; groups with a hit open.
+  const [hits, setHits] = useState<ChatRail | null>(null);
+  useEffect(() => {
+    if (!q || !app.workspaceId) { setHits(null); return; }
+    let live = true;
+    const t = setTimeout(() => {
+      api.chatRail(app.workspaceId, { q, perAgent: 50 }).then((r) => { if (live) setHits(r); }).catch(() => { if (live) setHits({ groups: [], archivedTotal: 0 }); });
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [q, app.workspaceId]);
+
+  const currentAgentKey = useMemo(() => {
+    if (app.homeView !== 'chat' || !app.currentId) return null;
+    const s = app.sessions.find((x) => x.id === app.currentId);
+    return s ? (s.agentId ?? '') : null;
+  }, [app.sessions, app.currentId, app.homeView]);
 
   const groups = useMemo(() => {
-    const match = (s: ChatSession) => !q || (s.name || s.autoTitle).toLowerCase().includes(q) || s.tags.toLowerCase().includes(q);
-    const byPin = (a: ChatSession, b: ChatSession) => (b.pinned - a.pinned) || (a.updatedAt < b.updatedAt ? 1 : -1);
-    const out: Array<{ id: string; name: string; emoji: string; avatar: string; count: number; items: ChatSession[]; isAgent: boolean }> = [];
+    const source = q ? hits?.groups ?? [] : app.chatRail;
+    const byKey = new Map(source.map((g) => [g.agentId ?? '', g]));
+    const base = new Map(app.chatRail.map((g) => [g.agentId ?? '', g]));
+    const out: RailGroupView[] = [];
+    const view = (key: string, meta: { id: string; name: string; emoji: string; avatar: string; isAgent: boolean }): RailGroupView | null => {
+      const g = byKey.get(key);
+      const nameHit = !!q && meta.isAgent && meta.name.toLowerCase().includes(q);
+      // a search shows the groups with hits, and agents whose name matches (their usual first page)
+      const use = g ?? (nameHit ? base.get(key) : undefined);
+      if (q && !use && !nameHit) return null;
+      return {
+        key, ...meta,
+        total: use?.total ?? 0, items: use?.items ?? [], loops: use?.loops ?? { total: 0, items: [] },
+        hasMore: !q && !!use?.nextCursor, approvals: new Set(base.get(key)?.approvalIds ?? []),
+        unread: meta.isAgent ? app.unread[meta.id] ?? 0 : 0,
+      };
+    };
     for (const a of app.agents) {
-      const all = app.sessions.filter((s) => s.agentId === a.id);
-      const items = all.filter(match).sort(byPin);
-      if (q && items.length === 0 && !a.name.toLowerCase().includes(q)) continue;
-      out.push({ id: a.id, name: a.name, emoji: a.emoji, avatar: grad(a.colors), count: all.length, items, isAgent: true });
+      const v = view(a.id, { id: a.id, name: a.name, emoji: a.emoji, avatar: grad(a.colors), isAgent: true });
+      if (v) out.push(v);
     }
-    const direct = app.sessions.filter((s) => !s.agentId);
-    const items = direct.filter(match).sort(byPin);
-    if (!(q && items.length === 0)) {
-      out.push({ id: '__ws', name: 'Workspace', emoji: '🗂️', avatar: 'var(--panel-2)', count: direct.length, items, isAgent: false });
-    }
+    const ws = view('', { id: '__ws', name: 'Workspace', emoji: '🗂️', avatar: 'var(--panel-2)', isAgent: false });
+    if (ws && (q || ws.total > 0 || ws.loops.total > 0 || out.length === 0)) out.push(ws);
     return out;
-  }, [app.agents, app.sessions, q]);
+  }, [app.agents, app.chatRail, app.unread, hits, q]);
+
+  /** Open: as the viewer set it by hand; otherwise only the open chat's
+   *  group and groups that want you (unread, an approval). A search opens
+   *  every group with a hit. */
+  const isOpen = (g: RailGroupView) => {
+    if (q) return true;
+    if (explicit[g.key] !== undefined) return explicit[g.key];
+    return g.key === currentAgentKey || g.unread > 0 || g.approvals.size > 0;
+  };
+  const anyOpen = groups.some(isOpen);
+  const setAll = (open: boolean) => saveExplicit(Object.fromEntries(groups.map((g) => [g.key, open])));
+  const archMore = async () => { try { await app.loadMoreArchived(); } catch { app.showToast('Could not load more archived chats'); } };
 
   return (
     <>
       <div style={{ padding: '0 12px 10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 9, padding: '7px 10px', marginBottom: 10 }}>
           <I d={P.search} size={14} stroke="var(--text-faint)" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search conversations" style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13, minWidth: 0 }} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search conversations" aria-label="Search conversations" style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13, minWidth: 0 }} />
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => void app.newChat(app.selectedAgent)} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
@@ -284,22 +377,38 @@ export function HomeRail() {
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
         {/* ---- group chat: channels (docs/group-chat.md) — begin ---- */}
         <ChannelsBlock search={q} />
-        <div style={{ ...sectionLabel, padding: '10px 10px 4px' }}>Direct messages</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 10px 4px' }}>
+          <span style={{ ...sectionLabel, padding: 0, flex: 1 }}>Direct messages</span>
+          {!q && groups.length > 1 && (
+            <button type="button" onClick={() => setAll(!anyOpen)} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', fontSize: 10.5, fontWeight: 600, cursor: 'pointer', padding: 2 }}>
+              {anyOpen ? 'Collapse all' : 'Expand all'}
+            </button>
+          )}
+        </div>
         {/* ---- group chat — end ---- */}
-        {groups.map((g) => <AgentGroup key={g.id} {...g} />)}
-        {app.archived.length > 0 && (
+        {groups.map((g) => (
+          <AgentGroup key={g.key || '__ws'} g={g} open={isOpen(g)} searching={!!q}
+            onToggle={() => saveExplicit({ ...explicit, [g.key]: !isOpen(g) })} />
+        ))}
+        {q && hits && groups.length === 0 && <div style={{ padding: '6px 12px', fontSize: 11.5, color: 'var(--text-faint)' }}>No conversations match.</div>}
+        {app.archivedTotal > 0 && (
           <div style={{ marginTop: 12, borderTop: '1px solid var(--border-soft)', paddingTop: 8 }}>
             <div onClick={() => setArchOpen(!archOpen)} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: 8, borderRadius: 9, cursor: 'pointer', color: 'var(--text-faint)' }}>
               <span style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>Archived</span>
-              <span style={{ fontSize: 10.5, background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px' }}>{app.archived.length}</span>
+              <span style={{ fontSize: 10.5, background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px' }}>{app.archivedTotal}</span>
               <I d={P.chevD} size={12} style={{ transform: archOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
             </div>
             {archOpen && app.archived.map((s) => (
               <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 9, margin: '2px 0' }}>
-                <span style={{ flex: 1, fontSize: 12.5, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name || s.autoTitle || 'Chat'}</span>
-                <button onClick={() => void app.restoreChat(s.id)} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '3px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Restore</button>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name || s.autoTitle || 'Chat'}</span>
+                <button onClick={() => void app.restoreChat(s.id)} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 7, padding: '3px 10px', fontSize: 11, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Restore</button>
               </div>
             ))}
+            {archOpen && app.archivedHasMore && (
+              <button type="button" onClick={() => void archMore()} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', color: 'var(--accent-hi)', fontSize: 11.5, fontWeight: 600, padding: '5px 10px', cursor: 'pointer' }}>
+                Show more ({Math.max(0, app.archivedTotal - app.archived.length)})
+              </button>
+            )}
           </div>
         )}
       </div>

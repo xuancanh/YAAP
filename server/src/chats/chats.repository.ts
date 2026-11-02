@@ -7,7 +7,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { and, asc, eq, gt, gte, inArray, isNull, isNotNull, lt, notLike, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { chatMessages, chatSessions, chatTurns, loopState } from '../database/schema';
+import { agentEvents, chatMessages, chatSessions, chatTurns, loopState } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
 
@@ -88,6 +88,18 @@ export class ChatsRepository {
     }).from(chatSessions).where(this.railWhere(workspaceId, { ...opts, loops: 'any' })).groupBy(chatSessions.agentId);
     const out = new Map<string, { chats: number; loops: number }>();
     for (const r of rows) out.set(r.agentId ?? '', { chats: Number(r.total) - Number(r.loops), loops: Number(r.loops) });
+    return out;
+  }
+
+  /** Rail sessions with an approval waiting in the inbox (a queued action,
+   *  a routed approval), keyed by agent ('' = none): the rail opens those
+   *  groups and marks the rows. */
+  async approvalSessions(workspaceId: string): Promise<Map<string, string[]>> {
+    const rows = await this.db.selectDistinct({ id: chatSessions.id, agentId: chatSessions.agentId }).from(chatSessions)
+      .innerJoin(agentEvents, eq(agentEvents.sessionId, chatSessions.id))
+      .where(and(this.railWhere(workspaceId, { loops: 'any' }), inArray(agentEvents.kind, ['action_pending', 'approval_request'])));
+    const out = new Map<string, string[]>();
+    for (const r of rows) out.set(r.agentId ?? '', [...(out.get(r.agentId ?? '') ?? []), r.id]);
     return out;
   }
 

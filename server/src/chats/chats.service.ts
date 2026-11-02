@@ -36,12 +36,13 @@ export class ChatsService {
     const perAgent = Math.max(1, Math.min(100, Math.floor(opts.perAgent ?? 5)));
     const q = (opts.q ?? '').trim();
     const counts = await this.repo.railCounts(workspaceId, { q });
+    const approvals = await this.repo.approvalSessions(workspaceId);
     const groups = await Promise.all([...counts.entries()].map(async ([key, c]) => {
       const agentId = key || null;
       const limit = Math.max(1, Math.min(500, Math.floor(opts.limits?.[key] ?? perAgent)));
       const page = c.chats > 0 ? await this.repo.pageSessions(workspaceId, { agentId, loops: 'exclude', q, limit }) : { items: [], nextCursor: null };
       const loops = c.loops > 0 ? await this.repo.pageSessions(workspaceId, { agentId, loops: 'only', q, limit: 20 }) : { items: [], nextCursor: null };
-      return { agentId, total: c.chats, items: page.items, nextCursor: page.nextCursor, loops: { total: c.loops, items: loops.items } };
+      return { agentId, total: c.chats, items: page.items, nextCursor: page.nextCursor, loops: { total: c.loops, items: loops.items }, approvalIds: approvals.get(key) ?? [] };
     }));
     let archivedTotal = 0;
     for (const c of (await this.repo.railCounts(workspaceId, { archived: true, q })).values()) archivedTotal += c.chats + c.loops;

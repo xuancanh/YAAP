@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
+import { AgentAutoArchiveCard } from './ChatAutoArchive';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
 import { ImportSkillMdButton, MemoryImportModal, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { PublishButton, PublishModal } from './RegistryBits';
@@ -1581,6 +1582,7 @@ export function AgentHome() {
             </div>
 
             <SharedFolderCard a={a} />
+            <AgentAutoArchiveCard a={a} />
 
             <div style={{ ...card, padding: '16px 18px' }}>
               <div style={{ ...label, marginBottom: 12 }}>Ratings</div>

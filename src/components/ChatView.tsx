@@ -9,6 +9,7 @@ import { safeJsonParse, workspaceSpend } from '../lib/util';
 import { fmtUsd, usdFor } from '../lib/pricing';
 import { MAX_AUDIO_BYTES, fmtDuration, isAudioFile, recorderAvailable, useVoiceRecorder, AUDIO_EXT_RE } from '../lib/voice';
 import { VoiceChip } from './VoiceChip';
+import { AutoArchiveMenu } from './ChatAutoArchive';
 import { Markdown, plainText } from '../lib/md';
 import { CLASS_COLOR, CLASS_LABEL, CLASS_SHORT, degradedChatNote } from '../lib/org3';
 
@@ -598,6 +599,7 @@ export function ChatView() {
             <button onClick={() => void app.archiveChat(s.id)} title="Archive (retained; restore from the sidebar)" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: 'var(--text-faint)', flex: 'none' }}>
               <I d={P.board} size={13} />
             </button>
+            <AutoArchiveMenu s={s} />
             {app.me?.hasMembers && (
               <button onClick={() => void app.patchSession(s.id, { shared: s.shared !== 1 })}
                 title={s.shared === 1 ? 'Shared with every member of this workspace — click to make it private to you and the owner' : 'Private to you and the owner — click to share it with every member'}
