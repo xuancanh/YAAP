@@ -274,7 +274,9 @@ test('context ceiling: with auto-compact on, a chat at its ceiling compacts and 
   const compaction = new CompactionService(repo, locks, ctx, { get: () => undefined } as never, settings);
   const turns = new TurnLoopService(repo, locks, tools, ctx, skillsStub(), storageStub, mcpStub(), agentsStub(), wsStub(), undefined, compaction);
 
-  const s = await chats.create({ workspaceId: 'ws1', tokenCeiling: 1000 });
+  // the ceiling sits above the built-in tools' own overhead (~900 tokens of
+  // specs), so only the pretended context below trips it
+  const s = await chats.create({ workspaceId: 'ws1', tokenCeiling: 2000 });
   for (let i = 0; i < 3; i++) await collect(turns.run(s.id, { text: `message ${i}` }));
   // pretend the last call carried more context than the ceiling allows
   await repo.updateSession(s.id, { contextTokens: 5000 });
@@ -283,7 +285,7 @@ test('context ceiling: with auto-compact on, a chat at its ceiling compacts and 
   assert.ok(!events.some((e) => e.type === 'error'), 'no ceiling error');
   const after = (await repo.getSession(s.id))!;
   assert.ok(after.compactSummary.length > 0);
-  assert.ok(after.contextTokens < 1000, 'the measured context is back under the ceiling');
+  assert.ok(after.contextTokens < 2000, 'the measured context is back under the ceiling');
 
   // auto-compact off: the same chat is refused at its ceiling
   const off = { all: async () => ({ autoCompact: 'off' }) } as never;

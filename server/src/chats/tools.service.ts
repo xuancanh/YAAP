@@ -73,7 +73,7 @@ function fileLine(f: FileEntry): string {
   return `${displayPath(f.path)} (${f.size} bytes)${f.version ? ` · v${f.version}${f.updatedBy?.name ? ` · ${f.updatedBy.name}` : ''}` : ''}`;
 }
 
-const VERSION_HINT = 'Pass expectedVersion (from fs_read\'s header) when changing a file others may edit: if someone wrote it since, the call fails and you re-read and merge instead of overwriting their work.';
+const VERSION_HINT = 'With expectedVersion (from fs_read) it fails if someone wrote the file since: re-read and merge.';
 
 interface ChatTool extends AiToolSpec {
   readOnly: boolean;
@@ -102,8 +102,8 @@ export class ToolsService {
     this.tools = [
       {
         name: 'fs_list',
-        description: 'List files in the workspace filesystem. Without a prefix: your home folder (and your assigned folder, if any). "/" lists the top level of the workspace (one line per folder); any other path lists that folder. Paths print absolute (e.g. /org/plan.md) so you can pass them on. Relative paths and ~/ mean your home; /… is the workspace root.',
-        inputSchema: { type: 'object', properties: { prefix: { type: 'string', description: 'Folder to list: "/" for the top level, "/org", "~/knowledge", "notes" …' } } },
+        description: 'List files (absolute paths). No prefix: your home; "/": the workspace top level; else that folder. Relative and ~/ paths are your home, /… the workspace root.',
+        inputSchema: { type: 'object', properties: { prefix: { type: 'string' } } },
         readOnly: true,
         execute: async (root, input) => {
           const prefix = typeof input.prefix === 'string' ? input.prefix.trim() : '';
@@ -118,8 +118,8 @@ export class ToolsService {
       },
       {
         name: 'fs_read',
-        description: 'Read a text file. The first line is a header with the file\'s version and last editor, e.g. "[version 4 · last edited by Ada, 2m ago]" — pass that version as expectedVersion to fs_write / fs_edit.',
-        inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'notes.md (your home), /org/plan.md (workspace root)' } }, required: ['path'] },
+        description: 'Read a text file. The first line is "[version N · last edited by …]"; pass N as expectedVersion when you change it.',
+        inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
         readOnly: true,
         execute: async (root, input) => {
           const path = resolvePath(root, str(input, 'path'));
@@ -136,13 +136,13 @@ export class ToolsService {
       },
       {
         name: 'fs_write',
-        description: `Write (create or overwrite) a text file. Relative paths land in your home folder; write shared work to a shared folder such as /org/… or /channels/<slug>/…. You cannot write other agents' homes (/agents/<name>/) or any .checkpoints/ folder. ${VERSION_HINT}`,
+        description: `Create or overwrite a text file (not another agent's home or .checkpoints/). ${VERSION_HINT}`,
         inputSchema: {
           type: 'object',
           properties: {
             path: { type: 'string' },
             content: { type: 'string' },
-            expectedVersion: { type: 'integer', description: 'The version you read; 0 = the file must not exist yet' },
+            expectedVersion: { type: 'integer', description: '0 = must not exist yet' },
           },
           required: ['path', 'content'],
         },
@@ -157,13 +157,13 @@ export class ToolsService {
       },
       {
         name: 'fs_edit',
-        description: `Change part of a text file: replace the exact text "old" (it must occur exactly once — include enough surrounding text) with "new". The collaborative way to edit a shared file without rewriting it. ${VERSION_HINT}`,
+        description: `Replace the exact text "old" (must occur once) with "new" — edit a shared file without rewriting it. ${VERSION_HINT}`,
         inputSchema: {
           type: 'object',
           properties: {
             path: { type: 'string' },
-            old: { type: 'string', description: 'Exact text to replace (must match once)' },
-            new: { type: 'string', description: 'Replacement text ("" deletes)' },
+            old: { type: 'string' },
+            new: { type: 'string' },
             expectedVersion: { type: 'integer' },
           },
           required: ['path', 'old', 'new'],
@@ -177,7 +177,7 @@ export class ToolsService {
       },
       {
         name: 'fs_append',
-        description: 'Append text to a file (created if missing) — for logs, meeting notes and shared lists several writers add to. Needs no version: appends never overwrite anyone.',
+        description: 'Append text to a file (created if missing): logs, notes, shared lists. Never overwrites anyone.',
         inputSchema: {
           type: 'object',
           properties: { path: { type: 'string' }, content: { type: 'string' } },
@@ -193,7 +193,7 @@ export class ToolsService {
       },
       {
         name: 'fs_delete',
-        description: 'Delete a file (your home or a shared folder; never another agent\'s home or .checkpoints/).',
+        description: 'Delete a file.',
         inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
         readOnly: false,
         execute: async (root, input) => {
@@ -204,12 +204,12 @@ export class ToolsService {
       },
       {
         name: 'fs_search',
-        description: 'Search text file contents. Searches your home (and assigned folder) unless a prefix names another folder ("/" = the whole workspace). Returns matching lines as "/path:line: text".',
+        description: 'Search text files for a case-insensitive substring: your home, or the folder in prefix ("/" = everything). Returns "/path:line: text".',
         inputSchema: {
           type: 'object',
           properties: {
-            query: { type: 'string', description: 'Case-insensitive substring to find' },
-            prefix: { type: 'string', description: 'Folder to search, e.g. "/org" or "/"' },
+            query: { type: 'string' },
+            prefix: { type: 'string' },
           },
           required: ['query'],
         },
