@@ -13,6 +13,7 @@ import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
 import { MEETING_KIND_TITLES, minutesMeetingId, parseMinutes } from '../lib/org';
 import { AUDIENCE_COLOR, audienceLabel } from '../lib/org2';
+import { FollowToggle } from './FollowToggle';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 };
@@ -417,7 +418,8 @@ export function ChannelView() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
                 <span style={{ fontWeight: 600, fontSize: 13 }}>Thread</span>
                 <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>#{channel.slug}</span>
-                <button onClick={() => setThread(null)} style={{ ...ghostBtn, marginLeft: 'auto' }}><I d={P.x} size={14} /></button>
+                <div style={{ marginLeft: 'auto' }}><FollowToggle wsId={wsId} targetKind="thread" targetId={thread} /></div>
+                <button onClick={() => setThread(null)} style={ghostBtn}><I d={P.x} size={14} /></button>
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px' }}>
                 {renderMessage(threadRoot, { inThread: true })}

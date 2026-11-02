@@ -19,6 +19,7 @@ import { UsageBars, UsageRows } from './UsageChart';
 import { I, P } from '../lib/icons';
 import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
 import { changeSummary, decidedViaBadge, dueBadge, expectedLabel, memberSettingsLines, verificationBadge } from '../lib/org3';
+import { FollowToggle } from './FollowToggle';
 
 /** The CEO's-seat panes (docs/company-vision.md §8, items 18–20) load on demand. */
 const VisionPane = lazy(() => import('./OrgVisionView').then((m) => ({ default: m.VisionPane })));
@@ -491,6 +492,7 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ ...pill(STATUS_COLOR[task.status], '#fff') }}>{task.status.replace('_', ' ')}</span>
           <h2 style={{ ...h2, flex: 1 }}>{task.title}</h2>
+          <FollowToggle wsId={org.workspaceId} targetKind="org_task" targetId={task.id} />
           <button style={btn()} onClick={() => setWhy(true)} title="Why does this task exist? The chain up to the vision (docs/company-vision.md §2)">Why</button>
           <button style={btn()} onClick={() => setRelated(true)} title="Everything linked to this task in the record (docs/company-vision.md §6)">Related</button>
           <button style={btn()} onClick={onClose} aria-label="Close"><I d={P.x} size={14} /></button>

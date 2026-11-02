@@ -15,6 +15,7 @@ import {
   fileRevisionListSchema,
   transcriptSchema,
   hireResultSchema,
+  followViewSchema,
 } from './schemas';
 
 export interface Workspace {
@@ -671,6 +672,15 @@ export interface ChannelMessage {
 }
 export interface ChannelPage { messages: ChannelMessage[]; replies: Record<string, { count: number; lastAt: string }>; hasMore: boolean }
 export interface ChannelFile { path: string; name: string; size: number; lastModified?: string }
+
+/** Follows (docs/follows.md): a channel thread (root message id), an org
+ *  task or an agent kanban task, followed by agents and people. */
+export type FollowTargetKind = 'thread' | 'org_task' | 'agent_task';
+export interface FollowView {
+  following: boolean;
+  reason: string | null;
+  followers: Array<{ followerKind: 'agent' | 'user'; followerId: string; reason: string; createdAt: string }>;
+}
 export type WorkspaceEvent =
   | { type: 'hello'; workspaceId: string }
   | { type: 'channel_message'; workspaceId: string; channelId: string; message: ChannelMessage }
@@ -1293,6 +1303,16 @@ export const api = {
   markChannelRead: (wsId: string, slug: string, messageId?: string) =>
     send<{ ok: true }>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/read`, 'POST', { messageId }),
   channelFiles: (wsId: string, slug: string) => get<ChannelFile[]>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/files`),
+
+  // follows (docs/follows.md): the caller follows, unfollows, marks seen
+  follows: (wsId: string, targetKind: FollowTargetKind, targetId: string) =>
+    get<FollowView>(`/api/workspaces/${wsId}/follows?targetKind=${targetKind}&targetId=${enc(targetId)}`, followViewSchema),
+  follow: (wsId: string, targetKind: FollowTargetKind, targetId: string) =>
+    send<FollowView>(`/api/workspaces/${wsId}/follows`, 'POST', { targetKind, targetId }, followViewSchema),
+  unfollow: (wsId: string, targetKind: FollowTargetKind, targetId: string) =>
+    send<FollowView>(`/api/workspaces/${wsId}/follows/unfollow`, 'POST', { targetKind, targetId }, followViewSchema),
+  markFollowSeen: (wsId: string, targetKind: FollowTargetKind, targetId: string) =>
+    send<{ ok: true }>(`/api/workspaces/${wsId}/follows/seen`, 'POST', { targetKind, targetId }),
 
   // workspaces + workspace files
   workspaces: () => get<Workspace[]>('/api/workspaces'),

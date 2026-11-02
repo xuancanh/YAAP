@@ -31,6 +31,7 @@ import { OrgService } from '../server/src/org/org.service';
 import { OrgTasksService } from '../server/src/org/org-tasks.service';
 import { FollowsService, type Follower } from '../server/src/follows/follows.service';
 import { FollowsTools, FOLLOW_TOOLS } from '../server/src/follows/follows.tools';
+import { FollowsController } from '../server/src/follows/follows.controller';
 import { FOLLOW_TUNABLES } from '../server/src/follows/follow-tunables';
 import { classOf, unclassified } from '../server/src/actions/action-classes';
 import { TUNABLES } from '../server/src/org/org-tunables';
@@ -362,4 +363,26 @@ test('workspace scoping: ids resolve only inside the workspace; private channels
   await assert.rejects(tools.execute(session, 'follow', { kind: 'thread', id: root.id }), /no message/);
   assert.equal((await s.follows.list(agent(scout.id), other.id)).length, 0);
   assert.equal((await s.follows.list(agent(scout.id), s.ws.id)).length, 1, 'its own board task');
+});
+
+test('people: the controller follows, unfollows and marks seen as the caller, inside the caller\'s workspace only', async () => {
+  const s = await setup();
+  const ctl = new FollowsController(s.follows, s.db);
+  const root = await s.groupchat.post(s.general.id, { text: 'Offsite ideas', authorKind: 'human' });
+  let v = await ctl.view(s.ws.id, 'thread', root.id);
+  assert.equal(v.following, false);
+  v = await ctl.follow(s.ws.id, { targetKind: 'thread', targetId: root.id });
+  assert.equal(v.following, true);
+  assert.deepEqual(v.followers.map((f) => [f.followerKind, f.followerId, f.reason]), [['user', 'single', 'manual']]);
+  const atlas = await s.agents.create({ name: 'Atlas', workspaceId: s.ws.id });
+  await s.groupchat.addMember(s.general.id, { kind: 'agent', id: atlas.id });
+  await s.groupchat.post(s.general.id, { text: 'A lake?', threadRootId: root.id, authorKind: 'agent', authorId: atlas.id });
+  assert.equal((await rowOf(s, USER, root.id))!.unseenCount, 1);
+  await ctl.seen(s.ws.id, { targetKind: 'thread', targetId: root.id });
+  assert.equal((await rowOf(s, USER, root.id))!.unseenCount, 0);
+  assert.equal((await ctl.mine(s.ws.id)).length, 1);
+  v = await ctl.unfollow(s.ws.id, { targetKind: 'thread', targetId: root.id });
+  assert.equal(v.following, false);
+  assert.deepEqual(v.followers.map((f) => f.followerId), [atlas.id]);
+  await assert.rejects(ctl.view('nope', 'thread', root.id), /workspace nope/);
 });

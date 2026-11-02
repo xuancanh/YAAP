@@ -139,6 +139,13 @@ export const hireResultSchema = z.object({
   agent: agentSchema,
 });
 
+/** Follows (docs/follows.md): the follower avatars render from this list. */
+export const followViewSchema = z.object({
+  following: z.boolean(),
+  reason: z.string().nullable(),
+  followers: z.array(z.object({ followerKind: z.enum(['agent', 'user']), followerId: z.string(), reason: z.string(), createdAt: z.string() })),
+});
+
 /** Validate `value` against `schema`; on mismatch warn and keep the raw
  *  value — drift should be visible, never fatal. Returns `value` unchanged
  *  either way (schemas strip unknown keys, so we never hand parsed output
