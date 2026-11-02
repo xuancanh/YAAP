@@ -1430,7 +1430,10 @@ export function AgentHome() {
   const filteredChats = chatQuery.trim()
     ? conversations.filter((c) => (c.name || c.autoTitle).toLowerCase().includes(chatQuery.trim().toLowerCase()))
     : conversations;
-  const counts: Partial<Record<AgentTab, number>> = { Work: openTasks.length, Chats: conversations.length };
+  // The rail is paged (docs/chat-archiving.md): the loaded chats, the agent's full count, and its next page.
+  const railGroup = (app.chatRail ?? []).find((g) => g.agentId === a.id);
+  const chatTotal = Math.max(conversations.length, (railGroup?.total ?? 0) + (railGroup?.loops.total ?? 0));
+  const counts: Partial<Record<AgentTab, number>> = { Work: openTasks.length, Chats: chatTotal };
   const pending = page.o?.needsYou.length ?? 0;
 
   return (
@@ -1542,7 +1545,7 @@ export function AgentHome() {
         {tab === 'Chats' && (
           <div style={{ marginTop: 18 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-              <span style={label}>Conversations · {conversations.length}</span>
+              <span style={label}>Conversations · {chatTotal}</span>
               <input value={chatQuery} onChange={(e) => setChatQuery(e.target.value)} placeholder="search titles…"
                 style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', fontSize: 12, padding: '6px 10px', outline: 'none', width: 200 }} />
             </div>
@@ -1553,6 +1556,12 @@ export function AgentHome() {
                   {conversations.length ? 'No conversations match.' : 'No conversations yet — start the first one.'}
                 </div>
               )}
+              {railGroup?.nextCursor && (
+                <button type="button" onClick={() => void app.loadMoreChats(a.id).catch(() => app.showToast('Could not load more chats'))}
+                  style={{ display: 'block', background: 'none', border: 'none', color: 'var(--accent-hi)', fontSize: 12, fontWeight: 600, padding: '6px 10px', cursor: 'pointer' }}>
+                  Show more ({Math.max(0, railGroup.total - railGroup.items.length)})
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1562,6 +1571,7 @@ export function AgentHome() {
             <IdentityCard a={a} />
             <ModelCard a={a} />
             <HeartbeatCard a={a} />
+            <AgentAutoArchiveCard a={a} />
             <div style={{ ...card, padding: '16px 18px' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 9 }}>
                 <span style={label}>Charter</span>
@@ -1582,7 +1592,6 @@ export function AgentHome() {
             </div>
 
             <SharedFolderCard a={a} />
-            <AgentAutoArchiveCard a={a} />
 
             <div style={{ ...card, padding: '16px 18px' }}>
               <div style={{ ...label, marginBottom: 12 }}>Ratings</div>
