@@ -216,6 +216,53 @@ A line invites the owner to start a company, which opens the onboarding
 wizard. An empty workspace gets **Start a company with a Chief of Staff**
 or **Create one agent**.
 
+## Inbox
+
+The Inbox lists what waits on you now. A **Waiting / History** toggle sits
+at the top, and Waiting is the default.
+
+**History** lists everything that used to wait on you and is now
+resolved, newest first. It has the same filters as Waiting (Approvals,
+Keys, Escalations, Plans, My tasks, Incidents, Following), a search box, a
+date range (7, 30 or 90 days, or all time; 30 by default) and **Decided
+without you**. **Load more** fetches the next page. Each row shows:
+
+- what it was;
+- the outcome;
+- who resolved it: you, another person, a delegate (a person or an agent
+  role, named), the default at the deadline, an agent or the system;
+- when.
+
+A row opens its record. A task opens through its link, and a key opens
+the conversation it ran in. A card opens the Approvals pane. A plan or an
+incident opens in its pane, and a followed thread opens at its link. Rows
+that a default or a delegate decided carry a **decided without you**
+badge, so you can audit them.
+
+Some rows can be walked back through a route that already exists, behind
+a confirm:
+
+- a card decided by a delegation that is still active offers **Revoke**
+  (CEO only);
+- a task offers **Reopen** (not for viewers).
+
+`GET /api/workspaces/:id/inbox/history?kind=&q=&from=&to=&cursor=&limit=&without=`
+returns `{ items, nextCursor }`. It owns no state and reads each
+resolution from the record that holds it:
+
+| Kind | Source | Outcomes |
+|---|---|---|
+| approvals, escalations | `org_approvals` past pending (`decidedVia`: by hand, `default`, `delegate:…`); `two_key` cards are left to their key | approved, rejected, sent back, expired |
+| keys | `action_log` rows that were held or staged, attributed through their `two_key` card when a default or a delegate decided it | released, failed, denied, refused |
+| plans | `org_plans`; applied when the window closed counts as the default; the veto time comes from the audit row | applied, vetoed, expired |
+| incidents | `org_incidents`; who comes from the audit row | contained, resolved |
+| my tasks | org tasks assigned to you or reviewed by you | done, cancelled |
+| following | your follows, by `lastSeenAt` | seen |
+
+Everything is scoped to the workspace and the account. A member sees the
+company records they can already read, plus only their own tasks and
+follows.
+
 ## Links
 
 A single org task opens through its deep link,
