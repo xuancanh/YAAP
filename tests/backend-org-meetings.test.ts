@@ -295,10 +295,10 @@ test('a standup agenda is composed from the board without a model call — per m
   const msgs = await thread(s, company.id, m.threadRootId!);
   const agenda = msgs[0].text;
   assert.match(agenda, /Standup for .* — since .*Composed from the board/);
-  assert.match(agenda, /\*\*Writer\*\*\n- done: \[\w{8}\] Outline issue 1\n- in progress: \[\w{8}\] Draft issue 1\n- blocked: nothing/);
-  assert.match(agenda, /\*\*Editor\*\*\n- done: nothing since the last standup\n- in progress: nothing\n- blocked: \[\w{8}\] Style guide — waiting for examples/);
-  assert.match(agenda, /\*\*Chief\*\* \(lead\)[\s\S]*- blocked: \[\w{8}\] Pick a font — nobody owns this/);
-  assert.match(agenda, new RegExp(`Blocked without an owner → Chief now owns: \\[${orphan.id.slice(0, 8)}\\]`));
+  assert.match(agenda, /\*\*Writer\*\*\n- done: [A-Z][A-Z0-9]{1,5}-\d+ Outline issue 1\n- in progress: [A-Z][A-Z0-9]{1,5}-\d+ Draft issue 1\n- blocked: nothing/);
+  assert.match(agenda, /\*\*Editor\*\*\n- done: nothing since the last standup\n- in progress: nothing\n- blocked: [A-Z][A-Z0-9]{1,5}-\d+ Style guide — waiting for examples/);
+  assert.match(agenda, /\*\*Chief\*\* \(lead\)[\s\S]*- blocked: [A-Z][A-Z0-9]{1,5}-\d+ Pick a font — nobody owns this/);
+  assert.match(agenda, new RegExp(`Blocked without an owner → Chief now owns: ${orphan.key}`));
   const reassigned = await s.tasks.get(orgId, orphan.id);
   assert.equal(reassigned.assigneeAgentId, s.chief.id);
   assert.equal(reassigned.status, 'blocked', 'still blocked: it got an owner, not a wake');

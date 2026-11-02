@@ -129,7 +129,7 @@ test('a stale open task opens the gate: one real turn with the reason and the ch
   assert.match(res.reasons[0], /Reply to the vendor/);
   assert.equal(s.provider.requests.length, 1);
   const prompt = s.provider.requests[0].messages.map((m) => m.content).join('\n');
-  assert.match(prompt, /^Heartbeat\. You were woken because:\n- Task \[/m);
+  assert.match(prompt, /^Heartbeat\. You were woken because:\n- Task [A-Z][A-Z0-9]{1,5}-\d+ "/m);
   assert.match(prompt, /Reply to the vendor/);
   assert.match(prompt, /Do not invent work\./);
   assert.match(prompt, /Your charter[\s\S]*vendor relationships warm/);

@@ -106,7 +106,7 @@ test('a plain workspace: queued actions need you, a rejected model is loud on th
   assert.equal(h.artifacts[0].path, 'reports/weekly.md');
   assert.equal(h.artifacts[0].updatedBy.name, 'Writer');
   assert.ok(h.activity.some((a) => a.kind === 'file' && /Created reports\/weekly\.md/.test(a.title)));
-  assert.ok(h.activity.some((a) => a.kind === 'task' && /Done: Draft the plan/.test(a.title)));
+  assert.ok(h.activity.some((a) => a.kind === 'task' && /Done: ([A-Z][A-Z0-9]{1,5}-\d+ )?Draft the plan/.test(a.title)));
   assert.deepEqual(h.goals, []);
 
   // a later successful turn clears the error

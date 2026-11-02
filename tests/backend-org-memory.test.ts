@@ -145,7 +145,7 @@ test('org_write_playbook parks a skill and opens a review task with a reviewer o
   // write
   await assert.rejects(s.memory.execute(writerSession, 'org_write_playbook', { title: 'Publish an issue', body: PLAYBOOK, roles: ['Writer'] }), /why is required/);
   const out = await s.memory.execute(writerSession, 'org_write_playbook', { title: 'Publish an issue', body: PLAYBOOK, roles: ['Writer'], why: 'We ship every Friday the same way.' });
-  assert.match(out, /Playbook "Publish an issue" v1 written \(org-publish-an-issue; new\) and sent to review: task \[\w{8}\], reviewer (Chief|Editor)/);
+  assert.match(out, /Playbook "Publish an issue" v1 written \(org-publish-an-issue; new\) and sent to review: task [A-Z][A-Z0-9]{1,5}-\d+, reviewer (Chief|Editor)/);
   const [pb] = await s.playbooks.list(orgId);
   assert.equal(pb.status, 'in_review'); assert.equal(pb.version, 1); assert.equal(pb.ownerAgentId, s.writer.id);
   assert.deepEqual(JSON.parse(pb.roles), ['Writer']);
@@ -282,7 +282,7 @@ test('each postmortem trigger schedules one retro for the owning unit with an ag
   assert.equal(list.length, 2);
   const retroB = list.find((m) => m.title === 'Postmortem · Write the sponsor deck')!;
   assert.match(retroB.agenda, /a task escalated to the CEO after 3 review rounds/);
-  assert.match(retroB.agenda, /Task \[\w{8}\] "Write the sponsor deck" — status blocked, owner Writer, 3 review round\(s\), blockers: escalated: review round cap/);
+  assert.match(retroB.agenda, /Task [A-Z][A-Z0-9]{1,5}-\d+ "Write the sponsor deck" — status blocked, owner Writer, 3 review round\(s\), blockers: escalated: review round cap/);
   assert.match(retroB.agenda, /task_escalate/);
   // a plain escalation (round 1) does not
   const t3 = await s.tasks.create(orgId, { title: 'Pick a font', assigneeAgentId: s.writer.id });

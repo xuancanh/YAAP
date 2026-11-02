@@ -409,11 +409,11 @@ test('decision 4: the escalation chain — a specialist raises to its head (a bo
   const cards = async () => (await s.db.select().from(orgApprovals).where(eq(orgApprovals.orgId, orgId))).filter((a) => a.kind === 'escalation').length;
   const mine = await s.tasks.create(orgId, { title: 'Quote for Acme', createdBy: `agent:${s.writer.id}`, assigneeAgentId: s.editor.id });
   const out = await s.runtime.execute(specialist, 'org_escalate', { taskId: mine.id, reason: 'Acme asks for 30% off — above my authority' });
-  assert.match(out, /escalated to your head, Writer: escalation task \[[0-9a-f]{8}\] is on its board/);
+  assert.match(out, /escalated to your head, Writer: escalation task [A-Z][A-Z0-9]{1,5}-\d+ is on its board/);
   assert.equal((await s.tasks.get(orgId, mine.id)).status, 'blocked');
   const [esc] = (await s.tasks.list(orgId)).filter((t) => t.parentTaskId === mine.id);
   assert.equal(esc.assigneeAgentId, s.writer.id);
-  assert.match(esc.title, /^Escalation: Quote for Acme/);
+  assert.match(esc.title, /^Escalation: [A-Z][A-Z0-9]{1,5}-\d+ Quote for Acme/);
   assert.equal(await cards(), 0, 'no card for the CEO');
   // a repeat joins the open escalation
   assert.match(await s.runtime.execute(specialist, 'org_escalate', { taskId: mine.id, reason: 'still waiting' }), /added to its open escalation/);

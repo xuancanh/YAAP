@@ -568,7 +568,7 @@ test('channel tools: channel_post is refused outside membership; channel_read, c
   assert.equal(await s.runtime.contextFor(outsiderSession), null);
   // make a task from its own message by id prefix
   const made = await s.runtime.execute(scoutSession, 'channel_make_task', { messageId: posted.id.slice(0, 8), channel: 'launch', title: 'Write kickoff doc' });
-  assert.match(made, /Task \[[\w-]{8}\] "Write kickoff doc" created on the kanban/);
+  assert.match(made, /Task [A-Z][A-Z0-9]{1,5}-\d+ "Write kickoff doc" created on the kanban/);
   const task = (await s.agents.listTasks(scout.id))[0];
   assert.equal(task.channelId, launch.id);
   assert.equal(task.messageId, posted.id);
@@ -591,13 +591,13 @@ test('make-task links message ↔ task both ways, posts a system line, and statu
   assert.equal((await s.groupchat.message(root.id)).taskId, res.task.id);
   let thread = (await s.groupchat.messages(s.general.id, { thread: root.id })).messages;
   assert.equal(thread.length, 2);
-  assert.match(thread[1].text, /^Task \[[\w-]{8}\] "We need the Q1 deck by Friday" created for Scout on the kanban · todo$/);
+  assert.match(thread[1].text, /^Task [A-Z][A-Z0-9]{1,5}-\d+ "We need the Q1 deck by Friday" created for Scout on the kanban · todo$/);
   assert.ok(s.log.some((e) => e.type === 'task_update' && e.taskId === res.task.id && e.status === 'todo'));
   // the agent moves it: the thread hears about it
   await s.agents.updateTask(scout.id, res.task.id, { status: 'doing' });
   await new Promise((r) => setTimeout(r, 30));
   thread = (await s.groupchat.messages(s.general.id, { thread: root.id })).messages;
-  assert.match(thread.at(-1)!.text, /^Task \[[\w-]{8}\] "We need the Q1 deck by Friday" → doing$/);
+  assert.match(thread.at(-1)!.text, /^Task [A-Z][A-Z0-9]{1,5}-\d+ "We need the Q1 deck by Friday" → doing$/);
   await s.agents.updateTask(scout.id, res.task.id, { title: 'renamed only' });
   await new Promise((r) => setTimeout(r, 30));
   assert.equal((await s.groupchat.messages(s.general.id, { thread: root.id })).messages.length, 3, 'a title change posts nothing');

@@ -258,10 +258,10 @@ test('heartbeat: a follow needing the agent opens a gated, debounced beat with t
   const now = new Date();
   const res = await s.heartbeat.beat(chief, now);
   assert.equal(res.status, 'ran');
-  assert.ok(res.reasons.some((r) => /^Following task \[[0-9a-f]{8}\] "Draft the brief": blocked: needs the budget figure \(Writer\)$/.test(r)), res.reasons.join(' | '));
+  assert.ok(res.reasons.some((r) => /^Following task [A-Z][A-Z0-9]{1,5}-\d+ "Draft the brief": blocked: needs the budget figure \(Writer\)$/.test(r)), res.reasons.join(' | '));
   const prompt = s.provider.requests[0].messages.map((m) => m.content).join('\n');
   assert.match(prompt, /Following — new since your last beat/);
-  assert.match(prompt, /task \[[0-9a-f]{8}\] "Draft the brief": 2 updates, last from Writer — moved to blocked: needs the budget figure/);
+  assert.match(prompt, /task [A-Z][A-Z0-9]{1,5}-\d+ "Draft the brief": 2 updates, last from Writer — moved to blocked: needs the budget figure/);
   const seen = (await rowOf(s, agent(chief), t.id))!;
   assert.equal(seen.unseenCount, 0, 'the beat read it');
   assert.equal(seen.attentionAt, null);
@@ -305,7 +305,7 @@ test('closed targets stop reporting after the tunable window; the row is kept', 
   const row = (await rowOf(s, agent(a.id), t.id))!;
   assert.ok(row.closedAt);
   assert.equal(row.unseenCount, 1);
-  assert.match((await s.follows.digest(a.id)).text, /board task \[[0-9a-f]{8}\] "Ship it": 1 update, last from .* — moved to done \(closed\)/);
+  assert.match((await s.follows.digest(a.id)).text, /board task [A-Z][A-Z0-9]{1,5}-\d+ "Ship it": 1 update, last from .* — moved to done \(closed\)/);
   const later = new Date(Date.now() + (FOLLOW_TUNABLES['follow.closedWindowHours'].default + 1) * 3_600_000);
   assert.equal((await s.follows.digest(a.id, later)).text, '', 'past the window: no context');
   assert.ok(await rowOf(s, agent(a.id), t.id), 'the row is kept');

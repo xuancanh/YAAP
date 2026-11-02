@@ -303,7 +303,7 @@ test('org_review_structure summarises idle and overloaded members, unassigned go
   assert.match(out, /Editor .* — IDLE \(no open task, no run in 7 days\)/, 'a blocked task is not open work');
   assert.match(out, /Grow the newsletter — UNASSIGNED: no owner and no open task under it/);
   assert.match(out, /1 unassigned task\(s\), 1 blocked/);
-  assert.match(out, /blocked \[.{8}\] Stuck \(Editor\)/);
+  assert.match(out, /blocked [A-Z][A-Z0-9]{1,5}-\d+ Stuck \(Editor\)/);
   // a member cannot call it
   const w = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.writer.id, name: 'w' });
   await assert.rejects(s.runtime.execute(w, 'org_review_structure', {}), /chief-of-staff tool/);
@@ -333,8 +333,8 @@ test('board events wake the autonomous chief into one coalesced structure review
   assert.match(req.system, /Caps you act within: depth ≤ 3, ≤ 5 direct reports per member, ≤ 12 members/);
   const user = [...req.messages].reverse().find((m) => m.role === 'user')!.content;
   assert.match(user, /trigger: board/);
-  assert.match(user, /blocked: "Stuck" is blocked: waiting on data/);
-  assert.match(user, /escalation: "Stuck" escalated: cannot proceed/);
+  assert.match(user, /blocked: [A-Z][A-Z0-9]{1,5}-\d+ "Stuck" is blocked: waiting on data/);
+  assert.match(user, /escalation: [A-Z][A-Z0-9]{1,5}-\d+ "Stuck" escalated: cannot proceed/);
   assert.match(user, /goal: new objective "Another goal"/);
   assert.ok(req.tools!.some((x) => x.name === 'org_review_structure') && req.tools!.some((x) => x.name === 'org_hire_agent'), 'manager tools offered');
   const toolResult = s.provider.requests[1].messages.find((m) => m.role === 'tool')!.content;

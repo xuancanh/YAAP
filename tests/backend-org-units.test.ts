@@ -278,7 +278,7 @@ test('a status change of a task that did not come from a channel posts a one-lin
   assert.equal(lines.length, 1);
   assert.equal(lines[0].authorKind, 'system');
   assert.equal(lines[0].threadRootId, null);
-  assert.match(lines[0].text, new RegExp(`^Task \\[${t.id.slice(0, 8)}\\] "Collect sources" → in progress$`));
+  assert.match(lines[0].text, new RegExp(`^Task ${t.key} "Collect sources" → in progress$`));
   // a company task → #company
   const c = await s.tasks.create(orgId, { title: 'Set direction', assigneeAgentId: s.chief.id });
   await s.tasks.update(orgId, c.id, { status: 'blocked', blockers: ['waiting'] });

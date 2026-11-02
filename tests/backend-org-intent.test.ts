@@ -204,7 +204,7 @@ test('check-ins update the key result and keep a history; the owner, its manager
   await s.tasks.create(orgId, { title: 'Collect sources', assigneeAgentId: alpha.id });
   const reasons = await s.runtime.heartbeatReasons(alpha.id, new Date(Date.now() + 8 * DAY));
   assert.equal(reasons.length, 2);
-  assert.match(reasons[0], /task \[[0-9a-f]{8}\] "Collect sources" is todo/);
+  assert.match(reasons[0], /task [A-Z][A-Z0-9]{1,5}-\d+ "Collect sources" is todo/);
   assert.match(reasons[1], /key result \[[0-9a-f]{8}\] "Subscribers" is due a check-in \(org_check_in; cadence 7 day\(s\)\)/);
   await s.org.setProfile(orgId, { values: 'Honest numbers.' });
   await s.intent.setVision(orgId, { title: 'A newsletter people open' });
