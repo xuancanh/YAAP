@@ -239,6 +239,15 @@ export class WorkspaceFs implements OnApplicationBootstrap {
     return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   }
 
+  /** The most recently written files (metadata only, newest first), for
+   *  Home's recent artifacts (docs/home.md). Bookkeeping is never listed. */
+  async recent(workspaceId: string, limit = 10): Promise<FileMeta[]> {
+    if (!this.db) return [];
+    const rows = await this.db.select().from(workspaceFiles).where(eq(workspaceFiles.workspaceId, workspaceId))
+      .orderBy(desc(workspaceFiles.updatedAt)).limit(Math.max(1, Math.min(500, limit)) * 2);
+    return rows.filter((r) => !isHiddenPath(r.path)).slice(0, limit).map(toMeta);
+  }
+
   async revisions(workspaceId: string, path: string): Promise<RevisionEntry[]> {
     if (!this.db) return [];
     const rows = await this.db.select().from(workspaceFileRevisions)

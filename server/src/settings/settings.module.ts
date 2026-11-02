@@ -39,7 +39,8 @@ export class SettingsService {
 
   async all(): Promise<Record<string, string>> {
     const rows = await this.db.select().from(appSettings);
-    return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    // `home.*` rows are per-person bookkeeping (Home's last visit, docs/home.md), not settings.
+    return Object.fromEntries(rows.filter((r) => !r.key.startsWith('home.')).map((r) => [r.key, r.value]));
   }
 
   async put(patch: Record<string, string>): Promise<Record<string, string>> {
