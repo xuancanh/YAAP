@@ -53,6 +53,9 @@ export interface LiveTool {
   actionClass?: string; actionId?: string; held?: 'held' | 'staged';
 }
 export type LiveItem =
+  /** The message just sent, shown until the server has persisted it (the
+   *  `turn` event) and the transcript reload carries it. */
+  | { kind: 'user'; text: string }
   | { kind: 'thinking'; text: string; streaming: boolean }
   | { kind: 'answer'; text: string; streaming: boolean }
   | LiveTool;
@@ -676,7 +679,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ---- the live turn stream ----
   const runTurn = useCallback(async (id: string, text: string, atts: Array<{ path: string; kind: string }>) => {
     setStreamingIds((s) => new Set(s).add(id));
-    setLiveFor(id, () => []);
+    setLiveFor(id, () => [{ kind: 'user', text }]);
     if (currentIdRef.current === id) setLiveBrowserSteps([]);
     const ctrl = new AbortController();
     abortBy.current.set(id, ctrl);
@@ -708,7 +711,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
     try {
       await sendTurn(id, text, atts, (ev) => {
-        if (ev.type === 'thinking' || ev.type === 'answer') {
+        if (ev.type === 'turn') {
+          // the server persisted the message: load it into the transcript,
+          // then drop the optimistic row so it never shows twice
+          const drop = () => patch((items) => items.filter((i) => i.kind !== 'user'));
+          if (current()) void refreshTranscript().then(drop, drop); else drop();
+        } else if (ev.type === 'thinking' || ev.type === 'answer') {
           if (streamBuf.current && streamBuf.current.kind !== ev.type) applyBuf();
           if (streamBuf.current) streamBuf.current.text += ev.text;
           else streamBuf.current = { kind: ev.type, text: ev.text };

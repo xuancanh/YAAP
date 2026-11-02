@@ -557,6 +557,15 @@ export function ChatView() {
   if (!dividerPlaced && cutoffSeq !== null && app.transcript.messages.length > 0) pushDivider();
 
   const liveRows = app.live.map((item: LiveItem, i: number) => {
+    if (item.kind === 'user') {
+      return (
+        <div key={`lu${i}`} style={{ display: 'flex', justifyContent: 'flex-end', margin: '16px 0', animation: 'msgIn .2s ease' }}>
+          <div style={{ maxWidth: '80%', background: 'var(--user)', border: '1px solid var(--border-soft)', borderRadius: '14px 14px 4px 14px', padding: '9px 15px', lineHeight: 1.55 }}>
+            <Markdown text={item.text} compact />
+          </div>
+        </div>
+      );
+    }
     if (item.kind === 'thinking') return <Thinking key={`lt${i}`} text={item.text} streaming={item.streaming} />;
     if (item.kind === 'answer') {
       return (
@@ -679,6 +688,14 @@ export function ChatView() {
         <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 20px' }}>
           {rows}
           {liveRows}
+          {app.streaming && !app.live.some((i) => i.kind !== 'user') && (
+            // nothing streamed yet (the model is reading context or a
+            // non-streaming provider is answering): say it is working
+            <div style={{ display: 'flex', gap: 12, margin: '16px 0', alignItems: 'center', animation: 'msgIn .2s ease' }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>{agent?.emoji ?? '💬'}</div>
+              <span style={{ fontSize: 13, color: 'var(--text-faint)', animation: 'pulse 1.4s ease-in-out infinite' }}>{agent?.name ?? 'YAAM'} is working…</span>
+            </div>
+          )}
         </div>
       </div>
 
