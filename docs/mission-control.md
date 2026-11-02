@@ -7,8 +7,8 @@ is doing what.*
 Home answers "is anything on fire, and does anything need me?" for the
 whole company. Two more screens answer the next questions:
 
-- **An agent's Dashboard tab**: what is this agent doing, what is it stuck
-  on, what is next, what did it finish, and is it healthy?
+- **An agent's page**: what is this agent doing, why is it failing, what
+  needs you, what is it stuck on, what is next, and is it healthy?
 - **The org chart** (Company → People & money → Org chart): who in the
   company is doing what, who is stuck, and on whom?
 
@@ -18,17 +18,21 @@ screens always agree.
 Code:
 
 - `server/src/home/agent-status.ts`: the shared status (`agentStatuses`,
-  `deriveState`, `blockerOf`, `sortTeam`, `toHomeAgent`)
+  `deriveState`, `blockerOf`, `primaryError`, `fixHint`, `sortTeam`,
+  `toHomeAgent`)
 - `server/src/chats/live-turns.ts`: the live-turn registry the turn loop
   writes (`liveTurns`, `describeToolCall`)
 - `server/src/home/overview.service.ts` (`OverviewService`),
   `overview.controller.ts`, `overview.types.ts`
-- `src/components/AgentDashboard.tsx` (`AgentDashboard`, presentational;
-  `AgentOverviewPanel`, data and actions)
+- `src/components/AgentDashboard.tsx` (`AgentHeader` and `AgentDashboard`,
+  presentational; `useAgentPage`, data and actions; `AgentOverviewPanel`,
+  the compact side panel)
+- `src/components/AgentsView.tsx` (`AgentHome`: the header above six tabs)
+- `src/lib/agent-tabs.ts` (the tabs, their sections and the old names; pure)
 - `src/components/OrgMissionControl.tsx` (`MissionControlBoard`,
   presentational; `MissionControlPane`, data and the side panel)
-- `src/lib/overview.ts` (the words, the filters, the hierarchy and the
-  waiting chains; pure)
+- `src/lib/overview.ts` (the words, the signals, the merged activity, the
+  filters, the hierarchy and the waiting chains; pure)
 - tests: `tests/backend-overview.test.ts`, `web-tests/agent-dashboard.test.tsx`,
   `web-tests/mission-control.test.tsx` (and `tests/backend-home.test.ts`
   for the shared status on Home)
@@ -43,7 +47,7 @@ terminated:
 |---|---|
 | `state` | error, paused, blocked, working or idle, in that precedence (`deriveState`) |
 | `doing` | the current task, the review it owes, or "Blocked on … : reason" |
-| `errors` | the latest turn failed, an unread loop error or budget stop, a no-progress breaker, a degraded provider |
+| `errors` | the latest turn failed, an unread loop error or budget stop, a no-progress breaker, a degraded provider; each with its run (`sessionId`) or task (`taskId`) |
 | `live` | a turn running now, with the tool call in progress |
 | `doingSince` | when the current task was claimed |
 | `blocked` | each blocked task with `blockerOf`'s answer: the reason, what it waits on, since when |
@@ -67,7 +71,9 @@ red on its own: its turns fall back to another provider.
   assignee;
 - otherwise, an unmet dependency (`dependsOn`) waits on that task;
 - a pending escalation card for the task also means it waits on you;
-- anything else is free text: the reason, waiting on nothing named.
+- anything else is free text: the reason, waiting on nothing named;
+- no line at all: an empty reason (the page says "no reason recorded" and
+  asks).
 
 "Since" is the task's last update, the nearest the row records.
 
@@ -85,83 +91,150 @@ right (the turn died with the process). On a deployment with several
 server instances, each sees only its own turns; the persisted record of a
 turn stays `chat_turns`.
 
-## An agent's Dashboard tab
+## An agent's page
 
 `GET /api/agents/:id/overview` returns `AgentOverview`. It is scoped to
 the agent's workspace: the workspace must be visible to the caller.
 
-The page, top to bottom:
+*Redesigned 2 November 2026: the first version stacked thirteen sections
+under ten tabs, the error said "the last turn failed" while the cause sat
+deep in the week's activity, and the one thing waiting on the owner was at
+the bottom. The page now leads with the cause and with what needs you,
+and puts everything else in one work card, one timeline and a side
+column.*
 
-**1. The status sentence.** One sentence, large, with a rule in the state's
-colour:
+### The header (every tab)
 
-- "Working on **Draft three newsletter issues** · 2 h in" (the title opens
-  the task);
-- "Blocked on 3 tasks · waiting on you for 1";
-- "Idle: next heartbeat in 14 min" (or the next loop, whichever is first);
-- "Paused: nothing runs until you resume it" (or "the company is paused");
-- "Erroring: provider rejected model claude-opus-4-5".
+Avatar, name, role (or its title in the company) and model, then one
+status pill and one sentence:
 
-While a turn runs, a second line says what it is doing now ("Now writing
-org/sales/reports/2026-W45.md · 4 calls · 3 min") and the state dot
-pulses. Below: the next wake, the last beat, runs today against the daily
-cap, and whether the heartbeat is off.
+- **Working**: "Working on **Draft three newsletter issues** · 2 h in" (the
+  title opens the task);
+- **Blocked**: "Blocked on 3 tasks · waiting on you for 1";
+- **Idle**: "Next heartbeat in 14 min" (or the next loop, whichever is first);
+- **Paused**: "Nothing runs until you resume it" (or "The company is paused");
+- **Erroring**: the cause itself, "Tool round limit (24) reached", in red.
+
+While erroring, a second line says what to do when the message makes it
+obvious (`fixHint`), **See the run** opens the failing run's conversation,
+**Open the task** opens the task a breaker tripped on, and **Fix it** goes
+to the tab that fixes it (Settings for a model the provider rejects, Work ›
+Schedule for a loop out of token budget). While a turn runs, a line says
+what it is doing now ("Now writing org/sales/reports/2026-W45.md · 4
+calls · 3 min") and the pill pulses. Below: the next wake, the last beat,
+and whether the heartbeat is off.
 
 Quick actions: **Chat** (a new conversation), **Beat now** (the gated
-heartbeat), and **Pause** / **Resume**: the seat in the company, or the
-heartbeat for an agent outside one.
+heartbeat), **Pause** / **Resume** (the seat in the company, or the
+heartbeat for an agent outside one), and **•••** for Import memory,
+Export AGENT.json and Publish to the market.
 
-**2. Now.** The current task: title, outcome, done-when, when it started,
-when it is due, the last comment on its timeline, and the files it may
-write plus those this agent wrote since it started. **Open** goes to the
-task through `app.openOrgTask` (an org task) or to the Tasks tab (a task
-on the agent's own board). With no task: "Not on a task right now", or the
-conversation a running turn is in.
+### The cause
 
-**3. Blocked.** Each blocked task with its reason, what it waits on
-("Waiting on you", "Waiting on Writer", "Waiting on “Get the logo”") and
-since when. The ways to unblock it, each through the route that owns it:
+`agent-status.ts` records each error with where it happened: a failed turn
+with its conversation (`sessionId`), a loop error with the loop's
+conversation, a breaker trip with its task (`taskId`). A failed turn that
+recorded no message of its own takes the reason from the loop error of the
+same conversation (or within the hour), read or not, so Home, the org
+chart and this page say "tool round limit (24) reached" rather than "the
+last turn failed"; that loop error is then not listed a second time.
+
+`cause` is the error the page leads with (`primaryError`): a red one before
+a degraded provider, one with a fix before one without, a specific message
+before a generic one, then the newest. Its `fix` (`fixHint`) covers the
+tool round limit (split the work or raise `MAX_TOOL_ROUNDS`), a loop's
+token budget, a spending cap, a no-progress breaker, a refused key, a model
+the provider rejects, rate limits and a connection that failed to poll.
+
+### The page (Overview)
+
+**1. Signals.** A strip of small tiles, each a number and a note, that
+turn amber or red when off (`signals` in `src/lib/overview.ts`):
+
+| Tile | Amber | Red | A click |
+|---|---|---|---|
+| Doing | — | — | the Now tab |
+| Blocked | anything blocked | something waits on you | the Blocked tab |
+| Queue | — | — | the Up next tab |
+| WIP (open / `capacity.wipPerMember`) | at the limit | over it | the Now tab |
+| Budget (this month / the agent's envelope) | from 80% | at or over the cap | Health |
+| Errors (last two days) | a degraded provider only | any other error | Health |
+
+Without an envelope the budget tile says "Spend" with no colour; outside a
+company there is no WIP tile.
+
+**2. Needs you**, only when something waits on the owner (`needsYou`),
+oldest first: background actions it queued (Approve / Dismiss), connections
+another member's turn asks to use (Allow / Deny, shown only to that
+member), escalations of its tasks to you and approvals it asked for
+(Decide, which opens Approvals). The title opens the conversation or the
+task.
+
+**3. Work.** One card with tabs: Now, Blocked (n), Up next (n), Reviews (n,
+only when it owes any) and Done. It opens on Now, or on Blocked when there
+is no current task, or Up next. Each task is one line: the title, then a
+short reason or its age, and a chip for what it waits on ("Waiting on
+you", red; "Waiting on Writer", amber) or its status. A click expands the
+row in place: the outcome and the done-when (three lines, then **more**),
+the last comment, the files it may write and wrote, and the actions:
 
 | Button | What it does | Route |
 |---|---|---|
 | Decide | opens Approvals, where the escalation card is (only when it waits on you) | — |
 | Answer | a comment on the task's timeline, which wakes the assignee | `POST …/org/tasks/:id/comment` |
 | Reassign | another agent of the workspace takes it | `POST …/org/tasks/:id/assign` |
-| Open | the task's drawer on the board | `app.openOrgTask` |
+| Open task | the task's drawer (`app.openOrgTask`), or Work › Tasks for its own board | — |
 
-**4. Up next.** Its todo, waiting and claimed tasks in order (deadline
-first, then the oldest), numbered because the order is the plan. Then the
-reviews it owes and the follows with something new or needing it
-(`docs/follows.md`).
+A blocked task with no reason recorded says so in amber, "no reason
+recorded", with **Ask**, which opens the answer box. Up next is numbered:
+deadline first, then the oldest, because the order is the plan.
 
-**5. Recently done.** Tasks done in the last two weeks with their outcome;
-the files it wrote (the workspace filesystem, by this author); and its
-week: loop runs that did something stand alone, described by what they did,
-and routine ones collapse into "Writer · 10 heartbeat checks, nothing new"
-as on Home; loop errors and budget stops; its comments on task timelines
-and its posts to the company log.
+**4. Activity.** One timeline, newest first: loop runs (routine ones
+collapsed into "Writer · 10 heartbeat checks, nothing new", as on Home; the
+ones that did something stand alone), loop errors and budget stops, tasks
+it finished or that got blocked, its comments and posts, and the files it
+wrote. Filters: All, Runs, Tasks, Files, Comments. Ten rows, then **Show
+all**.
 
-**6. Goals it owns.** Objectives and key results whose owner is this agent,
-with progress (or current against target), confidence and the RAG colour
-of Home's goals. At risk first.
+**5. The side column.** **Team**: its manager, the unit it leads, a line
+per report (state, what it is doing) and people who report to it; a line
+opens that agent's page. **Health**: the errors (each with its run or
+task), spend this month against its envelope with a meter and a 30-day
+sparkline (the chat ledger, `health.spend.series`), today and 30 days, the
+heartbeat cadence and runs today, the next loop, and a link to its trust
+levels. **Goals it owns**, with progress and the RAG colour of Home's
+goals, and **Following** when a follow has news.
 
-**7. Team.** For a head or the chief: the unit it leads and a tile per
-report (state, what it is doing, its last beat), plus people who report to
-it. For a specialist: its manager. A tile opens that agent's page.
+**6. Its notes**, folded: the markdown it keeps with `update_dashboard`.
 
-**8. Health.** Errors (red; a degraded provider amber); spend today, over
-30 days (the chat ledger) and this month against its envelope (org runs
-against the agent budget), with a meter; WIP against the limit
-(`capacity.wipPerMember`); the heartbeat cadence in words and runs today;
-the next loop; its trust level per action class (they open the Trust tab).
+Recent conversations are not repeated here (the Chats tab and the rail
+list them), trust chips moved to Settings › Trust, and the 30-day usage
+chart became Health's sparkline.
 
-**9. Below.** Background actions it queued and connections it asks to use
-(Approve / Dismiss, Allow / Deny, as before), usage over 30 days, recent
-conversations, and the agent's own notes (the markdown it keeps with
-`update_dashboard`), folded.
+Side by side above about 700 px, one column below it; on a phone the page
+keeps a 16 px gutter and never scrolls sideways (the tab bars scroll in
+their own box).
 
-The two columns of sections become one below about 640 px; on a phone the
-page keeps a 16 px gutter and never scrolls sideways.
+### The tabs
+
+Six tabs (`src/lib/agent-tabs.ts`), two with sections:
+
+| Tab | Sections | What it holds |
+|---|---|---|
+| Overview | — | the page above |
+| Work | Tasks, Schedule | its own task board; its loops and heartbeat |
+| Chats | — | its conversations, searchable |
+| Artifacts | — | its files |
+| Memory | — | its file brain and lessons |
+| Settings | General, Skills & tools, Mini apps, Trust | identity, model, heartbeat, charter, shared folder, ratings, workspace, danger zone; skills, tools and connections; the apps it built; trust levels and held actions |
+
+Every older name still lands (`resolveAgentTab`), in `?tab=`, in
+`app.openAgent(id, tab)` and in the store's one-shot tab request:
+Dashboard → Overview; Tasks → Work › Tasks; Schedule → Work › Schedule;
+Mini apps, Skills & tools and Trust → those Settings sections; Files →
+Artifacts. `Tab:Section` works too ("Settings:Trust", "Work:Schedule"),
+and the fix hints use it. The Overview tab shows how many things wait on
+you; Work shows its open tasks.
 
 ## The org chart
 
@@ -204,8 +277,8 @@ outlines everyone on its chain, both ways, and names it: "Waiting chain:
 Writer → Content Head → You".
 
 **The side panel.** Picking an agent opens its overview in compact form
-(the status, Now, Blocked, the next three, WIP and spend), with **Open
-page**, **Chat** and **Board** (its unit's board).
+(the status and its cause, the signals, and the work card, whose rows open
+the task), with **Open page**, **Chat** and **Board** (its unit's board).
 
 **Edit structure.** The structure editor is one click away and unchanged:
 add a member, hire, scopes, pause, terminate, accept a changed charter, the

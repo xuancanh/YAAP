@@ -2,7 +2,7 @@
  * OverviewService — "what is this agent doing" and "what is the company
  * doing", docs/mission-control.md:
  *
- *  - `agent(agentId)`: the agent's Dashboard tab, `GET /api/agents/:id/overview`;
+ *  - `agent(agentId)`: the agent's page (header and Overview tab), `GET /api/agents/:id/overview`;
  *  - `missionControl(workspaceId)`: the org chart's mission control,
  *    `GET /api/workspaces/:id/org/mission-control`.
  *

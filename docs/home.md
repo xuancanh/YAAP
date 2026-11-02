@@ -144,7 +144,7 @@ happen:
 
 **One status everywhere.** The tile's state comes from
 `server/src/home/agent-status.ts` (`agentStatuses`), the same helper behind
-an agent's Dashboard tab and the org chart's mission control
+an agent's page (its Overview tab) and the org chart's mission control
 (`docs/mission-control.md`), so an agent is never "working" on one screen
 and "blocked" on another. The precedence is error, paused, blocked,
 working, idle:

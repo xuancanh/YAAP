@@ -1,6 +1,6 @@
 /**
  * The per-agent status every overview shares (docs/home.md "Team",
- * docs/mission-control.md): Home's team grid, an agent's own Dashboard
+ * docs/mission-control.md): Home's team grid, an agent's own page
  * (`GET /api/agents/:id/overview`) and the org mission control
  * (`GET /api/workspaces/:id/org/mission-control`) all read it from here, so
  * an agent is never "working" on one screen and "blocked" on another.
