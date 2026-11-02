@@ -254,6 +254,223 @@ run-sheets, session-logs, roles-not-names privacy. Wave 6 packs are
 mostly *recombination plus domain judgment*, which is exactly when a
 catalog can scale without dropping quality.
 
+## Business catalog (2026-11)
+
+Status: shipped. The packs above skew personal: they serve one person
+running their life or their own practice. A company of agents
+(docs/company-vision.md) needs a different shape: a **function** with a
+head who runs its process and a few specialists who report to it. The
+business catalog is that set, organised by job function, and it is the
+set the chief of staff hires from.
+
+**Shape.** Every function has:
+
+- a **Manager / Head** pack (`pack-biz-<fn>-manager`, role `<fn>-manager`,
+  tier `strong`, reports to the chief of staff). Its playbooks are the
+  function's operating system: `<fn>-okr-planning` (cascade a company
+  objective into a unit goal and 2-4 key results with owners, metric
+  sources and a recorded forecast), `<fn>-weekly-review` (check-ins,
+  at-risk calls, replans), `<fn>-kpi-audit` (sample accepted work and the
+  KPI definitions, act on the gaps), `<fn>-report` (the weekly function
+  report: RAG with an explicit rule, metrics against target, risks, asks),
+  `<fn>-team-management` (four-field briefs with checks, WIP from
+  `org_capacity`, reviews, written coaching, hire and pause cases for the
+  chief), plus 2-4 process skills for the function's own rituals (pipeline
+  review and forecast call, month-end close, sprint planning and retro,
+  queue review, hiring pipeline review, access review, ...). Loops carry
+  the default cadence.
+- 2-4 **specialist** packs (`pack-biz-<fn>-<slug>`, role `<fn>-<slug>`,
+  reports to the function manager) with 3-5 practical playbooks each.
+
+**Only real tools.** A function head is a unit lead, not the chief: its
+playbooks use the lead's tool set (`org_set_goal`, `org_set_key_result`,
+`org_check_in`, `org_create_task`, `org_assign`, `org_review`,
+`org_escalate`, `org_unit_report`, `org_signals`, `org_capacity`,
+`org_calibration`, `org_metric_read`, `org_set_cadence`,
+`org_write_playbook`, `org_propose_experiment`,
+`org_propose_metric_source`, `org_forecast_outcome`, `org_message`, ...).
+Structure stays with the chief: a head never calls `org_hire_agent`,
+`org_pause_agent`, `org_update_member` or `org_report`; it writes the case
+(role id, why, cost, alternatives, recommendation, confidence) as a backlog
+task for the chief, and CEO-only decisions go through `org_escalate`. The
+weekly report is a file in `/org/<fn>/reports/` plus an `org_message`
+summary; audit findings go in `/org/<fn>/audits/` (the independent
+`org_audit_finding` stays the Auditor's).
+
+**Mechanisms adapt.** No cadence or threshold in these playbooks is fixed.
+Every planning, review, audit and report skill starts by reading the
+company's vision, goals and operating profile (`org_intent`,
+`org_read_goal`) and derives the cadence, rigour, report length and
+autonomy from it, writes the result and the profile line that justifies it
+to `/org/<fn>/cadence.md`, and applies ritual changes with
+`org_set_cadence` (why = the profile line). The skills give a default and
+how to flex it ("weekly; twice weekly in a launch push; fortnightly for a
+deliberate profile"), never a single number (§1b of the vision).
+
+**Files.** Each function keeps a shared folder `/org/<fn>/` (`okrs/`,
+`reports/`, `audits/`, `cadence.md`, `kpis.md`, `team.md` and its own
+process artifacts) so heads, specialists, the chief and humans read the
+same record; members keep working notes in their own home
+(docs/filesystem.md).
+
+**Build.** Packs are `packs/biz-*.md` with `"cat": "Business"` and
+`"tail": "business"`; `scripts/build-authored-packs.mjs` appends the
+business tail (company member, read the profile first, files under
+`/org/`, work through the board, no invented numbers, outward actions are
+drafts) instead of the personal one, so personal packs are unchanged. The
+market shows them under **Business**, with the function in the role and at
+the head of the tagline ("Sales · ...") so search finds them.
+
+**Roles.** `server/src/org/roles/catalog.ts` carries a matching role per
+pack (`role:<fn>-<slug>`), with `packId` naming the pack: a role hire keeps
+the role's charter, scopes and model tier and installs the pack's
+playbooks. Fits tags are function-specific (pipeline, payroll, soc 2, ...)
+so the profile ranking still surfaces the generalist roles for a
+newsletter or a lab.
+
+### Sales
+
+Folder `/org/sales/` (pipeline, forecast, accounts, proposals, okrs, reports, audits).
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of Sales | `sales-manager` | bookings / new ARR, pipeline created, coverage, win rate, cycle length, forecast accuracy | pipeline review + weekly review (Mon), forecast call (Thu), report (Fri), deal & KPI audit (monthly), retro (quarter) |
+| Account Executive | `sales-account-executive` | bookings, win rate, forecast accuracy, close-plan coverage | forecast submission before each call |
+| Sales Development Rep | `sales-sdr` | qualified meetings, pipeline created, lead response time, lead-to-meeting conversion | daily lead triage |
+| Sales Engineer | `sales-engineer` | technical win rate, POC success, questionnaire turnaround | per deal |
+
+### Marketing
+
+Folder: `/org/marketing/` (okrs, calendar, channel-review, launches, funnel, content, seo, reports, audits, cadence.md, kpis.md, team.md).
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of Marketing (`pack-biz-marketing-manager`) | `marketing-manager` | pipeline sourced, SQLs, MQL-to-SQL conversion, CAC / cost per SQL, organic traffic, share of voice | weekly review (Mon), report (Fri), campaign calendar (monthly, 25th), channel and CAC review (monthly), launch readiness per tiered launch, KPI audit (monthly) |
+| Content Marketer (`pack-biz-marketing-content`) | `marketing-content` | content-assisted conversions and pipeline, engagement, newsletter open/click rate | per piece; content performance review monthly |
+| Demand Gen Marketer (`pack-biz-marketing-demand-gen`) | `marketing-demand-gen` | MQLs, SQLs, pipeline sourced, cost per lead / SQL, CAC by channel | funnel readout weekly (Mon); paid optimisation weekly; lead scoring review monthly |
+| Product Marketer (`pack-biz-marketing-product-marketing`) | `marketing-product-marketing` | launch adoption, win rate vs competitors, enablement coverage | per launch; positioning on segment or win-rate change; competitor briefs quarterly |
+| SEO Specialist (`pack-biz-marketing-seo`) | `marketing-seo` | organic clicks and conversions, rankings for target queries | keyword map quarterly; technical audit quarterly; rankings report monthly |
+
+### Customer Success & Support
+
+Folder: `/org/customer/` (okrs, queue-review, health, escalations, accounts, onboarding, kb, renewals.md, reports, audits, cadence.md, kpis.md, team.md).
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of Customer (`pack-biz-cs-manager`) | `cs-manager` | CSAT, first response time, time to resolution, SLA attainment, backlog age, GRR / NRR, churn, health score, onboarding time to value | queue review (daily), weekly review (Mon), report (Fri), health and renewals review (monthly; 90/60/30 days out), escalations per S1/S2, KPI audit (monthly) |
+| Customer Success Manager (`pack-biz-cs-csm`) | `cs-csm` | retention of the book, health score, renewal rate, expansion | health check monthly per account; QBRs quarterly; renewal readiness at 90/60/30 days |
+| Support Specialist (`pack-biz-cs-support`) | `cs-support` | first response and resolution time, SLA attainment, CSAT, reopen rate | queue sweeps several times a day; KB articles when a question repeats three times |
+| Onboarding Specialist (`pack-biz-cs-onboarding`) | `cs-onboarding` | time to value, onboarding completion, first-week usage | per new customer; checklist updated weekly |
+
+### Product
+
+Folder: `/org/product/` (okrs, roadmap.md, specs, discovery, research, launches, feedback, releases, roadmap-comms, metrics, reports, audits, cadence.md, kpis.md, team.md, decisions.md).
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of Product (`pack-biz-product-manager`) | `product-manager` | activation, retention, feature adoption, NPS, roadmap delivery predictability, discovery throughput | weekly review (Mon), report (Fri), discovery (fortnightly), roadmap review (quarterly + on major evidence), launch review before and 14-30 days after, KPI audit (monthly) |
+| Product Owner (`pack-biz-product-owner`) | `product-owner` | backlog readiness (two sprints refined), spec rework rate, accepted stories vs committed | backlog refinement weekly / before sprint planning; acceptance per story |
+| User Researcher (`pack-biz-product-user-researcher`) | `product-user-researcher` | studies completed, opportunities validated or killed, customer conversations per week | per study; feeds the fortnightly discovery session |
+| Product Operations Specialist (`pack-biz-product-ops`) | `product-ops` | feedback themes triaged, release notes per release, metrics pack on time | feedback triage weekly (Tue); release notes per release; roadmap comms per roadmap review; metrics pack monthly |
+
+### Engineering
+
+Folder: `/org/engineering/` (okrs, sprints, reviews, retros, postmortems, releases, runbooks, reliability, qa, reports, audits).
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of Engineering (`pack-biz-engineering-manager`) | `engineering-manager` | DORA (deployment frequency, lead time for changes, change failure rate, MTTR), sprint say/do, escaped defects, review turnaround, on-call load | sprint planning at sprint start, weekly review Mon, retro at sprint end, report Fri, postmortem per major incident, release readiness per release, monthly audit |
+| Software Engineer (`pack-biz-engineering-software-engineer`) | `engineering-software-engineer` | first-review acceptance, estimate accuracy, regressions introduced | per task; design note before non-trivial work |
+| QA Engineer (`pack-biz-engineering-qa`) | `engineering-qa` | escaped defects, regression pass rate, flaky tests, critical-flow coverage | per sprint and per release sign-off |
+| Site Reliability Engineer (`pack-biz-engineering-sre`) | `engineering-sre` | SLO attainment, error budget burn, MTTR, actionable-page ratio, out-of-hours pages | daily reliability check, handoff per on-call shift, monthly alert review |
+
+### Design
+
+Folder: `/org/design/` (okrs, requests, crit, system, brand, content, work, research, reviews, reports, audits).
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of Design (`pack-biz-design-manager`) | `design-manager` | usability task success, WCAG 2.2 AA conformance, design-system adoption, design cycle time, rework rate | intake Mon, crit Wed, weekly review, report Fri, design-system review monthly, monthly audit |
+| Product Designer (`pack-biz-design-product-designer`) | `design-product-designer` | task success in usability tests, time on task, handoff completeness | per design task; usability round before handoff |
+| Brand Designer (`pack-biz-design-brand`) | `design-brand` | brand consistency of sampled output, asset turnaround, template reuse | per request; monthly consistency review |
+| UX Writer (`pack-biz-design-ux-writer`) | `design-ux-writer` | glossary consistency, error-message coverage, content-audit issues closed | per flow; monthly content audit |
+
+### Data & Analytics
+
+Folder: `/org/data/` (okrs, requests, metrics.md, quality, models, sources, queries, answers, dashboards, experiments, forecasts, reports, audits).
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of Data (`pack-biz-data-manager`) | `data-manager` | request turnaround, freshness SLA met, data test pass rate, dashboard adoption, metric definition coverage (key results with an approved source) | request intake Mon, daily quality check, weekly review, report Fri, monthly audit and metric governance |
+| BI Analyst (`pack-biz-data-bi-analyst`) | `data-bi-analyst` | request turnaround, dashboard usage, answers reproducible on re-run | per request; KPI packs weekly or monthly on request |
+| Analytics Engineer (`pack-biz-data-analytics-engineer`) | `data-analytics-engineer` | freshness SLA met, test pass rate, pipeline incidents | weekly test and freshness review; on every failure |
+| Data Scientist (`pack-biz-data-scientist`) | `data-scientist` | experiments read out validly, forecast calibration | per experiment window; forecasts per planning cycle |
+
+### Finance
+
+Folder: `/org/finance/` (okrs, close, bva, cash, forecast, reports, audits, cadence.md, kpis.md, team.md).
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of Finance (`pack-biz-finance-manager`) | `finance-manager` | days to close, forecast accuracy, DSO, DPO, net burn and runway, budget variance, reconciliation exceptions, agent cost per accepted task | weekly review (Mon), weekly cash review (Wed), weekly report (Fri), close kickoff WD1, BvA after close, monthly KPI audit, quarterly reforecast |
+| Staff Accountant (`pack-biz-finance-accountant`) | `finance-accountant` | close tasks on time, reconciliations tied, exceptions aged, payables matched | close calendar (WD1-WD5), payment-run prep |
+| FP&A Analyst (`pack-biz-finance-fpa`) | `finance-fpa` | forecast accuracy, variance explained, scenario turnaround | monthly reforecast and variance commentary, quarterly unit economics |
+| Billing Specialist (`pack-biz-finance-billing`) | `finance-billing` | DSO, AR over 60 days, invoice right-first-time | invoice run per billing date, weekly collections (Tue), monthly accuracy check |
+
+### People / HR
+
+Folder: `/org/people/` (okrs, hiring, performance, engagement, lifecycle, reports, audits, cadence.md, kpis.md, team.md). Personal details stay in the HR system the company grants; workspace files carry roles, counts and ids.
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of People (`pack-biz-people-manager`) | `people-manager` | time to hire, offer acceptance, stage conversion, quality of hire, regretted attrition, eNPS/engagement, onboarding completion | hiring pipeline review + weekly review (Mon), weekly report (Fri), monthly KPI audit, quarterly engagement review, performance cycle twice yearly |
+| Recruiter (`pack-biz-people-recruiter`) | `people-recruiter` | time to hire, candidate response time, stage conversion, offer acceptance | per requisition: intake, screening as applications arrive, interview loops |
+| People Ops Specialist (`pack-biz-people-ops`) | `people-ops` | onboarding completion, request time to answer, payroll inputs on time | weekly starters/leavers check (Mon), payroll cut-off |
+| Learning & Development Partner (`pack-biz-people-learning`) | `people-learning` | training completion, mandatory training on time, applied-skill signals | gap analysis per cycle, monthly mandatory-training tracking |
+
+### Legal
+
+Folder: `/org/legal/` (okrs, matters.md, playbook.md, contracts, obligations.md, risk-register.md, privacy, regulatory-calendar.md, reports, audits, cadence.md, kpis.md, team.md). Drafts for human review; never signs or files.
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| General Counsel (`pack-biz-legal-manager`) | `legal-manager` | contract turnaround, matters open and aged, playbook conformance, regulatory deadlines met, risk register coverage | daily intake triage, weekly review (Mon), weekly report (Fri), monthly KPI audit, quarterly risk register and playbook review |
+| Contracts Specialist (`pack-biz-legal-contracts`) | `legal-contracts` | turnaround (days with legal), deviations flagged, obligations captured | per request against service targets |
+| Privacy & Compliance Officer (`pack-biz-legal-compliance`) | `legal-compliance` | DSRs within deadline, regulatory deadlines met, records of processing current | weekly regulatory calendar (Mon), quarterly records review, PIA before launches |
+
+### Operations
+
+Folder: `/org/operations/` (processes.md, sops/, improvements.md, vendors.md, programs/, okrs/, reports/, audits/, cadence.md).
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of Operations (`pack-biz-ops-manager`) | `ops-manager` | process cycle time, SLA adherence, cost per unit, SOP coverage, automation rate, vendor spend vs budget | weekly review (Mon), weekly report (Fri), monthly KPI audit + process review, quarterly vendor review and QBR |
+| Business Process Analyst (`pack-biz-ops-process-analyst`) | `ops-process-analyst` | cycle time, first-pass yield, automation rate, SOP coverage | on task; maps and SOPs on review interval |
+| Procurement Specialist (`pack-biz-ops-procurement`) | `ops-procurement` | vendor spend vs budget, renewals decided before notice, seat utilisation | monthly renewals scan |
+| Program Coordinator (`pack-biz-ops-program-coordinator`) | `ops-program-coordinator` | milestones on time, RAID items owned | weekly program status (Thu) |
+
+### IT & Security
+
+Folder: `/org/it-security/` (systems.md, assets.md, controls.md, evidence/, policies/, vulns/, access-reviews/, incidents/, okrs/, reports/, audits/, cadence.md).
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of IT & Security (`pack-biz-it-security-manager`) | `it-security-manager` | patch compliance, MTTR by severity, MFA coverage, access review completion, ticket SLA, phishing failure rate, control pass rate | weekly vulnerability + unit review (Mon), weekly report (Fri), monthly control audit, quarterly access review; incidents on demand |
+| IT Administrator (`pack-biz-it-security-it-admin`) | `it-security-it-admin` | ticket SLA, patch compliance, MFA coverage, leaver removal time | daily ticket triage |
+| Security Analyst (`pack-biz-it-security-analyst`) | `it-security-analyst` | remediation within SLA, alert false-positive rate, phishing failure rate | weekly vulnerability triage, quarterly phishing test |
+| GRC Specialist (`pack-biz-it-security-grc`) | `it-security-grc` | control test pass rate, evidence on time, vendor reviews current | monthly evidence collection, yearly policy review |
+
+### Revenue Operations
+
+Folder: `/org/revops/` (funnel.md, forecast-method.md, forecast/, changes/, routing.md, deal-desk/, analytics/, plans/, okrs/, reports/, audits/, cadence.md).
+
+| Pack | Role id | Owns (KPIs) | Cadence |
+|---|---|---|---|
+| Head of Revenue Operations (`pack-biz-revops-manager`) | `revops-manager` | forecast accuracy, CRM completeness, funnel conversion and velocity, lead routing time, quota attainment distribution, NRR attribution coverage | funnel review (Mon), forecast governance (Wed, before the sales call), weekly report (Fri), monthly data/KPI audit, annual/quarterly territory and quota plan |
+| CRM Administrator (`pack-biz-revops-crm-admin`) | `revops-crm-admin` | CRM completeness, lead routing time, changes released without rollback | weekly hygiene sweep (Mon) |
+| Deal Desk Analyst (`pack-biz-revops-deal-desk`) | `revops-deal-desk` | quote turnaround, effective discount, exception rate | per quote; monthly discount analysis |
+| Revenue Analyst (`pack-biz-revops-analyst`) | `revops-analyst` | forecast model error, attribution coverage, GRR/NRR by cohort | weekly pipeline analytics, monthly attribution and cohorts |
+
 ## Category taxonomy (2026-07 rework)
 
 "Business" had swollen to 37 of 71 packs, which makes a filter useless. The
@@ -285,6 +502,11 @@ personal, in the canonical rail order (CAT_ORDER in MarketView.tsx):
 - **Events & Travel** — Trip, Event, Wedding, Gift Concierge.
 - **Hobbies & Leisure** — Reading Club, Creative Muse, Game Master,
   Collector's Vault, Genealogy, Wardrobe Stylist.
+
+- **Business** — the company catalog: the Auditor and the business set
+  (a head and 2-4 specialists per job function, see "Business catalog"
+  above). The function sits in the role and the tagline, not in a separate
+  category, so the rail stays one chip.
 
 Assignment rule when a pack straddles: the buyer's identity wins over the
 task ("Technical Writer" is a writing profession, not engineering; "Course
