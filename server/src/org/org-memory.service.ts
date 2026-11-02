@@ -82,6 +82,8 @@ const LESSON_TOOL: AiToolSpec = {
     proposedPlaybookChange: { type: 'object', properties: { playbookId: { type: 'string', description: 'Playbook id, skill name or title.' }, note: { type: 'string' } }, required: ['playbookId', 'note'] },
   }, required: ['text', 'audience'] },
 };
+/** The retro-only meeting tool this module adds (meeting_propose_lesson). */
+export const LESSON_TOOL_NAME = LESSON_TOOL.name;
 
 @Injectable()
 export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModuleDestroy {

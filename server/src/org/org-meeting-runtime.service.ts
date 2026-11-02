@@ -111,6 +111,8 @@ const MEETING_TOOLS: AiToolSpec[] = [
   { name: 'meeting_ask_ceo', description: 'Ask the CEO a question only they can answer; it goes into the minutes and the daily brief.', inputSchema: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] } },
 ];
 const CLOSE_TOOL: AiToolSpec = { name: 'meeting_close', description: 'Close the meeting with a summary (3–6 lines): what was decided, who owns what, open risks and questions. Facilitator only, closing turn only.', inputSchema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] } };
+/** The tools a meeting turn is offered (the facilitator also gets meeting_close on the closing turn). */
+export const MEETING_TOOL_NAMES: readonly string[] = [...MEETING_TOOLS, CLOSE_TOOL].map((t) => t.name);
 
 @Injectable()
 export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModuleDestroy {

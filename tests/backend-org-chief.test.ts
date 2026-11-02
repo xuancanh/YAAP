@@ -20,6 +20,16 @@ import { OrgApprovalsService } from '../server/src/org/org-approvals.service';
 import { OrgChiefService, describeState } from '../server/src/org/org-chief.service';
 import { AUTHORED_PACKS } from '../server/src/market/authored-packs.generated';
 import { setup, enable, sessionOf } from './org-governance-harness';
+import { memStorage } from './helpers';
+import { ToolsService } from '../server/src/chats/tools.service';
+import { RESTRICT_OWN_SKILLS } from '../server/src/chats/turn-loop.service';
+import { BUILTIN_SKILLS } from '../server/src/skills/builtin-skills';
+import { OrgAnnouncer } from '../server/src/org/org-announcer';
+import { OrgPredictionsService } from '../server/src/org/org-predictions.service';
+import { OrgExperimentsService } from '../server/src/org/org-experiments.service';
+import { OrgMeetingRuntime, MEETING_TOOL_NAMES } from '../server/src/org/org-meeting-runtime.service';
+import { LESSON_TOOL_NAME } from '../server/src/org/org-memory.service';
+import type { RunCtx } from '../server/src/org/org-runtime.service';
 
 const ago = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 
@@ -129,7 +139,7 @@ test('the Chief of Staff pack: Business category, deep skills that name only org
   await enable(s, 'autonomous');
   const offered = new Set<string>();
   for (const spec of await s.runtime.specsFor(await sessionOf(s, s.chief.id))) offered.add(spec.name);
-  const known = new Set([...offered, 'org_set_cadence', 'org_decisions', 'org_recall', 'org_playbooks', 'org_write_playbook', 'org_capacity', 'org_eval_role', 'org_metric_sources', 'org_metric_read', 'org_incidents', 'org_propose_experiment', 'org_experiments', 'org_run_checks']);
+  const known = new Set([...offered, 'org_set_cadence', 'org_decisions', 'org_recall', 'org_playbooks', 'org_write_playbook', 'org_capacity', 'org_eval_role', 'org_metric_sources', 'org_metric_read', 'org_incidents', 'org_propose_experiment', 'org_experiments', 'org_run_checks', 'org_calibration', 'org_eval_cases', 'org_report_incident']);
   const named = new Set(pack.skills!.flatMap((x) => (x.instructions ?? '').match(/\borg_[a-z_]+\b/g) ?? []));
   for (const n of named) assert.ok(known.has(n), `${n} exists`);
   const all = pack.skills!.map((x) => x.instructions).join('\n');
@@ -206,4 +216,108 @@ test('operating-system state: rituals within the lookahead with their pre-read d
   assert.equal((await chiefSvc.heartbeatReasons(s.chief.id, new Date(), new Date().toISOString())).length, 0, 'already seen at the last beat');
   assert.deepEqual(await chiefSvc.heartbeatReasons(s.writer.id, new Date(), null), []);
   assert.match(describeState({ orgId, orgName: 'X', proxyLevel: 'conductor', rituals: [], overdueDecisions: [], staleRisks: [], breachedHandoffs: [], functionOwners: [], headRequests: [] }), /Nothing overdue/);
+});
+
+/** Every org_* / fs_* / meeting_* tool named in a business skill, offered to
+ *  the role that runs it (docs/autonomous-skills-review.md): the chief (any
+ *  session), a function head (a unit lead, in its loops and task runs, and
+ *  as a reviewer or in a meeting), a specialist (a member: loops, heartbeat,
+ *  task and reviewer runs, meetings) and the Auditor (its restricted run). */
+test('every tool a business skill names exists and is offered to the role that runs it', async () => {
+  const s = await setup();
+  const orgId = await enable(s, 'autonomous');
+  await s.org.updateMember(orgId, s.editor.id, { reportsToAgentId: s.writer.id });
+  await s.units.syncMembership(orgId);
+  const auditorAgent = await s.agents.create({ name: 'Auditor', provider: 'openai', model: 'gpt-5' });
+  await s.org.addMember(orgId, { agentId: auditorAgent.id, reportsToAgentId: s.chief.id, scopes: [] });
+  const announcer = new OrgAnnouncer({ announce: async () => undefined });
+  const predictions = new OrgPredictionsService(s.db, s.org, s.audit, s.tasks, s.agents, s.config, s.turns, s.runtime, s.intent, s.units, s.brief);
+  const experiments = new OrgExperimentsService(s.db, s.org, s.audit, s.approvals, s.agents, s.workspaces, s.config, s.turns, s.runtime, s.units, s.meetings, s.playbooks, s.capital, s.incidents, s.brief, predictions, undefined, announcer);
+  const meetingRuntime = new OrgMeetingRuntime(s.db, s.meetings, s.org, s.units, s.audit, s.agents, s.workspaces, s.turns, s.repo, s.runtime, s.config, announcer, s.approvals);
+  const providers = [s.runtime, s.memory, s.sensing, s.incidents, s.tools, predictions, experiments, meetingRuntime];
+  const fsTools = new ToolsService(memStorage().stub).specs().map((t) => t.name).filter((n) => n.startsWith('fs_'));
+  const offered = async (session: Awaited<ReturnType<typeof sessionOf>>): Promise<Set<string>> => {
+    const names = new Set<string>(fsTools);
+    for (const p of providers) for (const t of await p.specsFor(session)) names.add(t.name);
+    const restrict = await s.runtime.restrictTo(session);
+    return restrict ? new Set([...names].filter((n) => restrict.has(n))) : names;
+  };
+  const ctxFor = (session: { id: string }, agentId: string, extra: Partial<RunCtx>): RunCtx => ({ orgId, taskId: '', agentId, runId: `t-${session.id}`, sessionId: session.id, isChief: false, reviewer: false, progress: false, calls: new Map(), loopDetected: false, ...extra });
+  /** The union of what a member is offered across the session kinds it runs in. */
+  const across = async (agentId: string): Promise<Set<string>> => {
+    const all = new Set<string>([...MEETING_TOOL_NAMES, LESSON_TOOL_NAME]);
+    const loop = await sessionOf(s, agentId);
+    for (const n of await offered(loop)) all.add(n);
+    const review = await sessionOf(s, agentId);
+    s.runtime.beginAuxRun(ctxFor(review, agentId, { reviewer: true }));
+    for (const n of await offered(review)) all.add(n);
+    s.runtime.endAuxRun(review.id);
+    return all;
+  };
+  const chief = await offered(await sessionOf(s, s.chief.id));
+  const head = await across(s.writer.id);
+  const specialist = await across(s.editor.id);
+  const auditSession = await sessionOf(s, auditorAgent.id);
+  s.runtime.beginAuxRun(ctxFor(auditSession, auditorAgent.id, { audit: { findings: [], summary: '', closed: false, material: '' } }));
+  const auditor = await offered(auditSession);
+  s.runtime.endAuxRun(auditSession.id);
+
+  // the boundary the catalog states: a head never gets the chief's structure tools, the auditor never writes
+  for (const t of ['org_hire_agent', 'org_pause_agent', 'org_update_member', 'org_report', 'org_audit_finding']) assert.ok(!head.has(t), `a head has no ${t}`);
+  for (const t of ['org_task_update', 'org_task_comment', 'org_request_review', 'org_escalate', 'org_set_key_result', 'org_set_cadence']) assert.ok(head.has(t), `a head has ${t} in its loops`);
+  for (const t of ['org_task_update', 'org_request_review', 'org_task_comment']) assert.ok(specialist.has(t), `a specialist keeps its task true from the heartbeat (${t})`);
+  for (const t of ['org_costs', 'org_set_goal', 'org_assign', 'org_propose_experiment']) assert.ok(!specialist.has(t), `a specialist has no ${t}`);
+  for (const t of ['org_audit_finding', 'org_audit_close', 'fs_read', 'org_metric_read', 'org_decisions', 'org_intent']) assert.ok(auditor.has(t), `the auditor reads with ${t}`);
+  for (const t of ['fs_write', 'fs_edit', 'org_create_task', 'org_message', 'org_task_comment']) assert.ok(!auditor.has(t), `the auditor's run never offers ${t}`);
+
+  const roleOf = (id: string): { role: string; set: Set<string> } => id === CHIEF_PACK_ID ? { role: 'chief', set: chief } : id === 'pack-auditor' ? { role: 'auditor', set: auditor } : id.endsWith('-manager') ? { role: 'head', set: head } : { role: 'specialist', set: specialist };
+  // "org_audit_query action meeting_risk" names an audit action, not a tool
+  const toolsNamed = (text: string): string[] => [...new Set(text.replace(/\baction\s+[a-z_]+/g, '').match(/\b(?:org|fs|meeting)_[a-z_]+\b/g) ?? [])];
+  const packs = AUTHORED_PACKS.filter((p) => p.id.startsWith('pack-biz-') || p.id === CHIEF_PACK_ID || p.id === 'pack-auditor');
+  assert.ok(packs.length >= 54, `${packs.length} business packs`);
+  const missing: string[] = [];
+  for (const p of packs) {
+    const { role, set } = roleOf(p.id);
+    for (const sk of p.skills ?? []) for (const t of toolsNamed(sk.instructions ?? '')) if (!set.has(t)) missing.push(`${p.id} ${sk.name}: ${t} (${role})`);
+    for (const l of p.loops ?? []) for (const t of toolsNamed(l.prompt ?? '')) if (!set.has(t)) missing.push(`${p.id} loop ${l.name}: ${t} (${role})`);
+  }
+  // the cross-cutting org playbooks every member carries: a head runs all three
+  for (const b of BUILTIN_SKILLS.filter((x) => x.name.startsWith('org-'))) for (const t of toolsNamed(b.instructions)) if (!head.has(t)) missing.push(`builtin ${b.name}: ${t}`);
+  assert.deepEqual(missing, []);
+  // a head escalates from its loops only what is its unit's
+  const writerLoop = await sessionOf(s, s.writer.id);
+  const ours = await s.tasks.create(orgId, { title: 'Pick the launch date', createdBy: `agent:${s.writer.id}`, assigneeAgentId: s.editor.id });
+  assert.match(await s.runtime.execute(writerLoop, 'org_escalate', { taskId: ours.id, reason: 'needs the CEO' }), /escalated to the CEO/);
+  const theirs = await s.tasks.create(orgId, { title: 'Company offsite', createdBy: 'chief' });
+  await assert.rejects(s.runtime.execute(writerLoop, 'org_escalate', { taskId: theirs.id, reason: 'x' }), /your unit's board/);
+  // a head sees its reports' incidents (it runs their postmortems); a member only its own
+  await s.incidents.report(orgId, { title: 'Draft sent to the wrong list', detail: 'x', severity: 'minor', agentId: s.editor.id }, { detectedBy: 'owner' });
+  assert.match(await s.incidents.execute(writerLoop, 'org_incidents', {}), /Draft sent to the wrong list/);
+  assert.match(await s.incidents.execute(await sessionOf(s, auditorAgent.id), 'org_incidents', {}), /No incidents about you\./);
+  // the auditor's playbooks load inside its read-only run
+  s.runtime.beginAuxRun(ctxFor(auditSession, auditorAgent.id, { audit: { findings: [], summary: '', closed: false, material: '' } }));
+  assert.ok((await s.runtime.restrictTo(auditSession))!.has(RESTRICT_OWN_SKILLS));
+  s.runtime.endAuxRun(auditSession.id);
+});
+
+test('the business skill set closes its loops: the chief sweeps blocks and reviews the workforce, learning and files; heads agree handoffs, onboard hires and file assurance requests; the auditor reconciles the ledger', () => {
+  const chief = AUTHORED_PACKS.find((p) => p.id === CHIEF_PACK_ID)!;
+  const names = chief.skills!.map((x) => x.name);
+  for (const n of ['escalation-and-blocker-sweep', 'member-lifecycle-review', 'learning-loop-review', 'org-files-hygiene']) assert.ok(names.includes(n), n);
+  const loops = chiefLoops({ briefHour: 8, weeklyReviewCron: '0 16 * * 5', preReadHours: 24 });
+  // every playbook a chief loop names is one the pack carries, and the pack's loops say the same
+  for (const l of [...loops, ...(chief.loops ?? [])]) for (const m of l.prompt.match(/\b[a-z]+(?:-[a-z]+)+\b/g) ?? []) if (/-(review|brief|sweep|audit|intake|hygiene|planning|monitor|register|prep)$/.test(m)) assert.ok(names.includes(m), `${l.name} names ${m}`);
+  assert.deepEqual((chief.loops ?? []).map((l) => l.prompt), loops.map((l) => l.prompt), 'the pack and onboarding run one rhythm');
+  for (const h of AUTHORED_PACKS.filter((p) => /^pack-biz-.+-manager$/.test(p.id))) {
+    const fn = h.id.replace(/^pack-biz-/, '').replace(/-manager$/, '');
+    const body = (n: string) => h.skills!.find((x) => x.name === `${fn}-${n}`)!.instructions;
+    assert.match(body('okr-planning'), /\/org\/handoffs\.md/, `${h.id} agrees its dependencies`);
+    assert.match(body('weekly-review'), /\/org\/handoffs\.md/, `${h.id} answers handoffs`);
+    assert.match(body('team-management'), /Onboard every new member/, `${h.id} onboards`);
+    assert.match(body('kpi-audit'), /Assurance request:/, `${h.id} files assurance requests the auditor can find`);
+  }
+  const auditor = AUTHORED_PACKS.find((p) => p.id === 'pack-auditor')!;
+  assert.ok(auditor.skills!.some((x) => x.name === 'audit-ledger-and-metrics' && /Assurance request:/.test(x.instructions)));
+  assert.ok(auditor.skills!.some((x) => x.name === 'audit-values-and-culture'));
+  for (const n of ['org-member-workflow', 'org-member-onboarding', 'org-unit-retro']) assert.ok(BUILTIN_SKILLS.some((b) => b.name === n), `builtin ${n}`);
 });
