@@ -23,8 +23,10 @@ agents see, written with a leading `/`.
 │   │   └── .checkpoints/ read-only rollback history
 │   └── …
 ├── org/                  org-wide artifacts: plans, decisions, meeting notes,
-│                         and the mirrored company records (below)
+│   │                     and the mirrored company records (below)
+│   └── meetings/<yyyy>/  minutes of every unit meeting (docs/meetings.md)
 ├── channels/<slug>/      a channel's shared folder (unchanged)
+│   └── meetings/         minutes of `/meeting`s held in that channel
 ├── uploads/              files users attach from the composer
 └── <anything else>/      user- or agent-made shared folders
 ```
@@ -65,6 +67,24 @@ the record. A link to a playbook, an experiment or a metric source in the
 SPA opens its file. At boot a one-off backfill mirrors existing rows for
 every account — idempotent (unchanged files are skipped), logged, never
 throws.
+
+## Meeting minutes
+
+Every meeting ends with a minutes document (`docs/meetings.md`), written
+through `WorkspaceFs` by `OrgMeetingMinutesService`
+(`server/src/org/meeting-minutes.service.ts`) with the facilitator agent as
+author (`system` when there is none):
+
+| File | Written when | Holds |
+|------|--------------|-------|
+| `/org/meetings/<yyyy>/<yyyy-mm-dd>-<unit-slug>-<kind>.md` | a unit's meeting (a ritual from its cadence, `/meeting <kind>` in a unit channel, Start meeting) ends | when, the unit, facilitator, attendees, agenda, summary, discussion, decisions (who decided, `#decision:` id), action items (owner, done-when, the board task), open questions and risks, lessons, the next meeting |
+| `/<channel folder>/meetings/<yyyy-mm-dd>-<title-slug>.md` | a `/meeting` in a channel that is not a unit channel ends (the folder is `channels/<slug>` unless the channel has another) | the same |
+
+Dates are server-local, like the cadences. A second meeting at the same path
+the same day gets `-HHMM` (then `-<id8>`) appended; the first is never
+overwritten. Unlike the mirrors these are ordinary files: people and agents
+may annotate them, and revisions keep every version. The meeting row keeps
+the path (`org_meetings.minutesPath`), so lists never parse files.
 
 ## Paths an agent uses
 

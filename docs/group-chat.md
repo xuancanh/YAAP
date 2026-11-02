@@ -489,3 +489,20 @@ then changes and its hash is re-accepted), a playbook change becomes a
 revise task for the playbook's owner. A postmortem's agenda is composed
 without a model — timeline, cost, signals, decisions, playbook outcomes —
 and every retro's agenda ends with the playbooks and how they fared.
+
+**Minutes documents and the calendar (2 November 2026, `docs/meetings.md`).**
+Every meeting that started — closed by the facilitator, out of rounds, at the
+USD cap, stopped by a person, or cancelled / killed mid-way — now also leaves
+a markdown minutes file in the workspace tree, authored by the facilitator:
+`/org/meetings/<yyyy>/<yyyy-mm-dd>-<unit>-<kind>.md` for a unit's meeting,
+`/channels/<slug>/meetings/<yyyy-mm-dd>-<title>.md` for a `/meeting` in a
+channel that is not a unit channel (an ad-hoc `/meeting` is titled from its
+agenda). The summary is the facilitator's `meeting_close` note, else one
+bounded call on the facilitator's model, else composed from the record. The
+thread's minutes message and the channel line link the file ("· Minutes:
+/org/meetings/…"), so thread followers see it; the meeting row keeps
+`minutesPath` and `summary` (migration `0049-meeting-minutes`). A cancelled
+meeting's minutes say nothing was executed. `GET /api/workspaces/:id/meetings
+?unitId=&channel=&from=&to=` lists the meetings held and the cadences'
+upcoming occurrences, named by unit; the Company → Meetings pane and every
+channel's new **Meetings** tab show them as a list and a calendar.
