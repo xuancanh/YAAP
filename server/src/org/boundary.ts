@@ -76,6 +76,7 @@ const TUNABLE_ROWS: Array<{ prefix: string; verdict: BoundaryVerdict; reason: st
   { prefix: 'capital.vetoWindowMinutes', verdict: 'propose', reason: 'the veto window is the owner\'s oversight of autonomous plans', delegable: true },
   { prefix: 'evals.', verdict: 'propose', reason: 'eval settings decide whether a change that regresses can roll out', delegable: true },
   { prefix: 'seat.', verdict: 'propose', reason: 'deadlines and default actions decide what silence from the owner means', delegable: false },
+  { prefix: 'chief.proxyLevel', verdict: 'propose', reason: 'the archetype dial widens what the chief does on the CEO\'s behalf; proxy scope is earned one class at a time, never self-granted (docs/chief-of-staff.md)', delegable: false },
   { prefix: '', verdict: 'alone', reason: 'a tunable within its bound: the bound is the safety floor and lives in code', delegable: true },
 ];
 

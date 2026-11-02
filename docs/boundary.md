@@ -38,7 +38,7 @@ the actor `experiment`. That actor passes everything except a `never` row.
 | Family | Scope | Verdict | Why |
 |---|---|---|---|
 | tunable | `audit.*`, `redteam.*`, `boundary.*` | never | the auditor's independence; the test of the org; the boundary's own settings |
-| tunable | `actions.*`, `trust.*`, `seat.*` | propose (not delegable) | the external-action floor; what silence from the owner means |
+| tunable | `actions.*`, `trust.*`, `seat.*`, `chief.proxyLevel` | propose (not delegable) | the external-action floor; what silence from the owner means; how far the chief acts on the CEO's behalf (`docs/chief-of-staff.md`) |
 | tunable | `incidents.*`, `acceptance.*`, `signals.*`, `pulse.*`, `slo.*`, `evals.*`, `capital.vetoWindowMinutes` | propose | safety floors, what counts as verified, what the owner sees, the eval gate, the veto window |
 | tunable | any other key | alone | the bound is the safety floor and lives in code |
 | cadence | meeting cadences | alone | bounded by the ritual tunables |
