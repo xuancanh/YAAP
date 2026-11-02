@@ -1,12 +1,12 @@
 /** The Inbox and the Company menu (docs/company-vision.md §8 "The CEO's
  *  seat"): everything waiting on the CEO in one list, and the company panes
  *  grouped in the Company rail. Pure — the views and the store use these. */
-import type { OrgApproval, OrgHealth, OrgPlan, OrgTask } from './api';
+import type { FollowRow, OrgApproval, OrgHealth, OrgPlan, OrgTask } from './api';
 import type { OrgPane } from '../store';
 
 // ---- Inbox ----
 
-export type InboxFilter = 'all' | 'approvals' | 'keys' | 'escalations' | 'plans' | 'mytasks' | 'incidents';
+export type InboxFilter = 'all' | 'approvals' | 'keys' | 'escalations' | 'plans' | 'mytasks' | 'incidents' | 'following';
 export const INBOX_FILTERS: Array<{ id: InboxFilter; label: string }> = [
   { id: 'all', label: 'All' },
   { id: 'approvals', label: 'Approvals' },
@@ -15,9 +15,14 @@ export const INBOX_FILTERS: Array<{ id: InboxFilter; label: string }> = [
   { id: 'plans', label: 'Plans' },
   { id: 'mytasks', label: 'My tasks' },
   { id: 'incidents', label: 'Incidents' },
+  { id: 'following', label: 'Following' },
 ];
 
-export interface InboxItem { key: string; kind: Exclude<InboxFilter, 'all'>; title: string; detail: string; at: string; refId: string }
+export interface InboxItem {
+  key: string; kind: Exclude<InboxFilter, 'all'>; title: string; detail: string; at: string; refId: string;
+  /** Following (docs/follows.md): the followed thread or task, its unseen count and why it needs me. */
+  follow?: { targetKind: FollowRow['targetKind']; targetId: string; link: string; unseen: number; attention: string; closed: boolean };
+}
 
 export interface InboxSource {
   approvals: OrgApproval[];
@@ -26,6 +31,8 @@ export interface InboxSource {
   incidents: OrgHealth['openIncidents'];
   /** Held or staged actions waiting for the owner's key (one row for all). */
   heldActions: number;
+  /** What I follow (`GET …/follows/mine`): the ones with something new are listed. */
+  follows?: FollowRow[];
 }
 
 const OPEN_TASK = new Set(['backlog', 'waiting', 'todo', 'claimed', 'in_progress', 'in_review', 'blocked']);
@@ -52,6 +59,10 @@ export function buildInbox(src: InboxSource): InboxItem[] {
   for (const t of src.tasks?.assigned ?? []) if (OPEN_TASK.has(t.status)) out.push({ key: `t:${t.id}`, kind: 'mytasks', title: t.title, detail: `assigned to you · ${t.status.replace('_', ' ')}`, at: t.updatedAt ?? t.createdAt, refId: t.id });
   for (const t of src.tasks?.reviewing ?? []) if (OPEN_TASK.has(t.status)) out.push({ key: `r:${t.id}`, kind: 'mytasks', title: `Review: ${t.title}`, detail: 'waiting for your review', at: t.updatedAt ?? t.createdAt, refId: t.id });
   for (const i of src.incidents) if (i.status === 'open') out.push({ key: `i:${i.id}`, kind: 'incidents', title: i.title, detail: `${i.severity} · ${i.kind.replace(/_/g, ' ')}`, at: i.openedAt, refId: i.id });
+  for (const f of src.follows ?? []) {
+    if (f.mutedAt || (f.unseenCount <= 0 && !f.attentionAt)) continue;
+    out.push(followItem(f));
+  }
   // The keys row (no time) leads; the rest newest first.
   return out.sort((a, b) => (a.at === b.at ? 0 : !a.at ? -1 : !b.at ? 1 : a.at < b.at ? 1 : -1));
 }
@@ -60,9 +71,33 @@ export function filterInbox(items: InboxItem[], f: InboxFilter): InboxItem[] {
   return f === 'all' ? items : items.filter((i) => i.kind === f);
 }
 
-/** The Inbox nav badge: everything waiting on the CEO. */
-export function inboxBadge(c: { pendingApprovals: number; heldActions: number; pendingPlans: number; openIncidents: number; myTasks: number }): number {
-  return c.pendingApprovals + c.heldActions + c.pendingPlans + c.openIncidents + c.myTasks;
+const TARGET_WORD: Record<FollowRow['targetKind'], string> = { thread: 'thread', org_task: 'task', agent_task: 'task' };
+
+/** One followed thread or task as an Inbox row: its title, the latest change and who made it. */
+export function followItem(f: FollowRow): InboxItem {
+  const what = f.lastActivity ? `${f.lastActorName ? `${f.lastActorName}: ` : ''}${f.lastActivity}` : 'Nothing new since you looked';
+  return {
+    key: `f:${f.targetKind}:${f.targetId}`, kind: 'following', title: f.title || `A followed ${TARGET_WORD[f.targetKind]}`, detail: what,
+    at: f.lastActivityAt ?? f.createdAt, refId: f.targetId,
+    follow: { targetKind: f.targetKind, targetId: f.targetId, link: f.link, unseen: f.unseenCount, attention: f.attentionAt ? f.attention || 'needs you' : '', closed: Boolean(f.closedAt) },
+  };
+}
+
+/** The Following filter: every live follow, the ones needing me first, then the ones with news, newest first. */
+export function followingList(follows: FollowRow[]): InboxItem[] {
+  const rank = (i: InboxItem) => (i.follow?.attention ? 0 : (i.follow?.unseen ?? 0) > 0 ? 1 : 2);
+  return follows.filter((f) => !f.mutedAt).map(followItem).sort((a, b) => rank(a) - rank(b) || (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+}
+
+/** What the header counts as waiting on me: everything but followed news that does not need me. */
+export function waitingCount(items: InboxItem[]): number {
+  return items.filter((i) => i.kind !== 'following' || Boolean(i.follow?.attention)).length;
+}
+
+/** The Inbox nav badge: everything waiting on the CEO. Followed threads and
+ *  tasks count only when their latest change needs me, not for every reply. */
+export function inboxBadge(c: { pendingApprovals: number; heldActions: number; pendingPlans: number; openIncidents: number; myTasks: number; followAttention?: number }): number {
+  return c.pendingApprovals + c.heldActions + c.pendingPlans + c.openIncidents + c.myTasks + (c.followAttention ?? 0);
 }
 
 // ---- the Company menu ----
