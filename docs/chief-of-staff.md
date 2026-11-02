@@ -1,0 +1,232 @@
+# The chief of staff: run the operating system, not the company
+
+*Shipped 2 November 2026. The design follows
+`reports/Chief of staff operating model.md` (research notes in
+`research_notes/Chief of staff operating model/`); its "design for the AI
+agent" sections are the spec. It extends `docs/company-vision.md` §1b
+(everything adapts), §3 (rituals) and §13 (the heartbeat), and stays inside
+`docs/boundary.md`.*
+
+The chief of staff (CoS) is the most important agent in an organization. The
+research gives it one job: leverage on the CEO's **time, information and
+decisions**, obtained by designing and running the company's operating
+system — the planning, reporting, decision and communication loops that turn
+function leaders' work into CEO decisions and those decisions into
+follow-through. The agent's advantage over a human CoS is the upstream
+pipeline (data deadlines, pre-reads, timers, logs, hygiene checks), which it
+can run completely. Its documented failure modes (the second CEO, the
+"Berlin Wall") sit at the proxy end of the role, so it starts as a thorough
+conductor and earns proxy scope from the CEO.
+
+Code:
+
+- `server/src/org/roles/catalog.ts` — the `chief-of-staff` role's charter;
+  `defaultChiefCharter` (`org.service.ts`) builds the onboarding charter on it.
+- `server/src/org/chief-tunables.ts` — the `chief.*` tunables (area `chief`).
+- `server/src/org/chief-os.ts` — `diagnoseProfile`, `deriveOperatingSystem`,
+  `chiefLoops`, `seedArtifacts` (pure, no model).
+- `server/src/org/org-chief.service.ts` — `OrgChiefService`: the operating
+  system's state for the chief's heartbeat.
+- `server/src/org/org-bootstrap.service.ts` — onboarding installs and seeds it.
+- `packs/chief-of-staff.md` — the Chief of Staff pack (skills and loops),
+  built into `server/src/market/authored-packs.generated.ts` by
+  `node scripts/build-authored-packs.mjs`.
+
+## 1. The charter
+
+The charter has five parts (report: "Four taxonomies…", "Four limits…",
+"An AI chief of staff is a profile, a ledger and a bounded mandate").
+
+1. **Mandate.** Time, information, decisions; own the source of truth, never
+   the rituals ("treat the company like a product", HashiCorp).
+2. **Archetype.** The four published taxonomies collapse onto one axis,
+   which becomes a setting, `chief.proxyLevel`: 0 early-team generalist,
+   1 conductor, 2 functional stand-in, 3 CEO brain extension (Bain Capital
+   Ventures). Onboarding picks 0–2 from the stage; 3 is never set at
+   onboarding. A scheduled re-check of every live initiative against the
+   current goals counters the conductor's drift failure.
+3. **Function managers.** The CoS works at the handoffs and on work that
+   belongs to no function. Function-level work goes to the function's
+   manager (a member titled "… manager", or a unit lead): the objective
+   through `org_set_goal unit=…`, or a briefed task. It does the work itself
+   only when nobody owns the function ("if 80% of a job is one function, it
+   is that function's").
+4. **Three tiers** (below).
+5. **Five failures** with their countermeasures (§6).
+
+## 2. The three tiers and the boundary
+
+The boundary table (`docs/boundary.md`) is the ceiling of what any agent may
+change. The charter is narrower where the research says a human must
+approve, so the two never conflict: the boundary refuses, the charter
+declines.
+
+| Tier | What | How it is held |
+|---|---|---|
+| Alone | schedule and prepare forums; compile pre-reads, the scorecard and the issues list; chase owners; log decisions and to-dos; run handoff timers and goal hygiene; keep the `/org/` ledger; draft memos, board and investor updates, all-hands material; write the CEO brief; tune timers and thresholds within bounds | boundary rows `tunable:*` (alone), `cadence` (alone, timing) |
+| Proposes | new or retired rituals and what a ritual is for; the quarterly goal set; reallocations; reorganisations; the values → mechanism map; its own proxy level | charter; `org_propose_strategy`, `org_propose_experiment` (cadence, structure), decision cards; **`chief.proxyLevel` is a `propose`, non-delegable boundary row** |
+| Never | decide a one-way door; hire, fire or coach the leadership; commit money beyond an envelope; own the board or investor relationship; set culture-defining rules; send outward in the CEO's name; touch the auditor's settings or assure its own system | charter; boundary rows `never` and `propose (not delegable)`; the external floor |
+
+The proxy dial is the one new boundary row. Raising it widens what the chief
+does on the CEO's behalf, so it is earned one class at a time through the
+approvals record (report, "Conclusion"), never self-granted; a delegate
+cannot approve it either.
+
+## 3. The profile is the input
+
+`deriveOperatingSystem(profile)` reads the CEO's words and derives the
+parameters (report: "The profile is the input, and every parameter derives
+from it"). It is a string match like the role catalog's `fits`; explicit
+answers (`profile.stage`, `profile.cultureType` on the bootstrap body) win.
+
+- **Stage.** Words such as "pre-seed", "Series B", "enterprise"; otherwise
+  the starting headcount (below 10 early, 10–50 growth, 50+ scale).
+- **Culture type.** The Competing Values Framework's clan, adhocracy,
+  market or hierarchy by keyword; *balanced* when none dominates.
+- **Norms.** Speed-valuing, rigour-valuing, writing culture.
+
+| Parameter | Early | Growth | Scale | Culture and norms |
+|---|---|---|---|---|
+| `chief.proxyLevel` | 0 generalist | 1 conductor | 2 stand-in | — |
+| `planning.objectivesPerVision` / `chief.maxObjectives` | 2 / 3 | 3 / 4 | 4 / 5 | — |
+| `planning.keyResultsPerObjective` | 2 | 3 | 3 | — |
+| `intent.checkInCadenceDays` | 7 | 7 | 7 | hierarchy without speed: 14 |
+| `chief.preReadHours` | 24 | 48 | 48 | rigour or hierarchy 48, both 72; speed 24 |
+| `chief.handoffSlaHours` | 24 | 24 | 24 | speed 8, hierarchy 48 |
+| `chief.decisionOverdueHours` | 24 | 24 | 24 | speed 12, hierarchy 48 |
+| `chief.riskReviewDays` | 30 | 14 | 14 | hierarchy 7 |
+| `chief.offTrackWeeks` | 2 | 2 | 2 | speed or market 1 |
+| `chief.sunsetEmptyCycles` | 3 | 3 | 3 | speed or adhocracy 2, hierarchy 4 |
+| `chief.memoFirst` | 0 | 0 | 0 | rigour, writing or hierarchy 1 |
+
+The root unit's rituals (cadence mode `profile`, now the default):
+
+| Ritual | Derived |
+|---|---|
+| Standup | held only when the company values speed or is an adhocracy |
+| Weekly review | always; a market culture holds it mid-week (Amazon WBR) |
+| Retro | off for an early company that is not an adhocracy (postmortems still run) |
+| Leadership ("board") meeting | weekly; monthly (first Monday) while early |
+
+The decision protocol (consensus with a named decider, informed captain,
+single decider, RAPID, or DACI for a balanced profile) and the communication
+default (memo-first, async or written weekly updates) are written into
+`/org/operating-system.md`, not stored as numbers.
+
+The report is explicit that the culture → mechanism mapping is a design
+heuristic, not a finding. Every value is therefore a per-workspace tunable
+the CEO edits in Settings and the chief proposes to change; none is a fixed
+default, and nothing carries to another workspace.
+
+## 4. The ledger under `/org/`
+
+A small, fixed core of artifacts whose fields the sources specify. They live
+in the shared `/org/` folder at the workspace root (`docs/filesystem.md`);
+onboarding writes them once, never over a file that exists, and the chief
+keeps them.
+
+| File | Holds |
+|---|---|
+| `/org/operating-system.md` | the diagnosis with its evidence, the archetype, every derived parameter with its reason, the decision protocol, the communication default |
+| `/org/scorecard.md` | 5–15 numbers: owner, target, this week, six-week trend, on/off track |
+| `/org/issues.md` | the weekly meeting's issues list |
+| `/org/decisions.md` | question, one decider, recommender, inputs/veto, door, decision, rationale, dissent, follow-ups, revisit condition |
+| `/org/calendar.md` | every forum: purpose, owner (never the chief), output, empty-cycles counter |
+| `/org/risks.md` | owner, likelihood, impact, mitigation, status, review dates |
+| `/org/handoffs.md` | the handoff SLA registry, seeded with the function owners |
+| `/org/values.md` | values → mechanism map; a value with none is a drift candidate |
+
+The goal registry is the intent tree (`org_intent`), and the system's own
+decision rows stay in `org_decisions`; the files link to them by id.
+
+## 5. The heartbeat reads the operating system
+
+`OrgChiefService` registers a reason and a context provider named `chief`
+on the gated heartbeat, next to the runtime's `org` providers. Both are for
+the chief only and model-free.
+
+- **Rituals coming up** within `chief.ritualLookaheadHours`, with the
+  pre-read deadline `chief.preReadHours` before each.
+- **Decisions waiting on the CEO** longer than `chief.decisionOverdueHours`:
+  to lead the brief, never to decide.
+- **Stale risks**: at-risk key results and objectives with no check-in, and
+  open warn or critical signals, for `chief.riskReviewDays`.
+- **Breached handoffs**: a task a member of one unit asked for that sits on
+  another unit's board (backlog, todo, blocked, waiting, in review) and has
+  not moved for `chief.handoffSlaHours`. Tasks the chief created are routing,
+  not handoffs.
+- **Function owners** to route to.
+
+A handoff that breached since the chief's last beat is a reason to wake;
+breaches already seen stay in the context only, so a stuck handoff does not
+wake the chief every beat.
+
+## 6. Five failures and their countermeasures
+
+| Failure | Countermeasure |
+|---|---|
+| Gatekeeping (the "Berlin Wall") | widen access, never narrow it: no filtering or rewording of messages to the CEO; every brief line names its source (`ceo-daily-brief`) |
+| Second CEO | decide only inside an explicit delegated scope; the proxy dial is the CEO's (boundary row) |
+| Owner of every ritual | every forum has an owner other than the chief (`/org/calendar.md`); the chief keeps the record and the pre-reads |
+| Invented explanations | the WBR rule: unexplained variance is "unknown — investigating", owned and tracked (`weekly-business-review`, `/org/scorecard.md`) |
+| Status theatre | a forum empty for `chief.sunsetEmptyCycles` cycles is proposed for retirement (`ritual-retirement-review`); every added ritual must remove a handoff cost |
+
+## 7. The pack
+
+`packs/chief-of-staff.md` (`pack-chief-of-staff`, category Business). Its
+skills use only tools the server offers (`org_*`, plus `fs_read`/`fs_write`
+for the ledger):
+
+`operating-system-setup`, `annual-planning`, `quarterly-planning` (grading,
+the OKR cascade through function managers, a dependency map with
+acceptance), `weekly-business-review` (open items first, exceptions only,
+controllable inputs, "unknown" over invented causes), `exec-meeting-prep`
+(decision-shaped pre-reads, agenda as decisions and questions),
+`decision-log-hygiene` (one decider, door type, revisit conditions),
+`ceo-daily-brief`, `handoff-sla-monitor`, `risk-register` (with pre-mortems
+before one-way doors), `values-mechanism-audit` (the five mechanism families,
+drift with numbers, gaps as questions), `ritual-retirement-review`,
+`investor-update` (draft only) and `reorg-proposal`.
+
+Its loops: the weekday **operating-system sweep** an hour before the brief,
+the **weekly business review pack** at the pre-read deadline before the root
+unit's weekly review (moved off the weekend), the **monthly operating
+review** and the **quarterly planning kickoff** three weeks before the
+quarter. Onboarding computes their times from the workspace (`chiefLoops`);
+the pack's frontmatter carries the same loops at the default times for a
+market hire.
+
+## 8. Onboarding
+
+`POST …/org/bootstrap` now, after the profile and the chosen tunables:
+
+1. derives the operating system and writes each derived value the body did
+   not set as a tunable (an audited `tunable_set` row whose rationale names
+   the profile evidence);
+2. fits the root unit's rituals to it (cadence mode `profile`, the default;
+   `default`, `light` and `none` behave as before);
+3. installs the pack's skills on the chief (private to it; an existing
+   agent keeps its own charter and gains the skills) and its loops (a loop the
+   plan's cap refuses is installed switched off, with a note);
+4. seeds the ledger.
+
+The summary and the `org_bootstrap` audit row carry `operatingSystem`
+(stage, culture type, archetype, tunables, skills, loops, artifacts). The
+New workspace wizard offers "Fit to my profile" as its default rhythm.
+
+## 9. Departures and open edges
+
+- The ledger is written through `StorageService` at the workspace's
+  `org/…` keys. Once the workspace filesystem's metadata table lands
+  (`docs/filesystem.md`), the seed should go through `WorkspaceFs` so the
+  files carry a version and an editor.
+- Risks have no table: the register is a file; the heartbeat's "stale
+  risks" are at-risk goals and unacknowledged warnings, which the record
+  holds.
+- A handoff is inferred from units (requester's unit ≠ the task's board);
+  the per-handoff SLAs in `/org/handoffs.md` are the chief's record, while
+  the timer uses `chief.handoffSlaHours`.
+- The report offers no quantitative success measure for a CoS. The
+  candidates it lists (decision latency, share of decisions with an owner and
+  follow-through, initiatives on time) are read from the pulse and the log,
+  not scored.

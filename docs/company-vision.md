@@ -76,6 +76,10 @@ bounds on every tunable. Culture chooses within the fence; it never moves
 it. Every change to the profile or a tunable is a decision-log entry, so
 the company can see how it changed itself and why.
 
+The chief of staff turns the profile into the company's operating system
+— cadence, goal count, decision protocol, timers, the archetype it plays —
+and keeps the ledger under `/org/`: `docs/chief-of-staff.md`.
+
 ## 2. The intent cascade (the example, generalised)
 
 The CEO writes a **vision**: one paragraph, a horizon, a budget, and the
@@ -664,3 +668,16 @@ workspace, an agent of another workspace cannot be seated, and moving an
 agent between workspaces is an explicit action (`POST /api/agents/:id/move`),
 refused while it sits in an organization (docs/shared-agents.md "Workspace
 ownership").
+
+*The chief of staff's operating system — shipped 2 November 2026.* From
+`reports/Chief of staff operating model.md`: the chief's charter now states
+its mandate (leverage on the CEO's time, information and decisions by
+running the planning, reporting, decision and communication loops), its
+place on the conductor ↔ CEO-brain-extension axis (`chief.proxyLevel`, a
+proposal for the CEO in the boundary), the three authority tiers and the five
+failures it guards against. Onboarding derives the operating system from the
+profile (stage, culture type, norms) into `chief.*` and existing tunables and
+the root unit's rituals, installs the Chief of Staff pack's skills and loops
+on the chief and seeds the ledger under `/org/`; the chief's heartbeat reads
+the rituals due, overdue decisions, stale risks and breached handoffs. See
+`docs/chief-of-staff.md`.
