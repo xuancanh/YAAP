@@ -29,7 +29,7 @@ import type { ProviderHealthService } from '../ai/provider-health';
 import type { Organization } from '../org/org.service';
 import type { OrgTask, OrgTasksService } from '../org/org-tasks.service';
 import { liveTurns as defaultLive, type LiveTurn, type LiveTurnRegistry } from '../chats/live-turns';
-import type { HomeAgent, HomeAgentState } from './home.types';
+import type { HomeAgent, HomeAgentError, HomeAgentState } from './home.types';
 
 const DAY_MS = 24 * 60 * 60_000;
 /** Errors older than this no longer mark an agent as failing. */
@@ -88,7 +88,7 @@ export function blockerOf(t: Pick<OrgTask, 'id' | 'blockers' | 'dependsOn' | 'up
   }
   const last = lines.at(-1) ?? '';
   if (ctx.escalatedToCeo) return { reason: clip(last || 'Escalated to you', 240), waitsOn: { kind: 'ceo', id: null, name: 'You', taskId: null }, since };
-  return { reason: clip(last || 'No reason given', 240), waitsOn: { kind: 'unknown', id: null, name: '', taskId: null }, since };
+  return { reason: clip(last, 240), waitsOn: { kind: 'unknown', id: null, name: '', taskId: null }, since };
 }
 
 function taskWait(dep: Pick<OrgTask, 'id' | 'title' | 'assigneeAgentId'>, names: Map<string, string>, since: string, reason: string): BlockerInfo {
@@ -96,6 +96,37 @@ function taskWait(dep: Pick<OrgTask, 'id' | 'title' | 'assigneeAgentId'>, names:
   return who
     ? { reason, waitsOn: { kind: 'agent', id: who, name: names.get(who) ?? who.slice(0, 8), taskId: dep.id }, since }
     : { reason, waitsOn: { kind: 'task', id: null, name: dep.title, taskId: dep.id }, since };
+}
+
+/**
+ * What to do about an error, when the message makes it obvious, and where
+ * (`tab` is an agent-page tab: 'Settings:General', 'Work:Schedule', …).
+ * Pure; null when there is nothing better to say than the message.
+ */
+export function fixHint(e: Pick<HomeAgentError, 'kind' | 'message'>): { text: string; tab: string | null } | null {
+  const m = e.message.toLowerCase();
+  const rounds = /tool round limit \((\d+)\)/.exec(m);
+  if (rounds) return { text: `It used all ${rounds[1]} tool rounds in one turn. Split the work into smaller steps, or raise the server's MAX_TOOL_ROUNDS.`, tab: null };
+  if (/token ceiling|budget reached/.test(m)) return { text: 'The loop ran out of its token budget. Raise the loop budget or clear its conversation.', tab: 'Work:Schedule' };
+  if (e.kind === 'budget' || /monthly budget|budget stop|over budget/.test(m)) return { text: 'Its spending cap stopped it. Raise its monthly budget or wait for the month to turn.', tab: null };
+  if (e.kind === 'breaker') return { text: 'It keeps running without moving the task. Answer on the task, split it, or reassign it.', tab: null };
+  if (/api key|unauthori[sz]ed|\b401\b|invalid x-api-key|authentication/.test(m)) return { text: 'The provider refused the key. Check the provider key in Settings.', tab: null };
+  if (/model/.test(m) && /not found|rejected|does not exist|unknown|invalid|unsupported|\b404\b/.test(m)) return { text: 'The provider does not accept this model. Pick another one.', tab: 'Settings:General' };
+  if (/rate.?limit|\b429\b|overloaded|\b529\b/.test(m)) return { text: 'The provider is rate-limiting or overloaded. It tries again on its next run.', tab: null };
+  if (/could not poll|connection|reconnect/.test(m)) return { text: 'A connection it reads from failed. Reconnect it in Settings.', tab: 'Settings:Skills & tools' };
+  return null;
+}
+
+/**
+ * The one error the page leads with: a red one before a degraded provider,
+ * one that says what to do before one that does not, a specific message
+ * before a generic one, then the newest. Pure; null without errors.
+ */
+export function primaryError<E extends Pick<HomeAgentError, 'kind' | 'message' | 'at'>>(errors: E[]): E | null {
+  if (errors.length === 0) return null;
+  const generic = (e: E) => /recorded no reason|the last turn failed/i.test(e.message);
+  const score = (e: E) => (e.kind === 'provider' ? 0 : 8) + (fixHint(e) ? 4 : 0) + (generic(e) ? 0 : 2);
+  return errors.slice().sort((x, y) => score(y) - score(x) || y.at.localeCompare(x.at))[0];
 }
 
 /** The state from the facts, in the precedence the header lists. Pure. */
@@ -155,7 +186,7 @@ export async function agentStatuses(deps: StatusDeps, input: StatusInput): Promi
   // The latest turn per agent: an errored one (a model the provider rejects, a key that fails) is loud.
   const sessions = await db.select({ id: chatSessions.id, agentId: chatSessions.agentId }).from(chatSessions).where(eq(chatSessions.workspaceId, workspaceId));
   const agentOfSession = new Map(sessions.filter((s) => s.agentId).map((s) => [s.id, s.agentId as string]));
-  const latestTurn = new Map<string, { status: string; error: string | null; createdAt: string }>();
+  const latestTurn = new Map<string, { sessionId: string; status: string; error: string | null; createdAt: string }>();
   if (agentOfSession.size > 0) {
     const turns = await db.select({ sessionId: chatTurns.sessionId, status: chatTurns.status, error: chatTurns.error, createdAt: chatTurns.createdAt })
       .from(chatTurns).where(and(inArray(chatTurns.sessionId, [...agentOfSession.keys()]), gte(chatTurns.createdAt, cutoff)));
@@ -181,16 +212,24 @@ export async function agentStatuses(deps: StatusDeps, input: StatusInput): Promi
     if (m?.status === 'terminated') continue;
     const errors: HomeAgent['errors'] = [];
     const lt = latestTurn.get(a.id);
-    if (lt && lt.status === 'error') errors.push({ kind: 'turn', message: clip(lt.error || 'The last turn failed', 280), at: lt.createdAt });
     const events = await agentsSvc.listEvents(a.id, 20);
+    // A failed turn that recorded no message of its own: the loop that ran it
+    // says why ("tool round limit (24) reached"), read or not.
+    const explainedBy = lt && lt.status === 'error' && !lt.error?.trim()
+      ? events.find((e) => e.kind === 'loop_error' && e.body && (e.sessionId === lt.sessionId || Math.abs(Date.parse(e.createdAt) - Date.parse(lt.createdAt)) < 60 * 60_000))
+      : undefined;
+    if (lt && lt.status === 'error') {
+      errors.push({ kind: 'turn', message: clip(lt.error?.trim() || explainedBy?.body || 'The last turn failed and recorded no reason', 280), at: lt.createdAt, sessionId: lt.sessionId });
+    }
     const lastGood = events.find((e) => e.kind === 'loop_run');
     for (const e of events.filter((x) => (x.kind === 'loop_error' || x.kind === 'budget_stop') && x.createdAt >= cutoff && !x.readAt).slice(0, 2)) {
       if (e.kind === 'loop_error' && lastGood && lastGood.createdAt > e.createdAt) continue; // recovered since
-      errors.push({ kind: e.kind === 'budget_stop' ? 'budget' : 'loop', message: clip(`${e.title}${e.body ? `: ${e.body}` : ''}`, 280), at: e.createdAt });
+      if (e === explainedBy) continue; // already the turn's reason
+      errors.push({ kind: e.kind === 'budget_stop' ? 'budget' : 'loop', message: clip(`${e.title}${e.body ? `: ${e.body}` : ''}`, 280), at: e.createdAt, sessionId: e.sessionId || null });
     }
     const mine = orgTasks.filter((t) => t.assigneeAgentId === a.id);
     for (const t of mine.filter((x) => x.noProgressCount >= 2 && x.status !== 'done' && x.status !== 'cancelled').slice(0, 1)) {
-      errors.push({ kind: 'breaker', message: `No progress after ${t.noProgressCount} runs on "${clip(t.title, 80)}"`, at: t.lastRunAt ?? t.updatedAt });
+      errors.push({ kind: 'breaker', message: `No progress after ${t.noProgressCount} runs on "${clip(t.title, 80)}"`, at: t.lastRunAt ?? t.updatedAt, taskId: t.id });
     }
     const providerKey = a.provider || '';
     for (const p of degraded.filter((d) => providerKey && (d.provider === providerKey || providerKey.startsWith(d.provider)))) {
@@ -207,7 +246,7 @@ export async function agentStatuses(deps: StatusDeps, input: StatusInput): Promi
     if (doingTask) { doing = doingTask.status === 'in_review' ? `Reviewing "${doingTask.title}"` : doingTask.title; taskId = doingTask.id; }
     else if (blockedTask) {
       const why = blockedRows[0].blocker;
-      const reason = why.waitsOn.kind === 'unknown' && why.reason === 'No reason given' ? '' : why.reason;
+      const reason = why.reason;
       doing = `Blocked on "${blockedTask.title}"${reason ? `: ${clip(reason, 120)}` : ''}`; taskId = blockedTask.id;
     }
     else {

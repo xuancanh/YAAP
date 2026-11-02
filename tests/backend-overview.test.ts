@@ -31,7 +31,7 @@ import { SettingsService } from '../server/src/settings/settings.module';
 import { HomeService } from '../server/src/home/home.service';
 import { OverviewService } from '../server/src/home/overview.service';
 import { AgentOverviewController, MissionControlController } from '../server/src/home/overview.controller';
-import { blockerOf, deriveState, sortTeam } from '../server/src/home/agent-status';
+import { blockerOf, deriveState, fixHint, primaryError, sortTeam } from '../server/src/home/agent-status';
 import { orgUnits } from '../server/src/database/schema';
 import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
 
@@ -121,12 +121,30 @@ test('an agent working on a task: the Now card with its outcome and last comment
   assert.ok((o.health.wip?.limit ?? 0) > 0);
   assert.equal(o.health.trust.length, 5, 'one row per action class');
   assert.equal(o.health.spend.d30Usd, 0);
+  assert.equal(o.health.spend.series.length, 30, 'the sparkline: one point a day');
+  assert.equal(o.health.spend.monthCapUsd, null, 'no agent envelope set');
+  assert.equal(o.cause, null, 'nothing is failing');
+  // what waits on you: the escalation of its blocked task, with the card to decide
+  const esc = o.needsYou.find((n) => n.kind === 'escalation');
+  assert.equal(esc?.taskId, stuck.id);
+  assert.equal(esc?.title, 'Escalated: Pricing page copy');
+  assert.equal(esc?.detail, 'Need the final price from you');
+  assert.ok(esc?.approvalId);
   // the team: the writer manages the editor and reports to the chief
   assert.equal(o.agent.hasReports, true);
   assert.equal(o.team.manager?.id, s.chief.id);
   assert.deepEqual(o.team.reports.map((r) => r.id), [editor.id]);
   assert.equal(o.team.unit?.name, 'Writing', 'a member with reports leads a unit');
   assert.ok(o.recent.some((r) => r.kind === 'decision' && /Commented on "Draft three newsletter issues"/.test(r.title)));
+
+  // a queued background action lands in "needs you", with its event to act on
+  await s.agents.addEvent(s.writer.id, { kind: 'action_pending', title: 'Writer wants to run fs_write', body: 'drafts/issue-2.md', sessionId: 'sess-x' });
+  const o2 = await s.overview.agent(s.writer.id);
+  const act = o2.needsYou.find((n) => n.kind === 'action');
+  assert.equal(act?.title, 'Writer wants to run fs_write');
+  assert.equal(act?.sessionId, 'sess-x');
+  assert.ok(act?.eventId);
+  assert.equal(o2.needsYou.length, 2);
 
   const c = await s.overview.agent(s.chief.id);
   assert.equal(c.agent.isChief, true);
@@ -157,6 +175,9 @@ test('blocked on a teammate, erroring and idle with a live turn: one derivation,
   const c = await s.overview.agent(s.chief.id);
   assert.equal(c.status.state, 'error');
   assert.match(c.health.errors[0].message, /rejected model claude-opus-4-5/);
+  assert.equal(c.cause?.kind, 'turn');
+  assert.equal(c.cause?.sessionId, session.id, 'the cause links to the failing run');
+  assert.equal(c.cause?.fix?.tab, 'Settings:General', 'pick another model');
 
   // the writer got an "Escalation:" task: it is queued (todo), not in progress
   const w0 = await s.overview.agent(s.writer.id);
@@ -181,6 +202,24 @@ test('blocked on a teammate, erroring and idle with a live turn: one derivation,
   assert.ok(mc.units.some((u) => u.leadAgentId === s.writer.id));
   assert.equal(mc.nodes.find((n) => n.agentId === s.writer.id)!.leadsUnitId, mc.units.find((u) => u.leadAgentId === s.writer.id)!.id);
   assert.equal(mc.totals.monthCapUsd, 50);
+});
+
+test('erroring: a failed turn with no message of its own takes the loop error\'s cause, links its run and says how to fix it', async () => {
+  const s = await setup();
+  await company(s);
+  const session = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.writer.id, name: 'Loop · heartbeat' });
+  const turn = await s.repo.createTurn(session.id, { text: 'beat' });
+  await s.repo.updateTurn(turn.id, { status: 'error', error: null });
+  await s.agents.addEvent(s.writer.id, { kind: 'loop_error', title: 'Loop "heartbeat" failed', body: 'tool round limit (24) reached', sessionId: session.id });
+  await s.agents.markEventsRead(s.writer.id); // read in the inbox: it still explains the turn
+  const o = await s.overview.agent(s.writer.id);
+  assert.equal(o.status.state, 'error');
+  assert.equal(o.cause?.message, 'tool round limit (24) reached');
+  assert.equal(o.cause?.sessionId, session.id);
+  assert.match(o.cause?.fix?.text ?? '', /all 24 tool rounds/);
+  assert.equal(o.health.errors.length, 1, 'the loop error is the turn\'s reason, not a second error');
+  const home = await s.home.home(s.ws.id);
+  assert.equal(home.team.find((t) => t.id === s.writer.id)?.errors[0].message, 'tool round limit (24) reached', 'Home says the same');
 });
 
 test('a live turn makes an idle agent working, with the current tool call', async () => {
@@ -232,6 +271,19 @@ test('pure helpers: what a blocker waits on, the state precedence, the team orde
   assert.equal(dep.waitsOn.kind, 'agent'); assert.equal(dep.waitsOn.id, 'designer'); assert.equal(dep.waitsOn.taskId, 'aaaaaaaa-1111');
   assert.equal(blockerOf(t([], ['bbbbbbbb-2222']), { tasksById, names }).waitsOn.kind, 'task');
   assert.equal(blockerOf(t(['legal review']), { tasksById, names }).waitsOn.kind, 'unknown');
+  assert.equal(blockerOf(t([]), { tasksById, names }).reason, '', 'no reason recorded: empty, the page asks');
+
+  assert.match(fixHint({ kind: 'loop', message: 'Loop "x" failed: tool round limit (24) reached' })?.text ?? '', /24 tool rounds/);
+  assert.equal(fixHint({ kind: 'turn', message: 'provider rejected model claude-opus-4-5' })?.tab, 'Settings:General');
+  assert.equal(fixHint({ kind: 'loop', message: 'Budget reached (8000 tokens). Raise the loop budget or clear its conversation.' })?.tab, 'Work:Schedule');
+  assert.ok(fixHint({ kind: 'breaker', message: 'No progress after 3 runs on "x"' }));
+  assert.equal(fixHint({ kind: 'turn', message: 'something odd' }), null);
+  assert.equal(primaryError([
+    { kind: 'provider' as const, message: 'anthropic is degraded', at: '3' },
+    { kind: 'turn' as const, message: 'The last turn failed and recorded no reason', at: '2' },
+    { kind: 'loop' as const, message: 'tool round limit (24) reached', at: '1' },
+  ])?.kind, 'loop', 'the one that says what to do');
+  assert.equal(primaryError([]), null);
   assert.equal(blockerOf(t(['legal review']), { tasksById, names, escalatedToCeo: true }).waitsOn.kind, 'ceo');
 
   const err = [{ kind: 'turn' as const, message: 'x', at: '' }];

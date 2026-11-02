@@ -29,16 +29,16 @@ import { TrustService } from '../actions/trust.service';
 import { ACTION_CLASSES } from '../actions/action-classes';
 import { OrgService, type Organization } from '../org/org.service';
 import { OrgTasksService, type OrgTask } from '../org/org-tasks.service';
-import { OrgApprovalsService } from '../org/org-approvals.service';
+import { OrgApprovalsService, summarize } from '../org/org-approvals.service';
 import { OrgIntentService, type IntentNode } from '../org/org-intent.service';
 import { OrgRuntimeService } from '../org/org-runtime.service';
 import { govTunable } from '../org/governance-tunables';
-import { agentStatuses, type AgentRow, type AgentStatus } from './agent-status';
+import { agentStatuses, fixHint, primaryError, type AgentRow, type AgentStatus } from './agent-status';
 import { collapseRoutine, describeRun, loopNameOf, runTitle } from './home-activity';
 import { loopRunCalls, nextCronFire, ragOf } from './home.service';
 import type { HomeActivity } from './home.types';
 import type {
-  AgentOverview, MissionControl, MissionNode, OverviewBlocked, OverviewFollow, OverviewGoal, OverviewLive, OverviewStatus, OverviewTask, TeamTile,
+  AgentOverview, MissionControl, MissionNode, NeedsYouItem, OverviewBlocked, OverviewCause, OverviewFollow, OverviewGoal, OverviewLive, OverviewStatus, OverviewTask, TeamTile,
 } from './overview.types';
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -168,7 +168,7 @@ export class OverviewService {
       const ownDoing = own.filter((t) => t.status === 'doing').sort((x, y) => y.updatedAt.localeCompare(x.updatedAt))[0];
       const blocked: OverviewBlocked[] = [];
       for (const b of me.blocked) { const t = mine.find((x) => x.id === b.taskId); if (t) blocked.push({ ...await card(t), blocker: b.blocker }); }
-      for (const t of own.filter((x) => x.status === 'blocked')) blocked.push({ ...ownCard(t), blocker: { reason: t.note || 'Blocked', waitsOn: { kind: 'unknown', id: null, name: '', taskId: null }, since: t.updatedAt } });
+      for (const t of own.filter((x) => x.status === 'blocked')) blocked.push({ ...ownCard(t), blocker: { reason: t.note ?? '', waitsOn: { kind: 'unknown', id: null, name: '', taskId: null }, since: t.updatedAt } });
       const queued = mine.filter((t) => ['todo', 'waiting', 'claimed'].includes(t.status) && t.id !== nowTask?.id).sort(byUrgency);
       const queue = [...await Promise.all(queued.slice(0, LIST_LIMIT).map((t) => card(t, false))), ...own.filter((t) => t.status === 'todo').slice(0, LIST_LIMIT).map(ownCard)].slice(0, LIST_LIMIT);
       const reviews = await Promise.all(c.orgTasks.filter((t) => t.status === 'in_review' && t.reviewerAgentId === agentId && t.id !== nowTask?.id).slice(0, LIST_LIMIT).map((t) => card(t, false)));
@@ -195,8 +195,13 @@ export class OverviewService {
       }, [] as OverviewFollow[]),
       attempt('recent', () => this.recent(agentId, agent.name, c.org, c.orgTasks, names, now), [] as HomeActivity[]),
       attempt('goals', () => this.goalsOf(agentId, c.org, now), [] as OverviewGoal[]),
-      attempt('health', () => this.health(agentId, c.ws.id, c.org, me, now), { errors: me.errors, spend: { todayUsd: null, d30Usd: null, monthUsd: null, monthCapUsd: null }, trust: [], wip: null } as AgentOverview['health']),
+      attempt('health', () => this.health(agentId, c.ws.id, c.org, me, now), { errors: me.errors, spend: { todayUsd: null, d30Usd: null, monthUsd: null, monthCapUsd: null, series: [] }, trust: [], wip: null } as AgentOverview['health']),
     ]);
+    const needsYou = await attempt('needsYou', () => this.needsYou(agentId, c, mine), [] as NeedsYouItem[]);
+    const loudest = primaryError(me.errors);
+    const cause: OverviewCause | null = loudest
+      ? { kind: loudest.kind, message: loudest.message, at: loudest.at, sessionId: loudest.sessionId ?? null, taskId: loudest.taskId ?? null, fix: fixHint(loudest) }
+      : null;
 
     const loops = safe<Array<{ name: string; cron?: string; enabled?: boolean }>>(agent.loops, []);
     let nextLoop: AgentOverview['nextLoop'] = null;
@@ -223,10 +228,36 @@ export class OverviewService {
       agent: { id: agent.id, name: agent.name, emoji: agent.emoji, colors: agent.colors, title: me.title, role: agent.role ?? '', provider: agent.provider ?? '', model: agent.model ?? '', isChief: me.isChief, hasReports: reports.length > 0 },
       inCompany: Boolean(member),
       status: overviewStatus(me),
+      cause, needsYou,
       heartbeat, nextLoop, ...tasksSection, follows,
       files: myFiles.slice(0, 8).map((f) => ({ path: f.path, version: f.version, updatedAt: f.updatedAt })),
       recent, goals, team, health, dashboard: agent.dashboard ?? '', partial,
     };
+  }
+
+  /** What waits on the owner: actions it queued and connections it asks to
+   *  use (its inbox, as the caller may see it), and the company's pending
+   *  cards about it: an escalation of one of its tasks, an approval it asked for. */
+  private async needsYou(agentId: string, c: Awaited<ReturnType<OverviewService['context']>>, mine: OrgTask[]): Promise<NeedsYouItem[]> {
+    const out: NeedsYouItem[] = [];
+    for (const e of await this.agents.listEvents(agentId, 200)) {
+      if (e.kind !== 'action_pending' && e.kind !== 'approval_request') continue;
+      out.push({ id: `event:${e.id}`, kind: e.kind === 'action_pending' ? 'action' : 'connection', title: e.title, detail: clip(e.body, 240), at: e.createdAt, eventId: e.id, approvalId: null, taskId: null, sessionId: e.sessionId || null });
+    }
+    const myTasks = new Map(mine.map((t) => [t.id, t]));
+    for (const a of c.pending) {
+      const payload = safe<Record<string, unknown> & { taskId?: string; reason?: string }>(a.payload, {});
+      const task = typeof payload.taskId === 'string' ? myTasks.get(payload.taskId) : undefined;
+      const asked = a.requestedBy === `agent:${agentId}` || (a.requestedBy === 'chief' && c.org?.chiefOfStaffAgentId === agentId);
+      if (a.kind === 'escalation' ? !task : !asked) continue;
+      out.push({
+        id: `approval:${a.id}`, kind: a.kind === 'escalation' ? 'escalation' : 'approval',
+        title: task ? `Escalated: ${task.title}` : clip(summarize(a.kind, payload), 200),
+        detail: clip(typeof payload.reason === 'string' ? payload.reason : a.recommendation, 240),
+        at: a.createdAt, eventId: null, approvalId: a.id, taskId: task?.id ?? null, sessionId: null,
+      });
+    }
+    return out.sort((x, y) => x.at.localeCompare(y.at));
   }
 
   /** The agent's week: its loop runs (routine ones collapsed, as on Home), loud events and its task comments. */
@@ -288,10 +319,11 @@ export class OverviewService {
   }
 
   private async health(agentId: string, workspaceId: string, org: Organization | null, me: AgentStatus, now: Date): Promise<AgentOverview['health']> {
-    const spend: AgentOverview['health']['spend'] = { todayUsd: null, d30Usd: null, monthUsd: null, monthCapUsd: null };
+    const spend: AgentOverview['health']['spend'] = { todayUsd: null, d30Usd: null, monthUsd: null, monthCapUsd: null, series: [] };
     if (this.usage) {
       const u = await this.usage.agentUsage(agentId, 30, now);
       spend.d30Usd = u.totals.usd;
+      spend.series = u.series.map((d) => ({ day: d.day, usd: d.usd }));
       spend.todayUsd = u.series.find((d) => d.day === now.toISOString().slice(0, 10))?.usd ?? 0;
     }
     if (org && this.tasks && this.org) {

@@ -67,6 +67,36 @@ export interface TeamTile {
   state: HomeAgentState; doing: string; taskId: string | null; lastBeatAt: string | null; open: number; liveLabel: string;
 }
 
+/** Why the agent is erroring, in one place: the loudest error, where it
+ *  happened (the failing run's conversation, the task) and how to fix it. */
+export interface OverviewCause {
+  kind: HomeAgent['errors'][number]['kind'];
+  message: string;
+  at: string;
+  /** The conversation of the failing run (opens it). */
+  sessionId: string | null;
+  /** The task it failed on (a breaker trip). */
+  taskId: string | null;
+  /** What to do, when the message makes it obvious; `tab` is an agent-page tab ('Settings:General'). */
+  fix: { text: string; tab: string | null } | null;
+}
+
+/** Something waiting on the owner: a background action it queued, a
+ *  connection it asks to use, an escalation or an approval it asked for. */
+export interface NeedsYouItem {
+  id: string;
+  kind: 'action' | 'connection' | 'escalation' | 'approval';
+  title: string;
+  detail: string;
+  at: string;
+  /** action / connection: the agent event to act on. */
+  eventId: string | null;
+  /** escalation / approval: the org approval card. */
+  approvalId: string | null;
+  taskId: string | null;
+  sessionId: string | null;
+}
+
 export interface AgentOverview {
   agentId: string;
   workspaceId: string;
@@ -75,6 +105,10 @@ export interface AgentOverview {
   /** True when the workspace runs a company and this agent sits in it. */
   inCompany: boolean;
   status: OverviewStatus;
+  /** Set while it is erroring (or has errors): the cause, its run and a fix. */
+  cause: OverviewCause | null;
+  /** What waits on you, oldest first: the page puts it at the top. */
+  needsYou: NeedsYouItem[];
   heartbeat: {
     enabled: boolean; cron: string; nextDueAt: string | null; lastBeatAt: string | null; lastRunAt: string | null;
     lastReason: string; runsToday: number; dailyRunCap: number;
@@ -94,7 +128,8 @@ export interface AgentOverview {
   team: { manager: TeamTile | null; reports: TeamTile[]; humans: Array<{ memberAccountId: string; title: string }>; unit: { id: string; name: string; slug: string } | null };
   health: {
     errors: HomeAgent['errors'];
-    spend: { todayUsd: number | null; d30Usd: number | null; monthUsd: number | null; monthCapUsd: number | null };
+    /** `series`: the chat ledger per day over 30 days (the spend sparkline). */
+    spend: { todayUsd: number | null; d30Usd: number | null; monthUsd: number | null; monthCapUsd: number | null; series: Array<{ day: string; usd: number }> };
     trust: Array<{ actionClass: string; effective: number; ceiling: number }>;
     wip: { open: number; limit: number } | null;
   };

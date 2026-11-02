@@ -84,8 +84,18 @@ export interface HomeAgent {
   lastActiveAt: string | null;
   lastBeatAt: string | null;
   /** Loud problems: a turn the provider rejected, a loop error, a breaker trip, a degraded provider. */
-  errors: Array<{ kind: 'turn' | 'loop' | 'breaker' | 'provider' | 'budget'; message: string; at: string }>;
+  errors: HomeAgentError[];
   isChief: boolean;
+}
+
+/** A loud problem, with where it happened when the row says (the failing
+ *  run's conversation, the task a breaker tripped on). */
+export interface HomeAgentError {
+  kind: 'turn' | 'loop' | 'breaker' | 'provider' | 'budget';
+  message: string;
+  at: string;
+  sessionId?: string | null;
+  taskId?: string | null;
 }
 
 export type HomeActivityKind = 'task' | 'hire' | 'decision' | 'meeting' | 'incident' | 'file' | 'agent';
