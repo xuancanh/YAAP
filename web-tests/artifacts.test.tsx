@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // No `globals: true` in vitest.config.ts, so RTL does not auto-clean between tests.
 afterEach(cleanup);
 import { ApiError, type Agent, type FileEntry } from '../src/lib/api';
-import { buildTree, groupTree, isConflict, parseConflict, parseDelimited, viewKind, compareCells, ownerOf } from '../src/lib/artifacts';
+import { buildTree, groupTree, isConflict, parseConflict, parseDelimited, viewKind, compareCells, ownerOf, ORG_ORDER } from '../src/lib/artifacts';
+import { ORG_ORDER as SERVER_ORG_ORDER } from '../server/src/files/layout';
 import { CsvTable, FileEditor, JsonTree } from '../src/components/ArtifactViewer';
 import { ArtifactTree } from '../src/components/ArtifactTree';
 
@@ -150,6 +151,39 @@ describe('tree grouping', () => {
   it('expands the ancestors of the selected file', () => {
     render(<ArtifactTree entries={entries} agents={agents} grouped selected="org/notes/q3.md" onOpen={() => {}} />);
     expect(screen.getByText('q3.md')).toBeInTheDocument();
+  });
+});
+
+describe('the /org/ folder (docs/filesystem.md "Layout")', () => {
+  const agents = [agent('a1', 'Ada', 'agents/ada')];
+  const entries = [
+    'org/sales/cadence.md', 'org/zz-notes.md', 'org/metrics.md', 'org/playbooks/x.md', 'org/cs/README.md', 'org/goals/README.md',
+    'org/decisions.md', 'org/calendar.md', 'org/meetings/company/2026/2026-11-02-standup.md', 'org/README.md', 'org/operating-system.md',
+    'org/reports/2026-W45.md', 'org/loose/a.md', 'channels/general/x.md',
+  ].map(entry);
+
+  it('shows /org/ children in the layout order: the index, how the company runs, goals and rhythm, the ledger, functions, mirrors, then anything else', () => {
+    const org = buildTree(entries).find((n) => n.path === 'org')!;
+    expect(org.children.map((n) => n.name)).toEqual([
+      'README.md', 'operating-system.md', 'calendar.md', 'goals', 'meetings', 'reports', 'decisions.md', 'sales', 'cs', 'playbooks', 'metrics.md', 'loose', 'zz-notes.md',
+    ]);
+    // the same order when the tree is rooted at /org/; other folders keep folders-first, alphabetical
+    expect(buildTree(entries, 'org').map((n) => n.name).slice(0, 3)).toEqual(['README.md', 'operating-system.md', 'calendar.md']);
+  });
+
+  it('mirrors the server layout\'s order', () => {
+    expect([...ORG_ORDER]).toEqual([...SERVER_ORG_ORDER]);
+  });
+
+  it('pins /org/README.md at the top of Shared and opens it', () => {
+    expect(groupTree(buildTree(entries), agents).pinned.map((n) => n.path)).toEqual(['org/README.md']);
+    expect(groupTree(buildTree([entry('org/plan.md')]), agents).pinned).toEqual([]);
+    const onOpen = vi.fn();
+    render(<ArtifactTree entries={entries} agents={agents} grouped selected={null} onOpen={onOpen} />);
+    const pin = screen.getByTestId('artifact-pinned');
+    expect(pin).toHaveTextContent('org/README.md');
+    fireEvent.click(within(pin).getByText('org/README.md'));
+    expect(onOpen).toHaveBeenCalledWith('org/README.md');
   });
 });
 

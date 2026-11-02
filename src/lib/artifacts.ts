@@ -23,9 +23,28 @@ export const KEEP_FILE = '.keep';
 /** `/agents/ada/` → `agents/ada`. */
 export const normPath = (p: string | null | undefined): string => (p ?? '').replace(/^\/+/, '').replace(/\/+$/, '');
 
+/**
+ * The order /org/'s children are shown in — a mirror of ORG_ORDER in
+ * server/src/files/layout.ts (docs/filesystem.md "Layout"): the index, how
+ * the company runs, its goals and rhythm, the chief's packs, the ledger, the
+ * function folders, then the record mirrors and the archive. Anything else
+ * follows, folders first, alphabetically.
+ */
+export const ORG_ORDER: readonly string[] = [
+  'README.md', 'operating-system.md', 'calendar.md', 'goals', 'meetings', 'rituals', 'reports', 'briefs', 'planning',
+  'decisions.md', 'scorecard.md', 'issues.md', 'risks.md', 'handoffs.md', 'values.md', 'proposals',
+  'sales', 'marketing', 'cs', 'product', 'engineering', 'design', 'data', 'finance', 'people', 'legal', 'ops', 'it-security', 'revops',
+  'playbooks', 'experiments', 'evals', 'outcomes.md', 'metrics.md', 'archive',
+];
+/** The company folder's index, pinned at the top of Shared. */
+export const ORG_README = 'org/README.md';
+
+const byFolderThenName = (a: TreeNode, b: TreeNode): number => (a.isFolder === b.isFolder ? a.name.localeCompare(b.name) : a.isFolder ? -1 : 1);
+const orgRank = (n: TreeNode): number => { const i = ORG_ORDER.indexOf(n.name); return i < 0 ? ORG_ORDER.length : i; };
+
 /** A nested tree of `entries` under `root` (''/undefined = everything).
- *  Folders first, then files, each alphabetical; `.keep` markers create
- *  their folder but never show. */
+ *  Folders first, then files, each alphabetical — except /org/'s children,
+ *  which follow ORG_ORDER; `.keep` markers create their folder but never show. */
 export function buildTree(entries: FileEntry[], root = ''): TreeNode[] {
   const base = normPath(root);
   const top: TreeNode = { name: '', path: base, isFolder: true, children: [] };
@@ -50,7 +69,7 @@ export function buildTree(entries: FileEntry[], root = ''): TreeNode[] {
     parent.children.push({ name, path, isFolder: false, children: [], entry: e });
   }
   const sort = (n: TreeNode) => {
-    n.children.sort((a, b) => (a.isFolder === b.isFolder ? a.name.localeCompare(b.name) : a.isFolder ? -1 : 1));
+    n.children.sort(n.path === 'org' ? (a, b) => orgRank(a) - orgRank(b) || byFolderThenName(a, b) : byFolderThenName);
     n.children.forEach(sort);
   };
   sort(top);
@@ -58,11 +77,12 @@ export function buildTree(entries: FileEntry[], root = ''): TreeNode[] {
 }
 
 export interface AgentHome { node: TreeNode; agent: Agent | null; label: string }
-export interface GroupedTree { shared: TreeNode[]; agents: AgentHome[] }
+export interface GroupedTree { shared: TreeNode[]; agents: AgentHome[]; pinned: TreeNode[] }
 
 /** The Artifacts rail's two groups: **Shared** (every top-level folder but
  *  `agents/`, plus root files) and **Agents** (each `agents/<handle>/`,
- *  matched to its agent by `homeDir`; unmatched homes keep the folder name). */
+ *  matched to its agent by `homeDir`; unmatched homes keep the folder name).
+ *  `pinned` holds /org/README.md, the company folder's index, when it exists. */
 export function groupTree(nodes: TreeNode[], agents: Agent[]): GroupedTree {
   // /org/ — the company's shared folder, where its records are mirrored
   // (docs/filesystem.md) — leads the Shared group.
@@ -74,7 +94,8 @@ export function groupTree(nodes: TreeNode[], agents: Agent[]): GroupedTree {
     return { node, agent, label: agent?.name ?? node.name };
   });
   homes.sort((a, b) => a.label.localeCompare(b.label));
-  return { shared, agents: homes };
+  const readme = nodes.find((n) => n.isFolder && n.path === 'org')?.children.find((n) => !n.isFolder && n.path === ORG_README);
+  return { shared, agents: homes, pinned: readme ? [readme] : [] };
 }
 
 /** The agent whose home holds `path`, if any (`agents/<handle>/…`). */

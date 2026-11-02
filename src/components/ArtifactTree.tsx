@@ -85,6 +85,14 @@ export function ArtifactTree({ entries, agents, root, grouped, selected, onOpen,
       {groupHeader('group:shared', 'Shared', groups.shared.length)}
       {expanded['group:shared'] && (
         <div data-testid="artifact-shared">
+          {groups.pinned.map((n) => (
+            <div key={`pin:${n.path}`} data-testid="artifact-pinned">{row(n, 0, (
+              <>
+                <span style={{ flex: 'none', fontSize: 11.5 }}>📌</span>
+                <span style={{ flex: 1, fontSize: 12, fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: n.path === selected ? 'var(--accent-hi)' : 'var(--text-dim)' }}>{n.path}</span>
+              </>
+            ))}</div>
+          ))}
           {groups.shared.map((n) => row(n, 0))}
           {groups.shared.length === 0 && <div style={{ padding: '3px 8px', paddingLeft: indent + 17, fontSize: 11.5, color: 'var(--text-faint)' }}>No shared folders yet.</div>}
         </div>
