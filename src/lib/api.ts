@@ -784,7 +784,7 @@ export interface BootstrapBody {
   vision?: { title: string; description?: string; horizonDays?: number; dueAt?: string | null; rules?: string };
   profile?: { values?: string; culture?: string };
   tunables?: Record<string, number>;
-  cadences?: 'default' | 'light' | 'none';
+  cadences?: 'profile' | 'default' | 'light' | 'none';
   roles?: string[];
   planNow?: boolean;
 }
