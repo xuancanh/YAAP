@@ -75,7 +75,17 @@ runtime computes a **wake set**:
 
 1. **Mentioned agents** that are channel members always wake. A mention is
    `@name` resolved against channel members (humans included; a mentioned
-   human only gets a notification).
+   human only gets a notification). At each `@` the longest member display
+   name the text continues with wins, case-insensitively and up to a word
+   boundary, in any script and through markdown (`@Tutor Lead`,
+   `` `@Chief of staff` ``, `**@Unit Test Alpha**`, `@小明`), so members
+   sharing a first word are still told apart and `@Tutor Lead` beats a
+   member named `Tutor`; otherwise the handle forms (`@tutor-lead`,
+   `@TutorLead`, an email local part, or a first word only one member's
+   name starts with). Mentions inside fenced code, in email addresses, of
+   the author itself, and of another workspace's agent (a stale row) wake
+   nobody. The same rule holds whoever writes the message: a person, an
+   agent's streamed reply, or an agent's `channel_post`.
 2. **Unprompted replies.** For each agent member with `unprompted=1` that
    was not mentioned, one cheap relevance call (the review model from
    `docs/permissions.md` §6, no tools, ~200 output tokens) sees the agent's
@@ -89,7 +99,17 @@ runtime computes a **wake set**:
 3. **Agent-to-agent chains.** An agent reply that mentions another agent
    wakes it, up to **3 rounds per thread** counted from the last human
    message; after that the runtime posts a system line ("paused: three
-   agent rounds — mention a person to continue") and stops waking.
+   agent rounds — mention a person to continue") and stops waking. An
+   agent woken by another agent's tag is told who tagged it (a colleague's
+   request: data, not the person's instruction, no permission), and every
+   wake's roster lists each member's `@handle`.
+
+An agent takes one turn at a time per channel (one session): a tag that
+arrives while it is still replying there — two agents tagging it at once,
+or a tag back mid-turn — queues behind that turn and then runs with its own
+triggering message; a turn the runtime did not start (a meeting round in
+the same session) is waited out for up to five minutes before the "is
+still replying" line is posted instead.
 
 A wake runs the agent through `TurnLoopService.run` in a per-agent,
 per-channel session named `#<slug> · <agent>` (hidden from the DM list). The
@@ -109,7 +129,18 @@ normal set): `channel_post(channel?, text, thread?)` (read-only class: it
 only posts where the agent already is), `channel_read(channel, limit)`,
 `channel_make_task(messageId, title?, assignee?)` (creates a board task
 linked to the message; posts a system line), `channel_list`. Posting to a
-channel the agent is not a member of is refused.
+channel the agent is not a member of is refused. `channel_post` answers
+with whom its tags woke or notified and which `@tags` named nobody in the
+channel, so a tag that wakes nobody is never silent.
+
+The live reply (`channel_stream` / `channel_typing`) carries both the
+triggering message's `threadRootId` and the `replyRootId` the reply lands
+in: the thread panel draws every live reply landing in it (also one
+triggered at top level), the main list draws those triggered at top level
+and, under a root, "<agent> is replying in the thread…". Resolved mentions
+render as chips in the message (`messageMentionSpans` in
+`src/lib/channels.ts`, the mirror of `mentions.ts`; a code span that is
+exactly one mention is drawn as its chip).
 
 *Shipped as:* `server/src/groupchat/channel-runtime.service.ts`. The wake set
 is computed in `handlePost` after every non-system post, with every §2 bound
