@@ -30,6 +30,7 @@ import {
   type ActivityFilter, type Signal, type SignalLevel, type WorkTab,
 } from '../lib/overview';
 import { Markdown } from '../lib/md';
+import { keyStyle } from '../lib/task-keys';
 
 // ---- the idiom of the app: inline styles over the CSS variables ----
 
@@ -388,7 +389,7 @@ function WorkRow({ t, tab, index, now, act, open, onToggle, teammates, compact }
       <div style={{ display: 'flex', gap: 9, alignItems: 'center', padding: '8px 0', minWidth: 0 }}>
         {tab === 'next' && <span style={{ ...faint, width: 14, flex: 'none', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{index + 1}</span>}
         <button style={{ ...linkish, flex: 1, display: 'flex', flexDirection: 'column', gap: 1 }} onClick={toggle} aria-expanded={compact ? undefined : open}>
-          <span style={{ fontSize: 13, fontWeight: 600, display: 'block', ...oneLine }}>{t.title}</span>
+          <span style={{ fontSize: 13, fontWeight: 600, display: 'block', ...oneLine }}>{t.key && <span style={{ ...keyStyle, marginRight: 5 }}>{t.key}</span>}{t.title}</span>
           <span style={{ ...faint, display: 'block', ...oneLine }}>
             {b
               ? <>{reason ? <span style={{ color: 'var(--text-dim)' }}>{reason}</span> : <span style={{ color: 'var(--amber)' }}>no reason recorded</span>}{`, since ${when(b.blocker.since, now)}`}</>

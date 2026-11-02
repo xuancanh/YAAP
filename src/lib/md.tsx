@@ -22,14 +22,17 @@
  *
  * Inline: `code`, **bold**, *italic*, ~~strike~~, [text](url), autolinked
  * URLs, ![alt](src), and `#goal:`/`#decision:`/`#task:`/`#meeting:`/`#audit:`
- * reference chips when a `refs` resolver is given; resolved `@mentions` as
+ * reference chips when a `refs` resolver is given (and bare task keys like
+ * `ENG-12`, docs/tasks-keys.md, when it knows the key); resolved `@mentions` as
  * chips when a `mentions` finder is given (a code span that is exactly one
  * mention included — agents often write `` `@Name` ``).
  */
 import { memo, useState, type CSSProperties, type ReactNode } from 'react';
 
 export type RefKind = 'goal' | 'decision' | 'task' | 'meeting' | 'audit';
-export type RefResolver = (kind: RefKind, id: string) => { label: string; onClick?: () => void } | null;
+/** `bare` is set for a task key written without `#task:` (ENG-12): the
+ *  resolver answers only for keys it knows, so GPT-4 or UTF-8 stay text. */
+export type RefResolver = (kind: RefKind, id: string, bare?: boolean) => { label: string; onClick?: () => void } | null;
 
 /** Finds the resolved `@mentions` in a run of plain text (group chat): each
  *  span is drawn as a chip. */
@@ -69,6 +72,7 @@ const INLINE_RE = new RegExp([
   '(\\[[^\\]\\n]+\\]\\([^)\\s]+\\))',                 // 6 link
   '(https?:\\/\\/[^\\s<>()\\[\\]"\']+[^\\s<>()\\[\\]"\'.,;:!?])', // 7 bare url
   '(#(?:goal|decision|task|meeting|audit):[A-Za-z0-9_-]+)', // 8 ref chip
+  '((?<![\\w-])[A-Z][A-Z0-9]{1,5}-\\d{1,7}(?![\\w-]))', // 9 bare task key (ENG-12)
 ].join('|'), 'g');
 
 /** The glyph before a reference chip (goal, decision, task; a meeting or an audit row cited by ask-the-company). */
@@ -105,11 +109,11 @@ export function inline(text: string, keyBase: string, ctx: Ctx = {}): ReactNode[
       if (SAFE_LINK.test(link[2])) out.push(<a key={key} href={link[2]} target="_blank" rel="noreferrer noopener" style={{ color: 'var(--accent-hi)' }}>{inline(link[1], key, ctx)}</a>);
       else out.push(tok);
     } else if (m[7]) out.push(<a key={key} href={tok} target="_blank" rel="noreferrer noopener" style={{ color: 'var(--accent-hi)', wordBreak: 'break-all' }}>{tok}</a>);
-    else if (m[8]) {
-      const [, kind, id] = /^#(goal|decision|task|meeting|audit):(.+)$/.exec(tok)!;
-      const r = ctx.refs?.(kind as RefKind, id);
-      if (r) out.push(<button key={key} type="button" onClick={r.onClick} title={`${kind} ${id}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--accent-dim)', color: 'var(--accent-hi)', border: 'none', borderRadius: 999, padding: '0 8px', fontSize: '.85em', fontWeight: 600, cursor: r.onClick ? 'pointer' : 'default', verticalAlign: 'baseline' }}>{REF_GLYPH[kind as RefKind]} {r.label}</button>);
-      else out.push(tok);
+    else if (m[8] || m[9]) {
+      const [, kind, id] = m[9] ? [tok, 'task', tok] : /^#(goal|decision|task|meeting|audit):(.+)$/.exec(tok)!;
+      const r = ctx.refs?.(kind as RefKind, id, !!m[9]);
+      if (r) out.push(<button key={key} type="button" data-ref={kind} onClick={r.onClick} title={`${kind} ${id}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--accent-dim)', color: 'var(--accent-hi)', border: 'none', borderRadius: 999, padding: '0 8px', fontSize: '.85em', fontWeight: 600, cursor: r.onClick ? 'pointer' : 'default', verticalAlign: 'baseline' }}>{REF_GLYPH[kind as RefKind]} {r.label}</button>);
+      else out.push(...withMentions(tok, `${key}-t`, ctx));
     }
     last = m.index + tok.length;
   }

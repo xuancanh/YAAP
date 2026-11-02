@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } fro
 import { useApp, type OrgPane } from '../store';
 import { tabsOf } from '../lib/inbox';
 import { orgTaskHash, taskOfHash } from '../lib/links';
+import { isTaskKey, keyStyle, matchesTaskRef } from '../lib/task-keys';
 import {
   api, ORG_TASK_STATUSES, type Agent, type ChannelMessage, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgGoalNode, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
   type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type OrgUnitNode, type WorkspaceMember, type TaskCheck, type OrgDelegation, type CardEval,
@@ -375,22 +376,27 @@ function Board({ org }: { org: OrgDetail }) {
   const focusId = app.orgFocus?.kind === 'task' ? app.orgFocus.id : null;
   useEffect(() => {
     if (!focusId || !loaded) return;
-    const t = tasks.find((x) => x.id === focusId || x.id.startsWith(focusId));
+    const t = tasks.find((x) => matchesTaskRef(x, focusId));
     app.setOrgFocus(null);
     // Opened from inside the app (a signal row, a minutes card): put it in the address too.
     if (taskOfHash(window.location.hash) !== focusId) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${orgTaskHash(org.workspaceId, focusId)}`);
-    if (t) { setOpen(t); if (t.status === 'done' || t.status === 'cancelled') setShowCold(true); return; }
+    if (t) {
+      setOpen(t); if (t.status === 'done' || t.status === 'cancelled') setShowCold(true);
+      // A key or prefix in the address becomes the task's key (or id) once found.
+      if (t.key && focusId !== t.key && focusId !== t.id) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${orgTaskHash(org.workspaceId, t.key)}`);
+      return;
+    }
     let live = true;
     api.orgTask(org.workspaceId, focusId)
       .then((found) => { if (live) setOpen(found); })
-      .catch(() => { if (live) app.showToast(`Task ${focusId.slice(0, 8)} was not found`); });
+      .catch(() => { if (live) app.showToast(`Task ${isTaskKey(focusId) ? focusId.toUpperCase() : focusId.slice(0, 8)} was not found`); });
     return () => { live = false; };
   }, [focusId, loaded, tasks, app, org.workspaceId]);
   // The open drawer is in the address bar (back, forward and reload work);
   // the address moving off it (back) closes the drawer.
   const openTask = (t: OrgTask) => {
     setOpen(t);
-    const hash = orgTaskHash(org.workspaceId, t.id);
+    const hash = orgTaskHash(org.workspaceId, t.key || t.id);
     if (window.location.hash !== hash) window.history.pushState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
   };
   const closeTask = () => {
@@ -423,6 +429,7 @@ function Board({ org }: { org: OrgDetail }) {
           <div style={faint}>
             {isCompany ? 'One owner per task. Assigning wakes the owner; a comment wakes the owner; mentions wake nobody.' : <>Led by {lead?.name ?? '—'} · tasks of its reports, and what the lead hands them.</>}
             {current && <> · <span style={{ color: 'var(--accent-hi)', cursor: 'pointer' }} onClick={() => app.openChannel(current.slug)}>#{current.slug}</span></>}
+            {current && <> · <TaskKeyPrefix wsId={org.workspaceId} unitId={current.id} prefix={current.taskKey ?? null} /></>}
           </div>
         </div>
         <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }} title={isCompany ? 'Every unit\'s tasks, or only the company\'s own' : 'Include the units below this one'}><input type="checkbox" checked={rolled} onChange={(e) => setRollUp({ ...rollUp, [unitKey]: e.target.checked })} />roll up</label>
@@ -455,7 +462,7 @@ function Board({ org }: { org: OrgDetail }) {
               const foreign = unit && unit.id !== current?.id;
               return (
                 <div key={t.id} onClick={() => openTask(t)} style={{ ...card, padding: '8px 10px', marginBottom: 6, cursor: 'pointer' }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>{t.title}</div>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>{t.key && <span style={{ ...keyStyle, marginRight: 5 }}>{t.key}</span>}{t.title}</div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                     {a ? <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }}><Avatar a={a} size={14} />{a.name}</span> : t.assigneeHumanId ? <span style={pill('var(--blue)', '#fff')} title="A human employee owns this task">🧑 {app.nameOf(t.assigneeHumanId)}</span> : <span style={pill()}>unassigned</span>}
                     {t.class && t.class !== 'general' && <span style={pill()} title="Task class (routing, cost by class)">{t.class}</span>}
@@ -467,7 +474,7 @@ function Board({ org }: { org: OrgDetail }) {
                     {(() => { const v = verificationBadge(t.verification); return v ? <span style={pill(v.color, '#fff')} title={v.title}>{v.label}</span> : null; })()}
                     {t.status !== 'done' && t.checks && t.checks !== '[]' && <span style={pill()} title="Executable checks run before review">checks</span>}
                     {(() => { const d = dueBadge(t.dueAt, t.status); return d ? <span style={pill(d.color, d.color === 'var(--panel-2)' ? 'var(--text-dim)' : '#fff')} title={d.title}>{d.label}</span> : null; })()}
-                    {(t.waitingOn ?? []).map((id) => { const dep = tasks.find((x) => x.id === id); return <span key={id} style={pill()} title={`Waits on: ${dep?.title ?? id} (${dep?.status ?? 'unknown'})`}>⧗ {dep ? dep.title.slice(0, 18) : id.slice(0, 8)}</span>; })}
+                    {(t.waitingOn ?? []).map((id) => { const dep = tasks.find((x) => x.id === id); return <span key={id} style={pill()} title={`Waits on: ${dep?.title ?? id} (${dep?.status ?? 'unknown'})`}>⧗ {dep ? `${dep.key ? `${dep.key} ` : ''}${dep.title.slice(0, 18)}` : id.slice(0, 8)}</span>; })}
                     {t.status !== 'done' && t.status !== 'cancelled' && expectedLabel(t.expected) && <span style={{ ...pill(), opacity: .8 }} title={`Expected from ${t.expected?.samples} finished task(s) (${t.expected?.basis})`}>{expectedLabel(t.expected)}</span>}
                   </div>
                 </div>
@@ -476,7 +483,7 @@ function Board({ org }: { org: OrgDetail }) {
           </div>
         ))}
       </div>
-      {open && <TaskDrawer org={org} task={tasks.find((t) => t.id === open.id) ?? open} members={members} onClose={closeTask} reload={reload} />}
+      {open && <TaskDrawer org={org} task={tasks.find((t) => t.id === open.id) ?? open} members={members} onClose={closeTask} reload={reload} board={tasks} />}
     </div>
   );
 }
@@ -523,7 +530,28 @@ function NewTask({ org, members, units, tasks, defaultUnitId, onDone }: { org: O
   );
 }
 
-function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; task: OrgTask; members: OrgMember[]; onClose: () => void; reload: () => Promise<void> }) {
+/** The board's task key prefix (docs/tasks-keys.md), editable by the owner:
+ *  new tasks take the new prefix; existing keys stay. */
+function TaskKeyPrefix({ wsId, unitId, prefix }: { wsId: string; unitId: string; prefix: string | null }) {
+  const app = useApp();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(prefix ?? '');
+  const save = async () => {
+    try { await api.setOrgUnitTaskKey(wsId, unitId, value.trim()); setEditing(false); await app.refreshWsOrg(); app.showToast(`New tasks on this board are ${value.trim().toUpperCase()}-n`); }
+    catch (err) { app.showToast(err instanceof Error ? err.message : String(err)); }
+  };
+  if (!editing) return <span title="Task keys on this board (new tasks take the next number)">keys <span style={keyStyle}>{prefix ? `${prefix}-n` : '—'}</span> <button type="button" aria-label="Change the task key prefix" onClick={() => { setValue(prefix ?? ''); setEditing(true); }} style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', cursor: 'pointer', padding: 0, fontSize: 'inherit' }}>edit</button></span>;
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+      <input aria-label="Task key prefix" value={value} maxLength={6} onChange={(e) => setValue(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} onKeyDown={(e) => { if (e.key === 'Enter') void save(); if (e.key === 'Escape') setEditing(false); }} style={{ ...input, width: 80, padding: '1px 6px', fontFamily: 'var(--mono)' }} />
+      <button type="button" style={btn(true)} onClick={() => void save()} disabled={!/^[A-Z][A-Z0-9]{1,5}$/.test(value)}>Save</button>
+      <button type="button" style={btn()} onClick={() => setEditing(false)}>Cancel</button>
+    </span>
+  );
+}
+
+function TaskDrawer({ org, task, members, onClose, reload, board }: { org: OrgDetail; task: OrgTask; members: OrgMember[]; onClose: () => void; reload: () => Promise<void>; board?: OrgTask[] }) {
+  const tasksKeyOf = (id: string) => board?.find((x) => x.id === id)?.key ?? `[${id.slice(0, 8)}]`;
   const app = useApp();
   const names = useAgentNames();
   const [comments, setComments] = useState<OrgMessage[]>([]);
@@ -557,11 +585,11 @@ function TaskDrawer({ org, task, members, onClose, reload }: { org: OrgDetail; t
         </div>
         {why && <Suspense fallback={null}><WhyDrawer wsId={org.workspaceId} taskId={task.id} title={task.title} onClose={() => setWhy(false)} /></Suspense>}
         {related && <Suspense fallback={null}><RelatedDrawer wsId={org.workspaceId} ref={`task:${task.id}`} title={task.title} onClose={() => setRelated(false)} /></Suspense>}
-        <div style={faint}>[{task.id.slice(0, 8)}] created by {task.createdBy} · {ago(task.createdAt)} · owner {task.assigneeAgentId ? names.get(task.assigneeAgentId)?.name : task.assigneeHumanId ? `🧑 ${app.nameOf(task.assigneeHumanId)}` : 'nobody'}{task.reviewerAgentId ? ` · reviewer ${names.get(task.reviewerAgentId)?.name}` : task.reviewerHumanId ? ` · reviewer 🧑 ${app.nameOf(task.reviewerHumanId)}` : ''}{task.claimedBy ? ' · claimed' : ''}{task.class ? ` · class ${task.class}` : ''}</div>
+        <div style={faint}>{task.key ? <button type="button" onClick={() => { void navigator.clipboard?.writeText(task.key!).then(() => app.showToast(`${task.key} copied`), () => app.showToast('Copy failed')); }} title="Copy the task key" aria-label={`Copy task key ${task.key}`} style={{ ...keyStyle, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 4, padding: '0 5px', cursor: 'pointer', marginRight: 4 }}>{task.key} ⧉</button> : `[${task.id.slice(0, 8)}] `}created by {task.createdBy} · {ago(task.createdAt)} · owner {task.assigneeAgentId ? names.get(task.assigneeAgentId)?.name : task.assigneeHumanId ? `🧑 ${app.nameOf(task.assigneeHumanId)}` : 'nobody'}{task.reviewerAgentId ? ` · reviewer ${names.get(task.reviewerAgentId)?.name}` : task.reviewerHumanId ? ` · reviewer 🧑 ${app.nameOf(task.reviewerHumanId)}` : ''}{task.claimedBy ? ' · claimed' : ''}{task.class ? ` · class ${task.class}` : ''}</div>
         {(task.dueAt || (task.waitingOn ?? []).length > 0 || task.expected) && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             {(() => { const d = dueBadge(task.dueAt, task.status); return d ? <span style={pill(d.color, d.color === 'var(--panel-2)' ? 'var(--text-dim)' : '#fff')} title={d.title}>{d.label}</span> : task.dueAt ? <span style={pill()}>due {task.dueAt.slice(0, 16).replace('T', ' ')}</span> : null; })()}
-            {(task.waitingOn ?? []).length > 0 && <span style={faint}>waiting on {(task.waitingOn ?? []).map((id) => <RefButton key={id} kind="task" id={id} label={`[${id.slice(0, 8)}]`} />)}</span>}
+            {(task.waitingOn ?? []).length > 0 && <span style={faint}>waiting on {(task.waitingOn ?? []).map((id) => <RefButton key={id} kind="task" id={id} label={tasksKeyOf(id)} />)}</span>}
             {expectedLabel(task.expected) && <span style={faint}>expected {expectedLabel(task.expected)} from history</span>}
           </div>
         )}

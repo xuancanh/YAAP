@@ -10,6 +10,7 @@ import { useApp, grad } from '../store';
 import { api, type Agent, type ChannelDetail, type ChannelFile, type ChannelMember, type ChannelMessage, type OrgDecision, type OrgMeeting, type WorkspaceEvent } from '../lib/api';
 import { applyMention, decisionRefs, groupThreads, initials, liveInThread, meetingCommandHint, mentionQuery, mentionSuggestions, messageMentionSpans, type MentionCandidate } from '../lib/channels';
 import { Markdown, type RefResolver } from '../lib/md';
+import { keyPrefix, normalizeTaskKey, unitKeyPrefixes } from '../lib/task-keys';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
 import { MEETING_KIND_TITLES, minutesMeetingId, parseMinutes } from '../lib/org';
@@ -158,16 +159,30 @@ export function ChannelView() {
     }
     return () => { on = false; };
   }, [wsId, page.messages, threadMsgs, decisionNames]);
-  const refs = useCallback<RefResolver>((kind, id) => {
+  const orgPrefixes = useMemo(() => unitKeyPrefixes(app.wsOrg?.units ?? []), [app.wsOrg]);
+  const refs = useCallback<RefResolver>((kind, id, bare) => {
     if (kind === 'goal') {
       const g = goals.get(id) ?? [...goals.values()].find((x) => x.id.startsWith(id));
       return { label: g?.title ?? `goal ${id.slice(0, 8)}`, onClick: () => openGoal(g?.id ?? id) };
     }
     if (kind === 'decision') return { label: decisionNames[id] ?? `decision ${id.slice(0, 8)}`, onClick: () => openDecision(id) };
-    if (kind === 'task' && orgChannel) return { label: `task ${id.slice(0, 8)}`, onClick: () => app.openOrgTask(id) };
+    if (kind === 'task') {
+      // Task keys (docs/tasks-keys.md): a known org board prefix opens the
+      // board drawer, an agent's prefix its Tasks tab; anything else stays text.
+      const key = normalizeTaskKey(id);
+      if (key) {
+        const p = keyPrefix(key);
+        if (orgPrefixes.has(p) && app.companiesEnabled) return { label: key, onClick: () => app.openOrgTask(key) };
+        const owner = app.agents.find((a) => (a.taskKey ?? '').toUpperCase() === p);
+        if (owner) return { label: key, onClick: () => app.openAgent(owner.id, 'Tasks') };
+        if (bare) return null;
+      }
+      if (bare) return null;
+      if (orgChannel) return { label: key ?? `task ${id.slice(0, 8)}`, onClick: () => app.openOrgTask(id) };
+    }
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [goals, decisionNames, orgChannel, openDecision, rootUnitId, app]);
+  }, [goals, decisionNames, orgChannel, openDecision, rootUnitId, app, orgPrefixes]);
 
   // live events for this channel
   useEffect(() => {
@@ -301,7 +316,7 @@ export function ChannelView() {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 5 }}>
             {m.taskId && (
               <button onClick={() => openTask(m)} title="Open on the board" style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--accent-dim)', border: 'none', color: 'var(--text)', borderRadius: 7, padding: '2px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
-                <I d={P.board} size={12} />task {m.taskId.slice(0, 8)}
+                <I d={P.board} size={12} />task {m.taskKey ?? m.taskId.slice(0, 8)}
               </button>
             )}
             {!opts.inThread && (opts.replies ?? 0) > 0 && (
@@ -653,7 +668,7 @@ function MinutesCard({ wsId, meetingId, fallback, refs, onDecision, onTask }: { 
       {minutes.actions.map((a, i) => (
         <div key={i} style={{ ...row, display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 180 }}><b>{a.title}</b> — {a.owner || 'unowned'}{a.done_when ? <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>done when: {a.done_when}</div> : null}</div>
-          {a.taskId ? <button onClick={() => onTask(a.taskId!)} title="Open on the board" style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--accent-dim)', border: 'none', color: 'var(--text)', borderRadius: 7, padding: '2px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}><I d={P.board} size={12} />task {a.taskId.slice(0, 8)}</button> : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>no task</span>}
+          {a.taskId ? <button onClick={() => onTask(a.taskId!)} title="Open on the board" style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'var(--accent-dim)', border: 'none', color: 'var(--text)', borderRadius: 7, padding: '2px 8px', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}><I d={P.board} size={12} />task {a.taskKey ?? a.taskId.slice(0, 8)}</button> : <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>no task</span>}
         </div>
       ))}
       {section('Risks', minutes.risks.length)}

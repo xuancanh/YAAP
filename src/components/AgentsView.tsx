@@ -19,6 +19,7 @@ import { AgentHeader, AgentOverviewBody, useAgentPage } from './AgentDashboard';
 import { AGENT_TABS, SETTINGS_SECTIONS, WORK_SECTIONS, resolveAgentTab, type AgentTab, type SettingsSection, type WorkSection } from '../lib/agent-tabs';
 import { nextFire, untilLabel } from '../lib/cron';
 import { RUNS_WHEN, lastFiredLabel, runsWhenOf, triggerGlyph, triggerLabel, type Loop, type LoopTrigger, type RunsWhen } from '../lib/triggers';
+import { keyStyle } from '../lib/task-keys';
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 14, background: 'var(--panel)' };
 const label: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.6px', textTransform: 'uppercase', color: 'var(--text-faint)' };
@@ -424,7 +425,7 @@ function TasksBoard({ a, tasks, reload }: { a: Agent; tasks: AgentTask[]; reload
                 {items.map((t) => (
                   <div key={t.id} draggable onDragStart={() => { dragId.current = t.id; }}
                     style={{ ...card, padding: '10px 12px', cursor: 'grab' }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.45, textDecoration: t.status === 'done' || t.status === 'abandoned' ? 'line-through' : 'none', color: t.status === 'done' || t.status === 'abandoned' ? 'var(--text-dim)' : 'var(--text)' }}>{t.title}</div>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.45, textDecoration: t.status === 'done' || t.status === 'abandoned' ? 'line-through' : 'none', color: t.status === 'done' || t.status === 'abandoned' ? 'var(--text-dim)' : 'var(--text)' }}>{t.key && <span style={{ ...keyStyle, marginRight: 5, textDecoration: 'none', display: 'inline-block' }}>{t.key}</span>}{t.title}</div>
                     {t.note && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 3, lineHeight: 1.45, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{t.note}</div>}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
                       <span style={{ fontSize: 9.5, fontFamily: 'var(--mono)', color: 'var(--text-faint)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '1px 6px' }}>{ORIGIN_BADGE[t.origin] ?? t.origin}</span>

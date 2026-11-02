@@ -10,7 +10,8 @@ import { fmtUsd, usdFor } from '../lib/pricing';
 import { MAX_AUDIO_BYTES, fmtDuration, isAudioFile, recorderAvailable, useVoiceRecorder, AUDIO_EXT_RE } from '../lib/voice';
 import { VoiceChip } from './VoiceChip';
 import { AutoArchiveMenu } from './ChatAutoArchive';
-import { Markdown, plainText } from '../lib/md';
+import { Markdown, plainText, type RefResolver } from '../lib/md';
+import { useTaskRefs } from '../lib/useTaskRefs';
 import { CLASS_COLOR, CLASS_LABEL, CLASS_SHORT, degradedChatNote } from '../lib/org3';
 
 /** The owner's key inline on a held tool card (item 28, SPA item 32). */
@@ -334,12 +335,14 @@ function SpeakButton({ text, voice }: { text: string; voice?: string }) {
   );
 }
 
-const AssistantRow = memo(function AssistantRow({ m, turn, agent, isNewest, isLast, streaming, tts, ttsVoice, onOpenArtifact, onQuickReply }: {
+const AssistantRow = memo(function AssistantRow({ m, turn, agent, isNewest, isLast, streaming, tts, ttsVoice, onOpenArtifact, onQuickReply, refs }: {
   m: ChatMessage; turn?: ChatTurn; agent?: Agent;
   isNewest: boolean; isLast: boolean; streaming: boolean;
   /** Settings → ttsEnabled: show the speaker button (docs/voice.md). */
   tts: boolean; ttsVoice?: string;
   onOpenArtifact: (title: string, src: string) => void; onQuickReply: (text: string) => void;
+  /** Task key chips (docs/tasks-keys.md). */
+  refs?: RefResolver;
 }) {
   const { text: bodyText, replies } = parseQuickReplies(m.content);
   const art = detectArtifact(bodyText);
@@ -348,7 +351,7 @@ const AssistantRow = memo(function AssistantRow({ m, turn, agent, isNewest, isLa
       <div style={{ width: 28, height: 28, borderRadius: 8, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2, fontSize: 14 }}>{agent?.emoji ?? '💬'}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.65 }}><Markdown text={bodyText} /></div>
+          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.65 }}><Markdown text={bodyText} refs={refs} /></div>
           {tts && bodyText.trim() && !(streaming && isNewest) && <SpeakButton text={plainText(bodyText)} voice={ttsVoice} />}
         </div>
         {art && (
@@ -378,6 +381,7 @@ const AssistantRow = memo(function AssistantRow({ m, turn, agent, isNewest, isLa
 
 export function ChatView() {
   const app = useApp();
+  const taskRefs = useTaskRefs();
   const [modelPop, setModelPop] = useState(false);
   const [menu, setMenu] = useState<null | { kind: 'slash' | 'mention'; filter: string }>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -547,7 +551,7 @@ export function ChatView() {
       rows.push(<ToolCard key={m.id} t={{ kind: 'tool', id: m.id, name: m.toolName ?? 'tool', input: {}, status: m.content.startsWith('Denied') ? 'denied' : 'done', result: m.content, review: record?.review, actionClass: record?.actionClass, actionId: record?.actionId, held: record?.held }} />);
     } else {
       rows.push(
-        <AssistantRow key={m.id} m={m} turn={turnById.get(m.turnId)} agent={agent}
+        <AssistantRow key={m.id} m={m} turn={turnById.get(m.turnId)} agent={agent} refs={taskRefs}
           isNewest={m.id === newestAssistantId} isLast={lastMsgOfTurn.get(m.turnId) === m.id}
           streaming={app.streaming} tts={app.settings.ttsEnabled === 'on'} ttsVoice={app.settings.ttsVoice || undefined}
           onOpenArtifact={app.openArtifact} onQuickReply={app.send} />,
@@ -573,7 +577,7 @@ export function ChatView() {
         <div key={`la${i}`} style={{ display: 'flex', gap: 12, margin: '16px 0' }}>
           <div style={{ width: 28, height: 28, borderRadius: 8, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2, fontSize: 14 }}>{agent?.emoji ?? '💬'}</div>
           <div style={{ flex: 1, minWidth: 0, lineHeight: 1.65 }}>
-            <Markdown text={item.text} streaming={item.streaming} />
+            <Markdown text={item.text} streaming={item.streaming} refs={taskRefs} />
           </div>
         </div>
       );

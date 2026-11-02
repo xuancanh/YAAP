@@ -51,13 +51,13 @@ export function buildInbox(src: InboxSource): InboxItem[] {
     if (a.status !== 'pending' || a.kind === 'two_key') continue;
     const p = payloadOf(a);
     const name = str(p.title) || str(p.name) || str(p.summary) || a.recommendation;
-    if (a.kind === 'escalation') out.push({ key: `a:${a.id}`, kind: 'escalations', title: `Escalation: ${str(p.title) || 'a task'}`, detail: str(p.reason), at: a.createdAt, refId: a.id });
+    if (a.kind === 'escalation') out.push({ key: `a:${a.id}`, kind: 'escalations', title: `Escalation: ${str(p.taskKey) ? `${str(p.taskKey)} ` : ''}${str(p.title) || 'a task'}`, detail: str(p.reason), at: a.createdAt, refId: a.id });
     else out.push({ key: `a:${a.id}`, kind: 'approvals', title: `${a.kind.replace(/_/g, ' ')}${name ? `: ${name}` : ''}`, detail: a.recommendation && a.recommendation !== name ? a.recommendation : '', at: a.createdAt, refId: a.id });
   }
   if (src.heldActions > 0) out.push({ key: 'keys', kind: 'keys', title: `${src.heldActions} action${src.heldActions === 1 ? '' : 's'} waiting for your key`, detail: 'Held or staged outward actions — the exact call runs only with your key.', at: '', refId: '' });
   for (const p of src.plans) if (p.status === 'pending') out.push({ key: `p:${p.id}`, kind: 'plans', title: `Plan: ${p.summary || p.trigger}`, detail: p.applyAt ? `applies at ${p.applyAt.slice(0, 16).replace('T', ' ')} unless vetoed` : '', at: p.createdAt, refId: p.id });
-  for (const t of src.tasks?.assigned ?? []) if (OPEN_TASK.has(t.status)) out.push({ key: `t:${t.id}`, kind: 'mytasks', title: t.title, detail: `assigned to you · ${t.status.replace('_', ' ')}`, at: t.updatedAt ?? t.createdAt, refId: t.id });
-  for (const t of src.tasks?.reviewing ?? []) if (OPEN_TASK.has(t.status)) out.push({ key: `r:${t.id}`, kind: 'mytasks', title: `Review: ${t.title}`, detail: 'waiting for your review', at: t.updatedAt ?? t.createdAt, refId: t.id });
+  for (const t of src.tasks?.assigned ?? []) if (OPEN_TASK.has(t.status)) out.push({ key: `t:${t.id}`, kind: 'mytasks', title: `${t.key ? `${t.key} ` : ''}${t.title}`, detail: `assigned to you · ${t.status.replace('_', ' ')}`, at: t.updatedAt ?? t.createdAt, refId: t.id });
+  for (const t of src.tasks?.reviewing ?? []) if (OPEN_TASK.has(t.status)) out.push({ key: `r:${t.id}`, kind: 'mytasks', title: `Review: ${t.key ? `${t.key} ` : ''}${t.title}`, detail: 'waiting for your review', at: t.updatedAt ?? t.createdAt, refId: t.id });
   for (const i of src.incidents) if (i.status === 'open') out.push({ key: `i:${i.id}`, kind: 'incidents', title: i.title, detail: `${i.severity} · ${i.kind.replace(/_/g, ' ')}`, at: i.openedAt, refId: i.id });
   for (const f of src.follows ?? []) {
     if (f.mutedAt || (f.unseenCount <= 0 && !f.attentionAt)) continue;

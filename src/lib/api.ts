@@ -103,6 +103,8 @@ export interface EmailStatus {
 
 export interface Agent {
   id: string;
+  /** Task key prefix of the agent's own board (docs/tasks-keys.md), e.g. EVL. */
+  taskKey?: string | null;
   /** The owning workspace (docs/shared-agents.md "Workspace ownership"); agents are never shared across workspaces. */
   workspaceId?: string;
   name: string;
@@ -130,6 +132,8 @@ export interface Agent {
 /** One card on an agent's kanban board. */
 export interface AgentTask {
   id: string;
+  /** Task key (docs/tasks-keys.md), e.g. EVL-3; null on a task from before keys. */
+  key?: string | null;
   agentId: string;
   title: string;
   note: string;
@@ -705,7 +709,7 @@ export interface ChannelDetail extends Channel {
 }
 export interface ChannelMessage {
   id: string; channelId: string; threadRootId: string | null; authorKind: 'agent' | 'human' | 'system'; authorId: string;
-  text: string; attachments: string; mentions: string; taskId: string | null; runId: string | null; unprompted: number;
+  text: string; attachments: string; mentions: string; taskId: string | null; /** The task's key (docs/tasks-keys.md). */ taskKey?: string | null; runId: string | null; unprompted: number;
   editedAt: string | null; createdAt: string;
 }
 export interface ChannelPage { messages: ChannelMessage[]; replies: Record<string, { count: number; lastAt: string }>; hasMore: boolean }
@@ -790,6 +794,8 @@ export interface OrgGoal {
 /** Units (docs/group-chat.md §7): a board, a channel and a goal tracker per org level. */
 export interface OrgUnit {
   id: string; orgId: string; leadAgentId: string; parentUnitId: string | null; name: string; slug: string; channelId: string | null; archivedAt: string | null; createdAt: string;
+  /** The board's task key prefix (docs/tasks-keys.md), e.g. ENG. */
+  taskKey?: string | null;
 }
 export interface OrgUnitNode extends OrgUnit { memberAgentIds: string[]; counts: { openTasks: number; tasks: number; goals: number }; children: OrgUnitNode[] }
 export interface OrgGoalNode extends OrgGoal { progress: number; tasks: { total: number; done: number }; children: OrgGoalNode[] }
@@ -802,6 +808,8 @@ export interface OrgDetail extends Org {
 }
 export interface OrgTaskBrief { outcome: string; context: string; constraints: string; done_when: string }
 export interface OrgTask {
+  /** Task key (docs/tasks-keys.md), e.g. ENG-12; null on a task from before keys. */
+  key?: string | null;
   id: string; orgId: string; projectId: string | null; parentTaskId: string | null; title: string; brief: string;
   status: OrgTaskStatus; assigneeAgentId: string | null; claimedBy: string | null; claimedAt: string | null;
   reviewerAgentId: string | null; reviewRounds: number; blockers: string; fileScope: string; noProgressCount: number;
@@ -937,13 +945,13 @@ export const MEETING_KINDS: MeetingKind[] = ['planning', 'standup', 'weekly_revi
 export type MeetingStatus = 'scheduled' | 'running' | 'done' | 'cancelled' | 'postponed' | 'skipped';
 /** A person's verdict on a proposal in the room (docs/meetings.md "During"). */
 export interface ProposalVerdict { verdict?: 'approved' | 'rejected'; verdictBy?: string; verdictName?: string }
-export interface MinutesAction extends ProposalVerdict { title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string; messageId?: string; due?: string | null }
+export interface MinutesAction extends ProposalVerdict { title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string; taskKey?: string | null; messageId?: string; due?: string | null }
 export interface MinutesDecision extends ProposalVerdict { title: string; decision: string; alternatives: string; rationale: string; by: string; decisionId?: string; messageId?: string }
 export interface MinutesQuestion { question: string; by: string; messageId?: string; answer?: string; answeredBy?: string }
 /** A retro's lesson (docs/company-vision.md §6, item 22): one sentence with an audience; may carry a proposed charter or playbook change. */
 export type LessonAudience = 'member' | 'unit' | 'company';
 export interface MinutesLesson { text: string; audience: LessonAudience; by: string; proposedCharterChange?: { agent: string; text: string; mode?: 'append' | 'replace'; approvalId?: string }; proposedPlaybookChange?: { playbookId: string; note: string; taskId?: string } }
-export interface Minutes { summary: string; decisions: MinutesDecision[]; actions: MinutesAction[]; risks: Array<{ text: string; by: string }>; questions: MinutesQuestion[]; lessons?: MinutesLesson[]; parked?: Array<{ text: string; by: string; taskId?: string }>; endedBy?: string }
+export interface Minutes { summary: string; decisions: MinutesDecision[]; actions: MinutesAction[]; risks: Array<{ text: string; by: string }>; questions: MinutesQuestion[]; lessons?: MinutesLesson[]; parked?: Array<{ text: string; by: string; taskId?: string; taskKey?: string | null }>; endedBy?: string }
 /** The live room of a meeting (`OrgMeeting.room`, JSON; docs/meetings.md "During"). */
 export interface MeetingRoomState {
   items: string[]; current: number; itemStartedAt: string | null; itemMinutes: number; round: number; roundCap: number; extended: number;
@@ -1719,6 +1727,8 @@ export const api = {
   // units (docs/group-chat.md §7)
   orgUnits: (wsId: string) => get<OrgUnitNode[]>(`/api/workspaces/${wsId}/org/units`),
   renameOrgUnit: (wsId: string, unitId: string, name: string) => send<OrgUnit>(`/api/workspaces/${wsId}/org/units/${unitId}`, 'PATCH', { name }),
+  /** The board's task key prefix (docs/tasks-keys.md): new tasks take it, existing keys stay. */
+  setOrgUnitTaskKey: (wsId: string, unitId: string, taskKey: string) => send<OrgUnit>(`/api/workspaces/${wsId}/org/units/${unitId}`, 'PATCH', { taskKey }),
   orgGoalTree: (wsId: string, unitId?: string | null) => get<OrgGoalNode[]>(unitId ? `/api/workspaces/${wsId}/org/units/${unitId}/goals/tree` : `/api/workspaces/${wsId}/org/goals/tree`),
   goalMessages: (wsId: string, goalId: string) => get<Array<ChannelMessage & { slug: string }>>(`/api/workspaces/${wsId}/chat/goals/${goalId}/messages`),
   addOrgProject: (wsId: string, body: { title: string; goalId?: string | null }) => send<OrgProject>(`/api/workspaces/${wsId}/org/projects`, 'POST', body),
@@ -1995,6 +2005,8 @@ export interface OverviewStatus extends HomeAgent {
   live: OverviewLive | null; doingSince: string | null; waitingOnYou: number; blockedCount: number; open: number; lastRunAt: string | null; memberStatus: string | null;
 }
 export interface OverviewTask {
+  /** The task key (docs/tasks-keys.md), e.g. ENG-12; null on a row from before keys. */
+  key?: string | null;
   id: string; source: 'org' | 'agent'; title: string; status: string; outcome: string; doneWhen: string;
   startedAt: string | null; updatedAt: string; createdAt: string; dueAt: string | null;
   lastComment: { at: string; from: string; text: string } | null; files: string[]; acceptedBy: string; assigneeName: string;
