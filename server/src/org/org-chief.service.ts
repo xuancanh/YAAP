@@ -17,8 +17,9 @@
  *    `chief.riskReviewDays`;
  *  - breached handoffs: a task one unit's member asked for that sits on
  *    another unit's board and has not moved for `chief.handoffSlaHours`;
- *  - the function owners (unit leads and members titled "… manager") the
- *    chief routes function-level work to.
+ *  - the function owners (unit leads, "Head of …" and "… manager" titles)
+ *    the chief routes function-level work to, and the backlog requests
+ *    (hire, pause, decisions) they filed for the chief.
  *
  * It registers on the gated heartbeat next to the runtime's `org` providers:
  * the state is context for the chief only, and a handoff that breached since
@@ -38,6 +39,8 @@ import { chiefTunable, proxyLevelOf } from './chief-tunables';
 
 /** Statuses in which a handed-off task waits on its receiving side. */
 const HANDOFF_WAITING = new Set(['backlog', 'todo', 'blocked', 'waiting', 'in_review']);
+/** A function head's title: "Head of Sales" (the business catalog), "Sales manager". */
+const FUNCTION_HEAD = /^head of\b|\bmanager\b/i;
 const H = 3_600_000;
 
 export interface OperatingSystemState {
@@ -49,6 +52,9 @@ export interface OperatingSystemState {
   staleRisks: Array<{ ref: string; title: string; source: 'key_result' | 'objective' | 'signal'; staleDays: number }>;
   breachedHandoffs: Array<{ taskId: string; title: string; from: string; to: string; status: string; waitedHours: number; breachedAt: string }>;
   functionOwners: Array<{ name: string; title: string; unit: string }>;
+  /** Backlog tasks a function head filed for the chief (hire, pause and
+   *  re-tooling cases, decisions, asks from its weekly report), oldest first. */
+  headRequests: Array<{ taskId: string; title: string; from: string; waitedHours: number }>;
 }
 
 @Injectable()
@@ -143,13 +149,19 @@ export class OrgChiefService {
       breachedHandoffs.sort((a, b) => b.waitedHours - a.waitedHours);
     }
 
-    // Function owners: unit leads and members titled "… manager".
+    // Function owners: unit leads and the function heads ("Head of …", "… manager").
     const leads = new Map(units.filter((u) => u.leadAgentId).map((u) => [u.leadAgentId, u]));
     const functionOwners = members
-      .filter((m) => m.agentId !== org.chiefOfStaffAgentId && m.status === 'active' && (leads.has(m.agentId) || /\bmanager\b/i.test(m.title)))
+      .filter((m) => m.agentId !== org.chiefOfStaffAgentId && m.status === 'active' && (leads.has(m.agentId) || FUNCTION_HEAD.test(m.title)))
       .map((m) => ({ name: names.get(m.agentId) ?? m.agentId.slice(0, 8), title: m.title || 'lead', unit: leads.get(m.agentId)?.name ?? '' }));
 
-    return { orgId, orgName: org.name, proxyLevel: proxyLevelOf(org), rituals, overdueDecisions, staleRisks, breachedHandoffs, functionOwners };
+    const headIds = new Set(members.filter((m) => m.agentId !== org.chiefOfStaffAgentId && (leads.has(m.agentId) || FUNCTION_HEAD.test(m.title))).map((m) => m.agentId));
+    const headRequests = (await this.tasks.list(orgId))
+      .filter((t) => t.status === 'backlog' && t.createdBy.startsWith('agent:') && headIds.has(t.createdBy.slice('agent:'.length)) && (!t.assigneeAgentId || t.assigneeAgentId === org.chiefOfStaffAgentId))
+      .map((t) => ({ taskId: t.id, title: t.title, from: names.get(t.createdBy.slice('agent:'.length)) ?? 'a function head', waitedHours: Math.max(0, Math.floor((nowMs - Date.parse(t.createdAt)) / H)) }))
+      .sort((a, b) => b.waitedHours - a.waitedHours);
+
+    return { orgId, orgName: org.name, proxyLevel: proxyLevelOf(org), rituals, overdueDecisions, staleRisks, breachedHandoffs, functionOwners, headRequests };
   }
 
   /** Wake the chief for a handoff that breached since its last beat (a
@@ -201,7 +213,8 @@ export function describeState(st: OperatingSystemState): string {
   if (st.overdueDecisions.length) lines.push('Decisions waiting on the CEO past the overdue window (put them first in the brief; never decide them yourself):', ...st.overdueDecisions.slice(0, 6).map((d) => `- [${d.id.slice(0, 8)}] ${d.kind}: ${d.summary} — waited ${d.waitedHours}h${d.deadline ? `, default at ${at(d.deadline)}` : ''}`));
   if (st.staleRisks.length) lines.push('Stale risks (no check-in or acknowledgement within chief.riskReviewDays; ask the owner to re-score, do not re-score for them):', ...st.staleRisks.slice(0, 6).map((r) => `- [${r.ref.slice(0, r.ref.indexOf(':') + 9)}] ${r.source.replace('_', ' ')} "${r.title}" — ${r.staleDays} day(s)`));
   if (st.breachedHandoffs.length) lines.push('Breached handoffs (route to the owner, then the shared manager or /org/issues.md):', ...st.breachedHandoffs.slice(0, 6).map((h) => `- [${h.taskId.slice(0, 8)}] "${h.title}" from ${h.from} → ${h.to}, ${h.status.replace('_', ' ')} for ${h.waitedHours}h`));
-  if (st.functionOwners.length) lines.push(`Function owners (route function-level work to them): ${st.functionOwners.map((o) => `${o.name} (${o.title}${o.unit ? `, ${o.unit}` : ''})`).join('; ')}.`);
+  if (st.headRequests.length) lines.push('Requests from function heads in your backlog (hire, pause and re-tooling cases, asks; decide within the boundary or put them to the CEO — run function-reports-intake):', ...st.headRequests.slice(0, 6).map((r) => `- [${r.taskId.slice(0, 8)}] "${r.title}" from ${r.from}, ${r.waitedHours}h old`));
+  if (st.functionOwners.length) lines.push(`Function owners (route function-level work to them; their weekly reports are under /org/<function>/reports/): ${st.functionOwners.map((o) => `${o.name} (${o.title}${o.unit ? `, ${o.unit}` : ''})`).join('; ')}.`);
   if (lines.length === 1) lines.push('Nothing overdue: no ritual in the lookahead, no decision past due, no stale risk, no breached handoff.');
   lines.push('The ledger lives under /org/ (operating-system.md, scorecard.md, issues.md, decisions.md, calendar.md, risks.md, handoffs.md, values.md).');
   return lines.join('\n');

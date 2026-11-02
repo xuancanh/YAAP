@@ -28,7 +28,8 @@ Code:
 - `server/src/org/org-chief.service.ts` — `OrgChiefService`: the operating
   system's state for the chief's heartbeat.
 - `server/src/org/org-bootstrap.service.ts` — onboarding installs and seeds it.
-- `packs/chief-of-staff.md` — the Chief of Staff pack (skills and loops),
+- `packs/chief-of-staff.md` — the Chief of Staff pack (skills and loops,
+  with the business charter tail),
   built into `server/src/market/authored-packs.generated.ts` by
   `node scripts/build-authored-packs.mjs`.
 
@@ -47,10 +48,14 @@ The charter has five parts (report: "Four taxonomies…", "Four limits…",
    current goals counters the conductor's drift failure.
 3. **Function managers.** The CoS works at the handoffs and on work that
    belongs to no function. Function-level work goes to the function's
-   manager (a member titled "… manager", or a unit lead): the objective
-   through `org_set_goal unit=…`, or a briefed task. It does the work itself
-   only when nobody owns the function ("if 80% of a job is one function, it
-   is that function's").
+   head (the business catalog's `role:<fn>-manager`, titled "Head of …", or
+   a unit lead): the objective through `org_set_goal unit=…`, or a briefed
+   task. It does the work itself only when nobody owns the function ("if 80%
+   of a job is one function, it is that function's"). The heads report to
+   the chief weekly under `/org/<function>/reports/` and file hire, pause and
+   re-tooling cases as backlog tasks for it (`docs/agent-catalog.md`
+   "Business catalog"); the chief reads the reports into the weekly review
+   and decides each case within the boundary or puts it to the CEO.
 4. **Three tiers** (below).
 5. **Five failures** with their countermeasures (§6).
 
@@ -155,7 +160,10 @@ the chief only and model-free.
   another unit's board (backlog, todo, blocked, waiting, in review) and has
   not moved for `chief.handoffSlaHours`. Tasks the chief created are routing,
   not handoffs.
-- **Function owners** to route to.
+- **Function owners** to route to (unit leads, "Head of …" and "… manager"
+  titles), with a pointer to their reports under `/org/<function>/reports/`.
+- **Requests from function heads**: backlog tasks a head filed for the
+  chief (hire and pause cases, asks), oldest first.
 
 A handoff that breached since the chief's last beat is a reason to wake;
 breaches already seen stay in the context only, so a stuck handoff does not
@@ -177,7 +185,10 @@ wake the chief every beat.
 skills use only tools the server offers (`org_*`, plus `fs_read`/`fs_write`
 for the ledger):
 
-`operating-system-setup`, `annual-planning`, `quarterly-planning` (grading,
+`operating-system-setup`, `function-reports-intake` (the heads' weekly
+reports and backlog cases: scorecard and risks from the reports with the
+report cited, incomplete cases sent back, hires through `org_hire_agent
+role:<id>` under the head, the rest to the CEO), `annual-planning`, `quarterly-planning` (grading,
 the OKR cascade through function managers, a dependency map with
 acceptance), `weekly-business-review` (open items first, exceptions only,
 controllable inputs, "unknown" over invented causes), `exec-meeting-prep`
@@ -188,7 +199,8 @@ before one-way doors), `values-mechanism-audit` (the five mechanism families,
 drift with numbers, gaps as questions), `ritual-retirement-review`,
 `investor-update` (draft only) and `reorg-proposal`.
 
-Its loops: the weekday **operating-system sweep** an hour before the brief,
+Its loops: the weekday **operating-system sweep** (intake, brief, handoffs)
+an hour before the brief,
 the **weekly business review pack** at the pre-read deadline before the root
 unit's weekly review (moved off the weekend), the **monthly operating
 review** and the **quarterly planning kickoff** three weeks before the
@@ -208,7 +220,9 @@ market hire.
 3. installs the pack's skills on the chief (private to it; an existing
    agent keeps its own charter and gains the skills) and its loops (a loop the
    plan's cap refuses is installed switched off, with a note);
-4. seeds the ledger.
+4. seeds the ledger through the workspace filesystem (`WorkspaceFs`, so
+   the files carry a version and an author; `StorageService` when the
+   filesystem is absent).
 
 The summary and the `org_bootstrap` audit row carry `operatingSystem`
 (stage, culture type, archetype, tunables, skills, loops, artifacts). The
@@ -216,10 +230,6 @@ New workspace wizard offers "Fit to my profile" as its default rhythm.
 
 ## 9. Departures and open edges
 
-- The ledger is written through `StorageService` at the workspace's
-  `org/…` keys. Once the workspace filesystem's metadata table lands
-  (`docs/filesystem.md`), the seed should go through `WorkspaceFs` so the
-  files carry a version and an editor.
 - Risks have no table: the register is a file; the heartbeat's "stale
   risks" are at-risk goals and unacknowledged warnings, which the record
   holds.

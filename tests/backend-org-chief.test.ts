@@ -122,7 +122,7 @@ test('the Chief of Staff pack: Business category, deep skills that name only org
   const pack = OrgApprovalsService.catalogItem(CHIEF_PACK_ID)!;
   assert.ok(pack); assert.equal(pack.cat, 'Business'); assert.equal(pack.role, 'Chief of staff');
   const names = pack.skills!.map((s) => s.name);
-  for (const n of ['operating-system-setup', 'annual-planning', 'quarterly-planning', 'weekly-business-review', 'exec-meeting-prep', 'decision-log-hygiene', 'ceo-daily-brief', 'handoff-sla-monitor', 'risk-register', 'values-mechanism-audit', 'ritual-retirement-review', 'investor-update', 'reorg-proposal']) assert.ok(names.includes(n), n);
+  for (const n of ['operating-system-setup', 'annual-planning', 'quarterly-planning', 'weekly-business-review', 'exec-meeting-prep', 'decision-log-hygiene', 'ceo-daily-brief', 'handoff-sla-monitor', 'risk-register', 'values-mechanism-audit', 'ritual-retirement-review', 'investor-update', 'reorg-proposal', 'function-reports-intake']) assert.ok(names.includes(n), n);
   for (const s of pack.skills!) assert.ok((s.instructions ?? '').length > 800, `${s.name} is step-by-step`);
   // every org_* / meeting_* tool a skill names is one the server offers
   const s = await setup();
@@ -134,6 +134,8 @@ test('the Chief of Staff pack: Business category, deep skills that name only org
   for (const n of named) assert.ok(known.has(n), `${n} exists`);
   const all = pack.skills!.map((x) => x.instructions).join('\n');
   assert.match(all, /function manager/);
+  assert.match(all, /\/org\/<function>\/reports\//, 'the heads\' weekly reports are read');
+  assert.match(all, /role:<fn>-<specialist>/, 'the heads\' hire cases are decided through the hire path');
   assert.match(all, /unknown — investigating/);
   assert.match(all, /\/org\/decisions\.md/);
 });
@@ -143,7 +145,7 @@ test('operating-system state: rituals within the lookahead with their pre-read d
   const orgId = await enable(s, 'supervised');
   // a unit: the editor reports to the writer, who becomes a lead
   await s.org.updateMember(orgId, s.editor.id, { reportsToAgentId: s.writer.id });
-  await s.org.updateMember(orgId, s.writer.id, { title: 'Sales manager' });
+  await s.org.updateMember(orgId, s.writer.id, { title: 'Head of Sales' });
   await s.units.syncMembership(orgId);
   await s.meetings.ensureCadenceDefaults(orgId);
   const chiefSvc = new OrgChiefService(s.org, s.tasks, s.approvals, s.agents, s.units, s.meetings, s.signals);
@@ -157,6 +159,8 @@ test('operating-system state: rituals within the lookahead with their pre-read d
   // a task inside its own unit is not a handoff
   const own = await s.tasks.create(orgId, { title: 'Call list', status: 'todo', createdBy: `agent:${s.editor.id}`, unitId: sales.id });
   await s.db.update(orgTasks).set({ updatedAt: ago(30) }).where(eq(orgTasks.id, own.id));
+  // the head files a hire case for the chief as a backlog task (the business catalog's manage-team playbook)
+  const hireCase = await s.tasks.create(orgId, { title: 'Hire case: role:sales-sdr', brief: { outcome: 'decide the hire', done_when: 'decided' }, status: 'backlog', createdBy: `agent:${s.writer.id}` });
   // a card the CEO has not answered for two days
   const card = await s.approvals.create(orgId, { kind: 'escalation', payload: {}, requestedBy: 'chief', recommendation: 'Decide the launch date' });
   await s.db.update(orgApprovals).set({ createdAt: ago(50) }).where(eq(orgApprovals.id, card.id));
@@ -173,7 +177,8 @@ test('operating-system state: rituals within the lookahead with their pre-read d
   assert.deepEqual(st.overdueDecisions.map((d) => d.id), [card.id]);
   assert.ok(st.overdueDecisions[0].waitedHours >= 49);
   assert.ok(st.staleRisks.some((r) => r.ref === `goal:${kr.id}` && r.staleDays >= 20));
-  assert.ok(st.functionOwners.some((o) => o.name === 'Writer' && o.title === 'Sales manager'));
+  assert.ok(st.functionOwners.some((o) => o.name === 'Writer' && o.title === 'Head of Sales'));
+  assert.deepEqual(st.headRequests.map((r) => r.taskId), [hireCase.id], 'the head\'s hire case waits in the chief\'s backlog');
   // rituals: a two-week lookahead holds the weekly ones, each with its pre-read deadline before it
   await s.org.setTunable(orgId, 'chief.ritualLookaheadHours', 336, { actor: 'user' });
   const wide = await chiefSvc.state(orgId);
@@ -193,10 +198,12 @@ test('operating-system state: rituals within the lookahead with their pre-read d
   assert.match(ctx!, /Breached handoffs/);
   assert.match(ctx!, /Decisions waiting on the CEO/);
   assert.match(ctx!, /Function owners/);
+  assert.match(ctx!, /Requests from function heads/);
+  assert.match(ctx!, /\/org\/<function>\/reports\//);
   assert.equal(await chiefSvc.heartbeatContext(s.writer.id, new Date()), null, 'only the chief reads the operating system');
   assert.equal((await chiefSvc.heartbeatReasons(s.chief.id, new Date(), null)).length, 1);
   assert.match((await chiefSvc.heartbeatReasons(s.chief.id, new Date(), null))[0], /handoff-sla-monitor/);
   assert.equal((await chiefSvc.heartbeatReasons(s.chief.id, new Date(), new Date().toISOString())).length, 0, 'already seen at the last beat');
   assert.deepEqual(await chiefSvc.heartbeatReasons(s.writer.id, new Date(), null), []);
-  assert.match(describeState({ orgId, orgName: 'X', proxyLevel: 'conductor', rituals: [], overdueDecisions: [], staleRisks: [], breachedHandoffs: [], functionOwners: [] }), /Nothing overdue/);
+  assert.match(describeState({ orgId, orgName: 'X', proxyLevel: 'conductor', rituals: [], overdueDecisions: [], staleRisks: [], breachedHandoffs: [], functionOwners: [], headRequests: [] }), /Nothing overdue/);
 });

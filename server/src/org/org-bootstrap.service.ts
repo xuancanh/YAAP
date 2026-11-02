@@ -32,7 +32,8 @@
  * Staff pack's skills and loops (packs/chief-of-staff.md, loop times from
  * the brief hour and the weekly review) and the ledger is seeded under
  * `/org/` (operating-system, decisions, risks, scorecard, calendar, issues,
- * handoffs, values) — never over a file that exists.
+ * handoffs, values) through the workspace filesystem — never over a file
+ * that exists.
  *
  * Nothing here is a hidden default: every value the chief will read comes
  * from the body, and what the body leaves out stays at the documented
@@ -59,6 +60,7 @@ import { roleById, roleRef, ROLE_PREFIX } from './roles/catalog';
 import { SkillsService } from '../skills/skills.service';
 import { StorageService } from '../storage/storage.service';
 import { workspaceFileKey } from '../storage/storage.keys';
+import { WorkspaceFs } from '../files/workspace-fs.service';
 import { CHIEF_PACK_ID, CULTURE_TYPES, STAGES, chiefLoops, deriveOperatingSystem, seedArtifacts, type CultureType, type OperatingSystemPlan, type Stage } from './chief-os';
 
 export const CADENCE_MODES = ['profile', 'default', 'light', 'none'] as const;
@@ -124,6 +126,9 @@ export class OrgBootstrapService {
     @Optional() private readonly skills?: SkillsService,
     /** Optional: the ledger's starting files under `/org/`. */
     @Optional() private readonly storage?: StorageService,
+    /** Optional: the workspace filesystem (docs/filesystem.md) — with it the
+     *  seed files carry a version and an author like any other artifact. */
+    @Optional() private readonly fs?: WorkspaceFs,
   ) {}
 
   /** `role:<id>`, a bare role id or a role title → the catalog hire
@@ -337,7 +342,7 @@ export class OrgBootstrapService {
   /** The ledger's starting files (chief-os.ts `seedArtifacts`), written
    *  only where no file exists yet; returns the `/org/…` paths written. */
   private async seedLedger(orgId: string, workspaceId: string, plan: OperatingSystemPlan, input: BootstrapInput, rootId: string | null, notes: string[]): Promise<string[]> {
-    if (!this.storage) { notes.push('file storage unavailable: the /org/ ledger was not seeded'); return []; }
+    if (!this.storage && !this.fs) { notes.push('file storage unavailable: the /org/ ledger was not seeded'); return []; }
     const org = await this.org.get(orgId);
     const unitRows = this.units ? await this.units.units(orgId).catch(() => []) : [];
     const unitName = new Map(unitRows.map((u) => [u.id, u.name]));
@@ -351,10 +356,15 @@ export class OrgBootstrapService {
     });
     const written: string[] = [];
     for (const f of files) {
-      const key = workspaceFileKey(workspaceId, f.path);
       try {
-        if (await this.storage.get(key)) continue;
-        await this.storage.put(key, Buffer.from(f.body, 'utf8'), 'text/markdown');
+        if (this.fs) {
+          if (await this.fs.read(workspaceId, f.path)) continue;
+          await this.fs.write(workspaceId, f.path, Buffer.from(f.body, 'utf8'), { by: { kind: 'system', id: 'system', name: 'onboarding' }, contentType: 'text/markdown' });
+        } else {
+          const key = workspaceFileKey(workspaceId, f.path);
+          if (await this.storage!.get(key)) continue;
+          await this.storage!.put(key, Buffer.from(f.body, 'utf8'), 'text/markdown');
+        }
         written.push(`/${f.path}`);
       } catch (err) {
         notes.push(`/${f.path} was not written: ${err instanceof Error ? err.message : String(err)}`);

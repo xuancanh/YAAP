@@ -39,6 +39,7 @@ import { WorkspaceOrgController } from '../server/src/org/workspace-org.controll
 import { TUNABLES, tunable } from '../server/src/org/org-tunables';
 import { setAddressLookup } from '../server/src/common/url-guard';
 import { SkillsService } from '../server/src/skills/skills.service';
+import { WorkspaceFs } from '../server/src/files/workspace-fs.service';
 import { workspaceFileKey } from '../server/src/storage/storage.keys';
 import { CHIEF_PACK_ID } from '../server/src/org/chief-os';
 
@@ -70,7 +71,7 @@ async function setup() {
   const orgs = new OrgController(org, tasks, approvals, audit, brief, runtime, config, units, undefined, undefined, undefined, intent);
   const roles = new OrgRolesService();
   const skills = new SkillsService(db);
-  const bootstrap = new OrgBootstrapService(org, workspaces, agents, mode, approvals, runtime, audit, intent, units, meetings, roles, skills, stub);
+  const bootstrap = new OrgBootstrapService(org, workspaces, agents, mode, approvals, runtime, audit, intent, units, meetings, roles, skills, stub, new WorkspaceFs(stub, db));
   const controller = new WorkspaceOrgController(mode, orgs, config, meetings, undefined, undefined, undefined, undefined, undefined, bootstrap);
   const ws = (await workspaces.list())[0];
   return { db, agents, workspaces, audit, org, units, intent, approvals, meetings, runtime, mode, bootstrap, controller, ws, announced, skills, storage: stub, files: map };
