@@ -102,6 +102,7 @@ export function HomeView() {
         app.setOrgPane(t.pane);
         app.setMobileDetail(true);
         return;
+      case 'task': app.openOrgTask(t.taskId); return;
       case 'agent': app.openAgent(t.agentId); return;
       case 'file': app.openFile({ kind: 'workspace', id: wsId }, t.path); return;
       case 'chat': app.openSession(t.sessionId); return;

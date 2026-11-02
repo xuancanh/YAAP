@@ -11,8 +11,8 @@
  * phone one, in the same order.
  */
 import { useState, type CSSProperties, type ReactNode } from 'react';
-import type { HomeActivityKind, HomeAgent, HomeData, HomeGoal, HomeNeed, HomeNeedAction } from '../lib/api';
-import { ACTIVITY_FILTERS, NEED_KIND_LABEL, actionLabel, dayHeading, defaultSentence, greeting, headline, recommendationLine, splitPath, targetOf, needTarget, usd, when, type HomeTarget } from '../lib/home';
+import type { HomeActivity, HomeAgent, HomeData, HomeGoal, HomeNeed, HomeNeedAction } from '../lib/api';
+import { activityFilters, activityRows, dedupeUpcoming, upcomingDetail, type ActivityFilter, NEED_KIND_LABEL, actionLabel, dayHeading, defaultSentence, greeting, headline, recommendationLine, splitPath, targetOf, needTarget, usd, when, type HomeTarget } from '../lib/home';
 import { Markdown } from '../lib/md';
 import { I, P } from '../lib/icons';
 
@@ -328,11 +328,32 @@ function Team({ data, narrow, now, onOpen, onAllAgents }: Pick<HomeBoardProps, '
 
 // ---- 6. activity ----
 
+/** A day of routine loop runs on one line; the raw runs fold out under it. */
+function RoutineRuns({ a, now }: { a: HomeActivity; now: Date }) {
+  const [open, setOpen] = useState(false);
+  const runs = a.runs!;
+  return (
+    <>
+      <span style={{ color: 'var(--text-dim)' }}>{a.title}</span>
+      <button style={{ ...link, display: 'block', fontSize: 12, fontWeight: 500, marginTop: 1 }} aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? 'Hide the runs' : `Show the ${runs.count === 1 ? 'run' : `${runs.count} runs`}`}
+      </button>
+      {open && (
+        <ol data-testid="routine-runs" style={{ listStyle: 'none', margin: '4px 0 0', padding: '0 0 0 10px', borderLeft: '2px solid var(--border-soft)' }}>
+          {runs.items.map((r) => (
+            <li key={r.id} style={{ ...faint, padding: '2px 0', overflowWrap: 'anywhere' }}>{when(r.at, now)}{r.detail ? `: ${r.detail}` : ''}</li>
+          ))}
+          {runs.count > runs.items.length && <li style={{ ...faint, padding: '2px 0' }}>and {runs.count - runs.items.length} earlier</li>}
+        </ol>
+      )}
+    </>
+  );
+}
+
 function Activity({ data, now, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'> & { now: Date }) {
-  const [filter, setFilter] = useState<'all' | HomeActivityKind>('all');
-  const present = new Set(data.activity.map((a) => a.kind));
-  const filters = ACTIVITY_FILTERS.filter((f) => f.id === 'all' || present.has(f.id));
-  const rows = filter === 'all' ? data.activity : data.activity.filter((a) => a.kind === filter);
+  const [filter, setFilter] = useState<ActivityFilter>('all');
+  const filters = activityFilters(data.activity);
+  const rows = activityRows(data.activity, filter);
   return (
     <Section id="activity" title="Activity">
       {filters.length > 2 && (
@@ -353,8 +374,12 @@ function Activity({ data, now, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'>
               <li key={a.id} style={{ display: 'grid', gridTemplateColumns: '64px minmax(0,1fr)', gap: 10, padding: '7px 0', borderTop: '1px solid var(--border-soft)' }}>
                 <span style={{ ...faint, fontSize: 11.5, paddingTop: 1 }}>{when(a.at, now)}</span>
                 <span style={{ minWidth: 0, fontSize: 13, lineHeight: 1.45, overflowWrap: 'anywhere' }}>
-                  {t ? <button style={{ ...link, color: 'var(--text)', fontWeight: 500, fontSize: 13 }} onClick={() => onOpen(t)}>{a.title}</button> : a.title}
-                  {(a.actor || a.detail) && <span style={{ display: 'block', ...faint }}>{[a.actor, a.detail].filter(Boolean).join(': ')}</span>}
+                  {a.runs ? <RoutineRuns a={a} now={now} /> : (
+                    <>
+                      {t ? <button style={{ ...link, color: 'var(--text)', fontWeight: 500, fontSize: 13 }} onClick={() => onOpen(t)}>{a.title}</button> : a.title}
+                      {(a.actor || a.detail) && <span style={{ display: 'block', ...faint }}>{[a.actor, a.detail].filter(Boolean).join(': ')}</span>}
+                    </>
+                  )}
                 </span>
               </li>
             );
@@ -411,7 +436,7 @@ function SpendHealth({ data, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'>) 
 
 function ComingUp({ data, now, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'> & { now: Date }) {
   const groups: Array<{ day: string; rows: HomeData['upcoming'] }> = [];
-  for (const u of data.upcoming) {
+  for (const u of dedupeUpcoming(data.upcoming)) {
     const day = dayHeading(u.at, now);
     const g = groups.at(-1);
     if (g && g.day === day) g.rows.push(u); else groups.push({ day, rows: [u] });
@@ -425,12 +450,13 @@ function ComingUp({ data, now, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'>
               <div style={{ ...faint, fontWeight: 600, marginBottom: 4 }}>{g.day}</div>
               {g.rows.map((u) => {
                 const t = targetOf(u.ref);
+                const detail = upcomingDetail(u);
                 return (
                   <div key={u.id} style={{ display: 'grid', gridTemplateColumns: '68px minmax(0,1fr)', gap: 8, padding: '3px 0', fontSize: 13 }}>
                     <span style={{ ...faint, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{new Date(u.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span>
                     <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
                       {t ? <button style={{ ...link, color: 'var(--text)', fontWeight: 500, fontSize: 13 }} onClick={() => onOpen(t)}>{u.title}</button> : u.title}
-                      {u.detail && <span style={{ ...faint, color: u.detail === 'overdue' ? 'var(--red)' : 'var(--text-faint)' }}> {u.detail}</span>}
+                      {detail && <span style={{ ...faint, display: 'block', color: detail === 'overdue' ? 'var(--red)' : 'var(--text-faint)' }}>{detail}</span>}
                     </span>
                   </div>
                 );

@@ -81,7 +81,7 @@ describe('Home copy', () => {
     expect(recommendationLine(need())).toBe('Chief recommends approve. 70% sure. Reversible.');
   });
   it('maps references to where they open', () => {
-    expect(targetOf({ type: 'task', id: 't' })).toEqual({ to: 'pane', pane: 'board', focus: { kind: 'task', id: 't' } });
+    expect(targetOf({ type: 'task', id: 't' })).toEqual({ to: 'task', taskId: 't' });
     expect(targetOf({ type: 'goal', id: 'g' })).toEqual({ to: 'pane', pane: 'vision', focus: { kind: 'goal', id: 'g' } });
     expect(targetOf({ type: 'file', id: 'a/b.md' })).toEqual({ to: 'file', path: 'a/b.md' });
     expect(targetOf({ type: 'org', id: 'o' })).toBeNull();

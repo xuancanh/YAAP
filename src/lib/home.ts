@@ -4,7 +4,7 @@
  * default means in words, and where a reference opens. Kept free of React
  * and the store so web-tests can pin the copy.
  */
-import type { HomeActivityKind, HomeData, HomeNeed, HomeNeedAction, HomeRef } from './api';
+import type { HomeActivity, HomeActivityKind, HomeData, HomeNeed, HomeNeedAction, HomeRef, HomeUpcoming } from './api';
 import type { OrgFocus, OrgPane } from '../store';
 
 export function greeting(now = new Date()): string {
@@ -113,6 +113,7 @@ export function actionDone(a: HomeNeedAction): string {
 /** Where a reference opens: an org pane (with the row to focus), an agent, a file. */
 export type HomeTarget =
   | { to: 'pane'; pane: OrgPane; focus?: OrgFocus }
+  | { to: 'task'; taskId: string }
   | { to: 'agent'; agentId: string }
   | { to: 'file'; path: string }
   | { to: 'chat'; sessionId: string }
@@ -121,7 +122,7 @@ export type HomeTarget =
 export function targetOf(ref: HomeRef | null | undefined): HomeTarget | null {
   if (!ref) return null;
   switch (ref.type) {
-    case 'task': return { to: 'pane', pane: 'board', focus: { kind: 'task', id: ref.id } };
+    case 'task': return { to: 'task', taskId: ref.id };
     case 'goal': return { to: 'pane', pane: 'vision', focus: { kind: 'goal', id: ref.id } };
     case 'meeting': return { to: 'pane', pane: 'meetings', focus: { kind: 'meeting', id: ref.id } };
     case 'decision': return { to: 'pane', pane: 'decisions', focus: { kind: 'decision', id: ref.id } };
@@ -141,15 +142,141 @@ export function needTarget(n: HomeNeed): HomeTarget | null {
   if (n.ref.planId) return targetOf({ type: 'plan', id: n.ref.planId });
   if (n.kind === 'queued_action' && n.ref.agentId) return { to: 'agent', agentId: n.ref.agentId };
   if (n.kind === 'held_action' && !n.ref.approvalId && n.ref.sessionId) return { to: 'chat', sessionId: n.ref.sessionId };
+  // An escalation is about one task: the task is the context (the card decides it here).
+  if (n.kind === 'escalation' && n.ref.taskId) return { to: 'task', taskId: n.ref.taskId };
   if (n.ref.approvalId || n.ref.actionId) return { to: 'inbox' };
   if (n.ref.signalId) return { to: 'pane', pane: 'pulse' };
   return null;
 }
 
-export const ACTIVITY_FILTERS: Array<{ id: 'all' | HomeActivityKind; label: string }> = [
+export type ActivityFilter = 'all' | HomeActivityKind | 'runs';
+export const ACTIVITY_FILTERS: Array<{ id: ActivityFilter; label: string }> = [
   { id: 'all', label: 'All' }, { id: 'task', label: 'Tasks' }, { id: 'decision', label: 'Decisions' }, { id: 'hire', label: 'People' },
   { id: 'meeting', label: 'Meetings' }, { id: 'incident', label: 'Incidents' }, { id: 'file', label: 'Files' }, { id: 'agent', label: 'Agents' },
+  { id: 'runs', label: 'Agent runs' },
 ];
+
+/** Whether a row is an agent loop run (a notable one, or a routine summary). */
+export const isRun = (a: HomeActivity): boolean => Boolean(a.loop || a.runs);
+
+/**
+ * The rows a filter shows. Routine loop runs arrive collapsed (one line per
+ * agent per day); "Agent runs" lists every run raw, notable or not, newest
+ * first. Every other filter keeps the collapsed lines.
+ */
+export function activityRows(activity: HomeActivity[], filter: ActivityFilter): HomeActivity[] {
+  if (filter === 'all') return activity;
+  if (filter !== 'runs') return activity.filter((a) => a.kind === filter);
+  const out: HomeActivity[] = [];
+  for (const a of activity) {
+    if (a.loop) out.push(a);
+    else if (a.runs) for (const r of a.runs.items) out.push({ id: r.id, at: r.at, kind: 'agent', title: r.title, detail: r.detail, actor: a.actor, ref: a.ref });
+  }
+  return out.sort((x, y) => y.at.localeCompare(x.at));
+}
+
+/** The filters with something to show. */
+export function activityFilters(activity: HomeActivity[]): typeof ACTIVITY_FILTERS {
+  const present = new Set(activity.map((a) => a.kind));
+  const runs = activity.some(isRun);
+  return ACTIVITY_FILTERS.filter((f) => f.id === 'all' || (f.id === 'runs' ? runs : present.has(f.id)));
+}
+
+// ---- cadences in words (Coming up) ----
+
+const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function dowSet(field: string): Set<number> | null {
+  const days = new Set<number>();
+  for (const part of field.split(',')) {
+    const range = /^(\d)-(\d)$/.exec(part);
+    if (range) { for (let d = Number(range[1]); d <= Number(range[2]); d++) days.add(d % 7); continue; }
+    if (/^\d$/.test(part)) { days.add(Number(part) % 7); continue; }
+    return null;
+  }
+  return days.size ? days : null;
+}
+
+function daysWords(days: Set<number>): string {
+  const list = [...days].sort((a, b) => a - b);
+  const key = list.join(',');
+  if (key === '0,1,2,3,4,5,6') return 'every day';
+  if (key === '1,2,3,4,5') return 'every weekday';
+  if (key === '0,6') return 'weekends';
+  if (list.length === 1) return `${DOW[list[0]]}s`;
+  const names = list.map((d) => `${DOW[d]}s`);
+  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+const ordinal = (n: number): string => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`;
+
+/** A time of day the viewer's way ("4:00 PM" or "16:00", by locale). */
+export function clockTime(d: Date): string {
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+/**
+ * A five-field cron in words, in the viewer's time zone: "Fridays at 4:00 PM",
+ * "every weekday at 9:30 AM", "1st of each month at 8:00 AM", "every 2 hours".
+ * Crons are server-local; with `at` (a fire time the server computed) the
+ * time and the weekday are the viewer's. Anything odder stays the raw cron.
+ */
+export function cadenceText(cron: string, at?: string | null): string {
+  const f = (cron ?? '').trim().split(/\s+/);
+  if (f.length !== 5) return cron;
+  const [min, hour, dom, mon, dow] = f;
+  if (mon !== '*') return cron;
+  const fixed = /^\d+$/.test(min) && /^\d+$/.test(hour);
+  const when = at && !Number.isNaN(Date.parse(at)) ? new Date(at) : null;
+  const time = fixed ? clockTime(when ?? new Date(2000, 0, 1, Number(hour), Number(min))) : null;
+  if (dom === '*' && time) {
+    if (dow === '*') return `every day at ${time}`;
+    let days = dowSet(dow);
+    if (!days) return cron;
+    // The server's weekday may not be the viewer's (16:00 Friday in Hanoi is
+    // Friday morning in London, but 01:00 Monday there is Sunday here).
+    if (when) {
+      const local = when.getDay();
+      const shift = [0, -1, 1].find((s) => days!.has((local - s + 7) % 7)) ?? 0;
+      if (shift) days = new Set([...days].map((d) => (d + shift + 7) % 7));
+    }
+    return `${daysWords(days)} at ${time}`;
+  }
+  if (dow === '*' && /^\d+$/.test(dom) && time) return `${ordinal(Number(dom))} of each month at ${time}`;
+  if (dom === '*' && dow === '*') {
+    const everyH = /^\*\/(\d+)$/.exec(hour);
+    if (/^\d+$/.test(min) && everyH) return `every ${everyH[1]} hours`;
+    if (/^\d+$/.test(min) && hour === '*') return 'every hour';
+    const everyM = /^\*\/(\d+)$/.exec(min);
+    if (everyM && hour === '*') return `every ${everyM[1]} minutes`;
+  }
+  return cron;
+}
+
+/**
+ * Coming up, one row per thing: the same title at the same minute is one
+ * row (a ritual each unit holds), naming the units that hold it.
+ */
+export function dedupeUpcoming(rows: HomeUpcoming[]): HomeUpcoming[] {
+  const out: HomeUpcoming[] = [];
+  const seen = new Map<string, HomeUpcoming>();
+  for (const r of rows) {
+    const key = `${r.title.trim().toLowerCase()}|${new Date(r.at).toISOString().slice(0, 16)}`;
+    const first = seen.get(key);
+    if (!first) { const copy = { ...r, units: r.units ? [...r.units] : r.units }; seen.set(key, copy); out.push(copy); continue; }
+    for (const u of r.units ?? []) { first.units = first.units ?? []; if (!first.units.includes(u)) first.units.push(u); }
+  }
+  return out;
+}
+
+/** The second line of a Coming up row: the units, then the cadence in words, else the detail. */
+export function upcomingDetail(u: HomeUpcoming): string {
+  const bits: string[] = [];
+  if (u.units?.length) bits.push(u.units.join(', '));
+  if (u.cron) bits.push(cadenceText(u.cron, u.at));
+  else if (u.detail && !(u.units?.length && u.detail === u.units.join(', '))) bits.push(u.detail);
+  return bits.join(' · ');
+}
 
 /** The file's name and its folder, for compact lists. */
 export function splitPath(path: string): { name: string; dir: string } {
