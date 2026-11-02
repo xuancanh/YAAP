@@ -4,11 +4,12 @@
  *  open incidents, and what changed on the threads and tasks I follow
  *  (docs/follows.md) — with filters; a filter opens the full pane for that
  *  kind (the full artifact, never a summary). A task opens through its deep
- *  link (`#/ws/<id>/org/board?task=<id>`). */
+ *  link (`#/ws/<id>/org/board?task=<id>`). The History toggle shows what
+ *  used to wait on me and how it ended (InboxHistory.tsx). */
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
 import { api, type FollowRow, type OrgApproval, type OrgDetail, type OrgPlan, type OrgTask } from '../lib/api';
-import { buildInbox, filterInbox, followingList, waitingCount, INBOX_FILTERS, type InboxFilter, type InboxItem } from '../lib/inbox';
+import { buildInbox, filterInbox, followingList, waitingCount, INBOX_FILTERS, type InboxFilter, type InboxItem, type InboxMode } from '../lib/inbox';
 import { I, P } from '../lib/icons';
 import { card, btn, pill, h2, faint, ago } from './org-ui';
 import { Approvals } from './OrganizationView';
@@ -16,6 +17,7 @@ import { Approvals } from './OrganizationView';
 const PlansPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.PlansPane })));
 const MyTasksPane = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.MyTasksPane })));
 const IncidentsPane = lazy(() => import('./OrgIncidentsView').then((m) => ({ default: m.IncidentsPane })));
+const InboxHistory = lazy(() => import('./InboxHistory').then((m) => ({ default: m.InboxHistory })));
 
 const KIND_COLOR: Record<InboxItem['kind'], string> = {
   approvals: 'var(--amber)', keys: 'var(--amber)', escalations: 'var(--red)', plans: 'var(--blue)', mytasks: 'var(--accent)', incidents: 'var(--red)', following: 'var(--green)',
@@ -51,6 +53,10 @@ export function InboxView() {
   const [org, setOrg] = useState<OrgDetail | null>(null);
   const [src, setSrc] = useState<{ approvals: OrgApproval[]; plans: OrgPlan[]; tasks: { assigned: OrgTask[]; reviewing: OrgTask[] } | null; follows: FollowRow[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  /** Waiting (the default) or History (docs/home.md "Inbox"). */
+  const [mode, setMode] = useState<InboxMode>('waiting');
+  // A filter picked from elsewhere (Home, a Company link) is a Waiting view.
+  useEffect(() => { setMode('waiting'); }, [app.inboxFilter]);
   const reload = useCallback(async () => {
     if (!wsId) return;
     try {
@@ -98,7 +104,15 @@ export function InboxView() {
           <h2 style={{ ...h2, flex: 1 }}>Inbox</h2>
           <span style={faint}>{waiting ? `${waiting} waiting on you` : 'nothing waiting'}</span>
         </div>
-        <div role="tablist" aria-label="Inbox filters" style={{ display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto', paddingBottom: 2 }}>
+        <div role="group" aria-label="Inbox view" style={{ display: 'inline-flex', marginTop: 10, border: '1px solid var(--border)', borderRadius: 9, overflow: 'hidden' }}>
+          {(['waiting', 'history'] as const).map((m) => (
+            <button key={m} aria-pressed={mode === m} data-testid={`inbox-mode-${m}`} onClick={() => setMode(m)}
+              style={{ padding: '5px 14px', border: 'none', cursor: 'pointer', font: 'inherit', fontSize: 12.5, fontWeight: 600, background: mode === m ? 'var(--accent)' : 'var(--panel)', color: mode === m ? '#fff' : 'var(--text-dim)' }}>
+              {m === 'waiting' ? 'Waiting' : 'History'}
+            </button>
+          ))}
+        </div>
+        {mode === 'waiting' && <div role="tablist" aria-label="Inbox filters" style={{ display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto', paddingBottom: 2 }}>
           {INBOX_FILTERS.map((f) => {
             const n = f.id === 'all' ? items.length : count(f.id);
             return (
@@ -107,11 +121,15 @@ export function InboxView() {
               </button>
             );
           })}
-        </div>
+        </div>}
       </div>
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: 16 }}>
         {err && <div style={{ color: 'var(--red)', fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
-        {!org || !src ? <div style={faint}>Loading…</div> : filter === 'all' ? (
+        {mode === 'history' ? (
+          <Suspense fallback={<div style={faint}>Loading…</div>}>
+            <InboxHistory onWaiting={(f) => { app.setInboxFilter(f); setMode('waiting'); }} />
+          </Suspense>
+        ) : !org || !src ? <div style={faint}>Loading…</div> : filter === 'all' ? (
           <div style={{ maxWidth: 820 }} data-testid="inbox-list">
             {items.length === 0 && <div style={faint}>Nothing waits on you. Decisions, keys, plans, your tasks, new incidents and what changed on what you follow show up here.</div>}
             {items.map((i) => <Row key={i.key} i={i} onOpen={open} />)}

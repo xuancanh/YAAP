@@ -682,6 +682,19 @@ export interface FollowView {
   reason: string | null;
   followers: Array<{ followerKind: 'agent' | 'user'; followerId: string; reason: string; createdAt: string }>;
 }
+/** The Inbox's History (`GET …/inbox/history`; server/src/home/inbox-history.service.ts):
+ *  what used to wait on me, resolved, by whom and how. */
+export type HistoryKind = 'approvals' | 'keys' | 'escalations' | 'plans' | 'mytasks' | 'incidents' | 'following';
+export type HistoryOutcome = 'approved' | 'rejected' | 'revision_requested' | 'expired' | 'released' | 'failed' | 'denied' | 'refused' | 'applied' | 'vetoed' | 'contained' | 'resolved' | 'done' | 'cancelled' | 'seen';
+export interface HistoryItem {
+  key: string; kind: HistoryKind; title: string; detail: string; outcome: HistoryOutcome;
+  by: { kind: 'you' | 'person' | 'delegate' | 'default' | 'agent' | 'system'; name: string; id?: string };
+  withoutYou: boolean; at: string;
+  link: { type: 'approval' | 'action' | 'plan' | 'incident' | 'task' | 'thread' | 'agent_task'; id: string; sessionId?: string; href?: string };
+  undo?: { kind: 'revoke_delegation'; delegationId: string; label: string } | { kind: 'reopen_task'; taskId: string; label: string };
+}
+export interface HistoryPage { items: HistoryItem[]; nextCursor: string | null }
+export interface HistoryParams { kind?: HistoryKind; q?: string; from?: string; to?: string; cursor?: string; limit?: number; without?: boolean }
 /** One of the caller's follows with what is new on it (`GET …/follows/mine`). */
 export interface FollowRow {
   id: string; workspaceId: string; followerKind: 'agent' | 'user'; followerId: string; targetKind: FollowTargetKind; targetId: string;
@@ -1333,6 +1346,13 @@ export const api = {
   unfollow: (wsId: string, targetKind: FollowTargetKind, targetId: string) =>
     send<FollowView>(`/api/workspaces/${wsId}/follows/unfollow`, 'POST', { targetKind, targetId }, followViewSchema),
   followsMine: (wsId: string) => get<FollowRow[]>(`/api/workspaces/${wsId}/follows/mine`),
+  /** The Inbox's History: resolved items, newest first, a page at a time. */
+  inboxHistory: (wsId: string, p: HistoryParams = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(p)) if (v !== undefined && v !== '' && v !== false) qs.set(k, v === true ? '1' : String(v));
+    const s = qs.toString();
+    return get<HistoryPage>(`/api/workspaces/${wsId}/inbox/history${s ? `?${s}` : ''}`);
+  },
   markFollowSeen: (wsId: string, targetKind: FollowTargetKind, targetId: string) =>
     send<{ ok: true }>(`/api/workspaces/${wsId}/follows/seen`, 'POST', { targetKind, targetId }),
 

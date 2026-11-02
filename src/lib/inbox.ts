@@ -1,7 +1,7 @@
 /** The Inbox and the Company menu (docs/company-vision.md §8 "The CEO's
  *  seat"): everything waiting on the CEO in one list, and the company panes
  *  grouped in the Company rail. Pure — the views and the store use these. */
-import type { FollowRow, OrgApproval, OrgHealth, OrgPlan, OrgTask } from './api';
+import type { FollowRow, HistoryItem, HistoryOutcome, OrgApproval, OrgHealth, OrgPlan, OrgTask } from './api';
 import type { OrgPane } from '../store';
 
 // ---- Inbox ----
@@ -126,4 +126,67 @@ export function paneHome(pane: OrgPane): { section: 'inbox'; filter: InboxFilter
   if (pane === 'approvals') return { section: 'inbox', filter: 'approvals' };
   if (pane === 'mytasks') return { section: 'inbox', filter: 'mytasks' };
   return { section: 'workspace', pane };
+}
+
+// ---- the Inbox's History ----
+
+/** Waiting (what is on me now) or History (what was, and how it ended). */
+export type InboxMode = 'waiting' | 'history';
+
+/** The History's date windows, in days (0 = all time). */
+export const HISTORY_RANGES: Array<{ days: number; label: string }> = [
+  { days: 7, label: '7 days' }, { days: 30, label: '30 days' }, { days: 90, label: '90 days' }, { days: 0, label: 'All time' },
+];
+
+/** The start of a window `days` back from `now`, or undefined for all time. */
+export function historyFrom(days: number, now: Date = new Date()): string | undefined {
+  return days > 0 ? new Date(now.getTime() - days * 86_400_000).toISOString() : undefined;
+}
+
+export const OUTCOME_LABEL: Record<HistoryOutcome, string> = {
+  approved: 'approved', rejected: 'rejected', revision_requested: 'sent back', expired: 'expired',
+  released: 'released', failed: 'released · failed', denied: 'denied', refused: 'refused',
+  applied: 'applied', vetoed: 'vetoed', contained: 'contained', resolved: 'resolved',
+  done: 'done', cancelled: 'cancelled', seen: 'seen',
+};
+
+/** The outcome's colour: a yes green, a no red, the rest neutral. */
+export function outcomeColor(o: HistoryOutcome): string {
+  if (o === 'approved' || o === 'released' || o === 'applied' || o === 'resolved' || o === 'done') return 'var(--green)';
+  if (o === 'rejected' || o === 'denied' || o === 'vetoed' || o === 'failed' || o === 'refused') return 'var(--red)';
+  if (o === 'contained') return 'var(--amber)';
+  return 'var(--text-faint)';
+}
+
+/** "by you", "by the default at your deadline", "by your delegate Fin", "by Penny (agent)". */
+export function historyBy(i: Pick<HistoryItem, 'by' | 'outcome'>): string {
+  switch (i.by.kind) {
+    case 'you': return 'by you';
+    case 'default': return `by ${i.by.name}`;
+    case 'delegate': return `by your delegate ${i.by.name === 'You' ? '(you)' : i.by.name}`;
+    case 'agent': return `by ${i.by.name} (agent)`;
+    case 'system': return i.outcome === 'expired' && i.by.name.startsWith('nobody') ? 'nobody answered' : `by ${i.by.name}`;
+    default: return `by ${i.by.name}`;
+  }
+}
+
+/** Where a History row opens: the task, the conversation a key ran in, the
+ *  Inbox pane holding the cards, the plan or incident, or a followed thread. */
+export type HistoryTarget =
+  | { to: 'task'; taskId: string }
+  | { to: 'chat'; sessionId: string }
+  | { to: 'inbox'; filter: InboxFilter }
+  | { to: 'pane'; pane: 'plans' | 'incidents'; focus: { kind: 'plan' | 'incident'; id: string } }
+  | { to: 'hash'; hash: string };
+
+export function historyTarget(i: HistoryItem): HistoryTarget | null {
+  const l = i.link;
+  switch (l.type) {
+    case 'task': return { to: 'task', taskId: l.id };
+    case 'action': return l.sessionId ? { to: 'chat', sessionId: l.sessionId } : { to: 'inbox', filter: 'keys' };
+    case 'approval': return { to: 'inbox', filter: i.kind === 'escalations' ? 'escalations' : 'approvals' };
+    case 'plan': return { to: 'pane', pane: 'plans', focus: { kind: 'plan', id: l.id } };
+    case 'incident': return { to: 'pane', pane: 'incidents', focus: { kind: 'incident', id: l.id } };
+    default: return l.href ? { to: 'hash', hash: l.href.replace(/^[^#]*/, '') } : null;
+  }
 }
