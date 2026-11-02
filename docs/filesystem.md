@@ -12,24 +12,120 @@ in the bucket (one prefix = one tree, so quota/search/delete stay one prefix
 operation). The paths below are relative to that root and are what users and
 agents see, written with a leading `/`.
 
+One predictable tree. `server/src/files/layout.ts` is the single place that
+knows it: every server writer (the chief's seeded ledger, the record
+mirrors, meeting minutes, the generated indexes, function folders) builds
+its path there, and a test checks every `/org/…` path a pack playbook or a
+built-in skill names against its patterns (`classifyOrgPath`), so code and
+skills cannot drift apart.
+
 ```
-/                         the global workspace
-├── agents/
-│   ├── <handle>/         an agent's home — its default working folder
-│   │   ├── LESSONS.md    file brain (agent memory), as before
-│   │   ├── JOURNAL.md
-│   │   ├── knowledge/
-│   │   ├── apps/<appId>/ mini-app state and data
-│   │   └── .checkpoints/ read-only rollback history
-│   └── …
-├── org/                  org-wide artifacts: plans, decisions, meeting notes,
-│   │                     and the mirrored company records (below)
-│   └── meetings/<yyyy>/  minutes of every unit meeting (docs/meetings.md)
-├── channels/<slug>/      a channel's shared folder (unchanged)
-│   └── meetings/         minutes of `/meeting`s held in that channel
-├── uploads/              files users attach from the composer
-└── <anything else>/      user- or agent-made shared folders
+/                              the workspace
+├── org/                       the company's shared folder
+│   ├── README.md              the index: what lives where, functions, units      (generated)
+│   ├── operating-system.md    the chief's operating system: profile, parameters,
+│   │                          decision rights, why the root rituals look as they do
+│   ├── calendar.md            every ritual: unit, when (in words), purpose, owner,
+│   │                          output, last held, empty cycles                    (generated)
+│   ├── decisions.md           the decision log (one decider each)
+│   ├── scorecard.md, issues.md, risks.md, handoffs.md, values.md     the ledger
+│   ├── goals/                 README.md (vision, objectives) and
+│   │                          <id8>-<slug>.md per objective: key results, check-ins (generated)
+│   ├── rituals/<unit>.md      a unit's rituals, attendees, recent minutes         (generated)
+│   ├── meetings/<unit>/<yyyy>/<yyyy-mm-dd>-<kind>.md          minutes (docs/meetings.md)
+│   │                     …/<yyyy-mm-dd>-<kind>-agenda.md       the agenda and pre-reads
+│   ├── reports/<yyyy>-W<ww>.md            the weekly review pack (ISO week)
+│   │          <yyyy-mm>-<topic>.md        monthly reviews (staffing, learning)
+│   │          <yyyy-mm-dd>-board-update.md board / investor update drafts
+│   ├── briefs/<yyyy-mm-dd>.md the CEO's daily brief
+│   ├── planning/<yyyy>-Q<n>.md            the quarter's planning pack
+│   ├── proposals/<yyyy-mm-dd>-<slug>.md   proposals for the CEO
+│   ├── archive/<yyyy>/…       closed issues, resolved risks, old decisions
+│   ├── playbooks/ experiments/ evals/ outcomes.md metrics.md   record mirrors (below)
+│   └── <function>/            one per function (below): README.md, cadence.md,
+│                              kpis.md, team.md, okrs/<yyyy>-Q<n>.md,
+│                              reports/<yyyy>-W<ww>.md, audits/<yyyy-mm>.md,
+│                              processes/, and the function's own subfolders
+├── channels/<slug>/           a channel's shared folder
+│   └── meetings/<yyyy-mm-dd>-<title>.md   minutes of `/meeting`s in a non-unit channel
+├── agents/<handle>/           an agent's home — its default working folder
+│   ├── LESSONS.md, JOURNAL.md file brain (agent memory)
+│   ├── knowledge/             durable reference notes
+│   ├── apps/<appId>/          mini-app state and data
+│   ├── work/                  drafts not yet ready to share
+│   └── .checkpoints/          read-only rollback history
+├── uploads/                   files users attach from the composer
+└── <anything else>/           user- or agent-made shared folders
 ```
+
+**Function folders.** One folder per job function, named by the role
+catalog's id prefix, so a role, its pack and its folder agree without a
+map: `sales`, `marketing`, `cs` (Customer Success & Support), `product`,
+`engineering`, `design`, `data`, `finance`, `people`, `legal`, `ops`
+(Operations), `it-security`, `revops`. `role:cs-manager` and the
+`pack-biz-cs-*` packs work in `/org/cs/`. The fixed part is `README.md`,
+`cadence.md`, `kpis.md`, `team.md`, `okrs/<yyyy>-Q<n>.md`,
+`reports/<yyyy>-W<ww>.md` (the weekly report to the chief),
+`audits/<yyyy-mm>.md` and `processes/`; anything else is the function's own
+subfolder. Packs used `/org/customer/` and `/org/operations/` before the
+convention; the migration below moves them.
+
+**Decisions** stay one file, `/org/decisions.md`: the log is a table agents
+append to, and the system's own decision rows (approvals, meetings,
+tunables, experiments) are `org_decisions`, which the file links by id.
+
+### Generated indexes
+
+`OrgLayoutService` (`server/src/org/org-layout.service.ts`) writes these
+through `WorkspaceFs` with the `system` author, only when their text
+changed:
+
+| File | From | Refreshed when |
+|------|------|----------------|
+| `/org/README.md` | the layout, the functions with members (with their heads and units), the units | a member, unit or the organization changes; at boot |
+| `/org/calendar.md` | the cadences in words (`server/src/org/cadence-words.ts`, the wording of the SPA's `cadenceText`, in server time), the units' leads, the held meetings (last held; empty cycles = held meetings in a row with no decision and no action) | a cadence changes, a meeting ends or is cancelled, the org chart changes |
+| `/org/rituals/<unit>.md` | one unit's cadences, its lead and direct reports, its last five minutes | as the calendar |
+| `/org/goals/README.md`, `/org/goals/<id8>-<slug>.md` | the vision, objectives, key results (start, current, target, progress, confidence, at risk, source) and their last check-ins | a goal is created or updated, a check-in, a key result's source is bound |
+| `/org/<function>/README.md` | the folder's fixed layout and its head | written once when the function's first member joins (onboarding or a hire), never over a file; the function owns it |
+
+The refresh listens to the org audit log (`OrgAuditService.onAppend`: every
+cadence, goal, check-in, unit, member and meeting change writes a row),
+debounced per organization; onboarding refreshes right after it seeds the
+ledger (the calendar is no longer seeded). `README.md` and `calendar.md` end
+with a Notes marker: whatever follows it is kept when the file is
+regenerated (the chief's planning timeline, an absence, a retirement
+outcome); a calendar from before the layout keeps its old text under the
+Notes. The others are fully generated and say so. A renamed objective's old
+file is deleted (kept as a revision).
+
+### Moving files into the layout
+
+A boot job (`OrgLayoutService.bootAll`), per organization of every account,
+moves files written under earlier conventions (`legacyTarget` in
+`layout.ts`, pure):
+
+| Was | Is |
+|-----|----|
+| `/org/customer/…`, `/org/operations/…` | `/org/cs/…`, `/org/ops/…` |
+| `/org/meetings/<yyyy>/<day>-<unit>-<kind>[-sfx].md` | `/org/meetings/<unit>/<yyyy>/<day>-<kind>[-sfx].md` (the unit is the longest known unit slug the name starts with, else the part before a meeting kind, else `unsorted`) |
+| `/org/meetings/<day>-leadership.md` (the chief's agenda) | `/org/meetings/<root unit>/<yyyy>/<day>-board-agenda.md` |
+| `/org/reviews/<day>.md` | `/org/reports/<yyyy>-W<ww>.md` |
+| `/org/board/<day>-<x>.md` | `/org/reports/<day>-board-<x>.md` |
+| `/org/staffing/<yyyy-mm>.md`, `/org/learning/<yyyy-mm>.md` | `/org/reports/<yyyy-mm>-staffing.md`, `…-learning.md` |
+
+Each file moves with `WorkspaceFs.move`, so its version, creator and
+revisions follow (the move itself is attributed to `system`). Nothing is
+left behind and nothing is overwritten: a target that exists gets `-2`,
+`-3`… before the extension. The links the server stored are rewritten:
+`org_meetings.minutesPath` and the minutes' attachments on channel
+messages. Paths written as text in task comments, messages or other files
+are not rewritten (the index names where things live now). Files outside
+these patterns — a loose note at the top of `/org/` — stay where they are;
+the chief's `org-files-hygiene` pass files them. The job is idempotent (a
+moved path never maps again), logs its counts, never throws, then
+regenerates every index.
+
+### Homes and Artifacts
 
 - **Home.** `agents.homeDir` stores the agent's home as a workspace-relative
   path, `agents/<handle>`. `<handle>` is the agent's name slugified
@@ -41,7 +137,12 @@ agents see, written with a leading `/`.
   *Artifacts* view shows the whole tree, grouped as **Shared** (the
   top-level shared folders) and **Agents** (each agent's home, with its
   avatar). An agent's own *Artifacts* tab shows its home. *Artifacts* is a
-  main menu item (desktop and phone); `/org/` leads the Shared group.
+  main menu item (desktop and phone); `/org/` leads the Shared group, with
+  `/org/README.md` pinned above it, and `/org/`'s children are listed in the
+  layout's order (README, operating-system, calendar, goals, meetings,
+  rituals, reports, briefs, planning, the ledger, the function folders, the
+  mirrors, the archive; anything else after — `ORG_ORDER` in
+  `src/lib/artifacts.ts`, kept equal to the server's by a test).
 
 ## Mirrored company records
 
@@ -71,13 +172,14 @@ throws.
 ## Meeting minutes
 
 Every meeting ends with a minutes document (`docs/meetings.md`), written
-through `WorkspaceFs` by `OrgMeetingMinutesService`
+through `WorkspaceFs` (the path from `orgPath.minutes` / `channelPath.minutes`
+in `layout.ts`) by `OrgMeetingMinutesService`
 (`server/src/org/meeting-minutes.service.ts`) with the facilitator agent as
 author (`system` when there is none):
 
 | File | Written when | Holds |
 |------|--------------|-------|
-| `/org/meetings/<yyyy>/<yyyy-mm-dd>-<unit-slug>-<kind>.md` | a unit's meeting (a ritual from its cadence, `/meeting <kind>` in a unit channel, Start meeting) ends | when, the unit, facilitator, attendees, agenda, summary, discussion, decisions (who decided, `#decision:` id), action items (owner, done-when, the board task), open questions and risks, lessons, the next meeting |
+| `/org/meetings/<unit-slug>/<yyyy>/<yyyy-mm-dd>-<kind>.md` | a unit's meeting (a ritual from its cadence, `/meeting <kind>` in a unit channel, Start meeting) ends | when, the unit, facilitator, attendees, agenda, summary, discussion, decisions (who decided, `#decision:` id), action items (owner, done-when, the board task), open questions and risks, lessons, the next meeting |
 | `/<channel folder>/meetings/<yyyy-mm-dd>-<title-slug>.md` | a `/meeting` in a channel that is not a unit channel ends (the folder is `channels/<slug>` unless the channel has another) | the same |
 
 Dates are server-local, like the cadences. A second meeting at the same path
@@ -94,7 +196,7 @@ Agent file tools resolve paths like a shell whose cwd is the agent's home:
 |-----------------|-----------------------------------------------|
 | `notes.md`      | `/agents/<handle>/notes.md` (relative = home)  |
 | `~/notes.md`    | `/agents/<handle>/notes.md`                    |
-| `/org/plan.md`  | `/org/plan.md` (absolute = workspace root)     |
+| `/org/sales/plan.md` | `/org/sales/plan.md` (absolute = workspace root) |
 | `shared/x.md`   | `/<workspaceFolder>/x.md` — kept for back-compat when the agent has an assigned folder |
 
 A chat with no agent works at `/`, as direct chats did before.
@@ -163,7 +265,7 @@ clobber each other.
   version, by }` on the existing workspace event stream, so open viewers
   refresh live and show "Ada just edited this".
 
-## Migration
+## Migration of agent homes
 
 A boot-time, idempotent data move (not SQL): for each agent with a
 workspace, copy `agents/<agentId>/…` to `workspaces/<ws>/agents/<handle>/…`,

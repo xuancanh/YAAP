@@ -586,7 +586,8 @@ the risk sweep; the why chain.
   the quarterly planning kickoff.
 - `seedArtifacts` writes the ledger once at onboarding:
   `/org/operating-system.md`, `decisions.md`, `risks.md`, `scorecard.md`,
-  `calendar.md`, `issues.md`, `handoffs.md`, `values.md`.
+  `issues.md`, `handoffs.md`, `values.md`; `OrgLayoutService` then generates
+  `/org/README.md`, `calendar.md`, `rituals/` and `goals/` from the records.
 
 `OrgBootstrapService` applies all of this at onboarding.
 `OrgChiefService` exposes the operating system's state to the chief's
@@ -787,10 +788,15 @@ workspaces/<wsId>/
 │   ├── LESSONS.md, JOURNAL.md  its file brain
 │   ├── knowledge/              durable reference notes
 │   ├── apps/<appId>/           mini-app state and data
+│   ├── work/                   drafts not yet ready to share
 │   └── .checkpoints/<date>/    a daily brain snapshot, 14 kept, read-only
-├── org/                        the company's shared folder
+├── org/                        the company's shared folder (server/src/files/layout.ts)
+│   ├── README.md, calendar.md, rituals/<unit>.md, goals/   generated indexes
 │   ├── operating-system.md, decisions.md, risks.md, scorecard.md,
-│   │   calendar.md, issues.md, handoffs.md, values.md   (seeded once by the chief OS)
+│   │   issues.md, handoffs.md, values.md      (seeded once by the chief OS)
+│   ├── meetings/<unit>/<yyyy>/<yyyy-mm-dd>-<kind>.md   minutes
+│   ├── reports/, briefs/, planning/, proposals/, archive/   the chief's outputs
+│   ├── <function>/             sales, cs, ops, …: cadence, kpis, team, okrs, reports, audits
 │   ├── playbooks/<slug>.md     mirrored records (below)
 │   ├── experiments/<id8>-<slug>.md
 │   ├── evals/<role>.md
@@ -816,6 +822,10 @@ workspaces/<wsId>/
   wrote it (`fs-http.ts`). Delete keeps the last body, `restore` is itself a
   revision, and a move carries metadata and revisions. Every change emits
   `file.changed`.
+- **Layout** (`server/src/files/layout.ts`): every server writer builds
+  its path there; `OrgLayoutService` (`server/src/org/org-layout.service.ts`)
+  writes the generated indexes from the audit log and moves files written
+  under earlier conventions at boot (docs/filesystem.md "Layout").
 - **Mirrors** (`server/src/org/org-mirror.service.ts`): playbooks,
   experiments (with predictions), evals, outcomes and metrics are written as
   markdown by the `system` author only when the text changed, from

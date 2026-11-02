@@ -41,7 +41,10 @@ while running — `OrgMeetingRuntime` hands the record to
    the CEO's brief. A cancelled meeting executes nothing.
 3. **Document.** Markdown written through `WorkspaceFs`, authored by the
    facilitator agent (`system` when there is none):
-   - a unit's meeting → `/org/meetings/<yyyy>/<yyyy-mm-dd>-<unit-slug>-<kind>.md`
+   - a unit's meeting → `/org/meetings/<unit-slug>/<yyyy>/<yyyy-mm-dd>-<kind>.md`
+     (the unit's meetings together, a year per folder; the agenda the chief
+     prepares sits beside it as `…-<kind>-agenda.md`; the path comes from
+     `orgPath.minutes` in `server/src/files/layout.ts`)
    - a meeting in a channel that is not a unit channel → `/channels/<slug>/meetings/<yyyy-mm-dd>-<title-slug>.md`
      (the channel's folder, so it shows in the channel's Files tab; an
      ad-hoc `/meeting` is titled "Meeting: <first words of the agenda>")

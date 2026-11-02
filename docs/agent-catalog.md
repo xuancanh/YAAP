@@ -323,8 +323,8 @@ outside a task run as well (`org_task_update`, `org_task_comment`,
 what every member shares: `org-member-workflow` (status, handoffs between
 functions on both sides, blocks, failures, escalation), `org-member-onboarding`
 and `org-unit-retro` (docs/autonomous-skills-review.md). The
-weekly report is a file in `/org/<fn>/reports/` plus an `org_message`
-summary; audit findings go in `/org/<fn>/audits/` (the independent
+weekly report is a file `/org/<fn>/reports/<yyyy>-W<ww>.md` plus an `org_message`
+summary; audit findings go in `/org/<fn>/audits/<yyyy-mm>.md` (the independent
 `org_audit_finding` stays the Auditor's).
 
 **Mechanisms adapt.** No cadence or threshold in these playbooks is fixed.
@@ -337,11 +337,17 @@ to `/org/<fn>/cadence.md`, and applies ritual changes with
 how to flex it ("weekly; twice weekly in a launch push; fortnightly for a
 deliberate profile"), never a single number (§1b of the vision).
 
-**Files.** Each function keeps a shared folder `/org/<fn>/` (`okrs/`,
-`reports/`, `audits/`, `cadence.md`, `kpis.md`, `team.md` and its own
-process artifacts) so heads, specialists, the chief and humans read the
-same record; members keep working notes in their own home
-(docs/filesystem.md).
+**Files.** Each function keeps a shared folder `/org/<fn>/`, named by its
+roles' id prefix (`sales`, `marketing`, `cs`, `product`, `engineering`,
+`design`, `data`, `finance`, `people`, `legal`, `ops`, `it-security`,
+`revops`), with a fixed core — `README.md` (written when its first member
+joins), `cadence.md`, `kpis.md`, `team.md`, `okrs/<yyyy>-Q<n>.md`,
+`reports/<yyyy>-W<ww>.md`, `audits/<yyyy-mm>.md`, `processes/` — and its own
+process artifacts in subfolders, so heads, specialists, the chief and humans
+read the same record; members keep working notes and drafts in their own
+home (`work/`). The layout is `server/src/files/layout.ts`
+(docs/filesystem.md "Layout"); a test checks every `/org/` path a playbook
+names against it.
 
 **Build.** Packs are `packs/biz-*.md` with `"cat": "Business"`,
 `"tail": "business"` and the segment fields (`"segment": "business"`,
@@ -386,7 +392,7 @@ Folder: `/org/marketing/` (okrs, calendar, channel-review, launches, funnel, con
 
 ### Customer Success & Support
 
-Folder: `/org/customer/` (okrs, queue-review, health, escalations, accounts, onboarding, kb, renewals.md, reports, audits, cadence.md, kpis.md, team.md).
+Folder: `/org/cs/` (okrs, queue-review, health, escalations, accounts, onboarding, kb, renewals.md, reports, audits, cadence.md, kpis.md, team.md).
 
 | Pack | Role id | Owns (KPIs) | Cadence |
 |---|---|---|---|
@@ -473,7 +479,7 @@ Folder: `/org/legal/` (okrs, matters.md, playbook.md, contracts, obligations.md,
 
 ### Operations
 
-Folder: `/org/operations/` (processes.md, sops/, improvements.md, vendors.md, programs/, okrs/, reports/, audits/, cadence.md).
+Folder: `/org/ops/` (processes.md, sops/, improvements.md, vendors.md, programs/, okrs/, reports/, audits/, cadence.md).
 
 | Pack | Role id | Owns (KPIs) | Cadence |
 |---|---|---|---|

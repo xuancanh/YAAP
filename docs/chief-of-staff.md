@@ -132,9 +132,10 @@ default, and nothing carries to another workspace.
 ## 4. The ledger under `/org/`
 
 A small, fixed core of artifacts whose fields the sources specify. They live
-in the shared `/org/` folder at the workspace root (`docs/filesystem.md`);
+in the shared `/org/` folder at the workspace root, in the one layout
+`server/src/files/layout.ts` defines (`docs/filesystem.md` "Layout");
 onboarding writes them once, never over a file that exists, and the chief
-keeps them.
+keeps them. `/org/README.md` indexes the folder.
 
 | File | Holds |
 |---|---|
@@ -142,13 +143,27 @@ keeps them.
 | `/org/scorecard.md` | 5–15 numbers: owner, target, this week, six-week trend, on/off track |
 | `/org/issues.md` | the weekly meeting's issues list |
 | `/org/decisions.md` | question, one decider, recommender, inputs/veto, door, decision, rationale, dissent, follow-ups, revisit condition |
-| `/org/calendar.md` | every forum: purpose, owner (never the chief), output, empty-cycles counter |
+| `/org/calendar.md` | every forum: unit, when (in words), purpose, owner (never the chief), output, last held, empty cycles — generated from the cadences and the minutes, not seeded; the chief's notes go below its Notes marker and are kept |
 | `/org/risks.md` | owner, likelihood, impact, mitigation, status, review dates |
 | `/org/handoffs.md` | the handoff SLA registry, seeded with the function owners |
 | `/org/values.md` | values → mechanism map; a value with none is a drift candidate |
 
-The goal registry is the intent tree (`org_intent`), and the system's own
-decision rows stay in `org_decisions`; the files link to them by id.
+The goal registry is the intent tree (`org_intent`), mirrored to
+`/org/goals/` (one file per objective with its key results and check-ins);
+the system's own decision rows stay in `org_decisions`; the files link to
+them by id. `/org/rituals/<unit>.md` lists each unit's rituals and attendees.
+Both are generated (`OrgLayoutService`), like the calendar.
+
+The chief's own outputs have fixed places too: the weekly review pack at
+`/org/reports/<yyyy>-W<ww>.md`, monthly reviews at
+`/org/reports/<yyyy-mm>-staffing.md` and `…-learning.md`, board update
+drafts at `/org/reports/<yyyy-mm-dd>-board-update.md`, the daily brief at
+`/org/briefs/<yyyy-mm-dd>.md`, the quarter's planning pack at
+`/org/planning/<yyyy>-Q<n>.md`, proposals at
+`/org/proposals/<yyyy-mm-dd>-<slug>.md`, the leadership meeting's agenda
+beside its minutes at `/org/meetings/company/<yyyy>/<yyyy-mm-dd>-board-agenda.md`,
+and archived ledger rows under `/org/archive/<yyyy>/`. The chief changes a
+ritual through its cadence (`org_set_cadence`); the calendar follows.
 
 ## 5. The heartbeat reads the operating system
 
