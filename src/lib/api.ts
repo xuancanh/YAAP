@@ -722,6 +722,8 @@ export type WorkspaceEvent =
   | { type: 'channel_stream'; workspaceId: string; channelId: string; threadRootId: string | null; replyRootId?: string; agentId: string; liveId: string; delta: string; done?: boolean }
   | { type: 'task_update'; workspaceId: string; channelId: string; taskId: string; status: string; messageId: string | null; title: string }
   | { type: 'channel_update'; workspaceId: string; channelId: string }
+  /** docs/meetings.md "During": a meeting's room changed; refetch it. */
+  | { type: 'meeting_update'; workspaceId: string; channelId: string; meetingId: string; threadRootId: string | null; status: string }
   /** docs/filesystem.md "Activity": a write through WorkspaceFs. */
   | { type: 'file.changed' | 'file_changed'; workspaceId?: string; path: string; version?: number; by?: FileAuthor | string | null }
   | { type: 'channel_approval'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; sessionId: string; callId: string; tool: string; input: Record<string, unknown>; forActor: string; forName: string };
@@ -908,13 +910,27 @@ export interface OrgAuditRun {
 export interface AuditFinding { severity: string; kind: string; refType: string; refId: string; title: string; detail: string }
 export type MeetingKind = 'planning' | 'standup' | 'weekly_review' | 'retro' | 'board' | 'adhoc';
 export const MEETING_KINDS: MeetingKind[] = ['planning', 'standup', 'weekly_review', 'retro', 'board', 'adhoc'];
-export type MeetingStatus = 'scheduled' | 'running' | 'done' | 'cancelled' | 'postponed';
-export interface MinutesAction { title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string }
-export interface MinutesDecision { title: string; decision: string; alternatives: string; rationale: string; by: string; decisionId?: string }
+export type MeetingStatus = 'scheduled' | 'running' | 'done' | 'cancelled' | 'postponed' | 'skipped';
+/** A person's verdict on a proposal in the room (docs/meetings.md "During"). */
+export interface ProposalVerdict { verdict?: 'approved' | 'rejected'; verdictBy?: string; verdictName?: string }
+export interface MinutesAction extends ProposalVerdict { title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string; messageId?: string; due?: string | null }
+export interface MinutesDecision extends ProposalVerdict { title: string; decision: string; alternatives: string; rationale: string; by: string; decisionId?: string; messageId?: string }
+export interface MinutesQuestion { question: string; by: string; messageId?: string; answer?: string; answeredBy?: string }
 /** A retro's lesson (docs/company-vision.md §6, item 22): one sentence with an audience; may carry a proposed charter or playbook change. */
 export type LessonAudience = 'member' | 'unit' | 'company';
 export interface MinutesLesson { text: string; audience: LessonAudience; by: string; proposedCharterChange?: { agent: string; text: string; mode?: 'append' | 'replace'; approvalId?: string }; proposedPlaybookChange?: { playbookId: string; note: string; taskId?: string } }
-export interface Minutes { summary: string; decisions: MinutesDecision[]; actions: MinutesAction[]; risks: Array<{ text: string; by: string }>; questions: Array<{ question: string; by: string }>; lessons?: MinutesLesson[]; endedBy?: string }
+export interface Minutes { summary: string; decisions: MinutesDecision[]; actions: MinutesAction[]; risks: Array<{ text: string; by: string }>; questions: MinutesQuestion[]; lessons?: MinutesLesson[]; parked?: Array<{ text: string; by: string; taskId?: string }>; endedBy?: string }
+/** The live room of a meeting (`OrgMeeting.room`, JSON; docs/meetings.md "During"). */
+export interface MeetingRoomState {
+  items: string[]; current: number; itemStartedAt: string | null; itemMinutes: number; round: number; roundCap: number; extended: number;
+  speaking: string | null; attendance: Record<string, 'waiting' | 'speaking' | 'spoke' | 'passed' | 'idle'>; passes: Array<{ agentId: string; round: number; reason: string }>;
+  present: string[]; proposals: Array<{ text: string; why: string; byKind: 'agent' | 'human'; by: string; at: string }>; preRead: string;
+  openItems: Array<{ title: string; owner: string; taskId: string | null; state: 'done' | 'late' | 'blocked' | 'open' | 'dropped'; status: string; due: string | null }>;
+  verdicts: Record<string, { verdict: 'approved' | 'rejected'; by: string; byName: string; at: string; note?: string }>;
+  answers: Record<string, { answer: string; by: string; byName: string; at: string }>;
+  controls: { extend: number; skip: number; skipped: number; end: { by: string; at: string } | null };
+  remindedAt: string | null; preparedAt: string | null; speakers: string[]; skipped: string | null;
+}
 /** A meeting (docs/group-chat.md §8): a thread in a unit channel; `minutes` is JSON (Minutes). */
 export interface OrgMeeting {
   id: string; orgId: string; unitId: string | null; channelId: string | null; threadRootId: string | null; kind: MeetingKind; title: string; agenda: string;
@@ -922,6 +938,8 @@ export interface OrgMeeting {
   rounds: number; usd: number; minutes: string; createdBy: string; createdAt: string;
   /** The minutes document in the workspace tree (docs/meetings.md); null until the meeting ends. */
   minutesPath?: string | null; summary?: string;
+  /** The live room (JSON MeetingRoomState) and the tokens it used (migration 0050). */
+  room?: string; tokensIn?: number; tokensOut?: number;
 }
 /** One row of GET …/meetings (docs/meetings.md "The calendar"): a meeting
  *  held or scheduled, or an upcoming occurrence of a cadence (`source: 'cadence'`). */
@@ -932,6 +950,7 @@ export interface CalendarMeeting {
   facilitator: { id: string; name: string } | null; attendees: Array<{ kind: 'agent' | 'human'; id: string; name: string }>;
   minutesPath: string | null; summary: string; cron: string | null; threadRootId: string | null;
   decisions: number; actions: number; rounds: number; usd: number;
+  tokensIn?: number; tokensOut?: number;
 }
 export interface CalendarResponse { from: string; to: string; now: string; hasOrg: boolean; meetings: CalendarMeeting[] }
 /** The decision log (docs/company-vision.md §6); referenced as `#decision:<id>`. */
@@ -1740,7 +1759,13 @@ export const api = {
     return get<CalendarResponse>(`/api/workspaces/${wsId}/meetings${qs ? `?${qs}` : ''}`);
   },
   orgMeeting: (wsId: string, meetingId: string) => get<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings/${enc(meetingId)}`),
-  startOrgMeeting: (wsId: string, body: { kind: MeetingKind; unitId?: string; channelId?: string; agenda?: string; title?: string }) => send<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings`, 'POST', body),
+  startOrgMeeting: (wsId: string, body: { kind: MeetingKind; unitId?: string; channelId?: string; agenda?: string; title?: string; attendees?: Array<{ kind: 'agent' | 'human'; id: string }> }) => send<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings`, 'POST', body),
+  /** The room (docs/meetings.md "During"): join, steer, rule on proposals, answer, propose agenda items. */
+  joinMeeting: (wsId: string, meetingId: string) => send<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings/${enc(meetingId)}/join`, 'POST', {}),
+  controlMeeting: (wsId: string, meetingId: string, action: 'extend' | 'skip' | 'end') => send<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings/${enc(meetingId)}/control`, 'POST', { action }),
+  meetingVerdict: (wsId: string, meetingId: string, body: { kind: 'decision' | 'action'; index: number; verdict: 'approve' | 'reject'; note?: string }) => send<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings/${enc(meetingId)}/verdict`, 'POST', body),
+  meetingAnswer: (wsId: string, meetingId: string, index: number, answer: string) => send<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings/${enc(meetingId)}/answer`, 'POST', { index, answer }),
+  proposeMeetingAgenda: (wsId: string, meetingId: string, text: string, why?: string) => send<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings/${enc(meetingId)}/agenda`, 'POST', { text, why }),
   cancelOrgMeeting: (wsId: string, meetingId: string) => send<OrgMeeting>(`/api/workspaces/${wsId}/org/meetings/${enc(meetingId)}/cancel`, 'POST'),
   orgDecisions: (wsId: string, unitId?: string | null) => get<OrgDecision[]>(`/api/workspaces/${wsId}/org/decisions${unitId ? `?unitId=${enc(unitId)}` : ''}`),
   /** The decision a `#decision:<id>` chip names (id or unique prefix). */

@@ -8,11 +8,13 @@
 /* eslint-disable react-refresh/only-export-components */
 import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { useApp } from '../store';
-import { api, MEETING_KINDS, type MeetingKind, type OrgCadence, type OrgDecision, type OrgDetail, type OrgMeeting } from '../lib/api';
+import { api, type OrgCadence, type OrgDecision, type OrgDetail, type OrgMeeting } from '../lib/api';
 import { fmtUsd } from '../lib/pricing';
 import { decidedByLabel, decisionSource, firesOn, humanCron, MEETING_KIND_TITLES } from '../lib/org';
+import { tokensText } from '../lib/meetings';
 import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar, UnitChips } from './org-ui';
 import { MeetingsBoard } from './MeetingsBoard';
+import { MeetingStartDialog } from './MeetingStartDialog';
 
 const RelatedDrawer = lazy(() => import('./OrgMemoryView').then((m) => ({ default: m.RelatedDrawer })));
 
@@ -66,12 +68,12 @@ export function MeetingsPane({ org }: { org: OrgDetail }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 220 }}>
           <h2 style={h2}>{isCompany ? 'Meetings' : `${current?.name ?? 'Unit'} · meetings`}</h2>
-          <div style={faint}>Rituals are threads in the unit channel: one turn per attendee per round, at most three rounds, a USD cap, and minutes that become tasks, decisions, risks and questions for you. Crons are server-local, like loops.</div>
+          <div style={faint}>Rituals are threads in the unit channel: they open with the last meeting's open items, give each attendee one turn per round (later rounds only those with something open; passing is cheap), time-box each agenda item, stay under a USD cap, skip themselves when there is nothing to discuss, and end in minutes that become tasks, decisions, risks and questions for you. Crons are server-local, like loops.</div>
         </div>
         <button style={btn(true)} onClick={() => setStarting(!starting)}>Start meeting</button>
       </div>
       <UnitChips count={(u) => app.orgCadences.filter((c) => c.unitId === u.id && c.enabled === 1 && firesOn(c.cron)).length || null} title={(u) => `${app.orgCadences.filter((c) => c.unitId === u.id && c.enabled === 1 && firesOn(c.cron)).length} ritual(s) today`} />
-      {starting && <StartMeeting org={org} defaultUnitId={unitId ?? units.find((u) => u.parentUnitId === null)?.id ?? ''} onDone={(m) => { setStarting(false); void refresh(); if (m) setTimeout(() => { void api.orgMeeting(wsId, m.id).then(openMeeting).catch(() => {}); }, 1500); }} />}
+      {starting && <MeetingStartDialog wsId={wsId} units={units} defaultUnitId={unitId ?? units.find((u) => u.parentUnitId === null)?.id ?? ''} onDone={(m) => { setStarting(false); void refresh(); if (m) setTimeout(() => { void api.orgMeeting(wsId, m.id).then(openMeeting).catch(() => {}); }, 1500); }} />}
       {running.length > 0 && (
         <div style={{ ...card, marginBottom: 10, borderLeft: '3px solid var(--green)' }}>
           <div style={label}>Running now</div>
@@ -79,8 +81,8 @@ export function MeetingsPane({ org }: { org: OrgDetail }) {
             <div key={m.id} style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', animation: 'pulse 1.2s infinite' }} />
               <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{m.title || MEETING_KIND_TITLES[m.kind]} · {unitName(m.unitId)}</span>
-              <span style={faint}>round {m.rounds} · {fmtUsd(m.usd)} · started {ago(m.startedAt)}</span>
-              <button style={btn()} onClick={() => openMeeting(m)}>Open thread</button>
+              <span style={faint}>round {m.rounds} · {tokensText((m.tokensIn ?? 0) + (m.tokensOut ?? 0))} tokens · {fmtUsd(m.usd)} · started {ago(m.startedAt)}</span>
+              <button style={btn(true)} onClick={() => { void api.joinMeeting(wsId, m.id).catch(() => undefined); openMeeting(m); }}>Join</button>
               <button style={btn(false, true)} onClick={() => { if (confirm('Cancel this meeting? The minutes are written from what was proposed so far.')) void act(() => api.cancelOrgMeeting(wsId, m.id), 'Meeting cancelled'); }}>Cancel</button>
             </div>
           ))}
@@ -145,47 +147,6 @@ function CadenceRow({ c, wsId, act }: { c: OrgCadence; wsId: string; act: (fn: (
   );
 }
 const MEETING_TITLE = (k: string) => MEETING_KIND_TITLES[k] ?? k;
-
-function StartMeeting({ org, defaultUnitId, onDone }: { org: OrgDetail; defaultUnitId: string; onDone: (m: OrgMeeting | null) => void }) {
-  const app = useApp();
-  const { units } = useUnits();
-  const [kind, setKind] = useState<MeetingKind>('adhoc');
-  const [unitId, setUnitId] = useState(defaultUnitId);
-  const [agenda, setAgenda] = useState('');
-  const [title, setTitle] = useState('');
-  const [busy, setBusy] = useState(false);
-  const start = async () => {
-    setBusy(true);
-    try {
-      const m = await api.startOrgMeeting(org.workspaceId, { kind, unitId: unitId || undefined, agenda: agenda.trim() || undefined, title: title.trim() || undefined });
-      app.showToast(`${MEETING_KIND_TITLES[kind]} started in the unit channel`);
-      onDone(m);
-    } catch (e) { app.showToast(e instanceof Error ? e.message.slice(0, 160) : 'could not start'); onDone(null); } finally { setBusy(false); }
-  };
-  return (
-    <div style={{ ...card, marginBottom: 10, display: 'grid', gap: 8 }}>
-      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-        <label style={{ ...label, display: 'flex', flexDirection: 'column', gap: 4 }}>Kind
-          <select value={kind} onChange={(e) => setKind(e.target.value as MeetingKind)} style={input}>{MEETING_KINDS.map((k) => <option key={k} value={k}>{MEETING_KIND_TITLES[k]}</option>)}</select>
-        </label>
-        <label style={{ ...label, display: 'flex', flexDirection: 'column', gap: 4 }}>Unit
-          <select value={unitId} onChange={(e) => setUnitId(e.target.value)} style={input}>{units.map((u) => <option key={u.id} value={u.id}>{'· '.repeat(u.depth)}{u.parentUnitId === null ? 'Company' : u.name}</option>)}</select>
-        </label>
-        <label style={{ ...label, display: 'flex', flexDirection: 'column', gap: 4 }}>Title (optional)
-          <input value={title} onChange={(e) => setTitle(e.target.value)} style={input} placeholder={MEETING_KIND_TITLES[kind]} />
-        </label>
-      </div>
-      <label style={{ ...label, display: 'flex', flexDirection: 'column', gap: 4 }}>Agenda
-        <textarea value={agenda} onChange={(e) => setAgenda(e.target.value)} rows={3} style={{ ...input, resize: 'vertical', fontFamily: 'inherit' }} placeholder={kind === 'standup' ? 'Composed from the board (done · in progress · blocked per member); add anything extra here' : 'What to settle in this meeting'} />
-      </label>
-      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', alignItems: 'center' }}>
-        <span style={{ ...faint, flex: 1 }}>Attendees: the unit (lead and reports) plus the people in its channel. Reply in the thread to be heard in the next round; "stop" ends it.</span>
-        <button style={btn()} onClick={() => onDone(null)}>Cancel</button>
-        <button style={btn(true)} disabled={busy} onClick={() => void start()}>{busy ? 'Starting…' : 'Start now'}</button>
-      </div>
-    </div>
-  );
-}
 
 // ---- decisions ----
 

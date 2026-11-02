@@ -1,7 +1,7 @@
 /** The meetings list and calendar (docs/meetings.md): pure helpers for the
  *  month grid, the week agenda and the list's upcoming / past split. Dates
  *  are the viewer's local time; weeks start on Monday. */
-import type { CalendarMeeting } from './api';
+import type { CalendarMeeting, MeetingRoomState, Minutes } from './api';
 
 /** `yyyy-mm-dd` in local time. */
 export function dayKey(d: Date): string {
@@ -73,4 +73,62 @@ export function clock(iso: string): string {
 /** A title short enough for a calendar cell: the kind and the unit, without the "Meeting: " prefix. */
 export function shortTitle(m: CalendarMeeting): string {
   return m.title.replace(/^Meeting: /, '');
+}
+
+// ---- the meeting room (docs/meetings.md "During") ----
+
+export function emptyRoom(): MeetingRoomState {
+  return {
+    items: [], current: 0, itemStartedAt: null, itemMinutes: 10, round: 0, roundCap: 0, extended: 0, speaking: null, attendance: {}, passes: [], present: [],
+    proposals: [], preRead: '', openItems: [], verdicts: {}, answers: {}, controls: { extend: 0, skip: 0, skipped: 0, end: null }, remindedAt: null, preparedAt: null, speakers: [], skipped: null,
+  };
+}
+
+/** The room JSON of a meeting row, defensively (missing → empty). */
+export function parseRoom(raw: string | null | undefined): MeetingRoomState {
+  const base = emptyRoom();
+  if (!raw) return base;
+  try {
+    const v = JSON.parse(raw) as Partial<MeetingRoomState>;
+    return v && typeof v === 'object' ? { ...base, ...v, controls: { ...base.controls, ...(v.controls ?? {}) } } : base;
+  } catch { return base; }
+}
+
+export type SeatState = 'speaking' | 'spoke' | 'passed' | 'waiting' | 'idle' | 'present' | 'away';
+export interface Seat { kind: 'agent' | 'human'; id: string; name: string; state: SeatState; facilitator: boolean }
+
+/** The attendee strip: agents in speaking order with this round's state,
+ *  then the people (present when they joined). */
+export function seats(room: MeetingRoomState, attendees: Array<{ kind: 'agent' | 'human'; id: string }>, facilitatorId: string | null, name: (kind: 'agent' | 'human', id: string) => string): Seat[] {
+  const agentIds = room.speakers.length ? room.speakers : attendees.filter((a) => a.kind === 'agent').map((a) => a.id);
+  const people = [...new Set([...attendees.filter((a) => a.kind === 'human').map((a) => a.id), ...room.present])];
+  return [
+    ...agentIds.map((id) => ({ kind: 'agent' as const, id, name: name('agent', id), facilitator: id === facilitatorId, state: (room.speaking === id ? 'speaking' : room.attendance[id] ?? 'waiting') as SeatState })),
+    ...people.map((id) => ({ kind: 'human' as const, id, name: name('human', id), facilitator: false, state: (room.present.includes(id) ? 'present' : 'away') as SeatState })),
+  ];
+}
+
+/** Whole minutes since `iso` (0 when unknown). */
+export function minutesSince(iso: string | null | undefined, now = Date.now()): number {
+  if (!iso) return 0;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 60_000)) : 0;
+}
+
+/** "12.3k" */
+export function tokensText(n: number | null | undefined): string {
+  const v = n ?? 0;
+  return v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1_000 ? `${(v / 1_000).toFixed(1)}k` : String(v);
+}
+
+/** The proposal a thread message announced (its inline Approve / Reject / Answer). */
+export type ProposalRef = { kind: 'decision' | 'action' | 'question'; index: number; title: string };
+export function proposalFor(messageId: string, minutes: Minutes): ProposalRef | null {
+  const d = minutes.decisions.findIndex((x) => x.messageId === messageId);
+  if (d >= 0) return { kind: 'decision', index: d, title: minutes.decisions[d].title };
+  const a = minutes.actions.findIndex((x) => x.messageId === messageId);
+  if (a >= 0) return { kind: 'action', index: a, title: minutes.actions[a].title };
+  const q = minutes.questions.findIndex((x) => x.messageId === messageId);
+  if (q >= 0) return { kind: 'question', index: q, title: minutes.questions[q].question };
+  return null;
 }

@@ -16,6 +16,8 @@ import { MEETING_KIND_TITLES, minutesMeetingId, parseMinutes } from '../lib/org'
 import { AUDIENCE_COLOR, audienceLabel } from '../lib/org2';
 import { FollowToggle } from './FollowToggle';
 import { MeetingsBoard } from './MeetingsBoard';
+import { MeetingRoom, ProposalActions } from './MeetingRoom';
+import { parseRoom } from '../lib/meetings';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 };
@@ -131,6 +133,8 @@ export function ChannelView() {
     return () => { stop = true; clearInterval(t); };
   }, [orgChannel, wsId, channelId, page.messages.length]);
   const meetingByRoot = useMemo(() => new Map(meetings.filter((m) => m.threadRootId).map((m) => [m.threadRootId!, m])), [meetings]);
+  // A room changed (docs/meetings.md "During"): the server says which; take the fresh row.
+  const upsertMeeting = useCallback((m: OrgMeeting) => setMeetings((l) => (l.some((x) => x.id === m.id) ? l.map((x) => (x.id === m.id ? m : x)) : [...l, m])), []);
   const cancelMeeting = async (m: OrgMeeting) => {
     if (!confirm(`End ${m.title || 'the meeting'} now? The minutes are written from what was proposed so far.`)) return;
     try { await api.cancelOrgMeeting(wsId, m.id); app.showToast('Meeting cancelled'); setMeetings((l) => l.map((x) => (x.id === m.id ? { ...x, status: 'cancelled' } : x))); } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'could not cancel'); }
@@ -193,11 +197,13 @@ export function ChannelView() {
         });
       } else if (ev.type === 'channel_approval') {
         if (ev.forActor === me) setApprovals((a) => [...a.filter((x) => x.callId !== ev.callId), { sessionId: ev.sessionId, callId: ev.callId, tool: ev.tool, input: ev.input, agentId: ev.agentId, threadRootId: ev.threadRootId, forName: ev.forName }]);
+      } else if (ev.type === 'meeting_update') {
+        void api.orgMeeting(wsId, ev.meetingId).then(upsertMeeting).catch(() => {});
       } else if (ev.type === 'channel_update') {
         void api.channel(wsId, channel.slug).then(setDetail).catch(() => {});
       }
     });
-  }, [channel, app, wsId, me]);
+  }, [channel, app, wsId, me, upsertMeeting]);
 
   // autoscroll while near the bottom; deep-linked focus scrolls once
   useEffect(() => {
@@ -282,6 +288,7 @@ export function ChannelView() {
             </span>
           </div>
           {minutesOf ? <MinutesCard wsId={wsId} meetingId={minutesOf} fallback={m.text} refs={refs} onDecision={openDecision} onTask={(id) => app.openOrgTask(id)} /> : <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={m.text} refs={refs} compact mentions={(s) => messageMentionSpans(s, m.mentions, mentionables).map((x) => ({ start: x.start, end: x.end, kind: x.member.kind }))} /></div>}
+          {opts.inThread && thread && meetingByRoot.get(thread) && m.authorKind === 'agent' && <ProposalSlot wsId={wsId} meeting={meetingByRoot.get(thread)!} messageId={m.id} onChanged={upsertMeeting} text={m.text} />}
           {atts.filter((a) => a.kind !== 'minutes').length > 0 && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
               {atts.filter((a) => a.kind !== 'minutes').map((a, i) => (
@@ -423,6 +430,7 @@ export function ChannelView() {
                 <div style={{ marginLeft: 'auto' }}><FollowToggle wsId={wsId} targetKind="thread" targetId={thread} /></div>
                 <button onClick={() => setThread(null)} style={ghostBtn}><I d={P.x} size={14} /></button>
               </div>
+              {meetingByRoot.get(thread) && <MeetingRoom wsId={wsId} meeting={meetingByRoot.get(thread)!} me={me} name={(kind, id) => nameOf(kind, id)} onChanged={upsertMeeting} />}
               <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px' }}>
                 {renderMessage(threadRoot, { inThread: true })}
                 <div style={{ height: 1, background: 'var(--border-soft)', margin: '8px 0' }} />
@@ -432,14 +440,14 @@ export function ChannelView() {
                 {approvals.filter((a) => a.threadRootId === thread).map(renderApproval)}
               </div>
               <Composer wsId={wsId} slug={slug} folder={channel.folder} mentionables={mentionables} threadRootId={thread} compact orgMode={orgChannel}
-                placeholder={meetingByRoot.get(thread)?.status === 'running' ? 'Reply — read at the next round; "stop" ends the meeting' : 'Reply in thread'}
-                note={meetingByRoot.get(thread)?.status === 'running' ? 'A meeting is running here: your message is read at the next round. Mentions wake nobody; "stop" ends it.' : undefined} />
+                placeholder={meetingByRoot.get(thread)?.status === 'running' ? (parseRoom(meetingByRoot.get(thread)!.room).present.includes(me) ? 'Speak — heard at the next turn; "stop" ends the meeting' : 'Reply — read at the next round (Join to be heard at the next turn)') : 'Reply in thread'}
+                note={meetingByRoot.get(thread)?.status === 'running' ? (parseRoom(meetingByRoot.get(thread)!.room).present.includes(me) ? 'You are in the room: the next speaker hears you. Mentions wake nobody; "stop" ends it.' : 'A meeting is running here: your message is read at the next round — Join to be heard at the next turn. Mentions wake nobody; "stop" ends it.') : undefined} />
             </aside>
           )}
         </div>
       )}
 
-      {tab === 'meetings' && <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', minWidth: 0 }}><MeetingsBoard wsId={wsId} channel={slug} /></div>}
+      {tab === 'meetings' && <div style={{ flex: 1, overflowY: 'auto', padding: '14px 16px', minWidth: 0 }}><MeetingsBoard wsId={wsId} channel={slug} startIn={orgChannel ? { id: channel.id, slug } : null} /></div>}
       {tab === 'files' && <FilesTab wsId={wsId} slug={slug} folder={channel.folder} files={files} reload={() => void api.channelFiles(wsId, slug).then(setFiles).catch(() => {})} />}
       {tab === 'settings' && detail && <SettingsTab detail={detail} onChange={(d) => { setDetail(d); void app.refreshChannels(); }} />}
     </div>
@@ -583,6 +591,12 @@ function Composer({ wsId, slug, folder, mentionables, threadRootId, placeholder,
 }
 
 // ---- meetings (docs/group-chat.md §8) ----
+
+/** Inline Approve / Reject / Answer under an agent's proposal in a meeting thread. */
+function ProposalSlot({ wsId, meeting, messageId, onChanged, text }: { wsId: string; meeting: OrgMeeting; messageId: string; onChanged: (m: OrgMeeting) => void; text: string }) {
+  if (!/^(Decision proposed|Action proposed|Question for the CEO):/.test(text)) return null;
+  return <div><ProposalActions wsId={wsId} meeting={meeting} messageId={messageId} onChanged={onChanged} /></div>;
+}
 
 /** The strip above a meeting's agenda root: "Meeting · <kind> · running/done",
  *  rounds and cost, Cancel while it runs, Open thread from the channel. */

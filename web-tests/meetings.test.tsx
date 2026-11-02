@@ -89,7 +89,7 @@ describe('MeetingsBoard', () => {
     expect(rows[0]).toMatch(/every weekday at|Mon/);
     fireEvent.click(within(screen.getAllByTestId('meeting-row')[2]).getByRole('button', { name: 'Minutes' }));
     expect(fake.openFile).toHaveBeenCalledWith({ kind: 'workspace', id: 'ws1' }, 'org/meetings/2026/2026-11-02-company-weekly-review.md');
-    fireEvent.click(within(screen.getAllByTestId('meeting-row')[2]).getByRole('button', { name: 'Thread' }));
+    fireEvent.click(within(screen.getAllByTestId('meeting-row')[2]).getByRole('button', { name: 'View' }));
     expect(fake.openChannel).toHaveBeenCalledWith('company', 'r1');
     fireEvent.click(screen.getByRole('button', { name: 'Standup · Writer' }));
     const dialog = screen.getByRole('dialog', { name: 'Standup · Writer details' });

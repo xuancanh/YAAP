@@ -9,13 +9,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
 import { api, type CalendarMeeting, type CalendarResponse } from '../lib/api';
 import { cadenceText } from '../lib/home';
+import { fmtUsd } from '../lib/pricing';
 import { MEETING_KIND_TITLES } from '../lib/org';
-import { addDays, byDay, clock, dayKey, monthGrid, rangeFor, shortTitle, splitList, startOfDay, weekDays, whenText } from '../lib/meetings';
+import { addDays, byDay, clock, dayKey, monthGrid, rangeFor, shortTitle, splitList, startOfDay, tokensText, weekDays, whenText } from '../lib/meetings';
+import { MeetingStartDialog } from './MeetingStartDialog';
 import { card, btn, pill, faint, linkBtn, label } from './org-ui';
 
 type View = 'list' | 'calendar';
 const VIEW_KEY = 'meetings.view';
-const STATUS_COLOR: Record<string, string> = { upcoming: 'var(--accent)', running: 'var(--green)', scheduled: 'var(--amber)', postponed: 'var(--amber)', done: 'var(--text-faint)', cancelled: 'var(--red)' };
+const STATUS_COLOR: Record<string, string> = { upcoming: 'var(--accent)', running: 'var(--green)', scheduled: 'var(--amber)', postponed: 'var(--amber)', done: 'var(--text-faint)', cancelled: 'var(--red)', skipped: 'var(--text-faint)' };
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -28,7 +30,11 @@ function saveView(v: View): void {
 
 const statusLabel = (m: CalendarMeeting) => (m.status === 'upcoming' ? 'upcoming' : m.status);
 
-export function MeetingsBoard({ wsId, unitId, channel, showUnit = true }: { wsId: string; unitId?: string | null; channel?: string | null; showUnit?: boolean }) {
+export function MeetingsBoard({ wsId, unitId, channel, showUnit = true, startIn }: {
+  wsId: string; unitId?: string | null; channel?: string | null; showUnit?: boolean;
+  /** A channel's Meetings tab: "Start meeting" here starts one in this channel. */
+  startIn?: { id: string; slug: string } | null;
+}) {
   const app = useApp();
   const phone = Boolean(app.stacked);
   const [view, setViewState] = useState<View>(readView);
@@ -38,6 +44,7 @@ export function MeetingsBoard({ wsId, unitId, channel, showUnit = true }: { wsId
   const [selected, setSelected] = useState<CalendarMeeting | null>(null);
   const [dayOpen, setDayOpen] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [starting, setStarting] = useState(false);
   const setView = (v: View) => { setViewState(v); saveView(v); setSelected(null); setDayOpen(null); };
   const calMode: 'month' | 'week' = phone ? 'week' : 'month';
   // The list covers the last 60 and the next 30 days (fixed when mounted).
@@ -56,11 +63,17 @@ export function MeetingsBoard({ wsId, unitId, channel, showUnit = true }: { wsId
     setSelected(m);
   };
   const openThread = (m: CalendarMeeting) => { if (m.channelSlug) app.openChannel(m.channelSlug, m.threadRootId); };
+  // Join: present in the room (heard at the next turn), then the thread with its room header.
+  const join = (m: CalendarMeeting) => {
+    if (m.meetingId) void api.joinMeeting(wsId, m.meetingId).catch((e: unknown) => app.showToast(e instanceof Error ? e.message.slice(0, 140) : 'could not join'));
+    openThread(m);
+  };
   const items = data?.meetings ?? [];
 
   const header = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
       <div style={{ fontSize: 13.5, fontWeight: 700, flex: 1, minWidth: 120 }}>Meetings</div>
+      {startIn && data?.hasOrg && <button style={btn(true)} onClick={() => setStarting(!starting)}>Start meeting</button>}
       <div role="group" aria-label="View" style={{ display: 'flex', gap: 2, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: 2 }}>
         {(['list', 'calendar'] as View[]).map((v) => (
           <button key={v} aria-pressed={view === v} onClick={() => setView(v)} style={{ background: view === v ? 'var(--accent)' : 'none', color: view === v ? '#fff' : 'var(--text-dim)', border: 'none', borderRadius: 6, padding: '3px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize' }}>{v}</button>
@@ -76,9 +89,10 @@ export function MeetingsBoard({ wsId, unitId, channel, showUnit = true }: { wsId
   return (
     <div style={{ ...card, minWidth: 0 }}>
       {header}
+      {starting && startIn && <MeetingStartDialog wsId={wsId} units={[]} channel={startIn} onDone={(m) => { setStarting(false); if (m) { void load(); setTimeout(() => { void api.orgMeeting(wsId, m.id).then((x) => { if (x.threadRootId) app.openChannel(startIn.slug, x.threadRootId); }).catch(() => {}); }, 1500); } }} />}
       {failed && <div style={{ ...faint, color: 'var(--red)' }}>{failed}</div>}
       {!data && !failed && <div style={faint}>Loading…</div>}
-      {data && view === 'list' && <ListView items={items} open={open} openThread={openThread} showUnit={showUnit} showAll={showAll} setShowAll={setShowAll} />}
+      {data && view === 'list' && <ListView items={items} open={open} openThread={openThread} join={join} showUnit={showUnit} showAll={showAll} setShowAll={setShowAll} />}
       {data && view === 'calendar' && (
         <CalendarView mode={calMode} anchor={anchor} setAnchor={(d) => { setAnchor(d); setDayOpen(null); }} items={items} open={open} dayOpen={dayOpen} setDayOpen={setDayOpen} showUnit={showUnit} />
       )}
@@ -87,7 +101,8 @@ export function MeetingsBoard({ wsId, unitId, channel, showUnit = true }: { wsId
   );
 }
 
-function Row({ m, open, openThread, showUnit }: { m: CalendarMeeting; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; showUnit: boolean }) {
+function Row({ m, open, openThread, join, showUnit }: { m: CalendarMeeting; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; join: (m: CalendarMeeting) => void; showUnit: boolean }) {
+  const tokens = (m.tokensIn ?? 0) + (m.tokensOut ?? 0);
   return (
     <div data-testid="meeting-row" style={{ display: 'flex', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border-soft)', alignItems: 'flex-start', minWidth: 0 }}>
       <span style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_COLOR[m.status] ?? 'var(--border)', flex: 'none', marginTop: 6 }} />
@@ -102,30 +117,32 @@ function Row({ m, open, openThread, showUnit }: { m: CalendarMeeting; open: (m: 
           {m.cron ? <> · {cadenceText(m.cron, m.at)}</> : null}
           {m.facilitator ? <> · {m.facilitator.name}</> : null}
           {m.status === 'done' ? <> · {m.decisions} decision(s) · {m.actions} action(s)</> : null}
+          {(m.status === 'done' || m.status === 'running') && (tokens > 0 || m.usd > 0) ? <span data-testid="meeting-cost"> · {tokensText(tokens)} tokens · {fmtUsd(m.usd)}</span> : null}
         </div>
         {m.summary && <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.summary}</div>}
       </div>
       <div style={{ display: 'flex', gap: 5, flex: 'none' }}>
         {m.minutesPath && <button style={btn()} onClick={() => open(m)} title={`Open /${m.minutesPath}`}>Minutes</button>}
-        {m.threadRootId && m.channelSlug && <button style={btn()} onClick={() => openThread(m)} title="Open the meeting thread">Thread</button>}
+        {m.status === 'running' && m.channelSlug && <button style={btn(true)} onClick={() => join(m)} title="Join the room: you are heard at the next turn">Join</button>}
+        {m.status !== 'running' && m.threadRootId && m.channelSlug && <button style={btn()} onClick={() => openThread(m)} title="Open the meeting thread and its room">View</button>}
         {!m.minutesPath && !m.threadRootId && <button style={btn()} onClick={() => open(m)}>Details</button>}
       </div>
     </div>
   );
 }
 
-function ListView({ items, open, openThread, showUnit, showAll, setShowAll }: { items: CalendarMeeting[]; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; showUnit: boolean; showAll: boolean; setShowAll: (v: boolean) => void }) {
+function ListView({ items, open, openThread, join, showUnit, showAll, setShowAll }: { items: CalendarMeeting[]; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; join: (m: CalendarMeeting) => void; showUnit: boolean; showAll: boolean; setShowAll: (v: boolean) => void }) {
   const { upcoming, past } = splitList(items);
   const shownUpcoming = showAll ? upcoming : upcoming.slice(0, 8);
   return (
     <div>
       <div style={{ ...label, marginTop: 4 }}>Upcoming ({upcoming.length})</div>
       {upcoming.length === 0 && <div style={{ ...faint, padding: '6px 0' }}>Nothing scheduled in the next 30 days.</div>}
-      {shownUpcoming.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} showUnit={showUnit} />)}
+      {shownUpcoming.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} join={join} showUnit={showUnit} />)}
       {upcoming.length > shownUpcoming.length && <button style={{ ...linkBtn, marginTop: 6 }} onClick={() => setShowAll(true)}>Show {upcoming.length - shownUpcoming.length} more</button>}
       <div style={{ ...label, marginTop: 12 }}>Past ({past.length})</div>
       {past.length === 0 && <div style={{ ...faint, padding: '6px 0' }}>No meeting held in the last 60 days. <code>/meeting</code> in a channel starts one.</div>}
-      {past.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} showUnit={showUnit} />)}
+      {past.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} join={join} showUnit={showUnit} />)}
     </div>
   );
 }
