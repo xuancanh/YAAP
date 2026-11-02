@@ -293,13 +293,38 @@ export class WorkspaceFs implements OnApplicationBootstrap {
     });
   }
 
-  async delete(workspaceId: string, path: string, opts: { by: FsActor }): Promise<void> {
+  /** Delete a file, reversibly: its last body is kept as a revision (with
+   *  the revisions before it), so `restore` brings it back. Only the live
+   *  object and its metadata row go. Returns the kept version (null when
+   *  there was nothing to keep or no database). */
+  async delete(workspaceId: string, path: string, opts: { by: FsActor }): Promise<{ keptVersion: number | null }> {
     WorkspaceFs.assertCanWrite(opts.by, path);
-    await this.locked(workspaceId, path, async () => {
-      await this.storage.delete(workspaceFileKey(workspaceId, path));
-      await this.forget(workspaceId, path);
+    const kept = await this.locked(workspaceId, path, async () => {
+      const key = workspaceFileKey(workspaceId, path);
+      let keptVersion: number | null = null;
+      if (this.db) {
+        const body = await this.storage.get(key);
+        if (body !== null) {
+          const meta = await this.meta(workspaceId, path);
+          await this.keepRevision(workspaceId, path, body, meta, nowIso());
+          keptVersion = meta?.version ?? 0;
+        }
+        await this.db.delete(workspaceFiles).where(and(eq(workspaceFiles.workspaceId, workspaceId), eq(workspaceFiles.path, path)));
+      }
+      await this.storage.delete(key);
+      return keptVersion;
     });
     this.emit(workspaceId, path, 0, opts.by, { deleted: true });
+    return { keptVersion: kept };
+  }
+
+  /** The newest kept revision of a path (0 = none) — a deleted file's last body. */
+  async latestRevision(workspaceId: string, path: string): Promise<number> {
+    if (!this.db) return 0;
+    const row = (await this.db.select({ version: workspaceFileRevisions.version }).from(workspaceFileRevisions)
+      .where(and(eq(workspaceFileRevisions.workspaceId, workspaceId), eq(workspaceFileRevisions.path, path)))
+      .orderBy(desc(workspaceFileRevisions.version)).limit(1))[0];
+    return row?.version ?? 0;
   }
 
   /** Restore = write the kept body back as a new version (the current one
@@ -360,10 +385,13 @@ export class WorkspaceFs implements OnApplicationBootstrap {
     if (opts.expectedVersion !== undefined && opts.expectedVersion !== null && (meta?.version ?? 0) !== opts.expectedVersion) {
       throw new FileConflictError(path, opts.expectedVersion, meta);
     }
+    // A path whose file was deleted keeps its history: numbering continues
+    // after the newest kept revision instead of overwriting it.
+    const base = meta?.version ?? await this.latestRevision(workspaceId, path);
     const previous = await this.storage.get(key);
     if (previous !== null) await this.keepRevision(workspaceId, path, previous, meta, now);
     await this.storage.put(key, body, contentType);
-    const version = (meta?.version ?? 0) + 1;
+    const version = base + 1;
     const set = {
       version, size: body.length, contentType,
       updatedByKind: by.kind, updatedById: by.id, updatedByName: by.name, updatedAt: now,

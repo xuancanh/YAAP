@@ -193,13 +193,31 @@ export class ToolsService {
       },
       {
         name: 'fs_delete',
-        description: 'Delete a file.',
+        description: 'Delete a file. Its last version is kept: fs_restore brings it back.',
         inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
         readOnly: false,
         execute: async (root, input) => {
           const path = resolvePath(root, str(input, 'path'));
-          await this.fs.delete(root.workspaceId, path, { by: actorOf(root) });
-          return `deleted ${displayPath(path)}`;
+          const { keptVersion } = await this.fs.delete(root.workspaceId, path, { by: actorOf(root) });
+          return `deleted ${displayPath(path)}${keptVersion !== null ? ` (kept as revision ${keptVersion} — fs_restore brings it back)` : ''}`;
+        },
+      },
+      {
+        name: 'fs_restore',
+        description: 'Bring back a deleted file, or roll a file back, from its kept revisions: the newest one, or the version you name. The current body (if any) is kept as a revision too.',
+        inputSchema: { type: 'object', properties: { path: { type: 'string' }, version: { type: 'integer' } }, required: ['path'] },
+        readOnly: false,
+        execute: async (root, input) => {
+          const path = resolvePath(root, str(input, 'path'));
+          const asked = input.version;
+          if (asked !== undefined && asked !== null && (typeof asked !== 'number' || !Number.isInteger(asked) || asked < 0)) throw new Error('invalid arguments: "version" must be a non-negative integer');
+          const kept = await this.fs.revisions(root.workspaceId, path);
+          const version = typeof asked === 'number' ? asked : kept[0]?.version;
+          if (version === undefined || !kept.some((r) => r.version === version)) {
+            return `no kept revision${typeof asked === 'number' ? ` ${asked}` : 's'} of ${displayPath(path)}${kept.length ? ` — kept: ${kept.map((r) => r.version).join(', ')}` : ''}`;
+          }
+          const meta = await this.fs.restore(root.workspaceId, path, version, { by: actorOf(root) });
+          return `restored ${displayPath(path)} from revision ${version}${meta.version ? ` (now version ${meta.version})` : ''}`;
         },
       },
       {
