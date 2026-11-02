@@ -1,7 +1,7 @@
 /** Agents: the directory grid, the create-agent dialog, and the per-agent
  *  home page — tabbed like YAAM: Dashboard (agent-maintained markdown),
  *  Mini apps (self-built, embeddable), Chats, Memory (file brain), Settings. */
-import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
@@ -12,7 +12,9 @@ import { UsageBars, UsageRows } from './UsageChart';
 import { fmtUsd } from '../lib/pricing';
 import { fmtTokens } from '../lib/util';
 import { Markdown } from '../lib/md';
-import { sealHtml } from '../lib/sandbox';
+import { KEEP_FILE, agentSource, normPath, workspaceSource } from '../lib/artifacts';
+import { ArtifactTree } from './ArtifactTree';
+import { ArtifactPane } from './FilesView';
 import { nextFire, untilLabel } from '../lib/cron';
 import { RUNS_WHEN, lastFiredLabel, runsWhenOf, triggerGlyph, triggerLabel, type Loop, type LoopTrigger, type RunsWhen } from '../lib/triggers';
 
@@ -722,74 +724,86 @@ function ScheduleTab({ a }: { a: Agent }) {
   );
 }
 
-/** The agent's isolated folder as a tab: file list + rich preview. The brain
- *  (LESSONS.md / JOURNAL.md / knowledge/) lives here. */
-function AgentFilesTab({ a }: { a: Agent }) {
+/** The agent's home as its Artifacts tab (docs/filesystem.md): the same tree
+ *  and viewer as the workspace Artifacts view, on the workspace routes under
+ *  `homeDir`. Agents whose home is not migrated yet (homeDir outside
+ *  `agents/`, or nothing listed there) fall back to the agent routes. The
+ *  brain (LESSONS.md / JOURNAL.md / knowledge/) lives here. */
+function AgentArtifactsTab({ a }: { a: Agent }) {
   const app = useApp();
+  const wsId = a.workspaceId || app.workspaceId || '';
+  const home = normPath(a.homeDir);
+  const [mode, setMode] = useState<'ws' | 'agent' | null>(null);
   const [files, setFiles] = useState<FileEntry[]>([]);
-  const [sel, setSel] = useState<string | null>('LESSONS.md');
-  const [preview, setPreview] = useState<FilePreview | null>(null);
+  const [sel, setSel] = useState<string | null>(null);
+  const wsSrc = useMemo(() => (wsId ? workspaceSource(wsId) : null), [wsId]);
+  const agSrc = useMemo(() => agentSource(a.id, app.workspaceId || undefined, a.homeDir), [a.id, app.workspaceId, a.homeDir]);
+  const source = mode === 'ws' && wsSrc ? wsSrc : agSrc;
+  const root = mode === 'ws' ? home : '';
 
+  const load = useCallback(async (): Promise<void> => {
+    if (home.startsWith('agents/') && wsId) {
+      const all = await api.wsFiles(wsId).catch(() => [] as FileEntry[]);
+      const mine = all.filter((e) => normPath(e.path).startsWith(`${home}/`));
+      if (mine.length) { setMode('ws'); setFiles(mine); return; }
+    }
+    const list = await api.agentFiles(a.id, app.workspaceId || undefined).catch(() => [] as FileEntry[]);
+    setMode('agent');
+    setFiles(list);
+  }, [a.id, home, wsId, app.workspaceId]);
+  useEffect(() => { setSel(null); setMode(null); setFiles([]); void load(); }, [load]);
+  // Open LESSONS.md (the brain) first, else the first file.
   useEffect(() => {
-    void api.agentFiles(a.id, app.workspaceId || undefined).then((f) => {
-      setFiles(f.sort((x, y) => x.path.localeCompare(y.path)));
-      setSel((cur) => (cur && f.some((e) => e.path === cur) ? cur : f[0]?.path ?? null));
-    }).catch(() => setFiles([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [a.id]);
-  useEffect(() => {
-    setPreview(null);
-    if (sel) void api.agentPreview(a.id, sel, app.workspaceId || undefined).then(setPreview).catch(() => setPreview(null));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [a.id, sel]);
+    if (sel || !mode || files.length === 0) return;
+    const lessons = root ? `${root}/LESSONS.md` : 'LESSONS.md';
+    const first = files.map((f) => normPath(f.path)).filter((p) => !p.endsWith(`/${KEEP_FILE}`)).sort()[0] ?? null;
+    setSel(files.some((f) => normPath(f.path) === lessons) ? lessons : first);
+  }, [files, mode, root, sel]);
 
-  const glyph = (p: string) => p.startsWith('shared/') ? '🔗' : p.endsWith('.md') ? '📄' : p.endsWith('.html') ? '🧩' : p.match(/\.(png|jpg|jpeg|gif|svg|webp)$/) ? '🖼️' : '📄';
+  const restoreCheckpoint = (p: string, preview: FilePreview | null) => {
+    const rel = root && p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
+    if (!rel.startsWith('.checkpoints/') || preview?.text === undefined) return null;
+    const target = rel.split('/').slice(2).join('/');
+    if (!target) return null;
+    return (
+      <button type="button" title="Copy this snapshot back over the live file" onClick={async () => {
+        if (!window.confirm(`Restore ${target} to this ${rel.split('/')[1]} snapshot? The live file is overwritten.`)) return;
+        try {
+          await source.write(root ? `${root}/${target}` : target, preview.text!);
+          app.showToast(`Restored ${target}`);
+          void load();
+        } catch (e) { app.showToast(e instanceof Error ? e.message.slice(0, 120) : 'Restore failed'); }
+      }} style={{ background: 'var(--panel)', border: '1px solid var(--amber)', color: 'var(--amber)', borderRadius: 8, padding: '6px 11px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none', whiteSpace: 'nowrap' }}>{app.stacked ? 'Restore' : 'Restore this version'}</button>
+    );
+  };
+
   return (
     <div style={{ marginTop: 18 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : '230px 1fr', gap: 12, alignItems: 'start' }}>
-        <div style={{ ...card, padding: '6px 6px', maxHeight: 480, overflowY: 'auto' }}>
-          {files.map((f) => (
-            <div key={f.path} onClick={() => setSel(f.path)}
-              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 9px', borderRadius: 8, cursor: 'pointer', background: f.path === sel ? 'var(--accent-dim)' : 'none' }}>
-              <span style={{ fontSize: 12, flex: 'none' }}>{glyph(f.path)}</span>
-              <span style={{ flex: 1, fontSize: 12, fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: f.path === sel ? 'var(--accent-hi)' : 'var(--text-dim)' }}>{f.path}</span>
-              <span style={{ fontSize: 9.5, color: 'var(--text-faint)', flex: 'none' }}>{(f.size / 1024).toFixed(1)}K</span>
-            </div>
-          ))}
-          {files.length === 0 && <div style={{ padding: '10px 10px', fontSize: 12, color: 'var(--text-faint)' }}>No files yet.</div>}
+      <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? 'minmax(0,1fr)' : '240px minmax(0,1fr)', gap: 12, alignItems: 'start' }}>
+        <div style={{ ...card, padding: '6px 4px', maxHeight: app.stacked ? 260 : 540, overflowY: 'auto' }}>
+          {mode === null
+            ? <div style={{ padding: 10, fontSize: 12, color: 'var(--text-faint)' }}>Loading…</div>
+            : <ArtifactTree entries={files} agents={app.agents} root={root || undefined} selected={sel} onOpen={setSel} indent={6} />}
         </div>
-        <div style={{ ...card, overflow: 'hidden', height: 480, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 9, padding: '9px 13px', borderBottom: '1px solid var(--border-soft)', background: 'var(--panel-2)' }}>
-            <span style={{ fontSize: 12.5, fontWeight: 600, fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sel ?? 'no file selected'}</span>
-            {preview?.kind === 'html' && preview.text && (
-              <button onClick={() => app.openArtifact(sel!.split('/').pop()!, preview.text!)} style={{ marginLeft: 'auto', background: 'var(--panel)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '4px 11px', fontSize: 11, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Open preview</button>
-            )}
-            {sel?.startsWith('.checkpoints/') && preview?.text !== undefined && (
-              <button title="Copy this snapshot back over the live file" onClick={async () => {
-                const target = sel.split('/').slice(2).join('/');
-                if (!target || !window.confirm(`Restore ${target} to this ${sel.split('/')[1]} snapshot? The live file is overwritten.`)) return;
-                await api.putAgentFile(a.id, target, btoa(unescape(encodeURIComponent(preview.text!))), 'text/markdown');
-                app.showToast(`Restored ${target}`);
-              }} style={{ marginLeft: 'auto', background: 'var(--panel)', border: '1px solid var(--amber)', color: 'var(--amber)', borderRadius: 7, padding: '4px 11px', fontSize: 11, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>Restore this version</button>
-            )}
-          </div>
-          <div style={{ flex: 1, overflow: 'auto', background: 'var(--code)' }}>
-            {sel && preview === null && <div style={{ padding: 16, fontSize: 12.5, color: 'var(--text-faint)' }}>Loading…</div>}
-            {preview?.kind === 'image' && preview.base64 && (
-              <div style={{ padding: 16 }}><img src={`data:${preview.contentType};base64,${preview.base64}`} alt={sel ?? ''} style={{ maxWidth: '100%', borderRadius: 8 }} /></div>
-            )}
-            {preview?.kind === 'html' && preview.text && (
-              <iframe title={sel ?? 'preview'} sandbox="allow-scripts" srcDoc={sealHtml(preview.text)} style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }} />
-            )}
-            {(preview?.kind === 'markdown' || preview?.kind === 'text') && (
-              <pre style={{ margin: 0, padding: '14px 16px', fontFamily: 'var(--mono)', fontSize: 12, lineHeight: 1.65, color: 'var(--text-dim)', whiteSpace: 'pre-wrap' }}>{preview.text}{preview.truncated ? '\n…(truncated)' : ''}</pre>
-            )}
-            {preview?.kind === 'binary' && <div style={{ padding: 16, fontSize: 12.5, color: 'var(--text-faint)' }}>Binary file · {preview.size} bytes</div>}
-          </div>
+        <div style={{ ...card, padding: 0, overflow: 'hidden', height: app.stacked ? 520 : 540, display: 'flex', flexDirection: 'column' }}>
+          <ArtifactPane
+            embedded
+            source={source}
+            entries={files}
+            path={sel}
+            onOpen={setSel}
+            onChanged={load}
+            refreshOnEvents
+            root={root}
+            rootLabel={`~${a.name}`}
+            ownerAgent={a}
+            extraActions={restoreCheckpoint}
+            empty={<div style={{ padding: 16, fontSize: 12.5, color: 'var(--text-faint)' }}>{mode === null ? 'Loading…' : 'No file selected.'}</div>}
+          />
         </div>
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 10 }}>
-        {a.name}'s working folder — its file tools, uploads, and attachments all operate here. <span style={{ fontFamily: 'var(--mono)' }}>LESSONS.md</span> and <span style={{ fontFamily: 'var(--mono)' }}>JOURNAL.md</span> are its memory; <span style={{ fontFamily: 'var(--mono)' }}>.checkpoints/</span> is read-only rollback history.
+        {a.name}'s home{root ? <> — <span style={{ fontFamily: 'var(--mono)' }}>/{root}/</span></> : ''}: its file tools, uploads, and attachments work here, and other agents can read it. <span style={{ fontFamily: 'var(--mono)' }}>LESSONS.md</span> and <span style={{ fontFamily: 'var(--mono)' }}>JOURNAL.md</span> are its memory; <span style={{ fontFamily: 'var(--mono)' }}>.checkpoints/</span> is read-only rollback history. Shared work lives in the workspace Artifacts.
       </div>
     </div>
   );
@@ -1329,7 +1343,9 @@ function MemoryTab({ a }: { a: Agent }) {
   );
 }
 
-const TABS = ['Dashboard', 'Tasks', 'Schedule', 'Memory', 'Mini apps', 'Skills & tools', 'Trust', 'Chats', 'Files', 'Settings'] as const;
+const TABS = ['Dashboard', 'Tasks', 'Schedule', 'Memory', 'Mini apps', 'Skills & tools', 'Trust', 'Chats', 'Artifacts', 'Settings'] as const;
+/** Old tab names still accepted by `?tab=` and in-app deep links. */
+const TAB_ALIASES: Record<string, string> = { Files: 'Artifacts' };
 /** The agent's trust levels, its action log and held actions (item 28, SPA item 32). */
 const AgentTrustTab = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.AgentTrustTab })));
 type HomeTab = (typeof TABS)[number];
@@ -1358,7 +1374,8 @@ export function AgentHome() {
 
   // ?tab= deep link (screenshot verification); consumed on the first open
   const urlTab = useRef<HomeTab | null>((() => {
-    const q = new URLSearchParams(window.location.search).get('tab');
+    const raw = new URLSearchParams(window.location.search).get('tab');
+    const q = raw ? TAB_ALIASES[raw] ?? raw : raw;
     return TABS.includes(q as HomeTab) ? (q as HomeTab) : null;
   })());
   useEffect(() => {
@@ -1371,8 +1388,9 @@ export function AgentHome() {
   // In-app deep link (e.g. the chat's "needs a grant" hint): one-shot tab
   // request from the store, works even when this agent page is already open.
   useEffect(() => {
-    if (app.agentTabRequest && TABS.includes(app.agentTabRequest as HomeTab)) {
-      setTab(app.agentTabRequest as HomeTab);
+    const want = app.agentTabRequest ? TAB_ALIASES[app.agentTabRequest] ?? app.agentTabRequest : null;
+    if (want && TABS.includes(want as HomeTab)) {
+      setTab(want as HomeTab);
       app.setAgentTabRequest(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1572,7 +1590,7 @@ export function AgentHome() {
         {tab === 'Schedule' && <ScheduleTab a={a} />}
         {tab === 'Memory' && <MemoryTab a={a} />}
         {tab === 'Skills & tools' && <SkillsToolsTab a={a} />}
-        {tab === 'Files' && <AgentFilesTab a={a} />}
+        {tab === 'Artifacts' && <AgentArtifactsTab a={a} />}
         {tab === 'Trust' && (app.workspaceId ? <Suspense fallback={<div style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>Loading…</div>}><AgentTrustTab agentId={a.id} wsId={a.workspaceId || app.workspaceId} /></Suspense> : <div style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>Open a workspace to see this agent's trust levels.</div>)}
 
         {tab === 'Mini apps' && (
