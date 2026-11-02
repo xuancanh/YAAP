@@ -22,7 +22,8 @@ agents see, written with a leading `/`.
 │   │   ├── apps/<appId>/ mini-app state and data
 │   │   └── .checkpoints/ read-only rollback history
 │   └── …
-├── org/                  org-wide artifacts: plans, decisions, meeting notes
+├── org/                  org-wide artifacts: plans, decisions, meeting notes,
+│                         and the mirrored company records (below)
 ├── channels/<slug>/      a channel's shared folder (unchanged)
 ├── uploads/              files users attach from the composer
 └── <anything else>/      user- or agent-made shared folders
@@ -37,7 +38,33 @@ agents see, written with a leading `/`.
 - **Artifacts** = every folder outside `agents/`. In the UI, the
   *Artifacts* view shows the whole tree, grouped as **Shared** (the
   top-level shared folders) and **Agents** (each agent's home, with its
-  avatar). An agent's own *Artifacts* tab shows its home.
+  avatar). An agent's own *Artifacts* tab shows its home. *Artifacts* is a
+  main menu item (desktop and phone); `/org/` leads the Shared group.
+
+## Mirrored company records
+
+In organization mode the company's durable records stay in their tables —
+the agents keep their tools (`org_write_playbook`, experiments, evals,
+sensing, value accounting) — and are mirrored as small, readable markdown
+under `/org/`, so people read them in Artifacts instead of in dedicated
+panes (the Ask, Playbooks, Metrics, Experiments, Outcomes and Evals panes
+were removed from the SPA on 2 November 2026). `OrgMirrorService`
+(`server/src/org/org-mirror.service.ts`) writes them with the `system`
+author, only when the text changed:
+
+| File | Written when | Holds |
+|------|--------------|-------|
+| `/org/playbooks/<name>.md` | a playbook is written or revised, its review closes, it is activated or retired, its outcome counters refresh | status, version, roles, the SKILL.md body, why, uses and rating |
+| `/org/experiments/<id8>-<slug>.md` | an experiment is proposed, governed, started, extended, decided or abandoned; a forecast on it is recorded or resolved (reconciliation) | status and window, hypothesis, the change, the metric and expected effect, baseline, result, the predictions with their scores |
+| `/org/evals/<role>.md` | an eval run starts or ends (including rollout gates) | the role's golden-set size by source, the latest runs: candidate, pass rate vs baseline, verdict, who asked (`rollout gate (…)`) |
+| `/org/outcomes.md` | value accounting records new value events, or the CEO prices a key result | per active objective: value realised this month, spend, ROI, each key result's value / target and 7-day movement |
+| `/org/metrics.md` | a metric sample lands (poll, webhook, attestation) | every metric source's kind, status, latest value and last fetch, and its last five readings — never config or secrets |
+
+The files say they are mirrors: edits are overwritten by the next change to
+the record. A link to a playbook, an experiment or a metric source in the
+SPA opens its file. At boot a one-off backfill mirrors existing rows for
+every account — idempotent (unchanged files are skipped), logged, never
+throws.
 
 ## Paths an agent uses
 

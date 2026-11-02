@@ -236,7 +236,8 @@ The CEO should spend ten minutes a day and feel in control.
   they like.
 - **Ask the company.** A chat with the chief that answers from the record
   ("who is working on X, why is Y late, what did Z cost") with citations
-  into tasks, decisions and messages.
+  into tasks, decisions and messages. (Since 2 November 2026 this is an
+  ordinary chat with the chief; the separate Ask pane is gone.)
 - **Preview.** In autonomous mode the chief shows its plan as a diff
   (hires, moves, budgets, first tasks) and a cost estimate before the veto
   window closes. The CEO can also ask "what would you do with twice the
@@ -255,6 +256,26 @@ The CEO should spend ten minutes a day and feel in control.
   about itself is one table (`docs/boundary.md`), and every change that
   rolls out to how a member works is first replayed against that role's
   golden set (`docs/evals.md`).
+
+**On screen (simplified 2 November 2026).** The main menu is Home · Chat ·
+**Inbox** · **Company** · **Artifacts** · Apps · Market (+ Settings); Inbox
+and Company show only in organization mode.
+
+- **Inbox** — everything waiting on the CEO in one list with filters:
+  decision cards, actions waiting for the owner's key, escalations, plans
+  awaiting a veto, my tasks and reviews, incidents nobody has contained. A
+  filter opens the full pane; the nav icon carries the combined count.
+- **Company** (the Workspace section) — the rail groups the panes, each
+  group collapsible per viewer: *Teams* (each unit's #channel, Board,
+  Goals), *Direction* (Vision, Goals, Plans, Decisions), *Operations*
+  (Pulse with Brief as a tab, Meetings, Incidents), *People & money* (Org
+  chart, Spend with Capital as a tab), *Oversight* (Audit with Replay as a
+  tab).
+- **Artifacts** — the workspace tree. Playbooks, experiments, evals,
+  outcomes and metrics are files under `/org/` there
+  (`docs/filesystem.md` "Mirrored company records"); their panes were
+  removed. Old links (`#/ws/<id>/org/approvals`, `…/experiments`, …) land
+  on the new home.
 
 ## 9. Companies as products
 
@@ -681,3 +702,11 @@ the root unit's rituals, installs the Chief of Staff pack's skills and loops
 on the chief and seeds the ledger under `/org/`; the chief's heartbeat reads
 the rituals due, overdue decisions, stale risks and breached handoffs. See
 `docs/chief-of-staff.md`.
+
+*A simpler app — shipped 2 November 2026.* The Ask, Playbooks, Metrics,
+Experiments, Outcomes and Evals panes are gone from the SPA; their records
+are mirrored as markdown under `/org/` and read in the new Artifacts main
+menu item. Approvals and My tasks moved to the new Inbox; Brief, Capital
+and Replay became tabs of Pulse, Spend and Audit; the Workspace section is
+now Company, its rail grouped (§8 "On screen"). The backend tools and
+routes are unchanged.

@@ -1536,3 +1536,31 @@ screen):*
   boundary rows; the org board labels its last column "cancelled ·
   abandoned" and the task drawer heads an abandoned task with its owner's
   reason (the "Abandoned by its owner" comment).
+
+### 33. A simpler app: Artifacts, Inbox, Company *(done)*
+*Shipped 2 November 2026.* The SPA drops six panes and regroups the rest:
+
+- **Removed panes:** Ask (ask the chief in a chat), Playbooks, Metrics,
+  Experiments, Outcomes and Evals — with their components
+  (`OrgExperimentsView`, `AskPane`, `PlaybooksPane`, `MetricsPane`,
+  `EvalsPane`, `OutcomesPane`), the running-experiments poll and badge. The
+  backend tools, services and routes stay; agents use them as before.
+- **Mirrors:** `OrgMirrorService` writes playbooks, experiments (with their
+  forecasts), evals per role, outcomes and metrics as markdown under `/org/`
+  when the records change, plus an idempotent boot backfill
+  (`docs/filesystem.md` "Mirrored company records";
+  `tests/backend-org-mirror.test.ts`). References to a playbook, experiment
+  or metric source open the file.
+- **Main menu:** Home · Chat · Inbox · Company · Artifacts · Apps · Market
+  (+ Settings), desktop and phone. *Artifacts* is the workspace tree with
+  `/org/` first; `?section=files|artifacts` and workspace `openFile` land
+  there. *Inbox* (`src/lib/inbox.ts`, `InboxView`) lists what waits on the
+  CEO with filters and carries the combined badge; the Organization header
+  chips are gone. *Company* is the Workspace section renamed; its rail is
+  grouped Teams / Direction / Operations / People & money / Oversight
+  (collapse per viewer), Brief, Capital and Replay are tabs of Pulse, Spend
+  and Audit. `setOrgPane('approvals' | 'mytasks')` routes to the Inbox, so
+  every deep link keeps working (`web-tests/nav.test.tsx`).
+
+Items 22, 27, 30, 31 and 32 above describe these panes as shipped; they
+remain the record of what was built, superseded on screen by this item.
