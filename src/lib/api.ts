@@ -12,6 +12,7 @@ import {
   agentListSchema,
   fileEntryListSchema,
   filePreviewSchema,
+  fileRevisionListSchema,
   transcriptSchema,
   hireResultSchema,
 } from './schemas';
@@ -602,10 +603,18 @@ export interface RegistryStatus {
  *  product shows under Settings → Security. */
 export interface SecurityPolicy { contact: string; policyUrl: string; summary: string[] }
 
+/** Who last wrote a file (docs/filesystem.md "Collaboration"). */
+export interface FileAuthor { kind: 'user' | 'agent' | 'system' | (string & {}); id: string; name: string }
+
 export interface FileEntry {
   path: string;
   size: number;
   lastModified?: string;
+  /** Collaboration metadata — absent for objects written outside WorkspaceFs
+   *  and on servers older than docs/filesystem.md. */
+  version?: number;
+  updatedBy?: FileAuthor | null;
+  owner?: { agentId: string } | null;
 }
 
 /** `html` previews must render inside a sandboxed iframe (FR-13.1). */
@@ -617,7 +626,16 @@ export interface FilePreview {
   text?: string;
   truncated?: boolean;
   base64?: string;
+  version?: number;
+  updatedBy?: FileAuthor | null;
+  updatedAt?: string;
 }
+
+/** GET /api/workspaces/:id/file/revisions — newest first. */
+export interface FileRevision { version: number; size: number; updatedBy?: FileAuthor | null; updatedAt: string }
+
+/** A write through POST …/files with the optimistic version check. */
+export interface FileWrite { path: string; contentBase64: string; contentType?: string; expectedVersion?: number }
 
 /** Upload result; audio uploads (voice notes, docs/voice.md) also carry the
  *  transcript (null when transcription is off/unavailable) and a duration. */
@@ -660,6 +678,8 @@ export type WorkspaceEvent =
   | { type: 'channel_stream'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; liveId: string; delta: string; done?: boolean }
   | { type: 'task_update'; workspaceId: string; channelId: string; taskId: string; status: string; messageId: string | null; title: string }
   | { type: 'channel_update'; workspaceId: string; channelId: string }
+  /** docs/filesystem.md "Activity": a write through WorkspaceFs. */
+  | { type: 'file.changed' | 'file_changed'; workspaceId?: string; path: string; version?: number; by?: FileAuthor | string | null }
   | { type: 'channel_approval'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; sessionId: string; callId: string; tool: string; input: Record<string, unknown>; forActor: string; forName: string };
 
 export interface SearchResults {
@@ -1155,8 +1175,21 @@ export interface OutcomeRow {
 }
 export interface ValueEvent { id: string; orgId: string; goalId: string; objectiveId: string | null; unitId: string | null; kind: 'movement' | 'achieved'; sampleId: string | null; fromValue: number | null; toValue: number | null; delta: number; valueUsd: number; at: string; createdAt: string }
 
+/** A non-2xx response. The message keeps the historical `"<status> <body>"`
+ *  shape; `status` lets callers branch (409 = version conflict). */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly body: string;
+  constructor(status: number, body: string) {
+    super(`${status} ${body}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.body = body;
+  }
+}
+
 async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok) throw new ApiError(res.status, await res.text());
   return res.json() as Promise<T>;
 }
 
@@ -1277,6 +1310,16 @@ export const api = {
     get<FilePreview>(`/api/workspaces/${id}/preview?path=${enc(path)}`, filePreviewSchema),
   wsPutFile: (id: string, path: string, contentBase64: string, contentType?: string, durationSeconds?: number) =>
     send<UploadResult>(`/api/workspaces/${id}/files`, 'POST', { path, contentBase64, contentType, durationSeconds }),
+  /** Write with the version check (docs/filesystem.md): 409 when the file moved on. */
+  wsWriteFile: (id: string, w: FileWrite) => send<UploadResult & { version?: number }>(`/api/workspaces/${id}/files`, 'POST', w),
+  wsFileRevisions: (id: string, path: string) =>
+    get<FileRevision[]>(`/api/workspaces/${id}/file/revisions?path=${enc(path)}`, fileRevisionListSchema),
+  wsFileRevision: (id: string, path: string, version: number) =>
+    get<FilePreview>(`/api/workspaces/${id}/file/revision?path=${enc(path)}&version=${version}`, filePreviewSchema),
+  wsRestoreFile: (id: string, path: string, version: number) =>
+    send<{ ok: boolean; version?: number }>(`/api/workspaces/${id}/file/restore`, 'POST', { path, version }),
+  wsMoveFile: (id: string, from: string, to: string) => send<{ ok: boolean }>(`/api/workspaces/${id}/file/move`, 'POST', { from, to }),
+  wsDeleteFile: (id: string, path: string) => send<{ ok: boolean }>(`/api/workspaces/${id}/file?path=${enc(path)}`, 'DELETE'),
 
   // chats
   chats: (workspaceId: string) => get<ChatSession[]>(`/api/chats?workspaceId=${enc(workspaceId)}`, chatSessionListSchema),
@@ -1400,6 +1443,8 @@ export const api = {
     get<FileEntry[]>(`/api/agents/${id}/files${workspaceId ? `?workspaceId=${enc(workspaceId)}` : ''}`, fileEntryListSchema),
   putAgentFile: (id: string, path: string, contentBase64: string, contentType?: string, durationSeconds?: number) =>
     send<UploadResult>(`/api/agents/${id}/files`, 'POST', { path, contentBase64, contentType, durationSeconds }),
+  /** The agent route maps onto its home; it may or may not honour expectedVersion. */
+  agentWriteFile: (id: string, w: FileWrite) => send<UploadResult & { version?: number }>(`/api/agents/${id}/files`, 'POST', w),
   agentPreview: (id: string, path: string, workspaceId?: string) =>
     get<FilePreview>(`/api/agents/${id}/preview?path=${enc(path)}${workspaceId ? `&workspaceId=${enc(workspaceId)}` : ''}`, filePreviewSchema),
   agentExportUrl: (id: string, opts: { includeProfile?: boolean; workspaceId?: string } = {}) =>

@@ -81,10 +81,15 @@ export const agentSchema = z.object({
   createdAt: z.string(),
 });
 
+export const fileAuthorSchema = z.object({ kind: z.string(), id: z.string(), name: z.string() });
+
 export const fileEntrySchema = z.object({
   path: z.string(),
   size: z.number(),
   lastModified: z.string().optional(),
+  version: z.number().optional(),
+  updatedBy: fileAuthorSchema.nullable().optional(),
+  owner: z.object({ agentId: z.string() }).nullable().optional(),
 });
 
 export const filePreviewSchema = z.object({
@@ -95,11 +100,22 @@ export const filePreviewSchema = z.object({
   text: z.string().optional(),
   truncated: z.boolean().optional(),
   base64: z.string().optional(),
+  version: z.number().optional(),
+  updatedBy: fileAuthorSchema.nullable().optional(),
+  updatedAt: z.string().optional(),
+});
+
+export const fileRevisionSchema = z.object({
+  version: z.number(),
+  size: z.number(),
+  updatedBy: fileAuthorSchema.nullable().optional(),
+  updatedAt: z.string(),
 });
 
 export const chatSessionListSchema = z.array(chatSessionSchema);
 export const agentListSchema = z.array(agentSchema);
 export const fileEntryListSchema = z.array(fileEntrySchema);
+export const fileRevisionListSchema = z.array(fileRevisionSchema);
 
 export const transcriptSchema = z.object({
   messages: z.array(chatMessageSchema),
