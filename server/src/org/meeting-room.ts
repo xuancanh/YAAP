@@ -67,12 +67,14 @@ export interface MeetingRoom {
   speakers: string[];
   /** Why the meeting skipped itself, when it did. */
   skipped: string | null;
+  /** The agenda and pre-read file beside the minutes (`orgPath.agenda`), once written. */
+  agendaPath: string | null;
 }
 
 export function emptyRoom(): MeetingRoom {
   return {
     items: [], current: 0, itemStartedAt: null, itemMinutes: 10, round: 0, roundCap: 0, extended: 0, speaking: null, attendance: {}, passes: [], present: [],
-    proposals: [], preRead: '', openItems: [], verdicts: {}, answers: {}, controls: { extend: 0, skip: 0, skipped: 0, end: null }, remindedAt: null, preparedAt: null, speakers: [], skipped: null,
+    proposals: [], preRead: '', openItems: [], verdicts: {}, answers: {}, controls: { extend: 0, skip: 0, skipped: 0, end: null }, remindedAt: null, preparedAt: null, speakers: [], skipped: null, agendaPath: null,
   };
 }
 
@@ -194,4 +196,16 @@ export function itemElapsedMinutes(room: MeetingRoom, now: Date): number {
 /** "12.3k" tokens. */
 export function tokensText(n: number): string {
   return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n);
+}
+
+/** The agenda document (docs/meetings.md "Before"): items, the open items,
+ *  the pre-read and the attendees' proposals, as markdown. Pure. */
+export function agendaMarkdown(input: { title: string; kindTitle: string; when: string; items: string[]; agenda: string; openItems: OpenItem[]; preRead: string; proposals: Array<{ text: string; why: string; by: string }> }): string {
+  const lines = [`# Agenda — ${input.title}`, '', `${input.kindTitle} · ${input.when}`, ''];
+  if (input.items.length) lines.push('## Items', '', ...input.items.map((x, i) => `${i + 1}. ${x}`), '');
+  if (input.openItems.length) lines.push(openItemsText(input.openItems, 'the last meeting'), '');
+  if (input.agenda.trim()) lines.push('## Agenda', '', input.agenda.trim(), '');
+  if (input.preRead.trim()) lines.push('## Pre-read', '', input.preRead.trim(), '');
+  lines.push('## Proposed by attendees', '', ...(input.proposals.length ? input.proposals.map((p) => `- ${p.text}${p.why ? ` — ${p.why}` : ''} (${p.by})`) : ['_None yet — propose until the meeting starts._']), '');
+  return lines.join('\n');
 }

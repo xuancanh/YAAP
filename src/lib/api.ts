@@ -930,6 +930,8 @@ export interface MeetingRoomState {
   answers: Record<string, { answer: string; by: string; byName: string; at: string }>;
   controls: { extend: number; skip: number; skipped: number; end: { by: string; at: string } | null };
   remindedAt: string | null; preparedAt: string | null; speakers: string[]; skipped: string | null;
+  /** The agenda and pre-read file beside the minutes, once written. */
+  agendaPath?: string | null;
 }
 /** A meeting (docs/group-chat.md §8): a thread in a unit channel; `minutes` is JSON (Minutes). */
 export interface OrgMeeting {

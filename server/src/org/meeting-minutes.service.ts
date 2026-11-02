@@ -367,6 +367,28 @@ export class OrgMeetingMinutesService {
     return path;
   }
 
+  /**
+   * The agenda and pre-read of a unit's meeting, beside its minutes
+   * (`orgPath.agenda`: `…/<yyyy-mm-dd>-<kind>-agenda.md`, docs/meetings.md
+   * "Before"), authored by the facilitator. Rewritten as it changes
+   * (prepared, a proposal, the start). Never throws; null without a unit or
+   * a file system.
+   */
+  async writeAgenda(input: { workspaceId: string; meeting: Pick<OrgMeeting, 'kind' | 'facilitatorAgentId' | 'scheduledFor' | 'startedAt' | 'createdAt'>; unitSlug: string | null; markdown: string }): Promise<string | null> {
+    if (!this.fs || !input.unitSlug) return null;
+    const m = input.meeting;
+    const path = orgPath.agenda(input.unitSlug, new Date(m.startedAt ?? m.scheduledFor ?? m.createdAt), m.kind);
+    const body = Buffer.from(input.markdown, 'utf8');
+    try {
+      try { await this.fs.write(input.workspaceId, path, body, { by: await this.author(m.facilitatorAgentId), contentType: 'text/markdown' }); }
+      catch { await this.fs.write(input.workspaceId, path, body, { by: MINUTES_SYSTEM_AUTHOR, contentType: 'text/markdown' }); }
+      return path;
+    } catch (err) {
+      this.logger.warn(`agenda file not written: ${err instanceof Error ? err.message : err}`);
+      return null;
+    }
+  }
+
   private async author(agentId: string | null): Promise<FsActor> {
     if (!agentId) return MINUTES_SYSTEM_AUTHOR;
     const a = await this.agents.get(agentId).catch(() => null) as { id: string; name: string; homeDir?: string | null } | null;

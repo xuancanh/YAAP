@@ -79,7 +79,7 @@ import { meetingTunable, operatingProfile } from './meeting-tunables';
 import { chiefTunable } from './chief-tunables';
 import { normalizeDue } from './org-tasks.service';
 import {
-  agendaIsEmpty, agendaItems, hasOpenThread, itemElapsedMinutes, openItemsText, parseRoom, tokensText,
+  agendaIsEmpty, agendaItems, agendaMarkdown, hasOpenThread, itemElapsedMinutes, openItemsText, parseRoom, tokensText,
   type MeetingRoom,
 } from './meeting-room';
 import { OrgMeetingMinutesService, type Narration, type WriteMinutesInput } from './meeting-minutes.service';
@@ -339,6 +339,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
         const pre = await this.meetings.preRead(org.id, unit, since).catch(() => null);
         const openItems = await this.meetings.openItems(org.id, prev).catch(() => []);
         await this.meetings.patchRoom(org.id, m.id, (r) => { r.preRead = pre?.text ?? ''; r.openItems = openItems; r.preparedAt = now.toISOString(); });
+        await this.writeAgendaDoc(org.id, m.id, m.agenda);
         await this.audit.append(org.id, { actor: 'system', action: 'meeting_prepared', refType: 'meeting', refId: m.id, payload: { kind: m.kind, unitId: unit.id, scheduledFor: m.scheduledFor, openItems: openItems.length, counts: pre?.counts ?? null } });
         scheduled.push(m);
       }
@@ -551,6 +552,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       r.attendance = Object.fromEntries(speakers.map((id) => [id, 'waiting' as const])); r.openItems = openItems; r.preRead = pre?.text ?? r.preRead;
     });
     m = await this.meetings.update(orgId, meetingId, { status: 'running', threadRootId: root.id, startedAt, agenda });
+    await this.writeAgendaDoc(orgId, meetingId, userAgenda);
     this.roomChanged(m, org.workspaceId);
     await this.audit.append(orgId, { actor: 'system', action: 'meeting_start', refType: 'meeting', refId: meetingId, payload: { kind: m.kind, unitId: m.unitId, channelId: m.channelId, threadRootId: root.id, attendees: speakers.length, roundCap, usdCap, items: items.length, openItems: openItems.length } });
 
@@ -982,10 +984,33 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       if (r.proposals.some((p) => p.text.toLowerCase() === text.toLowerCase())) throw new BadRequestException('already proposed');
       r.proposals.push({ text, why: (input.why ?? '').trim().slice(0, 300), byKind: by.kind, by: by.id, at: nowIso() });
     });
+    await this.writeAgendaDoc(orgId, meetingId, m.agenda);
     await this.audit.append(orgId, { actor: by.kind === 'agent' ? `agent:${by.id}` : by.id === currentAccountId() ? 'user' : `human:${by.id}`, action: 'meeting_agenda_proposed', refType: 'meeting', refId: meetingId, payload: { text } });
     const after = await this.meetings.get(orgId, meetingId);
     this.roomChanged(after, (await this.org.get(orgId)).workspaceId);
     return after;
+  }
+
+  /** The agenda and pre-read file of a unit's meeting, beside its minutes
+   *  (`orgPath.agenda` through the minutes service); its path is kept on the room. */
+  private async writeAgendaDoc(orgId: string, meetingId: string, userAgenda: string): Promise<void> {
+    if (!this.minutesDocs) return;
+    const m = await this.meetings.get(orgId, meetingId).catch(() => null);
+    if (!m?.unitId) return;
+    const unit = await this.units.get(orgId, m.unitId).catch(() => null);
+    if (!unit) return;
+    const org = await this.org.get(orgId);
+    const room = parseRoom(m.room);
+    const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
+    const people = await this.peopleNames(room.proposals.filter((p) => p.byKind === 'human').map((p) => p.by));
+    const markdown = agendaMarkdown({
+      title: m.title, kindTitle: KIND_TITLES[m.kind as MeetingKind] ?? m.kind, when: `${(m.startedAt ?? m.scheduledFor ?? m.createdAt).slice(0, 16).replace('T', ' ')} UTC`,
+      items: room.items.length ? room.items : agendaItems(m.kind as MeetingKind, userAgenda, room.openItems.length, room.proposals),
+      agenda: userAgenda, openItems: room.openItems, preRead: room.preRead,
+      proposals: room.proposals.map((p) => ({ text: p.text, why: p.why, by: p.byKind === 'agent' ? names.get(p.by) ?? 'an agent' : people.get(p.by) ?? 'a person' })),
+    });
+    const path = await this.minutesDocs.writeAgenda({ workspaceId: org.workspaceId, meeting: m, unitSlug: unit.slug, markdown }).catch(() => null);
+    if (path && path !== room.agendaPath) await this.meetings.patchRoom(orgId, meetingId, (r) => { r.agendaPath = path; });
   }
 
   /** Scheduled meetings this agent attends that are open for agenda proposals. */

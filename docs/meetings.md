@@ -49,7 +49,12 @@ round.
   since the last meeting of this kind (on pace / at risk — the scorecard
   deltas), at-risk goals, what moved and what was done on the unit's board,
   what is blocked. It is kept on the room and attached to the agenda at the
-  start. The calendar shows the prepared meeting instead of the cadence's
+  start. A unit's meeting also gets its **agenda file** beside its minutes —
+  `orgPath.agenda` in `server/src/files/layout.ts`
+  (`…/<yyyy-mm-dd>-<kind>-agenda.md`): the items, the open items, the
+  pre-read and the proposals, authored by the facilitator and rewritten when
+  it is prepared, when a proposal arrives and when it starts (the room keeps
+  `agendaPath`; the room header's Agenda button opens it). The calendar shows the prepared meeting instead of the cadence's
   occurrence. A prepared meeting whose cadence never fired is cancelled ten
   minutes after its time.
 - **Agenda proposals.** Until it starts, an agent attendee may call

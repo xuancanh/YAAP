@@ -31,6 +31,7 @@ import { OrgModeService } from '../server/src/org/org-mode.service';
 import { OrgAnnouncer } from '../server/src/org/org-announcer';
 import { OrgUnitsService } from '../server/src/org/org-units.service';
 import { OrgMeetingsService, parseMinutes } from '../server/src/org/org-meetings.service';
+import { orgPath } from '../server/src/files/layout';
 import { OrgMeetingRuntime, adhocTitle } from '../server/src/org/org-meeting-runtime.service';
 import { OrgMeetingMinutesService, MINUTES_MAX_TOKENS, localDay, minutesPathFor, parseNarrative, recordDiscussion, withSuffix } from '../server/src/org/meeting-minutes.service';
 import { MeetingsCalendarService, WorkspaceMeetingsController, expandCron, retroGap } from '../server/src/org/meetings-calendar';
@@ -387,4 +388,23 @@ test('GET …/meetings: past meetings with minutes, upcoming occurrences from th
   const c = (await s.meetings.cadences(orgId)).find((x) => x.unitId === writerUnit.id && x.kind === 'standup')!;
   await s.meetings.updateCadence(orgId, c.id, { enabled: false });
   assert.equal((await s.controller.list(s.ws.id, writerUnit.id, undefined, from, to)).meetings.filter((x) => x.kind === 'standup').length, 0);
+});
+
+test('a unit meeting\'s agenda and pre-read are written beside its minutes (orgPath.agenda), with the proposals, and the room keeps the path', async () => {
+  const s = await setup(() => say('ok'));
+  const orgId = await enable(s);
+  const root = await s.units.rootUnit(orgId);
+  const m0 = await s.meetings.create(orgId, { kind: 'weekly_review', unitId: root.id, createdBy: 'user', scheduledFor: new Date(Date.now() + 3600_000).toISOString() });
+  await s.meetingRuntime.proposeAgenda(orgId, m0.id, { kind: 'agent', id: s.writer.id }, { text: 'Sponsorship policy', why: 'two offers' });
+  const path = orgPath.agenda(root.slug, new Date(m0.scheduledFor!), 'weekly_review');
+  assert.match(path, /-weekly-review-agenda\.md$/);
+  assert.match((await readFile(s, path))!, /## Proposed by attendees\n\n- Sponsorship policy — two offers \(Writer\)/);
+  await s.meetingRuntime.run(orgId, m0.id);
+  const m = await s.meetings.get(orgId, m0.id);
+  const room = JSON.parse(m.room) as { agendaPath: string };
+  const doc = (await readFile(s, room.agendaPath))!;
+  assert.match(doc, /^# Agenda — Weekly review/);
+  assert.match(doc, /## Items\n\n1\. Scorecard[\s\S]*Sponsorship policy/);
+  assert.match(doc, /## Pre-read\n\n\*\*Pre-read\*\*/);
+  assert.ok(m.minutesPath && room.agendaPath.replace(/-agenda\.md$/, '.md').split('/').slice(0, -1).join('/') === m.minutesPath.split('/').slice(0, -1).join('/'), 'beside the minutes');
 });

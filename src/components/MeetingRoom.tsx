@@ -62,6 +62,7 @@ export function MeetingRoom({ wsId, meeting: m, me, name, onChanged }: {
         <span style={{ fontWeight: 700, fontSize: 13, minWidth: 0, overflowWrap: 'anywhere' }}>{m.title || MEETING_KIND_TITLES[m.kind]}</span>
         <span style={{ fontSize: 11.5, color }}>{m.status}</span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+          {room.agendaPath && <button style={smallBtn} title={`Open /${room.agendaPath}`} onClick={() => app.openFile({ kind: 'workspace', id: wsId }, room.agendaPath!)}>Agenda</button>}
           {(running || before) && !present && <button style={{ ...smallBtn, background: 'var(--accent)', color: '#fff', border: 'none' }} disabled={busy} onClick={() => void act(() => api.joinMeeting(wsId, m.id), 'You are in the room: you are heard at the next turn')}>Join</button>}
           {running && <button style={smallBtn} disabled={busy || m.kind === 'standup'} title="One more round, within the caps" onClick={() => void act(() => api.controlMeeting(wsId, m.id, 'extend'), 'One more round')}>Extend</button>}
           {running && <button style={smallBtn} disabled={busy || room.current >= room.items.length} title="Move to the next agenda item" onClick={() => void act(() => api.controlMeeting(wsId, m.id, 'skip'), 'Item skipped')}>Skip item</button>}
