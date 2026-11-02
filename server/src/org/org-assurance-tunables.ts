@@ -32,6 +32,10 @@ export const ASSURANCE_TUNABLES = {
   'pulse.criticalPenalty': { default: 5, min: 0, max: 25, doc: 'Points subtracted per open critical signal.' },
   // the auditor (§5.3)
   'audit.sampleSize': { default: 10, min: 1, max: 30, doc: 'Accepted tasks sampled per audit.' },
+  // On-demand assurance (decision 3, docs/autonomous-skills-review.md §4): an
+  // open "Assurance request:" task brings the next audit forward. The window
+  // batches requests: one audit answers every request filed within it.
+  'audit.assuranceDebounceHours': { default: 6, min: 1, max: 168, doc: 'Hours an open "Assurance request:" task waits (collecting any others filed meanwhile) before it brings the next audit forward; one audit answers them all.' },
 } satisfies Record<string, TunableSpec>;
 
 export type AssuranceTunableKey = keyof typeof ASSURANCE_TUNABLES;

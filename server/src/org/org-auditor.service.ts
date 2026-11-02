@@ -59,10 +59,14 @@ import { assuranceTunable } from './org-assurance-tunables';
 import { incidentTunable } from './incident-tunables';
 
 export type OrgAuditRun = typeof orgAudits.$inferSelect;
-export type AuditTrigger = 'cadence' | 'manual';
+/** `assurance`: an open "Assurance request:" task brought the audit forward. */
+export type AuditTrigger = 'cadence' | 'manual' | 'assurance';
+/** The title convention heads use for an on-demand audit (docs/autonomous-skills-review.md). */
+export const ASSURANCE_REQUEST = /^assurance request:/i;
 
 const SESSION_SUFFIX = ' · Audit';
 const DAY_MS = 24 * 60 * 60_000;
+const HOUR_MS = 60 * 60_000;
 const FALLBACK_PRICE = { input: 3, output: 15 };
 const STOP_WORDS = new Set(['the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'in', 'on', 'with', 'you', 'your', 'are', 'is', 'it', 'this', 'that', 'as', 'by', 'at', 'be', 'from', 'not', 'into', 'every', 'when', 'what', 'who', 'how', 'all', 'any', 'can', 'do', 'does', 'our', 'its', 'their', 'they', 'we', 'one', 'two', 'per', 'own', 'out', 'up', 'no', 'so', 'if', 'than', 'then', 'them', 'has', 'have', 'had', 'will', 'never', 'always']);
 
@@ -172,7 +176,8 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
     try {
       for (const org of await this.org.list()) {
         if (org.status !== 'active' || !org.auditorAgentId) continue;
-        if (await this.due(org, now)) await this.runAudit(org.id, 'cadence').catch((err) => this.logger.warn(`audit of org ${org.id} failed: ${err instanceof Error ? err.message : err}`));
+        const trigger: AuditTrigger | null = (await this.due(org, now)) ? 'cadence' : (await this.assuranceDue(org, now)) ? 'assurance' : null;
+        if (trigger) await this.runAudit(org.id, trigger).catch((err) => this.logger.warn(`audit of org ${org.id} failed: ${err instanceof Error ? err.message : err}`));
       }
     } catch (err) {
       this.logger.warn(`auditor tick failed: ${err instanceof Error ? err.message : err}`);
@@ -185,6 +190,26 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
     const last = (await this.list(org.id, 20)).find((a) => a.trigger !== 'redteam');
     if (!last) return true;
     return now.getTime() - new Date(last.startedAt).getTime() >= Math.max(1, org.auditCadenceDays) * DAY_MS;
+  }
+
+  /**
+   * On-demand assurance (decision 3, docs/autonomous-skills-review.md §4): an
+   * open task titled "Assurance request: …" filed after the last audit
+   * started brings the next audit forward once the oldest such request is
+   * `audit.assuranceDebounceHours` old. The window is the debounce: every
+   * request filed in it is answered by the one audit, and a request filed
+   * after an audit started waits its own window, so many requests never mean
+   * many audits. A runtime trigger, not an agent power: audit settings stay
+   * outside every agent's reach (docs/boundary.md, `audit.*` is never).
+   */
+  async assuranceDue(org: Organization, now = new Date()): Promise<boolean> {
+    const open = (await this.tasks.list(org.id)).filter((t) => ASSURANCE_REQUEST.test(t.title.trim()) && !['done', 'cancelled'].includes(t.status));
+    if (open.length === 0) return false;
+    const last = (await this.list(org.id, 20)).find((a) => a.trigger !== 'redteam');
+    const uncovered = last ? open.filter((t) => t.createdAt > last.startedAt) : open;
+    if (uncovered.length === 0) return false;
+    const oldest = Math.min(...uncovered.map((t) => Date.parse(t.createdAt)));
+    return now.getTime() - oldest >= assuranceTunable(org, 'audit.assuranceDebounceHours') * HOUR_MS;
   }
 
   list(orgId: string, limit = 50): Promise<OrgAuditRun[]> {
@@ -239,6 +264,7 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
       `You were woken as the auditor of "${org.name}" (trigger: ${trigger}). Audit the material in your context: ${sample.counts.tasks} accepted task(s), ${sample.counts.auditRows} scope/spend/autonomous audit row(s) and ${sample.counts.driftCandidates} charter-drift candidate(s) since ${since.slice(0, 16).replace('T', ' ')}.`,
       'For each accepted task, judge whether the final comment shows done_when was met and whether the work honours the company\'s values; for each scope widening and autonomous action, whether the recorded reason justifies it; for each spend row, whether it is proportionate; for each drift candidate, whether the work matches the charter. Record every problem with org_audit_finding (cite the id). If something holds, say so in the summary rather than inventing a finding. Finish with org_audit_close.',
       'Your playbooks (your skill_* tools) hold the procedure: load the ones that fit before you judge. You may also read the shared files (fs_list, fs_read, fs_search: the ledger under /org/ and the functions\' reports), the decision log (org_decisions) and the metric sources (org_metric_sources, org_metric_read), and the board for open tasks titled "Assurance request:" that the chief or a function head filed for you.',
+      trigger === 'assurance' ? 'This audit was brought forward by open "Assurance request:" tasks (org_read_board lists them): answer each one first and cite it in its findings or in the summary.' : '',
       pick.single ? 'Note: no model family other than the workers\' was available; this is a single-model audit and the report will say so.' : '',
     ].filter(Boolean).join('\n\n');
 

@@ -25,6 +25,8 @@
  */
 import { CHIEF_TUNABLES, PROXY_LEVELS, type ProxyLevel } from './chief-tunables';
 import { TUNABLES } from './org-tunables';
+// The assurance keys (audit.assuranceDebounceHours) join the registry at import.
+import './org-assurance-tunables';
 
 /** The pack the chief's skills and loops come from (packs/chief-of-staff.md). */
 export const CHIEF_PACK_ID = 'pack-chief-of-staff';
@@ -135,6 +137,7 @@ export function deriveOperatingSystem(p: ProfileInput): OperatingSystemPlan {
   set('chief.riskReviewDays', c === 'hierarchy' ? 7 : stage === 'early' ? 30 : 14, c === 'hierarchy' ? 'risk register and controls in the foreground' : stage === 'early' ? 'a small company reviews risks monthly' : 'risks re-scored every two weeks');
   set('chief.offTrackWeeks', speed || c === 'market' ? 1 : 2, speed || c === 'market' ? 'off track for a week is an issue' : 'off track for two weeks with no issue raised is flagged');
   set('chief.sunsetEmptyCycles', speed || c === 'adhocracy' ? 2 : c === 'hierarchy' ? 4 : 3, speed || c === 'adhocracy' ? 'rituals that stop earning their time go fast' : c === 'hierarchy' ? 'rituals are retired deliberately' : 'three empty cycles and a ritual is up for retirement');
+  set('audit.assuranceDebounceHours', speed ? 2 : c === 'hierarchy' || rigor ? 24 : stage === 'early' ? 4 : 6, speed ? 'speed is a value: a head\'s assurance request is answered within hours' : c === 'hierarchy' || rigor ? 'assurance requests are batched into one formal audit a day' : stage === 'early' ? 'a small company answers an assurance request the same morning' : 'assurance requests are batched for a few hours, then audited');
   set('chief.memoFirst', rigor || writing || c === 'hierarchy' ? 1 : 0, rigor || writing || c === 'hierarchy' ? 'the company defaults to writing: every decision item has a pre-read' : 'written pre-reads for one-way doors only');
 
   const decisionProtocol = {

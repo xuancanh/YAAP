@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConfigService } from '@nestjs/config';
 import { eq, sql } from 'drizzle-orm';
-import { agentTypes, orgApprovals, orgRuns, orgSignals, orgTasks } from '../server/src/database/schema';
+import { agentTypes, orgApprovals, orgAudits, orgRuns, orgSignals, orgTasks } from '../server/src/database/schema';
 import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
 import type { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import { ChatsRepository } from '../server/src/chats/chats.repository';
@@ -32,6 +32,7 @@ import { OrgUnitsService } from '../server/src/org/org-units.service';
 import { OrgSignalsService, thresholdsOf } from '../server/src/org/org-signals.service';
 import { OrgSloService, pulseScore, breachesOf, classOf, median, DEFAULT_SLO_TARGETS, DEFAULT_PULSE_WEIGHTS } from '../server/src/org/org-slo.service';
 import { OrgAuditorService, driftsFromCharter } from '../server/src/org/org-auditor.service';
+import { deriveOperatingSystem, planValue } from '../server/src/org/chief-os';
 import { ASSURANCE_TUNABLES, assuranceTunable, mergeTunables } from '../server/src/org/org-assurance-tunables';
 import { OrgController } from '../server/src/org/org.controller';
 import { WorkspaceOrgController } from '../server/src/org/workspace-org.controller';
@@ -542,4 +543,50 @@ test('the runtime tick sweeps signals and samples SLOs every five minutes for ac
   assert.equal(driftsFromCharter('You write newsletter issues and drafts.', ['Draft issue 12', 'Write the intro']), false);
   assert.equal(driftsFromCharter('You write newsletter issues and drafts.', ['File quarterly taxes', 'Reconcile invoices']), true);
   assert.equal(driftsFromCharter('You write newsletter issues and drafts.', ['File quarterly taxes']), false, 'one title is not a pattern');
+});
+
+test('decision 3: an open "Assurance request:" task brings the next audit forward after audit.assuranceDebounceHours — one audit answers every request in the window; the window is the owner\'s tunable, derived from the profile', async () => {
+  const close = [{ type: 'tool_call', id: 'c', name: 'org_audit_close', input: { summary: 'Assurance answered.' } }, { type: 'done' }] as AiStreamEvent[];
+  const s = await setup([close, [{ type: 'answer', text: 'Done.' }, { type: 'done' }]]);
+  const auditorAgent = await s.agents.create({ name: 'Auditor', charter: 'You audit.', provider: 'openai', model: 'gpt-5' });
+  await s.org.addMember(s.orgId, { agentId: auditorAgent.id, title: 'Auditor', reportsToAgentId: s.chief.id });
+  await s.org.update(s.orgId, { auditorAgentId: auditorAgent.id, auditCadenceDays: 30 });
+  // the last audit ran an hour ago: the cadence is a month away
+  await s.db.insert(orgAudits).values({ id: 'prior', accountId: 'single', orgId: s.orgId, auditorAgentId: auditorAgent.id, trigger: 'cadence', startedAt: ago(1), endedAt: ago(1), sampled: '{}', findings: '[]', summary: 'ok', singleModel: 0, noRotation: 0, model: 'gpt-5', usd: 0, status: 'done', createdAt: ago(1) });
+  const org = async () => s.org.get(s.orgId);
+  const later = (h: number) => new Date(Date.now() + h * HOUR);
+  assert.equal(await s.auditor.assuranceDue(await org(), later(48)), false, 'no request, no early audit');
+  // two heads file requests: neither audits before the window, one audit answers both
+  await s.tasks.create(s.orgId, { title: 'Assurance request: verify the pipeline numbers', createdBy: `agent:${s.writer.id}` });
+  await s.tasks.create(s.orgId, { title: 'Assurance request: check the churn KPI source', createdBy: `agent:${s.editor.id}` });
+  assert.equal(await s.auditor.assuranceDue(await org(), later(1)), false, 'inside the 6h default window');
+  await s.auditor.tick(later(1));
+  assert.equal((await s.auditor.list(s.orgId)).length, 1, 'no audit yet');
+  assert.equal(await s.auditor.assuranceDue(await org(), later(7)), true);
+  await s.auditor.tick(later(7));
+  let runs = await s.auditor.list(s.orgId);
+  assert.equal(runs.length, 2);
+  assert.equal(runs[0].trigger, 'assurance');
+  assert.ok(s.provider.requests[0].messages.some((m) => m.role === 'user' && /brought forward by open "Assurance request:" tasks/.test(String(m.content))), 'the prompt says why it runs early');
+  // debounce: both requests are covered, ticking again runs nothing
+  assert.equal(await s.auditor.assuranceDue(await org(), later(7)), false);
+  await s.auditor.tick(later(8));
+  assert.equal((await s.auditor.list(s.orgId)).length, 2, 'many requests, one audit');
+  // a closed request does not count; a new one waits its own window
+  const third = await s.tasks.create(s.orgId, { title: 'Assurance request: the NPS survey sample', createdBy: `agent:${s.writer.id}` });
+  await s.tasks.update(s.orgId, third.id, { status: 'cancelled' });
+  assert.equal(await s.auditor.assuranceDue(await org(), later(30)), false);
+  await s.tasks.create(s.orgId, { title: 'Assurance request: the NPS survey sample (again)', createdBy: `agent:${s.writer.id}` });
+  assert.equal(await s.auditor.assuranceDue(await org(), later(2)), false);
+  // the window is a tunable on the owner's side of the boundary: the CEO shortens it, an agent may not
+  await s.org.setTunable(s.orgId, 'audit.assuranceDebounceHours', 1, { actor: 'user', why: 'answer heads faster' });
+  assert.equal(await s.auditor.assuranceDue(await org(), later(2)), true);
+  await assert.rejects(s.org.setTunable(s.orgId, 'audit.assuranceDebounceHours', 168, { actor: 'chief', why: 'fewer audits' }), /never an agent's/);
+  assert.equal(assuranceTunable(await org(), 'audit.assuranceDebounceHours'), 1);
+  // the profile shapes the starting value within its bound
+  assert.equal(planValue(deriveOperatingSystem({ values: 'ship fast, move fast' }), 'audit.assuranceDebounceHours'), 2);
+  assert.equal(planValue(deriveOperatingSystem({ values: 'compliance, careful process, approval' }), 'audit.assuranceDebounceHours'), 24);
+  assert.equal(ASSURANCE_TUNABLES['audit.assuranceDebounceHours'].default, 6);
+  runs = await s.auditor.list(s.orgId);
+  assert.equal(runs.length, 2);
 });

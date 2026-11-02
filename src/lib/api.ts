@@ -856,7 +856,7 @@ export interface OrgPulse {
 }
 export interface OrgSloInfo { targets: SloTargets; weights: PulseWeights; tunables: Record<string, number>; bounds: Record<string, { default: number; min: number; max: number; doc: string }> }
 export interface OrgAuditRun {
-  id: string; orgId: string; auditorAgentId: string; trigger: 'cadence' | 'manual' | 'redteam'; startedAt: string; endedAt: string | null; sampled: string; findings: string; summary: string;
+  id: string; orgId: string; auditorAgentId: string; trigger: 'cadence' | 'manual' | 'assurance' | 'redteam'; startedAt: string; endedAt: string | null; sampled: string; findings: string; summary: string;
   singleModel: number; model: string; usd: number; status: 'running' | 'done' | 'failed' | 'budget_stop'; createdAt: string;
   /** Audit of the auditor (item 29): JSON SpotCard[]; precision / recall as of the latest answer; 1 when the seat could not rotate. */
   spotChecks?: string; precision?: number | null; recall?: number | null; noRotation?: number;
