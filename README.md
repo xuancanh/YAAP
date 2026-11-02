@@ -1,299 +1,307 @@
 # YAAM Chat
 
-A standalone web application for **durable-agent chat**: provider-neutral LLM
-conversations owned by persistent agent identities, extracted from the YAAM
-desktop app's chat feature and rebuilt as a client/server web app.
+**An autonomous company of AI agents that you run as the owner.** You write a
+paragraph of intent: a vision, a budget, your rules. A Chief of Staff turns it
+into objectives and key results, hires function heads and specialists from a
+catalog, and runs the company's operating system: the board, the cadences, the
+meetings, the brief. Every agent is a durable identity with its own model,
+memory, home folder, tools and heartbeat. They work in channels and on a
+shared board, write their work as versioned files, and act on the outside
+world only as far as they have earned. You open **Home** to see what needs you,
+what happened while you were away and whether the company is on track. You
+decide through one-line **decision cards** that say what happens if you stay
+silent.
 
-- Requirements: [`docs/chat-requirements.md`](docs/chat-requirements.md)
-  (FR-numbered; the source of truth for scope).
-- Stack and layout follow `smart-knowledge-app`: **NestJS** backend
-  (`server/`), **React 19 + Vite** frontend (`src/`), **Drizzle ORM +
-  Postgres**, **S3-compatible object storage** for workspace files (MinIO in
-  dev), tests on `node:test` via `tsx` against **PGlite** (in-memory Postgres).
+It is a NestJS API and a React SPA over Postgres and S3-compatible storage,
+provider-neutral (Anthropic, OpenAI and the OpenAI-compatible family), and
+built so that the owner can look away: actions are classed by reversibility,
+trust is earned per action class, an independent reviewer checks risky calls,
+incidents contain themselves, and what the company may change about itself is
+one table.
+
+<p align="center"><img src="docs/images/home.jpg" alt="Home: the owner's mission control" width="900"></p>
+
+| | |
+|---|---|
+| ![Inbox](docs/images/inbox.jpg) **Inbox**: everything waiting on you, plus Following | ![Company](docs/images/company-board.jpg) **Company**: units on a grouped rail, each with its board |
+| ![Artifacts](docs/images/artifacts.jpg) **Artifacts**: the workspace filesystem, Shared and Agents homes, versions and history | ![Channel](docs/images/channel.jpg) **Channels**: `#company` with the Chief of Staff's standup |
+| ![Agent](docs/images/agent.jpg) **Agent page**: dashboard, heartbeat, sessions, memory, tools | ![Market](docs/images/market-business.jpg) **Market**: the Business catalog of function heads and specialists |
+
+## Contents
+
+- [What you can do](#what-you-can-do)
+- [Quick start](#quick-start)
+- [Project layout](#project-layout)
+- [Testing](#testing)
+- [Documentation](#documentation)
+
+## What you can do
+
+### Home and Inbox
+
+- **Home is mission control** ([docs/home.md](docs/home.md)). One request
+  (`GET /api/workspaces/:id/home`) composes: *Needs you* (decision cards,
+  held or staged actions, incidents, warnings), *Since you were last here*
+  (tasks done or blocked, what was decided without you, files changed, the
+  pulse), *Goals*, *Team* (each agent's state, current work and heartbeat),
+  *Activity* (routine loop runs collapsed per agent and day), *Spend and
+  health*, *Coming up* (meetings, cadences in words, deadlines) and *Recent
+  files*. Each section fails on its own; the rest still renders.
+- **Inbox** collects everything waiting on you: approvals and decision cards,
+  staged sends, escalations, mentions and agent events. Its **Following**
+  view shows what changed on the threads and tasks you follow
+  ([docs/follows.md](docs/follows.md)).
+- Notifications reach you outside the tab through Telegram, email and web
+  push, inside quiet hours you set ([docs/channels.md](docs/channels.md)).
+
+### Company
+
+Switch a workspace into organization mode (`supervised` or `autonomous`) and
+it becomes a company ([docs/group-chat.md](docs/group-chat.md) §5,
+[docs/company-vision.md](docs/company-vision.md)).
+
+- **Chief of Staff** ([docs/chief-of-staff.md](docs/chief-of-staff.md)):
+  derives the company's operating system from your values, culture and stage
+  (cadences, templates, thresholds, how much it may act as your proxy), runs
+  the rituals and keeps the source of truth. It hires, reorganizes and moves
+  budget: in supervised mode each change is a card you decide; in autonomous
+  mode it acts inside hard caps and a veto window.
+- **Function heads and specialists**: 13 function heads and 39 specialists
+  plus an Auditor in the Business catalog
+  ([docs/agent-catalog.md](docs/agent-catalog.md),
+  [docs/autonomous-skills-review.md](docs/autonomous-skills-review.md)).
+  Every lead runs a **unit** with its own board, `#<slug>` channel and goal
+  subtree. A human can hold a role too.
+- **Goals and OKRs**: vision → objectives → key results with metric, target,
+  owner and due date. A model-free sweep flags key results at risk, and any
+  task can show its *why* chain. Key results can be **measured** from metric
+  sources (HTTPS JSON, webhooks, Gmail/Calendar/Drive counts, attestation)
+  rather than typed in ([docs/sensing.md](docs/sensing.md)).
+- **The board**: tasks with one owner, atomic claiming, four-field briefs,
+  dependencies, deadlines, WIP limits, review rounds and model-free `done_when`
+  checks. Each task has a deep link.
+- **Meetings and cadences**: standups, reviews and retros run as bounded
+  rituals in unit channel threads, with minutes and a decision log. Every
+  cadence and threshold is a per-company **tunable** with a bound.
+- **Decisions**: every card carries a recommendation, alternatives,
+  reversibility and what happens at its deadline if you say nothing. Kinds of
+  card can be delegated to a person or a role
+  ([docs/owners-seat.md](docs/owners-seat.md)).
+- **Incidents**: breaker trips, failed checks, budget stops and critical
+  audit findings are contained by severity (note, pause the member, freeze an
+  action class, drop to supervised) and major ones get a postmortem
+  ([docs/incidents.md](docs/incidents.md)).
+- **Audit**: an append-only, hash-chained log of every change, an auditor
+  role whose own precision is spot-checked, and any day can be replayed.
+- **Spend**: USD envelopes reserved before every run (80% warning, 100% hard
+  stop), cost per outcome rolled up to key results, a burn forecast, and
+  model routing by task class.
+- **Improvement**: changes run as experiments with predictions that are
+  scored ([docs/experiments.md](docs/experiments.md)); charter, playbook and
+  routing changes are replayed against a role's golden set before rollout
+  ([docs/evals.md](docs/evals.md)). A company exports as a blueprint,
+  `COMPANY.json` ([docs/blueprints.md](docs/blueprints.md)).
+
+### Agents
+
+- **Durable identities**: each agent has its own provider and model, charter,
+  sessions, memory (LESSONS, JOURNAL, profile entries it reads back each
+  turn; [docs/agent-memory.md](docs/agent-memory.md)), home folder and tools.
+- **A heartbeat**: every agent wakes on a gated heartbeat that runs only when
+  something changed (quiet otherwise), plus cron loops and event triggers:
+  new mail, calendar changes, assigned tasks, webhooks
+  ([docs/triggers.md](docs/triggers.md)).
+- **Tools**: workspace files, web search and fetch, a credential-free browser
+  ([docs/browser-tool.md](docs/browser-tool.md)), sandboxed `run_js` /
+  `run_python` ([docs/code-execution.md](docs/code-execution.md)), skills,
+  MCP servers, Google and Microsoft connections
+  ([docs/integrations.md](docs/integrations.md)), mini apps
+  ([docs/miniapp-capabilities.md](docs/miniapp-capabilities.md)), voice notes
+  ([docs/voice.md](docs/voice.md)) and, through a paired companion, your own
+  desktop ([docs/computer-control.md](docs/computer-control.md)).
+- **Channels and @mentions** ([docs/group-chat.md](docs/group-chat.md)):
+  Slack-style channels and threads where people and agents talk. A mentioned
+  agent replies in its own per-channel session and behaves exactly as it does
+  in a private chat. Unprompted replies pass a relevance check and hard rate
+  bounds, and agent-to-agent chains stop after three rounds.
+- **Following**: agents and people follow the threads and tasks they take
+  part in; an agent hears about changes in its heartbeat, a person in the
+  Inbox.
+- **Portability**: AGENT.json v2 export and import, memory import from other
+  assistants, and `SKILL.md` skills in the agentskills.io format.
+
+### Artifacts
+
+- **One filesystem per workspace** ([docs/filesystem.md](docs/filesystem.md)),
+  laid out like a Linux box: `agents/<handle>/` homes, `org/`,
+  `channels/<slug>/`, `uploads/` and any shared folder.
+- **Versioning and collaboration**: every write records a version and an
+  author, conflicting writes get a 409 with the current version, History
+  shows past revisions, and agent homes keep read-only checkpoints.
+- **Company records as files**: playbooks, experiments, evals, outcomes and
+  metrics are mirrored as markdown under `/org/` and read in Artifacts.
+- Markdown, HTML, images, PDFs and slide decks preview in place. HTML runs in
+  a sealed, network-denied iframe.
+
+### Trust and safety
+
+- **Self-modification boundary** ([docs/boundary.md](docs/boundary.md)): one
+  table says what the company may change alone, only through an experiment,
+  only as a proposal to you, or never.
+- **Permissions** ([docs/permissions.md](docs/permissions.md)): three gates
+  for anything an agent builds (apps, skills, tools); Ask/Auto approvals per
+  chat.
+- **Actions and the trust ledger**
+  ([docs/actions-and-trust.md](docs/actions-and-trust.md)): every tool call is
+  classed by reversibility (read, internal write, external reversible,
+  external irreversible, money) and logged with an idempotency key. Each agent
+  earns a trust level per class; sends it may not yet make alone are
+  **staged** as drafts for you.
+- **Independent reviewer**: a second model call with no tools checks risky
+  actions before they run.
+- **Prompt-injection defences**: untrusted content is framed as data, and a
+  scheduled red-team run tries a canary injection against record-only tools
+  ([docs/security.md](docs/security.md), [docs/incidents.md](docs/incidents.md)).
+- SSRF guard on every outbound URL, sealed tokens at rest, account-scoped
+  queries and workspace access guards.
+
+### Market
+
+- **Agents**: the Business catalog (function heads, specialists, the Chief
+  of Staff and the Auditor) and personal packs (trip planner, meal planner,
+  tutor, landlord ledger and more than 50 others), all authored in `packs/`. Every
+  hire runs a capability review first.
+- **Connectors**: native Google and Microsoft integrations and a curated
+  directory of remote MCP servers. Connecting grants nothing to any agent;
+  access is a per-agent grant.
+- **Community**: publish and install agents, skills and mini apps behind a
+  scan and a review; installs land inert ([docs/registry.md](docs/registry.md)).
+- **Companies**: whole-company blueprints with a dry-run plan before install.
 
 ## Quick start
 
+Requirements: Node.js 20+ and Docker.
+
 ```bash
 npm install
-docker compose -f docker-compose.dev.yml up -d   # Postgres :5433 + MinIO :9100
-npm run dev        # NestJS API on :8790 + Vite frontend on :5175 (proxies /api)
-npm test           # backend tests (PGlite in-memory Postgres, no server boot)
-npm run build      # server (tsc) + frontend (vite) production build
+cp .env.example .env                              # defaults match the compose file
+docker compose -f docker-compose.dev.yml up -d    # Postgres :5433, MinIO :9100 (console :9101)
+npm run dev                                       # API :8790 + SPA :5175 (Vite proxies /api)
 ```
 
-Config defaults match the compose file; override via env (see `.env.example`).
-Migrations are idempotent and run on every boot. The S3 bucket is auto-created
-on boot when the store allows it (MinIO does; on AWS pre-create it).
+Open http://localhost:5175. Add an agent type with a provider key under
+**Settings → Providers & agent types** (Anthropic or the OpenAI-compatible
+family; without a key, chats fall back to the Echo dev provider). Then hire an
+agent from the Market, or turn the workspace into a company under
+**Settings → Workspace → Organization**.
 
-## Layout
+- `npm run dev` (`scripts/dev.mjs`) compiles the server with `tsc --watch`,
+  runs `server/dist/main.js` under `node --watch`, and starts Vite. The server
+  runs from compiled output because Nest's constructor injection needs
+  `emitDecoratorMetadata`.
+- Migrations are idempotent and run on every boot. The S3 bucket is created
+  on boot when the store allows it (MinIO does; on AWS, create it first).
+- Optional integrations (Google/Microsoft OAuth, Telegram, email, web push,
+  code runner, browser, voice, registry) are configured in `.env`; each block
+  in `.env.example` says what it enables. `COMPANIES_ENABLED=false` hides
+  organization mode.
+- `npm run build` builds the server (tsc) and the SPA (Vite).
+  `npm run packs:build` regenerates `server/src/market/authored-packs.generated.ts`
+  from `packs/*.md`. Production: `Dockerfile`,
+  `deploy/docker-compose.prod.yml` and [docs/environments.md](docs/environments.md).
+
+## Project layout
 
 ```
-server/src/
-  config/        typed env configuration
-  database/      Drizzle schema + idempotent boot migrations (Postgres)
-  status/        GET /api/status
-  workspaces/    scoping partitions, durable memory (§12) + S3-backed files
-  storage/       S3-compatible object storage (workspace-scoped keys)
-  agent-types/   provider/model/persona presets (§9); API keys never leave the server
-  agents/        durable agent identities: charter, feedback, dashboard (§11)
-  chats/         sessions, transcript, the SSE tool-using turn loop (§1–§8)
-  skills/        instruction-pack skills offered as tools (§10); built-ins seeded
-  search/        GET /api/search — sessions, messages, files (FR-8.2)
-  ai/            provider-neutral streaming interface (NFR-1) + Echo dev provider
-src/             React frontend: full design port (chats, agents, files,
-                 market, settings, artifact panel; dark/light, responsive)
-tests/           node:test suites run with tsx against PGlite (in-memory Postgres)
-scripts/dev.mjs  parallel server + Vite dev runner
+server/src/          NestJS API, one module per domain (see docs/architecture.md)
+  chats/             sessions, the streaming turn loop, tools, compaction, heartbeat, loops
+  org/               the company: units, tasks, intent, meetings, approvals, audit,
+                     incidents, sensing, experiments, evals, capital, chief of staff
+  agents/ ai/ actions/ review/ files/ storage/ groupchat/ follows/ home/ …
+  database/          Drizzle schema.ts + idempotent boot migrations (migrator.ts)
+src/                 React 19 + Vite SPA: store.tsx, components/, lib/
+packs/               authored agent packs (markdown + JSON front matter)
+scripts/             dev.mjs, build-authored-packs.mjs, push-keys.mjs
+tests/               backend suites: node:test via tsx over PGlite (in-memory Postgres)
+web-tests/           frontend suites: vitest + jsdom
+companion/           desktop companion for computer control
+cloudflare/          email-worker, runner-worker
+deploy/ infra/       production compose file, Cloudflare Worker for the SPA
+docs/                design docs (index below)
 ```
 
-Layering inside the server is Controllers → Services → Repositories (Drizzle),
-one NestJS module per domain, mirroring the reference app.
+## Testing
 
-## Current state
+```bash
+TEST_CONCURRENCY=2 npm test           # backend: tsx --test over PGlite, no server boot
+VITEST_MAX_WORKERS=2 npm run test:web # frontend: vitest + jsdom
+npm run lint
+```
 
-The chat pipeline runs end to end: session lifecycle
-(archive/pin/tags/draft), a **tool-using streaming turn loop** (up to 24
-rounds) with an **Anthropic adapter** (plus anthropic-compatible endpoints and
-an Echo dev provider), workspace-file + raw-HTTP tools with an SSRF guard,
-the **Ask/Auto approval flow** (allow once / always / whole tool / deny,
-remembered per chat), **compaction** (`/compact` + auto-threshold, shared
-busy lock, visible transcript untouched), token-ceiling refusal, stop/abort,
-structured turn records, `/clear`, markdown `/export`, ratings, and system
-context assembled from persona + agent charter + workspace memory + pending
-feedback.
+Keep concurrency low: the PGlite suites are memory-hungry, and several suites
+often run side by side on one machine. `npm test` defaults to 3 concurrent
+files and vitest to 2 workers.
 
-Also shipped: a **skills system** (global + workspace instruction packs
-offered to the model as `skill_*` tools; `deep-research`, `write-document`,
-and `create-slides` are seeded built-ins), **web_search / web_fetch /
-fs_search** research tools, a **slides_create** tool rendering self-contained
-HTML decks, workspace-wide **search** (`/api/search`), and **rich file
-previews** (`/api/workspaces/:id/preview` classifies markdown/html/image/pdf/
-text; HTML previews must render in a sandboxed, network-denied iframe).
-A **credential-free browser tool** (`browser_open` / `browser_read` /
-`browser_act` / `browser_screenshot`, Cloudflare Browser Rendering or local
-Playwright, incognito per turn, SSRF-guarded, password fields refused) streams
-every page it renders as a screenshot into the chat's Browser panel
-(`docs/browser-tool.md`).
+## Documentation
 
-**The workspace is the company** (`docs/group-chat.md` §5,
-`docs/autonomous-company.md`): switch a workspace into organization mode and
-every agent in it joins under a chief of staff — a shared task board with
-atomic claiming and four-field briefs, event-driven wakes (assignment,
-comment on an owned task, review request, approval decision — never a
-mention, no heartbeats), USD envelopes reserved before every run with an 80%
-warning and a 100% hard stop, circuit breakers (no-progress backoff,
-same-call loop detection, a three-round review cap that escalates to you)
-and a hash-chained audit log. In **supervised** mode the chief's
-`org_hire_agent` / `org_set_scope` (widening) / `org_reorg` /
-`org_allocate_budget` / `org_terminate_agent` calls produce approval cards
-you decide in the app or by answering the brief; in **autonomous** mode they
-execute at once within hard caps (depth ≤ 3, five direct reports, an agent
-cap, agent and project envelopes inside the company envelope, scopes never
-beyond the chief's own, nothing inherited) and are refused with the reason
-outside them — every action audited with the chief's reason, announced in
-`#company` and listed in the daily brief, and the chief reviews the
-structure when a task blocks or a goal lands and once a day. Every member
-with direct reports leads a **unit** (`docs/group-chat.md` §7): its own
-board, a `#<slug>` channel whose membership follows the org chart, and a
-goal subtree with computed progress, plus unit-scoped `org_set_goal` /
-`org_assign` / `org_unit_report` tools. Intent flows down as a cascade
-(`docs/company-vision.md` §2): you write a **vision** with a horizon, a
-budget and your rules; the chief's planning session turns it into objectives
-with measurable **key results** (metric, target, owner, due date) and hands
-each objective to a unit whose lead plans its own; owners **check in** value
-and confidence; a model-free sweep flags key results at risk (behind pace,
-no active owner, confidence falling, check-in overdue) and wakes the unit
-lead, the chief, or your brief; any task can show its **why chain**. Every
-threshold is a per-company **tunable** with a bound, and the company's values
-and culture (its operating profile, §1b) reach every planning prompt. Money is
-the control surface (§7–§8): every task has a class, spend rolls up to key
-results and objectives (**cost per outcome**, flagged when it runs ahead of
-progress), allocations say what each envelope buys, task classes route to
-model tiers, a trailing-burn **forecast** warns before the balance does, the
-autonomous chief's structural plans wait a **veto window** before they apply
-(or run as a dry run that applies nothing), and any day can be **replayed**
-from the audit chain. The
-company **remembers** (`docs/company-vision.md` §6): agents write
-**playbooks** as skills that a reviewer other than the author accepts before
-they are offered to a role; a failed objective, a task escalated after its
-review rounds, a breaker that keeps tripping or a critical audit finding
-schedules a **postmortem retro** with an agenda built from the record, whose
-lessons land in the agents' memory, propose charter changes you approve as a
-diff, and send playbooks back for revision; every approval and autonomous
-action is a row in the searchable **decision log**; and you can **ask the
-company** a question and get an answer whose citations are verified against
-the record. When
-something goes wrong it is an **incident** (`docs/incidents.md`): a breaker
-trip, a failed check or revert, a critical audit finding, a budget stop, a
-bounce, a tool-error streak or your own report is contained by severity —
-note, pause the member, freeze the external action class, drop to supervised
-— you get one line saying what was contained, major ones get a postmortem,
-and resolving with undo reverses the containment. A provider outage fails
-over to another model family with the same tools and prompt; a revoked
-connection pauses only what needs it; the brief and `GET …/org/health` say
-what is degraded. The auditor is audited too: you spot-check two of its
-calls per audit (its precision and recall), its seat rotates, and a weekly
-red-team run tries a canary prompt injection against record-only tools. A
-company exports as a **blueprint** (`docs/blueprints.md`, `COMPANY.json`):
-roles, charters, profile, vision, tunables, playbooks and budget split, none
-of its history; import one into an empty workspace with a mode and a budget
-and it staffs itself (one approval card in supervised mode), or publish it to
-the market as a `company` and let it be rated by the outcomes of the
-companies that ran it. Hiring picks a **role** from a catalog
-(`role:<id>`), and a human can hold a role too: an `employee` sits on the
-chart and in its unit channel, owns tasks and reviews them. Key results can
-be **measured** rather than reported (`docs/sensing.md`): a metric source
-(an HTTPS JSON endpoint, a webhook, a Gmail/Calendar/Drive count, or your
-attestation) feeds a time series with provenance, a bound key result takes
-its value only from it, agents may propose a source but only you activate
-one, and a task's `done_when` can carry model-free **checks** that accept it
-without a reviewer when they pass. What the company may change about itself
-is one table (`docs/boundary.md`): tunables, cadences, routing and structure
-within a unit it changes alone; charters and cross-unit structure only
-through an experiment; the constitution, caps, the external floor and the
-company envelope only as a proposal to you; the auditor's settings and the
-kill switch never — an attempt is a finding and an incident. A charter,
-playbook or routing change is first replayed against the role's **golden
-set** of past accepted work in a record-only sandbox, and a regression
-blocks it (`docs/evals.md`). Members have WIP limits, tasks have
-dependencies and deadlines, and the heartbeat works overdue items first.
-Every decision card says what is recommended, the alternatives, how
-reversible it is and what happens at its deadline if you say nothing (only
-reversible internal changes you allowed default to yes); kinds of cards can
-be delegated to a person or a role such as a controller; the brief opens
-with measured outcomes and the value they realised against spend, and a unit
-that moves nothing is told to shrink (`docs/owners-seat.md`). The Workspace
-rail shows the company and each unit (channel, board, goals), then the org
-chart, approvals, spend, brief and audit;
-Settings → Workspace → Organization holds the mode, chief, envelope, cap and
-the pause button. `COMPANIES_ENABLED=false` hides it all.
+Start with [docs/architecture.md](docs/architecture.md) for how the system is
+built, and [docs/company-vision.md](docs/company-vision.md) with
+[docs/autonomous-org-first-principles.md](docs/autonomous-org-first-principles.md)
+for why.
 
-**Actions and trust** (`docs/actions-and-trust.md`): every tool call is
-classed by reversibility — read, internal write, external reversible,
-external irreversible, money — and every non-read call is logged with an
-idempotency key, so a retry never sends twice. Outward calls are
-rate-limited per channel, money is off by default, and a send an agent may
-not yet make alone is **staged** as a draft for your key. Each agent earns a
-**trust level** per class (0 proposes, 1 acts and you hear after, 2 acts with
-a peer check — an agent co-signer on another model family for irreversible
-and money — 3 acts) under ceilings you set; levels rise after clean streaks
-and drop at once on an incident, a revert or a run of rejections, in private
-chats and org runs alike. Supervised mode is a ceiling preset over it.
+**Architecture and operations**
 
-**Group chat** (`docs/group-chat.md`): every workspace has Slack-style
-channels (`#general` by default), where people and agents converse. A
-mentioned agent wakes in its own per-channel session and its reply streams
-into the channel; agents allowed to speak unprompted pass one cheap relevance
-check and hard bounds (one per two minutes, two per message, never while a
-mentioned agent is replying, never to another unprompted reply, never over
-the channel's daily token budget); agent-to-agent chains stop after three
-rounds per thread until a person speaks. Threads, a channel folder mounted as
-`shared/`, "make task" from any message (organisation board or the agent's
-kanban) with status lines posting back, approvals routed to the person who
-asked, mention notifications through paired Telegram/email/push with deep
-links, `#slug text` posting from Telegram, workspace SSE, and FTS over
-channel messages.
+- [architecture.md](docs/architecture.md): system context, module map, turn loop, autonomy engine, data model, security, frontend.
+- [security.md](docs/security.md): threat model, what each defence is and where it is enforced.
+- [deployment.md](docs/deployment.md): distribution and deployment strategy.
+- [environments.md](docs/environments.md): runbook for dev, staging and prod.
+- [accounts.md](docs/accounts.md): tenancy, magic-link sign-in and plans (`AUTH_MODE`).
+- [shared-accounts.md](docs/shared-accounts.md): shared accounts across the product suite.
+- [shared-agents.md](docs/shared-agents.md): several people on one workspace.
+- [filesystem.md](docs/filesystem.md): the workspace tree, homes, versions and `/org/` mirrors.
 
-The frontend implements the design comp in `design/`: activity-bar shell,
-workspace-scoped chat list grouped by agent, streaming chat with thinking
-blocks, tool cards + inline Ask/Auto approvals, artifact side panel
-(sandboxed, network-denied), slash + @-mention menus with attachments,
-message queueing, retry / edit-and-resend / fork / promote / ratings, token
-meter, per-agent file brains with rich previews, agent directory + home
-(charter, loops, ratings, mini apps, AGENT.json export), the agent market
-with capability-review hiring, and the settings panes (including Market and
-Security) backed by the API.
+**The company**
 
-Providers: Anthropic (+anthropic-compatible) and the OpenAI-compatible
-family — OpenAI, DeepSeek, Kimi, GLM, and custom gateways — all through one
-provider-neutral streaming loop. Scheduled agent loops fire on their cron
-(FR-11.6) in a dedicated per-loop chat and journal each run; conversations
-distill into size-bounded LESSONS/JOURNAL brain appends via /api/chats/:id/
-distill or the Distill button (FR-11.4).
+- [company-vision.md](docs/company-vision.md): the company that runs itself; intent cascade, rituals, capital, memory.
+- [autonomous-org-first-principles.md](docs/autonomous-org-first-principles.md): capabilities C1–C12 an organization that runs itself needs.
+- [autonomous-company.md](docs/autonomous-company.md): research behind the task board, org runtime and tools.
+- [chief-of-staff.md](docs/chief-of-staff.md): the Chief of Staff's charter and derived operating system.
+- [home.md](docs/home.md): Home, the owner's mission control.
+- [owners-seat.md](docs/owners-seat.md): decision cards, defaults at deadline, delegation.
+- [group-chat.md](docs/group-chat.md): channels, threads, organization mode, units, meetings.
+- [follows.md](docs/follows.md): following threads and tasks.
+- [boundary.md](docs/boundary.md): the self-modification boundary.
+- [actions-and-trust.md](docs/actions-and-trust.md): action classes and the trust ledger.
+- [incidents.md](docs/incidents.md): incidents, degradation and audit independence.
+- [sensing.md](docs/sensing.md): metric sources and executable acceptance.
+- [experiments.md](docs/experiments.md): experiments, the prediction ledger, reconciliation.
+- [evals.md](docs/evals.md): golden sets and gated rollout.
+- [blueprints.md](docs/blueprints.md): companies as `COMPANY.json` blueprints.
+- [autonomous-skills-review.md](docs/autonomous-skills-review.md): review of the skills the company's agents carry.
 
-MCP (§10.3): HTTP(S) MCP servers over the Streamable HTTP transport —
-configure in Settings, Discover caches the tool list, and enabled servers'
-tools are offered to chats as `mcp_<server>_<tool>`, always pausing for
-approval in Ask mode (the server behind an MCP call is opaque, so it gates
-like a mutation).
+**Agents and tools**
 
-Composer attachments accept drag-and-drop and file-picker uploads (stored
-under uploads/ in the workspace file store); assistants can offer one-tap
-quick replies (FR-5.3, a provider-neutral QUICK_REPLIES protocol line the UI
-parses); AGENT.json v2 round-trips — export from the agent home (identity,
-loops, apps, lessons, private skills, open tasks), import on the directory
-page behind a review modal where lessons arrive quarantined and skills as
-drafts (FR-11.7). Agents also import memory from Claude, Meta Muse, Hermes
-and OpenClaw exports as proposals, and skills import/export as agentskills.io
-`SKILL.md` through a scan step; every skill tracks use and 👍/👎 outcomes,
-and a 👎 lets the agent propose a revision you accept as a diff. The Market's
-**Community** department is a registry (`docs/registry.md`): publish an
-agent, skill or mini app (scanned first), install behind a mandatory
-capability review that lands everything inert, ratings rolled up from turn
-feedback, and federation with a hosted registry over `REGISTRY_URL`.
+- [chat-requirements.md](docs/chat-requirements.md): functional requirements for chat (FR numbers).
+- [agent-memory.md](docs/agent-memory.md): how agents learn and read back what they learned.
+- [agent-catalog.md](docs/agent-catalog.md): professional, casual and Business packs.
+- [triggers.md](docs/triggers.md): event triggers and the heartbeat.
+- [permissions.md](docs/permissions.md): the three-gate permission model.
+- [integrations.md](docs/integrations.md): external services and connectors.
+- [browser-tool.md](docs/browser-tool.md): the credential-free browser.
+- [code-execution.md](docs/code-execution.md): sandboxed code execution.
+- [computer-control.md](docs/computer-control.md): the desktop companion.
+- [channels.md](docs/channels.md): Telegram, email and web push.
+- [voice.md](docs/voice.md): voice notes and read-aloud.
+- [miniapp-capabilities.md](docs/miniapp-capabilities.md): mini-app capabilities and manifest.
+- [miniapp-roadmap.md](docs/miniapp-roadmap.md): model calls, data and connections for mini apps.
+- [registry.md](docs/registry.md): the Community market registry.
 
-Image attachments are real vision inputs: uploaded/mentioned images become
-base64 image blocks (Anthropic) or data-URI image_url parts (OpenAI family)
-on the user message, bounded to 4 images ≤3MB each. Gemini is supported via
-its OpenAI-compatible endpoint. Chats archive from the header and restore
-from the sidebar's Archived group (FR-1.4). Voice notes record in the
-composer (or drop an audio file) and transcribe on upload through an
-OpenAI-compatible `/audio/transcriptions` endpoint — the model reads the
-transcript, never the bytes — with optional read-aloud replies behind a
-setting (docs/voice.md).
+**Plans and research**
 
-Accounts and tenancy (docs/accounts.md): every table carries `accountId` and
-the database handle is account-scoped, so one deployment can serve many
-people. `AUTH_MODE=single` (default) keeps today's one-user install exactly as
-it was; `AUTH_MODE=accounts` adds email magic-link sign-in, an Account pane,
-and plans — `free` (your keys, 3 agents, 3 loops), `hosted` (platform keys
-under a monthly dollar ceiling, default $15, enforced as a hard stop) and
-`byo` (your keys, no ceiling) — with billing left to a `BillingProvider` seam
-an admin drives by hand today.
+- [execution-plan.md](docs/execution-plan.md): numbered work items and what shipped.
+- [roadmap.md](docs/roadmap.md): the original roadmap for a durable personal agent.
+- [competitor-gap-analysis.md](docs/competitor-gap-analysis.md): hosted competitors and the trust wedge.
 
-Shared agents (docs/shared-agents.md): in accounts mode a workspace owner
-invites other people by email as `member` or `viewer`; they work inside the
-owner's workspace with their own identity. A member's sessions are private
-until shared and their messages are attributed to them (never treated as
-authority); an agent may use a member's own Google/Microsoft connection only
-in turns that member starts, and a call that would use someone else's
-connection pauses for *that* person's approval, delivered to their inbox,
-phone or mail and invisible to everyone else; lessons and profile entries
-carry an audience (shared or private to one member) and cross-member flow is
-default-deny until the owner writes a rule. Organisations gain humans too:
-board members decide hires, budgets and strategy, observers read, and the
-audit chain names who decided.
+## License
 
-Proactivity controls (roadmap Phase 2, finished): per-workspace **quiet
-hours** with an interrupt policy (`queue` | `silent` | `allow-urgent`) — loops
-still run inside the window, their notifications wait or stay inbox-only; a
-**monthly spend stop** (`spendBudgetTokens`) that refuses loop runs before the
-model is called (one `budget_stop` event per loop per day) while user turns
-keep working behind a "Workspace budget reached" badge; **cost in dollars**
-from a per-model list-price table (`server/src/ai/pricing.ts`, overridable in
-Settings → Usage) with 30-day per-agent/per-loop charts on the agent home and
-`GET /api/agents/:id/usage`; and **two-way Telegram** — undelivered inbox
-events for the paired default agent (plus every agent's failures and budget
-stops) are pushed to the paired chat within a minute, batched, each with a
-deep link back to the conversation, never echoing channel-born events back.
-Loops also fire on **event triggers** (`docs/triggers.md`): new mail matching
-a query, a calendar event created/changed/starting, a task assigned by
-someone else, or a secret webhook URL — payloads reach the agent framed as
-data, not instructions, under the same budgets and quiet hours.
-
-Presence (roadmap Phase 4, `docs/channels.md`): every agent has an **email
-address** (`<slug>@EMAIL_DOMAIN`, inbound through an HMAC-signed webhook fed
-by `cloudflare/email-worker`, pairing by code, replies threaded back through
-Cloudflare Email Sending or Resend, optional inbox digest), **web push** with
-VAPID keys and a service worker, and a **manifest** so the UI installs as a
-PWA — inbox events reach the phone's lock screen, honouring quiet hours.
-
-Desktop computer control (`docs/computer-control.md`, `companion/`): a paired,
-outbound-only companion on the user's own machine gives agents `computer_*`
-tools (screenshot, click/type/key, shell, files in granted folders) behind
-user-chosen scopes — every action approved in the app, the acting tools never
-auto-approvable, loop and channel turns refused, every action audited in
-Settings → Computer with Pause / Disconnect and a server kill switch.
-
-Next up: a native Bedrock (SigV4) adapter is the one remaining FR-9.2
-provider.
+AGPL-3.0-or-later (see `package.json`).
