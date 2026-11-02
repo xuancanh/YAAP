@@ -24,7 +24,7 @@
  *     proposals/<yyyy-mm-dd>-<slug>.md   proposals for the CEO
  *     archive/<yyyy>/…        closed ledger rows, archived
  *     playbooks/ experiments/ evals/ outcomes.md metrics.md   record mirrors
- *     <function>/             one per function (role-id prefix): README.md, cadence.md,
+ *     <function>/             one per job function (sales, customer, operations…): README.md, cadence.md,
  *                             kpis.md, team.md, okrs/<yyyy>-Q<n>.md,
  *                             reports/<yyyy>-W<ww>.md, audits/<yyyy-mm>.md, processes/, …
  *   /channels/<slug>/         a channel's folder; meetings/<yyyy-mm-dd>-<title>.md
@@ -80,37 +80,43 @@ const id8 = (id: string): string => (id ?? '').slice(0, 8).toLowerCase().replace
 export interface OrgFunction { id: string; title: string }
 
 /**
- * One folder per job function, named by the role catalog's id prefix
- * (`cs-manager` → `/org/cs/`), so a role, its pack (`pack-biz-cs-…`) and its
- * folder agree without a map. The two folders packs used before the
- * convention (`customer`, `operations`) are moved by the boot migration
- * (`LEGACY_FUNCTION_DIRS`).
+ * One folder per job function, named by the job function's id — the ids the
+ * market groups business packs by and packs name in their frontmatter
+ * (server/src/market/segments.ts BIZ_FUNCTIONS, less `leadership`, whose
+ * chief and auditor work in /org/ itself). A test keeps the two lists equal.
  */
 export const ORG_FUNCTIONS: readonly OrgFunction[] = [
   { id: 'sales', title: 'Sales' },
   { id: 'marketing', title: 'Marketing' },
-  { id: 'cs', title: 'Customer Success & Support' },
+  { id: 'customer', title: 'Customer Success & Support' },
   { id: 'product', title: 'Product' },
   { id: 'engineering', title: 'Engineering' },
   { id: 'design', title: 'Design' },
-  { id: 'data', title: 'Data' },
+  { id: 'data', title: 'Data & Analytics' },
   { id: 'finance', title: 'Finance' },
-  { id: 'people', title: 'People' },
+  { id: 'people', title: 'People & HR' },
   { id: 'legal', title: 'Legal' },
-  { id: 'ops', title: 'Operations' },
+  { id: 'operations', title: 'Operations' },
   { id: 'it-security', title: 'IT & Security' },
   { id: 'revops', title: 'Revenue Operations' },
 ];
 export const FUNCTION_IDS: readonly string[] = ORG_FUNCTIONS.map((f) => f.id);
-/** Folders packs wrote before the convention → the canonical function folder. */
-export const LEGACY_FUNCTION_DIRS: Readonly<Record<string, string>> = { customer: 'cs', operations: 'ops' };
+/**
+ * The documented map from a role-id prefix to its function folder where the
+ * two differ: catalog roles are `cs-*` and `ops-*` (role:cs-manager,
+ * pack-biz-cs-manager), their folders `/org/customer/` and
+ * `/org/operations/`. Every other prefix is its folder's name.
+ */
+export const ROLE_PREFIX_FUNCTION: Readonly<Record<string, string>> = { cs: 'customer', ops: 'operations' };
 
-/** The function of a catalog role id (`cs-manager` → `cs`) or a business pack
- *  id (`pack-biz-it-security-manager` → `it-security`); null otherwise. */
+/** The function of a catalog role id (`cs-manager` → `customer`) or a
+ *  business pack id (`pack-biz-it-security-manager` → `it-security`); null
+ *  otherwise (the chief of staff, the auditor, the generalist roles). */
 export function functionOfRole(roleOrPackId: string | null | undefined): string | null {
   const id = (roleOrPackId ?? '').trim().toLowerCase().replace(/^role:/, '').replace(/^pack-biz-/, '');
-  const hit = [...FUNCTION_IDS].sort((a, b) => b.length - a.length).find((f) => id.startsWith(`${f}-`));
-  return hit ?? null;
+  const prefixes = [...FUNCTION_IDS, ...Object.keys(ROLE_PREFIX_FUNCTION)].sort((a, b) => b.length - a.length);
+  const hit = prefixes.find((f) => id.startsWith(`${f}-`));
+  return hit ? ROLE_PREFIX_FUNCTION[hit] ?? hit : null;
 }
 
 /** The fixed part of every function folder; anything else under it is the function's own. */
@@ -273,7 +279,6 @@ const KIND_SLUGS = ['planning', 'standup', 'weekly-review', 'retro', 'board', 'a
  * it is already in place (or is not ours to move). Pure, so the boot
  * migration is idempotent: a moved path never maps again.
  *
- *  - `org/customer/…` → `org/cs/…`, `org/operations/…` → `org/ops/…`;
  *  - `org/meetings/<yyyy>/<day>-<unit>-<kind>[-sfx].md` → `org/meetings/<unit>/<yyyy>/<day>-<kind>[-sfx].md`
  *    (the unit is the longest known unit slug the name starts with, else the
  *    part before a known kind, else `unsorted`);
@@ -284,8 +289,6 @@ const KIND_SLUGS = ['planning', 'standup', 'weekly-review', 'retro', 'board', 'a
 export function legacyTarget(path: string, opts: { unitSlugs?: string[]; rootSlug?: string } = {}): string | null {
   const seg = path.split('/');
   if (seg[0] !== ORG_DIR || seg.length < 3) return null;
-  const legacyFn = LEGACY_FUNCTION_DIRS[seg[1]];
-  if (legacyFn) return [ORG_DIR, legacyFn, ...seg.slice(2)].join('/');
   const name = seg[seg.length - 1];
   if (seg[1] === 'meetings') {
     if (seg.length === 3) {

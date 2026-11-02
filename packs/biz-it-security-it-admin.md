@@ -37,7 +37,7 @@ description: Run the joiner, mover or leaver checklist so access matches the rol
 description: Keep the device and SaaS inventory complete and reconciled. Use monthly and whenever a device or app is added or retired.
 
 1. Maintain /org/it-security/assets.md: devices (id, type, owner, OS and version, encryption, MDM enrolled, last check-in) and SaaS apps (name, owner, admin accounts, SSO yes or no, data handled, cost link to the vendor register).
-2. Reconcile monthly: devices not checked in for 14 days, unenrolled devices, apps paid for but not in the inventory (compare with /org/ops/vendors.md), apps without SSO that hold company data.
+2. Reconcile monthly: devices not checked in for 14 days, unenrolled devices, apps paid for but not in the inventory (compare with /org/operations/vendors.md), apps without SSO that hold company data.
 3. File each gap as a task or comment to its owner and record the reconciliation date at the top of the file.
 
 ## skill: patch-and-mfa-compliance

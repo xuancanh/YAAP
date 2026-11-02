@@ -796,7 +796,7 @@ workspaces/<wsId>/
 │   │   issues.md, handoffs.md, values.md      (seeded once by the chief OS)
 │   ├── meetings/<unit>/<yyyy>/<yyyy-mm-dd>-<kind>.md   minutes
 │   ├── reports/, briefs/, planning/, proposals/, archive/   the chief's outputs
-│   ├── <function>/             sales, cs, ops, …: cadence, kpis, team, okrs, reports, audits
+│   ├── <function>/             sales, customer, operations, …: cadence, kpis, team, okrs, reports, audits
 │   ├── playbooks/<slug>.md     mirrored records (below)
 │   ├── experiments/<id8>-<slug>.md
 │   ├── evals/<role>.md

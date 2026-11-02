@@ -11,7 +11,8 @@ import { testDb, memStorage } from './helpers';
 import { WorkspaceFs } from '../server/src/files/workspace-fs.service';
 import { WorkspacesService } from '../server/src/workspaces/workspaces.service';
 import { agents as agentsTable, channelMessages, channels, organizations, orgCadences, orgCheckins, orgGoals, orgMeetings, orgMembers, orgUnits } from '../server/src/database/schema';
-import { FUNCTION_IDS, LEDGER_FILES, ORG_ORDER, classifyOrgPath, functionOfRole, legacyTarget, orgPath, quarterLabel, weekLabel, withNumber } from '../server/src/files/layout';
+import { BIZ_FUNCTIONS } from '../server/src/market/segments';
+import { FUNCTION_IDS, LEDGER_FILES, ROLE_PREFIX_FUNCTION, ORG_ORDER, classifyOrgPath, functionOfRole, legacyTarget, orgPath, quarterLabel, weekLabel, withNumber } from '../server/src/files/layout';
 import { cadenceWords } from '../server/src/org/cadence-words';
 import { NOTES_MARKER, OrgLayoutService, emptyCycles, partsFor } from '../server/src/org/org-layout.service';
 import { OrgAuditService } from '../server/src/org/org-audit.service';
@@ -36,8 +37,8 @@ test('the layout helper: one path per kind of file, labels in server-local time,
   assert.equal(orgPath.boardUpdate('2026-11-02'), 'org/reports/2026-11-02-board-update.md');
   assert.equal(orgPath.brief('2026-11-02'), 'org/briefs/2026-11-02.md');
   assert.equal(orgPath.planning('2026-11-02'), 'org/planning/2026-Q4.md');
-  assert.equal(orgPath.functionReport('cs', '2026-11-02'), 'org/cs/reports/2026-W45.md');
-  assert.equal(orgPath.functionOkrs('ops', '2026-02-10'), 'org/ops/okrs/2026-Q1.md');
+  assert.equal(orgPath.functionReport('customer', '2026-11-02'), 'org/customer/reports/2026-W45.md');
+  assert.equal(orgPath.functionOkrs('operations', '2026-02-10'), 'org/operations/okrs/2026-Q1.md');
   assert.equal(orgPath.functionAudit('finance', '2026-11-02'), 'org/finance/audits/2026-11.md');
   // ISO weeks: the week's year differs from the calendar year around New Year
   assert.equal(weekLabel('2026-01-01'), '2026-W01');
@@ -45,12 +46,17 @@ test('the layout helper: one path per kind of file, labels in server-local time,
   assert.equal(weekLabel('2024-12-30'), '2025-W01');
   assert.equal(quarterLabel('2026-12-31'), '2026-Q4');
   assert.equal(withNumber('org/cs/a.md', 2), 'org/cs/a-2.md');
-  // every function folder is a role-id prefix: role, pack and folder agree without a map
-  assert.equal(functionOfRole('cs-manager'), 'cs');
-  assert.equal(functionOfRole('role:ops-procurement'), 'ops');
+  // function folders are the market's job functions; role ids map to them (cs-* and ops-* through the documented map)
+  assert.deepEqual([...FUNCTION_IDS].sort(), BIZ_FUNCTIONS.map((f) => f.id).filter((f) => f !== 'leadership').sort());
+  assert.deepEqual(ROLE_PREFIX_FUNCTION, { cs: 'customer', ops: 'operations' });
+  assert.equal(functionOfRole('cs-manager'), 'customer');
+  assert.equal(functionOfRole('role:ops-procurement'), 'operations');
+  assert.equal(functionOfRole('revops-analyst'), 'revops', 'the longest prefix wins');
   assert.equal(functionOfRole('pack-biz-it-security-manager'), 'it-security');
   assert.equal(functionOfRole('chief-of-staff'), null);
   for (const r of ROLES.filter((x) => x.packId?.startsWith('pack-biz-'))) assert.ok(FUNCTION_IDS.includes(functionOfRole(r.id) ?? ''), `${r.id} has a function folder`);
+  // and each business pack's own frontmatter function is the folder its role maps to
+  for (const p of AUTHORED_PACKS.filter((x) => x.id.startsWith('pack-biz-'))) assert.equal(functionOfRole(p.id), (p as { function?: string }).function, p.id);
   // README leads; functions follow the company's own files; mirrors and the archive last
   assert.equal(ORG_ORDER[0], 'README.md');
   assert.ok(ORG_ORDER.indexOf('calendar.md') < ORG_ORDER.indexOf('sales') && ORG_ORDER.indexOf('sales') < ORG_ORDER.indexOf('playbooks'));
@@ -71,12 +77,12 @@ test('every writer builds its path through the helper: minutes, mirrors, the see
 test('the layout check: placeholders allowed, fixed function subfolders constrained, loose or legacy paths refused', () => {
   for (const ok of ['/org/', '/org/README.md', '/org/calendar.md', '/org/goals/', '/org/rituals/company.md', '/org/meetings/<unit>/<yyyy>/<yyyy-mm-dd>-board-agenda.md',
     '/org/reports/<yyyy>-W<ww>.md', '/org/reports/<yyyy-mm>-staffing.md', '/org/reports/<yyyy-mm-dd>-board-update.md', '/org/briefs/<yyyy-mm-dd>.md', '/org/planning/<yyyy>-Q<n>.md',
-    '/org/proposals/<yyyy-mm-dd>-reorg.md', '/org/archive/<yyyy>/<file>.md', '/org/playbooks/', '/org/<function>/reports/', '/org/cs/okrs/<yyyy>-Q<n>.md', '/org/sales/audits/<yyyy-mm>.md',
+    '/org/proposals/<yyyy-mm-dd>-reorg.md', '/org/archive/<yyyy>/<file>.md', '/org/playbooks/', '/org/<function>/reports/', '/org/customer/okrs/<yyyy>-Q<n>.md', '/org/sales/audits/<yyyy-mm>.md',
     '/org/finance/close/<yyyy-mm>/recs/<account>.md', '/org/it-security/access-reviews/<yyyy>-Q<q>/']) assert.ok(classifyOrgPath(ok), ok);
-  for (const bad of ['/org/customer/kpis.md', '/org/operations/', '/org/reviews/<date>.md', '/org/meetings/<date>-leadership.md', '/org/staffing/<yyyy-mm>.md',
-    '/org/sales/okrs/<cycle>.md', '/org/cs/reports/<date>.md', '/org/plan.md']) assert.equal(classifyOrgPath(bad), null, bad);
+  for (const bad of ['/org/cs/kpis.md', '/org/ops/', '/org/reviews/<date>.md', '/org/meetings/<date>-leadership.md', '/org/staffing/<yyyy-mm>.md',
+    '/org/sales/okrs/<cycle>.md', '/org/customer/reports/<date>.md', '/org/plan.md']) assert.equal(classifyOrgPath(bad), null, bad);
   // the migration's mapping is a fixed point on the layout: a moved path never maps again
-  for (const placed of ['org/cs/kpis.md', 'org/meetings/company/2026/2026-11-02-standup.md', 'org/reports/2026-W45.md', 'org/README.md', 'org/retro-backlog.md']) assert.equal(legacyTarget(placed, { unitSlugs: ['company'] }), null, placed);
+  for (const placed of ['org/customer/kpis.md', 'org/meetings/company/2026/2026-11-02-standup.md', 'org/reports/2026-W45.md', 'org/README.md', 'org/retro-backlog.md']) assert.equal(legacyTarget(placed, { unitSlugs: ['company'] }), null, placed);
   assert.equal(legacyTarget('org/meetings/2026/2026-11-02-weekly-review-standup.md', { unitSlugs: ['weekly-review'] }), 'org/meetings/weekly-review/2026/2026-11-02-standup.md', 'a known unit slug wins over a kind-shaped name');
   assert.equal(legacyTarget('org/meetings/2026/notes.md'), 'org/meetings/unsorted/2026/notes.md');
 });
@@ -156,11 +162,11 @@ async function company() {
 test('the generated indexes: README, calendar and rituals from the cadences, goals from the intent tree, function READMEs once', async () => {
   const { orgId, layout, text, fs, ws } = await company();
   const written = await layout.refresh(orgId);
-  assert.deepEqual(written.sort(), ['org/README.md', 'org/calendar.md', 'org/cs/README.md', 'org/goals/README.md', 'org/goals/gobj123-keep-customers.md', 'org/rituals/company.md', 'org/rituals/mara.md']);
+  assert.deepEqual(written.sort(), ['org/README.md', 'org/calendar.md', 'org/customer/README.md', 'org/goals/README.md', 'org/goals/gobj123-keep-customers.md', 'org/rituals/company.md', 'org/rituals/mara.md']);
 
   const readme = (await text('org/README.md'))!;
   assert.match(readme, /^# Acme — the company folder/);
-  assert.match(readme, /\| \/org\/cs\/ \| Customer Success & Support \| Mara \(Head of Customer\) \| Mara's team \(#mara\) \|/);
+  assert.match(readme, /\| \/org\/customer\/ \| Customer Success & Support \| Mara \(Head of Customer\) \| Mara's team \(#mara\) \|/);
   assert.match(readme, /\| Acme \(#company\) \| Atlas \| \/org\/rituals\/company\.md \| \/org\/meetings\/company\/ \|/);
   assert.ok(readme.includes(NOTES_MARKER));
 
@@ -178,7 +184,7 @@ test('the generated indexes: README, calendar and rituals from the cadences, goa
   const goal = (await text('org/goals/gobj123-keep-customers.md'))!;
   assert.match(goal, /\| Churn under 2% \| monthly churn \| 5 % \| 3\.5 % \| 2 % \| 50% \| 60% \| — \| check-ins \|/);
   assert.match(goal, /### Churn under 2%\n\n- 2026-11-02: 3\.5 % · confidence 60% · Mara — two saves this week/);
-  assert.match((await text('org/cs/README.md'))!, /# Customer Success & Support — \/org\/cs\/[\s\S]*Head: Mara \(Head of Customer\)/);
+  assert.match((await text('org/customer/README.md'))!, /# Customer Success & Support — \/org\/customer\/[\s\S]*Head: Mara \(Head of Customer\)/);
 
   // nothing changed: nothing is written, versions stay
   assert.deepEqual(await layout.refresh(orgId), []);
@@ -195,7 +201,7 @@ test('notes below the marker survive a regeneration; a function README is the fu
   assert.match(cal, /## Notes[\s\S]*### Kept from before this file was generated\n\n#### Review calendar — Acme\n\nPlanning inputs due 1 Dec\./);
   // the chief appends a note; a cadence change regenerates the table and keeps the note
   await fs.append(ws.id, 'org/calendar.md', '- CEO away 10–14 Nov.\n', { by: { kind: 'agent', id: 'a-chief', name: 'Atlas' } });
-  await fs.write(ws.id, 'org/cs/README.md', Buffer.from('# Ours\n'), { by: { kind: 'agent', id: 'a-mara', name: 'Mara', home: 'agents/mara' } });
+  await fs.write(ws.id, 'org/customer/README.md', Buffer.from('# Ours\n'), { by: { kind: 'agent', id: 'a-mara', name: 'Mara', home: 'agents/mara' } });
   await db.update(orgCadences).set({ cron: '0 10 * * 3' }).where(eq(orgCadences.id, 'c1'));
   await db.update(orgGoals).set({ title: 'Keep every customer' }).where(eq(orgGoals.id, 'g-obj12345'));
   const again = await layout.refresh(orgId);
@@ -203,7 +209,7 @@ test('notes below the marker survive a regeneration; a function README is the fu
   const cal2 = (await text('org/calendar.md'))!;
   assert.match(cal2, /Wednesdays at 10:00/);
   assert.match(cal2, /- CEO away 10–14 Nov\.\n$/);
-  assert.equal(await text('org/cs/README.md'), '# Ours\n', 'never over the function\'s own file');
+  assert.equal(await text('org/customer/README.md'), '# Ours\n', 'never over the function\'s own file');
   assert.equal(await text('org/goals/gobj123-keep-customers.md'), null, 'the old title\'s file is gone (kept as a revision)');
 });
 
@@ -228,7 +234,8 @@ test('the boot migration: legacy folders and minutes move with their history, ne
   const put = (p: string, body: string, by = user) => fs.write(ws.id, p, Buffer.from(body), { by });
   await put('org/customer/kpis.md', 'v1');
   await put('org/customer/kpis.md', 'v2');
-  await put('org/operations/sops/refunds.md', 'sop');
+  await put('org/reviews/2026-10-23.md', 'v1');
+  await put('org/reviews/2026-10-23.md', 'v2');
   await put('org/meetings/2026/2026-10-30-company-weekly-review.md', 'minutes A');
   await put('org/meetings/2026/2026-10-30-mara-standup-0930.md', 'minutes B');
   await put('org/meetings/2026/2026-10-29-ghost-retro.md', 'minutes C');
@@ -246,8 +253,7 @@ test('the boot migration: legacy folders and minutes move with their history, ne
   const r = await layout.migrate(orgId);
   assert.equal(r.failed, 0);
   assert.deepEqual(Object.fromEntries(r.moved), {
-    'org/customer/kpis.md': 'org/cs/kpis.md',
-    'org/operations/sops/refunds.md': 'org/ops/sops/refunds.md',
+    'org/reviews/2026-10-23.md': 'org/reports/2026-W43.md',
     'org/meetings/2026/2026-10-30-company-weekly-review.md': 'org/meetings/company/2026/2026-10-30-weekly-review-2.md',
     'org/meetings/2026/2026-10-30-mara-standup-0930.md': 'org/meetings/mara/2026/2026-10-30-standup-0930.md',
     'org/meetings/2026/2026-10-29-ghost-retro.md': 'org/meetings/ghost/2026/2026-10-29-retro.md',
@@ -257,16 +263,17 @@ test('the boot migration: legacy folders and minutes move with their history, ne
     'org/board/2026-10-01-update.md': 'org/reports/2026-10-01-board-update.md',
   });
   // nothing left behind; nothing overwritten; the loose file stays
-  assert.equal((await fs.list(ws.id, 'org/customer')).length, 0);
-  assert.equal((await fs.list(ws.id, 'org/operations')).length, 0);
+  assert.equal((await fs.list(ws.id, 'org/reviews')).length, 0);
+  assert.equal((await fs.list(ws.id, 'org/meetings/2026')).length, 0);
+  assert.equal(await text('org/customer/kpis.md'), 'v2', 'a function folder already in place stays');
   assert.equal(await text('org/meetings/company/2026/2026-10-30-weekly-review.md'), 'already here');
   assert.equal(await text('org/meetings/company/2026/2026-10-30-weekly-review-2.md'), 'minutes A');
   assert.equal(await text('org/retro-backlog.md'), 'loose, not ours to move');
   // metadata and revisions follow the file
-  const meta = await fs.meta(ws.id, 'org/cs/kpis.md');
+  const meta = await fs.meta(ws.id, 'org/reports/2026-W43.md');
   assert.equal(meta?.version, 2);
-  assert.deepEqual((await fs.revisions(ws.id, 'org/cs/kpis.md')).map((x) => x.version), [1]);
-  assert.equal((await fs.revision(ws.id, 'org/cs/kpis.md', 1))?.toString(), 'v1');
+  assert.deepEqual((await fs.revisions(ws.id, 'org/reports/2026-W43.md')).map((x) => x.version), [1]);
+  assert.equal((await fs.revision(ws.id, 'org/reports/2026-W43.md', 1))?.toString(), 'v1');
   // the links the server stored follow
   assert.equal((await db.select().from(orgMeetings).where(eq(orgMeetings.id, 'mt1')))[0].minutesPath, 'org/meetings/company/2026/2026-10-30-weekly-review-2.md');
   assert.deepEqual(JSON.parse((await db.select().from(channelMessages).where(eq(channelMessages.id, 'msg1')))[0].attachments), [{ path: 'org/meetings/company/2026/2026-10-30-weekly-review-2.md', kind: 'file' }]);

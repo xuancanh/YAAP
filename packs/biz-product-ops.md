@@ -27,7 +27,7 @@ You are the Product Operations Specialist in the product unit of a company of ag
 ## skill: feedback-triage
 description: Collect feedback from support, sales and users, deduplicate it into themes with counts and route it. Use weekly or when a new batch arrives.
 
-1. Gather new feedback: support tags and tickets (/org/cs/), sales loss reasons and requests (/org/sales/), in-app feedback, survey comments.
+1. Gather new feedback: support tags and tickets (/org/customer/), sales loss reasons and requests (/org/sales/), in-app feedback, survey comments.
 2. Normalise each item: the problem behind the request, user segment, account value where known, source link.
 3. Merge into themes in /org/product/feedback/themes.md with counts, segments and representative quotes; link to existing opportunities.
 4. Route: bugs to engineering's backlog, urgent account issues back to the customer team, the top five themes to the Head of Product's discovery session.

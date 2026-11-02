@@ -42,7 +42,7 @@ description: Cascade the company's objectives into the product unit's goal and 2
 ## skill: product-roadmap-review
 description: Review and reprioritise the roadmap each quarter (and on major new evidence) with explicit scoring and written trade-offs. Use at quarter start, before planning, and when a big customer, market or metric change lands.
 
-1. Gather candidates: the current roadmap /org/product/roadmap.md, the opportunity backlog, top customer themes from /org/cs/, sales loss reasons from /org/sales/, engineering's tech debt list and the key results at risk (org_intent).
+1. Gather candidates: the current roadmap /org/product/roadmap.md, the opportunity backlog, top customer themes from /org/customer/, sales loss reasons from /org/sales/, engineering's tech debt list and the key results at risk (org_intent).
 2. Score each candidate with RICE (reach per quarter, impact 0.25-3, confidence %, effort in person-weeks from engineering's estimate) and note the key result it serves; anything serving no key result needs a stated strategic reason or is dropped.
 3. Read capacity: engineering's planned capacity for the quarter (ask its lead via a backlog task or /org/engineering/), minus keep-the-lights-on and debt allocation (by default 20-30%, flexed by the profile).
 4. Draft the roadmap as Now (committed this quarter), Next (likely), Later (exploring), with the items cut and why. Commit only what fits capacity with a buffer.

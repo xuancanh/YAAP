@@ -42,7 +42,7 @@ skills cannot drift apart.
 │   ├── proposals/<yyyy-mm-dd>-<slug>.md   proposals for the CEO
 │   ├── archive/<yyyy>/…       closed issues, resolved risks, old decisions
 │   ├── playbooks/ experiments/ evals/ outcomes.md metrics.md   record mirrors (below)
-│   └── <function>/            one per function (below): README.md, cadence.md,
+│   └── <function>/            one per job function (below): README.md, cadence.md,
 │                              kpis.md, team.md, okrs/<yyyy>-Q<n>.md,
 │                              reports/<yyyy>-W<ww>.md, audits/<yyyy-mm>.md,
 │                              processes/, and the function's own subfolders
@@ -58,17 +58,21 @@ skills cannot drift apart.
 └── <anything else>/           user- or agent-made shared folders
 ```
 
-**Function folders.** One folder per job function, named by the role
-catalog's id prefix, so a role, its pack and its folder agree without a
-map: `sales`, `marketing`, `cs` (Customer Success & Support), `product`,
-`engineering`, `design`, `data`, `finance`, `people`, `legal`, `ops`
-(Operations), `it-security`, `revops`. `role:cs-manager` and the
-`pack-biz-cs-*` packs work in `/org/cs/`. The fixed part is `README.md`,
-`cadence.md`, `kpis.md`, `team.md`, `okrs/<yyyy>-Q<n>.md`,
-`reports/<yyyy>-W<ww>.md` (the weekly report to the chief),
-`audits/<yyyy-mm>.md` and `processes/`; anything else is the function's own
-subfolder. Packs used `/org/customer/` and `/org/operations/` before the
-convention; the migration below moves them.
+**Function folders.** One folder per job function, named by the
+function's id — the ids the market groups business packs by and each pack
+names in its frontmatter (`server/src/market/segments.ts`): `sales`,
+`marketing`, `customer`, `product`, `engineering`, `design`, `data`,
+`finance`, `people`, `legal`, `operations`, `it-security`, `revops`
+(`leadership` — the chief and the auditor — works in `/org/` itself). A
+catalog role's id prefix is its function, with one documented map where
+the two differ (`ROLE_PREFIX_FUNCTION`): `cs-*` roles (role:cs-manager,
+pack-biz-cs-*) work in `/org/customer/`, `ops-*` roles in
+`/org/operations/`. Tests keep the folder list equal to the market's and
+each business pack's frontmatter function equal to its role's folder. The
+fixed part is `README.md`, `cadence.md`, `kpis.md`, `team.md`,
+`okrs/<yyyy>-Q<n>.md`, `reports/<yyyy>-W<ww>.md` (the weekly report to the
+chief), `audits/<yyyy-mm>.md` and `processes/`; anything else is the
+function's own subfolder.
 
 **Decisions** stay one file, `/org/decisions.md`: the log is a table agents
 append to, and the system's own decision rows (approvals, meetings,
@@ -106,7 +110,6 @@ moves files written under earlier conventions (`legacyTarget` in
 
 | Was | Is |
 |-----|----|
-| `/org/customer/…`, `/org/operations/…` | `/org/cs/…`, `/org/ops/…` |
 | `/org/meetings/<yyyy>/<day>-<unit>-<kind>[-sfx].md` | `/org/meetings/<unit>/<yyyy>/<day>-<kind>[-sfx].md` (the unit is the longest known unit slug the name starts with, else the part before a meeting kind, else `unsorted`) |
 | `/org/meetings/<day>-leadership.md` (the chief's agenda) | `/org/meetings/<root unit>/<yyyy>/<day>-board-agenda.md` |
 | `/org/reviews/<day>.md` | `/org/reports/<yyyy>-W<ww>.md` |

@@ -33,7 +33,7 @@ export const normPath = (p: string | null | undefined): string => (p ?? '').repl
 export const ORG_ORDER: readonly string[] = [
   'README.md', 'operating-system.md', 'calendar.md', 'goals', 'meetings', 'rituals', 'reports', 'briefs', 'planning',
   'decisions.md', 'scorecard.md', 'issues.md', 'risks.md', 'handoffs.md', 'values.md', 'proposals',
-  'sales', 'marketing', 'cs', 'product', 'engineering', 'design', 'data', 'finance', 'people', 'legal', 'ops', 'it-security', 'revops',
+  'sales', 'marketing', 'customer', 'product', 'engineering', 'design', 'data', 'finance', 'people', 'legal', 'operations', 'it-security', 'revops',
   'playbooks', 'experiments', 'evals', 'outcomes.md', 'metrics.md', 'archive',
 ];
 /** The company folder's index, pinned at the top of Shared. */

@@ -17,8 +17,8 @@
  *    goal, check-in, unit, member and meeting change writes a row there) and
  *    refreshes the affected indexes, debounced per org;
  *  - **the boot migration**: files written under earlier conventions
- *    (`legacyTarget`: /org/customer → /org/cs, /org/operations → /org/ops,
- *    /org/meetings/<yyyy>/<day>-<unit>-<kind>.md → /org/meetings/<unit>/<yyyy>/…,
+ *    (`legacyTarget`: /org/meetings/<yyyy>/<day>-<unit>-<kind>.md →
+ *    /org/meetings/<unit>/<yyyy>/<day>-<kind>.md, the leadership agenda beside it,
  *    the chief's reviews/board/staffing/learning files → /org/reports/) move
  *    with WorkspaceFs.move (metadata and revisions follow), never over a file
  *    (a `-2` suffix instead), and the links the server stored to them
@@ -262,7 +262,7 @@ export function renderOrgReadme(ctx: IndexCtx): string {
     '| /org/values.md | values → mechanisms |',
     '',
     '## Functions', '',
-    `One folder per function, named like its roles (\`role:cs-manager\` → /org/cs/): ${ORG_FUNCTIONS.map((f) => `\`${f.id}\` ${f.title}`).join(', ')}. Each holds README.md, ${FUNCTION_LAYOUT.cadence}, ${FUNCTION_LAYOUT.kpis}, ${FUNCTION_LAYOUT.team}, ${FUNCTION_LAYOUT.okrs}/<yyyy>-Q<n>.md, ${FUNCTION_LAYOUT.reports}/<yyyy>-W<ww>.md (the weekly report to the chief), ${FUNCTION_LAYOUT.audits}/<yyyy-mm>.md and ${FUNCTION_LAYOUT.processes}/; anything else the function needs goes in its own subfolder.`, '',
+    `One folder per job function, named like the market's functions (a role's id prefix, except \`cs-*\` → /org/customer/ and \`ops-*\` → /org/operations/): ${ORG_FUNCTIONS.map((f) => `\`${f.id}\` ${f.title}`).join(', ')}. Each holds README.md, ${FUNCTION_LAYOUT.cadence}, ${FUNCTION_LAYOUT.kpis}, ${FUNCTION_LAYOUT.team}, ${FUNCTION_LAYOUT.okrs}/<yyyy>-Q<n>.md, ${FUNCTION_LAYOUT.reports}/<yyyy>-W<ww>.md (the weekly report to the chief), ${FUNCTION_LAYOUT.audits}/<yyyy-mm>.md and ${FUNCTION_LAYOUT.processes}/; anything else the function needs goes in its own subfolder.`, '',
   ];
   if (ctx.functions.length) {
     lines.push('| Folder | Function | Head | Unit |', '|---|---|---|---|');

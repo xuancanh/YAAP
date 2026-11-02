@@ -338,9 +338,10 @@ how to flex it ("weekly; twice weekly in a launch push; fortnightly for a
 deliberate profile"), never a single number (§1b of the vision).
 
 **Files.** Each function keeps a shared folder `/org/<fn>/`, named by its
-roles' id prefix (`sales`, `marketing`, `cs`, `product`, `engineering`,
-`design`, `data`, `finance`, `people`, `legal`, `ops`, `it-security`,
-`revops`), with a fixed core — `README.md` (written when its first member
+job function's id (`sales`, `marketing`, `customer`, `product`,
+`engineering`, `design`, `data`, `finance`, `people`, `legal`,
+`operations`, `it-security`, `revops` — the market's functions; `cs-*`
+roles work in `/org/customer/`, `ops-*` in `/org/operations/`), with a fixed core — `README.md` (written when its first member
 joins), `cadence.md`, `kpis.md`, `team.md`, `okrs/<yyyy>-Q<n>.md`,
 `reports/<yyyy>-W<ww>.md`, `audits/<yyyy-mm>.md`, `processes/` — and its own
 process artifacts in subfolders, so heads, specialists, the chief and humans
@@ -392,7 +393,7 @@ Folder: `/org/marketing/` (okrs, calendar, channel-review, launches, funnel, con
 
 ### Customer Success & Support
 
-Folder: `/org/cs/` (okrs, queue-review, health, escalations, accounts, onboarding, kb, renewals.md, reports, audits, cadence.md, kpis.md, team.md).
+Folder: `/org/customer/` (okrs, queue-review, health, escalations, accounts, onboarding, kb, renewals.md, reports, audits, cadence.md, kpis.md, team.md).
 
 | Pack | Role id | Owns (KPIs) | Cadence |
 |---|---|---|---|
@@ -479,7 +480,7 @@ Folder: `/org/legal/` (okrs, matters.md, playbook.md, contracts, obligations.md,
 
 ### Operations
 
-Folder: `/org/ops/` (processes.md, sops/, improvements.md, vendors.md, programs/, okrs/, reports/, audits/, cadence.md).
+Folder: `/org/operations/` (processes.md, sops/, improvements.md, vendors.md, programs/, okrs/, reports/, audits/, cadence.md).
 
 | Pack | Role id | Owns (KPIs) | Cadence |
 |---|---|---|---|

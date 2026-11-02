@@ -157,7 +157,7 @@ describe('tree grouping', () => {
 describe('the /org/ folder (docs/filesystem.md "Layout")', () => {
   const agents = [agent('a1', 'Ada', 'agents/ada')];
   const entries = [
-    'org/sales/cadence.md', 'org/zz-notes.md', 'org/metrics.md', 'org/playbooks/x.md', 'org/cs/README.md', 'org/goals/README.md',
+    'org/sales/cadence.md', 'org/zz-notes.md', 'org/metrics.md', 'org/playbooks/x.md', 'org/customer/README.md', 'org/goals/README.md',
     'org/decisions.md', 'org/calendar.md', 'org/meetings/company/2026/2026-11-02-standup.md', 'org/README.md', 'org/operating-system.md',
     'org/reports/2026-W45.md', 'org/loose/a.md', 'channels/general/x.md',
   ].map(entry);
@@ -165,7 +165,7 @@ describe('the /org/ folder (docs/filesystem.md "Layout")', () => {
   it('shows /org/ children in the layout order: the index, how the company runs, goals and rhythm, the ledger, functions, mirrors, then anything else', () => {
     const org = buildTree(entries).find((n) => n.path === 'org')!;
     expect(org.children.map((n) => n.name)).toEqual([
-      'README.md', 'operating-system.md', 'calendar.md', 'goals', 'meetings', 'reports', 'decisions.md', 'sales', 'cs', 'playbooks', 'metrics.md', 'loose', 'zz-notes.md',
+      'README.md', 'operating-system.md', 'calendar.md', 'goals', 'meetings', 'reports', 'decisions.md', 'sales', 'customer', 'playbooks', 'metrics.md', 'loose', 'zz-notes.md',
     ]);
     // the same order when the tree is rooted at /org/; other folders keep folders-first, alphabetical
     expect(buildTree(entries, 'org').map((n) => n.name).slice(0, 3)).toEqual(['README.md', 'operating-system.md', 'calendar.md']);
