@@ -1,9 +1,14 @@
 # The company that runs itself: a vision for yaam-chat
 
-*Status: proposal, 1 November 2026. Builds on `docs/autonomous-company.md`
-(the research and the shipped foundation), `docs/group-chat.md` §5–§7
-(organization mode, channels, units) and `docs/execution-plan.md` items
-1–17. Nothing here is built yet; §9 turns it into an execution plan.*
+*Status: proposal of 1 November 2026, since built — phases A–F shipped as
+execution-plan items 18–24 (plus §12–§13, onboarding and workspace-owned
+agents in items 21, 25 and 26) and the SPA was simplified in item 33; §14 records
+what shipped and how it departs from the proposal. Builds on
+`docs/autonomous-company.md` (the research and the shipped foundation),
+`docs/group-chat.md` §5–§7 (organization mode, channels, units) and
+`docs/execution-plan.md` items 1–17; §11 turns it into an execution plan.*
+
+Last updated: 2026-11-02
 
 ## 0. The one-sentence version
 
@@ -259,12 +264,16 @@ The CEO should spend ten minutes a day and feel in control.
 
 **On screen (simplified 2 November 2026).** The main menu is Home · Chat ·
 **Inbox** · **Company** · **Artifacts** · Apps · Market (+ Settings); Inbox
-and Company show only in organization mode.
+and Company show only in organization mode. **Home** is the owner's mission
+control (`docs/home.md`): what needs the owner, what happened, whether the
+company is on track; the agent directory is **All agents**.
 
 - **Inbox** — everything waiting on the CEO in one list with filters:
   decision cards, actions waiting for the owner's key, escalations, plans
-  awaiting a veto, my tasks and reviews, incidents nobody has contained. A
-  filter opens the full pane; the nav icon carries the combined count.
+  awaiting a veto, my tasks and reviews, incidents nobody has contained,
+  and **Following** — what changed on the threads and tasks I follow
+  (`docs/follows.md`). A filter opens the full pane; the nav icon carries
+  the combined count.
 - **Company** (the Workspace section) — the rail groups the panes, each
   group collapsible per viewer: *Teams* (each unit's #channel, Board,
   Goals), *Direction* (Vision, Goals, Plans, Decisions), *Operations*
@@ -679,7 +688,9 @@ by a lead inside its unit or the chief anywhere (`org_assign human=`).
 Departures from §9: playbooks install as skill *drafts* (the registry rule
 that nothing installs live); cadences are listed, not written, by an import
 until item 19's rituals own them; tiers resolve through item 23's `tierModel` (one tier table); "companies working
-together" (§9.3) stays last and is not started; no SPA.
+together" (§9.3) stays last and is not started; no SPA. (Now: the SPA
+has it — Settings → Workspace → Organization → Blueprint, execution-plan
+item 24 "Shipped as, SPA".)
 
 *Onboarding (item 25) — shipped 1 November 2026.* The §1b profile is
 collected at birth: the New workspace wizard asks whether the workspace is a

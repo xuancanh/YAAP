@@ -5,7 +5,11 @@ organization that runs, improves and audits itself needs, starting from
 the user rather than from the features yaam-chat already has. It then
 grades items 1–26 against that list. `docs/company-vision.md` is the
 earlier, feature-first vision. Where the two disagree, this document is
-the newer argument.*
+the newer argument. The build order in §8 has since shipped as
+execution-plan items 27–32 (2 November 2026); §7 marks each capability
+Have.*
+
+Last updated: 2026-11-02
 
 ## 1. What an organization is
 
@@ -379,7 +383,11 @@ and in chat, the health strip and the auditor's spot checks on Pulse (see
 `docs/execution-plan.md` items 27–30, "Shipped as, SPA"); C4, C6, C8 and C12
 followed in item 32's part two — decision cards with deadlines and
 defaults, delegations, the boundary table, the Evals and Outcomes panes,
-WIP and deadlines on the board.
+WIP and deadlines on the board. (Now, since execution-plan item 33: the
+Metrics, Experiments, Evals and Outcomes panes are gone and their records
+are markdown files under `/org/` in Artifacts; approvals, held actions and
+open incidents wait in the Inbox; Incidents sits under Company →
+Operations.)
 
 ## 8. Build order
 

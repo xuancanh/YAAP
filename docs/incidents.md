@@ -3,7 +3,11 @@
 Execution-plan item 29. Capability C11 (incidents as a first-class object)
 and the parts of C9 (independent verification) that do not need
 ground-truth metrics, from `docs/autonomous-org-first-principles.md` §4.
-Backend only; the SPA is item 32.
+The SPA followed in item 32 (part one): the Incidents pane, now under
+Company → Operations; since item 33 open incidents also wait in the Inbox
+(Incidents filter).
+
+Last updated: 2026-11-02
 
 An owner can look away only if something notices when things go wrong,
 stops the damage before anyone is asked, says plainly what it did, and

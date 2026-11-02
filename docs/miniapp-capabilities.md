@@ -7,6 +7,8 @@ class with a per-app capability manifest." This document designs that manifest
 and the runtime behind it; `docs/miniapp-roadmap.md` reviews what landed and
 designs what comes next (model calls, file promotion, databases, connections).
 
+Last updated: 2026-11-02
+
 ## 1. Where we are, and why it is not enough
 
 A mini app today is inert HTML in an `allow-scripts` iframe with an opaque
@@ -103,8 +105,9 @@ needed: it adds persistence, not reach.
 ### 4.2 `files.read` — activation-gated
 `yaam.files.list(prefix)`, `yaam.files.read(path)` over the same FileRoot
 the agent's chats use (own folder + `shared/` mount), read-only, previews
-capped like the Files tab. With no network, a read-only view is just a
-different lens on data the user already sees in the Files tab — the gate
+capped like the agent's Artifacts tab (formerly Files). With no network, a
+read-only view is just a different lens on data the user already sees in
+that tab — the gate
 exists because "this app can see everything my agent knows" is still worth
 one explicit yes.
 

@@ -1,7 +1,13 @@
 # Agent catalog: professional and casual packs
 
-Status: design. Follow-up to the 13 profession packs shipped from
-anthropics/knowledge-work-plugins. Sources studied:
+Status: design, since shipped — the packs proposed below (additions,
+casual waves, waves 4–6 and the business catalog) are in `packs/`.
+Follow-up to the 13 profession packs shipped from
+anthropics/knowledge-work-plugins.
+
+Last updated: 2026-11-02
+
+Sources studied:
 
 - **anthropics/skills** — Anthropic's own skill showcase. Not professions:
   *craft* skills — document creation (docx/pdf/pptx/xlsx, the ones powering

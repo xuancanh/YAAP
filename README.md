@@ -58,7 +58,8 @@ one table.
 
 Switch a workspace into organization mode (`supervised` or `autonomous`) and
 it becomes a company ([docs/group-chat.md](docs/group-chat.md) §5,
-[docs/company-vision.md](docs/company-vision.md)).
+[docs/company-vision.md](docs/company-vision.md)), and **Company** and
+**Inbox** join the main menu.
 
 - **Chief of Staff** ([docs/chief-of-staff.md](docs/chief-of-staff.md)):
   derives the company's operating system from your values, culture and stage

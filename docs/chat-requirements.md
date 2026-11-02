@@ -4,9 +4,13 @@ Scope: the in-app **Chat** feature — provider-neutral LLM conversations that r
 *without* a PTY (distinct from terminal agent sessions). This is a
 requirements document (what the system must do), derived from the shipped
 behavior in `app/src/domains/chat/*`, `app/src/app/runtime/chat.ts`, and the
-chat entities in `core/entities.ts`. Companion design docs:
-[`architecture.md` § In-app chat flow](architecture.md),
-[`frontend-domains.md`](frontend-domains.md).
+chat entities in `core/entities.ts` of the earlier desktop codebase; in this
+repository chat lives in `server/src/chats/` (turn loop, sessions, loops,
+heartbeat) and `src/components/ChatView.tsx`. Companion design docs:
+[`architecture.md` § The turn loop](architecture.md#4-the-turn-loop),
+[`architecture.md` § Frontend architecture](architecture.md#10-frontend-architecture).
+
+Last updated: 2026-11-02
 
 Terminology: a **chat session** is one conversation (an agent record with
 `kind: 'chat'`). A **chat agent type** is a reusable provider/model/persona

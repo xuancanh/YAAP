@@ -1,8 +1,11 @@
 # Actions and trust: the external-action contract and the trust ledger
 
 *Status: shipped, 2 November 2026 (execution-plan item 28). Capabilities C2
-and C10 of `docs/autonomous-org-first-principles.md`. The SPA for it is item
-32.*
+and C10 of `docs/autonomous-org-first-principles.md`. The SPA for it shipped
+in item 32 (part one): Settings → Workspace → Trust, the agent's Trust tab,
+and the `two_key` card in the Inbox and in chat.*
+
+Last updated: 2026-11-02
 
 The Ask/Auto switch answers "may this chat act without asking?". It cannot
 answer the question an owner who wants to look away is really asking: *which*
@@ -280,6 +283,7 @@ actions module importing the org domain.
 ## 9. Not done here
 
 - The SPA (item 32): the ledger table, the action log, the `two_key` card.
+  (Now shipped: execution-plan item 28 "Shipped as, SPA".)
 - Calendar staging (`sendUpdates=none`) waits for calendar tools that take
   guests; `ownDomains` is not yet filled from the owner's connections, so
   every guest counts as outside.

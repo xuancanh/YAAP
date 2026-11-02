@@ -10,6 +10,8 @@ cover it.
 Supersedes the "group session that wakes nobody" in
 `docs/autonomous-company.md` §4 (see the revision note there).
 
+Last updated: 2026-11-02
+
 The owner's correction after items 1–14 shipped: the company is the
 workspace, and the group chat is a Slack channel, not a log. Humans and agents
 converse in channels; agents participate. This document is the design for
@@ -271,6 +273,9 @@ agent home says "Chief of staff of <workspace>", and
 `#/ws/<id>/org/<pane>` deep-links a pane. Tests:
 `tests/backend-org-mode.test.ts`. Not done: the group log pane (replaced by
 `#company`, item 15); `channel_make_task` → board linkage is item 15's.
+(Now, since execution-plan item 33: the section is back in the main menu as
+**Company**, its rail grouped Teams / Direction / Operations / People &
+money / Oversight; Approvals moved to the Inbox; Brief is a tab of Pulse.)
 
 **Onboarding (execution-plan item 25, 1 November 2026).** "Add workspace"
 opens a wizard instead of a name prompt: name and colour, then "run this

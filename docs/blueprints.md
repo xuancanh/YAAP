@@ -8,7 +8,10 @@ a budget, and it staffs itself. Blueprints publish to the market registry as
 kind `company`, behind the same review gate as agents and skills, and are
 rated by the measured outcomes of the companies that ran them. The same item
 ships the **role catalog as data** (§4) and **hybrid human roles** (§4,
-"hybrid staff"). Backend only; no SPA.
+"hybrid staff"). The SPA side is the Blueprint card in Settings →
+Workspace → Organization ("In the app" below, `src/components/OrgBlueprintBits.tsx`).
+
+Last updated: 2026-11-02
 
 ## 1. The format: `COMPANY.json` v1
 
