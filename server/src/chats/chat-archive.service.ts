@@ -263,7 +263,7 @@ export class ChatArchiveService implements ToolProviderHook, OnModuleInit {
         // Housekeeping, not news: in the inbox's history, never a badge.
         await this.agentsSvc.patchEvent(ev.id, { readAt: nowIso() });
       } catch (err) {
-        this.logger.warn(`auto-archive event for ${agentId} failed: ${err instanceof Error ? err.message : err}`);
+        this.logger.warn(`auto-archive event for ${agentId} failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     this.logger.log(`auto-archived ${archived.length} finished-task chat(s)`);

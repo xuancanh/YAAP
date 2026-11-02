@@ -5,7 +5,7 @@ import { useApp } from '../store';
 import { api, type Agent, type ChatSession } from '../lib/api';
 
 /** The choices: days after the task is done; '' = the workspace (or agent) default, 0 = off. */
-export const AUTO_ARCHIVE_CHOICES = [0, 1, 3, 7, 14, 30] as const;
+const AUTO_ARCHIVE_CHOICES = [0, 1, 3, 7, 14, 30] as const;
 
 const toValue = (v: number | null | undefined): string => (v === null || v === undefined ? '' : String(v));
 const fromValue = (v: string): number | null => (v === '' ? null : Number(v));
