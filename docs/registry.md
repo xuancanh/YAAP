@@ -15,6 +15,12 @@ table plus one federation URL, and spends its effort on the one thing the
 large ecosystems get wrong: **nothing installs unreviewed, and nothing
 installs live.**
 
+(The curated packs in the Agents department are split into a Personal and a
+Business segment, the latter by job function: docs/agent-catalog.md
+"Segments and functions". Registry items carry no segment; the Community
+department lists them by kind, and anything without a segment counts as
+personal.)
+
 ## 1. The model
 
 Three tables, migration `0025-registry` (`server/src/database/migrator.ts`,

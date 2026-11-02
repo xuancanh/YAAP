@@ -343,13 +343,16 @@ process artifacts) so heads, specialists, the chief and humans read the
 same record; members keep working notes in their own home
 (docs/filesystem.md).
 
-**Build.** Packs are `packs/biz-*.md` with `"cat": "Business"` and
-`"tail": "business"`; `scripts/build-authored-packs.mjs` appends the
-business tail (company member, read the profile first, files under
+**Build.** Packs are `packs/biz-*.md` with `"cat": "Business"`,
+`"tail": "business"` and the segment fields (`"segment": "business"`,
+`"function"`, `"level"`, `"reportsTo"`, `"kpis"`, `"cadence"`; see
+"Segments and functions" below); `scripts/build-authored-packs.mjs` appends
+the business tail (company member, read the profile first, files under
 `/org/`, work through the board, no invented numbers, outward actions are
 drafts) instead of the personal one, so personal packs are unchanged. The
-market shows them under **Business**, with the function in the role and at
-the head of the tagline ("Sales · ...") so search finds them.
+market files them in the **Business** segment under their function; the
+function also stays at the head of the tagline ("Sales · ...") so search
+finds them.
 
 **Roles.** `server/src/org/roles/catalog.ts` carries a matching role per
 pack (`role:<fn>-<slug>`), with `packId` naming the pack: a role hire keeps
@@ -501,11 +504,112 @@ Folder: `/org/revops/` (funnel.md, forecast-method.md, forecast/, changes/, rout
 | Deal Desk Analyst (`pack-biz-revops-deal-desk`) | `revops-deal-desk` | quote turnaround, effective discount, exception rate | per quote; monthly discount analysis |
 | Revenue Analyst (`pack-biz-revops-analyst`) | `revops-analyst` | forecast model error, attribution coverage, GRR/NRR by cohort | weekly pipeline analytics, monthly attribution and cohorts |
 
+## Segments and functions (2026-11)
+
+Status: shipped. One flat "Business" chip holding 54 packs was the 2026-07
+problem again, and it mixed two buyers: a person hiring help for their own
+life or practice, and a company staffing a function. The Market now has two
+layers:
+
+- **Personal** — the thirteen categories below (Workplace … Hobbies &
+  Leisure). A pack is personal unless its frontmatter says otherwise; its
+  `cat` is its category.
+- **Business** — fourteen job functions, in rail order: **Leadership**
+  (Chief of Staff, Auditor), Sales, Marketing, Customer Success & Support,
+  Product, Engineering, Design, Data & Analytics, Finance, People & HR,
+  Legal, Operations, IT & Security, Revenue Operations. Function ids:
+  `leadership, sales, marketing, customer, product, engineering, design,
+  data, finance, people, legal, operations, it-security, revops`
+  (`server/src/market/segments.ts` `BIZ_FUNCTIONS`, mirrored by
+  `src/lib/market.ts` with each function's icon and colour).
+
+**Data.** `MarketItem` gains optional `segment` (`personal` | `business`),
+`function`, `level` (`head` | `specialist` | `leadership`), `reportsTo` (the
+manager's pack id), `kpis` and `cadence` (one line, from the tables in
+"Business catalog" above). Optional so registry and community items, and
+older clients, stay valid: no segment means personal. `GET /api/market`
+also returns `orgHire`, the `templateOrPack` a company hire sends:
+`role:<id>` for the catalog role whose `Role.packId` is the pack, the pack
+id itself for a business pack with no role (the Auditor, the profession
+packs), and null for personal packs and the Chief of Staff (its seat is set
+when the company starts). `GET /api/market/segments` returns the personal
+categories and business functions with their counts and each function's
+head.
+
+**Source.** Authored packs carry the fields in their `---json` frontmatter;
+`scripts/build-authored-packs.mjs` defaults a pack without them to
+`personal`, refuses an unknown function or level, a business-tail pack
+outside the business segment, function fields on a personal pack, and a
+reporting line that does not resolve (a head reports to leadership, a
+specialist to its own function's head). The profession packs are classified
+in `scripts/build-profession-packs.mjs` (`PACKS`), never in the generated
+file; `--meta-only` re-applies that metadata without a
+knowledge-work-plugins checkout.
+
+**Profession pack classification.** A plugin that is one job function's
+toolkit is business, filed under that function at `specialist` level with
+no `reportsTo`: a generalist that brings no head playbooks and works
+standalone or under the function's head. A pack for one person's own shop
+or research stays personal.
+
+| Pack | Segment | Function / category |
+|---|---|---|
+| Marketer | business | marketing |
+| Sales Partner | business | sales |
+| Support Desk | business | customer |
+| Bookkeeper | business | finance |
+| Counsel | business | legal |
+| People Partner | business | people |
+| Ops Manager | business | operations |
+| Product Manager | business | product |
+| Design Partner | business | design |
+| Data Analyst | business | data |
+| Engineer | business | engineering |
+| Shopkeeper | personal | Small Business (a solo owner's copilot) |
+| Research Desk | personal | Workplace (one person's research and digests) |
+
+So **Product & Engineering** no longer has a personal pack and leaves the
+personal rail (it comes back if a personal pack names it), Workplace keeps
+Executive Assistant, Deck & Doc Studio and Research Desk, and Legal &
+Finance keeps Paralegal, Tax Season and Insurance Agent.
+
+**Navigation.** A Personal | Business switch sits at the top of the Market
+rail and in the Agents header. Personal shows the category chips; Business
+shows the functions with counts, an overview of function tiles, and a
+function page: the head first and prominent ("Hire the Head of Finance — it
+can hire its own team"), then the specialists who report to it, then the
+rest of the function (generalist profession packs). Cards show the
+function's icon and colour, reports-to, KPIs, cadence (or loop names), the
+skills count and loops. Search spans both segments and badges each result
+Personal or Business. The default segment is Business when the workspace
+runs a company and Personal otherwise, until the viewer picks one; the
+choice is remembered per viewer (`localStorage` key `yaam-market-segment`).
+Deep links: `?section=market&segment=business&fn=finance`,
+`?section=market&cat=Education`. On a phone the view carries its own switch
+and chips (no rail), and cards stack in one column.
+
+**Hiring a business pack.** With a company on, the hire review offers
+**Hire into the company** (the default) or **Add as a standalone agent**.
+The company path posts a `hire` card through the existing
+`POST /api/workspaces/:id/org/approvals` with `templateOrPack` = the item's
+`orgHire`, resolved by `OrgApprovalsService.prepareHire` like the chief's
+own proposal (role charter, scopes met with the chief's holdings, model
+tier, the pack's playbooks; depth and fan-out checked before the card
+exists). It reports to the chief by default; a specialist defaults to its
+function's head when the company has one. The card is decided in Inbox →
+Approvals; the hired member starts without the pack's loops (the company's
+cadences run its rituals). Without a company the review offers the
+standalone hire only, with a link to start one.
+
 ## Category taxonomy (2026-07 rework)
 
 "Business" had swollen to 37 of 71 packs, which makes a filter useless. The
 catalog now uses thirteen categories sized 4-8, professional first then
-personal, in the canonical rail order (CAT_ORDER in MarketView.tsx):
+personal, in the canonical rail order (PERSONAL_CATS in src/lib/market.ts).
+Since 2026-11 these are the **Personal** segment; the business packs and
+the function-toolkit profession packs moved to the Business segment (see
+"Segments and functions"), so the lists below name a few packs that now
+live there:
 
 - **Workplace** — the office suite: EA, Ops, People, Support, Research
   Desk, Marketer, Sales, Deck & Doc Studio.
@@ -533,10 +637,8 @@ personal, in the canonical rail order (CAT_ORDER in MarketView.tsx):
 - **Hobbies & Leisure** — Reading Club, Creative Muse, Game Master,
   Collector's Vault, Genealogy, Wardrobe Stylist.
 
-- **Business** — the company catalog: the Auditor and the business set
-  (a head and 2-4 specialists per job function, see "Business catalog"
-  above). The function sits in the role and the tagline, not in a separate
-  category, so the rail stays one chip.
+- **Business** — no longer a category: the company catalog is the
+  Business segment, filed by job function (see "Segments and functions").
 
 Assignment rule when a pack straddles: the buyer's identity wins over the
 task ("Technical Writer" is a writing profession, not engineering; "Course
