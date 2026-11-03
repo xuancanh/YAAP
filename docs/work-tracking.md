@@ -125,7 +125,7 @@ workspace's agents and its people (the owner and the workspace members).
 `OrgTasksService.comment` and the brief paths of `create` / `update`) does
 the rest; the resolved mentions are stored on the comment
 (`org_messages.mentions`, `[{ kind, id }]`, with `fromUserId` for a
-person's comment — migration `0090-task-mentions`).
+person's comment — migration `0084-task-mentions`).
 
 | Rule | |
 |---|---|
