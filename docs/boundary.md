@@ -169,3 +169,20 @@ profile at onboarding: 2 when speed is a value, 24 for a control or rigour
 culture, 4 early, else 6), one audit runs with trigger `assurance` and
 answers every request filed in the window. The key sits under `audit.*`, so
 it is `never` an agent's to change, like the cadence it shortens.
+
+## Who reviews a card first (added 3 November 2026)
+
+The verdicts above decide **whether** a change needs a card. Who reviews it
+first is the direct manager of the member who raised it
+(`docs/owners-seat.md` §7).
+
+- A `propose` row's card is CEO-reserved. It passes through the requester's
+  managers for their recommendations, but no manager may decide it.
+- A card a manager may decide is one within the authority table: in its
+  reporting line, within its unit headroom, at its trust. Examples are an
+  `alone` row's card in a supervised company, or a card its raiser could not
+  act on alone.
+- A manager's approval applies as that manager (`agent:<id>`), so this
+  table still binds it.
+- Only the owner decides a card whose row says `delegable: false`.
+

@@ -38,7 +38,7 @@ already own each fact:
 
 | Section | Source |
 |---|---|
-| Needs you | `OrgApprovalsService.pending` (decision cards), `OrgCapitalService.plans('pending')`, `ActionsService.list('held' / 'staged')`, `OrgIncidentsService.list`, `OrgSignalsService.list` (owner or CEO, warn and critical), agent events `action_pending` |
+| Needs you | `OrgApprovalsService.pending` held by the CEO (decision cards, with `chain` when a card climbed through managers, docs/owners-seat.md §7), `OrgCapitalService.plans('pending')`, `ActionsService.list('held' / 'staged')`, `OrgIncidentsService.list`, `OrgSignalsService.list` (owner or CEO, warn and critical), agent events `action_pending` |
 | Since you were last here | org tasks done since the visit, the org audit (`auto_*`, `approval_default`, `delegated_decision`, `member_add`, `member_pause`, `member_terminate`), the decision log, `OrgBriefService.latest`, `OrgSloService.pulse`, `WorkspaceFs.recent` |
 | Goals | `OrgIntentService.intentTree` |
 | Team | agents, org members, the board, the latest chat turn per agent, agent events, `heartbeat_state`, org runs, `ProviderHealthService` |
@@ -240,7 +240,15 @@ or **Create one agent**.
 
 ## Inbox
 
-The Inbox lists what waits on you now. A **Waiting / History** toggle sits
+The Inbox lists what waits on you now. Decisions go to the requester's
+direct manager first (`docs/owners-seat.md` §7), so a card one of your
+managers still holds is not listed yet. The Approvals header counts those
+cards as "in review by your managers".
+
+A card that climbed to you shows its route, such as "Writer → Head of
+Content → Chief → you", with each manager's recommendation. A person who
+manages a member sees that member's cards here, with Approve, Reject, Send
+back and Escalate. A **Waiting / History** toggle sits
 at the top, and Waiting is the default.
 
 **History** lists everything that used to wait on you and is now

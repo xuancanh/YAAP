@@ -187,6 +187,12 @@ the chief only and model-free.
   chief (cases that stay the chief's, asks) and the `Escalation:` tasks a
   head raised to it, oldest first. The heads' own hires, pauses and settings
   changes arrive as inbox notices (origin `org`) and lines in the group log.
+- **Decisions for you** (`OrgDecisionsService`, provider `decisions`;
+  `docs/owners-seat.md` §7): the cards the heads raised, and those their
+  heads escalated, wait on the chief before the CEO sees them. Each card
+  shows its chain so far, every recommendation, and whether the chief may
+  decide it. The chief acts with `org_decide`. A card it leaves climbs to
+  the CEO with "no recommendation" when `seat.hopTimeoutHours` ends.
 
 A handoff that breached since the chief's last beat is a reason to wake;
 breaches already seen stay in the context only, so a stuck handoff does not
