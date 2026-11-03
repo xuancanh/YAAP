@@ -19,7 +19,7 @@ export interface TaskAddedEvent {
 }
 
 /** `mention`: a task comment (or brief) tagged the member with @Name (docs/work-tracking.md "Mentions"). */
-export type OrgWakeReason = 'assignment' | 'comment' | 'approval' | 'review' | 'manual' | 'trigger' | 'rewake' | 'dependency' | 'mention';
+export type OrgWakeReason = 'assignment' | 'comment' | 'approval' | 'review' | 'manual' | 'trigger' | 'rewake' | 'dependency' | 'mention' | 'next';
 
 export interface OrgWakeEvent {
   orgId: string;

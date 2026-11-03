@@ -23,6 +23,10 @@ export const WORK_TUNABLES: Record<string, TunableDef> = {
   'work.orphanGraceHours': { default: 24, min: 1, max: 336, area: 'work', description: 'Hours a task may sit in a unit\'s Unsorted project before the unit head (then the chief) is asked to place it.' },
   'work.mentionChainCap': { default: 3, min: 1, max: 10, area: 'work', description: 'Agent comments tagging another agent on one task since a person last commented, after which a tag no longer wakes anyone (the ping-pong cap; a person\'s comment resets it).' },
   'work.forecastMinSamples': { default: 8, min: 3, max: 60, area: 'work', description: 'Done tasks (in the forecast window) needed before a project shows a forecast range instead of "not enough history".' },
+  'work.nextTaskDelaySeconds': { default: 30, min: 5, max: 3_600, area: 'work', description: 'Seconds after a task leaves a member\'s hands (done, sent to review, cancelled, blocked) before it is woken for its next work: reviews it owes, newly unblocked work, its to-do by project lane and urgency, then fitting backlog.' },
+  'work.selfAssign': { default: 1, min: 0, max: 2, area: 'work', description: 'Whether a member with nothing to do may take unassigned backlog work that fits its role: 0 off (it asks its manager), 1 within its unit, 2 within its unit or the projects it works on.' },
+  'work.nextTaskMaxPerHour': { default: 6, min: 1, max: 60, area: 'work', description: 'Next-work wakes a member may get in one hour (a loop guard beside the budgets and the WIP limit).' },
+  'work.chaseAfterHours': { default: 24, min: 1, max: 336, area: 'work', description: 'Hours a task may wait on its blocker before the owner\'s heartbeat nudges it to chase the blocker\'s owner or escalate, and to pick up other work meanwhile.' },
 };
 registerTunables(WORK_TUNABLES);
 
@@ -45,5 +49,8 @@ export function deriveWorkTunables(d: Pick<ProfileDiagnosis, 'stage' | 'cultureT
     { key: 'work.operatingWipCap', value: rigor || c === 'hierarchy' ? 5 : stage === 'early' ? 2 : 3, why: rigor || c === 'hierarchy' ? 'rigour values process improvements: more room for retro actions' : stage === 'early' ? 'an early company spends little on work about work' : 'a few retro actions at a time; the rest wait as proposals' },
     { key: 'work.mentionChainCap', value: c === 'hierarchy' ? 2 : speed ? 4 : 3, why: c === 'hierarchy' ? 'a control culture brings a person in sooner when agents go back and forth' : speed ? 'speed is a value: agents may settle a question between themselves a little longer' : 'three rounds of agents tagging each other, then a person decides' },
     { key: 'work.forecastMinSamples', value: rigor ? 12 : 8, why: rigor ? 'evidence before a forecast: a larger sample' : 'a forecast once eight tasks are done' },
+    { key: 'work.nextTaskDelaySeconds', value: speed ? 10 : c === 'hierarchy' ? 60 : 30, why: speed ? 'speed is a value: a member moves to its next task within seconds' : c === 'hierarchy' ? 'a member settles one task before the next is pulled' : 'a member is woken for its next task half a minute after finishing one' },
+    { key: 'work.selfAssign', value: c === 'hierarchy' ? 0 : c === 'adhocracy' || c === 'clan' ? 2 : 1, why: c === 'hierarchy' ? 'a control culture: managers assign work, an idle member asks for it' : c === 'adhocracy' || c === 'clan' ? 'members pull fitting work in their unit and the projects they work on' : 'members pull fitting backlog work within their own unit' },
+    { key: 'work.chaseAfterHours', value: speed ? 8 : c === 'hierarchy' ? 48 : 24, why: speed ? 'a blocker is chased the same working day' : c === 'hierarchy' ? 'a blocker is given two days before it is chased' : 'a blocker is chased after a day' },
   ].map((t) => { const def = WORK_TUNABLES[t.key]; return { ...t, value: Math.min(def.max, Math.max(def.min, t.value)) }; });
 }

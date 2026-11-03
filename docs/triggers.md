@@ -192,8 +192,11 @@ from its own minute tick, or `POST /api/agents/:id/heartbeat/beat`):
    your tools, then stop. Do not invent work.` followed by the agent's
    charter ("Your charter (check your work against it)") and, when a
    **`HeartbeatContextProvider`** supplied one, the company's operating
-   profile ("How this company works …", bounded to 1 500 chars). `busy`
-   and `budget_stop` come back from `runLoop` unchanged.
+   profile ("How this company works …", bounded to 1 500 chars), and every
+   **`HeartbeatSectionProvider`**'s titled section (bounded to 1 200 chars
+   each) — the org's "Your next work" is one. A section never opens the
+   gate by itself. `busy` and `budget_stop` come back from `runLoop`
+   unchanged.
 
 **Provider interfaces** (for the org module and any other domain; nothing
 there is implemented here):
@@ -208,8 +211,13 @@ interface HeartbeatContextProvider {
   context(agentId: string, ctx: HeartbeatContext): Promise<string | null>;
 }
 interface HeartbeatContext { now: Date; workspaceId: string; tunables: HeartbeatTunables; lastRunAt: string | null }
+interface HeartbeatSectionProvider {
+  readonly name: string;
+  section(agentId: string, ctx: HeartbeatContext): Promise<{ title: string; text: string } | null>;
+}
 heartbeat.addReasonProvider(p)   // → unsubscribe()
 heartbeat.addContextProvider(p)  // → unsubscribe()
+heartbeat.addSectionProvider(p)  // → unsubscribe()
 ```
 
 The org module is expected to register reasons such as "key result
@@ -217,6 +225,22 @@ check-in due", "signal addressed to you", "ritual you facilitate", and a
 context provider that renders the organization's values, culture, vision
 and current goals. A throwing provider is logged and skipped; `ChatsModule`
 exports `HeartbeatService`.
+
+**Company members: next work and blocked work** (docs/work-tracking.md
+"Pull next" and "Blocked work on the heartbeat"). For a member of an
+organization the org's reason provider first runs the model-free
+**next-work pull** (`OrgNextWorkService`): an idle member with a review it
+owes, a newly unblocked task, a claimable to-do or fitting backlog is woken
+for that task as an ordinary task run (wake reason `next`), and the plain
+to-do lines then stay out of the heartbeat's reasons so one piece of work
+never opens two turns. Its blocked tasks are re-checked each beat without a
+model: a wake only when what they wait on changed — the dependency's or
+decision card's status, a reply from whoever it waits on, a comment from
+anyone else, its expected date passing — with the reason naming exactly
+which; past `work.chaseAfterHours` one nudge to chase or escalate and pick
+up other work; otherwise the doubling back-off. The **"Your next work"**
+section lists the top three next items (newly unblocked first) with their
+reason, and the blocked items with what they wait on and since when.
 
 **API and UI.** `GET /api/agents/:id/heartbeat` → settings in effect
 (`enabled`, `cron`, `dailyRunCap`, `staleMinutes`), state and `runsToday`;

@@ -244,6 +244,17 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   private decisions?: DecisionsPort;
   bindDecisions(p: DecisionsPort | undefined): void { this.decisions = p; }
 
+  /** OrgNextWorkService binds the model-free next-work pull the heartbeat
+   *  runs first (docs/work-tracking.md "Pull next"); it returns the task id
+   *  it queued a run for, or null. */
+  private nextWorkHook?: (org: Organization, agentId: string, now: Date) => Promise<string | null>;
+  bindNextWork(fn: ((org: Organization, agentId: string, now: Date) => Promise<string | null>) | undefined): void { this.nextWorkHook = fn; }
+  /** Whether a wake for this member is queued (any task). */
+  hasPendingWakeFor(agentId: string, orgId?: string): boolean {
+    for (const p of this.pendingWakes.values()) if (p.ev.agentId === agentId && (!orgId || p.ev.orgId === orgId)) return true;
+    return false;
+  }
+
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
     private readonly org: OrgService,
@@ -533,10 +544,15 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       // when its blocker changes (the dependency moved, the decision was
       // made, someone else commented), otherwise on an exponential back-off;
       // a task paused for circular behaviour does not wake its owner at all.
+      // Next work (docs/work-tracking.md "Pull next"): the model-free pull
+      // runs first; when it queued a task run for this member, plain to-do
+      // lines wait behind that run instead of opening a second turn.
+      const pulled = this.nextWorkHook ? await this.nextWorkHook(org, agentId, now).catch(() => null) : null;
       const listed: Array<{ t: OrgTask; why: string }> = [];
       for (const t of open) {
         if (t.wakesPausedAt) continue;
         if (t.status === 'blocked') { const why = await this.blockedWake(org, t, now); if (why) listed.push({ t, why }); continue; }
+        if (pulled && (t.id === pulled || (t.status === 'todo' && urgencyOf(t, now, soon) === 2))) continue;
         listed.push({ t, why: '' });
       }
       for (const { t, why } of listed.slice(0, 5)) {
@@ -553,33 +569,72 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
 
   /**
    * The heartbeat back-off for one blocked task (docs/work-tracking.md
-   * "The heartbeat wakes on change"). The blocker's signature includes the
-   * state of what it waits on: the dependency's status, the decision card's
-   * status, the last comment by anyone but the owner. A changed signature
-   * wakes the owner at once; an unchanged one after `work.blockedBackoffMinutes`,
-   * doubling up to `work.blockedBackoffMaxHours`. The first sight of a new
-   * blocker only arms the timer (the owner just set it). Returns the reason
+   * "Heartbeat back-off" and "Blocked work on the heartbeat"). Model-free.
+   * The blocker's signature carries the state of what it waits on: the
+   * dependency's status, the decision card's status, replies from whoever it
+   * waits on and comments from anyone else since it was blocked, whether its
+   * expected date passed, whether it waited past `work.chaseAfterHours`. A
+   * changed state wakes the owner at once, naming exactly what changed; past
+   * the chase threshold the owner is nudged once to chase the blocker's
+   * owner or escalate, and to pick up other work meanwhile; an unchanged one
+   * re-checks after `work.blockedBackoffMinutes`, doubling up to
+   * `work.blockedBackoffMaxHours`. The first sight of a blocker (or a new
+   * blocker the owner just set) only arms the timer. Returns the reason
    * text, or null for no wake now.
    */
   private async blockedWake(org: Organization, t: OrgTask, now: Date): Promise<string | null> {
     const b = parseBlockedOn(t.blockedOn) ?? legacyBlockedOn({ lines: listOf(t.blockers), since: t.updatedAt });
-    let state = '';
-    if (b.kind === 'task' && b.ref) state = (await this.tasks.get(org.id, b.ref).catch(() => null))?.status ?? 'gone';
-    if ((b.kind === 'decision' || b.kind === 'ceo' || b.kind === 'manager') && b.ref) state = (await this.db.select({ status: orgApprovals.status }).from(orgApprovals).where(eq(orgApprovals.id, b.ref)).limit(1)).at(0)?.status ?? '';
-    const others = (await this.tasks.messages(org.id, { taskId: t.id, limit: 50 })).filter((m) => m.fromAgentId !== t.assigneeAgentId && m.fromAgentId !== null);
-    state += `|${others.length}`;
-    const sig = blockerSignature(b, state);
+    const since = b.since || t.updatedAt;
+    const state: BlockState = { dep: '', card: '', waited: 0, others: 0, overdue: 0, chase: 0 };
+    let depRef = '';
+    if (b.kind === 'task' && b.ref) { const dep = await this.tasks.get(org.id, b.ref).catch(() => null); state.dep = dep?.status ?? 'gone'; depRef = dep ? taskRef(dep) : b.ref.slice(0, 8); }
+    if ((b.kind === 'decision' || b.kind === 'ceo' || b.kind === 'manager') && b.ref) state.card = (await this.db.select({ status: orgApprovals.status }).from(orgApprovals).where(eq(orgApprovals.id, b.ref)).limit(1)).at(0)?.status ?? '';
+    // Replies since the blocker was set: from whoever it waits on (the member,
+    // or a person: a comment with no agent author), and from anyone else.
+    const waitsOnAgent = (b.kind === 'agent' || b.kind === 'manager') && b.ref ? b.ref : null;
+    const waitsOnPerson = b.kind === 'person' || b.kind === 'ceo' || (b.kind === 'manager' && !b.ref);
+    const replies = (await this.tasks.messages(org.id, { taskId: t.id, limit: 50 })).filter((m) => m.fromAgentId !== t.assigneeAgentId && m.createdAt >= since);
+    const fromWaited = replies.filter((m) => (waitsOnAgent ? m.fromAgentId === waitsOnAgent : waitsOnPerson && m.fromAgentId === null));
+    state.waited = fromWaited.length;
+    state.others = replies.length - fromWaited.length;
+    if (b.until && Date.parse(b.until) <= now.getTime()) state.overdue = 1;
+    const chaseHours = workTunable(org, 'work.chaseAfterHours');
+    const ageMs = now.getTime() - Date.parse(since);
+    if (Number.isFinite(ageMs) && ageMs >= chaseHours * 3_600_000) state.chase = 1;
+    const sig = blockerSignature(b, encodeBlockState(state));
     const base = workTunable(org, 'work.blockedBackoffMinutes') * 60_000;
     const max = workTunable(org, 'work.blockedBackoffMaxHours') * 3_600_000;
     const arm = async (count: number, why: string | null) => {
       await this.db.update(orgTasks).set({ wakeSig: sig, wakeCount: count, nextWakeAt: new Date(now.getTime() + Math.min(max, base * 2 ** count)).toISOString() }).where(eq(orgTasks.id, t.id));
       return why;
     };
-    const what = describeBlockedOn(b);
+    const nameOf = async (id: string | null) => (id ? (await this.agents.get(id).catch(() => null))?.name ?? id.slice(0, 8) : '');
+    const refName = waitsOnAgent ? await nameOf(waitsOnAgent) : '';
+    const what = describeBlockedOn(b, (k, r) => (k === 'task' ? depRef || r.slice(0, 8) : r === waitsOnAgent ? refName : r.slice(0, 8)));
+    const recheck = (n: number) => `still ${what}; re-check ${n} — record the re-check in your run, not on the task`;
     if (!t.wakeSig) return arm(0, null);
-    if (t.wakeSig !== sig) return arm(0, `its blocker changed (${what}): check whether it can move`);
+    const prevAt = t.wakeSig.lastIndexOf(BLOCK_STATE_MARK);
+    // A signature from before the state was itemized: adopt it without a wake.
+    if (prevAt < 0) {
+      await this.db.update(orgTasks).set({ wakeSig: sig }).where(eq(orgTasks.id, t.id));
+      return t.nextWakeAt && now.toISOString() < t.nextWakeAt ? null : arm(t.wakeCount + 1, recheck(t.wakeCount + 1));
+    }
+    // Another blocker (kind, ref or ask): the owner just set it, so re-arm only.
+    if (t.wakeSig.slice(0, prevAt) !== sig.slice(0, sig.lastIndexOf(BLOCK_STATE_MARK))) return arm(0, null);
+    const prev = decodeBlockState(t.wakeSig.slice(prevAt));
+    const who = waitsOnAgent ? refName : b.kind === 'ceo' ? 'the CEO' : b.kind === 'person' ? 'the person it waits on' : b.kind === 'external' ? 'the outside party' : b.kind === 'task' ? `the owner of ${depRef || 'that task'}` : 'whoever decides it';
+    const sinceText = `${since.slice(0, 16).replace('T', ' ')} (${Math.max(1, Math.round(ageMs / 3_600_000))}h)`;
+    const nudge = `it has waited past ${chaseHours}h (work.chaseAfterHours): chase ${who} with org_task_comment (@mention them) or escalate through your manager (org_escalate), and pick up other work meanwhile`;
+    const changed: string[] = [];
+    if (prev.dep !== state.dep) changed.push(`the task it waits on (${depRef}) is now ${state.dep.replace('_', ' ')}`);
+    if (prev.card !== state.card) changed.push(`the decision card it waits on is now ${state.card || 'gone'}`);
+    if (state.waited > prev.waited) changed.push(`${who} replied on the task`);
+    if (state.others > prev.others) { const last = replies.filter((m) => !fromWaited.includes(m)).at(-1); changed.push(`a new comment from ${last?.fromAgentId ? await nameOf(last.fromAgentId) : 'a person'}`); }
+    if (state.overdue > prev.overdue) changed.push(`its expected date (${(b.until ?? '').slice(0, 10)}) has passed`);
+    if (changed.length) return arm(0, `blocker changed: ${changed.join('; ')} — check whether it can move now${state.chase ? `; ${nudge}` : ''}`);
+    if (state.chase > prev.chase) return arm(t.wakeCount, `still ${what}, since ${sinceText}; ${nudge}`);
     if (t.nextWakeAt && now.toISOString() < t.nextWakeAt) return null;
-    return arm(t.wakeCount + 1, `still ${what}; re-check ${t.wakeCount + 1} — record the re-check in your run, not on the task`);
+    return arm(t.wakeCount + 1, `${recheck(t.wakeCount + 1)}${state.chase ? `; waiting since ${sinceText}: chase ${who} or escalate, and pick up other work meanwhile` : ''}`);
   }
 
   // ---- the intent cascade (docs/company-vision.md §2) ----
@@ -1210,7 +1265,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     }
     const head = reviewer
       ? `You were woken as the REVIEWER of task ${taskRef(task)} "${task.title}" (reason: ${reason}). Check the result against the done_when rubric in your context, then call org_review with accept, request_changes (with a concrete note), or escalate. Do not do the task yourself.`
-      : `You were woken for task ${taskRef(task)} "${task.title}" (reason: ${reason}). Do the work described in your context with your tools, keep the status current with org_task_update, leave a short handoff with org_task_comment, and when done_when is met call org_request_review. If you are stuck, set status blocked with the blocker named. Write your comments and handoffs so a person can follow them: plain language, full sentences.`;
+      : `You were woken for task ${taskRef(task)} "${task.title}" (reason: ${reason === 'next' ? 'your next work: you finished or handed off your last task and this is the top of your queue' : reason}). Do the work described in your context with your tools, keep the status current with org_task_update, leave a short handoff with org_task_comment, and when done_when is met call org_request_review. If you are stuck, set status blocked with the blocker named. Write your comments and handoffs so a person can follow them: plain language, full sentences.`;
     return [head, comments.length ? `Task timeline (newest last):\n${framed.join('\n')}` : 'No comments on this task yet.'].join('\n\n');
   }
 
@@ -1623,9 +1678,9 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         if (Array.isArray(input.blockers)) patch.blockers = input.blockers.map(String);
         // One structured blocker (docs/work-tracking.md): what it waits on and the ask.
         if (requested === 'blocked') {
-          const given = (input.blockedOn && typeof input.blockedOn === 'object' ? input.blockedOn : {}) as { kind?: string; ref?: string; reason?: string };
+          const given = (input.blockedOn && typeof input.blockedOn === 'object' ? input.blockedOn : {}) as { kind?: string; ref?: string; reason?: string; until?: string };
           const reasonText = (given.reason ?? '').trim() || why.trim();
-          patch.blockedOn = { kind: given.kind || str('waitsOn') || legacyBlockedOn({ lines: [reasonText], since: '' }).kind, ref: given.ref ?? (str('ref') || null), reason: reasonText };
+          patch.blockedOn = { kind: given.kind || str('waitsOn') || legacyBlockedOn({ lines: [reasonText], since: '' }).kind, ref: given.ref ?? (str('ref') || null), reason: reasonText, until: given.until ?? (str('expectedBy') || null) };
         }
         if (requested === 'abandoned' && !isChief) {
           await this.tasks.comment(org.id, t.id, { text: `Abandoned by its owner: ${why.trim()}`, fromAgentId: agentId, runId: ctx?.runId ?? null });
@@ -2403,7 +2458,7 @@ const LEAD_TOOLS: AiToolSpec[] = [
 ];
 
 const TASK_TOOLS: AiToolSpec[] = [
-  { name: 'org_task_update', description: 'Update your task and keep it true: in_progress while you work it, blocked with what it waits on, abandoned with why it is no longer worth doing (the chief is told), todo to put it back; a note for the timeline, blockers. Tasks finish through org_request_review, never by setting done.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: `${TASK_REF} Defaults to the task you were woken for.` }, status: { type: 'string', enum: ['in_progress', 'blocked', 'todo', 'abandoned', 'backlog', 'cancelled'] }, note: { type: 'string', description: 'Required for blocked (or pass blockers) and abandoned: what it waits on, or why it is no longer worth doing.' }, blockers: { type: 'array', items: { type: 'string' } }, waitsOn: { type: 'string', enum: ['task', 'person', 'agent', 'manager', 'ceo', 'external', 'decision'], description: 'For blocked: who or what it waits on. task = another task (ref its key: the task waits and moves on when it is done); manager = your direct manager; ceo = a decision only the CEO can make (a card in Needs you); person = a human (ref their id); agent = a member (ref its name); decision = a pending decision card (ref its id); external = outside the company.' }, ref: { type: 'string', description: 'For blocked: the task key, member name, person id or card id it waits on.' } } } },
+  { name: 'org_task_update', description: 'Update your task and keep it true: in_progress while you work it, blocked with what it waits on, abandoned with why it is no longer worth doing (the chief is told), todo to put it back; a note for the timeline, blockers. Tasks finish through org_request_review, never by setting done.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: `${TASK_REF} Defaults to the task you were woken for.` }, status: { type: 'string', enum: ['in_progress', 'blocked', 'todo', 'abandoned', 'backlog', 'cancelled'] }, note: { type: 'string', description: 'Required for blocked (or pass blockers) and abandoned: what it waits on, or why it is no longer worth doing.' }, blockers: { type: 'array', items: { type: 'string' } }, waitsOn: { type: 'string', enum: ['task', 'person', 'agent', 'manager', 'ceo', 'external', 'decision'], description: 'For blocked: who or what it waits on. task = another task (ref its key: the task waits and moves on when it is done); manager = your direct manager; ceo = a decision only the CEO can make (a card in Needs you); person = a human (ref their id); agent = a member (ref its name); decision = a pending decision card (ref its id); external = outside the company.' }, ref: { type: 'string', description: 'For blocked: the task key, member name, person id or card id it waits on.' }, expectedBy: { type: 'string', description: 'For blocked, optional: when you expect it to clear (a date); past it your heartbeat wakes you to chase it. Mostly for external blockers.' } } } },
   { name: 'org_task_comment', description: 'Comment on a task\'s timeline (a handoff note, a question, an answer). A comment on somebody else\'s task wakes its owner. Tag a member or a person with @Name in the text (or list them in notify) to bring them in: a tagged member is woken for the task with your comment and answers there, a tagged person is notified; both follow the task. Tag only the one who must act or answer — never to broadcast or cc. A tag of someone who cannot see the task (outside the company) is refused, and tags between agents stop waking after a few rounds until a person comments.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, text: { type: 'string', description: 'The comment; @Name tags a member or a person.' }, notify: { type: 'array', items: { type: 'string' }, description: 'Names (as you would write after @) to tag without writing them in the text.' } }, required: ['text'] } },
   { name: 'org_request_review', description: 'Hand your finished task to review: it moves to in_review and a reviewer other than you (preferring a different model family) is woken with the done_when rubric.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, note: { type: 'string', description: 'Where the result is and how it meets done_when.' } } } },
 ];
@@ -2558,4 +2613,17 @@ function dailySeries(runs: Array<{ startedAt: string; tokensIn: number; tokensOu
   for (let i = 0; i < days; i++) { const day = new Date(since.getTime() + i * DAY).toISOString().slice(0, 10); series.set(day, { day, tokensIn: 0, tokensOut: 0, usd: 0 }); }
   for (const r of runs) { const d = series.get(r.startedAt.slice(0, 10)); if (d) { d.tokensIn += r.tokensIn; d.tokensOut += r.tokensOut; d.usd += r.usd; } }
   return [...series.values()];
+}
+
+/** The itemized state of what a blocked task waits on, in its wake signature
+ *  (after BLOCK_STATE_MARK), so the heartbeat can say exactly what changed. */
+interface BlockState { dep: string; card: string; waited: number; others: number; overdue: number; chase: number }
+const BLOCK_STATE_MARK = '§';
+function encodeBlockState(s: BlockState): string {
+  return `${BLOCK_STATE_MARK}dep=${s.dep};card=${s.card};waited=${s.waited};others=${s.others};overdue=${s.overdue};chase=${s.chase}`;
+}
+function decodeBlockState(raw: string): BlockState {
+  const kv = new Map(raw.replace(BLOCK_STATE_MARK, '').split(';').map((p) => { const i = p.indexOf('='); return [p.slice(0, i), p.slice(i + 1)] as [string, string]; }));
+  const n = (k: string) => Number(kv.get(k) ?? 0) || 0;
+  return { dep: kv.get('dep') ?? '', card: kv.get('card') ?? '', waited: n('waited'), others: n('others'), overdue: n('overdue'), chase: n('chase') };
 }

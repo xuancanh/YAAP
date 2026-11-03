@@ -166,7 +166,7 @@ returns a task's history.
 ## 3. Blocked is one field
 
 ```
-blockedOn = { kind, ref, reason, since, by }
+blockedOn = { kind, ref, reason, since, by, until? }
 kind ∈ task | person | agent | manager | ceo | external | decision
 ```
 
@@ -227,6 +227,10 @@ tunes them with `org_tune`, the CEO in Settings.
 | `work.operatingWipCap` | 3 | Open tasks in a unit's Operating improvements. |
 | `work.orphanGraceHours` | 24 | Hours in Unsorted before the head (then the chief) is asked to place it. |
 | `work.forecastMinSamples` | 8 | Done tasks needed before a forecast range is shown. |
+| `work.nextTaskDelaySeconds` | 30 | Seconds after a task leaves a member's hands before it is woken for its next work (speed 10, a control culture 60). |
+| `work.selfAssign` | 1 | Fitting unassigned backlog a member with nothing to do may take itself: 0 off (it asks its manager), 1 in its unit, 2 in its unit or the projects it works on (a control culture 0, clan / adhocracy 2). |
+| `work.nextTaskMaxPerHour` | 6 | Next-work wakes per member per hour (a loop guard). |
+| `work.chaseAfterHours` | 24 | Hours a task waits on its blocker before the owner is nudged to chase or escalate (speed 8, a control culture 48). |
 
 **The bet.** Moving a project to Now is the CEO's decision. An agent's
 request — `org_create_project` with lane now, or `org_update_project` to
@@ -257,6 +261,62 @@ same way without state: a blocked item wakes when the time since it was
 blocked crosses base × (2^k − 1) after the last heartbeat run
 (`blockedBackoffDue`, `heartbeat.service.ts`; base = four staleness
 intervals).
+
+**Pull next** (`OrgNextWorkService`, `org-next-work.service.ts`). When a
+task leaves its owner's hands — done or accepted, sent to review, cancelled
+or abandoned, blocked by the owner — or a reviewer finishes a review, the
+member's pull is scheduled `work.nextTaskDelaySeconds` later (one per
+member; finishes inside the window coalesce; a run still going re-arms it).
+Every heartbeat beat runs the same pull first. It is model-free and walks
+the member's queue in order, waking it (an ordinary task run, wake reason
+`next`; reviews keep `review`) for the first item it can act on:
+
+1. a **review it owes**;
+2. its own to-do that was **just unblocked** (the last move came from
+   blocked or waiting);
+3. its own **to-do**, ranked by project lane (Now first; system projects
+   count as Now), urgency (overdue, due within `capacity.dueSoonHours`),
+   due date, project rank, age — claimed only when the claim gate allows:
+   the WIP limit (`capacity.wipPerMember`), unmet dependencies, a paused
+   task, a tripped appetite breaker;
+4. with nothing of its own, **unassigned backlog that fits**: in its unit
+   (the one it leads or reports into) or a project it works on (leads, or
+   holds a task in), matching its role (title, role, charter and the
+   catalog role's competencies against the task's title, outcome and
+   class) or on a project it works on; never in Operating improvements, a
+   project that is not active, or one whose breaker tripped. Under
+   `work.selfAssign` it takes it itself (an assignment by `agent:<id>`, so
+   the ordinary assignment wake runs it); otherwise it asks its manager —
+   a comment on the task and an inbox event for an agent manager — at most
+   once a day per task;
+5. **nothing at all** → nothing: no wake, no model call.
+
+It respects the org's and the member's status, quiet hours, the spend stop,
+the agent and company envelopes, and `work.nextTaskMaxPerHour`. **No double
+wakes:** a wake already queued for the member (assignment, comment, review,
+dependency, approval, an @mention) or a run in flight skips the pull, and when the
+heartbeat's pull queued a run the plain to-do lines leave its reasons. **No
+loops:** the task that just left the member's hands is not pulled for ten
+minutes; breaker blocks (the system blocking a task: loop, no progress,
+budget stop) schedule nothing; a member never takes back backlog it gave
+up; a task already self-assigned twice is left to a manager (no ping-pong).
+
+**Blocked work on the heartbeat.** Each beat re-checks the member's
+blocked tasks without a model. The wake signature itemizes what the
+blocker waits on — the dependency's status, the decision card's status,
+replies from whoever it waits on (the member, or a person) and comments
+from anyone else since it was blocked, whether its expected date
+(`blockedOn.until`, `expectedBy` on `org_task_update`) passed, whether it
+waited past `work.chaseAfterHours`. A change wakes the owner with
+"blocker changed: …" naming exactly which; crossing the chase threshold
+wakes it once to chase the blocker's owner (`org_task_comment`,
+@mention) or escalate through its manager, and to pick up other work
+meanwhile; nothing changed keeps the back-off. A new blocker the owner set
+only re-arms the timer.
+
+**Your next work.** The member's heartbeat prompt carries a section with
+the top three next items (newly unblocked first) and why, and its blocked
+or waiting tasks with what they wait on and since when.
 
 **Circular behaviour.** A run that fails or makes no progress leaves the
 signature of its approach (the tool calls and the error). The same

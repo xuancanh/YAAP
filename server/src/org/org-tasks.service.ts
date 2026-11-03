@@ -136,8 +136,14 @@ export type ClaimGate = (orgId: string, task: OrgTask) => Promise<string | null>
  *  the default reads `reportsToAgentId` (the chief's manager is the CEO). */
 export type ManagerResolver = (orgId: string, task: OrgTask) => Promise<string | null>;
 
-/** A blocker as a caller gives it: the kind, what it waits on, the ask. */
-export interface BlockInput { kind: BlockedKind | string; ref?: string | null; reason: string }
+/** A blocker as a caller gives it: the kind, what it waits on, the ask, and
+ *  optionally when it is expected to clear (`until`, ISO or a date). */
+export interface BlockInput { kind: BlockedKind | string; ref?: string | null; reason: string; until?: string | null }
+
+/** A status change, as `recordTransition` wrote it (docs/work-tracking.md
+ *  "Done is an event"): listeners (the next-work pull) read the task again. */
+export interface TransitionEvent { orgId: string; taskId: string; from: string; to: string; actor: string; reason: string }
+export type TransitionListener = (ev: TransitionEvent) => Promise<void> | void;
 
 export function parseBrief(raw: string | Record<string, unknown> | undefined): TaskBrief {
   let v: Record<string, unknown> = {};
@@ -178,6 +184,14 @@ export class OrgTasksService {
   /** TaskMentionsService binds `@mentions` in comments and briefs (docs/work-tracking.md "Mentions"). */
   setMentionHook(hook: TaskMentionHook | undefined): void { this.mentionHook = hook; }
 
+  private readonly transitionListeners: TransitionListener[] = [];
+  /** Be told of every recorded status change (OrgNextWorkService: a task
+   *  leaving its owner's hands schedules the owner's next-work pull). */
+  onTransition(fn: TransitionListener): () => void {
+    this.transitionListeners.push(fn);
+    return () => { const i = this.transitionListeners.indexOf(fn); if (i >= 0) this.transitionListeners.splice(i, 1); };
+  }
+
   // ---- done is an event (docs/work-tracking.md) ----
 
   /**
@@ -204,6 +218,7 @@ export class OrgTasksService {
       if (to !== 'blocked' && to !== 'waiting' && before.status === 'blocked') { set.blockedOn = ''; set.wakeSig = ''; set.wakeCount = 0; set.nextWakeAt = null; }
       if (Object.keys(set).length) await this.db.update(orgTasks).set(set).where(eq(orgTasks.id, before.id));
     } catch { /* history must never break the board */ }
+    for (const fn of this.transitionListeners) await Promise.resolve(fn({ orgId, taskId: before.id, from: before.status, to, actor, reason })).catch(() => undefined);
   }
 
   /** The status history of a task, oldest first. */
@@ -637,7 +652,10 @@ export class OrgTasksService {
       }
       default: ref = kind === 'ceo' ? ref : ''; break;
     }
-    return { kind, ref, reason, since: nowIso(), by: actor };
+    const untilRaw = String(input.until ?? '').trim();
+    const untilMs = untilRaw ? Date.parse(untilRaw) : NaN;
+    if (untilRaw && !Number.isFinite(untilMs)) throw new BadRequestException(`blockedOn.until "${untilRaw.slice(0, 40)}" is not a date`);
+    return { kind, ref, reason, since: nowIso(), by: actor, ...(Number.isFinite(untilMs) ? { until: new Date(untilMs).toISOString() } : {}) };
   }
 
   /** The owner's direct manager (agent id), or null when that is the CEO. */

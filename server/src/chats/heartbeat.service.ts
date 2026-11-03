@@ -64,6 +64,14 @@ export interface HeartbeatContextProvider {
   context(agentId: string, ctx: HeartbeatContext): Promise<string | null>;
 }
 
+/** Another module's own titled section of the heartbeat prompt (the org's
+ *  "Your next work", docs/work-tracking.md): shown only when the gate opened
+ *  for other reasons — a section never opens the gate by itself. */
+export interface HeartbeatSectionProvider {
+  readonly name: string;
+  section(agentId: string, ctx: HeartbeatContext): Promise<{ title: string; text: string } | null>;
+}
+
 export interface HeartbeatContext {
   now: Date;
   workspaceId: string;
@@ -102,6 +110,8 @@ const REASONS_CAP = 15;
 const MENTION_WINDOW_MS = 7 * 24 * 60 * 60_000;
 /** Context providers' text is bounded in the prompt. */
 const CONTEXT_CAP = 1_500;
+/** Each titled section is bounded too. */
+const SECTION_CAP = 1_200;
 
 @Injectable()
 export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
@@ -111,6 +121,7 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
   private readonly lastBeat = new Map<string, string>();
   private readonly reasonProviders: HeartbeatReasonProvider[] = [];
   private readonly contextProviders: HeartbeatContextProvider[] = [];
+  private readonly sectionProviders: HeartbeatSectionProvider[] = [];
   /** Whether the org module's `org_members` table may be consulted for
    *  paused members; probed once, false when the table is missing. */
   private orgMembersProbe?: Promise<boolean>;
@@ -149,6 +160,11 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
   addContextProvider(p: HeartbeatContextProvider): () => void {
     this.contextProviders.push(p);
     return () => { const i = this.contextProviders.indexOf(p); if (i >= 0) this.contextProviders.splice(i, 1); };
+  }
+
+  addSectionProvider(p: HeartbeatSectionProvider): () => void {
+    this.sectionProviders.push(p);
+    return () => { const i = this.sectionProviders.indexOf(p); if (i >= 0) this.sectionProviders.splice(i, 1); };
   }
 
   // ---- the tick ----
@@ -231,7 +247,8 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
 
     const context = await this.contextFor(agentId, ctx);
     const following = this.follows ? await this.follows.digest(agentId, now).catch(() => ({ text: '', ids: [] as string[] })) : { text: '', ids: [] as string[] };
-    const prompt = heartbeatPrompt(reasons, agent.charter, context, following.text);
+    const sections = await this.sectionsFor(agentId, ctx);
+    const prompt = heartbeatPrompt(reasons, agent.charter, context, following.text, sections);
     const loop: LoopDef = { name: HEARTBEAT_LOOP_NAME, cron: tunables.cron, prompt };
     const status: LoopRunStatus = await this.loops.runLoop(agent.id, agent.name, loop);
     if (status !== 'ran') return finish(status, reasons, { runsDay: today, runsToday });
@@ -277,6 +294,20 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
       }
     }
     return parts.join('\n\n').slice(0, CONTEXT_CAP);
+  }
+
+  /** Titled sections from registered providers, each bounded; model-free. */
+  async sectionsFor(agentId: string, ctx: HeartbeatContext): Promise<string[]> {
+    const out: string[] = [];
+    for (const p of this.sectionProviders) {
+      try {
+        const sec = await p.section(agentId, ctx);
+        if (sec && sec.text.trim()) out.push(`${sec.title.trim()}:\n${sec.text.trim().slice(0, SECTION_CAP)}`);
+      } catch (err) {
+        this.logger.warn(`heartbeat section provider "${p.name}" failed: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    return out;
   }
 
   // ---- built-in reason sources ----
@@ -414,10 +445,11 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
  *  charter (its purpose) and the company's operating profile when a context
  *  provider supplied one — all framed so the agent checks the items and
  *  stops, rather than inventing work. */
-export function heartbeatPrompt(reasons: string[], charter: string, context: string, following = ''): string {
+export function heartbeatPrompt(reasons: string[], charter: string, context: string, following = '', sections: string[] = []): string {
   const parts = [
     `Heartbeat. You were woken because:\n${reasons.map((r) => `- ${r}`).join('\n')}\nCheck each item, act with your tools, then stop. Do not invent work. Keep your board true with update_task: doing when you work on a task, done when finished, blocked (with what it waits on) when you cannot move it, abandoned (with why) when it is no longer worth doing.`,
   ];
+  for (const sec of sections) if (sec.trim()) parts.push(sec.trim());
   const purpose = (charter ?? '').trim();
   if (purpose) parts.push(`Your charter (check your work against it):\n${purpose.slice(0, 1_200)}`);
   if (following.trim()) parts.push(`Following — new since your last beat (threads and tasks you follow; follow, unfollow and list_follows manage them — unfollow what no longer concerns you):\n${following.trim()}`);

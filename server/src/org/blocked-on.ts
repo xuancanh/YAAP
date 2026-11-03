@@ -38,6 +38,9 @@ export interface BlockedOn {
   since: string;
   /** Who set it (an actor string: user, chief, agent:<id>, system, migration). */
   by?: string;
+  /** When the owner expects it to clear (ISO), optional — mostly for an
+   *  `external` blocker; past it, the heartbeat wakes the owner once. */
+  until?: string;
 }
 
 export function isBlockedKind(v: unknown): v is BlockedKind {
@@ -50,12 +53,12 @@ export function parseBlockedOn(raw: string | null | undefined): BlockedOn | null
   try {
     const v = JSON.parse(raw) as Partial<BlockedOn>;
     if (!v || !isBlockedKind(v.kind)) return null;
-    return { kind: v.kind, ref: String(v.ref ?? ''), reason: String(v.reason ?? ''), since: String(v.since ?? ''), ...(v.by ? { by: String(v.by) } : {}) };
+    return { kind: v.kind, ref: String(v.ref ?? ''), reason: String(v.reason ?? ''), since: String(v.since ?? ''), ...(v.by ? { by: String(v.by) } : {}), ...(v.until ? { until: String(v.until) } : {}) };
   } catch { return null; }
 }
 
 export function serializeBlockedOn(b: BlockedOn | null): string {
-  return b ? JSON.stringify({ kind: b.kind, ref: b.ref, reason: b.reason.slice(0, 600), since: b.since, ...(b.by ? { by: b.by } : {}) }) : '';
+  return b ? JSON.stringify({ kind: b.kind, ref: b.ref, reason: b.reason.slice(0, 600), since: b.since, ...(b.by ? { by: b.by } : {}), ...(b.until ? { until: b.until } : {}) }) : '';
 }
 
 /** Whether two blockers are the same blocker (kind and ref): `since` survives. */
