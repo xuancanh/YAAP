@@ -198,7 +198,7 @@ function Header({ data, narrow, name, now, onOpen }: Pick<HomeBoardProps, 'data'
       </div>
       <p data-testid="home-headline" style={{ margin: 0, ...meta, fontSize: 14, color: 'var(--text-dim)', ...num }}>
         {sentences.join(' ')}
-        {c && <> {c.chiefName ? `${c.chiefName} is chief of staff` : 'No chief of staff yet'}, with {c.memberCount} {c.memberCount === 1 ? 'member' : 'members'}.</>}
+        {c && <> {c.chiefName ? (/^chief of staff$/i.test(c.chiefName.trim()) ? 'Your chief of staff leads the team' : `${c.chiefName} is chief of staff`) : 'No chief of staff yet'}, with {c.memberCount} {c.memberCount === 1 ? 'member' : 'members'}.</>}
       </p>
       {data.partial.length > 0 && <span role="status" style={{ ...meta, color: 'var(--amber)' }}>Some parts didn't load: {data.partial.join(', ')}.</span>}
     </header>
