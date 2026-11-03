@@ -243,6 +243,47 @@
     "google-gmail",
     "google-drive"
   ],
+  "projects": [
+    {
+      "title": "Returns in five days",
+      "brief": {
+        "problem": "Returns take two weeks end to end and drive most support tickets and refund disputes.",
+        "hypothesis": "A self-serve returns flow, a carrier label on request and refunds on scan cut the cycle and the tickets.",
+        "done_when": "Median return-to-refund time is under five days for four weeks and returns tickets fall by a third.",
+        "mvp": "A returns request form, a prepaid label from one carrier and a refund rule on carrier scan."
+      },
+      "lead": "Head of Operations",
+      "team": [
+        {
+          "title": "Support Specialist (Returns)",
+          "role": "returns desk",
+          "allocation": 50
+        },
+        {
+          "title": "Procurement Specialist",
+          "role": "carrier contract",
+          "allocation": 20
+        },
+        {
+          "title": "Staff Accountant",
+          "role": "refund reconciliation",
+          "allocation": 20
+        },
+        {
+          "title": "Growth Marketer",
+          "role": "customer messaging",
+          "allocation": 15
+        }
+      ],
+      "krs": [
+        "median return-to-refund days",
+        "returns tickets per week"
+      ],
+      "cadence": "0 10 * * 1,3,5",
+      "appetiteDays": 30,
+      "appetiteUsd": 60
+    }
+  ],
   "origin": {
     "exportedFrom": "yaam first-party",
     "at": "2026-11-04T00:00:00.000Z",

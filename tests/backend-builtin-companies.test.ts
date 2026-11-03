@@ -55,7 +55,7 @@ const SRC = join(ROOT, 'blueprints/first-party');
 
 /** The starter catalog as docs/foundry.md §10.2 states it: seats incl. the chief, the envelope, the profile diagnosis. */
 const CATALOG: Record<string, { name: string; seats: number; envelope: number; stage: string; culture: string; norm?: 'speed' | 'rigor' | 'writing' }> = {
-  'saas-startup': { name: 'SaaS startup', seats: 9, envelope: 600, stage: 'early', culture: 'adhocracy', norm: 'speed' },
+  'saas-startup': { name: 'SaaS startup', seats: 10, envelope: 600, stage: 'early', culture: 'adhocracy', norm: 'speed' },
   agency: { name: 'Agency', seats: 8, envelope: 500, stage: 'growth', culture: 'market' },
   'e-commerce-shop': { name: 'E-commerce shop', seats: 10, envelope: 550, stage: 'early', culture: 'market', norm: 'speed' },
   'open-source-project': { name: 'Open-source project', seats: 6, envelope: 250, stage: 'early', culture: 'clan', norm: 'writing' },
@@ -211,12 +211,13 @@ test('a starter installs through review → plan → import into an empty worksp
   const id = 'builtin:saas-startup';
   const first = await s.companies.install(id, { workspaceId: target.id, mode: 'supervised' });
   if (!('requiresConfirm' in first)) throw new Error('expected the review and the plan');
-  assert.equal(first.review!.source, 'builtin'); assert.equal(first.review!.blueprint!.roles.length, 9);
+  assert.equal(first.review!.source, 'builtin'); assert.equal(first.review!.blueprint!.roles.length, 10);
   assert.equal(first.plan!.ok, true);
   assert.equal(first.plan!.chief.roleId, 'chief-of-staff');
-  assert.equal(first.plan!.hires.length, 8);
+  assert.equal(first.plan!.hires.length, 9);
   assert.ok(first.plan!.hires.every((h) => h.dropped.every((d) => d.startsWith('connection:'))), 'only connection scopes drop (recommended, never granted)');
-  assert.equal(first.plan!.budget.monthlyUsd, 600); assert.equal(first.plan!.budget.allocated, 475);
+  assert.equal(first.plan!.budget.monthlyUsd, 600); assert.equal(first.plan!.budget.allocated, 515);
+  assert.deepEqual(first.plan!.projects.map((p) => [p.title, p.lead, p.team.length]), [['Self-serve onboarding', 'Program Manager', 4]], 'a roadmap item owned by the Program Manager with a cross-functional team');
   assert.ok(first.plan!.cadences.list.some((c) => c.unitTitle === 'Head of Engineering' && c.kind === 'planning'));
   assert.equal(first.plan!.cadences.list.length, first.plan!.cadences.count);
   assert.deepEqual(first.plan!.recommendedConnections, ['calendar', 'gmail']);

@@ -165,13 +165,21 @@ test fails when the two drift.
 
 | Starter (`builtin:<slug>`) | Seats | Envelope | Roles (catalog ids; the chief is `chief-of-staff` in each) | Profile reads as |
 |---|---|---|---|---|
-| SaaS startup (`saas-startup`) | 9 | $600 | `engineering-manager` → `engineering-software-engineer` ×2, `engineering-qa`; `cs-manager` → `cs-support`; `marketing-manager` (Head of Growth) → `marketing-demand-gen` | early; adhocracy; speed |
+| SaaS startup (`saas-startup`) | 10 | $600 | `engineering-manager` → `engineering-software-engineer` ×2, `engineering-qa`; `cs-manager` → `cs-support`; `marketing-manager` (Head of Growth) → `marketing-demand-gen`; `ops-pm` (Program Manager, leading the "Self-serve onboarding" project with a cross-functional team) | early; adhocracy; speed |
 | Agency (`agency`) | 8 | $500 | `project-lead` (Head of Client Delivery) → `ops-program-coordinator`, `designer`; `marketing-content` (Editor-in-chief) → `writer-editor`, `design-brand`; `finance-billing` | growth; market |
 | E-commerce shop (`e-commerce-shop`) | 10 | $550 | `ops-manager` → `ops-procurement`; `cs-manager` → `cs-support` ×2; `marketing-manager` → `marketing-demand-gen`; `finance-manager` → `finance-accountant` | early; market; speed |
 | Open-source project (`open-source-project`) | 6 | $250 | `engineering-manager` (Lead Maintainer) → `engineering-software-engineer` ×2 (triager, core contributor), `writer-editor` (docs and changelog); `project-lead` (Community Lead) | early; clan; writing |
 | Research lab (`research-lab`) | 6 | $400 | `researcher` (Principal Investigator, strong) → `analyst`, `data-scientist`, `writer-editor`; `auditor` | early; adhocracy; rigour |
 | Solo creator (`solo-creator`) | 5 | $150 | `marketing-content` (Editor-in-chief) → `writer-editor`, `marketer`; `controller` (cash-basis books) | early; clan |
 | Professional services firm (`professional-services-firm`) | 11 | $700 | `project-lead` (Head of Delivery) → `ops-program-coordinator`, `analyst`, `researcher`; `finance-manager` → `finance-accountant`, `finance-billing`; `people-manager` → `people-recruiter`; `auditor` | growth; hierarchy; rigour |
+
+Two starters carry a roadmap item with a cross-functional team (§1b):
+**SaaS startup**'s Program Manager leads "Self-serve onboarding" with the
+product engineer (60%), the QA engineer (30%), the growth marketer (40%) and
+the support specialist (20%) on its team and a weekday standup;
+**E-commerce shop**'s Head of Operations leads "Returns in five days" with
+the returns support specialist, procurement, the staff accountant and the
+growth marketer. Both import into Next — the CEO bets Now.
 
 How they are written, and what the test pins
 (`tests/backend-builtin-companies.test.ts`):

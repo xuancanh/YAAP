@@ -158,7 +158,7 @@ test('build script: the committed authored packs are what the build emits from p
 
 test('build script: every business pack carries segment, function and level; personal packs default to personal', () => {
   const biz = AUTHORED_PACKS.filter((p) => p.cat === 'Business');
-  assert.equal(biz.length, 54, 'the 52 function packs, the chief of staff and the auditor');
+  assert.equal(biz.length, 55, 'the 53 function packs (the Program Manager included), the chief of staff and the auditor');
   for (const p of biz) {
     assert.equal(p.segment, 'business', p.id);
     assert.ok(FN_IDS.includes(p.function!), `${p.id}: ${p.function}`);
@@ -247,7 +247,7 @@ test('market service: list() carries the segment and the company hire ref; segme
 
   const seg = market.segments();
   assert.equal(seg.personal.total + seg.business.total, items.length);
-  assert.equal(seg.business.total, 54 + 11);
+  assert.equal(seg.business.total, 55 + 11);
   assert.deepEqual(seg.business.functions.map((f) => f.id), FN_IDS, 'all fourteen, in rail order');
   const fin = seg.business.functions.find((f) => f.id === 'finance')!;
   assert.equal(fin.label, 'Finance'); assert.equal(fin.count, 5, 'head, three specialists and Bookkeeper'); assert.equal(fin.headId, 'pack-biz-finance-manager');

@@ -1487,7 +1487,7 @@ Maintainer (`packages.publish` two-key).
 
 | Blueprint | Kits | Seats (incl. chief) | Profile defaults | Feeds the operating system | Starting envelope |
 |---|---|---|---|---|---|
-| **SaaS startup** | Ship Software, Support Desk, Growth; *Revenue*, *Finance Close* | 9 | early; adhocracy; speed | sprint planning, weekly reviews; scorecard: deploy frequency, change failure rate, first response, CSAT, activation | $600 |
+| **SaaS startup** | Ship Software, Support Desk, Growth; *Revenue*, *Finance Close* | 10 (with a Program Manager owning the self-serve onboarding project) | early; adhocracy; speed | sprint planning, weekly reviews; scorecard: deploy frequency, change failure rate, first response, CSAT, activation | $600 |
 | **Agency** | Client Delivery, Content Studio; *Ship Software*, *Finance Close* | 8 | growth; market | client status, delivery review; scorecard: milestones on time, utilisation, days to invoice | $500 |
 | **E-commerce shop** | Commerce Ops, Support Desk, Growth, Finance Close | 10 | early; market; speed | orders check, weekly reviews; scorecard: fulfilment time, refund rate, CSAT, activation | $550 |
 | **Open-source project** | Open-Source Maintainer (with Ship Software); *Content Studio* | 6 | early; clan; writing | triage, release; scorecard: first response on issues, contributor PR merge time | $250 |

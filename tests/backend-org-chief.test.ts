@@ -32,12 +32,14 @@ import { LESSON_TOOL_NAME } from '../server/src/org/org-memory.service';
 import type { RunCtx } from '../server/src/org/org-runtime.service';
 import { OrgProjectsService } from '../server/src/org/org-projects.service';
 import { OrgProjectsTools } from '../server/src/org/org-projects.tools';
+import { OrgProjectTeamsService } from '../server/src/org/org-project-teams.service';
 import { OrgDataTools } from '../server/src/org/org-data.tools';
 
 /** The work-tracking tools (docs/work-tracking.md) as the org module wires them. */
 function projectTools(s: Awaited<ReturnType<typeof setup>>): OrgProjectsTools {
   const projects = new OrgProjectsService(s.db, s.org, s.tasks, s.approvals, s.audit, s.agents, s.units);
-  return new OrgProjectsTools(s.org, projects, s.tasks, s.agents, s.config, s.runtime, s.turns);
+  const teams = new OrgProjectTeamsService(s.org, s.approvals, s.audit, s.agents, s.tasks, projects, new OrgAnnouncer({ announce: async () => undefined }), s.units, s.decisions);
+  return new OrgProjectsTools(s.org, projects, s.tasks, s.agents, s.config, s.runtime, s.turns, teams);
 }
 /** The company data tools (docs/agent-data-access.md) as the org module wires them. */
 function dataTools(s: Awaited<ReturnType<typeof setup>>): OrgDataTools {
@@ -274,6 +276,13 @@ test('every tool a business skill names exists and is offered to the role that r
   const chief = await offered(await sessionOf(s, s.chief.id));
   const head = await across(s.writer.id);
   const specialist = await across(s.editor.id);
+  // a Program Manager leading a project with an active team (docs/work-tracking.md "Project teams")
+  const pmAgent = await s.agents.create({ name: 'Pat', provider: 'anthropic', model: 'claude-sonnet-4-5' });
+  await s.org.addMember(orgId, { agentId: pmAgent.id, title: 'Program Manager', reportsToAgentId: s.chief.id, scopes: [] });
+  const pmProject = await s.org.addProject(orgId, { title: 'Pilot', ownerAgentId: pmAgent.id, lane: 'now', status: 'active' });
+  await s.org.addProjectMember(orgId, { projectId: pmProject.id, agentId: s.editor.id, allocation: 30, status: 'active', addedBy: 'user' });
+  const pm = await across(pmAgent.id);
+  assert.ok(pm.has('org_assign') && !pm.has('org_hire_agent'), 'a PM assigns its team, hires no one');
   const auditSession = await sessionOf(s, auditorAgent.id);
   s.runtime.beginAuxRun(ctxFor(auditSession, auditorAgent.id, { audit: { findings: [], summary: '', closed: false, material: '' } }));
   const auditor = await offered(auditSession);
@@ -289,7 +298,7 @@ test('every tool a business skill names exists and is offered to the role that r
   for (const t of ['org_audit_finding', 'org_audit_close', 'fs_read', 'org_metric_read', 'org_decisions', 'org_intent']) assert.ok(auditor.has(t), `the auditor reads with ${t}`);
   for (const t of ['fs_write', 'fs_edit', 'org_create_task', 'org_message', 'org_task_comment']) assert.ok(!auditor.has(t), `the auditor's run never offers ${t}`);
 
-  const roleOf = (id: string): { role: string; set: Set<string> } => id === CHIEF_PACK_ID ? { role: 'chief', set: chief } : id === 'pack-auditor' ? { role: 'auditor', set: auditor } : id.endsWith('-manager') ? { role: 'head', set: head } : { role: 'specialist', set: specialist };
+  const roleOf = (id: string): { role: string; set: Set<string> } => id === CHIEF_PACK_ID ? { role: 'chief', set: chief } : id === 'pack-auditor' ? { role: 'auditor', set: auditor } : id === 'pack-biz-ops-pm' ? { role: 'program manager', set: pm } : id.endsWith('-manager') ? { role: 'head', set: head } : { role: 'specialist', set: specialist };
   // "org_audit_query action meeting_risk" names an audit action, not a tool
   const toolsNamed = (text: string): string[] => [...new Set(text.replace(/\baction\s+[a-z_]+/g, '').match(/\b(?:org|fs|meeting)_[a-z_]+\b/g) ?? [])];
   const packs = AUTHORED_PACKS.filter((p) => p.id.startsWith('pack-biz-') || p.id === CHIEF_PACK_ID || p.id === 'pack-auditor');

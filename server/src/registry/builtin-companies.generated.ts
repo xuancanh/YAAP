@@ -158,6 +158,20 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      ],
      "modelTier": "standard",
      "monthlyUsd": 45
+    },
+    {
+     "roleId": "ops-pm",
+     "title": "Program Manager",
+     "charter": "You are a Program Manager of the company: you own roadmap items end to end. For each project you lead you keep the brief, milestones and appetite true, post its health update on cadence (on track, at risk with the ask, off track with the reason), run its standup and dependency review, and answer its appetite breaker with a decision for the lead's manager. You staff a project with a cross-functional team borrowed from the units: you propose each member and its allocation, its own head approves, and you assign the project's tasks to its team. The heads stay accountable for their people; you hire no one and move no one between units.\n\nYou own the self-serve onboarding bet end to end: one weekly health call, a daily ten-minute standup in its channel, and a team borrowed from engineering, QA and growth whose heads approve the time.",
+     "reportsTo": "Chief of staff",
+     "scopes": [
+      "tool:fs_read",
+      "tool:fs_write",
+      "tool:web_fetch",
+      "tool:web_search"
+     ],
+     "modelTier": "standard",
+     "monthlyUsd": 40
     }
    ],
    "cadences": [
@@ -241,7 +255,8 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      "Head of Customer": 55,
      "Support Specialist": 30,
      "Head of Growth": 60,
-     "Growth Marketer": 45
+     "Growth Marketer": 45,
+     "Program Manager": 40
     }
    },
    "cards": [
@@ -249,6 +264,47 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "google-gmail",
     "google-drive",
     "browser"
+   ],
+   "projects": [
+    {
+     "title": "Self-serve onboarding",
+     "brief": {
+      "problem": "New teams stall between signup and their first real use; nobody owns the path end to end.",
+      "hypothesis": "A guided first project and in-app help in the first session raise signup-to-active.",
+      "done_when": "Signup-to-active is measured weekly and above the target for two weeks running.",
+      "mvp": "One guided first project, an empty-state checklist and a help link answered within hours."
+     },
+     "lead": "Program Manager",
+     "team": [
+      {
+       "title": "Software Engineer (Product)",
+       "role": "engineer",
+       "allocation": 60
+      },
+      {
+       "title": "QA Engineer",
+       "role": "quality",
+       "allocation": 30
+      },
+      {
+       "title": "Growth Marketer",
+       "role": "activation analyst",
+       "allocation": 40
+      },
+      {
+       "title": "Support Specialist",
+       "role": "customer voice",
+       "allocation": 20
+      }
+     ],
+     "krs": [
+      "signup-to-active rate",
+      "time to first project"
+     ],
+     "cadence": "45 9 * * 1-5",
+     "appetiteDays": 42,
+     "appetiteUsd": 120
+    }
    ],
    "origin": {
     "exportedFrom": "yaam first-party",
@@ -705,6 +761,47 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "google-calendar",
     "google-gmail",
     "google-drive"
+   ],
+   "projects": [
+    {
+     "title": "Returns in five days",
+     "brief": {
+      "problem": "Returns take two weeks end to end and drive most support tickets and refund disputes.",
+      "hypothesis": "A self-serve returns flow, a carrier label on request and refunds on scan cut the cycle and the tickets.",
+      "done_when": "Median return-to-refund time is under five days for four weeks and returns tickets fall by a third.",
+      "mvp": "A returns request form, a prepaid label from one carrier and a refund rule on carrier scan."
+     },
+     "lead": "Head of Operations",
+     "team": [
+      {
+       "title": "Support Specialist (Returns)",
+       "role": "returns desk",
+       "allocation": 50
+      },
+      {
+       "title": "Procurement Specialist",
+       "role": "carrier contract",
+       "allocation": 20
+      },
+      {
+       "title": "Staff Accountant",
+       "role": "refund reconciliation",
+       "allocation": 20
+      },
+      {
+       "title": "Growth Marketer",
+       "role": "customer messaging",
+       "allocation": 15
+      }
+     ],
+     "krs": [
+      "median return-to-refund days",
+      "returns tickets per week"
+     ],
+     "cadence": "0 10 * * 1,3,5",
+     "appetiteDays": 30,
+     "appetiteUsd": 60
+    }
    ],
    "origin": {
     "exportedFrom": "yaam first-party",
