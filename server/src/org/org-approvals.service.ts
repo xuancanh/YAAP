@@ -407,13 +407,13 @@ export class OrgApprovalsService {
       // (docs/sensing.md §4, OrgSensingService activates it), an experiment
       // (docs/experiments.md §1.3, OrgExperimentsService starts it), the
       // meetings module's cadence, the memory module's charter change, and the
-      // action contract's two-key hold.
+      // action contract's two-key hold; work tracking's project bets,
+      // appetite decisions and kills (OrgProjectsService, docs/work-tracking.md).
       case 'cadence':
       case 'charter_change':
       case 'metric_source':
       case 'two_key':
       case 'member_settings':
-      // Work tracking (docs/work-tracking.md): OrgProjectsService applies the CEO's bets.
       case 'project_now':
       case 'project_appetite':
       case 'project_kill':
