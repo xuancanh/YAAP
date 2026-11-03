@@ -2179,7 +2179,7 @@ took the doc's proposed default.
 Built on 4 November 2026, beside Foundry (`docs/foundry.md`, "Shipped as
 (Foundry shelves)"). Code: `server/src/plugins/plugin-registry.service.ts`
 and `plugin-registry.controller.ts`, the source and recall changes in
-`plugins.service.ts` and `loader.ts`; migration `0082-plugin-registry`.
+`plugins.service.ts` and `loader.ts`; migration `0086-plugin-registry`.
 Tests: `tests/backend-plugin-registry.test.ts`, `web-tests/foundry.test.tsx`.
 
 **Built.**
