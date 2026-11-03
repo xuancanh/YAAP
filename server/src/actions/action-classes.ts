@@ -83,6 +83,8 @@ export const TOOL_CLASSES: Record<string, Classifier> = {
   change_status: 'read', change_list: 'read', change_request_apply: 'internal_write',
   // follows (follows/follows.tools.ts): only the agent's own follow rows change — free, no approval
   follow: 'read', unfollow: 'read', list_follows: 'read',
+  // workspace data reads (data-access/workspace-data.tools.ts, docs/agent-data-access.md): scoped, bounded, secret-free
+  ws_catalog: 'read', ws_workspace: 'read', ws_agents: 'read', ws_market: 'read', ws_plugins: 'read',
   // chat auto-archive (chats/chat-archive.service.ts): only the agent's own chats' setting changes — free, no approval
   set_chat_auto_archive: 'read',
   // agents message the owner (chats/owner-messages.service.ts): it only talks to the owner, in the agent's own DM — free

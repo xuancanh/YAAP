@@ -76,6 +76,7 @@ import { FollowsModule, FollowsToolsModule } from './follows/follows.module';
 import { HomeModule } from './home/home.module';
 import { HarnessModule } from './harness/harness.module';
 import { PluginsModule } from './plugins/plugins.module';
+import { DataAccessModule } from './data-access/data-access.module';
 import { WorkspaceAccessGuard } from './shared/workspace-access.guard';
 import { SessionAuthStrategy } from './accounts/session-auth.strategy';
 import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
@@ -117,6 +118,7 @@ import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
     HomeModule,
     HarnessModule,
     PluginsModule,
+    DataAccessModule,
   ],
   providers: [
     // Identity is bound here and nowhere else: swapping this one provider
