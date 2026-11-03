@@ -2,7 +2,7 @@
  *  route a card climbed ("Writer → Head of Content → Chief → you") with each
  *  manager's recommendation, on Home and in the Inbox; a card a manager still
  *  holds is not in the CEO's list yet. */
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HomeData, HomeNeed, OrgApproval } from '../src/lib/api';
 import { HomeBoard } from '../src/components/HomeBoard';
@@ -82,6 +82,8 @@ describe('Home', () => {
       { at: iso(-100), action: 'escalated', by: 'Chief', recommendation: 'modify', reasoning: '5% now, 5% next quarter' },
     ] } });
     render(<HomeBoard data={data([chained, need({ id: 'approval:a2', ref: { approvalId: 'a2' } })])} narrow={false} wide now={NOW} name="Linh" onAct={vi.fn()} onOpen={vi.fn()} onAllAgents={vi.fn()} />);
+    expect(screen.queryAllByTestId('need-chain')).toHaveLength(0); // folded until the row opens
+    for (const b of screen.getAllByRole('button', { name: 'Show details' })) fireEvent.click(b);
     const chains = screen.getAllByTestId('need-chain');
     expect(chains).toHaveLength(1);
     expect(chains[0].textContent).toContain('Writer → Head of Content → Chief → you');

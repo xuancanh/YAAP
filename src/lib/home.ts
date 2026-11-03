@@ -293,3 +293,143 @@ export function dayHeading(iso: string, now = new Date()): string {
   if (days === 1) return 'Tomorrow';
   return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
 }
+
+// ---- the command-center view (docs/home.md "The page") ----
+
+const SYSTEM_ACTORS = new Set(['migration', 'system', 'backfill', 'scheduler']);
+
+/** Who asked, for the meta line: a readable name; the machinery reads "System". */
+export function askedBy(n: HomeNeed): string {
+  const who = (n.requestedBy ?? '').trim();
+  return SYSTEM_ACTORS.has(who.toLowerCase()) ? 'System' : who;
+}
+
+const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+/**
+ * A card's one-line title and the task it is about. An escalation's server
+ * title wraps the task in quotes (`task "Make the kill criterion…": User
+ * decision on…`): the ask leads, and the task is named by its key beside it.
+ */
+export function needHeadline(n: HomeNeed): { title: string; task: { key: string | null; title: string } | null } {
+  const raw = (n.title ?? '').trim();
+  const m = /^task "([\s\S]*?)":\s*([\s\S]*)$/.exec(raw);
+  if (m) {
+    const ask = m[2].trim();
+    return { title: capitalize(ask || m[1]), task: n.task ?? { key: null, title: m[1] } };
+  }
+  return { title: capitalize(raw), task: n.task ?? null };
+}
+
+/** The card's detail, unless it only repeats the title. */
+export function needBody(n: HomeNeed): string {
+  const d = (n.detail ?? '').trim();
+  if (!d) return '';
+  const t = needHeadline(n).title.toLowerCase().replace(/…$/, '');
+  return d.toLowerCase().startsWith(t.slice(0, Math.min(t.length, 60))) ? '' : d;
+}
+
+/** The default in a few words for the meta line: "Denies in 3 h", "Applies in 20 min". */
+export function defaultShort(n: HomeNeed, now = new Date()): string {
+  if (!n.deadline || !n.defaultAction) return '';
+  if (new Date(n.deadline).getTime() <= now.getTime()) return 'Past its deadline';
+  const at = when(n.deadline, now);
+  const verb = n.defaultAction === 'apply' ? 'Applies' : n.defaultAction === 'approve' ? 'Approves' : 'Denies';
+  return `${verb} ${at.startsWith('in ') ? at : `on ${at}`}`;
+}
+
+/** The proposer's recommendation as a chip: "Recommends approve, 70%". */
+export function recommendationChip(n: HomeNeed): string {
+  if (!n.recommendedAction) return '';
+  return `Recommends ${n.recommendedAction}${n.confidence !== null ? `, ${Math.round(n.confidence * 100)}%` : ''}`;
+}
+
+/** What earns a banner above everything: a paused company, spend over its envelope, a token budget used up. */
+export interface HomeBanner { tone: 'red' | 'amber'; id: 'paused' | 'envelope' | 'forecast' | 'tokens'; title: string; body: string; action: { label: string; target: HomeTarget } }
+
+export function stateBanners(d: HomeData): HomeBanner[] {
+  const out: HomeBanner[] = [];
+  const s = d.spend;
+  if (d.company?.status === 'paused') {
+    out.push({ tone: 'red', id: 'paused', title: `${d.company.name} is paused`, body: 'Nothing runs until you resume: no loops, no tasks, no meetings. Decisions still wait for you here.', action: { label: 'Resume in Company', target: { to: 'pane', pane: 'board' } } });
+  }
+  const cap = s.monthCapUsd ?? 0;
+  if (d.company && cap > 0 && (s.monthUsd ?? 0) >= cap) {
+    out.push({ tone: 'red', id: 'envelope', title: 'Spend is over the monthly envelope', body: `${usd(s.monthUsd)} of ${usd(cap)} spent this month. Work that costs money stops until you raise the envelope.`, action: { label: 'Raise the envelope', target: { to: 'pane', pane: 'spend' } } });
+  } else if (d.company && cap > 0 && s.forecastState === 'stop') {
+    out.push({ tone: 'amber', id: 'forecast', title: 'On pace to pass the envelope', body: `${usd(s.projectedUsd)} forecast by month end against ${usd(cap)}.`, action: { label: 'See spend', target: { to: 'pane', pane: 'spend' } } });
+  }
+  if (s.tokens?.over) {
+    out.push({ tone: 'red', id: 'tokens', title: 'The token budget is used up', body: `${Math.round(s.tokens.spent / 1000)}k of ${Math.round(s.tokens.budget / 1000)}k tokens this month. Agents are stopped until the budget resets or you raise it.`, action: { label: 'See spend', target: d.company ? { to: 'pane', pane: 'spend' } : { to: 'inbox' } } });
+  }
+  return out;
+}
+
+/** This week against the week before, from a daily series (oldest first). */
+export function weekOverWeek(values: number[] | null | undefined): { thisWeek: number; lastWeek: number | null; delta: number | null } | null {
+  if (!values || values.length < 7) return null;
+  const sum = (xs: number[]) => xs.reduce((n, x) => n + x, 0);
+  const thisWeek = sum(values.slice(-7));
+  const lastWeek = values.length >= 14 ? sum(values.slice(-14, -7)) : null;
+  return { thisWeek, lastWeek, delta: lastWeek === null ? null : thisWeek - lastWeek };
+}
+
+/** The brief, shortened: its first bullets (as markdown), else its first paragraph. */
+export function briefSummary(text: string, max = 3): { md: string; more: boolean } {
+  const lines = (text ?? '').split('\n');
+  const bullets = lines.map((l) => /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(l)?.[1]).filter((x): x is string => Boolean(x && x.trim()));
+  if (bullets.length) return { md: bullets.slice(0, max).map((b) => `- ${b}`).join('\n'), more: bullets.length > max };
+  const para = lines.filter((l) => l.trim() && !/^#{1,6}\s/.test(l)).slice(0, 2).join(' ');
+  return { md: para.length > 280 ? `${para.slice(0, 279)}…` : para, more: para.length > 280 || lines.filter((l) => l.trim()).length > 3 };
+}
+
+/** One Highlights row: a notable event, or one person's file edits grouped. */
+export type HomeHighlight =
+  | { type: 'event'; id: string; at: string; a: HomeActivity }
+  | { type: 'files'; id: string; at: string; actor: string; items: HomeActivity[] };
+
+/**
+ * The notable part of the week: tasks done or blocked, decisions, people,
+ * meetings, incidents and loop runs that did something stand alone; file
+ * edits fold into one row per person ("Tutor Engineer edited 6 files");
+ * routine runs are left to the full feed.
+ */
+export function highlights(activity: HomeActivity[]): HomeHighlight[] {
+  const out: HomeHighlight[] = [];
+  const files = new Map<string, Extract<HomeHighlight, { type: 'files' }>>();
+  for (const a of activity) {
+    if (a.runs) continue;
+    if (a.kind === 'file') {
+      const actor = a.actor || 'Someone';
+      const g = files.get(actor);
+      if (g) { g.items.push(a); if (a.at > g.at) g.at = a.at; continue; }
+      const row = { type: 'files' as const, id: `files:${actor}`, at: a.at, actor, items: [a] };
+      files.set(actor, row);
+      out.push(row);
+      continue;
+    }
+    out.push({ type: 'event', id: a.id, at: a.at, a });
+  }
+  // A group of one is just the event.
+  return out.map((h): HomeHighlight => (h.type === 'files' && h.items.length === 1 ? { type: 'event', id: h.items[0].id, at: h.items[0].at, a: h.items[0] } : h))
+    .sort((x, y) => y.at.localeCompare(x.at));
+}
+
+/** "Tutor Engineer edited 6 files". */
+export function filesLine(h: Extract<HomeHighlight, { type: 'files' }>): string {
+  const created = h.items.filter((a) => /^Created /.test(a.title)).length;
+  const edited = h.items.length - created;
+  const bits = [edited ? `edited ${plural(edited, 'file')}` : '', created ? `created ${plural(created, 'file')}` : ''].filter(Boolean);
+  return `${h.actor} ${bits.join(' and ')}`;
+}
+
+/** A project's target in words: "14 Nov", "Due today", "3 d late". */
+export function targetWords(date: string | null, now = new Date()): string {
+  if (!date) return '';
+  const d = new Date(`${date.slice(0, 10)}T00:00:00`);
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const days = Math.round((d.getTime() - start.getTime()) / 86_400_000);
+  if (days < 0) return `${-days} d late`;
+  if (days === 0) return 'Due today';
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}

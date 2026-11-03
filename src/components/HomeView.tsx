@@ -117,8 +117,19 @@ export function HomeView() {
     app.openSession(m.sessionId);
   }, [app, wsId]);
 
-  const narrow = app.width < 640;
-  const wide = app.width >= 1180;
+  // The layout follows Home's own width (beside the sidebar), not the window's.
+  const box = useRef<HTMLDivElement>(null);
+  const [boxWidth, setBoxWidth] = useState<number | null>(null);
+  useEffect(() => {
+    const el = box.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => setBoxWidth(Math.round(entries[0]?.contentRect.width ?? 0) || null));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const width = boxWidth ?? app.width;
+  const narrow = app.width < 640 || width < 600;
+  const wide = width >= 1040;
   const name = useMemo(() => {
     const full = app.me ? app.me.names[app.me.actorId] ?? '' : '';
     return full.split(/\s+/)[0] ?? '';
@@ -127,7 +138,7 @@ export function HomeView() {
   const ws = app.workspaces.find((w) => w.id === wsId);
 
   return (
-    <div data-testid="home-view" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minWidth: 0 }}>
+    <div ref={box} data-testid="home-view" style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minWidth: 0 }}>
       {data ? (
         <HomeBoard
           data={data} narrow={narrow} wide={wide} name={name} busy={busy}

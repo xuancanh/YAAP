@@ -69,7 +69,7 @@ function base(): HomeData {
     company: { orgId: 'o1', name: 'Acme', mode: 'autonomous', status: 'active', chiefAgentId: null, chiefName: null, memberCount: 2 },
     headline: { tasksDone: 0, needsYou: 0, todayUsd: null, monthUsd: null, monthCapUsd: null }, needs: [],
     recap: { tasksDone: 0, tasksBlocked: 0, decisions: [], decisionsCount: 0, people: [], artifactsChanged: 0, brief: null, pulse: null },
-    goals: [], team: [], activity: ACTIVITY,
+    goals: [], team: [{ id: 'w', name: 'Unit Test Writer', emoji: 'W', colors: '', title: 'Writer', state: 'idle', doing: '', taskId: null, lastActiveAt: null, lastBeatAt: null, isChief: false, errors: [] }], activity: ACTIVITY,
     spend: { todayUsd: null, monthUsd: null, monthCapUsd: null, projectedUsd: null, forecastState: null, tokens: null },
     health: { status: 'ok', openIncidents: [], providers: [], audit: null }, upcoming: [], artifacts: [], partial: [],
   };
@@ -87,6 +87,11 @@ describe('Activity: routine runs collapsed', () => {
   it('shows one line per agent and day, expandable, with the notable run described by what it did', () => {
     const onOpen = vi.fn();
     render(<HomeBoard data={base()} narrow wide={false} now={NOW} onAct={vi.fn()} onOpen={onOpen} onAllAgents={vi.fn()} />);
+    // Highlights leave routine runs out; the notable run stands alone
+    const hl = screen.getByTestId('activity-highlights');
+    expect(hl.textContent).not.toContain('heartbeat checks, nothing new');
+    expect(hl.textContent).toContain('moved task 91ef6d61 to blocked');
+    fireEvent.click(screen.getByRole('button', { name: 'All activity' }));
     const list = screen.getByTestId('activity-list');
     expect(list.textContent).toContain('Unit Test Writer · 3 heartbeat checks, nothing new');
     expect(list.textContent).not.toContain('Loop "heartbeat" ran');

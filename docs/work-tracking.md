@@ -281,10 +281,14 @@ fewer than `work.forecastMinSamples` done events the page says "not enough
 history" instead of a range; with too little project history it uses the
 company's throughput and says so. It assumes comparably sized tasks.
 
-**Home** (`docs/home.md`) — the **portfolio** for the CEO: counts (Now, at
-risk, off track, update missing, over budget, late) and the exceptions,
-then a "since you last looked" digest of project changes (health calls,
-lane moves, breakers, milestones, done) and done-by-project from `doneAt`.
+**Home** (`docs/home.md`) — the **portfolio** for the CEO as a roadmap
+snapshot: the lanes in one line, the Now projects (`nowProjects`) as rows
+with health, flags and their reason or ask, progress and target date, then
+projects flagged outside Now (off track, update missing, at risk, over
+budget, late, a tripped breaker); with nothing in Now, one line and
+**Propose a bet**. The "since you were here" block carries the digest of
+project changes (health calls, lane moves, breakers, milestones, done) and
+done-by-project from `doneAt`.
 
 **Unit boards** keep working, filterable by project; cards show the project
 key and a source badge; the drawer shows the steps, the structured

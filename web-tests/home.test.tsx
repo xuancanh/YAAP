@@ -6,7 +6,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 import { api, type HomeAgent, type HomeData, type HomeNeed } from '../src/lib/api';
 import { HomeBoard, HomeStatus } from '../src/components/HomeBoard';
 import { decide } from '../src/components/HomeView';
-import { defaultSentence, headline, needTarget, recommendationLine, sinceLabel, targetOf } from '../src/lib/home';
+import { askedBy, briefSummary, defaultSentence, defaultShort, headline, needBody, needHeadline, needTarget, recommendationChip, recommendationLine, sinceLabel, stateBanners, targetOf, weekOverWeek } from '../src/lib/home';
 
 const NOW = new Date('2026-11-02T08:00:00');
 const iso = (minutesFromNow: number) => new Date(NOW.getTime() + minutesFromNow * 60_000).toISOString();
@@ -90,36 +90,128 @@ describe('Home copy', () => {
   });
 });
 
+describe('Home copy — the command center', () => {
+  it('cleans an escalation title: the ask leads, the task is named by its key, the body does not repeat it', () => {
+    const esc = need({ kind: 'escalation', title: 'task "Make the kill criterion citable: fix D10/D11": User decision on the sandbox execution', detail: 'User decision on the sandbox execution', requestedBy: 'migration', task: { key: 'D-11', title: 'Make the kill criterion citable: fix D10/D11' } });
+    expect(needHeadline(esc)).toEqual({ title: 'User decision on the sandbox execution', task: { key: 'D-11', title: 'Make the kill criterion citable: fix D10/D11' } });
+    expect(needBody(esc)).toBe('');
+    expect(askedBy(esc)).toBe('System');
+    expect(needHeadline(need({ title: 'tune work.x 1 → 2' })).title).toBe('Tune work.x 1 → 2');
+    expect(needHeadline(need({ kind: 'escalation', title: 'task "Pricing": ' })).title).toBe('Pricing');
+  });
+  it('words the default and the recommendation short, for the meta line', () => {
+    expect(defaultShort(need(), NOW)).toBe('Denies in 3 h');
+    expect(defaultShort(need({ defaultAction: 'apply', deadline: iso(20) }), NOW)).toBe('Applies in 20 min');
+    expect(defaultShort(need({ deadline: iso(-5) }), NOW)).toBe('Past its deadline');
+    expect(defaultShort(need({ defaultAction: '' }), NOW)).toBe('');
+    expect(recommendationChip(need())).toBe('Recommends approve, 70%');
+  });
+  it('raises a banner for a paused company, spend over the envelope and a used-up token budget', () => {
+    expect(stateBanners(fixture())).toEqual([]);
+    const paused = stateBanners(fixture({ company: { ...fixture().company!, status: 'paused' } }));
+    expect(paused.map((b) => b.id)).toEqual(['paused']);
+    expect(paused[0].action).toEqual({ label: 'Resume in Company', target: { to: 'pane', pane: 'board' } });
+    const over = stateBanners(fixture({ spend: { ...fixture().spend, monthUsd: 21 } }));
+    expect(over[0]).toMatchObject({ id: 'envelope', tone: 'red', action: { label: 'Raise the envelope', target: { to: 'pane', pane: 'spend' } } });
+    expect(stateBanners(fixture({ spend: { ...fixture().spend, forecastState: 'stop' } }))[0].id).toBe('forecast');
+    expect(stateBanners(fixture({ company: null, spend: { ...fixture().spend, tokens: { spent: 2e6, budget: 1e6, over: true } } }))[0].id).toBe('tokens');
+  });
+  it('compares this week with the last, and shortens the brief to its first bullets', () => {
+    expect(weekOverWeek([1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2])).toEqual({ thisWeek: 14, lastWeek: 7, delta: 7 });
+    expect(weekOverWeek([1, 2, 3, 4, 5, 6, 7])).toEqual({ thisWeek: 28, lastWeek: null, delta: null });
+    expect(weekOverWeek([1])).toBeNull();
+    expect(briefSummary('## A\n- one\n- two\n- three\n- four')).toEqual({ md: '- one\n- two\n- three', more: true });
+    expect(briefSummary('Just a paragraph.').md).toBe('Just a paragraph.');
+  });
+});
+
 describe('HomeBoard — a company', () => {
-  it('opens with the greeting, the headline, the mode and the run state', () => {
+  it('opens with the greeting, the company, the mode and the run state', () => {
     const { onOpen } = board(fixture());
     expect(screen.getByText('Good morning, Linh.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Acme');
     expect(screen.getByTestId('home-headline')).toHaveTextContent('Overnight your team closed 12 tasks. 3 things need you.');
     expect(screen.getByTestId('home-mode')).toHaveTextContent('Autonomous');
+    expect(screen.getByTestId('home-run-state')).toHaveTextContent('Running');
     fireEvent.click(screen.getByTestId('home-run-state'));
+    expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'board' });
+    expect(screen.queryByTestId('home-banner-paused')).toBeNull();
+  });
+
+  it('shows a paused company as a banner with its primary action', () => {
+    const { onOpen } = board(fixture({ company: { ...fixture().company!, status: 'paused' } }));
+    expect(screen.getByTestId('home-run-state')).toHaveTextContent('Paused');
+    const banner = screen.getByTestId('home-banner-paused');
+    expect(banner).toHaveTextContent('Acme is paused');
+    expect(banner).toHaveTextContent('Nothing runs until you resume');
+    fireEvent.click(within(banner).getByRole('button', { name: 'Resume in Company' }));
     expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'board' });
   });
 
-  it('shows a paused company loudly', () => {
-    board(fixture({ company: { ...fixture().company!, status: 'paused' } }));
-    expect(screen.getByTestId('home-run-state')).toHaveTextContent('Paused: nothing runs until you resume');
+  it('shows the key numbers: needs you, spend against the envelope with the forecast, done this week against last, blocked, agents, pulse', () => {
+    const series = Array.from({ length: 14 }, (_, i) => ({ day: `2026-10-${String(20 + i).padStart(2, '0')}`, done: i < 7 ? 1 : 2 }));
+    const { onOpen, onAllAgents } = board(fixture({ recap: { ...fixture().recap, doneSeries: series } }));
+    expect(screen.getByTestId('kpi-needs')).toHaveTextContent('3');
+    fireEvent.click(screen.getByTestId('kpi-needs'));
+    expect(onOpen).toHaveBeenLastCalledWith({ to: 'inbox' });
+    const spend = screen.getByTestId('kpi-spend');
+    expect(spend).toHaveTextContent('$12.40');
+    expect(spend).toHaveTextContent('Forecast $24.00');
+    expect(within(spend).getByRole('meter')).toHaveAttribute('aria-valuemax', '20');
+    fireEvent.click(spend);
+    expect(onOpen).toHaveBeenLastCalledWith({ to: 'pane', pane: 'spend' });
+    expect(screen.getByTestId('kpi-done')).toHaveTextContent('Done this week14');
+    expect(screen.getByTestId('kpi-done')).toHaveTextContent('+7 vs last week');
+    expect(within(screen.getByTestId('kpi-done')).getByRole('img')).toHaveAccessibleName(/Tasks done per day/);
+    expect(screen.getByTestId('kpi-blocked')).toHaveTextContent('1');
+    expect(screen.getByTestId('kpi-agents')).toHaveTextContent('1/ 2');
+    fireEvent.click(screen.getByTestId('kpi-agents'));
+    expect(onAllAgents).toHaveBeenCalled();
+    expect(screen.getByTestId('kpi-pulse')).toHaveTextContent('82');
   });
 
-  it('lists what needs the owner with defaults, deadlines and inline decisions', () => {
+  it('lists what needs the owner as compact rows: kind, a clean title, the default, the recommendation, inline decisions, detail on demand', () => {
     const { onAct, onOpen } = board(fixture());
     const cards = screen.getAllByTestId('need-card');
     expect(cards.map((c) => c.getAttribute('data-kind'))).toEqual(['escalation', 'approval', 'plan']);
     const hire = cards[1];
     expect(hire).toHaveTextContent('Ana as Researcher');
-    expect(hire).toHaveTextContent('Chief recommends approve. 70% sure. Reversible.');
-    expect(within(hire).getByTestId('need-default')).toHaveTextContent("If you don't answer, it will be denied in 3 h.");
+    expect(within(hire).getByTestId('need-rec')).toHaveTextContent('Recommends approve, 70%');
+    expect(within(hire).getByTestId('need-default')).toHaveTextContent('Denies in 3 h');
+    expect(within(hire).queryByTestId('need-detail')).toBeNull();
+    fireEvent.click(within(hire).getByRole('button', { name: 'Show details' }));
+    const detail = within(hire).getByTestId('need-detail');
+    expect(detail).toHaveTextContent('Research has no owner.');
+    expect(detail).toHaveTextContent('Chief recommends approve. 70% sure. Reversible.');
+    expect(within(hire).getByTestId('need-default-full')).toHaveTextContent("If you don't answer, it will be denied in 3 h.");
     fireEvent.click(within(hire).getByRole('button', { name: 'Approve' }));
     expect(onAct).toHaveBeenCalledWith(expect.objectContaining({ id: 'approval:a1' }), 'approve');
     fireEvent.click(within(cards[2]).getByRole('button', { name: 'Veto' }));
     expect(onAct).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'plan:p1' }), 'veto');
-    expect(within(cards[2]).getByTestId('need-default')).toHaveTextContent('Applies on its own in 20 min unless you veto it.');
+    expect(within(cards[2]).getByTestId('need-default')).toHaveTextContent('Applies in 20 min');
     fireEvent.click(screen.getByRole('button', { name: 'See all in Inbox' }));
     expect(onOpen).toHaveBeenCalledWith({ to: 'inbox' });
+  });
+
+  it('names an escalation by its ask and its task key; the key opens the task', () => {
+    const esc = need({ id: 'approval:e', kind: 'escalation', title: 'task "Fix D10/D11 references": User decision on the sandbox', detail: 'User decision on the sandbox', requestedBy: 'migration', task: { key: 'D-11', title: 'Fix D10/D11 references' }, ref: { approvalId: 'e', taskId: 't11' } });
+    const { onOpen } = board(fixture({ needs: [esc], headline: { ...fixture().headline, needsYou: 1 } }));
+    const card = screen.getByTestId('need-card');
+    expect(within(card).getByRole('button', { name: 'User decision on the sandbox' })).toBeInTheDocument();
+    expect(card).not.toHaveTextContent('task "');
+    expect(card).toHaveTextContent('System');
+    expect(card).not.toHaveTextContent('migration');
+    fireEvent.click(within(card).getByRole('button', { name: 'D-11' }));
+    expect(onOpen).toHaveBeenCalledWith({ to: 'task', taskId: 't11' });
+  });
+
+  it('shows the top five and links the rest', () => {
+    const many = Array.from({ length: 7 }, (_, i) => need({ id: `approval:${i}`, title: `Card ${i}` }));
+    board(fixture({ needs: many, headline: { ...fixture().headline, needsYou: 9 } }));
+    expect(screen.getAllByTestId('need-card')).toHaveLength(5);
+    fireEvent.click(screen.getByRole('button', { name: '4 more' }));
+    expect(screen.getAllByTestId('need-card')).toHaveLength(7);
+    expect(screen.getByRole('button', { name: '2 more in the Inbox' })).toBeInTheDocument();
   });
 
   it('disables a card while its decision is in flight', () => {
@@ -128,21 +220,42 @@ describe('HomeBoard — a company', () => {
     expect(within(hire).getByRole('button', { name: 'Approve' })).toBeDisabled();
   });
 
-  it('summarises since the last visit with the brief, and goals at risk first', () => {
-    board(fixture());
+  it('summarises since the last visit with the brief\'s first bullets, and goals at risk first', () => {
+    const { onOpen } = board(fixture());
     const recap = screen.getByTestId('home-recap');
-    expect(recap).toHaveTextContent('decided without you');
+    expect(recap).toHaveTextContent('Overnight');
+    expect(recap).toHaveTextContent('2 decided without you, 4 files changed.');
     expect(recap).toHaveTextContent('hire: Marketer as Growth');
     expect(recap).toHaveTextContent('Marketer joined as Growth');
-    expect(within(screen.getByTestId('home-brief')).getByText('+40')).toBeInTheDocument();
+    const brief = screen.getByTestId('home-brief');
+    expect(within(brief).getByText('+40')).toBeInTheDocument();
+    expect(brief).not.toHaveTextContent('Outcomes');
+    fireEvent.click(within(brief).getByRole('button', { name: 'Read the brief' }));
+    expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'brief' });
     const goals = screen.getAllByTestId('home-goal');
     expect(goals.map((g) => g.getAttribute('data-rag'))).toEqual(['red', 'green']);
     expect(goals[0]).toHaveTextContent('At risk');
     expect(goals[0]).toHaveTextContent('100 / 1000 subs');
   });
 
-  it('filters the activity feed', () => {
+  it('shows highlights, file edits grouped per person, and the full feed behind a toggle', () => {
+    const edits = ['JOURNAL.md', 'a.md', 'b.md'].map((f, i) => ({ id: `f${i}`, at: iso(-60 - i), kind: 'file' as const, title: `Edited notes/${f}`, detail: 'version 5', actor: 'Tutor Engineer', ref: { type: 'file', id: `notes/${f}` } }));
+    const { onOpen } = board(fixture({ activity: [...fixture().activity, ...edits] }));
+    const hl = screen.getByTestId('activity-highlights');
+    expect(within(hl).getAllByRole('listitem')).toHaveLength(4); // 3 events (Writer's one file among them), Tutor Engineer's group
+    const group = within(hl).getByTestId('highlight-files');
+    expect(group).toHaveTextContent('Tutor Engineer edited 3 files');
+    expect(group).not.toHaveTextContent('JOURNAL.md');
+    fireEvent.click(within(group).getByRole('button', { name: /Tutor Engineer edited 3 files/ }));
+    fireEvent.click(within(group).getByRole('button', { name: 'JOURNAL.md' }));
+    expect(onOpen).toHaveBeenCalledWith({ to: 'file', path: 'notes/JOURNAL.md' });
+    fireEvent.click(screen.getByRole('button', { name: 'All activity' }));
+    expect(within(screen.getByTestId('activity-list')).getAllByRole('listitem')).toHaveLength(6);
+  });
+
+  it('filters the full activity feed', () => {
     board(fixture());
+    fireEvent.click(screen.getByRole('button', { name: 'All activity' }));
     const list = () => screen.getByTestId('activity-list');
     expect(within(list()).getAllByRole('listitem')).toHaveLength(3);
     fireEvent.click(screen.getByRole('button', { name: 'Files' }));
@@ -159,15 +272,22 @@ describe('HomeBoard — a company', () => {
     expect(s).toHaveTextContent('2 findings');
   });
 
-  it('surfaces agent errors loudly and links to the full directory', () => {
-    const failing = agent({ id: 'x', name: 'Analyst', state: 'error', errors: [{ kind: 'turn', message: 'model "gpt-9-ultra" not found (404)', at: iso(-3) }] });
-    const { onAllAgents, onOpen } = board(fixture({ team: [failing, agent()] }));
-    expect(screen.getByRole('alert')).toHaveTextContent('One agent is failing.');
-    const tile = screen.getAllByTestId('team-agent').find((t) => t.getAttribute('data-state') === 'error')!;
+  it('surfaces agent errors loudly, pins failing agents on top with a fix, and links to the full directory', () => {
+    const failing = agent({ id: 'x', name: 'Analyst', state: 'error', errors: [{ kind: 'turn', message: 'model "gpt-9-ultra" not found (404)', at: iso(-3), sessionId: 's9' }] });
+    const { onAllAgents, onOpen } = board(fixture({ team: [agent(), failing] }));
+    expect(within(screen.getByTestId('home-team')).getByRole('alert')).toHaveTextContent('One agent is failing.');
+    const rows = screen.getAllByTestId('team-agent');
+    expect(rows[0].getAttribute('data-state')).toBe('error');
+    const tile = rows[0];
     expect(within(tile).getByTestId('agent-error')).toHaveTextContent('model "gpt-9-ultra" not found (404)');
     expect(tile).toHaveTextContent('Failing');
-    fireEvent.click(tile);
-    expect(onOpen).toHaveBeenCalledWith({ to: 'agent', agentId: 'x' });
+    fireEvent.click(within(tile).getByRole('button', { name: 'Open the run' }));
+    expect(onOpen).toHaveBeenCalledWith({ to: 'chat', sessionId: 's9' });
+    fireEvent.click(within(tile).getByRole('button', { name: 'Fix' }));
+    expect(onOpen).toHaveBeenLastCalledWith({ to: 'agent', agentId: 'x' });
+    fireEvent.click(within(rows[1]).getByRole('button', { name: /Writer/ }));
+    expect(onOpen).toHaveBeenLastCalledWith({ to: 'agent', agentId: 'w' });
+    expect(screen.getByTestId('kpi-agents')).toHaveTextContent('1 failing');
     fireEvent.click(screen.getByRole('button', { name: 'All agents' }));
     expect(onAllAgents).toHaveBeenCalled();
   });
@@ -190,16 +310,24 @@ describe('HomeBoard — no company', () => {
     expect(screen.getByTestId('needs-empty')).toHaveTextContent("You're clear.");
     expect(screen.queryByTestId('home-mode')).toBeNull();
     expect(screen.queryByTestId('home-goals')).toBeNull();
+    // an empty workspace: the start card leads; no strip of zeros, no empty panels
+    expect(screen.queryByTestId('home-kpis')).toBeNull();
+    expect(screen.queryByTestId('home-team')).toBeNull();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Good morning, Linh.');
   });
 
   it('lists queued background actions with Approve and Dismiss, and recent files', () => {
     const queued = need({ id: 'event:e1', kind: 'queued_action', subkind: 'gmail_send', title: 'Send the newsletter', requestedBy: 'Writer', deadline: null, defaultAction: '', recommendation: '', recommendedAction: '', reversibility: '', confidence: null, ref: { agentId: 'w', eventId: 'e1' }, actions: ['approve', 'dismiss'] });
-    const { onAct, onOpen } = board(fixture({ company: null, needs: [queued], headline: { tasksDone: 2, needsYou: 1, todayUsd: 0.1, monthUsd: 1, monthCapUsd: null } }), { narrow: true, wide: false });
+    const { onAct, onOpen } = board(fixture({ company: null, needs: [queued], spend: { todayUsd: 0.1, monthUsd: 1, monthCapUsd: null, projectedUsd: null, forecastState: null, tokens: null }, headline: { tasksDone: 2, needsYou: 1, todayUsd: 0.1, monthUsd: 1, monthCapUsd: null } }), { narrow: true, wide: false });
     const card = screen.getByTestId('need-card');
     expect(card).toHaveTextContent('Queued action');
     fireEvent.click(within(card).getByRole('button', { name: 'Dismiss' }));
     expect(onAct).toHaveBeenCalledWith(expect.objectContaining({ id: 'event:e1' }), 'dismiss');
     expect(screen.queryByRole('button', { name: 'See all in Inbox' })).toBeNull();
+    // the simpler variant: no company numbers, no roadmap, no goals
+    expect(screen.queryByTestId('kpi-pulse')).toBeNull();
+    expect(screen.getByTestId('kpi-spend')).toHaveTextContent('Spend this month');
+    expect(screen.queryByTestId('home-portfolio')).toBeNull();
     fireEvent.click(within(screen.getByTestId('home-artifacts')).getByRole('button', { name: /weekly\.md/ }));
     expect(onOpen).toHaveBeenCalledWith({ to: 'file', path: 'reports/weekly.md' });
   });
@@ -244,22 +372,40 @@ describe('HomeBoard — the portfolio (docs/work-tracking.md)', () => {
     digest: [{ at: iso(-60), projectId: 'p3', key: 'P-3', title: 'Podcast pilot', kind: 'lane', text: 'moved to now' }],
     doneByProject: [{ projectId: 'p1', key: 'P-1', title: 'Referral loop', done: 4 }],
   };
-  it('shows the counts, the exceptions with their reasons, and the digest; a row opens the project page', () => {
-    const { onOpen } = board(fixture({ portfolio }));
+  const nowProjects: NonNullable<NonNullable<HomeData['portfolio']>['nowProjects']> = [
+    { projectId: 'p1', key: 'P-1', title: 'Referral loop', health: 'off_track', progress: { done: 3, total: 10, pct: 30 }, targetDate: '2026-11-20', late: false, blocked: 2, leadName: 'Writer' },
+    { projectId: 'p3', key: 'P-3', title: 'Podcast pilot', health: 'on_track', progress: { done: 1, total: 4, pct: 25 }, targetDate: '2026-10-30', late: true, blocked: 0, leadName: 'Chief' },
+  ];
+  it('shows the Now projects with progress, health and target; flagged ones carry their reasons; elsewhere-flagged follow; a row opens the project page', () => {
+    const { onOpen } = board(fixture({ portfolio: { ...portfolio, nowProjects } }));
     const sec = screen.getByTestId('home-portfolio');
-    expect(within(screen.getByTestId('portfolio-counts')).getByText('Off track')).toBeTruthy();
-    const rows = within(sec).getAllByTestId('portfolio-exception');
-    expect(rows).toHaveLength(2);
-    expect(rows[0].textContent).toContain('P-1 Referral loop');
-    expect(rows[1].textContent).toContain('Update missing');
-    expect(rows[1].textContent).toContain('Ask: an intro to the agency');
+    expect(screen.getByTestId('portfolio-counts').textContent).toBe('3 in Now, 2 next, 1 later');
+    const rows = within(sec).getAllByTestId('portfolio-project');
+    expect(rows).toHaveLength(3); // two in Now, P-2 flagged elsewhere
+    expect(rows[0].textContent).toContain('P-1Referral loop');
+    expect(rows[0].textContent).toContain('Off track');
+    expect(rows[0].textContent).toContain('The ESP rejected the template');
+    expect(rows[0].textContent).toContain('3/10');
+    expect(within(rows[0]).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '30');
+    expect(rows[1].textContent).toContain('3 d late');
+    expect(rows[1].getAttribute('data-flagged')).toBeNull();
+    expect(rows[2].textContent).toContain('Update missing');
+    expect(rows[2].textContent).toContain('Ask: an intro to the agency');
+    expect(sec.textContent).toContain('Also flagged');
     const digest = screen.getByTestId('portfolio-digest');
-    expect(digest.textContent).toContain('Since you last looked');
     expect(digest.textContent).toContain('moved to now');
-    expect(digest.textContent).toContain('Done:');
-    fireEvent.click(within(rows[0]).getByText('P-1 Referral loop'));
+    expect(digest.textContent).toContain('Tasks done');
+    fireEvent.click(within(rows[0]).getByRole('button'));
     expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'roadmap', focus: { kind: 'project', id: 'p1' } });
     fireEvent.click(within(sec).getByText('Open roadmap'));
+    expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'roadmap' });
+  });
+  it('an empty roadmap is one line and a call to action, not a strip of zeros', () => {
+    const { onOpen } = board(fixture({ portfolio: { counts: { now: 0, next: 0, later: 0, atRisk: 0, offTrack: 0, updateMissing: 0, overBudget: 0, late: 0 }, exceptions: [], digest: [], doneByProject: [], nowProjects: [] } }));
+    const sec = screen.getByTestId('home-portfolio');
+    expect(sec).toHaveTextContent('No project is in Now yet.');
+    expect(within(sec).queryAllByTestId('portfolio-project')).toHaveLength(0);
+    fireEvent.click(within(sec).getByRole('button', { name: 'Propose a bet' }));
     expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'roadmap' });
   });
   it('is absent without a portfolio, and a KR shows its projects\' health beside the RAG', () => {

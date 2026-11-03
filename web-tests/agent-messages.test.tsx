@@ -105,9 +105,9 @@ describe('Home — Messages from your team', () => {
     expect(row).toHaveTextContent('<img src=x onerror=alert(1)> **bold?**');
     expect(row.querySelector('img')).toBeNull();
     expect(row.querySelector('strong')).toBeNull();
-    expect(within(row).getByTestId('home-message-urgency')).toHaveTextContent('urgent');
+    expect(within(row).getByTestId('home-message-urgency')).toHaveTextContent(/urgent/i);
     expect(within(row).getByTestId('home-message-unread')).toBeInTheDocument();
-    expect(row).toHaveTextContent('OPS-1 · /org/a.md');
+    expect(row).toHaveTextContent('OPS-1, /org/a.md');
     expect(within(within(block).getByTestId('home-message-h2')).queryByTestId('home-message-unread')).toBeNull();
     fireEvent.click(row);
     expect(onMessage).toHaveBeenCalledWith(items[0]);

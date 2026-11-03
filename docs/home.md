@@ -73,26 +73,85 @@ The route is a GET, so a viewer of a shared workspace gets a Home too.
 
 ## The page, in order of attention
 
-**1. Header.** A greeting and one sentence about the state of the company,
-for example: "Overnight your team closed 12 tasks. 3 things need you.
-$4.20 spent today, $12.40 of $20.00 this month." The sentence is the one
-large element on the page. Below it:
+*Redesigned 4 November 2026 as a command center: the old page was one long
+column of equal-weight sections led by a giant sentence.*
 
-- the mode (Supervised or Autonomous);
-- the run state, which links to the Company header where the kill switch
-  is. A paused company shows in red: "Paused: nothing runs until you
-  resume".
-- the chief of staff and the member count.
+**Layout.** A centred container (max 1360 px) on a 12-column grid. Wide
+(Home's own width 1040 px and up, measured with a `ResizeObserver` on the
+view, not the window) the main column takes 8 and the side column 4:
 
-**2. Needs you.** This is the most prominent section. Cards are ranked by
-severity, then nearest deadline, then oldest. Each card shows:
+```
+[ header: greeting, company, mode, run state ]
+[ state banner, only when needed             ]
+[ key numbers: one strip of tiles            ]
+[ Needs you            ] [ Team              ]
+[ Messages             ] [ Goals             ]
+[ Roadmap              ] [ Coming up         ]
+[ Since you were here  ] [ Spend and health  ]
+[ Highlights           ] [ Recent files      ]
+```
 
-- what it is and who asked;
-- the proposer's case, for example "Chief recommends approve. 70% sure.
-  Reversible.";
-- what happens if the owner says nothing, for example "If you don't
-  answer, it will be denied in 3 h" or "Applies on its own in 18 min
-  unless you veto it";
+Narrower it is one column in priority order (needs, messages, team,
+roadmap, goals, since, coming up, highlights, spend, files); on a tablet
+the short side panels pair up two by two. On a phone (under 600 px) it is
+one column with a 16 px gutter and never scrolls sideways.
+
+**The card system.** Every section is a panel: one radius (12 px), one
+border, one padding scale (16 px). Labels are small caps; titles strong;
+meta in the dim text colour (never the faint one, which is too
+low-contrast to read); status colours only where they mean something
+(red failing or off track, amber blocked or watch, green done or on
+track); numbers in tabular figures; icons from `src/lib/icons`. Rows have
+hover states and every control a visible focus ring (a small `<style>`
+scoped to `.hm`, since inline styles cannot say `:hover`); loading shows a
+skeleton of the page, still under `prefers-reduced-motion`.
+
+**1. Header.** A small greeting, the company name, the mode (Supervised or
+Autonomous) and the run state (Running, or Paused in red; it links to the
+Company header where the kill switch is), then one quiet line: "Overnight
+your team closed 12 tasks. 3 things need you. Atlas is chief of staff,
+with 7 members." Sections that failed to load are named here.
+
+**State banner** (`stateBanners`, `src/lib/home.ts`), only when needed, with
+its primary action:
+
+| When | Banner | Action |
+|---|---|---|
+| the company is paused | "Acme is paused. Nothing runs until you resume" | Resume in Company (the kill switch) |
+| month spend at or over the envelope | "Spend is over the monthly envelope" | Raise the envelope (Spend) |
+| the forecast state is `stop` | "On pace to pass the envelope" | See spend |
+| the token budget is used up | "The token budget is used up" | See spend |
+
+**Key numbers.** One strip of tiles, each a link:
+
+- **Needs you**: the count, and how many are critical or due within 6 h
+  (opens the Inbox);
+- **Spend vs envelope**: the month against the envelope as a meter (spent
+  solid, the month-end forecast soft, the envelope a tick), the forecast and
+  today's spend (opens Spend). Without an envelope: the month, today or the
+  token budget, and a 14-day sparkline;
+- **Done this week**: tasks done in the last 7 days, the change against the
+  7 before (`weekOverWeek`) and a 14-day sparkline (`recap.doneSeries`);
+- **Blocked**: tasks blocked now;
+- **Agents working**: working of all, and how many are failing (opens All
+  agents);
+- **Pulse** (a company): the score and its breaches.
+
+**2. Needs you.** Cards are ranked by severity, then nearest deadline,
+then oldest, as compact rows. Each row has:
+
+- a kind chip (Decision, Escalation, Needs your key, Pending change,
+  Incident, Signal, Queued action), coloured by severity; a high or
+  critical one also gets a bar at its edge;
+- a one-line title (`needHeadline`). An escalation's server title wraps
+  its task in quotes (`task "Make the kill criterion…": User decision on…`);
+  the row leads with the ask and names the task by its key (`HomeNeed.task`,
+  a chip that opens the task). Detail that only repeats the title is
+  dropped (`needBody`);
+- one meta line: who asked (the machinery, such as `migration`, reads
+  "System"), the age, the default in a few words ("Denies in 3 h",
+  "Applies in 20 min", `defaultShort`) and the recommendation chip
+  ("Recommends approve, 70%");
 - the inline decisions, each through the route that already owns it:
 
 | Card | Buttons | Route |
@@ -104,42 +163,56 @@ severity, then nearest deadline, then oldest. Each card shows:
 | queued background action | Approve / Dismiss | `/api/agents/:id/events/:eventId/act` |
 | incident | Review (opens Incidents) | — |
 
+The chevron (or the title) expands the detail: the task, the body, the
+route the card climbed, the proposer's case ("Chief recommends approve.
+70% sure. Reversible."), the default in full ("If you don't answer, it
+will be denied in 3 h") and a link to the full context.
+
 A held action that already has a two-key card is listed once, as the
-card. The page shows six cards; **See all in Inbox** has the rest.
+card. The page shows five; **N more** shows the rest the page carries, and
+**See all in Inbox** has everything.
 
 **Messages from your team.** What agents wrote to you with
 `message_owner` (`docs/agent-messages.md`), unread first, at most five:
-the agent, its urgency (urgent or fyi), when, the text as plain text and
+the agent, its urgency (Urgent or FYI), when, the text as plain text and
 the task keys or files it refers to. A row opens the agent's direct chat,
 where your reply goes, and marks that chat's messages read. The section is
 hidden when nobody wrote; the heading counts the unread ones. It is the
 owner's: a member of a shared workspace does not see it.
 
-**2b. Portfolio** (work tracking, `docs/work-tracking.md`). For a company
-with projects: a counts strip — Now, at risk, off track, update missing,
-over budget, late — and the exceptions, worst first (off track, a tripped
-appetite breaker, update missing, at risk with its ask, over budget, a
-target date passed), each with its lead and the reason or ask; a click
-opens the project page, and **Open roadmap** opens Company › Direction ›
-Roadmap. Below it, **since you last looked**: the project changes since the
-last visit (health calls, lane moves, breakers and decisions on them,
-milestones, projects done) and the tasks done per project (from `doneAt`).
-The data is `HomeData.portfolio` (`OrgProjectsService.portfolio`); also
-`GET …/org/portfolio?since=`.
+**3. Roadmap** (work tracking, `docs/work-tracking.md`). For a company: the
+lanes in one line ("3 in Now, 2 next, 1 later"), then the projects in Now
+(`portfolio.nowProjects`, in rank order) as rows: a health dot, the key and
+title, the flags (off track, a tripped appetite breaker, update missing, at
+risk, over budget, late) with the reason or ask, the lead, blocked tasks, a
+progress bar (done of total) and the target date ("Target 21 Nov", or "4 d
+late" in red). Projects flagged outside Now follow under **Also flagged**.
+A row opens the project page; **Open roadmap** opens Company › Direction ›
+Roadmap. With nothing in Now and nothing flagged it is one line and
+**Propose a bet**, not a strip of zeros. The data is `HomeData.portfolio`
+(`OrgProjectsService.portfolio`); also `GET …/org/portfolio?since=`.
 
-**3. Since you were last here.** Counts of tasks done (by `doneAt`, the
-moment a task was accepted — no longer "last touched while done"), tasks
-blocked, decisions taken without the owner, files changed and the pulse.
-Then:
+**4. Since you were here.** One block for the window since the last visit
+("Overnight", "Since yesterday"), replacing the two overlapping recaps:
 
+- how many decisions were taken without the owner and how many files
+  changed;
+- the chief of staff's latest brief, shortened to its first three bullets
+  (`briefSummary`; else its first paragraph), with **Read the brief**;
 - the decisions taken without the owner (on its own, by default, by a
   delegate, logged), each linked to where it was made;
 - hires, pauses and departures;
-- the chief of staff's latest brief, rendered as markdown, folded after a
-  few lines.
+- on the roadmap: tasks done per project (from `doneAt`) and the project
+  changes (health calls, lane moves, breakers and decisions on them,
+  milestones, projects done).
 
-**4. Goals.** Active objectives with their key results' progress, a RAG
-mark and confidence. At risk comes first.
+Tasks done count by `doneAt`, the moment a task was accepted, not "last
+touched while done".
+
+**5. Goals.** A compact panel: each active objective with its RAG word and
+the reason it is at risk, and up to three key results as bars with their
+value ("12 / 40 students"); at most four objectives, the rest behind
+**Vision and goals**. At risk comes first.
 
 - Red: the model-free assessment says at risk.
 - Amber: behind its pace against target.
@@ -152,13 +225,16 @@ and still feeds the at-risk rule when it drops twice in a row. The worst
 health the leads wrote on the projects that move the key result is shown
 beside it, never averaged in (`docs/work-tracking.md`).
 
-**5. Team.** One tile per agent: what it is doing (the current task, a
-review, or the blocker), when it was last active, and its last heartbeat.
-The chief of staff comes first, then failing, blocked, working, paused
-and idle agents.
+**6. Team.** A compact roster: one row per agent with its avatar and
+status dot, name and role, a state pill and one line of what it is doing
+(the current task, a review, or the blocker; else when it was last
+active). A count line sums the states ("3 working, 1 blocked"). Failing
+agents are pinned on top, then the server's order (the chief of staff,
+blocked, working, paused, idle). Eight rows show; **Show N more** the rest.
 
-Errors are loud. A tile turns red, with the message, when any of these
-happen:
+Errors are loud. A row turns red, with the message and **Fix** (opens the
+agent) and **Open the run** (the failing run's conversation) or **Open the
+task** (where a breaker tripped), when any of these happen:
 
 - the agent's latest turn failed (for example, the provider rejected the
   model name);
@@ -189,9 +265,13 @@ A blocked tile says what the task waits on: the latest blocker line, read
 by `blockerOf` (an escalation to you, an escalation to a teammate, a task
 it depends on), not the raw blockers list.
 
-**6. Activity.** Notable events of the week: tasks done or blocked,
-people, decisions, meetings held, incidents, files created or edited, and
-agent loop runs. Filter chips appear for the kinds present.
+**7. Highlights.** The notable part of the week (`highlights`): tasks done
+or blocked, decisions, people, meetings held, incidents and loop runs that
+did something, each with a kind mark, who and when. File edits fold into
+one row per person ("Tutor Engineer edited 6 files"), which expands into
+the files; routine runs are left out. Eight rows show; **N more
+highlights** the rest. **All activity** switches to the full feed: every
+event, filter chips for the kinds present, and routine runs.
 
 Most loop runs are heartbeats that find nothing to do, so a run is news
 only when it did something. The server reads the run's tool calls (the
@@ -217,16 +297,16 @@ folds out into the runs (the latest 30). A failed run is a `loop_error` and
 is never collapsed. The **Agent runs** chip lists every run raw, notable or
 not.
 
-**7. Spend and health.** Today's spend and the month's spend against the
-company envelope, with the month-end forecast. The meter turns amber or
-red with the forecast state. Below that:
+**8. Spend and health.** Today's spend and the month's spend against the
+company envelope, with the month-end forecast (the meter itself is in the
+key numbers, amber or red with the forecast state). Below that:
 
 - the workspace token budget, when one is set;
 - health: normal, degraded or incident, with open incidents and degraded
   providers;
 - the last audit and its top findings.
 
-**8. Coming up.** Meetings, rituals, deadlines, card deadlines and plan
+**9. Coming up.** Meetings, rituals, deadlines, card deadlines and plan
 apply times for the week, plus loops due in the next day, grouped by day.
 
 Rituals and loops carry their cron, and the page puts it in words in the
@@ -242,29 +322,36 @@ The same title at the same time is one row that names the units: "Weekly
 review · Sales, Engineering". The server merges them, and the page merges
 again whatever still matches.
 
-**9. Recent files.** The last files written in the workspace, with who
+**10. Recent files.** The last files written in the workspace, with who
 wrote them. A file opens in Artifacts.
 
-Docked wide (1180 px and up), the page has two columns. Needs you, the
-recap, goals and activity are on the left. Team, spend, coming up and
-files are on the right. Narrower, it is one column in the order above.
-On a phone it uses a 16 px gutter and never scrolls sideways.
+### The series behind the sparklines
+
+Two small fields feed the key numbers, both the last 14 UTC days, oldest
+first (`dayBuckets`, `SERIES_DAYS` in `home.service.ts`):
+
+- `recap.doneSeries`: tasks done per day (org tasks by `doneAt`; without a
+  company, agent tasks by their last update while done);
+- `spend.series`: spend per day, company runs (`OrgRuntimeService.spendTree`)
+  plus chat, loop and channel turns (`UsageService.workspaceUsage`, asked
+  for at least 14 days; the month total sums this month's days).
+
+`HomeNeed.task` carries the key and title of the task a card is about
+(escalations and reviews, from the card's `taskId`), and
+`portfolio.nowProjects` the Now projects for the roadmap snapshot.
 
 ### Without a company
 
-Home is simpler without a company:
+Home is simpler without a company, in the same visual system: the
+greeting is the title; the key numbers are Needs you, Spend this month
+(with the token budget and a sparkline), Done, Blocked and Agents; then
+needs, team, what changed, coming up (loops due), highlights, spend and
+recent files. No roadmap, goals or pulse.
 
-- agent status;
-- background actions waiting for approval;
-- tasks done;
-- activity;
-- spend against the workspace budget;
-- loops due;
-- recent files.
-
-A line invites the owner to start a company, which opens the onboarding
-wizard. An empty workspace gets **Start a company with a Chief of Staff**
-or **Create one agent**.
+A dashed line invites the owner to start a company, which opens the
+onboarding wizard. An empty workspace (no agents yet) gets **Start a
+company with a Chief of Staff** or **Create one agent**, then only Needs
+you and Spend: no strip of zeros, no empty panels.
 
 ## Inbox
 
