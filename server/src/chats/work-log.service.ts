@@ -91,7 +91,7 @@ interface Row {
   id: string; sessionId: string; sessionName: string; seq: number; input: string; status: string; error: string | null;
   tokensIn: number; tokensOut: number; model: string; sessionModel: string; toolCalls: string; createdAt: string; archivedAt: string | null;
   trigger: WorkTrigger; triggerKey: string; outcome: WorkOutcome; runUsd: number | null;
-  taskKind: 'org' | 'agent' | null; taskId: string | null; taskKey: string | null; taskTitle: string | null;
+  taskKind: 'org' | 'agent' | null; taskId: string | null; taskKey: string | null; taskTitle: string | null; taskStatus?: string | null;
   answer: string | null; thinkingCount: number;
   source: string | null; rerunOf: string | null; by: string | null;
 }
@@ -226,6 +226,7 @@ export class WorkLogService {
           COALESCE(ot."id", atk."id") AS "taskId",
           COALESCE(ot."key", atk."key") AS "taskKey",
           COALESCE(ot."title", atk."title") AS "taskTitle",
+          COALESCE(ot."status", atk."status") AS "taskStatus",
           (SELECT LEFT(m."content", 400) FROM chat_messages m WHERE m."turnId" = t."id" AND m."role" = 'assistant' ORDER BY m."seq" DESC LIMIT 1) AS "answer",
           (SELECT COUNT(*) FROM chat_messages m WHERE m."turnId" = t."id" AND m."role" = 'thinking') AS "thinkingCount"
         FROM chat_turns t
@@ -297,7 +298,8 @@ export class WorkLogService {
       steps: calls.length + thinkingCount, toolCount: calls.length, thinkingCount, tools, files, task,
       archived: !!r.archivedAt,
       source: r.source ?? '', by: r.source === 'person' ? (r.by ?? '') : '', rerunOf: r.rerunOf ?? null,
-      rerunnable: r.outcome === 'error' || r.outcome === 'stopped' || r.outcome === 'blocked',
+      // A run whose task has since closed would only be refused: no Rerun then.
+      rerunnable: (r.outcome === 'error' || r.outcome === 'stopped' || r.outcome === 'blocked') && !isClosedTask(r.taskStatus),
       createdAt: r.createdAt,
     };
   }
@@ -350,4 +352,9 @@ function decodeCursor(raw?: string | null): { at: string; id: string } | null {
     if (Array.isArray(v) && typeof v[0] === 'string' && typeof v[1] === 'string') return { at: v[0], id: v[1] };
   } catch { /* a malformed cursor reads as the first page */ }
   return null;
+}
+
+/** Org tasks close as done or cancelled; agent tasks as done or abandoned. */
+export function isClosedTask(status: string | null | undefined): boolean {
+  return status === 'done' || status === 'cancelled' || status === 'abandoned';
 }

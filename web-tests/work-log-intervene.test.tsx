@@ -173,7 +173,7 @@ describe('rerun', () => {
     const r = await waitFor(() => row('r-err'));
     fireEvent.click(within(r).getByRole('button', { expanded: false }));
     fireEvent.click(await within(r).findByRole('button', { name: 'Rerun' }));
-    await waitFor(() => expect(fake.showToast).toHaveBeenCalledWith('The rerun did not start: closed'));
+    await waitFor(() => expect(fake.showToast).toHaveBeenCalledWith('The rerun did not start: its task is already done or cancelled. Reopen the task to run it again.'));
   });
 
   it('a rerun links back to the run it re-ran', async () => {

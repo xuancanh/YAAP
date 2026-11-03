@@ -13,6 +13,7 @@
  * one runs); Continue in chat opens the session in the chat view; a failed
  * or stopped run can Rerun. Viewers read only.
  */
+import { rerunRefusal } from '../lib/rerun';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, type LiveItem } from '../store';
 import { api, watchSession, type ApprovalDecision, type WorkLogFilters, type WorkLogGroup, type WorkOutcome, type WorkRun, type WorkRunDetail, type WorkTrigger } from '../lib/api';
@@ -371,7 +372,7 @@ function RunRow({ r, first, open, onToggle, detail, agentId, readOnly, agentName
         app.showToast(res.turnId ? `Rerunning ${r.label}` : `Rerun of ${r.label} started`);
         if (res.turnId) focusRun(res.turnId);
       } else {
-        app.showToast(`The rerun did not start: ${res.error || res.status.replace(/^skipped:/, '').replace(/_/g, ' ')}`);
+        app.showToast(rerunRefusal(res.status, res.error));
       }
       void onChanged();
     }).catch((e: unknown) => app.showToast(e instanceof Error ? e.message.replace(/^\d+\s*/, '').slice(0, 200) : 'Could not rerun it'))

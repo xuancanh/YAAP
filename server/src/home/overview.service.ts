@@ -11,6 +11,7 @@
  * (agent-status.ts), so the three screens always agree. Every section is
  * computed on its own; a failing source lands in `partial`.
  */
+import { isClosedTask } from '../chats/work-log.service';
 import { APPROVAL_TTL_MS } from '../chats/turn-loop.service';
 import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -222,11 +223,14 @@ export class OverviewService {
     if (cause?.sessionId) {
       cause.rerunTurnId = await attempt('rerun', async () => {
         const res = await this.db.execute(sql`
-          SELECT t."id", t."status" FROM chat_turns t JOIN chat_sessions s ON s."id" = t."sessionId"
+          SELECT t."id", t."status", COALESCE(ot."status", atk."status") AS "taskStatus"
+          FROM chat_turns t JOIN chat_sessions s ON s."id" = t."sessionId"
+          LEFT JOIN org_tasks ot ON s."taskKind" = 'org' AND ot."id" = s."taskId"
+          LEFT JOIN agent_tasks atk ON s."taskKind" = 'agent' AND atk."id" = s."taskId"
           WHERE t."sessionId" = ${cause.sessionId} AND s."kind" = 'work' AND s."accountId" = ${currentAccountId()}
           ORDER BY t."seq" DESC LIMIT 1`);
-        const last = ((res as unknown as { rows?: Array<{ id: string; status: string }> }).rows ?? [])[0];
-        return last && (last.status === 'error' || last.status === 'stopped') ? last.id : null;
+        const last = ((res as unknown as { rows?: Array<{ id: string; status: string; taskStatus: string | null }> }).rows ?? [])[0];
+        return last && (last.status === 'error' || last.status === 'stopped') && !isClosedTask(last.taskStatus) ? last.id : null;
       }, null as string | null);
     }
 

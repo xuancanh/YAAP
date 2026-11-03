@@ -21,6 +21,7 @@
  * live and wires the actions to their routes; `AgentOverviewPanel` is the
  * org mission control's compact side panel.
  */
+import { rerunRefusal } from '../lib/rerun';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp, grad } from '../store';
 import { api, type AgentOverview, type HomeActivity, type NeedsYouItem, type OverviewBlocked, type OverviewFollow, type OverviewTask, type TeamTile } from '../lib/api';
@@ -803,7 +804,7 @@ export function useAgentPage(agentId: string, onOpenTab?: (tab: string) => void)
     openSession: (id) => app.openSession(id),
     rerun: app.me?.role === 'viewer' ? undefined : (turnId) => void run(async () => {
       const r = await api.rerunWorkRun(agentId, turnId);
-      app.showToast(r.started ? 'Rerunning the failed run' : `The rerun did not start: ${r.error || r.status.replace(/^skipped:/, '').replace(/_/g, ' ')}`);
+      app.showToast(r.started ? 'Rerunning the failed run' : rerunRefusal(r.status, r.error));
     }),
     chat: () => void app.newChat(agentId),
     beatNow: () => void run(async () => {
