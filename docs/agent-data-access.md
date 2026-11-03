@@ -153,8 +153,8 @@ results, two projects, six tasks, three decisions) and a real
 
 | Session kind | Chief | Head | Specialist | What the org part said |
 |---|---|---|---|---|
-| Chat with the owner | 7,472 | 7,920 | 7,021 | `# Organisations`: name, title, mission (≤ 300), role guidance, one `ws_catalog` line |
-| Task run | 7,709 | 7,654 | 7,693 | `# Organisation run`: title, the **whole** mission, the **whole** values and culture (≤ 3,000), the brief |
+| Chat with the owner | 8,610 | 9,058 | 8,159 | `# Organisations`: name, title, mission (≤ 300), role guidance, one `ws_catalog` line |
+| Task run | 8,847 | 8,792 | 8,831 | `# Organisation run`: title, the **whole** mission, the **whole** values and culture (≤ 3,000), the brief |
 | Heartbeat (org context in the beat's prompt) | +1,623 | +1,216 | +905 | mission (≤ 300), vision, the whole values and culture — on top of the chat system prompt, which already had the mission |
 | Meeting round, channel wake | chat + the meeting / channel block | | | the meeting block repeats vision or mission, values and culture for the room |
 
@@ -242,10 +242,10 @@ style), the project-health duty and the decision queue in the heartbeat
 
 | Session kind | Chief | Head | Specialist |
 |---|---|---|---|
-| Chat (whole system prompt) | 8,656 (+1,184) | 8,823 (+903) | 7,884 (+863) |
-| Task run | 8,377 (+668) | 8,041 (+387) | 8,040 (+347) |
+| Chat (whole system prompt) | 9,794 (+1,184) | 9,961 (+903) | 9,022 (+863) |
+| Task run | 9,515 (+668) | 9,179 (+387) | 9,178 (+347) |
 | Heartbeat org context (beat prompt) | 716 (−907) | 309 (−907) | 0 (−905) |
-| Heartbeat total (system + org context) | 9,372 (+277) | 9,132 (−4) | 7,884 (−42) |
+| Heartbeat total (system + org context) | 10,510 (+277) | 10,270 (−4) | 9,022 (−42) |
 | The briefing itself | 1,494 | 1,213 | 1,173 |
 
 The test fails when a chat or a task run grows by more than 1,400

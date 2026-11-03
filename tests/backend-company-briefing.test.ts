@@ -15,9 +15,9 @@ import { eq } from 'drizzle-orm';
 
 /** The whole system prompt of a chat turn, measured on this fixture before
  *  the briefing (see the audit in docs/agent-data-access.md §7). */
-const CHAT_BEFORE = { chief: 7_472, head: 7_920, specialist: 7_021 };
+const CHAT_BEFORE = { chief: 8_610, head: 9_058, specialist: 8_159 };
 /** A task run's system prompt before the briefing, same fixture. */
-const RUN_BEFORE = { chief: 7_709, head: 7_654, specialist: 7_693 };
+const RUN_BEFORE = { chief: 8_847, head: 8_792, specialist: 8_831 };
 /** The heartbeat's org context lines before (the profile, vision and mission moved into the briefing). */
 const HEARTBEAT_BEFORE = { chief: 1_623, head: 1_216, specialist: 905 };
 /** The prompt may grow by at most this much per turn — under the briefing's own budget. */
