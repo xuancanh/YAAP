@@ -23,11 +23,19 @@ Code:
   owner-DM tag
 - `server/src/chats/work-log.service.ts`, `work-log.controller.ts` — the
   Work log endpoints
+- `server/src/chats/live-turns.ts` (`turnWatch`), `chats.controller.ts`
+  (`GET :id/live`) — watching a turn another caller started
+- `server/src/chats/work-rerun.service.ts`, `server/src/org/org-rerun.bridge.ts`
+  — Rerun
 - `server/src/chats/chats.repository.ts` (`railWhere`, `railCounts`,
   `approvalSessions`), `chats.service.ts` (`rail`, `page`, `ownerChatFor`)
 - `src/components/WorkLog.tsx` — the tab; `src/components/ChatView.tsx`
-  (`WorkedOn`) — the folded steps in a chat
-- tests: `tests/backend-work-log.test.ts`, `web-tests/work-log.test.tsx`,
+  (`WorkedOn`) — the folded steps in a chat; `src/lib/work-live.ts` — the
+  live rows of a watched run; `src/store.tsx` (`sendToSession`,
+  `openInChat`, the server-wait queue)
+- tests: `tests/backend-work-log.test.ts`, `tests/backend-work-log-intervene.test.ts`,
+  `web-tests/work-log.test.tsx`, `web-tests/work-log-intervene.test.tsx`,
+  `web-tests/work-log-store.test.tsx`,
   `web-tests/chat-rail.test.tsx`, `web-tests/chat-rail-store.test.tsx`
 
 ## 1. The kind
@@ -169,10 +177,86 @@ GET /api/agents/:agentId/work-log/runs/:turnId
   → WorkRun + { messages (in order, thinking included), toolCalls (input, result, approved, isError) }
 GET /api/agents/:agentId/work-log/sessions/:sessionId/latest
   → { turnId }
+POST /api/agents/:agentId/work-log/runs/:turnId/rerun
+  → { started, turnId, sessionId, status, error? }
+GET /api/chats/:id/live            (SSE)
+  → { type: 'live', turnId, source, startedAt }, the turn's events so far,
+    each new one, { type: 'end' } — or { type: 'idle', busy } when no turn runs
 ```
+
+A run also carries `source` (who sent it: `person`, else its origin `loop`,
+`user`, `channel`, `app`; `''` for turns from before migration 0081), `by`
+(the person behind a `person` run, `''` = the owner), `rerunOf` and
+`rerunnable` (failed, stopped or blocked).
 
 The list reads work sessions only; a run by id opens for any session of the
 agent, so a link never breaks on the kind. A member of a shared workspace
 sees the runs of shared sessions and their own, as with chats. The groups
 are counted under every filter but the trigger, so the chips stay put while
 filtering.
+
+## 4. Intervening
+
+The owner — and a member, on the sessions they can open — can step into a
+work session from the Work log. Viewers read the same views and nothing else.
+
+**Live.** A run in progress opens by itself and streams: its thinking, each
+tool call with its result, its answers, under **running · step N** with a
+pulsing dot (the row shows the same line). The Work log watches the turn
+through `GET /api/chats/:id/live`: the turn loop publishes every event of
+every turn into an in-process registry (`turnWatch`, beside `liveTurns`) as it
+yields it, so a watcher that did not start the turn — a heartbeat, a task run,
+a meeting round — gets the replay so far (token deltas merged, a pending
+approval kept) and then each event, then `end`. The registry is in-process
+and best-effort: on a multi-instance deployment the instance a watcher
+reaches may not run the turn; it answers `idle` with `busy`, and the Work log
+falls back to re-reading the run every 2 s (persisted rows: thinking, tool
+results, answers as each round ends). While anything is running or a message
+waits, the log re-reads its first page every 3 s, keeping what *Load more*
+fetched.
+
+**Stop and approvals.** *Stop* is `POST /api/chats/:id/stop`; a tool call
+waiting for approval shows inline with the same card and review details as in
+a chat (*Allow once*, *Allow always*, *Always allow <tool>*, *Deny*), answered
+through `POST /api/chats/:id/approve`. Both now check the caller may open the
+session (a member: shared sessions and their own), as the turn route did.
+
+**Message the agent in this work session.** A composer under an expanded run
+and under a session's run list (the session filter). Idle, it starts a turn in
+that session through `POST /api/chats/:id/turns` — origin `user`, so the
+session's Ask/Auto mode and the normal approval policy apply, and the
+session stays `work`. While a turn runs it queues for the next turn of that
+session (the chat's per-session queue): behind a turn this tab started it
+goes when that turn ends; behind a turn the server started (`waitServer`) the
+store watches the session and sends it when that turn is over (a `409 chat is
+busy` from a race requeues it the same way). Queued messages show under the
+composer and can be removed. There is no mid-turn injection: the turn loop
+has no safe point to add a user message between rounds across providers, so
+a steer lands on the next turn. A person's turn is stored with
+`source = 'person'` (migration 0081) and reads in the timeline as **from you**
+/ **from <name>**, the message shown as theirs rather than as a folded prompt.
+
+**Continue in chat.** Opens the same session in the chat view — the full
+transcript and composer — while it stays `work` (out of the rail and the
+Chats tab). The view says it is the agent's work session and has **← Back to
+Work log**. Deep link: `#/chat/<id>/chat` (plain `#/chat/<id>` still opens a
+work session's Work log).
+
+**Rerun.** A failed, stopped or blocked run — failed for a reason fixed since
+(a provider 400, an outage, a budget or tool-round limit raised) — has
+**Rerun**: the same trigger again, in the same work session.
+
+| Trigger | Rerun |
+|---|---|
+| heartbeat | the heartbeat beats now (`beat(force)`: quiet hours, the spend stop and the daily cap still apply; no reasons → nothing runs) |
+| loop | the loop fires now (`runLoop`: its own prompt, model and budget); a loop since removed is an error |
+| task (org) | the org runtime re-dispatches the task (`runTask(…, 'manual')`: seat, claim, capacity, budget reservation, the task's own wake prompt) |
+| meeting, channel, org, app, other, a person's message | the run's input (and attachments) again, with its origin (`loop`, `user`, `channel`, or a confined app ask) |
+
+The new turn carries `rerunOf` (the row reads *rerun*, the run links *rerun of
+an earlier run*). One rerun at a time per session, and a session mid-turn is
+refused (`409`). The request waits up to 8 s for the new turn to start and
+returns its id; a gate that refuses says why (`status`: `cap`, `quiet`,
+`skipped:closed`, …). The agent page's error cause offers **See the run ·
+Rerun** when the failing run is the newest of its work session and failed or
+stopped (`cause.rerunTurnId`).
