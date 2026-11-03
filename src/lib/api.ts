@@ -498,6 +498,51 @@ export interface ComputerAction {
 export const REMEMBERABLE_COMPUTER_TOOLS = new Set(['computer_screenshot', 'computer_move', 'computer_scroll', 'computer_list_dir', 'computer_read_file']);
 export const isComputerTool = (name: string): boolean => name.startsWith('computer_');
 
+// ---- plugins (docs/plugins.md, Phase 1) ----
+
+export type PluginRole = 'interface' | 'provider' | 'consumer';
+export type PluginStatus = 'installed' | 'active' | 'suspended' | 'disabled' | 'terminating' | 'removed';
+export interface PluginProviderRow { id: string; interface: string; range: string; status: string; resources: string[]; conformanceRunId: string | null }
+export interface PluginSummary {
+  id: string; name: string; version: string; description: string; roles: PluginRole[]; tier: string;
+  status: PluginStatus; suspendedReason: string; installId: string; digest: string; installedAt: string;
+  pendingUpdate: { version?: string; diff?: PluginDiffEntry[]; failures?: string[] } | null;
+  providers: PluginProviderRow[]; interfaces: string[];
+}
+export interface PluginDiffEntry { path: string; widening: boolean; detail: string }
+export interface PluginCaseResult { id: string; ok: boolean; skipped?: boolean; detail?: string }
+export interface PluginDetail extends PluginSummary {
+  effects: Array<{ id: string; seq: number; kind: string; ref: string; state: string; external: boolean; createdAt: string; unwoundAt: string | null }>;
+  conformance: Array<{ id: string; providerId: string; result: string; mode: string; startedAt: string; cases: PluginCaseResult[]; candidate: boolean }>;
+  grants: Array<{ agentId: string; level: string; extras: boolean }>;
+}
+export interface PluginCatalogEntry { id: string; name: string; version: string; description: string; roles: PluginRole[]; tier: string; installed: boolean; installedVersion: string | null; updateAvailable: boolean }
+export interface PluginReviewOp {
+  op: string; canonical: string; tool: string; semantics: string; declaredClass: string | null; effectiveClass: string;
+  floorReasons: string[]; raisedByFloor: boolean; twoKeyByFloor: boolean; reversibility: string; outbound: boolean; movesMoney: boolean;
+  change: { kind: string; role: string } | null; untrustedOutput: boolean;
+}
+export interface PluginReview {
+  id: string; name: string; version: string; description: string; publisher: { id: string; name: string; verifiedDomain?: string };
+  tier: string; roles: PluginRole[]; requires: { yaamCore: string; interfaces?: string[] }; digest: string; warnings: string[]; noEgress: boolean;
+  interfaces: Array<{ name: string; version: string; semantics: string; operations: PluginReviewOp[];
+    changeKinds: Array<{ kind: string; reversibility: string; declaredRequirement: string; effectiveRequirement: string; raisedByFloor: boolean; roles: Array<{ op: string; role: string }> }>;
+    events: string[]; suiteCases: string[] }>;
+  provides: Array<{ interface: string; resources: string[]; installed: boolean; operations: string[]; missingRequired: string[]; conformanceMode: string }>;
+  egress: Array<{ host: string; category: string }>; secrets: Array<{ slot: string; inject: string; redLine: boolean; description: string }>;
+  dataSharing: Array<{ category: string; to: string; when: string; purpose: string }>; identity: Array<{ header: string; value: string }>;
+  budgets: Record<string, number>; requestedPolicies: Array<{ match: Record<string, unknown>; require: string; why: string; status: string }>;
+  deferred: string[]; diff: PluginDiffEntry[]; widening: boolean; blockers: string[];
+}
+export interface InterfaceView {
+  name: string; version: string; major: number; pluginId: string; semantics: string;
+  operations: Array<{ op: string; canonical: string; tool: string; effectiveClass: string; declaredClass: string | null; floorReasons: string[]; change: { kind: string; role: string } | null }>;
+  changeKinds: Array<{ kind: string; reversibility: string; requirement: string }>;
+  providers: Array<{ id: string; pluginId: string; status: string; healthy: boolean; resources: string[]; range: string }>;
+  bindings: Array<{ id: string; major: number; scopeKind: string; scopeRef: string; providerId: string; pluginId: string | null; setBy: string }>;
+}
+export interface PluginSource { firstParty?: string; manifest?: unknown; files?: Record<string, string> }
+
 // ---- coding agents (docs/coding-harnesses.md) ----
 
 export type HarnessId = 'claude_code' | 'codex' | 'pi' | 'deepseek';
@@ -1661,6 +1706,18 @@ export const api = {
     send<{ ok: boolean }>(`/api/connections/${id}/grants/${agentId}${service ? `?service=${service}` : ''}`, 'DELETE'),
   // code runner (docs/code-execution.md) — read-only: the backend is env-configured
   runnerStatus: () => get<RunnerStatus>('/api/runner/status'),
+  // plugins (docs/plugins.md, Phase 1): members read; the owner installs, binds and grants
+  pluginCatalog: (ws: string) => get<PluginCatalogEntry[]>(`/api/workspaces/${enc(ws)}/plugins/catalog`),
+  plugins: (ws: string) => get<PluginSummary[]>(`/api/workspaces/${enc(ws)}/plugins`),
+  plugin: (ws: string, id: string) => get<PluginDetail>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}`),
+  reviewPlugin: (ws: string, source: PluginSource) => send<PluginReview>(`/api/workspaces/${enc(ws)}/plugins/review`, 'POST', { source }),
+  installPlugin: (ws: string, source: PluginSource) => send<{ installed: boolean; review: PluginReview }>(`/api/workspaces/${enc(ws)}/plugins/install`, 'POST', { source, confirm: true }),
+  pluginAction: (ws: string, id: string, action: 'disable' | 'enable' | 'conformance') => send<unknown>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}/${action}`, 'POST'),
+  uninstallPlugin: (ws: string, id: string) => send<unknown>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}`, 'DELETE'),
+  decidePluginUpdate: (ws: string, id: string, approve: boolean) => send<unknown>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}/updates/decide`, 'POST', { approve }),
+  setPluginGrant: (ws: string, id: string, agentId: string, level: 'read' | 'write' | null) => send<unknown>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}/grants/${enc(agentId)}`, 'PUT', { level }),
+  interfaces: (ws: string) => get<InterfaceView[]>(`/api/workspaces/${enc(ws)}/interfaces`),
+  setBinding: (ws: string, iface: string, body: { major?: number; scopeKind: string; scopeRef?: string; providerId: string | null }) => send<unknown>(`/api/workspaces/${enc(ws)}/interfaces/${enc(iface)}/bindings`, 'PUT', body),
   // coding agents (docs/coding-harnesses.md): owner-only writes; the key is write-only
   harnesses: () => get<HarnessView>('/api/harness'),
   updateHarness: (id: HarnessId, patch: HarnessPatch) => send<HarnessView>(`/api/harness/${id}`, 'PUT', patch),
