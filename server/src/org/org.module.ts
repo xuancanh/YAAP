@@ -63,6 +63,7 @@ import { OrgDecisionsService } from './org-decisions.service';
 import { OrgMirrorService } from './org-mirror.service';
 import { OrgLayoutService } from './org-layout.service';
 import { OrgGovernanceTools } from './org-governance.tools';
+import { OrgDataTools } from './org-data.tools';
 import { OrgProjectsService } from './org-projects.service';
 import { OrgProjectsTools } from './org-projects.tools';
 import { WorkController } from './work.controller';
@@ -132,7 +133,8 @@ import { MeetingsCalendarService, WorkspaceMeetingsController } from './meetings
  * (docs/evals.md); OrgCapacityService is the WIP, duration and deadline
  * model; OrgSeatService holds decision-card defaults, delegations and value
  * accounting (docs/owners-seat.md); OrgGovernanceTools offers their tools and
- * GovernanceController their routes.
+ * GovernanceController their routes. OrgDataTools offers the company's data
+ * as read tools (docs/agent-data-access.md).
  * The chief of staff (docs/chief-of-staff.md): OrgChiefService computes the
  * operating system's state (rituals due, overdue decisions, stale risks,
  * breached handoffs) for the chief's heartbeat; onboarding seeds the ledger
@@ -141,7 +143,7 @@ import { MeetingsCalendarService, WorkspaceMeetingsController } from './meetings
 @Module({
   imports: [AgentsModule, ChatsModule, WorkspacesModule, SkillsModule, SettingsModule, ActionReviewModule, AiModule, RegistryModule, ConnectionsModule, ActionsModule],
   controllers: [OrgController, WorkspaceOrgController, WorkController, BlueprintsController, CompaniesController, OrgSensingController, WorkspaceOrgSensingController, MetricsIngestController, IncidentsController, ExperimentsController, GovernanceController, WorkspaceMeetingsController],
-  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController, OrgIncidentsService, OrgRedTeamService, OrgTrustBridge, OrgRerunBridge, OrgPredictionsService, OrgExperimentsService, OrgReconciliationService, OrgBoundaryService, OrgEvalsService, OrgCapacityService, OrgSeatService, OrgDecisionsService, OrgGovernanceTools, OrgProjectsService, OrgProjectsTools, OrgChiefService, OrgMirrorService, OrgLayoutService, OrgMeetingMinutesService, MeetingsCalendarService],
+  providers: [OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgApprovalsService, OrgAuditService, OrgSignalsService, OrgSloService, OrgCapitalService, OrgBriefService, OrgRuntimeService, OrgAuditorService, OrgAnnouncer, OrgModeService, OrgController, OrgMeetingsService, OrgMeetingRuntime, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgSensingController, OrgIncidentsService, OrgRedTeamService, OrgTrustBridge, OrgRerunBridge, OrgPredictionsService, OrgExperimentsService, OrgReconciliationService, OrgBoundaryService, OrgEvalsService, OrgCapacityService, OrgSeatService, OrgDecisionsService, OrgGovernanceTools, OrgDataTools, OrgProjectsService, OrgProjectsTools, OrgChiefService, OrgMirrorService, OrgLayoutService, OrgMeetingMinutesService, MeetingsCalendarService],
   exports: [OrgApprovalsService, OrgAuditService, OrgBriefService, OrgService, OrgUnitsService, OrgIntentService, OrgTasksService, OrgRuntimeService, OrgModeService, OrgAnnouncer, OrgSignalsService, OrgSloService, OrgAuditorService, OrgMeetingsService, OrgMeetingRuntime, OrgCapitalService, OrgPlaybooksService, OrgKnowledgeService, OrgMemoryService, OrgRolesService, OrgBlueprintsService, OrgBootstrapService, OrgSensingService, OrgIncidentsService, OrgRedTeamService, OrgExperimentsService, OrgPredictionsService, OrgReconciliationService, OrgBoundaryService, OrgEvalsService, OrgCapacityService, OrgSeatService, OrgProjectsService, OrgDecisionsService, OrgChiefService, OrgMirrorService, OrgLayoutService, OrgMeetingMinutesService, MeetingsCalendarService],
 })
 export class OrgModule {}
