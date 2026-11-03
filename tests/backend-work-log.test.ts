@@ -1,6 +1,7 @@
 /** Chat vs work (docs/work-log.md): session classification and the 0080
- *  backfill, every creation path stating its kind, the owner DM, the rail and
- *  chat pages and chat search keeping to conversations, thinking persisted on
+ *  backfill, every creation path stating its kind, the owner DM, the rail
+ *  (chat rows, the Work subsection page with trigger and run state, search
+ *  across kinds), chat search keeping to conversations, thinking persisted on
  *  the transcript, and the Work log endpoint — trigger grouping, filters,
  *  paging, run detail with thinking and tool calls. */
 import { test } from 'node:test';
@@ -140,27 +141,63 @@ test('user-started chats, forks and the owner DM are chats; the owner DM is one 
   assert.notEqual((await s.chats.ownerChatFor(s.agent.id)).id, dm.id, 'an archived DM is replaced by a live one');
 });
 
-test('the rail and the chat pages list chats only; a work approval badges the agent, never a chat row; chat search skips work', async () => {
+test('the rail lists chats as chat rows and work sessions in their own page with trigger and run state; approvals on both; search across kinds', async () => {
   const s = await setup();
   const ctl = new ChatsController(s.chats, {} as never, {} as never, {} as never);
+  const at = (min: number) => new Date(Date.UTC(2026, 10, 2, 12, 0) - min * 60_000).toISOString();
+  const touch = (id: string, min: number) => s.db.update(chatSessions).set({ updatedAt: at(min) }).where(eq(chatSessions.id, id));
   const chat = await s.chats.create({ workspaceId: s.ws.id, agentId: s.agent.id, name: 'Plan the launch' });
   const beat = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.agent.id, name: 'Loop · heartbeat', kind: 'work' });
   const run = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.agent.id, name: 'Org · Acme · Close the books', kind: 'work' });
+  const todo = await s.agents.addTask(s.agent.id, { title: 'Write the report' });
+  const taskRun = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.agent.id, name: 'Write the report', kind: 'work', taskKind: 'agent', taskId: todo.id });
+  const chan = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.agent.id, name: '#general · Jong', kind: 'work', tags: '["channel"]' });
+  await touch(chat.id, 1); await touch(beat.id, 2); await touch(taskRun.id, 3); await touch(chan.id, 4); await touch(run.id, 5);
+  // the heartbeat shares one session across runs: one row, running now
+  const b1 = await s.repo.createTurn(beat.id, { text: 'Heartbeat' });
+  await s.repo.updateTurn(b1.id, { status: 'done' });
+  await s.repo.createTurn(beat.id, { text: 'Heartbeat' });
+  await touch(beat.id, 2);
   await s.agents.addEvent(s.agent.id, { kind: 'action_pending', title: 'Send the invoice?', sessionId: run.id });
-  const rail = await ctl.rail(s.ws.id);
+  const rail = await ctl.rail(s.ws.id, '2');
   const g = rail.groups.find((x) => x.agentId === s.agent.id)!;
-  assert.deepEqual(g.items.map((x) => x.id), [chat.id]);
+  assert.deepEqual(g.items.map((x) => x.id), [chat.id], 'chat rows: conversations only');
   assert.equal(g.total, 1);
   assert.deepEqual(g.approvalIds, [], 'no chat waits');
-  assert.equal(g.work.total, 2);
-  assert.deepEqual(g.work.approvalIds, [run.id], 'the agent is badged for the waiting run');
+  assert.equal(g.work.total, 4);
+  assert.deepEqual(g.work.items.map((x) => x.id), [beat.id, taskRun.id], 'work rows, newest activity first, paged');
+  assert.ok(g.work.nextCursor);
+  assert.deepEqual(g.work.approvalIds, [run.id], 'the waiting run is marked');
+  const [beatRow, taskRow] = g.work.items as Array<{ trigger: string; triggerKey: string; triggerLabel: string; running: boolean }>;
+  assert.deepEqual([beatRow.trigger, beatRow.triggerLabel, beatRow.running], ['heartbeat', 'Heartbeat', true]);
+  assert.deepEqual([taskRow.trigger, taskRow.triggerKey, taskRow.running], ['task', todo.key ?? todo.id, false]);
+  assert.equal(taskRow.triggerLabel, [todo.key, 'Write the report'].filter(Boolean).join(' '));
+  // Show more pages the work sessions the same way
+  const more = await ctl.page(s.ws.id, s.agent.id, undefined, undefined, '5', g.work.nextCursor!, 'work');
+  assert.deepEqual(more.items.map((x) => x.id), [chan.id, run.id]);
+  assert.deepEqual((more.items as Array<{ trigger: string; triggerKey: string }>).map((x) => [x.trigger, x.triggerKey]), [['channel', '#general'], ['org', 'Org · Acme · Close the books']]);
+  // the rail keeps the loaded work count on refresh
+  assert.equal((await ctl.rail(s.ws.id, '2', undefined, undefined, `${s.agent.id}:4`)).groups.find((x) => x.agentId === s.agent.id)!.work.items.length, 4);
+  // the chat pages stay chats
   assert.deepEqual((await ctl.page(s.ws.id, s.agent.id)).items.map((x) => x.id), [chat.id]);
   assert.deepEqual((await ctl.page(s.ws.id)).items.map((x) => x.id), [chat.id]);
+  // GET / PATCH a work session carry its trigger
+  const got = await ctl.get(beat.id) as { trigger?: string; running?: boolean };
+  assert.equal(got.trigger, 'heartbeat');
+  assert.equal(got.running, true);
+  assert.equal((await ctl.update(run.id, { pinned: true }) as { trigger?: string }).trigger, 'org');
+  assert.equal('trigger' in (await ctl.get(chat.id)), false, 'a chat carries no trigger');
   await s.chats.archive(beat.id);
   assert.equal((await ctl.rail(s.ws.id)).archivedTotal, 0, 'an archived run is not an archived chat');
   assert.deepEqual((await ctl.page(s.ws.id, undefined, 'true')).items, []);
-  // a search reaches chats, not runs
-  assert.deepEqual((await ctl.rail(s.ws.id, undefined, undefined, 'close the books')).groups, []);
+  // a search reaches work sessions too, and narrows by kind
+  const hit = (await ctl.rail(s.ws.id, undefined, undefined, 'close the books')).groups.find((x) => x.agentId === s.agent.id)!;
+  assert.deepEqual([hit.total, hit.items.length, hit.work.total, hit.work.items.map((x) => x.id)], [0, 0, 1, [run.id]]);
+  assert.deepEqual((await ctl.rail(s.ws.id, undefined, undefined, 'close the books', undefined, 'chat')).groups, []);
+  assert.equal((await ctl.rail(s.ws.id, undefined, undefined, 'close the books', undefined, 'work')).groups.length, 1);
+  const both = (await ctl.rail(s.ws.id, undefined, undefined, 'the')).groups.find((x) => x.agentId === s.agent.id)!;
+  assert.deepEqual([both.items.map((x) => x.id), both.work.items.map((x) => x.id).sort()], [[chat.id], [run.id, taskRun.id].sort()]);
+  assert.equal((await ctl.rail(s.ws.id, undefined, undefined, 'the', undefined, 'work')).groups.find((x) => x.agentId === s.agent.id)!.total, 0, 'kind=work counts no chats');
   // chat search (FR-8.2) over chats only
   const t1 = await s.repo.createTurn(chat.id, { text: 'zebra plan' });
   await s.repo.appendMessage({ sessionId: chat.id, turnId: t1.id, role: 'user', content: 'zebra plan for launch' });

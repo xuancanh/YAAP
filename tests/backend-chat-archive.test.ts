@@ -309,7 +309,7 @@ test('the rail: per-agent first page, cursor pages, work sessions (loops, channe
   assert.equal(g.total, 14, '12 chats + the pinned one + the waiting one; loops and channel sessions not counted');
   assert.deepEqual(g.items.map((c) => c.name), ['Old but pinned', 'Chat 0', 'Chat 1', 'Chat 2', 'Chat 3']);
   assert.ok(g.nextCursor);
-  assert.equal(g.work.total, 4, 'two loops and two channel working sessions: the agent work, read in its Work log');
+  assert.equal(g.work.total, 4, 'two loops and two channel working sessions: the agent work, in its Work subsection');
   assert.deepEqual(g.work.approvalIds, []);
   assert.equal('loops' in g, false, 'no Heartbeat runs row any more');
   assert.equal(rail.groups.find((x) => x.agentId === null)!.items[0].id, direct.id);

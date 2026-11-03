@@ -319,6 +319,27 @@ export function labelOf(trigger: WorkTrigger, key: string, taskKey: string | nul
   }
 }
 
+/** A work session's trigger, read off the session itself (the rail's work
+ *  rows, ChatView's header chip): the loop or heartbeat, the task it runs
+ *  (`task` = its key and title when known), the channel it works in, the
+ *  org/app session's name. A channel session hosts both meeting rounds and
+ *  channel wakes, so a session reads `channel`; the Work log tells the runs
+ *  apart turn by turn. */
+export interface SessionTrigger { trigger: WorkTrigger; triggerKey: string; triggerLabel: string }
+export function sessionTrigger(s: { name?: string | null; tags?: string | null; taskKind?: string | null; taskId?: string | null },
+  task?: { key: string | null; title: string | null } | null): SessionTrigger {
+  const name = s.name ?? '';
+  const of = (trigger: WorkTrigger, key: string, taskKey: string | null = null, taskTitle: string | null = null): SessionTrigger =>
+    ({ trigger, triggerKey: key, triggerLabel: labelOf(trigger, key, taskKey, taskTitle) });
+  if (name === 'Loop · heartbeat') return of('heartbeat', '');
+  if (name.startsWith('Loop · ')) return of('loop', name.slice('Loop · '.length));
+  if (s.taskKind && s.taskId) return of('task', task?.key || s.taskId, task?.key ?? null, task?.title ?? null);
+  if ((name.startsWith('#') && name.includes(' · ')) || (s.tags ?? '').includes('"channel"')) return of('channel', name.split(' · ')[0]);
+  if (name.startsWith('App · ')) return of('app', name);
+  if (name.startsWith('Org · ') || name.startsWith('Red team · ') || name.startsWith('Eval · ')) return of('org', name);
+  return of('other', name);
+}
+
 function parseCalls(raw: string): Array<{ tool: string; input?: unknown; result?: unknown; approved?: string; isError?: boolean; actionClass?: string }> {
   try {
     const v = JSON.parse(raw || '[]') as unknown;

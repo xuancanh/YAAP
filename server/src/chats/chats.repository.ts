@@ -39,10 +39,10 @@ export class ChatsRepository {
 
   /** The rail's filter (docs/chat-archiving.md "The rail"): a workspace's
    *  sessions of one kind the current actor may see — `chat` unless asked
-   *  otherwise: the rail and the chat pages list conversations with people,
-   *  never the agents' own runs (loops, org runs, meeting rounds, a
-   *  channel's hidden working session — docs/work-log.md). `agentId` null =
-   *  the workspace's agent-less chats. */
+   *  otherwise. The rail shows conversations with people as each agent's
+   *  chat rows and its own runs (loops, org runs, meeting rounds, a
+   *  channel's working session — docs/work-log.md) in its Work subsection.
+   *  `agentId` null = the workspace's agent-less sessions. */
   private railWhere(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; kind?: SessionKind | 'any'; q?: string }) {
     const conds = [
       eq(chatSessions.workspaceId, workspaceId),
@@ -80,23 +80,41 @@ export class ChatsRepository {
   }
 
   /** How many sessions each agent has (key '' = no agent), split into chats
-   *  and work sessions (its runs, read in its Work log). A search counts
-   *  matching chats only. */
-  async railCounts(workspaceId: string, opts: { archived?: boolean; q?: string } = {}): Promise<Map<string, { chats: number; work: number }>> {
+   *  and work sessions (its runs — the rail's Work subsection). A search
+   *  counts the matching sessions of `kind` (default: both). */
+  async railCounts(workspaceId: string, opts: { archived?: boolean; q?: string; kind?: SessionKind | 'any' } = {}): Promise<Map<string, { chats: number; work: number }>> {
     const rows = await this.db.select({
       agentId: chatSessions.agentId,
       work: sql<number>`SUM(CASE WHEN ${chatSessions.kind} = 'work' THEN 1 ELSE 0 END)`,
       total: sql<number>`COUNT(*)`,
-    }).from(chatSessions).where(this.railWhere(workspaceId, { ...opts, kind: (opts.q ?? '').trim() ? 'chat' : 'any' })).groupBy(chatSessions.agentId);
+    }).from(chatSessions).where(this.railWhere(workspaceId, { ...opts, kind: opts.kind ?? 'any' })).groupBy(chatSessions.agentId);
     const out = new Map<string, { chats: number; work: number }>();
     for (const r of rows) out.set(r.agentId ?? '', { chats: Number(r.total) - Number(r.work), work: Number(r.work) });
     return out;
   }
 
+  /** The rail's run state of work sessions: the task each one runs (key and
+   *  title, for its trigger label) and whether its newest turn is still
+   *  running. `ids` come from an already-scoped page. */
+  async sessionRunMeta(ids: string[]): Promise<Map<string, { taskKey: string | null; taskTitle: string | null; running: boolean }>> {
+    const out = new Map<string, { taskKey: string | null; taskTitle: string | null; running: boolean }>();
+    if (ids.length === 0) return out;
+    const res = await this.db.execute(sql`
+      SELECT s."id", COALESCE(ot."key", atk."key") AS "taskKey", COALESCE(ot."title", atk."title") AS "taskTitle", lt."status" AS "lastStatus"
+      FROM chat_sessions s
+      LEFT JOIN org_tasks ot ON s."taskKind" = 'org' AND ot."id" = s."taskId"
+      LEFT JOIN agent_tasks atk ON s."taskKind" = 'agent' AND atk."id" = s."taskId"
+      LEFT JOIN LATERAL (SELECT t."status" FROM chat_turns t WHERE t."sessionId" = s."id" ORDER BY t."seq" DESC LIMIT 1) lt ON TRUE
+      WHERE s."id" IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+    `);
+    const rows = ((res as { rows?: unknown[] }).rows ?? []) as Array<{ id: string; taskKey: string | null; taskTitle: string | null; lastStatus: string | null }>;
+    for (const r of rows) out.set(r.id, { taskKey: r.taskKey ?? null, taskTitle: r.taskTitle ?? null, running: r.lastStatus === 'running' });
+    return out;
+  }
+
   /** Sessions with an approval waiting in the inbox (a queued action, a
    *  routed approval), keyed by agent ('' = none) and split by kind: the
-   *  rail marks the chat rows, and badges the agent for the work ones —
-   *  those open in the Work log, never as a chat row. */
+   *  rail marks the chat rows and the work rows alike, and badges the agent. */
   async approvalSessions(workspaceId: string): Promise<Map<string, { chat: string[]; work: string[] }>> {
     const rows = await this.db.selectDistinct({ id: chatSessions.id, agentId: chatSessions.agentId, kind: chatSessions.kind }).from(chatSessions)
       .innerJoin(agentEvents, eq(agentEvents.sessionId, chatSessions.id))

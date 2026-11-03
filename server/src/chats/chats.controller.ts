@@ -61,6 +61,18 @@ class ApproveDto {
   @IsIn(['allow-once', 'allow-always', 'allow-tool', 'deny']) decision!: ApprovalDecision;
 }
 
+/** `agentId:count` pairs, comma-separated ('' = agent-less). */
+function parseLimits(raw?: string): Record<string, number> {
+  const parsed: Record<string, number> = {};
+  for (const pair of (raw ?? '').split(',')) {
+    const i = pair.lastIndexOf(':');
+    if (i < 0) continue;
+    const n = Number(pair.slice(i + 1));
+    if (Number.isFinite(n) && n > 0) parsed[pair.slice(0, i)] = n;
+  }
+  return parsed;
+}
+
 @Controller('chats')
 export class ChatsController {
   constructor(
@@ -78,40 +90,40 @@ export class ChatsController {
     return this.chats.list(workspaceId, archived === 'true');
   }
 
-  /** The Home rail (docs/chat-archiving.md): `limits` is `agentId:count`
-   *  pairs (comma-separated; '' = agent-less) for groups showing more than
-   *  `perAgent`. */
+  /** The Home rail (docs/chat-archiving.md): `limits` / `workLimits` are
+   *  `agentId:count` pairs (comma-separated; '' = agent-less) for groups
+   *  showing more chats / work sessions than `perAgent`; `kind` narrows a
+   *  search to 'chat' or 'work' (default 'all'). */
   @Get('rail')
-  rail(@Query('workspaceId') workspaceId: string, @Query('perAgent') perAgent?: string, @Query('limits') limits?: string, @Query('q') q?: string) {
-    const parsed: Record<string, number> = {};
-    for (const pair of (limits ?? '').split(',')) {
-      const i = pair.lastIndexOf(':');
-      if (i < 0) continue;
-      const n = Number(pair.slice(i + 1));
-      if (Number.isFinite(n) && n > 0) parsed[pair.slice(0, i)] = n;
-    }
-    return this.chats.rail(workspaceId, { perAgent: perAgent ? Number(perAgent) || undefined : undefined, limits: parsed, q });
+  rail(@Query('workspaceId') workspaceId: string, @Query('perAgent') perAgent?: string, @Query('limits') limits?: string, @Query('q') q?: string,
+    @Query('workLimits') workLimits?: string, @Query('kind') kind?: string) {
+    return this.chats.rail(workspaceId, {
+      perAgent: perAgent ? Number(perAgent) || undefined : undefined, limits: parseLimits(limits), workLimits: parseLimits(workLimits), q,
+      kind: kind === 'chat' || kind === 'work' ? kind : 'all',
+    });
   }
 
-  /** One page of chats: `agentId` ('none' = agent-less; omitted = all),
-   *  `archived`, `q`, `limit`, `cursor`. Conversations only — the agents'
-   *  runs (`kind: 'work'`) page through GET /agents/:id/work-log. */
+  /** One page of the rail: `agentId` ('none' = agent-less; omitted = all),
+   *  `kind` ('chat' default, or 'work' — the agent's runs, with their
+   *  trigger), `archived` (chats), `q`, `limit`, `cursor`. */
   @Get('page')
   page(@Query('workspaceId') workspaceId: string, @Query('agentId') agentId?: string, @Query('archived') archived?: string,
-    @Query('q') q?: string, @Query('limit') limit?: string, @Query('cursor') cursor?: string) {
+    @Query('q') q?: string, @Query('limit') limit?: string, @Query('cursor') cursor?: string, @Query('kind') kind?: string) {
     return this.chats.page(workspaceId, {
       agentId: agentId === undefined || agentId === '' ? undefined : agentId === 'none' ? null : agentId,
       archived: archived === 'true',
       q, limit: limit ? Number(limit) || undefined : undefined, cursor: cursor || null,
+      kind: kind === 'work' ? 'work' : 'chat',
     });
   }
 
   @Post() create(@Body() dto: CreateChatDto) { return this.chats.create(dto); }
-  @Get(':id') get(@Param('id') id: string) { return this.chats.get(id); }
+  @Get(':id') get(@Param('id') id: string) { return this.chats.getWithMeta(id); }
   @Patch(':id') async update(@Param('id') id: string, @Body() dto: UpdateChatDto) {
     const { shared, ...rest } = dto;
     if (shared !== undefined) await this.chats.setShared(id, shared);
-    return Object.keys(rest).length > 0 ? this.chats.update(id, rest) : this.chats.get(id);
+    if (Object.keys(rest).length > 0) await this.chats.update(id, rest);
+    return this.chats.getWithMeta(id);
   }
   @Delete(':id') remove(@Param('id') id: string) { return this.chats.remove(id); }
   @Post(':id/archive')

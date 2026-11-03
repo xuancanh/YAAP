@@ -11,7 +11,13 @@ import { AgentsService } from '../agents/agents.service';
 import { SkillsService } from '../skills/skills.service';
 import { RegistryService } from '../registry/registry.service';
 import { taskRef } from '../common/task-keys';
-import { OWNER_DM_TAG } from './session-kind';
+import { OWNER_DM_TAG, type SessionKind } from './session-kind';
+import { sessionTrigger, type SessionTrigger } from './work-log.service';
+
+/** The rail search's filter: chats, work sessions, or both. */
+export type RailKind = 'chat' | 'work' | 'all';
+/** A work session's rail/ChatView meta: its trigger and a run going. */
+export type WorkSessionMeta = SessionTrigger & { running: boolean };
 
 @Injectable()
 export class ChatsService {
@@ -29,34 +35,63 @@ export class ChatsService {
   }
 
   /** The Home rail in one call (docs/chat-archiving.md "The rail"): per agent
-   *  (key '' = the workspace's agent-less chats) the chat count, the first
-   *  `limits[key] ?? perAgent` chats (pinned first, newest next) with the
-   *  cursor of the next page, the chats waiting on an approval, and — for
-   *  the agent's own runs, which are not chat rows (docs/work-log.md) — how
-   *  many work sessions it has and which of them wait on an approval; plus
-   *  the archived chat count. With `q`, only matching chats count and show,
-   *  so a search reaches into collapsed groups. */
-  async rail(workspaceId: string, opts: { perAgent?: number; limits?: Record<string, number>; q?: string } = {}) {
+   *  (key '' = the workspace's agent-less sessions) the chat count, the
+   *  first `limits[key] ?? perAgent` chats (pinned first, newest next) with
+   *  the cursor of the next page and the chats waiting on an approval; and
+   *  its work sessions (docs/work-log.md) the same way — count, the first
+   *  `workLimits[key] ?? perAgent` (newest activity first, each with its
+   *  trigger and whether a run is going), the cursor, the ones waiting on
+   *  an approval — for the rail's Work subsection; plus the archived chat
+   *  count. With `q`, only matching sessions of `kind` ('all' = both) count
+   *  and show, so a search reaches into collapsed groups. */
+  async rail(workspaceId: string, opts: { perAgent?: number; limits?: Record<string, number>; workLimits?: Record<string, number>; q?: string; kind?: RailKind } = {}) {
     const perAgent = Math.max(1, Math.min(100, Math.floor(opts.perAgent ?? 5)));
     const q = (opts.q ?? '').trim();
-    const counts = await this.repo.railCounts(workspaceId, { q });
+    const kind: RailKind = opts.kind === 'chat' || opts.kind === 'work' ? opts.kind : 'all';
+    const counts = await this.repo.railCounts(workspaceId, { q, kind: kind === 'all' ? 'any' : kind });
     const approvals = await this.repo.approvalSessions(workspaceId);
+    const empty = { items: [] as ChatSession[], nextCursor: null as string | null };
     const groups = await Promise.all([...counts.entries()].map(async ([key, c]) => {
       const agentId = key || null;
       const limit = Math.max(1, Math.min(500, Math.floor(opts.limits?.[key] ?? perAgent)));
-      const page = c.chats > 0 ? await this.repo.pageSessions(workspaceId, { agentId, kind: 'chat', q, limit }) : { items: [], nextCursor: null };
+      const workLimit = Math.max(1, Math.min(500, Math.floor(opts.workLimits?.[key] ?? perAgent)));
+      const page = c.chats > 0 ? await this.repo.pageSessions(workspaceId, { agentId, kind: 'chat', q, limit }) : empty;
+      const work = c.work > 0 ? await this.repo.pageSessions(workspaceId, { agentId, kind: 'work', q, limit: workLimit }) : empty;
       const a = approvals.get(key);
-      return { agentId, total: c.chats, items: page.items, nextCursor: page.nextCursor, approvalIds: a?.chat ?? [], work: { total: c.work, approvalIds: a?.work ?? [] } };
+      return {
+        agentId, total: c.chats, items: page.items, nextCursor: page.nextCursor, approvalIds: a?.chat ?? [],
+        work: { total: c.work, items: await this.withWorkMeta(work.items), nextCursor: work.nextCursor, approvalIds: a?.work ?? [] },
+      };
     }));
     let archivedTotal = 0;
     for (const c of (await this.repo.railCounts(workspaceId, { archived: true, q })).values()) archivedTotal += c.chats;
     return { groups, archivedTotal };
   }
 
-  /** One page of the rail: an agent's chats ('none' = agent-less) or the
-   *  archived ones. Chats only — the agents' runs page through the Work log. */
-  page(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; q?: string; limit?: number; cursor?: string | null }) {
-    return this.repo.pageSessions(workspaceId, { ...opts, kind: 'chat' });
+  /** One page of the rail: an agent's chats ('none' = agent-less), its work
+   *  sessions (`kind: 'work'`, with their trigger), or the archived chats. */
+  async page(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; q?: string; limit?: number; cursor?: string | null; kind?: SessionKind }) {
+    const res = await this.repo.pageSessions(workspaceId, { ...opts, kind: opts.kind === 'work' ? 'work' : 'chat' });
+    return opts.kind === 'work' ? { ...res, items: await this.withWorkMeta(res.items) } : res;
+  }
+
+  /** Work sessions with what the rail row and ChatView's header chip show:
+   *  the trigger (heartbeat, loop, task key, channel, …) and whether a run
+   *  is going. Chats pass through unchanged. */
+  async withWorkMeta<T extends ChatSession>(sessions: T[]): Promise<Array<T | (T & WorkSessionMeta)>> {
+    const work = sessions.filter((s) => s.kind === 'work');
+    if (work.length === 0) return sessions;
+    const meta = await this.repo.sessionRunMeta(work.map((s) => s.id));
+    return sessions.map((s) => {
+      if (s.kind !== 'work') return s;
+      const m = meta.get(s.id);
+      return { ...s, ...sessionTrigger(s, m ? { key: m.taskKey, title: m.taskTitle } : null), running: m?.running ?? false };
+    });
+  }
+
+  /** One session with its work meta (GET/PATCH /chats/:id). */
+  async getWithMeta(id: string) {
+    return (await this.withWorkMeta([await this.get(id)]))[0];
   }
 
   /**

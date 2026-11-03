@@ -9,8 +9,10 @@
  *    meeting rounds and channel wakes (the hidden `#slug · Agent` working
  *    sessions), red-team and eval runs, mini-app asks (`App · …`).
  *
- * Chat surfaces (the rail, the agent's Chats tab, chat search) list `chat`
- * sessions only; `work` sessions are read through the agent's Work log.
+ * The rail lists both — chats as each agent's chat rows, `work` sessions in
+ * its Work subsection — and both open in the chat view; the agent's Chats
+ * tab and chat search keep to `chat`, and the Work log is the timeline of
+ * the `work` sessions' runs.
  * Memory and turn context are the same for both — the kind is presentation
  * and classification, never a model input.
  *
