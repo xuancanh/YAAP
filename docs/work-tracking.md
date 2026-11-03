@@ -146,9 +146,11 @@ kanban note). Rules (`OrgTasksService.normalizeBlock`, `routeBlock`):
   (another kind or ref) — a comment no longer resets a blocker's age.
 - **Routing** — whoever it waits on hears of it:
   - `ceo` → a decision card in Needs you (`escalation`; `ref` = the card);
-  - `manager` → the owner's direct manager (`ref` resolved; the
-    decision-routing module may bind its own `ManagerResolver` — the field
-    stays generic). The chief's manager is the CEO: a card;
+  - `manager` → the owner's direct manager, resolved through decision
+    routing (`OrgDecisionsService.routeDecision`, docs/owners-seat.md §7;
+    bound as the board's `ManagerResolver`): an agent manager gets an inbox
+    event; a person, or the CEO for the chief, gets a card the router places
+    with them, and the blocker becomes `decision` on that card;
   - `agent` → an inbox event for that member (it reaches its heartbeat);
   - `person` → that person's queue (an addressed inbox event, and
     `…/humans/me/tasks` lists it under `waitingOnYou`); the owner's own
@@ -157,8 +159,11 @@ kanban note). Rules (`OrgTasksService.normalizeBlock`, `routeBlock`):
     todo (with a wake) when that task is done;
   - `decision` → a pending card; deciding it unblocks the task with a wake;
   - `external` → recorded; the back-off re-checks it.
-- `org_escalate` keeps working and writes the same field (`ceo`, or
-  `manager` / `agent` with the escalation task on that member's board).
+- `org_escalate` keeps working and writes the same field: its card is
+  placed with the raiser's manager first, so the task blocks on that
+  `decision` (or on the `ceo` when the card went straight there); the
+  chain below the CEO writes `manager` / `agent` with the escalation task
+  on that member's board.
 - A legacy `blockers` line is still written beside it so old readers keep
   working; the board, Home and the agent status read `blockedOn` first
   (`blockerOf`, `agent-status.ts`).
@@ -234,13 +239,15 @@ either) the breaker trips: new task claims in the project pause (the claim
 gate, `OrgProjectsService.claimGate`) and a decision — **extend, cut
 scope or kill** — goes to the lead's manager chain:
 
-- the lead reports to an agent → an `Appetite reached:` decision task on
+- who decides is decision routing's answer for the lead (`routeDecision`);
+- the lead's manager is an agent → an `Appetite reached:` decision task on
   that manager's board (source `escalation`; it is not gated). The manager
   decides with `org_project_appetite`: extend within `work.extendShare` of
   the original appetite applies at once (boundary row
   `project_appetite:within`); more, or a kill, is a card for the CEO;
-- the lead is the chief, a person, or reports to nobody → a
-  `project_appetite` card for the CEO. Approve extends; reject kills
+- the lead is the chief, reports to a person, or to nobody → a
+  `project_appetite` card raised by the lead, which the router places with
+  that person or the CEO. Approve extends; reject kills
   (cancels the project and its open tasks); revise cuts scope (a small
   extension, and the lead is told to cancel or move out what does not fit).
 

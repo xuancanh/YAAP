@@ -47,6 +47,8 @@ import { OrgTasksService, type OrgTask } from './org-tasks.service';
 import { OrgApprovalsService, type OrgApproval } from './org-approvals.service';
 import { OrgAuditService } from './org-audit.service';
 import { OrgUnitsService } from './org-units.service';
+import { OrgDecisionsService } from './org-decisions.service';
+import { holderAgent } from './decision-routing';
 import { parseBlockedOn, describeBlockedOn } from './blocked-on';
 import { workTunable } from './work-tunables';
 import {
@@ -107,7 +109,17 @@ export class OrgProjectsService {
     private readonly agents: AgentsService,
     @Optional() private readonly units?: OrgUnitsService,
     @Optional() heartbeat?: HeartbeatService,
+    /** Optional: decision routing (docs/owners-seat.md §7) — who "the manager" is
+     *  for blockedOn: manager and who decides a tripped appetite. */
+    @Optional() private readonly decisions?: OrgDecisionsService,
   ) {
+    if (decisions) {
+      tasks.setManagerResolver(async (orgId, t) => {
+        if (!t.assigneeAgentId) return null;
+        const r = await decisions.routeDecision(orgId, t.assigneeAgentId, 'escalation', { taskId: t.id });
+        return holderAgent(r.holder);
+      });
+    }
     tasks.setPlacer((orgId, input) => this.place(orgId, input));
     tasks.setClaimGate((orgId, task) => this.claimGate(orgId, task));
     approvals.onApply('project_now', async (orgId, payload) => this.applyBet(orgId, String(payload.projectId ?? ''), payload));
@@ -435,12 +447,15 @@ export class OrgProjectsService {
    *  person, or reports to nobody — a `project_appetite` card. */
   private async raiseAppetiteDecision(org: Organization, p: OrgProject, a: ProjectSummary['appetite']): Promise<void> {
     const lead = p.ownerAgentId;
-    const manager = lead && lead !== org.chiefOfStaffAgentId ? (await this.managerChain(org.id, lead))[0] ?? null : null;
+    // Decision routing (docs/owners-seat.md §7): the lead's direct manager first.
+    // An agent manager gets a decision task; a person or the CEO a card the router places.
+    const routed = lead && this.decisions ? await this.decisions.routeDecision(org.id, lead, 'project_appetite', { projectId: p.id }).catch(() => null) : null;
+    const manager = routed ? holderAgent(routed.holder) : lead && lead !== org.chiefOfStaffAgentId ? (await this.managerChain(org.id, lead))[0] ?? null : null;
     const extendUsd = p.appetiteUsd > 0 ? Math.round(p.appetiteUsd * 0.5 * 100) / 100 : 0;
     const extendDays = p.appetiteDays > 0 ? Math.max(1, Math.round(p.appetiteDays * 0.5)) : 0;
     if (!manager) {
       await this.approvals.create(org.id, {
-        kind: 'project_appetite', requestedBy: 'system', recommendation: `${describeAppetite(a)}. ${workTunable(org, 'work.breakerDefaultExtend') >= 1 ? 'The default is to extend.' : 'The default is to cancel (the circuit breaker).'}`,
+        kind: 'project_appetite', requestedBy: lead && routed ? `agent:${lead}` : 'system', recommendation: `${describeAppetite(a)}. ${workTunable(org, 'work.breakerDefaultExtend') >= 1 ? 'The default is to extend.' : 'The default is to cancel (the circuit breaker).'}`,
         payload: { projectId: p.id, projectKey: p.key, title: p.title, spentUsd: a.spentUsd, appetiteUsd: p.appetiteUsd, daysUsed: a.daysUsed, appetiteDays: p.appetiteDays, extendUsd, extendDays, health: p.health, healthReason: p.healthReason },
         card: { recommendedAction: workTunable(org, 'work.breakerDefaultExtend') >= 1 ? 'approve' : 'deny', alternatives: ['Approve: extend by the amount shown', 'Reject: kill the project (cancel its open tasks)', 'Revise: cut scope — finish what fits a small extension'] },
       });

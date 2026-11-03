@@ -27,7 +27,7 @@ async function setup() {
   const s = await harness();
   // The harness builds the board without the agents service; production injects it (inbox events for blockers).
   (s.tasks as unknown as { agents: unknown }).agents = s.agents;
-  const projects = new OrgProjectsService(s.db, s.org, s.tasks, s.approvals, s.audit, s.agents, s.units);
+  const projects = new OrgProjectsService(s.db, s.org, s.tasks, s.approvals, s.audit, s.agents, s.units, undefined, s.decisions);
   const tools = new OrgProjectsTools(s.org, projects, s.tasks, s.agents, s.config, s.runtime, s.turns);
   const orgId = await enable(s);
   const controller = new OrgController(s.org, s.tasks, s.approvals, s.audit, s.brief, s.runtime, s.config);
@@ -455,4 +455,32 @@ test('backfill (migration 0060): sources, projects for orphans, blockedOn from t
   const second = await backfillWorkTracking(q);
   assert.deepEqual(second, { projects: 0, systemProjects: 0, sources: 0, placed: 0, blocked: 0, transitions: 0, merged: { tasks: 0, steps: 0 } }, 'idempotent');
   assert.ok(titleSimilarity('Run + score the baseline on the 10 scenarios', 'Run and score the baseline scenarios') >= 0.4);
+});
+
+test('decision routing: blocked on the manager and the appetite go through routeDecision; an escalation held by a manager blocks on that decision', async () => {
+  const s = await setup();
+  // a head with a report: the report's manager is the head, not the chief
+  await s.org.updateMember(s.orgId, s.editor.id, { reportsToAgentId: s.writer.id });
+  const t = await s.tasks.create(s.orgId, { title: 'Proofread issue 13', assigneeAgentId: s.editor.id });
+  await s.tasks.update(s.orgId, t.id, { blockedOn: { kind: 'manager', reason: 'Which style guide wins?' } }, `agent:${s.editor.id}`);
+  const b = parseBlockedOn((await s.tasks.get(s.orgId, t.id)).blockedOn)!;
+  assert.equal(b.kind, 'manager');
+  assert.equal(b.ref, s.writer.id, 'the direct manager from routeDecision');
+  // org_escalate's CEO path: the card is placed with the raiser's manager first
+  const t2 = await s.tasks.create(s.orgId, { title: 'Buy a stock photo', assigneeAgentId: s.editor.id });
+  await s.tasks.escalate(s.orgId, t2.id, 'needs $40', `agent:${s.editor.id}`);
+  const b2 = parseBlockedOn((await s.tasks.get(s.orgId, t2.id)).blockedOn)!;
+  const card = (await s.approvals.pending(s.orgId)).find((a) => a.kind === 'escalation' && JSON.parse(a.payload).taskId === t2.id)!;
+  assert.equal(card.holder, `agent:${s.writer.id}`);
+  assert.equal(b2.kind, 'decision');
+  assert.equal(b2.ref, card.id);
+  await s.approvals.decide(s.orgId, card.id, 'approve', 'ok');
+  assert.notEqual((await s.tasks.get(s.orgId, t2.id)).status, 'blocked');
+  // the appetite of a project led by the head goes to its manager (the chief) as a decision task
+  const { project } = await s.projects.create(s.orgId, { title: 'Style guide', goalIds: [s.kr.id], ownerAgentId: s.writer.id, appetiteUsd: 0.1 }, 'user');
+  const t3 = await s.tasks.create(s.orgId, { title: 'Draft the guide', assigneeAgentId: s.editor.id, projectId: project.id });
+  await addRun(s, s.orgId, t3.id, s.editor.id, 0.2);
+  await s.projects.checkBreaker(s.orgId, project.id);
+  const decision = (await s.tasks.list(s.orgId, { projectId: project.id })).find((x) => x.title.startsWith('Appetite reached:'))!;
+  assert.equal(decision.assigneeAgentId, s.chief.id);
 });
