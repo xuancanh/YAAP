@@ -102,6 +102,10 @@ test('a plain workspace: queued actions need you, a rejected model is loud on th
   assert.equal(h.team.find((a) => a.id === s.chief.id)!.state, 'idle');
 
   assert.equal(h.recap.tasksDone, 1);
+  // the KPI strip's sparkline: 14 days, oldest first, today last
+  assert.equal(h.recap.doneSeries!.length, 14);
+  assert.equal(h.recap.doneSeries!.at(-1)!.day, new Date().toISOString().slice(0, 10));
+  assert.equal(h.recap.doneSeries!.at(-1)!.done, 1);
   assert.equal(h.recap.artifactsChanged, 1);
   assert.equal(h.artifacts[0].path, 'reports/weekly.md');
   assert.equal(h.artifacts[0].updatedBy.name, 'Writer');
@@ -151,7 +155,8 @@ test('a company: decision cards with defaults, escalations first, held actions d
   const st = await s.mode.setMode(s.ws.id, { mode: 'supervised', chiefOfStaffAgentId: s.chief.id, monthlyUsd: 20 });
   const orgId = st.orgId!;
   const hire = await s.approvals.create(orgId, { kind: 'hire', payload: { name: 'Ana', title: 'Researcher' }, requestedBy: 'chief', recommendation: 'We need research capacity.', card: { recommendedAction: 'approve', confidence: 0.7 } as never });
-  const esc = await s.approvals.create(orgId, { kind: 'escalation', payload: { title: 'Pricing page', reason: 'Two leads disagree' }, requestedBy: s.writer.id });
+  const pricing = await s.tasks.create(orgId, { title: 'Pricing page', createdBy: 'user' });
+  const esc = await s.approvals.create(orgId, { kind: 'escalation', payload: { title: 'Pricing page', reason: 'Two leads disagree', taskId: pricing.id }, requestedBy: s.writer.id });
   const twoKey = await s.approvals.create(orgId, { kind: 'two_key', payload: { tool: 'gmail_send', class: 'external_send', summary: 'to 120', actionId: 'act-carded' }, requestedBy: s.writer.id });
   held = [
     { id: 'act-carded', class: 'external_send', tool: 'gmail_send', status: 'held', keys: JSON.stringify({ approvalId: twoKey.id }), note: '', input: '{}', agentId: s.writer.id, sessionId: 's', createdAt: new Date().toISOString() },
@@ -172,6 +177,10 @@ test('a company: decision cards with defaults, escalations first, held actions d
   assert.deepEqual(hireCard.actions, ['approve', 'reject']);
   assert.equal(byId.get(`approval:${esc.id}`)!.kind, 'escalation');
   assert.equal(byId.get(`approval:${esc.id}`)!.severity, 'high');
+  // an escalation names its task (key and title), so the page need not repeat the quoted title
+  assert.equal(byId.get(`approval:${esc.id}`)!.task!.title, 'Pricing page');
+  assert.equal(byId.get(`approval:${esc.id}`)!.task!.key, pricing.key ?? null);
+  assert.equal(byId.get(`approval:${hire.id}`)!.task, undefined);
   assert.equal(byId.get(`approval:${twoKey.id}`)!.kind, 'held_action');
   assert.ok(!byId.has('action:act-carded'), 'a held action carried by its two-key card is listed once');
   assert.equal(byId.get('action:act-bare')!.kind, 'held_action');

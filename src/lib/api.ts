@@ -983,6 +983,12 @@ export interface HomePortfolio {
   exceptions: Array<{ projectId: string; key: string | null; title: string; kinds: PortfolioKind[]; detail: string; leadName: string }>;
   digest: Array<{ at: string; projectId: string; key: string | null; title: string; kind: 'health' | 'lane' | 'done' | 'milestone' | 'created' | 'breaker' | 'target'; text: string }>;
   doneByProject: Array<{ projectId: string; key: string | null; title: string; done: number }>;
+  /** The projects in Now, in rank order: Home's roadmap snapshot. */
+  nowProjects?: HomeNowProject[];
+}
+export interface HomeNowProject {
+  projectId: string; key: string | null; title: string; health: '' | 'on_track' | 'at_risk' | 'off_track';
+  progress: { done: number; total: number; pct: number }; targetDate: string | null; late: boolean; blocked: number; leadName: string;
 }
 export interface TaskTransition { id: string; orgId: string; taskId: string; fromStatus: string; toStatus: string; actor: string; reason: string; backfilled: number; at: string }
 export interface ProjectPatch {
@@ -2191,12 +2197,16 @@ export interface HomeNeed {
   actions: HomeNeedAction[];
   /** The route a card climbed to reach you (docs/owners-seat.md §7). */
   chain?: { line: string; hops: Array<{ at: string; action: string; by: string; recommendation: string; reasoning: string }>; reserved: string };
+  /** A card about one task (an escalation, a review): its key and title. */
+  task?: { key: string | null; title: string };
 }
 export interface HomeRef { type: string; id: string }
 export interface HomeRecapItem { at: string; kind: 'auto' | 'default' | 'delegate' | 'decision' | 'hire' | 'pause' | 'terminate'; title: string; detail: string; ref: HomeRef | null }
 export interface HomeRecap {
   tasksDone: number; tasksBlocked: number; decisions: HomeRecapItem[]; decisionsCount: number; people: HomeRecapItem[]; artifactsChanged: number;
   brief: { at: string; text: string } | null; pulse: { score: number; breaches: number } | null;
+  /** Tasks done per day, the last 14 days, oldest first. */
+  doneSeries?: Array<{ day: string; done: number }>;
 }
 export type HomeRag = 'red' | 'amber' | 'green' | 'grey';
 export interface HomeKeyResult { id: string; title: string; currentValue: number | null; targetValue: number | null; unitLabel: string; progress: number; confidence: number | null; atRisk: boolean; atRiskReason: string; rag: HomeRag; dueAt: string | null;
@@ -2222,6 +2232,8 @@ export interface HomeActivity {
 export interface HomeSpend {
   todayUsd: number | null; monthUsd: number | null; monthCapUsd: number | null; projectedUsd: number | null;
   forecastState: 'onTrack' | 'warn' | 'stop' | null; tokens: { spent: number; budget: number; over: boolean } | null;
+  /** Spend per day, the last 14 days, oldest first. */
+  series?: Array<{ day: string; usd: number }>;
 }
 export interface HomeHealth {
   status: 'ok' | 'degraded' | 'incident';

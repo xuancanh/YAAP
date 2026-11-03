@@ -325,6 +325,10 @@ test('health cadence: the lead owes an update on its cadence, Update missing pas
   assert.match(ex.detail, /Ask: An intro/);
   assert.ok(pf.digest.some((d) => d.projectId === project.id && d.kind === 'health'));
   assert.equal(pf.counts.atRisk, 1);
+  // Home's roadmap snapshot: the projects in Now, with progress and health
+  assert.equal(pf.nowProjects.length, pf.counts.now);
+  const mine = pf.nowProjects.find((p) => p.projectId === project.id);
+  if (after.lane === 'now') { assert.equal(mine!.health, 'at_risk'); assert.equal(typeof mine!.progress.pct, 'number'); } else assert.equal(mine, undefined);
 });
 
 test('the KR rule: a low confidence number alone no longer turns a key result amber', () => {

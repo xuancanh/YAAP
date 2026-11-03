@@ -61,6 +61,15 @@ const ACTIVITY_LIMIT = 40;
 /** Messages from your team shown on Home (the Inbox's Messages filter has the rest). */
 const MESSAGES_LIMIT = 5;
 const ARTIFACT_LIMIT = 8;
+/** The days the KPI sparklines cover (this week and the one before it). */
+export const SERIES_DAYS = 14;
+
+/** The last SERIES_DAYS UTC days, oldest first, ending today. */
+export function dayBuckets(now: Date, days = SERIES_DAYS): string[] {
+  const out: string[] = [];
+  for (let i = days - 1; i >= 0; i--) out.push(new Date(now.getTime() - i * DAY_MS).toISOString().slice(0, 10));
+  return out;
+}
 
 type AgentRow = Awaited<ReturnType<AgentsService['list']>>[number];
 type Rag = 'red' | 'amber' | 'green' | 'grey';
@@ -180,8 +189,8 @@ export class HomeService {
     const members = org ? await this.org!.members(org.id).catch(() => []) : [];
 
     const [needs, recap, goals, team, activity, spend, health, upcoming, artifacts, portfolio] = await Promise.all([
-      attempt('needs', () => this.needs(workspaceId, orgOn ? org : null, agents, names, now), [] as HomeNeed[]),
-      attempt('recap', () => this.recap(workspaceId, orgOn ? org : null, agents, orgTasks, names, since), emptyRecap()),
+      attempt('needs', () => this.needs(workspaceId, orgOn ? org : null, agents, names, now, orgTasks), [] as HomeNeed[]),
+      attempt('recap', () => this.recap(workspaceId, orgOn ? org : null, agents, orgTasks, names, since, now), emptyRecap()),
       attempt('goals', () => (orgOn && org && this.intent ? this.goals(org.id, now) : Promise.resolve([] as HomeGoal[])), [] as HomeGoal[]),
       attempt('team', () => this.team(workspaceId, org, orgOn, agents, orgTasks, members, now), [] as HomeAgent[]),
       attempt('activity', () => this.activity(workspaceId, orgOn ? org : null, agents, orgTasks, names, now), [] as HomeActivity[]),
@@ -219,7 +228,7 @@ export class HomeService {
 
   // ---- 2. needs you ----
 
-  private async needs(workspaceId: string, org: Organization | null, agents: AgentRow[], names: Map<string, string>, now: Date): Promise<HomeNeed[]> {
+  private async needs(workspaceId: string, org: Organization | null, agents: AgentRow[], names: Map<string, string>, now: Date, orgTasks: OrgTask[] = []): Promise<HomeNeed[]> {
     const out: HomeNeed[] = [];
     const nameOf = (actor: string) => {
       if (!actor) return '';
@@ -236,7 +245,11 @@ export class HomeService {
         const payload = safe<Record<string, unknown>>(a.payload, {});
         if (typeof payload.actionId === 'string') coveredActions.add(payload.actionId);
         if (a.holder && a.holder !== 'ceo') continue;
-        out.push(approvalNeed(a, payload, nameOf(a.requestedBy), now, holderName));
+        const need = approvalNeed(a, payload, nameOf(a.requestedBy), now, holderName);
+        const task = need.ref.taskId ? orgTasks.find((t) => t.id === need.ref.taskId) : undefined;
+        if (task) need.task = { key: task.key ?? null, title: task.title };
+        else if (typeof payload.title === 'string' && need.ref.taskId) need.task = { key: null, title: payload.title };
+        out.push(need);
       }
     }
     if (org && this.capital) {
@@ -301,19 +314,23 @@ export class HomeService {
 
   // ---- 3. since you were last here ----
 
-  private async recap(workspaceId: string, org: Organization | null, agents: AgentRow[], orgTasks: OrgTask[], names: Map<string, string>, since: string): Promise<HomeRecap> {
+  private async recap(workspaceId: string, org: Organization | null, agents: AgentRow[], orgTasks: OrgTask[], names: Map<string, string>, since: string, now = new Date()): Promise<HomeRecap> {
     const recap = emptyRecap();
+    const doneAts: string[] = [];
     if (org) {
       // Done is an event (docs/work-tracking.md): doneAt, not "last touched while done".
       recap.tasksDone = orgTasks.filter((t) => t.status === 'done' && (t.doneAt ?? t.updatedAt) >= since).length;
       recap.tasksBlocked = orgTasks.filter((t) => t.status === 'blocked').length;
+      for (const t of orgTasks) if (t.status === 'done') doneAts.push(t.doneAt ?? t.updatedAt);
     } else {
       for (const a of agents) {
         const ts = await this.agents.listTasks(a.id);
         recap.tasksDone += ts.filter((t) => t.status === 'done' && t.updatedAt >= since).length;
         recap.tasksBlocked += ts.filter((t) => t.status === 'blocked').length;
+        for (const t of ts) if (t.status === 'done') doneAts.push(t.updatedAt);
       }
     }
+    recap.doneSeries = dayBuckets(now).map((day) => ({ day, done: doneAts.filter((at) => at.slice(0, 10) === day).length }));
     if (org) {
       const decisions: HomeRecapItem[] = [];
       const people: HomeRecapItem[] = [];
@@ -470,11 +487,13 @@ export class HomeService {
   private async spend(workspaceId: string, org: Organization | null, ws: Awaited<ReturnType<WorkspacesService['get']>>, now: Date): Promise<HomeSpend> {
     const out = emptySpend();
     const today = now.toISOString().slice(0, 10);
+    const byDay = new Map<string, number>();
     if (org && this.runtime) {
       const tree = await this.runtime.spendTree(org.id, now);
       out.monthUsd = tree.company.usd;
       out.monthCapUsd = tree.company.monthlyUsd || null;
       out.todayUsd = tree.series.find((d: { day: string; usd: number }) => d.day === today)?.usd ?? 0;
+      for (const d of tree.series as Array<{ day: string; usd: number }>) byDay.set(d.day, (byDay.get(d.day) ?? 0) + d.usd);
       if (this.capital) {
         const f = await this.capital.forecast(org.id, now).catch(() => null);
         if (f) { out.projectedUsd = f.company.projectedUsd; out.forecastState = f.company.state as HomeSpend['forecastState']; }
@@ -482,11 +501,14 @@ export class HomeService {
     }
     if (this.usage) {
       // Chat, loop and channel turns: the ledger outside org runs.
-      const u = await this.usage.workspaceUsage(workspaceId, now.getUTCDate(), now);
+      // At least SERIES_DAYS for the sparkline; the month is the days of this month.
+      const u = await this.usage.workspaceUsage(workspaceId, Math.max(SERIES_DAYS, now.getUTCDate()), now);
       const todayChat = u.series.find((d) => d.day === today)?.usd ?? 0;
       out.todayUsd = (out.todayUsd ?? 0) + todayChat;
-      if (!org) out.monthUsd = u.totals.usd;
+      if (!org) out.monthUsd = u.series.filter((d) => d.day.slice(0, 7) === today.slice(0, 7)).reduce((n, d) => n + d.usd, 0);
+      for (const d of u.series) byDay.set(d.day, (byDay.get(d.day) ?? 0) + d.usd);
     }
+    if (byDay.size) out.series = dayBuckets(now).map((day) => ({ day, usd: Math.round((byDay.get(day) ?? 0) * 10_000) / 10_000 }));
     const st = spendStatus(ws, now);
     out.tokens = st.budgetTokens > 0 ? { spent: st.spentTokens, budget: st.budgetTokens, over: st.over } : null;
     return out;

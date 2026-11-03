@@ -48,6 +48,9 @@ export interface HomeNeed {
   actions: HomeNeedAction[];
   /** The route a card climbed to reach you (docs/owners-seat.md §7): absent when it came straight to you. */
   chain?: HomeNeedChain;
+  /** A card about one task (an escalation, a review): the task's key and title,
+   *  so the page can say "D-11" instead of repeating the title in quotes. */
+  task?: { key: string | null; title: string };
 }
 
 export interface HomeNeedChain {
@@ -73,6 +76,8 @@ export interface HomeRecap {
   /** The Chief of Staff's latest brief (markdown). */
   brief: { at: string; text: string } | null;
   pulse: { score: number; breaches: number } | null;
+  /** Tasks done per day over the last 14 days, oldest first (the KPI strip's sparkline and its week-on-week delta). */
+  doneSeries?: Array<{ day: string; done: number }>;
 }
 
 export interface HomeKeyResult {
@@ -132,6 +137,8 @@ export interface HomeSpend {
   forecastState: 'onTrack' | 'warn' | 'stop' | null;
   /** The workspace token budget (no company). */
   tokens: { spent: number; budget: number; over: boolean } | null;
+  /** Spend per day over the last 14 days, oldest first (company runs plus chat, loop and channel turns). */
+  series?: Array<{ day: string; usd: number }>;
 }
 
 export interface HomeHealth {
@@ -194,4 +201,13 @@ export interface HomePortfolio {
   exceptions: Array<{ projectId: string; key: string | null; title: string; kinds: Array<'off_track' | 'at_risk' | 'update_missing' | 'over_budget' | 'late' | 'tripped'>; detail: string; leadName: string }>;
   digest: Array<{ at: string; projectId: string; key: string | null; title: string; kind: 'health' | 'lane' | 'done' | 'milestone' | 'created' | 'breaker' | 'target'; text: string }>;
   doneByProject: Array<{ projectId: string; key: string | null; title: string; done: number }>;
+  /** The projects in Now, in rank order: Home's roadmap snapshot. */
+  nowProjects?: HomeNowProject[];
+}
+
+export interface HomeNowProject {
+  projectId: string; key: string | null; title: string;
+  health: '' | 'on_track' | 'at_risk' | 'off_track';
+  progress: { done: number; total: number; pct: number };
+  targetDate: string | null; late: boolean; blocked: number; leadName: string;
 }

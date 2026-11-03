@@ -96,6 +96,8 @@ export interface Portfolio {
   exceptions: Array<{ projectId: string; key: string | null; title: string; kinds: Array<'off_track' | 'at_risk' | 'update_missing' | 'over_budget' | 'late' | 'tripped'>; detail: string; leadName: string }>;
   digest: Array<{ at: string; projectId: string; key: string | null; title: string; kind: 'health' | 'lane' | 'done' | 'milestone' | 'created' | 'breaker' | 'target'; text: string }>;
   doneByProject: Array<{ projectId: string; key: string | null; title: string; done: number }>;
+  /** The projects in Now, in rank order (Home's roadmap snapshot). */
+  nowProjects: Array<{ projectId: string; key: string | null; title: string; health: '' | 'on_track' | 'at_risk' | 'off_track'; progress: { done: number; total: number; pct: number }; targetDate: string | null; late: boolean; blocked: number; leadName: string }>;
 }
 
 @Injectable()
@@ -736,7 +738,11 @@ export class OrgProjectsService {
     for (const t of tasks.filter((x) => x.status === 'done' && x.doneAt && x.doneAt >= since && x.projectId)) doneBy.set(t.projectId!, (doneBy.get(t.projectId!) ?? 0) + 1);
     const allProjects = new Map((await this.org.projects(orgId)).map((p) => [p.id, p]));
     const doneByProject = [...doneBy.entries()].map(([id, done]) => ({ projectId: id, key: allProjects.get(id)?.key ?? null, title: allProjects.get(id)?.title ?? '', done })).sort((a, b) => b.done - a.done);
-    return { generatedAt: now.toISOString(), counts, exceptions, digest: digest.slice(0, 30), doneByProject };
+    const nowProjects: Portfolio['nowProjects'] = live.filter((p) => p.lane === 'now' && p.kind === 'project').sort((a, b) => a.rank - b.rank).map((p) => ({
+      projectId: p.id, key: p.key, title: p.title, health: (['on_track', 'at_risk', 'off_track'].includes(p.health) ? p.health : '') as Portfolio['nowProjects'][number]['health'],
+      progress: p.progress, targetDate: p.targetDate, late: p.late, blocked: p.blocked, leadName: p.lead.name,
+    }));
+    return { generatedAt: now.toISOString(), counts, exceptions, digest: digest.slice(0, 30), doneByProject, nowProjects };
   }
 
   // ---- the heartbeat (docs/work-tracking.md "Health cadence") ----
