@@ -390,7 +390,7 @@ A company ends the way it started: by the owner, on purpose, and
 reversibly first. Code: `server/src/org/org-lifecycle.service.ts`
 (`OrgLifecycleService`), the read-only guard `archived-org.guard.ts`, the
 SPA's Danger zone `src/components/OrgDangerZone.tsx` (Settings → Workspace
-→ Organization). Migration `0082-org-archive` adds `organizations.archivedAt`,
+→ Organization). Migration `0085-org-archive` adds `organizations.archivedAt`,
 `archivedBy` and `archiveState`. Owner only: the routes are in the
 owner-only table (`workspace-access.guard.ts`) and the service refuses a
 member or viewer too.
