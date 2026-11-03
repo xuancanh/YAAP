@@ -128,6 +128,23 @@ describe('the header', () => {
     expect(act2.calls).toEqual(['openTab:Settings:General']);
   });
 
+  it('erroring on a run that can run again: "See the run · Rerun"; no Rerun without the action (a viewer)', () => {
+    const act = { ...actions(), rerun: vi.fn() };
+    const errors = [{ kind: 'loop' as const, message: 'provider 400: Tool names must be unique', at: iso(-29), sessionId: 's1' }];
+    const o = fixture({
+      cause: { kind: 'loop', message: 'provider 400: Tool names must be unique', at: iso(-29), sessionId: 's1', taskId: null, fix: null, rerunTurnId: 't-failed' },
+      health: { ...fixture().health, errors },
+    }, { state: 'error', errors });
+    render(<AgentDashboard o={o} now={NOW} act={act} />);
+    const cause = screen.getByTestId('agent-cause');
+    expect(within(cause).getByRole('button', { name: 'See the run' })).toBeInTheDocument();
+    fireEvent.click(within(cause).getByRole('button', { name: 'Rerun' }));
+    expect(act.rerun).toHaveBeenCalledWith('t-failed');
+    cleanup();
+    render(<AgentDashboard o={o} now={NOW} act={actions()} />);
+    expect(within(screen.getByTestId('agent-cause')).queryByRole('button', { name: 'Rerun' })).toBeNull();
+  });
+
   it('blocked, idle and paused say it in one line', () => {
     const o = fixture({ now: null, blocked: [blocked(), blocked({ id: 'b2', title: 'Logo', blocker: { reason: 'Which tone?', waitsOn: { kind: 'agent', id: 'c', name: 'Chief', taskId: null }, since: iso(-30) } }), blocked({ id: 'b3', title: 'Legal', blocker: { reason: 'legal review', waitsOn: { kind: 'unknown', id: null, name: '', taskId: null }, since: iso(-30) } })] },
       { state: 'blocked', doing: 'Blocked on "Pricing page copy"', blockedCount: 3, waitingOnYou: 1, doingSince: null });

@@ -64,6 +64,8 @@ export interface DashboardActions {
   openActivity: (a: HomeActivity) => void;
   /** A conversation (the failing run, the turn that queued an action). */
   openSession: (sessionId: string) => void;
+  /** Run the failing run again (docs/work-log.md "Rerun"); absent for a viewer. */
+  rerun?: (turnId: string) => void;
   chat: () => void;
   beatNow: () => void;
   togglePause: () => void;
@@ -173,6 +175,7 @@ function StatusBlock({ o, now, act, compact }: { o: AgentOverview; now: Date; ac
           <span style={{ display: 'inline-flex', gap: 10, flex: 'none' }}>
             {cause.fix?.tab && !compact && <button style={inlineLink} onClick={() => act.openTab(cause.fix!.tab!)}>Fix it</button>}
             {cause.sessionId && <button style={inlineLink} onClick={() => act.openSession(cause.sessionId!)}>See the run</button>}
+            {cause.rerunTurnId && act.rerun && <button data-testid="cause-rerun" style={inlineLink} onClick={() => act.rerun!(cause.rerunTurnId!)}>Rerun</button>}
             {cause.taskId && <button style={inlineLink} onClick={() => act.openTask({ id: cause.taskId!, source: 'org' })}>Open the task</button>}
             <span style={faint}>{when(cause.at, now)}</span>
           </span>
@@ -798,6 +801,10 @@ export function useAgentPage(agentId: string, onOpenTab?: (tab: string) => void)
       else if (a.ref?.type === 'file') app.openFile({ kind: 'workspace', id: wsId }, a.ref.id);
     },
     openSession: (id) => app.openSession(id),
+    rerun: app.me?.role === 'viewer' ? undefined : (turnId) => void run(async () => {
+      const r = await api.rerunWorkRun(agentId, turnId);
+      app.showToast(r.started ? 'Rerunning the failed run' : `The rerun did not start: ${r.error || r.status.replace(/^skipped:/, '').replace(/_/g, ' ')}`);
+    }),
     chat: () => void app.newChat(agentId),
     beatNow: () => void run(async () => {
       const r = await api.beatNow(agentId);

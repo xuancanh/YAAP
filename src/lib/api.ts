@@ -319,7 +319,24 @@ export interface WorkRun {
   files: Array<{ path: string; op: string }>;
   task: { kind: 'org' | 'agent'; id: string; key: string | null; title: string } | null;
   archived: boolean; createdAt: string;
+  /** Who sent it: 'person' (someone typed it), else its origin ('loop',
+   *  'user', 'channel', 'app'); '' for old runs (docs/work-log.md). */
+  source?: string;
+  /** The person behind a 'person' run (an actor id; '' = the owner). */
+  by?: string;
+  /** The run this one re-runs (Rerun). */
+  rerunOf?: string | null;
+  /** Failed, stopped or blocked: Rerun applies. */
+  rerunnable?: boolean;
 }
+/** POST …/work-log/runs/:turnId/rerun. */
+export interface WorkRerunResult { started: boolean; turnId: string | null; sessionId: string; status: string; error?: string }
+/** What GET /api/chats/:id/live streams: the running turn's events (TurnEvent),
+ *  framed by `live` and `end`; `idle` when nothing runs there. */
+export type SessionWatchEvent = TurnEvent
+  | { type: 'live'; turnId: string; source: string; startedAt: string }
+  | { type: 'idle'; busy: boolean }
+  | { type: 'end' };
 export interface WorkRunDetail extends WorkRun {
   messages: Array<{ id: string; seq: number; role: string; content: string; toolName: string | null; createdAt: string }>;
   toolCalls: Array<{ tool: string; input: unknown; result: string; approved: string; isError: boolean; actionClass?: string }>;
@@ -1670,6 +1687,8 @@ export const api = {
     return get<WorkLogPage>(`/api/agents/${enc(agentId)}/work-log${qs ? `?${qs}` : ''}`);
   },
   workRun: (agentId: string, turnId: string) => get<WorkRunDetail>(`/api/agents/${enc(agentId)}/work-log/runs/${enc(turnId)}`),
+  /** Run a failed or stopped run again, by its trigger, in its session. */
+  rerunWorkRun: (agentId: string, turnId: string) => send<WorkRerunResult>(`/api/agents/${enc(agentId)}/work-log/runs/${enc(turnId)}/rerun`, 'POST'),
   latestWorkRun: (agentId: string, sessionId: string) => get<{ turnId: string | null }>(`/api/agents/${enc(agentId)}/work-log/sessions/${enc(sessionId)}/latest`),
   clear: (id: string) => send<{ ok: boolean }>(`/api/chats/${id}/clear`, 'POST'),
   compact: (id: string) => send<{ ok: boolean; reason?: string }>(`/api/chats/${id}/compact`, 'POST'),
@@ -2267,6 +2286,8 @@ export interface TeamTile { id: string; name: string; emoji: string; colors: str
 export interface OverviewCause {
   kind: HomeAgent['errors'][number]['kind']; message: string; at: string;
   sessionId: string | null; taskId: string | null; fix: { text: string; tab: string | null } | null;
+  /** The failing run when it can run again (docs/work-log.md "Rerun"). */
+  rerunTurnId?: string | null;
 }
 /** Something waiting on the owner. */
 export interface NeedsYouItem {
@@ -2405,6 +2426,34 @@ export async function sendTurn(
       } catch {
         // one malformed event must not kill the whole stream
       }
+    }
+  }
+}
+
+/** Watch the turn running in a session, whoever started it (docs/work-log.md
+ *  "Intervening"): the same fetch-based SSE reader as sendTurn. Resolves
+ *  when the turn ends, nothing runs (`idle`), or `signal` aborts. */
+export async function watchSession(
+  chatId: string,
+  onEvent: (ev: SessionWatchEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const url = `/api/chats/${chatId}/live`;
+  const res = await fetch(url, { headers: authHeaders(url), signal });
+  if (!res.ok || !res.body) throw new Error(`${res.status} ${await res.text()}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split('\n\n');
+    buffer = events.pop() ?? '';
+    for (const chunk of events) {
+      const data = chunk.split('\n').filter((l) => l.startsWith('data: ')).map((l) => l.slice(6)).join('\n');
+      if (!data) continue;
+      try { onEvent(JSON.parse(data) as SessionWatchEvent); } catch { /* one malformed event must not kill the stream */ }
     }
   }
 }

@@ -5,7 +5,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  api, sendTurn, authHeaders, setActiveSharedWorkspace, subscribeWorkspaceEvents,
+  api, sendTurn, authHeaders, setActiveSharedWorkspace, subscribeWorkspaceEvents, watchSession,
   type Agent, type AgentApp, type AgentStats, type AgentType, type ChatMessage, type ChatRailGroup, type ChatSession, type ChatTurn,
   type MarketItem, type McpServer, type Skill, type Workspace, type FileEntry, type ApprovalDecision, type ToolReview,
   type BrowserStep, type WorkspaceOrg, type SharedWorkspace, type WorkspaceMe, type Channel, type WorkspaceEvent,
@@ -88,7 +88,10 @@ export interface ArtifactState { title: string; src: string; appCtx?: { agentId:
 /** A message staged while a turn streams: drained afterwards for the session
  *  it was written in, with its attachments (FR: nothing is silently dropped). */
 const EMPTY_LIVE: LiveItem[] = [];
-export interface QueuedMessage { id: number; sessionId: string; text: string; attachments: SentAttachment[] }
+/** A message waiting for its session's next turn. `waitServer`: the session
+ *  is busy with a turn this tab did not start (a heartbeat, a task run —
+ *  docs/work-log.md "Intervening"); it is sent when that turn ends. */
+export interface QueuedMessage { id: number; sessionId: string; text: string; attachments: SentAttachment[]; waitServer?: boolean }
 /** The attachment descriptor persisted on a turn (the server reads files by path). */
 export interface SentAttachment { path: string; kind: string; transcript?: string | null; durationSeconds?: number | null }
 /** A composer attachment chip. kind 'audio' = voice note (docs/voice.md): the
@@ -153,6 +156,17 @@ interface Store {
   stopTurn: () => void;
   approve: (callId: string, decision: ApprovalDecision) => void;
   queue: QueuedMessage[]; removeQueued: (id: number) => void;
+  /** Every queued message, any session (the Work log shows its sessions'). */
+  queueAll: QueuedMessage[];
+  /** Message any session, from outside its chat view (the Work log): starts
+   *  a turn (origin user), or queues for the next one when a turn runs there
+   *  — this tab's (`streaming`) or the server's (`serverBusy`). */
+  sendToSession: (sessionId: string, text: string, opts?: { serverBusy?: boolean }) => Promise<'started' | 'queued'>;
+  /** Open a session in the chat view whatever its kind: a work session stays
+   *  work (out of the rail) and offers its way back to the Work log. */
+  openInChat: (sessionId: string) => void;
+  /** Whether this tab is running a turn in the session. */
+  streamingIds: ReadonlySet<string>;
   drafts: Record<string, string>; setDraft: (v: string) => void;
   attachments: ComposerAttachment[];
   addAttachment: (path: string, kind?: string, extra?: Partial<Pick<ComposerAttachment, 'transcript' | 'durationSeconds'>>) => void;
@@ -262,6 +276,18 @@ export const gradPair = (pair: [string, string]): string => `linear-gradient(140
  *  log, docs/work-log.md) nor a channel's hidden working session. */
 function openableIn(s: ChatSession | null | undefined, ws: string | null | undefined): boolean {
   return !!s && s.workspaceId === ws && !s.archivedAt && s.kind !== 'work' && !isChannelSession(s);
+}
+/** A work session someone asked to open as a chat (Continue in chat). */
+function openableAsChat(s: ChatSession | null | undefined, ws: string | null | undefined, ids: Set<string>): boolean {
+  return !!s && s.workspaceId === ws && ids.has(s.id);
+}
+/** `#/chat/<id>` (a chat, or a work session's Work log) and `#/chat/<id>/chat`
+ *  (that session in the chat view, whatever its kind). */
+export function parseChatLink(hash: string, asChat?: Set<string>): string | null {
+  const m = /^#\/chat\/([\w-]+)(\/chat)?$/.exec(hash);
+  if (!m) return null;
+  if (m[2]) asChat?.add(m[1]);
+  return m[1];
 }
 
 /** What the Work log should open (docs/work-log.md): a run, or a work
@@ -396,6 +422,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   currentIdRef.current = currentId;
   const queueRef = useRef(queue);
   queueRef.current = queue;
+  /** Sessions this tab is running a turn in, updated synchronously (state lags). */
+  const activeRuns = useRef(new Set<string>());
+  /** Work sessions opened as a chat (Continue in chat, #/chat/<id>/chat). */
+  const asChat = useRef(new Set<string>());
   // per-session fetch abort; the rAF-buffered stream text lives in each runTurn
   const abortBy = useRef(new Map<string, AbortController>());
   const streaming = currentId ? streamingIds.has(currentId) : false;
@@ -414,7 +444,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Deep links from channel notifications: <app>/#/chat/<sessionId>. The
   // session list may not have loaded yet, so the id waits in a ref and the
   // session-pick effect below honours it once the list contains it.
-  const deepLink = useRef<string | null>(/^#\/chat\/([\w-]+)$/.exec(window.location.hash)?.[1] ?? null);
+  // #/chat/<id>/chat opens a work session in the chat view (docs/work-log.md).
+  const deepLink = useRef<string | null>(parseChatLink(window.location.hash, asChat.current));
   // Organization deep links (#company announcements, the brief):
   // #/ws/<workspaceId>/org/<pane> opens that pane of that workspace, and
   // #/ws/<workspaceId>/org/board?task=<taskId> one task's drawer on the board.
@@ -432,7 +463,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const channelLink = useRef(parseChannelHash(window.location.hash));
   useEffect(() => {
     const onHash = () => {
-      const id = /^#\/chat\/([\w-]+)$/.exec(window.location.hash)?.[1];
+      const id = parseChatLink(window.location.hash, asChat.current);
       if (id) { deepLink.current = id; setProbeTick((n) => n + 1); } // nudge the pick effect
       const org = parseOrgLink(window.location.hash);
       if (org) { orgLink.current = org; setWorkspaces((list) => [...list]); }
@@ -528,7 +559,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const rail = await api.chatRail(workspaceId, { limits: railLimits.current });
     // Open chats beyond the loaded pages are re-read so they stay current.
     const inRail = new Set(rail.groups.flatMap((g) => g.items.map((s) => s.id)));
-    const extras = (await Promise.all(extraRef.current.filter((s) => !inRail.has(s.id)).map((s) => api.chat(s.id).catch(() => null)))).filter((s): s is ChatSession => openableIn(s, workspaceId));
+    const extras = (await Promise.all(extraRef.current.filter((s) => !inRail.has(s.id)).map((s) => api.chat(s.id).catch(() => null)))).filter((s): s is ChatSession => openableIn(s, workspaceId) || openableAsChat(s, workspaceId, asChat.current));
     for (const s of extraRef.current) if (!extras.some((x) => x.id === s.id) && !inRail.has(s.id)) probed.current.set(s.id, 'missing');
     setChatRail(rail.groups);
     setExtraSessions(extras);
@@ -678,12 +709,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void api.chat(id).then((s) => {
       // A deep link to an agent's run opens it in the agent's Work log
       // (docs/work-log.md), never as the open chat.
-      if (s.kind === 'work' && s.agentId && deepLink.current === id) {
+      if (s.kind === 'work' && s.agentId && deepLink.current === id && !asChat.current.has(id)) {
         deepLink.current = null;
         window.history.replaceState(null, '', window.location.pathname + window.location.search);
         openWorkLogRef.current(s.agentId, { sessionId: s.id });
       }
-      if (openableIn(s, workspaceIdRef.current)) { probed.current.set(id, 'found'); setExtraSessions((x) => (x.some((y) => y.id === s.id) ? x : [...x, s])); } else probed.current.set(id, 'missing');
+      if (openableIn(s, workspaceIdRef.current) || openableAsChat(s, workspaceIdRef.current, asChat.current)) { probed.current.set(id, 'found'); setExtraSessions((x) => (x.some((y) => y.id === s.id) ? x : [...x, s])); } else probed.current.set(id, 'missing');
     }).catch(() => { probed.current.set(id, 'missing'); }).finally(() => setProbeTick((n) => n + 1));
   }, []);
 
@@ -785,6 +816,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }).catch(() => showChat(id));
   }, [showChat, openWorkLog]);
 
+  const openInChat = useCallback((id: string) => {
+    asChat.current.add(id);
+    probed.current.delete(id);
+    void api.chat(id).then((s) => {
+      if (s.workspaceId === workspaceIdRef.current) setExtraSessions((x) => (x.some((y) => y.id === s.id) ? x.map((y) => (y.id === s.id ? s : y)) : [...x, s]));
+      showChat(id);
+    }).catch(() => showToast('Could not open that session'));
+  }, [showChat, showToast]);
+
   const openFile = useCallback((target: FileTarget, path: string | null) => {
     if (target.kind === 'workspace') setSection('artifacts');
     else { setSection('home'); setHomeView('file'); }
@@ -877,6 +917,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // ---- the live turn stream ----
   const runTurn = useCallback(async (id: string, text: string, atts: Array<{ path: string; kind: string }>) => {
+    activeRuns.current.add(id);
     setStreamingIds((s) => new Set(s).add(id));
     setLiveFor(id, () => [{ kind: 'user', text }]);
     if (currentIdRef.current === id) setLiveBrowserSteps([]);
@@ -967,7 +1008,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       }, ctrl.signal);
     } catch (err) {
-      if (!(err instanceof Error && err.name === 'AbortError')) showToast(err instanceof Error ? err.message : 'turn failed');
+      if (err instanceof Error && /^409\b/.test(err.message)) {
+        // A turn this tab did not start holds the session (a heartbeat, a
+        // task run): the message waits for it to end (docs/work-log.md).
+        setQueue((q) => [...q, { id: Date.now(), sessionId: id, text, attachments: atts.map((a) => ({ ...a } as SentAttachment)), waitServer: true }]);
+        showToast('The agent is mid-run here — your message is queued for its next turn');
+      } else if (!(err instanceof Error && err.name === 'AbortError')) showToast(err instanceof Error ? err.message : 'turn failed');
     }
     if (streamRaf.current) { cancelAnimationFrame(streamRaf.current); streamRaf.current = 0; }
     streamBuf.current = null;
@@ -979,14 +1025,60 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // the persisted tool records now carry the same steps
     if (current()) setLiveBrowserSteps([]);
     await refreshSessions();
-    const next = queueRef.current.find((q) => q.sessionId === id);
-    if (next) {
-      setQueue((q) => q.filter((x) => x.id !== next.id));
-      setTimeout(() => { void runTurnRef.current?.(next.sessionId, next.text, next.attachments); }, 300);
-    }
+    activeRuns.current.delete(id);
+    setTimeout(() => flushQueueRef.current(id, false), 300);
   }, [refreshTranscript, refreshSessions, refreshWorkspaces, showToast, setLiveFor, clearLiveFor]);
   const runTurnRef = useRef<typeof runTurn>(runTurn);
   runTurnRef.current = runTurn;
+
+  /** Send the session's next queued message, unless this tab is running a
+   *  turn there. Messages waiting on a server turn go only when `server` says
+   *  that turn is over. */
+  const flushQueue = useCallback((id: string, server: boolean) => {
+    if (activeRuns.current.has(id)) return;
+    const next = queueRef.current.find((q) => q.sessionId === id && (server || !q.waitServer));
+    if (!next) return;
+    queueRef.current = queueRef.current.filter((x) => x.id !== next.id);
+    setQueue((q) => q.filter((x) => x.id !== next.id));
+    void runTurnRef.current?.(next.sessionId, next.text, next.attachments);
+  }, []);
+  const flushQueueRef = useRef(flushQueue);
+  flushQueueRef.current = flushQueue;
+
+  // Messages waiting on a turn this tab did not start: watch that session
+  // and send when its turn ends (or when nothing runs there any more).
+  const waitingOn = useMemo(() => [...new Set(queue.filter((q) => q.waitServer).map((q) => q.sessionId))].sort().join(','), [queue]);
+  useEffect(() => {
+    if (!waitingOn) return;
+    const ctrl = new AbortController();
+    for (const id of waitingOn.split(',')) {
+      void (async () => {
+        while (!ctrl.signal.aborted) {
+          let busy = false;
+          try {
+            await watchSession(id, (ev) => { if (ev.type === 'idle') busy = ev.busy; }, ctrl.signal);
+          } catch { busy = true; /* offline or gone: try again shortly */ }
+          if (ctrl.signal.aborted) return;
+          if (!busy) { flushQueueRef.current(id, true); return; }
+          await new Promise((r) => setTimeout(r, 2_000));
+        }
+      })();
+    }
+    return () => ctrl.abort();
+  }, [waitingOn]);
+
+  const sendToSession = useCallback(async (id: string, text: string, opts: { serverBusy?: boolean } = {}): Promise<'started' | 'queued'> => {
+    const trimmed = text.trim();
+    if (!trimmed) return 'queued';
+    if (activeRuns.current.has(id) || opts.serverBusy || queueRef.current.some((q) => q.sessionId === id)) {
+      const item: QueuedMessage = { id: Date.now() + Math.random(), sessionId: id, text: trimmed, attachments: [], waitServer: !activeRuns.current.has(id) };
+      queueRef.current = [...queueRef.current, item];
+      setQueue((q) => [...q, item]);
+      return 'queued';
+    }
+    void runTurnRef.current(id, trimmed, []);
+    return 'started';
+  }, []);
 
   const send = useCallback(async (text: string) => {
     const id = currentIdRef.current;
@@ -1205,7 +1297,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, setMcp, refreshMcp,
     market, refreshMarket, settings, saveSettings, pricing,
     currentId, openSession, openWorkLog, workLogFocus, clearWorkLogFocus, current, transcript, refreshTranscript, patchSession, newChat,
-    streaming, live, send, stopTurn, approve, queue: sessionQueue, removeQueued,
+    streaming, live, send, stopTurn, approve, queue: sessionQueue, removeQueued, queueAll: queue, sendToSession, openInChat, streamingIds,
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
     retry, editResend, fork, promote, rate,
     fileTarget, setFileTarget, fileList, refreshFiles, currentFile, setCurrentFile, openFile,
@@ -1224,7 +1316,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, refreshMcp,
     market, refreshMarket, settings, saveSettings, pricing,
     currentId, openSession, openWorkLog, workLogFocus, clearWorkLogFocus, current, transcript, refreshTranscript, patchSession, newChat,
-    streaming, live, send, stopTurn, approve, sessionQueue, removeQueued,
+    streaming, live, send, stopTurn, approve, sessionQueue, removeQueued, queue, sendToSession, openInChat, streamingIds,
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
     retry, editResend, fork, promote, rate,
     fileTarget, fileList, refreshFiles, currentFile, openFile,

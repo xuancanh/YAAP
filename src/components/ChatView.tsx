@@ -42,10 +42,14 @@ function detectArtifact(content: string): { title: string; src: string } | null 
   return null;
 }
 
-function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
+/** A tool call: its state, input, result, review and — while it waits —
+ *  the approval buttons. `onDecide` answers for a session other than the
+ *  open chat (the Work log's inline approvals); `readOnly` hides the buttons
+ *  (a viewer). */
+export function ToolCard({ t, onDecide, readOnly = false, agentId }: { t: LiveTool & { persisted?: boolean }; onDecide?: (d: ApprovalDecision) => void; readOnly?: boolean; agentId?: string }) {
   const app = useApp();
   const [deciding, setDeciding] = useState(false);
-  const decide = (d: ApprovalDecision) => { if (deciding) return; setDeciding(true); app.approve(t.id, d); };
+  const decide = (d: ApprovalDecision) => { if (deciding) return; setDeciding(true); if (onDecide) onDecide(d); else app.approve(t.id, d); };
   const border = t.status === 'pending' ? 'var(--amber)' : t.status === 'denied' ? 'var(--red)' : 'var(--border)';
   const map: Record<string, [string, string]> = {
     pending: ['var(--amber)', 'Needs approval'], running: ['var(--green)', 'Running'],
@@ -116,7 +120,10 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
           Waiting for {t.routedTo.name}'s approval — {t.name} would use their connection, so only they can allow it (from their inbox or their phone). Nobody else sees the request.
         </div>
       )}
-      {t.status === 'pending' && !t.routedTo && (
+      {t.status === 'pending' && !t.routedTo && readOnly && (
+        <div style={{ padding: '11px 13px', borderTop: '1px solid var(--border-soft)', fontSize: 12, color: 'var(--amber)' }}>Waiting for an approval — viewers can see it but not answer it.</div>
+      )}
+      {t.status === 'pending' && !t.routedTo && !readOnly && (
         <div style={{ padding: '11px 13px', borderTop: '1px solid var(--border-soft)' }}>
           <div style={{ fontSize: 12, color: 'var(--amber)', display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10, fontWeight: 500 }}>
             <I d={P.warn} size={14} />{t.review ? `The reviewer asked for your decision — ${t.review.reason}` : computer ? `Approve to ${arg} on your computer` : `This tool needs approval — approve to run ${t.name}`}
@@ -133,7 +140,7 @@ function ToolCard({ t }: { t: LiveTool & { persisted?: boolean } }) {
         <pre style={{ margin: 0, padding: '12px 14px', borderTop: '1px solid var(--border-soft)', background: 'var(--code)', ...mono, fontSize: 12, lineHeight: 1.6, color: 'var(--text-dim)', overflowX: 'auto', whiteSpace: 'pre', maxHeight: 260, overflowY: 'auto' }}>{t.result}</pre>
       )}
       <ReviewLine review={t.review} />
-      <NeedsGrantHint result={t.result} />
+      <NeedsGrantHint result={t.result} agentId={agentId} />
     </div>
   );
 }
@@ -180,9 +187,9 @@ function ReviewLine({ review }: { review?: ToolReview }) {
 /** Connect at the moment of need (docs/integrations.md §4, entry point 2):
  *  a connection tool refused for lack of a grant gets an inline path to the
  *  agent's Skills & tools tab, where grants live. */
-function NeedsGrantHint({ result }: { result?: string }) {
+function NeedsGrantHint({ result, agentId: forAgent }: { result?: string; agentId?: string }) {
   const app = useApp();
-  const agentId = app.sessions.find((s) => s.id === app.currentId)?.agentId;
+  const agentId = forAgent ?? app.sessions.find((s) => s.id === app.currentId)?.agentId;
   if (!agentId || typeof result !== 'string' || !/no (connection|write) grant/.test(result)) return null;
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', borderTop: '1px solid var(--border-soft)' }}>
@@ -740,6 +747,14 @@ export function ChatView() {
           </button>
         </div>
       </header>
+      {s.kind === 'work' && s.agentId && (
+        <div data-testid="work-session-banner" style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '7px 16px', borderBottom: '1px solid var(--border)', background: 'var(--panel-2)', fontSize: 12, color: 'var(--text-dim)' }}>
+          <span style={{ flex: 1, minWidth: 0 }}>{agent?.name ?? 'The agent'}'s work session — it stays in the Work log, not in your chats.</span>
+          <button onClick={() => app.openWorkLog(s.agentId!, { sessionId: s.id })} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 11.5, fontWeight: 600, padding: '3px 10px', cursor: 'pointer', flex: 'none' }}>
+            ← Back to Work log
+          </button>
+        </div>
+      )}
 
       <div ref={scrollRef} onScroll={(e) => { const el = e.currentTarget; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} style={{ flex: 1, overflowY: 'auto', padding: '22px 0 8px' }}>
         <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 20px' }}>
