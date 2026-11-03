@@ -5,7 +5,6 @@ import { I, P } from '../lib/icons';
 import { useApp, grad, type OrgPane } from '../store';
 import { api, type ChatRail, type ChatSession } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
-import { NewWorkspaceWizard } from './NewWorkspaceWizard';
 import { ArtifactTree } from './ArtifactTree';
 import { createFile, createFolder, workspaceSource } from '../lib/artifacts';
 import { sectionDef, type CompanySection } from '../lib/company-nav';
@@ -25,62 +24,6 @@ function timeAgo(iso: string): string {
   const d = Math.floor(h / 24);
   if (d < 7) return `${d}d`;
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-export function WorkspacePill() {
-  const app = useApp();
-  const [open, setOpen] = useState(false);
-  // "Add workspace" opens the onboarding wizard (item 25): name and colour,
-  // then whether to run it as a company with a chief of staff.
-  const [adding, setAdding] = useState(false);
-  const ws = app.workspaces.find((w) => w.id === app.workspaceId);
-  if (!ws) return null;
-  return (
-    <div style={{ padding: '12px 12px 8px', position: 'relative' }}>
-      <button onClick={() => setOpen(!open)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 11px', color: 'var(--text)', cursor: 'pointer' }}>
-        <span style={{ width: 9, height: 9, borderRadius: 3, background: ws.color, flex: 'none' }} />
-        <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ws.name}</div>
-          <div style={{ fontSize: 10.5, color: 'var(--text-faint)', fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ws.shared ? `shared by ${ws.shared.ownerName} · ${ws.shared.role}` : 'workspace · s3'}</div>
-        </div>
-        <I d={P.upDown} size={13} stroke="var(--text-faint)" style={{ flex: 'none' }} />
-      </button>
-      {open && (
-        <div style={{ position: 'absolute', top: 'calc(100% - 2px)', left: 12, right: 12, background: 'var(--elev)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow)', zIndex: 50, padding: 6, animation: 'msgIn .12s' }}>
-          <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '6px 8px 4px' }}>Workspaces · scope chats</div>
-          {app.workspaces.filter((w) => !w.shared).map((w) => (
-            <div key={w.id} onClick={() => { app.pickWorkspace(w.id); setOpen(false); app.showToast(`Switched to ${w.name}`); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 9px', borderRadius: 8, cursor: 'pointer', margin: '1px 0', background: w.id === app.workspaceId ? 'var(--panel-2)' : 'none' }}>
-              <span style={{ width: 9, height: 9, borderRadius: 3, background: w.color, flex: 'none' }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 500 }}>{w.name}</div>
-              </div>
-              {w.id === app.workspaceId && <I d={P.check} size={14} stroke="var(--accent)" sw={2.5} />}
-            </div>
-          ))}
-          {app.workspaces.some((w) => w.shared) && (
-            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '8px 8px 4px', borderTop: '1px solid var(--border-soft)', marginTop: 4 }}>Shared with you</div>
-          )}
-          {app.workspaces.filter((w) => w.shared).map((w) => (
-            <div key={w.id} onClick={() => { app.pickWorkspace(w.id); setOpen(false); app.showToast(`Switched to ${w.name} (${w.shared!.ownerName}'s)`); }}
-              title={`Owned by ${w.shared!.ownerName}; you are a ${w.shared!.role}`}
-              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 9px', borderRadius: 8, cursor: 'pointer', margin: '1px 0', background: w.id === app.workspaceId ? 'var(--panel-2)' : 'none' }}>
-              <span style={{ width: 9, height: 9, borderRadius: 3, background: w.color, flex: 'none', outline: '1px dashed var(--text-faint)', outlineOffset: 1 }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 500 }}>{w.name}</div>
-                <div style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>{w.shared!.ownerName} · {w.shared!.role}</div>
-              </div>
-              {w.id === app.workspaceId && <I d={P.check} size={14} stroke="var(--accent)" sw={2.5} />}
-            </div>
-          ))}
-          <button type="button" onClick={() => { setAdding(true); setOpen(false); }} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9, padding: '8px 9px', borderRadius: 8, cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12.5, borderTop: '1px solid var(--border-soft)', marginTop: 4, background: 'none', border: 'none', borderTopStyle: 'solid', font: 'inherit', textAlign: 'left' }}>
-            <I d={P.plus} size={14} />Add workspace
-          </button>
-        </div>
-      )}
-      {adding && <NewWorkspaceWizard onClose={() => setAdding(false)} />}
-    </div>
-  );
 }
 
 /** The small trigger glyph on a work row (docs/work-log.md): what started
