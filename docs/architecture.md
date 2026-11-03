@@ -104,7 +104,7 @@ and `HttpLoggingInterceptor` registered globally.
 | `agent-types` | Provider/model/persona presets; API keys sealed at rest. | `AgentTypesService` |
 | `agents` | Durable agents: charter, dashboard, kanban, loops, inbox events, lessons, checkpoints; `TriggerBus`. | `AgentsService`, `AgentMemoryService`, `chats/trigger-bus.ts` |
 | `ai` | Provider adapters, retry, stream timeout, health and degradation, context windows, pricing. | `AiProviderFactory`, `ProviderHealthService`, `anthropic-ai.provider.ts`, `openai-ai.provider.ts` |
-| `chats` | Sessions and transcripts, the turn loop, context assembly, core tools, compaction, loops and triggers, distillation, the heartbeat. | `TurnLoopService`, `TurnContextService`, `ToolsService`, `CompactionService`, `LoopsService`, `HeartbeatService`, `DistillService`, `ChatLocks` |
+| `chats` | Sessions and transcripts (each `chat` or `work`, [work-log.md](work-log.md)), the turn loop, context assembly, core tools, compaction, loops and triggers, distillation, the heartbeat, the agents' Work log. | `TurnLoopService`, `TurnContextService`, `ToolsService`, `CompactionService`, `LoopsService`, `HeartbeatService`, `DistillService`, `ChatLocks`, `WorkLogService` |
 | `skills` | Instruction-pack skills offered as `skill_<name>` tools; built-ins seeded on boot. | `SkillsService`, `builtin-skills.ts` |
 | `search` | Workspace search over sessions, messages and files. | `SearchService` |
 | `mcp` | MCP server config, discovery, calls. | `McpService`, `mcp-client.ts`, `mcp-oauth.ts` |

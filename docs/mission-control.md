@@ -27,7 +27,8 @@ Code:
 - `src/components/AgentDashboard.tsx` (`AgentHeader` and `AgentDashboard`,
   presentational; `useAgentPage`, data and actions; `AgentOverviewPanel`,
   the compact side panel)
-- `src/components/AgentsView.tsx` (`AgentHome`: the header above six tabs)
+- `src/components/AgentsView.tsx` (`AgentHome`: the header above seven tabs)
+- `src/components/WorkLog.tsx` (the Work log tab, [work-log.md](work-log.md))
 - `src/lib/agent-tabs.ts` (the tabs, their sections and the old names; pure)
 - `src/components/OrgMissionControl.tsx` (`MissionControlBoard`,
   presentational; `MissionControlPane`, data and the side panel)
@@ -116,7 +117,9 @@ status pill and one sentence:
 - **Erroring**: the cause itself, "Tool round limit (24) reached", in red.
 
 While erroring, a second line says what to do when the message makes it
-obvious (`fixHint`), **See the run** opens the failing run's conversation,
+obvious (`fixHint`), **See the run** opens the failing run in the agent's
+**Work log** ([work-log.md](work-log.md); a run is a `work` session, never
+a chat),
 **Open the task** opens the task a breaker tripped on, and **Fix it** goes
 to the tab that fixes it (Settings for a model the provider rejects, Work ›
 Schedule for a loop out of token budget). While a turn runs, a line says
@@ -194,7 +197,8 @@ collapsed into "Writer · 10 heartbeat checks, nothing new", as on Home; the
 ones that did something stand alone), loop errors and budget stops, tasks
 it finished or that got blocked, its comments and posts, and the files it
 wrote. Filters: All, Runs, Tasks, Files, Comments. Ten rows, then **Show
-all**.
+all**. **Work log →** beside the filters opens the Work log tab, where each
+run expands to its thinking and tool calls.
 
 **5. The side column.** **Team**: its manager, the unit it leads, a line
 per report (state, what it is doing) and people who report to it; a line
@@ -208,7 +212,7 @@ goals, and **Following** when a follow has news.
 **6. Its notes**, folded: the markdown it keeps with `update_dashboard`.
 
 Recent conversations are not repeated here (the Chats tab and the rail
-list them), trust chips moved to Settings › Trust, and the 30-day usage
+list them; the agent's own runs are in the Work log), trust chips moved to Settings › Trust, and the 30-day usage
 chart became Health's sparkline.
 
 Side by side above about 700 px, one column below it; on a phone the page
@@ -217,13 +221,14 @@ their own box).
 
 ### The tabs
 
-Six tabs (`src/lib/agent-tabs.ts`), two with sections:
+Seven tabs (`src/lib/agent-tabs.ts`), two with sections:
 
 | Tab | Sections | What it holds |
 |---|---|---|
 | Overview | — | the page above |
 | Work | Tasks, Schedule | its own task board; its loops and heartbeat |
-| Chats | — | its conversations, searchable |
+| Work log | — | its own runs — heartbeat, loops, task runs, meetings, channel wakes — grouped by trigger, each expandable to its thinking, tool calls, files, cost and outcome ([work-log.md](work-log.md)) |
+| Chats | — | its conversations with people (`kind: 'chat'`), searchable |
 | Artifacts | — | its files |
 | Memory | — | its file brain and lessons |
 | Settings | General, Skills & tools, Mini apps, Trust | identity, model, heartbeat, charter, shared folder, ratings, workspace, danger zone; skills, tools and connections; the apps it built; trust levels and held actions |
@@ -232,9 +237,10 @@ Every older name still lands (`resolveAgentTab`), in `?tab=`, in
 `app.openAgent(id, tab)` and in the store's one-shot tab request:
 Dashboard → Overview; Tasks → Work › Tasks; Schedule → Work › Schedule;
 Mini apps, Skills & tools and Trust → those Settings sections; Files →
-Artifacts. `Tab:Section` works too ("Settings:Trust", "Work:Schedule"),
+Artifacts; Work log, worklog, runs and Heartbeat runs → Work log. `Tab:Section` works too ("Settings:Trust", "Work:Schedule"),
 and the fix hints use it. The Overview tab shows how many things wait on
-you; Work shows its open tasks.
+you; Work shows its open tasks; Work log shows, in red, the runs waiting
+on your approval.
 
 ## The org chart
 
@@ -278,7 +284,8 @@ Writer → Content Head → You".
 
 **The side panel.** Picking an agent opens its overview in compact form
 (the status and its cause, the signals, and the work card, whose rows open
-the task), with **Open page**, **Chat** and **Board** (its unit's board).
+the task), with **Open page**, **Chat** and **Board** (its unit's board),
+and **Work log** — every run with its thinking and tool calls.
 
 **Edit structure.** The structure editor is one click away and unchanged:
 add a member, hire, scopes, pause, terminate, accept a changed charter, the

@@ -10,7 +10,7 @@ heartbeat) and `src/components/ChatView.tsx`. Companion design docs:
 [`architecture.md` § The turn loop](architecture.md#4-the-turn-loop),
 [`architecture.md` § Frontend architecture](architecture.md#10-frontend-architecture).
 
-Last updated: 2026-11-02
+Last updated: 2026-11-03
 
 Terminology: a **chat session** is one conversation (an agent record with
 `kind: 'chat'`). A **chat agent type** is a reusable provider/model/persona
@@ -45,13 +45,26 @@ sessions plus a file "brain".
   leaves an explaining inbox event, and archived chats restore as in FR-1.4.
   See [chat-archiving.md](chat-archiving.md).
 - **FR-1.8** The chat rail is **paged**: per agent the newest chats load
-  first with "Show more"; loop and heartbeat sessions fold into one row per
-  agent; the archive pages too. Search runs on the server and reaches every
-  chat.
+  first with "Show more"; the archive pages too. Search runs on the server
+  and reaches every chat. The rail lists **conversations only** (FR-1.10):
+  an agent's own runs are one **Work log** row per agent, never chat rows.
 - **FR-1.9** Agent groups in the rail are **collapsed by default**, except the
   open chat's group and groups with unread activity or a pending approval;
   the header shows those badges and the chat count; collapse choices persist
   per viewer, with Collapse all / Expand all.
+- **FR-1.10** Every session has a **kind**: `chat` — a conversation with
+  people (user-started chats, the owner DM agents write to with
+  `message_owner`, a member's Telegram or email thread, forks) — or `work` —
+  the agent's own run (heartbeat and loops, org task runs and other org runs,
+  meeting rounds, channel wakes, red-team / eval runs, mini-app asks). Every
+  code path that creates a session states it; existing sessions were
+  backfilled (migration 0080). Chat surfaces — the rail, the agent's Chats
+  tab, chat search, `/api/chats/page` — show `chat` only; `work` sessions are
+  read in the agent's **Work log** ([work-log.md](work-log.md)). A link to a
+  session opens the chat view for a chat and the Work log run for a work
+  session. A work session waiting on an approval is an Inbox item and a badge
+  on the agent, not a chat row. Memory and turn context do not depend on the
+  kind.
 
 ## 2. Composer & input
 
@@ -78,8 +91,9 @@ sessions plus a file "brain".
 - **FR-3.1** A turn runs a **provider-neutral streaming LLM loop** supporting up
   to **24 tool rounds** per turn.
 - **FR-3.2** The loop streams the **answer** and **thinking** channels
-  separately; thinking is shown distinctly and excluded from provider history
-  reconstruction.
+  separately; thinking is shown distinctly, persisted on the transcript as
+  `thinking` rows (one per round, for the Work log), and excluded from
+  provider history reconstruction.
 - **FR-3.3** The loop exposes these tool families to the model:
   - local **file / navigation / edit / exec** tools;
   - **web** and raw **HTTP** tools;
@@ -110,7 +124,11 @@ sessions plus a file "brain".
 ## 5. Rendering & interaction
 
 - **FR-5.1** The transcript renders user, assistant, tool, and thinking messages
-  distinctly; markdown is rendered.
+  distinctly; markdown is rendered. In a conversation (`kind: 'chat'`) each
+  turn's thinking and tool calls fold behind one compact **"worked on it · N
+  steps"** line (expandable; while a turn runs, "working · N steps…", with a
+  call waiting on approval kept in view), so the answer stays prominent; the
+  full record of the agent's runs is its Work log.
 - **FR-5.2** **Artifacts**: a reply containing substantial HTML or SVG surfaces
   an artifact chip that opens the content in a **sandboxed, network-denied side
   panel** (opaque-origin iframe, same hardening as the addon sandbox).
@@ -158,7 +176,9 @@ sessions plus a file "brain".
 - **FR-8.1** Visible transcripts are persisted; **tool and thinking messages are
   excluded** when reconstructing provider history after restart.
 - **FR-8.2** Chat transcript changes debounce a **full rebuild of the in-memory
-  search index**, making conversations searchable.
+  search index**, making conversations searchable. Chat search covers `chat`
+  sessions (never thinking rows); the agents' runs are searched in their Work
+  log.
 - **FR-8.3** Chat runtime state is keyed by chat id and **cancellable** via the
   abort registry; disposing a chat tears down its runtime cleanly.
 

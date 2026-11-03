@@ -1,9 +1,11 @@
 # Chat archiving and the rail
 
-Agents accumulate chats: one per org task they run (`Org · <org> · <task>`),
-chats a turn was promoted from, loop and heartbeat sessions. Two things keep
-the Home rail usable: finished-task chats archive themselves, and the rail
-loads and shows chats a page at a time, folded per agent.
+Agents accumulate sessions: one per org task they run (`Org · <org> ·
+<task>`), chats a turn was promoted from, loop and heartbeat sessions. Three
+things keep the Home rail usable: the agents' own runs are `work` sessions
+that never show as chats (they live in the agent's Work log,
+[work-log.md](work-log.md)); finished-task sessions archive themselves; and
+the rail loads and shows chats a page at a time, folded per agent.
 
 Requirements: [chat-requirements.md](chat-requirements.md) FR-1.4, FR-1.7–FR-1.9.
 
@@ -18,6 +20,14 @@ Requirements: [chat-requirements.md](chat-requirements.md) FR-1.4, FR-1.7–FR-1
 
 A chat keeps its first link; it is never re-linked by a later promote. Chats
 with no task are never auto-archived.
+
+**Who it applies to.** Mostly work sessions: every per-task org run session
+is linked, so the sweep is what keeps an agent's finished runs from piling
+up. Among conversations, only a chat a turn was promoted from (or one the
+agent linked) is ever swept. An archived work session's runs stay in the
+Work log (marked *archived session*) — the log is history; archiving only
+retires the session. The archive group in the rail and `archivedTotal` count
+chats only.
 
 ## The setting
 
@@ -75,25 +85,29 @@ counts as activity, so the chat stays at least another `days`.
 
 ## The rail
 
-The Home rail no longer loads every chat. `GET /api/chats/rail?workspaceId=`
+The Home rail no longer loads every chat, and lists conversations only
+(`chat_sessions.kind = 'chat'`, migration 0080). `GET /api/chats/rail?workspaceId=`
 returns per agent (`agentId` null = the workspace's agent-less chats):
 
-- `total` — its chats, not counting loop / heartbeat sessions or channels'
-  hidden working sessions (`#slug · Agent`, tagged `channel`, kept out
-  server-side);
+- `total` — its chats; its runs (loops, heartbeat, org runs, meeting rounds,
+  a channel's hidden `#slug · Agent` working session) are `work` sessions and
+  never counted or listed here;
 - `items` — the newest 5 (pinned first), or as many as `limits=<agentId>:<n>,…`
   asks for, and `nextCursor`;
-- `loops` — its `Loop · …` sessions (count and the newest 20), shown as one
-  **Heartbeat runs** row;
 - `approvalIds` — its chats with an approval waiting in the inbox;
+- `work` — `{ total, approvalIds }`: how many work sessions it has and which
+  wait on an approval. The rail shows one **Work log** row per agent (it
+  replaced the *Heartbeat runs* row) and adds the waiting runs to the
+  agent's red badge, opening its group — never a chat row;
 
-plus `archivedTotal`. `GET /api/chats/page?workspaceId=&agentId=(id|none)&loops=only|exclude&archived=true&q=&limit=&cursor=`
-returns one page (`{ items, nextCursor }`, cursor opaque). `GET /api/chats`
-is unchanged for other callers.
+plus `archivedTotal` (chats). `GET /api/chats/page?workspaceId=&agentId=(id|none)&archived=true&q=&limit=&cursor=`
+returns one page of chats (`{ items, nextCursor }`, cursor opaque). `GET
+/api/chats` is unchanged for other callers.
 
-The store keeps `sessions` as what is loaded: every group's pages, their loop
-rows, and the open chat even when it is on no page (looked up by id, e.g. from
-a link or a search hit). *Show more (N)* fetches the next 20 of a group, and a
+The store keeps `sessions` as what is loaded: every group's pages and the
+open chat even when it is on no page (looked up by id, e.g. from a link or a
+search hit). A link to a work session (`openSession`, `#/chat/<id>`) opens the
+agent's Work log on that session instead. *Show more (N)* fetches the next 20 of a group, and a
 refresh keeps the count each group has loaded.
 
 In the rail:
