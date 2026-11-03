@@ -48,11 +48,15 @@ function payloadOf(a: OrgApproval): Record<string, unknown> {
 export function buildInbox(src: InboxSource): InboxItem[] {
   const out: InboxItem[] = [];
   for (const a of src.approvals) {
-    if (a.status !== 'pending' || a.kind === 'two_key') continue;
+    // A card a manager still holds is on its way up, not yours yet (docs/owners-seat.md §7).
+    if (a.status !== 'pending' || a.kind === 'two_key' || a.forYou === false) continue;
     const p = payloadOf(a);
     const name = str(p.title) || str(p.name) || str(p.summary) || a.recommendation;
-    if (a.kind === 'escalation') out.push({ key: `a:${a.id}`, kind: 'escalations', title: `Escalation: ${str(p.taskKey) ? `${str(p.taskKey)} ` : ''}${str(p.title) || 'a task'}`, detail: str(p.reason), at: a.createdAt, refId: a.id });
-    else out.push({ key: `a:${a.id}`, kind: 'approvals', title: `${a.kind.replace(/_/g, ' ')}${name ? `: ${name}` : ''}`, detail: a.recommendation && a.recommendation !== name ? a.recommendation : '', at: a.createdAt, refId: a.id });
+    // The route it climbed: "Writer → Head of Content → Chief → you".
+    const via = a.chainLine && a.chainLine.includes('→') ? a.chainLine : '';
+    const withVia = (d: string) => [d, via].filter(Boolean).join(' · ');
+    if (a.kind === 'escalation') out.push({ key: `a:${a.id}`, kind: 'escalations', title: `Escalation: ${str(p.taskKey) ? `${str(p.taskKey)} ` : ''}${str(p.title) || 'a task'}`, detail: withVia(str(p.reason)), at: a.createdAt, refId: a.id });
+    else out.push({ key: `a:${a.id}`, kind: 'approvals', title: `${a.kind.replace(/_/g, ' ')}${name ? `: ${name}` : ''}`, detail: withVia(a.recommendation && a.recommendation !== name ? a.recommendation : ''), at: a.createdAt, refId: a.id });
   }
   if (src.heldActions > 0) out.push({ key: 'keys', kind: 'keys', title: `${src.heldActions} action${src.heldActions === 1 ? '' : 's'} waiting for your key`, detail: 'Held or staged outward actions — the exact call runs only with your key.', at: '', refId: '' });
   for (const p of src.plans) if (p.status === 'pending') out.push({ key: `p:${p.id}`, kind: 'plans', title: `Plan: ${p.summary || p.trigger}`, detail: p.applyAt ? `applies at ${p.applyAt.slice(0, 16).replace('T', ' ')} unless vetoed` : '', at: p.createdAt, refId: p.id });

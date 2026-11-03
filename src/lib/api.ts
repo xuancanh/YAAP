@@ -941,7 +941,14 @@ export interface OrgApproval {
    *  `defaultAction` is applied at `deadline` ('' = none); `decidedVia` is '' | default | delegate:<…>. */
   recommendedAction?: 'approve' | 'deny' | 'modify' | ''; alternatives?: string; reversibility?: 'reversible' | 'costly' | 'irreversible' | '';
   confidence?: number | null; deadline?: string | null; defaultAction?: 'approve' | 'deny' | ''; decidedVia?: string;
+  /** Decision routing (docs/owners-seat.md §7): who holds it now ('ceo', 'agent:<id>', 'human:<id>'), its hops, why it is CEO-reserved. */
+  holder?: string; holderName?: string; hopDeadline?: string | null; reserved?: string; urgency?: 'normal' | 'urgent' | string; chain?: string;
+  /** "Writer → Head of Content → Chief → you" and each hop with names (GET …/approvals). */
+  chainLine?: string; chainHops?: DecisionHopView[];
+  /** It waits on the viewer now (false while a manager above the requester still holds it). */
+  forYou?: boolean;
 }
+export interface DecisionHopView { at: string; action: 'raised' | 'escalated' | 'timed_out' | 'sent_back' | 'decided' | string; by: string; byName: string; from: string; to: string; toName: string; recommendation?: string; reasoning?: string; decision?: string; sameModel?: boolean }
 export interface OrgAuditRow { id: string; orgId: string; seq: number; actor: string; action: string; refType: string; refId: string; payload: string; prevHash: string; hash: string; createdAt: string }
 export interface OrgBrief { orgId: string; at: string; text: string; items: Array<{ n: number; approvalId: string; kind: string; summary: string }> }
 /** GET /api/workspaces/:id/org — mode, caps and the full org detail when enabled. */
@@ -1879,6 +1886,10 @@ export const api = {
   orgApprovals: (wsId: string, status?: string) => get<OrgApproval[]>(`/api/workspaces/${wsId}/org/approvals${status ? `?status=${enc(status)}` : ''}`),
   decideOrgApproval: (wsId: string, approvalId: string, decision: 'approve' | 'reject' | 'revise', note?: string) =>
     send<{ approval: OrgApproval; result?: Record<string, unknown> }>(`/api/workspaces/${wsId}/org/approvals/${approvalId}/decide`, 'POST', { decision, note }),
+  /** A person holding a routed card (docs/owners-seat.md §7): decide, send back or escalate with a recommendation. */
+  actOnOrgDecision: (wsId: string, approvalId: string, decision: 'approve' | 'reject' | 'send_back' | 'escalate', note?: string, recommendation?: 'approve' | 'deny' | 'modify') =>
+    send<{ approval: OrgApproval; message?: string }>(`/api/workspaces/${wsId}/org/approvals/${approvalId}/decide`, 'POST', { decision, note, recommendation }),
+  orgDecisionAuthority: (wsId: string) => get<Array<{ kind: string; manager: 'decide' | 'decide_if' | 'recommend'; when: string }>>(`/api/workspaces/${wsId}/org/decisions/authority`),
   orgAudit: (wsId: string, limit = 100) => get<OrgAuditRow[]>(`/api/workspaces/${wsId}/org/audit?limit=${limit}`),
   verifyOrgAudit: (wsId: string) => get<{ ok: boolean; length: number; brokenAt: number | null; reason?: string }>(`/api/workspaces/${wsId}/org/audit/verify`),
   orgBrief: (wsId: string) => get<OrgBrief | null>(`/api/workspaces/${wsId}/org/brief`),
@@ -2064,6 +2075,8 @@ export interface HomeNeed {
   confidence: number | null; requestedBy: string;
   ref: { approvalId?: string; actionId?: string; planId?: string; incidentId?: string; signalId?: string; agentId?: string; eventId?: string; taskId?: string; sessionId?: string };
   actions: HomeNeedAction[];
+  /** The route a card climbed to reach you (docs/owners-seat.md §7). */
+  chain?: { line: string; hops: Array<{ at: string; action: string; by: string; recommendation: string; reasoning: string }>; reserved: string };
 }
 export interface HomeRef { type: string; id: string }
 export interface HomeRecapItem { at: string; kind: 'auto' | 'default' | 'delegate' | 'decision' | 'hire' | 'pause' | 'terminate'; title: string; detail: string; ref: HomeRef | null }
@@ -2177,7 +2190,10 @@ export interface AgentOverview {
   };
   dashboard: string;
   partial: string[];
+  /** Decisions for it as a manager (docs/owners-seat.md §7). */
+  decisions?: OverviewDecision[];
 }
+export interface OverviewDecision { approvalId: string; kind: string; title: string; from: string; chainLine: string; reserved: string; urgency: string; hopDeadline: string | null; createdAt: string }
 export interface MissionNode extends OverviewStatus {
   agentId: string; reportsToAgentId: string | null; leadsUnitId: string | null;
   wip: { open: number; limit: number };

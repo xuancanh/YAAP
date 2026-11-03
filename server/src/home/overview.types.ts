@@ -138,6 +138,24 @@ export interface AgentOverview {
   /** The agent's own notes (update_dashboard), markdown. */
   dashboard: string;
   partial: string[];
+  /** Decisions for it as a manager (docs/owners-seat.md §7): cards its reports raised, waiting on it. */
+  decisions?: OverviewDecision[];
+}
+
+export interface OverviewDecision {
+  approvalId: string;
+  kind: string;
+  title: string;
+  /** The requester's name. */
+  from: string;
+  /** "Editor → Writer" so far. */
+  chainLine: string;
+  /** Why only the CEO decides it ('' = it may decide within its authority). */
+  reserved: string;
+  urgency: string;
+  /** When it climbs on its own. */
+  hopDeadline: string | null;
+  createdAt: string;
 }
 
 // ---- mission control ----

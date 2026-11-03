@@ -493,11 +493,13 @@ export class OrgDecisionsService {
 
   /** Cards with their chain for display (`GET …/approvals`): the line
    *  ("Writer → Head of Content → Chief → you") and every hop with names. */
-  async withChains<T extends OrgApproval>(orgId: string, rows: T[], you: Holder = CEO): Promise<Array<T & { chainLine: string; chainHops: Array<DecisionHop & { byName: string; toName: string }>; holderName: string }>> {
+  async withChains<T extends OrgApproval>(orgId: string, rows: T[], you: Holder = CEO): Promise<Array<T & { chainLine: string; chainHops: Array<DecisionHop & { byName: string; toName: string }>; holderName: string; forYou: boolean }>> {
     const names = await this.namer(orgId);
     return rows.map((a) => {
       const hops = parseChain(a.chain);
-      return { ...a, chainLine: chainLine(hops, names, { you }), chainHops: hops.map((h) => ({ ...h, byName: names(h.by), toName: names(h.to) })), holderName: names(a.holder || CEO) };
+      const holder = a.holder || CEO;
+      // forYou: it waits on the viewer — held by them, or with the CEO (whose cards board members and delegates may also decide).
+      return { ...a, chainLine: chainLine(hops, names, { you }), chainHops: hops.map((h) => ({ ...h, byName: names(h.by), toName: names(h.to) })), holderName: names(holder), forYou: holder === you || holder === CEO };
     });
   }
 

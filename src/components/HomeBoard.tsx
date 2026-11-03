@@ -15,6 +15,7 @@ import type { HomeActivity, HomeAgent, HomeData, HomeGoal, HomeNeed, HomeNeedAct
 import { activityFilters, activityRows, dedupeUpcoming, upcomingDetail, type ActivityFilter, NEED_KIND_LABEL, actionLabel, dayHeading, defaultSentence, greeting, headline, recommendationLine, splitPath, targetOf, needTarget, usd, when, type HomeTarget } from '../lib/home';
 import { Markdown } from '../lib/md';
 import { I, P } from '../lib/icons';
+import { hopLine, managerHops } from '../lib/decisions';
 
 export interface HomeBoardProps {
   data: HomeData;
@@ -141,6 +142,12 @@ function NeedCard({ n, now, busy, onAct, onOpen }: { n: HomeNeed; now: Date; bus
       </div>
       <div style={{ fontSize: 14.5, fontWeight: 600, lineHeight: 1.4, overflowWrap: 'anywhere' }}>{n.title}</div>
       {n.detail && <div style={{ ...dim, ...clamp(3), overflowWrap: 'anywhere' }}>{n.detail}</div>}
+      {n.chain && (
+        <div data-testid="need-chain" style={{ ...dim, fontSize: 12.5, display: 'grid', gap: 2 }}>
+          <div style={{ overflowWrap: 'anywhere' }}><span style={{ color: 'var(--text)', fontWeight: 600 }}>{n.chain.line}</span>{n.chain.reserved ? <span> · only you decide this ({n.chain.reserved})</span> : null}</div>
+          {managerHops(n.chain.hops).map((h, i) => <div key={`${h.at}-${i}`} data-testid="need-chain-hop" style={{ ...clamp(2), overflowWrap: 'anywhere' }}>{hopLine({ ...h, byName: h.by })}</div>)}
+        </div>
+      )}
       {(n.recommendation || rec) && (
         <div style={{ ...dim, fontSize: 12.5 }}>
           {rec}{n.recommendation ? <span style={{ color: 'var(--text)' }}> “{n.recommendation}”</span> : null}

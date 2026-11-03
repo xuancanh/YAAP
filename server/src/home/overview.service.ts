@@ -39,7 +39,9 @@ import { loopRunCalls, nextCronFire, ragOf } from './home.service';
 import type { HomeActivity } from './home.types';
 import type {
   AgentOverview, MissionControl, MissionNode, NeedsYouItem, OverviewBlocked, OverviewCause, OverviewFollow, OverviewGoal, OverviewLive, OverviewStatus, OverviewTask, TeamTile,
+  OverviewDecision,
 } from './overview.types';
+import { chainLine, parseChain } from '../org/decision-routing';
 
 const DAY_MS = 24 * 60 * 60_000;
 const RECENT_DAYS = 7;
@@ -198,6 +200,17 @@ export class OverviewService {
       attempt('health', () => this.health(agentId, c.ws.id, c.org, me, now), { errors: me.errors, spend: { todayUsd: null, d30Usd: null, monthUsd: null, monthCapUsd: null, series: [] }, trust: [], wip: null } as AgentOverview['health']),
     ]);
     const needsYou = await attempt('needsYou', () => this.needsYou(agentId, c, mine), [] as NeedsYouItem[]);
+    // Decisions for it as a manager (docs/owners-seat.md §7).
+    const decisions = await attempt('decisions', async (): Promise<OverviewDecision[]> => {
+      if (!c.org || !this.approvals) return [];
+      const org = c.org;
+      const held = (await this.approvals.list(org.id, { status: 'pending' })).filter((a) => a.holder === `agent:${agentId}`);
+      const nameOfHolder = (h: string) => (h === 'ceo' ? 'CEO' : h === 'chief' ? names.get(org.chiefOfStaffAgentId ?? '') ?? 'Chief' : names.get(h.replace(/^agent:/, '')) ?? (h.startsWith('human:') ? 'a person' : h));
+      return held.sort((x, y) => (x.createdAt < y.createdAt ? -1 : 1)).slice(0, LIST_LIMIT).map((a) => ({
+        approvalId: a.id, kind: a.kind, title: summarize(a.kind, safe<Record<string, unknown>>(a.payload, {})), from: nameOfHolder(a.requestedBy),
+        chainLine: chainLine(parseChain(a.chain), nameOfHolder, { you: `agent:${agentId}` }), reserved: a.reserved ?? '', urgency: a.urgency ?? 'normal', hopDeadline: a.hopDeadline ?? null, createdAt: a.createdAt,
+      }));
+    }, [] as OverviewDecision[]);
     const loudest = primaryError(me.errors);
     const cause: OverviewCause | null = loudest
       ? { kind: loudest.kind, message: loudest.message, at: loudest.at, sessionId: loudest.sessionId ?? null, taskId: loudest.taskId ?? null, fix: fixHint(loudest) }
@@ -231,7 +244,7 @@ export class OverviewService {
       cause, needsYou,
       heartbeat, nextLoop, ...tasksSection, follows,
       files: myFiles.slice(0, 8).map((f) => ({ path: f.path, version: f.version, updatedAt: f.updatedAt })),
-      recent, goals, team, health, dashboard: agent.dashboard ?? '', partial,
+      recent, goals, team, health, dashboard: agent.dashboard ?? '', partial, decisions,
     };
   }
 

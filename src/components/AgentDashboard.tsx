@@ -456,6 +456,28 @@ function WorkCard({ o, now, act, teammates, compact, tab, setTab }: {
   );
 }
 
+// ---- decisions for it as a manager (docs/owners-seat.md §7) ----
+
+function DecisionsFor({ o, now }: { o: AgentOverview; now: Date }) {
+  const rows = o.decisions ?? [];
+  return (
+    <Section title="Decisions for it" count={rows.length} testId="section-decisions">
+      <ul style={{ ...panel, margin: 0, padding: '2px 0' }}>
+        {rows.map((d, i) => (
+          <li key={d.approvalId} data-testid="decision-row" style={{ listStyle: 'none', padding: '8px 12px', borderTop: i === 0 ? 'none' : '1px solid var(--border-soft)', fontSize: 12.5, display: 'grid', gap: 2 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+              <span style={{ flex: 1, ...oneLine, fontWeight: 600 }}>{d.kind.replace(/_/g, ' ')}: {d.title}</span>
+              {d.urgency === 'urgent' && <Chip color="var(--red)">urgent</Chip>}
+              {d.reserved ? <Chip color="var(--amber)">recommend only</Chip> : <Chip>may decide</Chip>}
+            </div>
+            <div style={{ ...faint, overflowWrap: 'anywhere' }}>from {d.from} · {d.chainLine}{d.hopDeadline ? ` · climbs on its own ${when(d.hopDeadline, now)}` : ''}{d.reserved ? ` · CEO-reserved: ${d.reserved}` : ''}</div>
+          </li>
+        ))}
+      </ul>
+    </Section>
+  );
+}
+
 // ---- activity ----
 
 function Activity({ o, now, act }: { o: AgentOverview; now: Date; act: DashboardActions }) {
@@ -696,6 +718,7 @@ export function AgentDashboard({ o, now = new Date(), compact = false, busy = fa
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'flex-start' }}>
         <div style={{ flex: '999 1 400px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 18 }}>
+          {(o.decisions?.length ?? 0) > 0 && <DecisionsFor o={o} now={now} />}
           {work}
           <Activity o={o} now={now} act={act} />
         </div>

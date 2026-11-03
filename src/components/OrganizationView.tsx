@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useApp, type OrgPane } from '../store';
 import { tabsOf } from '../lib/inbox';
+import { hopLine, inReviewBelow, managerHops, waitsOnViewer } from '../lib/decisions';
 import { orgTaskHash, taskOfHash } from '../lib/links';
 import { isTaskKey, keyStyle, matchesTaskRef } from '../lib/task-keys';
 import {
@@ -817,14 +818,22 @@ export function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promi
     try { await api.decideOrgApproval(org.workspaceId, a.id, d, notes[a.id]); await refresh(); await reload(); await app.refreshAgents(); app.showToast(`${a.kind}: ${d}d`); }
     catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
-  const pending = rows.filter((r) => r.status === 'pending');
+  // Decision routing (docs/owners-seat.md §7): a card a manager still holds is on its way up, not yours yet.
+  const pending = rows.filter(waitsOnViewer);
+  const below = inReviewBelow(rows);
+  const holdMine = (a: OrgApproval) => Boolean(humans.actorId) && a.holder === `human:${humans.actorId}`;
+  const [recs, setRecs] = useState<Record<string, 'approve' | 'deny' | 'modify'>>({});
+  const act = async (a: OrgApproval, d: 'approve' | 'reject' | 'send_back' | 'escalate') => {
+    try { const r = await api.actOnOrgDecision(org.workspaceId, a.id, d, notes[a.id], recs[a.id]); await refresh(); await reload(); app.showToast(r.message ?? `${a.kind}: ${d.replace('_', ' ')}`); }
+    catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
+  };
   // A held or staged action is decided in "Waiting for your key" below (the same key; its two_key card closes with it).
-  const shown = history ? rows.filter((r) => r.status !== 'pending').sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) : pending.filter((r) => r.kind !== 'two_key');
+  const shown = history ? rows.filter((r) => r.status !== 'pending').sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)) : pending.filter((r) => r.kind !== 'two_key' || holdMine(r));
   const nm = (id: unknown) => (typeof id === 'string' ? names.get(id)?.name ?? id.slice(0, 8) : '—');
   return (
     <div style={{ maxWidth: 820 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Approvals · {pending.length} pending</h2><div style={faint}>The full artifact, not a summary. Only a human decides here — the CEO, or a board member for hires, budgets and strategy; an agent's message never counts. Unanswered cards expire after 72 h ("not done"). In autonomous mode only strategy, escalations and external actions still arrive here.</div></div>
+        <div style={{ flex: 1 }}><h2 style={h2}>Approvals · {pending.length} pending</h2>{below > 0 && !history && <div data-testid="in-review-below" style={{ ...faint, marginBottom: 4 }}>{below} more in review by your managers — each decides within its authority or brings it up with a recommendation.</div>}<div style={faint}>The full artifact, not a summary. Only a human decides here — the CEO, or a board member for hires, budgets and strategy; an agent's message never counts. Unanswered cards expire after 72 h ("not done"). In autonomous mode only strategy, escalations and external actions still arrive here.</div></div>
         <button style={btn(history)} onClick={() => setHistory(!history)}>{history ? 'Show pending' : 'History'}</button>
       </div>
       {!history && (app.orgHeldActions > 0 || app.orgFocus?.kind === 'action') && <div style={{ ...card, marginBottom: 12 }}><Suspense fallback={<div style={faint}>Loading…</div>}><HeldActions wsId={org.workspaceId} /></Suspense></div>}
@@ -838,15 +847,31 @@ export function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promi
               <span style={faint}>by {a.requestedBy} · {ago(a.createdAt)}{a.status !== 'pending' ? ` · ${a.status}${a.decidedBy ? ` by ${app.nameOf(a.decidedBy)}` : ''}${a.decisionNote ? ` — ${a.decisionNote}` : ''}` : a.expiresAt ? ` · expires ${ago(a.expiresAt).replace(' ago', '')}` : ''}</span>
               {a.status === 'pending' && <span style={pill()} title="Who may decide this card">{deciders(a.kind)}</span>}
             </div>
-            {a.recommendation && <div style={{ fontSize: 12.5, marginBottom: 6 }}><b>Chief:</b> {a.recommendation}</div>}
+            {a.recommendation && <div style={{ fontSize: 12.5, marginBottom: 6 }}><b>{a.chainHops && a.chainHops.length > 0 ? 'Requester' : 'Chief'}:</b> {a.recommendation}</div>}
+            <DecisionChain a={a} />
             <DecisionExtras source={{ ...p, ...(a as unknown as Record<string, unknown>) }} skip={a.status === 'pending' ? ['recommendation'] : ['recommendation', 'deadline', 'defaultAction']} />
             <ApprovalArtifact kind={a.kind} p={p} nm={nm} wsId={org.workspaceId} />
             {(() => { const v = decidedViaBadge(a.decidedVia, (id) => app.nameOf(id)); return v ? <div style={{ marginTop: 6 }}><span style={pill('var(--blue)', '#fff')} title={v.title}>{v.label}</span></div> : null; })()}
             {p.eval && typeof p.eval === 'object' ? <Suspense fallback={null}><CardEvalLine ev={p.eval as CardEval} /></Suspense> : null}
-            {a.status === 'pending' && !mayDecide(a.kind, a, p) && humans.me !== null && (
+            {a.status === 'pending' && holdMine(a) && (
+              <div style={{ display: 'grid', gap: 6, marginTop: 10 }} data-testid="manager-actions">
+                <div style={faint}>You are this card's reviewer{a.reserved ? ` — CEO-reserved (${a.reserved}): recommend and escalate, or send it back` : ': decide it within your authority, send it back with guidance, or escalate it with your recommendation'}.</div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <input value={notes[a.id] ?? ''} onChange={(e) => setNotes({ ...notes, [a.id]: e.target.value })} placeholder="Your reasoning (required to send back)" style={input} />
+                  <select aria-label="Recommendation" value={recs[a.id] ?? 'approve'} onChange={(e) => setRecs({ ...recs, [a.id]: e.target.value as 'approve' | 'deny' | 'modify' })} style={{ ...input, flex: 'none', width: 'auto' }}>
+                    <option value="approve">recommend approve</option><option value="deny">recommend deny</option><option value="modify">recommend changes</option>
+                  </select>
+                  {!a.reserved && <button style={btn(true)} onClick={() => void act(a, 'approve')}>Approve</button>}
+                  {!a.reserved && <button style={btn(false, true)} onClick={() => void act(a, 'reject')}>Reject</button>}
+                  {a.kind !== 'two_key' && <button style={btn()} disabled={!(notes[a.id] ?? '').trim()} onClick={() => void act(a, 'send_back')}>Send back</button>}
+                  <button style={btn()} onClick={() => void act(a, 'escalate')}>Escalate</button>
+                </div>
+              </div>
+            )}
+            {a.status === 'pending' && !holdMine(a) && !mayDecide(a.kind, a, p) && humans.me !== null && (
               <div style={{ ...faint, marginTop: 10 }}>{humans.me === 'observer' ? 'Observers read the company but decide nothing.' : `A ${a.kind} approval is the CEO's to decide.`}</div>
             )}
-            {a.status === 'pending' && mayDecide(a.kind, a, p) && (
+            {a.status === 'pending' && !holdMine(a) && mayDecide(a.kind, a, p) && (
               <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                 <input value={notes[a.id] ?? ''} onChange={(e) => setNotes({ ...notes, [a.id]: e.target.value })} placeholder="Note to the chief (required for revise)" style={input} />
                 <button style={btn(true)} onClick={() => void decide(a, 'approve')}>{a.kind === 'two_key' ? (p.staged ? 'Send the draft (my key)' : 'Approve (my key)') : 'Approve'}</button>
@@ -857,6 +882,22 @@ export function Approvals({ org, reload }: { org: OrgDetail; reload: () => Promi
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** The route a card climbed (docs/owners-seat.md §7): "Writer → Head of Content → Chief → you" and each manager's recommendation. */
+export function DecisionChain({ a }: { a: Pick<OrgApproval, 'chainLine' | 'chainHops' | 'reserved' | 'status'> }) {
+  const hops = managerHops(a.chainHops);
+  if (!a.chainLine || !a.chainLine.includes('→')) return null;
+  return (
+    <div data-testid="decision-chain" style={{ fontSize: 12.5, marginBottom: 6, display: 'grid', gap: 3 }}>
+      <div><span style={faint}>Route:</span> <b>{a.chainLine}</b>{a.reserved ? <span style={{ ...faint, marginLeft: 6 }}>· CEO-reserved: {a.reserved}</span> : null}</div>
+      {hops.length > 0 && (
+        <ul style={{ margin: 0, paddingLeft: 18 }}>
+          {hops.map((h, i) => <li key={`${h.at}-${i}`} data-testid="decision-hop" style={{ overflowWrap: 'anywhere' }}>{hopLine(h)}</li>)}
+        </ul>
+      )}
     </div>
   );
 }
