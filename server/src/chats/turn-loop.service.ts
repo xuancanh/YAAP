@@ -381,7 +381,7 @@ const exactKey = (call: AiToolCall): string =>
 
 /** Pending approvals auto-deny after this long, so an orphaned approval
  *  (dead client, lost UI) cannot park a turn — and the chat lock — forever. */
-const APPROVAL_TTL_MS = 10 * 60_000;
+export const APPROVAL_TTL_MS = 10 * 60_000;
 
 /** The action contract's state for one call (docs/actions-and-trust.md):
  *  its class, the action-log row, the trust decision (null = the legacy

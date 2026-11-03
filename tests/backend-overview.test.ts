@@ -145,6 +145,13 @@ test('an agent working on a task: the Now card with its outcome and last comment
   assert.equal(act?.sessionId, 'sess-x');
   assert.ok(act?.eventId);
   assert.equal(o2.needsYou.length, 2);
+  // an approval request whose paused call has timed out is not something to answer any more
+  const stale = await s.agents.addEvent(s.writer.id, { kind: 'approval_request', title: 'Writer asks to run fs_write in #company', sessionId: 'sess-y', payload: JSON.stringify({ callId: 'c1' }) });
+  await s.agents.patchEvent(stale.id, { createdAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString() });
+  const fresh = await s.agents.addEvent(s.writer.id, { kind: 'approval_request', title: 'Writer asks to run fs_append in #company', sessionId: 'sess-z', payload: JSON.stringify({ callId: 'c2' }) });
+  const o3 = await s.overview.agent(s.writer.id);
+  assert.ok(!o3.needsYou.some((n) => n.eventId === stale.id), 'a timed-out request is hidden');
+  assert.ok(o3.needsYou.some((n) => n.eventId === fresh.id), 'a live one stays');
 
   const c = await s.overview.agent(s.chief.id);
   assert.equal(c.agent.isChief, true);

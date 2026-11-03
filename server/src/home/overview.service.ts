@@ -11,6 +11,7 @@
  * (agent-status.ts), so the three screens always agree. Every section is
  * computed on its own; a failing source lands in `partial`.
  */
+import { APPROVAL_TTL_MS } from '../chats/turn-loop.service';
 import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
@@ -268,6 +269,9 @@ export class OverviewService {
     const out: NeedsYouItem[] = [];
     for (const e of await this.agents.listEvents(agentId, 200)) {
       if (e.kind !== 'action_pending' && e.kind !== 'approval_request') continue;
+      // A paused call waits only APPROVAL_TTL_MS; after that the turn loop has
+      // denied it, so an old request is no longer something to answer.
+      if (e.kind === 'approval_request' && Date.now() - Date.parse(e.createdAt) > APPROVAL_TTL_MS + 60_000) continue;
       out.push({ id: `event:${e.id}`, kind: e.kind === 'action_pending' ? 'action' : 'connection', title: e.title, detail: clip(e.body, 240), at: e.createdAt, eventId: e.id, approvalId: null, taskId: null, sessionId: e.sessionId || null });
     }
     const myTasks = new Map(mine.map((t) => [t.id, t]));

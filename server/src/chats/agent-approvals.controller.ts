@@ -17,7 +17,7 @@
  */
 import { BadRequestException, Body, Controller, NotFoundException, Param, Post } from '@nestjs/common';
 import { IsIn } from 'class-validator';
-import { actorId } from '../accounts/account-context';
+import { actorId, currentAccountId } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
 import { TurnLoopService } from './turn-loop.service';
 
@@ -31,7 +31,10 @@ export class AgentApprovalsController {
   async decide(@Param('id') id: string, @Param('eventId') eventId: string, @Body() dto: DecideDto) {
     const me = actorId();
     const ev = await this.agents.getEvent(id, eventId);
-    if (ev.forMemberAccountId !== me) throw new NotFoundException(`event ${eventId}`);
+    // '' addresses the owner (the channel runtime and turn loop store the
+    // owner's own approvals that way); anyone else must be the named member.
+    const addressee = ev.forMemberAccountId || currentAccountId();
+    if (addressee !== me) throw new NotFoundException(`event ${eventId}`);
     if (ev.kind !== 'approval_request') throw new BadRequestException(`this request was already ${ev.kind.replace('approval_', '')}`);
     const payload = JSON.parse(ev.payload || '{}') as { callId?: string };
     if (!ev.sessionId || !payload.callId) throw new BadRequestException('event has no pending call');

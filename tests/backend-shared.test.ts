@@ -542,3 +542,14 @@ test('org humans: a board member approves a hire but not a scope widen; an obser
   assert.deepEqual(briefs.map((e) => e.forMemberAccountId).sort(), ['', w.bob].sort());
   assert.equal((await runWithAccount(w.alice, () => audit.verify(o.id))).ok, true);
 });
+
+test('an approval addressed to the owner (empty addressee, as channel turns store it) can be answered by the owner; a stale one expires instead of 404', async () => {
+  const w = await world();
+  const turns = { resolveApproval: () => false } as unknown as ConstructorParameters<typeof AgentApprovalsController>[1];
+  const agent = await runWithAccount(w.alice, () => w.agents.create({ name: 'Scout' }));
+  const ev = await runWithAccount(w.alice, () => w.agents.addEvent(agent.id, { kind: 'approval_request', title: 'Scout asks to run fs_write in #company', sessionId: 'sess-gone', payload: JSON.stringify({ callId: 'call-1' }), forMemberAccountId: '' }));
+  const controller = new AgentApprovalsController(w.agents, turns);
+  const res = await runWithAccount(w.alice, () => controller.decide(agent.id, ev.id, { decision: 'allow' }));
+  assert.equal(res.resolved, false, 'the turn that asked is gone');
+  assert.equal((await runWithAccount(w.alice, () => w.agents.getEvent(agent.id, ev.id))).kind, 'approval_expired');
+});
