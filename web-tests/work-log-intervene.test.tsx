@@ -3,10 +3,10 @@
  *  stops, answers its approvals inline; the composer starts a turn when idle
  *  and queues while one runs; Continue in chat; Rerun with its double-click
  *  guard; a person's message is labelled theirs; viewers read only. And the
- *  chat view's way back to the Work log. */
+ *  chat view of a work session: its trigger chip, Open in Work log, Rerun. */
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatSession, WorkRun, WorkRunDetail } from '../src/lib/api';
+import type { ChatSession, ChatTurn, WorkRun, WorkRunDetail } from '../src/lib/api';
 
 const fake: Record<string, unknown> = {};
 vi.mock('../src/store', () => ({ useApp: () => fake, grad: () => 'none' }));
@@ -205,20 +205,36 @@ describe('viewers read only', () => {
 });
 
 describe('the chat view of a work session', () => {
-  it('says it is a work session and goes back to the Work log', () => {
-    const s: ChatSession = {
-      id: 's-beat', workspaceId: 'ws1', agentId: 'a1', agentTypeId: null, name: 'Loop · heartbeat', autoTitle: '', cwd: null, model: '', thinkingEffort: 'off', permissionMode: 'auto',
-      pinned: 0, tags: '[]', archivedAt: null, draft: '', tokenCeiling: 0, compactSummary: '', compactCutoff: null, tokensIn: 0, tokensOut: 0, createdAt: '', updatedAt: '', kind: 'work',
-    };
-    Object.assign(fake, {
-      current: s, currentId: s.id, sessions: [s], transcript: { turns: [], messages: [] }, live: [], streaming: false, drafts: {}, attachments: [], queue: [], settings: {}, workspaces: [], agentTypes: [], pricing: {}, skills: [], fileList: [],
-      me: null, orgHealth: null, wsOrg: null, companiesEnabled: false, stacked: false, width: 1200,
-      patchSession: vi.fn(), archiveChat: vi.fn(), setDraft: vi.fn(), send: vi.fn(), approve: vi.fn(), openArtifact: vi.fn(), openBrowserPanel: vi.fn(), go: vi.fn(), setMobileChatOpen: vi.fn(), refreshFiles: vi.fn(),
-    });
+  const s: ChatSession = {
+    id: 's-beat', workspaceId: 'ws1', agentId: 'a1', agentTypeId: null, name: 'Loop · heartbeat', autoTitle: '', cwd: null, model: '', thinkingEffort: 'off', permissionMode: 'auto',
+    pinned: 0, tags: '[]', archivedAt: null, draft: '', tokenCeiling: 0, compactSummary: '', compactCutoff: null, tokensIn: 0, tokensOut: 0, createdAt: '', updatedAt: '', kind: 'work',
+    trigger: 'heartbeat', triggerKey: '', triggerLabel: 'Heartbeat',
+  };
+  const turn = (id: string, seq: number, status: string): ChatTurn => ({ id, sessionId: 's-beat', seq, input: 'Heartbeat', attachments: '[]', status, toolCalls: '[]', tokensIn: 0, tokensOut: 0, rating: null, taskHandoff: null } as ChatTurn);
+  const viewStore = (turns: ChatTurn[]) => Object.assign(fake, {
+    current: s, currentId: s.id, sessions: [], transcript: { turns, messages: [] }, live: [], streaming: false, drafts: {}, attachments: [], queue: [], settings: {}, workspaces: [], agentTypes: [], pricing: {}, skills: [], fileList: [],
+    me: null, orgHealth: null, wsOrg: null, companiesEnabled: false, stacked: false, width: 1200,
+    patchSession: vi.fn(), archiveChat: vi.fn(), setDraft: vi.fn(), send: vi.fn(), approve: vi.fn(), openArtifact: vi.fn(), openBrowserPanel: vi.fn(), go: vi.fn(), setMobileChatOpen: vi.fn(), refreshFiles: vi.fn(),
+    refreshTranscript: vi.fn(async () => undefined),
+  });
+
+  it('shows the trigger chip and opens the session in the Work log', () => {
+    viewStore([turn('t0', 0, 'done')]);
     render(<ChatView />);
     const banner = screen.getByTestId('work-session-banner');
-    expect(banner).toHaveTextContent("Jong's work session");
-    fireEvent.click(within(banner).getByRole('button', { name: '← Back to Work log' }));
+    expect(within(banner).getByTestId('work-trigger-chip')).toHaveTextContent('Heartbeat');
+    expect(banner).toHaveTextContent("Jong's work");
+    expect(within(banner).queryByRole('button', { name: 'Rerun' })).toBeNull();
+    fireEvent.click(within(banner).getByRole('button', { name: 'Open in Work log' }));
     expect(fake.openWorkLog).toHaveBeenCalledWith('a1', { sessionId: 's-beat' });
+  });
+
+  it('offers Rerun when the last run failed, through the Work log rerun endpoint', async () => {
+    viewStore([turn('t0', 0, 'done'), turn('t1', 1, 'error')]);
+    render(<ChatView />);
+    fireEvent.click(within(screen.getByTestId('work-session-banner')).getByRole('button', { name: 'Rerun' }));
+    await waitFor(() => expect(posted('/api/agents/a1/work-log/runs/t1/rerun')).toHaveLength(1));
+    await waitFor(() => expect(fake.showToast).toHaveBeenCalledWith('Rerunning Heartbeat'));
+    expect(fake.refreshTranscript).toHaveBeenCalled();
   });
 });

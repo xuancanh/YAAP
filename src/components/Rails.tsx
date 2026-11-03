@@ -82,15 +82,50 @@ export function WorkspacePill() {
   );
 }
 
+/** The small trigger glyph on a work row (docs/work-log.md): what started
+ *  the session — the heartbeat, a loop, a task key, a channel, a meeting. */
+function workGlyph(s: Pick<ChatSession, 'trigger' | 'triggerKey'>): string {
+  switch (s.trigger) {
+    case 'heartbeat': case 'loop': return 'loop';
+    case 'task': return s.triggerKey || 'task';
+    case 'meeting': return 'meeting';
+    case 'channel': return 'channel';
+    case 'app': return 'app';
+    case 'org': return 'org';
+    default: return 'work';
+  }
+}
+
+/** The row's title. A work session drops what its glyph already says: a
+ *  loop reads by its name ("digest"), a task by its title, a channel
+ *  session by its `#slug`, an org run without the `Org · ` prefix. */
+function rowTitle(s: ChatSession): string {
+  const name = s.name || s.autoTitle || (s.kind === 'work' ? 'Run' : 'New chat');
+  if (s.kind !== 'work') return name;
+  const key = s.triggerKey ?? '';
+  const label = s.triggerLabel ?? '';
+  switch (s.trigger) {
+    case 'heartbeat': return 'Heartbeat';
+    case 'loop': return key || name;
+    case 'task': return key && label.startsWith(`${key} `) ? label.slice(key.length + 1) : label || name;
+    case 'channel': case 'meeting': return key || name;
+    case 'org': return name.replace(/^Org · /, '');
+    default: return name;
+  }
+}
+
 function SessionRow({ s, approval = false }: { s: ChatSession; approval?: boolean }) {
   const app = useApp();
-  const tags = safeJsonParse<string[]>(s.tags, []);
+  const tags = safeJsonParse<string[]>(s.tags, []).filter((t) => !(s.kind === 'work' && t === 'channel'));
   const active = s.id === app.currentId && app.homeView === 'chat';
+  const work = s.kind === 'work';
   return (
-    <div onClick={() => app.openSession(s.id)} style={{ padding: '7px 10px', borderRadius: 9, cursor: 'pointer', margin: '1px 0', background: active ? 'var(--accent-dim)' : 'none' }}>
+    <div onClick={() => app.openSession(s.id)} data-testid={`rail-row-${s.id}`} style={{ padding: '7px 10px', borderRadius: 9, cursor: 'pointer', margin: '1px 0', background: active ? 'var(--accent-dim)' : 'none' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         {s.pinned === 1 && <I d={P.pin} size={11} fill="var(--amber)" style={{ flex: 'none' }} />}
-        <span style={{ flex: 1, fontSize: 12.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name || s.autoTitle || 'New chat'}</span>
+        {work && <span title={`Work session · ${s.triggerLabel || s.name}`} style={{ fontSize: 9.5, color: 'var(--text-faint)', border: '1px solid var(--border-soft)', borderRadius: 4, padding: '0 4px', flex: 'none', maxWidth: 76, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{workGlyph(s)}</span>}
+        <span style={{ flex: 1, fontSize: 12.5, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rowTitle(s)}</span>
+        {work && s.running && <span title="Running now" aria-label="Running now" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--green)', flex: 'none', animation: 'pulse 1.4s ease-in-out infinite' }} />}
         {approval && <span title="Waiting on your approval" aria-label="Waiting on your approval" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--red)', flex: 'none' }} />}
         {app.me?.hasMembers && s.shared === 1 && <span title="Shared with every member of this workspace" style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 4, padding: '0 5px', flex: 'none' }}>shared</span>}
         {app.me?.hasMembers && s.shared !== 1 && s.initiatedBy && s.initiatedBy !== app.me.actorId && <span title={`Private session of ${app.nameOf(s.initiatedBy)}`} style={{ fontSize: 9.5, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 5px', flex: 'none' }}>{app.nameOf(s.initiatedBy)}</span>}
@@ -154,32 +189,91 @@ function ArtifactsSection() {
  *  best effort): `true` = opened by hand, `false` = closed by hand; absent =
  *  the default (closed, unless the group holds the open chat or wants you). */
 const RAIL_GROUPS_KEY = 'yaam-rail-groups';
-function useRailCollapse(): [Record<string, boolean>, (next: Record<string, boolean>) => void] {
+function useRailCollapse(storageKey = RAIL_GROUPS_KEY): [Record<string, boolean>, (next: Record<string, boolean>) => void] {
   const [state, setState] = useState<Record<string, boolean>>(() => {
-    try { return JSON.parse(localStorage.getItem(RAIL_GROUPS_KEY) ?? '{}') as Record<string, boolean>; } catch { return {}; }
+    try { return JSON.parse(localStorage.getItem(storageKey) ?? '{}') as Record<string, boolean>; } catch { return {}; }
   });
   const save = (next: Record<string, boolean>) => {
     setState(next);
-    try { localStorage.setItem(RAIL_GROUPS_KEY, JSON.stringify(next)); } catch { /* storage unavailable: keep it in memory */ }
+    try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* storage unavailable: keep it in memory */ }
   };
   return [state, save];
+}
+
+/** Collapse state of each agent's Work subsection, per viewer (same rules
+ *  as the groups: absent = the default). */
+const RAIL_WORK_KEY = 'yaam-rail-work';
+
+interface RailWorkView {
+  total: number; items: ChatSession[]; hasMore: boolean;
+  /** Work sessions waiting on an approval (ids). */
+  approvals: Set<string>;
+  /** A run is going in one of the loaded work sessions. */
+  running: boolean;
 }
 
 interface RailGroupView {
   key: string; id: string; name: string; emoji: string; avatar: string; isAgent: boolean;
   total: number; items: ChatSession[];
-  /** The agent's runs (docs/work-log.md): a count and the ones waiting on
-   *  an approval — one "Work log" row, never chat rows. */
-  work: { total: number; approvals: number };
+  /** The agent's runs (docs/work-log.md): the Work subsection's rows. */
+  work: RailWorkView;
   hasMore: boolean; approvals: Set<string>; unread: number;
+}
+
+const moreBtn = (loading: boolean): React.CSSProperties => ({ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', color: 'var(--accent-hi)', fontSize: 11.5, fontWeight: 600, padding: '5px 10px', cursor: loading ? 'default' : 'pointer' });
+
+/** The agent's Work subsection (docs/work-log.md): its work sessions —
+ *  heartbeat, loops, task runs, meetings, channel wakes — as ordinary
+ *  session rows, newest activity first, paged like chats. The header folds
+ *  it, carries the count, a running / approval dot, and a link to the
+ *  agent's Work log timeline. */
+function WorkSection({ g, open, onToggle, searching }: { g: RailGroupView; open: boolean; onToggle: () => void; searching: boolean }) {
+  const app = useApp();
+  const [loading, setLoading] = useState(false);
+  const w = g.work;
+  const remaining = Math.max(0, w.total - w.items.length);
+  const more = async () => {
+    setLoading(true);
+    try { await app.loadMoreWork(g.key); } catch { app.showToast('Could not load more work sessions'); } finally { setLoading(false); }
+  };
+  const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex', flex: 'none' };
+  return (
+    <div data-testid={`rail-work-${g.key || 'workspace'}`} style={{ marginTop: 2 }}>
+      <div onClick={onToggle} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 10px', borderRadius: 9, cursor: 'pointer', color: 'var(--text-faint)' }}>
+        <button onClick={(e) => { e.stopPropagation(); onToggle(); }} aria-label={`${open ? 'Collapse' : 'Expand'} ${g.name}'s work`} aria-expanded={open} style={{ ...iconBtn, padding: 0 }}>
+          <I d={P.chevD} size={11} style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .12s' }} />
+        </button>
+        <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.4px', textTransform: 'uppercase', flex: 1 }}>Work</span>
+        {w.running && <span title="A run is going now" aria-label="A run is going now" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--green)', flex: 'none', animation: 'pulse 1.4s ease-in-out infinite' }} />}
+        {w.approvals.size > 0 && <span title="A run is waiting on your approval" aria-label="A run is waiting on your approval" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--red)', flex: 'none' }} />}
+        <span title={`${w.total} work session${w.total === 1 ? '' : 's'}`} style={{ fontSize: 10, background: 'var(--panel-2)', borderRadius: 5, padding: '0 5px', flex: 'none' }}>{w.total}</span>
+        {g.isAgent && (
+          <button onClick={(e) => { e.stopPropagation(); app.openWorkLog(g.id); }} title="Open the Work log — the timeline of its runs" aria-label={`Open ${g.name}'s Work log`} style={iconBtn}>
+            <I d={P.clock} size={12} />
+          </button>
+        )}
+      </div>
+      {open && (
+        <>
+          {w.items.map((s) => <SessionRow key={s.id} s={s} approval={w.approvals.has(s.id)} />)}
+          {!searching && w.hasMore && remaining > 0 && (
+            <button type="button" onClick={() => void more()} disabled={loading} style={moreBtn(loading)}>
+              {loading ? 'Loading…' : `Show more (${remaining})`}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 /** One root in the combined rail — everything about a single agent: identity
  *  row (opens the agent home) with its unread / approval badges and chat
- *  count, then — when open — its newest chats, "Show more", and one "Work
- *  log" row for its own runs (heartbeat, loops, task runs, meetings —
- *  docs/work-log.md), badged when one of them waits on an approval. */
-function AgentGroup({ g, open, onToggle, searching }: { g: RailGroupView; open: boolean; onToggle: () => void; searching: boolean }) {
+ *  count, then — when open — its newest chats and "Show more", then its
+ *  Work subsection: its own runs (heartbeat, loops, task runs, meetings —
+ *  docs/work-log.md) as the same session rows, folded unless one is
+ *  running, waits on an approval, or is open. */
+function AgentGroup({ g, open, onToggle, workOpen, onToggleWork, searching }: { g: RailGroupView; open: boolean; onToggle: () => void; workOpen: boolean; onToggleWork: () => void; searching: boolean }) {
   const app = useApp();
   const [loading, setLoading] = useState(false);
   const agentActive = g.isAgent && app.selectedAgent === g.id && app.homeView === 'agent';
@@ -188,6 +282,8 @@ function AgentGroup({ g, open, onToggle, searching }: { g: RailGroupView; open: 
     setLoading(true);
     try { await app.loadMoreChats(g.key); } catch { app.showToast('Could not load more chats'); } finally { setLoading(false); }
   };
+  const workApprovals = g.work.approvals.size;
+  const showWork = searching ? g.work.items.length > 0 : g.work.total > 0;
   const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 2, display: 'flex', flex: 'none' };
   return (
     <div style={{ marginTop: 4 }} data-testid={`rail-group-${g.key || 'workspace'}`}>
@@ -198,8 +294,8 @@ function AgentGroup({ g, open, onToggle, searching }: { g: RailGroupView; open: 
         {g.unread > 0 && (
           <span title="Unread activity from loops and proactive work" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px', flex: 'none' }}>{g.unread}</span>
         )}
-        {g.approvals.size + g.work.approvals > 0 && (
-          <span title={g.work.approvals ? `${g.approvals.size + g.work.approvals} waiting on your approval (${g.work.approvals} in its Work log)` : `${g.approvals.size} chat(s) waiting on your approval`} style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--red)', borderRadius: 8, padding: '1px 6px', flex: 'none' }}>{g.approvals.size + g.work.approvals}</span>
+        {g.approvals.size + workApprovals > 0 && (
+          <span title={workApprovals ? `${g.approvals.size + workApprovals} waiting on your approval (${workApprovals} in its work)` : `${g.approvals.size} chat(s) waiting on your approval`} style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--red)', borderRadius: 8, padding: '1px 6px', flex: 'none' }}>{g.approvals.size + workApprovals}</span>
         )}
         <span title={`${g.total} chat${g.total === 1 ? '' : 's'}`} style={{ fontSize: 10.5, color: 'var(--text-faint)', background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px', flex: 'none' }}>{g.total}</span>
         <button onClick={(e) => { e.stopPropagation(); void app.newChat(g.isAgent ? g.id : null); }} title="New chat" aria-label={`New chat with ${g.name}`} style={iconBtn}>
@@ -212,24 +308,13 @@ function AgentGroup({ g, open, onToggle, searching }: { g: RailGroupView; open: 
       {open && (
         <div style={{ paddingLeft: 10, borderLeft: '1px solid var(--border-soft)', marginLeft: 19 }}>
           {g.items.map((s) => <SessionRow key={s.id} s={s} approval={g.approvals.has(s.id)} />)}
-          {g.items.length === 0 && <div style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--text-faint)' }}>No conversations.</div>}
+          {g.items.length === 0 && (!searching || !showWork) && <div style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--text-faint)' }}>No conversations.</div>}
           {!searching && g.hasMore && remaining > 0 && (
-            <button type="button" onClick={() => void more()} disabled={loading}
-              style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', color: 'var(--accent-hi)', fontSize: 11.5, fontWeight: 600, padding: '5px 10px', cursor: loading ? 'default' : 'pointer' }}>
+            <button type="button" onClick={() => void more()} disabled={loading} style={moreBtn(loading)}>
               {loading ? 'Loading…' : `Show more (${remaining})`}
             </button>
           )}
-          {g.isAgent && !searching && g.work.total > 0 && (
-            <div role="button" tabIndex={0} onClick={() => app.openWorkLog(g.id)} onKeyDown={(e) => { if (e.key === 'Enter') app.openWorkLog(g.id); }}
-              title="The agent's own runs — heartbeat, loops, task runs, meetings — with their thinking and tool calls"
-              data-testid={`rail-worklog-${g.key}`}
-              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 9, cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12 }}>
-              <I d={P.clock} size={12} style={{ flex: 'none' }} />
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Work log</span>
-              {g.work.approvals > 0 && <span title="A run is waiting on your approval" aria-label="A run is waiting on your approval" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--red)', flex: 'none' }} />}
-              <I d={P.chevR} size={11} style={{ flex: 'none' }} />
-            </div>
-          )}
+          {showWork && <WorkSection g={g} open={workOpen} onToggle={onToggleWork} searching={searching} />}
         </div>
       )}
     </div>
@@ -296,24 +381,32 @@ export function HomeRail() {
   const [search, setSearch] = useState('');
   const [archOpen, setArchOpen] = useState(false);
   const [explicit, saveExplicit] = useRailCollapse();
+  const [explicitWork, saveExplicitWork] = useRailCollapse(RAIL_WORK_KEY);
+  const [searchKind, setSearchKind] = useState<'all' | 'chat' | 'work'>('all');
   const q = search.trim().toLowerCase();
-  // Search runs on the server (the rail is paged), so it finds chats in
-  // collapsed groups and beyond the loaded pages; groups with a hit open.
+  // Search runs on the server (the rail is paged), so it finds chats and
+  // work sessions in collapsed groups and beyond the loaded pages; groups
+  // with a hit open.
   const [hits, setHits] = useState<ChatRail | null>(null);
   useEffect(() => {
     if (!q || !app.workspaceId) { setHits(null); return; }
     let live = true;
     const t = setTimeout(() => {
-      api.chatRail(app.workspaceId, { q, perAgent: 50 }).then((r) => { if (live) setHits(r); }).catch(() => { if (live) setHits({ groups: [], archivedTotal: 0 }); });
+      api.chatRail(app.workspaceId, { q, perAgent: 50, kind: searchKind }).then((r) => { if (live) setHits(r); }).catch(() => { if (live) setHits({ groups: [], archivedTotal: 0 }); });
     }, 250);
     return () => { live = false; clearTimeout(t); };
-  }, [q, app.workspaceId]);
+  }, [q, app.workspaceId, searchKind]);
 
-  const currentAgentKey = useMemo(() => {
-    if (app.homeView !== 'chat' || !app.currentId) return null;
-    const s = app.sessions.find((x) => x.id === app.currentId);
-    return s ? (s.agentId ?? '') : null;
-  }, [app.sessions, app.currentId, app.homeView]);
+  /** The open session's group, and whether it is one of its work sessions. */
+  const { sessions, chatRail, currentId, homeView } = app;
+  const currentAt = useMemo((): { key: string; work: boolean } | null => {
+    if (homeView !== 'chat' || !currentId) return null;
+    const s = sessions.find((x) => x.id === currentId);
+    if (s) return { key: s.agentId ?? '', work: s.kind === 'work' };
+    const g = chatRail.find((x) => (x.work?.items ?? []).some((y) => y.id === currentId));
+    return g ? { key: g.agentId ?? '', work: true } : null;
+  }, [sessions, chatRail, currentId, homeView]);
+  const currentAgentKey = currentAt?.key ?? null;
 
   const groups = useMemo(() => {
     const source = q ? hits?.groups ?? [] : app.chatRail;
@@ -326,10 +419,14 @@ export function HomeRail() {
       // a search shows the groups with hits, and agents whose name matches (their usual first page)
       const use = g ?? (nameHit ? base.get(key) : undefined);
       if (q && !use && !nameHit) return null;
+      const workItems = use?.work?.items ?? [];
       return {
         key, ...meta,
         total: use?.total ?? 0, items: use?.items ?? [],
-        work: { total: base.get(key)?.work?.total ?? 0, approvals: base.get(key)?.work?.approvalIds.length ?? 0 },
+        work: {
+          total: use?.work?.total ?? 0, items: workItems, hasMore: !q && !!use?.work?.nextCursor,
+          approvals: new Set(base.get(key)?.work?.approvalIds ?? []), running: workItems.some((s) => s.running),
+        },
         hasMore: !q && !!use?.nextCursor, approvals: new Set(base.get(key)?.approvalIds ?? []),
         unread: meta.isAgent ? app.unread[meta.id] ?? 0 : 0,
       };
@@ -339,17 +436,25 @@ export function HomeRail() {
       if (v) out.push(v);
     }
     const ws = view('', { id: '__ws', name: 'Workspace', emoji: '🗂️', avatar: 'var(--panel-2)', isAgent: false });
-    if (ws && (q || ws.total > 0 || out.length === 0)) out.push(ws);
+    if (ws && (q || ws.total > 0 || ws.work.total > 0 || out.length === 0)) out.push(ws);
     return out;
   }, [app.agents, app.chatRail, app.unread, hits, q]);
 
-  /** Open: as the viewer set it by hand; otherwise only the open chat's
-   *  group and groups that want you (unread, an approval). A search opens
-   *  every group with a hit. */
+  /** Open: as the viewer set it by hand; otherwise only the open session's
+   *  group and groups that want you (unread, an approval, a run going). A
+   *  search opens every group with a hit. */
   const isOpen = (g: RailGroupView) => {
     if (q) return true;
     if (explicit[g.key] !== undefined) return explicit[g.key];
-    return g.key === currentAgentKey || g.unread > 0 || g.approvals.size > 0 || g.work.approvals > 0;
+    return g.key === currentAgentKey || g.unread > 0 || g.approvals.size > 0 || g.work.approvals.size > 0;
+  };
+  /** The Work subsection: folded by default unless one of its sessions is
+   *  running, waits on an approval, or is the open one; a search opens it
+   *  when it has hits. */
+  const isWorkOpen = (g: RailGroupView) => {
+    if (q) return g.work.items.length > 0;
+    if (explicitWork[g.key] !== undefined) return explicitWork[g.key];
+    return g.work.running || g.work.approvals.size > 0 || (!!currentAt?.work && currentAt.key === g.key);
   };
   const anyOpen = groups.some(isOpen);
   const setAll = (open: boolean) => saveExplicit(Object.fromEntries(groups.map((g) => [g.key, open])));
@@ -362,6 +467,16 @@ export function HomeRail() {
           <I d={P.search} size={14} stroke="var(--text-faint)" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search conversations" aria-label="Search conversations" style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13, minWidth: 0 }} />
         </div>
+        {q && (
+          <div role="group" aria-label="Search in" style={{ display: 'flex', gap: 4, margin: '-4px 0 10px' }}>
+            {(['all', 'chat', 'work'] as const).map((k) => (
+              <button key={k} type="button" aria-pressed={searchKind === k} onClick={() => setSearchKind(k)}
+                style={{ flex: 1, background: searchKind === k ? 'var(--accent-dim)' : 'var(--panel-2)', color: searchKind === k ? 'var(--accent-hi)' : 'var(--text-dim)', border: '1px solid var(--border-soft)', borderRadius: 7, padding: '3px 0', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                {k === 'all' ? 'All' : k === 'chat' ? 'Chats' : 'Work'}
+              </button>
+            ))}
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={() => void app.newChat(app.selectedAgent)} style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 9, padding: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
             <I d={P.plus} size={15} sw={2.2} />New chat
@@ -385,7 +500,8 @@ export function HomeRail() {
         {/* ---- group chat — end ---- */}
         {groups.map((g) => (
           <AgentGroup key={g.key || '__ws'} g={g} open={isOpen(g)} searching={!!q}
-            onToggle={() => saveExplicit({ ...explicit, [g.key]: !isOpen(g) })} />
+            onToggle={() => saveExplicit({ ...explicit, [g.key]: !isOpen(g) })}
+            workOpen={isWorkOpen(g)} onToggleWork={() => saveExplicitWork({ ...explicitWork, [g.key]: !isWorkOpen(g) })} />
         ))}
         {q && hits && groups.length === 0 && <div style={{ padding: '6px 12px', fontSize: 11.5, color: 'var(--text-faint)' }}>No conversations match.</div>}
         {app.archivedTotal > 0 && (

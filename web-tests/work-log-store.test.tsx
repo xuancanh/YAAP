@@ -1,6 +1,6 @@
 /** The store's side of intervening in a work session (docs/work-log.md
  *  "Intervening"): Continue in chat opens a work session in the chat view
- *  (it stays out of the rail), the #/chat/<id>/chat deep link does the same,
+ *  (the same as any link to it), the #/chat/<id>/chat deep link does too,
  *  and messaging a session starts a turn when it is idle or queues for the
  *  next turn while one runs — sent once the server's turn ends. */
 import { act, cleanup, render, waitFor } from '@testing-library/react';
@@ -56,16 +56,17 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 const posts = () => calls.filter((c) => c.url === '/api/chats/run/turns' && c.method === 'POST');
 
 describe('intervening from the store', () => {
-  it('parses #/chat/<id> and #/chat/<id>/chat links', () => {
-    const asChat = new Set<string>();
-    expect(parseChatLink('#/chat/abc', asChat)).toBe('abc');
-    expect(asChat.has('abc')).toBe(false);
-    expect(parseChatLink('#/chat/abc/chat', asChat)).toBe('abc');
-    expect(asChat.has('abc')).toBe(true);
-    expect(parseChatLink('#/ws/x/org/board', asChat)).toBeNull();
+  it('parses #/chat/<id>, #/chat/<id>/chat and #/chat/<id>/log links', () => {
+    const asLog = new Set<string>();
+    expect(parseChatLink('#/chat/abc', asLog)).toBe('abc');
+    expect(parseChatLink('#/chat/abc/chat', asLog)).toBe('abc');
+    expect(asLog.has('abc')).toBe(false);
+    expect(parseChatLink('#/chat/abc/log', asLog)).toBe('abc');
+    expect(asLog.has('abc')).toBe(true);
+    expect(parseChatLink('#/ws/x/org/board', asLog)).toBeNull();
   });
 
-  it('Continue in chat opens a work session in the chat view; it stays out of the rail', async () => {
+  it('Continue in chat opens a work session in the chat view, like the plain link', async () => {
     render(<AppProvider><Probe /></AppProvider>);
     await waitFor(() => expect(app?.sessions.map((s) => s.id)).toEqual(['c0']));
     act(() => { app!.openInChat('run'); });
@@ -73,9 +74,11 @@ describe('intervening from the store', () => {
     expect(app!.homeView).toBe('chat');
     expect(app!.current?.kind).toBe('work');
     expect(app!.chatRail.flatMap((g) => g.items).some((s) => s.id === 'run')).toBe(false);
-    // and the plain link still routes the session to its Work log
+    // the plain link opens the chat view as well, not the Work log
+    act(() => { app!.openAgent('a1'); });
     act(() => { app!.openSession('run'); });
-    await waitFor(() => expect(app!.workLogFocus).toMatchObject({ agentId: 'a1', sessionId: 'run' }));
+    await waitFor(() => expect(app!.homeView).toBe('chat'));
+    expect(app!.workLogFocus).toBeNull();
   });
 
   it('a #/chat/<id>/chat deep link opens the work session in the chat view', async () => {

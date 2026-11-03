@@ -415,6 +415,38 @@ const AssistantRow = memo(function AssistantRow({ m, turn, agent, isNewest, isLa
   );
 });
 
+/** The header strip of an agent's work session opened in the chat view
+ *  (docs/work-log.md): a chip with what started it (heartbeat, a loop, the
+ *  task key, a channel), "Open in Work log" for its timeline, and Rerun
+ *  when its last run failed or was stopped (the Work log's rerun: the run
+ *  again by its trigger, in this session). */
+function WorkSessionBar({ agentId, sessionId, label, agentName }: { agentId: string; sessionId: string; label: string; agentName: string }) {
+  const app = useApp();
+  const [rerunning, setRerunning] = useState(false);
+  const last = app.transcript.turns.reduce<ChatTurn | null>((a, t) => (t.sessionId === sessionId && (!a || t.seq > a.seq) ? t : a), null);
+  const failed = !!last && !app.streaming && (last.status === 'error' || last.status === 'stopped');
+  const rerun = () => {
+    if (!last || rerunning) return;
+    setRerunning(true);
+    void api.rerunWorkRun(agentId, last.id).then((res) => {
+      app.showToast(res.started ? `Rerunning ${label}` : `The rerun did not start: ${res.error || res.status.replace(/^skipped:/, '').replace(/_/g, ' ')}`);
+      void app.refreshTranscript();
+    }).catch((e: unknown) => app.showToast(e instanceof Error ? e.message.replace(/^\d+\s*/, '').slice(0, 200) : 'Could not rerun it'))
+      .finally(() => setRerunning(false));
+  };
+  const btn: React.CSSProperties = { background: 'none', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 11.5, fontWeight: 600, padding: '3px 10px', cursor: 'pointer', flex: 'none' };
+  return (
+    <div data-testid="work-session-banner" style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '7px 16px', borderBottom: '1px solid var(--border)', background: 'var(--panel-2)', fontSize: 12, color: 'var(--text-dim)' }}>
+      <span data-testid="work-trigger-chip" title={`${agentName}'s work session`} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6, padding: '1px 8px', flex: 'none', maxWidth: '50%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <I d={P.clock} size={11} />{label}
+      </span>
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agentName}'s work</span>
+      {failed && <button onClick={rerun} disabled={rerunning} style={btn}>{rerunning ? 'Rerunning…' : 'Rerun'}</button>}
+      <button onClick={() => app.openWorkLog(agentId, { sessionId })} style={btn}>Open in Work log</button>
+    </div>
+  );
+}
+
 export function ChatView() {
   const app = useApp();
   const taskRefs = useTaskRefs();
@@ -747,14 +779,7 @@ export function ChatView() {
           </button>
         </div>
       </header>
-      {s.kind === 'work' && s.agentId && (
-        <div data-testid="work-session-banner" style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '7px 16px', borderBottom: '1px solid var(--border)', background: 'var(--panel-2)', fontSize: 12, color: 'var(--text-dim)' }}>
-          <span style={{ flex: 1, minWidth: 0 }}>{agent?.name ?? 'The agent'}'s work session — it stays in the Work log, not in your chats.</span>
-          <button onClick={() => app.openWorkLog(s.agentId!, { sessionId: s.id })} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 11.5, fontWeight: 600, padding: '3px 10px', cursor: 'pointer', flex: 'none' }}>
-            ← Back to Work log
-          </button>
-        </div>
-      )}
+      {s.kind === 'work' && s.agentId && <WorkSessionBar agentId={s.agentId} sessionId={s.id} label={s.triggerLabel || s.name} agentName={agent?.name ?? 'The agent'} />}
 
       <div ref={scrollRef} onScroll={(e) => { const el = e.currentTarget; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} style={{ flex: 1, overflowY: 'auto', padding: '22px 0 8px' }}>
         <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 20px' }}>

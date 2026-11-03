@@ -1,9 +1,10 @@
 /** The store's side of the paged rail (docs/chat-archiving.md "The rail"):
  *  sessions come from GET /api/chats/rail (not the full list), "Show more"
  *  appends the next page and is kept on refresh, and an open chat on no
- *  loaded page is looked up by id and stays open. A link to an agent's run
- *  (a `work` session, docs/work-log.md) opens its Work log, never the chat
- *  view — from openSession and from a #/chat/<id> deep link. */
+ *  loaded page is looked up by id and stays open. The agents' work sessions
+ *  (docs/work-log.md) come with the rail and page on their own; a link to
+ *  one opens it in the chat view like a chat — from openSession and from a
+ *  #/chat/<id> deep link — and #/chat/<id>/log opens its Work log. */
 import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSession } from '../src/lib/api';
@@ -20,14 +21,18 @@ function chat(id: string, agentId: string | null, extra: Partial<ChatSession> = 
 const calls: string[] = [];
 const first = Array.from({ length: 5 }, (_, i) => chat(`c${i}`, 'a1'));
 const second = Array.from({ length: 5 }, (_, i) => chat(`c${i + 5}`, 'a1'));
+const works = Array.from({ length: 3 }, (_, i) => chat(`w${i}`, 'a1', { name: `Loop · l${i}`, kind: 'work', trigger: 'loop', triggerKey: `l${i}`, triggerLabel: `Loop · l${i}` }));
 
 function route(url: string): unknown {
   if (url.startsWith('/api/chats/rail')) {
     const wide = url.includes('limits=a1%3A10');
-    return { groups: [{ agentId: 'a1', total: 30, items: wide ? [...first, ...second] : first, nextCursor: 'cur1', approvalIds: [], work: { total: 1, approvalIds: [] } }], archivedTotal: 0 };
+    const wideWork = url.includes('workLimits=a1%3A3');
+    return { groups: [{ agentId: 'a1', total: 30, items: wide ? [...first, ...second] : first, nextCursor: 'cur1', approvalIds: [],
+      work: { total: 3, items: wideWork ? works : works.slice(0, 2), nextCursor: wideWork ? null : 'wcur', approvalIds: [] } }], archivedTotal: 0 };
   }
   if (url.startsWith('/api/chats/page')) {
     if (url.includes('archived=true')) return { items: [], nextCursor: null };
+    if (url.includes('kind=work')) return { items: works.slice(2), nextCursor: null };
     return { items: second, nextCursor: 'cur2' };
   }
   if (url === '/api/chats/far') return chat('far', 'a1');
@@ -45,6 +50,7 @@ function Probe() { app = useApp(); return null; }
 beforeEach(() => {
   calls.length = 0;
   app = null;
+  window.location.hash = '';
   vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined, removeItem: () => undefined });
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     calls.push(String(url));
@@ -76,22 +82,61 @@ describe('the paged rail in the store', () => {
     expect(calls).toContain('/api/chats/far');
     expect(app!.currentId).toBe('far');
 
-    // a link to an agent's run opens its Work log; the open chat stays
+    // a link to an agent's work session opens it in the chat view too; it
+    // is not a conversation, so it stays out of `sessions`
     act(() => { app!.openSession('run'); });
-    await waitFor(() => expect(app!.workLogFocus).toMatchObject({ agentId: 'a1', sessionId: 'run' }));
-    expect(app!.homeView).toBe('agent');
-    expect(app!.selectedAgent).toBe('a1');
-    expect(app!.agentTabRequest).toBe('Work log');
-    expect(app!.currentId).toBe('far');
+    await waitFor(() => expect(app!.current?.id).toBe('run'));
+    expect(app!.homeView).toBe('chat');
+    expect(app!.current?.kind).toBe('work');
+    expect(app!.workLogFocus).toBeNull();
     expect(app!.sessions.some((s) => s.id === 'run')).toBe(false);
   });
 
-  it('a #/chat/<id> deep link to a work session opens the Work log, not the chat view', async () => {
+  it('loads the work sessions with the rail, pages them, and keeps the page on refresh', async () => {
+    render(<AppProvider><Probe /></AppProvider>);
+    await waitFor(() => expect(app?.chatRail[0]?.work.items?.map((s) => s.id)).toEqual(['w0', 'w1']));
+    await act(async () => { await app!.loadMoreWork('a1'); });
+    expect(app!.chatRail[0].work.items!.map((s) => s.id)).toEqual(['w0', 'w1', 'w2']);
+    expect(app!.chatRail[0].work.nextCursor).toBeNull();
+    expect(calls.some((u) => u.startsWith('/api/chats/page?') && u.includes('kind=work') && u.includes('cursor=wcur'))).toBe(true);
+    await act(async () => { await app!.refreshSessions(); });
+    expect(calls.some((u) => u.startsWith('/api/chats/rail') && u.includes('workLimits=a1%3A3'))).toBe(true);
+    // a work row opens in the chat view without another lookup
+    act(() => { app!.openSession('w1'); });
+    await waitFor(() => expect(app!.current?.id).toBe('w1'));
+    expect(calls).not.toContain('/api/chats/w1');
+  });
+
+  it('a #/chat/<id> deep link to a work session opens the chat view', async () => {
     window.location.hash = '#/chat/run';
+    render(<AppProvider><Probe /></AppProvider>);
+    await waitFor(() => expect(app?.currentId).toBe('run'));
+    expect(app!.homeView).toBe('chat');
+    expect(app!.workLogFocus).toBeNull();
+    expect(window.location.hash).toBe('');
+  });
+
+  it('a #/chat/<id> deep link to a chat opens the chat view', async () => {
+    window.location.hash = '#/chat/far';
+    render(<AppProvider><Probe /></AppProvider>);
+    await waitFor(() => expect(app?.currentId).toBe('far'));
+    expect(app!.homeView).toBe('chat');
+  });
+
+  it('a #/chat/<id>/log deep link opens the work session in the Work log', async () => {
+    window.location.hash = '#/chat/run/log';
     render(<AppProvider><Probe /></AppProvider>);
     await waitFor(() => expect(app?.workLogFocus).toMatchObject({ agentId: 'a1', sessionId: 'run' }));
     expect(app!.homeView).toBe('agent');
+    expect(app!.agentTabRequest).toBe('Work log');
     expect(app!.currentId).not.toBe('run');
     expect(window.location.hash).toBe('');
+  });
+
+  it('a #/chat/<id>/log deep link to a loaded work row opens the Work log too', async () => {
+    window.location.hash = '#/chat/w0/log';
+    render(<AppProvider><Probe /></AppProvider>);
+    await waitFor(() => expect(app?.workLogFocus).toMatchObject({ agentId: 'a1', sessionId: 'w0' }));
+    expect(app!.currentId).not.toBe('w0');
   });
 });

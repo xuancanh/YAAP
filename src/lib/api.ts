@@ -281,10 +281,18 @@ export interface ChatSession {
   /** The task this chat works on: 'org' | 'agent' (kanban) | null. */
   taskKind?: string | null;
   taskId?: string | null;
-  /** 'chat' — a conversation with people (the rail, ChatView); 'work' — the
-   *  agent's own run (heartbeat, loop, org task, meeting round, channel
-   *  wake), read in its Work log (docs/work-log.md). Absent = chat. */
+  /** 'chat' — a conversation with people; 'work' — the agent's own run
+   *  (heartbeat, loop, org task, meeting round, channel wake), listed in
+   *  the rail's Work subsection and opened in ChatView like a chat, its
+   *  timeline in the Work log (docs/work-log.md). Absent = chat. */
   kind?: 'chat' | 'work';
+  /** Work sessions (from the rail, the page and GET /chats/:id): what
+   *  started them — the heartbeat, a loop, a task (key), a channel — and
+   *  whether a run is going now. */
+  trigger?: WorkTrigger;
+  triggerKey?: string;
+  triggerLabel?: string;
+  running?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -299,10 +307,11 @@ export interface ChatRailGroup {
   nextCursor: string | null;
   /** Chats with an approval waiting in the inbox. */
   approvalIds: string[];
-  /** The agent's work sessions (docs/work-log.md): how many, and the ones
-   *  waiting on an approval — a badge on the agent and a Work log link,
-   *  never chat rows. */
-  work: { total: number; approvalIds: string[] };
+  /** The agent's work sessions (docs/work-log.md), the rail's Work
+   *  subsection: how many, the loaded page (newest activity first, each
+   *  with its trigger), the next cursor, and the ones waiting on an
+   *  approval. `items`/`nextCursor` are absent from older servers. */
+  work: { total: number; approvalIds: string[]; items?: ChatSession[]; nextCursor?: string | null };
 }
 export interface ChatRail { groups: ChatRailGroup[]; archivedTotal: number }
 
@@ -1665,15 +1674,19 @@ export const api = {
   // chats
   chats: (workspaceId: string) => get<ChatSession[]>(`/api/chats?workspaceId=${enc(workspaceId)}`, chatSessionListSchema),
   chat: (id: string) => get<ChatSession>(`/api/chats/${id}`, chatSessionSchema),
-  /** The Home rail: per agent the first page of chats, the work counts and the approvals. */
-  chatRail: (workspaceId: string, opts: { limits?: Record<string, number>; q?: string; perAgent?: number } = {}) => {
-    const limits = Object.entries(opts.limits ?? {}).map(([k, n]) => `${k}:${n}`).join(',');
-    return get<ChatRail>(`/api/chats/rail?workspaceId=${enc(workspaceId)}${limits ? `&limits=${enc(limits)}` : ''}${opts.q ? `&q=${enc(opts.q)}` : ''}${opts.perAgent ? `&perAgent=${opts.perAgent}` : ''}`);
+  /** The Home rail: per agent the first page of chats and of work sessions, and the approvals.
+   *  `kind` narrows a search to chats or work. */
+  chatRail: (workspaceId: string, opts: { limits?: Record<string, number>; workLimits?: Record<string, number>; q?: string; perAgent?: number; kind?: 'chat' | 'work' | 'all' } = {}) => {
+    const pairs = (m?: Record<string, number>) => Object.entries(m ?? {}).map(([k, n]) => `${k}:${n}`).join(',');
+    const limits = pairs(opts.limits);
+    const workLimits = pairs(opts.workLimits);
+    return get<ChatRail>(`/api/chats/rail?workspaceId=${enc(workspaceId)}${limits ? `&limits=${enc(limits)}` : ''}${workLimits ? `&workLimits=${enc(workLimits)}` : ''}${opts.q ? `&q=${enc(opts.q)}` : ''}${opts.perAgent ? `&perAgent=${opts.perAgent}` : ''}${opts.kind && opts.kind !== 'all' ? `&kind=${opts.kind}` : ''}`);
   },
-  /** One page of chats: an agent's ('none' = agent-less) or the archive (conversations only). */
-  chatPage: (workspaceId: string, opts: { agentId?: string | null; archived?: boolean; q?: string; limit?: number; cursor?: string | null } = {}) => {
+  /** One page of the rail: an agent's chats ('none' = agent-less), its work sessions (`kind: 'work'`), or the archive. */
+  chatPage: (workspaceId: string, opts: { agentId?: string | null; archived?: boolean; q?: string; limit?: number; cursor?: string | null; kind?: 'chat' | 'work' } = {}) => {
     const p = new URLSearchParams({ workspaceId });
     if (opts.agentId !== undefined) p.set('agentId', opts.agentId === null ? 'none' : opts.agentId);
+    if (opts.kind === 'work') p.set('kind', 'work');
     if (opts.archived) p.set('archived', 'true');
     if (opts.q) p.set('q', opts.q);
     if (opts.limit) p.set('limit', String(opts.limit));

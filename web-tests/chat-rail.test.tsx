@@ -1,9 +1,11 @@
 /** The Home rail (docs/chat-archiving.md "The rail"): agent groups collapsed
  *  by default except the open chat's group and groups with unread activity or
  *  an approval; the header's badges and count; collapse kept per viewer;
- *  "Show more" pages; no work-session rows — one "Work log" row per agent,
- *  badged when a run waits on an approval (docs/work-log.md); Collapse
- *  all / Expand all; search reaches collapsed groups and opens them; the
+ *  "Show more" pages; the agent's work sessions in a Work subsection after
+ *  its chats — the same rows with a trigger glyph, folded unless a run is
+ *  going, waits on an approval or is open, paged, with a Work log link
+ *  (docs/work-log.md); Collapse all / Expand all; search reaches collapsed
+ *  groups and both kinds and opens them, narrowed by Chats / Work; the
  *  archive pages too. And the chat header's auto-archive control and the
  *  agent Settings default. */
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -32,6 +34,15 @@ function group(agentId: string | null, n: number, extra: Partial<ChatRailGroup> 
   return { agentId, total: n, items, nextCursor: n > 5 ? 'c1' : null, approvalIds: [], work: { total: 0, approvalIds: [] }, ...extra };
 }
 
+const WORK_KEY = 'yaam-rail-work';
+const beat = (agentId: string, extra: Partial<ChatSession> = {}) =>
+  chat(`${agentId}-beat`, agentId, 'Loop · heartbeat', { kind: 'work', trigger: 'heartbeat', triggerKey: '', triggerLabel: 'Heartbeat', running: false, ...extra });
+const task = (agentId: string, extra: Partial<ChatSession> = {}) =>
+  chat(`${agentId}-task`, agentId, 'Org · Acme · Close the books', { kind: 'work', trigger: 'task', triggerKey: 'ENG-12', triggerLabel: 'ENG-12 Close the books', running: false, ...extra });
+function workOf(_agentId: string, items: ChatSession[], total = items.length, approvalIds: string[] = []): ChatRailGroup['work'] {
+  return { total, items, nextCursor: total > items.length ? 'w1' : null, approvalIds };
+}
+
 const fetchCalls: string[] = [];
 let searchResult: unknown = { groups: [], archivedTotal: 0 };
 
@@ -54,7 +65,7 @@ beforeEach(() => {
     unread: {}, sessions: [], currentId: null, homeView: 'chat', selectedAgent: null,
     archived: [], archivedTotal: 0, archivedHasMore: false,
     channels: [], currentChannel: null, me: null, nameOf: (x: string) => x,
-    loadMoreChats: vi.fn(async () => undefined), loadMoreArchived: vi.fn(async () => undefined),
+    loadMoreChats: vi.fn(async () => undefined), loadMoreWork: vi.fn(async () => undefined), loadMoreArchived: vi.fn(async () => undefined),
     restoreChat: vi.fn(), newChat: vi.fn(), openAgent: vi.fn(), openSession: vi.fn(), openWorkLog: vi.fn(), setNewAgentOpen: vi.fn(),
     refreshChannels: vi.fn(), openChannel: vi.fn(), showToast: vi.fn(), patchSession: vi.fn(async () => undefined), refreshAgents: vi.fn(async () => undefined),
     width: 1200,
@@ -64,6 +75,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 const groupEl = (key: string) => screen.getByTestId(`rail-group-${key}`);
 const rows = (key: string) => within(groupEl(key)).queryAllByText(/chat \d+$/);
+const workEl = (key: string) => screen.getByTestId(`rail-work-${key}`);
 
 describe('the Home rail', () => {
   it('collapses every agent group by default and shows the count on the header', () => {
@@ -118,27 +130,64 @@ describe('the Home rail', () => {
     expect(within(groupEl('a2')).queryByRole('button', { name: /Show more/ })).toBeNull();
   });
 
-  it('lists conversations only: the agent runs are one "Work log" row, never chat rows', () => {
+  it('lists work sessions after the chats in a Work subsection, folded by default, with the same rows', () => {
     storage[KEY] = JSON.stringify({ a1: true });
-    fake.chatRail = [group('a1', 2, { work: { total: 7, approvalIds: [] } })];
+    fake.chatRail = [group('a1', 2, { work: workOf('a1', [beat('a1'), task('a1')], 7) })];
     render(<HomeRail />);
     const g = groupEl('a1');
-    expect(within(g).queryByText('Heartbeat runs')).toBeNull();
-    expect(within(g).queryByText(/^Loop · /)).toBeNull();
+    const w = workEl('a1');
     expect(rows('a1')).toHaveLength(2);
-    fireEvent.click(within(g).getByTestId('rail-worklog-a1'));
+    // chats first, then the Work subsection
+    expect(g.innerHTML.indexOf('a1 chat 1')).toBeLessThan(g.innerHTML.indexOf('rail-work-a1'));
+    expect(within(w).getByTitle('7 work sessions')).toHaveTextContent('7');
+    expect(within(w).queryByText('Heartbeat')).toBeNull();
+    expect(screen.queryByTestId('rail-worklog-a1')).toBeNull();
+    fireEvent.click(within(w).getByRole('button', { name: "Expand Jong's work" }));
+    expect(JSON.parse(storage[WORK_KEY])).toEqual({ a1: true });
+    expect(within(w).getByText('Heartbeat')).toBeInTheDocument();
+    // a task run reads by its title with its key as the glyph
+    expect(within(w).getByText('Close the books')).toBeInTheDocument();
+    expect(within(w).getByText('ENG-12')).toBeInTheDocument();
+    expect(within(w).getByText('loop')).toBeInTheDocument();
+    fireEvent.click(within(w).getByText('Heartbeat'));
+    expect(fake.openSession).toHaveBeenCalledWith('a1-beat');
+    // the header links to the Work log timeline
+    fireEvent.click(within(w).getByRole('button', { name: "Open Jong's Work log" }));
     expect(fake.openWorkLog).toHaveBeenCalledWith('a1');
-    expect(fake.openSession).not.toHaveBeenCalled();
+    // "Show more (N)" pages the work sessions
+    fireEvent.click(within(w).getByRole('button', { name: 'Show more (5)' }));
+    expect(fake.loadMoreWork).toHaveBeenCalledWith('a1');
   });
 
-  it('a run waiting on an approval badges the agent and opens its group, without a chat row', () => {
-    fake.chatRail = [group('a1', 2, { work: { total: 3, approvalIds: ['run-1'] } }), group('a2', 3)];
+  it('opens the Work subsection by itself when a run is going, waits on an approval, or is the open session', () => {
+    fake.chatRail = [
+      group('a1', 2, { work: workOf('a1', [beat('a1', { running: true }), task('a1')]) }),
+      group('a2', 3, { work: workOf('a2', [beat('a2'), task('a2')], 2, ['a2-task']) }),
+      group('a3', 2, { work: workOf('a3', [beat('a3'), task('a3')]) }),
+    ];
+    storage[KEY] = JSON.stringify({ a1: true, a3: true });
+    fake.currentId = 'a3-task';
     render(<HomeRail />);
-    const g = groupEl('a1');
-    expect(within(g).getByTitle(/1 waiting on your approval \(1 in its Work log\)/)).toHaveTextContent('1');
-    expect(rows('a1')).toHaveLength(2);
-    expect(within(g).getByLabelText('A run is waiting on your approval')).toBeInTheDocument();
-    expect(rows('a2')).toHaveLength(0);
+    // running: open, with the running dot on the header and the row
+    expect(within(workEl('a1')).getByText('Heartbeat')).toBeInTheDocument();
+    expect(within(workEl('a1')).getByLabelText('A run is going now')).toBeInTheDocument();
+    expect(within(workEl('a1')).getByLabelText('Running now')).toBeInTheDocument();
+    // waiting on an approval: the group and its Work open, the row and the agent badged
+    expect(within(groupEl('a2')).getByTitle(/1 waiting on your approval \(1 in its work\)/)).toHaveTextContent('1');
+    expect(within(workEl('a2')).getByLabelText('A run is waiting on your approval')).toBeInTheDocument();
+    expect(within(workEl('a2')).getAllByLabelText('Waiting on your approval')).toHaveLength(1);
+    // the open session is one of its work sessions
+    expect(within(workEl('a3')).getByText('Close the books')).toBeInTheDocument();
+    // folding it by hand sticks
+    fireEvent.click(within(workEl('a1')).getByRole('button', { name: "Collapse Jong's work" }));
+    expect(within(workEl('a1')).queryByText('Heartbeat')).toBeNull();
+    expect(JSON.parse(storage[WORK_KEY])).toEqual({ a1: false });
+  });
+
+  it('shows no Work subsection for an agent without work sessions', () => {
+    storage[KEY] = JSON.stringify({ a2: true });
+    render(<HomeRail />);
+    expect(screen.queryByTestId('rail-work-a2')).toBeNull();
   });
 
   it('Collapse all / Expand all sets every group and persists', () => {
@@ -166,6 +215,22 @@ describe('the Home rail', () => {
     // clearing the search returns to the collapsed rail
     fireEvent.change(screen.getByLabelText('Search conversations'), { target: { value: '' } });
     await waitFor(() => expect(screen.queryByText('Quarterly close notes')).toBeNull());
+  });
+
+  it('search reaches work sessions too, opens their Work subsection, and narrows to Chats / Work', async () => {
+    searchResult = { groups: [group('a2', 0, { items: [], work: workOf('a2', [task('a2')]) })], archivedTotal: 0 };
+    render(<HomeRail />);
+    expect(screen.queryByRole('group', { name: 'Search in' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Search conversations'), { target: { value: 'books' } });
+    await waitFor(() => expect(screen.getByText('Close the books')).toBeInTheDocument());
+    expect(within(workEl('a2')).getByText('Close the books')).toBeInTheDocument();
+    expect(within(groupEl('a2')).queryByText('No conversations.')).toBeNull();
+    expect(fetchCalls.filter((u) => u.includes('q=books')).every((u) => !u.includes('kind='))).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Work' }));
+    await waitFor(() => expect(fetchCalls.some((u) => u.includes('q=books') && u.includes('kind=work'))).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: 'Chats' }));
+    await waitFor(() => expect(fetchCalls.some((u) => u.includes('q=books') && u.includes('kind=chat'))).toBe(true));
+    expect(screen.getByRole('button', { name: 'Chats' })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('pages the archive the same way', () => {
