@@ -76,6 +76,14 @@ export const P = {
   rows: ['M4 7h16M4 12h16M4 17h10'],
   memoryIcon: ['M4 5h16v14H4z', 'M8 5v14'],
   context: ['M4 6h16v4H4zM4 14h10v4H4z'],
+  // the top bar (docs/home.md "Top bar")
+  bell: ['M6 16V11a6 6 0 0112 0v5l1.5 2h-15z', 'M10 20a2 2 0 004 0'],
+  help: ['M12 3a9 9 0 100 18 9 9 0 000-18z', 'M9.5 9.5a2.5 2.5 0 114 2c-.9.6-1.5 1.1-1.5 2.2', 'M12 16.6a.6.6 0 100 1.2.6.6 0 000-1.2z'],
+  /** Draw filled (`fill="currentColor"`). */
+  dots: ['M5 10.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3zM12 10.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3zM19 10.5a1.5 1.5 0 100 3 1.5 1.5 0 000-3z'],
+  pause: ['M9 6v12M15 6v12'],
+  play: ['M8 5.5v13l10-6.5z'],
+  user: ['M12 4a4 4 0 100 8 4 4 0 000-8z', 'M4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5'],
 };
 
 export const CAP_ICON: Record<string, string[]> = {

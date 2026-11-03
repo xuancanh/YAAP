@@ -5,8 +5,9 @@ import { AppProvider, useApp } from './store';
 import { AuthProvider, useAuth } from './auth';
 import { SignIn } from './components/SignIn';
 import { ActivityBar, BottomNav, Toast } from './components/Shell';
-import { WorkspacePill, HomeRail, CompanyRail, ArtifactsRail, MarketRail, SettingsRail, SecondaryHeader } from './components/Rails';
+import { HomeRail, CompanyRail, ArtifactsRail, MarketRail, SettingsRail, SecondaryHeader } from './components/Rails';
 import { isCompanySection, sectionDef } from './lib/company-nav';
+import { TopBar } from './components/TopBar';
 import { ChatView } from './components/ChatView';
 import { ChannelView } from './components/ChannelView';
 import { FilesView } from './components/FilesView';
@@ -85,9 +86,14 @@ function Layout() {
     <div data-theme={app.theme} style={{ height: '100vh', display: 'flex', position: 'relative', background: 'var(--bg)', color: 'var(--text)', fontSize: 14, overflow: 'hidden', paddingBottom: app.stacked ? 58 : 0 }}>
       {!app.stacked && <ActivityBar />}
 
+      {/* The top bar (docs/home.md "Top bar") spans the work area beside the
+          main menu: the workspace switcher, the company at a glance, search,
+          create, notifications and the account. */}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      <TopBar onSettings={(pane) => { setSettingsPane(pane); app.go('settings'); app.setMobileDetail(true); }} />
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', position: 'relative' }}>
       {showSecondary && hasSecondary && (
         <aside style={{ width: app.stacked ? '100%' : app.mediumDock ? 250 : 292, flex: 'none', background: 'var(--panel)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          {(sec === 'home' || company || sec === 'artifacts' || sec === 'settings') && <WorkspacePill />}
           <SecondaryHeader title={secTitle} />
           {sec === 'home' && <HomeRail />}
           {company && <CompanyRail section={sec} />}
@@ -118,6 +124,8 @@ function Layout() {
       )}
 
       <ArtifactPanel />
+      </div>
+      </div>
       {app.stacked && <BottomNav />}
       <Suspense fallback={null}><HireModal /></Suspense>
       <Suspense fallback={null}><NewAgentDialog /></Suspense>

@@ -42,8 +42,10 @@ export const ORG_PANES_IN_ARTIFACTS = ['ask', 'playbooks', 'metrics', 'experimen
 /** Something a pane should open or scroll to once loaded (a signal row's
  *  deep link, docs/company-vision.md §5): a task on the board, a goal on the
  *  vision page, a meeting thread, a plan, a replay day (the id is the
- *  YYYY-MM-DD). Consumed by the pane. */
-export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'replay' | 'incident' | 'action' | 'project'; id: string }
+ *  YYYY-MM-DD); mission control opened on a filter (`mission`, the id a
+ *  MissionOnly such as `error`, from the top bar's failing count). Consumed
+ *  by the pane. */
+export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'replay' | 'incident' | 'action' | 'project' | 'mission'; id: string }
 const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
 /** What the main pane shows while in the Home section: a conversation, a
  *  group-chat channel, an agent's home page (or the directory when no agent

@@ -296,6 +296,16 @@ export function MissionControlPane({ org, onEditStructure }: { org: OrgDetail; o
     app.setOrgPane('board');
   };
   const narrow = app.width < 720;
+  // The top bar's failing count opens mission control on that filter.
+  // The focus is consumed: the filter applies once, and the board stays the person's to change.
+  const focusOnly = app.orgFocus?.kind === 'mission' ? app.orgFocus.id : null;
+  const [initial, setInitial] = useState<{ filter: MissionFilter; n: number }>({ filter: NO_FILTER, n: 0 });
+  useEffect(() => {
+    if (!focusOnly) return;
+    if (ONLY.some((o) => o.id === focusOnly)) setInitial((x) => ({ filter: { ...NO_FILTER, only: focusOnly as MissionOnly }, n: x.n + 1 }));
+    app.setOrgFocus(null);
+  }, [focusOnly, app]);
+  const initialFilter = initial.filter;
   return (
     <div style={{ maxWidth: 1400, minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -308,7 +318,7 @@ export function MissionControlPane({ org, onEditStructure }: { org: OrgDetail; o
       {!mc ? (
         error ? <div role="alert" style={{ fontSize: 12.5, color: 'var(--red)' }}>{error} <button style={{ ...btn(), marginLeft: 6 }} onClick={() => void load()}>Retry</button></div> : <div style={faint}>Loading…</div>
       ) : (
-        <MissionControlBoard mc={mc} now={now} narrow={narrow} selected={selected} onSelect={(id) => setSelected((cur) => (cur === id ? null : id))}
+        <MissionControlBoard key={initial.n} mc={mc} now={now} narrow={narrow} initialFilter={initialFilter} selected={selected} onSelect={(id) => setSelected((cur) => (cur === id ? null : id))}
           onWaitingOnYou={() => { app.setOrgFocus(null); app.setOrgPane('approvals'); }} onOpenUnit={openUnit} nameOfHuman={(id) => app.nameOf(id)} />
       )}
       {node && (

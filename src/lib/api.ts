@@ -919,7 +919,9 @@ export type WorkspaceEvent =
   | { type: 'meeting_update'; workspaceId: string; channelId: string; meetingId: string; threadRootId: string | null; status: string }
   /** docs/filesystem.md "Activity": a write through WorkspaceFs. */
   | { type: 'file.changed' | 'file_changed'; workspaceId?: string; path: string; version?: number; by?: FileAuthor | string | null }
-  | { type: 'channel_approval'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; sessionId: string; callId: string; tool: string; input: Record<string, unknown>; forActor: string; forName: string };
+  | { type: 'channel_approval'; workspaceId: string; channelId: string; threadRootId: string | null; agentId: string; sessionId: string; callId: string; tool: string; input: Record<string, unknown>; forActor: string; forName: string }
+  /** docs/home.md "Top bar": a turn started (`on`) or ended in the workspace; `running` counts the turns running there now. */
+  | { type: 'turn_live'; workspaceId: string; sessionId: string; agentId: string | null; on: boolean; running: number };
 
 export interface SearchResults {
   /** Group-chat hits (the same FTS extended to channel messages). */
@@ -1612,7 +1614,7 @@ export function setActiveSharedWorkspace(id: string | null): void { sharedWorksp
 
 /** Routes about *this* account rather than the workspace on screen: never
  *  carry the workspace header, or an owner's data would answer for ours. */
-const OWN_ACCOUNT_ROUTE = /^\/api\/(auth|account|admin|push)(\/|$)|^\/api\/workspaces(\/shared)?$/;
+const OWN_ACCOUNT_ROUTE = /^\/api\/(auth|account|admin|push)(\/|$)|^\/api\/workspaces(\/shared)?$|^\/api\/topbar\/workspaces$/;
 
 /** Power-user escape hatch matching YAAM_API_TOKEN on the server: set
  *  localStorage key `yaam_api_token` to attach a bearer token to every call.
@@ -2296,7 +2298,43 @@ export const api = {
   agentOverview: (agentId: string) => get<AgentOverview>(`/api/agents/${enc(agentId)}/overview`),
   /** The org chart's mission control (docs/mission-control.md). */
   missionControl: (wsId: string) => get<MissionControl>(`/api/workspaces/${wsId}/org/mission-control`),
+  /** The top bar (docs/home.md "Top bar"): the company at a glance. */
+  workspaceStatus: (wsId: string) => get<WorkspaceStatus>(`/api/workspaces/${wsId}/status`),
+  /** The switcher's rows: each own workspace's company state, Needs you and unread notifications. */
+  workspaceGlance: () => get<WorkspaceGlanceRow[]>('/api/topbar/workspaces'),
+  /** The bell: what waits on you, and the inbox events addressed to you. */
+  notifications: (wsId: string) => get<NotificationsPage>(`/api/workspaces/${wsId}/notifications`),
+  markNotificationsRead: (wsId: string, body: { ids: string[] } | { all: true }) => send<{ ok: true; marked: number }>(`/api/workspaces/${wsId}/notifications/read`, 'POST', body),
 };
+
+// ---- the top bar (docs/home.md "Top bar"; server/src/home/topbar.types.ts) ----
+export interface WorkspaceCompanyGlance { name: string; mode: 'supervised' | 'autonomous'; status: 'active' | 'paused' }
+export interface LiveRun { sessionId: string; agentId: string | null; agentName: string; origin: string; sessionName: string; startedAt: string; toolLabel: string }
+export interface WorkspaceStatus {
+  workspaceId: string; generatedAt: string;
+  company: WorkspaceCompanyGlance | null;
+  needsYou: number; urgent: number;
+  spend: Pick<HomeSpend, 'todayUsd' | 'monthUsd' | 'monthCapUsd' | 'projectedUsd' | 'forecastState'> | null;
+  agents: { total: number; working: number; failing: number; faces: Array<{ id: string; name: string; emoji: string; colors: string; state: 'working' | 'error' }> };
+  live: LiveRun[];
+  nextMeeting: { id: string; title: string; at: string; meetingId: string | null } | null;
+  partial: string[];
+}
+export interface WorkspaceGlanceRow { workspaceId: string; company: WorkspaceCompanyGlance | null; needsYou: number; unread: number }
+export type NotificationKind = 'decision' | 'escalation' | 'key' | 'plan' | 'incident' | 'signal' | 'queued_action'
+  | 'message' | 'mention' | 'follow' | 'run_failed' | 'budget_stop' | 'activity';
+export type NotificationTarget =
+  | { to: 'need'; need: Pick<HomeNeed, 'kind' | 'ref'> }
+  | { to: 'chat'; sessionId: string }
+  | { to: 'agent'; agentId: string }
+  | { to: 'hash'; hash: string }
+  | { to: 'inbox' };
+export interface TopNotification {
+  id: string; kind: NotificationKind; title: string; body: string; at: string;
+  severity: 'critical' | 'high' | 'normal' | 'low'; read: boolean; waiting: boolean;
+  deadline: string | null; expiresSoon: boolean; from: string; agentId: string | null; target: NotificationTarget;
+}
+export interface NotificationsPage { generatedAt: string; items: TopNotification[]; unread: number }
 
 // ---- Home (docs/home.md; server/src/home/home.types.ts) ----
 export type HomeNeedAction = 'approve' | 'reject' | 'veto' | 'apply_now' | 'ack' | 'dismiss';

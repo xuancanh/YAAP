@@ -27,6 +27,7 @@ import { GroupChatService } from './groupchat.service';
 import { ChannelRuntimeService } from './channel-runtime.service';
 import { WorkspaceEventBus } from './workspace-events';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { liveTurns } from '../chats/live-turns';
 
 class CreateChannelDto {
   @IsString() name!: string;
@@ -223,7 +224,8 @@ export class GroupChatController {
   }
 
   /** Workspace SSE (§4): channel_message · channel_typing · channel_stream ·
-   *  task_update · channel_update · channel_approval. Same wire format as the
+   *  task_update · channel_update · channel_approval, and turn_live (a turn
+   *  starting or ending in the workspace, docs/home.md "Top bar"). Same wire format as the
    *  turn stream; keepalive pings every 15s. */
   @Get('events')
   async events_(@Param('id') id: string, @Res() res: Response) {
@@ -238,8 +240,12 @@ export class GroupChatController {
     const unsubscribe = this.events.subscribe(id, (ev) => {
       if (!res.writableEnded) res.write(`data: ${JSON.stringify(ev)}\n\n`);
     });
+    // Turns starting and ending here (the top bar's live runs count).
+    const unsubscribeLive = liveTurns.subscribe(id, (ev) => {
+      if (!res.writableEnded) res.write(`data: ${JSON.stringify(ev)}\n\n`);
+    });
     const keepalive = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15_000);
-    const close = () => { clearInterval(keepalive); unsubscribe(); if (!res.writableEnded) res.end(); };
+    const close = () => { clearInterval(keepalive); unsubscribe(); unsubscribeLive(); if (!res.writableEnded) res.end(); };
     res.on('close', close);
     res.on('error', close);
   }

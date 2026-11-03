@@ -55,11 +55,17 @@ export function describeToolCall(tool: string, input: unknown): string {
   return clip(`using ${name.replace(/_/g, ' ')}`, 120);
 }
 
+/** A turn starting or ending in a workspace (the top bar's live runs count,
+ *  docs/home.md "Top bar"); `running` is how many turns run there now. */
+export interface LiveTurnChange { type: 'turn_live'; workspaceId: string; sessionId: string; agentId: string | null; on: boolean; running: number }
+
 export class LiveTurnRegistry {
   private readonly turns = new Map<string, LiveTurn>();
+  private readonly listeners = new Map<string, Set<(ev: LiveTurnChange) => void>>();
 
   begin(t: Pick<LiveTurn, 'sessionId' | 'turnId' | 'agentId' | 'workspaceId' | 'origin' | 'sessionName'>, now = new Date()): void {
     this.turns.set(t.sessionId, { ...t, startedAt: now.toISOString(), tool: null, toolLabel: '', toolAt: null, calls: 0 });
+    this.notify(t.workspaceId, t.sessionId, t.agentId, true);
   }
 
   tool(sessionId: string, tool: string, input: unknown, now = new Date()): void {
@@ -68,7 +74,31 @@ export class LiveTurnRegistry {
     t.tool = tool; t.toolLabel = describeToolCall(tool, input); t.toolAt = now.toISOString(); t.calls += 1;
   }
 
-  end(sessionId: string): void { this.turns.delete(sessionId); }
+  end(sessionId: string): void {
+    const t = this.turns.get(sessionId);
+    this.turns.delete(sessionId);
+    if (t) this.notify(t.workspaceId, sessionId, t.agentId, false);
+  }
+
+  /** Every turn running in a workspace now, oldest first. */
+  inWorkspace(workspaceId: string): LiveTurn[] {
+    return [...this.turns.values()].filter((t) => t.workspaceId === workspaceId).map((t) => ({ ...t })).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  }
+
+  /** Hear turns start and end in one workspace (the workspace SSE stream). */
+  subscribe(workspaceId: string, listener: (ev: LiveTurnChange) => void): () => void {
+    let set = this.listeners.get(workspaceId);
+    if (!set) { set = new Set(); this.listeners.set(workspaceId, set); }
+    set.add(listener);
+    return () => { set.delete(listener); if (set.size === 0 && this.listeners.get(workspaceId) === set) this.listeners.delete(workspaceId); };
+  }
+
+  private notify(workspaceId: string, sessionId: string, agentId: string | null, on: boolean): void {
+    const set = this.listeners.get(workspaceId);
+    if (!set?.size) return;
+    const running = [...this.turns.values()].filter((t) => t.workspaceId === workspaceId).length;
+    for (const l of set) { try { l({ type: 'turn_live', workspaceId, sessionId, agentId, on, running }); } catch { /* a listener never breaks the turn */ } }
+  }
 
   /** One live turn per agent of a workspace (the most recently active). */
   byAgent(workspaceId: string): Map<string, LiveTurn> {

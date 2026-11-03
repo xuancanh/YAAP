@@ -3,7 +3,8 @@
  *  mode — the company's sections (Direction, Operations, People, Money,
  *  Oversight; src/lib/company-nav.ts), then Artifacts · Apps · Market, with
  *  Settings at the foot. On a phone the company sections and the rest fold
- *  into two sheets (Company, More) so the bar keeps five targets. */
+ *  into two sheets (Company, More) so the bar keeps five targets. The theme
+ *  toggle lives in the top bar's account menu (src/components/TopBar.tsx). */
 import { useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, type Section } from '../store';
@@ -86,9 +87,6 @@ export function ActivityBar() {
       <button onClick={() => app.go('settings')} style={btn(app.section === 'settings')} aria-label="Settings">
         <I d={P.gear} size={18} sw={1.9} />
         <span style={{ fontSize: 9 }}>Settings</span>
-      </button>
-      <button onClick={app.toggleTheme} title="Theme" aria-label="Theme" style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 8, borderRadius: 9, display: 'flex', flex: 'none' }}>
-        <I d={app.theme === 'dark' ? P.sun : P.moon} size={16} />
       </button>
     </nav>
   );

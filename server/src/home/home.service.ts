@@ -52,6 +52,14 @@ import { collapseRoutine, describeRun, loopNameOf, mergeUpcoming, runTitle, type
 import { agentStatuses, sortTeam, toHomeAgent } from './agent-status';
 import { taskLabel } from '../common/task-keys';
 
+/** What `HomeService.glance` returns: the top bar's raw material. */
+export interface HomeGlance {
+  workspaceId: string; generatedAt: string;
+  company: { name: string; mode: 'supervised' | 'autonomous'; status: 'active' | 'paused' } | null;
+  needs: HomeNeed[]; spend: HomeSpend | null; team: HomeAgent[]; upcoming: HomeUpcoming[];
+  agentNames: Map<string, string>; partial: string[];
+}
+
 const DAY_MS = 24 * 60 * 60_000;
 /** A visit within this of the previous one continues the same session. */
 export const SESSION_GAP_MS = 30 * 60_000;
@@ -213,6 +221,42 @@ export class HomeService {
       headline: { tasksDone: recap.tasksDone, needsYou: ranked.length, todayUsd: spend.todayUsd, monthUsd: spend.monthUsd, monthCapUsd: spend.monthCapUsd },
       needs: ranked.slice(0, NEEDS_LIMIT),
       recap, goals, team, activity, spend, health, upcoming, artifacts, messages, portfolio, partial,
+    };
+  }
+
+  // ---- the top bar's glance (docs/home.md "Top bar") ----
+
+  /**
+   * The few facts the top bar shows, from the same sections as Home: the
+   * company, the ranked Needs-you cards, and on request the spend, the team
+   * and what is coming up. No visit is recorded. `parts` keeps the switcher's
+   * rows cheap (needs only).
+   */
+  async glance(workspaceId: string, opts: { now?: Date; parts?: Array<'spend' | 'team' | 'upcoming'> } = {}): Promise<HomeGlance> {
+    const now = opts.now ?? new Date();
+    const parts = new Set(opts.parts ?? ['spend', 'team', 'upcoming']);
+    const ws = await this.workspaces.get(workspaceId);
+    const partial: string[] = [];
+    const attempt = async <T,>(section: string, fn: () => Promise<T>, fallback: T): Promise<T> => {
+      try { return await fn(); } catch { partial.push(section); return fallback; }
+    };
+    const agents = await this.agents.list({ workspaceId });
+    const names = new Map(agents.map((a) => [a.id, a.name]));
+    const org = this.companiesEnabled() && this.org ? await this.org.byWorkspace(workspaceId).catch(() => null) : null;
+    const orgOn = Boolean(org && ws.orgMode !== 'off');
+    const needOrgTasks = orgOn && (parts.has('team') || parts.has('upcoming'));
+    const orgTasks = needOrgTasks && org && this.tasks ? await this.tasks.list(org.id).catch(() => [] as OrgTask[]) : [];
+    const members = orgOn && parts.has('team') && org ? await this.org!.members(org.id).catch(() => []) : [];
+    const [needs, spend, team, upcoming] = await Promise.all([
+      attempt('needs', () => this.needs(workspaceId, orgOn ? org : null, agents, names, now, orgTasks), [] as HomeNeed[]),
+      parts.has('spend') && orgOn ? attempt('spend', () => this.spend(workspaceId, org, ws, now), null as HomeSpend | null) : Promise.resolve(null),
+      parts.has('team') ? attempt('team', () => this.team(workspaceId, org, orgOn, agents, orgTasks, members, now), [] as HomeAgent[]) : Promise.resolve([] as HomeAgent[]),
+      parts.has('upcoming') && orgOn ? attempt('upcoming', () => this.upcoming(org, [], orgTasks, now), [] as HomeUpcoming[]) : Promise.resolve([] as HomeUpcoming[]),
+    ]);
+    return {
+      workspaceId, generatedAt: now.toISOString(),
+      company: org && orgOn ? { name: org.name, mode: ws.orgMode as 'supervised' | 'autonomous', status: org.status as 'active' | 'paused' } : null,
+      needs: rankNeeds(needs), spend, team, upcoming, agentNames: names, partial,
     };
   }
 
