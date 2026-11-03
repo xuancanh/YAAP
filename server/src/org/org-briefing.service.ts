@@ -45,12 +45,13 @@ import { AgentsService } from '../agents/agents.service';
 import { StorageService } from '../storage/storage.service';
 import { homeKey } from '../files/agent-home';
 import { taskRef } from '../common/task-keys';
-import { OrgService, type Organization, type OrgGoal, type OrgMember, type OrgProject } from './org.service';
+import { OrgService, type Organization, type OrgGoal, type OrgMember, type OrgProject, type OrgProjectMember } from './org.service';
+import { isHeadMember } from './heads';
 import { OrgAuditService } from './org-audit.service';
 import { OrgTasksService, type OrgTask } from './org-tasks.service';
 import { OrgUnitsService, type OrgUnit } from './org-units.service';
 import { OrgIntentService, paceOf } from './org-intent.service';
-import { OrgRuntimeService, headFunction } from './org-runtime.service';
+import { OrgRuntimeService } from './org-runtime.service';
 import { tunable } from './org-tunables';
 
 /** The briefing's hard ceiling, in characters (the tests measure it). */
@@ -74,6 +75,8 @@ interface Snapshot {
   org: Organization; vision: OrgGoal | null;
   members: OrgMember[]; names: Map<string, string>;
   units: OrgUnit[]; projects: OrgProject[]; krs: Kr[];
+  /** Live project-team rows (docs/work-tracking.md "Project teams"): who is on which project, its role and allocation. */
+  team: OrgProjectMember[];
   tasks: OrgTask[];
   decisions: Array<{ title: string; unitId: string | null; createdAt: string }>;
   pending: Array<{ holder: string }>;
@@ -211,6 +214,7 @@ export class OrgBriefingService implements ToolProviderHook {
       units: this.units ? await this.units.units(orgId) : [],
       projects: (await this.org.projects(orgId)).filter((p) => p.kind === 'project' && !['done', 'cancelled'].includes(p.status)),
       krs, tasks: (await this.tasks.list(orgId)).filter((t) => OPEN.has(t.status)),
+      team: (await this.org.projectMembers(orgId).catch(() => [] as OrgProjectMember[])).filter((r) => r.status === 'active' || r.status === 'pending'),
       decisions, pending,
     };
     this.snaps.set(orgId, snap);
@@ -271,7 +275,7 @@ export class OrgBriefingService implements ToolProviderHook {
       v.reports.length ? `- My direct reports: ${v.reports.map((r) => `${v.nm(r.agentId)}${r.title ? ` (${r.title})` : ''}`).join(', ')}` : '- No direct reports',
       '',
       '## My projects',
-      ...(v.myProjects.length ? v.myProjects.map((p) => `- ${p.key} "${clip(p.title, 80)}" — ${p.ownerAgentId === agentId ? 'I lead it' : 'I work on it'}`) : ['- None yet']),
+      ...(v.myProjects.length ? v.myProjects.map((p) => { const seat = v.seats.get(p.id); return `- ${p.key} "${clip(p.title, 80)}" — ${p.ownerAgentId === agentId ? 'I lead it' : seat ? `on its team as ${seat.role || 'a member'}, ${seat.allocation}% of my time${seat.status === 'pending' ? ' (pending my head\'s approval)' : ''}` : 'I work on it'}`; }) : ['- None yet']),
       '',
       'Current numbers (health, key results, tasks) are in the briefing of every turn; the detail is in org_company, org_people, org_project <key> and org_intent.',
     ];
@@ -296,7 +300,7 @@ export class OrgBriefingService implements ToolProviderHook {
 }
 
 /** Audit actions after which a member's standing may have changed. */
-const STANDING_ACTIONS = /^(member_|reorg|hire|terminate|unit_|project_create|project_update|task_create|org_update|profile|vision_|mission)/;
+const STANDING_ACTIONS = /^(member_|reorg|hire|terminate|unit_|project_create|project_update|project_member|task_create|org_update|profile|vision_|mission)/;
 
 /** A member's view of the snapshot: its position and scope (OrgDataTools.viewer's rule). */
 function viewOf(s: Snapshot, agentId: string) {
@@ -321,11 +325,15 @@ function viewOf(s: Snapshot, agentId: string) {
     if (led) for (let q = [led.id]; q.length;) { const id = q.shift()!; units.add(id); for (const u of s.units) if (u.parentUnitId === id && !units.has(u.id)) q.push(u.id); }
   }
   const reports = s.members.filter((m) => m.reportsToAgentId === agentId);
-  const head = !isChief && agentId !== s.org.auditorAgentId && (led !== null || (headFunction(me?.title) !== null && me?.reportsToAgentId === s.org.chiefOfStaffAgentId));
+  // heads.ts: a unit lead, a member flagged a head, or a head-shaped title under the chief.
+  const head = isHeadMember(me, s.org, led !== null);
   const role: BriefingRole = isChief ? 'chief' : head ? 'head' : 'specialist';
   const mine = s.tasks.filter((t) => t.assigneeAgentId === agentId);
-  const myProjects = s.projects.filter((p) => p.ownerAgentId === agentId || mine.some((t) => t.projectId === p.id));
-  return { nm, me, isChief, role, root, led, home, units, reports, mine, myProjects };
+  // Its project-team seats (role on the project, allocation; pending until its head approves).
+  const seats = new Map(s.team.filter((r) => r.agentId === agentId).map((r) => [r.projectId, r]));
+  const myProjects = s.projects.filter((p) => p.ownerAgentId === agentId || seats.has(p.id) || mine.some((t) => t.projectId === p.id));
+  const allocation = [...seats.values()].filter((r) => r.status === 'active').reduce((sum, r) => sum + r.allocation, 0);
+  return { nm, me, isChief, role, root, led, home, units, reports, mine, myProjects, seats, allocation };
 }
 
 
@@ -352,9 +360,11 @@ function briefingText(s: Snapshot, v: View, agentId: string, unreadMentions: num
   const on = v.myProjects.slice(0, 4).map((p) => {
     const n = v.mine.filter((t) => t.projectId === p.id).length;
     const all = s.tasks.filter((t) => t.projectId === p.id).length;
-    return `${p.key} (${p.ownerAgentId === agentId ? 'lead' : 'contributor'}${n ? `, ${n}/${all} open tasks yours` : ''})`;
+    const seat = v.seats.get(p.id);
+    const part = p.ownerAgentId === agentId ? 'lead' : seat ? `${seat.role || 'team member'} ${seat.allocation}%${seat.status === 'pending' ? ', pending your head\'s approval' : ''}` : 'contributor';
+    return `${p.key} (${part}${n ? `, ${n}/${all} open tasks yours` : ''})`;
   });
-  add(0, `You: ${title}${unitBit}; ${line}${reports}${on.length ? `; on ${on.join(', ')}${v.myProjects.length > 4 ? ', …' : ''}` : ''}.`);
+  add(0, `You: ${title}${unitBit}; ${line}${reports}${on.length ? `; on ${on.join(', ')}${v.myProjects.length > 4 ? ', …' : ''}` : ''}${v.allocation ? `; ${v.allocation}% of your time is allocated to project teams (their leads assign you those tasks; the rest is your unit's)` : ''}.`);
 
   // Goals.
   const krLine = (k: Kr) => `- [${k.rag}] ${clip(k.goal.title, 50)}: ${fmtNum(k.goal.currentValue ?? k.goal.startValue)}/${fmtNum(k.goal.targetValue)}${k.goal.unitLabel ? ` ${k.goal.unitLabel}` : ''}${k.pct !== null ? ` (${k.pct}%)` : ''}${k.goal.dueAt ? `, due ${day(k.goal.dueAt)}` : ''}${k.goal.ownerAgentId === agentId ? ', yours' : ''}`;

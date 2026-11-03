@@ -148,7 +148,10 @@
     "work.updateCadenceDays": 5,
     "work.appetiteWarnShare": 0.7,
     "work.operatingWipCap": 5,
-    "work.forecastMinSamples": 12
+    "work.forecastMinSamples": 12,
+    "discussion.autoCloseHours": 72,
+    "discussion.autoMoveMode": 2,
+    "discussion.agentDailyCap": 2
   },
   "playbooks": [],
   "budget": {

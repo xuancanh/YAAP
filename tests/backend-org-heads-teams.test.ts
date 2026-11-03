@@ -16,6 +16,8 @@ import { OrgChiefService } from '../server/src/org/org-chief.service';
 import { validateBlueprint, BLUEPRINT_FORMAT } from '../server/src/org/blueprints/format';
 import { OrgBlueprintsService } from '../server/src/org/org-blueprints.service';
 import { OrgMeetingRuntime } from '../server/src/org/org-meeting-runtime.service';
+import { OrgBriefingService } from '../server/src/org/org-briefing.service';
+import type { ConfigService } from '@nestjs/config';
 
 /** A fake channel layer (the group-chat module's seam) that records what happens. */
 function fakeChannels(s: S) {
@@ -75,7 +77,7 @@ test('head detection is not limited to catalog titles: "Head of Tutoring", a lea
   assert.match(headHireRefusal(null, 'role:sales-manager') ?? '', /not other heads/);
 });
 
-test('why heads did not hire, fixed: a "Head of Tutoring" with no reports is offered the head tools in every session kind, leads a unit from day one, sees a staffing gap in its task runs, chats and heartbeat, and is woken for it once a day', async () => {
+test('why heads did not hire, fixed: a "Head of Tutoring" with no reports is offered the head tools in every session kind, leads a unit from day one, sees a staffing gap in its task runs, chats and heartbeats, and is woken for it once a day', async () => {
   const s = await setup();
   const orgId = await enable(s, 'supervised');
   await s.org.updateMember(orgId, s.writer.id, { title: 'Head of Tutoring' });
@@ -89,9 +91,8 @@ test('why heads did not hire, fixed: a "Head of Tutoring" with no reports is off
   // the staffing line: no specialists, open work it carries itself
   await s.tasks.create(orgId, { title: 'Tutor flow v1', createdBy: 'chief', assigneeAgentId: s.writer.id, status: 'todo' });
   const ctx = await s.runtime.contextFor(await sessionOf(s, s.writer.id));
-  assert.match(ctx!, /Staffing gap: you have no specialists and carry 1 open task\(s\) yourself/);
+  assert.match(ctx!, /Staffing gap: no specialists; you carry 1 open task\(s\)/);
   assert.match(ctx!, /org_hire_agent "role:<id>" reportsTo you/);
-  assert.match(await s.runtime.heartbeatContext(s.writer.id) ?? '', /Staffing gap/);
   const now = new Date();
   assert.ok((await s.runtime.heartbeatReasons(s.writer.id, now)).some((r) => /Staffing gap/.test(r)), 'the gap wakes the head');
   assert.ok(!(await s.runtime.heartbeatReasons(s.writer.id, now)).some((r) => /Staffing gap/.test(r)), 'once a day, not every beat');
@@ -223,6 +224,11 @@ test('project teams: the lead proposes a member from another unit, the member\'s
   const ch = channels.get(team.channel!.id)!;
   assert.ok(ch.members.some((m) => m.id === s.editor.id) && ch.members.some((m) => m.id === pmAgent.id), 'lead and team are channel members');
   assert.ok((await inbox(s, s.editor.id, 'info')).some((e) => /You joined project/.test(e.title)));
+  // the company briefing tells the member its seat and its allocation
+  const briefing = new OrgBriefingService(s.db, s.org, s.audit, s.tasks, s.agents, { get: () => undefined } as unknown as ConfigService, undefined, s.units, s.intent, s.runtime);
+  const b = await briefing.briefingFor(s.editor.id);
+  assert.match(b ?? '', new RegExp(`${project.key} \\(account lead 60%`));
+  assert.match(b ?? '', /60% of your time is allocated to project teams/);
   // the PM is offered org_assign and assigns the project's task across units; not a task outside the project, not a non-member
   assert.ok(names(await s.runtime.specsFor(pm)).has('org_assign'));
   const task = await s.tasks.create(orgId, { title: 'Pilot SOW for Acme', createdBy: `agent:${pmAgent.id}`, projectId: project.id });

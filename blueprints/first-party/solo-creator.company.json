@@ -115,7 +115,8 @@
     "meeting.prepMinutes": 60,
     "work.updateCadenceDays": 5,
     "work.breakerDefaultExtend": 1,
-    "work.operatingWipCap": 2
+    "work.operatingWipCap": 2,
+    "discussion.agentDailyCap": 2
   },
   "playbooks": [],
   "budget": {

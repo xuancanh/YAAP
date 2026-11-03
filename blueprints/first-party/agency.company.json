@@ -171,7 +171,9 @@
     "meeting.prepMinutes": 1440,
     "work.appetiteWarnShare": 0.7,
     "work.operatingWipCap": 5,
-    "work.forecastMinSamples": 12
+    "work.forecastMinSamples": 12,
+    "discussion.autoCloseHours": 72,
+    "discussion.agentDailyCap": 2
   },
   "playbooks": [],
   "budget": {

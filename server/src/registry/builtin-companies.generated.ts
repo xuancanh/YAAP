@@ -242,7 +242,11 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.updateCadenceDays": 3,
     "work.updateMissingGraceDays": 1,
     "work.blockedBackoffMinutes": 30,
-    "work.operatingWipCap": 2
+    "work.operatingWipCap": 2,
+    "work.mentionChainCap": 4,
+    "discussion.autoCloseHours": 12,
+    "discussion.autoMoveMode": 2,
+    "discussion.agentDailyCap": 2
    },
    "playbooks": [],
    "budget": {
@@ -488,7 +492,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "meeting.prepMinutes": 1440,
     "work.appetiteWarnShare": 0.7,
     "work.operatingWipCap": 5,
-    "work.forecastMinSamples": 12
+    "work.forecastMinSamples": 12,
+    "discussion.autoCloseHours": 72,
+    "discussion.agentDailyCap": 2
    },
    "playbooks": [],
    "budget": {
@@ -740,7 +746,11 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.updateCadenceDays": 3,
     "work.updateMissingGraceDays": 1,
     "work.blockedBackoffMinutes": 30,
-    "work.operatingWipCap": 2
+    "work.operatingWipCap": 2,
+    "work.mentionChainCap": 4,
+    "discussion.autoCloseHours": 12,
+    "discussion.autoMoveMode": 2,
+    "discussion.agentDailyCap": 2
    },
    "playbooks": [],
    "budget": {
@@ -970,7 +980,11 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.breakerDefaultExtend": 1,
     "work.blockedBackoffMinutes": 30,
     "work.operatingWipCap": 5,
-    "work.forecastMinSamples": 12
+    "work.mentionChainCap": 4,
+    "work.forecastMinSamples": 12,
+    "discussion.autoCloseHours": 12,
+    "discussion.autoMoveMode": 2,
+    "discussion.agentDailyCap": 2
    },
    "playbooks": [],
    "budget": {
@@ -1146,7 +1160,10 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.updateCadenceDays": 5,
     "work.appetiteWarnShare": 0.7,
     "work.operatingWipCap": 5,
-    "work.forecastMinSamples": 12
+    "work.forecastMinSamples": 12,
+    "discussion.autoCloseHours": 72,
+    "discussion.autoMoveMode": 2,
+    "discussion.agentDailyCap": 2
    },
    "playbooks": [],
    "budget": {
@@ -1290,7 +1307,8 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "meeting.prepMinutes": 60,
     "work.updateCadenceDays": 5,
     "work.breakerDefaultExtend": 1,
-    "work.operatingWipCap": 2
+    "work.operatingWipCap": 2,
+    "discussion.agentDailyCap": 2
    },
    "playbooks": [],
    "budget": {
@@ -1542,7 +1560,10 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.updateMissingGraceDays": 2,
     "work.appetiteWarnShare": 0.7,
     "work.operatingWipCap": 5,
-    "work.forecastMinSamples": 12
+    "work.mentionChainCap": 2,
+    "work.forecastMinSamples": 12,
+    "discussion.autoCloseHours": 72,
+    "discussion.agentDailyCap": 2
    },
    "playbooks": [],
    "budget": {

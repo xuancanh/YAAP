@@ -233,7 +233,11 @@
     "work.updateCadenceDays": 3,
     "work.updateMissingGraceDays": 1,
     "work.blockedBackoffMinutes": 30,
-    "work.operatingWipCap": 2
+    "work.operatingWipCap": 2,
+    "work.mentionChainCap": 4,
+    "discussion.autoCloseHours": 12,
+    "discussion.autoMoveMode": 2,
+    "discussion.agentDailyCap": 2
   },
   "playbooks": [],
   "budget": {

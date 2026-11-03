@@ -57,6 +57,7 @@ export const ORG_TABLE_PLAN: ReadonlyArray<{ table: string; mode: 'delete' | 'de
   { table: 'org_task_checks', mode: 'delete' },
   { table: 'org_runs', mode: 'delete' },
   { table: 'org_messages', mode: 'delete' },
+  { table: 'org_project_members', mode: 'delete' },
   { table: 'org_project_updates', mode: 'delete' },
   { table: 'org_checkins', mode: 'delete' },
   { table: 'org_value_events', mode: 'delete' },

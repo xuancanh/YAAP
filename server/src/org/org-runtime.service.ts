@@ -1484,18 +1484,18 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     const live = await this.org.liveMemberCount(org.id);
     const pendingHires = (await this.approvals.pending(org.id)).filter((a) => a.kind === 'hire').length;
     const headroom = Math.max(0, cap - live - pendingHires);
-    const roles = rolesForHead(head.fn).slice(0, 6).map((r) => `role:${r.id}`);
+    const roles = rolesForHead(head.fn).slice(0, 3).map((r) => `role:${r.id}`);
     const gaps: string[] = [];
-    if (reports.length === 0) gaps.push(mine > 0 ? `you have no specialists and carry ${mine} open task(s) yourself` : 'you have no specialists yet');
-    else if (atLimit.length === reports.length) gaps.push(`every report is at its WIP limit (${atLimit.map((r) => names.get(r.agentId) ?? r.agentId.slice(0, 8)).join(', ')})`);
-    if (mine >= wip) gaps.push(`you are at your own WIP limit (${mine}/${wip}) doing unit work`);
-    if (unassigned > 0 && (reports.length === 0 || atLimit.length === reports.length)) gaps.push(`${unassigned} unassigned task(s) wait on your unit's board`);
-    const team = reports.length ? reports.map((r) => `${names.get(r.agentId) ?? r.agentId.slice(0, 8)} (${r.title || 'member'}, ${openOf(r.agentId)}/${wip} open)`).join(', ') : 'none';
+    if (reports.length === 0) gaps.push(mine > 0 ? `no specialists; you carry ${mine} open task(s)` : 'no specialists yet');
+    else if (atLimit.length === reports.length) gaps.push('every report at its WIP limit');
+    if (mine >= wip) gaps.push(`you are at your WIP limit (${mine}/${wip})`);
+    if (unassigned > 0 && (reports.length === 0 || atLimit.length === reports.length)) gaps.push(`${unassigned} unassigned task(s) on your board`);
+    const team = reports.length ? `${reports.slice(0, 4).map((r) => `${names.get(r.agentId) ?? r.agentId.slice(0, 8)} ${openOf(r.agentId)}/${wip}`).join(', ')}${reports.length > 4 ? ` +${reports.length - 4}` : ''}` : 'none';
     const autonomous = ws?.orgMode === 'autonomous';
     return [
-      `  Staffing (you head ${head.fn ? `the ${head.fn} function` : 'a function'}${head.unit ? `, unit #${head.unit.slug}` : ''}): reports ${team}; you hold ${mine}/${wip} open task(s); agent cap headroom ${headroom} (${live} member(s), ${pendingHires} pending hire(s), cap ${cap}).`,
+      `  Staffing: reports ${team}; you ${mine}/${wip} open; agent-cap headroom ${headroom}.`,
       gaps.length
-        ? `  Staffing gap: ${gaps.join('; ')}. Design your team before you take on more work yourself: run your team-design playbook (org_roles${head.fn ? ` q "${head.fn}"` : ''} → seats in team.md → org_hire_agent "role:<id>" reportsTo you, within your unit's envelope; ${autonomous ? 'autonomous: it acts at once within the caps, why required' : 'supervised: a card your manager and the CEO decide'}), then hand the work to your hires.${roles.length ? ` Roles you hire: ${roles.join(', ')}.` : ''}`
+        ? `  Staffing gap: ${gaps.join('; ')}. Run your team-design playbook: org_roles${head.fn ? ` q "${head.fn}"` : ''}, then org_hire_agent "role:<id>" reportsTo you within your envelope (${autonomous ? 'acts at once within caps' : 'a card for your manager'})${roles.length ? `, e.g. ${roles.join(', ')}` : ''}; hand the work to your hires.`
         : '',
     ].filter(Boolean).join('\n');
   }

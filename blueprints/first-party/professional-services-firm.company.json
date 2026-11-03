@@ -224,7 +224,10 @@
     "work.updateMissingGraceDays": 2,
     "work.appetiteWarnShare": 0.7,
     "work.operatingWipCap": 5,
-    "work.forecastMinSamples": 12
+    "work.mentionChainCap": 2,
+    "work.forecastMinSamples": 12,
+    "discussion.autoCloseHours": 72,
+    "discussion.agentDailyCap": 2
   },
   "playbooks": [],
   "budget": {
