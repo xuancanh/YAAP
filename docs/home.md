@@ -107,6 +107,14 @@ severity, then nearest deadline, then oldest. Each card shows:
 A held action that already has a two-key card is listed once, as the
 card. The page shows six cards; **See all in Inbox** has the rest.
 
+**Messages from your team.** What agents wrote to you with
+`message_owner` (`docs/agent-messages.md`), unread first, at most five:
+the agent, its urgency (urgent or fyi), when, the text as plain text and
+the task keys or files it refers to. A row opens the agent's direct chat,
+where your reply goes, and marks that chat's messages read. The section is
+hidden when nobody wrote; the heading counts the unread ones. It is the
+owner's: a member of a shared workspace does not see it.
+
 **3. Since you were last here.** Counts of tasks done, tasks blocked,
 decisions taken without the owner, files changed and the pulse. Then:
 
@@ -250,6 +258,17 @@ Content → Chief → you", with each manager's recommendation. A person who
 manages a member sees that member's cards here, with Approve, Reject, Send
 back and Escalate. A **Waiting / History** toggle sits
 at the top, and Waiting is the default.
+
+**Messages.** The **Messages** filter lists what agents wrote to you
+directly (`docs/agent-messages.md`) over the last two weeks: unread first,
+then newest, each with the agent, a **new** marker while unread and its
+urgency when it is not normal. An unread message also waits in **All** and
+counts in the Inbox badge. Opening one opens the agent's direct chat —
+your reply there continues the conversation — and marks that chat's
+messages read. Messages stay in their chats, so History has no Messages
+filter. `GET /api/workspaces/:id/inbox/messages` returns `{ items, unread }`
+and `POST /api/workspaces/:id/inbox/messages/read {eventId | sessionId}`
+marks one chat's messages read; both are the owner's.
 
 **History** lists everything that used to wait on you and is now
 resolved, newest first. It has the same filters as Waiting (Approvals,
