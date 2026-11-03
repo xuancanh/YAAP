@@ -435,3 +435,18 @@ test('decision 4: the escalation chain — a specialist raises to its head (a bo
   assert.match(card.reserved, /only the CEO/);
   await assert.rejects(s.runtime.execute(head, 'org_escalate', { taskId: theirs.id, reason: 'x', to: 'board' }), /to must be "chief" or "ceo"/);
 });
+
+test('org_roles: the chief and a function head search the role catalog instead of a dumped list; specialists do not get it', async () => {
+  const { s, head, specialist, chief } = await salesCompany('autonomous');
+  const names = async (sess: Awaited<ReturnType<typeof sessionOf>>) => new Set((await s.runtime.specsFor(sess)).map((t) => t.name));
+  assert.ok((await names(chief)).has('org_roles'), 'the chief searches the catalog');
+  assert.ok((await names(head)).has('org_roles'), 'a head hires too');
+  assert.ok(!(await names(specialist)).has('org_roles'), 'a specialist does not hire');
+  const finance = await s.runtime.execute(chief, 'org_roles', { q: 'finance' });
+  assert.match(finance, /role:finance-manager/);
+  assert.doesNotMatch(finance, /role:sales-sdr/);
+  const heads = await s.runtime.execute(chief, 'org_roles', { managers: true, limit: 40 });
+  for (const line of heads.split('\n').filter((l) => l.startsWith('- role:'))) assert.match(line, /^- role:[a-z-]+-manager /);
+  assert.match(await s.runtime.execute(chief, 'org_roles', { reportsTo: 'sales-manager' }), /role:sales-/);
+  assert.match(await s.runtime.execute(chief, 'org_roles', { q: 'zzzz-nothing' }), /No role matches/);
+});

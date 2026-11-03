@@ -96,9 +96,7 @@ import type { SelfChange } from './boundary';
 import type { ApprovalKind } from './org-approvals.service';
 import { govTunable } from './governance-tunables';
 import { urgencyOf } from './org-capacity.service';
-import { PROFESSION_PACKS } from '../market/profession-packs.generated';
-import { AUTHORED_PACKS } from '../market/authored-packs.generated';
-import { ROLES, roleRef } from './roles/catalog';
+import { ROLES, rankRoles, roleRef } from './roles/catalog';
 import { CHIEF_PACK_ID } from './chief-os';
 import { taskRef } from '../common/task-keys';
 
@@ -725,8 +723,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     }
     if (isChief) {
       // Business packs first (docs/agent-catalog.md "Business catalog"): a company hires function heads and their specialists.
-      const catalog = [...AUTHORED_PACKS.filter((p) => p.cat === 'Business'), ...PROFESSION_PACKS].slice(0, 80).map((p) => `${p.name} (${p.role})`);
-      lines.push('## Roles you can hire from the catalog', catalog.join(', '));
+      lines.push('## Hiring', `The role catalog has ${ROLES.length} roles (function heads and their specialists, plus generalists). Search it with org_roles (by function, skill or title) before a hire, then hire with org_hire_agent templateOrPack "role:<id>".`);
     }
     lines.push('## Current intent tree', await this.intent!.describeTree(org.id, { unitId: isChief ? null : unit.id }));
     const report = await this.units!.unitReport(org.id, unit.id, names).catch(() => '');
@@ -1747,6 +1744,20 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         const unit = leadUnit ?? (str('unit') ? await this.unitByRef(org.id, str('unit')) : await this.units.rootUnit(org.id));
         return this.units.unitReport(org.id, unit.id, names);
       }
+      case 'org_roles': {
+        const profile = [org.values, org.culture, org.mission].filter(Boolean).join(' ');
+        const q = typeof input.q === 'string' ? input.q.toLowerCase().trim() : '';
+        const words = q.split(/[^a-z0-9]+/).filter((w) => w.length > 1);
+        const limit = Math.min(40, Math.max(1, Number(input.limit) || 15));
+        const hay = (r: (typeof ROLES)[number]) => `${r.id} ${r.title} ${r.competencies.join(' ')} ${r.fits.join(' ')}`.toLowerCase();
+        const ranked = rankRoles(`${profile} ${q}`)
+          .filter((r) => !input.managers || r.id.endsWith('-manager'))
+          .filter((r) => typeof input.reportsTo !== 'string' || (r.reportsToHint ?? 'chief-of-staff') === input.reportsTo)
+          .filter((r) => words.length === 0 || words.some((w) => hay(r).includes(w)));
+        if (ranked.length === 0) return `No role matches${q ? ` "${q}"` : ''}. ${ROLES.length} roles exist; try a function (sales, finance, engineering) or leave q empty.`;
+        return [`${ranked.length} role(s)${ranked.length > limit ? `, showing ${limit}` : ''} — hire with org_hire_agent templateOrPack "role:<id>":`,
+          ...ranked.slice(0, limit).map((r) => `- role:${r.id} — ${r.title} · reports to ${r.reportsToHint ?? 'chief-of-staff'} · ${r.modelTier} tier · ~$${r.estMonthlyUsd}/month${r.packId ? ' · brings its pack\'s playbooks' : ''}\n  ${r.competencies.slice(0, 6).join(', ')}`)].join('\n');
+      }
       case 'org_hire_agent': {
         await requireChiefOrHead();
         const head = await headInfo();
@@ -2330,6 +2341,7 @@ export function headHireRefusal(fn: string | null, templateOrPack: string): stri
 const MANAGER_TOOLS: AiToolSpec[] = [
   ...REVIEW_TOOLS,
   LEAD_TOOLS[0],
+  { name: 'org_roles', description: 'Search the role catalog you hire from (role:<id> for org_hire_agent): each role\'s id, title, function, who it reports to, model tier, rough monthly cost, competencies and whether it brings a pack of playbooks. Ranked by fit with the company\'s profile (values, culture, mission) and your query. Use it before a hire instead of guessing role ids.', inputSchema: { type: 'object', properties: { q: { type: 'string', description: 'Words to match: a function (finance, sales), a skill (forecasting, onboarding) or a title.' }, managers: { type: 'boolean', description: 'Only function heads (…-manager roles).' }, reportsTo: { type: 'string', description: 'Only roles that usually report to this role id, e.g. finance-manager.' }, limit: { type: 'number', description: 'Default 15, at most 40.' }, org: { type: 'string' } } } },
   { name: 'org_hire_agent', description: 'Hire a new member from a catalog pack (e.g. "Researcher", "Marketer"), a catalog role ("role:<id>" — researcher, writer-editor, analyst, engineer, designer, marketer, support, controller, auditor, project-lead, or a business function: <function>-manager such as sales-manager, finance-manager, engineering-manager, and its specialists such as sales-sdr, finance-fpa; GET …/org/roles lists them; the role brings its charter, scopes and model tier, a function role also its pack\'s playbooks) or a template (name + charter). Supervised mode: creates an approval card for the CEO and no agent exists until approved. Autonomous mode: executes at once within caps (depth ≤ 3, ≤ 5 reports, agent cap, company envelope) or is refused with the reason; why is required. Requested scopes are intersected with your own holdings; nothing is inherited. A function head hires only into its own unit (reportsTo itself or one of its reports; its function\'s roles, role:<fn>-<slug>), within the agent cap and its unit\'s envelope (the allocations to its objectives; the company envelope when it has none), routed exactly like the chief\'s hires; the chief of staff is told of every one.', inputSchema: { type: 'object', properties: { templateOrPack: { type: 'string' }, name: { type: 'string' }, title: { type: 'string' }, charter: { type: 'string', description: 'Template hires only.' }, reportsTo: { type: 'string', description: 'Member name; defaults to you.' }, scopes: { type: 'array', items: { type: 'string' }, description: 'tool:<name>, connection:<service>:<read|write>, skill:<name>, folder:<path>' }, provider: { type: 'string' }, model: { type: 'string' }, monthlyBudgetUsd: { type: 'number' }, why: { type: 'string', description: 'Your one-line recommendation.' }, org: { type: 'string' } }, required: ['templateOrPack', 'title'] } },
   { name: 'org_set_scope', description: 'Set a report\'s scopes. Narrowing applies immediately; widening creates an approval card for the CEO (supervised) or applies at once (autonomous, why required). You can never grant what you do not hold.', inputSchema: { type: 'object', properties: { agent: { type: 'string' }, scopes: { type: 'array', items: { type: 'string' } }, why: { type: 'string' }, org: { type: 'string' } }, required: ['agent', 'scopes'] } },
   { name: 'org_pause_agent', description: 'Pause a report immediately (a narrowing): its queued wakes are dropped and it runs no tasks until resumed by the CEO. A function head pauses only members of its own reporting line; the chief of staff is told.', inputSchema: { type: 'object', properties: { agent: { type: 'string' }, org: { type: 'string' } }, required: ['agent'] } },
@@ -2347,7 +2359,7 @@ const MANAGER_TOOLS: AiToolSpec[] = [
 ];
 
 /** A function head's lifecycle tools for its own reporting line (decision 1). */
-const HEAD_TOOLS: AiToolSpec[] = MANAGER_TOOLS.filter((t) => ['org_hire_agent', 'org_pause_agent', 'org_update_member'].includes(t.name));
+const HEAD_TOOLS: AiToolSpec[] = MANAGER_TOOLS.filter((t) => ['org_roles', 'org_hire_agent', 'org_pause_agent', 'org_update_member'].includes(t.name));
 /** Every member: the escalation chain and the spend reads (decision 2: read-only, nothing that writes or commits spend). */
 const MEMBER_EXTRA_TOOLS: AiToolSpec[] = [ESCALATE_TOOL, ...LEAD_TOOLS.filter((t) => t.name === 'org_costs' || t.name === 'org_forecast')];
 
@@ -2381,9 +2393,9 @@ const ALL_TOOL_NAMES = new Set([...COMMON_TOOLS, ...TASK_TOOLS, ...MANAGER_TOOLS
 /** Reads, plus proposals: in supervised mode they only create an approval
  *  card the user resolves; in autonomous mode the owner's mode choice is the
  *  gate (org runs are Auto-mode turns either way). */
-const READONLY_TOOLS = new Set(['org_decision_queue', 'org_read_board', 'org_read_goal', 'org_audit_query', 'org_review_structure', 'org_unit_report', 'org_intent', 'org_why', 'org_hire_agent', 'org_reorg', 'org_propose_reorg', 'org_propose_strategy', 'org_terminate_agent', 'org_signals', 'org_pulse', 'org_audit_finding', 'org_audit_close', 'org_costs', 'org_forecast']);
+const READONLY_TOOLS = new Set(['org_roles', 'org_decision_queue', 'org_read_board', 'org_read_goal', 'org_audit_query', 'org_review_structure', 'org_unit_report', 'org_intent', 'org_why', 'org_hire_agent', 'org_reorg', 'org_propose_reorg', 'org_propose_strategy', 'org_terminate_agent', 'org_signals', 'org_pulse', 'org_audit_finding', 'org_audit_close', 'org_costs', 'org_forecast']);
 /** Reads a dry run lets through unrecorded (docs/company-vision.md §8); every other call is recorded and not applied. */
-const DRY_RUN_READS = new Set(['org_decision_queue', 'org_read_board', 'org_read_goal', 'org_signals', 'org_pulse', 'org_intent', 'org_why', 'org_unit_report', 'org_review_structure', 'org_audit_query', 'org_costs', 'org_forecast']);
+const DRY_RUN_READS = new Set(['org_roles', 'org_decision_queue', 'org_read_board', 'org_read_goal', 'org_signals', 'org_pulse', 'org_intent', 'org_why', 'org_unit_report', 'org_review_structure', 'org_audit_query', 'org_costs', 'org_forecast']);
 
 export const ORG_TOOL_NAMES = ALL_TOOL_NAMES;
 
