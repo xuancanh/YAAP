@@ -22,6 +22,7 @@ import { AGENT_TABS, SETTINGS_SECTIONS, WORK_SECTIONS, resolveAgentTab, type Age
 import { nextFire, untilLabel } from '../lib/cron';
 import { RUNS_WHEN, lastFiredLabel, runsWhenOf, triggerGlyph, triggerLabel, type Loop, type LoopTrigger, type RunsWhen } from '../lib/triggers';
 import { keyStyle } from '../lib/task-keys';
+import { effectiveType, typeModelList } from '../lib/agent-models';
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 14, background: 'var(--panel)' };
 const label: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.6px', textTransform: 'uppercase', color: 'var(--text-faint)' };
@@ -1172,7 +1173,7 @@ function IdentityCard({ a }: { a: Agent }) {
 /** Model: the agent type (provider, key, base URL) and the model within it.
  *  Every session kind — private chats, channels, loops, heartbeats, org runs —
  *  runs on it, unless a chat picked a model by hand in its header. */
-function ModelCard({ a }: { a: Agent }) {
+export function ModelCard({ a }: { a: Agent }) {
   const app = useApp();
   const types = app.agentTypes;
   const enabled = types.filter((t) => t.enabled);
@@ -1180,13 +1181,20 @@ function ModelCard({ a }: { a: Agent }) {
   const [typeId, setTypeId] = useState<string>(a.agentTypeId ?? '');
   const [model, setModel] = useState(a.model);
   const [applyToChats, setApplyToChats] = useState(true);
-  useEffect(() => { setTypeId(a.agentTypeId ?? ''); setModel(a.model); }, [a.id, a.agentTypeId, a.model]);
-  const picked = types.find((t) => t.id === typeId) ?? null;
-  const suggestions = (() => { try { const m = JSON.parse(picked?.models || '[]') as unknown; return Array.isArray(m) ? m.filter((x): x is string => typeof x === 'string') : []; } catch { return []; } })();
+  // The type the agent will run on: the one picked, else the server's automatic choice.
+  const picked = types.find((t) => t.id === typeId) ?? effectiveType(types, { agentTypeId: null, provider: a.provider }, app.settings.defaultAgentTypeId);
+  const list = typeModelList(picked);
+  const [custom, setCustom] = useState(() => !!a.model && !list.includes(a.model));
+  useEffect(() => {
+    setTypeId(a.agentTypeId ?? ''); setModel(a.model);
+    const t = types.find((x) => x.id === a.agentTypeId) ?? effectiveType(types, { agentTypeId: null, provider: a.provider }, app.settings.defaultAgentTypeId);
+    setCustom(!!a.model && !typeModelList(t).includes(a.model));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [a.id, a.agentTypeId, a.model]);
   const dirty = typeId !== (a.agentTypeId ?? '') || model !== a.model;
   const save = async () => {
     try {
-      await api.updateAgent(a.id, { agentTypeId: typeId || null, model: model.trim(), applyToChats });
+      await api.updateAgent(a.id, { agentTypeId: typeId || null, model: model.trim(), applyToChats, ...(custom && model.trim() ? { customModel: true } : {}) });
       await app.refreshAgents();
       await app.refreshSessions();
       app.showToast(`${a.name} now runs on ${model.trim() || picked?.model || 'the type default'}${applyToChats ? ', including its existing chats' : ' in new chats'}`);
@@ -1208,15 +1216,23 @@ function ModelCard({ a }: { a: Agent }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
           <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>
             Agent type
-            <select value={typeId} onChange={(e) => { const t = types.find((x) => x.id === e.target.value); setTypeId(e.target.value); if (t) setModel(t.model); }} style={{ ...fieldInput, cursor: 'pointer' }}>
+            <select value={typeId} onChange={(e) => { const t = types.find((x) => x.id === e.target.value); setTypeId(e.target.value); if (t) { setModel(t.model); setCustom(false); } }} style={{ ...fieldInput, cursor: 'pointer' }}>
               <option value="">Automatic (by provider: {a.provider})</option>
               {enabled.map((t) => <option key={t.id} value={t.id}>{t.name} · {t.provider}{t.hasApiKey ? '' : ' (no key)'}</option>)}
             </select>
           </label>
           <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>
             Model
-            <input value={model} onChange={(e) => setModel(e.target.value)} list={`models-${a.id}`} placeholder={picked?.model || 'type default'} style={{ ...fieldInput, fontFamily: 'var(--mono)' }} />
-            <datalist id={`models-${a.id}`}>{[...new Set([picked?.model, ...suggestions].filter(Boolean) as string[])].map((m) => <option key={m} value={m} />)}</datalist>
+            <select aria-label="Model" value={custom ? '__custom' : (model || picked?.model || '')} onChange={(e) => { if (e.target.value === '__custom') { setCustom(true); } else { setCustom(false); setModel(e.target.value); } }} style={{ ...fieldInput, fontFamily: 'var(--mono)', cursor: 'pointer' }}>
+              {list.map((m) => <option key={m} value={m}>{m}{m === picked?.model ? ' (default)' : ''}</option>)}
+              <option value="__custom">Custom model id…</option>
+            </select>
+            {custom && (
+              <>
+                <input aria-label="Custom model id" value={model} onChange={(e) => setModel(e.target.value)} placeholder="exact model id the provider serves" style={{ ...fieldInput, fontFamily: 'var(--mono)' }} />
+                <span style={{ fontSize: 11, color: 'var(--amber)' }}>Custom: not in {picked?.name ?? 'the type'}&apos;s list — the provider must serve this exact id.</span>
+              </>
+            )}
           </label>
         </div>
       )}

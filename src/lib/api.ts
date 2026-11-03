@@ -241,10 +241,28 @@ export interface AgentType {
   provider: string;
   model: string;
   models: string;
+  /** When `models` last came from the provider (null = configured by hand). */
+  modelsFetchedAt?: string | null;
+  /** JSON { cheap?, standard?, strong? }: designated models per tier. */
+  tierModels?: string;
   baseUrl: string | null;
   persona: string;
   enabled: number;
   hasApiKey: boolean;
+}
+
+export type ModelTierName = 'cheap' | 'standard' | 'strong';
+
+/** GET /api/agent-types/:id/models (and the refresh result). */
+export interface AgentTypeModels {
+  id: string; name: string; provider: string;
+  default: string;
+  models: string[];
+  tierModels: Partial<Record<ModelTierName, string>>;
+  fetchedAt: string | null;
+  discoverable: boolean;
+  /** Refresh only. */
+  ok?: boolean; error?: string; defaultChanged?: { from: string; to: string };
 }
 
 export interface ChatSession {
@@ -1756,7 +1774,7 @@ export const api = {
   // agents
   /** The workspace's agents (every agent belongs to exactly one workspace). */
   agents: (workspaceId?: string) => get<Agent[]>(`/api/agents${workspaceId ? `?workspaceId=${enc(workspaceId)}` : ''}`, agentListSchema),
-  createAgent: (input: { name: string; workspaceId: string; charter?: string; role?: string; emoji?: string; colors?: [string, string]; provider?: string; model?: string }) =>
+  createAgent: (input: { name: string; workspaceId: string; charter?: string; role?: string; emoji?: string; colors?: [string, string]; provider?: string; model?: string; agentTypeId?: string; customModel?: boolean }) =>
     send<Agent>('/api/agents', 'POST', input, agentSchema),
   /** Move an agent to another workspace — refused while it sits in an organization. */
   moveAgent: (id: string, workspaceId: string) => send<Agent>(`/api/agents/${id}/move`, 'POST', { workspaceId }, agentSchema),
@@ -1871,6 +1889,10 @@ export const api = {
   agentTypes: () => get<AgentType[]>('/api/agent-types'),
   createAgentType: (input: { name: string; provider: string; model: string; apiKey?: string; baseUrl?: string; persona?: string }) =>
     send<AgentType>('/api/agent-types', 'POST', input),
+  updateAgentType: (id: string, patch: { model?: string; models?: string[]; tierModels?: Partial<Record<ModelTierName, string | null>>; enabled?: boolean; name?: string }) =>
+    send<AgentType>(`/api/agent-types/${enc(id)}`, 'PATCH', patch),
+  agentTypeModels: (id: string) => get<AgentTypeModels>(`/api/agent-types/${enc(id)}/models`),
+  refreshAgentTypeModels: (id: string) => send<AgentTypeModels>(`/api/agent-types/${enc(id)}/models/refresh`, 'POST', {}),
 
   // skills / mcp / market / settings / search
   skills: (workspaceId?: string, agentId?: string) =>

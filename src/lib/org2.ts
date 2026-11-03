@@ -209,7 +209,7 @@ export function forecastRows(f: { company: EnvelopeForecast; agents: EnvelopeFor
 // ---- routing (§7) ----
 
 /** The strong tier per provider family when the CEO pinned none — a mirror of the server table (org-routing.ts). */
-const STRONG_MODELS: Array<[RegExp, string]> = [[/^anthropic$/, 'claude-opus-4-5'], [/openai/, 'gpt-5.1'], [/deepseek/, 'deepseek-reasoner'], [/google|gemini/, 'gemini-2.5-pro']];
+const STRONG_MODELS: Array<[RegExp, string]> = [[/^anthropic$/, 'claude-opus-5-5'], [/openai/, 'gpt-5.1'], [/deepseek/, 'deepseek-v4-pro'], [/google|gemini/, 'gemini-2.5-pro']];
 
 export const TIER_LABEL: Record<ModelTier, string> = { cheap: 'cheap', standard: 'standard', strong: 'strong' };
 export const TIER_HINT: Record<ModelTier, string> = { cheap: "the provider's cheapest model", standard: "the agent's own model", strong: "the provider's strong model" };

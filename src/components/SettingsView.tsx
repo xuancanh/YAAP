@@ -7,7 +7,7 @@ import { useAuth } from '../auth';
 import { ImportSkillMdButton, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { PublishButton } from './RegistryBits';
 import { NewWorkspaceWizard } from './NewWorkspaceWizard';
-import { api, PROVIDER_COLORS, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type FlowKind, type FlowRule, type MemberGrant, type MemberRole, type OrgCaps, type OrgMode, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceInvite, type WorkspaceMember, type WorkspaceUsage, type OrgTunable } from '../lib/api';
+import { api, PROVIDER_COLORS, type AgentType, type ModelTierName, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type FlowKind, type FlowRule, type MemberGrant, type MemberRole, type OrgCaps, type OrgMode, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceInvite, type WorkspaceMember, type WorkspaceUsage, type OrgTunable } from '../lib/api';
 import { AREA_LABEL, groupTunables, SLO_TARGET_OF, tunableError } from '../lib/org';
 import { KIND_LABEL } from '../lib/registry';
 import { PLAN_LABEL, capLine, ceilingPct, usageLine } from '../lib/account';
@@ -15,6 +15,7 @@ import { fmtTokens, safeJsonParse, workspaceSpend } from '../lib/util';
 import { currentSubscription, disablePush, enablePush, pushSupported } from '../lib/push';
 import { fmtUsd } from '../lib/pricing';
 import { UsageBars, UsageRows } from './UsageChart';
+import { MODEL_TIERS, fetchedLabel, typeModelList, typeTierModels } from '../lib/agent-models';
 
 const PANE_META: Record<string, [string, string]> = {
   account: ['Account', 'Who you are signed in as, your plan, this month in dollars against its ceiling, and the provider keys your agents run on.'],
@@ -50,6 +51,57 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
   );
 }
 
+/** A type's models (docs/agent-types.md "Models"): the list (Refresh asks the
+ *  provider), the default model, and an optional model per tier — every
+ *  pick from the list. Creation and the org's tiers resolve through these. */
+export function TypeModels({ t, onChanged, toast }: { t: AgentType; onChanged: () => Promise<void> | void; toast: (msg: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const list = typeModelList(t);
+  const tiers = typeTierModels(t);
+  const sel: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '5px 8px', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--mono)', outline: 'none', maxWidth: '100%' };
+  const save = async (patch: { model?: string; tierModels?: Partial<Record<ModelTierName, string | null>> }, msg: string) => {
+    try { await api.updateAgentType(t.id, patch); await onChanged(); toast(msg); } catch (err) { toast(err instanceof Error ? err.message.slice(0, 160) : 'could not save'); }
+  };
+  const refresh = async () => {
+    setBusy(true);
+    try {
+      const r = await api.refreshAgentTypeModels(t.id);
+      await onChanged();
+      toast(r.ok ? `${t.name}: ${r.models.length} model${r.models.length === 1 ? '' : 's'}${r.defaultChanged ? ` — default ${r.defaultChanged.from} isn't served, now ${r.defaultChanged.to}` : ''}` : `Could not fetch ${t.name}'s models (${r.error ?? 'unknown error'}); kept the configured list`);
+    } catch (err) { toast(err instanceof Error ? err.message.slice(0, 160) : 'refresh failed'); } finally { setBusy(false); }
+  };
+  return (
+    <div data-testid={`type-models-${t.id}`} style={{ marginTop: 12, paddingTop: 11, borderTop: '1px solid var(--border)', display: 'grid', gap: 9 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-dim)' }}>Models</span>
+        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{list.length} · {fetchedLabel(t.modelsFetchedAt)}</span>
+        <button onClick={() => { void refresh(); }} disabled={busy || t.provider === 'echo'} aria-label={`Refresh ${t.name} models`}
+          style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '4px 10px', fontSize: 11.5, cursor: busy ? 'wait' : 'pointer' }}>{busy ? 'Refreshing…' : 'Refresh'}</button>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+        {list.map((m) => <span key={m} style={{ fontSize: 11, fontFamily: 'var(--mono)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 6px', color: m === t.model ? 'var(--green)' : 'var(--text-dim)' }}>{m}</span>)}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
+        <label style={{ display: 'grid', gap: 3, fontSize: 11, color: 'var(--text-faint)' }}>
+          Default model
+          <select aria-label={`${t.name} default model`} value={t.model} onChange={(e) => { void save({ model: e.target.value }, `${t.name} now defaults to ${e.target.value}`); }} style={sel}>
+            {list.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </label>
+        {MODEL_TIERS.map((tier) => (
+          <label key={tier} style={{ display: 'grid', gap: 3, fontSize: 11, color: 'var(--text-faint)' }}>
+            {tier[0].toUpperCase() + tier.slice(1)} tier
+            <select aria-label={`${t.name} ${tier} tier model`} value={tiers[tier] ?? ''} onChange={(e) => { void save({ tierModels: { [tier]: e.target.value || null } }, e.target.value ? `${t.name}: ${tier} tier → ${e.target.value}` : `${t.name}: ${tier} tier uses the default`); }} style={sel}>
+              <option value="">{tier === 'standard' ? 'the default model' : 'automatic'}</option>
+              {list.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ProvidersPane() {
   const app = useApp();
   const auth = useAuth();
@@ -78,6 +130,7 @@ function ProvidersPane() {
               {t.id === defaultId ? 'Default' : 'Set default'}
             </button>
           </div>
+          <TypeModels t={t} onChanged={() => app.refreshAgentTypes()} toast={app.showToast} />
         </div>
       ))}
       {adding ? (
