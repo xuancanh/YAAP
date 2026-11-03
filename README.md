@@ -297,6 +297,7 @@ for why.
 - [miniapp-capabilities.md](docs/miniapp-capabilities.md): mini-app capabilities and manifest.
 - [miniapp-roadmap.md](docs/miniapp-roadmap.md): model calls, data and connections for mini apps.
 - [registry.md](docs/registry.md): the Community market registry.
+- [plugins.md](docs/plugins.md): plugin architecture: declarative vendor capability packs, change records, the enforcing core.
 
 **Plans and research**
 
