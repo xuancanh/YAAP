@@ -78,6 +78,9 @@ export interface HomeRecap {
 export interface HomeKeyResult {
   id: string; title: string; currentValue: number | null; targetValue: number | null; unitLabel: string;
   progress: number; confidence: number | null; atRisk: boolean; atRiskReason: string; rag: 'red' | 'amber' | 'green' | 'grey'; dueAt: string | null;
+  /** The worst owner-written health among the projects that move it ('' = none
+   *  written), shown beside the RAG — never averaged into it (docs/work-tracking.md). */
+  projectHealth?: '' | 'on_track' | 'at_risk' | 'off_track';
 }
 export interface HomeGoal {
   id: string; title: string; ownerName: string | null; progress: number; confidence: number | null;
@@ -178,6 +181,17 @@ export interface HomeData {
   /** Messages from your team (docs/agent-messages.md): what agents sent the
    *  owner with message_owner — unread first — and the unread count. */
   messages: { items: HomeMessage[]; unread: number };
+  /** Work tracking (docs/work-tracking.md): the CEO's portfolio — projects at
+   *  risk, off track, missing their update, over budget or late — and the
+   *  digest of project changes since the last visit. Null without a company. */
+  portfolio?: HomePortfolio | null;
   /** Sections that failed to load; the rest still render. */
   partial: string[];
+}
+
+export interface HomePortfolio {
+  counts: { now: number; next: number; later: number; atRisk: number; offTrack: number; updateMissing: number; overBudget: number; late: number };
+  exceptions: Array<{ projectId: string; key: string | null; title: string; kinds: Array<'off_track' | 'at_risk' | 'update_missing' | 'over_budget' | 'late' | 'tripped'>; detail: string; leadName: string }>;
+  digest: Array<{ at: string; projectId: string; key: string | null; title: string; kind: 'health' | 'lane' | 'done' | 'milestone' | 'created' | 'breaker' | 'target'; text: string }>;
+  doneByProject: Array<{ projectId: string; key: string | null; title: string; done: number }>;
 }

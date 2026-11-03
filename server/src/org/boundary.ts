@@ -33,7 +33,9 @@ export type ChangeKind =
   | 'budget' | 'constitution' | 'caps' | 'external_floor' | 'trust_ceiling'
   | 'audit_settings' | 'audit_chain' | 'kill_switch' | 'frozen_classes'
   | 'delegation' | 'eval_cases'
-  | 'member_identity' | 'member_model' | 'member_heartbeat' | 'member_folder';
+  | 'member_identity' | 'member_model' | 'member_heartbeat' | 'member_folder'
+  // Work tracking (docs/work-tracking.md): the CEO's bets.
+  | 'project_bet' | 'project_appetite' | 'project_kill';
 
 /** A proposed self-change, described enough for the table to place it. */
 export interface SelfChange {
@@ -100,6 +102,10 @@ export const BOUNDARY: BoundaryRule[] = [
   { id: 'member_folder', kind: 'member_folder', match: 'a member\'s assigned workspace folder', verdict: 'propose', reason: 'it widens which shared files the member can read and write', delegable: true },
   { id: 'scope_widen', kind: 'scope_widen', match: 'widen a member\'s scopes', verdict: 'alone', reason: 'only within the chief\'s own holdings — the cap refuses anything beyond', delegable: true },
   { id: 'scope_narrow', kind: 'scope_narrow', match: 'narrow a member\'s scopes', verdict: 'alone', reason: 'narrowing removes authority', delegable: true },
+  { id: 'project_bet', kind: 'project_bet', match: 'moving a project to Now (the betting table)', verdict: 'propose', reason: 'what the company works on now is the CEO\'s bet; agents shape and propose, the CEO decides', delegable: true },
+  { id: 'project_appetite:within', kind: 'project_appetite', match: 'extend a tripped project\'s appetite within the manager\'s share (work.extendShare)', verdict: 'alone', reason: 'the lead\'s manager decides within a bounded extension; the circuit breaker already stopped new work', delegable: true },
+  { id: 'project_appetite:beyond', kind: 'project_appetite', match: 'raise a project\'s appetite beyond the manager\'s share, or a project the chief leads', verdict: 'propose', reason: 'more time or money on a bet than the manager may grant is the CEO\'s', delegable: true },
+  { id: 'project_kill', kind: 'project_kill', match: 'cancel (kill) a project in Now', verdict: 'propose', reason: 'stopping a bet the CEO made is the CEO\'s call', delegable: true },
   { id: 'budget:within', kind: 'budget', match: 'agent or project envelope within the company envelope', verdict: 'alone', reason: 'allocation inside the envelope the owner set', delegable: true },
   { id: 'budget:above', kind: 'budget', match: 'the company envelope, or above it', verdict: 'propose', reason: 'money beyond the envelope is the owner\'s', delegable: true },
   { id: 'constitution', kind: 'constitution', match: 'the constitution (the CEO\'s standing rules)', verdict: 'propose', reason: 'the legislature is the owner; the chief may only propose amendments', delegable: false },
@@ -130,6 +136,7 @@ export function ruleFor(change: SelfChange): BoundaryRule {
   if (change.kind === 'reorg') return BOUNDARY.find((b) => b.id === (change.withinUnit === false ? 'reorg:beyond' : 'reorg:unit'))!;
   if (change.kind === 'terminate') return BOUNDARY.find((b) => b.id === (change.withinUnit === false ? 'terminate:beyond' : 'terminate:unit'))!;
   if (change.kind === 'budget') return BOUNDARY.find((b) => b.id === (change.withinEnvelope === false ? 'budget:above' : 'budget:within'))!;
+  if (change.kind === 'project_appetite') return BOUNDARY.find((b) => b.id === (change.withinEnvelope === false ? 'project_appetite:beyond' : 'project_appetite:within'))!;
   const row = BOUNDARY.find((b) => b.kind === change.kind);
   if (!row) throw new Error(`no boundary row for "${change.kind}"`);
   return row;

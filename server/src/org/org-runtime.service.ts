@@ -61,7 +61,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { agentTypes, orgBudgets } from '../database/schema';
+import { agentTypes, orgApprovals, orgBudgets, orgTasks } from '../database/schema';
 import { nowIso } from '../common/ids.util';
 import { AccountsService } from '../accounts/accounts.service';
 import { AgentsService } from '../agents/agents.service';
@@ -99,6 +99,8 @@ import { urgencyOf } from './org-capacity.service';
 import { ROLES, rankRoles, roleRef } from './roles/catalog';
 import { CHIEF_PACK_ID } from './chief-os';
 import { taskRef } from '../common/task-keys';
+import { blockerSignature, describeBlockedOn, legacyBlockedOn, parseBlockedOn } from './blocked-on';
+import { workTunable } from './work-tunables';
 
 export type RunResult = 'ran' | 'budget_stop' | 'refused' | `skipped:${string}`;
 
@@ -520,9 +522,19 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       const soon = govTunable(org, 'capacity.dueSoonHours');
       const open = (await this.tasks.list(org.id)).filter((t) => t.assigneeAgentId === agentId && ['todo', 'claimed', 'in_progress', 'blocked'].includes(t.status))
         .sort((a, b) => (urgencyOf(a, now, soon) - urgencyOf(b, now, soon)) || ((a.dueAt ?? '9999') < (b.dueAt ?? '9999') ? -1 : (a.dueAt ?? '9999') > (b.dueAt ?? '9999') ? 1 : 0));
-      for (const t of open.slice(0, 5)) {
+      // Work tracking (docs/work-tracking.md): a blocked task wakes its owner
+      // when its blocker changes (the dependency moved, the decision was
+      // made, someone else commented), otherwise on an exponential back-off;
+      // a task paused for circular behaviour does not wake its owner at all.
+      const listed: Array<{ t: OrgTask; why: string }> = [];
+      for (const t of open) {
+        if (t.wakesPausedAt) continue;
+        if (t.status === 'blocked') { const why = await this.blockedWake(org, t, now); if (why) listed.push({ t, why }); continue; }
+        listed.push({ t, why: '' });
+      }
+      for (const { t, why } of listed.slice(0, 5)) {
         const u = urgencyOf(t, now, soon);
-        out.push(`${u === 0 ? `OVERDUE (was due ${t.dueAt!.slice(0, 16).replace('T', ' ')}): ` : u === 1 ? `due within ${soon}h (${t.dueAt!.slice(0, 16).replace('T', ' ')}): ` : ''}task ${taskRef(t)} "${t.title}" is ${t.status.replace('_', ' ')} (org_task_update / org_request_review)`);
+        out.push(`${u === 0 ? `OVERDUE (was due ${t.dueAt!.slice(0, 16).replace('T', ' ')}): ` : u === 1 ? `due within ${soon}h (${t.dueAt!.slice(0, 16).replace('T', ' ')}): ` : ''}task ${taskRef(t)} "${t.title}" is ${t.status.replace('_', ' ')}${why ? ` — ${why}` : ''} (org_task_update / org_request_review)`);
       }
       for (const g of (await this.org.goals(org.id)).filter((g) => g.kind === 'key_result' && g.status === 'active' && g.ownerAgentId === agentId)) {
         const last = Date.parse(g.lastCheckInAt ?? g.createdAt);
@@ -530,6 +542,37 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       }
     }
     return out;
+  }
+
+  /**
+   * The heartbeat back-off for one blocked task (docs/work-tracking.md
+   * "The heartbeat wakes on change"). The blocker's signature includes the
+   * state of what it waits on: the dependency's status, the decision card's
+   * status, the last comment by anyone but the owner. A changed signature
+   * wakes the owner at once; an unchanged one after `work.blockedBackoffMinutes`,
+   * doubling up to `work.blockedBackoffMaxHours`. The first sight of a new
+   * blocker only arms the timer (the owner just set it). Returns the reason
+   * text, or null for no wake now.
+   */
+  private async blockedWake(org: Organization, t: OrgTask, now: Date): Promise<string | null> {
+    const b = parseBlockedOn(t.blockedOn) ?? legacyBlockedOn({ lines: listOf(t.blockers), since: t.updatedAt });
+    let state = '';
+    if (b.kind === 'task' && b.ref) state = (await this.tasks.get(org.id, b.ref).catch(() => null))?.status ?? 'gone';
+    if ((b.kind === 'decision' || b.kind === 'ceo' || b.kind === 'manager') && b.ref) state = (await this.db.select({ status: orgApprovals.status }).from(orgApprovals).where(eq(orgApprovals.id, b.ref)).limit(1)).at(0)?.status ?? '';
+    const others = (await this.tasks.messages(org.id, { taskId: t.id, limit: 50 })).filter((m) => m.fromAgentId !== t.assigneeAgentId && m.fromAgentId !== null);
+    state += `|${others.length}`;
+    const sig = blockerSignature(b, state);
+    const base = workTunable(org, 'work.blockedBackoffMinutes') * 60_000;
+    const max = workTunable(org, 'work.blockedBackoffMaxHours') * 3_600_000;
+    const arm = async (count: number, why: string | null) => {
+      await this.db.update(orgTasks).set({ wakeSig: sig, wakeCount: count, nextWakeAt: new Date(now.getTime() + Math.min(max, base * 2 ** count)).toISOString() }).where(eq(orgTasks.id, t.id));
+      return why;
+    };
+    const what = describeBlockedOn(b);
+    if (!t.wakeSig) return arm(0, null);
+    if (t.wakeSig !== sig) return arm(0, `its blocker changed (${what}): check whether it can move`);
+    if (t.nextWakeAt && now.toISOString() < t.nextWakeAt) return null;
+    return arm(t.wakeCount + 1, `still ${what}; re-check ${t.wakeCount + 1} — record the re-check in your run, not on the task`);
   }
 
   /** The operating profile and the vision, for the heartbeat prompt. */
@@ -839,6 +882,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     let task = await this.tasks.get(orgId, taskId);
     if (['done', 'cancelled'].includes(task.status)) return 'skipped:closed';
     if ((await this.tasks.runningRuns(orgId, taskId)).length > 0) return 'skipped:busy';
+    // Circular behaviour (docs/work-tracking.md): wakes stay paused until the lead rebriefs, reassigns or comments.
+    if (task.wakesPausedAt && !(task.status === 'in_review' && task.reviewerAgentId === agentId)) return 'skipped:paused';
 
     // Which seat: reviewer, or the owner (claiming a todo task, or continuing one it holds).
     const reviewer = task.status === 'in_review' && task.reviewerAgentId === agentId;
@@ -852,10 +897,11 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         const blocker = await this.tasks.claimBlocker(orgId, task, agentId, govTunable(org, 'capacity.wipPerMember'));
         if (blocker) {
           const waiting = blocker.startsWith('waiting');
+          const paused = blocker.startsWith('paused');
           if (waiting) await this.tasks.update(orgId, taskId, { status: 'waiting' }, 'system').catch(() => undefined);
-          await this.tasks.endRun(run.id, { status: 'refused', outcome: waiting ? 'waiting' : 'wip' });
+          await this.tasks.endRun(run.id, { status: 'refused', outcome: waiting ? 'waiting' : paused ? 'paused' : 'wip' });
           await this.audit.append(orgId, { actor: 'system', action: 'claim_refused', refType: 'task', refId: taskId, payload: { agentId, reason: blocker.slice(0, 300) } });
-          return waiting ? 'skipped:waiting' : 'skipped:wip';
+          return waiting ? 'skipped:waiting' : paused ? 'skipped:paused' : 'skipped:wip';
         }
         const won = await this.tasks.claim(orgId, taskId, agentId, run.id);
         if (!won) { await this.tasks.endRun(run.id, { status: 'refused', outcome: 'claimed_elsewhere' }); return 'skipped:claimed_elsewhere'; }
@@ -939,17 +985,48 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       await this.tasks.update(orgId, taskId, { status: 'blocked', blockers: [...listOf(current.blockers), 'loop detected: the same tool call repeated 3 times'] }, 'system');
       await this.ownerEvent(org, agentId, `Run stopped: loop detected on "${task.title}"`, `${agent.name} repeated the same tool call ${this.identicalCallLimit} times. The task is blocked with the chief of staff as owner.`, session.id, ws);
       await this.emitBreaker({ orgId, agentId, taskId, kind: 'loop', detail: `${agent.name} repeated the same tool call ${this.identicalCallLimit} times on "${task.title}"`, sessionId: session.id });
+    } else if (!killed && !reviewer && (outcome === 'no_progress' || status === 'failed') && await this.circular(org, current, ctx, error, agent.name)) {
+      // paused for its lead (circular behaviour); no re-wake is scheduled
     } else if (!killed && !reviewer && outcome === 'no_progress') {
       await this.noProgress(org, current, agent.name, session.id, ws);
     } else if (progressed && current.noProgressCount > 0) {
       await this.tasks.update(orgId, taskId, { noProgressCount: 0 }, 'system').catch(() => {});
     }
+    if (progressed && !error && current.failSig) await this.db.update(orgTasks).set({ failSig: '', failRepeats: 0 }).where(eq(orgTasks.id, taskId)).catch(() => undefined);
     await this.agents.addEvent(agentId, {
       kind: 'org_run', title: `${reviewer ? 'Reviewed' : 'Worked on'} "${task.title}" (${outcome})`,
       body: (error ? `${error}. ` : '') + answer.replace(/\s+/g, ' ').slice(0, 400), sessionId: session.id,
       payload: JSON.stringify({ orgId, taskId, runId: run.id, outcome, usd }), origin: 'loop', ...deliveryFor(ws, 'org_run'),
     }).catch(() => {});
     return 'ran';
+  }
+
+  /**
+   * Circular behaviour (docs/work-tracking.md; GitHub's "the agent tries the
+   * same failing approach multiple times"): a run that failed or made no
+   * progress leaves the signature of its approach — the tool calls it made
+   * and the error. The same signature `work.circularRepeats` times in a row
+   * pauses the task's wakes and flags its lead (the project lead, else the
+   * owner's manager, else the chief). A comment, a reassignment or an edit by
+   * someone else lifts the pause. Returns whether it paused.
+   */
+  private async circular(org: Organization, task: OrgTask, ctx: Pick<RunCtx, 'calls'>, error: string | null, agentName: string): Promise<boolean> {
+    // An idle run (no tool call, no error) is not an approach: the no-progress back-off handles it.
+    if (ctx.calls.size === 0 && !error) return false;
+    const approach = [...ctx.calls.keys()].sort().join(',') + `|${(error ?? '').replace(/[0-9a-f-]{8,}|\d+/gi, '#').slice(0, 120)}`;
+    const sig = createHash('sha256').update(approach).digest('hex').slice(0, 16);
+    const repeats = task.failSig === sig ? task.failRepeats + 1 : 1;
+    const limit = workTunable(org, 'work.circularRepeats');
+    const pause = repeats >= limit;
+    await this.db.update(orgTasks).set({ failSig: sig, failRepeats: repeats, ...(pause ? { wakesPausedAt: nowIso() } : {}) }).where(eq(orgTasks.id, task.id));
+    if (!pause) return false;
+    const project = task.projectId ? await this.org.project(org.id, task.projectId).catch(() => null) : null;
+    const owner = task.assigneeAgentId ? await this.org.member(org.id, task.assigneeAgentId) : null;
+    const lead = project?.ownerAgentId && project.ownerAgentId !== task.assigneeAgentId ? project.ownerAgentId : owner?.reportsToAgentId ?? org.chiefOfStaffAgentId;
+    await this.audit.append(org.id, { actor: 'system', action: 'task_circular', refType: 'task', refId: task.id, payload: { repeats, sig, lead } });
+    if (lead) await this.agents.addEvent(lead, { kind: 'blocked', title: `Paused: ${agentName} repeated the same failed approach on ${taskRef(task)} "${task.title}"`.slice(0, 200), body: `${repeats} runs in a row ended the same way${error ? ` (${error.slice(0, 200)})` : ''}. Wakes on the task are paused: rebrief it with a comment, reassign it, split it or cancel it.`, payload: JSON.stringify({ orgId: org.id, taskId: task.id }), origin: 'org' }).catch(() => undefined);
+    this.bus?.emitOrgBoard({ orgId: org.id, kind: 'blocked', refId: task.id, detail: `${taskRef(task)} "${task.title}" paused: the same failed approach ${repeats} times` });
+    return true;
   }
 
   private async noProgress(org: Organization, task: OrgTask, agentName: string, sessionId: string, ws: { quietHours: string } | null): Promise<void> {
@@ -1481,7 +1558,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         const goals = await this.org.goals(org.id);
         const projects = await this.org.projects(org.id);
         if (goals.length === 0) return `No goals yet. Mission: ${org.mission || '(none)'}`;
-        return goals.map((g) => `[${g.id.slice(0, 8)}] (${g.status}) ${g.title}${g.description ? ` — ${g.description.slice(0, 300)}` : ''}\n${projects.filter((p) => p.goalId === g.id).map((p) => `   project [${p.id.slice(0, 8)}] (${p.status}) ${p.title}`).join('\n')}`).join('\n');
+        return goals.map((g) => `[${g.id.slice(0, 8)}] (${g.status}) ${g.title}${g.description ? ` — ${g.description.slice(0, 300)}` : ''}\n${projects.filter((p) => p.goalId === g.id).map((p) => `   project ${p.key ?? `[${p.id.slice(0, 8)}]`} (${p.lane}/${p.status}) ${p.title}`).join('\n')}`).join('\n');
       }
       case 'org_message': {
         await this.tasks.post(org.id, { text: str('text'), fromAgentId: agentId, runId: ctx?.runId ?? null });
@@ -1498,7 +1575,9 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
           // Capacity (C4): the WIP limit; the chief may override with a reason.
           await this.tasks.checkWip(org.id, assignee, { actor, override: str('override'), limit: govTunable(org, 'capacity.wipPerMember') }).catch((err: unknown) => { throw new Error(err instanceof Error ? err.message : String(err)); });
         }
-        const projectId = str('projectId') ? (await this.org.projects(org.id)).find((p) => p.id.startsWith(str('projectId')))?.id ?? null : (ctx ? (await this.tasks.get(org.id, ctx.taskId)).projectId : null);
+        // Every task has a project (docs/work-tracking.md): the one named (its key, e.g. P-3), the current task's, else the placement rule.
+        const pref = str('projectId') || str('project');
+        const projectId = pref ? (await this.org.projects(org.id)).find((p) => (p.key ?? '').toLowerCase() === pref.toLowerCase() || p.id === pref || (pref.length >= 6 && p.id.startsWith(pref)))?.id ?? (() => { throw new Error(`refused: no project "${pref}" — org_projects lists them`); })() : (ctx?.taskId ? (await this.tasks.get(org.id, ctx.taskId)).projectId : null);
         const t = await this.tasks.create(org.id, {
           title: str('title'), brief, projectId, parentTaskId: ctx?.taskId ?? null, assigneeAgentId: assignee,
           status: assignee ? 'todo' : 'backlog', createdBy: actor, class: str('class') || null,
@@ -1522,14 +1601,21 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         const patch: Parameters<OrgTasksService['update']>[2] = {};
         if (status) patch.status = status as never;
         if (Array.isArray(input.blockers)) patch.blockers = input.blockers.map(String);
+        // One structured blocker (docs/work-tracking.md): what it waits on and the ask.
+        if (requested === 'blocked') {
+          const given = (input.blockedOn && typeof input.blockedOn === 'object' ? input.blockedOn : {}) as { kind?: string; ref?: string; reason?: string };
+          const reasonText = (given.reason ?? '').trim() || why.trim();
+          patch.blockedOn = { kind: given.kind || str('waitsOn') || legacyBlockedOn({ lines: [reasonText], since: '' }).kind, ref: given.ref ?? (str('ref') || null), reason: reasonText };
+        }
         if (requested === 'abandoned' && !isChief) {
           await this.tasks.comment(org.id, t.id, { text: `Abandoned by its owner: ${why.trim()}`, fromAgentId: agentId, runId: ctx?.runId ?? null });
           this.bus?.emitOrgBoard({ orgId: org.id, kind: 'blocked', refId: t.id, detail: `"${t.title}" abandoned by its owner: ${why.trim().slice(0, 120)}` });
         }
         if (str('note')) await this.tasks.comment(org.id, t.id, { text: str('note'), fromAgentId: agentId, runId: ctx?.runId ?? null, wake: isChief && t.assigneeAgentId !== agentId });
-        if (Object.keys(patch).length > 0) await this.tasks.update(org.id, t.id, patch, actor);
+        const after = Object.keys(patch).length > 0 ? await this.tasks.update(org.id, t.id, patch, actor).catch((err: unknown) => { const m = err instanceof Error ? err.message : String(err); throw new Error(m.startsWith('refused') ? m : `refused: ${m}`); }) : t;
         if (ctx) ctx.progress = true;
-        return `Task ${taskRef(t)} updated${status ? ` → ${status}` : ''}.`;
+        const b = after.status === 'blocked' || after.status === 'waiting' ? parseBlockedOn(after.blockedOn) : null;
+        return `Task ${taskRef(t)} updated${status ? ` → ${after.status}` : ''}${b ? ` (${describeBlockedOn(b, (_k, r) => names.get(r) ?? r.slice(0, 8))})` : ''}.`;
       }
       case 'org_task_comment': {
         const t = await taskOf();
@@ -2241,7 +2327,7 @@ const COMMON_TOOLS: AiToolSpec[] = [
   { name: 'org_read_board', description: 'Read the organisation\'s shared task board: id, status, title, owner. Pass mine=true for only your tasks.', inputSchema: { type: 'object', properties: { mine: { type: 'boolean' }, org: { type: 'string', description: 'Organisation name when you belong to several.' } } } },
   { name: 'org_read_goal', description: 'Read the organisation\'s goals and their projects.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
   { name: 'org_message', description: 'Post a short attributed message to the organisation\'s group log. It wakes nobody and carries no authority; use it for summaries, not for asking someone to act.', inputSchema: { type: 'object', properties: { text: { type: 'string' }, org: { type: 'string' } }, required: ['text'] } },
-  { name: 'org_create_task', description: 'Create a task on the shared board with the four-field brief. As a member it lands in the backlog (a subtask of your current task) for the chief of staff to triage; the chief, or a unit lead for its own reports, may assign it directly. `class` (triage | research | synthesis | review | ops | general) drives cost roll-ups and model routing; derived from the brief when omitted.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, ...brief4, class: { type: 'string', description: 'triage | research | synthesis | review | ops | general' }, checks: CHECKS_PARAM, projectId: { type: 'string' }, assignee: { type: 'string', description: 'Chief or unit lead only: member name to assign to (a lead: itself or a direct report).' }, org: { type: 'string' } }, required: ['title', 'outcome', 'done_when'] } },
+  { name: 'org_create_task', description: 'Create a task on the shared board with the four-field brief. As a member it lands in the backlog (a subtask of your current task) for the chief of staff to triage; the chief, or a unit lead for its own reports, may assign it directly. `class` (triage | research | synthesis | review | ops | general) drives cost roll-ups and model routing; derived from the brief when omitted.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, ...brief4, class: { type: 'string', description: 'triage | research | synthesis | review | ops | general' }, checks: CHECKS_PARAM, projectId: { type: 'string', description: 'The project it serves (its key, e.g. P-3; org_projects lists them). Default: your current task\'s project, else your unit\'s Unsorted project for the head to place.' }, assignee: { type: 'string', description: 'Chief or unit lead only: member name to assign to (a lead: itself or a direct report).' }, org: { type: 'string' } }, required: ['title', 'outcome', 'done_when'] } },
   { name: 'org_signals', description: 'Open signals (docs/company-vision.md §5): stale or blocked tasks, ageing reviews, burn rate, breaker trips, org debt, SLO breaches, audit findings. You see the ones addressed to you; a unit lead its unit\'s; the chief all. Filter by severity (info|warn|critical) or unit.', inputSchema: { type: 'object', properties: { severity: { type: 'string', enum: ['info', 'warn', 'critical'] }, unit: { type: 'string' }, org: { type: 'string' } } } },
   { name: 'org_ack_signal', description: 'Acknowledge a signal addressed to you (the chief: any) with an optional note. It stays visible as acked and resolves itself when the condition clears.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, note: { type: 'string' }, org: { type: 'string' } }, required: ['id'] } },
   // Intent (docs/company-vision.md §2): read the tree, ask why, check in.
@@ -2280,7 +2366,7 @@ const LEAD_TOOLS: AiToolSpec[] = [
 ];
 
 const TASK_TOOLS: AiToolSpec[] = [
-  { name: 'org_task_update', description: 'Update your task and keep it true: in_progress while you work it, blocked with what it waits on, abandoned with why it is no longer worth doing (the chief is told), todo to put it back; a note for the timeline, blockers. Tasks finish through org_request_review, never by setting done.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: `${TASK_REF} Defaults to the task you were woken for.` }, status: { type: 'string', enum: ['in_progress', 'blocked', 'todo', 'abandoned', 'backlog', 'cancelled'] }, note: { type: 'string', description: 'Required for blocked (or pass blockers) and abandoned: what it waits on, or why it is no longer worth doing.' }, blockers: { type: 'array', items: { type: 'string' } } } } },
+  { name: 'org_task_update', description: 'Update your task and keep it true: in_progress while you work it, blocked with what it waits on, abandoned with why it is no longer worth doing (the chief is told), todo to put it back; a note for the timeline, blockers. Tasks finish through org_request_review, never by setting done.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: `${TASK_REF} Defaults to the task you were woken for.` }, status: { type: 'string', enum: ['in_progress', 'blocked', 'todo', 'abandoned', 'backlog', 'cancelled'] }, note: { type: 'string', description: 'Required for blocked (or pass blockers) and abandoned: what it waits on, or why it is no longer worth doing.' }, blockers: { type: 'array', items: { type: 'string' } }, waitsOn: { type: 'string', enum: ['task', 'person', 'agent', 'manager', 'ceo', 'external', 'decision'], description: 'For blocked: who or what it waits on. task = another task (ref its key: the task waits and moves on when it is done); manager = your direct manager; ceo = a decision only the CEO can make (a card in Needs you); person = a human (ref their id); agent = a member (ref its name); decision = a pending decision card (ref its id); external = outside the company.' }, ref: { type: 'string', description: 'For blocked: the task key, member name, person id or card id it waits on.' } } } },
   { name: 'org_task_comment', description: 'Comment on a task\'s timeline (a handoff note, a question for the chief). A comment on somebody else\'s task wakes its owner; mentions do not.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, text: { type: 'string' } }, required: ['text'] } },
   { name: 'org_request_review', description: 'Hand your finished task to review: it moves to in_review and a reviewer other than you (preferring a different model family) is woken with the done_when rubric.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, note: { type: 'string', description: 'Where the result is and how it meets done_when.' } } } },
 ];

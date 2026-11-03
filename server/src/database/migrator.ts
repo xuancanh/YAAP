@@ -11,6 +11,7 @@
  * in production, PGlite in tests.
  */
 import { backfillTaskKeys } from '../common/task-keys';
+import { backfillWorkTracking } from './work-tracking-backfill';
 
 export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
@@ -2063,6 +2064,97 @@ const MIGRATIONS: Migration[] = [
       `);
       await db.query(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_kind ON chat_sessions ("workspaceId", "kind", "agentId", "updatedAt")`);
       await db.query(`CREATE INDEX IF NOT EXISTS idx_chat_turns_session_created ON chat_turns ("sessionId", "createdAt")`);
+    },
+  },
+  {
+    id: '0060-work-tracking',
+    up: async (db) => {
+      // Work tracking (docs/work-tracking.md): projects become the required
+      // middle level (lead, key results, brief, dates, milestones, appetite,
+      // lane, health), every task records its source, one structured
+      // blocker, checklist steps and its done event (task_transitions,
+      // startedAt / doneAt), the heartbeat back-off and circular-behaviour
+      // state; health updates get their own table; the kanban of company
+      // members merges into the org board (agent_tasks.mergedInto). Then the
+      // backfill (work-tracking-backfill.ts). Idempotent.
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('org_projects', 'key', 'TEXT');
+      await add('org_projects', 'goalIds', `TEXT NOT NULL DEFAULT '[]'`);
+      await add('org_projects', 'leadHumanId', 'TEXT');
+      await add('org_projects', 'unitId', 'TEXT');
+      await add('org_projects', 'kind', `TEXT NOT NULL DEFAULT 'project'`);
+      await add('org_projects', 'brief', `TEXT NOT NULL DEFAULT '{}'`);
+      await add('org_projects', 'startDate', 'TEXT');
+      await add('org_projects', 'targetDate', 'TEXT');
+      await add('org_projects', 'milestones', `TEXT NOT NULL DEFAULT '[]'`);
+      await add('org_projects', 'appetiteDays', 'INTEGER NOT NULL DEFAULT 0');
+      await add('org_projects', 'appetiteUsd', 'REAL NOT NULL DEFAULT 0');
+      await add('org_projects', 'lane', `TEXT NOT NULL DEFAULT 'later'`);
+      await add('org_projects', 'rank', 'INTEGER NOT NULL DEFAULT 0');
+      await add('org_projects', 'health', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_projects', 'healthReason', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_projects', 'healthAsk', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_projects', 'healthAt', 'TEXT');
+      await add('org_projects', 'hill', 'REAL');
+      await add('org_projects', 'updateCadenceDays', 'INTEGER');
+      await add('org_projects', 'breakerAt', 'TEXT');
+      await add('org_projects', 'appetiteWarnedAt', 'TEXT');
+      await add('org_projects', 'createdBy', `TEXT NOT NULL DEFAULT 'user'`);
+      await add('org_projects', 'updatedAt', 'TEXT');
+      // source: added empty so the backfill can tell untouched rows, then defaulted.
+      await add('org_tasks', 'source', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_tasks', 'blockedOn', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_tasks', 'steps', `TEXT NOT NULL DEFAULT '[]'`);
+      await add('org_tasks', 'startedAt', 'TEXT');
+      await add('org_tasks', 'doneAt', 'TEXT');
+      await add('org_tasks', 'blockedSeconds', 'INTEGER NOT NULL DEFAULT 0');
+      await add('org_tasks', 'wakeSig', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_tasks', 'wakeCount', 'INTEGER NOT NULL DEFAULT 0');
+      await add('org_tasks', 'nextWakeAt', 'TEXT');
+      await add('org_tasks', 'failSig', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_tasks', 'failRepeats', 'INTEGER NOT NULL DEFAULT 0');
+      await add('org_tasks', 'wakesPausedAt', 'TEXT');
+      await add('agent_tasks', 'mergedInto', 'TEXT');
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS org_project_updates (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "id" TEXT PRIMARY KEY,
+          "orgId" TEXT NOT NULL,
+          "projectId" TEXT NOT NULL,
+          "health" TEXT NOT NULL,
+          "reason" TEXT NOT NULL DEFAULT '',
+          "ask" TEXT NOT NULL DEFAULT '',
+          "body" TEXT NOT NULL DEFAULT '',
+          "hill" REAL,
+          "diff" TEXT NOT NULL DEFAULT '{}',
+          "by" TEXT NOT NULL DEFAULT '',
+          "createdAt" TEXT NOT NULL
+        )
+      `);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS task_transitions (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "id" TEXT PRIMARY KEY,
+          "orgId" TEXT NOT NULL,
+          "taskId" TEXT NOT NULL,
+          "fromStatus" TEXT NOT NULL DEFAULT '',
+          "toStatus" TEXT NOT NULL,
+          "actor" TEXT NOT NULL DEFAULT '',
+          "reason" TEXT NOT NULL DEFAULT '',
+          "backfilled" INTEGER NOT NULL DEFAULT 0,
+          "at" TEXT NOT NULL
+        )
+      `);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_project_updates_project ON org_project_updates ("projectId", "createdAt")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_task_transitions_task ON task_transitions ("taskId", "at")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_task_transitions_org ON task_transitions ("orgId", "toStatus", "at")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_tasks_project ON org_tasks ("projectId")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_projects_org ON org_projects ("orgId", "kind")`);
+      await backfillWorkTracking(db);
+      await db.query(`ALTER TABLE org_tasks ALTER COLUMN "source" SET DEFAULT 'agent'`);
+      await db.query(`UPDATE org_tasks SET "source" = 'agent' WHERE "source" = ''`);
     },
   },
 ];

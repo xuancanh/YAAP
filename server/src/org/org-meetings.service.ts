@@ -464,6 +464,8 @@ export class OrgMeetingsService {
         title: a.title, brief: { outcome: a.outcome || a.title, context, constraints: '', done_when: a.done_when },
         assigneeAgentId: assignee, status: assignee ? 'todo' : 'backlog', createdBy: `agent:${a.by || facilitator}`, dueAt: a.due ?? null,
         unitId: meeting.unitId ?? undefined, channelId: meeting.channelId, messageId: opts.threadRootId ?? meeting.threadRootId,
+        // Work tracking (docs/work-tracking.md): a retro's actions go to the unit's capped Operating improvements project.
+        source: meeting.kind === 'retro' ? 'retro' : 'meeting',
       }).catch(() => null);
       if (t) { a.taskId = t.id; a.taskKey = t.key; if (!assignee && a.owner) a.owner = `${a.owner} (backlog for the chief)`; }
     }
@@ -483,6 +485,7 @@ export class OrgMeetingsService {
         title: `Parked: ${p.text}`.slice(0, 200), brief: { outcome: p.text, context: `${context}. Parked in the meeting as off-topic.`, constraints: '', done_when: 'Decided where it belongs, or dropped' },
         assigneeAgentId: null, status: 'backlog', createdBy: `agent:${p.by || facilitator}`,
         unitId: meeting.unitId ?? undefined, channelId: meeting.channelId, messageId: opts.threadRootId ?? meeting.threadRootId,
+        source: meeting.kind === 'retro' ? 'retro' : 'meeting',
       }).catch(() => null);
       if (t) { p.taskId = t.id; p.taskKey = t.key; }
     }

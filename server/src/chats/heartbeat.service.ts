@@ -282,15 +282,21 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
   // ---- built-in reason sources ----
 
   /** Open board tasks (todo | doing) not touched for the staleness interval,
-   *  and blocked ones not looked at for four intervals (is it still blocked?). */
+   *  and blocked ones on an exponential back-off (docs/work-tracking.md): a
+   *  blocked task wakes its owner when the back-off crosses a step since the
+   *  last heartbeat run — four staleness intervals after it was blocked, then
+   *  twelve, twenty-eight… (base × (2^k − 1)) — so re-checking an unchanged
+   *  blocker and rewriting its note no longer resets the clock. Kanban rows
+   *  merged into the company board are not on it. */
   private async staleTasks(agentId: string, ctx: HeartbeatContext): Promise<string[]> {
     const before = new Date(ctx.now.getTime() - ctx.tunables.staleMinutes * 60_000).toISOString();
-    const blockedBefore = new Date(ctx.now.getTime() - 4 * ctx.tunables.staleMinutes * 60_000).toISOString();
-    const rows = (await this.db.execute(sql`
-      SELECT "id", "key", "title", "status", "updatedAt" FROM agent_tasks
-      WHERE "agentId" = ${agentId} AND (("status" IN ('todo', 'doing') AND "updatedAt" <= ${before}) OR ("status" = 'blocked' AND "updatedAt" <= ${blockedBefore}))
-      ORDER BY "updatedAt" ASC LIMIT ${REASONS_PER_SOURCE + 1}
-    `)).rows as unknown as Array<{ id: string; key: string | null; title: string; status: string; updatedAt: string }>;
+    const all = (await this.db.execute(sql`
+      SELECT "id", "key", "title", "status", "note", "createdAt", "updatedAt" FROM agent_tasks
+      WHERE "agentId" = ${agentId} AND "mergedInto" IS NULL AND (("status" IN ('todo', 'doing') AND "updatedAt" <= ${before}) OR "status" = 'blocked')
+      ORDER BY "updatedAt" ASC LIMIT 200
+    `)).rows as unknown as Array<{ id: string; key: string | null; title: string; status: string; note: string; createdAt: string; updatedAt: string }>;
+    const base = 4 * ctx.tunables.staleMinutes * 60_000;
+    const rows = all.filter((t) => t.status !== 'blocked' || blockedBackoffDue(t, base, ctx.now, ctx.lastRunAt)).slice(0, REASONS_PER_SOURCE + 1);
     const lines = rows.slice(0, REASONS_PER_SOURCE).map((t) => `Task ${taskRef(t)} "${t.title.slice(0, 80)}" is ${t.status === 'doing' ? 'in progress' : t.status === 'blocked' ? 'blocked (check whether it can move now)' : 'to do'} and untouched since ${t.updatedAt.slice(0, 16).replace('T', ' ')}`);
     if (rows.length > REASONS_PER_SOURCE) lines[REASONS_PER_SOURCE - 1] += ' (and more on your board)';
     return lines;
@@ -416,6 +422,27 @@ export function heartbeatPrompt(reasons: string[], charter: string, context: str
   if (following.trim()) parts.push(`Following — new since your last beat (threads and tasks you follow; follow, unfollow and list_follows manage them — unfollow what no longer concerns you):\n${following.trim()}`);
   if (context.trim()) parts.push(`How this company works (its operating profile — values, culture, vision, goals; follow it in what you prioritise and how you communicate):\n${context.trim()}`);
   return parts.join('\n\n');
+}
+
+/** When a kanban task was blocked: its latest "Blocked (YYYY-MM-DD): …" note line, else its last update. */
+export function blockedSince(t: { note?: string | null; updatedAt: string }): number {
+  const m = [...(t.note ?? '').matchAll(/Blocked \((\d{4}-\d{2}-\d{2})\):/g)].at(-1);
+  const ms = m ? Date.parse(`${m[1]}T00:00:00.000Z`) : NaN;
+  return Number.isFinite(ms) ? ms : Date.parse(t.updatedAt);
+}
+
+/** Whether a blocked kanban task is due a wake: the elapsed time since it
+ *  was blocked crossed a back-off step (base × (2^k − 1), k ≥ 1) after the
+ *  last heartbeat run. Pure and stateless. */
+export function blockedBackoffDue(t: { note?: string | null; updatedAt: string }, baseMs: number, now: Date, lastRunAt: string | null): boolean {
+  if (baseMs <= 0) return true;
+  const since = blockedSince(t);
+  const step = (ms: number) => (ms < baseMs ? 0 : Math.floor(Math.log2(ms / baseMs + 1)));
+  const nowStep = step(now.getTime() - since);
+  if (nowStep === 0) return false;
+  const last = lastRunAt ? Date.parse(lastRunAt) : NaN;
+  if (!Number.isFinite(last) || last < since) return true;
+  return nowStep > step(last - since);
 }
 
 /** The first minute at or after `from` + 1 min matching `cron`, within 8

@@ -38,7 +38,7 @@ import { actorId } from '../accounts/account-context';
 import { ORG_MODES, type OrgMode } from '../workspaces/workspaces.service';
 import { OrgModeService, AUTONOMY_CAPS, MAX_ORG_AGENT_CAP } from './org-mode.service';
 import {
-  OrgController, UpdateOrgDto, AddMemberDto, UpdateMemberDto, ScopesDto, GoalDto, ProjectDto, TaskDto, AssignDto, TextDto, ReviewDto, DecideDto, ProposalDto, BudgetDto, WakeDto, HumanDto, UnitDto, SloDto, AckDto,
+  OrgController, UpdateOrgDto, AddMemberDto, UpdateMemberDto, ScopesDto, GoalDto, TaskDto, AssignDto, TextDto, ReviewDto, DecideDto, ProposalDto, BudgetDto, WakeDto, HumanDto, UnitDto, SloDto, AckDto,
   VisionDto, ProfileDto, TunableDto, CheckInDto, PlanDto, RoutingDto, AllocationDto, DryRunDto, VetoDto,
 } from './org.controller';
 
@@ -181,9 +181,7 @@ export class WorkspaceOrgController {
   @Get('goals') async goals(@Param('id') id: string, @Query('unitId') unitId?: string) { return this.orgs.goals(await this.oid(id), unitId); }
   @Post('goals') async addGoal(@Param('id') id: string, @Body() dto: GoalDto) { return this.orgs.addGoal(await this.oid(id), dto); }
   @Patch('goals/:goalId') async updateGoal(@Param('id') id: string, @Param('goalId') goalId: string, @Body() dto: GoalDto) { return this.orgs.updateGoal(await this.oid(id), goalId, dto); }
-  @Get('projects') async projects(@Param('id') id: string) { return this.orgs.projects(await this.oid(id)); }
-  @Post('projects') async addProject(@Param('id') id: string, @Body() dto: ProjectDto) { return this.orgs.addProject(await this.oid(id), dto); }
-  @Patch('projects/:projectId') async updateProject(@Param('id') id: string, @Param('projectId') projectId: string, @Body() dto: ProjectDto) { return this.orgs.updateProject(await this.oid(id), projectId, dto); }
+  // Projects (GET/POST projects, GET/PATCH projects/:projectId, …) live in WorkController (docs/work-tracking.md).
 
   @Get('tasks') async board(@Param('id') id: string, @Query('projectId') projectId?: string, @Query('status') status?: string, @Query('unitId') unitId?: string, @Query('rollUp') rollUp?: string) { return this.orgs.board(await this.oid(id), projectId, status, unitId, rollUp); }
   @Get('tasks/:taskId') async task(@Param('id') id: string, @Param('taskId') taskId: string) { return this.orgs.task(await this.oid(id), taskId); }

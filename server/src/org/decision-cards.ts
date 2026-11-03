@@ -20,6 +20,7 @@ const KIND_REVERSIBILITY: Record<string, Reversibility> = {
   external: 'irreversible', terminate: 'costly', escalation: 'reversible', tune: 'reversible', cadence: 'reversible',
   routing: 'reversible', charter_change: 'reversible', blueprint: 'costly', human_review: 'reversible', metric_source: 'reversible',
   two_key: 'irreversible', experiment: 'reversible',
+  project_now: 'reversible', project_appetite: 'costly', project_kill: 'costly',
 };
 
 /** Reversibility of a card: the action class for a held action, else the kind's. */
@@ -63,6 +64,9 @@ export function computedAlternatives(kind: string): string[] {
     case 'budget_raise': return ['Reject: keep the envelope and cut scope', 'Revise: a smaller raise'];
     case 'two_key': return ['Reject: the action does not run', 'Revise: stage it for a later send'];
     case 'escalation': return ['Reject: cancel the task', 'Revise: rebrief and continue'];
+    case 'project_now': return ['Reject: keep it in Next or Later', 'Revise: reshape it (a smaller appetite, a sharper brief)'];
+    case 'project_appetite': return ['Reject: kill the project (cancel its open tasks)', 'Revise: cut scope — finish what fits a small extension'];
+    case 'project_kill': return ['Reject: keep the project running', 'Revise: move it back to Next instead'];
     default: return ['Reject: keep things as they are', 'Revise: ask the proposer for a different change'];
   }
 }

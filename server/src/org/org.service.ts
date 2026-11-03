@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
+import { PROJECT_LANES, PROJECT_STATUSES, normalizeDay, parseIdList, parseProjectBrief, type Milestone, type ProjectBrief, type ProjectKind } from './work-model';
 import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants, orgHumans, orgUnits, orgCheckins, orgAllocations, workspaces } from '../database/schema';
 import { TriggerBus } from '../chats/trigger-bus';
 import { newId, nowIso } from '../common/ids.util';
@@ -34,6 +35,40 @@ export type Organization = typeof organizations.$inferSelect;
 export type OrgMember = typeof orgMembers.$inferSelect;
 export type OrgGoal = typeof orgGoals.$inferSelect;
 export type OrgProject = typeof orgProjects.$inferSelect;
+
+/** The fields a project is created with (docs/work-tracking.md). */
+export interface ProjectCreate {
+  title: string; goalId?: string | null; goalIds?: string[]; ownerAgentId?: string | null; leadHumanId?: string | null; unitId?: string | null;
+  kind?: ProjectKind; brief?: Partial<ProjectBrief> | string; startDate?: string | null; targetDate?: string | null; milestones?: unknown;
+  appetiteDays?: number | null; appetiteUsd?: number | null; lane?: string; status?: string; rank?: number; updateCadenceDays?: number | null;
+}
+export interface ProjectPatch extends Partial<Omit<ProjectCreate, 'title' | 'kind'>> {
+  title?: string; health?: string; healthReason?: string; healthAsk?: string; healthAt?: string | null; hill?: number | null; breakerAt?: string | null; appetiteWarnedAt?: string | null;
+}
+
+/** Validate the plain fields of a project create or patch; throws a 400 with the reason. */
+function projectFields(input: Partial<ProjectCreate>): { status?: string; lane?: string; startDate?: string | null; targetDate?: string | null; milestones?: Milestone[]; appetiteDays?: number; appetiteUsd?: number; updateCadenceDays?: number | null } {
+  const out: ReturnType<typeof projectFields> = {};
+  const day = (v: unknown, what: string) => { try { return normalizeDay(v); } catch (err) { throw new BadRequestException(`${what}: ${(err as Error).message}`); } };
+  if (input.status !== undefined) { if (!(PROJECT_STATUSES as readonly string[]).includes(input.status)) throw new BadRequestException(`project status must be one of ${PROJECT_STATUSES.join(', ')}`); out.status = input.status; }
+  if (input.lane !== undefined) { if (!(PROJECT_LANES as readonly string[]).includes(input.lane)) throw new BadRequestException(`lane must be one of ${PROJECT_LANES.join(', ')}`); out.lane = input.lane; }
+  if (input.startDate !== undefined) out.startDate = day(input.startDate, 'startDate');
+  if (input.targetDate !== undefined) out.targetDate = day(input.targetDate, 'targetDate');
+  if (out.startDate && out.targetDate && out.targetDate < out.startDate) throw new BadRequestException('targetDate is before startDate');
+  if (input.milestones !== undefined) {
+    const raw = Array.isArray(input.milestones) ? input.milestones : [];
+    out.milestones = raw.slice(0, 30).map((m, i) => {
+      const x = (m ?? {}) as Record<string, unknown>;
+      const name = String(x.name ?? '').trim().slice(0, 120);
+      if (!name) throw new BadRequestException('a milestone needs a name');
+      return { id: String(x.id ?? `m${i + 1}`), name, date: day(x.date, `milestone "${name}"`), done: Boolean(x.done), ...(x.done ? { doneAt: String(x.doneAt ?? nowIso()) } : {}) };
+    });
+  }
+  if (input.appetiteDays !== undefined && input.appetiteDays !== null) { const n = Math.round(Number(input.appetiteDays)); if (!Number.isFinite(n) || n < 0 || n > 3_650) throw new BadRequestException('appetiteDays is 0–3650'); out.appetiteDays = n; }
+  if (input.appetiteUsd !== undefined && input.appetiteUsd !== null) { const n = Number(input.appetiteUsd); if (!Number.isFinite(n) || n < 0) throw new BadRequestException('appetiteUsd must be ≥ 0'); out.appetiteUsd = Math.round(n * 100) / 100; }
+  if (input.updateCadenceDays !== undefined) { if (input.updateCadenceDays === null) out.updateCadenceDays = null; else { const n = Math.round(Number(input.updateCadenceDays)); if (!Number.isFinite(n) || n < 1 || n > 30) throw new BadRequestException('updateCadenceDays is 1–30'); out.updateCadenceDays = n; } }
+  return out;
+}
 export type OrgBudget = typeof orgBudgets.$inferSelect;
 export type OrgHuman = typeof orgHumans.$inferSelect;
 export type OrgAllocation = typeof orgAllocations.$inferSelect;
@@ -769,27 +804,62 @@ export class OrgService {
     return p;
   }
 
-  async addProject(orgId: string, input: { title: string; goalId?: string | null; ownerAgentId?: string | null }, actor = 'user'): Promise<OrgProject> {
+  /** Insert a project row (docs/work-tracking.md). Persistence and field
+   *  validation only: OrgProjectsService adds the gating (who may move a
+   *  project to Now), the system projects and the health stream. */
+  async addProject(orgId: string, input: ProjectCreate, actor = 'user'): Promise<OrgProject> {
     await this.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 200);
     if (!title) throw new BadRequestException('project title is required');
-    if (input.goalId) await this.goal(orgId, input.goalId);
-    const row: OrgProject = { id: newId(), accountId: currentAccountId(), orgId, goalId: input.goalId ?? null, title, status: 'active', ownerAgentId: input.ownerAgentId ?? null, createdAt: nowIso() };
+    const goalIds = [...new Set([...(input.goalIds ?? []), ...(input.goalId ? [input.goalId] : [])].map(String).filter(Boolean))].slice(0, 10);
+    for (const g of goalIds) await this.goal(orgId, g);
+    const fields = projectFields(input);
+    const existing = await this.projects(orgId);
+    const n = existing.reduce((m, p) => Math.max(m, Number(/^P-(\d+)$/.exec(p.key ?? '')?.[1] ?? 0)), 0);
+    const now = nowIso();
+    const row: OrgProject = {
+      id: newId(), accountId: currentAccountId(), orgId, key: `P-${n + 1}`, goalId: goalIds[0] ?? null, goalIds: JSON.stringify(goalIds), title,
+      status: fields.status ?? 'active', ownerAgentId: input.ownerAgentId ?? null, leadHumanId: input.ownerAgentId ? null : input.leadHumanId ?? null,
+      unitId: input.unitId ?? null, kind: input.kind ?? 'project', brief: JSON.stringify(parseProjectBrief(input.brief ?? {})),
+      startDate: fields.startDate ?? null, targetDate: fields.targetDate ?? null, milestones: JSON.stringify(fields.milestones ?? []),
+      appetiteDays: fields.appetiteDays ?? 0, appetiteUsd: fields.appetiteUsd ?? 0, lane: fields.lane ?? (input.status === undefined || input.status === 'active' ? 'now' : 'later'),
+      rank: input.rank ?? existing.length, health: '', healthReason: '', healthAsk: '', healthAt: null, hill: null,
+      updateCadenceDays: fields.updateCadenceDays ?? null, breakerAt: null, appetiteWarnedAt: null, createdBy: actor, createdAt: now, updatedAt: now,
+    };
     await this.db.insert(orgProjects).values(row);
-    await this.audit.append(orgId, { actor, action: 'project_create', refType: 'project', refId: row.id, payload: { title, goalId: row.goalId } });
+    await this.audit.append(orgId, { actor, action: 'project_create', refType: 'project', refId: row.id, payload: { key: row.key, title, goalId: row.goalId, goalIds, kind: row.kind, lane: row.lane, status: row.status, ownerAgentId: row.ownerAgentId, leadHumanId: row.leadHumanId, unitId: row.unitId } });
     return row;
   }
 
-  async updateProject(orgId: string, id: string, patch: Partial<Pick<OrgProject, 'title' | 'status' | 'goalId' | 'ownerAgentId'>>, actor = 'user'): Promise<OrgProject> {
-    await this.project(orgId, id);
+  async updateProject(orgId: string, id: string, patch: ProjectPatch, actor = 'user'): Promise<OrgProject> {
+    const before = await this.project(orgId, id);
     const set: Record<string, unknown> = {};
-    if (patch.title !== undefined) set.title = patch.title.trim().slice(0, 200);
-    if (patch.status !== undefined) set.status = patch.status;
-    if (patch.goalId !== undefined) set.goalId = patch.goalId;
-    if (patch.ownerAgentId !== undefined) set.ownerAgentId = patch.ownerAgentId;
+    if (patch.title !== undefined) { const t = patch.title.trim().slice(0, 200); if (!t) throw new BadRequestException('title cannot be empty'); set.title = t; }
+    const f = projectFields(patch);
+    for (const k of ['status', 'lane', 'startDate', 'targetDate', 'appetiteDays', 'appetiteUsd', 'updateCadenceDays'] as const) if (f[k] !== undefined) set[k] = f[k];
+    if (f.milestones !== undefined) set.milestones = JSON.stringify(f.milestones);
+    if (patch.brief !== undefined) set.brief = JSON.stringify({ ...parseProjectBrief(before.brief), ...Object.fromEntries(Object.entries(parseProjectBrief(patch.brief)).filter(([, v]) => v !== '')) });
+    if (patch.goalIds !== undefined || patch.goalId !== undefined) {
+      const ids = [...new Set([...(patch.goalIds ?? (patch.goalId === undefined ? parseIdList(before.goalIds) : [])), ...(patch.goalId ? [patch.goalId] : [])].map(String).filter(Boolean))].slice(0, 10);
+      for (const g of ids) await this.goal(orgId, g);
+      set.goalIds = JSON.stringify(ids); set.goalId = ids[0] ?? null;
+    }
+    if (patch.ownerAgentId !== undefined) { set.ownerAgentId = patch.ownerAgentId; if (patch.ownerAgentId) set.leadHumanId = null; }
+    if (patch.leadHumanId !== undefined) { set.leadHumanId = patch.leadHumanId; if (patch.leadHumanId) set.ownerAgentId = null; }
+    if (patch.unitId !== undefined) set.unitId = patch.unitId;
+    if (patch.rank !== undefined) set.rank = Math.round(Number(patch.rank) || 0);
+    if (patch.health !== undefined) set.health = patch.health;
+    if (patch.healthReason !== undefined) set.healthReason = patch.healthReason.slice(0, 600);
+    if (patch.healthAsk !== undefined) set.healthAsk = patch.healthAsk.slice(0, 600);
+    if (patch.healthAt !== undefined) set.healthAt = patch.healthAt;
+    if (patch.hill !== undefined) set.hill = patch.hill === null ? null : Math.min(1, Math.max(0, Number(patch.hill)));
+    if (patch.breakerAt !== undefined) set.breakerAt = patch.breakerAt;
+    if (patch.appetiteWarnedAt !== undefined) set.appetiteWarnedAt = patch.appetiteWarnedAt;
     if (Object.keys(set).length > 0) {
+      set.updatedAt = nowIso();
       await this.db.update(orgProjects).set(set).where(eq(orgProjects.id, id));
-      await this.audit.append(orgId, { actor, action: 'project_update', refType: 'project', refId: id, payload: set });
+      const { updatedAt: _u, ...logged } = set; void _u;
+      await this.audit.append(orgId, { actor, action: 'project_update', refType: 'project', refId: id, payload: logged });
     }
     return this.project(orgId, id);
   }

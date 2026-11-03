@@ -166,6 +166,11 @@ export const agentTasks = pgTable('agent_tasks', {
    *  made from, so status changes post back into its thread. */
   channelId: text('channelId'),
   messageId: text('messageId'),
+  /** Work tracking (docs/work-tracking.md): set when a company member's
+   *  kanban item was merged into the org board — `task:<orgTaskId>` (it
+   *  became that task) or `step:<orgTaskId>` (a checklist step on it).
+   *  Merged rows are hidden from the agent board. */
+  mergedInto: text('mergedInto'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });
@@ -1048,16 +1053,98 @@ export const orgPlaybooks = pgTable('org_playbooks', {
   updatedAt: text('updatedAt').notNull(),
 });
 
+/** Projects (docs/work-tracking.md): the middle level of the work graph —
+ *  goal / key result → **project** → task. One lead (an agent or a person),
+ *  one or more key results it is meant to move, a short brief, dates and
+ *  milestones, an appetite in days and USD with a circuit breaker, a roadmap
+ *  lane (Now / Next / Later) and an owner-written health stream. Every org
+ *  task has one. `kind` marks the per-unit system projects: `unsorted`
+ *  (orphans waiting to be placed) and `operating` (retro and postmortem
+ *  actions, WIP-capped). */
 export const orgProjects = pgTable('org_projects', {
   id: text('id').primaryKey(),
   accountId: text('accountId').notNull().default('single'),
   orgId: text('orgId').notNull(),
+  /** Short readable key, `P-<n>` per organization. */
+  key: text('key'),
+  /** The first key result it moves (kept for the why-chain and costByGoal). */
   goalId: text('goalId'),
+  /** JSON array of every key result (goal) id it moves; goalId is its first. */
+  goalIds: text('goalIds').notNull().default('[]'),
   title: text('title').notNull(),
-  /** active | done | cancelled. */
+  /** proposed | shaped | active | paused | done | cancelled. */
   status: text('status').notNull().default('active'),
+  /** The lead when it is an agent (kept name: ownerAgentId). */
   ownerAgentId: text('ownerAgentId'),
+  /** The lead when it is a person (an account id); exclusive with ownerAgentId. */
+  leadHumanId: text('leadHumanId'),
+  unitId: text('unitId'),
+  /** project | unsorted | operating. */
+  kind: text('kind').notNull().default('project'),
+  /** JSON { problem, hypothesis, done_when, mvp }. */
+  brief: text('brief').notNull().default('{}'),
+  startDate: text('startDate'),
+  targetDate: text('targetDate'),
+  /** JSON array of { id, name, date, done, doneAt }. */
+  milestones: text('milestones').notNull().default('[]'),
+  /** Appetite (Shape Up): calendar days and USD the CEO is willing to spend; 0 = none set. */
+  appetiteDays: integer('appetiteDays').notNull().default(0),
+  appetiteUsd: real('appetiteUsd').notNull().default(0),
+  /** now | next | later — the roadmap lane; moving to now is the CEO's bet. */
+  lane: text('lane').notNull().default('later'),
+  /** Order within its lane (lower first). */
+  rank: integer('rank').notNull().default(0),
+  /** The latest owner-written health: '' (none yet) | on_track | at_risk | off_track. */
+  health: text('health').notNull().default(''),
+  healthReason: text('healthReason').notNull().default(''),
+  healthAsk: text('healthAsk').notNull().default(''),
+  healthAt: text('healthAt'),
+  /** Hill position 0–1 (0–0.5 figuring it out, 0.5–1 making it happen); null = not placed. */
+  hill: real('hill'),
+  /** Days between health updates for this project; null = the lead's tunable. */
+  updateCadenceDays: integer('updateCadenceDays'),
+  /** Circuit breaker: when the appetite tripped (claims paused), '' = not tripped. */
+  breakerAt: text('breakerAt'),
+  /** When the lead was asked for an update at the warn share of the appetite. */
+  appetiteWarnedAt: text('appetiteWarnedAt'),
+  createdBy: text('createdBy').notNull().default('user'),
   createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt'),
+});
+
+/** A project's health update (docs/work-tracking.md): the lead's call, its
+ *  reason and ask, the hill position, a narrative, and the auto-generated
+ *  diff since the previous update (target date, scope, spend, tasks). */
+export const orgProjectUpdates = pgTable('org_project_updates', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  projectId: text('projectId').notNull(),
+  health: text('health').notNull(),
+  reason: text('reason').notNull().default(''),
+  ask: text('ask').notNull().default(''),
+  body: text('body').notNull().default(''),
+  hill: real('hill'),
+  /** JSON of what changed since the previous update. */
+  diff: text('diff').notNull().default('{}'),
+  by: text('by').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** Every status change of an org task, with its actor (docs/work-tracking.md
+ *  "Done is an event"): cycle time, throughput and "done this week" read it. */
+export const taskTransitions = pgTable('task_transitions', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  taskId: text('taskId').notNull(),
+  fromStatus: text('fromStatus').notNull().default(''),
+  toStatus: text('toStatus').notNull(),
+  actor: text('actor').notNull().default(''),
+  reason: text('reason').notNull().default(''),
+  /** 1 when reconstructed from the audit log by the migration. */
+  backfilled: integer('backfilled').notNull().default(0),
+  at: text('at').notNull(),
 });
 
 /** The shared board. One owner per task; the claim is atomic (org-tasks.service). */
@@ -1118,6 +1205,30 @@ export const orgTasks = pgTable('org_tasks', {
    *  claimed) and the deadline the heartbeat ranks urgent work by. */
   dependsOn: text('dependsOn').notNull().default('[]'),
   dueAt: text('dueAt'),
+  /** Work tracking (docs/work-tracking.md): where the task came from —
+   *  plan | meeting | retro | incident | escalation | agent | ceo | chat. */
+  source: text('source').notNull().default('agent'),
+  /** One structured blocker, JSON { kind: task | person | agent | manager |
+   *  ceo | external | decision, ref, reason, since, by } or '' when not
+   *  blocked. `since` is set once and never reset by a comment. */
+  blockedOn: text('blockedOn').notNull().default(''),
+  /** Checklist steps (the merged agent kanban): JSON [{ id, text, done, doneAt }]. */
+  steps: text('steps').notNull().default('[]'),
+  /** First move into claimed / in progress, and the last move into done. */
+  startedAt: text('startedAt'),
+  doneAt: text('doneAt'),
+  /** Seconds spent blocked so far (closed spells). */
+  blockedSeconds: integer('blockedSeconds').notNull().default(0),
+  /** Heartbeat back-off on a blocked task: the blocker's signature at the
+   *  last wake, wakes so far on it, and the earliest next wake. */
+  wakeSig: text('wakeSig').notNull().default(''),
+  wakeCount: integer('wakeCount').notNull().default(0),
+  nextWakeAt: text('nextWakeAt'),
+  /** Circular behaviour: the signature of the last failed approach, how
+   *  often it repeated, and when wakes were paused for the lead. */
+  failSig: text('failSig').notNull().default(''),
+  failRepeats: integer('failRepeats').notNull().default(0),
+  wakesPausedAt: text('wakesPausedAt'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });

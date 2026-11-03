@@ -223,7 +223,7 @@ test('a failing source marks its section partial and the rest still renders; no-
 test('pure helpers: RAG, ranking and the next cron fire', () => {
   assert.equal(ragOf({ atRisk: 1, confidence: 0.9 }), 'red');
   assert.equal(ragOf({ atRisk: 0, pace: 'behind', confidence: 0.9 }), 'amber');
-  assert.equal(ragOf({ atRisk: 0, confidence: 0.2 }), 'amber');
+  assert.equal(ragOf({ atRisk: 0, confidence: 0.2 }), 'grey', 'a low confidence number alone is not amber (docs/work-tracking.md)');
   assert.equal(ragOf({ atRisk: 0, pace: 'onPace', confidence: null }), 'green');
   assert.equal(ragOf({ atRisk: 0, pace: 'unknown', confidence: null }), 'grey');
   const n = (id: string, severity: HomeNeed['severity'], deadline: string | null, createdAt = '2026-01-01') => ({ id, severity, deadline, createdAt }) as HomeNeed;

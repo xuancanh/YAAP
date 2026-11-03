@@ -13,7 +13,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException, Optional } 
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { orgTasks, orgRuns, orgMessages, orgApprovals } from '../database/schema';
+import { orgTasks, orgRuns, orgMessages, orgApprovals, taskTransitions } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { actorId, currentAccountId } from '../accounts/account-context';
 import { FollowsService, followerFromActor, orgTaskTarget, type FollowActivity, type Follower, type FollowReason } from '../follows/follows.service';
@@ -24,6 +24,8 @@ import { OrgUnitsService } from './org-units.service';
 import { AgentsService } from '../agents/agents.service';
 import { normalizeChecks, parseChecks, type Check } from './org-checks';
 import { nextOrgTaskKey, queryableOf, resolveTaskRef, taskLabel, taskRef } from '../common/task-keys';
+import { BLOCKED_KINDS, blockerLine, describeBlockedOn, isBlockedKind, legacyBlockedOn, parseBlockedOn, sameBlocker, serializeBlockedOn, type BlockedKind, type BlockedOn } from './blocked-on';
+import { STEPS_CAP, TASK_SOURCES, deriveSource, isTaskSource, nextStepId, parseSteps, type TaskSource, type TaskStep } from './work-model';
 
 export type OrgTask = typeof orgTasks.$inferSelect;
 export type OrgRun = typeof orgRuns.$inferSelect;
@@ -118,6 +120,24 @@ export type AcceptedListener = (ev: { orgId: string; task: OrgTask; by: 'check' 
 /** Extra fields the board API shows per task (expected duration, item 31). */
 export type BoardAnnotator = (orgId: string, rows: OrgTask[]) => Promise<Map<string, Record<string, unknown>>>;
 
+/** Where a new task goes (docs/work-tracking.md: every task has a project).
+ *  OrgProjectsService binds it: the parent's project, the unit's Operating
+ *  improvements for retro work (WIP-capped: over the cap the task stays an
+ *  unassigned proposal in its backlog), the unit's Unsorted otherwise. */
+export type TaskPlacer = (orgId: string, input: { projectId: string | null; parentTaskId: string | null; unitId: string | null; source: TaskSource; assigneeAgentId: string | null }) => Promise<{ projectId: string | null; demote?: string }>;
+
+/** Why a member may not claim a task in its project now (a tripped appetite
+ *  breaker), or null. OrgProjectsService binds it. */
+export type ClaimGate = (orgId: string, task: OrgTask) => Promise<string | null>;
+
+/** Who a member's direct manager is, for `blockedOn: manager`: an agent id,
+ *  or null when it is the CEO. The decision-routing module may bind its own;
+ *  the default reads `reportsToAgentId` (the chief's manager is the CEO). */
+export type ManagerResolver = (orgId: string, task: OrgTask) => Promise<string | null>;
+
+/** A blocker as a caller gives it: the kind, what it waits on, the ask. */
+export interface BlockInput { kind: BlockedKind | string; ref?: string | null; reason: string }
+
 export function parseBrief(raw: string | Record<string, unknown> | undefined): TaskBrief {
   let v: Record<string, unknown> = {};
   if (typeof raw === 'string') { try { v = JSON.parse(raw || '{}') as Record<string, unknown>; } catch { v = {}; } }
@@ -143,6 +163,51 @@ export class OrgTasksService {
   ) {}
 
   private acceptanceGate?: AcceptanceGate;
+  private placer?: TaskPlacer;
+  private claimGate?: ClaimGate;
+  private managerResolver?: ManagerResolver;
+
+  /** OrgProjectsService binds the placement rule (every task has a project). */
+  setPlacer(fn: TaskPlacer | undefined): void { this.placer = fn; }
+  /** OrgProjectsService binds the appetite breaker's claim gate. */
+  setClaimGate(fn: ClaimGate | undefined): void { this.claimGate = fn; }
+  /** The decision-routing module binds who "the manager" is (blockedOn: manager). */
+  setManagerResolver(fn: ManagerResolver | undefined): void { this.managerResolver = fn; }
+
+  // ---- done is an event (docs/work-tracking.md) ----
+
+  /**
+   * Record a status change: one `task_transitions` row (from, to, actor,
+   * at), and the task's clocks — `startedAt` on the first move into claimed
+   * / in progress / review, `doneAt` on every move into done (cleared on a
+   * reopen), `blockedSeconds` when a blocked spell ends. Leaving blocked
+   * clears the blocker and the heartbeat back-off. Never throws.
+   */
+  async recordTransition(orgId: string, before: Pick<OrgTask, 'id' | 'status' | 'startedAt' | 'doneAt' | 'blockedOn' | 'blockedSeconds' | 'updatedAt'>, to: string, actor: string, reason = ''): Promise<void> {
+    if (!to || before.status === to) return;
+    const at = nowIso();
+    try {
+      await this.db.insert(taskTransitions).values({ id: newId(), accountId: currentAccountId(), orgId, taskId: before.id, fromStatus: before.status, toStatus: to, actor: actor.slice(0, 80), reason: reason.slice(0, 300), backfilled: 0, at });
+      const set: Record<string, unknown> = {};
+      if (!before.startedAt && ['claimed', 'in_progress', 'in_review', 'done'].includes(to)) set.startedAt = at;
+      if (to === 'done') set.doneAt = at;
+      else if (before.doneAt) set.doneAt = null;
+      if (before.status === 'blocked') {
+        const since = parseBlockedOn(before.blockedOn)?.since || before.updatedAt;
+        const secs = Math.max(0, Math.round((Date.parse(at) - Date.parse(since)) / 1000));
+        if (Number.isFinite(secs)) set.blockedSeconds = (before.blockedSeconds ?? 0) + secs;
+      }
+      if (to !== 'blocked' && to !== 'waiting' && before.status === 'blocked') { set.blockedOn = ''; set.wakeSig = ''; set.wakeCount = 0; set.nextWakeAt = null; }
+      if (Object.keys(set).length) await this.db.update(orgTasks).set(set).where(eq(orgTasks.id, before.id));
+    } catch { /* history must never break the board */ }
+  }
+
+  /** The status history of a task, oldest first. */
+  transitions(orgId: string, taskId?: string): Promise<Array<typeof taskTransitions.$inferSelect>> {
+    const conds = [eq(taskTransitions.orgId, orgId)];
+    if (taskId) conds.push(eq(taskTransitions.taskId, taskId));
+    return this.db.select().from(taskTransitions).where(and(...conds)).orderBy(taskTransitions.at);
+  }
 
   // ---- follows (docs/follows.md) ----
 
@@ -270,6 +335,9 @@ export class OrgTasksService {
   async claimBlocker(orgId: string, t: OrgTask, agentId: string, wipLimit: number): Promise<string | null> {
     const unmet = await this.unmetDeps(orgId, t);
     if (unmet.length) return `waiting on ${unmet.map((x) => `${taskRef(x)} ${x.title}`).join(', ')}`;
+    if (t.wakesPausedAt) return `paused: wakes on this task are paused since ${t.wakesPausedAt.slice(0, 16).replace('T', ' ')} (the same failed approach repeated) until its lead rebriefs, reassigns or comments`;
+    const gate = this.claimGate ? await this.claimGate(orgId, t).catch(() => null) : null;
+    if (gate) return `paused: ${gate}`;
     const active = (await this.list(orgId)).filter((x) => x.assigneeAgentId === agentId && x.id !== t.id && ['claimed', 'in_progress'].includes(x.status));
     if (active.length >= wipLimit) return `wip: ${active.length} active task(s), limit ${wipLimit}`;
     return null;
@@ -281,10 +349,12 @@ export class OrgTasksService {
     const all = await this.list(orgId);
     const done = new Set(all.filter((t) => t.status === 'done').map((t) => t.id));
     const released: string[] = [];
-    for (const t of all.filter((x) => x.status === 'waiting' && parseDeps(x.dependsOn).includes(doneTaskId))) {
+    const waitsOnIt = (x: OrgTask) => (x.status === 'waiting' && parseDeps(x.dependsOn).includes(doneTaskId)) || (x.status === 'blocked' && parseBlockedOn(x.blockedOn)?.kind === 'task' && parseBlockedOn(x.blockedOn)?.ref === doneTaskId);
+    for (const t of all.filter(waitsOnIt)) {
       if (!parseDeps(t.dependsOn).every((d) => done.has(d))) continue;
       const next = t.assigneeAgentId || t.assigneeHumanId ? 'todo' : 'backlog';
-      await this.db.update(orgTasks).set({ status: next, updatedAt: nowIso() }).where(eq(orgTasks.id, t.id));
+      await this.db.update(orgTasks).set({ status: next, blockedOn: '', updatedAt: nowIso() }).where(eq(orgTasks.id, t.id));
+      await this.recordTransition(orgId, t, next, 'system', `dependency ${doneTaskId.slice(0, 8)} done`);
       await this.audit.append(orgId, { actor: 'system', action: 'task_unblocked', refType: 'task', refId: t.id, payload: { by: doneTaskId, status: next } });
       if (t.assigneeAgentId && next === 'todo' && await this.org.isActive(orgId)) this.emitWake(orgId, t.id, t.assigneeAgentId, 'dependency');
       released.push(t.id);
@@ -338,13 +408,19 @@ export class OrgTasksService {
     /** Capacity (item 31): task ids this one waits on, and its deadline (ISO). */
     dependsOn?: unknown;
     dueAt?: string | null;
+    /** Work tracking (docs/work-tracking.md): where it came from (derived from createdBy when absent). */
+    source?: TaskSource | string | null;
+    /** Checklist steps to start with (text lines). */
+    steps?: string[];
   }): Promise<OrgTask> {
     const org = await this.org.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 200);
     if (!title) throw new BadRequestException('task title is required');
     if ((await this.list(orgId)).length >= TASK_LIMIT) throw new BadRequestException(`task limit (${TASK_LIMIT}) reached — close or cancel tasks first`);
     if (input.projectId) await this.org.project(orgId, input.projectId);
-    if (input.parentTaskId) await this.get(orgId, input.parentTaskId);
+    const parent = input.parentTaskId ? await this.get(orgId, input.parentTaskId) : null;
+    if (input.source !== undefined && input.source !== null && input.source !== '' && !isTaskSource(input.source)) throw new BadRequestException(`source must be one of ${TASK_SOURCES.join(', ')}`);
+    const source: TaskSource = isTaskSource(input.source) ? input.source : deriveSource({ createdBy: input.createdBy ?? 'user', title, parentTaskId: input.parentTaskId, channelId: input.channelId });
     let status: TaskStatus = input.status ?? (input.assigneeAgentId ? 'todo' : 'backlog');
     if (!TASK_STATUSES.includes(status)) throw new BadRequestException(`status must be one of ${TASK_STATUSES.join(', ')}`);
     if (input.assigneeAgentId) {
@@ -363,13 +439,26 @@ export class OrgTasksService {
       if (input.unitId) { unitId = (await this.units.get(orgId, input.unitId)).id; unitExplicit = 1; }
       else unitId = await this.units.defaultUnitId(orgId, { assigneeAgentId: input.assigneeAgentId, createdBy: input.createdBy }).catch(() => null);
     }
+    // Every task has a project (docs/work-tracking.md): the one named, the
+    // parent's, else the placement rule (the unit's Unsorted, or its
+    // Operating improvements for retro work — over its WIP cap a retro action
+    // stays an unassigned proposal).
+    let projectId = input.projectId ?? parent?.projectId ?? null;
+    let assigneeAgentId = input.assigneeAgentId ?? null;
+    if (this.placer) {
+      const placed = await this.placer(orgId, { projectId, parentTaskId: input.parentTaskId ?? null, unitId, source, assigneeAgentId }).catch(() => ({ projectId }));
+      projectId = placed.projectId ?? projectId;
+      if ('demote' in placed && placed.demote) { assigneeAgentId = null; status = 'backlog'; }
+    }
+    const steps: TaskStep[] = [];
+    for (const line of (input.steps ?? []).map(String).map((x) => x.trim()).filter(Boolean).slice(0, STEPS_CAP)) steps.push({ id: nextStepId(steps), text: line.slice(0, 300), done: false });
     // The key (docs/tasks-keys.md): the next number of the board's prefix.
     const key = await nextOrgTaskKey(queryableOf(this.db), orgId, unitId).catch(() => null);
     const now = nowIso();
     const row: OrgTask = {
-      id: newId(), accountId: currentAccountId(), orgId, key, projectId: input.projectId ?? null, parentTaskId: input.parentTaskId ?? null,
+      id: newId(), accountId: currentAccountId(), orgId, key, projectId, parentTaskId: input.parentTaskId ?? null,
       title, brief: JSON.stringify(brief), status,
-      assigneeAgentId: input.assigneeAgentId ?? null, assigneeHumanId: null, claimedBy: null, claimedAt: null,
+      assigneeAgentId, assigneeHumanId: null, claimedBy: null, claimedAt: null,
       reviewerAgentId: input.reviewerAgentId ?? null, reviewerHumanId: null, reviewRounds: 0,
       blockers: '[]', fileScope: JSON.stringify((input.fileScope ?? []).map(String).slice(0, 20)),
       noProgressCount: 0, lastRunAt: null, createdBy: input.createdBy ?? 'user',
@@ -378,10 +467,13 @@ export class OrgTasksService {
       class: normalizeTaskClass(input.class) ?? deriveTaskClass({ title, brief }),
       checks: JSON.stringify(checks), acceptedBy: '',
       dependsOn: JSON.stringify(dependsOn), dueAt,
+      source, blockedOn: '', steps: JSON.stringify(steps), startedAt: null, doneAt: status === 'done' ? now : null, blockedSeconds: 0,
+      wakeSig: '', wakeCount: 0, nextWakeAt: null, failSig: '', failRepeats: 0, wakesPausedAt: null,
       createdAt: now, updatedAt: now,
     };
     await this.db.insert(orgTasks).values(row);
-    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { key, title, status, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId, class: row.class, ...(checks.length ? { checks: checks.length } : {}), ...(dependsOn.length ? { dependsOn } : {}), ...(dueAt ? { dueAt } : {}) } });
+    await this.db.insert(taskTransitions).values({ id: newId(), accountId: currentAccountId(), orgId, taskId: row.id, fromStatus: '', toStatus: status, actor: row.createdBy.slice(0, 80), reason: 'created', backfilled: 0, at: now }).catch(() => undefined);
+    await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { key, title, status, source, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId, class: row.class, ...(checks.length ? { checks: checks.length } : {}), ...(dependsOn.length ? { dependsOn } : {}), ...(dueAt ? { dueAt } : {}) } });
     if (row.assigneeAgentId && status === 'todo' && org.status === 'active') this.emitWake(orgId, row.id, row.assigneeAgentId, 'assignment');
     await this.autoFollow(orgId, row, followerFromActor(row.createdBy, actorId()), 'started');
     if (row.assigneeAgentId) await this.autoFollow(orgId, row, { kind: 'agent', id: row.assigneeAgentId }, 'assignee');
@@ -405,9 +497,37 @@ export class OrgTasksService {
     /** Capacity (item 31): replace the dependencies (cycles refused) or the deadline. */
     dependsOn?: unknown;
     dueAt?: string | null;
+    /** Work tracking: the one structured blocker (docs/work-tracking.md); null clears it. */
+    blockedOn?: BlockInput | null;
+    source?: TaskSource | string;
+    /** Clear the circular-behaviour pause (a lead rebriefed or reassigned). */
+    resumeWakes?: boolean;
   }, actor = 'user'): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     const set: Record<string, unknown> = { updatedAt: nowIso() };
+    if (patch.source !== undefined) { if (!isTaskSource(patch.source)) throw new BadRequestException(`source must be one of ${TASK_SOURCES.join(', ')}`); set.source = patch.source; }
+    // Someone other than the owner acting on the task — or an explicit
+    // resume — lifts a circular-behaviour pause (docs/work-tracking.md).
+    if (t.wakesPausedAt && (patch.resumeWakes || (actor !== `agent:${t.assigneeAgentId}` && actor !== 'system'))) { set.wakesPausedAt = null; set.failSig = ''; set.failRepeats = 0; }
+    // The structured blocker: a status of blocked with a blocker, or a
+    // blocker alone (which blocks). Legacy `blockers` lines become one.
+    let block: BlockedOn | null | undefined;
+    if (patch.blockedOn === null) block = null;
+    else if (patch.blockedOn) block = await this.normalizeBlock(orgId, t, patch.blockedOn, actor);
+    else if (patch.status === 'blocked' && patch.blockers?.length) block = { ...legacyBlockedOn({ lines: patch.blockers.map(String), since: nowIso() }), by: actor };
+    if (block) {
+      const prev = parseBlockedOn(t.blockedOn);
+      if (t.status === 'blocked' && sameBlocker(prev, block)) block.since = prev!.since;
+      set.blockedOn = serializeBlockedOn(block);
+      if (block.kind !== 'task') { patch = { ...patch, status: 'blocked' }; if (patch.blockers === undefined) set.blockers = JSON.stringify([...parseList(t.blockers), blockerLine(block)].slice(-20)); }
+      else {
+        // A task blocker is a dependency: the task waits and moves on when it is done.
+        const deps = [...new Set([...parseDeps(t.dependsOn), block.ref])];
+        patch = { ...patch, dependsOn: deps, status: 'todo' };
+      }
+    } else if (block === null && t.status === 'blocked' && patch.status === undefined) {
+      patch = { ...patch, status: t.assigneeAgentId || t.assigneeHumanId ? 'todo' : 'backlog' };
+    }
     let deps = parseDeps(t.dependsOn);
     if (patch.dependsOn !== undefined) { deps = await this.resolveDeps(orgId, taskId, patch.dependsOn); set.dependsOn = JSON.stringify(deps); }
     if (patch.dueAt !== undefined) set.dueAt = normalizeDue(patch.dueAt);
@@ -447,11 +567,15 @@ export class OrgTasksService {
       if (t.status === 'todo' && unmet) set.status = 'waiting';
       else if (t.status === 'waiting' && !unmet) set.status = t.assigneeAgentId || t.assigneeHumanId ? 'todo' : 'backlog';
     }
+    if (set.status !== undefined && set.status !== 'blocked' && set.status !== 'waiting' && block === undefined && t.blockedOn) set.blockedOn = '';
     await this.db.update(orgTasks).set(set).where(eq(orgTasks.id, taskId));
+    if (typeof set.status === 'string' && set.status !== t.status) await this.recordTransition(orgId, { ...t, blockedOn: typeof set.blockedOn === 'string' && set.status === 'blocked' ? set.blockedOn : t.blockedOn }, set.status, actor, block ? block.reason : '');
     const { updatedAt: _u, ...logged } = set; void _u;
     if (Object.keys(logged).length > 0) await this.audit.append(orgId, { actor, action: 'task_update', refType: 'task', refId: taskId, payload: logged });
+    // Route the blocker to whoever it waits on (docs/work-tracking.md).
+    if (block && (!sameBlocker(parseBlockedOn(t.blockedOn), block) || t.status !== 'blocked')) await this.routeBlock(orgId, await this.get(orgId, taskId), block, actor);
     // A task that just became blocked is a board event the autonomous chief reviews (docs/group-chat.md §5).
-    if (patch.status === 'blocked' && t.status !== 'blocked') this.bus?.emitOrgBoard({ orgId, kind: 'blocked', refId: taskId, detail: `${taskRef(t)} "${t.title}" is blocked${patch.blockers?.length ? `: ${patch.blockers.at(-1)}` : ''}` });
+    if (patch.status === 'blocked' && t.status !== 'blocked') this.bus?.emitOrgBoard({ orgId, kind: 'blocked', refId: taskId, detail: `${taskRef(t)} "${t.title}" is blocked${block ? `: ${block.kind === 'external' ? block.reason : describeBlockedOn(block)}` : patch.blockers?.length ? `: ${patch.blockers.at(-1)}` : ''}` });
     const updated = await this.get(orgId, taskId);
     if (updated.status === 'done' && t.status !== 'done') await this.releaseDependants(orgId, taskId);
     if (t.status === 'waiting' && updated.status === 'todo' && updated.assigneeAgentId && await this.org.isActive(orgId)) this.emitWake(orgId, taskId, updated.assigneeAgentId, 'dependency');
@@ -466,6 +590,151 @@ export class OrgTasksService {
     return updated;
   }
 
+  // ---- the one blocker (docs/work-tracking.md) ----
+
+  /** Validate a blocker a caller gave and resolve its ref (a task key, a
+   *  member name or id, an approval id prefix, the manager). The reason is
+   *  required: no task enters blocked without its ask. */
+  async normalizeBlock(orgId: string, t: OrgTask, input: BlockInput, actor: string): Promise<BlockedOn> {
+    const kind = String(input.kind ?? '').trim().toLowerCase();
+    if (!isBlockedKind(kind)) throw new BadRequestException(`blockedOn.kind must be one of ${BLOCKED_KINDS.join(', ')}`);
+    const reason = String(input.reason ?? '').trim().slice(0, 600);
+    if (!reason) throw new BadRequestException('blockedOn.reason is required: say what would unblock it (the ask)');
+    let ref = String(input.ref ?? '').trim();
+    switch (kind) {
+      case 'task': {
+        if (!ref) throw new BadRequestException('blockedOn.ref is required for a task blocker: the key of the task it waits on');
+        const dep = await this.byPrefix(orgId, ref);
+        if (dep.id === t.id) throw new BadRequestException('a task cannot wait on itself');
+        ref = dep.id; break;
+      }
+      case 'agent': {
+        const members = await this.org.members(orgId);
+        const names = new Map(((await this.agents?.list().catch(() => [])) ?? []).map((a) => [a.id, a.name]));
+        const q = ref.toLowerCase();
+        const m = members.find((x) => x.status !== 'terminated' && (x.agentId === ref || (q.length >= 6 && x.agentId.startsWith(q)) || (names.get(x.agentId) ?? '').toLowerCase() === q));
+        if (!m) throw new BadRequestException(`blockedOn.ref "${ref}" is not a member of this organization`);
+        ref = m.agentId; break;
+      }
+      case 'person': {
+        if (!ref) throw new BadRequestException('blockedOn.ref is required for a person blocker: their account id (a human employee or the owner)');
+        break;
+      }
+      case 'manager': ref = (await this.managerOf(orgId, t)) ?? ''; break;
+      case 'decision': {
+        if (ref) {
+          const hit = (await this.db.select().from(orgApprovals).where(eq(orgApprovals.orgId, orgId))).find((a) => a.id === ref || (ref.length >= 6 && a.id.startsWith(ref)));
+          if (!hit) throw new BadRequestException(`blockedOn.ref "${ref}" is not a decision card of this organization`);
+          ref = hit.id;
+        }
+        break;
+      }
+      default: ref = kind === 'ceo' ? ref : ''; break;
+    }
+    return { kind, ref, reason, since: nowIso(), by: actor };
+  }
+
+  /** The owner's direct manager (agent id), or null when that is the CEO. */
+  async managerOf(orgId: string, t: OrgTask): Promise<string | null> {
+    if (this.managerResolver) return this.managerResolver(orgId, t).catch(() => null);
+    const org = await this.org.get(orgId);
+    if (t.assigneeHumanId) { const h = await this.org.employee(orgId, t.assigneeHumanId).catch(() => null); return h?.reportsToAgentId ?? org.chiefOfStaffAgentId ?? null; }
+    if (!t.assigneeAgentId || t.assigneeAgentId === org.chiefOfStaffAgentId) return null;
+    const m = await this.org.member(orgId, t.assigneeAgentId);
+    return m?.reportsToAgentId ?? org.chiefOfStaffAgentId ?? null;
+  }
+
+  /** Send a new blocker to whoever it waits on: the CEO and an unresolved
+   *  manager (the CEO) get a decision card in Needs you; a person their
+   *  queue (an addressed inbox event, and Inbox › My tasks lists it); an
+   *  agent or the manager an inbox event that reaches its heartbeat. A task,
+   *  an external party or a pending decision need no message. */
+  private async routeBlock(orgId: string, t: OrgTask, b: BlockedOn, actor: string): Promise<void> {
+    const org = await this.org.get(orgId).catch(() => null);
+    if (!org) return;
+    if (b.kind === 'ceo' || (b.kind === 'manager' && !b.ref)) {
+      // A CEO block is a CEO-only decision; an unresolved manager block is a
+      // card the router places with the owner's manager (a person, or the CEO).
+      const card = await this.escalationCard(orgId, t, b.reason, actor, b.kind === 'ceo' ? { to: 'ceo' } : {});
+      if (card.id) await this.db.update(orgTasks).set({ blockedOn: serializeBlockedOn({ ...b, kind: b.kind === 'manager' ? 'decision' : b.kind, ref: card.id }) }).where(eq(orgTasks.id, t.id));
+      return;
+    }
+    if (b.kind === 'person') {
+      if (b.ref === org.accountId) { await this.escalationCard(orgId, t, b.reason, actor, { to: 'ceo' }); return; }
+      await this.notifyHuman(orgId, b.ref, { kind: 'org_task', title: `Waiting on you: ${taskLabel(t)}`.slice(0, 200), body: b.reason, payload: { orgId, taskId: t.id, action: 'blocked_on_you' } });
+      await this.autoFollow(orgId, t, { kind: 'user', id: b.ref }, 'assignee');
+      return;
+    }
+    if ((b.kind === 'agent' || b.kind === 'manager') && b.ref && this.agents) {
+      await this.agents.addEvent(b.ref, { kind: 'blocked', title: `Waiting on you: ${taskLabel(t)}`.slice(0, 200), body: b.reason, payload: JSON.stringify({ orgId, taskId: t.id, blockedOn: b.kind }), origin: 'org' }).catch(() => undefined);
+      await this.autoFollow(orgId, t, { kind: 'agent', id: b.ref }, 'reviewer');
+    }
+  }
+
+  /** One pending CEO `escalation` card per task (reused when one exists). */
+  private async escalationCard(orgId: string, t: OrgTask, reason: string, actor: string, opts: { to?: 'ceo'; recommendation?: string; urgency?: 'normal' | 'urgent' } = {}): Promise<{ id: string | null; holderName: string | null }> {
+    const org = await this.org.get(orgId);
+    const pending = (await this.db.select().from(orgApprovals).where(and(eq(orgApprovals.orgId, orgId), eq(orgApprovals.kind, 'escalation'), eq(orgApprovals.status, 'pending'))))
+      .find((a) => (JSON.parse(a.payload) as { taskId?: string }).taskId === t.id);
+    if (pending) return { id: pending.id, holderName: null };
+    const id = newId();
+    await this.db.insert(orgApprovals).values({
+      id, accountId: currentAccountId(), orgId, kind: 'escalation',
+      payload: JSON.stringify({ taskId: t.id, taskKey: t.key, title: t.title, reason, ownerAgentId: org.chiefOfStaffAgentId, assigneeAgentId: t.assigneeAgentId, projectId: t.projectId, ...(opts.to === 'ceo' ? { to: 'ceo' } : {}) }),
+      requestedBy: actor, recommendation: (opts.recommendation ?? '').slice(0, 600), status: 'pending', decidedAt: null, decisionNote: '', expiresAt: null, createdAt: nowIso(),
+      urgency: opts.urgency === 'urgent' ? 'urgent' : 'normal',
+    });
+    // The decision-routing module places it with the raiser's manager first.
+    const holderName = this.escalationRouter ? (await this.escalationRouter(orgId, id).catch(() => null))?.holderName ?? null : null;
+    return { id, holderName };
+  }
+
+  /** Tasks waiting on a decision card (blockedOn decision / ceo / manager
+   *  with that card as ref) move again when it is decided. */
+  async decisionMade(orgId: string, approvalId: string, note = ''): Promise<string[]> {
+    const moved: string[] = [];
+    for (const t of (await this.list(orgId, { status: 'blocked' })).filter((x) => { const b = parseBlockedOn(x.blockedOn); return Boolean(b && (b.kind === 'decision' || b.kind === 'ceo' || b.kind === 'manager') && b.ref === approvalId); })) {
+      await this.update(orgId, t.id, { blockedOn: null }, 'system');
+      await this.comment(orgId, t.id, { text: `Decided${note ? `: ${note}` : ''} — the decision it waited on is made.`, fromAgentId: null, wake: true, system: true });
+      moved.push(t.id);
+    }
+    return moved;
+  }
+
+  /** Tasks waiting on a person (blockedOn: person), for their queue. */
+  async waitingOnPerson(orgId: string, memberAccountId: string): Promise<OrgTask[]> {
+    return (await this.list(orgId, { status: 'blocked' })).filter((t) => { const b = parseBlockedOn(t.blockedOn); return b?.kind === 'person' && b.ref === memberAccountId; });
+  }
+
+  // ---- checklist steps (the merged agent kanban, docs/work-tracking.md) ----
+
+  /** Add, tick, untick or drop a checklist step. Steps carry no status of
+   *  their own, no key and no heartbeat: they are the owner's notes on how
+   *  the task gets done. A step is named by its id (s2), its number (2), its
+   *  text or the kanban key it came from. */
+  async step(orgId: string, taskId: string, op: { add?: string; done?: string; undo?: string; drop?: string }, actor: string): Promise<{ task: OrgTask; steps: TaskStep[] }> {
+    const t = await this.get(orgId, taskId);
+    const steps = parseSteps(t.steps);
+    const find = (ref: string) => {
+      const q = ref.trim().toLowerCase();
+      const hit = steps.find((x) => x.id === q || (q !== '' && x.text.toLowerCase() === q)) ?? (/^[0-9]+$/.test(q) ? steps[Number(q) - 1] : undefined) ?? steps.find((x) => Boolean(x.from) && x.from!.toLowerCase() === q);
+      if (!hit) throw new BadRequestException(`no step "${ref}" on ${taskRef(t)} — steps: ${steps.map((x) => `${x.id} ${x.text.slice(0, 40)}`).join('; ') || 'none'}`);
+      return hit;
+    };
+    if (op.add !== undefined) {
+      const text = op.add.trim().slice(0, 300);
+      if (!text) throw new BadRequestException('a step needs text');
+      if (steps.filter((x) => !x.dropped).length >= STEPS_CAP) throw new BadRequestException(`a task holds at most ${STEPS_CAP} steps — split the work into tasks`);
+      steps.push({ id: nextStepId(steps), text, done: false });
+    }
+    if (op.done) { const x = find(op.done); x.done = true; x.doneAt = nowIso(); }
+    if (op.undo) { const x = find(op.undo); x.done = false; delete x.doneAt; }
+    if (op.drop) { const x = find(op.drop); x.dropped = true; x.done = true; }
+    await this.db.update(orgTasks).set({ steps: JSON.stringify(steps), updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.audit.append(orgId, { actor, action: 'task_steps', refType: 'task', refId: taskId, payload: { ...op } });
+    return { task: await this.get(orgId, taskId), steps };
+  }
+
   /** Assign (or re-assign) a task to an active member and wake them. A task
    *  in backlog moves to todo; a claimed task is released first. */
   async assign(orgId: string, taskId: string, agentId: string, actor = 'user'): Promise<OrgTask> {
@@ -476,7 +745,8 @@ export class OrgTasksService {
     // The board follows the assignee unless the unit was named explicitly (docs/group-chat.md §7).
     const unitId = this.units && !t.unitExplicit ? await this.units.defaultUnitId(orgId, { assigneeAgentId: agentId }).catch(() => t.unitId) : t.unitId;
     const waiting = (await this.unmetDeps(orgId, t)).length > 0;
-    await this.db.update(orgTasks).set({ assigneeAgentId: agentId, assigneeHumanId: null, status: waiting ? 'waiting' : 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.db.update(orgTasks).set({ assigneeAgentId: agentId, assigneeHumanId: null, status: waiting ? 'waiting' : 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, wakesPausedAt: null, failSig: '', failRepeats: 0, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.recordTransition(orgId, t, waiting ? 'waiting' : 'todo', actor, 'assigned');
     await this.audit.append(orgId, { actor, action: 'task_assign', refType: 'task', refId: taskId, payload: { agentId, previous: t.assigneeAgentId ?? t.assigneeHumanId, unitId, ...(waiting ? { waiting: true } : {}) } });
     if (!waiting && await this.org.isActive(orgId)) this.emitWake(orgId, taskId, agentId, 'assignment');
     await this.autoFollow(orgId, t, { kind: 'agent', id: agentId }, 'assignee');
@@ -498,6 +768,7 @@ export class OrgTasksService {
       ? ((await this.units.ledBy(orgId, h.reportsToAgentId).catch(() => null)) ?? (await this.units.unitForAssignee(orgId, h.reportsToAgentId).catch(() => null)))?.id ?? t.unitId
       : t.unitId;
     await this.db.update(orgTasks).set({ assigneeAgentId: null, assigneeHumanId: memberAccountId, status: 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.recordTransition(orgId, t, 'todo', actor, 'assigned to a person');
     await this.audit.append(orgId, { actor, action: 'task_assign_human', refType: 'task', refId: taskId, payload: { memberAccountId, previous: t.assigneeAgentId ?? t.assigneeHumanId, unitId } });
     await this.notifyHuman(orgId, memberAccountId, { kind: 'org_task', title: `Task assigned to you: ${t.title}`.slice(0, 200), body: parseBrief(t.brief).outcome, payload: { orgId, taskId, action: 'assigned' } });
     await this.autoFollow(orgId, t, { kind: 'user', id: memberAccountId }, 'assignee');
@@ -506,10 +777,12 @@ export class OrgTasksService {
   }
 
   /** The task cards of one human: tasks they own or are asked to review (item 24). */
-  async tasksOfHuman(orgId: string, memberAccountId: string): Promise<{ assigned: OrgTask[]; reviewing: OrgTask[] }> {
+  async tasksOfHuman(orgId: string, memberAccountId: string): Promise<{ assigned: OrgTask[]; reviewing: OrgTask[]; waitingOnYou: OrgTask[] }> {
     const rows = await this.list(orgId);
     const open = (t: OrgTask) => !['done', 'cancelled'].includes(t.status);
-    return { assigned: rows.filter((t) => t.assigneeHumanId === memberAccountId && open(t)), reviewing: rows.filter((t) => t.reviewerHumanId === memberAccountId && t.status === 'in_review') };
+    // Work tracking: a task blocked on this person is in their queue too.
+    const waitingOnYou = rows.filter((t) => t.status === 'blocked' && (() => { const b = parseBlockedOn(t.blockedOn); return b?.kind === 'person' && b.ref === memberAccountId; })());
+    return { assigned: rows.filter((t) => t.assigneeHumanId === memberAccountId && open(t)), reviewing: rows.filter((t) => t.reviewerHumanId === memberAccountId && t.status === 'in_review'), waitingOnYou };
   }
 
   /** An addressed inbox event for a human of the org (the owner's events are
@@ -535,12 +808,17 @@ export class OrgTasksService {
     `);
     const rows = ((res as { rows?: unknown[] }).rows ?? (Array.isArray(res) ? res : [])) as OrgTask[];
     const row = rows[0] ?? null;
-    if (row) await this.audit.append(orgId, { actor: `agent:${agentId}`, action: 'task_claim', refType: 'task', refId: taskId, payload: { runId } });
+    if (row) {
+      await this.recordTransition(orgId, { ...row, status: 'todo' }, 'claimed', `agent:${agentId}`);
+      await this.audit.append(orgId, { actor: `agent:${agentId}`, action: 'task_claim', refType: 'task', refId: taskId, payload: { runId } });
+    }
     return row;
   }
 
   /** Release a claim held by `runId` (run ended without finishing). */
   async release(orgId: string, taskId: string, runId: string, toStatus: TaskStatus = 'todo'): Promise<void> {
+    const before = await this.get(orgId, taskId).catch(() => null);
+    if (before && before.claimedBy === runId) await this.recordTransition(orgId, before, toStatus, 'system', 'run ended');
     await this.db.execute(sql`
       UPDATE org_tasks SET "status" = ${toStatus}, "claimedBy" = NULL, "claimedAt" = NULL, "updatedAt" = ${nowIso()}
       WHERE "id" = ${taskId} AND "orgId" = ${orgId} AND "claimedBy" = ${runId}
@@ -562,6 +840,9 @@ export class OrgTasksService {
     const owner = t.assigneeAgentId;
     const wake = input.wake ?? true;
     let woke = false;
+    // A word from someone other than the owner is new direction: a
+    // circular-behaviour pause lifts (docs/work-tracking.md).
+    if (t.wakesPausedAt && !input.system && (input.fromAgentId ?? null) !== owner) await this.db.update(orgTasks).set({ wakesPausedAt: null, failSig: '', failRepeats: 0 }).where(eq(orgTasks.id, taskId));
     if (wake && owner && owner !== (input.fromAgentId ?? null) && !['done', 'cancelled'].includes(t.status) && await this.org.isActive(orgId)) {
       this.emitWake(orgId, taskId, owner, 'comment');
       woke = true;
@@ -611,6 +892,7 @@ export class OrgTasksService {
       if (verdict.outcome === 'pass' && !verdict.alsoReview) {
         if (input.note) await this.comment(orgId, taskId, { text: `Review requested: ${input.note}`, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, wake: false });
         await this.db.update(orgTasks).set({ status: 'done', acceptedBy: 'check', claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+        await this.recordTransition(orgId, t, 'done', 'check', 'accepted by check');
         await this.audit.append(orgId, { actor: 'check', action: 'review_accept', refType: 'task', refId: taskId, payload: { by: 'check', requestedBy: by, rounds: t.reviewRounds } });
         await this.comment(orgId, taskId, { text: `Accepted by check: ${verdict.detail}`.slice(0, 8_000), fromAgentId: null, wake: false });
         await this.accepted(orgId, taskId, 'check', t.reviewRounds);
@@ -632,6 +914,7 @@ export class OrgTasksService {
     if (humanReviewer) {
       if (!(await this.org.employee(orgId, humanReviewer))) throw new BadRequestException('reviewerHumanId must be a human employee of this organization');
       await this.db.update(orgTasks).set({ status: 'in_review', reviewerHumanId: humanReviewer, reviewerAgentId: null, claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+      await this.recordTransition(orgId, t, 'in_review', input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', 'review requested');
       if (input.note) await this.comment(orgId, taskId, { text: `Review requested: ${input.note}`, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, wake: false });
       const pending = (await this.db.select().from(orgApprovals).where(and(eq(orgApprovals.orgId, orgId), eq(orgApprovals.kind, 'human_review'), eq(orgApprovals.status, 'pending'))))
         .find((a) => (JSON.parse(a.payload) as { taskId?: string }).taskId === taskId);
@@ -660,6 +943,7 @@ export class OrgTasksService {
       reviewer = differentFamily?.agentId ?? candidates.find((m) => m.agentId === org.chiefOfStaffAgentId)?.agentId ?? candidates[0]?.agentId ?? null;
     }
     await this.db.update(orgTasks).set({ status: 'in_review', reviewerAgentId: reviewer, claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.recordTransition(orgId, t, 'in_review', input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', 'review requested');
     if (input.note) await this.comment(orgId, taskId, { text: `Review requested: ${input.note}`, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, wake: false });
     await this.audit.append(orgId, { actor: input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', action: 'review_request', refType: 'task', refId: taskId, payload: { reviewerAgentId: reviewer } });
     if (reviewer && await this.org.isActive(orgId)) this.emitWake(orgId, taskId, reviewer, 'review');
@@ -690,6 +974,7 @@ export class OrgTasksService {
     for (const fn of this.reviewListeners) await Promise.resolve(fn({ orgId, taskId, assigneeAgentId: t.assigneeAgentId, verdict: input.verdict, byAgentId: input.byAgentId ?? null })).catch(() => undefined);
     if (input.verdict === 'accept') {
       await this.db.update(orgTasks).set({ status: 'done', acceptedBy: 'review', claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+      await this.recordTransition(orgId, t, 'done', actor, 'accepted by review');
       await this.audit.append(orgId, { actor, action: 'review_accept', refType: 'task', refId: taskId, payload: { rounds: t.reviewRounds } });
       if (input.note) await this.comment(orgId, taskId, { text: `Accepted: ${input.note}`, fromAgentId: input.byAgentId ?? null, runId: input.runId ?? null, wake: false });
       await this.accepted(orgId, taskId, 'review', t.reviewRounds);
@@ -703,6 +988,7 @@ export class OrgTasksService {
       return this.get(orgId, taskId);
     }
     await this.db.update(orgTasks).set({ status: 'todo', reviewRounds: rounds, claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.recordTransition(orgId, t, 'todo', actor, 'changes requested');
     await this.audit.append(orgId, { actor, action: 'review_request_changes', refType: 'task', refId: taskId, payload: { rounds } });
     await this.comment(orgId, taskId, { text: `Changes requested (round ${rounds}/${REVIEW_ROUND_CAP}): ${input.note ?? ''}`.trim(), fromAgentId: input.byAgentId ?? null, runId: input.runId ?? null, wake: true, system: input.byCheck });
     return this.get(orgId, taskId);
@@ -713,23 +999,17 @@ export class OrgTasksService {
   async escalate(orgId: string, taskId: string, reason: string, actor: string, opts: { to?: 'ceo'; recommendation?: string; urgency?: 'normal' | 'urgent' } = {}): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     const org = await this.org.get(orgId);
-    const pending = (await this.db.select().from(orgApprovals).where(and(eq(orgApprovals.orgId, orgId), eq(orgApprovals.kind, 'escalation'), eq(orgApprovals.status, 'pending'))))
-      .find((a) => (JSON.parse(a.payload) as { taskId?: string }).taskId === taskId);
+    void org;
     // Decision routing (docs/owners-seat.md §7): the card goes to the raiser's
-    // direct manager first; the blocker names who holds it.
-    let holderName: string | null = null;
-    if (!pending) {
-      const id = newId();
-      await this.db.insert(orgApprovals).values({
-        id, accountId: currentAccountId(), orgId, kind: 'escalation',
-        payload: JSON.stringify({ taskId, taskKey: t.key, title: t.title, reason, ownerAgentId: org.chiefOfStaffAgentId, assigneeAgentId: t.assigneeAgentId, ...(opts.to === 'ceo' ? { to: 'ceo' } : {}) }),
-        requestedBy: actor, recommendation: (opts.recommendation ?? '').slice(0, 600), status: 'pending', decidedAt: null, decisionNote: '', expiresAt: null, createdAt: nowIso(),
-        urgency: opts.urgency === 'urgent' ? 'urgent' : 'normal',
-      });
-      if (this.escalationRouter) holderName = (await this.escalationRouter(orgId, id).catch(() => null))?.holderName ?? null;
-    }
-    const blockers = [...parseList(t.blockers), (holderName ? `escalated to ${holderName}: ${reason}` : `escalated: ${reason}`).slice(0, 300)].slice(-20);
-    await this.db.update(orgTasks).set({ status: 'blocked', blockers: JSON.stringify(blockers), claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    // direct manager first; the one blocker names the card (a decision while a
+    // manager holds it, the CEO when it went straight there).
+    const card = await this.escalationCard(orgId, t, reason, actor, opts);
+    const blockers = [...parseList(t.blockers), (card.holderName ? `escalated to ${card.holderName}: ${reason}` : `escalated: ${reason}`).slice(0, 300)].slice(-20);
+    const prev = parseBlockedOn(t.blockedOn);
+    const kind = card.holderName ? 'decision' : 'ceo';
+    const b: BlockedOn = { kind, ref: card.id ?? '', reason: (card.holderName ? `held by ${card.holderName}: ${reason}` : reason).slice(0, 600), since: prev && prev.kind === kind && t.status === 'blocked' ? prev.since : nowIso(), by: actor };
+    await this.db.update(orgTasks).set({ status: 'blocked', blockers: JSON.stringify(blockers), blockedOn: serializeBlockedOn(b), claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.recordTransition(orgId, t, 'blocked', actor, `escalated: ${reason}`);
     await this.audit.append(orgId, { actor, action: 'task_escalate', refType: 'task', refId: taskId, payload: { reason: reason.slice(0, 300) } });
     this.bus?.emitOrgBoard({ orgId, kind: 'escalation', refId: taskId, detail: `${taskRef(t)} "${t.title}" escalated: ${reason.slice(0, 200)}` });
     const blocked = await this.get(orgId, taskId);
@@ -763,7 +1043,10 @@ export class OrgTasksService {
     const t = await this.get(orgId, taskId);
     const reason = input.reason.slice(0, 300);
     const blockers = [...parseList(t.blockers), `escalated to ${input.toName}: ${reason}`.slice(0, 300)].slice(-20);
-    await this.db.update(orgTasks).set({ status: 'blocked', blockers: JSON.stringify(blockers), claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    const manager = await this.managerOf(orgId, t).catch(() => null);
+    const b: BlockedOn = { kind: manager === input.toAgentId ? 'manager' : 'agent', ref: input.toAgentId, reason, since: nowIso(), by: input.actor };
+    await this.db.update(orgTasks).set({ status: 'blocked', blockers: JSON.stringify(blockers), blockedOn: serializeBlockedOn(b), claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
+    await this.recordTransition(orgId, t, 'blocked', input.actor, `escalated to ${input.toName}: ${reason}`);
     await this.comment(orgId, t.id, { text: `Escalated to ${input.toName}: ${reason}`, fromAgentId: input.fromAgentId, runId: input.runId ?? null });
     const open = (await this.list(orgId)).find((x) => x.parentTaskId === t.id && x.assigneeAgentId === input.toAgentId && x.title.startsWith('Escalation:') && !['done', 'cancelled'].includes(x.status));
     let escalation: OrgTask;
@@ -830,6 +1113,7 @@ export class OrgTasksService {
     const tasks = (await this.list(orgId)).filter((t) => !opts.assigneeAgentId || t.assigneeAgentId === opts.assigneeAgentId);
     if (tasks.length === 0) return 'The board is empty.';
     const byId = new Map((await this.list(orgId)).map((t) => [t.id, t]));
+    const projects = new Map((await this.org.projects(orgId).catch(() => [])).map((p) => [p.id, `${p.key ?? p.id.slice(0, 8)} "${p.title.slice(0, 40)}"`]));
     const order = Object.fromEntries(TASK_STATUSES.map((s, i) => [s, i])) as Record<string, number>;
     return tasks
       .filter((t) => t.status !== 'cancelled')
@@ -839,7 +1123,10 @@ export class OrgTasksService {
         const b = parseBrief(t.brief);
         const who = t.assigneeAgentId ? agentNames.get(t.assigneeAgentId) ?? t.assigneeAgentId.slice(0, 8) : t.assigneeHumanId ? `human ${t.assigneeHumanId.slice(0, 8)}` : 'unassigned';
         const deps = parseDeps(t.dependsOn);
-        return `${taskRef(t)} (${t.status}) ${t.title} — owner: ${who}${t.reviewRounds ? ` · review round ${t.reviewRounds}` : ''}${t.dueAt ? ` · due ${t.dueAt.slice(0, 16).replace('T', ' ')}` : ''}${deps.length ? ` · depends on ${deps.map((d) => { const x = byId.get(d); return x ? taskRef(x) : d.slice(0, 8); }).join(', ')}` : ''}${b.outcome ? ` · outcome: ${b.outcome.slice(0, 100)}` : ''}`;
+        const project = t.projectId ? projects.get(t.projectId) : undefined;
+        const blocked = t.status === 'blocked' ? parseBlockedOn(t.blockedOn) : null;
+        const steps = parseSteps(t.steps).filter((x) => !x.dropped);
+        return `${taskRef(t)} (${t.status}) ${t.title} — owner: ${who}${project ? ` · project ${project}` : ''}${t.source !== 'agent' ? ` · from ${t.source}` : ''}${blocked ? ` · ${describeBlockedOn(blocked, (k, r) => (k === 'task' ? (byId.get(r) ? taskRef(byId.get(r)!) : r.slice(0, 8)) : agentNames.get(r) ?? r.slice(0, 8)))}` : ''}${steps.length ? ` · steps ${steps.filter((x) => x.done).length}/${steps.length}` : ''}${t.reviewRounds ? ` · review round ${t.reviewRounds}` : ''}${t.dueAt ? ` · due ${t.dueAt.slice(0, 16).replace('T', ' ')}` : ''}${deps.length ? ` · depends on ${deps.map((d) => { const x = byId.get(d); return x ? taskRef(x) : d.slice(0, 8); }).join(', ')}` : ''}${b.outcome ? ` · outcome: ${b.outcome.slice(0, 100)}` : ''}`;
       })
       .join('\n');
   }

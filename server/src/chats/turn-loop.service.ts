@@ -129,6 +129,15 @@ export interface PolicyStageHook {
   settle(row: ActionRow, status: string): Promise<void>;
 }
 
+/** Work tracking (docs/work-tracking.md): a company member's kanban tools
+ *  (list_tasks / add_task / update_task / delegate_task) map onto the org
+ *  board. The org module binds it; `handles` false keeps the agent's own
+ *  board (a personal agent, no company). */
+export interface KanbanBridge {
+  handles(agentId: string): Promise<boolean>;
+  execute(session: ChatSession, name: 'list_tasks' | 'add_task' | 'update_task' | 'delegate_task', input: Record<string, unknown>): Promise<string>;
+}
+
 export interface ToolProviderHook {
   specsFor(session: ChatSession): Promise<AiToolSpec[]>;
   /** See PolicyStageHook (interface operations only). */
@@ -246,12 +255,14 @@ const AGENT_TOOLS: AiToolSpec[] = [
   },
   {
     name: 'add_task',
-    description: 'Add a task to your kanban board (status starts at todo). Use it to queue work you notice but are not doing right now.',
+    description: 'Add a task to your kanban board (status starts at todo). Use it to queue work you notice but are not doing right now. In a company it queues a task you own on the company board (backlog), or — with `task` — a checklist step on one of your tasks.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'Short imperative task title.' },
         note: { type: 'string', description: 'Optional detail or acceptance criteria.' },
+        task: { type: 'string', description: 'In a company: the key of your task to add this as a checklist step to (inside a task run, the current task by default).' },
+        project: { type: 'string', description: 'In a company: the project key (e.g. P-3) the new task serves.' },
       },
       required: ['title'],
     },
@@ -267,6 +278,9 @@ const AGENT_TOOLS: AiToolSpec[] = [
         reason: { type: 'string', description: 'Required for blocked (what it waits on) and abandoned (why it is no longer worth doing).' },
         title: { type: 'string' },
         note: { type: 'string' },
+        waitsOn: { type: 'string', enum: ['task', 'person', 'agent', 'manager', 'ceo', 'external', 'decision'], description: 'In a company, for blocked: who or what it waits on (ref names which one).' },
+        ref: { type: 'string', description: 'In a company, for blocked: the task key, member name, person id or decision card id it waits on.' },
+        step: { type: 'string', description: 'In a company: a checklist step of this task (s2, its number or text) to tick (status done), untick (todo) or drop (abandoned).' },
       },
       required: ['id'],
     },
@@ -420,6 +434,10 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
   setOrgTools(hook: OrgToolsHook | undefined): void {
     this.orgTools = hook;
   }
+
+  /** See KanbanBridge. Registered by the org module at boot. */
+  private kanbanBridge?: KanbanBridge;
+  setKanbanBridge(bridge: KanbanBridge | undefined): void { this.kanbanBridge = bridge; }
 
   /** Offer another domain's tools to agent sessions (see ToolProviderHook). */
   addToolProvider(hook: ToolProviderHook): () => void {
@@ -1315,6 +1333,10 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     if (AGENT_TOOL_NAMES.has(name)) {
       if (!session.agentId) throw new Error(`${name} is only available in chats owned by a durable agent`);
       const agentId = session.agentId;
+      // A company member's kanban is the org board (docs/work-tracking.md).
+      if ((name === 'list_tasks' || name === 'add_task' || name === 'update_task' || name === 'delegate_task') && this.kanbanBridge && await this.kanbanBridge.handles(agentId).catch(() => false)) {
+        return this.kanbanBridge.execute(session, name, input);
+      }
       switch (name) {
         case 'update_dashboard':
           return this.agents.updateDashboard(agentId, String(input.markdown ?? ''));

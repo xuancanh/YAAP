@@ -28,6 +28,7 @@ import { CHIEF_TUNABLES, PROXY_LEVELS, type ProxyLevel } from './chief-tunables'
 import { TUNABLES } from './org-tunables';
 import { orgPath } from '../files/layout';
 import { deriveMeetingTunables } from './meeting-tunables';
+import { deriveWorkTunables } from './work-tunables';
 // The assurance keys (audit.assuranceDebounceHours) join the registry at import.
 import './org-assurance-tunables';
 // The seat keys (seat.hopTimeoutHours, docs/owners-seat.md §7) too.
@@ -147,6 +148,8 @@ export function deriveOperatingSystem(p: ProfileInput): OperatingSystemPlan {
   set('seat.urgentHopTimeoutHours', speed ? 1 : c === 'hierarchy' || rigor ? 4 : 2, speed ? 'urgent decisions climb after an hour' : c === 'hierarchy' || rigor ? 'urgent decisions still get half a morning per level' : 'urgent decisions climb after two hours');
   set('chief.memoFirst', rigor || writing || c === 'hierarchy' ? 1 : 0, rigor || writing || c === 'hierarchy' ? 'the company defaults to writing: every decision item has a pre-read' : 'written pre-reads for one-way doors only');
   for (const t of deriveMeetingTunables(d)) set(t.key, t.value, t.why);
+  // Work tracking (docs/work-tracking.md): update cadence, back-off, breaker default, meta-work cap.
+  for (const t of deriveWorkTunables(d)) set(t.key, t.value, t.why);
 
   const decisionProtocol = {
     clan: 'Consensus-seeking with one named final decider; dissent is recorded, then the decider decides.',
@@ -178,7 +181,7 @@ export function planValue(plan: OperatingSystemPlan, key: string): number | unde
 export function chiefLoops(opts: { briefHour: number; weeklyReviewCron: string | null; preReadHours: number }): Array<{ name: string; cron: string; prompt: string }> {
   const sweepHour = Math.max(0, Math.min(23, Math.round(opts.briefHour) - 1));
   return [
-    { name: 'Operating-system sweep', cron: `30 ${sweepHour} * * 1-5`, prompt: 'Run your function-reports-intake playbook (new reports under /org/<function>/reports/ and the heads\' backlog requests), then escalation-and-blocker-sweep, ceo-daily-brief and handoff-sla-monitor: refresh /org/scorecard.md, /org/issues.md and /org/handoffs.md from the record, chase owners whose pre-reads are due, and leave the CEO a five-line brief. Mark any variance you cannot explain as unknown.' },
+    { name: 'Operating-system sweep', cron: `30 ${sweepHour} * * 1-5`, prompt: 'Run your function-reports-intake playbook (new reports under /org/<function>/reports/ and the heads\' backlog requests), then project-portfolio, escalation-and-blocker-sweep, ceo-daily-brief and handoff-sla-monitor: refresh /org/scorecard.md, /org/issues.md and /org/handoffs.md from the record, chase owners whose pre-reads are due, and leave the CEO a five-line brief. Mark any variance you cannot explain as unknown.' },
     { name: 'Weekly business review pack', cron: prepCron(opts.weeklyReviewCron, opts.preReadHours), prompt: 'Run your weekly-business-review playbook to assemble the pack for the coming weekly review (exceptions only, controllable inputs, last week\'s open items first), then exec-meeting-prep for the leadership meeting. Owners write the commentary; you compile it and chase what is missing.' },
     { name: 'Monthly operating review', cron: '0 10 1 * *', prompt: 'Run your decision-log-hygiene, risk-register and ritual-retirement-review playbooks, then values-mechanism-audit, member-lifecycle-review, learning-loop-review and org-files-hygiene. Propose changes; change nothing the CEO or a ritual owner owns.' },
     { name: 'Quarterly planning kickoff', cron: '0 10 8 3,6,9,12 *', prompt: 'Run your quarterly-planning playbook: grade the quarter, collect each function\'s draft objectives with their dependencies, and prepare the planning pack and the proposal for the CEO.' },

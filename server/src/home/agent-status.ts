@@ -31,6 +31,7 @@ import type { OrgTask, OrgTasksService } from '../org/org-tasks.service';
 import { liveTurns as defaultLive, type LiveTurn, type LiveTurnRegistry } from '../chats/live-turns';
 import type { HomeAgent, HomeAgentError, HomeAgentState } from './home.types';
 import { isTaskKey } from '../common/task-keys';
+import { parseBlockedOn } from '../org/blocked-on';
 
 const DAY_MS = 24 * 60 * 60_000;
 /** Errors older than this no longer mark an agent as failing. */
@@ -62,7 +63,7 @@ export interface BlockerInfo {
  * free-text lines, task ids) and unmet dependencies into one answer: the
  * latest reason, and who or what it waits on. Pure.
  */
-export function blockerOf(t: Pick<OrgTask, 'id' | 'blockers' | 'dependsOn' | 'updatedAt'>, ctx: {
+export function blockerOf(t: Pick<OrgTask, 'id' | 'blockers' | 'dependsOn' | 'updatedAt'> & { blockedOn?: string | null }, ctx: {
   tasksById: Map<string, Pick<OrgTask, 'id' | 'title' | 'status' | 'assigneeAgentId'> & { key?: string | null }>;
   names: Map<string, string>;
   /** A pending CEO escalation card exists for this task. */
@@ -71,6 +72,23 @@ export function blockerOf(t: Pick<OrgTask, 'id' | 'blockers' | 'dependsOn' | 'up
   const lines = parseList(t.blockers);
   const byPrefix = (id: string) => ctx.tasksById.get(id) ?? [...ctx.tasksById.values()].find((x) => (id.length >= 8 && x.id.startsWith(id)) || (!!x.key && x.key === id.toUpperCase()));
   const idByName = (name: string) => [...ctx.names.entries()].find(([, n]) => n.toLowerCase() === name.trim().toLowerCase())?.[0] ?? null;
+  // The one structured blocker (docs/work-tracking.md) wins; its `since` is
+  // set once, so a comment no longer resets the age. The regexes below read
+  // rows written before it.
+  const b = parseBlockedOn(t.blockedOn);
+  if (b) {
+    const since = b.since || t.updatedAt;
+    const reason = clip(b.reason, 240);
+    switch (b.kind) {
+      case 'ceo': return { reason, waitsOn: { kind: 'ceo', id: null, name: 'You', taskId: null }, since };
+      case 'manager': return b.ref ? { reason, waitsOn: { kind: 'agent', id: b.ref, name: ctx.names.get(b.ref) ?? 'its manager', taskId: null }, since } : { reason, waitsOn: { kind: 'ceo', id: null, name: 'You', taskId: null }, since };
+      case 'agent': return { reason, waitsOn: { kind: 'agent', id: b.ref || null, name: ctx.names.get(b.ref) ?? b.ref.slice(0, 8), taskId: null }, since };
+      case 'task': { const dep = byPrefix(b.ref); if (dep) return taskWait(dep, ctx.names, since, reason || `Waits on "${clip(dep.title, 120)}"`); break; }
+      case 'decision': if (ctx.escalatedToCeo) return { reason, waitsOn: { kind: 'ceo', id: null, name: 'You', taskId: null }, since }; break;
+      default: break;
+    }
+    return { reason, waitsOn: { kind: 'unknown', id: null, name: b.kind === 'person' ? 'a person' : b.kind === 'external' ? 'outside the company' : '', taskId: null }, since };
+  }
   const since = t.updatedAt;
   for (const line of lines.slice().reverse()) {
     const to = /^escalated to (.+?): ([\s\S]*)$/.exec(line);

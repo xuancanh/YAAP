@@ -43,8 +43,10 @@ import { OrgCapitalService } from '../org/org-capital.service';
 import { OrgIncidentsService } from '../org/org-incidents.service';
 import { OrgRuntimeService } from '../org/org-runtime.service';
 import { OwnerMessagesService } from '../chats/owner-messages.service';
+import { OrgProjectsService } from '../org/org-projects.service';
+import { parseIdList } from '../org/work-model';
 import type {
-  HomeActivity, HomeAgent, HomeArtifact, HomeData, HomeGoal, HomeHealth, HomeKeyResult, HomeNeed, HomeRecap, HomeRecapItem, HomeSpend, HomeUpcoming,
+  HomeActivity, HomeAgent, HomeArtifact, HomeData, HomeGoal, HomeHealth, HomeKeyResult, HomeNeed, HomePortfolio, HomeRecap, HomeRecapItem, HomeSpend, HomeUpcoming,
 } from './home.types';
 import { collapseRoutine, describeRun, loopNameOf, mergeUpcoming, runTitle, type RunCall } from './home-activity';
 import { agentStatuses, sortTeam, toHomeAgent } from './agent-status';
@@ -67,13 +69,23 @@ const safe = <T,>(raw: string | null | undefined, fallback: T): T => { try { ret
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const SEVERITY_RANK: Record<HomeNeed['severity'], number> = { critical: 0, high: 1, normal: 2 };
 
-/** RAG from the model-free assessment: at risk is red; behind or low confidence amber; on pace green. */
+/**
+ * RAG from the model-free assessment (docs/work-tracking.md "Key results"):
+ * at risk is red; behind its pace against target amber; on pace green;
+ * grey when there is no measure yet. A low confidence number alone no longer
+ * turns a key result amber — with most owners checking in below 0.5, amber
+ * meant nothing. Confidence still feeds `atRisk` through its tunable rule
+ * (consecutive drops) and is shown beside the RAG; the child projects'
+ * worst health is shown beside it too, never averaged in.
+ */
 export function ragOf(n: { atRisk: number | boolean; pace?: string; confidence: number | null }): Rag {
   if (n.atRisk) return 'red';
-  if (n.pace === 'behind' || (n.confidence !== null && n.confidence < 0.5)) return 'amber';
-  if (n.pace === 'onPace' || (n.confidence !== null && n.confidence >= 0.5)) return 'green';
+  if (n.pace === 'behind') return 'amber';
+  if (n.pace === 'onPace') return 'green';
   return 'grey';
 }
+
+const HEALTH_RANK: Record<string, number> = { off_track: 3, at_risk: 2, on_track: 1, '': 0 };
 
 /** The next minute a five-field cron matches, within a week; null otherwise. */
 export function nextCronFire(expr: string, from: Date): Date | null {
@@ -120,6 +132,8 @@ export class HomeService {
     @Optional() private readonly runtime?: OrgRuntimeService,
     /** Messages from your team (docs/agent-messages.md). */
     @Optional() private readonly ownerMessages?: OwnerMessagesService,
+    /** Optional: work tracking (docs/work-tracking.md) — the portfolio and project health beside KRs. */
+    @Optional() private readonly projects?: OrgProjectsService,
   ) {}
 
   private companiesEnabled(): boolean { return this.config?.get<boolean>('companiesEnabled') !== false; }
@@ -165,7 +179,7 @@ export class HomeService {
     const orgTasks = org && this.tasks ? await this.tasks.list(org.id).catch(() => [] as OrgTask[]) : [];
     const members = org ? await this.org!.members(org.id).catch(() => []) : [];
 
-    const [needs, recap, goals, team, activity, spend, health, upcoming, artifacts] = await Promise.all([
+    const [needs, recap, goals, team, activity, spend, health, upcoming, artifacts, portfolio] = await Promise.all([
       attempt('needs', () => this.needs(workspaceId, orgOn ? org : null, agents, names, now), [] as HomeNeed[]),
       attempt('recap', () => this.recap(workspaceId, orgOn ? org : null, agents, orgTasks, names, since), emptyRecap()),
       attempt('goals', () => (orgOn && org && this.intent ? this.goals(org.id, now) : Promise.resolve([] as HomeGoal[])), [] as HomeGoal[]),
@@ -175,6 +189,7 @@ export class HomeService {
       attempt('health', () => this.health(workspaceId, orgOn ? org : null), { status: 'ok', openIncidents: [], providers: [], audit: null } as HomeHealth),
       attempt('upcoming', () => this.upcoming(orgOn ? org : null, agents, orgTasks, now), [] as HomeUpcoming[]),
       attempt('artifacts', () => this.artifacts(workspaceId), [] as HomeArtifact[]),
+      attempt('portfolio', () => (orgOn && org && this.projects ? this.projects.portfolio(org.id, since, now) as Promise<HomePortfolio> : Promise.resolve(null)), null as HomePortfolio | null),
     ]);
 
     const messages = await attempt('messages', () => this.teamMessages(workspaceId, now), { items: [], unread: 0 } as HomeData['messages']);
@@ -188,7 +203,7 @@ export class HomeService {
       } : null,
       headline: { tasksDone: recap.tasksDone, needsYou: ranked.length, todayUsd: spend.todayUsd, monthUsd: spend.monthUsd, monthCapUsd: spend.monthCapUsd },
       needs: ranked.slice(0, NEEDS_LIMIT),
-      recap, goals, team, activity, spend, health, upcoming, artifacts, messages, partial,
+      recap, goals, team, activity, spend, health, upcoming, artifacts, messages, portfolio, partial,
     };
   }
 
@@ -289,7 +304,8 @@ export class HomeService {
   private async recap(workspaceId: string, org: Organization | null, agents: AgentRow[], orgTasks: OrgTask[], names: Map<string, string>, since: string): Promise<HomeRecap> {
     const recap = emptyRecap();
     if (org) {
-      recap.tasksDone = orgTasks.filter((t) => t.status === 'done' && t.updatedAt >= since).length;
+      // Done is an event (docs/work-tracking.md): doneAt, not "last touched while done".
+      recap.tasksDone = orgTasks.filter((t) => t.status === 'done' && (t.doneAt ?? t.updatedAt) >= since).length;
       recap.tasksBlocked = orgTasks.filter((t) => t.status === 'blocked').length;
     } else {
       for (const a of agents) {
@@ -339,6 +355,11 @@ export class HomeService {
 
   private async goals(orgId: string, now: Date): Promise<HomeGoal[]> {
     const tree = await this.intent!.intentTree(orgId, { now });
+    // The worst owner-written health of the live projects that move each goal.
+    const projectHealth = new Map<string, string>();
+    for (const p of (await this.org!.projects(orgId).catch(() => [])).filter((x) => x.kind === 'project' && !['done', 'cancelled'].includes(x.status))) {
+      for (const g of parseIdList(p.goalIds)) if ((HEALTH_RANK[p.health] ?? 0) > (HEALTH_RANK[projectHealth.get(g) ?? ''] ?? 0)) projectHealth.set(g, p.health);
+    }
     const objectives: IntentNode[] = [];
     const walk = (nodes: IntentNode[]) => { for (const n of nodes) { if (n.kind === 'objective') objectives.push(n); walk(n.children as IntentNode[]); } };
     walk(tree);
@@ -346,6 +367,7 @@ export class HomeService {
       const krs = (o.children as IntentNode[]).filter((c) => c.kind === 'key_result').map((k): HomeKeyResult => ({
         id: k.id, title: k.title, currentValue: k.currentValue, targetValue: k.targetValue, unitLabel: k.unitLabel, progress: k.progress,
         confidence: k.confidence, atRisk: Boolean(k.atRisk), atRiskReason: k.atRiskReason, rag: ragOf(k), dueAt: k.dueAt,
+        projectHealth: (projectHealth.get(k.id) ?? '') as HomeKeyResult['projectHealth'],
       }));
       const atRisk = Boolean(o.atRisk) || krs.some((k) => k.atRisk);
       const rag: Rag = atRisk ? 'red' : krs.some((k) => k.rag === 'amber') ? 'amber' : ragOf(o);

@@ -354,8 +354,10 @@ export class AgentsService {
 
   // ---- the agent's own kanban board (§11) ----
 
-  listTasks(agentId: string) {
-    return this.db.select().from(agentTasks).where(eq(agentTasks.agentId, agentId));
+  /** The agent's own board. Rows merged into the company board
+   *  (docs/work-tracking.md, `mergedInto`) are not on it any more. */
+  async listTasks(agentId: string) {
+    return (await this.db.select().from(agentTasks).where(eq(agentTasks.agentId, agentId))).filter((t) => !t.mergedInto);
   }
 
   async addTask(agentId: string, input: { title: string; note?: string; origin?: string; sessionId?: string; channelId?: string | null; messageId?: string | null; createdBy?: Follower | null }) {

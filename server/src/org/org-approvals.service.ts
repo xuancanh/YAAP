@@ -33,8 +33,8 @@ import { clamp01, computedAlternatives, defaultActionFor, normalizeAlternatives,
 import { govTunable } from './governance-tunables';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19; `blueprint` is OrgBlueprintsService's,
@@ -388,7 +388,7 @@ export class OrgApprovalsService {
             const project = await this.org.addProject(orgId, { title: pr.title, goalId: goal.id }, 'user');
             created.projects++;
             for (const t of (pr.tasks ?? []).slice(0, 25)) {
-              await this.tasks.create(orgId, { title: t.title, brief: t.brief, projectId: project.id, assigneeAgentId: t.assigneeAgentId ?? null, status: t.assigneeAgentId ? 'todo' : 'backlog', createdBy: by });
+              await this.tasks.create(orgId, { title: t.title, brief: t.brief, projectId: project.id, assigneeAgentId: t.assigneeAgentId ?? null, status: t.assigneeAgentId ? 'todo' : 'backlog', createdBy: by, source: 'plan' });
               created.tasks++;
             }
           }
@@ -413,6 +413,10 @@ export class OrgApprovalsService {
       case 'metric_source':
       case 'two_key':
       case 'member_settings':
+      // Work tracking (docs/work-tracking.md): OrgProjectsService applies the CEO's bets.
+      case 'project_now':
+      case 'project_appetite':
+      case 'project_kill':
       case 'experiment': {
         // Kinds another module owns (the meetings module's cadence, the memory module's charter change).
         const fn = this.appliers.get(kind);
@@ -556,6 +560,9 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'metric_source': return `metric source "${String(payload.name ?? '')}" (${String(payload.kind ?? '')}${payload.target ? `: ${String(payload.target).slice(0, 80)}` : ''})`;
     case 'experiment': return `experiment "${String(payload.title ?? '')}": ${String(payload.changeKind ?? '')} change, ${String(payload.metric ?? 'metric')} ${String(payload.direction ?? 'up') === 'down' ? '↓' : '↑'} ${String(payload.expected ?? '')} in ${String(payload.windowDays ?? '')}d`.slice(0, 200);
     case 'human_review': return `review of task "${String(payload.title ?? '')}" by ${String(payload.reviewerHumanId ?? 'a human')}`.slice(0, 160);
+    case 'project_now': return `bet: move ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}" to Now${payload.appetiteDays || payload.appetiteUsd ? ` (appetite ${payload.appetiteDays ? `${String(payload.appetiteDays)}d` : ''}${payload.appetiteDays && payload.appetiteUsd ? ' / ' : ''}${payload.appetiteUsd ? `$${Number(payload.appetiteUsd).toFixed(0)}` : ''})` : ''}`.slice(0, 200);
+    case 'project_appetite': return `${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}" hit its appetite: extend, cut scope or kill${payload.extendUsd || payload.extendDays ? ` (asked: +${payload.extendDays ? `${String(payload.extendDays)}d` : ''}${payload.extendDays && payload.extendUsd ? ' / ' : ''}${payload.extendUsd ? `$${Number(payload.extendUsd).toFixed(2)}` : ''})` : ''}`.slice(0, 200);
+    case 'project_kill': return `kill ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}"`.slice(0, 200);
     case 'two_key': return `${payload.staged ? 'send staged' : 'run held'} ${String(payload.tool ?? 'action')} (${String(payload.class ?? '').replace(/_/g, ' ')}): ${String(payload.summary ?? '')}`.slice(0, 160);
     default: return kind;
   }
