@@ -573,13 +573,15 @@ export const isComputerTool = (name: string): boolean => name.startsWith('comput
 // ---- plugins (docs/plugins.md, Phase 1) ----
 
 export type PluginRole = 'interface' | 'provider' | 'consumer';
-export type PluginStatus = 'installed' | 'active' | 'suspended' | 'disabled' | 'terminating' | 'removed';
+export type PluginStatus = 'installed' | 'active' | 'suspended' | 'disabled' | 'frozen' | 'terminating' | 'removed';
 export interface PluginProviderRow { id: string; interface: string; range: string; status: string; resources: string[]; conformanceRunId: string | null }
 export interface PluginSummary {
   id: string; name: string; version: string; description: string; roles: PluginRole[]; tier: string;
   status: PluginStatus; suspendedReason: string; installId: string; digest: string; installedAt: string;
   pendingUpdate: { version?: string; diff?: PluginDiffEntry[]; failures?: string[] } | null;
   providers: PluginProviderRow[]; interfaces: string[];
+  /** Set while the install is frozen because its version was recalled (docs/plugins.md §6.8). */
+  recall?: { version: string; notice: string; at: string | null } | null;
 }
 export interface PluginDiffEntry { path: string; widening: boolean; detail: string }
 export interface PluginCaseResult { id: string; ok: boolean; skipped?: boolean; detail?: string }
@@ -605,6 +607,8 @@ export interface PluginReview {
   dataSharing: Array<{ category: string; to: string; when: string; purpose: string }>; identity: Array<{ header: string; value: string }>;
   budgets: Record<string, number>; requestedPolicies: Array<{ match: Record<string, unknown>; require: string; why: string; status: string }>;
   deferred: string[]; diff: PluginDiffEntry[]; widening: boolean; blockers: string[];
+  /** Community tier: the install needs the owner's explicit opt-in (acceptCommunity). */
+  communityOptIn?: boolean;
 }
 export interface InterfaceView {
   name: string; version: string; major: number; pluginId: string; semantics: string;
@@ -613,7 +617,73 @@ export interface InterfaceView {
   providers: Array<{ id: string; pluginId: string; status: string; healthy: boolean; resources: string[]; range: string }>;
   bindings: Array<{ id: string; major: number; scopeKind: string; scopeRef: string; providerId: string; pluginId: string | null; setBy: string }>;
 }
-export interface PluginSource { firstParty?: string; manifest?: unknown; files?: Record<string, string> }
+export interface PluginSource { firstParty?: string; registry?: { id: string; version?: string }; manifest?: unknown; files?: Record<string, string>; path?: string }
+
+// ---- Foundry and the plugin registry (docs/foundry.md §8, docs/plugins.md §7) ----
+
+export type PluginTier = 'first_party' | 'verified' | 'community' | 'local';
+export interface PluginConformanceEntry {
+  interface: string; range: string; interfaceVersion: string | null; mode: string;
+  result: 'pass' | 'fail' | 'error' | 'unverified'; passed: number; failed: number; failures: string[]; ranAt: string;
+}
+export interface FoundryPlugin {
+  id: string; name: string; description: string; tier: PluginTier; source: 'first_party' | 'local' | 'registry';
+  publisher: { id: string; name: string; verifiedDomain?: string }; roles: PluginRole[];
+  version: string | null; digest: string | null; coreRange: string | null; compatible: boolean;
+  defines: string[]; provides: string[]; requires: string[]; noEgress: boolean;
+  conformance: Array<{ interface: string; interfaceVersion: string | null; result: string }>;
+  installs: number; versionCount: number; recalled: boolean; installable: boolean; publishedAt: string;
+  installed: { status: PluginStatus; version: string; notice: string; recalled: boolean } | null;
+  updateAvailable: boolean;
+}
+export interface FoundryPluginList {
+  items: FoundryPlugin[];
+  facets: { interfaces: Array<{ name: string; defined: boolean; providers: number; consumers: number }>; tiers: Record<PluginTier, number>; roles: Record<PluginRole, number> };
+  coreApi: string;
+}
+export interface FoundryOperation {
+  op: string; canonical: string; tool: string; semantics: string; declaredClass: string | null; effectiveClass: string;
+  floorReasons: string[]; twoKey: boolean; outbound: boolean; movesMoney: boolean; reversibility: string; required: boolean;
+}
+export interface FoundryCapabilities {
+  roles: PluginRole[];
+  defines: Array<{ name: string; version: string; semantics: string; operations: FoundryOperation[]; changeKinds: string[]; events: string[] }>;
+  provides: Array<{ interface: string; range: string; resources: string[]; conformanceMode: string; operations: FoundryOperation[]; missingRequired: string[]; resolvedWith: string | null }>;
+  requires: string[];
+  egress: Array<{ host: string; category: string }>;
+  dataSharing: Array<{ category: string; to: string; when: string; purpose: string }>;
+  secrets: Array<{ slot: string; description: string; kind: string; inject: string }>;
+  identity: Array<{ header: string; value: string }>;
+  connections: string[];
+  requestedPolicies: Array<{ operation: string | null; changeKind: string | null; require: string; why: string }>;
+  budgets: Record<string, number>;
+  consumer: { skills: number; rolePacks: number; playbooks: number; verifies: number };
+  extras: Array<{ name: string; declaredClass: string | null }>;
+  noEgress: boolean;
+}
+export interface FoundryPluginVersion {
+  version: string; digest: string; manifestHash: string; commitSha: string; coreRange: string; compatible: boolean;
+  conformance: PluginConformanceEntry[]; publishedAt: string; publishedBy: string; changelog: string;
+  recalled: boolean; recalledAt: string | null; recallReason: string; installed: boolean;
+}
+export interface FoundryPluginDetail extends FoundryPlugin {
+  license: string; homepage: string;
+  capabilities: FoundryCapabilities | null;
+  installSource: PluginSource | null;
+  versions: FoundryPluginVersion[];
+  related: Array<{ id: string; name: string; tier: PluginTier; roles: PluginRole[]; defines: string[]; provides: string[]; conformance: FoundryPlugin['conformance'] }>;
+}
+export interface PluginUpdates {
+  pluginId: string;
+  installed: { version: string; status: PluginStatus; recalled: boolean; notice: string };
+  pending: Record<string, unknown> | null;
+  updates: Array<{ version: string; digest: string; commitSha: string; coreRange: string; compatible: boolean; changelog: string; conformance: PluginConformanceEntry[]; publishedAt: string; newer: boolean; diff: PluginDiffEntry[]; widening: boolean; source: PluginSource }>;
+}
+export interface KitPreview {
+  id: string; name: string; blurb: string; functions: string[]; companyTypes: string[];
+  interfaces: Array<{ name: string; optional?: boolean; planned?: boolean }>; providers: string[]; seats: string[]; cadences: string[]; metrics: string[];
+  policies: string; status: 'coming_soon'; installable: false;
+}
 
 // ---- coding agents (docs/coding-harnesses.md) ----
 
@@ -1967,7 +2037,18 @@ export const api = {
   plugins: (ws: string) => get<PluginSummary[]>(`/api/workspaces/${enc(ws)}/plugins`),
   plugin: (ws: string, id: string) => get<PluginDetail>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}`),
   reviewPlugin: (ws: string, source: PluginSource) => send<PluginReview>(`/api/workspaces/${enc(ws)}/plugins/review`, 'POST', { source }),
-  installPlugin: (ws: string, source: PluginSource) => send<{ installed: boolean; review: PluginReview }>(`/api/workspaces/${enc(ws)}/plugins/install`, 'POST', { source, confirm: true }),
+  installPlugin: (ws: string, source: PluginSource, opts: { acceptCommunity?: boolean } = {}) => send<{ installed: boolean; review: PluginReview }>(`/api/workspaces/${enc(ws)}/plugins/install`, 'POST', { source, confirm: true, ...(opts.acceptCommunity ? { acceptCommunity: true } : {}) }),
+  updatePlugin: (ws: string, id: string, source: PluginSource) => send<{ applied: boolean; pending?: boolean; widening?: boolean; failures?: string[]; diff?: PluginDiffEntry[] }>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}/update`, 'POST', { source }),
+  pluginUpdates: (ws: string, id: string) => get<PluginUpdates>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}/updates`),
+  // Foundry (docs/foundry.md): the Plugins shelf and the Kits previews
+  foundryPlugins: (ws: string, f: { q?: string; role?: string; iface?: string; tier?: string } = {}) => {
+    const p = new URLSearchParams(Object.entries(f).filter(([, v]) => v) as Array<[string, string]>).toString();
+    return get<FoundryPluginList>(`/api/workspaces/${enc(ws)}/foundry/plugins${p ? `?${p}` : ''}`);
+  },
+  foundryPlugin: (ws: string, id: string) => get<FoundryPluginDetail>(`/api/workspaces/${enc(ws)}/foundry/plugins/${enc(id)}`),
+  publishPlugin: (ws: string, body: { manifest?: unknown; files?: Record<string, string>; commitSha?: string; changelog?: string; dryRun?: boolean }) => send<Record<string, unknown>>(`/api/workspaces/${enc(ws)}/foundry/plugins/publish`, 'POST', body),
+  recallPlugin: (ws: string, id: string, version: string, reason: string) => send<{ recalled: boolean; frozen: number; withdrawn: number }>(`/api/workspaces/${enc(ws)}/foundry/plugins/${enc(id)}/versions/${enc(version)}/recall`, 'POST', { reason }),
+  foundryKits: () => get<KitPreview[]>('/api/foundry/kits'),
   pluginAction: (ws: string, id: string, action: 'disable' | 'enable' | 'conformance') => send<unknown>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}/${action}`, 'POST'),
   uninstallPlugin: (ws: string, id: string) => send<unknown>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}`, 'DELETE'),
   decidePluginUpdate: (ws: string, id: string, approve: boolean) => send<unknown>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}/updates/decide`, 'POST', { approve }),

@@ -45,7 +45,7 @@ describe('main menu', () => {
   it('in organization mode: Home · Inbox · Chat, the five company sections, Artifacts · Apps · Market, Settings', () => {
     orgOn();
     render(<ActivityBar />);
-    expect(labels()).toEqual(['Home', 'Inbox', 'Chat', 'Direction', 'Operations', 'People', 'Money', 'Oversight', 'Artifacts', 'Apps', 'Market', 'Settings']);
+    expect(labels()).toEqual(['Home', 'Inbox', 'Chat', 'Direction', 'Operations', 'People', 'Money', 'Oversight', 'Artifacts', 'Apps', 'Foundry', 'Settings']);
     // the company sections are one visual group
     expect(within(screen.getByTestId('nav-group-company')).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Direction', 'Operations', 'People', 'Money', 'Oversight']);
     // 2 cards + 1 key + 1 plan + 1 open (uncontained) incident + 3 tasks
@@ -70,7 +70,7 @@ describe('main menu', () => {
   it('hides Inbox and the company sections when organization mode is off; Artifacts stays', () => {
     orgOn({ wsOrg: { mode: 'off', pendingApprovals: 0 } });
     render(<BottomNav />);
-    expect(labels()).toEqual(['Home', 'Chat', 'Artifacts', 'Apps', 'Market', 'Settings']);
+    expect(labels()).toEqual(['Home', 'Chat', 'Artifacts', 'Apps', 'Foundry', 'Settings']);
     expect(screen.queryByTestId('inbox-badge')).toBeNull();
     cleanup();
     orgOn({ wsOrg: { mode: 'off', pendingApprovals: 0 } });

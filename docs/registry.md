@@ -29,7 +29,7 @@ mirrored in `schema.ts`). All three carry `accountId TEXT NOT NULL DEFAULT
 
 | Table | What a row is |
 |---|---|
-| `registry_items` | One listing: `kind` (`agent` · `skill` · `app` · `company`, §8), `slug`, `name`, `description`, `version`, `publisherName`, `manifest` (the portable artifact, JSON), `capabilities` (the static review summary, JSON), `scanReport` (the item-9 scan that ran at publish, JSON), `installs`, `ratingUp`/`ratingDown`, `published`, `source` (`local` · `remote`), `remoteUrl`, `sourceRef` (the agent/skill/app it was published from). Unique on (`accountId`, `kind`, `slug`). |
+| `registry_items` | One listing: `kind` (`agent` · `skill` · `app` · `company`, §8; `plugin` mirrored and `kit` reserved, §9), `slug`, `name`, `description`, `version`, `publisherName`, `manifest` (the portable artifact, JSON), `capabilities` (the static review summary, JSON), `scanReport` (the item-9 scan that ran at publish, JSON), `installs`, `ratingUp`/`ratingDown`, `published`, `source` (`local` · `remote`), `remoteUrl`, `sourceRef` (the agent/skill/app it was published from). Unique on (`accountId`, `kind`, `slug`). |
 | `registry_installs` | One install: `itemId` (a local id, or `remote:<id>` for an item pulled from `REGISTRY_URL`), `version`, and the `agentId` / `skillId` / `appId` it created locally. |
 | `registry_ratings` | One rating: `itemId`, `installId`, `turnId` (set when rolled up from a turn rating, `''` when explicit), `rating`, `note`. Unique on (`installId`, `turnId`) so a re-rated turn updates instead of doubling. |
 
@@ -267,6 +267,37 @@ exceptions:
   `POST /api/registry/public/:id/outcome { kind }` for a remote one. Turn
   ratings do not apply to companies (there is no turn to rate).
 
+## 9. Plugins (and kits, reserved)
+
+Foundry (`docs/foundry.md` §8) lists **plugins** — interfaces, providers
+and consumers (`docs/plugins.md`) — from their own registry
+(`server/src/plugins/plugin-registry.service.ts`, `plugins` and
+`plugin_versions`), because a plugin needs what these three tables do not
+have: immutable semver versions pinned by digest, a core API range, a
+tier bound to its namespace, conformance results per interface version and
+recall. `registry_items` gets one mirrored row of **kind `plugin`** per
+published package (the listing projection: plugin id, version, digest,
+roles, core range), so the public feed (§4) carries it. `RegistryKind`
+also names **`kit`**, reserved for the kit mechanism; nothing writes it.
+
+- **Publish** mirrors §2: `POST /api/workspaces/:ws/foundry/plugins/publish`
+  with `dryRun` first; the archive rules, the text lint and the registry's
+  own conformance stand in for the scan; a blocker refuses. Owner-only.
+- **Capability review**: the generic routes refuse both kinds —
+  `POST /api/registry/:id/install` on a plugin names the plugin install
+  route, behind the plugin review (every operation's effective class, the
+  permission diff, blockers), as companies name theirs (§8).
+- **Tiers and opt-in**: published packages are Community tier (`@community`);
+  installing one needs the owner's explicit opt-in, and a community
+  interface also needs the workspace's community-interface setting.
+- **Recall** freezes installs through the registrar; a recalled version
+  never installs again. Federation of plugin listings is read-only: remote
+  plugin installs and revocation over the feed are not built.
+
+The Community department dissolved into Foundry's shelves: community
+agents sit on Agents › Community, skills and mini apps on Plugins › Skills
+& apps, each listing only its own kinds (plugin rows never show there).
+
 ## 7. Files
 
 `server/src/registry/` (`registry.service.ts`, `registry.controller.ts`,
@@ -279,6 +310,7 @@ exceptions:
 `chats/chats.service.ts`, `capabilities` carried through
 `AgentsService.importJson`; `src/lib/registry.ts` (pure helpers),
 `src/components/RegistryBits.tsx` (Publish form, review modal), the
-Community department in `MarketView.tsx`, Settings → Market and Settings →
-Security in `SettingsView.tsx`; `tests/backend-registry.test.ts`,
+Community department in `MarketView.tsx` (now Foundry's Agents › Community
+and Plugins › Skills & apps), Settings → Market (labelled Foundry) and
+Settings → Security in `SettingsView.tsx`; `tests/backend-registry.test.ts`,
 `web-tests/registry.test.ts`.

@@ -1,7 +1,9 @@
 # Plugins: interfaces, providers and consumers on an enforcing core
 
 Status: **Phase 1 shipped**, 3 November 2026 (see "Shipped as (Phase 1)"
-under §10). Later phases are design.
+under §10); **the plugin registry shipped** 4 November 2026 (tiers,
+pinning, versions, recall, updates and Foundry's Plugins shelf; see
+"Shipped as (plugin registry)" under §10). Later phases are design.
 
 Sources:
 
@@ -1784,7 +1786,9 @@ Software kit (`docs/foundry.md` §2.6):
 ### 7.1 Registry and tiers
 
 Plugins (all roles) and kits become registry kinds beside `agent`,
-`skill`, `app` and `company` (`docs/registry.md` §1). The Connectors
+`skill`, `app` and `company` (`docs/registry.md` §1). *Shipped for
+plugins (kind `plugin`; `kit` reserved): see "Shipped as (plugin
+registry)" under §10.* The Connectors
 directory (`server/src/market/connectors.catalog.ts`) becomes the
 Market's plugin department. Tiers bind to scope, Grafana's rule
 [R: "Versions, events, secrets and trust"]:
@@ -2169,6 +2173,78 @@ took the doc's proposed default.
 - Q15: `mock` conformance is enough to bind a first-party provider.
 - Q16: resource bindings beat unit bindings.
 
+
+#### Shipped as (plugin registry)
+
+Built on 4 November 2026, beside Foundry (`docs/foundry.md`, "Shipped as
+(Foundry shelves)"). Code: `server/src/plugins/plugin-registry.service.ts`
+and `plugin-registry.controller.ts`, the source and recall changes in
+`plugins.service.ts` and `loader.ts`; migration `0082-plugin-registry`.
+Tests: `tests/backend-plugin-registry.test.ts`, `web-tests/foundry.test.tsx`.
+
+**Built.**
+
+- **Packages and versions** (§7, §8.1). `plugins` rows carry the listing
+  (description, publisher display name, `source` — `first_party`,
+  `local` or `registry` — the one workspace a local package is visible to,
+  `listed`, the install count). `plugin_versions` rows stay immutable and
+  gain the source pin `commitSha` (a full hex digest, never a name that
+  can move), the registry's own **conformance per provided interface
+  version** (mock mode, against the newest registry interface that
+  satisfies the range), the capability summary, the changelog,
+  `publishedBy` and `revokedBy`. Versions are semver; the core API range
+  (`requires.yaamCore`) decides whether a version is installable here.
+- **Three sources.** First-party folders sync into the registry on first
+  use. **Local**: an uploaded folder (`source.files` with `plugin.json`)
+  or, in developer mode, a folder under `YAAM_PLUGINS_DEV_DIR`
+  (`POST …/plugins/dev { path }`, or `source.path`), both through the
+  loader's archive rules: no scripts or binaries by name, no package
+  scripts, no symlinks, no executable bits, no path that escapes, nothing
+  runs at install. A local package is `name@local` and shows only in the
+  workspace that loaded it. **Registry**: `POST
+  /api/workspaces/:ws/foundry/plugins/publish { manifest | files,
+  commitSha?, changelog?, dryRun? }` (owner-only). The dry run returns what
+  installers will see (tier, digest, capabilities, conformance, warnings,
+  blockers) and writes nothing; a blocker refuses. A listing row of
+  registry kind `plugin` is mirrored into `registry_items`, so the public
+  feed carries it (`docs/registry.md` §9).
+- **Tiers.** `@yaam` is first-party only; `@community` publishes as the
+  Community tier; `@<publisher>` (Verified) is refused until signing
+  ships, with the reason. Community floors at publish: no provider code,
+  no `env` secret slots, no fixture implementations. A package belongs to
+  one publisher; a version never changes bytes (same version with another
+  digest is refused) and versions only go up.
+- **Installing from the registry** (`source.registry { id, version? }`)
+  rebuilds the package from the stored files and refuses it unless it
+  matches the pinned digest. A **Community** install needs the owner's
+  explicit opt-in at confirm (`acceptCommunity: true`; the review carries
+  `communityOptIn`), and a community or local **interface** still needs
+  the workspace's `plugins.allowCommunityInterfaces` (§5.1).
+- **Recall** (§6.8): `POST /api/workspaces/:ws/foundry/plugins/:id/versions/:version/recall
+  { reason }` (owner-only) sets `revokedAt`. A recalled version never
+  installs again by any source (the digest is checked on every load).
+  Every install of it goes **`frozen`**: the registrar unwinds its effects
+  restorably, its tools leave from the next turn, dependants suspend,
+  `plugin_revoked` (severity major) is audited, and the install carries
+  the notice (`summary.recall`). Enable is refused; moving the install to
+  any version that is not recalled (older or newer) restores the effects
+  and unfreezes it. Pending updates to the recalled version are withdrawn.
+- **Updates**: `GET /api/workspaces/:ws/plugins/:id/updates` lists every
+  version the install could move to, each with `permissionDiff` against
+  the approved version and its widening flag; applying goes through
+  `POST …/plugins/:id/update { source }`, so widening still waits.
+- **Browse**: `GET /api/workspaces/:ws/foundry/plugins?q=&role=&iface=&tier=`
+  (with facets) and `GET …/foundry/plugins/:id` (operations with their
+  effective classes, egress hosts, data sharing, secret slots, requested
+  policies, conformance, versions with pins and recalls, the publisher,
+  the other packages on the same interfaces).
+
+**Refined.** Recall is the instance owner's act per workspace route; the
+registry federation feed (`REGISTRY_URL`) does not yet carry revocations,
+and remote plugin installs are not built — other instances see the
+listing only. Statuses gain `frozen`. **Deferred**: signing and the
+Verified tier, remote plugin installs and revocation over the feed, the
+`plugin_update` card, staged rollout, kits.
 
 ### Phase 2: repackage what exists; trust and updates
 

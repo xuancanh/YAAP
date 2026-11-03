@@ -2162,7 +2162,7 @@ export const plugins = pgTable('plugins', {
   roles: text('roles').notNull().default('[]'),
   registryItemId: text('registryItemId'),
   createdAt: text('createdAt').notNull(),
-  /** The registry listing (0082): what Foundry's Plugins shelf shows. */
+  /** The registry listing (0086): what Foundry's Plugins shelf shows. */
   description: text('description').notNull().default(''),
   publisherName: text('publisherName').notNull().default(''),
   /** first_party (plugins/first-party/) | local (loaded by one workspace) | registry (published here). */

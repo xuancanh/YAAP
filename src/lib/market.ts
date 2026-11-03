@@ -116,7 +116,14 @@ export function defaultReportsTo(item: MarketItem, items: MarketItem[], members:
   return chiefId && active.some((m) => m.agentId === chiefId) ? chiefId : (chiefId ?? active[0]?.agentId ?? null);
 }
 
-// ---- navigation: segment, personal category, business function ----
+// ---- navigation: shelf, segment, personal category, business function ----
+
+/** Foundry's shelves (docs/foundry.md §8.1). */
+export type Shelf = 'blueprints' | 'kits' | 'agents' | 'plugins';
+export const SHELVES: readonly Shelf[] = ['blueprints', 'kits', 'agents', 'plugins'];
+/** The Plugins shelf's kind filter: a plugin role, the native connectors, or community skills and apps. */
+export type PluginFilter = '' | 'interface' | 'provider' | 'consumer' | 'connectors' | 'skills';
+export const PLUGIN_FILTERS: readonly PluginFilter[] = ['', 'interface', 'provider', 'consumer', 'connectors', 'skills'];
 
 export interface MarketNav {
   segment: MarketSegment;
@@ -124,12 +131,26 @@ export interface MarketNav {
   cat: string;
   /** Business function id ('' = the function overview). */
   fn: string;
+  /** The shelf (default: agents, as the Market opened before Foundry). */
+  shelf?: Shelf;
+  /** Plugins shelf: kind filter, interface filter, tier filter, and the open detail page. */
+  pf?: PluginFilter;
+  iface?: string;
+  tier?: string;
+  plugin?: string;
+  /** Agents shelf: '' = the curated catalog, 'community' = published by people. */
+  agentTier?: '' | 'community';
 }
 
-/** `?section=market&segment=business&fn=finance` (and `&cat=Education`). */
+/**
+ * `?section=foundry&shelf=plugins&iface=scm&tier=community&plugin=scm@yaam`,
+ * and every `?section=market…` link of before (`segment`, `fn`, `cat`
+ * unchanged; a market link without a shelf lands on Agents, as it did).
+ */
 export function navFromUrl(search: string): Partial<MarketNav> | null {
   const p = new URLSearchParams(search);
-  if (p.get('section') !== 'market') return null;
+  const section = p.get('section');
+  if (section !== 'market' && section !== 'foundry') return null;
   const out: Partial<MarketNav> = {};
   const seg = p.get('segment');
   const fn = p.get('fn');
@@ -137,13 +158,38 @@ export function navFromUrl(search: string): Partial<MarketNav> | null {
   if (seg === 'personal' || seg === 'business') out.segment = seg;
   if (fn) { out.fn = fn; out.segment ??= 'business'; }
   if (cat) { out.cat = cat; out.segment ??= 'personal'; }
+  const shelf = p.get('shelf');
+  if (shelf && (SHELVES as readonly string[]).includes(shelf)) out.shelf = shelf as Shelf;
+  // The old departments: Connectors and Community dissolved into the shelves (foundry.md §8.6).
+  if (shelf === 'connectors' || shelf === 'companies' || shelf === 'community') out.shelf = shelf === 'companies' ? 'blueprints' : shelf === 'connectors' ? 'plugins' : 'agents';
+  if (shelf === 'connectors') out.pf = 'connectors';
+  if (shelf === 'community') out.agentTier = 'community';
+  const role = p.get('role');
+  if (role && (PLUGIN_FILTERS as readonly string[]).includes(role)) out.pf = role as PluginFilter;
+  const iface = p.get('iface');
+  if (iface && /^[a-z][a-z0-9]{1,15}$/.test(iface)) { out.iface = iface; out.shelf ??= 'plugins'; }
+  const tier = p.get('tier');
+  if (tier && ['first_party', 'verified', 'community', 'local'].includes(tier)) out.tier = tier;
+  const plugin = p.get('plugin');
+  if (plugin && /^[a-z0-9-]{2,40}@[a-z0-9-]{2,40}$/.test(plugin)) { out.plugin = plugin; out.shelf ??= 'plugins'; }
   return Object.keys(out).length ? out : null;
 }
 
 export function navQuery(nav: MarketNav): string {
-  const p = new URLSearchParams({ section: 'market', segment: nav.segment });
-  if (nav.segment === 'business' && nav.fn) p.set('fn', nav.fn);
-  if (nav.segment === 'personal' && nav.cat !== 'All') p.set('cat', nav.cat);
+  const shelf = nav.shelf ?? 'agents';
+  const p = new URLSearchParams({ section: 'foundry' });
+  if (shelf !== 'agents') p.set('shelf', shelf);
+  if (shelf === 'agents') {
+    p.set('segment', nav.segment);
+    if (nav.segment === 'business' && nav.fn) p.set('fn', nav.fn);
+    if (nav.segment === 'personal' && nav.cat !== 'All') p.set('cat', nav.cat);
+  }
+  if (shelf === 'plugins') {
+    if (nav.pf) p.set('role', nav.pf);
+    if (nav.iface) p.set('iface', nav.iface);
+    if (nav.tier) p.set('tier', nav.tier);
+    if (nav.plugin) p.set('plugin', nav.plugin);
+  }
   return `?${p.toString()}`;
 }
 
@@ -178,7 +224,8 @@ export function useMarketNav(orgOn: boolean): { nav: MarketNav; setNav: (patch: 
   });
   const decided = useRef(init.decided);
   const [nav, setState] = useState<MarketNav>(() => ({
-    segment: defaultSegment(init.url?.segment, init.stored, orgOn), cat: init.url?.cat ?? 'All', fn: init.url?.fn ?? '',
+    ...init.url,
+    segment: defaultSegment(init.url?.segment, init.stored, orgOn), cat: init.url?.cat ?? 'All', fn: init.url?.fn ?? '', shelf: init.url?.shelf ?? 'agents',
   }));
   useEffect(() => {
     if (decided.current) return;

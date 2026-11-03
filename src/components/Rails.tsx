@@ -8,7 +8,7 @@ import { safeJsonParse } from '../lib/util';
 import { ArtifactTree } from './ArtifactTree';
 import { createFile, createFolder, workspaceSource } from '../lib/artifacts';
 import { sectionDef, type CompanySection } from '../lib/company-nav';
-import { bizFunctions, bySegment, marketCats, SEGMENT_LABEL, type MarketNav, type MarketSegment } from '../lib/market';
+import { BIZ_FUNCTIONS, bizFunctions, bySegment, marketCats, SEGMENT_LABEL, SHELVES, type MarketNav, type MarketSegment, type Shelf } from '../lib/market';
 import { railChannels } from '../lib/channels';
 import { SubChannelRows } from './SubChannels';
 
@@ -559,21 +559,53 @@ function countAtRisk(nodes: Array<{ atRisk: number; children: unknown[] }>): num
   return nodes.reduce((n, g) => n + (g.atRisk ? 1 : 0) + countAtRisk(g.children as Array<{ atRisk: number; children: unknown[] }>), 0);
 }
 
-/** The Market rail: the Personal | Business switch, then the personal
- *  categories or the business functions, each with its count. */
+const RAIL_SHELF: Record<Shelf, string> = { blueprints: 'Blueprints', kits: 'Kits', agents: 'Agents', plugins: 'Plugins' };
+
+/** The Foundry rail: the four shelves; on Agents, the Personal | Business
+ *  switch, then the personal categories or the business functions, each
+ *  with its count; on Kits, the functions the previews cover. */
 export function MarketRail({ nav, setNav }: { nav: MarketNav; setNav: (patch: Partial<MarketNav>) => void }) {
   const app = useApp();
   const row = (key: string, label: React.ReactNode, count: number, active: boolean, onClick: () => void) => (
     <button key={key} onClick={onClick} aria-current={active ? 'true' : undefined}
       style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', border: 'none', font: 'inherit', padding: '7px 9px', borderRadius: 8, cursor: 'pointer', fontSize: 12.5, margin: '1px 0', background: active ? 'var(--accent-dim)' : 'none', color: active ? 'var(--text)' : 'var(--text-dim)' }}>
       <span style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
-      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{count}</span>
+      {count >= 0 && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{count}</span>}
     </button>
   );
   const personal = bySegment(app.market, 'personal');
   const fns = bizFunctions(app.market);
+  const shelf = nav.shelf ?? 'agents';
+  const shelves = (
+    <div role="navigation" aria-label="Shelves" style={{ margin: '0 0 10px', paddingBottom: 8, borderBottom: '1px solid var(--border-soft)' }}>
+      {SHELVES.map((s) => (
+        <button key={s} onClick={() => setNav({ shelf: s, plugin: '' })} aria-current={s === shelf ? 'page' : undefined}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', border: 'none', font: 'inherit', padding: '7px 9px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: s === shelf ? 700 : 500, margin: '1px 0', background: s === shelf ? 'var(--accent-dim)' : 'none', color: s === shelf ? 'var(--text)' : 'var(--text-dim)' }}>
+          <span style={{ flex: 1 }}>{RAIL_SHELF[s]}</span>
+          {s === 'kits' && <span style={{ fontSize: 10.5, color: 'var(--amber)' }}>soon</span>}
+        </button>
+      ))}
+    </div>
+  );
+  if (shelf !== 'agents') {
+    return (
+      <div style={{ flex: 1, overflowY: 'auto', padding: '2px 8px 12px' }}>
+        {shelves}
+        {shelf === 'kits' && <>
+          {row('all', 'All functions', -1, !nav.fn, () => setNav({ fn: '' }))}
+          {BIZ_FUNCTIONS.map((f) => row(f.id, <><span aria-hidden style={{ width: 8, height: 8, borderRadius: 3, background: f.color, flex: 'none' }} />{f.label}</>, -1, nav.fn === f.id, () => setNav({ fn: f.id })))}
+        </>}
+        <div style={{ margin: '14px 8px 0', padding: 12, border: '1px solid var(--border-soft)', borderRadius: 11, background: 'var(--panel-2)', fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+          {shelf === 'plugins' ? 'Every install opens the review first: each operation with the class yaam will treat it as. Installing grants nothing to any agent.'
+            : shelf === 'kits' ? 'Kits are previews for now. Their parts are already on the Plugins and Agents shelves.'
+              : 'A blueprint shows its review and a dry-run plan before anything is created.'}
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '2px 8px 12px' }}>
+      {shelves}
       <div role="tablist" aria-label="Market segment" style={{ display: 'flex', gap: 4, padding: 3, margin: '0 2px 8px', borderRadius: 10, background: 'var(--panel-2)', border: '1px solid var(--border-soft)' }}>
         {(['personal', 'business'] as MarketSegment[]).map((s) => (
           <button key={s} role="tab" aria-selected={nav.segment === s} onClick={() => setNav({ segment: s })}
@@ -614,7 +646,7 @@ export const SETTINGS_PANES = [
   { id: 'harness', label: 'Coding agents', icon: P.bolt },
   { id: 'plugins', label: 'Plugins', icon: P.market },
   { id: 'computer', label: 'Computer', icon: P.window },
-  { id: 'market', label: 'Market', icon: P.market },
+  { id: 'market', label: 'Foundry', icon: P.market },
   { id: 'security', label: 'Security', icon: P.shield },
 ];
 

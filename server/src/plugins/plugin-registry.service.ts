@@ -262,7 +262,7 @@ export class PluginRegistryService {
       defines: t.defines, provides: t.provides, requires: t.requires,
       noEgress: (m?.egress ?? []).length === 0,
       conformance: conformance.map((c) => ({ interface: c.interface, interfaceVersion: c.interfaceVersion, result: c.result })),
-      installs: row.installs, versions: versions.length,
+      installs: row.installs, versionCount: versions.length,
       recalled: versions.length > 0 && !latest && versions.every((v) => v.revokedAt),
       installable: Boolean(latest),
       publishedAt: shown?.createdAt ?? row.createdAt,
@@ -405,7 +405,7 @@ export class PluginRegistryService {
       digest: pkg.digest, manifestHash: pkg.manifestHash, commitSha, coreRange: m.requires.yaamCore, compatible,
       capabilities, conformance, warnings, blockers, alreadyPublished: Boolean(same && same.archiveSha256 === pkg.digest),
     };
-    if (input.dryRun) return { dryRun: true as const, ...preview };
+    if (input.dryRun) return { dryRun: true as const, ...preview, published: false };
     if (blockers.length > 0) throw new BadRequestException({ message: 'publish refused', blockers });
     if (preview.alreadyPublished) return { dryRun: false as const, ...preview, published: false };
     const now = nowIso();

@@ -24,7 +24,8 @@ const NAV: NavItem[] = [
   ...COMPANY_SECTIONS.map((s): NavItem => ({ id: s.id, label: s.label, icon: SECTION_ICON[s.id], group: 'company', org: true })),
   { id: 'artifacts', label: 'Artifacts', icon: P.files, group: 'make' },
   { id: 'apps', label: 'Apps', icon: P.window, group: 'make' },
-  { id: 'market', label: 'Market', icon: P.market, group: 'make' },
+  // Foundry, the marketplace (docs/foundry.md); the section id stays `market` so old links and state keep working.
+  { id: 'market', label: 'Foundry', icon: P.market, group: 'make' },
 ];
 
 /** The main menu for this workspace, with the Inbox badge and the Operations incident dot. */

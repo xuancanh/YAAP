@@ -77,10 +77,10 @@ function Layout() {
   const showSecondary = app.stacked ? !detailActive : true;
   const showMain = app.stacked ? !showSecondary : true;
 
-  const secTitle = sec === 'home' ? 'Channels & chats' : company ? sectionDef(sec).label : sec === 'artifacts' ? 'Artifacts' : sec === 'market' ? 'Market' : 'Settings';
+  const secTitle = sec === 'home' ? 'Channels & chats' : company ? sectionDef(sec).label : sec === 'artifacts' ? 'Artifacts' : sec === 'market' ? 'Foundry' : 'Settings';
   const hasSecondary = !meeting && sec !== 'overview' && sec !== 'agents' && sec !== 'apps' && sec !== 'inbox' // Home, the agent directory, apps gallery and the Inbox are full-width
     && !(company && (app.stacked || !orgOpen)) // on a phone a company section carries its own page strip
-    && !(sec === 'market' && app.stacked); // on a phone the Market view carries its own segment switch and chips
+    && !(sec === 'market' && app.stacked); // on a phone Foundry carries its own shelf tabs, segment switch and chips
 
   return (
     <div data-theme={app.theme} style={{ height: '100vh', display: 'flex', position: 'relative', background: 'var(--bg)', color: 'var(--text)', fontSize: 14, overflow: 'hidden', paddingBottom: app.stacked ? 58 : 0 }}>
@@ -117,7 +117,7 @@ function Layout() {
           {company && (orgOpen ? <Suspense fallback={viewFallback}><OrganizationView section={sec} /></Suspense> : <WorkspaceOff />)}
           {sec === 'artifacts' && <FilesView />}
           {sec === 'inbox' && <Suspense fallback={viewFallback}><InboxView /></Suspense>}
-          {sec === 'market' && <Suspense fallback={viewFallback}><MarketView nav={market.nav} setNav={market.setNav} /></Suspense>}
+          {sec === 'market' && <Suspense fallback={viewFallback}><MarketView nav={market.nav} setNav={market.setNav} onOpenSettings={(pane) => { setSettingsPane(pane); app.go('settings'); }} /></Suspense>}
           {sec === 'settings' && <Suspense fallback={viewFallback}><SettingsView pane={settingsPane} /></Suspense>}
           </>}
         </main>

@@ -99,7 +99,8 @@ describe('market helpers', () => {
     expect(navFromUrl('?section=market&fn=sales')).toEqual({ fn: 'sales', segment: 'business' });
     expect(navFromUrl('?section=market&cat=Education')).toEqual({ cat: 'Education', segment: 'personal' });
     expect(navFromUrl('?section=settings&segment=business')).toBeNull();
-    expect(navQuery({ segment: 'business', cat: 'All', fn: 'finance' })).toBe('?section=market&segment=business&fn=finance');
+    // Links are written as Foundry links; `?section=market` ones are still read (above).
+    expect(navQuery({ segment: 'business', cat: 'All', fn: 'finance' })).toBe('?section=foundry&segment=business&fn=finance');
   });
 
   it('defaults to Business for a company, Personal otherwise; a stored choice or deep link wins; blocked storage is harmless', () => {
@@ -140,7 +141,7 @@ describe('useMarketNav', () => {
     expect(renderHook(() => useMarketNav(true)).result.current.nav.segment).toBe('personal');
     setUrl('?section=market&segment=business&fn=finance');
     const { result } = renderHook(() => useMarketNav(false));
-    expect(result.current.nav).toEqual({ segment: 'business', cat: 'All', fn: 'finance' });
+    expect(result.current.nav).toEqual({ segment: 'business', cat: 'All', fn: 'finance', shelf: 'agents' });
   });
 });
 

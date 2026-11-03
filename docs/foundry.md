@@ -1,7 +1,10 @@
 # Foundry: kits, blueprints and the marketplace
 
-Status: **design**, 3 November 2026. Nothing here is built yet. It builds
-on `docs/plugins.md` (design) and `docs/blueprints.md` (shipped).
+Status: **design**, 3 November 2026; **Foundry's shelves shipped** 4
+November 2026 (Blueprints, Kits as previews, Agents, Plugins; see
+"Shipped as (Foundry shelves)" under §11). Kits are pending: nothing
+installs from the Kits shelf yet. It builds on `docs/plugins.md` and
+`docs/blueprints.md` (shipped).
 
 Sources:
 
@@ -1620,6 +1623,60 @@ Acceptance:
 - The scorecard holds the fed metrics, no more than 15 rows.
 - For a SaaS profile, Ship Software and Support Desk rank first, with the
   matched words shown.
+
+### Shipped as (Foundry shelves)
+
+Built on 4 November 2026 with the plugin registry (`docs/plugins.md`,
+"Shipped as (plugin registry)"). Code: `src/components/MarketView.tsx`
+(the section, shelf tabs, Blueprints and Agents), `src/components/FoundryBits.tsx`
+(the Plugins shelf, the plugin detail page, the Kits shelf),
+`src/lib/foundry.ts`, the shelf state and links in `src/lib/market.ts`,
+the shelf list in the rail (`Rails.tsx` `MarketRail`), `server/src/foundry/`
+(`GET /api/foundry`, `GET /api/foundry/kits`). Tests:
+`web-tests/foundry.test.tsx`, `tests/backend-plugin-registry.test.ts`.
+
+**Built.**
+
+- **Foundry replaces the Market** in the nav and the section header. The
+  section id stays `market` internally; `?section=foundry` and every
+  `?section=market…` link open it (`segment`, `fn`, `cat` unchanged; the
+  old departments map: `shelf=companies` → Blueprints, `shelf=connectors`
+  → Plugins › Connectors, `shelf=community` → Agents › Community). Links
+  are written as `?section=foundry&shelf=…&iface=…&tier=…&plugin=…`.
+- **Blueprints**: the Companies department, re-housed intact
+  (`CompaniesDept`, `/api/market/companies`), so published and built-in
+  starter blueprints list as before.
+- **Kits**: the notice "Kits are coming — bundles of interfaces, providers
+  and roles for a use case" and the twelve kits of §10.1 as previews
+  (interfaces, providers, seats, cadences, metrics), each marked Coming
+  soon with a disabled install button; the rail's functions filter them.
+- **Agents**: the curated catalog with Personal | Business exactly as
+  before, plus **Community** (registry agents with the Community tier).
+- **Plugins**: a parts list from the plugin registry — tier badge, role,
+  the interfaces each package defines, provides or requires, conformance,
+  egress, install state, recall and update flags — with filters for kind
+  (Interfaces, Providers, Consumers, **Connectors**, **Skills & apps**),
+  interface and tier, and search. Connectors keep the existing connect
+  cards as a filter; community skills and mini apps sit under Skills &
+  apps. The **detail page** shows what the package defines and provides
+  (every operation with the class yaam treats it as, the declared class
+  when a floor raised it, a class strip), what it requires, egress hosts,
+  data sharing, secret slots, requested policies, conformance per
+  interface version, versions with digest, source pin, changelog and
+  recalls, and the publisher. **Install** opens the Phase 1 review screen
+  (classification, diff, blockers) with the community opt-in when the
+  tier is Community, then installs; an installed package links to
+  Settings › Plugins, and a frozen one shows the recall notice there and
+  here.
+- **Settings › Plugins** gains the recall notice, the versions an install
+  can move to with their permission diff, and "Load your own plugin" (a
+  folder upload as `name@local`).
+
+**Not yet.** Kits themselves (F1), Foundry › Installed, recommendations
+(`rankKits`), the company-type filter on Blueprints, Publish in the
+Foundry header (publishing is the API above for plugins, and the existing
+buttons for agents, skills, apps and companies), Settings › Foundry (the
+Market pane is relabelled).
 
 ### F3: upgrades, customisation, rating
 

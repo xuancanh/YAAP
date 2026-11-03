@@ -4,12 +4,15 @@
  *  class as yaam will treat it, with the floor that raised it), interfaces
  *  with their providers, conformance and the owner's bindings, and per
  *  install the inventory of what it added, its conformance runs and the
- *  agents granted access. */
+ *  agents granted access; the recall notice on a frozen install, updates
+ *  from the plugin registry with their permission diff, and loading your
+ *  own plugin folder as `name@local` (docs/plugins.md §7). */
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../store';
 import {
-  api, type InterfaceView, type PluginCatalogEntry, type PluginDetail, type PluginReview, type PluginSummary,
+  api, type InterfaceView, type PluginCatalogEntry, type PluginDetail, type PluginReview, type PluginSource, type PluginSummary, type PluginUpdates,
 } from '../lib/api';
+import { folderFiles } from '../lib/foundry';
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 13, background: 'var(--panel)', padding: '15px 17px' };
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -30,6 +33,7 @@ function Pill({ text, tone }: { text: string; tone?: string }) {
 
 export function statusText(p: Pick<PluginSummary, 'status' | 'suspendedReason'>): string {
   if (p.status === 'suspended') return `suspended: ${p.suspendedReason}`;
+  if (p.status === 'frozen') return `frozen: ${p.suspendedReason}`;
   if (p.status === 'installed' && p.suspendedReason) return `not ready: ${p.suspendedReason}`;
   return p.status;
 }
@@ -163,6 +167,37 @@ function InstallDetail({ ws, p, onChanged }: { ws: string; p: PluginSummary; onC
   );
 }
 
+/** Versions an install can move to, each with its permission diff (§6.5). */
+function UpdatesPanel({ ws, p, onChanged }: { ws: string; p: PluginSummary; onChanged: () => void }) {
+  const app = useApp();
+  const [u, setU] = useState<PluginUpdates | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { void Promise.resolve().then(() => api.pluginUpdates(ws, p.id)).then(setU).catch(() => setU(null)); }, [ws, p.id, p.version, p.status]);
+  if (!u) return null;
+  if (u.updates.length === 0) return <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 6 }} data-testid={`updates-${p.id}`}>No other version to move to.</div>;
+  const go = async (source: PluginSource, version: string) => {
+    setBusy(true);
+    try {
+      const r = await api.updatePlugin(ws, p.id, source);
+      app.showToast?.(r.applied ? `${p.name} moved to ${version}` : `${p.name} ${version} waits for your approval: it widens what the plugin may do`);
+      onChanged();
+    } catch (e) { app.showToast?.(errText(e)); } finally { setBusy(false); }
+  };
+  return (
+    <div style={{ marginTop: 8 }} data-testid={`updates-${p.id}`}>
+      <div style={{ fontSize: 12, fontWeight: 600 }}>{p.status === 'frozen' ? 'Versions that are not recalled' : 'Updates'}</div>
+      {u.updates.map((x) => (
+        <div key={x.version} style={{ fontSize: 11.5, marginTop: 4, display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+          <span style={{ ...mono, fontWeight: 600 }}>{x.version}</span>
+          <Pill text={x.widening ? 'widens access' : 'no new access'} tone={x.widening ? 'var(--amber)' : 'var(--green)'} />
+          <span style={{ color: 'var(--text-dim)', flex: 1, minWidth: 160 }}>{x.diff.filter((d) => d.widening).map((d) => `${d.path}: ${d.detail}`).join('; ') || x.changelog || 'No permission change.'}</span>
+          <button type="button" style={btn} disabled={busy || !x.compatible} onClick={() => void go(x.source, x.version)}>{x.newer ? 'Update' : 'Move'} to {x.version}</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function InterfaceCard({ ws, i, onChanged }: { ws: string; i: InterfaceView; onChanged: () => void }) {
   const app = useApp();
   const def = i.bindings.find((b) => b.scopeKind === 'workspace');
@@ -203,7 +238,7 @@ export function PluginsPane() {
   const [catalog, setCatalog] = useState<PluginCatalogEntry[]>([]);
   const [installed, setInstalled] = useState<PluginSummary[]>([]);
   const [ifaces, setIfaces] = useState<InterfaceView[]>([]);
-  const [review, setReview] = useState<{ id: string; r: PluginReview } | null>(null);
+  const [review, setReview] = useState<{ source: PluginSource; r: PluginReview } | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -219,12 +254,22 @@ export function PluginsPane() {
 
   const startReview = async (id: string) => {
     setBusy(true);
-    try { setReview({ id, r: await api.reviewPlugin(ws, { firstParty: id }) }); } catch (e) { setError(errText(e)); } finally { setBusy(false); }
+    try { setReview({ source: { firstParty: id }, r: await api.reviewPlugin(ws, { firstParty: id }) }); } catch (e) { setError(errText(e)); } finally { setBusy(false); }
+  };
+  /** Your own plugin folder, uploaded as text through the loader's rules: it installs as name@local, in this workspace only. */
+  const loadFolder = async (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    setBusy(true);
+    try {
+      const files = await folderFiles(Array.from(list));
+      const source: PluginSource = { files };
+      setReview({ source, r: await api.reviewPlugin(ws, source) });
+    } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   };
   const install = async () => {
     if (!review) return;
     setBusy(true);
-    try { await api.installPlugin(ws, { firstParty: review.id }); app.showToast?.(`${review.r.name} installed`); setReview(null); await load(); } catch (e) { setError(errText(e)); } finally { setBusy(false); }
+    try { await api.installPlugin(ws, review.source); app.showToast?.(`${review.r.name} installed`); setReview(null); await load(); } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   };
   const act = async (id: string, what: 'disable' | 'enable' | 'conformance' | 'uninstall' | 'approve' | 'decline') => {
     setBusy(true);
@@ -272,6 +317,12 @@ export function PluginsPane() {
                 {' '}<button type="button" style={btn} disabled={busy} onClick={() => void act(p.id, 'decline')}>Decline</button>
               </div>
             )}
+            {p.status === 'frozen' && (
+              <div role="alert" data-testid={`recall-${p.id}`} style={{ fontSize: 11.5, marginTop: 6, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--red, #e5484d)', color: 'var(--text-dim)' }}>
+                <b style={{ color: 'var(--red, #e5484d)' }}>Frozen.</b> {p.recall?.notice ?? p.suspendedReason}. Its tools are gone and its dependants are suspended; move it to a version that is not recalled, or uninstall it.
+              </div>
+            )}
+            {(open === p.id || p.status === 'frozen') && <UpdatesPanel ws={ws} p={p} onChanged={() => void load()} />}
             {open === p.id && <InstallDetail ws={ws} p={p} onChanged={() => void load()} />}
           </div>
         ))}
@@ -283,6 +334,17 @@ export function PluginsPane() {
           {ifaces.map((i) => <InterfaceCard key={i.name} ws={ws} i={i} onChanged={() => void load()} />)}
         </div>
       )}
+
+      <div style={card}>
+        <div style={h}>Load your own plugin</div>
+        <div style={{ fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+          Pick a folder with a <span style={mono}>plugin.json</span> whose id ends in <span style={mono}>@local</span>. It is read as text and checked like any package: no scripts, no binaries, no package scripts, nothing runs at install. It installs in this workspace only, after the same review. More plugins are on Foundry&apos;s Plugins shelf.
+        </div>
+        <label style={{ ...btn, display: 'inline-block', marginTop: 8 }}>
+          Choose a folder…
+          <input type="file" aria-label="Plugin folder" multiple {...({ webkitdirectory: '' } as Record<string, string>)} style={{ display: 'none' }} onChange={(e) => { void loadFolder(e.target.files); e.target.value = ''; }} />
+        </label>
+      </div>
 
       <div style={card}>
         <div style={h}>First-party plugins</div>

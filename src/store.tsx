@@ -319,6 +319,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (q === 'market' || q === 'settings' || q === 'overview' || (q === 'agents' && !p.get('agent')) || q === 'inbox' || q === 'artifacts' || q === 'apps') return q;
     if (isCompanySection(q)) return q;
     if (q === 'workspace' || q === 'company') return LEGACY_COMPANY_SECTION; // legacy: the one Company section
+    if (q === 'foundry') return 'market'; // Foundry is the Market's new name; `?section=market` keeps working above
     if (q === 'files') return 'artifacts';
     if (q === 'chats' || (q === 'agents' && p.get('agent'))) return 'home';
     return 'overview'; // Home is the landing page

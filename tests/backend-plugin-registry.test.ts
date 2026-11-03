@@ -138,7 +138,7 @@ test('a community plugin installs only with the owner\'s opt-in, and a community
   const review = await s.plugins.review(s.ws.id, { registry: { id: 'tick@community' } });
   assert.equal(review.tier, 'community');
   assert.equal(review.communityOptIn, true);
-  assert.ok(review.blockers.some((b) => b.includes('community-interface opt-in')), 'the interface needs plugins.allowCommunityInterfaces');
+  assert.ok((review.blockers as string[]).some((b) => b.includes('community-interface opt-in')), 'the interface needs plugins.allowCommunityInterfaces');
   await assert.rejects(s.plugins.install(s.ws.id, { registry: { id: 'tick@community' } }, { confirm: true, acceptCommunity: true }), (e: any) => JSON.stringify(e.response).includes('community-interface opt-in'));
   await s.plugins.setWorkspaceSettings(s.ws.id, { allowCommunityInterfaces: true });
   await assert.rejects(s.plugins.install(s.ws.id, { registry: { id: 'tick@community' } }, { confirm: true }), (e: any) => JSON.stringify(e.response).includes('explicit opt-in'));

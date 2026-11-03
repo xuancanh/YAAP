@@ -34,7 +34,7 @@ const PANE_META: Record<string, [string, string]> = {
   harness: ['Coding agents', 'Claude Code, Codex, Pi and DeepSeek as the code_agent tool: multi-step coding in a private copy of a workspace folder, synced back as the agent. Gated like code execution unless you opt an agent in.'],
   runner: ['Code runner & browser', 'Where run_js / run_python execute and where browser_open / browser_act render. Both are disposable and approval-gated; the browser is credential-free and visible to you.'],
   computer: ['Computer', 'Let agents act on your own computer through a paired companion you run. Every action is approved by you, scoped to what you granted, and recorded here.'],
-  market: ['Market', 'The Community registry: which hosted registry this instance browses, whether Publish can push there, and what you have published.'],
+  market: ['Foundry', 'The Community registry: which hosted registry this instance browses, whether Publish can push there, and what you have published.'],
   security: ['Security', 'The threat model this product is held to, as published in docs/security.md — and where to report a vulnerability.'],
 };
 
@@ -1829,8 +1829,8 @@ function MarketPane() {
             {list && status.remoteUrl && !list.remote.ok && <div style={{ fontSize: 11.5, color: 'var(--amber)', marginTop: 4 }}>{list.remote.error}</div>}
             <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 4 }}>
               {status.remoteUrl
-                ? 'Its public items are merged into Market → Community (cached 10 minutes). Installing one pulls the manifest and runs the scan here, under the same review.'
-                : 'Market → Community shows only what this instance has published. Set REGISTRY_URL to browse a hosted registry as well.'}
+                ? 'Its public items are merged into the Foundry shelves with the Community tier (cached 10 minutes). Installing one pulls the manifest and runs the scan here, under the same review.'
+                : 'Foundry shows only what this instance has published. Set REGISTRY_URL to browse a hosted registry as well.'}
             </div>
           </div>
         </div>

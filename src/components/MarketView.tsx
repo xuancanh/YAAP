@@ -1,66 +1,102 @@
-/** Agent Market: registry cards + the capability-review hire modal (FR-11.7),
- *  in two layers — Personal (categories) and Business (job functions, a head
- *  and its team; docs/agent-catalog.md "Segments and functions") — the
- *  Connectors department (docs/integrations.md §4a), and the Community
- *  department — the publish/install registry (docs/registry.md). */
+/** Foundry, the marketplace (docs/foundry.md §8; it was the Market): four
+ *  shelves — Blueprints (company types: the Companies department, re-housed
+ *  intact), Kits (previews until kits ship), Agents (the curated packs in two
+ *  layers — Personal by category, Business by job function, a head and its
+ *  team, docs/agent-catalog.md — plus community agents from the registry,
+ *  docs/registry.md) and Plugins (interfaces, providers and consumers from
+ *  the plugin registry, the Connectors directory, docs/integrations.md §4a,
+ *  and community skills and mini apps). The capability-review hire modal
+ *  (FR-11.7) lives here too. */
 import { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { I, P, CAP_ICON } from '../lib/icons';
 import { api, type CompanyRegistryItem, type Connection, type ConnectorEntry, type MarketItem, type RegistryItem, type RegistryKind, type RegistryList } from '../lib/api';
 import { useApp, gradPair } from '../store';
 import {
   bizFunctions, bySegment, cadenceLine, defaultReportsTo, functionMeta, functionPage, marketCats, reportsToName, searchMarket, segmentOf,
-  SEGMENT_LABEL, type MarketNav, type MarketSegment,
+  SEGMENT_LABEL, SHELVES, type MarketNav, type MarketSegment, type Shelf,
 } from '../lib/market';
 import { RegistryReviewModal } from './RegistryBits';
 import { KIND_GLYPH, KIND_LABEL, flagCount, fmtInstalls, installSummary, ratingLabel } from '../lib/registry';
+import { KitsShelf, PluginDetailPage, PluginFilters, PluginsShelf } from './FoundryBits';
 
 const CompanyInstallModal = lazy(() => import('./OrgBlueprintBits').then((m) => ({ default: m.CompanyInstallModal })));
 
-type Dept = 'agents' | 'connectors' | 'community' | 'companies';
-const DEPT_LABEL: Record<Dept, string> = { agents: 'Agents', connectors: 'Connectors', community: 'Community', companies: 'Companies' };
-const DEPT_BLURB: Record<Dept, string> = {
-  agents: 'Hire durable agents from the registry. Each install runs a capability review first — imported loops enable immediately.',
-  connectors: 'Connect the services your agents work with. Connecting grants nothing to any agent — access stays a per-agent grant.',
-  community: 'Agents, skills and mini apps published by people like you. Every install shows the scan and the real text first, and lands inert: loops off, skills as drafts, capabilities parked.',
-  companies: 'Whole companies as blueprints (docs/blueprints.md): roles, charters, scopes, cadences, playbooks and a budget — never memory or credentials. Installing shows the review and the dry-run plan first; hires wait on one approval card in supervised mode.',
+export const SHELF_LABEL: Record<Shelf, string> = { blueprints: 'Blueprints', kits: 'Kits', agents: 'Agents', plugins: 'Plugins' };
+const SHELF_HOLDS: Record<Shelf, string> = { blueprints: 'Company types', kits: 'Use cases', agents: 'The people', plugins: 'Parts and connectors' };
+const SHELF_BLURB: Record<Shelf, string> = {
+  blueprints: 'Whole companies as blueprints (docs/blueprints.md): roles, charters, scopes, cadences, playbooks and a budget — never memory or credentials. Installing shows the review and the dry-run plan first; hires wait on one approval card in supervised mode.',
+  kits: 'A kit sets up one use case in a company: the interfaces and providers it works through, the roles that run it, their rhythm and how it is measured.',
+  agents: '',
+  plugins: 'Interfaces, the providers that implement them and the consumers that use them — each with the class yaam treats every operation as. Connecting or installing grants nothing to any agent.',
 };
 
-export function MarketView({ nav, setNav }: { nav: MarketNav; setNav: (patch: Partial<MarketNav>) => void }) {
+export function MarketView({ nav, setNav, onOpenSettings }: { nav: MarketNav; setNav: (patch: Partial<MarketNav>) => void; onOpenSettings?: (pane: string) => void }) {
   const app = useApp();
   const [search, setSearch] = useState('');
-  const [dept, setDept] = useState<Dept>('agents');
   const q = search.trim();
   const orgOn = app.companiesEnabled && !!app.wsOrg && app.wsOrg.mode !== 'off';
+  const shelf: Shelf = nav.shelf ?? 'agents';
+  const community = shelf === 'agents' && nav.agentTier === 'community';
+  const manage = () => (onOpenSettings ? onOpenSettings('plugins') : app.go('settings'));
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
       <div style={{ maxWidth: 980, margin: '0 auto', padding: app.stacked ? '20px 16px 60px' : '30px 28px 60px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 23, fontWeight: 700, letterSpacing: '-.4px', flex: 1 }}>Market</div>
-          {dept === 'agents' && <SegmentSwitch nav={nav} setNav={setNav} />}
+          <h1 style={{ fontSize: 23, fontWeight: 700, letterSpacing: '-.4px', flex: 1, margin: 0 }}>Foundry</h1>
+          {shelf === 'agents' && !community && <SegmentSwitch nav={nav} setNav={setNav} />}
         </div>
-        <div style={{ color: 'var(--text-dim)', fontSize: 13.5, marginTop: 4, maxWidth: 560 }}>{dept === 'agents' ? SEGMENT_BLURB[nav.segment] : DEPT_BLURB[dept]}</div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
-          {(['agents', 'connectors', 'community', ...(app.companiesEnabled ? ['companies' as const] : [])] as Dept[]).map((d) => (
-            <div key={d} onClick={() => setDept(d)} style={{ padding: '7px 18px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer', border: `1px solid ${d === dept ? 'var(--accent)' : 'var(--border)'}`, background: d === dept ? 'var(--accent-dim)' : 'var(--panel)', color: d === dept ? 'var(--accent-hi)' : 'var(--text-dim)' }}>
-              {DEPT_LABEL[d]}
-            </div>
-          ))}
+        <ShelfTabs shelf={shelf} setNav={setNav} />
+        <div style={{ color: 'var(--text-dim)', fontSize: 13.5, marginTop: 12, maxWidth: 620, lineHeight: 1.55 }}>
+          {shelf === 'agents' ? (community ? DEPT_BLURB.community : SEGMENT_BLURB[nav.segment]) : shelf === 'plugins' && nav.pf === 'connectors' ? DEPT_BLURB.connectors : shelf === 'plugins' && nav.pf === 'skills' ? DEPT_BLURB.community : SHELF_BLURB[shelf]}
         </div>
-        {dept === 'connectors' && <ConnectorsDept />}
-        {dept === 'community' && <CommunityDept />}
-        {dept === 'companies' && <CompaniesDept />}
-        {dept === 'agents' && <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 9, padding: '8px 11px', marginTop: 18, minWidth: 0 }}>
-            <I d={P.search} size={15} stroke="var(--text-faint)" />
-            <input aria-label="Search the market" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search personal and business agents" style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13 }} />
-            {search && <button aria-label="Clear search" onClick={() => setSearch('')} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', padding: 0 }}><I d={P.x} size={14} /></button>}
+        {shelf === 'blueprints' && (app.companiesEnabled ? <CompaniesDept /> : <Empty>Companies are not enabled on this server, so there are no blueprints to start from.</Empty>)}
+        {shelf === 'kits' && <KitsShelf nav={nav} />}
+        {shelf === 'plugins' && (nav.plugin
+          ? <PluginDetailPage id={nav.plugin} onBack={() => setNav({ plugin: '' })} onOpen={(id) => setNav({ plugin: id })} onManage={manage} />
+          : nav.pf === 'connectors' ? <><PluginFilters nav={nav} setNav={setNav} /><ConnectorsDept /></>
+            : nav.pf === 'skills' ? <><PluginFilters nav={nav} setNav={setNav} /><CommunityDept kinds={['skill', 'app']} /></>
+              : <PluginsShelf nav={nav} setNav={setNav} />)}
+        {shelf === 'agents' && <>
+          <div role="group" aria-label="Agent source" style={{ display: 'flex', gap: 7, marginTop: 14, flexWrap: 'wrap' }}>
+            <button aria-pressed={!community} onClick={() => setNav({ agentTier: '' })} style={chip(!community)}>Curated catalog</button>
+            <button aria-pressed={community} onClick={() => setNav({ agentTier: 'community' })} style={chip(community)}>Community</button>
           </div>
-          {q ? <SearchResults q={q} />
-            : nav.segment === 'personal' ? <PersonalSegment nav={nav} setNav={setNav} />
-              : <BusinessSegment nav={nav} setNav={setNav} orgOn={orgOn} />}
+          {community ? <CommunityDept kinds={['agent']} /> : <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 9, padding: '8px 11px', marginTop: 14, minWidth: 0 }}>
+              <I d={P.search} size={15} stroke="var(--text-faint)" />
+              <input aria-label="Search the market" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search personal and business agents" style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13 }} />
+              {search && <button aria-label="Clear search" onClick={() => setSearch('')} style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', padding: 0 }}><I d={P.x} size={14} /></button>}
+            </div>
+            {q ? <SearchResults q={q} />
+              : nav.segment === 'personal' ? <PersonalSegment nav={nav} setNav={setNav} />
+                : <BusinessSegment nav={nav} setNav={setNav} orgOn={orgOn} />}
+          </>}
         </>}
       </div>
+    </div>
+  );
+}
+
+const DEPT_BLURB = {
+  connectors: 'Connect the services your agents work with. Connecting grants nothing to any agent — access stays a per-agent grant.',
+  community: 'Published by people like you, with the Community tier. Every install shows the scan and the real text first, and lands inert: loops off, skills as drafts, capabilities parked.',
+};
+
+/** The four shelves; each says what it holds. */
+function ShelfTabs({ shelf, setNav }: { shelf: Shelf; setNav: (patch: Partial<MarketNav>) => void }) {
+  return (
+    <div role="tablist" aria-label="Foundry shelves" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 0, marginTop: 16, borderBottom: '1px solid var(--border)' }}>
+      {SHELVES.map((s) => {
+        const on = s === shelf;
+        return (
+          <button key={s} role="tab" aria-selected={on} onClick={() => setNav({ shelf: s, plugin: '' })}
+            style={{ font: 'inherit', textAlign: 'left', background: 'none', border: 'none', borderBottom: `2px solid ${on ? 'var(--accent)' : 'transparent'}`, marginBottom: -1, padding: '8px 10px 9px', cursor: 'pointer', color: on ? 'var(--text)' : 'var(--text-dim)' }}>
+            <span style={{ display: 'block', fontSize: 14, fontWeight: on ? 700 : 600 }}>{SHELF_LABEL[s]}{s === 'kits' && <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--amber)', marginLeft: 6 }}>soon</span>}</span>
+            <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-faint)' }}>{SHELF_HOLDS[s]}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -413,11 +449,13 @@ function ConnectorsDept() {
 /** The Community department (docs/registry.md): local + remote registry
  *  items with a kind badge, installs, rating, publisher, version and the
  *  scan-flag count; the detail/Install opens the review modal. */
-function CommunityDept() {
+function CommunityDept({ kinds }: { kinds: RegistryKind[] }) {
   const app = useApp();
-  const [data, setData] = useState<RegistryList | null>(null);
+  const [raw, setData] = useState<RegistryList | null>(null);
   const [failed, setFailed] = useState('');
-  const [kind, setKind] = useState<RegistryKind | ''>('');
+  const [kind, setKind] = useState<RegistryKind | ''>(kinds.length === 1 ? kinds[0] : '');
+  // Plugins and kits list on their own shelves; this department shows only its kinds.
+  const data = raw ? { ...raw, items: raw.items.filter((i) => kinds.includes(i.kind)) } : null;
   const [q, setQ] = useState('');
   const [reviewing, setReviewing] = useState<RegistryItem | null>(null);
   const load = () => {
@@ -436,11 +474,11 @@ function CommunityDept() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 9, padding: '8px 11px', flex: 1, minWidth: 200 }}>
           <I d={P.search} size={15} stroke="var(--text-faint)" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the community" style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13 }} />
+          <input aria-label="Search the community" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the community" style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text)', fontSize: 13 }} />
         </div>
-        {(['', 'agent', 'skill', 'app'] as const).map((k) => (
+        {kinds.length > 1 && (['', ...kinds] as const).map((k) => (
           <div key={k || 'all'} onClick={() => setKind(k)} style={{ padding: '6px 14px', borderRadius: 20, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', border: `1px solid ${k === kind ? 'var(--accent)' : 'var(--border)'}`, background: k === kind ? 'var(--accent)' : 'var(--panel)', color: k === kind ? '#fff' : 'var(--text-dim)' }}>
-            {k ? `${KIND_LABEL[k]}s` : 'All'}
+            {k ? `${KIND_LABEL[k as RegistryKind]}s` : 'All'}
           </div>
         ))}
       </div>
@@ -455,7 +493,7 @@ function CommunityDept() {
       {data && data.items.length === 0 && !failed && (
         <div style={{ marginTop: 18, border: '1px solid var(--border)', borderRadius: 16, background: 'var(--panel)', padding: 20, fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
           Nothing published yet. Publish one of yours from an agent&apos;s home page, a skill row, or a mini-app card — the form scans it first and shows you what installers will see.
-          {!data.remote.url && <> Set <span style={{ fontFamily: 'var(--mono)' }}>REGISTRY_URL</span> to browse a hosted registry as well (Settings → Market).</>}
+          {!data.remote.url && <> Set <span style={{ fontFamily: 'var(--mono)' }}>REGISTRY_URL</span> to browse a hosted registry as well (Settings › Foundry).</>}
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : 'repeat(2,1fr)', gap: 16, marginTop: 18 }}>
@@ -508,8 +546,9 @@ function CommunityDept() {
   );
 }
 
-/** The Companies department (docs/registry.md §8, item 24): published
- *  blueprints with their outcome counts; Install opens the two-step modal. */
+/** The Companies department (docs/registry.md §8, item 24), the Blueprints
+ *  shelf of Foundry: published blueprints with their outcome counts;
+ *  Install opens the two-step modal. */
 function CompaniesDept() {
   const app = useApp();
   const [data, setData] = useState<{ items: CompanyRegistryItem[]; remote: RegistryList['remote'] } | null>(null);
