@@ -401,7 +401,7 @@ test('the chief\'s root planning: the vision, the rules, the operating profile, 
   assert.match(prompt, /## Vision\n\n\[[0-9a-f]{8}\] A newsletter 5,000 people open \(horizon \d{4}-\d{2}-\d{2}\)\nEvery Friday\./);
   assert.match(prompt, /## Rules that must never be broken[\s\S]*No sending without a human read\./);
   assert.match(prompt, /## Operating profile \(plan in its spirit\)\n\nValues: Quality over speed; never spam\.\nCulture: Terse, written, async; one meeting a week at most\./);
-  assert.match(prompt, /## Roles you can hire from the catalog/);
+  assert.match(prompt, /## Hiring[\s\S]*org_roles/); // the catalog is searched with org_roles, not dumped
   assert.match(prompt, /up to 2 company objectives/, 'the tunable shapes the guidance');
   assert.match(prompt, /org_tune them within bounds/);
   assert.match(prompt, /Finish with org_strategy_memo/);
