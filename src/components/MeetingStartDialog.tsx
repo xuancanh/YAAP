@@ -26,7 +26,9 @@ export function MeetingStartDialog({ wsId, units, defaultUnitId, channel, onDone
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
   const [members, setMembers] = useState<ChannelMember[] | null>(null);
-  const [picked, setPicked] = useState<Set<string> | null>(null);
+  /** Attendees the person unticked. Everyone else is picked, so a refetch of
+   *  the members or the agents list never undoes the person's choice. */
+  const [unpicked, setUnpicked] = useState<Set<string>>(() => new Set());
   const [joinMe, setJoinMe] = useState(true);
   useEffect(() => {
     if (!channel) { setMembers(null); return; }
@@ -40,13 +42,12 @@ export function MeetingStartDialog({ wsId, units, defaultUnitId, channel, onDone
     return ids.map((id) => ({ id, name: agentName(id) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel, members, units, unitId, app.agents]);
-  // Everyone is picked until the person changes it.
-  useEffect(() => { setPicked(new Set(candidates.map((c) => c.id))); }, [candidates]);
-  const toggle = (id: string) => setPicked((p) => { const n = new Set(p ?? []); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const isPicked = (id: string) => !unpicked.has(id);
+  const toggle = (id: string) => setUnpicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const start = async () => {
     setBusy(true);
     try {
-      const agents = candidates.filter((c) => picked?.has(c.id)).map((c) => ({ kind: 'agent' as const, id: c.id }));
+      const agents = candidates.filter((c) => isPicked(c.id)).map((c) => ({ kind: 'agent' as const, id: c.id }));
       const attendees = agents.length || joinMe ? [...agents, ...(joinMe && me ? [{ kind: 'human' as const, id: me }] : [])] : undefined;
       const m = await api.startOrgMeeting(wsId, {
         kind, unitId: channel ? undefined : unitId || undefined, channelId: channel?.id, agenda: agenda.trim() || undefined, title: title.trim() || undefined,
@@ -79,7 +80,7 @@ export function MeetingStartDialog({ wsId, units, defaultUnitId, channel, onDone
         {candidates.length === 0 && <span style={faint}>{channel && members === null ? 'Loading…' : 'The unit (lead and reports) by default'}</span>}
         {candidates.map((c) => (
           <label key={c.id} style={{ display: 'flex', gap: 4, alignItems: 'center', fontSize: 12.5 }}>
-            <input type="checkbox" checked={picked?.has(c.id) ?? true} onChange={() => toggle(c.id)} />{c.name}
+            <input type="checkbox" checked={isPicked(c.id)} onChange={() => toggle(c.id)} />{c.name}
           </label>
         ))}
         <label style={{ display: 'flex', gap: 4, alignItems: 'center', fontSize: 12.5 }}>
