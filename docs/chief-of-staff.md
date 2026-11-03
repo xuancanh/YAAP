@@ -237,9 +237,14 @@ onboarding owner after each hire, probation, eval-gated model changes, pause
 and termination),
 `learning-loop-review` (experiments, calibration, lessons into playbooks,
 golden sets) and `org-files-hygiene` (the ledger and the function folders
-complete, linked, archived, free of secrets).
+complete, linked, archived, free of secrets). `project-portfolio`
+(docs/work-tracking.md) keeps the project layer true: orphans placed out of
+Unsorted, retro actions held to the Operating improvements cap, health
+updates chased with a drafted diff (the lead owns the call), appetite
+breakers watched, and the betting table of shaped projects prepared for the
+CEO — it never moves a project to Now, extends an appetite or kills a bet.
 
-Its loops: the weekday **operating-system sweep** (intake, blocks, brief, handoffs)
+Its loops: the weekday **operating-system sweep** (intake, projects, blocks, brief, handoffs)
 an hour before the brief,
 the **weekly business review pack** at the pre-read deadline before the root
 unit's weekly review (moved off the weekend), the **monthly operating

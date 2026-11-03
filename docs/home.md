@@ -115,8 +115,22 @@ where your reply goes, and marks that chat's messages read. The section is
 hidden when nobody wrote; the heading counts the unread ones. It is the
 owner's: a member of a shared workspace does not see it.
 
-**3. Since you were last here.** Counts of tasks done, tasks blocked,
-decisions taken without the owner, files changed and the pulse. Then:
+**2b. Portfolio** (work tracking, `docs/work-tracking.md`). For a company
+with projects: a counts strip — Now, at risk, off track, update missing,
+over budget, late — and the exceptions, worst first (off track, a tripped
+appetite breaker, update missing, at risk with its ask, over budget, a
+target date passed), each with its lead and the reason or ask; a click
+opens the project page, and **Open roadmap** opens Company › Direction ›
+Roadmap. Below it, **since you last looked**: the project changes since the
+last visit (health calls, lane moves, breakers and decisions on them,
+milestones, projects done) and the tasks done per project (from `doneAt`).
+The data is `HomeData.portfolio` (`OrgProjectsService.portfolio`); also
+`GET …/org/portfolio?since=`.
+
+**3. Since you were last here.** Counts of tasks done (by `doneAt`, the
+moment a task was accepted — no longer "last touched while done"), tasks
+blocked, decisions taken without the owner, files changed and the pulse.
+Then:
 
 - the decisions taken without the owner (on its own, by default, by a
   delegate, logged), each linked to where it was made;
@@ -128,9 +142,15 @@ decisions taken without the owner, files changed and the pulse. Then:
 mark and confidence. At risk comes first.
 
 - Red: the model-free assessment says at risk.
-- Amber: behind pace, or confidence below 50%.
+- Amber: behind its pace against target.
 - Green: on pace.
 - Grey: not measured.
+
+A low confidence number alone no longer makes a key result amber (it made
+most of them amber by construction); confidence is shown beside the mark
+and still feeds the at-risk rule when it drops twice in a row. The worst
+health the leads wrote on the projects that move the key result is shown
+beside it, never averaged in (`docs/work-tracking.md`).
 
 **5. Team.** One tile per agent: what it is doing (the current task, a
 review, or the blocker), when it was last active, and its last heartbeat.

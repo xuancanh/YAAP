@@ -19,7 +19,7 @@ with a letter.
 | The root unit (the company board) | The company name: a word of four letters or fewer whole, else its first three; two words, two letters and one; three or more, the initials. Filler words (Inc, Corp, the, of) drop out. `CO` when nothing is left. | Jong → `JONG`, Acme Corp → `ACME`, Acme Widget Works → `AWW` |
 | A function unit | The lead's job function (its catalog role id or a function word in its title) → a fixed code. | `ENG`, `SALES`, `MKT`, `CS`, `PROD`, `DSN`, `DATA`, `FIN`, `PPL`, `LEGAL`, `OPS`, `IT`, `REV` |
 | Any other unit | The lead's title without role words (head, lead, manager…), then the lead's name. | Head of Research → `RES`, Ava → `AVA` |
-| An agent's own kanban | The agent's handle (`agents/<handle>`), by the same word rule. | evidence-lead → `EVL`, atlas → `ATL` |
+| An agent's own kanban | The agent's handle (`agents/<handle>`), by the same word rule. Only personal agents (no company) keep a kanban since the work-tracking merge (`docs/work-tracking.md`). | evidence-lead → `EVL`, atlas → `ATL` |
 
 Prefixes are unique in the workspace (units of the organization and every
 agent's board together), so a key names one task there. A derived prefix
@@ -58,6 +58,25 @@ task on a unit board takes the unit's prefix, one without a unit the root
 unit's (or the organization's own, adopted by the root unit later). It is
 idempotent — keyed rows are skipped and counters only grow — and
 `backfillTaskKeys()` can be run on its own.
+
+## Projects and the kanban merge
+
+Projects (`docs/work-tracking.md`) have their own key, `P-<n>`, numbered per
+organization (`P-1`, `P-2`, …; the migration numbers existing projects in
+creation order and gives each unit's Unsorted and Operating improvements
+projects theirs). **Decision: tasks keep their board's prefix**, not the
+project's — a key never changes when a task moves to another project, and
+a project spans units — so the project shows beside the key as a badge
+(`ENG-12 · P-3`). Tools take a project by key (`projectId: "P-3"`), id or
+id prefix.
+
+Migration `0060-work-tracking` merges each company member's kanban into the
+org board. A kanban item that became an org task **keeps its kanban key**
+(`TUL-1` stays `TUL-1`): keys are unique per workspace across both boards,
+so it cannot collide, and links in chats keep resolving. One that became a
+checklist step on the task it mirrored keeps the key as the step's
+`from`; `update_task` with that key ticks the step. The kanban row is kept
+and marked `mergedInto`, and no longer shows on the agent's board.
 
 ## Naming a task
 

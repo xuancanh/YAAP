@@ -33,9 +33,9 @@ them.
 
 | Primitive | What it is | Today | Where it goes |
 |---|---|---|---|
-| **Intent** | Vision → objectives → key results → tasks; every task answers "why" by walking up the tree. | Goals with progress from linked tasks. | Measurable key results, owners, due dates, confidence check-ins, at-risk detection, cascade into units. |
+| **Intent** | Vision → objectives → key results → projects → tasks; every task answers "why" by walking up the tree. | Goals with progress from linked tasks. | Measurable key results, owners, due dates, confidence check-ins, at-risk detection, cascade into units. |
 | **Structure** | Units, roles, charters, reporting lines. | Chart with depth/fan-out caps; units per lead. | Role catalog with competency profiles; charters versioned and diffed; succession; "org debt" detection. |
-| **Work** | Tasks with four-field briefs, review, acceptance. | Board per unit, claims, review rounds, breakers. | Projects with milestones; task classes routed to models by class; cycle time and acceptance rate as company SLOs. |
+| **Work** | Projects (the bets: a lead, key results, a brief, an appetite, a health stream) and tasks with four-field briefs, review, acceptance (`docs/work-tracking.md`). | Board per unit, claims, review rounds, breakers; projects required since 0060, one task system, done as an event. | Projects with milestones; task classes routed to models by class; cycle time and acceptance rate as company SLOs. |
 | **Conversation** | Channels, threads, DMs, meetings. | Channels per unit, mentions, relevance wake. | Meetings as bounded rituals that end in minutes, decisions and actions. |
 | **Memory** | Files, lessons, decisions, playbooks. | Shared files per channel, lessons with audiences, skills. | A decision log with rationale; playbooks agents write and follow; postmortems that revise charters and skills. |
 | **Capital** | Envelopes, reservations, spend. | Nested USD envelopes, reserve-before-call, breakers. | Allocation by expected value; cost per accepted outcome; forecasts; model routing as a cost lever. |
@@ -115,8 +115,17 @@ stays linked to it.
    results under one objective wake the chief; an objective at risk lands
    on the CEO's brief as a decision ("cut scope, add budget, or accept").
 5. **Why chain.** Any task, message or file can show its chain:
-   task → key result → objective → vision. A task whose chain is broken
-   (its goal was abandoned) is flagged, not silently worked.
+   task → project → key result → objective → vision. A task whose chain is
+   broken (its goal was abandoned) is flagged, not silently worked.
+6. **Projects carry the work** (`docs/work-tracking.md`). Between a key
+   result and its tasks sits a project: one lead, the key result(s) it
+   moves, a four-line brief, an appetite in days and USD, a lane on the
+   roadmap (Now / Next / Later) and an owner-written health update on a
+   cadence. Every task has one (orphans land in their unit's Unsorted
+   project; retro actions in a capped Operating improvements project).
+   Agents shape and propose projects; **moving one to Now is the CEO's
+   bet**, a decision card. A project that uses up its appetite pauses new
+   work and goes to its lead's manager to extend, cut scope or kill.
 
 The same machinery serves a one-line request. "Ship a newsletter by
 Friday" is a vision with a short horizon; the cascade is one session deep.
@@ -269,14 +278,17 @@ control (`docs/home.md`): what needs the owner, what happened, whether the
 company is on track; the agent directory is **All agents**.
 
 - **Inbox** — everything waiting on the CEO in one list with filters:
-  decision cards, actions waiting for the owner's key, escalations, plans
-  awaiting a veto, my tasks and reviews, incidents nobody has contained,
+  decision cards (including project bets and appetite decisions), actions
+  waiting for the owner's key, escalations (every task blocked on the CEO
+  has one), pending changes awaiting a veto, my tasks and reviews, incidents nobody has contained,
   and **Following** — what changed on the threads and tasks I follow
   (`docs/follows.md`). A filter opens the full pane; the nav icon carries
   the combined count.
 - **Company** (the Workspace section) — the rail groups the panes, each
   group collapsible per viewer: *Teams* (each unit's #channel, Board,
-  Goals), *Direction* (Vision, Goals, Plans, Decisions), *Operations*
+  Goals), *Direction* (Roadmap — Timeline and Now / Next / Later, with a
+  page per project — Vision, Goals, Pending changes, Decisions; "Plans"
+  was renamed so that "plan" means the roadmap, `docs/work-tracking.md`), *Operations*
   (Pulse with Brief as a tab, Meetings, Incidents), *People & money* (Org
   chart, Spend with Capital as a tab), *Oversight* (Audit with Replay as a
   tab).
