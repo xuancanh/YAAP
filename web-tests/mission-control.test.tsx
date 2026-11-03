@@ -130,7 +130,7 @@ describe('the helpers', () => {
     expect(forest.map((t) => t.node.agentId)).toEqual(['chief']);
     expect(forest[0].children.map((t) => t.node.agentId)).toEqual(['sales']);
     const full = buildForest(mc.nodes);
-    expect(full[0].children.map((t) => t.node.agentId)).toEqual(['content', 'sales'], 'leads with reports first, then by name');
+    expect(full[0].children.map((t) => t.node.agentId)).toEqual(['content', 'sales']); // leads with reports first, then by name
     expect(flattenForest(full, new Set(['content'])).map((r) => `${r.depth}:${r.node.agentId}`)).toEqual(['0:chief', '1:content', '1:sales', '2:rep']);
   });
 
