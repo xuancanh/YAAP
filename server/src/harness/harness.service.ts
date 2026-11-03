@@ -168,11 +168,22 @@ export class HarnessService implements ToolProviderHook, OnModuleInit {
     return [dirname(binary), dirname(process.execPath)];
   }
 
-  /** Run a short command with the scrubbed env and capture its output. */
-  private capture(bin: string, args: string[], timeoutMs: number): Promise<{ code: number | null; out: string; err: string }> {
+  /** Run a short command with the scrubbed env and capture its output —
+   *  in a throwaway directory of its own, never the server's cwd (the repo). */
+  private async capture(bin: string, args: string[], timeoutMs: number): Promise<{ code: number | null; out: string; err: string }> {
+    const dir = realpathSync(await mkdtemp(join(tmpdir(), 'yaam-harness-detect-')));
+    try {
+      return await this.captureIn(dir, bin, args, timeoutMs);
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private captureIn(dir: string, bin: string, args: string[], timeoutMs: number): Promise<{ code: number | null; out: string; err: string }> {
     return new Promise((resolve, reject) => {
       const child = spawn(bin, args, {
-        env: { PATH: [...this.pathDirsFor(bin), '/usr/bin', '/bin'].join(':'), HOME: tmpdir(), LANG: 'en_US.UTF-8', TERM: 'dumb', NO_COLOR: '1' },
+        cwd: dir,
+        env: { PATH: [...this.pathDirsFor(bin), '/usr/bin', '/bin'].join(':'), HOME: dir, TMPDIR: dir, LANG: 'en_US.UTF-8', TERM: 'dumb', NO_COLOR: '1' },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       let out = ''; let err = '';

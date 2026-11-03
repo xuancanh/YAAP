@@ -8,6 +8,7 @@
  *  and no network is ever used. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -216,6 +217,7 @@ test('settings API: validated per harness, the key never returned, internal rows
  *  prints its environment's keys; SLOW edits, reports progress, then waits. */
 const FAKE_CLAUDE = `#!/usr/bin/env node
 const fs = require('fs');
+if (process.argv.includes('--version')) { console.log('2.1.310 (Claude Code)'); process.exit(0); }
 let task = '';
 process.stdin.on('data', (d) => { task += d; });
 process.stdin.on('end', () => {
@@ -258,7 +260,6 @@ async function setup() {
   const adaHome = (await agents.home(ada.id)).home;
   const bobHome = (await agents.home(bob.id)).home;
   const binDir = await fakeBin('claude', FAKE_CLAUDE);
-  await fakeBin('claude', FAKE_CLAUDE);
   const svc = new HarnessService(settings, fs);
   svc.searchDirs = [binDir];
   svc.sandboxKind = () => null;
@@ -275,13 +276,14 @@ type S = Awaited<ReturnType<typeof setup>>;
 const runCfg = async (s: S, patch: Partial<HarnessConfig> = {}) => ({ ...(await s.svc.config()).claude_code, ...patch });
 
 test('detection: a fake binary on the search path and its --version; a configured path that is not executable', async () => {
-  const dir = await fakeBin('claude', '#!/bin/sh\necho "2.1.310 (Claude Code)"\n');
+  const dir = await fakeBin('claude', '#!/bin/sh\ntouch yaam-detect-marker\necho "2.1.310 (Claude Code)"\n');
   const db = await testDb();
   const { stub } = memStorage();
   const svc = new HarnessService(new SettingsService(db), new WorkspaceFs(stub, db));
   svc.searchDirs = ['/nonexistent', dir];
   const st = await svc.detect('claude_code', cfgOf('claude_code'));
   assert.equal(st.found, true); assert.equal(st.version, '2.1.310'); assert.equal(st.path, join(dir, 'claude'));
+  assert.equal(existsSync(join(process.cwd(), 'yaam-detect-marker')), false, '--version runs in a throwaway dir, never the server cwd');
   const dsk = await svc.detect('deepseek', cfgOf('deepseek'));
   assert.equal(dsk.found, true, 'DeepSeek runs the claude binary');
   const missing = await svc.detect('codex', cfgOf('codex'));
