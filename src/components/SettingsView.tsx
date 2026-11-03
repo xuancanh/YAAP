@@ -25,7 +25,8 @@ const PANE_META: Record<string, [string, string]> = {
   permissions: ['Permissions', 'Default permission mode for new chats and remembered approvals.'],
   context: ['Context & budget', 'Token ceiling and automatic compaction threshold.'],
   memory: ['Workspace memory', 'Durable chat memory injected as shared context for this workspace.'],
-  workspace: ['Workspace', 'Who else works here and as what, quiet hours, the interrupt policy, and the monthly spend stop. Loops keep working; what changes is when you hear about it and how much it may cost.'],
+  workspace: ['Workspace', 'Who else works here and as what, the trust levels agents earn, quiet hours, the interrupt policy, and the monthly spend stop. Loops keep working; what changes is when you hear about it and how much it may cost.'],
+  company: ['Company', 'Run this workspace as a company: the mode, the chief of staff, the envelope and the agent cap, delegated approvals and the boundary, the tunables behind every ritual, and the blueprint. Everything the company does day to day is in its own sections of the main menu.'],
   usage: ['Usage', 'Tokens and dollars over the last 30 days — per agent, per loop, per day — and the price table behind the estimate.'],
   channels: ['Channels', 'Talk to your agents where you already are — Telegram, email, and push to this device, paired to you alone.'],
   connections: ['Connections', 'Link external services (Google Calendar first). Connecting grants nothing — you approve access per agent.'],
@@ -579,8 +580,12 @@ function WorkspacePane() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <MembersSection ws={ws} />
-      {app.companiesEnabled && <OrganizationSection ws={ws} />}
-      {app.companiesEnabled && app.wsOrg && app.wsOrg.mode !== 'off' && app.wsOrg.orgId && <Suspense fallback={null}><GovernanceSettings wsId={ws.id} /></Suspense>}
+      {app.companiesEnabled && (
+        <div data-testid="company-settings-moved" style={{ ...card, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 200, fontSize: 12.5, color: 'var(--text-dim)' }}>Organization mode, the chief of staff, governance, tunables and the blueprint are in Settings › Company.</div>
+          <button onClick={() => app.openSettings('company')} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Company settings</button>
+        </div>
+      )}
       <Suspense fallback={null}><TrustSection wsId={ws.id} /></Suspense>
       <HeartbeatDefaultsSection ws={ws} />
       <div style={card}>
@@ -659,7 +664,23 @@ function WorkspacePane() {
   );
 }
 
-/** Settings → Workspace → Organization (docs/group-chat.md §5): the
+/** Settings › Company: the one home of the company's settings — the
+ *  organization (mode, chief, envelope, cap, tunables, blueprint, and what
+ *  ends the company) and governance (delegated approvals, the boundary). */
+function CompanyPane() {
+  const app = useApp();
+  const ws = app.workspaces.find((w) => w.id === app.workspaceId);
+  if (!ws) return null;
+  if (!app.companiesEnabled) return <div style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>Companies are disabled on this server.</div>;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <OrganizationSection ws={ws} />
+      {app.wsOrg && app.wsOrg.mode !== 'off' && app.wsOrg.orgId && <Suspense fallback={null}><GovernanceSettings wsId={ws.id} /></Suspense>}
+    </div>
+  );
+}
+
+/** Settings › Company › Organization (docs/group-chat.md §5): the
  *  workspace is the company. Mode, chief of staff, the company envelope and
  *  the agent cap live here; the panes (board, goals, org chart, approvals,
  *  spend, brief, audit) appear under the workspace in the rail while the
@@ -708,7 +729,7 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
       await app.refreshWsOrg();
     } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'failed'); }
   };
-  const open = () => { app.go('workspace'); app.setOrgPane('board'); };
+  const open = () => { app.go('operations'); };
   const members = st?.org?.members.filter((m) => m.status !== 'terminated').length ?? 0;
   return (
     <div style={card}>
@@ -716,7 +737,7 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>Organization</div>
           <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>
-            The workspace is the company. Turn it on and every agent here joins, with a chief of staff at the top; the board, goals, org chart, spend, brief and audit appear under the workspace.
+            The workspace is the company. Turn it on and every agent here joins, with a chief of staff at the top; Direction, Operations, People, Money and Oversight appear in the main menu.
           </div>
         </div>
         {current === 'off' && isOwner && (
@@ -726,7 +747,7 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
         {current !== 'off' && st && (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: st.orgStatus === 'paused' ? '#fff' : 'var(--text-dim)', background: st.orgStatus === 'paused' ? 'var(--red)' : 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px' }}>{st.orgStatus === 'paused' ? 'paused' : `${current} · ${members} member${members === 1 ? '' : 's'}${st.pendingApprovals ? ` · ${st.pendingApprovals} pending` : ''}`}</span>
-            <button onClick={open} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Open the board</button>
+            <button onClick={open} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Open the company</button>
             {isOwner && <button onClick={() => void toggleRun()} style={{ background: st.orgStatus === 'active' ? 'var(--red)' : 'var(--accent)', border: 'none', color: '#fff', borderRadius: 7, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }} title={st.orgStatus === 'active' ? 'Kill switch: stop every wake and run' : 'Resume wakes and runs'}>{st.orgStatus === 'active' ? 'Pause' : 'Resume'}</button>}
           </div>
         )}
@@ -2021,6 +2042,7 @@ export function SettingsView({ pane }: { pane: string }) {
           {pane === 'context' && <ContextPane />}
           {pane === 'memory' && <MemoryPane />}
           {pane === 'workspace' && <WorkspacePane />}
+          {pane === 'company' && <CompanyPane />}
           {pane === 'usage' && <UsagePane />}
           {pane === 'channels' && <ChannelsPane />}
           {pane === 'connections' && <ConnectionsPane />}

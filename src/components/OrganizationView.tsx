@@ -1,14 +1,15 @@
-/** The organization panes of a workspace (docs/group-chat.md §5, execution
- *  plan items 14 and 16): the workspace *is* the company, so these render in
- *  the Workspace section when organization mode is on — the shared board,
- *  goals, the org chart, the approvals queue (full artifact, never a
- *  summary), spend vs envelopes, the brief with its one-reply input, and the
- *  audit (runs and the hash-chained log). Enabling, the mode, the chief and
- *  the caps live in Settings → Workspace → Organization; the group log moved
- *  to the `#company` channel. */
+/** The organization pages of a workspace (docs/group-chat.md §5, execution
+ *  plan items 14 and 16): the workspace *is* the company, so in organization
+ *  mode each company section (Direction, Operations, People, Money,
+ *  Oversight; src/lib/company-nav.ts) renders here — its dashboard, or one of
+ *  its pages: the shared board, goals, the org chart, spend vs envelopes,
+ *  the brief with its one-reply input, the audit (runs and the hash-chained
+ *  log)… The approvals queue (full artifact, never a summary) renders in the
+ *  Inbox. Enabling, the mode, the chief and the caps live in Settings ›
+ *  Company; the group log moved to the `#company` channel. */
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useApp, type OrgPane } from '../store';
-import { tabsOf } from '../lib/inbox';
+import { sectionDef, sectionOfPane, type CompanySection } from '../lib/company-nav';
 import { hopLine, inReviewBelow, managerHops, waitsOnViewer } from '../lib/decisions';
 import { orgTaskHash, taskOfHash } from '../lib/links';
 import { isTaskKey, keyStyle, matchesTaskRef } from '../lib/task-keys';
@@ -20,7 +21,7 @@ import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
 import { UsageBars, UsageRows } from './UsageChart';
 import { I, P } from '../lib/icons';
-import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
+import { card, input, btn, pill, h2, faint, linkBtn, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
 import { changeSummary, decidedViaBadge, dueBadge, expectedLabel, memberSettingsLines, verificationBadge } from '../lib/org3';
 import { FollowToggle } from './FollowToggle';
 import { MentionBox, storedMentions, useMentionables } from './MentionBox';
@@ -36,10 +37,8 @@ const DecisionsPane = lazy(() => import('./OrgMeetingsView').then((m) => ({ defa
 const WhyDrawer = lazy(() => import('./OrgVisionView').then((m) => ({ default: m.WhyDrawer })));
 /** Memory, capital, blueprints and hybrid staff (items 22–24); playbooks are files under /org/playbooks/ in Artifacts. */
 const RelatedDrawer = lazy(() => import('./OrgMemoryView').then((m) => ({ default: m.RelatedDrawer })));
-const PlansPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.PlansPane })));
 const ReplayPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.ReplayPane })));
 const CapitalPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.CapitalPane })));
-const MyTasksPane = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.MyTasksPane })));
 const HireDialog = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.HireDialog })));
 /** The org chart's mission control (docs/mission-control.md). */
 const MissionControlPane = lazy(() => import('./OrgMissionControl').then((m) => ({ default: m.MissionControlPane })));
@@ -54,13 +53,15 @@ const CapacityStrip = lazy(() => import('./OrgGovernanceView').then((m) => ({ de
 const CardEvalLine = lazy(() => import('./OrgGovernanceView').then((m) => ({ default: m.CardEvalLine })));
 /** Work tracking (docs/work-tracking.md): the roadmap and the project page. */
 const RoadmapPane = lazy(() => import('./OrgRoadmapView').then((m) => ({ default: m.RoadmapPane })));
-const LAZY_PANES = new Set(['vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents', 'roadmap']);
+const TeamsPane = lazy(() => import('./CompanyDashboards').then((m) => ({ default: m.TeamsPane })));
+const SectionDashboard = lazy(() => import('./CompanyDashboards').then((m) => ({ default: m.SectionDashboard })));
+const LAZY_PANES = new Set(['vision', 'pulse', 'meetings', 'decisions', 'replay', 'capital', 'incidents', 'roadmap', 'teams']);
 
 const STATUS_COLOR: Record<OrgTaskStatus, string> = {
   backlog: 'var(--text-faint)', waiting: 'var(--text-dim)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
 };
 
-export function OrganizationView() {
+export function OrganizationView({ section }: { section: CompanySection }) {
   const app = useApp();
   const [org, setOrg] = useState<OrgDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -85,43 +86,44 @@ export function OrganizationView() {
       await reload();
     } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
-  const view = app.orgPane ?? 'board';
+  const def = sectionDef(section);
+  // A page of this section, or the section's dashboard.
+  const view: OrgPane | null = app.orgPane && sectionOfPane(app.orgPane) === section ? app.orgPane : null;
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 20px 10px', borderBottom: '1px solid var(--border)' }}>
-        {app.stacked && <button onClick={() => app.setMobileDetail(false)} style={{ ...btn(), padding: 6 }}><I d={P.chevL} size={14} /></button>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 20px 10px', borderBottom: app.stacked ? 'none' : '1px solid var(--border)' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <h2 style={h2}>{ws?.name ?? org.name}</h2>
-            <span style={pill(org.status === 'active' ? 'var(--green)' : 'var(--red)', '#fff')}>{org.status}</span>
-            <span title={mode === 'autonomous' ? 'The chief of staff hires, reorganizes and allocates within caps on its own' : 'Structural changes are approvals you decide'} style={pill()}>{mode}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <h2 style={{ ...h2, fontSize: 16 }} data-testid="company-section-title">{def.label}</h2>
+            {/* On a phone the header keeps the section name, the paused state and the kill switch. */}
+            {!app.stacked && <span style={faint}>{ws?.name ?? org.name}</span>}
+            {(!app.stacked || org.status !== 'active') && <span style={pill(org.status === 'active' ? 'var(--green)' : 'var(--red)', '#fff')}>{org.status}</span>}
+            {!app.stacked && <span title={mode === 'autonomous' ? 'The chief of staff hires, reorganizes and allocates within caps on its own' : 'Structural changes are approvals you decide'} style={pill()}>{mode}</span>}
             {org.charterDrift.length > 0 && <span title="A member's charter changed outside the org path" style={pill('var(--amber)', '#fff')}>charter drift · {org.charterDrift.length}</span>}
           </div>
-          {org.mission && <div style={{ ...faint, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{org.mission}</div>}
         </div>
-        <button onClick={toggle} style={btn(false, org.status === 'active')} title={org.status === 'active' ? 'Kill switch: stop every wake and run' : 'Resume wakes and runs'}>{org.status === 'active' ? 'Pause company' : 'Resume'}</button>
+        <button onClick={toggle} style={btn(false, org.status === 'active')} title={org.status === 'active' ? 'Kill switch: stop every wake and run' : 'Resume wakes and runs'}>{org.status === 'active' ? (app.stacked ? 'Pause' : 'Pause company') : 'Resume'}</button>
       </div>
+      {app.stacked && <PageStrip section={section} view={view} />}
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 18 }}>
-        <PaneTabs view={view} />
+        {view === null && <Suspense fallback={<div style={faint}>Loading…</div>}><SectionDashboard section={section} org={org} /></Suspense>}
         {view === 'chart' && <OrgChart org={org} reload={reload} />}
         {view === 'board' && <Board org={org} />}
         {view === 'goals' && <Goals org={org} reload={reload} />}
-        {view === 'approvals' && <Approvals org={org} reload={reload} />}
         {view === 'spend' && <Spend org={org} reload={reload} />}
         {view === 'audit' && <Audit org={org} />}
         {view === 'brief' && <BriefView org={org} mode={mode} />}
-        {LAZY_PANES.has(view) && (
+        {view !== null && LAZY_PANES.has(view) && (
           <Suspense fallback={<div style={faint}>Loading…</div>}>
             {view === 'vision' && <VisionPane org={org} reload={reload} />}
             {view === 'pulse' && <PulsePane org={org} />}
             {view === 'meetings' && <MeetingsPane org={org} />}
             {view === 'decisions' && <DecisionsPane org={org} />}
-            {view === 'plans' && <PlansPane org={org} />}
             {view === 'replay' && <ReplayPane org={org} />}
             {view === 'capital' && <CapitalPane org={org} />}
-            {view === 'mytasks' && <MyTasksPane org={org} />}
             {view === 'incidents' && <IncidentsPane org={org} />}
             {view === 'roadmap' && <RoadmapPane org={org} />}
+            {view === 'teams' && <TeamsPane org={org} />}
           </Suspense>
         )}
       </div>
@@ -129,20 +131,15 @@ export function OrganizationView() {
   );
 }
 
-/** Merged panes (src/lib/inbox.ts COMPANY_GROUPS): Pulse | Brief, Spend | Capital, Audit | Replay. */
-const TAB_LABEL: Partial<Record<OrgPane, string>> = { pulse: 'Pulse', brief: 'Brief', spend: 'Spend', capital: 'Capital', audit: 'Audit', replay: 'Replay' };
-function PaneTabs({ view }: { view: OrgPane }) {
+/** On a phone the section's pages are a strip of chips under the header (no rail). */
+function PageStrip({ section, view }: { section: CompanySection; view: OrgPane | null }) {
   const app = useApp();
-  const tabs = tabsOf(view);
-  if (!tabs) return null;
+  const def = sectionDef(section);
+  const chip = (on: boolean): React.CSSProperties => ({ ...btn(on), flex: 'none', whiteSpace: 'nowrap', background: on ? 'var(--accent)' : 'var(--panel-2)', color: on ? '#fff' : 'var(--text)', border: on ? 'none' : '1px solid var(--border)' });
   return (
-    <div role="tablist" style={{ display: 'flex', gap: 4, marginBottom: 14, borderBottom: '1px solid var(--border-soft)' }}>
-      {tabs.map((t) => (
-        <button key={t} role="tab" aria-selected={t === view} onClick={() => app.setOrgPane(t)}
-          style={{ background: 'none', border: 'none', borderBottom: `2px solid ${t === view ? 'var(--accent)' : 'transparent'}`, color: t === view ? 'var(--text)' : 'var(--text-dim)', padding: '6px 10px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>
-          {TAB_LABEL[t] ?? t}
-        </button>
-      ))}
+    <div role="tablist" aria-label={`${def.label} pages`} data-testid="company-page-strip" style={{ display: 'flex', gap: 6, overflowX: 'auto', padding: '0 16px 10px', borderBottom: '1px solid var(--border)' }}>
+      <button role="tab" aria-selected={view === null} onClick={() => { app.setOrgUnitId(null); app.go(section); }} style={chip(view === null)}>Overview</button>
+      {def.pages.map((p) => <button key={p.pane} role="tab" aria-selected={view === p.pane} onClick={() => { app.setOrgUnitId(null); app.setOrgPane(p.pane); }} style={chip(view === p.pane)}>{p.label}</button>)}
     </div>
   );
 }
@@ -1068,7 +1065,7 @@ function Spend({ org, reload }: { org: OrgDetail; reload: () => Promise<void> })
   const [caps, setCaps] = useState<Record<string, string>>({});
   const refresh = useCallback(async () => setSpend(await api.orgSpend(org.workspaceId).catch(() => null)), [org.id]);
   useEffect(() => { void refresh(); }, [refresh]);
-  const setCap = async (scope: 'company' | 'agent' | 'project', refId: string) => {
+  const setCap = async (scope: 'agent' | 'project', refId: string) => {
     try { await api.setOrgBudget(org.workspaceId, { scope, refId, monthlyUsd: Number(caps[refId] ?? 0) }); await refresh(); await reload(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
   if (!spend) return <div style={faint}>Loading…</div>;
@@ -1081,7 +1078,10 @@ function Spend({ org, reload }: { org: OrgDetail; reload: () => Promise<void> })
           {pct !== null && <div style={{ height: 5, background: 'var(--panel-2)', borderRadius: 3, marginTop: 4 }}><div style={{ width: `${pct}%`, height: 5, borderRadius: 3, background: pct >= 100 ? 'var(--red)' : pct >= 80 ? 'var(--amber)' : 'var(--green)' }} /></div>}
         </div>
         <div style={{ fontSize: 12.5, fontFamily: 'var(--mono)', textAlign: 'right' }}>{fmtUsd(n.usd)}{n.monthlyUsd > 0 ? <span style={faint}> / {fmtUsd(n.monthlyUsd)}</span> : <span style={faint}> / no cap</span>}</div>
-        <div style={{ display: 'flex', gap: 4 }}><input value={caps[refId] ?? String(n.monthlyUsd || '')} onChange={(e) => setCaps({ ...caps, [refId]: e.target.value.replace(/[^\d.]/g, '') })} style={{ ...input, padding: '4px 8px' }} placeholder="cap $" /><button style={btn()} onClick={() => void setCap(scope, refId)}>Set</button></div>
+        {scope === 'company'
+          // The company envelope is set in one place: Settings › Company, beside the mode and the agent cap.
+          ? <button style={{ ...linkBtn, justifySelf: 'start' }} data-testid="envelope-settings-link" onClick={() => app.openSettings('company')}>Change in Settings</button>
+          : <div style={{ display: 'flex', gap: 4 }}><input value={caps[refId] ?? String(n.monthlyUsd || '')} onChange={(e) => setCaps({ ...caps, [refId]: e.target.value.replace(/[^\d.]/g, '') })} style={{ ...input, padding: '4px 8px' }} placeholder="cap $" /><button style={btn()} onClick={() => void setCap(scope, refId)}>Set</button></div>}
       </div>
     );
   };

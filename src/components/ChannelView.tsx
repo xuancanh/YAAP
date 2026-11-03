@@ -90,15 +90,13 @@ export function ChannelView() {
   const openGoal = (goalId: string) => {
     const g = goals.get(goalId);
     app.setOrgUnitId(g?.unitId && g.unitId !== rootUnitId ? g.unitId : null);
-    app.setOrgPane('goals');
-    app.go('workspace');
+    app.setOrgPane('goals'); // opens Direction › Goals
     app.setMobileDetail(true);
   };
   const openUnitBoard = () => {
     if (!detail?.unit) return;
     app.setOrgUnitId(detail.unit.id === rootUnitId ? null : detail.unit.id);
-    app.setOrgPane('board');
-    app.go('workspace');
+    app.setOrgPane('board'); // opens Operations › Board
     app.setMobileDetail(true);
   };
 
@@ -151,7 +149,7 @@ export function ChannelView() {
     if (!confirm(`End ${m.title || 'the meeting'} now? The minutes are written from what was proposed so far.`)) return;
     try { await api.cancelOrgMeeting(wsId, m.id); app.showToast('Meeting cancelled'); setMeetings((l) => l.map((x) => (x.id === m.id ? { ...x, status: 'cancelled' } : x))); } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 140) : 'could not cancel'); }
   };
-  const openDecision = useCallback((id: string) => { app.setOrgFocus({ kind: 'decision', id }); app.setOrgUnitId(null); app.setOrgPane('decisions'); app.go('workspace'); app.setMobileDetail(true); }, [app]);
+  const openDecision = useCallback((id: string) => { app.setOrgFocus({ kind: 'decision', id }); app.setOrgUnitId(null); app.setOrgPane('decisions'); app.setMobileDetail(true); }, [app]);
   // `#decision:<id>` chips (docs/group-chat.md §8) resolve through
   // GET …/chat/decisions/:id (id or unique prefix): titles are fetched once per
   // id for the messages on screen and read synchronously by the Markdown

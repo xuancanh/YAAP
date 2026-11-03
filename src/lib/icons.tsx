@@ -55,6 +55,17 @@ export const P = {
   files: ['M8 3h8l4 4v12H8z', 'M15 3v5h5', 'M5 7v14h11'],
   /** A tray: the Inbox. */
   inbox: ['M4 13l2.5-8h11L20 13v6H4z', 'M4 13h5l1 2h4l1-2h5'],
+  /** The company sections (src/lib/company-nav.ts): Direction uses the compass. */
+  /** A heartbeat line: Operations. */
+  pulse: ['M3 12h4l2-5 4 10 2-5h6'],
+  /** Two people: People. */
+  people: ['M9 11a3.5 3.5 0 100-7 3.5 3.5 0 000 7z', 'M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5', 'M16 4.3a3.5 3.5 0 010 6.4M18 14.8c2 .7 3.2 2.4 3.5 5.2'],
+  /** A coin: Money. */
+  coin: ['M12 3a9 9 0 100 18 9 9 0 000-18', 'M14.8 9.2c-.5-.9-1.6-1.4-2.8-1.4-1.6 0-2.8.8-2.8 2.1 0 2.9 5.8 1.4 5.8 4.2 0 1.3-1.3 2.1-3 2.1-1.3 0-2.4-.6-2.9-1.5M12 6v1.8M12 16.2V18'],
+  /** An eye: Oversight. */
+  eye: ['M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z', 'M12 9a3 3 0 100 6 3 3 0 000-6z'],
+  /** Three dots: the phone menu's More. */
+  more: ['M5 12h.01M12 12h.01M19 12h.01'],
   /** A building: the Company section. */
   building: ['M5 21V4h9v17M14 9h5v12M3 21h18', 'M8 8h3M8 12h3M8 16h3'],
   term: ['M4 5h16v14H4z', 'M7 9l3 3-3 3M13 15h4'],

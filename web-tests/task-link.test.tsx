@@ -57,7 +57,7 @@ describe('the task link', () => {
   });
 
   it('opens the drawer for a task that is not on the loaded board, and back closes it', async () => {
-    render(<OrganizationView />);
+    render(<OrganizationView section="operations" />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Close the books' })).toBeInTheDocument());
     expect(calls.some((u) => u.endsWith('/org/tasks/abc12345'))).toBe(true);
     expect(fake.setOrgFocus).toHaveBeenCalledWith(null);
@@ -68,7 +68,7 @@ describe('the task link', () => {
   });
 
   it('closing the drawer takes the task off the address', async () => {
-    render(<OrganizationView />);
+    render(<OrganizationView section="operations" />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Close the books' })).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('heading', { name: 'Close the books' })).toBeNull();

@@ -3,7 +3,9 @@
  *  owner's key, escalations, plans awaiting a veto, my tasks and reviews,
  *  open incidents, and what changed on the threads and tasks I follow
  *  (docs/follows.md) — with filters; a filter opens the full pane for that
- *  kind (the full artifact, never a summary). A task opens through its deep
+ *  kind (the full artifact, never a summary). Incidents are the exception:
+ *  the open ones are listed here and handled in Operations › Incidents, the
+ *  one incident page. A task opens through its deep
  *  link (`#/ws/<id>/org/board?task=<id>`). The History toggle shows what
  *  used to wait on me and how it ended (InboxHistory.tsx). */
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
@@ -18,7 +20,6 @@ import type { MentionCandidate } from '../lib/channels';
 
 const PlansPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.PlansPane })));
 const MyTasksPane = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.MyTasksPane })));
-const IncidentsPane = lazy(() => import('./OrgIncidentsView').then((m) => ({ default: m.IncidentsPane })));
 const InboxHistory = lazy(() => import('./InboxHistory').then((m) => ({ default: m.InboxHistory })));
 
 const KIND_COLOR: Record<InboxItem['kind'], string> = {
@@ -105,13 +106,14 @@ export function InboxView() {
     if (i.kind === 'messages') { openMessage(i); return; }
     if (i.kind === 'following') { openFollow(i); return; }
     if (i.kind === 'mytasks') { app.openOrgTask(i.refId); return; }
+    // An incident is contained and resolved on its one page, Operations › Incidents.
+    if (i.kind === 'incidents') { app.setOrgFocus({ kind: 'incident', id: i.refId }); app.setOrgUnitId(null); app.setOrgPane('incidents'); return; }
     if (i.kind === 'plans') app.setOrgFocus({ kind: 'plan', id: i.refId });
-    else if (i.kind === 'incidents') app.setOrgFocus({ kind: 'incident', id: i.refId });
     app.setInboxFilter(i.kind);
   };
 
   if (!app.companiesEnabled || !app.wsOrg || app.wsOrg.mode === 'off') {
-    return <div style={{ flex: 1, padding: 24, ...faint }}>The Inbox gathers what waits on you when the workspace runs as a company — turn organization mode on in Settings → Workspace.</div>;
+    return <div style={{ flex: 1, padding: 24, ...faint }}>The Inbox gathers what waits on you when the workspace runs as a company — turn organization mode on in Settings › Company.</div>;
   }
   return (
     <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
@@ -156,6 +158,12 @@ export function InboxView() {
             {messages.length === 0 && <div style={faint}>No messages from your team. When an agent writes to you directly it lands here and in its chat with you, where your reply goes.</div>}
             {messages.map((i) => <Row key={i.key} i={i} onOpen={open} members={members} />)}
           </div>
+        ) : filter === 'incidents' ? (
+          <div style={{ maxWidth: 820 }} data-testid="incidents-list">
+            {filterInbox(items, 'incidents').length === 0 && <div style={faint}>No open incidents. Contained and resolved ones are in Operations › Incidents.</div>}
+            {filterInbox(items, 'incidents').map((i) => <Row key={i.key} i={i} onOpen={open} />)}
+            <button style={{ ...btn(), marginTop: 4 }} onClick={() => { app.setOrgFocus(null); app.setOrgUnitId(null); app.setOrgPane('incidents'); }}>All incidents in Operations</button>
+          </div>
         ) : filter === 'following' ? (
           <div style={{ maxWidth: 820 }} data-testid="following-list">
             {following.length === 0 && <div style={faint}>You follow nothing yet. Threads you start or reply to and tasks you create, own or review are followed for you; the Follow button on a thread or a task adds any other.</div>}
@@ -166,7 +174,6 @@ export function InboxView() {
             {(filter === 'approvals' || filter === 'keys' || filter === 'escalations') && <Approvals org={org} reload={reload} />}
             {filter === 'plans' && <PlansPane org={org} />}
             {filter === 'mytasks' && <MyTasksPane org={org} />}
-            {filter === 'incidents' && <IncidentsPane org={org} />}
           </Suspense>
         )}
       </div>

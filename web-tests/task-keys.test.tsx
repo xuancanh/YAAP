@@ -96,7 +96,7 @@ describe('the board by key', () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
 
   it('?task=eng-12 opens the drawer; the card and the header show the key, which copies', async () => {
-    render(<OrganizationView />);
+    render(<OrganizationView section="operations" />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Ship the API' })).toBeInTheDocument());
     expect(window.location.hash).toBe('#/ws/ws1/org/board?task=ENG-12');
     fireEvent.click(screen.getByRole('button', { name: 'Copy task key ENG-12' }));

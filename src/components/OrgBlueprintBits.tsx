@@ -1,5 +1,5 @@
 /** Blueprints in the app (docs/blueprints.md; docs/company-vision.md §9;
- *  execution plan item 24): under Settings → Workspace → Organization the
+ *  execution plan item 24): under Settings › Company the
  *  CEO exports the company as COMPANY.json, imports one (paste or file →
  *  the dry-run plan → confirm) and publishes it to the registry (dry run
  *  first); the Market's Companies tab installs a published one into a
@@ -68,7 +68,7 @@ export function ImportPlanView({ plan }: { plan: BlueprintImportPlan }) {
   );
 }
 
-/** Settings → Workspace → Organization → Blueprint: export, import, publish. */
+/** Settings › Company → Blueprint: export, import, publish. */
 export function BlueprintCard({ ws }: { ws: Workspace }) {
   const app = useApp();
   const [open, setOpen] = useState(false);
@@ -107,7 +107,7 @@ export function BlueprintCard({ ws }: { ws: Workspace }) {
       app.showToast(r.approvalId ? `Imported — ${r.hired.length} hire(s) wait on one approval card` : `Imported — ${r.hired.length} hire(s) made`);
       setPlan(null); setRaw('');
       await Promise.all([app.refreshWsOrg(), app.refreshAgents(), app.refreshWorkspaces()]);
-      if (r.approvalId) { app.go('workspace'); app.setOrgPane('approvals'); }
+      if (r.approvalId) app.setOrgPane('approvals'); // the card waits in the Inbox
     } catch (e) { toast(e, 'import failed'); } finally { setBusy(null); }
   };
   const startPublish = () => setPublish({ name: ws.name, description: '', publisher: loadPublisherName(typeof localStorage === 'undefined' ? null : localStorage), preview: null });

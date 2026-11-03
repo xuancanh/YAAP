@@ -1,8 +1,7 @@
-/** The Inbox and the Company menu (docs/company-vision.md §8 "The CEO's
- *  seat"): everything waiting on the CEO in one list, and the company panes
- *  grouped in the Company rail. Pure — the views and the store use these. */
+/** The Inbox (docs/company-vision.md §8 "The CEO's seat"): everything
+ *  waiting on the CEO in one list. The company sections and where each pane
+ *  lives are in ./company-nav.ts. Pure — the views and the store use these. */
 import type { AgentMessage, FollowRow, HistoryItem, HistoryOutcome, OrgApproval, OrgHealth, OrgPlan, OrgTask } from './api';
-import type { OrgPane } from '../store';
 
 // ---- Inbox ----
 
@@ -125,34 +124,6 @@ export function waitingCount(items: InboxItem[]): number {
  *  tasks count only when their latest change needs me, not for every reply. */
 export function inboxBadge(c: { pendingApprovals: number; heldActions: number; pendingPlans: number; openIncidents: number; myTasks: number; followAttention?: number; unreadMessages?: number }): number {
   return c.pendingApprovals + c.heldActions + c.pendingPlans + c.openIncidents + c.myTasks + (c.followAttention ?? 0) + (c.unreadMessages ?? 0);
-}
-
-// ---- the Company menu ----
-
-export type CompanyGroupId = 'teams' | 'direction' | 'operations' | 'people' | 'oversight';
-export interface CompanyEntry { pane: OrgPane; label: string; /** Panes merged into this entry as tabs. */ tabs?: OrgPane[] }
-/** The rail's groups below Teams (the unit groups). Approvals and My tasks
- *  live in the Inbox; Brief is a tab of Pulse, Capital of Spend, Replay of Audit. */
-export const COMPANY_GROUPS: Array<{ id: CompanyGroupId; label: string; entries: CompanyEntry[] }> = [
-  { id: 'teams', label: 'Teams', entries: [] },
-  { id: 'direction', label: 'Direction', entries: [{ pane: 'roadmap', label: 'Roadmap' }, { pane: 'vision', label: 'Vision' }, { pane: 'goals', label: 'Goals' }, { pane: 'plans', label: 'Pending changes' }, { pane: 'decisions', label: 'Decisions' }] },
-  { id: 'operations', label: 'Operations', entries: [{ pane: 'pulse', label: 'Pulse', tabs: ['pulse', 'brief'] }, { pane: 'meetings', label: 'Meetings' }, { pane: 'incidents', label: 'Incidents' }] },
-  { id: 'people', label: 'People & money', entries: [{ pane: 'chart', label: 'Org chart' }, { pane: 'spend', label: 'Spend', tabs: ['spend', 'capital'] }] },
-  { id: 'oversight', label: 'Oversight', entries: [{ pane: 'audit', label: 'Audit', tabs: ['audit', 'replay'] }] },
-];
-
-/** The pane pairs shown as tabs of one entry, by pane. */
-export function tabsOf(pane: OrgPane): OrgPane[] | null {
-  for (const g of COMPANY_GROUPS) for (const e of g.entries) if (e.tabs?.includes(pane)) return e.tabs;
-  return null;
-}
-
-/** Where a pane lives now: the Inbox for approvals and my tasks, the Company
- *  section for the rest (merged panes open on their tab). */
-export function paneHome(pane: OrgPane): { section: 'inbox'; filter: InboxFilter } | { section: 'workspace'; pane: OrgPane } {
-  if (pane === 'approvals') return { section: 'inbox', filter: 'approvals' };
-  if (pane === 'mytasks') return { section: 'inbox', filter: 'mytasks' };
-  return { section: 'workspace', pane };
 }
 
 // ---- the Inbox's History ----

@@ -23,7 +23,7 @@ one table.
 
 | | |
 |---|---|
-| ![Inbox](docs/images/inbox.jpg) **Inbox**: everything waiting on you, plus Following | ![Company](docs/images/company-board.jpg) **Company**: units on a grouped rail, each with its board |
+| ![Inbox](docs/images/inbox.jpg) **Inbox**: everything waiting on you, plus Following | ![Company](docs/images/company-board.jpg) **Company sections**: Direction, Operations, People, Money and Oversight, each with a dashboard |
 | ![Artifacts](docs/images/artifacts.jpg) **Artifacts**: the workspace filesystem, Shared and Agents homes, versions and history | ![Channel](docs/images/channel.jpg) **Channels**: `#company` with the Chief of Staff's standup |
 | ![Agent](docs/images/agent.jpg) **Agent page**: dashboard, heartbeat, sessions, memory, tools | ![Market](docs/images/market-business.jpg) **Market**: the Business catalog of function heads and specialists |
 
@@ -58,8 +58,13 @@ one table.
 
 Switch a workspace into organization mode (`supervised` or `autonomous`) and
 it becomes a company ([docs/group-chat.md](docs/group-chat.md) §5,
-[docs/company-vision.md](docs/company-vision.md)), and **Company** and
-**Inbox** join the main menu.
+[docs/company-vision.md](docs/company-vision.md)), and **Inbox** and the
+company's five sections join the main menu: **Direction** (vision, goals,
+roadmap, decisions), **Operations** (board, pulse, brief, meetings,
+incidents), **People** (org chart, teams), **Money** (spend, capital) and
+**Oversight** (audit, replay). Each opens on a dashboard that summarises its
+pages; what waits on you stays in the Inbox, and company settings in
+Settings › Company.
 
 - **Chief of Staff** ([docs/chief-of-staff.md](docs/chief-of-staff.md)):
   derives the company's operating system from your values, culture and stage
@@ -194,7 +199,7 @@ Open http://localhost:5175. Add an agent type with a provider key under
 **Settings → Providers & agent types** (Anthropic or the OpenAI-compatible
 family; without a key, chats fall back to the Echo dev provider). Then hire an
 agent from the Market, or turn the workspace into a company under
-**Settings → Workspace → Organization**.
+**Settings › Company**.
 
 - `npm run dev` (`scripts/dev.mjs`) compiles the server with `tsc --watch`,
   runs `server/dist/main.js` under `node --watch`, and starts Vite. The server

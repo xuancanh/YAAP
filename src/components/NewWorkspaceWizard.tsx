@@ -5,7 +5,7 @@
  *  values and culture, the budget with its fence, the ritual rhythm, the
  *  first hires (only when the role catalog answers) and a review of what
  *  will be created. One `POST …/org/bootstrap` does the setup; the same
- *  wizard opens from Settings → Workspace → Organization ("Enable company…")
+ *  wizard opens from Settings › Company ("Enable company…")
  *  for a workspace that exists, starting at the mode step. Nothing the chief
  *  will read is a hidden default: every value is on screen in the review. */
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -115,8 +115,7 @@ export function NewWorkspaceWizard({ onClose, existing }: WizardProps) {
       if (!existing || wsId !== app.workspaceId) app.pickWorkspace(wsId);
       await Promise.all([app.refreshWorkspaces(), app.refreshAgents().catch(() => undefined)]);
       await app.refreshWsOrg();
-      app.go('workspace');
-      app.setOrgPane('vision');
+      app.setOrgPane('vision'); // Direction › Vision
       app.showToast(successToast(r));
       onClose();
     } catch (e) {

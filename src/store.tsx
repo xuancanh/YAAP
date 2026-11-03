@@ -13,22 +13,28 @@ import {
 } from './lib/api';
 import { isChannelSession, parseChannelHash } from './lib/channels';
 import { orgTaskHash, parseOrgHash } from './lib/links';
-import { paneHome, type InboxFilter } from './lib/inbox';
+import type { InboxFilter } from './lib/inbox';
+import { isCompanySection, paneHome, LEGACY_COMPANY_SECTION, type CompanySection } from './lib/company-nav';
 
 /** A workspace in the picker: one of ours, or one shared with us (then
  *  `shared` names the owner and our role; docs/shared-agents.md). */
 export type WorkspaceEntry = Workspace & { shared?: SharedWorkspace };
 import type { PriceTable } from './lib/pricing';
 
-/** `workspace` is the Company section (the id stays for URLs); `inbox` is
- *  everything waiting on the CEO (src/lib/inbox.ts). */
-/** 'overview' is Home, the owner's mission control (docs/home.md); 'agents' the full agent directory it links to. */
-export type Section = 'home' | 'overview' | 'agents' | 'inbox' | 'workspace' | 'artifacts' | 'apps' | 'market' | 'settings';
-/** The organization panes under the Workspace section (docs/group-chat.md
- *  §5: the workspace is the company; there is no separate Company section). */
+/** 'overview' is Home, the owner's mission control (docs/home.md); 'agents'
+ *  the full agent directory it links to; `inbox` everything waiting on the
+ *  CEO (src/lib/inbox.ts). In organization mode the company is five sections
+ *  of its own — direction, operations, people, money, oversight
+ *  (src/lib/company-nav.ts). `workspace` is the old Company section: an
+ *  alias kept for links, it opens Operations. */
+export type Section = 'home' | 'overview' | 'agents' | 'inbox' | CompanySection | 'workspace' | 'artifacts' | 'apps' | 'market' | 'settings';
+/** The organization pages (docs/group-chat.md §5: the workspace is the
+ *  company). Each lives in exactly one company section, or in the Inbox. */
 export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'plans' | 'replay' | 'capital' | 'mytasks'
-  | 'incidents' | 'roadmap';
-export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents', 'roadmap'];
+  | 'incidents' | 'roadmap' | 'teams';
+export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents', 'roadmap', 'teams'];
+/** The section a section id opens: the legacy Company id opens Operations. */
+export const resolveSection = (s: Section): Exclude<Section, 'workspace'> => (s === 'workspace' ? LEGACY_COMPANY_SECTION : s);
 /** Panes folded into Artifacts (playbooks, experiments, evals, outcomes and
  *  metrics are mirrored as files under /org/; docs/filesystem.md): a link to
  *  one of them opens the Artifacts section instead. */
@@ -217,8 +223,10 @@ interface Store {
   companiesEnabled: boolean;
   /** GET /api/workspaces/:id/org for the current workspace; null while loading or when companies are disabled. */
   wsOrg: WorkspaceOrg | null; refreshWsOrg: () => Promise<void>;
-  /** Which organization pane the Workspace section shows; null = the board. */
+  /** Which company page shows; null = the current section's dashboard. setOrgPane opens a page in its own section (or the Inbox). */
   orgPane: OrgPane | null; setOrgPane: (v: OrgPane | null) => void;
+  /** The Settings pane, and a way to open one from anywhere (e.g. Oversight → Settings › Company). */
+  settingsPane: string; setSettingsPane: (p: string) => void; openSettings: (pane: string) => void;
   /** The unit the Board / Goals panes are scoped to (docs/group-chat.md §7); null = the company. */
   orgUnitId: string | null; setOrgUnitId: (v: string | null) => void;
   /** The CEO's seat (docs/company-vision.md §8): the company intent tree and
@@ -304,9 +312,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const q = p.get('section');
     const org = p.get('org');
     if (org && ORG_PANES_IN_ARTIFACTS.includes(org)) return 'artifacts';
-    if (isOrgPane(org) && paneHome(org).section === 'inbox') return 'inbox';
-    if (q === 'market' || q === 'settings' || q === 'overview' || (q === 'agents' && !p.get('agent')) || q === 'inbox' || q === 'workspace' || q === 'artifacts' || q === 'apps') return q;
-    if (q === 'company') return 'workspace'; // legacy: the company lives under the workspace now
+    // ?org=<pane> opens the pane where it lives now: a company section or the Inbox.
+    if (isOrgPane(org)) return paneHome(org).section;
+    if (q === 'market' || q === 'settings' || q === 'overview' || (q === 'agents' && !p.get('agent')) || q === 'inbox' || q === 'artifacts' || q === 'apps') return q;
+    if (isCompanySection(q)) return q;
+    if (q === 'workspace' || q === 'company') return LEGACY_COMPANY_SECTION; // legacy: the one Company section
     if (q === 'files') return 'artifacts';
     if (q === 'chats' || (q === 'agents' && p.get('agent'))) return 'home';
     return 'overview'; // Home is the landing page
@@ -392,23 +402,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [orgPane, setOrgPaneRaw] = useState<OrgPane | null>(() => {
     const p = new URLSearchParams(window.location.search);
     const pane = p.get('org');
-    if (isOrgPane(pane) && paneHome(pane).section === 'workspace') return pane;
-    return p.get('section') === 'company' ? 'board' : null;
+    if (isOrgPane(pane) && paneHome(pane).section !== 'inbox') return pane;
+    return null;
   });
   const [inboxFilter, setInboxFilter] = useState<InboxFilter>(() => {
     const pane = new URLSearchParams(window.location.search).get('org');
     const home = isOrgPane(pane) ? paneHome(pane) : null;
     return home?.section === 'inbox' ? home.filter : 'all';
   });
-  /** Open a pane where it lives now: approvals and my tasks in the Inbox,
-   *  everything else in the Company section (null = back to its default). */
+  /** Open a pane where it lives now (src/lib/company-nav.ts): approvals, my
+   *  tasks and pending changes in the Inbox, every other page in its company
+   *  section (null = the current section's dashboard). */
   const setOrgPane = useCallback((v: OrgPane | null) => {
     if (v === null) { setOrgPaneRaw(null); return; }
     const home = paneHome(v);
     if (home.section === 'inbox') { setSection('inbox'); setInboxFilter(home.filter); return; }
-    setSection('workspace');
+    setSection(home.section);
     setOrgPaneRaw(home.pane);
   }, []);
+  /** The Settings pane shown (?section=settings&pane=<id>); openSettings goes there. */
+  const [settingsPane, setSettingsPane] = useState(() => new URLSearchParams(window.location.search).get('pane') ?? 'providers');
   const [orgMyTasks, setOrgMyTasks] = useState(0);
   const [followAttention, setFollowAttention] = useState(0);
   const [unreadMessages, setUnreadMessages] = useState(0);
@@ -456,12 +469,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Organization deep links (#company announcements, the brief):
   // #/ws/<workspaceId>/org/<pane> opens that pane of that workspace, and
   // #/ws/<workspaceId>/org/board?task=<taskId> one task's drawer on the board.
-  const orgLink = useRef<{ workspaceId: string; pane: OrgPane | 'artifacts'; taskId: string | null } | null>(null);
-  const parseOrgLink = (hash: string): { workspaceId: string; pane: OrgPane | 'artifacts'; taskId: string | null } | null => {
+  // #/ws/<workspaceId>/org/<section> (direction, operations, …) opens that section's dashboard.
+  const orgLink = useRef<{ workspaceId: string; pane: OrgPane | 'artifacts' | CompanySection; taskId: string | null } | null>(null);
+  const parseOrgLink = (hash: string): { workspaceId: string; pane: OrgPane | 'artifacts' | CompanySection; taskId: string | null } | null => {
     const m = parseOrgHash(hash);
     if (!m) return null;
     if (m.taskId) return { workspaceId: m.workspaceId, pane: 'board', taskId: m.taskId };
     if (ORG_PANES_IN_ARTIFACTS.includes(m.pane)) return { workspaceId: m.workspaceId, pane: 'artifacts', taskId: null };
+    if (isCompanySection(m.pane)) return { workspaceId: m.workspaceId, pane: m.pane, taskId: null };
     return isOrgPane(m.pane) ? { workspaceId: m.workspaceId, pane: m.pane, taskId: null } : null;
   };
   if (orgLink.current === null && !deepLink.current) orgLink.current = parseOrgLink(window.location.hash);
@@ -895,6 +910,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (wanted.pane === 'artifacts') setSection('artifacts');
+    else if (isCompanySection(wanted.pane)) { setSection(wanted.pane); setOrgPaneRaw(null); }
     else { setOrgPane(wanted.pane); setMobileDetail(true); }
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
   }, [workspaces, workspaceId]);
@@ -1242,13 +1258,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!fileTarget && workspaceId) setFileTarget({ kind: 'workspace', id: workspaceId });
   }, [workspaceId, fileTarget]);
 
+  /** Go to a section. A company section opens on its dashboard. */
   const go = useCallback((s: Section) => {
-    setSection(s);
+    const to = resolveSection(s);
+    setSection(to);
+    if (isCompanySection(to)) setOrgPaneRaw(null);
     setMobileChatOpen(false);
     setMobileDetail(false);
     setArtifact(null);
     setBrowserOpen(false);
   }, []);
+
+  const openSettings = useCallback((pane: string) => { go('settings'); setSettingsPane(pane); setMobileDetail(true); }, [go]);
 
   const saveSettings = useCallback(async (patch: Record<string, string>) => {
     setSettings(await api.putSettings(patch));
@@ -1329,7 +1350,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, orgFocus, setOrgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, settingsPane, setSettingsPane, openSettings, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, orgFocus, setOrgFocus,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
@@ -1348,7 +1369,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, orgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, settingsPane, openSettings, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, orgFocus,
     channels, refreshChannels, currentChannel, channelFocus, openChannel, onWorkspaceEvent,
   ]);
 

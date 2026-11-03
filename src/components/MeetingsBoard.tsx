@@ -86,7 +86,7 @@ export function MeetingsBoard({ wsId, unitId, channel, showUnit = true, startIn 
   );
 
   if (data && !data.hasOrg) {
-    return <div style={card}>{header}<div style={faint}>Meetings run in organization mode: enable it in Settings → Workspace → Organization, then <code>/meeting</code> in a channel starts one.</div></div>;
+    return <div style={card}>{header}<div style={faint}>Meetings run in organization mode: enable it in Settings › Company, then <code>/meeting</code> in a channel starts one.</div></div>;
   }
 
   return (

@@ -271,32 +271,68 @@ The CEO should spend ten minutes a day and feel in control.
   rolls out to how a member works is first replayed against that role's
   golden set (`docs/evals.md`).
 
-**On screen (simplified 2 November 2026).** The main menu is Home · Chat ·
-**Inbox** · **Company** · **Artifacts** · Apps · Market (+ Settings); Inbox
-and Company show only in organization mode. **Home** is the owner's mission
-control (`docs/home.md`): what needs the owner, what happened, whether the
-company is on track; the agent directory is **All agents**.
+**On screen (reorganized 4 November 2026).** The main menu is grouped:
+**Home** · **Inbox** · **Chat**, then the company's five sections —
+**Direction** · **Operations** · **People** · **Money** · **Oversight** —
+then **Artifacts** · Apps · Market, with **Settings** at the foot. Inbox
+and the five sections show only in organization mode. On a phone the bar
+keeps five targets: Home, Inbox, Chat, **Company** (a sheet with the five
+sections) and **More** (Artifacts, Apps, Market, Settings). The Inbox icon
+carries the combined count; Operations carries a red dot while an incident
+is open (`src/components/Shell.tsx`).
 
-- **Inbox** — everything waiting on the CEO in one list with filters:
-  decision cards (including project bets and appetite decisions), actions
-  waiting for the owner's key, escalations (every task blocked on the CEO
-  has one), pending changes awaiting a veto, my tasks and reviews, incidents nobody has contained,
-  and **Following** — what changed on the threads and tasks I follow
-  (`docs/follows.md`). A filter opens the full pane; the nav icon carries
-  the combined count.
-- **Company** (the Workspace section) — the rail groups the panes, each
-  group collapsible per viewer: *Teams* (each unit's #channel, Board,
-  Goals), *Direction* (Roadmap — Timeline and Now / Next / Later, with a
-  page per project — Vision, Goals, Pending changes, Decisions; "Plans"
-  was renamed so that "plan" means the roadmap, `docs/work-tracking.md`), *Operations*
-  (Pulse with Brief as a tab, Meetings, Incidents), *People & money* (Org
-  chart, Spend with Capital as a tab), *Oversight* (Audit with Replay as a
-  tab).
-- **Artifacts** — the workspace tree. Playbooks, experiments, evals,
-  outcomes and metrics are files under `/org/` there
-  (`docs/filesystem.md` "Mirrored company records"); their panes were
-  removed. Old links (`#/ws/<id>/org/approvals`, `…/experiments`, …) land
-  on the new home.
+Every company section opens on a **dashboard**: one plain sentence on where
+the section stands, then compact cards that summarise its pages and link
+into them; its pages are in the section's own rail (on a phone, a strip of
+chips under the header). Each page lives in exactly one section
+(`src/lib/company-nav.ts`, tested):
+
+| Section | Dashboard cards | Pages |
+|---|---|---|
+| Direction | Vision · goals with key-result progress and risk · roadmap snapshot (Now / Next / Later, the Now projects) · recent decisions | Vision, Goals, Roadmap, Decisions |
+| Operations | Board counts and what is blocked · pulse score and breaches · the latest brief · the next rituals · open incidents and health | Board, Pulse, Brief, Meetings, Incidents |
+| People | Org chart (members, teams, levels, leads) · teams · capacity (who is at their limit) · agents (All agents, hire from the Market) | Org chart (mission control), Teams |
+| Money | This month against the envelope, the forecast and the daily burn · budgets per agent and project · capital by goal · envelopes that will warn or stop | Spend, Capital |
+| Oversight | Audit trail (chain intact?, the chief's own changes) · the auditor's last findings · trust levels · incident history · replay · governance | Audit, Replay |
+
+Two rules keep the sections from repeating each other. **What waits on you
+is only in the Inbox**: approvals and decision cards, keys, escalations,
+pending changes (the veto window) and my tasks open there; a section that
+has something waiting shows one slim row that links to the Inbox, never
+the cards themselves. **Company settings are only in Settings › Company**:
+the mode, the chief of staff, the envelope and the agent cap, the tunables,
+the blueprint and what ends the company, delegated approvals and the
+boundary. Oversight links there; Settings › Workspace keeps what is not
+about the company (members, trust levels, quiet hours, the token stop).
+
+**Where each surface lives** (the audit behind the reorganization):
+
+| Surface | Was in | Now | Decision |
+|---|---|---|---|
+| Pending changes (plans in the veto window) | Company › Direction, Inbox › Pending changes | Inbox › Pending changes | merge: one page, in the Inbox; Operations links to it |
+| Incidents | Company › Operations, Inbox › Incidents (same full pane twice), Home | Operations › Incidents; the Inbox lists the open ones and opens them there; Home shows a line | merge: one incident page |
+| Goals | Company › Teams (per unit), Company › Direction, Home | Direction › Goals (unit chips inside); People › Teams links to a unit's goals; Home keeps its snapshot | remove the per-unit rail rows |
+| Board | Company › Teams (per unit) | Operations › Board (unit chips inside); People › Teams links to a unit's board | remove the per-unit rail rows |
+| Unit #channels | Company › Teams, Chat rail | Chat rail; People › Teams links to each | remove from the company rail |
+| Spend / Capital | Company › People & money (one entry, two tabs), Home spend, Settings › Usage | Money › Spend and Money › Capital; Home keeps its spend line; Settings › Usage keeps tokens and the price table | split the tabs into pages; keep the overview and the usage table |
+| Company envelope | Settings › Workspace › Organization and the Spend pane's company row | Settings › Company (the Spend row links there); agent and project envelopes stay in Money › Spend | remove the duplicate editor |
+| Governance, tunables, blueprint, danger zone | Settings › Workspace › Organization | Settings › Company | move intact; Oversight › Governance links to it |
+| Trust levels | Settings › Workspace, agent page › Trust | unchanged; Oversight shows a summary card | keep (works without a company) |
+| Org chart / mission control / agent directory | Company › People & money, Home › All agents | People › Org chart (mission control) and People › Teams; All agents stays reachable from Home and People | keep, link |
+| Meetings | Company › Operations, each channel's Meetings tab | Operations › Meetings (every unit); the channel tab stays scoped to its channel | keep (scoped vs all) |
+| Brief | Company › Pulse (a tab), Home | Operations › Brief; Home keeps the summary with "Read the brief" | split the tab; keep the summary |
+| Audit / Replay | Company › Oversight (one entry, two tabs) | Oversight › Audit and Oversight › Replay | split the tabs into pages |
+| Approvals, My tasks | Inbox (moved earlier) | Inbox | unchanged |
+
+**Old links still work.** `?section=workspace` and `?section=company` open
+Operations; `?section=direction` (and the other four) open that section;
+`?org=<pane>` and `#/ws/<id>/org/<pane>` open the page in its section, or
+the Inbox for approvals, my tasks and pending changes; `#/ws/<id>/org/<section>`
+opens a dashboard; `setOrgPane(pane)` routes the same way, and
+`go('workspace')` is an alias for Operations. Playbooks, experiments,
+evals, outcomes and metrics are files under `/org/` in **Artifacts**
+(`docs/filesystem.md` "Mirrored company records"); their old links land
+there.
 
 ## 9. Companies as products
 
@@ -533,7 +569,7 @@ resolve and deep links, audits, spend vs envelope, today's rituals),
 **Meetings** (§3: cadences in words and editable, meetings held, Start
 meeting; meeting threads and minutes cards in the channel) and
 **Decisions** (§6: the log with rationale, alternatives, decider and source);
-the tunables (§1b) edit from Settings → Workspace → Organization and the
+the tunables (§1b) edit from Settings › Company and the
 heartbeat defaults (§13) from Settings → Workspace. *(1 November 2026,
 branch `feat/spa2`)* The rest of the seat followed: **Ask** (§6, citations as
 chips, sources), **Plans** (§8, every planned change as a diff with the veto
@@ -701,7 +737,7 @@ Departures from §9: playbooks install as skill *drafts* (the registry rule
 that nothing installs live); cadences are listed, not written, by an import
 until item 19's rituals own them; tiers resolve through item 23's `tierModel` (one tier table); "companies working
 together" (§9.3) stays last and is not started; no SPA. (Now: the SPA
-has it — Settings → Workspace → Organization → Blueprint, execution-plan
+has it — Settings › Company → Blueprint, execution-plan
 item 24 "Shipped as, SPA".)
 
 *Onboarding (item 25) — shipped 1 November 2026.* The §1b profile is
@@ -737,5 +773,5 @@ Experiments, Outcomes and Evals panes are gone from the SPA; their records
 are mirrored as markdown under `/org/` and read in the new Artifacts main
 menu item. Approvals and My tasks moved to the new Inbox; Brief, Capital
 and Replay became tabs of Pulse, Spend and Audit; the Workspace section is
-now Company, its rail grouped (§8 "On screen"). The backend tools and
+now five company sections with dashboards (§8 "On screen"). The backend tools and
 routes are unchanged.

@@ -198,7 +198,7 @@ yet.
 
 ### In the app
 
-Settings → Workspace → Organization has a **Blueprint** row: *Export
+Settings › Company has a **Blueprint** row: *Export
 blueprint* downloads the COMPANY.json; *Import blueprint* takes a pasted or
 picked file, the mode and an optional envelope, shows the dry-run plan (the
 chief, hires by role with the scopes they keep and the ones dropped at the

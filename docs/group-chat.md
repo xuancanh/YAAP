@@ -312,7 +312,7 @@ anything exists), cadences, hires through the one hire path (cards in
 supervised mode, seated within caps in autonomous mode), the first planning
 session fire-and-forget — audited as one `org_bootstrap` row plus each step's
 own decision row, and refused with 400 when the workspace already has a
-company. Settings → Workspace → Organization has "Enable company…" opening
+company. Settings › Company has "Enable company…" opening
 the same wizard from the mode step for an existing workspace. Nothing the
 chief reads is a hidden default: what the wizard leaves blank stays at the
 documented tunable defaults the Settings card shows.

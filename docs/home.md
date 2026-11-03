@@ -14,6 +14,14 @@ specialists. The owner opens Home to find out four things, in this order:
 The landing page used to be the agent directory. The directory is still
 there, as **All agents** (section `agents`, `?section=agents`).
 
+Home is the cross-cutting overview. Each company section — Direction,
+Operations, People, Money, Oversight — has its own dashboard for a closer
+look at one area (`docs/company-vision.md` §8 "On screen"), and Home's
+links open the page in its section: a goal in Direction › Vision, a
+project in Direction › Roadmap, spend in Money › Spend, the brief in
+Operations › Brief, an incident in Operations › Incidents. What waits on
+you is decided on Home or in the Inbox, never on a section dashboard.
+
 Code:
 
 - `server/src/home/home.service.ts` (`HomeService`), `home.controller.ts`, `home.types.ts`
@@ -108,7 +116,7 @@ skeleton of the page, still under `prefers-reduced-motion`.
 
 **1. Header.** A small greeting, the company name, the mode (Supervised or
 Autonomous) and the run state (Running, or Paused in red; it links to the
-Company header where the kill switch is), then one quiet line: "Overnight
+Operations board, whose header carries the kill switch on every company page), then one quiet line: "Overnight
 your team closed 12 tasks. 3 things need you. Atlas is chief of staff,
 with 7 members." Sections that failed to load are named here.
 
@@ -117,7 +125,7 @@ its primary action:
 
 | When | Banner | Action |
 |---|---|---|
-| the company is paused | "Acme is paused. Nothing runs until you resume" | Resume in Company (the kill switch) |
+| the company is paused | "Acme is paused. Nothing runs until you resume" | Resume in Company (the kill switch, in every company section's header) |
 | month spend at or over the envelope | "Spend is over the monthly envelope" | Raise the envelope (Spend) |
 | the forecast state is `stop` | "On pace to pass the envelope" | See spend |
 | the token budget is used up | "The token budget is used up" | See spend |
@@ -187,7 +195,7 @@ title, the flags (off track, a tripped appetite breaker, update missing, at
 risk, over budget, late) with the reason or ask, the lead, blocked tasks, a
 progress bar (done of total) and the target date ("Target 21 Nov", or "4 d
 late" in red). Projects flagged outside Now follow under **Also flagged**.
-A row opens the project page; **Open roadmap** opens Company › Direction ›
+A row opens the project page; **Open roadmap** opens Direction ›
 Roadmap. With nothing in Now and nothing flagged it is one line and
 **Propose a bet**, not a strip of zeros. The data is `HomeData.portfolio`
 (`OrgProjectsService.portfolio`); also `GET …/org/portfolio?since=`.
@@ -424,8 +432,8 @@ follows.
 A single org task opens through its deep link,
 `#/ws/<workspaceId>/org/board?task=<taskId>` (`src/lib/links.ts`; the
 server writes the same shape, `orgTaskLink` in
-`server/src/follows/follows.service.ts`). It opens the Company section,
-the board and the task's drawer. When the task is not on the loaded board
+`server/src/follows/follows.service.ts`). It opens Operations › Board
+and the task's drawer. When the task is not on the loaded board
 (another unit, or done or cancelled), the board fetches it with
 `GET /api/workspaces/:id/org/tasks/:taskId` (an id or its short prefix).
 

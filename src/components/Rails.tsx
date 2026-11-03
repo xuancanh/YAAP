@@ -3,13 +3,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type OrgPane } from '../store';
-import { api, type ChatRail, type ChatSession, type OrgUnitNode } from '../lib/api';
+import { api, type ChatRail, type ChatSession } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
-import { atRiskByUnit, firesOn, MEETING_KIND_TITLES } from '../lib/org';
 import { NewWorkspaceWizard } from './NewWorkspaceWizard';
 import { ArtifactTree } from './ArtifactTree';
 import { createFile, createFolder, workspaceSource } from '../lib/artifacts';
-import { COMPANY_GROUPS } from '../lib/inbox';
+import { sectionDef, type CompanySection } from '../lib/company-nav';
 import { bizFunctions, bySegment, marketCats, SEGMENT_LABEL, type MarketNav, type MarketSegment } from '../lib/market';
 import { railChannels } from '../lib/channels';
 import { SubChannelRows } from './SubChannels';
@@ -536,92 +535,21 @@ export function HomeRail() {
   );
 }
 
-/** Icons of the Company rail's entries (groups in src/lib/inbox.ts). */
+/** Icons of the company pages (sections in src/lib/company-nav.ts). */
 const PANE_ICON: Partial<Record<OrgPane, string[]>> = {
-  roadmap: P.board, vision: P.compass, goals: P.star, plans: P.rows, decisions: P.check,
-  pulse: P.sun, meetings: P.chat, incidents: P.warn,
-  chart: P.bot, spend: P.bolt, audit: P.clock,
+  vision: P.compass, goals: P.star, roadmap: P.board, decisions: P.check,
+  board: P.board, pulse: P.pulse, brief: P.rows, meetings: P.chat, incidents: P.warn,
+  chart: P.bot, teams: P.people, spend: P.bolt, capital: P.coin, audit: P.clock, replay: P.retry,
 };
 
-/** Collapse state of the Company rail's groups, per viewer (localStorage, best effort). */
-const GROUPS_KEY = 'yaam-company-groups';
-function useCollapsed(): [Record<string, boolean>, (id: string) => void] {
-  const [state, setState] = useState<Record<string, boolean>>(() => {
-    try { return JSON.parse(localStorage.getItem(GROUPS_KEY) ?? '{}') as Record<string, boolean>; } catch { return {}; }
-  });
-  const toggle = (id: string) => setState((prev) => {
-    const next = { ...prev, [id]: !prev[id] };
-    try { localStorage.setItem(GROUPS_KEY, JSON.stringify(next)); } catch { /* storage unavailable: keep it in memory */ }
-    return next;
-  });
-  return [state, toggle];
-}
-
-function GroupLabel({ id, label, collapsed, onToggle }: { id: string; label: string; collapsed: boolean; onToggle: () => void }) {
+function PaneRow({ id, label, icon, active, badge, badgeColor = 'var(--amber)', badgeTitle, onClick }: { id: string; label: string; icon: string[]; active: boolean; badge?: number; badgeColor?: string; badgeTitle?: string; onClick: () => void }) {
   return (
-    <button type="button" data-testid={`company-group-${id}`} aria-expanded={!collapsed} onClick={onToggle}
-      style={{ ...sectionLabel, display: 'flex', alignItems: 'center', gap: 6, width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '10px 10px 4px', textAlign: 'left' }}>
-      <span style={{ flex: 1 }}>{label}</span>
-      <I d={P.chevD} size={11} style={{ transform: collapsed ? 'rotate(-90deg)' : 'none', transition: 'transform .12s' }} />
-    </button>
-  );
-}
-
-function PaneRow({ id, label, icon, active, badge, badgeColor = 'var(--amber)', badgeTitle, onClick, indent = 0 }: { id: string; label: string; icon: string[]; active: boolean; badge?: number; badgeColor?: string; badgeTitle?: string; onClick: () => void; indent?: number }) {
-  return (
-    <div key={id} onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '8px 10px', paddingLeft: 10 + indent, borderRadius: 9, cursor: 'pointer', fontSize: 13, margin: '1px 0', color: 'var(--text)', background: active ? 'var(--accent-dim)' : 'none' }}>
+    <button type="button" data-testid={`company-page-${id}`} onClick={onClick} aria-current={active ? 'page' : undefined}
+      style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', textAlign: 'left', border: 'none', font: 'inherit', padding: '8px 10px', borderRadius: 9, cursor: 'pointer', fontSize: 13, margin: '1px 0', color: 'var(--text)', background: active ? 'var(--accent-dim)' : 'none' }}>
       <I d={icon} size={16} sw={1.9} style={{ flex: 'none' }} />
       <span style={{ flex: 1 }}>{label}</span>
       {badge !== undefined && <span title={badgeTitle} style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: badgeColor, borderRadius: 8, padding: '1px 6px' }}>{badge}</span>}
-    </div>
-  );
-}
-
-/** One unit of the organization (docs/group-chat.md §7): the company at
- *  the top (`#company`, Board, Goals), then every unit below it as a
- *  collapsible group headed by its lead — `#<slug>`, Board, Goals — each
- *  opening the existing pane scoped to that unit (`orgUnitId`). */
-function UnitGroup({ node, depth }: { node: OrgUnitNode; depth: number }) {
-  const app = useApp();
-  const isRoot = node.parentUnitId === null;
-  const [open, setOpen] = useState(depth < 2);
-  const lead = app.agents.find((a) => a.id === node.leadAgentId);
-  const channel = app.channels.find((c) => c.id === node.channelId) ?? app.channels.find((c) => c.slug === node.slug);
-  const unitId = isRoot ? null : node.id;
-  const scoped = app.section === 'workspace' && app.orgUnitId === unitId;
-  const pane = (id: OrgPane) => { app.setOrgUnitId(unitId); app.setOrgPane(id); app.setMobileDetail(true); };
-  const indent = depth * 12;
-  const channelActive = app.homeView === 'channel' && app.currentChannel === (channel?.slug ?? node.slug);
-  // The CEO's seat (docs/company-vision.md §8): goals at risk in this unit and today's ritual.
-  const atRisk = useMemo(() => atRiskByUnit(app.orgIntent), [app.orgIntent]);
-  const risk = (atRisk[node.id] ?? 0) + (isRoot ? atRisk[''] ?? 0 : 0);
-  const today = app.orgCadences.filter((c) => c.unitId === node.id && c.enabled === 1 && firesOn(c.cron)).map((c) => MEETING_KIND_TITLES[c.kind] ?? c.kind);
-  return (
-    <div style={{ marginBottom: 2 }}>
-      <div onClick={() => !isRoot && setOpen(!open)} title={isRoot ? 'The company' : `${node.name} · led by ${lead?.name ?? 'an agent'} · ${node.memberAgentIds.length} member(s)`}
-        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', paddingLeft: 10 + indent, borderRadius: 9, cursor: isRoot ? 'default' : 'pointer', fontSize: 12.5, fontWeight: 600, color: 'var(--text)' }}>
-        {isRoot
-          ? <span style={{ width: 18, height: 18, borderRadius: 6, background: 'var(--panel-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, flex: 'none' }}>🏢</span>
-          : <span style={{ width: 18, height: 18, borderRadius: 6, background: lead ? grad(lead.colors) : 'var(--panel-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, flex: 'none' }}>{lead?.emoji ?? '?'}</span>}
-        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{isRoot ? 'Company' : node.name}</span>
-        {today.length > 0 && <span title={`Today: ${today.join(', ')}`} onClick={(e) => { e.stopPropagation(); pane('meetings'); }} style={{ fontSize: 9.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '0 5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 90 }}>{today[0].toLowerCase()}{today.length > 1 ? ` +${today.length - 1}` : ''}</span>}
-        {risk > 0 && <span title={`${risk} goal(s) at risk — open the vision page`} onClick={(e) => { e.stopPropagation(); pane('vision'); }} style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px' }}>{risk}</span>}
-        {node.counts.openTasks > 0 && <span title="Open tasks on this board" style={{ fontSize: 10, color: 'var(--text-faint)' }}>{node.counts.openTasks}</span>}
-        {!isRoot && <I d={P.chevD} size={13} style={{ transform: open ? 'none' : 'rotate(-90deg)', transition: 'transform .12s', color: 'var(--text-faint)', flex: 'none' }} />}
-      </div>
-      {open && (
-        <>
-          <div onClick={() => app.openChannel(channel?.slug ?? node.slug)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', paddingLeft: 22 + indent, borderRadius: 9, cursor: 'pointer', margin: '1px 0', background: channelActive ? 'var(--accent-dim)' : 'none' }}>
-            <span style={{ fontWeight: 700, color: 'var(--accent-hi)', width: 12, textAlign: 'center' }}>#</span>
-            <span style={{ flex: 1, fontSize: 12.5, fontWeight: (channel?.unread ?? 0) > 0 ? 700 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{channel?.slug ?? node.slug}</span>
-            {(channel?.unread ?? 0) > 0 && <span title="Unread messages" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--accent)', borderRadius: 8, padding: '1px 6px' }}>{channel!.unread}</span>}
-          </div>
-          <PaneRow id={`${node.id}-board`} label="Board" icon={P.board} indent={12 + indent} active={scoped && app.orgPane === 'board'} onClick={() => pane('board')} />
-          <PaneRow id={`${node.id}-goals`} label="Goals" icon={P.star} indent={12 + indent} active={scoped && app.orgPane === 'goals'} onClick={() => pane('goals')} />
-          {node.children.map((c) => <UnitGroup key={c.id} node={c} depth={depth + 1} />)}
-        </>
-      )}
-    </div>
+    </button>
   );
 }
 
@@ -644,56 +572,48 @@ export function ArtifactsRail() {
   );
 }
 
-/** The Company tab's rail (the Workspace section): the company's panes in
- *  collapsible groups — Teams (each unit's #channel, Board, Goals),
- *  Direction, Operations, People & money, Oversight. What waits on the CEO
- *  (approvals, keys, my tasks) lives in the Inbox; the files in Artifacts. */
-export function WorkspaceRail() {
+/** A company section's rail (src/lib/company-nav.ts): its dashboard, then
+ *  its pages. Each page is in exactly one section; what waits on the CEO is
+ *  in the Inbox, the files in Artifacts, company settings in Settings › Company. */
+export function CompanyRail({ section }: { section: CompanySection }) {
   const app = useApp();
-  const [collapsed, toggle] = useCollapsed();
   const org = app.companiesEnabled && app.wsOrg && app.wsOrg.mode !== 'off' ? app.wsOrg : null;
   if (!org) {
     return (
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
-        <div style={{ padding: '6px 10px', fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.5 }}>Organization mode is off for this workspace — turn it on in Settings → Workspace.</div>
+        <div style={{ padding: '6px 10px', fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.5 }}>Organization mode is off for this workspace — turn it on in Settings › Company.</div>
         <PaneRow id="open-artifacts" label="Open Artifacts" icon={P.files} active={false} onClick={() => app.go('artifacts')} />
       </div>
     );
   }
-  const openIncidents = app.orgHealth?.openIncidents.length ?? 0;
-  const view = app.orgPane ?? 'board';
+  const def = sectionDef(section);
+  const openIncidents = (app.orgHealth?.openIncidents ?? []).filter((i) => i.status === 'open').length;
+  const atRisk = countAtRisk(app.orgIntent ?? []);
   const badgeOf = (id: OrgPane): { n: number; color?: string; title: string } | undefined => {
-    if (id === 'plans' && app.orgPendingPlans > 0) return { n: app.orgPendingPlans, title: `${app.orgPendingPlans} pending change(s) awaiting your veto` };
     if (id === 'incidents' && openIncidents > 0) return { n: openIncidents, color: 'var(--red)', title: `${openIncidents} open incident(s)` };
+    if (id === 'goals' && atRisk > 0) return { n: atRisk, title: `${atRisk} goal(s) at risk` };
     return undefined;
   };
-  const open = (pane: OrgPane, unit: string | null = app.orgUnitId) => { app.setOrgUnitId(unit); app.setOrgPane(pane); app.setMobileDetail(true); };
+  const view = app.orgPane && def.pages.some((p) => p.pane === app.orgPane) ? app.orgPane : null;
+  const open = (pane: OrgPane | null) => {
+    app.setOrgUnitId(null);
+    if (pane) app.setOrgPane(pane); else app.go(section);
+    app.setMobileDetail(true);
+  };
   return (
-    <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
-      <div style={{ ...sectionLabel, padding: '2px 10px 2px', display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ flex: 1 }}>Organization</span>
-        <span title={org.orgStatus === 'paused' ? 'Paused (kill switch)' : `${org.mode} mode`} style={{ fontSize: 9.5, fontWeight: 600, textTransform: 'none', letterSpacing: 0, color: org.orgStatus === 'paused' ? '#fff' : 'var(--text-dim)', background: org.orgStatus === 'paused' ? 'var(--red)' : 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 5, padding: '0 6px' }}>{org.orgStatus === 'paused' ? 'paused' : org.mode}</span>
-      </div>
-      {COMPANY_GROUPS.map((g) => (
-        <div key={g.id}>
-          <GroupLabel id={g.id} label={g.label} collapsed={Boolean(collapsed[g.id])} onToggle={() => toggle(g.id)} />
-          {!collapsed[g.id] && g.id === 'teams' && (
-            <>
-              {/* Units (docs/group-chat.md §7): the company, then one collapsible group per live unit — #channel, Board, Goals. */}
-              {(org.units ?? []).map((u) => <UnitGroup key={u.id} node={u} depth={0} />)}
-              {(org.units ?? []).length === 0 && <PaneRow id="board" label="Board" icon={P.board} active={view === 'board' && app.orgUnitId === null} onClick={() => open('board', null)} />}
-            </>
-          )}
-          {!collapsed[g.id] && g.entries.map((e) => {
-            const b = badgeOf(e.pane);
-            const active = app.section === 'workspace' && (e.tabs ? e.tabs.includes(view) : view === e.pane) && (e.pane !== 'goals' || app.orgUnitId === null);
-            return <PaneRow key={e.pane} id={e.pane} label={e.label} icon={PANE_ICON[e.pane] ?? P.board} active={active} badge={b?.n} badgeColor={b?.color} badgeTitle={b?.title}
-              onClick={() => open(e.pane, e.pane === 'goals' ? null : app.orgUnitId)} />;
-          })}
-        </div>
-      ))}
+    <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }} data-testid={`company-rail-${section}`}>
+      <PaneRow id="overview" label="Overview" icon={P.panel} active={view === null} onClick={() => open(null)} />
+      {def.pages.map((e) => {
+        const b = badgeOf(e.pane);
+        return <PaneRow key={e.pane} id={e.pane} label={e.label} icon={PANE_ICON[e.pane] ?? P.board} active={view === e.pane} badge={b?.n} badgeColor={b?.color} badgeTitle={b?.title} onClick={() => open(e.pane)} />;
+      })}
     </div>
   );
+}
+
+/** Goals at risk anywhere in the intent tree. */
+function countAtRisk(nodes: Array<{ atRisk: number; children: unknown[] }>): number {
+  return nodes.reduce((n, g) => n + (g.atRisk ? 1 : 0) + countAtRisk(g.children as Array<{ atRisk: number; children: unknown[] }>), 0);
 }
 
 /** The Market rail: the Personal | Business switch, then the personal
@@ -743,6 +663,7 @@ export const SETTINGS_PANES = [
   { id: 'context', label: 'Context & budget', icon: P.context },
   { id: 'memory', label: 'Workspace memory', icon: P.memoryIcon },
   { id: 'workspace', label: 'Workspace', icon: P.clock },
+  { id: 'company', label: 'Company', icon: P.building },
   { id: 'usage', label: 'Usage', icon: P.bolt },
   { id: 'channels', label: 'Channels', icon: P.chat },
   { id: 'connections', label: 'Connections', icon: P.globe },
@@ -758,7 +679,7 @@ export function SettingsRail({ pane, setPane }: { pane: string; setPane: (p: str
   const app = useApp();
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '2px 8px 12px' }}>
-      {SETTINGS_PANES.map((n) => (
+      {SETTINGS_PANES.filter((n) => n.id !== 'company' || app.companiesEnabled).map((n) => (
         <div key={n.id} onClick={() => { setPane(n.id); app.setMobileDetail(true); }} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '9px 10px', borderRadius: 9, cursor: 'pointer', fontSize: 13, margin: '1px 0', color: 'var(--text)', background: n.id === pane ? 'var(--accent-dim)' : 'none' }}>
           <I d={n.icon} size={16} sw={1.9} style={{ flex: 'none' }} />
           <span style={{ flex: 1 }}>{n.label}</span>
