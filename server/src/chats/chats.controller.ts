@@ -202,14 +202,14 @@ export class ChatsController {
     res.on('error', () => {});
     const write = (ev: unknown) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(ev)}\n\n`); };
     let unsubscribe = () => {};
-    let keepalive: ReturnType<typeof setInterval> | undefined;
-    const close = () => { unsubscribe(); if (keepalive) clearInterval(keepalive); if (!res.writableEnded) res.end(); };
+    const timers: { keepalive?: ReturnType<typeof setInterval> } = {};
+    const close = () => { unsubscribe(); if (timers.keepalive) clearInterval(timers.keepalive); if (!res.writableEnded) res.end(); };
     const sub = turnWatch.watch(id, (ev) => { write(ev); if (ev.type === 'end') close(); });
     if (!sub) { write({ type: 'idle', busy: this.turns.isBusy(id) }); res.end(); return; }
     unsubscribe = sub.unsubscribe;
     write({ type: 'live', turnId: sub.start.turnId, source: sub.start.source, startedAt: sub.start.startedAt });
     for (const ev of sub.start.replay) write(ev);
-    keepalive = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15_000);
+    timers.keepalive = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15_000);
     res.on('close', close);
   }
 
