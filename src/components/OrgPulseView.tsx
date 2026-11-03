@@ -56,7 +56,7 @@ export function PulsePane({ org }: { org: OrgDetail }) {
       <Suspense fallback={null}><HealthStrip health={app.orgHealth} onOpenIncidents={() => app.setOrgPane('incidents')} /></Suspense>
       {app.orgPendingPlans > 0 && (
         <div role="status" style={{ ...card, borderLeft: '3px solid var(--amber)', display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 13 }}><b>{app.orgPendingPlans} plan{app.orgPendingPlans === 1 ? '' : 's'}</b> awaiting your veto — the chief's structural changes apply when the window closes unless you stop them.</span>
+          <span style={{ fontSize: 13 }}><b>{app.orgPendingPlans} pending change{app.orgPendingPlans === 1 ? '' : 's'}</b> awaiting your veto — the chief's structural changes apply when the window closes unless you stop them.</span>
           <button style={{ ...btn(true), marginLeft: 'auto' }} onClick={() => app.setOrgPane('plans')}>Review plans</button>
         </div>
       )}

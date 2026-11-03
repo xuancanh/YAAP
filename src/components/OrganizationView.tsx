@@ -23,6 +23,8 @@ import { I, P } from '../lib/icons';
 import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
 import { changeSummary, decidedViaBadge, dueBadge, expectedLabel, memberSettingsLines, verificationBadge } from '../lib/org3';
 import { FollowToggle } from './FollowToggle';
+import { SOURCE_TONE, SOURCE_WORD, blockedText, parseBlockedOn, stepsCount } from '../lib/roadmap';
+import type { TaskSource } from '../lib/api';
 
 /** The CEO's-seat panes (docs/company-vision.md §8, items 18–20) load on demand. */
 const VisionPane = lazy(() => import('./OrgVisionView').then((m) => ({ default: m.VisionPane })));
@@ -48,7 +50,9 @@ const ActionCallPreview = lazy(() => import('./OrgTrustView').then((m) => ({ def
 /** Capacity and the cards' eval line (item 31); evals and outcomes are files under /org/ in Artifacts. */
 const CapacityStrip = lazy(() => import('./OrgGovernanceView').then((m) => ({ default: m.CapacityStrip })));
 const CardEvalLine = lazy(() => import('./OrgGovernanceView').then((m) => ({ default: m.CardEvalLine })));
-const LAZY_PANES = new Set(['vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents']);
+/** Work tracking (docs/work-tracking.md): the roadmap and the project page. */
+const RoadmapPane = lazy(() => import('./OrgRoadmapView').then((m) => ({ default: m.RoadmapPane })));
+const LAZY_PANES = new Set(['vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents', 'roadmap']);
 
 const STATUS_COLOR: Record<OrgTaskStatus, string> = {
   backlog: 'var(--text-faint)', waiting: 'var(--text-dim)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
@@ -115,6 +119,7 @@ export function OrganizationView() {
             {view === 'capital' && <CapitalPane org={org} />}
             {view === 'mytasks' && <MyTasksPane org={org} />}
             {view === 'incidents' && <IncidentsPane org={org} />}
+            {view === 'roadmap' && <RoadmapPane org={org} />}
           </Suspense>
         )}
       </div>
@@ -360,6 +365,8 @@ function Board({ org }: { org: OrgDetail }) {
   const [open, setOpen] = useState<OrgTask | null>(null);
   const [adding, setAdding] = useState(false);
   const [showCold, setShowCold] = useState(false);
+  /** Work tracking: filter the board to one project ('' = all). */
+  const [projectFilter, setProjectFilter] = useState('');
   // The company board rolls up by default (every task); a unit board shows its own tasks until asked to roll up (docs/group-chat.md §7).
   const [rollUp, setRollUp] = useState<Record<string, boolean>>({});
   const unitKey = current?.id ?? 'all';
@@ -420,6 +427,8 @@ function Board({ org }: { org: OrgDetail }) {
     };
   }, []);
   const cols = ORG_TASK_STATUSES.filter((s) => showCold || (s !== 'done' && s !== 'cancelled'));
+  const projectsById = new Map(org.projects.map((p) => [p.id, p]));
+  const shown = projectFilter ? tasks.filter((t) => t.projectId === projectFilter) : tasks;
   const members = org.members.filter((m) => m.status === 'active');
   const lead = current ? names.get(current.leadAgentId) : undefined;
   return (
@@ -435,6 +444,12 @@ function Board({ org }: { org: OrgDetail }) {
         </div>
         <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }} title={isCompany ? 'Every unit\'s tasks, or only the company\'s own' : 'Include the units below this one'}><input type="checkbox" checked={rolled} onChange={(e) => setRollUp({ ...rollUp, [unitKey]: e.target.checked })} />roll up</label>
         <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={showCold} onChange={(e) => setShowCold(e.target.checked)} />done & cancelled</label>
+        {org.projects.length > 0 && (
+          <select aria-label="Project" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ ...input, width: 'auto', maxWidth: 220 }}>
+            <option value="">All projects</option>
+            {org.projects.filter((p) => p.status !== 'cancelled').map((p) => <option key={p.id} value={p.id}>{p.key ? `${p.key} ` : ''}{p.title}</option>)}
+          </select>
+        )}
         <button style={btn(true)} onClick={() => setAdding(true)}>New task</button>
       </div>
       {units.length > 1 && (
@@ -456,15 +471,21 @@ function Board({ org }: { org: OrgDetail }) {
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols.length}, minmax(150px, 1fr))`, gap: 8, overflowX: 'auto' }}>
         {cols.map((s) => (
           <div key={s} style={{ background: 'var(--panel-2)', borderRadius: 10, padding: 8, minHeight: 120 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: STATUS_COLOR[s], marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}><span title={s === 'cancelled' ? 'Cancelled, or abandoned by its owner (the reason is on the timeline)' : s === 'waiting' ? 'Waiting on another task; cannot be claimed yet' : undefined}>{s === 'cancelled' ? 'cancelled · abandoned' : s.replace('_', ' ')}</span><span>{tasks.filter((t) => t.status === s).length}</span></div>
-            {tasks.filter((t) => t.status === s).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).map((t) => {
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: STATUS_COLOR[s], marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}><span title={s === 'cancelled' ? 'Cancelled, or abandoned by its owner (the reason is on the timeline)' : s === 'waiting' ? 'Waiting on another task; cannot be claimed yet' : undefined}>{s === 'cancelled' ? 'cancelled · abandoned' : s.replace('_', ' ')}</span><span>{shown.filter((t) => t.status === s).length}</span></div>
+            {shown.filter((t) => t.status === s).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).map((t) => {
               const a = t.assigneeAgentId ? names.get(t.assigneeAgentId) : undefined;
               const unit = t.unitId ? byId.get(t.unitId) : root;
               const foreign = unit && unit.id !== current?.id;
+              const project = t.projectId ? projectsById.get(t.projectId) : undefined;
+              const blocked = t.status === 'blocked' ? blockedText(parseBlockedOn(t.blockedOn), (id) => names.get(id)?.name ?? tasks.find((x) => x.id === id)?.key ?? id.slice(0, 8)) || safeJsonParse<string[]>(t.blockers, []).at(-1) || '' : '';
+              const steps = stepsCount(t.steps);
               return (
                 <div key={t.id} onClick={() => openTask(t)} style={{ ...card, padding: '8px 10px', marginBottom: 6, cursor: 'pointer' }}>
                   <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>{t.key && <span style={{ ...keyStyle, marginRight: 5 }}>{t.key}</span>}{t.title}</div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                    {project && <span data-testid="project-badge" style={{ ...pill(), fontFamily: 'var(--mono)' }} title={`Project: ${project.title}`}>{project.key ?? project.title.slice(0, 14)}</span>}
+                    {t.source && t.source in SOURCE_WORD && t.source !== 'agent' && <span data-testid="source-badge" style={{ ...pill(SOURCE_TONE[t.source as TaskSource].bg, SOURCE_TONE[t.source as TaskSource].fg), border: 'none' }} title={`Source: ${SOURCE_WORD[t.source as TaskSource]}`}>{SOURCE_WORD[t.source as TaskSource]}</span>}
+                    {steps.total > 0 && <span style={pill()} title="Checklist steps done">steps {steps.done}/{steps.total}</span>}
                     {a ? <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }}><Avatar a={a} size={14} />{a.name}</span> : t.assigneeHumanId ? <span style={pill('var(--blue)', '#fff')} title="A human employee owns this task">🧑 {app.nameOf(t.assigneeHumanId)}</span> : <span style={pill()}>unassigned</span>}
                     {t.class && t.class !== 'general' && <span style={pill()} title="Task class (routing, cost by class)">{t.class}</span>}
                     {foreign && unit && <span style={pill()} title={`On the board of ${unit.name}`}>{unit.parentUnitId === null ? 'company' : unit.name}</span>}
@@ -478,6 +499,7 @@ function Board({ org }: { org: OrgDetail }) {
                     {(t.waitingOn ?? []).map((id) => { const dep = tasks.find((x) => x.id === id); return <span key={id} style={pill()} title={`Waits on: ${dep?.title ?? id} (${dep?.status ?? 'unknown'})`}>⧗ {dep ? `${dep.key ? `${dep.key} ` : ''}${dep.title.slice(0, 18)}` : id.slice(0, 8)}</span>; })}
                     {t.status !== 'done' && t.status !== 'cancelled' && expectedLabel(t.expected) && <span style={{ ...pill(), opacity: .8 }} title={`Expected from ${t.expected?.samples} finished task(s) (${t.expected?.basis})`}>{expectedLabel(t.expected)}</span>}
                   </div>
+                  {blocked && <div data-testid="blocked-on" style={{ fontSize: 11.5, color: 'var(--red)', marginTop: 5, lineHeight: 1.35 }}>{blocked}</div>}
                 </div>
               );
             })}
@@ -514,7 +536,7 @@ function NewTask({ org, members, units, tasks, defaultUnitId, onDone }: { org: O
       ))}
       <div style={{ display: 'flex', gap: 8 }}>
         <select value={assignee} onChange={(e) => setAssignee(e.target.value)} style={input}><option value="">Backlog (chief triages)</option>{members.map((m) => <option key={m.id} value={m.agentId}>assign to {names.get(m.agentId)?.name ?? m.agentId.slice(0, 8)}</option>)}</select>
-        <select value={projectId} onChange={(e) => setProjectId(e.target.value)} style={input}><option value="">No project</option>{org.projects.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}</select>
+        <select value={projectId} onChange={(e) => setProjectId(e.target.value)} style={input} title="Every task has a project; without one it lands in its unit's Unsorted project"><option value="">Project: Unsorted</option>{org.projects.filter((p) => p.status !== 'cancelled' && p.status !== 'done').map((p) => <option key={p.id} value={p.id}>{p.key ? `${p.key} ` : ''}{p.title}</option>)}</select>
         {units.length > 1 && <select value={unitId} onChange={(e) => setUnitId(e.target.value)} style={input} title="Which unit's board; by default the one led by the assignee's manager"><option value="">Board: by assignee</option>{units.map((u) => <option key={u.id} value={u.id}>{'· '.repeat(u.depth)}{u.parentUnitId === null ? 'Company' : u.name}</option>)}</select>}
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -571,6 +593,11 @@ function TaskDrawer({ org, task, members, onClose, reload, board }: { org: OrgDe
   useEffect(() => { void refresh(); }, [refresh]);
   const act = async (fn: () => Promise<unknown>) => { try { await fn(); await refresh(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
   const blockers = safeJsonParse<string[]>(task.blockers, []);
+  // Work tracking (docs/work-tracking.md): the one structured blocker, the project and the checklist.
+  const blockedOn = parseBlockedOn(task.blockedOn);
+  const steps = safeJsonParse<Array<{ id: string; text: string; done: boolean; dropped?: boolean }>>(task.steps ?? '[]', []).filter((s) => !s.dropped);
+  const project = task.projectId ? org.projects.find((p) => p.id === task.projectId) : undefined;
+  const [stepText, setStepText] = useState('');
   // A member may abandon its own task (stored as cancelled, with the reason as an "Abandoned by its owner" comment).
   const abandoned = task.status === 'cancelled' ? comments.find((c) => c.text.startsWith('Abandoned by its owner')) : undefined;
   return (
@@ -594,10 +621,35 @@ function TaskDrawer({ org, task, members, onClose, reload, board }: { org: OrgDe
             {expectedLabel(task.expected) && <span style={faint}>expected {expectedLabel(task.expected)} from history</span>}
           </div>
         )}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          {task.source && task.source in SOURCE_WORD && <span style={{ ...pill(SOURCE_TONE[task.source as TaskSource].bg, SOURCE_TONE[task.source as TaskSource].fg), border: 'none' }}>source: {SOURCE_WORD[task.source as TaskSource]}</span>}
+          <select aria-label="Project of the task" value={task.projectId ?? ''} onChange={(e) => { const pid = e.target.value; if (pid && pid !== task.projectId) void act(() => api.linkTaskToProject(org.workspaceId, pid, task.id)); }} style={{ ...input, width: 'auto', maxWidth: 260 }}>
+            {!task.projectId && <option value="">No project</option>}
+            {org.projects.filter((p) => p.id === task.projectId || (p.status !== 'cancelled' && p.status !== 'done')).map((p) => <option key={p.id} value={p.id}>project {p.key ? `${p.key} ` : ''}{p.title}</option>)}
+          </select>
+          {project && project.kind === 'project' && <button style={btn()} onClick={() => { app.setOrgFocus({ kind: 'project', id: project.id }); app.setOrgPane('roadmap'); }}>Open project</button>}
+          {task.doneAt && <span style={faint}>done {task.doneAt.slice(0, 10)}</span>}
+          {task.wakesPausedAt && <span style={pill('var(--amber)', '#fff')} title="The owner repeated the same failed approach; wakes are paused until someone rebriefs, reassigns or comments">wakes paused</span>}
+        </div>
+        {blockedOn && task.status === 'blocked' && <div role="status" data-testid="drawer-blocked-on" style={{ ...card, borderLeft: '3px solid var(--red)', fontSize: 12.5 }}><b>{blockedText(blockedOn, (id) => names.get(id)?.name ?? (board?.find((x) => x.id === id)?.key ?? id.slice(0, 8)))}</b><span style={faint}> · since {ago(blockedOn.since)}</span></div>}
         {abandoned && <div role="status" style={{ ...card, borderLeft: '3px solid var(--amber)', fontSize: 12.5 }}><b>Abandoned by {names.get(abandoned.fromAgentId ?? '')?.name ?? 'its owner'}</b> — {abandoned.text.replace(/^Abandoned by its owner:\s*/, '')} <span style={faint}>· {ago(abandoned.createdAt)} · the chief was told to triage</span></div>}
         <div style={card}>
           {(['outcome', 'context', 'constraints', 'done_when'] as const).map((k) => <div key={k} style={{ marginBottom: 6 }}><div style={{ ...faint, textTransform: 'uppercase', letterSpacing: '.4px', fontSize: 10.5 }}>{k.replace('_', ' ')}</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{brief[k] || <span style={faint}>—</span>}</div></div>)}
           {blockers.length > 0 && <div><div style={{ ...faint, textTransform: 'uppercase', fontSize: 10.5 }}>blockers</div>{blockers.map((b, i) => <div key={i} style={{ fontSize: 12.5, color: 'var(--red)' }}>■ {b}</div>)}</div>}
+        </div>
+        <div data-testid="task-steps" style={card}>
+          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Steps {steps.length > 0 && <span style={faint}>{steps.filter((s) => s.done).length}/{steps.length}</span>}</div>
+          {steps.length === 0 && <div style={faint}>No checklist yet.</div>}
+          {steps.map((s) => (
+            <label key={s.id} style={{ display: 'flex', gap: 7, alignItems: 'center', fontSize: 12.5, padding: '2px 0' }}>
+              <input type="checkbox" checked={s.done} onChange={(e) => void act(() => api.taskSteps(org.workspaceId, task.id, e.target.checked ? { done: s.id } : { undo: s.id }))} />
+              <span style={{ textDecoration: s.done ? 'line-through' : 'none', color: s.done ? 'var(--text-dim)' : 'var(--text)' }}>{s.text}</span>
+            </label>
+          ))}
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <input aria-label="New step" value={stepText} onChange={(e) => setStepText(e.target.value)} placeholder="Add a step" style={input} />
+            <button style={btn()} disabled={!stepText.trim()} onClick={() => void act(async () => { await api.taskSteps(org.workspaceId, task.id, { add: stepText.trim() }); setStepText(''); })}>Add</button>
+          </div>
         </div>
         <Suspense fallback={null}><TaskChecksPanel wsId={org.workspaceId} task={task} onRan={() => void refresh()} /></Suspense>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -614,7 +666,7 @@ function TaskDrawer({ org, task, members, onClose, reload, board }: { org: OrgDe
           )}
           {task.assigneeAgentId && !['done', 'cancelled'].includes(task.status) && <button style={btn()} onClick={() => void act(() => api.wakeOrgTask(org.workspaceId, task.id, true))}>Wake now</button>}
           {task.status === 'in_review' && <><button style={btn(true)} onClick={() => void act(() => api.reviewOrgTask(org.workspaceId, task.id, 'accept', note))}>Accept</button><button style={btn()} onClick={() => void act(() => api.reviewOrgTask(org.workspaceId, task.id, 'request_changes', note || 'changes requested'))}>Request changes</button></>}
-          {task.status === 'blocked' && <button style={btn()} onClick={() => void act(() => api.updateOrgTask(org.workspaceId, task.id, { status: 'todo', blockers: [] }))}>Unblock → todo</button>}
+          {task.status === 'blocked' && <button style={btn()} onClick={() => void act(() => blockedOn ? api.setTaskBlockedOn(org.workspaceId, task.id, { clear: true }) : api.updateOrgTask(org.workspaceId, task.id, { status: 'todo', blockers: [] }))}>Unblock → todo</button>}
           {!['done', 'cancelled'].includes(task.status) && <button style={btn(false, true)} onClick={() => void act(() => api.updateOrgTask(org.workspaceId, task.id, { status: 'cancelled' }))}>Cancel task</button>}
         </div>
         {task.status === 'in_review' && <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Review note (optional)" style={input} />}

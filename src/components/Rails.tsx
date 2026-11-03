@@ -415,7 +415,7 @@ export function HomeRail() {
 
 /** Icons of the Company rail's entries (groups in src/lib/inbox.ts). */
 const PANE_ICON: Partial<Record<OrgPane, string[]>> = {
-  vision: P.compass, goals: P.star, plans: P.rows, decisions: P.check,
+  roadmap: P.board, vision: P.compass, goals: P.star, plans: P.rows, decisions: P.check,
   pulse: P.sun, meetings: P.chat, incidents: P.warn,
   chart: P.bot, spend: P.bolt, audit: P.clock,
 };
@@ -540,7 +540,7 @@ export function WorkspaceRail() {
   const openIncidents = app.orgHealth?.openIncidents.length ?? 0;
   const view = app.orgPane ?? 'board';
   const badgeOf = (id: OrgPane): { n: number; color?: string; title: string } | undefined => {
-    if (id === 'plans' && app.orgPendingPlans > 0) return { n: app.orgPendingPlans, title: `${app.orgPendingPlans} plan(s) awaiting your veto` };
+    if (id === 'plans' && app.orgPendingPlans > 0) return { n: app.orgPendingPlans, title: `${app.orgPendingPlans} pending change(s) awaiting your veto` };
     if (id === 'incidents' && openIncidents > 0) return { n: openIncidents, color: 'var(--red)', title: `${openIncidents} open incident(s)` };
     return undefined;
   };

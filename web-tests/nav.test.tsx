@@ -71,7 +71,7 @@ describe('the Company rail', () => {
     for (const g of ['teams', 'direction', 'operations', 'people', 'oversight']) expect(screen.getByTestId(`company-group-${g}`)).toBeInTheDocument();
     const text = document.body.textContent ?? '';
     for (const gone of ['Ask', 'Playbooks', 'Metrics', 'Experiments', 'Outcomes', 'Evals', 'Approvals', 'My tasks', 'Brief', 'Capital', 'Replay']) expect(text).not.toContain(gone);
-    for (const here of ['Vision', 'Goals', 'Plans', 'Decisions', 'Pulse', 'Meetings', 'Incidents', 'Org chart', 'Spend', 'Audit']) expect(text).toContain(here);
+    for (const here of ['Roadmap', 'Vision', 'Goals', 'Pending changes', 'Decisions', 'Pulse', 'Meetings', 'Incidents', 'Org chart', 'Spend', 'Audit']) expect(text).toContain(here);
     // no header chips any more: the counts moved to the Inbox
     expect(text).not.toMatch(/\d+ keys?|\d+ plans?\b|\d+ incidents?/);
     fireEvent.click(screen.getByText('Spend'));

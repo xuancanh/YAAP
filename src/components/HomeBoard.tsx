@@ -11,7 +11,7 @@
  * phone one, in the same order.
  */
 import { useState, type CSSProperties, type ReactNode } from 'react';
-import type { AgentMessage, HomeActivity, HomeAgent, HomeData, HomeGoal, HomeNeed, HomeNeedAction } from '../lib/api';
+import type { AgentMessage, HomeActivity, HomeAgent, HomeData, HomeGoal, HomeNeed, HomeNeedAction, PortfolioKind } from '../lib/api';
 import { activityFilters, activityRows, dedupeUpcoming, upcomingDetail, type ActivityFilter, NEED_KIND_LABEL, actionLabel, dayHeading, defaultSentence, greeting, headline, recommendationLine, splitPath, targetOf, needTarget, usd, when, type HomeTarget } from '../lib/home';
 import { Markdown } from '../lib/md';
 import { I, P } from '../lib/icons';
@@ -295,6 +295,67 @@ function Recap({ data, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'>) {
   );
 }
 
+// ---- 3b. the portfolio (docs/work-tracking.md) ----
+
+const KIND_WORD: Record<PortfolioKind, string> = { off_track: 'Off track', tripped: 'Breaker tripped', update_missing: 'Update missing', at_risk: 'At risk', over_budget: 'Over budget', late: 'Late' };
+const KIND_COLOR: Record<PortfolioKind, string> = { off_track: 'var(--red)', tripped: 'var(--red)', update_missing: 'var(--amber)', at_risk: 'var(--amber)', over_budget: 'var(--amber)', late: 'var(--text-dim)' };
+const PROJECT_HEALTH_COLOR: Record<string, string> = { on_track: 'var(--green)', at_risk: 'var(--amber)', off_track: 'var(--red)' };
+
+/** The CEO's portfolio: exceptions first (one line per project, why it is
+ *  here), the counts, then what changed on projects since the last visit. */
+function Portfolio({ data, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'>) {
+  const pf = data.portfolio;
+  if (!data.company || !pf) return null;
+  const openProject = (id: string) => onOpen({ to: 'pane', pane: 'roadmap', focus: { kind: 'project', id } });
+  const c = pf.counts;
+  const tiles: Array<{ label: string; n: number; color?: string }> = [
+    { label: 'Now', n: c.now }, { label: 'At risk', n: c.atRisk, color: 'var(--amber)' }, { label: 'Off track', n: c.offTrack, color: 'var(--red)' },
+    { label: 'Update missing', n: c.updateMissing, color: 'var(--amber)' }, { label: 'Over budget', n: c.overBudget, color: 'var(--red)' }, { label: 'Late', n: c.late },
+  ];
+  return (
+    <Section id="portfolio" title="Projects" action={<button style={link} onClick={() => onOpen({ to: 'pane', pane: 'roadmap' })}>Open roadmap</button>}>
+      <div data-testid="portfolio-counts" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', marginBottom: 10 }}>
+        {tiles.map((t) => (
+          <span key={t.label} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5 }}>
+            <span style={{ fontSize: 17, fontWeight: 650, fontVariantNumeric: 'tabular-nums', color: t.n > 0 && t.color ? t.color : 'var(--text)' }}>{t.n}</span>
+            <span style={faint}>{t.label}</span>
+          </span>
+        ))}
+      </div>
+      {pf.exceptions.length === 0 ? <Empty>{c.now > 0 ? 'Every project in Now is on track with a fresh update.' : 'No project is in Now yet. The roadmap is where you choose the bets.'}</Empty> : (
+        <ul data-testid="portfolio-exceptions" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {pf.exceptions.map((e) => (
+            <li key={e.projectId} data-testid="portfolio-exception" style={{ borderLeft: `3px solid ${KIND_COLOR[e.kinds[0]] ?? 'var(--border)'}`, paddingLeft: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <button style={{ ...link, color: 'var(--text)', fontSize: 13.5 }} onClick={() => openProject(e.projectId)}>{e.key ? `${e.key} ` : ''}{e.title}</button>
+                {e.kinds.map((k) => <span key={k} style={{ fontSize: 11, fontWeight: 600, color: KIND_COLOR[k] }}>{KIND_WORD[k]}</span>)}
+                <span style={faint}>lead {e.leadName}</span>
+              </div>
+              {e.detail && <div style={{ ...dim, fontSize: 12.5 }}>{e.detail}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {(pf.digest.length > 0 || pf.doneByProject.length > 0) && (
+        <div data-testid="portfolio-digest" style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Since you last looked</div>
+          {pf.doneByProject.length > 0 && (
+            <div style={{ ...dim, fontSize: 12.5, marginBottom: 4 }}>
+              Done: {pf.doneByProject.map((d, i) => <span key={d.projectId}>{i > 0 && ', '}<button style={{ ...link, fontSize: 12.5 }} onClick={() => openProject(d.projectId)}>{d.key ?? d.title}</button> {d.done}</span>)}
+            </div>
+          )}
+          {pf.digest.slice(0, 8).map((d, i) => (
+            <div key={`${d.projectId}:${d.at}:${i}`} style={{ display: 'flex', gap: 8, fontSize: 12.5, padding: '2px 0', minWidth: 0 }}>
+              <button style={{ ...link, fontSize: 12.5, flex: 'none' }} onClick={() => openProject(d.projectId)}>{d.key ?? d.title.slice(0, 20)}</button>
+              <span style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{d.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 // ---- 4. goals ----
 
 function Goals({ data, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'>) {
@@ -317,6 +378,7 @@ function Goals({ data, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'>) {
                   <div key={k.id} style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                     <span style={{ fontSize: 12.5, color: 'var(--text-dim)', flex: '1 1 50%', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={k.title}>{k.title}</span>
                     <Bar value={k.progress} color={RAG_COLOR[k.rag]} label={`${k.title} progress`} />
+                    {k.projectHealth && <span data-testid="kr-project-health" title="The worst health a lead wrote on the projects that move it (shown beside the measure, not averaged in)" style={{ fontSize: 11, fontWeight: 600, flex: 'none', color: PROJECT_HEALTH_COLOR[k.projectHealth] }}>projects {k.projectHealth.replace('_', ' ')}</span>}
                     <span style={{ ...faint, flex: 'none', fontVariantNumeric: 'tabular-nums', minWidth: 64, textAlign: 'right' }}>
                       {k.currentValue !== null && k.targetValue !== null ? `${k.currentValue} / ${k.targetValue}${k.unitLabel ? ` ${k.unitLabel}` : ''}` : `${Math.round(k.progress * 100)}%`}
                     </span>
@@ -555,6 +617,7 @@ export function HomeBoard(props: HomeBoardProps) {
   const main = (
     <>
       <NeedsYou data={data} now={now} busy={busy} onAct={onAct} onOpen={onOpen} />
+      <Portfolio data={data} onOpen={onOpen} />
       <TeamMessages data={data} now={now} onOpen={onOpen} onMessage={props.onMessage} />
       <Recap data={data} onOpen={onOpen} />
       <Goals data={data} onOpen={onOpen} />

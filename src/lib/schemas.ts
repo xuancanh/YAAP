@@ -192,6 +192,11 @@ export const homeDataSchema = z.object({
     unread: z.number(),
     items: z.array(z.object({ id: z.string(), agentId: z.string(), agentName: z.string(), text: z.string(), urgency: z.enum(['fyi', 'normal', 'urgent']), sessionId: z.string(), createdAt: z.string(), read: z.boolean() })),
   }).optional(),
+  portfolio: z.object({
+    counts: z.object({ now: z.number(), atRisk: z.number(), offTrack: z.number(), updateMissing: z.number(), overBudget: z.number(), late: z.number() }),
+    exceptions: z.array(z.object({ projectId: z.string(), title: z.string(), kinds: z.array(z.string()) })),
+    digest: z.array(z.object({ at: z.string(), projectId: z.string(), kind: z.string(), text: z.string() })),
+  }).nullable().optional(),
   partial: z.array(z.string()),
 });
 

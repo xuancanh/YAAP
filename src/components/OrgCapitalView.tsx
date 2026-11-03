@@ -63,7 +63,7 @@ export function PlansPane({ org }: { org: OrgDetail }) {
     <div style={{ maxWidth: 900 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 220 }}>
-          <h2 style={h2}>Plans{pending.length ? ` · ${pending.length} awaiting your veto` : ''}</h2>
+          <h2 style={h2}>Pending changes{pending.length ? ` · ${pending.length} awaiting your veto` : ''}</h2>
           <div style={faint}>In autonomous mode every structural change the chief plans — hires, reorganisations, terminations, scope and budget changes, routing, tunables — is written here first and applies after the veto window (<code>capital.vetoWindowMinutes</code>) unless you veto it. A dry run asks the chief what it would do and applies nothing.</div>
         </div>
         <select aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...input, width: 'auto' }}>
@@ -82,7 +82,7 @@ export function PlansPane({ org }: { org: OrgDetail }) {
         {dry.plan && <PlanDiff plan={dry.plan} nameOf={nameOf} hypothetical />}
       </div>
       {rows === null && <div style={faint}>Loading…</div>}
-      {rows && rows.length === 0 && <div style={{ ...card, ...faint }}>{status ? 'No plan with this status.' : 'No plan yet. Plans are captured from autonomous planning runs and chief reviews; in supervised mode the same changes arrive as approval cards.'}</div>}
+      {rows && rows.length === 0 && <div style={{ ...card, ...faint }}>{status ? 'No plan with this status.' : 'No pending changes yet. They are captured from autonomous planning runs and chief reviews; in supervised mode the same changes arrive as approval cards.'}</div>}
       {rows?.map((p) => {
         const expanded = open === p.id;
         const actions = parsePlanActions(p.actions);
@@ -193,7 +193,7 @@ export function ReplayPane({ org }: { org: OrgDetail }) {
       {replay && (
         <>
           <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', marginBottom: 10 }}>
-            {tile('Runs', replay.totals.runs)}{tile('Spent', fmtUsd(replay.totals.usd))}{tile('Decisions', replay.totals.decisions)}{tile('Signals', replay.totals.signals)}{tile('Plans', replay.totals.plans)}{tile('Audit rows', replay.totals.auditRows)}
+            {tile('Runs', replay.totals.runs)}{tile('Spent', fmtUsd(replay.totals.usd))}{tile('Decisions', replay.totals.decisions)}{tile('Signals', replay.totals.signals)}{tile('Pending changes', replay.totals.plans)}{tile('Audit rows', replay.totals.auditRows)}
           </div>
           <div style={{ ...card, display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
             <span style={pill(replay.chain.ok ? 'var(--green)' : 'var(--red)', '#fff')}>{replay.chain.ok ? 'chain verified' : `chain broken at #${replay.chain.brokenAt}`}</span>

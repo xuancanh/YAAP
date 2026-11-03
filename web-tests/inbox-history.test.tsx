@@ -113,7 +113,7 @@ describe('the History toggle', () => {
     fireEvent.click(screen.getByTestId('inbox-mode-history'));
     await screen.findByTestId('history-item-a:1');
     const tabs = screen.getByRole('tablist', { name: 'History filters' });
-    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['All', 'Approvals', 'Keys', 'Escalations', 'Plans', 'My tasks', 'Incidents', 'Following']);
+    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['All', 'Approvals', 'Keys', 'Escalations', 'Pending changes', 'My tasks', 'Incidents', 'Following']);
 
     historyBody = () => ({ items: [], nextCursor: null });
     fireEvent.click(within(tabs).getByRole('tab', { name: 'Keys' }));

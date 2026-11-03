@@ -233,3 +233,40 @@ describe('HomeStatus and decisions', () => {
     await expect(decide('ws1', need({ kind: 'incident', ref: { incidentId: 'i' } }), 'approve')).rejects.toThrow(/open it for details/);
   });
 });
+
+describe('HomeBoard — the portfolio (docs/work-tracking.md)', () => {
+  const portfolio: NonNullable<HomeData['portfolio']> = {
+    counts: { now: 3, next: 2, later: 1, atRisk: 1, offTrack: 1, updateMissing: 1, overBudget: 0, late: 0 },
+    exceptions: [
+      { projectId: 'p1', key: 'P-1', title: 'Referral loop', kinds: ['off_track'], detail: 'The ESP rejected the template', leadName: 'Writer' },
+      { projectId: 'p2', key: 'P-2', title: 'Sponsorships', kinds: ['at_risk', 'update_missing'], detail: 'Ask: an intro to the agency', leadName: 'Sales Head' },
+    ],
+    digest: [{ at: iso(-60), projectId: 'p3', key: 'P-3', title: 'Podcast pilot', kind: 'lane', text: 'moved to now' }],
+    doneByProject: [{ projectId: 'p1', key: 'P-1', title: 'Referral loop', done: 4 }],
+  };
+  it('shows the counts, the exceptions with their reasons, and the digest; a row opens the project page', () => {
+    const { onOpen } = board(fixture({ portfolio }));
+    const sec = screen.getByTestId('home-portfolio');
+    expect(within(screen.getByTestId('portfolio-counts')).getByText('Off track')).toBeTruthy();
+    const rows = within(sec).getAllByTestId('portfolio-exception');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toContain('P-1 Referral loop');
+    expect(rows[1].textContent).toContain('Update missing');
+    expect(rows[1].textContent).toContain('Ask: an intro to the agency');
+    const digest = screen.getByTestId('portfolio-digest');
+    expect(digest.textContent).toContain('Since you last looked');
+    expect(digest.textContent).toContain('moved to now');
+    expect(digest.textContent).toContain('Done:');
+    fireEvent.click(within(rows[0]).getByText('P-1 Referral loop'));
+    expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'roadmap', focus: { kind: 'project', id: 'p1' } });
+    fireEvent.click(within(sec).getByText('Open roadmap'));
+    expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'roadmap' });
+  });
+  it('is absent without a portfolio, and a KR shows its projects\' health beside the RAG', () => {
+    const data = fixture({ portfolio: null });
+    data.goals[0].keyResults[0].projectHealth = 'at_risk';
+    board(data);
+    expect(screen.queryByTestId('home-portfolio')).toBeNull();
+    expect(screen.getByTestId('kr-project-health').textContent).toBe('projects at risk');
+  });
+});

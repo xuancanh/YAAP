@@ -90,7 +90,7 @@ export function recommendationLine(n: HomeNeed): string {
 }
 
 export const NEED_KIND_LABEL: Record<HomeNeed['kind'], string> = {
-  approval: 'Decision', escalation: 'Escalation', held_action: 'Needs your key', plan: 'Plan to veto',
+  approval: 'Decision', escalation: 'Escalation', held_action: 'Needs your key', plan: 'Pending change',
   incident: 'Incident', signal: 'Signal', queued_action: 'Queued action',
 };
 

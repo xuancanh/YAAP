@@ -899,7 +899,79 @@ export interface OrgUnit {
 }
 export interface OrgUnitNode extends OrgUnit { memberAgentIds: string[]; counts: { openTasks: number; tasks: number; goals: number }; children: OrgUnitNode[] }
 export interface OrgGoalNode extends OrgGoal { progress: number; tasks: { total: number; done: number }; children: OrgGoalNode[] }
-export interface OrgProject { id: string; orgId: string; goalId: string | null; title: string; status: string; ownerAgentId: string | null; createdAt: string }
+/** A project (docs/work-tracking.md): the middle level, goal / key result → project → task. */
+export interface OrgProject {
+  id: string; orgId: string; goalId: string | null; title: string; status: string; ownerAgentId: string | null; createdAt: string;
+  key?: string | null; goalIds?: string; leadHumanId?: string | null; unitId?: string | null;
+  /** project | unsorted | operating (the per-unit system projects). */
+  kind?: 'project' | 'unsorted' | 'operating' | string;
+  /** JSON { problem, hypothesis, done_when, mvp }; milestones JSON Milestone[]. */
+  brief?: string; startDate?: string | null; targetDate?: string | null; milestones?: string;
+  appetiteDays?: number; appetiteUsd?: number; lane?: 'now' | 'next' | 'later' | string; rank?: number;
+  health?: '' | 'on_track' | 'at_risk' | 'off_track' | string; healthReason?: string; healthAsk?: string; healthAt?: string | null;
+  hill?: number | null; updateCadenceDays?: number | null; breakerAt?: string | null; updatedAt?: string | null;
+}
+export type TaskSource = 'plan' | 'meeting' | 'retro' | 'incident' | 'escalation' | 'agent' | 'ceo' | 'chat';
+export type BlockedKind = 'task' | 'person' | 'agent' | 'manager' | 'ceo' | 'external' | 'decision';
+/** The one structured blocker (org_tasks.blockedOn, stored as JSON). */
+export interface BlockedOn { kind: BlockedKind; ref: string; reason: string; since: string; by?: string }
+export interface Milestone { id: string; name: string; date: string | null; done: boolean; doneAt?: string | null }
+export interface ProjectBrief { problem: string; hypothesis: string; done_when: string; mvp: string }
+export interface ProjectForecast { state: 'range' | 'insufficient' | 'done'; remaining: number; samples: number; p50: string | null; p85: string | null; note: string }
+/** One row of the roadmap (server ProjectSummary). */
+export interface ProjectSummary {
+  id: string; key: string | null; title: string; kind: string; status: string; lane: string; rank: number;
+  unitId: string | null; unitName: string | null;
+  lead: { kind: 'agent' | 'person' | 'none'; id: string | null; name: string };
+  goalIds: string[]; goals: Array<{ id: string; title: string; kind: string; parentGoalId: string | null }>;
+  startDate: string | null; targetDate: string | null; milestones: Milestone[];
+  progress: { done: number; total: number; pct: number };
+  hill: number | null; hillInferred: boolean;
+  health: string; healthReason: string; healthAsk: string; healthAt: string | null;
+  update: { state: 'none' | 'fresh' | 'due' | 'missing'; dueAt: string | null; cadenceDays: number };
+  appetite: { days: number; usd: number; spentUsd: number; usdShare: number | null; daysUsed: number | null; daysShare: number | null; tripped: boolean; breakerAt: string | null };
+  blocked: number; late: boolean; overBudget: boolean;
+  forecast: ProjectForecast;
+  briefOk: boolean;
+  createdAt?: string;
+}
+/** GET /api/workspaces/:id/org/roadmap. */
+export interface RoadmapData {
+  generatedAt: string; today: string; projects: ProjectSummary[];
+  goals: Array<{ id: string; title: string; kind: string; parentGoalId: string | null; status: string; dueAt: string | null }>;
+  units: Array<{ id: string; name: string; parentUnitId: string | null }>;
+  system: ProjectSummary[];
+}
+export interface ProjectUpdate { id: string; orgId: string; projectId: string; health: string; reason: string; ask: string; body: string; hill: number | null; diff: string; by: string; createdAt: string }
+export interface ProjectPageTask {
+  id: string; key: string | null; title: string; status: OrgTaskStatus; assigneeAgentId: string | null; assigneeHumanId: string | null; source: TaskSource | string;
+  dueAt: string | null; doneAt: string | null; startedAt: string | null; updatedAt: string; unitId: string | null;
+  assigneeName: string; blockedOn: BlockedOn | null; blockedText: string; steps: { done: number; total: number };
+}
+/** GET /api/workspaces/:id/org/projects/:projectId — the project page. */
+export interface ProjectPage {
+  project: ProjectSummary & { brief: ProjectBrief; createdAt: string; createdBy: string; updateCadenceDays: number | null };
+  updates: ProjectUpdate[];
+  tasks: ProjectPageTask[];
+  blockers: Array<{ taskId: string; key: string | null; title: string; kind: string; text: string; since: string }>;
+  decisions: Array<{ id: string; kind: string; title: string; status: string; at: string; via: 'card' | 'log' }>;
+  files: Array<{ path: string; taskId: string }>;
+  burn: Array<{ day: string; usd: number }>;
+  throughput: Array<{ week: string; done: number }>;
+}
+export type PortfolioKind = 'off_track' | 'at_risk' | 'update_missing' | 'over_budget' | 'late' | 'tripped';
+/** Home's portfolio (server HomePortfolio): exceptions first, then the digest since the last visit. */
+export interface HomePortfolio {
+  counts: { now: number; next: number; later: number; atRisk: number; offTrack: number; updateMissing: number; overBudget: number; late: number };
+  exceptions: Array<{ projectId: string; key: string | null; title: string; kinds: PortfolioKind[]; detail: string; leadName: string }>;
+  digest: Array<{ at: string; projectId: string; key: string | null; title: string; kind: 'health' | 'lane' | 'done' | 'milestone' | 'created' | 'breaker' | 'target'; text: string }>;
+  doneByProject: Array<{ projectId: string; key: string | null; title: string; done: number }>;
+}
+export interface TaskTransition { id: string; orgId: string; taskId: string; fromStatus: string; toStatus: string; actor: string; reason: string; backfilled: number; at: string }
+export interface ProjectPatch {
+  title?: string; lane?: string; rank?: number; status?: string; startDate?: string | null; targetDate?: string | null;
+  brief?: Partial<ProjectBrief>; appetiteDays?: number; appetiteUsd?: number; goalIds?: string[]; ownerAgentId?: string | null; updateCadenceDays?: number | null;
+}
 export interface OrgBudget { id: string; orgId: string; scope: 'company' | 'agent' | 'project'; refId: string; monthlyUsd: number; reservedUsd: number; spentUsd: number; month: string }
 export interface OrgGrant { id: string; orgId: string; agentId: string; kind: string; value: string; grantedBy: string; createdAt: string }
 export interface OrgDetail extends Org {
@@ -926,6 +998,11 @@ export interface OrgTask {
    *  dependencies (`waitingOn`) and the expected duration from history. */
   dependsOn?: string; dueAt?: string | null; waitingOn?: string[];
   expected?: { runs: number | null; hours: number | null; samples: number; basis: 'member' | 'class' | 'none' };
+  /** Work tracking (docs/work-tracking.md): where it came from, the one
+   *  structured blocker (JSON BlockedOn, '' when none), the checklist steps
+   *  (JSON), the done event's clocks and a circular-behaviour pause. */
+  source?: TaskSource | string; blockedOn?: string; steps?: string;
+  startedAt?: string | null; doneAt?: string | null; blockedSeconds?: number; wakesPausedAt?: string | null;
 }
 export interface OrgRun {
   id: string; orgId: string; taskId: string; agentId: string; sessionId: string | null; wakeReason: string;
@@ -933,7 +1010,7 @@ export interface OrgRun {
 }
 export interface OrgMessage { id: string; orgId: string; taskId: string | null; fromAgentId: string | null; runId: string | null; text: string; createdAt: string }
 export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review'
-  | 'two_key' | 'metric_source' | 'experiment' | 'member_settings';
+  | 'two_key' | 'metric_source' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill';
 export interface OrgApproval {
   id: string; orgId: string; kind: OrgApprovalKind; payload: string; requestedBy: string; recommendation: string;
   status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired'; decidedAt: string | null; decidedBy?: string; decisionNote: string; expiresAt: string | null; createdAt: string;
@@ -1869,6 +1946,20 @@ export const api = {
   orgGoalTree: (wsId: string, unitId?: string | null) => get<OrgGoalNode[]>(unitId ? `/api/workspaces/${wsId}/org/units/${unitId}/goals/tree` : `/api/workspaces/${wsId}/org/goals/tree`),
   goalMessages: (wsId: string, goalId: string) => get<Array<ChannelMessage & { slug: string }>>(`/api/workspaces/${wsId}/chat/goals/${goalId}/messages`),
   addOrgProject: (wsId: string, body: { title: string; goalId?: string | null }) => send<OrgProject>(`/api/workspaces/${wsId}/org/projects`, 'POST', body),
+  // work tracking (docs/work-tracking.md): the roadmap, projects, health, milestones, appetite
+  orgRoadmap: (wsId: string) => get<RoadmapData>(`/api/workspaces/${wsId}/org/roadmap`),
+  orgPortfolio: (wsId: string, since?: string) => get<HomePortfolio & { generatedAt: string }>(`/api/workspaces/${wsId}/org/portfolio${since ? `?since=${enc(since)}` : ''}`),
+  orgProject: (wsId: string, projectId: string) => get<ProjectPage>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}`),
+  createOrgProject: (wsId: string, body: ProjectPatch & { title: string }) => send<OrgProject>(`/api/workspaces/${wsId}/org/projects`, 'POST', body),
+  updateOrgProject: (wsId: string, projectId: string, patch: ProjectPatch) => send<OrgProject>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}`, 'PATCH', patch),
+  postProjectUpdate: (wsId: string, projectId: string, body: { health: string; reason?: string; ask?: string; body?: string; hill?: number | null }) => send<ProjectUpdate>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/updates`, 'POST', body),
+  addProjectMilestone: (wsId: string, projectId: string, body: { name: string; date?: string | null }) => send<OrgProject>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/milestones`, 'POST', body),
+  setProjectMilestone: (wsId: string, projectId: string, milestoneId: string, patch: { name?: string; date?: string | null; done?: boolean }) => send<OrgProject>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/milestones/${enc(milestoneId)}`, 'PATCH', patch),
+  decideProjectAppetite: (wsId: string, projectId: string, body: { decision: 'extend' | 'cut_scope' | 'kill'; extendDays?: number; extendUsd?: number; note?: string }) => send<OrgProject>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/appetite`, 'POST', body),
+  linkTaskToProject: (wsId: string, projectId: string, taskId: string) => send<OrgTask>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/tasks`, 'POST', { taskId }),
+  taskTransitions: (wsId: string, taskId: string) => get<TaskTransition[]>(`/api/workspaces/${wsId}/org/tasks/${enc(taskId)}/transitions`),
+  taskSteps: (wsId: string, taskId: string, op: { add?: string; done?: string; undo?: string; drop?: string }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${enc(taskId)}/steps`, 'POST', op),
+  setTaskBlockedOn: (wsId: string, taskId: string, body: { kind?: BlockedKind; ref?: string; reason?: string; clear?: boolean }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${enc(taskId)}/blocked-on`, 'POST', body),
   orgTasks: (wsId: string, opts: { unitId?: string | null; rollUp?: boolean } = {}) => {
     const q = new URLSearchParams();
     if (opts.unitId) q.set('unitId', opts.unitId);
@@ -2089,7 +2180,9 @@ export interface HomeRecap {
   brief: { at: string; text: string } | null; pulse: { score: number; breaches: number } | null;
 }
 export type HomeRag = 'red' | 'amber' | 'green' | 'grey';
-export interface HomeKeyResult { id: string; title: string; currentValue: number | null; targetValue: number | null; unitLabel: string; progress: number; confidence: number | null; atRisk: boolean; atRiskReason: string; rag: HomeRag; dueAt: string | null }
+export interface HomeKeyResult { id: string; title: string; currentValue: number | null; targetValue: number | null; unitLabel: string; progress: number; confidence: number | null; atRisk: boolean; atRiskReason: string; rag: HomeRag; dueAt: string | null;
+  /** The worst owner-written health of the projects that move it (docs/work-tracking.md); shown beside the RAG, never averaged in. */
+  projectHealth?: '' | 'on_track' | 'at_risk' | 'off_track' }
 export interface HomeGoal { id: string; title: string; ownerName: string | null; progress: number; confidence: number | null; atRisk: boolean; atRiskReason: string; rag: HomeRag; dueAt: string | null; keyResults: HomeKeyResult[] }
 export type HomeAgentState = 'working' | 'idle' | 'blocked' | 'paused' | 'error';
 export interface HomeAgent {
@@ -2140,6 +2233,8 @@ export interface HomeData {
   spend: HomeSpend; health: HomeHealth; upcoming: HomeUpcoming[]; artifacts: HomeArtifact[];
   /** Messages from your team (docs/agent-messages.md); absent from an older server. */
   messages?: { items: AgentMessage[]; unread: number };
+  /** Work tracking: the CEO's portfolio of projects and the digest since the last visit (null without a company). */
+  portfolio?: HomePortfolio | null;
   /** Sections that failed to load on the server. */
   partial: string[];
 }

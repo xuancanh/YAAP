@@ -27,8 +27,8 @@ export type Section = 'home' | 'overview' | 'agents' | 'inbox' | 'workspace' | '
 /** The organization panes under the Workspace section (docs/group-chat.md
  *  §5: the workspace is the company; there is no separate Company section). */
 export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'plans' | 'replay' | 'capital' | 'mytasks'
-  | 'incidents';
-export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents'];
+  | 'incidents' | 'roadmap';
+export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents', 'roadmap'];
 /** Panes folded into Artifacts (playbooks, experiments, evals, outcomes and
  *  metrics are mirrored as files under /org/; docs/filesystem.md): a link to
  *  one of them opens the Artifacts section instead. */
@@ -37,7 +37,7 @@ export const ORG_PANES_IN_ARTIFACTS = ['ask', 'playbooks', 'metrics', 'experimen
  *  deep link, docs/company-vision.md §5): a task on the board, a goal on the
  *  vision page, a meeting thread, a plan, a replay day (the id is the
  *  YYYY-MM-DD). Consumed by the pane. */
-export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'replay' | 'incident' | 'action'; id: string }
+export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'replay' | 'incident' | 'action' | 'project'; id: string }
 const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
 /** What the main pane shows while in the Home section: a conversation, a
  *  group-chat channel, an agent's home page (or the directory when no agent

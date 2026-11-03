@@ -13,7 +13,8 @@ export const INBOX_FILTERS: Array<{ id: InboxFilter; label: string }> = [
   { id: 'approvals', label: 'Approvals' },
   { id: 'keys', label: 'Keys' },
   { id: 'escalations', label: 'Escalations' },
-  { id: 'plans', label: 'Plans' },
+  // "Plans" are veto-window change batches (org_plans): named Pending changes in the UI so "plan" means the roadmap (docs/work-tracking.md).
+  { id: 'plans', label: 'Pending changes' },
   { id: 'mytasks', label: 'My tasks' },
   { id: 'incidents', label: 'Incidents' },
   { id: 'following', label: 'Following' },
@@ -134,7 +135,7 @@ export interface CompanyEntry { pane: OrgPane; label: string; /** Panes merged i
  *  live in the Inbox; Brief is a tab of Pulse, Capital of Spend, Replay of Audit. */
 export const COMPANY_GROUPS: Array<{ id: CompanyGroupId; label: string; entries: CompanyEntry[] }> = [
   { id: 'teams', label: 'Teams', entries: [] },
-  { id: 'direction', label: 'Direction', entries: [{ pane: 'vision', label: 'Vision' }, { pane: 'goals', label: 'Goals' }, { pane: 'plans', label: 'Plans' }, { pane: 'decisions', label: 'Decisions' }] },
+  { id: 'direction', label: 'Direction', entries: [{ pane: 'roadmap', label: 'Roadmap' }, { pane: 'vision', label: 'Vision' }, { pane: 'goals', label: 'Goals' }, { pane: 'plans', label: 'Pending changes' }, { pane: 'decisions', label: 'Decisions' }] },
   { id: 'operations', label: 'Operations', entries: [{ pane: 'pulse', label: 'Pulse', tabs: ['pulse', 'brief'] }, { pane: 'meetings', label: 'Meetings' }, { pane: 'incidents', label: 'Incidents' }] },
   { id: 'people', label: 'People & money', entries: [{ pane: 'chart', label: 'Org chart' }, { pane: 'spend', label: 'Spend', tabs: ['spend', 'capital'] }] },
   { id: 'oversight', label: 'Oversight', entries: [{ pane: 'audit', label: 'Audit', tabs: ['audit', 'replay'] }] },
