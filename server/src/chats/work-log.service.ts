@@ -64,6 +64,15 @@ export interface WorkRun {
   files: Array<{ path: string; op: string }>;
   task: WorkRunTask | null;
   archived: boolean;
+  /** Who sent it: 'person' (someone typed it — the run is labelled theirs),
+   *  else the origin ('loop', 'user', 'channel', 'app'); '' for old runs. */
+  source: string;
+  /** The person who typed a 'person' run (an actor id; '' = the owner). */
+  by: string;
+  /** The run this one re-runs (the Work log's Rerun), else null. */
+  rerunOf: string | null;
+  /** Failed, stopped or blocked: the Rerun action applies. */
+  rerunnable: boolean;
   createdAt: string;
 }
 export interface WorkRunDetail extends WorkRun {
@@ -84,6 +93,7 @@ interface Row {
   trigger: WorkTrigger; triggerKey: string; outcome: WorkOutcome; runUsd: number | null;
   taskKind: 'org' | 'agent' | null; taskId: string | null; taskKey: string | null; taskTitle: string | null;
   answer: string | null; thinkingCount: number;
+  source: string | null; rerunOf: string | null; by: string | null;
 }
 
 const rowsOf = (res: unknown): unknown[] => ((res as { rows?: unknown[] }).rows ?? (Array.isArray(res) ? res : []));
@@ -191,6 +201,8 @@ export class WorkLogService {
       FROM (
         SELECT t."id", t."sessionId", t."seq", LEFT(t."input", 2000) AS "input", t."status", t."error",
           t."tokensIn", t."tokensOut", t."model", s."model" AS "sessionModel", t."toolCalls", t."createdAt",
+          t."source", t."rerunOf",
+          (SELECT m."authorAccountId" FROM chat_messages m WHERE m."turnId" = t."id" AND m."role" = 'user' ORDER BY m."seq" ASC LIMIT 1) AS "by",
           s."name" AS "sessionName", s."archivedAt",
           CASE
             WHEN s."name" = 'Loop · heartbeat' THEN 'heartbeat'
@@ -283,7 +295,10 @@ export class WorkLogService {
       input: (r.input ?? '').slice(0, 2000), answer: (r.answer ?? '').slice(0, 400),
       tokensIn, tokensOut, usd, model,
       steps: calls.length + thinkingCount, toolCount: calls.length, thinkingCount, tools, files, task,
-      archived: !!r.archivedAt, createdAt: r.createdAt,
+      archived: !!r.archivedAt,
+      source: r.source ?? '', by: r.source === 'person' ? (r.by ?? '') : '', rerunOf: r.rerunOf ?? null,
+      rerunnable: r.outcome === 'error' || r.outcome === 'stopped' || r.outcome === 'blocked',
+      createdAt: r.createdAt,
     };
   }
 }

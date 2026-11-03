@@ -14,6 +14,7 @@ import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min, Valida
 import { ChatsService } from './chats.service';
 import { TurnLoopService, ApprovalDecision } from './turn-loop.service';
 import { CompactionService } from './compaction.service';
+import { turnWatch } from './live-turns';
 import { DistillService } from './distill.service';
 
 class CreateChatDto {
@@ -158,7 +159,9 @@ export class ChatsController {
       if (!res.writableEnded) res.write(': ping\n\n');
     }, 15_000);
     try {
-      for await (const ev of this.turns.run(id, dto)) {
+      // A person typed this (the chat or the Work log composer): origin
+      // 'user', so Ask-mode approvals apply in a work session too.
+      for await (const ev of this.turns.run(id, { text: dto.text, attachments: dto.attachments, origin: 'user', source: 'person' })) {
         res.write(`data: ${JSON.stringify(ev)}\n\n`);
       }
     } catch (err) {
@@ -178,12 +181,36 @@ export class ChatsController {
     return this.distillSvc.distill(id);
   }
 
-  /** Resolve a paused Ask-mode tool approval (§4). */
+  /** Resolve a paused Ask-mode tool approval (§4). Only for a session the
+   *  caller may see (a member's on shared sessions and their own). */
   @Post(':id/approve')
-  approve(@Param('id') id: string, @Body() dto: ApproveDto) {
+  async approve(@Param('id') id: string, @Body() dto: ApproveDto) {
+    await this.chats.get(id);
     // An approval routed to another member (docs/shared-agents.md §3) is
     // theirs to answer: this path reports it unresolved for anyone else.
     return { resolved: this.turns.resolveApproval(id, dto.callId, dto.decision, actorId()) };
+  }
+
+  /** Watch the turn running in a session, whoever started it (the Work
+   *  log's live view, docs/work-log.md "Intervening"). SSE: `{ type: 'live',
+   *  turnId, source, startedAt }`, the turn's events so far, then each new
+   *  one, then `{ type: 'end' }`; `{ type: 'idle' }` when nothing runs here. */
+  @Get(':id/live')
+  async live(@Param('id') id: string, @Res() res: Response) {
+    await this.chats.get(id); // 404 for a session the actor may not see
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', 'X-Accel-Buffering': 'no', Connection: 'keep-alive' });
+    res.on('error', () => {});
+    const write = (ev: unknown) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(ev)}\n\n`); };
+    let unsubscribe = () => {};
+    let keepalive: ReturnType<typeof setInterval> | undefined;
+    const close = () => { unsubscribe(); if (keepalive) clearInterval(keepalive); if (!res.writableEnded) res.end(); };
+    const sub = turnWatch.watch(id, (ev) => { write(ev); if (ev.type === 'end') close(); });
+    if (!sub) { write({ type: 'idle', busy: this.turns.isBusy(id) }); res.end(); return; }
+    unsubscribe = sub.unsubscribe;
+    write({ type: 'live', turnId: sub.start.turnId, source: sub.start.source, startedAt: sub.start.startedAt });
+    for (const ev of sub.start.replay) write(ev);
+    keepalive = setInterval(() => { if (!res.writableEnded) res.write(': ping\n\n'); }, 15_000);
+    res.on('close', close);
   }
 
   /** /compact — distill private history into a summary (FR-7.3). */
@@ -193,7 +220,8 @@ export class ChatsController {
   }
 
   @Post(':id/stop')
-  stop(@Param('id') id: string) {
+  async stop(@Param('id') id: string) {
+    await this.chats.get(id); // only a session the caller may see
     return { stopped: this.turns.stop(id) };
   }
 

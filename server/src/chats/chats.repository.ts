@@ -234,7 +234,7 @@ export class ChatsRepository {
   }
 
   // ---- turns ----
-  async createTurn(sessionId: string, input: { text: string; attachments?: unknown[]; model?: string }): Promise<ChatTurn> {
+  async createTurn(sessionId: string, input: { text: string; attachments?: unknown[]; model?: string; source?: string; rerunOf?: string | null }): Promise<ChatTurn> {
     // seq is allocated by a subquery in the same statement — a read-max-then-
     // insert pair is two round-trips and races when the busy lock is absent.
     const rows = await this.db.insert(chatTurns).values({
@@ -252,6 +252,8 @@ export class ChatsRepository {
       ratingNote: null,
       taskHandoff: null,
       error: null,
+      source: input.source ?? '',
+      rerunOf: input.rerunOf ?? null,
       createdAt: nowIso(),
     }).returning();
     return rows[0];

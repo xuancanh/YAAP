@@ -51,7 +51,7 @@ import { CONNECTION_TOOLS } from '../connections/connections.tools';
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { ProviderHealthService } from '../ai/provider-health';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
-import { liveTurns } from './live-turns';
+import { liveTurns, turnWatch, type WatchedEvent } from './live-turns';
 import { taskRef } from '../common/task-keys';
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
@@ -60,6 +60,16 @@ export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'd
  *  channel (Telegram). Channels are untrusted surfaces (docs/agent-memory.md)
  *  and their events are never echoed back to them. */
 export type TurnOrigin = 'user' | 'loop' | 'channel';
+
+/** What a turn is asked to do. `source` is who sent it, persisted on the
+ *  turn (docs/work-log.md): 'person' for a person typing (POST /turns),
+ *  else the origin ('user' | 'loop' | 'channel') or 'app' for a confined
+ *  mini-app ask. */
+export interface TurnInput { text: string; attachments?: unknown[]; origin?: TurnOrigin; confined?: boolean; source?: TurnSource }
+export type TurnSource = 'person' | 'user' | 'loop' | 'channel' | 'app';
+export function sourceOf(input: Pick<TurnInput, 'origin' | 'confined'>): TurnSource {
+  return input.confined ? 'app' : input.origin ?? 'user';
+}
 
 /** Org tools and org-run context (docs/autonomous-company.md), supplied by
  *  OrgRuntimeService through `setOrgTools` so this module never imports the
@@ -414,6 +424,8 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
    *  call tree can stamp the events they write without threading it through
    *  every signature. */
   private readonly turnOrigins = new Map<string, TurnOrigin>();
+  /** Rerun marks waiting for the next turn of a session (markNextTurn). */
+  private readonly nextTurnMarks = new Map<string, { rerunOf: string; onTurn?: (turnId: string) => void; expires: number }>();
   /** See OrgToolsHook. Registered by OrgRuntimeService at boot. */
   private orgTools?: OrgToolsHook;
   /** Further tool providers (ToolProviderHook), in registration order. */
@@ -577,7 +589,32 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
    *  the agent — a mini app's `agent.ask` (docs/miniapp-capabilities.md): the
    *  free internal work of docs/permissions.md §8 gates like any mutation
    *  there, so an app cannot write the agent's brain or shared files. */
-  async *run(sessionId: string, input: { text: string; attachments?: unknown[]; origin?: TurnOrigin; confined?: boolean }): AsyncGenerator<TurnEvent> {
+  async *run(sessionId: string, input: TurnInput): AsyncGenerator<TurnEvent> {
+    // Every event of the turn also reaches anyone watching the session
+    // (GET /api/chats/:id/live — the Work log's live view of a run it did not
+    // start, docs/work-log.md "Intervening"). Only a run that got the lock
+    // registers, so a refused turn never ends another one's watch.
+    let watching = false;
+    try {
+      for await (const ev of this.runInner(sessionId, input)) {
+        if (ev.type === 'turn') { turnWatch.begin(sessionId, ev.turnId, input.source ?? sourceOf(input)); watching = true; } else if (watching) turnWatch.publish(sessionId, ev as unknown as WatchedEvent);
+        yield ev;
+      }
+    } finally {
+      if (watching) turnWatch.end(sessionId);
+    }
+  }
+
+  /** Mark the next turn of a session as a rerun of `rerunOf` (the Work log's
+   *  Rerun, docs/work-log.md): consumed by the next turn that takes the
+   *  session's lock; `onTurn` hears its id. Unconsumed marks expire. */
+  markNextTurn(sessionId: string, mark: { rerunOf: string; onTurn?: (turnId: string) => void }, ttlMs = 120_000): () => void {
+    const entry = { ...mark, expires: Date.now() + ttlMs };
+    this.nextTurnMarks.set(sessionId, entry);
+    return () => { if (this.nextTurnMarks.get(sessionId) === entry) this.nextTurnMarks.delete(sessionId); };
+  }
+
+  private async *runInner(sessionId: string, input: TurnInput): AsyncGenerator<TurnEvent> {
     const session = await this.repo.getSession(sessionId);
     if (!session) throw new NotFoundException(`chat ${sessionId}`);
     // The workspace's monthly spend stop (phase 2.5). Background turns are
@@ -630,7 +667,11 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     const ctl = new AbortController();
     this.aborts.set(sessionId, ctl);
 
-    const turn = await this.repo.createTurn(sessionId, { ...input, model: session.model });
+    const mark = this.nextTurnMarks.get(sessionId);
+    this.nextTurnMarks.delete(sessionId);
+    const rerunOf = mark && mark.expires > Date.now() ? mark.rerunOf : null;
+    const turn = await this.repo.createTurn(sessionId, { ...input, model: session.model, source: input.source ?? sourceOf(input), rerunOf });
+    if (rerunOf) { try { mark?.onTurn?.(turn.id); } catch { /* a listener never fails the turn */ } }
     await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'user', content: input.text });
     // Auto-title from the first message when the chat is unnamed (FR-1.3).
     if (!session.name && !session.autoTitle) {

@@ -86,3 +86,85 @@ export class LiveTurnRegistry {
 
 /** The process-wide registry the turn loop writes and the overviews read. */
 export const liveTurns = new LiveTurnRegistry();
+
+/** One event of a running turn, as the turn loop yields it. */
+export interface WatchedEvent { type: string; [k: string]: unknown }
+export type WatchListener = (ev: WatchedEvent) => void;
+export interface WatchStart { turnId: string; source: string; startedAt: string; replay: WatchedEvent[] }
+
+/** Bounded replay per turn: enough for a long run's steps; token deltas
+ *  are merged, so a turn's prose costs one event per block. */
+const REPLAY_CAP = 1_500;
+
+/**
+ * TurnWatchRegistry — the events of every running turn, for watchers that
+ * did not start it (docs/work-log.md "Intervening": the Work log's live view
+ * of a heartbeat, a task run, a meeting round). The turn loop begins a watch
+ * when a turn takes its session's lock, publishes every event it yields, and
+ * ends it however the turn ends. A watcher that arrives mid-turn first gets
+ * the replay (thinking and answer deltas merged; pending approvals kept), then
+ * the live events, then `{ type: 'end' }`.
+ *
+ * In-process and best-effort, like `liveTurns`: on a multi-instance
+ * deployment a watcher on another instance sees no live turn and the Work
+ * log falls back to polling the run.
+ */
+export class TurnWatchRegistry {
+  private readonly turns = new Map<string, { turnId: string; source: string; startedAt: string; events: WatchedEvent[]; listeners: Set<WatchListener> }>();
+
+  begin(sessionId: string, turnId: string, source: string, now = new Date()): void {
+    const prior = this.turns.get(sessionId);
+    if (prior) for (const l of prior.listeners) safeCall(l, { type: 'end' });
+    this.turns.set(sessionId, { turnId, source, startedAt: now.toISOString(), events: [], listeners: new Set() });
+  }
+
+  publish(sessionId: string, ev: WatchedEvent): void {
+    const t = this.turns.get(sessionId);
+    if (!t) return;
+    const last = t.events.at(-1);
+    if ((ev.type === 'thinking' || ev.type === 'answer') && last?.type === ev.type && typeof last.text === 'string' && typeof ev.text === 'string') {
+      t.events[t.events.length - 1] = { ...last, text: last.text + ev.text };
+    } else if (ev.type !== 'usage') {
+      t.events.push(ev);
+      if (t.events.length > REPLAY_CAP) {
+        // drop the oldest event that is not an approval request
+        const i = t.events.findIndex((e) => e.type !== 'approval_required');
+        t.events.splice(i < 0 ? 0 : i, 1);
+      }
+    }
+    for (const l of t.listeners) safeCall(l, ev);
+  }
+
+  end(sessionId: string): void {
+    const t = this.turns.get(sessionId);
+    if (!t) return;
+    this.turns.delete(sessionId);
+    for (const l of t.listeners) safeCall(l, { type: 'end' });
+  }
+
+  /** The running turn of a session: its replay, and a subscription to what
+   *  follows. Null when no turn runs here (on this instance). */
+  watch(sessionId: string, listener: WatchListener): { start: WatchStart; unsubscribe: () => void } | null {
+    const t = this.turns.get(sessionId);
+    if (!t) return null;
+    t.listeners.add(listener);
+    return {
+      start: { turnId: t.turnId, source: t.source, startedAt: t.startedAt, replay: t.events.map((e) => ({ ...e })) },
+      unsubscribe: () => { t.listeners.delete(listener); },
+    };
+  }
+
+  running(sessionId: string): { turnId: string; startedAt: string } | null {
+    const t = this.turns.get(sessionId);
+    return t ? { turnId: t.turnId, startedAt: t.startedAt } : null;
+  }
+
+  clear(): void { this.turns.clear(); }
+}
+
+function safeCall(l: WatchListener, ev: WatchedEvent): void {
+  try { l(ev); } catch { /* a watcher never breaks the turn */ }
+}
+
+/** The process-wide registry the turn loop publishes into. */
+export const turnWatch = new TurnWatchRegistry();

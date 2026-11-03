@@ -2157,6 +2157,17 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_chat_turns_session_created ON chat_turns ("sessionId", "createdAt")`);
     },
   },
+  {
+    id: '0081-turn-source',
+    up: async (db) => {
+      // Intervening in a work session (docs/work-log.md): who sent each turn
+      // — 'person' when someone typed it, else its origin — so the Work log
+      // labels a person's message as theirs; and the run a Rerun re-runs.
+      // Old turns stay '' (unknown). Idempotent.
+      if (!(await hasColumn(db, 'chat_turns', 'source'))) await db.query(`ALTER TABLE chat_turns ADD COLUMN "source" TEXT NOT NULL DEFAULT ''`);
+      if (!(await hasColumn(db, 'chat_turns', 'rerunOf'))) await db.query(`ALTER TABLE chat_turns ADD COLUMN "rerunOf" TEXT`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

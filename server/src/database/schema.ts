@@ -349,6 +349,12 @@ export const chatTurns = pgTable('chat_turns', {
   /** Degradation (execution-plan item 29): JSON { from, to } when the turn
    *  ran on a fallback provider because its own was degraded; null otherwise. */
   degraded: text('degraded'),
+  /** Who sent it (docs/work-log.md): 'person' (a person typed it — the chat
+   *  or the Work log composer), 'user' | 'loop' | 'channel' (the turn's
+   *  origin), 'app' (a mini-app ask); '' for turns from before migration 0081. */
+  source: text('source').notNull().default(''),
+  /** The Work log's Rerun: the run this turn re-runs; null otherwise. */
+  rerunOf: text('rerunOf'),
   createdAt: text('createdAt').notNull(),
 });
 

@@ -13,8 +13,9 @@
  */
 import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, desc, eq, gte, isNull } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
+import { currentAccountId } from '../accounts/account-context';
 import type { DrizzleDb } from '../database/database.module';
 import { orgMessages, orgUnits } from '../database/schema';
 import { AgentsService } from '../agents/agents.service';
@@ -213,8 +214,20 @@ export class OverviewService {
     }, [] as OverviewDecision[]);
     const loudest = primaryError(me.errors);
     const cause: OverviewCause | null = loudest
-      ? { kind: loudest.kind, message: loudest.message, at: loudest.at, sessionId: loudest.sessionId ?? null, taskId: loudest.taskId ?? null, fix: fixHint(loudest) }
+      ? { kind: loudest.kind, message: loudest.message, at: loudest.at, sessionId: loudest.sessionId ?? null, taskId: loudest.taskId ?? null, fix: fixHint(loudest), rerunTurnId: null }
       : null;
+    // The Work log's Rerun (docs/work-log.md): when the failing run is the
+    // newest of a work session and it failed or stopped, it can run again.
+    if (cause?.sessionId) {
+      cause.rerunTurnId = await attempt('rerun', async () => {
+        const res = await this.db.execute(sql`
+          SELECT t."id", t."status" FROM chat_turns t JOIN chat_sessions s ON s."id" = t."sessionId"
+          WHERE t."sessionId" = ${cause.sessionId} AND s."kind" = 'work' AND s."accountId" = ${currentAccountId()}
+          ORDER BY t."seq" DESC LIMIT 1`);
+        const last = ((res as unknown as { rows?: Array<{ id: string; status: string }> }).rows ?? [])[0];
+        return last && (last.status === 'error' || last.status === 'stopped') ? last.id : null;
+      }, null as string | null);
+    }
 
     const loops = safe<Array<{ name: string; cron?: string; enabled?: boolean }>>(agent.loops, []);
     let nextLoop: AgentOverview['nextLoop'] = null;

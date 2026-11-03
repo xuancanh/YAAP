@@ -81,6 +81,9 @@ export interface OverviewCause {
   taskId: string | null;
   /** What to do, when the message makes it obvious; `tab` is an agent-page tab ('Settings:General'). */
   fix: { text: string; tab: string | null } | null;
+  /** The failing run when it can run again (the newest run of a work
+   *  session, failed or stopped): the Work log's Rerun, docs/work-log.md. */
+  rerunTurnId: string | null;
 }
 
 /** Something waiting on the owner: a background action it queued, a

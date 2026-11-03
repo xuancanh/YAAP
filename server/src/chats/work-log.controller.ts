@@ -7,13 +7,16 @@
  *       one run: thinking, tool calls with inputs and outputs, files, cost
  *   GET /api/agents/:agentId/work-log/sessions/:sessionId/latest
  *       the newest run of a session (deep links to a work session)
+ *   POST /api/agents/:agentId/work-log/runs/:turnId/rerun
+ *       run a failed or stopped run again, by its trigger, in its session
  */
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, NotFoundException, Optional, Param, Post, Query } from '@nestjs/common';
 import { WorkLogService } from './work-log.service';
+import { WorkRerunService } from './work-rerun.service';
 
 @Controller('agents/:agentId/work-log')
 export class WorkLogController {
-  constructor(private readonly log: WorkLogService) {}
+  constructor(private readonly log: WorkLogService, @Optional() private readonly reruns?: WorkRerunService) {}
 
   @Get()
   list(@Param('agentId') agentId: string, @Query('trigger') trigger?: string, @Query('key') key?: string, @Query('outcome') outcome?: string,
@@ -28,6 +31,12 @@ export class WorkLogController {
   @Get('runs/:turnId')
   run(@Param('agentId') agentId: string, @Param('turnId') turnId: string) {
     return this.log.run(agentId, turnId);
+  }
+
+  @Post('runs/:turnId/rerun')
+  rerun(@Param('agentId') agentId: string, @Param('turnId') turnId: string) {
+    if (!this.reruns) throw new NotFoundException('rerun is not available');
+    return this.reruns.rerun(agentId, turnId);
   }
 
   @Get('sessions/:sessionId/latest')
