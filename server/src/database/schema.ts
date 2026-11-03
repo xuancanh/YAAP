@@ -73,6 +73,10 @@ export const workspaces = pgTable('workspaces', {
    *  docs/actions-and-trust.md §6): JSON { <class>: 0–3 }; '{}' = the
    *  defaults in actions/trust-policy.ts. */
   trustCeilings: text('trustCeilings').notNull().default('{}'),
+  /** Plugin settings of the workspace (migration 0054, docs/plugins.md
+   *  §5.1): JSON { allowCommunityInterfaces?: boolean }; owner-only, never
+   *  an agent's to change. */
+  pluginSettings: text('pluginSettings').notNull().default('{}'),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -1648,6 +1652,30 @@ export const actionLog = pgTable('action_log', {
   note: text('note').notNull().default(''),
   createdAt: text('createdAt').notNull(),
   finishedAt: text('finishedAt'),
+  // ---- plugin calls (migration 0053, docs/plugins.md §5.6); null otherwise ----
+  /** The canonical interface operation (`iface.op`). */
+  operation: text('operation'),
+  interfaceVersion: text('interfaceVersion'),
+  /** The interface_providers row that served the call. */
+  providerId: text('providerId'),
+  /** workspace | unit:<id> | project:<id> | resource:<pattern>. */
+  bindingScope: text('bindingScope'),
+  pluginVersion: text('pluginVersion'),
+  packageDigest: text('packageDigest'),
+  definitionHash: text('definitionHash'),
+  credentialRef: text('credentialRef'),
+  changeId: text('changeId'),
+  tainted: integer('tainted'),
+  /** The asked/decided pair (§4.3): one request id per ask. */
+  approvalRequestId: text('approvalRequestId'),
+  approvalAskedAt: text('approvalAskedAt'),
+  approvalDecidedAt: text('approvalDecidedAt'),
+  /** allowed-once | rejected | cancelled | unavailable. */
+  approvalOutcome: text('approvalOutcome'),
+  /** The metered cost in USD: reserved before the call, settled after. */
+  costUsd: real('costUsd'),
+  /** reserved | settled | released. */
+  costState: text('costState'),
 }, (t) => [uniqueIndex('idx_action_log_key').on(t.accountId, t.key)]);
 
 /** The trust ledger's evidence (C10): one row per outcome that counts for a
@@ -1930,3 +1958,279 @@ export const follows = pgTable('follows', {
   wokeAt: text('wokeAt'),
   closedAt: text('closedAt'),
 }, (t) => [uniqueIndex('idx_follows_unique').on(t.followerKind, t.followerId, t.targetKind, t.targetId)]);
+
+// ---- plugins: interfaces, providers and consumers (docs/plugins.md §8) ----
+
+/** One row per package identity (`name@registry`) per account. */
+export const plugins = pgTable('plugins', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  /** `name@registry`, e.g. scm@yaam. */
+  pluginId: text('pluginId').notNull(),
+  name: text('name').notNull(),
+  publisherId: text('publisherId').notNull(),
+  /** first_party | verified | community | local. */
+  tier: text('tier').notNull(),
+  /** JSON list of interface | provider | consumer. */
+  roles: text('roles').notNull().default('[]'),
+  registryItemId: text('registryItemId'),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_plugins_identity').on(t.accountId, t.pluginId)]);
+
+/** An immutable version of a package: the manifest, its referenced data
+ *  files and the canonical definitions with their hashes (§5.3). */
+export const pluginVersions = pgTable('plugin_versions', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  pluginId: text('pluginId').notNull(),
+  version: text('version').notNull(),
+  manifest: text('manifest').notNull(),
+  manifestHash: text('manifestHash').notNull(),
+  /** sha256 over the manifest and every referenced file. */
+  archiveSha256: text('archiveSha256').notNull(),
+  /** JSON { <relative path>: <text> } — suites, fixtures, skills. */
+  files: text('files').notNull().default('{}'),
+  /** JSON { <contribution id>: <sha256> }. */
+  definitions: text('definitions').notNull().default('{}'),
+  coreRange: text('coreRange').notNull(),
+  /** JSON list of load warnings. */
+  scanReport: text('scanReport').notNull().default('[]'),
+  source: text('source').notNull().default('first_party'),
+  createdAt: text('createdAt').notNull(),
+  revokedAt: text('revokedAt'),
+  revokeReason: text('revokeReason'),
+}, (t) => [uniqueIndex('idx_plugin_versions_hash').on(t.accountId, t.pluginId, t.archiveSha256)]);
+
+/** A package installed in one workspace (installs are workspace-owned). */
+export const pluginInstalls = pgTable('plugin_installs', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  pluginId: text('pluginId').notNull(),
+  versionId: text('versionId').notNull(),
+  /** A widening update or a failed conformance waiting for the owner (§6.5). */
+  pendingVersionId: text('pendingVersionId'),
+  /** JSON { diff, failures? } for the pending version. */
+  pendingNote: text('pendingNote').notNull().default('{}'),
+  /** installed | active | suspended | disabled | removed. */
+  status: text('status').notNull().default('installed'),
+  suspendedReason: text('suspendedReason').notNull().default(''),
+  /** JSON: the permission diff and classifications the owner approved. */
+  approvedDiff: text('approvedDiff').notNull().default('[]'),
+  /** JSON: non-security settings (validated against the manifest's schema). */
+  settings: text('settings').notNull().default('{}'),
+  kitInstallId: text('kitInstallId'),
+  installedBy: text('installedBy').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  activatedAt: text('activatedAt'),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_plugin_installs_ws').on(t.workspaceId, t.pluginId)]);
+
+/** An interface name, claimed by one package (§4.2). */
+export const interfaces = pgTable('interfaces', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  /** The registry namespace that claimed it (yaam, a publisher, local). */
+  ownerNamespace: text('ownerNamespace').notNull(),
+  ownerPluginId: text('ownerPluginId').notNull(),
+  latestVersion: text('latestVersion').notNull(),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_interfaces_name').on(t.accountId, t.name)]);
+
+/** An immutable interface contract version. */
+export const interfaceVersions = pgTable('interface_versions', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  version: text('version').notNull(),
+  major: integer('major').notNull(),
+  definition: text('definition').notNull(),
+  definitionHash: text('definitionHash').notNull(),
+  pluginVersionId: text('pluginVersionId').notNull(),
+  suite: text('suite').notNull().default('{}'),
+  deprecatedAt: text('deprecatedAt'),
+  sunsetAt: text('sunsetAt'),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_interface_versions_v').on(t.accountId, t.name, t.version, t.definitionHash)]);
+
+/** A provider install's claim on one interface range, with its conformance. */
+export const interfaceProviders = pgTable('interface_providers', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  installId: text('installId').notNull(),
+  interface: text('interface').notNull(),
+  range: text('range').notNull(),
+  resolvedVersion: text('resolvedVersion').notNull().default(''),
+  /** JSON list of resource globs served. */
+  resources: text('resources').notNull().default('[]'),
+  conformanceRunId: text('conformanceRunId'),
+  /** unverified | conformant | failed | suspended. */
+  status: text('status').notNull().default('unverified'),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_interface_providers_install').on(t.installId, t.interface)]);
+
+/** Exactly one provider per (interface major, scope) (§4.2). */
+export const interfaceBindings = pgTable('interface_bindings', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  interface: text('interface').notNull(),
+  major: integer('major').notNull(),
+  /** workspace | unit | project | resource. */
+  scopeKind: text('scopeKind').notNull(),
+  /** '' for workspace; a unit id, project id or resource glob. */
+  scopeRef: text('scopeRef').notNull().default(''),
+  providerId: text('providerId').notNull(),
+  setBy: text('setBy').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_interface_bindings_scope').on(t.workspaceId, t.interface, t.major, t.scopeKind, t.scopeRef)]);
+
+/** The owner's policies on operations, stored in core (§4.3 step 4). */
+export const interfacePolicies = pgTable('interface_policies', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  /** Canonical `iface.op`, or `iface.*`; '' when the rule names a change kind. */
+  operation: text('operation').notNull().default(''),
+  changeKind: text('changeKind').notNull().default(''),
+  resourcePattern: text('resourcePattern').notNull().default(''),
+  /** JSON { bind?: { <field>: <glob> } }. */
+  match: text('match').notNull().default('{}'),
+  /** two_key | cosign | owner_key | deny | class:<Class>. */
+  require: text('require').notNull(),
+  why: text('why').notNull().default(''),
+  setBy: text('setBy').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** One conformance run of a provider against an interface version (§4.4). */
+export const conformanceRuns = pgTable('conformance_runs', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  providerId: text('providerId').notNull(),
+  installId: text('installId').notNull(),
+  pluginVersionId: text('pluginVersionId').notNull(),
+  interfaceVersionId: text('interfaceVersionId').notNull(),
+  mode: text('mode').notNull(),
+  startedAt: text('startedAt').notNull(),
+  finishedAt: text('finishedAt'),
+  /** pass | fail | error. */
+  result: text('result').notNull().default('error'),
+  /** JSON list { id, ok, skipped?, detail? }. */
+  cases: text('cases').notNull().default('[]'),
+  envId: text('envId'),
+});
+
+/** The registrar (§4.10): every contribution a plugin made, with its inverse. */
+export const pluginEffects = pgTable('plugin_effects', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  installId: text('installId').notNull(),
+  seq: integer('seq').notNull(),
+  /** interface | provider | binding | grant | tools … */
+  kind: text('kind').notNull(),
+  ref: text('ref').notNull(),
+  /** JSON { op, table?, id?, snapshot? } — how the core removes it, and how enable restores it. */
+  inverse: text('inverse').notNull(),
+  external: integer('external').notNull().default(0),
+  finalizer: text('finalizer'),
+  /** live | unwinding | unwound | orphaned. */
+  state: text('state').notNull().default('live'),
+  createdAt: text('createdAt').notNull(),
+  unwoundAt: text('unwoundAt'),
+});
+
+/** Per-agent grants on a provider install (§6.4): off by default. */
+export const pluginGrants = pgTable('plugin_grants', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  installId: text('installId').notNull(),
+  connectionId: text('connectionId'),
+  agentId: text('agentId').notNull(),
+  /** read | write. */
+  level: text('level').notNull(),
+  /** 1 = the provider's vendor extras too. */
+  extras: integer('extras').notNull().default(0),
+  memberAccountId: text('memberAccountId'),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_plugin_grants_agent').on(t.installId, t.agentId)]);
+
+/** The workspace's plugin audit chain (§5.6): installs, consents, bindings,
+ *  grants, conformance, updates, suspensions, unwinds, change transitions
+ *  and the approval pairs — hash-chained like org_audit, and mirrored to
+ *  org_audit when the workspace is an organization. */
+export const pluginAudit = pgTable('plugin_audit', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  seq: integer('seq').notNull(),
+  actor: text('actor').notNull(),
+  action: text('action').notNull(),
+  refType: text('refType').notNull().default(''),
+  refId: text('refId').notNull().default(''),
+  payload: text('payload').notNull().default('{}'),
+  prevHash: text('prevHash').notNull().default(''),
+  hash: text('hash').notNull(),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_plugin_audit_seq').on(t.workspaceId, t.seq)]);
+
+/** The generic change record (§4.8). The core knows no kinds: `kind` is
+ *  `<iface>.<kind>` declared by an interface, or `core.manual`. */
+export const changeRecords = pgTable('change_records', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  kind: text('kind').notNull(),
+  interfaceVersionId: text('interfaceVersionId'),
+  providerId: text('providerId'),
+  bindingScope: text('bindingScope'),
+  ref: text('ref').notNull().default(''),
+  /** JSON: the target identity, pinned at review. */
+  bind: text('bind').notNull().default('{}'),
+  title: text('title').notNull().default(''),
+  /** proposed | reviewed | gated | approved | applied | verifying | verified | rolling_back | rolled_back | rejected | abandoned | failed. */
+  state: text('state').notNull().default('proposed'),
+  /** agent:<id> | user:<id>. */
+  proposer: text('proposer').notNull(),
+  taskId: text('taskId'),
+  /** JSON list { by, approve, counts, at }. */
+  reviews: text('reviews').notNull().default('[]'),
+  /** trust | cosign | two_key | owner_key. */
+  requirement: text('requirement').notNull().default('trust'),
+  approvalId: text('approvalId'),
+  /** JSON { requestId?, askedAt?, owner?: { by, approve, at }, outcome?, used? }. */
+  keys: text('keys').notNull().default('{}'),
+  applyActionId: text('applyActionId'),
+  /** JSON { applied?: {…}, checks: [{ event?, match?, within, source, status }] }. */
+  verify: text('verify').notNull().default('{}'),
+  rollbackActionId: text('rollbackActionId'),
+  deadlineAt: text('deadlineAt'),
+  /** JSON list { from, to, by, why, at } — every transition. */
+  history: text('history').notNull().default('[]'),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+});
+
+/** Model-visible means logged (§5.6): plugin text that entered a model's
+ *  context, by hash, with its source. */
+export const contextProvenance = pgTable('context_provenance', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  sessionId: text('sessionId').notNull(),
+  turnId: text('turnId'),
+  /** tool_definition | operation_result | event | skill | card | panel. */
+  sourceKind: text('sourceKind').notNull(),
+  pluginId: text('pluginId').notNull(),
+  pluginVersion: text('pluginVersion').notNull(),
+  contributionId: text('contributionId').notNull(),
+  contentHash: text('contentHash').notNull(),
+  bytes: integer('bytes').notNull(),
+  untrusted: integer('untrusted').notNull().default(0),
+  createdAt: text('createdAt').notNull(),
+}, (t) => [uniqueIndex('idx_context_provenance_dedupe').on(t.sessionId, t.sourceKind, t.contentHash)]);

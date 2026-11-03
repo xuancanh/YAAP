@@ -38,6 +38,10 @@ export function isOwnerOnlyRoute(method: string, path: string): boolean {
   if (/^\/api\/workspaces$/.test(p)) return true;
   if (/^\/api\/workspaces\/[^/]+$/.test(p)) return true;
   if (/^\/api\/workspaces\/[^/]+\/(members|invites|flow-rules)(\/|$)/.test(p)) return true;
+  // Plugins (docs/plugins.md §6.1): installs, bindings, grants, policies and
+  // plugin settings are the owner's; so is the key on a change record.
+  if (/^\/api\/workspaces\/[^/]+\/(plugins|interfaces|interface-policies|plugin-settings)(\/|$)/.test(p)) return true;
+  if (/^\/api\/workspaces\/[^/]+\/changes\/[^/]+\/keys$/.test(p)) return true;
   if (/^\/api\/(settings|agent-types|mcp|skills|connections|computer|harness|registry|market|push|admin)(\/|$)/.test(p)) return true;
   if (/^\/api\/agents$/.test(p)) return true;
   if (/^\/api\/agents\/[^/]+$/.test(p)) return true;

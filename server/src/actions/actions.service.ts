@@ -78,6 +78,21 @@ export interface ActionHooks {
   audit?(workspaceId: string, entry: { actor: string; action: string; refType: string; refId: string; payload: Record<string, unknown> }): Promise<void>;
 }
 
+/** The plugin-call columns of a row (docs/plugins.md §5.6); null for every other call. */
+export interface PluginCallFields {
+  operation: string | null; interfaceVersion: string | null; providerId: string | null; bindingScope: string | null;
+  pluginVersion: string | null; packageDigest: string | null; definitionHash: string | null; credentialRef: string | null;
+  changeId: string | null; tainted: number | null; approvalRequestId: string | null; approvalAskedAt: string | null;
+  approvalDecidedAt: string | null; approvalOutcome: string | null; costUsd: number | null; costState: string | null;
+}
+const EMPTY_PLUGIN_FIELDS: PluginCallFields = {
+  operation: null, interfaceVersion: null, providerId: null, bindingScope: null, pluginVersion: null, packageDigest: null,
+  definitionHash: null, credentialRef: null, changeId: null, tainted: null, approvalRequestId: null, approvalAskedAt: null,
+  approvalDecidedAt: null, approvalOutcome: null, costUsd: null, costState: null,
+};
+/** The closed approval vocabulary of plugin calls (docs/plugins.md §4.3). */
+export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable';
+
 /** What the turn loop runs a held action with on the owner's key. */
 export type HeldExecutor = (sessionId: string, tool: string, input: Record<string, unknown>) => Promise<string>;
 
@@ -152,7 +167,7 @@ export class ActionsService {
 
   /** Open (or reopen) the row for this call. One row per key: a retry of a
    *  failed or stale attempt reuses it. */
-  async start(ctx: ActionCtx, p: { key: string; tool: string; input: Record<string, unknown>; cls: ActionClass; decision: string; level: TrustLevel | null; prior: ActionRow | null }): Promise<ActionRow> {
+  async start(ctx: ActionCtx, p: { key: string; tool: string; input: Record<string, unknown>; cls: ActionClass; decision: string; level: TrustLevel | null; prior: ActionRow | null; plugin?: PluginCallFields | null }): Promise<ActionRow> {
     const org = await this.trust.orgOf(ctx.workspaceId);
     const now = nowIso();
     const fields = {
@@ -161,6 +176,7 @@ export class ActionsService {
       inputHash: sha256(canonicalJson(p.input)), input: JSON.stringify(p.input).slice(0, 20_000),
       status: 'started', decision: p.decision, level: p.level, keys: '{}', stagedRef: '',
       result: '', resultHash: '', note: '', createdAt: now, finishedAt: null, revertedAt: null,
+      ...EMPTY_PLUGIN_FIELDS, ...(p.plugin ?? {}),
     };
     if (p.prior) {
       await this.db.update(actionLog).set(fields).where(eq(actionLog.id, p.prior.id));
@@ -183,10 +199,32 @@ export class ActionsService {
     await this.db.update(actionLog).set({ decision, ...(keys ? { keys: JSON.stringify(keys) } : {}) }).where(eq(actionLog.id, id));
   }
 
+  /** The `asked` half of the approval pair (plugin calls): a fresh request id. */
+  async markAsked(row: ActionRow, why: string): Promise<string> {
+    const requestId = newId();
+    const at = nowIso();
+    await this.db.update(actionLog).set({ approvalRequestId: requestId, approvalAskedAt: at, approvalOutcome: null, approvalDecidedAt: null }).where(eq(actionLog.id, row.id));
+    row.approvalRequestId = requestId;
+    this.onApproval?.(row, 'asked', null, why, requestId);
+    return requestId;
+  }
+
+  /** The `decided` half: one of the four outcomes, with the key holder for allowed-once. */
+  async markDecided(row: ActionRow, outcome: ApprovalOutcome, by: string, requestId?: string): Promise<void> {
+    const id = requestId ?? row.approvalRequestId ?? (await this.db.select({ r: actionLog.approvalRequestId }).from(actionLog).where(eq(actionLog.id, row.id))).at(0)?.r ?? newId();
+    await this.db.update(actionLog).set({ approvalRequestId: id, approvalDecidedAt: nowIso(), approvalOutcome: outcome }).where(eq(actionLog.id, row.id));
+    this.onApproval?.(row, 'decided', outcome, by, id);
+  }
+
+  /** Told of each half of an approval pair on a plugin call (the plugin
+   *  audit chain listens; it mirrors to org_audit). `by` is the reason for
+   *  `asked` and the key holder for `decided`. */
+  onApproval?: (row: ActionRow, half: 'asked' | 'decided', outcome: ApprovalOutcome | null, by: string, requestId: string) => void;
+
   /** Settle the row and feed the ledger (success counts as clean). */
   async finish(row: ActionRow, p: { status: ActionStatus; result?: string; note?: string; keys?: Record<string, unknown> }): Promise<void> {
     const result = (p.result ?? '').slice(0, 8_000);
-    // Keys merge over what the row already records (never lose a co-signer's verdict).
+    // Keys combine over what the row already records (never lose a co-signer's verdict).
     const keys = p.keys ? { ...parseKeys((await this.db.select({ keys: actionLog.keys }).from(actionLog).where(eq(actionLog.id, row.id))).at(0)?.keys), ...p.keys } : null;
     await this.db.update(actionLog).set({
       status: p.status, result, resultHash: result ? sha256(result) : '', finishedAt: nowIso(),
@@ -291,6 +329,7 @@ export class ActionsService {
     keys.owner = { by: actor, approve, note: note.slice(0, 300), at: nowIso() };
     const approvalId = typeof keys.approvalId === 'string' ? keys.approvalId : null;
     const cls = isActionClass(row.class) ? row.class : 'external_reversible';
+    if (row.operation) await this.markDecided(row, approve ? 'allowed-once' : 'rejected', actor);
     if (!approve) {
       await this.finish(row, { status: 'denied', note: note || 'the owner said no', keys });
       if (row.agentId) await this.trust.record(workspaceId, row.agentId, cls, 'rejected', { refType: 'action', refId: row.id });

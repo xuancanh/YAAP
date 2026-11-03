@@ -43,6 +43,8 @@ COPY --from=build /app/server/dist ./server/dist
 # "type": "module" or node refuses to load the CommonJS output in server/dist.
 COPY server/package.json ./server/package.json
 COPY --from=build /app/dist ./dist
+# First-party plugins are declarative data the server loads (docs/plugins.md §3.2).
+COPY plugins ./plugins
 USER node
 EXPOSE 8790
 CMD ["node", "server/dist/main.js"]

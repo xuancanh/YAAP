@@ -43,8 +43,8 @@ import { ConnectionsService } from '../connections/connections.service';
 import { ActionReviewService, ReviewRecord } from '../review/action-review.service';
 import { ComputerService } from '../computer/computer.service';
 import { REMEMBERABLE_COMPUTER_TOOLS, summarizeInput as summarizeComputerInput } from '../computer/computer-scopes';
-import { ActionsService, type ActionCtx, type ActionRow, type CoSignVerdict } from '../actions/actions.service';
-import { runsFreely, stagingOf, TWO_KEY_CLASSES, unclassified, type ActionClass } from '../actions/action-classes';
+import { ActionsService, type ActionCtx, type ActionRow, type CoSignVerdict, type PluginCallFields } from '../actions/actions.service';
+import { ACTION_CLASSES as ACTION_CLASS_ORDER, runsFreely, stagingOf, TWO_KEY_CLASSES, unclassified, type ActionClass } from '../actions/action-classes';
 import { decide, type TrustDecision, type TrustLevel } from '../actions/trust-policy';
 import { CONNECTION_TOOLS } from '../connections/connections.tools';
 
@@ -97,8 +97,39 @@ export interface ToolExecCtx {
   fileRoot?: () => Promise<FileRoot>;
 }
 
+/**
+ * The fixed policy stage for interface operations (docs/plugins.md §4.3),
+ * offered by the plugin dispatcher. The turn loop runs it before the trust
+ * decision, the Ask/Auto check, the reviewer and the ask, and cannot skip
+ * it: a call whose provider has a stage and no action contract is refused,
+ * and the provider's executor refuses any call the stage did not admit.
+ */
+export interface PolicyPreflight {
+  /** Set when the stage refuses the call (unbound, gate, owner deny, budget). */
+  refuse?: string;
+  cls: ActionClass;
+  /** trust | cosign | two_key | owner_key — above trust needs that key. */
+  requirement: 'trust' | 'cosign' | 'two_key' | 'owner_key';
+  /** An approved change record's one-shot owner key covers this call. */
+  preKeyed?: { by: string; requestId: string } | null;
+  /** Whether a granted approval may be remembered (allow-always / allow-tool). */
+  mayRemember: boolean;
+  /** The plugin columns of the action_log row. */
+  fields: Partial<PluginCallFields>;
+}
+export interface PolicyStageHook {
+  /** null = not an interface operation (an ordinary tool of the same provider). */
+  preflight(session: ChatSession, call: AiToolCall, origin: TurnOrigin): Promise<PolicyPreflight | null>;
+  /** The chain decided to run this exact call: one execution may follow. */
+  admit(session: ChatSession, name: string, input: Record<string, unknown>): void;
+  /** The call's row is settled (metering). */
+  settle(row: ActionRow, status: string): Promise<void>;
+}
+
 export interface ToolProviderHook {
   specsFor(session: ChatSession): Promise<AiToolSpec[]>;
+  /** See PolicyStageHook (interface operations only). */
+  policyStage?: PolicyStageHook;
   owns(name: string): boolean;
   isReadOnly(name: string): boolean;
   execute(session: ChatSession, name: string, input: Record<string, unknown>, ctx?: ToolExecCtx): Promise<string>;
@@ -330,6 +361,8 @@ const APPROVAL_TTL_MS = 10 * 60_000;
  *  Ask gates decide: a person in an Ask-mode chat, or a channel turn) and
  *  the effective level it was made at. */
 interface ContractState {
+  /** The policy stage's verdict for an interface operation. */
+  plugin?: PolicyPreflight;
   cls: ActionClass;
   row: ActionRow;
   decision: TrustDecision | null;
@@ -370,6 +403,8 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
   private readonly extraProviders: ToolProviderHook[] = [];
   /** How long a paused approval waits before auto-deny (test seam). */
   approvalTtlMs = APPROVAL_TTL_MS;
+  /** Approvals that ended on the TTL rather than an answer (`unavailable` for plugin calls). */
+  private readonly timedOut = new Set<string>();
   /** sessionId → the progress sink of the tool call running now. */
   private readonly progressSinks = new Map<string, (text: string) => void>();
   /** sessionId → the record-only recorder (see SandboxRecorder). */
@@ -439,6 +474,9 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
       actions.bindExecutor(async (sessionId, tool, input) => {
         const s = await this.repo.getSession(sessionId);
         if (!s) throw new Error(`session ${sessionId} is gone`);
+        // A held plugin call runs on the owner's key: that key is the
+        // decision the policy stage waited for (docs/plugins.md §4.3).
+        this.providerOf(tool)?.policyStage?.admit(s, tool, input);
         return this.executeTool(s, tool, input);
       });
       actions.coSignRunner = (p) => this.runCoSigner(p);
@@ -793,6 +831,31 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
           // stage (a draft) or a second agent key. Computer tools keep their
           // own floor (user turns only, every call asks) and skip it.
           let contract: ContractState | null = null;
+          // The fixed policy stage for interface operations (docs/plugins.md
+          // §4.3): binding, grant, change gate, class, owner policies and
+          // budget. It cannot be skipped: without the action contract a
+          // plugin call is refused, and a refusal is logged like any call.
+          const stage = this.providerOf(call.name)?.policyStage;
+          let plugin: PolicyPreflight | null = null;
+          if (stage) {
+            plugin = this.actions && session.agentId
+              ? await stage.preflight(session, call, input.origin ?? 'user').catch((err: unknown) => ({ refuse: `the policy stage failed (${err instanceof Error ? err.message : String(err)}), so the call is denied`, cls: 'external_reversible' as const, requirement: 'trust' as const, mayRemember: false, fields: {} }))
+              : { refuse: 'interface operations need the action contract and a durable agent', cls: 'external_reversible', requirement: 'trust', mayRemember: false, fields: {} };
+            if (plugin?.refuse) {
+              const output = `Refused: ${plugin.refuse}. Nothing was called. Do not retry the same call — tell the user what you wanted to do.`;
+              if (this.actions) {
+                const actx: ActionCtx = { sessionId: session.id, workspaceId: session.workspaceId, agentId: session.agentId ?? null, origin: input.origin ?? 'user' };
+                const key = this.actions.keyFor(actx, call.name, call.input);
+                const row = await this.actions.start(actx, { key, tool: call.name, input: call.input, cls: plugin.cls, decision: 'refused', level: null, prior: await this.actions.byKey(key), plugin: { ...plugin.fields, costUsd: 0, costState: 'released' } as PluginCallFields }).catch(() => null);
+                if (row) await this.actions.finish(row, { status: 'refused', note: plugin.refuse }).catch(() => undefined);
+              }
+              await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
+              history.push({ role: 'tool', content: output, toolCallId: call.id, isError: true });
+              toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'deny', isError: true });
+              yield { type: 'tool_result', id: call.id, name: call.name, output, isError: true };
+              continue;
+            }
+          }
           // Internal, reversible work (files through WorkspaceFs, the agent's
           // own records and proposals, the org's work record) runs freely in
           // every kind of session: no pause, no ledger ask or hold, no
@@ -805,11 +868,12 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
           if (this.actions && !this.computer?.owns(call.name)) {
             const origin = input.origin ?? 'user';
             const provider = this.providerOf(call.name);
-            const cls = this.actions.classify(call.name, call.input, {
+            const classified = this.actions.classify(call.name, call.input, {
               readOnly: call.name.startsWith(MCP_TOOL_PREFIX) ? mcpReadOnly.has(call.name)
                 : provider && session.agentId ? provider.isReadOnly(call.name) : undefined,
             });
-            if (cls !== 'read') {
+            const cls: ActionClass = plugin && ACTION_CLASS_ORDER.indexOf(plugin.cls) > ACTION_CLASS_ORDER.indexOf(classified) ? plugin.cls : classified;
+            if (cls !== 'read' || plugin) {
               const actx: ActionCtx = { sessionId: session.id, workspaceId: session.workspaceId, agentId: session.agentId ?? null, origin };
               const key = this.actions.keyFor(actx, call.name, call.input);
               const prior = await this.actions.byKey(key);
@@ -833,13 +897,24 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
                 if (!legacy && !free) decision = decide({ cls, level, humanPresent: origin === 'user', hasStaging });
               }
               if (free) decision = 'run';
+              // The stage's requirement: an approved change record's one-shot
+              // key runs the call; otherwise two-key and owner-key calls take
+              // the owner's key whatever the level, and cosign a second key.
+              if (plugin) {
+                if (plugin.preKeyed) decision = 'run';
+                else if (plugin.requirement === 'two_key' || plugin.requirement === 'owner_key') decision = origin === 'user' ? 'ask' : 'hold';
+                else if (plugin.requirement === 'cosign' && (decision === 'run' || decision === 'run_notify' || decision === null)) decision = 'cosign';
+              }
               // An incident froze this class for the member's organization
               // (item 29): held for the owner's key whatever the level, in
               // every kind of session.
               const frozen = await this.actions.isFrozen(session.workspaceId, session.agentId ?? null, cls);
               if (frozen) decision = 'hold';
-              const row = await this.actions.start(actx, { key, tool: call.name, input: call.input, cls, decision: frozen ? 'frozen' : free ? 'free' : decision ?? 'legacy', level, prior });
-              contract = { cls, row, decision, level, ...(frozen ? { why: `an incident froze ${cls.replace(/_/g, ' ')} actions for the organization` } : {}) };
+              const row = await this.actions.start(actx, { key, tool: call.name, input: call.input, cls, decision: frozen ? 'frozen' : plugin?.preKeyed ? 'change_key' : free ? 'free' : decision ?? 'legacy', level, prior, plugin: plugin ? plugin.fields as PluginCallFields : null });
+              contract = { cls, row, decision, level, ...(plugin ? { plugin } : {}), ...(frozen ? { why: `an incident froze ${cls.replace(/_/g, ' ')} actions for the organization` } : {}) };
+              // The change record's key was asked and decided at its gate:
+              // this call is that one-shot allowed-once.
+              if (plugin?.preKeyed && !frozen) await this.actions.markDecided(row, 'allowed-once', plugin.preKeyed.by, plugin.preKeyed.requestId || undefined);
               if (decision === 'cosign') {
                 const cs = await this.actions.coSign(row, { name: call.name, input: call.input });
                 if (cs.result?.verdict === 'approve') {
@@ -860,6 +935,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
                 }
               }
               if (contract.decision === 'hold' || contract.decision === 'stage') {
+                if (plugin) await this.actions.markAsked(row, `held for the owner's key (requirement ${plugin.requirement}, class ${cls})`);
                 const held = await this.holdOrStage(session, contract, call, skillsUsed);
                 await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: held.output, toolName: call.name });
                 history.push({ role: 'tool', content: held.output, toolCallId: call.id, isError: false });
@@ -949,9 +1025,15 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             yield { type: 'tool_result', id: call.id, name: tool, output: output.slice(0, 500), isError, ...contractTag };
             continue;
           }
-          const policy = free
+          const basePolicy = free
             ? { verdict: 'auto' as const, remember: false, readOnly: false }
             : this.contractPolicy(contract, this.checkPolicy(session, call, approvals));
+          // Plugin calls (§4.3): remembered approvals only for read and
+          // external_reversible, never for two-key or change apply/rollback —
+          // and a remembered grant never answers such a call.
+          const policy = plugin && !free
+            ? (!plugin.mayRemember && basePolicy.verdict === 'remembered' ? { ...basePolicy, verdict: 'ask' as const, remember: false } : { ...basePolicy, remember: basePolicy.remember && plugin.mayRemember })
+            : basePolicy;
           let { verdict } = policy;
           const { remember } = policy;
           // Independent reviewer (docs/permissions.md §6): a mutating call that
@@ -963,7 +1045,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
           // goes on to act outward is read at that outward call.
           let review: ReviewRecord | undefined;
           let reviewDenial: string | undefined;
-          if ((verdict === 'auto' || verdict === 'remembered') && policy.readOnly === false && !free && this.review && !contract?.cosigned
+          if ((verdict === 'auto' || verdict === 'remembered') && policy.readOnly === false && !free && this.review && !contract?.cosigned && !plugin?.preKeyed
             && (await this.review.config()).enabled) {
             const agent = session.agentId ? await this.agents.get(session.agentId).catch(() => null) : null;
             const r = await this.review.review({
@@ -1003,8 +1085,14 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             // consumer pulls again — approving into an unregistered slot would
             // deadlock the turn.
             const decided = this.awaitDecision(sessionId, call.id, ctl.signal);
+            if (plugin && contract && this.actions) await this.actions.markAsked(contract.row, `asked inline (requirement ${plugin.requirement}, class ${contract.cls})`).catch(() => undefined);
             yield { type: 'approval_required', callId: call.id, tool: call.name, input: call.input, ...(review ? { review } : {}) };
             decision = await decided;
+            const timedOut = this.timedOut.delete(`${sessionId}:${call.id}`);
+            if (plugin && contract && this.actions) {
+              const outcome = ctl.signal.aborted ? 'cancelled' : timedOut ? 'unavailable' : decision === 'deny' ? 'rejected' : 'allowed-once';
+              await this.actions.markDecided(contract.row, outcome, outcome === 'allowed-once' ? actor : outcome === 'rejected' ? actor : 'system').catch(() => undefined);
+            }
             if ((decision === 'allow-always' || decision === 'allow-tool') && remember) {
               if (decision === 'allow-always') approvals.exact.push(exactKey(call));
               if (decision === 'allow-tool' && !SELF_MOD_TOOLS.has(call.name)) approvals.tools.push(call.name);
@@ -1027,8 +1115,11 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             if (!rate.ok) {
               output = await this.actions!.refuseRate(contract!.row, rate.reason, rate.limit);
               isError = true;
+              if (plugin) await stage?.settle(contract!.row, 'refused').catch(() => undefined);
               contract = null; // settled
             } else {
+              // The chain decided to run this exact call: the stage admits one execution.
+              if (plugin) stage?.admit(session, call.name, call.input);
               // Run the tool while streaming whatever progress it reports.
               const queue: string[] = [];
               let wake: (() => void) | null = null;
@@ -1064,6 +1155,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
               : undefined;
             await this.actions.finish(contract.row, { status, result: output, ...(reviewDenial ? { note: reviewDenial } : {}), ...(keys ? { keys } : {}) }).catch(() => undefined);
             if (status === 'succeeded' && contract.decision === 'run_notify') await this.actions.notifyAfter(contract.row, output);
+            if (plugin) await stage?.settle(contract.row, status).catch(() => undefined);
           }
           // A settled computer action: the screenshot rides along to the model
           // as a vision part on this tool result (never persisted in the
@@ -1480,7 +1572,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
       const onAbort = () => settle('deny');
       // Second layer behind the abort listener: an orphaned approval (dead
       // client that never triggered a close, lost UI) auto-denies on TTL.
-      const ttl = setTimeout(() => settle('deny'), this.approvalTtlMs);
+      const ttl = setTimeout(() => { this.timedOut.add(key); settle('deny'); }, this.approvalTtlMs);
       ttl.unref?.();
       signal.addEventListener('abort', onAbort, { once: true });
       this.pending.set(key, settle);

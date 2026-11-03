@@ -1882,6 +1882,139 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_tasks_key ON agent_tasks ("agentId", "key")`);
     },
   },
+  {
+    id: '0053-change-records',
+    up: async (db) => {
+      // The generic change record and model-visible provenance
+      // (docs/plugins.md §4.8, §5.6, §8.3), and the plugin-call columns of
+      // action_log: the canonical operation, its interface version,
+      // provider and binding scope, the approval asked/decided pair with
+      // its closed outcome, and the metered cost. The plan's `jobs` table
+      // is deferred: verify windows wait on change_records.deadlineAt.
+      // Idempotent.
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS change_records (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "id" TEXT PRIMARY KEY,
+          "workspaceId" TEXT NOT NULL,
+          "kind" TEXT NOT NULL,
+          "interfaceVersionId" TEXT,
+          "providerId" TEXT,
+          "bindingScope" TEXT,
+          "ref" TEXT NOT NULL DEFAULT '',
+          "bind" TEXT NOT NULL DEFAULT '{}',
+          "title" TEXT NOT NULL DEFAULT '',
+          "state" TEXT NOT NULL DEFAULT 'proposed',
+          "proposer" TEXT NOT NULL,
+          "taskId" TEXT,
+          "reviews" TEXT NOT NULL DEFAULT '[]',
+          "requirement" TEXT NOT NULL DEFAULT 'trust',
+          "approvalId" TEXT,
+          "keys" TEXT NOT NULL DEFAULT '{}',
+          "applyActionId" TEXT,
+          "verify" TEXT NOT NULL DEFAULT '{}',
+          "rollbackActionId" TEXT,
+          "deadlineAt" TEXT,
+          "history" TEXT NOT NULL DEFAULT '[]',
+          "createdAt" TEXT NOT NULL,
+          "updatedAt" TEXT NOT NULL
+        )
+      `);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_change_records_ws ON change_records ("workspaceId", "state")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_change_records_deadline ON change_records ("deadlineAt")`);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS context_provenance (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "id" TEXT PRIMARY KEY,
+          "workspaceId" TEXT NOT NULL,
+          "sessionId" TEXT NOT NULL,
+          "turnId" TEXT,
+          "sourceKind" TEXT NOT NULL,
+          "pluginId" TEXT NOT NULL,
+          "pluginVersion" TEXT NOT NULL,
+          "contributionId" TEXT NOT NULL,
+          "contentHash" TEXT NOT NULL,
+          "bytes" INTEGER NOT NULL,
+          "untrusted" INTEGER NOT NULL DEFAULT 0,
+          "createdAt" TEXT NOT NULL
+        )
+      `);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_context_provenance_dedupe ON context_provenance ("sessionId", "sourceKind", "contentHash")`);
+      const cols: Array<[string, string]> = [
+        ['operation', 'TEXT'], ['interfaceVersion', 'TEXT'], ['providerId', 'TEXT'], ['bindingScope', 'TEXT'],
+        ['pluginVersion', 'TEXT'], ['packageDigest', 'TEXT'], ['definitionHash', 'TEXT'], ['credentialRef', 'TEXT'],
+        ['changeId', 'TEXT'], ['tainted', 'INTEGER'], ['approvalRequestId', 'TEXT'], ['approvalAskedAt', 'TEXT'],
+        ['approvalDecidedAt', 'TEXT'], ['approvalOutcome', 'TEXT'], ['costUsd', 'REAL'], ['costState', 'TEXT'],
+      ];
+      for (const [c, ddl] of cols) if (!(await hasColumn(db, 'action_log', c))) await db.query(`ALTER TABLE action_log ADD COLUMN "${c}" ${ddl}`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_action_log_operation ON action_log ("workspaceId", "operation")`);
+    },
+  },
+  {
+    id: '0054-plugins-interfaces',
+    up: async (db) => {
+      // Plugins, interfaces, providers, bindings, owner policies,
+      // conformance runs, the registrar's effects, per-agent grants and the
+      // plugin audit chain (docs/plugins.md §8.1, Phase 1), and the
+      // workspace's plugin settings. Secrets, connections, shares, settings
+      // layers, webhook deliveries and environments come with the phases
+      // that use them. Idempotent.
+      if (!(await hasColumn(db, 'workspaces', 'pluginSettings'))) await db.query(`ALTER TABLE workspaces ADD COLUMN "pluginSettings" TEXT NOT NULL DEFAULT '{}'`);
+      const tables: Array<[string, string, string[]]> = [
+        ['plugins', `"id" TEXT PRIMARY KEY, "pluginId" TEXT NOT NULL, "name" TEXT NOT NULL, "publisherId" TEXT NOT NULL,
+          "tier" TEXT NOT NULL, "roles" TEXT NOT NULL DEFAULT '[]', "registryItemId" TEXT, "createdAt" TEXT NOT NULL`,
+        ['CREATE UNIQUE INDEX IF NOT EXISTS idx_plugins_identity ON plugins ("accountId", "pluginId")']],
+        ['plugin_versions', `"id" TEXT PRIMARY KEY, "pluginId" TEXT NOT NULL, "version" TEXT NOT NULL, "manifest" TEXT NOT NULL,
+          "manifestHash" TEXT NOT NULL, "archiveSha256" TEXT NOT NULL, "files" TEXT NOT NULL DEFAULT '{}',
+          "definitions" TEXT NOT NULL DEFAULT '{}', "coreRange" TEXT NOT NULL, "scanReport" TEXT NOT NULL DEFAULT '[]',
+          "source" TEXT NOT NULL DEFAULT 'first_party', "createdAt" TEXT NOT NULL, "revokedAt" TEXT, "revokeReason" TEXT`,
+        ['CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_versions_hash ON plugin_versions ("accountId", "pluginId", "archiveSha256")']],
+        ['plugin_installs', `"id" TEXT PRIMARY KEY, "workspaceId" TEXT NOT NULL, "pluginId" TEXT NOT NULL, "versionId" TEXT NOT NULL,
+          "pendingVersionId" TEXT, "pendingNote" TEXT NOT NULL DEFAULT '{}', "status" TEXT NOT NULL DEFAULT 'installed',
+          "suspendedReason" TEXT NOT NULL DEFAULT '', "approvedDiff" TEXT NOT NULL DEFAULT '[]', "settings" TEXT NOT NULL DEFAULT '{}',
+          "kitInstallId" TEXT, "installedBy" TEXT NOT NULL DEFAULT '', "createdAt" TEXT NOT NULL, "activatedAt" TEXT, "updatedAt" TEXT NOT NULL`,
+        ['CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_installs_ws ON plugin_installs ("workspaceId", "pluginId")']],
+        ['interfaces', `"id" TEXT PRIMARY KEY, "name" TEXT NOT NULL, "ownerNamespace" TEXT NOT NULL, "ownerPluginId" TEXT NOT NULL,
+          "latestVersion" TEXT NOT NULL, "createdAt" TEXT NOT NULL`,
+        ['CREATE UNIQUE INDEX IF NOT EXISTS idx_interfaces_name ON interfaces ("accountId", "name")']],
+        ['interface_versions', `"id" TEXT PRIMARY KEY, "name" TEXT NOT NULL, "version" TEXT NOT NULL, "major" INTEGER NOT NULL,
+          "definition" TEXT NOT NULL, "definitionHash" TEXT NOT NULL, "pluginVersionId" TEXT NOT NULL, "suite" TEXT NOT NULL DEFAULT '{}',
+          "deprecatedAt" TEXT, "sunsetAt" TEXT, "createdAt" TEXT NOT NULL`,
+        ['CREATE UNIQUE INDEX IF NOT EXISTS idx_interface_versions_v ON interface_versions ("accountId", "name", "version", "definitionHash")']],
+        ['interface_providers', `"id" TEXT PRIMARY KEY, "workspaceId" TEXT NOT NULL, "installId" TEXT NOT NULL, "interface" TEXT NOT NULL,
+          "range" TEXT NOT NULL, "resolvedVersion" TEXT NOT NULL DEFAULT '', "resources" TEXT NOT NULL DEFAULT '[]',
+          "conformanceRunId" TEXT, "status" TEXT NOT NULL DEFAULT 'unverified', "createdAt" TEXT NOT NULL`,
+        ['CREATE UNIQUE INDEX IF NOT EXISTS idx_interface_providers_install ON interface_providers ("installId", "interface")']],
+        ['interface_bindings', `"id" TEXT PRIMARY KEY, "workspaceId" TEXT NOT NULL, "interface" TEXT NOT NULL, "major" INTEGER NOT NULL,
+          "scopeKind" TEXT NOT NULL, "scopeRef" TEXT NOT NULL DEFAULT '', "providerId" TEXT NOT NULL, "setBy" TEXT NOT NULL DEFAULT '',
+          "createdAt" TEXT NOT NULL`,
+        ['CREATE UNIQUE INDEX IF NOT EXISTS idx_interface_bindings_scope ON interface_bindings ("workspaceId", "interface", "major", "scopeKind", "scopeRef")']],
+        ['interface_policies', `"id" TEXT PRIMARY KEY, "workspaceId" TEXT NOT NULL, "operation" TEXT NOT NULL DEFAULT '',
+          "changeKind" TEXT NOT NULL DEFAULT '', "resourcePattern" TEXT NOT NULL DEFAULT '', "match" TEXT NOT NULL DEFAULT '{}',
+          "require" TEXT NOT NULL, "why" TEXT NOT NULL DEFAULT '', "setBy" TEXT NOT NULL DEFAULT '', "createdAt" TEXT NOT NULL`,
+        ['CREATE INDEX IF NOT EXISTS idx_interface_policies_ws ON interface_policies ("workspaceId")']],
+        ['conformance_runs', `"id" TEXT PRIMARY KEY, "workspaceId" TEXT NOT NULL, "providerId" TEXT NOT NULL, "installId" TEXT NOT NULL,
+          "pluginVersionId" TEXT NOT NULL, "interfaceVersionId" TEXT NOT NULL, "mode" TEXT NOT NULL, "startedAt" TEXT NOT NULL,
+          "finishedAt" TEXT, "result" TEXT NOT NULL DEFAULT 'error', "cases" TEXT NOT NULL DEFAULT '[]', "envId" TEXT`,
+        ['CREATE INDEX IF NOT EXISTS idx_conformance_runs_provider ON conformance_runs ("providerId")']],
+        ['plugin_effects', `"id" TEXT PRIMARY KEY, "workspaceId" TEXT NOT NULL, "installId" TEXT NOT NULL, "seq" INTEGER NOT NULL,
+          "kind" TEXT NOT NULL, "ref" TEXT NOT NULL, "inverse" TEXT NOT NULL, "external" INTEGER NOT NULL DEFAULT 0, "finalizer" TEXT,
+          "state" TEXT NOT NULL DEFAULT 'live', "createdAt" TEXT NOT NULL, "unwoundAt" TEXT`,
+        ['CREATE INDEX IF NOT EXISTS idx_plugin_effects_install ON plugin_effects ("installId", "seq")']],
+        ['plugin_grants', `"id" TEXT PRIMARY KEY, "workspaceId" TEXT NOT NULL, "installId" TEXT NOT NULL, "connectionId" TEXT,
+          "agentId" TEXT NOT NULL, "level" TEXT NOT NULL, "extras" INTEGER NOT NULL DEFAULT 0, "memberAccountId" TEXT, "createdAt" TEXT NOT NULL`,
+        ['CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_grants_agent ON plugin_grants ("installId", "agentId")']],
+        ['plugin_audit', `"id" TEXT PRIMARY KEY, "workspaceId" TEXT NOT NULL, "seq" INTEGER NOT NULL, "actor" TEXT NOT NULL,
+          "action" TEXT NOT NULL, "refType" TEXT NOT NULL DEFAULT '', "refId" TEXT NOT NULL DEFAULT '', "payload" TEXT NOT NULL DEFAULT '{}',
+          "prevHash" TEXT NOT NULL DEFAULT '', "hash" TEXT NOT NULL, "createdAt" TEXT NOT NULL`,
+        ['CREATE UNIQUE INDEX IF NOT EXISTS idx_plugin_audit_seq ON plugin_audit ("workspaceId", "seq")']],
+      ];
+      for (const [table, columns, indexes] of tables) {
+        await db.query(`CREATE TABLE IF NOT EXISTS ${table} ("accountId" TEXT NOT NULL DEFAULT 'single', ${columns})`);
+        for (const ix of indexes) await db.query(ix);
+      }
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */
