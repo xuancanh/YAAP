@@ -15,6 +15,7 @@ import { useApp } from '../store';
 import { api, type AgentMessage, type HomeData, type HomeNeed, type HomeNeedAction } from '../lib/api';
 import { actionDone, type HomeTarget } from '../lib/home';
 import { HomeBoard, HomeStatus } from './HomeBoard';
+import { useMentionables } from './MentionBox';
 
 const NewWorkspaceWizard = lazy(() => import('./NewWorkspaceWizard').then((m) => ({ default: m.NewWorkspaceWizard })));
 
@@ -42,6 +43,8 @@ export function HomeView() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
   const [wizard, setWizard] = useState(false);
+  // Task @mentions in snippets render as chips (docs/work-tracking.md "Mentions"); only in a company.
+  const mentionables = useMentionables(data?.company ? wsId : null);
   const since = useRef<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -142,7 +145,7 @@ export function HomeView() {
       {data ? (
         <HomeBoard
           data={data} narrow={narrow} wide={wide} name={name} busy={busy}
-          onAct={(n, a) => { void onAct(n, a); }} onOpen={onOpen} onMessage={onMessage} onAllAgents={() => app.go('agents')}
+          onAct={(n, a) => { void onAct(n, a); }} onOpen={onOpen} onMessage={onMessage} onAllAgents={() => app.go('agents')} mentionables={mentionables}
           onStartCompany={app.companiesEnabled && isOwner && ws && !ws.shared ? () => setWizard(true) : undefined}
           onNewAgent={isOwner ? () => app.setNewAgentOpen(true) : undefined}
         />

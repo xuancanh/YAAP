@@ -50,6 +50,7 @@ import { OrgAuditorService } from './org-auditor.service';
 import { OrgIntentService } from './org-intent.service';
 import { OrgCapitalService } from './org-capital.service';
 import { OrgDecisionsService } from './org-decisions.service';
+import { TaskMentionsService } from './task-mentions.service';
 import { describeTunables } from './org-tunables';
 
 export class ChiefDto {
@@ -184,6 +185,8 @@ export class TaskDto {
 
 export class AssignDto { @IsOptional() @IsString() agentId?: string; /** Hybrid staff (item 24): a human employee's account id instead. */ @IsOptional() @IsString() humanId?: string }
 export class TextDto { @IsString() text!: string }
+/** A task comment: `@Name` in the text tags; `notify` tags by name without writing it (docs/work-tracking.md "Mentions"). */
+export class CommentDto { @IsString() text!: string; @IsOptional() @IsArray() @IsString({ each: true }) notify?: string[] }
 export class ReviewDto {
   @IsIn(['accept', 'request_changes', 'escalate']) verdict!: 'accept' | 'request_changes' | 'escalate';
   @IsOptional() @IsString() note?: string;
@@ -232,6 +235,8 @@ export class OrgController {
     @Optional() private readonly capital?: OrgCapitalService,
     /** Optional: decision routing (docs/owners-seat.md §7). */
     @Optional() private readonly decisions?: OrgDecisionsService,
+    /** Optional: `@mentions` on tasks (docs/work-tracking.md "Mentions"). */
+    @Optional() private readonly mentions?: TaskMentionsService,
   ) {}
 
   private enabled(): boolean { return this.config.get<boolean>('companiesEnabled') !== false; }
@@ -391,7 +396,9 @@ export class OrgController {
     if (!dto.agentId) throw new BadRequestException('agentId or humanId is required');
     return this.tasks.assign(id, taskId, dto.agentId, this.actor());
   }
-  @Post(':id/tasks/:taskId/comment') comment(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TextDto) { this.guard(); return this.tasks.comment(id, taskId, { text: dto.text, fromAgentId: null }); }
+  @Post(':id/tasks/:taskId/comment') comment(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: CommentDto) { this.guard(); return this.tasks.comment(id, taskId, { text: dto.text, fromAgentId: null, notify: dto.notify, strictMentions: true }); }
+  /** Who may be tagged on this company's tasks (the comment box's @ list). */
+  @Get(':id/mentionables') async mentionables(@Param('id') id: string) { this.guard(); return this.mentions ? this.mentions.candidates(id) : []; }
   @Get(':id/tasks/:taskId/comments') comments(@Param('id') id: string, @Param('taskId') taskId: string) { this.guard(); return this.tasks.messages(id, { taskId }); }
   /** The CEO reviews directly (no independent check: the human is the floor). */
   @Post(':id/tasks/:taskId/review') review(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: ReviewDto) { this.guard(); return this.tasks.review(id, taskId, { verdict: dto.verdict, note: dto.note, byAgentId: null }); }

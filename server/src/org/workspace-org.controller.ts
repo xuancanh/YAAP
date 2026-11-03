@@ -38,7 +38,7 @@ import { actorId } from '../accounts/account-context';
 import { ORG_MODES, type OrgMode } from '../workspaces/workspaces.service';
 import { OrgModeService, AUTONOMY_CAPS, MAX_ORG_AGENT_CAP } from './org-mode.service';
 import {
-  OrgController, UpdateOrgDto, AddMemberDto, UpdateMemberDto, ScopesDto, GoalDto, TaskDto, AssignDto, TextDto, ReviewDto, DecideDto, ProposalDto, BudgetDto, WakeDto, HumanDto, UnitDto, SloDto, AckDto,
+  OrgController, UpdateOrgDto, AddMemberDto, UpdateMemberDto, ScopesDto, GoalDto, TaskDto, AssignDto, TextDto, CommentDto, ReviewDto, DecideDto, ProposalDto, BudgetDto, WakeDto, HumanDto, UnitDto, SloDto, AckDto,
   VisionDto, ProfileDto, TunableDto, CheckInDto, PlanDto, RoutingDto, AllocationDto, DryRunDto, VetoDto,
 } from './org.controller';
 
@@ -188,7 +188,8 @@ export class WorkspaceOrgController {
   @Post('tasks') async addTask(@Param('id') id: string, @Body() dto: TaskDto) { return this.orgs.addTask(await this.oid(id), dto); }
   @Patch('tasks/:taskId') async updateTask(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TaskDto) { return this.orgs.updateTask(await this.oid(id), taskId, dto); }
   @Post('tasks/:taskId/assign') async assign(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: AssignDto) { return this.orgs.assign(await this.oid(id), taskId, dto); }
-  @Post('tasks/:taskId/comment') async comment(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: TextDto) { return this.orgs.comment(await this.oid(id), taskId, dto); }
+  @Post('tasks/:taskId/comment') async comment(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: CommentDto) { return this.orgs.comment(await this.oid(id), taskId, dto); }
+  @Get('mentionables') async mentionables(@Param('id') id: string) { return this.orgs.mentionables(await this.oid(id)); }
   @Get('tasks/:taskId/comments') async comments(@Param('id') id: string, @Param('taskId') taskId: string) { return this.orgs.comments(await this.oid(id), taskId); }
   @Post('tasks/:taskId/review') async review(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: ReviewDto) { return this.orgs.review(await this.oid(id), taskId, dto); }
   @Post('tasks/:taskId/request-review') async requestReview(@Param('id') id: string, @Param('taskId') taskId: string, @Body() dto: Partial<TextDto>) { return this.orgs.requestReview(await this.oid(id), taskId, dto); }

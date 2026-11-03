@@ -21,6 +21,7 @@ export const WORK_TUNABLES: Record<string, TunableDef> = {
   'work.circularRepeats': { default: 2, min: 2, max: 5, area: 'work', description: 'Runs ending in the same failed approach on one task before its wakes pause and the lead is flagged (circular behaviour).' },
   'work.operatingWipCap': { default: 3, min: 0, max: 20, area: 'work', description: 'Open tasks a unit\'s "Operating improvements" project (retro and postmortem actions) may hold; more stay proposals in its backlog.' },
   'work.orphanGraceHours': { default: 24, min: 1, max: 336, area: 'work', description: 'Hours a task may sit in a unit\'s Unsorted project before the unit head (then the chief) is asked to place it.' },
+  'work.mentionChainCap': { default: 3, min: 1, max: 10, area: 'work', description: 'Agent comments tagging another agent on one task since a person last commented, after which a tag no longer wakes anyone (the ping-pong cap; a person\'s comment resets it).' },
   'work.forecastMinSamples': { default: 8, min: 3, max: 60, area: 'work', description: 'Done tasks (in the forecast window) needed before a project shows a forecast range instead of "not enough history".' },
 };
 registerTunables(WORK_TUNABLES);
@@ -42,6 +43,7 @@ export function deriveWorkTunables(d: Pick<ProfileDiagnosis, 'stage' | 'cultureT
     { key: 'work.breakerDefaultExtend', value: c === 'clan' ? 1 : 0, why: c === 'clan' ? 'a people-first culture extends by default and cuts deliberately' : 'Shape Up\'s circuit breaker: a bet that runs out is cancelled unless someone extends it' },
     { key: 'work.blockedBackoffMinutes', value: speed ? 30 : 60, why: speed ? 'blocked work is re-checked sooner' : 'an unchanged blocker is re-checked after an hour, then less often' },
     { key: 'work.operatingWipCap', value: rigor || c === 'hierarchy' ? 5 : stage === 'early' ? 2 : 3, why: rigor || c === 'hierarchy' ? 'rigour values process improvements: more room for retro actions' : stage === 'early' ? 'an early company spends little on work about work' : 'a few retro actions at a time; the rest wait as proposals' },
+    { key: 'work.mentionChainCap', value: c === 'hierarchy' ? 2 : speed ? 4 : 3, why: c === 'hierarchy' ? 'a control culture brings a person in sooner when agents go back and forth' : speed ? 'speed is a value: agents may settle a question between themselves a little longer' : 'three rounds of agents tagging each other, then a person decides' },
     { key: 'work.forecastMinSamples', value: rigor ? 12 : 8, why: rigor ? 'evidence before a forecast: a larger sample' : 'a forecast once eight tasks are done' },
   ].map((t) => { const def = WORK_TUNABLES[t.key]; return { ...t, value: Math.min(def.max, Math.max(def.min, t.value)) }; });
 }

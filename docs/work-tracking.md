@@ -113,6 +113,39 @@ appears in company counts. The prompt says which is which
 (`turn-context.service.ts`, and the members' work-tracking section from
 `OrgProjectsTools.contextFor`).
 
+### Mentions: tagging on a task
+
+People and agents tag the member or person who must act with `@Name` in a
+task comment (and in a brief). Names resolve with the channel resolver
+(`server/src/groupchat/mentions.ts` `mentionSpans`, unchanged: the longest
+display name, any script, markdown-aware, handles such as `@editor-in-chief`,
+a person's email local part) against everyone who might be tagged: the
+workspace's agents and its people (the owner and the workspace members).
+`TaskMentionsService` (`server/src/org/task-mentions.service.ts`, bound into
+`OrgTasksService.comment` and the brief paths of `create` / `update`) does
+the rest; the resolved mentions are stored on the comment
+(`org_messages.mentions`, `[{ kind, id }]`, with `fromUserId` for a
+person's comment — migration `0090-task-mentions`).
+
+| Rule | |
+|---|---|
+| Who may be tagged | The company's live members and the workspace's people. A tag that resolves to an agent outside the company or a let-go member is **refused** with the reason ("X is not a member of Acme, so they cannot see ENG-12") on the comment route and `org_task_comment`; nothing is stored. Internal lines (review notes, `org_task_update` notes) leave such a tag out instead. Another workspace's agents are nobody here. |
+| A tagged agent | Follows the task (`mentioned`) and is woken for it with reason `mention` through the org runtime, so every wake gate applies: a paused company or member, budgets (the reservation), the per-task session. Not woken: the author; the owner when the comment already woke it (the comment wake is the one wake); a closed task. The run is a **consulted** seat: the prompt names the task (key, title, status, owner), quotes the comment that tagged it and the recent timeline; it answers with `org_task_comment` and never claims, updates or takes the task over (no claim, no no-progress or circular-behaviour counting against the owner's task). It waits only for its own run on the task, not the owner's. |
+| The ping-pong cap | An agent comment that tags another agent counts one round. Once more than `work.mentionChainCap` (default 3, a per-company tunable) rounds followed the last person's comment, a tag wakes nobody (the tool result says so, and the follow fan-out does not wake them either) until a person comments again. A person's tags never count. |
+| A tagged person | Follows the task (`mentioned`) and gets one addressed inbox event — `kind: 'mention'`, title `ENG-12 · Writer mentioned you`, payload `{ link, from, orgId, taskId, messageId }` with the task's deep link (`#/ws/<id>/org/board?task=<id>`, which `app.openOrgTask` opens) — pushed through their pairings under the workspace's quiet hours (`deliveryFor(ws, 'mention')`). Their Following row shows "Needs you: … addressed you". |
+| No double notify | The tagged are passed to the follow fan-out as `alreadyWoken` / `alreadyNotified` (and capped agents as `alreadyWoken`): a follower who is also tagged is woken or notified once, by the mention; everyone else hears of the comment as follow news. |
+| Briefs | A tag new in a brief (on create, or added by an edit) is delivered like a comment's (titled "mentioned you in the brief"); a tag already there is not delivered again. Brief tags are never refused — an invisible one is left out. |
+
+Agents tag with `@Name` in `org_task_comment` text or its `notify: [names]`
+argument (resolved the same way; a name that names nobody is refused). The
+built-in `org-member-workflow` skill (step 8b) says: tag the one who must
+act or answer, never to broadcast; when tagged on a task you do not own,
+answer there. In the SPA the task drawer's comment box autocompletes
+members and people with their faces (`MentionBox`, `GET
+/api/workspaces/:id/org/mentionables`), comments draw the server-resolved
+tags as chips, and the Inbox and Home snippets draw `@names` of members and
+people as chips; a tagged person finds the task under Inbox → Following.
+
 ## 2. Done is an event
 
 `task_transitions` records every status change: from, to, actor, reason,
@@ -190,6 +223,7 @@ tunes them with `org_tune`, the CEO in Settings.
 | `work.blockedBackoffMinutes` | 60 | First wait before an unchanged blocked task wakes its owner again; doubles. |
 | `work.blockedBackoffMaxHours` | 48 | The longest wait. |
 | `work.circularRepeats` | 2 | Same failed approach this many runs in a row → wakes pause. |
+| `work.mentionChainCap` | 3 | Agent comments tagging another agent on one task since a person last commented, after which a tag wakes nobody ("Mentions"). |
 | `work.operatingWipCap` | 3 | Open tasks in a unit's Operating improvements. |
 | `work.orphanGraceHours` | 24 | Hours in Unsorted before the head (then the chief) is asked to place it. |
 | `work.forecastMinSamples` | 8 | Done tasks needed before a forecast range is shown. |
@@ -312,6 +346,7 @@ change batches, `org_plans`) is now **Pending changes** in the UI, so
 | `org_task_steps` | the task's owner | bookkeeping |
 | `org_create_task` `projectId` | — | takes a project key (`P-3`) |
 | `org_task_update` `waitsOn`, `ref` | — | the structured blocker |
+| `org_task_comment` `@Name`, `notify` | every member | tags a member (woken) or a person (notified) — "Mentions" above |
 
 The Chief of Staff pack's `project-portfolio` skill runs the chase (orphans,
 missing updates, breakers, the betting table) and never moves a project to
@@ -337,6 +372,8 @@ POST   /api/workspaces/:id/org/projects/:projectId/tasks     { taskId } — move
 GET    /api/workspaces/:id/org/tasks/:taskId/transitions
 POST   /api/workspaces/:id/org/tasks/:taskId/steps           { add | done | undo | drop }
 POST   /api/workspaces/:id/org/tasks/:taskId/blocked-on      { kind, ref?, reason } | { clear: true }
+POST   /api/workspaces/:id/org/tasks/:taskId/comment         { text, notify? } — @mentions resolved; refused for someone who cannot see the task
+GET    /api/workspaces/:id/org/mentionables                  who may be tagged: [{ kind, id, name, status }]
 ```
 
 Writes need the CEO or a board member; a person who leads a project posts

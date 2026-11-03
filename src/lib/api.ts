@@ -1079,7 +1079,15 @@ export interface OrgRun {
   id: string; orgId: string; taskId: string; agentId: string; sessionId: string | null; wakeReason: string;
   status: string; outcome: string; tokensIn: number; tokensOut: number; usd: number; startedAt: string; endedAt: string | null;
 }
-export interface OrgMessage { id: string; orgId: string; taskId: string | null; fromAgentId: string | null; runId: string | null; text: string; createdAt: string }
+export interface OrgMessage {
+  id: string; orgId: string; taskId: string | null; fromAgentId: string | null; runId: string | null; text: string; createdAt: string;
+  /** Resolved `@mentions` (docs/work-tracking.md "Mentions"): JSON `[{ kind, id }]`. */
+  mentions?: string;
+  /** The person who wrote it ('' for agents and the system). */
+  fromUserId?: string;
+}
+/** Who may be tagged on a company's tasks (the comment box's @ list). */
+export interface OrgMentionable { kind: 'agent' | 'human'; id: string; name: string; status?: string }
 export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review'
   | 'two_key' | 'metric_source' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill';
 export interface OrgApproval {
@@ -2063,7 +2071,8 @@ export const api = {
   addOrgTask: (wsId: string, body: { title: string; brief?: Partial<OrgTaskBrief>; projectId?: string | null; assigneeAgentId?: string | null; unitId?: string; checks?: TaskCheck[]; dependsOn?: string[]; dueAt?: string | null }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks`, 'POST', body),
   updateOrgTask: (wsId: string, taskId: string, patch: { title?: string; brief?: Partial<OrgTaskBrief>; status?: OrgTaskStatus; blockers?: string[]; dependsOn?: string[]; dueAt?: string | null }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}`, 'PATCH', patch),
   assignOrgTask: (wsId: string, taskId: string, agentId: string) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}/assign`, 'POST', { agentId }),
-  commentOrgTask: (wsId: string, taskId: string, text: string) => send<OrgMessage>(`/api/workspaces/${wsId}/org/tasks/${taskId}/comment`, 'POST', { text }),
+  commentOrgTask: (wsId: string, taskId: string, text: string, notify?: string[]) => send<OrgMessage>(`/api/workspaces/${wsId}/org/tasks/${taskId}/comment`, 'POST', notify?.length ? { text, notify } : { text }),
+  orgMentionables: (wsId: string) => get<OrgMentionable[]>(`/api/workspaces/${wsId}/org/mentionables`),
   orgTaskComments: (wsId: string, taskId: string) => get<OrgMessage[]>(`/api/workspaces/${wsId}/org/tasks/${taskId}/comments`),
   reviewOrgTask: (wsId: string, taskId: string, verdict: 'accept' | 'request_changes' | 'escalate', note?: string) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}/review`, 'POST', { verdict, note }),
   wakeOrgTask: (wsId: string, taskId: string, now = false) => send<{ queued?: boolean; result?: string }>(`/api/workspaces/${wsId}/org/tasks/${taskId}/wake`, 'POST', { now }),

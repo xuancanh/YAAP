@@ -1446,6 +1446,11 @@ export const orgMessages = pgTable('org_messages', {
   runId: text('runId'),
   text: text('text').notNull(),
   createdAt: text('createdAt').notNull(),
+  /** Resolved `@mentions` of a task comment (docs/work-tracking.md
+   *  "Mentions"): JSON `[{ kind: 'agent' | 'human', id }]`. */
+  mentions: text('mentions').notNull().default('[]'),
+  /** The person who wrote a comment ('' for agents and the system). */
+  fromUserId: text('fromUserId').notNull().default(''),
 });
 // ---- shared workspaces (docs/shared-agents.md, execution plan item 8) ----
 // Rows belong to the *owning* account (accountId); the member is named by

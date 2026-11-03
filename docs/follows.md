@@ -39,7 +39,7 @@ Idempotent (an existing row, muted or not, is left as it is):
 | Target | Who follows | Where |
 |---|---|---|
 | Channel thread | the root's author (`started`) once the thread has a reply or a mention; every replier (`commented`); agents mentioned in it (`mentioned`) | `GroupChatService.post` |
-| Org task | the creator (`started`: `agent:<id>`, or the user for `user`); the assignee at create, assign, re-assign and owner change (`assignee`, people too); the reviewer at create and on `request_review` (`reviewer`, people too); every commenter (`commented`) | `OrgTasksService` |
+| Org task | the creator (`started`: `agent:<id>`, or the user for `user`); the assignee at create, assign, re-assign and owner change (`assignee`, people too); the reviewer at create and on `request_review` (`reviewer`, people too); every commenter (`commented`); every agent and person tagged with `@Name` in a comment or the brief (`mentioned`) | `OrgTasksService`, `TaskMentionsService` |
 | Kanban task | the owning agent (`owner`); its creator (`started`: the person who added it, or the delegating agent) | `AgentsService.addTask` |
 | Sub-channel (discussion, meeting) | its starter (`started`); every member it opened with (`participant`); whoever posts in it later (`commented`) | `SubChannels.start` / `onPosted` (`server/src/groupchat/sub-channels.ts`) |
 
@@ -56,11 +56,14 @@ for the actor instead — an agent never notifies itself.
 
 **Attention** (`attentionAt`) is set when the change needs the follower:
 blocked, review requested, reopened (for every follower), or a comment
-naming the follower with `@Name` (for that follower). It is *not* set for an
-agent an existing mechanism already wakes for the same change: an agent
-mentioned in a thread (the channel runtime wakes it now), the owner of a
-task that gets a comment, the new assignee, the reviewer asked (the org
-runtime wakes them). Nobody is woken twice.
+naming the follower with `@Name` (for that follower — on a task, the
+mentions `TaskMentionsService` resolved, people included; see
+docs/work-tracking.md "Mentions"). It is *not* set for an agent an existing
+mechanism already wakes for the same change: an agent mentioned in a thread
+(the channel runtime wakes it now), an agent tagged on a task (the org
+runtime wakes it with reason `mention`, or the tag was held by the
+ping-pong cap), the owner of a task that gets a comment, the new assignee,
+the reviewer asked (the org runtime wakes them). Nobody is woken twice.
 
 **People** get one addressed inbox event (`kind: 'follow'`, agent id
 `follow:<workspaceId>`, payload `{ link, targetKind, targetId }`) per
@@ -71,7 +74,8 @@ docs/home.md "Links"); rows written with the older board-only link are
 brought up to date on the next activity. One event per target: the first update after they last looked. Later updates only count
 until they open the thread or the task (the SPA marks it seen) or act on it
 themselves. Quiet hours apply as for every event; a person already notified
-by a mention gets no follow event for the same message.
+by a mention (a channel message, or a task comment or brief tagging them —
+their `kind: 'mention'` event) gets no follow event for the same change.
 
 **Sub-channels** (docs/group-chat.md §9). A post in a discussion is
 activity on the sub-channel for its followers (mentions excluded as above);

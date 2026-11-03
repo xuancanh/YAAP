@@ -147,6 +147,16 @@ render as chips in the message (`messageMentionSpans` in
 `src/lib/channels.ts`, the mirror of `mentions.ts`; a code span that is
 exactly one mention is drawn as its chip).
 
+*The shared resolver.* `mentions.ts` is the one `@name` resolver: org task
+comments and briefs (docs/work-tracking.md "Mentions",
+`server/src/org/task-mentions.service.ts`) call the same `mentionSpans`
+against the company's members and the workspace's people, and the SPA's
+task drawer reuses `mentionQuery` / `mentionSuggestions` / `applyMention`
+and the chips from `src/lib/channels.ts` (`src/components/MentionBox.tsx`).
+Its exported API (`MentionableMember`, `Mention`, `mentionSpans`,
+`parseMentions`, `unresolvedMentions`, `handleOf`) is kept stable for both;
+channel behaviour is unchanged.
+
 *Shipped as:* `server/src/groupchat/channel-runtime.service.ts`. The wake set
 is computed in `handlePost` after every non-system post, with every §2 bound
 checked before the relevance call (`relevanceFn` is the test seam; the real

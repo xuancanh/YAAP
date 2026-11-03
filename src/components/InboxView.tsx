@@ -13,6 +13,8 @@ import { buildInbox, filterInbox, followingList, messagesList, waitingCount, INB
 import { I, P } from '../lib/icons';
 import { card, btn, pill, h2, faint, ago } from './org-ui';
 import { Approvals } from './OrganizationView';
+import { MentionText, useMentionables } from './MentionBox';
+import type { MentionCandidate } from '../lib/channels';
 
 const PlansPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.PlansPane })));
 const MyTasksPane = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.MyTasksPane })));
@@ -26,7 +28,7 @@ const KIND_LABEL: Record<InboxItem['kind'], string> = {
   messages: 'message', approvals: 'approval', keys: 'key', escalations: 'escalation', plans: 'plan', mytasks: 'task', incidents: 'incident', following: 'following',
 };
 
-function Row({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) => void }) {
+function Row({ i, onOpen, members = [] }: { i: InboxItem; onOpen: (i: InboxItem) => void; members?: MentionCandidate[] }) {
   const f = i.follow;
   const m = i.message;
   const color = f?.attention || m?.urgency === 'urgent' ? (m ? 'var(--red)' : 'var(--amber)') : KIND_COLOR[i.kind];
@@ -37,7 +39,7 @@ function Row({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) => void }) {
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: 'block', fontSize: 13, fontWeight: 600, overflowWrap: 'anywhere' }}>{i.title}</span>
         {f?.attention && <span data-testid="follow-attention" style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--amber)', marginTop: 2, overflowWrap: 'anywhere' }}>Needs you: {f.attention}</span>}
-        {i.detail && <span style={{ display: 'block', ...faint, marginTop: 2, overflowWrap: 'anywhere' }}>{i.detail}</span>}
+        {i.detail && <span style={{ display: 'block', ...faint, marginTop: 2, overflowWrap: 'anywhere' }}><MentionText text={i.detail} members={members} /></span>}
       </span>
       <span style={{ flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
         {i.at && <span style={faint}>{ago(i.at)}</span>}
@@ -53,6 +55,8 @@ function Row({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) => void }) {
 export function InboxView() {
   const app = useApp();
   const wsId = app.workspaceId;
+  // @mentions in task comments (docs/work-tracking.md "Mentions") render as chips in the rows.
+  const members = useMentionables(app.companiesEnabled && app.wsOrg && app.wsOrg.mode !== 'off' ? wsId : null);
   const [org, setOrg] = useState<OrgDetail | null>(null);
   const [src, setSrc] = useState<{ approvals: OrgApproval[]; plans: OrgPlan[]; tasks: { assigned: OrgTask[]; reviewing: OrgTask[] } | null; follows: FollowRow[]; messages: AgentMessage[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -145,17 +149,17 @@ export function InboxView() {
         ) : !org || !src ? <div style={faint}>Loading…</div> : filter === 'all' ? (
           <div style={{ maxWidth: 820 }} data-testid="inbox-list">
             {items.length === 0 && <div style={faint}>Nothing waits on you. Decisions, keys, plans, your tasks, new incidents and what changed on what you follow show up here.</div>}
-            {items.map((i) => <Row key={i.key} i={i} onOpen={open} />)}
+            {items.map((i) => <Row key={i.key} i={i} onOpen={open} members={members} />)}
           </div>
         ) : filter === 'messages' ? (
           <div style={{ maxWidth: 820 }} data-testid="messages-list">
             {messages.length === 0 && <div style={faint}>No messages from your team. When an agent writes to you directly it lands here and in its chat with you, where your reply goes.</div>}
-            {messages.map((i) => <Row key={i.key} i={i} onOpen={open} />)}
+            {messages.map((i) => <Row key={i.key} i={i} onOpen={open} members={members} />)}
           </div>
         ) : filter === 'following' ? (
           <div style={{ maxWidth: 820 }} data-testid="following-list">
             {following.length === 0 && <div style={faint}>You follow nothing yet. Threads you start or reply to and tasks you create, own or review are followed for you; the Follow button on a thread or a task adds any other.</div>}
-            {following.map((i) => <Row key={i.key} i={i} onOpen={open} />)}
+            {following.map((i) => <Row key={i.key} i={i} onOpen={open} members={members} />)}
           </div>
         ) : (
           <Suspense fallback={<div style={faint}>Loading…</div>}>

@@ -18,12 +18,13 @@ export interface TaskAddedEvent {
   task: { id: string; key?: string | null; title: string; note: string; origin: string; sessionId: string | null; createdAt: string };
 }
 
-export type OrgWakeReason = 'assignment' | 'comment' | 'approval' | 'review' | 'manual' | 'trigger' | 'rewake' | 'dependency';
+/** `mention`: a task comment (or brief) tagged the member with @Name (docs/work-tracking.md "Mentions"). */
+export type OrgWakeReason = 'assignment' | 'comment' | 'approval' | 'review' | 'manual' | 'trigger' | 'rewake' | 'dependency' | 'mention';
 
 export interface OrgWakeEvent {
   orgId: string;
   taskId: string;
-  /** The one member this wake is for. Mentions never produce an event. */
+  /** The one member this wake is for. A channel mention never produces one; a task mention does (reason `mention`). */
   agentId: string;
   reason: OrgWakeReason;
 }

@@ -25,6 +25,7 @@ import { AgentsService } from '../agents/agents.service';
 import { normalizeChecks, parseChecks, type Check } from './org-checks';
 import { nextOrgTaskKey, queryableOf, resolveTaskRef, taskLabel, taskRef } from '../common/task-keys';
 import { BLOCKED_KINDS, blockerLine, describeBlockedOn, isBlockedKind, legacyBlockedOn, parseBlockedOn, sameBlocker, serializeBlockedOn, type BlockedKind, type BlockedOn } from './blocked-on';
+import type { MentionDelivery, TaskMentionHook } from './task-mentions.service';
 import { STEPS_CAP, TASK_SOURCES, deriveSource, isTaskSource, nextStepId, parseSteps, type TaskSource, type TaskStep } from './work-model';
 
 export type OrgTask = typeof orgTasks.$inferSelect;
@@ -173,6 +174,9 @@ export class OrgTasksService {
   setClaimGate(fn: ClaimGate | undefined): void { this.claimGate = fn; }
   /** The decision-routing module binds who "the manager" is (blockedOn: manager). */
   setManagerResolver(fn: ManagerResolver | undefined): void { this.managerResolver = fn; }
+  private mentionHook?: TaskMentionHook;
+  /** TaskMentionsService binds `@mentions` in comments and briefs (docs/work-tracking.md "Mentions"). */
+  setMentionHook(hook: TaskMentionHook | undefined): void { this.mentionHook = hook; }
 
   // ---- done is an event (docs/work-tracking.md) ----
 
@@ -478,6 +482,7 @@ export class OrgTasksService {
     await this.autoFollow(orgId, row, followerFromActor(row.createdBy, actorId()), 'started');
     if (row.assigneeAgentId) await this.autoFollow(orgId, row, { kind: 'agent', id: row.assigneeAgentId }, 'assignee');
     if (row.reviewerAgentId) await this.autoFollow(orgId, row, { kind: 'agent', id: row.reviewerAgentId }, 'reviewer');
+    await this.briefMentions(orgId, row, '', row.createdBy, Boolean(row.assigneeAgentId && status === 'todo' && org.status === 'active')).catch(() => undefined);
     return row;
   }
 
@@ -587,6 +592,7 @@ export class OrgTasksService {
     if (patch.assigneeAgentId && patch.assigneeAgentId !== t.assigneeAgentId) await this.autoFollow(orgId, updated, { kind: 'agent', id: patch.assigneeAgentId }, 'assignee');
     if (patch.reviewerAgentId && patch.reviewerAgentId !== t.reviewerAgentId) await this.autoFollow(orgId, updated, { kind: 'agent', id: patch.reviewerAgentId }, 'reviewer');
     await this.trackStatus(orgId, updated, t.status, followerFromActor(actor, actorId()), { alreadyWoken: t.status === 'waiting' && updated.status === 'todo' && updated.assigneeAgentId ? [updated.assigneeAgentId] : undefined });
+    if (patch.brief !== undefined && updated.brief !== t.brief) await this.briefMentions(orgId, updated, t.brief, actor, false).catch(() => undefined);
     return updated;
   }
 
@@ -828,13 +834,23 @@ export class OrgTasksService {
   // ---- comments and the group log (org_messages) ----
 
   /** A comment on a task. Wakes the task's owner only when the author is
-   *  somebody else (the user, the chief, a reviewer) — never on a mention,
-   *  never the author itself, never anyone else named in the text. */
-  async comment(orgId: string, taskId: string, input: { text: string; fromAgentId?: string | null; runId?: string | null; wake?: boolean; system?: boolean }): Promise<OrgMessage> {
+   *  somebody else (the user, the chief, a reviewer), never the author
+   *  itself. `@mentions` (and `notify` names) resolve against the company's
+   *  members and the workspace's people (docs/work-tracking.md "Mentions"):
+   *  a tagged agent is woken for the task (reason `mention`), a tagged person
+   *  gets an inbox event; both follow it. `strictMentions` refuses a tag of
+   *  someone who cannot see the task (the HTTP route and the agent tool);
+   *  elsewhere such a tag is left out. System lines tag nobody. */
+  async comment(orgId: string, taskId: string, input: { text: string; fromAgentId?: string | null; runId?: string | null; wake?: boolean; system?: boolean; notify?: string[]; strictMentions?: boolean }): Promise<OrgMessage & { delivery?: MentionDelivery }> {
     const t = await this.get(orgId, taskId);
     const text = (input.text ?? '').trim().slice(0, 8_000);
     if (!text) throw new BadRequestException('comment text is required');
-    const row: OrgMessage = { id: newId(), accountId: currentAccountId(), orgId, taskId, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, text, createdAt: nowIso() };
+    const fromUserId = !input.fromAgentId && input.wake !== false && !input.system ? actorId() : '';
+    const authors = { authorAgentId: input.fromAgentId ?? null, authorUserId: fromUserId || null };
+    const mentions = this.mentionHook && !input.system && (input.fromAgentId || fromUserId)
+      ? await this.mentionHook.resolve(orgId, t, text, { notify: input.notify, strict: input.strictMentions === true, ...authors })
+      : [];
+    const row: OrgMessage = { id: newId(), accountId: currentAccountId(), orgId, taskId, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, text, createdAt: nowIso(), mentions: JSON.stringify(mentions), fromUserId };
     await this.db.insert(orgMessages).values(row);
     await this.audit.append(orgId, { actor: input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', action: 'task_comment', refType: 'task', refId: taskId, payload: { chars: text.length } });
     const owner = t.assigneeAgentId;
@@ -852,8 +868,34 @@ export class OrgTasksService {
     // every other follower hears of it — attention for an agent it names.
     const by: Follower | null = input.fromAgentId ? { kind: 'agent', id: input.fromAgentId } : input.wake !== false && !input.system ? { kind: 'user', id: actorId() } : null;
     await this.autoFollow(orgId, t, by, 'commented');
-    await this.track(orgId, t, { actor: by, summary: `commented: ${text}`, mentionText: text, alreadyWoken: woke && owner ? [owner] : undefined });
-    return row;
+    // Mentions: the tagged are woken / notified once, so the follow fan-out
+    // below neither wakes nor notifies them a second time.
+    const delivery = this.mentionHook && mentions.length ? await this.mentionHook.deliver(orgId, t, row, mentions, { ...authors, ownerWoken: woke, source: 'comment' }) : undefined;
+    const tagged = mentions.filter((m) => m.kind === 'agent').map((m) => m.id);
+    await this.track(orgId, t, {
+      actor: by, summary: `commented: ${text}`,
+      ...(this.mentionHook ? { directedTo: mentions.map((m) => ({ kind: m.kind === 'agent' ? 'agent' as const : 'user' as const, id: m.id })) } : { mentionText: text }),
+      alreadyWoken: [...new Set([...(woke && owner ? [owner] : []), ...(delivery?.woken ?? []), ...(delivery?.capped ? tagged : [])])],
+      alreadyNotified: delivery?.notified,
+    });
+    return delivery ? { ...row, delivery } : row;
+  }
+
+  /** `@mentions` new in a brief (created, or edited by update): the tagged
+   *  are woken / notified like a comment's, never refused (docs/work-tracking.md). */
+  private async briefMentions(orgId: string, t: OrgTask, before: string, actor: string, ownerWoken: boolean): Promise<void> {
+    if (!this.mentionHook) return;
+    const text = (b: string) => Object.values(parseBrief(b)).join('\n');
+    const now = text(t.brief);
+    if (!now.includes('@')) return;
+    const authorAgentId = actor.startsWith('agent:') ? actor.slice(6) : null;
+    const authorUserId = actor === 'user' || actor.startsWith('human:') ? (actor.startsWith('human:') ? actor.slice(6) : actorId()) : null;
+    const opts = { strict: false, authorAgentId, authorUserId };
+    const old = new Set((before ? await this.mentionHook.resolve(orgId, t, text(before), opts) : []).map((m) => `${m.kind}:${m.id}`));
+    const fresh = (await this.mentionHook.resolve(orgId, t, now, opts)).filter((m) => !old.has(`${m.kind}:${m.id}`));
+    if (!fresh.length) return;
+    const row = { id: '', accountId: currentAccountId(), orgId, taskId: t.id, fromAgentId: authorAgentId, runId: null, text: now, createdAt: nowIso(), mentions: JSON.stringify(fresh), fromUserId: authorUserId ?? '' } as OrgMessage;
+    await this.mentionHook.deliver(orgId, t, row, fresh, { authorAgentId, authorUserId, ownerWoken, source: 'brief' });
   }
 
   /** A message in the group log. Attributed; wakes nobody (§6). */
@@ -861,7 +903,7 @@ export class OrgTasksService {
     await this.org.get(orgId);
     const text = (input.text ?? '').trim().slice(0, 8_000);
     if (!text) throw new BadRequestException('message text is required');
-    const row: OrgMessage = { id: newId(), accountId: currentAccountId(), orgId, taskId: null, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, text, createdAt: nowIso() };
+    const row: OrgMessage = { id: newId(), accountId: currentAccountId(), orgId, taskId: null, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null, text, createdAt: nowIso(), mentions: '[]', fromUserId: input.fromAgentId ? '' : actorId() };
     await this.db.insert(orgMessages).values(row);
     await this.audit.append(orgId, { actor: input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', action: 'message', refType: 'org', refId: orgId, payload: { chars: text.length } });
     return row;

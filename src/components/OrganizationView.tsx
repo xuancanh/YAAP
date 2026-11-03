@@ -23,6 +23,8 @@ import { I, P } from '../lib/icons';
 import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
 import { changeSummary, decidedViaBadge, dueBadge, expectedLabel, memberSettingsLines, verificationBadge } from '../lib/org3';
 import { FollowToggle } from './FollowToggle';
+import { MentionBox, storedMentions, useMentionables } from './MentionBox';
+import { Markdown } from '../lib/md';
 import { SOURCE_TONE, SOURCE_WORD, blockedText, parseBlockedOn, stepsCount } from '../lib/roadmap';
 import type { TaskSource } from '../lib/api';
 
@@ -437,7 +439,7 @@ function Board({ org }: { org: OrgDetail }) {
         <div style={{ flex: 1 }}>
           <h2 style={h2}>{isCompany ? 'Board' : `${current?.name ?? 'Unit'} · board`}</h2>
           <div style={faint}>
-            {isCompany ? 'One owner per task. Assigning wakes the owner; a comment wakes the owner; mentions wake nobody.' : <>Led by {lead?.name ?? '—'} · tasks of its reports, and what the lead hands them.</>}
+            {isCompany ? 'One owner per task. Assigning wakes the owner; a comment wakes the owner; @Name in a comment wakes that member or notifies that person.' : <>Led by {lead?.name ?? '—'} · tasks of its reports, and what the lead hands them.</>}
             {current && <> · <span style={{ color: 'var(--accent-hi)', cursor: 'pointer' }} onClick={() => app.openChannel(current.slug)}>#{current.slug}</span></>}
             {current && <> · <TaskKeyPrefix wsId={org.workspaceId} unitId={current.id} prefix={current.taskKey ?? null} /></>}
           </div>
@@ -584,6 +586,8 @@ function TaskDrawer({ org, task, members, onClose, reload, board }: { org: OrgDe
   const [why, setWhy] = useState(false);
   const [related, setRelated] = useState(false);
   const [employees, setEmployees] = useState<OrgHuman[]>([]);
+  // @mentions (docs/work-tracking.md "Mentions"): who may be tagged here.
+  const mentionables = useMentionables(org.workspaceId, true);
   const brief = parseBriefText(task.brief);
   useEffect(() => { void api.orgHumans(org.workspaceId).then((h) => setEmployees(h.humans.filter((x) => x.role === 'employee'))).catch(() => setEmployees([])); }, [org.workspaceId]);
   const refresh = useCallback(async () => {
@@ -673,13 +677,14 @@ function TaskDrawer({ org, task, members, onClose, reload, board }: { org: OrgDe
         <div>
           <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Timeline</div>
           {comments.length === 0 && <div style={faint}>No comments yet.</div>}
-          {comments.map((c) => { const a = c.fromAgentId ? names.get(c.fromAgentId) : undefined; return (
-            <div key={c.id} style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border-soft)' }}>
+          {comments.map((c) => { const a = c.fromAgentId ? names.get(c.fromAgentId) : undefined; const who = a?.name ?? (c.fromUserId && c.fromUserId !== app.me?.actorId ? app.nameOf(c.fromUserId) : 'You'); return (
+            <div key={c.id} data-testid="task-comment" style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border-soft)' }}>
               {a ? <Avatar a={a} size={18} /> : <span style={{ fontSize: 14 }}>🧑‍💼</span>}
-              <div style={{ flex: 1, minWidth: 0 }}><div style={faint}>{a?.name ?? 'You'} · {ago(c.createdAt)}</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{c.text}</div></div>
+              <div style={{ flex: 1, minWidth: 0 }}><div style={faint}>{who} · {ago(c.createdAt)}</div><div style={{ fontSize: 12.5, overflowWrap: 'anywhere' }}><Markdown text={c.text} compact mentions={storedMentions(c.mentions, mentionables)} /></div></div>
             </div>); })}
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Comment — wakes the owner" style={input} onKeyDown={(e) => { if (e.key === 'Enter' && text.trim()) { void act(async () => { await api.commentOrgTask(org.workspaceId, task.id, text.trim()); setText(''); }); } }} />
+            <MentionBox value={text} onChange={setText} members={mentionables} ariaLabel="Comment" placeholder="Comment — wakes the owner · @ to tag a member or a person" style={input}
+              onSubmit={() => { if (text.trim()) void act(async () => { await api.commentOrgTask(org.workspaceId, task.id, text.trim()); setText(''); }); }} />
             <button style={btn(true)} disabled={!text.trim()} onClick={() => void act(async () => { await api.commentOrgTask(org.workspaceId, task.id, text.trim()); setText(''); })}>Post</button>
           </div>
         </div>

@@ -24,6 +24,8 @@ import {
   defaultSentence, greeting, headline, recommendationLine, splitPath, targetOf, needTarget, usd, when, type HomeTarget,
 } from '../lib/home';
 import { Markdown } from '../lib/md';
+import type { MentionCandidate } from '../lib/channels';
+import { MentionText } from './MentionBox';
 import { I, P } from '../lib/icons';
 import { hopLine, managerHops } from '../lib/decisions';
 
@@ -48,6 +50,8 @@ export interface HomeBoardProps {
   onRetry?: () => void;
   /** Open a message from the team: its direct chat (default: onOpen to the chat). */
   onMessage?: (m: AgentMessage) => void;
+  /** Who may be tagged (docs/work-tracking.md "Mentions"): `@names` in snippets render as chips. */
+  mentionables?: MentionCandidate[];
 }
 
 // ---- tokens ----
@@ -338,7 +342,7 @@ function KpiStrip({ data, narrow, wide, now, onOpen, onAllAgents }: Pick<HomeBoa
 
 // ---- 3. needs you ----
 
-function NeedRow({ n, now, narrow, busy, first, onAct, onOpen }: { n: HomeNeed; now: Date; narrow: boolean; busy: boolean; first: boolean; onAct: HomeBoardProps['onAct']; onOpen: HomeBoardProps['onOpen'] }) {
+function NeedRow({ n, now, narrow, busy, first, onAct, onOpen, mentionables = [] }: { n: HomeNeed; now: Date; narrow: boolean; busy: boolean; first: boolean; onAct: HomeBoardProps['onAct']; onOpen: HomeBoardProps['onOpen']; mentionables?: MentionCandidate[] }) {
   const [open, setOpen] = useState(false);
   const { title, task } = needHeadline(n);
   const who = askedBy(n);
@@ -389,7 +393,7 @@ function NeedRow({ n, now, narrow, busy, first, onAct, onOpen }: { n: HomeNeed; 
       {open && (
         <div data-testid="need-detail" style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: 8, marginTop: -2 }}>
           {task && <div style={meta}>About {task.key ? <b style={{ color: 'var(--text)', fontWeight: 600 }}>{task.key}</b> : 'the task'} {task.title}</div>}
-          {detail && <div style={{ ...body, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{detail}</div>}
+          {detail && <div style={{ ...body, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}><MentionText text={detail} members={mentionables} /></div>}
           {n.chain && (
             <div data-testid="need-chain" style={{ ...meta, display: 'grid', gap: 2 }}>
               <div style={{ overflowWrap: 'anywhere' }}><span style={{ color: 'var(--text)', fontWeight: 600 }}>{n.chain.line}</span>{n.chain.reserved ? <span>. Only you decide this ({n.chain.reserved}).</span> : null}</div>
@@ -407,7 +411,7 @@ function NeedRow({ n, now, narrow, busy, first, onAct, onOpen }: { n: HomeNeed; 
   );
 }
 
-function NeedsYou({ data, now, narrow, busy, onAct, onOpen }: Pick<HomeBoardProps, 'data' | 'narrow' | 'onAct' | 'onOpen'> & { now: Date; busy: Set<string> }) {
+function NeedsYou({ data, now, narrow, busy, onAct, onOpen, mentionables }: Pick<HomeBoardProps, 'data' | 'narrow' | 'onAct' | 'onOpen' | 'mentionables'> & { now: Date; busy: Set<string> }) {
   const [all, setAll] = useState(false);
   const shown = all ? data.needs : data.needs.slice(0, NEEDS_SHOWN);
   const more = data.headline.needsYou - shown.length;
@@ -421,7 +425,7 @@ function NeedsYou({ data, now, narrow, busy, onAct, onOpen }: Pick<HomeBoardProp
         </div>
       ) : (
         <div>
-          {shown.map((n, i) => <NeedRow key={n.id} n={n} now={now} narrow={narrow} first={i === 0} busy={busy.has(n.id)} onAct={onAct} onOpen={onOpen} />)}
+          {shown.map((n, i) => <NeedRow key={n.id} n={n} now={now} narrow={narrow} first={i === 0} busy={busy.has(n.id)} onAct={onAct} onOpen={onOpen} mentionables={mentionables} />)}
           {more > 0 && (
             <div style={{ borderTop: '1px solid var(--border-soft)', padding: '10px 16px' }}>
               <button className="hm-link" style={link} onClick={() => (data.needs.length > shown.length ? setAll(true) : onOpen({ to: 'inbox' }))}>
@@ -440,7 +444,7 @@ function NeedsYou({ data, now, narrow, busy, onAct, onOpen }: Pick<HomeBoardProp
 /** What agents wrote to the owner with message_owner, unread first. The text
  *  is the agent's, shown as plain text (data, never markup); a row opens the
  *  direct chat, where the reply goes. Hidden when there is nothing. */
-function TeamMessages({ data, now, onOpen, onMessage }: Pick<HomeBoardProps, 'data' | 'onOpen' | 'onMessage'> & { now: Date }) {
+function TeamMessages({ data, now, onOpen, onMessage, mentionables = [] }: Pick<HomeBoardProps, 'data' | 'onOpen' | 'onMessage' | 'mentionables'> & { now: Date }) {
   const m = data.messages;
   if (!m || m.items.length === 0) return null;
   const open = (x: AgentMessage) => (onMessage ? onMessage(x) : onOpen({ to: 'chat', sessionId: x.sessionId }));
@@ -459,7 +463,7 @@ function TeamMessages({ data, now, onOpen, onMessage }: Pick<HomeBoardProps, 'da
               <span style={{ flex: 1 }} />
               <span style={{ ...meta, ...num }}>{when(x.createdAt, now)}</span>
             </span>
-            <span style={{ ...body, ...clamp(2), whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', marginTop: 2, color: x.read ? 'var(--text-dim)' : 'var(--text)' }}>{x.text}</span>
+            <span style={{ ...body, ...clamp(2), whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', marginTop: 2, color: x.read ? 'var(--text-dim)' : 'var(--text)' }}><MentionText text={x.text} members={mentionables} /></span>
             {x.refs.length > 0 && <span style={{ ...meta, display: 'block', marginTop: 3, overflowWrap: 'anywhere' }}>{x.refs.join(', ')}</span>}
           </span>
         </button>
@@ -1008,8 +1012,8 @@ export function HomeBoard(props: HomeBoardProps) {
   const busy = props.busy ?? new Set<string>();
   const nothingYet = data.team.length === 0;
   const pad = narrow ? '20px 16px 40px' : '28px 32px 56px';
-  const needs = <NeedsYou key="needs" data={data} now={now} narrow={narrow} busy={busy} onAct={onAct} onOpen={onOpen} />;
-  const messages = <TeamMessages key="messages" data={data} now={now} onOpen={onOpen} onMessage={props.onMessage} />;
+  const needs = <NeedsYou key="needs" data={data} now={now} narrow={narrow} busy={busy} onAct={onAct} onOpen={onOpen} mentionables={props.mentionables} />;
+  const messages = <TeamMessages key="messages" data={data} now={now} onOpen={onOpen} onMessage={props.onMessage} mentionables={props.mentionables} />;
   const team = <Team key="team" data={data} now={now} onOpen={onOpen} onAllAgents={onAllAgents} />;
   const roadmap = <Roadmap key="roadmap" data={data} now={now} narrow={narrow} onOpen={onOpen} />;
   const goals = <Goals key="goals" data={data} onOpen={onOpen} />;

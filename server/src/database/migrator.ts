@@ -2206,6 +2206,17 @@ const MIGRATIONS: Migration[] = [
       if (!(await hasColumn(db, 'agent_types', 'tierModels'))) await db.query(`ALTER TABLE agent_types ADD COLUMN "tierModels" TEXT NOT NULL DEFAULT '{}'`);
     },
   },
+  {
+    id: '0084-task-mentions',
+    up: async (db) => {
+      // Mentions in task comments (docs/work-tracking.md "Mentions"): the
+      // resolved `@mentions` of a comment, and which person wrote it ('' for
+      // agents and the system), so a human comment ends an agent chain.
+      // Old comments stay '[]' / ''. Idempotent.
+      if (!(await hasColumn(db, 'org_messages', 'mentions'))) await db.query(`ALTER TABLE org_messages ADD COLUMN "mentions" TEXT NOT NULL DEFAULT '[]'`);
+      if (!(await hasColumn(db, 'org_messages', 'fromUserId'))) await db.query(`ALTER TABLE org_messages ADD COLUMN "fromUserId" TEXT NOT NULL DEFAULT ''`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */
