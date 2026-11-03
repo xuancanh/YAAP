@@ -59,10 +59,12 @@ that, or lower a class, without the owner seeing a diff.
   an asked/decided audit pair (§4.3).
 - **Model-visible means logged** (§5.6), **data-sharing rules** (§5.7)
   and an explicit **budget stage** (§4.3).
-- **Bundles with a resolved-config view** (§6.9), and **hot reload
+- **Kits (formerly bundles) with a resolved-config view** (§6.9), and **hot reload
   between turns, per contribution** (§6.5).
 - **No services between plugins**, and **policy is never a plugin**
   (§3.1, §4.3).
+- **Packaging for company types and use cases** (kits, blueprint v2,
+  the Foundry marketplace) is designed in `docs/foundry.md`.
 - §11 holds the copy/adapt/avoid table. Open questions the research
   answered are marked resolved in §12.
 
@@ -104,7 +106,7 @@ so that the core's existing gates apply to them without exception
   turn loop and the org runtime (§4).
 - The threat model, including malicious interfaces (§5).
 - Install, configure, conformance, bind, grant, update, disable, suspend,
-  uninstall, recall and bundles (§6).
+  uninstall, recall and kits (§6).
 - Tiers, pinning and versioning (§7), tables and endpoints (§8), the
   mapping from today's features (§9), and a phased plan with acceptance
   criteria (§10).
@@ -1548,7 +1550,7 @@ request"]. yaam's rules:
 
 ```mermaid
 stateDiagram-v2
-  [*] --> reviewing: install requested (owner) / proposed (agent card) / part of a bundle
+  [*] --> reviewing: install requested (owner) / proposed (agent card) / part of a kit
   reviewing --> installed: owner approves the permission diff (and classifications, for interfaces)
   reviewing --> [*]: declined
   installed --> conformance: provider role
@@ -1724,7 +1726,13 @@ A revoked interface version suspends every provider and consumer bound
 through it. Nothing installs without the owner's consent [R: "Versions,
 events, secrets and trust"].
 
-### 6.9 Bundles and the resolved-config view
+### 6.9 Kits and the resolved-config view
+
+*Terminology: this section first called the composition package a
+**bundle**. It is now the **kit** (`docs/foundry.md` §1.3), which adds
+people, rhythm, metrics and policies to the same mechanism; a kit with
+only plugins, bindings and settings is the old bundle. The rules below
+are unchanged.*
 
 dsh composes a running harness from layers: bundles, then the profile
 patch, then home patches, then overlays. A patch replaces a row's whole
@@ -1733,9 +1741,9 @@ each row [D: "Profiles, bundles and whole-value patches compose the
 running harness"]. yaam adapts the idea, and keeps security out of the
 layers.
 
-**A bundle** is a registry kind, `bundle`: an installable set of plugins
-with default configuration, under one review. For example, "Software
-company starter":
+**A kit** is a registry kind, `kit`: an installable set of plugins
+with default configuration, under one review. For example, the Ship
+Software kit (`docs/foundry.md` §2.6):
 
 - the interfaces `scm`, `ci`, `deploy`, `observability` and `issues`;
 - the providers `github@yaam`, `linear@yaam`, `sentry@yaam` and
@@ -1747,13 +1755,13 @@ company starter":
 
 **Rules.**
 
-- **One review, every consent.** Installing a bundle shows one screen with
+- **One review, every consent.** Installing a kit shows one screen with
   each member's own permission diff and classifications. The owner
   approves each member; nothing is approved implicitly because it came in
-  a bundle.
-- **Bundles override only non-security `settings`**, with whole-value
+  a kit.
+- **Kits override only non-security `settings`**, with whole-value
   replacement per key: no deep merge, and no removal.
-- **Security fields are never overridable** by a bundle or any layer:
+- **Security fields are never overridable** by a kit or any layer:
   - classes and requirements;
   - egress, secrets and `dataSharing`;
   - connections, scopes and grants;
@@ -1761,9 +1769,9 @@ company starter":
   - `identity`.
 
   Those come only from manifests, owner consent and owner policy.
-- **Bindings proposed by a bundle** are applied only when the owner
+- **Bindings proposed by a kit** are applied only when the owner
   confirms them in the review. They are not silent defaults.
-- **Layers, in order:** the plugin's defaults, then each bundle in install
+- **Layers, in order:** the plugin's defaults, then each kit in install
   order, then workspace overrides by the owner. The **resolved-config
   view** (`GET …/plugins/config/resolved`) shows each effective value and
   the layer that set it, like `dsh --dump-config`. A later bundle that
@@ -1774,7 +1782,7 @@ company starter":
 
 ### 7.1 Registry and tiers
 
-Plugins (all roles) and bundles become registry kinds beside `agent`,
+Plugins (all roles) and kits become registry kinds beside `agent`,
 `skill`, `app` and `company` (`docs/registry.md` §1). The Connectors
 directory (`server/src/market/connectors.catalog.ts`) becomes the
 Market's plugin department. Tiers bind to scope, Grafana's rule
@@ -1841,7 +1849,7 @@ tables carry `workspaceId`.
 |---|---|---|
 | `plugins` | `id` (`name@registry`), `name`, `publisherId`, `tier`, `roles`, `registryItemId` | One row per package identity |
 | `plugin_versions` | `id`, `pluginId`, `version`, `manifest`, `manifestHash`, `archiveSha256`, `imageDigests`, `definitions` (canonical definitions and hashes), `signature`, `coreRange`, `scanReport`, `revokedAt`, `revokeReason` | Immutable |
-| `plugin_installs` | `id`, `workspaceId`, `pluginId`, `versionId`, `pendingVersionId`, `status` (`installed`·`ready`·`active`·`suspended`·`update_pending`·`disabled`·`frozen`·`terminating`·`removed`), `suspendedReason`, `approvedDiff`, `settings`, `bundleId`, `installedBy`, `activatedAt` | Unique on (`workspaceId`, `pluginId`) |
+| `plugin_installs` | `id`, `workspaceId`, `pluginId`, `versionId`, `pendingVersionId`, `status` (`installed`·`ready`·`active`·`suspended`·`update_pending`·`disabled`·`frozen`·`terminating`·`removed`), `suspendedReason`, `approvedDiff`, `settings`, `kitInstallId`, `installedBy`, `activatedAt` | Unique on (`workspaceId`, `pluginId`) |
 | `interfaces` | `name`, `ownerNamespace`, `latestVersion` | A name is claimed by one namespace |
 | `interface_versions` | `id`, `name`, `version`, `major`, `definition` (operations, kinds, events, metrics), `definitionHash`, `pluginVersionId`, `suite`, `deprecatedAt`, `sunsetAt` | Immutable |
 | `interface_providers` | `id`, `workspaceId`, `installId`, `interface`, `range`, `resolvedVersion`, `resources`, `conformanceRunId`, `status` (`unverified`·`conformant`·`failed`·`suspended`) | One per provided range |
@@ -1853,8 +1861,8 @@ tables carry `workspaceId`.
 | `plugin_connections` | Shaped like `connections`, plus `installId` and `purpose` (`live`·`conformance`) | May merge into `connections` later |
 | `plugin_grants` | `id`, `installId`, `connectionId`, `agentId`, `level`, `extras` (bool), `memberAccountId` | Mirrors `connection_grants` |
 | `plugin_shares` | `id`, `installId`, `category`, `enabled`, `enabledAt`, `watermark` | Ambient sharing switches; watermark set at enabling (§5.7) |
-| `bundles` | Registry items of kind `bundle`; install rows link `bundleId` | |
-| `plugin_settings_layers` | `id`, `installId`, `layer` (`default`·`bundle:<id>`·`workspace`), `key`, `value`, `setAt` | Feeds the resolved-config view |
+| `kits` and related tables | Defined in `docs/foundry.md` §9.2; install rows link `kitInstallId` | |
+| `plugin_settings_layers` | `id`, `installId`, `layer` (`default`·`kit:<installId>`·`workspace`), `key`, `value`, `setAt` | Feeds the resolved-config view |
 | `webhook_deliveries` | `id`, `installId`, `eventId`, `deliveryId`, `receivedAt`, `bodySha256`, `body` (14 days), `status`, `jobId` | Unique on (`installId`, `deliveryId`) |
 | `change_records` | `id`, `workspaceId`, `kind`, `interfaceVersionId`, `providerId`, `bindingScope`, `ref`, `bind`, `title`, `state`, `proposer`, `taskId`, `reviews`, `requirement`, `approvalId`, `keys`, `applyActionId`, `verify`, `rollbackActionId`, `deadlineAt` | Kind is a string; the core knows no kinds |
 | `context_provenance` | `id`, `turnId`, `sourceKind`, `pluginId`, `pluginVersion`, `contributionId`, `contentHash`, `bytes`, `untrusted`, `createdAt` | §5.6 |
@@ -1881,10 +1889,10 @@ Owner-only unless noted. `:ws` is the workspace id.
 | Method and path | What |
 |---|---|
 | `GET /api/plugins/api` | The supported core plugin API range (public) |
-| `GET /api/plugins/catalog?q=&role=` | Plugins and bundles, local and remote |
+| `GET /api/plugins/catalog?q=&role=` | Plugins, local and remote (kits: `docs/foundry.md` §9.3) |
 | `GET /api/workspaces/:ws/plugins` | Installs, status and suspension reasons (members may read) |
 | `POST /api/workspaces/:ws/plugins/install { source, confirm? }` | Two-step: the diff against nothing, then install |
-| `POST /api/workspaces/:ws/bundles/install { source, confirm?, accept: {...} }` | Bundle review with per-member consent |
+| `POST /api/workspaces/:ws/kits/plan` · `…/kits/install { source, choices, confirm }` | Kit review with per-member consent (`docs/foundry.md` §9.3) |
 | `POST /api/workspaces/:ws/plugins/dev { path }` | Developer mode |
 | `GET /api/workspaces/:ws/plugins/:id` | Detail, including the **effects inventory** |
 | `PATCH /api/workspaces/:ws/plugins/:id/settings` | Non-security settings (validated) |
@@ -1943,7 +1951,7 @@ Each migration ships with a PGlite suite that runs it twice
 | Context cards | `server/src/connections/cards/` | Later, a declarative contribution, logged with provenance | Content about a service |
 | MCP servers | `server/src/mcp/`, `mcp_servers` | `@local` providers of extras with pins and grants. The MCP client stays core as a transport for operations and extras | Closes rug-pull and confused-deputy gaps |
 | Connectors directory | `connectors.catalog.ts` | The plugin catalog's first-party and verified listing | Already tiered |
-| Registry | `server/src/registry/` | Gains plugin kinds, bundles, revoke, signatures, conformance results | Its review gate is the install gate |
+| Registry | `server/src/registry/` | Gains plugin kinds, kits, revoke, signatures, conformance results | Its review gate is the install gate |
 | Market packs | `packs/`, `server/src/market/` | Stay content. Packs may declare `requires` interfaces, and plugins may ship packs | Packs are agents |
 | Custom HTTP tools | `save_tool` | Stay agent-built; they share the HTTP executor | Same mechanism |
 | `code_agent` and harnesses | `server/src/harness/` | The tool, the temp-dir materialise and sync-back, the OS jail and the stream parsers stay core and become the `local-sandbox` driver. Each harness becomes a first-party plugin with a declarative harness descriptor: binary, version arguments, task passing, env-var map, which core parser, turn counting, config-isolation flags | The CLI details are vendor-specific; the jail is not |
@@ -2043,8 +2051,8 @@ Build:
 - registry kinds, signing tiers, the interface trust tier, revoke and the
   federation feed;
 - the update flow with per-contribution hot reload and staged rollout;
-- taint; the data-sharing rules and ambient-share switches; bundles and
-  the resolved-config view;
+- taint; the data-sharing rules and ambient-share switches; kits and
+  the resolved-config view (`docs/foundry.md` §11, F1);
 - the `0055-mcp-to-plugins` migration.
 
 Acceptance:
@@ -2062,7 +2070,7 @@ Acceptance:
   the workspace.
 - An ambient share turned on sends nothing recorded before it was turned
   on.
-- A bundle that tries to set a security field is refused at publish.
+- A kit that tries to set a security field is refused at publish.
 - The resolved-config view names the layer of every value.
 
 ### Phase 3: the GitHub provider; ticket → PR → CI → merge
@@ -2118,7 +2126,7 @@ Acceptance:
 | 5: Revenue | `billing@yaam`, `support@yaam`, `analytics@yaam`; `stripe@yaam`, `paddle@yaam`, `intercom@yaam`, `posthog@yaam` | `money` operations are never run without a human key in a tainted turn. A price experiment reverts on its rule |
 | 6: Issue sync | Two-way `issues` mapping with task keys; `jira@yaam`, GitHub Issues in `github@yaam` | A change on either side converges without loops |
 | 7: Environments | `docker@yaam`, `firecracker@yaam`, `e2b@verified` drivers | The driver suite passes, including "no route except the proxy" |
-| 7b: Starter bundle | "Software company starter" | A new workspace gets interfaces, providers, bindings and packs under one review |
+| 7b: Kits and blueprints | Moved to `docs/foundry.md` §11: the Ship Software kit on mocks lands with Phase 2, real providers with Phases 3–5 | A new workspace gets interfaces, providers, bindings and packs under one review |
 | 8: Google and Microsoft | `mail`, `calendar` and `files` interfaces; the native connections become providers | Behaviour and tests unchanged |
 | Only on demand | Community provider code; community interfaces by default | Needs an enforced-egress driver everywhere, and a review process for interface classifications |
 
@@ -2143,7 +2151,7 @@ avoid"].
 | **Copy** | Stage order: log, decide, ask, guard, execute, post-process, log | The chain in §4.3, with ownership of the decision inverted |
 | **Adapt** | `ctx.isolate` per subtree | One install and one set of bindings per workspace; scoped bindings per unit, project or resource (§4.2) |
 | **Adapt** | Dependency-driven activation and re-activation | Suspend and resume per contribution, with tools hidden rather than erroring (§4.11) |
-| **Adapt** | Whole-value patch layering | Bundles override non-security settings only (§6.9) |
+| **Adapt** | Whole-value patch layering | Kits override non-security settings only (§6.9) |
 | **Adapt** | HMR diffing rows by id; `internal/update` reconfigure | Per-contribution reload between turns, never mid-turn (§6.5) |
 | **Adapt** | Monotonic guards | Out-of-process guards that fail closed; deny or ask only (§4.3) |
 | **Adapt** | Outbound contributors as named, individually disableable units with a watermark | Ambient shares: declared, off by default, watermark set at enabling, no backfill (§5.7) |
@@ -2160,7 +2168,7 @@ avoid"].
 
 **Resolved by the research and the owner's review:**
 
-- ~~Composition~~: bundles of plugins with non-security overrides and a
+- ~~Composition~~: kits (formerly bundles) of plugins with non-security overrides and a
   resolved-config view (§6.9).
 - ~~Service injection between plugins~~: none; plugins provide and consume
   interfaces through the core (§3.1).

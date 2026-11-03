@@ -298,6 +298,7 @@ for why.
 - [miniapp-roadmap.md](docs/miniapp-roadmap.md): model calls, data and connections for mini apps.
 - [registry.md](docs/registry.md): the Community market registry.
 - [plugins.md](docs/plugins.md): plugin architecture: interface, provider and consumer plugins on an enforcing, domain-agnostic core.
+- [foundry.md](docs/foundry.md): kits (use cases), blueprint v2 (company types) and Foundry, the marketplace that replaces the Market.
 
 **Plans and research**
 
