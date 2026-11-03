@@ -2162,6 +2162,17 @@ export const plugins = pgTable('plugins', {
   roles: text('roles').notNull().default('[]'),
   registryItemId: text('registryItemId'),
   createdAt: text('createdAt').notNull(),
+  /** The registry listing (0082): what Foundry's Plugins shelf shows. */
+  description: text('description').notNull().default(''),
+  publisherName: text('publisherName').notNull().default(''),
+  /** first_party (plugins/first-party/) | local (loaded by one workspace) | registry (published here). */
+  source: text('source').notNull().default('first_party'),
+  /** For source=local: the one workspace that sees it; '' = everywhere. */
+  workspaceId: text('workspaceId').notNull().default(''),
+  /** 1 = on the shelf; 0 = unlisted (kept for installs). */
+  listed: integer('listed').notNull().default(1),
+  installs: integer('installs').notNull().default(0),
+  updatedAt: text('updatedAt'),
 }, (t) => [uniqueIndex('idx_plugins_identity').on(t.accountId, t.pluginId)]);
 
 /** An immutable version of a package: the manifest, its referenced data
@@ -2184,8 +2195,18 @@ export const pluginVersions = pgTable('plugin_versions', {
   scanReport: text('scanReport').notNull().default('[]'),
   source: text('source').notNull().default('first_party'),
   createdAt: text('createdAt').notNull(),
+  /** Recall (docs/plugins.md §6.8): a recalled version never installs and its installs freeze. */
   revokedAt: text('revokedAt'),
   revokeReason: text('revokeReason'),
+  /** The source pin beside the archive digest (§7.2): a full hex SHA, never a branch name. */
+  commitSha: text('commitSha').notNull().default(''),
+  /** JSON [{ interface, interfaceVersion, mode, result, passed, failed, ranAt }]: the registry's own run. */
+  conformance: text('conformance').notNull().default('[]'),
+  /** JSON capability summary for the shelf and the detail page. */
+  capabilities: text('capabilities').notNull().default('{}'),
+  changelog: text('changelog').notNull().default(''),
+  publishedBy: text('publishedBy').notNull().default(''),
+  revokedBy: text('revokedBy').notNull().default(''),
 }, (t) => [uniqueIndex('idx_plugin_versions_hash').on(t.accountId, t.pluginId, t.archiveSha256)]);
 
 /** A package installed in one workspace (installs are workspace-owned). */
@@ -2199,7 +2220,7 @@ export const pluginInstalls = pgTable('plugin_installs', {
   pendingVersionId: text('pendingVersionId'),
   /** JSON { diff, failures? } for the pending version. */
   pendingNote: text('pendingNote').notNull().default('{}'),
-  /** installed | active | suspended | disabled | removed. */
+  /** installed | active | suspended | disabled | frozen (its version was recalled) | removed. */
   status: text('status').notNull().default('installed'),
   suspendedReason: text('suspendedReason').notNull().default(''),
   /** JSON: the permission diff and classifications the owner approved. */

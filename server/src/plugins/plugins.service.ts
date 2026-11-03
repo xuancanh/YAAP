@@ -12,7 +12,8 @@
  * conformance runner.
  */
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { resolve as resolvePath, sep as pathSep } from 'node:path';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import {
@@ -24,9 +25,9 @@ import { actorId, currentAccountId } from '../accounts/account-context';
 import { canonicalJson, isActionClass, registerOperationClasses, sha256, type ActionClass } from '../actions/action-classes';
 import { ActionsService } from '../actions/actions.service';
 import { CORE_API_VERSION, type InterfaceDef, type Manifest, type ProvidesDef, type Tier, type Fixtures, type Suite } from './manifest';
-import { firstPartyDir, loadFirstParty, packageFrom, PluginLoadError, referencedFiles, type PluginPackage } from './loader';
+import { devDir, firstPartyDir, loadFirstParty, loadPluginFolder, packageFrom, PluginLoadError, referencedFiles, type PluginPackage } from './loader';
 import { applyRules, classByInputOf, isWidening, kindRequirement, maxClass, permissionDiff, rank, staticClassOf, type DiffEntry, type PolicyRule } from './policy';
-import { majorOf, parseInterfaceRef, parseVersion, satisfies } from './semver';
+import { compareVersions, majorOf, parseInterfaceRef, parseVersion, satisfies } from './semver';
 import { globMatch, globSpecificity } from './template';
 import { runSuite, type CaseResult } from './conformance';
 import { validate } from './json-schema';
@@ -39,7 +40,18 @@ export type BindingRow = typeof interfaceBindings.$inferSelect;
 export type EffectRow = typeof pluginEffects.$inferSelect;
 type VersionRow = typeof pluginVersions.$inferSelect;
 
-export interface InstallSource { firstParty?: string; manifest?: unknown; files?: Record<string, string> }
+/**
+ * Where a package comes from (docs/plugins.md §6.1, §7):
+ * - `firstParty`: a folder under `plugins/first-party/`;
+ * - `registry`: a version published to this instance's plugin registry,
+ *   pinned by its digest (the latest installable one when `version` is
+ *   omitted);
+ * - `manifest` + `files`, or `files` carrying `plugin.json`: an uploaded
+ *   `@local` folder, through the loader's archive rules;
+ * - `path`: developer mode, a folder under `YAAM_PLUGINS_DEV_DIR`, walked
+ *   with the same rules (symlinks and executable bits refused).
+ */
+export interface InstallSource { firstParty?: string; registry?: { id: string; version?: string }; manifest?: unknown; files?: Record<string, string>; path?: string }
 
 export interface RegistryIface {
   name: string; version: string; major: number; def: InterfaceDef;
@@ -70,7 +82,9 @@ type EffectTable = keyof typeof EFFECT_TABLES;
 interface Inverse { op: 'delete' | 'noop'; table?: EffectTable; id?: string; snapshot?: Record<string, unknown>; note?: string }
 
 /** Statuses an install keeps whatever its dependencies say. */
-const STICKY = new Set(['disabled', 'removed']);
+const STICKY = new Set(['disabled', 'frozen', 'removed']);
+/** Statuses whose contributions are parked: nothing of theirs is offered or applies. */
+const PARKED = new Set(['disabled', 'frozen']);
 /** The interface name a model-facing tool belongs to: `<iface>_<op>`. */
 export function toolName(iface: string, op: string): string { return `${iface}_${op}`; }
 
@@ -113,30 +127,78 @@ export class PluginsService {
   /** Test seam and developer reload: forget the cached first-party catalog. */
   resetCatalog(): void { this.firstParty = null; }
 
-  async load(source: InstallSource): Promise<{ pkg: PluginPackage; tier: Tier; source: string }> {
+  async load(source: InstallSource): Promise<{ pkg: PluginPackage; tier: Tier; source: string; versionId?: string }> {
+    let out: { pkg: PluginPackage; tier: Tier; source: string; versionId?: string } | null = null;
     try {
       if (source.firstParty) {
         const id = source.firstParty.includes('@') ? source.firstParty : `${source.firstParty}@yaam`;
         const pkg = (await this.catalog()).get(id);
         if (!pkg) throw new NotFoundException(`no first-party plugin ${id}`);
-        return { pkg, tier: 'first_party', source: 'first_party' };
-      }
-      if (source.manifest !== undefined) {
-        const pkg = packageFrom(source.manifest, source.files ?? {});
-        if (!pkg.manifest.id.endsWith('@local')) throw new BadRequestException('an inline package loads as name@local only (developer mode); registry installs arrive with signing in plugins Phase 2');
-        return { pkg, tier: 'local', source: 'local' };
+        out = { pkg, tier: 'first_party', source: 'first_party' };
+      } else if (source.registry) {
+        out = await this.loadFromRegistry(source.registry.id, source.registry.version);
+      } else if (source.path) {
+        const root = devDir();
+        if (!root) throw new BadRequestException('developer mode is off: set YAAM_PLUGINS_DEV_DIR to load plugin folders from disk');
+        const abs = resolvePath(root, source.path);
+        if (abs !== root && !abs.startsWith(root + pathSep)) throw new BadRequestException('the folder must be inside YAAM_PLUGINS_DEV_DIR');
+        const pkg = await loadPluginFolder(abs);
+        if (!pkg.manifest.id.endsWith('@local')) throw new BadRequestException('a folder loads as name@local only (developer mode)');
+        out = { pkg, tier: 'local', source: 'local' };
+      } else if (source.manifest !== undefined || (source.files && typeof source.files['plugin.json'] === 'string')) {
+        let manifest = source.manifest;
+        const files = { ...(source.files ?? {}) };
+        if (manifest === undefined) {
+          try { manifest = JSON.parse(files['plugin.json']); } catch { throw new PluginLoadError(['plugin.json: not JSON']); }
+        }
+        delete files['plugin.json'];
+        const pkg = packageFrom(manifest, files);
+        if (!pkg.manifest.id.endsWith('@local')) throw new BadRequestException('an uploaded package loads as name@local only; publish to the registry for anything wider');
+        out = { pkg, tier: 'local', source: 'local' };
       }
     } catch (err) {
       if (err instanceof PluginLoadError) throw new BadRequestException({ message: 'the package was refused', errors: err.errors, warnings: err.warnings });
       throw err;
     }
-    throw new BadRequestException('source must name a first-party plugin or carry an inline @local manifest');
+    if (!out) throw new BadRequestException('source must name a first-party plugin, a registry version, an uploaded @local folder or a developer folder');
+    // A recalled version never installs, whichever way its bytes arrive.
+    const recalled = (await this.db.select({ v: pluginVersions.version, why: pluginVersions.revokeReason, at: pluginVersions.revokedAt })
+      .from(pluginVersions).where(and(eq(pluginVersions.pluginId, out.pkg.manifest.id), eq(pluginVersions.archiveSha256, out.pkg.digest)))).find((r) => r.at);
+    if (recalled) throw new BadRequestException(`${out.pkg.manifest.id}@${recalled.v} was recalled${recalled.why ? `: ${recalled.why}` : ''}; it cannot be installed`);
+    return out;
+  }
+
+  /** A registry version, rebuilt from its stored files and checked against its pinned digest. */
+  private async loadFromRegistry(id: string, version?: string): Promise<{ pkg: PluginPackage; tier: Tier; source: string; versionId: string }> {
+    const plugin = (await this.db.select().from(plugins).where(eq(plugins.pluginId, id))).at(0);
+    if (!plugin || plugin.source === 'local') throw new NotFoundException(`no plugin ${id} in the registry`);
+    if (plugin.source === 'first_party') {
+      const pkg = (await this.catalog()).get(id);
+      if (!pkg) throw new NotFoundException(`no first-party plugin ${id}`);
+      if (version && pkg.manifest.version !== version) throw new NotFoundException(`${id}@${version} is not the shipped first-party version (${pkg.manifest.version})`);
+      return { pkg, tier: 'first_party', source: 'first_party', versionId: '' };
+    }
+    const rows = (await this.db.select().from(pluginVersions).where(eq(pluginVersions.pluginId, id))).filter((v) => v.source !== 'local');
+    let row: VersionRow | undefined;
+    if (version) {
+      row = rows.find((v) => v.version === version);
+      if (!row) throw new NotFoundException(`no version ${version} of ${id}`);
+      if (row.revokedAt) throw new BadRequestException(`${id}@${version} was recalled${row.revokeReason ? `: ${row.revokeReason}` : ''}; it cannot be installed`);
+    } else {
+      row = rows.filter((v) => !v.revokedAt && satisfies(CORE_API_VERSION, v.coreRange)).sort((a, b) => compareVersions(b.version, a.version))[0];
+      if (!row) throw new NotFoundException(`${id} has no installable version`);
+    }
+    const pkg = packageFrom(JSON.parse(row.manifest), JSON.parse(row.files || '{}') as Record<string, string>);
+    if (pkg.digest !== row.archiveSha256) throw new BadRequestException(`${id}@${row.version}: the package does not match its pinned digest; refused`);
+    return { pkg, tier: plugin.tier as Tier, source: 'registry', versionId: row.id };
   }
 
   private async isOwner(workspaceId: string, actor = actorId()): Promise<boolean> {
     if (this.actions) return this.actions.trust.isOwnerOrCeo(workspaceId, actor);
     return actor === currentAccountId();
   }
+  /** Owner-only gate shared with the plugin registry. */
+  assertOwner(workspaceId: string, what: string): Promise<string> { return this.requireOwner(workspaceId, what); }
   private async requireOwner(workspaceId: string, what: string): Promise<string> {
     const actor = actorId();
     if (!(await this.isOwner(workspaceId, actor))) throw new ForbiddenException(`only the workspace owner ${what}`);
@@ -238,6 +300,8 @@ export class PluginsService {
     const diff = permissionDiff(prev, m);
     return {
       id: m.id, name: m.name, version: m.version, description: m.description ?? '', publisher: m.publisher, tier, roles: m.roles,
+      // Community packages install only with the owner's explicit opt-in at confirm (§7.1); interfaces need the workspace opt-in as well (§5.1).
+      communityOptIn: tier === 'community',
       requires: m.requires, digest: pkg.digest, manifestHash: pkg.manifestHash, warnings: pkg.warnings, coreApi: CORE_API_VERSION,
       noEgress: (m.egress ?? []).length === 0,
       interfaces: ifaces, provides,
@@ -263,21 +327,28 @@ export class PluginsService {
 
   // ---- install ----
 
-  async install(workspaceId: string, source: InstallSource, opts: { confirm?: boolean } = {}): Promise<Record<string, unknown>> {
+  async install(workspaceId: string, source: InstallSource, opts: { confirm?: boolean; acceptCommunity?: boolean } = {}): Promise<Record<string, unknown>> {
     const actor = await this.requireOwner(workspaceId, 'installs plugins');
-    const { pkg, tier } = await this.load(source);
+    const { pkg, tier, source: origin } = await this.load(source);
     const existing = await this.installOf(workspaceId, pkg.manifest.id);
     if (existing && existing.install.status !== 'removed') throw new ConflictException(`${pkg.manifest.id} is installed; update it instead`);
     const review = await this.reviewOf(workspaceId, pkg, tier, null);
     if (!opts.confirm) return { review, installed: false };
     if (review.blockers.length > 0) throw new BadRequestException({ message: 'the install is blocked', blockers: review.blockers });
+    if (tier === 'community' && opts.acceptCommunity !== true) {
+      throw new BadRequestException({ message: 'a community plugin installs only with your explicit opt-in', blockers: [`${pkg.manifest.id} is community tier: reviewed by the registry, not signed by a verified publisher; confirm with acceptCommunity`] });
+    }
     const m = pkg.manifest;
     const now = nowIso();
-    let plugin = (await this.db.select().from(plugins).where(eq(plugins.pluginId, m.id))).at(0);
+    const plugin = (await this.db.select().from(plugins).where(eq(plugins.pluginId, m.id))).at(0);
     if (!plugin) {
-      plugin = { accountId: currentAccountId(), id: newId(), pluginId: m.id, name: m.name, publisherId: m.publisher.id, tier, roles: JSON.stringify(m.roles), registryItemId: null, createdAt: now };
-      await this.db.insert(plugins).values(plugin);
+      await this.db.insert(plugins).values({
+        accountId: currentAccountId(), id: newId(), pluginId: m.id, name: m.name, publisherId: m.publisher.id, tier, roles: JSON.stringify(m.roles), registryItemId: null, createdAt: now,
+        description: m.description ?? '', publisherName: m.publisher.name, source: origin === 'local' ? 'local' : origin === 'registry' ? 'registry' : 'first_party',
+        workspaceId: origin === 'local' ? workspaceId : '', updatedAt: now,
+      });
     }
+    await this.db.update(plugins).set({ installs: sql`${plugins.installs} + 1` }).where(eq(plugins.pluginId, m.id));
     const version = await this.versionRow(pkg, tier);
     let install: InstallRow;
     if (existing) {
@@ -299,7 +370,8 @@ export class PluginsService {
     return { review, installed: true, install: await this.summary(workspaceId, m.id) };
   }
 
-  private async versionRow(pkg: PluginPackage, tier: Tier): Promise<VersionRow> {
+  /** The immutable version row for a package, found by its digest or written once. */
+  async versionRow(pkg: PluginPackage, tier: Tier, extra: Partial<Pick<VersionRow, 'commitSha' | 'conformance' | 'capabilities' | 'changelog' | 'publishedBy'>> = {}): Promise<VersionRow> {
     const m = pkg.manifest;
     const found = (await this.db.select().from(pluginVersions).where(and(eq(pluginVersions.pluginId, m.id), eq(pluginVersions.archiveSha256, pkg.digest)))).at(0);
     if (found) return found;
@@ -310,6 +382,7 @@ export class PluginsService {
       accountId: currentAccountId(), id: newId(), pluginId: m.id, version: m.version, manifest: JSON.stringify(m), manifestHash: pkg.manifestHash,
       archiveSha256: pkg.digest, files: JSON.stringify(pkg.files), definitions: JSON.stringify(definitions), coreRange: m.requires.yaamCore,
       scanReport: JSON.stringify(pkg.warnings), source: tier, createdAt: nowIso(), revokedAt: null, revokeReason: null,
+      commitSha: '', conformance: '[]', capabilities: '{}', changelog: '', publishedBy: '', revokedBy: '', ...extra,
     };
     await this.db.insert(pluginVersions).values(row);
     return row;
@@ -430,7 +503,7 @@ export class PluginsService {
     }).filter((x) => x.version);
     const ifaceMap = new Map<string, RegistryIface>();
     for (const li of installs) {
-      if (li.install.status === 'disabled') continue;
+      if (PARKED.has(li.install.status)) continue;
       for (const def of li.manifest.interfaces ?? []) {
         const hash = sha256(canonicalJson(def));
         const v = (await this.db.select().from(interfaceVersions).where(and(eq(interfaceVersions.name, def.name), eq(interfaceVersions.version, def.version), eq(interfaceVersions.definitionHash, hash)))).at(0);
@@ -463,7 +536,7 @@ export class PluginsService {
       return { operation: p.operation || null, changeKind: p.changeKind || null, resourcePattern: p.resourcePattern || null, bind: match.bind ?? null, require: p.require, why: p.why, source: 'owner' as const };
     });
     for (const li of installs) {
-      if (li.install.status === 'disabled') continue;
+      if (PARKED.has(li.install.status)) continue;
       for (const pol of li.manifest.policies ?? []) rules.push({ operation: pol.match.operation ?? null, changeKind: pol.match.changeKind ?? null, bind: pol.match.bind ?? null, require: pol.require, why: pol.why, source: 'plugin' });
     }
     // Keep classOf's lookup current: the strictest static class per tool name.
@@ -665,7 +738,7 @@ export class PluginsService {
     const provider = reg.providers.find((p) => p.row.interface === ifaceName && (p.row.id === body.providerId || p.pluginId === body.providerId));
     if (!provider) throw new BadRequestException(`${body.providerId} does not provide ${ifaceName}`);
     if (provider.row.status !== 'conformant') throw new BadRequestException(`${provider.pluginId} cannot be bound: conformance ${provider.row.status} (a provider binds only after a pass)`);
-    if (['disabled', 'removed', 'installed'].includes(provider.install.status)) throw new BadRequestException(`${provider.pluginId} cannot be bound while ${provider.install.status}`);
+    if (['disabled', 'frozen', 'removed', 'installed'].includes(provider.install.status)) throw new BadRequestException(`${provider.pluginId} cannot be bound while ${provider.install.status}`);
     if (majorOf(provider.row.range) !== major) throw new BadRequestException(`${provider.pluginId} provides ${ifaceName}@${provider.row.range}, not major ${major}`);
     if (existing) {
       await this.db.delete(interfaceBindings).where(eq(interfaceBindings.id, existing.id));
@@ -765,6 +838,7 @@ export class PluginsService {
   async enable(workspaceId: string, pluginId: string): Promise<Record<string, unknown>> {
     const actor = await this.requireOwner(workspaceId, 'enables plugins');
     const li = await this.installOf(workspaceId, pluginId);
+    if (li?.install.status === 'frozen') throw new BadRequestException(`${pluginId} is frozen because its version was recalled; update it to a version that is not recalled`);
     if (!li || li.install.status !== 'disabled') throw new BadRequestException(`${pluginId} is not disabled`);
     const n = await this.restore(workspaceId, li.install.id, actor);
     await this.db.update(pluginInstalls).set({ status: 'installed', updatedAt: nowIso() }).where(eq(pluginInstalls.id, li.install.id));
@@ -840,6 +914,12 @@ export class PluginsService {
    *  it starts), while classes are read per call and only ever stricter. */
   private async switchVersion(workspaceId: string, li: LoadedInstall, pkg: PluginPackage, version: VersionRow, actor: string, diff: DiffEntry[]): Promise<void> {
     const m = pkg.manifest;
+    if (li.install.status === 'frozen') {
+      // Moving off a recalled version: the parked effects come back, then the new version registers over them.
+      await this.restore(workspaceId, li.install.id, actor);
+      await this.db.update(pluginInstalls).set({ status: 'installed', suspendedReason: '' }).where(eq(pluginInstalls.id, li.install.id));
+      await this.audit.append(workspaceId, { actor, action: 'plugin_unfrozen', refType: 'plugin', refId: m.id, payload: { from: li.manifest.version, to: m.version } });
+    }
     await this.db.update(pluginInstalls).set({ versionId: version.id, pendingVersionId: null, pendingNote: '{}', approvedDiff: JSON.stringify({ diff }), updatedAt: nowIso() }).where(eq(pluginInstalls.id, li.install.id));
     for (const iface of m.interfaces ?? []) {
       const hash = sha256(canonicalJson(iface));
@@ -876,11 +956,40 @@ export class PluginsService {
     if ((note.failures ?? []).length > 0) throw new BadRequestException(`the pending version fails conformance and cannot be applied: ${note.failures!.join('; ')}`);
     const version = (await this.db.select().from(pluginVersions).where(eq(pluginVersions.id, li.install.pendingVersionId))).at(0);
     if (!version) throw new NotFoundException('the pending version is gone');
+    if (version.revokedAt) throw new BadRequestException(`${pluginId}@${version.version} was recalled${version.revokeReason ? `: ${version.revokeReason}` : ''}; it cannot be applied`);
     const files = JSON.parse(version.files || '{}') as Record<string, string>;
     const pkg = packageFrom(JSON.parse(version.manifest), files);
     await this.switchVersion(workspaceId, li, pkg, version, actor, note.diff ?? []);
     await this.audit.append(workspaceId, { actor, action: 'plugin_update_approved', refType: 'plugin', refId: pluginId, payload: { version: version.version } });
     return { applied: true };
+  }
+
+  // ---- recall (§6.8) ----
+
+  /**
+   * A recalled version freezes every install of it: the registrar unwinds
+   * its effects (kept restorable, so approving a version that is not
+   * recalled brings them back), its tools leave from the next turn, its
+   * dependants suspend, and the install carries the notice. Called by the
+   * plugin registry; the caller has checked who may recall.
+   */
+  async freeze(workspaceId: string, installId: string, notice: string, actor: string): Promise<boolean> {
+    const install = (await this.db.select().from(pluginInstalls).where(and(eq(pluginInstalls.id, installId), eq(pluginInstalls.workspaceId, workspaceId)))).at(0);
+    if (!install || install.status === 'removed' || install.status === 'frozen') return false;
+    const wasDisabled = install.status === 'disabled';
+    await this.db.update(pluginInstalls).set({ status: 'frozen', suspendedReason: notice, updatedAt: nowIso() }).where(eq(pluginInstalls.id, installId));
+    const n = wasDisabled ? 0 : await this.unwind(workspaceId, installId, actor, true);
+    await this.audit.append(workspaceId, { actor, action: 'plugin_revoked', refType: 'plugin', refId: install.pluginId, payload: { notice, unwound: n, severity: 'major' } });
+    await this.refreshActivation(workspaceId);
+    this.changed(workspaceId);
+    return true;
+  }
+
+  /** A pending update to a recalled version is withdrawn. */
+  async dropPending(workspaceId: string, installId: string, actor: string, why: string): Promise<void> {
+    await this.db.update(pluginInstalls).set({ pendingVersionId: null, pendingNote: '{}', updatedAt: nowIso() }).where(and(eq(pluginInstalls.id, installId), eq(pluginInstalls.workspaceId, workspaceId)));
+    await this.audit.append(workspaceId, { actor, action: 'plugin_update_withdrawn', refType: 'plugin_install', refId: installId, payload: { why } });
+    this.changed(workspaceId);
   }
 
   // ---- views ----
@@ -894,6 +1003,8 @@ export class PluginsService {
       id: li.manifest.id, name: li.manifest.name, version: li.manifest.version, description: li.manifest.description ?? '', roles: li.manifest.roles,
       tier: li.version.source, status: li.install.status, suspendedReason: li.install.suspendedReason, installId: li.install.id,
       digest: li.version.archiveSha256, installedAt: li.install.createdAt, pendingUpdate: pending,
+      // The recall notice (§6.8): why a frozen install stopped, until the owner moves it to a version that is not recalled.
+      recall: li.install.status === 'frozen' ? { version: li.manifest.version, notice: li.install.suspendedReason, at: li.version.revokedAt } : null,
       providers: providers.map((p) => ({ id: p.id, interface: p.interface, range: p.range, status: p.status, resources: JSON.parse(p.resources) as string[], conformanceRunId: p.conformanceRunId })),
       interfaces: (li.manifest.interfaces ?? []).map((i) => `${i.name}@${i.version}`),
     };

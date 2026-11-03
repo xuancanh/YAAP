@@ -41,8 +41,15 @@ import { scanAppHtml } from './app-scan';
 import { BUILTIN_COMPANIES } from './builtin-companies.generated';
 import { BlueprintError, validateBlueprint, type Blueprint } from '../org/blueprints/format';
 
-export type RegistryKind = 'agent' | 'skill' | 'app' | 'company';
+export type RegistryKind = 'agent' | 'skill' | 'app' | 'company' | 'plugin' | 'kit';
+/** Kinds published and installed through this service's generic routes. */
 export const REGISTRY_KINDS: readonly RegistryKind[] = ['agent', 'skill', 'app', 'company'];
+/** Package kinds (docs/foundry.md §9.1) listed here but published, installed
+ *  and recalled through their own registry: `plugin` through
+ *  PluginRegistryService (/api/workspaces/:ws/foundry/plugins); `kit` is
+ *  reserved for the kit mechanism (Foundry F1) and nothing writes it yet. */
+export const PACKAGE_KINDS: readonly RegistryKind[] = ['plugin', 'kit'];
+const LISTED_KINDS: readonly RegistryKind[] = [...REGISTRY_KINDS, ...PACKAGE_KINDS];
 /** Blueprint outcomes (docs/blueprints.md §4): the two measured milestones. */
 export type OutcomeKind = 'first_key_result' | 'thirty_days_in_envelope';
 export const OUTCOME_KINDS: readonly OutcomeKind[] = ['first_key_result', 'thirty_days_in_envelope'];
@@ -591,7 +598,7 @@ export class RegistryService {
     const localSlugs = new Set(local.map((i) => `${i.kind}/${i.slug}`));
     // A remote copy of something published here is the same thing; show ours.
     const merged = [...local, ...remote.items.filter((i) => !localSlugs.has(`${i.kind}/${i.slug}`)).map((i) => ({ ...i, installed: installedIds.has(i.id) }))];
-    const kind = filter.kind && REGISTRY_KINDS.includes(filter.kind as RegistryKind) ? filter.kind : '';
+    const kind = filter.kind && LISTED_KINDS.includes(filter.kind as RegistryKind) ? filter.kind : '';
     // The first-party starters join a company listing (only: the community
     // view lists what people published), first, with their install counts here.
     if (kind === 'company') {
@@ -696,7 +703,7 @@ export class RegistryService {
   /** Re-validate every field: the remote feed is data, not trusted rows. */
   private fromRemote(raw: Record<string, unknown>): RegistryListItem | null {
     if (typeof raw.id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(raw.id)) return null;
-    if (!REGISTRY_KINDS.includes(raw.kind as RegistryKind)) return null;
+    if (!LISTED_KINDS.includes(raw.kind as RegistryKind)) return null;
     if (typeof raw.name !== 'string' || !raw.name.trim()) return null;
     const scan = raw.scanReport && typeof raw.scanReport === 'object' ? (raw.scanReport as ScanReport) : emptyScan();
     const caps = raw.capabilities && typeof raw.capabilities === 'object' ? (raw.capabilities as CapabilitySummary) : { tools: [], connections: [], loops: [], skills: [], apps: [] };
@@ -766,6 +773,11 @@ export class RegistryService {
    *  report is shown for comparison, ours is the one that gates. */
   async review(id: string): Promise<{ item: RegistryListItem; review: RegistryReview; manifest: Record<string, unknown> }> {
     const detail = await this.get(id);
+    if (PACKAGE_KINDS.includes(detail.kind)) {
+      throw new BadRequestException(detail.kind === 'plugin'
+        ? 'a plugin installs through Foundry › Plugins (POST /api/workspaces/:ws/plugins/install with source.registry), behind the plugin review'
+        : 'kits are not installable yet (Foundry F1)');
+    }
     const norm = normalizeManifest(detail.kind, detail.manifest);
     const m = norm.manifest;
     const skillBodies = detail.kind === 'skill'

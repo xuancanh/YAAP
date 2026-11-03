@@ -152,6 +152,12 @@ export async function loadPluginFolder(dir: string): Promise<PluginPackage> {
   return packageFrom(raw, rest, [], Buffer.byteLength(rawText, 'utf8'));
 }
 
+/** Developer mode (docs/plugins.md §7.4): the one folder `@local` packages may load from on disk, or null when off. */
+export function devDir(): string | null {
+  const d = process.env.YAAM_PLUGINS_DEV_DIR;
+  return d ? resolve(d) : null;
+}
+
 /** Where first-party plugins live: `YAAM_PLUGINS_DIR` or `plugins/first-party` under the working directory. */
 export function firstPartyDir(): string {
   return resolve(process.env.YAAM_PLUGINS_DIR || join(process.cwd(), 'plugins', 'first-party'));

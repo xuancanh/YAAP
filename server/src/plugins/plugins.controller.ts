@@ -15,8 +15,11 @@ import { parseDuration } from './template';
 function sourceOf(body: Record<string, unknown> | undefined): InstallSource {
   const src = (body?.source ?? body) as Record<string, unknown> | undefined;
   if (!src || typeof src !== 'object') throw new BadRequestException('source is required');
+  const reg = src.registry as Record<string, unknown> | undefined;
   return {
     ...(typeof src.firstParty === 'string' ? { firstParty: src.firstParty } : {}),
+    ...(reg && typeof reg === 'object' && typeof reg.id === 'string' ? { registry: { id: reg.id, ...(typeof reg.version === 'string' ? { version: reg.version } : {}) } } : {}),
+    ...(typeof src.path === 'string' ? { path: src.path } : {}),
     ...(src.manifest !== undefined ? { manifest: src.manifest } : {}),
     ...(src.files && typeof src.files === 'object' ? { files: src.files as Record<string, string> } : {}),
   };
@@ -43,7 +46,14 @@ export class PluginsController {
   review(@Param('ws') ws: string, @Body() body: Record<string, unknown>) { return this.plugins.review(ws, sourceOf(body)); }
 
   @Post('workspaces/:ws/plugins/install')
-  install(@Param('ws') ws: string, @Body() body: Record<string, unknown>) { return this.plugins.install(ws, sourceOf(body), { confirm: body?.confirm === true }); }
+  install(@Param('ws') ws: string, @Body() body: Record<string, unknown>) { return this.plugins.install(ws, sourceOf(body), { confirm: body?.confirm === true, acceptCommunity: body?.acceptCommunity === true }); }
+
+  /** Developer mode (§7.4): load a folder under YAAM_PLUGINS_DEV_DIR as name@local, through the same review. */
+  @Post('workspaces/:ws/plugins/dev')
+  dev(@Param('ws') ws: string, @Body() body: { path?: string; confirm?: boolean }) {
+    if (typeof body?.path !== 'string' || !body.path) throw new BadRequestException('path is required');
+    return this.plugins.install(ws, { path: body.path }, { confirm: body.confirm === true });
+  }
 
   @Get('workspaces/:ws/plugin-settings')
   settings(@Param('ws') ws: string) { return this.plugins.workspaceSettings(ws); }

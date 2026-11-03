@@ -30,7 +30,8 @@
  *  FollowsModule     → /api/workspaces/:id/follows    (follow threads and tasks, docs/follows.md; global)
  *  HomeModule        → GET  /api/workspaces/:id/home     (the owner's mission control, docs/home.md)
  *  HarnessModule     → /api/harness                    (coding-agent CLIs as code_agent, docs/coding-harnesses.md)
- *  PluginsModule     → /api/workspaces/:id/plugins|interfaces|changes (interfaces, providers, consumers, docs/plugins.md)
+ *  PluginsModule     → /api/workspaces/:id/plugins|interfaces|changes|foundry/plugins (interfaces, providers, consumers and the plugin registry, docs/plugins.md)
+ *  FoundryModule     → GET  /api/foundry, /api/foundry/kits (the marketplace's shelves, docs/foundry.md)
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
@@ -76,6 +77,7 @@ import { FollowsModule, FollowsToolsModule } from './follows/follows.module';
 import { HomeModule } from './home/home.module';
 import { HarnessModule } from './harness/harness.module';
 import { PluginsModule } from './plugins/plugins.module';
+import { FoundryModule } from './foundry/foundry.module';
 import { DataAccessModule } from './data-access/data-access.module';
 import { WorkspaceAccessGuard } from './shared/workspace-access.guard';
 import { SessionAuthStrategy } from './accounts/session-auth.strategy';
@@ -118,6 +120,7 @@ import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
     HomeModule,
     HarnessModule,
     PluginsModule,
+    FoundryModule,
     DataAccessModule,
   ],
   providers: [

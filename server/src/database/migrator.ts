@@ -2229,6 +2229,40 @@ const MIGRATIONS: Migration[] = [
       if (!(await hasColumn(db, 'organizations', 'archiveState'))) await db.query(`ALTER TABLE organizations ADD COLUMN "archiveState" TEXT NOT NULL DEFAULT '{}'`);
     },
   },
+  {
+    id: '0086-plugin-registry',
+    up: async (db) => {
+      // The plugin registry and Foundry's Plugins shelf (docs/plugins.md §7,
+      // §8; docs/foundry.md §9): a package's listing (description, publisher
+      // display name, where it came from — first_party | local | registry —
+      // the one workspace a local package is visible to, whether it is
+      // listed, its install count) and, per immutable version, the pin
+      // beside the archive digest (a source commitSha), the registry's
+      // conformance results per provided interface, the capability summary,
+      // the changelog, who published it and who recalled it. Recall itself
+      // is the existing revokedAt / revokeReason. Idempotent.
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('plugins', 'description', `TEXT NOT NULL DEFAULT ''`);
+      await add('plugins', 'publisherName', `TEXT NOT NULL DEFAULT ''`);
+      await add('plugins', 'source', `TEXT NOT NULL DEFAULT 'first_party'`);
+      await add('plugins', 'workspaceId', `TEXT NOT NULL DEFAULT ''`);
+      await add('plugins', 'listed', `INTEGER NOT NULL DEFAULT 1`);
+      await add('plugins', 'installs', `INTEGER NOT NULL DEFAULT 0`);
+      await add('plugins', 'updatedAt', `TEXT`);
+      await add('plugin_versions', 'commitSha', `TEXT NOT NULL DEFAULT ''`);
+      await add('plugin_versions', 'conformance', `TEXT NOT NULL DEFAULT '[]'`);
+      await add('plugin_versions', 'capabilities', `TEXT NOT NULL DEFAULT '{}'`);
+      await add('plugin_versions', 'changelog', `TEXT NOT NULL DEFAULT ''`);
+      await add('plugin_versions', 'publishedBy', `TEXT NOT NULL DEFAULT ''`);
+      await add('plugin_versions', 'revokedBy', `TEXT NOT NULL DEFAULT ''`);
+      // Local packages from before this migration belong to the workspace that loaded them.
+      await db.query(`UPDATE plugins p SET "source" = 'local', "workspaceId" = COALESCE((SELECT MIN(i."workspaceId") FROM plugin_installs i WHERE i."pluginId" = p."pluginId" AND i."accountId" = p."accountId"), '')
+        WHERE p."tier" = 'local' AND p."source" = 'first_party'`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_plugin_versions_plugin ON plugin_versions ("accountId", "pluginId")`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */
