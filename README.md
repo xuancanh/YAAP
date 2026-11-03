@@ -47,6 +47,14 @@ one table.
   *Activity* (routine loop runs collapsed per agent and day), *Spend and
   health*, *Coming up* (meetings, cadences in words, deadlines) and *Recent
   files*. Each section fails on its own; the rest still renders.
+- **The top bar** ([docs/home.md](docs/home.md#top-bar)) sits over every
+  screen: the workspace switcher (each company's run state and what needs
+  you), the company at a glance (Running or Paused with the owner's
+  confirmed Pause / Resume, spend against the envelope, agents working and
+  failing, the turns running now, the next meeting), a command palette
+  (⌘K / Ctrl+K: places, agents, chats, task keys, files, actions), quick
+  create, a notifications bell that merges what waits on you with messages,
+  mentions, follows and failed runs, and the account menu.
 - **Inbox** collects everything waiting on you: approvals and decision cards,
   staged sends, escalations, mentions and agent events. Its **Following**
   view shows what changed on the threads and tasks you follow

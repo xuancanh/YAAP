@@ -457,3 +457,158 @@ The first request draws the page. After that:
 
 A decision removes its card at once. The page then refreshes behind it,
 and the Inbox badge is refreshed.
+
+## Top bar
+
+*Shipped 4 November 2026.* A 48 px bar across the top of the work area,
+beside the main menu, on every screen. It answers "is the company OK?" and
+"what needs me?" without leaving the page you are on, and it is where you
+switch workspaces, search and create.
+
+Code:
+
+- `src/components/TopBar.tsx` (`TopBar` holds the data and the navigation;
+  `TopBarView` and `NotificationsPanel` are presentational)
+- `src/components/CommandPalette.tsx` (presentational)
+- `src/lib/topbar.ts` (the copy and the rules, pure)
+- `server/src/home/topbar.service.ts`, `topbar.controller.ts`,
+  `topbar.types.ts`; `HomeService.glance` in `home.service.ts`
+- tests: `tests/backend-topbar.test.ts`, `web-tests/topbar.test.tsx`
+
+### What it shows
+
+```
+[■ Acme ▾ Autonomous] | ● Running ‖ | $4.20 today ▬▬▭ | ◐◐◐ 3 working 1 failing | ● 2 running | ◷ Standup in 12 min      [Search ⌘K] [+] [🔔 5] [L]
+```
+
+**Left: the workspace switcher.** The workspace's colour and name, and for
+a company its mode (Supervised or Autonomous). The menu lists your
+workspaces with one line each: Running or Paused (red) and the mode, or "No
+company", and how many things need you; a dot counts its unread
+notifications. Workspaces shared with you follow under the owner's name.
+**New workspace or company** opens the onboarding wizard. It replaces the
+rail's workspace pill.
+
+**Centre: the company at a glance** (a company only), left to right in
+order of attention:
+
+| Item | Click |
+|---|---|
+| **Running** (green dot) or **Paused** (red) | the owner: a confirm, then Pause company / Resume company (the kill switch, `POST …/org/pause`, `…/org/resume`); anyone else sees the state only |
+| **Spend**: today's spend and a small meter of the month against the envelope (the forecast soft behind it). Amber when the forecast is `warn`, red when the month reaches the envelope or the forecast is `stop`; the tooltip has the month and the forecast | Spend |
+| **Agents**: the faces of who is failing (red ring) and working, "3 working", and "1 failing" in red | mission control; the failing count opens it filtered to the failing agents |
+| **Live runs**: a breathing dot and the count of turns running now | a popover lists them (agent, session, the tool call in words, how long) and each opens its session |
+| **Next meeting** within a day: "Standup in 12 min" | the meeting (or Meetings) |
+
+Without a company the centre keeps only the live runs. Narrower windows
+drop the meeting first (under 1360 px), then the spend and the agents
+(under 1080 px); the run state and the live runs stay.
+
+**Right:** search (the command palette), **+** (create), the bell and the
+account menu.
+
+- **Create**: New chat, New task (a title, then the task opens; a company
+  only), Start a meeting (opens Meetings; a company only), New agent, New
+  workspace or company.
+- **Account**: who you are, the theme (it moved here from the main menu),
+  Account, Settings, the keyboard shortcuts and Sign out (accounts mode).
+
+**On a phone** (under 820 px) the bar is the switcher, the live runs,
+search, the bell and an overflow menu that carries the strand as rows
+(run state with Pause or Resume behind a confirm, spend, agents, failing,
+the next meeting), create and the account items. Nothing scrolls sideways.
+
+### The command palette
+
+⌘K (Mac) or Ctrl+K anywhere, or the search box. One field finds:
+
+- actions: new chat, task, meeting, agent or workspace; pause or resume the
+  company (the owner, confirmed); switch the theme; mark all notifications
+  read;
+- places: Home, Chat, Inbox, Company, mission control, Spend, Meetings,
+  Artifacts, Apps, Market, All agents, Settings;
+- agents, channels, the chats loaded in the rail and every settings pane;
+- a task by its key: typing `ENG-12` offers **Open task ENG-12**, resolved
+  with `GET …/org/tasks/:ref`;
+- after a short pause, the server's search (`GET /api/search`): chats,
+  files and message snippets.
+
+With an empty query it lists actions and places. Matches rank by where the
+text matches (the start, the start of a word, anywhere, the letters in
+order; `rankPalette`), at most six per group. ↑ ↓ move, Enter opens, Esc
+closes.
+
+### Notifications
+
+The bell's count is what you have not read. The badge turns red when an
+unread card is critical or its default applies within six hours. The panel:
+
+- **Waiting on you**: Home's Needs-you cards, in Home's order (decisions,
+  escalations, keys, pending changes, incidents, signals, queued actions).
+  A card whose default applies within six hours says "Expires in 2 h".
+- **Today** and **Earlier**: the inbox events addressed to you over the
+  last two weeks: messages from agents (`message_owner`), mentions in
+  channels, changes to what you follow, failed runs (`loop_error`,
+  `action_failed`) and budget stops, plus other agent notices. Routine
+  runs, queued actions (listed as their card) and action outcomes are not
+  listed.
+- Filters: All, Waiting on you, Messages (messages, mentions, follows),
+  Runs.
+- Each row: an unread dot coloured by what it is (red failing or critical,
+  amber waiting, the accent for messages), the title, the kind, who it is
+  from and when. A row opens where it belongs and marks itself read: a
+  card where Home sends it (`needTarget`), a message its direct chat, a
+  mention or a follow its link, a failed run its agent. **Mark read** on a
+  row, **Mark all read** at the top, **Open Inbox** (or Home without a
+  company) at the bottom.
+
+Read state reuses what exists. An inbox event keeps its own mark
+(`agent_events.readAt`, the one the agent inbox and the Inbox's Messages
+set). A card has none: it waits until it is decided. So the bell keeps, per
+person and workspace, the ids of the cards they have read and the time of
+their last **Mark all read**, in one app_settings row
+`home.notifications:<ws>:<actor>` (hidden from `GET /api/settings` with
+the other `home.*` rows). A card you have read stays listed while it waits;
+it only stops counting. A card that arrives later counts again.
+
+The bell is in-app only. Push (Telegram, email, web push) and quiet hours
+are unchanged (`docs/channels.md`); a silent event still shows here, as it
+does in the Inbox.
+
+### The requests
+
+| Request | Returns |
+|---|---|
+| `GET /api/workspaces/:id/status` | `WorkspaceStatus`: `company` (name, mode, status) or null; `needsYou` and `urgent` (critical, or a default within six hours); `spend` (today, month, envelope, forecast; a company only); `agents` (total, working, failing, up to five faces, failing first); `live` (the turns running now); `nextMeeting` (a meeting or ritual within a day); `partial` |
+| `GET /api/topbar/workspaces` | one row per own workspace: `company`, `needsYou`, `unread`. The SPA never sends the shared-workspace header with it |
+| `GET /api/workspaces/:id/notifications` | `{ items, unread }`: waiting cards first, then events newest first, at most 80 |
+| `POST /api/workspaces/:id/notifications/read` | `{ ids: string[] }` (`need:…` or `event:…`) or `{ all: true }` |
+
+`status` reads `HomeService.glance`: the same Needs-you, spend, team
+(`agentStatuses`, so an agent is "failing" here exactly when its Home tile
+is red) and coming-up sections as Home, without recording a visit. The
+switcher's rows ask for the cards only. The reads are GETs, so a viewer of
+a shared workspace gets a bar too; members set their own read marks, a
+viewer cannot (read-only).
+
+### Live
+
+- The live-turn registry (`server/src/chats/live-turns.ts`) now tells
+  subscribers when a turn starts or ends, and the workspace stream carries
+  it as `turn_live { sessionId, agentId, on, running }`. The bar shows
+  `running` at once and reloads the status behind it.
+- `task_update`, `channel_approval` and `meeting_update` refresh the status
+  and the bell (debounced 1.2 s); `channel_message` refreshes the bell.
+- A 30-second poll runs while the tab is visible, and both refresh when the
+  tab regains focus or the company's mode or run state changes elsewhere.
+
+### Left out
+
+- A separate help button: the app serves no documentation pages, so help
+  is the keyboard shortcuts in the account menu.
+- A "discussion" create item: a new channel lives in Chat; the palette
+  finds the channels.
+- An archived state in the switcher: workspaces and companies have none;
+  a company is running, paused or off.
+- Needs you as its own chip: the bell carries it, and the Inbox badge in the
+  main menu stays.
