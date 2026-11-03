@@ -52,6 +52,17 @@ export function ImportPlanView({ plan }: { plan: BlueprintImportPlan }) {
         <div><div style={label}>Tunables · {plan.tunables.length}</div>{plan.tunables.map((t) => <div key={t.key} style={{ fontSize: 12, ...mono }}>{t.key} = {t.applied}{t.applied !== t.value ? <span style={{ color: 'var(--amber)' }}> (asked {t.value}{t.note ? `: ${t.note}` : ''})</span> : null}</div>)}</div>
         <div><div style={label}>Playbooks · {plan.playbooks.length}</div>{plan.playbooks.map((p) => <div key={p.name} style={{ fontSize: 12, ...mono }}>/{p.name} <span style={faint}>draft</span></div>)}</div>
       </div>
+      {(plan.projects?.length ?? 0) > 0 && (
+        <div data-testid="blueprint-plan-projects">
+          <div style={label}>Projects · {plan.projects!.length} <span style={faint}>(created in Next once the hires exist)</span></div>
+          {plan.projects!.map((p) => (
+            <div key={p.title} style={{ fontSize: 12.5, marginTop: 4 }}>
+              <b>{p.title}</b> <span style={faint}>led by {p.lead}{p.cadence ? ` · standup ${p.cadence}` : ''}</span>
+              <div style={faint}>Team: {p.team.length ? p.team.map((m) => `${m.title}${m.role ? ` (${m.role})` : ''} ${m.allocation}%`).join(', ') : 'none'}</div>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={faint}>
         {plan.vision ? <>Vision “{plan.vision.title}” over {plan.vision.horizonDays} days · </> : 'No vision · '}
         profile: {[plan.profile.values && 'values', plan.profile.culture && 'culture', plan.profile.rules && 'rules'].filter(Boolean).join(', ') || 'none'} · {plan.cadences.count} cadence(s) {plan.cadences.applied ? 'applied' : 'listed'}{plan.cadences.note ? ` (${plan.cadences.note})` : ''}

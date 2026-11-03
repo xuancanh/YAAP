@@ -1086,8 +1086,21 @@ export interface ProjectPageTask {
   assigneeName: string; blockedOn: BlockedOn | null; blockedText: string; steps: { done: number; total: number };
 }
 /** GET /api/workspaces/:id/org/projects/:projectId — the project page. */
+/** A project's cross-functional team (docs/work-tracking.md "Project teams"). */
+export interface ProjectTeamMember {
+  id: string; kind: 'agent' | 'person'; agentId: string | null; humanId: string | null; name: string; title: string;
+  role: string; allocation: number; status: 'active' | 'pending' | string;
+  homeUnit: { id: string; name: string; slug: string } | null; managerName: string; totalAllocation: number; openTasks: number; approvalId: string | null; joinedAt: string;
+}
+export interface ProjectTeam {
+  projectId: string; key: string | null; title: string; lead: { agentId: string | null; name: string };
+  channel: { id: string; slug: string } | null; standup: { cron: string; nextAt: string | null; lastAt: string | null };
+  members: ProjectTeamMember[]; units: string[];
+}
 export interface ProjectPage {
   project: ProjectSummary & { brief: ProjectBrief; createdAt: string; createdBy: string; updateCadenceDays: number | null };
+  /** The cross-functional team with its home units (null for a system project). */
+  team?: ProjectTeam | null;
   updates: ProjectUpdate[];
   tasks: ProjectPageTask[];
   blockers: Array<{ taskId: string; key: string | null; title: string; kind: string; text: string; since: string }>;
@@ -1161,7 +1174,7 @@ export interface OrgMessage {
 /** Who may be tagged on a company's tasks (the comment box's @ list). */
 export interface OrgMentionable { kind: 'agent' | 'human'; id: string; name: string; status?: string }
 export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review'
-  | 'two_key' | 'metric_source' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill';
+  | 'two_key' | 'metric_source' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation';
 export interface OrgApproval {
   id: string; orgId: string; kind: OrgApprovalKind; payload: string; requestedBy: string; recommendation: string;
   status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired'; decidedAt: string | null; decidedBy?: string; decisionNote: string; expiresAt: string | null; createdAt: string;
@@ -1449,8 +1462,10 @@ export interface BlueprintImportPlan {
   tunables: Array<{ key: string; value: number; applied: number; note?: string }>; profile: { values: boolean; culture: boolean; rules: boolean };
   vision: { title: string; horizonDays: number } | null; playbooks: Array<{ name: string }>; cadences: { count: number; applied: boolean; note: string; list?: Array<{ unitTitle: string; kind: string; cron: string }> };
   recommendedCards: string[]; recommendedConnections: string[]; approval: 'blueprint' | 'none'; notes: string[];
+  /** Roadmap items with their lead and cross-functional team, by role title (blueprint v1 `projects`). */
+  projects?: Array<{ title: string; lead: string; team: Array<{ title: string; role: string; allocation: number }>; cadence: string | null; krs: string[] }>;
 }
-export interface BlueprintImportResult { orgId: string; importId: string; mode: ImportMode; chiefAgentId: string; hired: Array<{ agentId: string; title: string }>; approvalId: string | null; playbooks: Array<{ skillId: string; name: string }>; notes: string[] }
+export interface BlueprintImportResult { orgId: string; importId: string; mode: ImportMode; chiefAgentId: string; hired: Array<{ agentId: string; title: string }>; projects?: Array<{ projectId: string; key: string | null; title: string }>; approvalId: string | null; playbooks: Array<{ skillId: string; name: string }>; notes: string[] }
 export interface CompanyOutcomes { first_key_result: number; thirty_days_in_envelope: number }
 /** GET /api/market/companies — published blueprints with their outcome counts. */
 export interface CompanyRegistryItem extends RegistryItem { outcomes: CompanyOutcomes }
@@ -2175,6 +2190,10 @@ export const api = {
   addProjectMilestone: (wsId: string, projectId: string, body: { name: string; date?: string | null }) => send<OrgProject>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/milestones`, 'POST', body),
   setProjectMilestone: (wsId: string, projectId: string, milestoneId: string, patch: { name?: string; date?: string | null; done?: boolean }) => send<OrgProject>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/milestones/${enc(milestoneId)}`, 'PATCH', patch),
   decideProjectAppetite: (wsId: string, projectId: string, body: { decision: 'extend' | 'cut_scope' | 'kill'; extendDays?: number; extendUsd?: number; note?: string }) => send<OrgProject>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/appetite`, 'POST', body),
+  projectTeam: (wsId: string, projectId: string) => get<ProjectTeam>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/team`),
+  addProjectMember: (wsId: string, projectId: string, body: { agentId: string; role?: string; allocation: number }) => send<ProjectTeam>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/team`, 'POST', body),
+  removeProjectMember: (wsId: string, projectId: string, agentId: string) => send<ProjectTeam>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/team/${enc(agentId)}`, 'DELETE'),
+  setProjectStandup: (wsId: string, projectId: string, cron: string | null) => send<ProjectTeam>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/standup`, 'POST', { cron }),
   linkTaskToProject: (wsId: string, projectId: string, taskId: string) => send<OrgTask>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/tasks`, 'POST', { taskId }),
   taskTransitions: (wsId: string, taskId: string) => get<TaskTransition[]>(`/api/workspaces/${wsId}/org/tasks/${enc(taskId)}/transitions`),
   taskSteps: (wsId: string, taskId: string, op: { add?: string; done?: string; undo?: string; drop?: string }) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${enc(taskId)}/steps`, 'POST', op),

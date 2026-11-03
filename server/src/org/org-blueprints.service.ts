@@ -50,7 +50,10 @@ import { OrgAuditService } from './org-audit.service';
 import { checkTunable, parseTunables, TUNABLES } from './org-tunables';
 import { meetScopes } from './scopes';
 import { ROLES, roleById, roleCharter, tierOfModel } from './roles/catalog';
-import { BLUEPRINT_FORMAT, BlueprintError, hireOrder, rootRole, unitsOf, validateBlueprint, type Blueprint, type BlueprintRole } from './blueprints/format';
+import { BLUEPRINT_FORMAT, BlueprintError, hireOrder, rootRole, unitsOf, validateBlueprint, type Blueprint, type BlueprintProject, type BlueprintRole } from './blueprints/format';
+import { OrgProjectsService } from './org-projects.service';
+import { OrgProjectTeamsService } from './org-project-teams.service';
+import { parseProjectBrief } from './work-model';
 
 export type BlueprintImportRow = typeof orgBlueprintImports.$inferSelect;
 export type ImportMode = 'supervised' | 'autonomous';
@@ -77,6 +80,8 @@ export interface ImportPlan {
   cadences: { count: number; applied: boolean; note: string; list: NonNullable<Blueprint['cadences']> };
   recommendedCards: string[];
   recommendedConnections: string[];
+  /** Roadmap items with their leads and cross-functional teams, created after the staffing (in Next: the CEO bets Now). */
+  projects: Array<{ title: string; lead: string; team: Array<{ title: string; role: string; allocation: number }>; cadence: string | null; krs: string[] }>;
   /** The whole staffing plan as one approval card (supervised) or direct hires (autonomous). */
   approval: 'blueprint' | 'none';
   notes: string[];
@@ -89,6 +94,8 @@ export interface ImportResult {
   chiefAgentId: string;
   /** Agents created now (autonomous) — supervised mode creates none until the card is approved. */
   hired: Array<{ agentId: string; title: string }>;
+  /** Projects created now (autonomous, or no hires) — supervised mode creates them when the card is approved. */
+  projects: Array<{ projectId: string; key: string | null; title: string }>;
   approvalId: string | null;
   playbooks: Array<{ skillId: string; name: string }>;
   notes: string[];
@@ -98,6 +105,8 @@ export interface ImportResult {
 interface BlueprintApprovalPayload {
   importId: string; name: string;
   hires: Array<HirePayload & { reportsToTitle: string }>;
+  /** Roadmap items to create once the hires exist (blueprint v1 `projects`). */
+  projects?: BlueprintProject[];
 }
 
 const OUTCOME_SWEEP_MS = 60 * 60_000;
@@ -121,6 +130,8 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
     private readonly audit: OrgAuditService,
     @Optional() private readonly settings?: SettingsService,
     @Optional() private readonly registry?: RegistryService,
+    @Optional() private readonly projects?: OrgProjectsService,
+    @Optional() private readonly teams?: OrgProjectTeamsService,
   ) {
     this.approvals.onApply('blueprint', (orgId, payload, approval) => this.applyStaffing(orgId, payload as unknown as BlueprintApprovalPayload, approval));
   }
@@ -183,7 +194,32 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
     if (routing) bp.routing = routing;
     const cards = await this.probeCards(org);
     if (cards.length) bp.cards = cards;
+    const projects = await this.exportProjects(orgId, titles);
+    if (projects.length) bp.projects = projects;
     return validateBlueprint(bp);
+  }
+
+  /** Open projects with their lead and team, by role title (blueprint v1 `projects`). */
+  private async exportProjects(orgId: string, titles: Map<string, string>): Promise<BlueprintProject[]> {
+    const out: BlueprintProject[] = [];
+    const load = new Map<string, number>();
+    const rows = await this.org.projectMembers(orgId).catch(() => []);
+    for (const p of (await this.org.projects(orgId)).filter((x) => x.kind === 'project' && x.status !== 'done' && x.status !== 'cancelled').slice(0, 10)) {
+      const lead = p.ownerAgentId ? titles.get(p.ownerAgentId) : undefined;
+      if (!lead) continue;
+      const team: BlueprintProject['team'] = [];
+      for (const r of rows.filter((x) => x.projectId === p.id && x.status === 'active' && x.agentId).slice(0, 8)) {
+        const t = titles.get(r.agentId!);
+        if (!t || team.some((m) => m.title === t)) continue;
+        const used = load.get(t) ?? 0;
+        if (used + r.allocation > 100) continue;
+        load.set(t, used + r.allocation);
+        team.push({ title: t, role: r.role, allocation: Math.max(1, r.allocation) });
+      }
+      const b = parseProjectBrief(p.brief);
+      out.push({ title: p.title, brief: { problem: b.problem, hypothesis: b.hypothesis, done_when: b.done_when, mvp: b.mvp }, lead, team, ...(p.standupCron ? { cadence: p.standupCron } : {}), ...(p.appetiteDays ? { appetiteDays: p.appetiteDays } : {}), ...(p.appetiteUsd ? { appetiteUsd: p.appetiteUsd } : {}) });
+    }
+    return out;
   }
 
   /** Rituals (item 19) store cadences in `org_cadences` when merged; read them
@@ -297,6 +333,7 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
     const cadencesTable = await this.tableExists('org_cadences').catch(() => false);
     const cadences = { count: bp.cadences?.length ?? 0, applied: false, note: bp.cadences?.length ? (cadencesTable ? 'rituals are installed; cadences are listed for the chief to set (not written by the import)' : 'skipped: rituals (item 19) are not installed on this server') : 'none', list: bp.cadences ?? [] };
     if (bp.playbooks.length) notes.push(`${bp.playbooks.length} playbook(s) install as skill drafts; approve them on the Skills page`);
+    if (bp.projects?.length) notes.push(`${bp.projects.length} project(s) are created in Next with their leads and cross-functional teams once the hires exist; moving one to Now is your bet`);
     notes.push('nothing else is created: no connections, grants, memory, lessons, tokens or files');
     return {
       ok: !existing,
@@ -309,6 +346,7 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
       vision: bp.vision ? { title: bp.vision.title, horizonDays: bp.vision.horizonDays } : null,
       playbooks: bp.playbooks.map((p) => ({ name: p.name })),
       cadences, recommendedCards: bp.cards ?? [], recommendedConnections,
+      projects: (bp.projects ?? []).map((p) => ({ title: p.title, lead: p.lead, team: p.team, cadence: p.cadence ?? null, krs: p.krs ?? [] })),
       approval: mode === 'supervised' && hires.length > 0 ? 'blueprint' : 'none',
       notes,
     };
@@ -359,16 +397,23 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
     });
     let approvalId: string | null = null;
     let hired: ImportResult['hired'] = [];
+    let projectsMade: ImportResult['projects'] = [];
     if (payloads.length > 0) {
       if (opts.mode === 'supervised') {
-        const a = await this.approvals.create(org.id, { kind: 'blueprint', payload: { importId, name: bp.name, hires: payloads } as unknown as Record<string, unknown>, requestedBy: actor, recommendation: `Staff "${bp.name}" from its blueprint: ${payloads.map((p) => p.title).join(', ')}.` });
+        const a = await this.approvals.create(org.id, { kind: 'blueprint', payload: { importId, name: bp.name, hires: payloads, ...(bp.projects?.length ? { projects: bp.projects } : {}) } as unknown as Record<string, unknown>, requestedBy: actor, recommendation: `Staff "${bp.name}" from its blueprint: ${payloads.map((p) => p.title).join(', ')}.` });
         approvalId = a.id;
         notes.push(`${payloads.length} hire(s) wait on one approval card (${a.id.slice(0, 8)}); no agent exists until it is approved`);
       } else {
-        const res = await this.applyStaffing(org.id, { importId, name: bp.name, hires: payloads }, null);
+        const res = await this.applyStaffing(org.id, { importId, name: bp.name, hires: payloads, ...(bp.projects?.length ? { projects: bp.projects } : {}) }, null);
         hired = res.hired as ImportResult['hired'];
+        projectsMade = res.projects as ImportResult['projects'];
         for (const f of res.failed as string[]) notes.push(`hire failed: ${f}`);
       }
+    } else if (bp.projects?.length) {
+      const byTitle = new Map<string, string>([[root.title.toLowerCase(), chief.id]]);
+      const made = await this.createProjects(org.id, bp.projects, byTitle);
+      projectsMade = made.projects;
+      notes.push(...made.notes);
     }
     const row: BlueprintImportRow = {
       accountId: currentAccountId(), id: importId, orgId: org.id, workspaceId, itemId: opts.itemId ?? '', name: bp.name, mode: opts.mode,
@@ -376,7 +421,7 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
     };
     await this.db.insert(orgBlueprintImports).values(row);
     await this.audit.append(org.id, { actor, action: 'blueprint_import', refType: 'org', refId: org.id, payload: { name: bp.name, mode: opts.mode, roles: bp.roles.length, hires: payloads.length, approvalId, playbooks: playbooks.length, itemId: opts.itemId ?? '', origin: bp.origin.sourceOrgId } });
-    return { orgId: org.id, importId, mode: opts.mode, chiefAgentId: chief.id, hired, approvalId, playbooks, notes };
+    return { orgId: org.id, importId, mode: opts.mode, chiefAgentId: chief.id, hired, projects: projectsMade, approvalId, playbooks, notes };
   }
 
   /** The `blueprint` approval's applier: hires in order through `applyHire`,
@@ -399,7 +444,38 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
         hired.push({ agentId: r.agentId, title: String(h.title) });
       } catch (err) { failed.push(`${h.title}: ${err instanceof Error ? err.message : String(err)}`); }
     }
-    return { hired, failed };
+    const made = Array.isArray(payload.projects) && payload.projects.length ? await this.createProjects(orgId, payload.projects, byTitle) : { projects: [], notes: [] };
+    return { hired, failed: [...failed, ...made.notes], projects: made.projects };
+  }
+
+  /**
+   * The blueprint's roadmap items, once their people exist: each project in
+   * Next (shaped when its brief and appetite are filled — the CEO bets Now)
+   * with its lead, its cross-functional team at their allocations (the
+   * import is the CEO's act, so allocations apply without cards), its
+   * channel and its standup. Key results are listed in the brief for the
+   * chief to set.
+   */
+  private async createProjects(orgId: string, list: BlueprintProject[], byTitle: Map<string, string>): Promise<{ projects: ImportResult['projects']; notes: string[] }> {
+    const projects: ImportResult['projects'] = [];
+    const notes: string[] = [];
+    if (!this.projects) return { projects, notes: list.length ? ['projects skipped: work tracking is not available on this server'] : [] };
+    for (const p of list) {
+      const lead = byTitle.get(p.lead.toLowerCase()) ?? null;
+      try {
+        const brief = { ...p.brief, hypothesis: [p.brief.hypothesis, p.krs?.length ? `Key results to set: ${p.krs.join('; ')}.` : ''].filter(Boolean).join(' ') };
+        const shaped = Boolean(brief.problem && brief.done_when && ((p.appetiteDays ?? 0) > 0 || (p.appetiteUsd ?? 0) > 0));
+        const r = await this.projects.create(orgId, { title: p.title, goalIds: [], ownerAgentId: lead, brief, appetiteDays: p.appetiteDays ?? 0, appetiteUsd: p.appetiteUsd ?? 0, lane: 'next', status: shaped ? 'shaped' : 'proposed' }, 'user');
+        projects.push({ projectId: r.project.id, key: r.project.key, title: r.project.title });
+        for (const m of p.team) {
+          const agentId = byTitle.get(m.title.toLowerCase());
+          if (!agentId || !this.teams) { notes.push(`${r.project.key}: ${m.title} not added (${agentId ? 'project teams are not available' : 'the role was not hired'})`); continue; }
+          await this.teams.propose(orgId, r.project.id, { agentId, role: m.role, allocation: m.allocation, why: 'blueprint' }, 'user').catch((err: unknown) => notes.push(`${r.project.key}: ${m.title} not added: ${err instanceof Error ? err.message : String(err)}`));
+        }
+        if (p.cadence && this.teams) await this.teams.setStandup(orgId, r.project.id, p.cadence, 'user').catch((err: unknown) => notes.push(`${r.project.key}: standup not set: ${err instanceof Error ? err.message : String(err)}`));
+      } catch (err) { notes.push(`project "${p.title}" skipped: ${err instanceof Error ? err.message : String(err)}`); }
+    }
+    return { projects, notes };
   }
 
   // ---- outcomes (docs/blueprints.md §4) ----

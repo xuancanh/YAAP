@@ -879,6 +879,9 @@ export const orgMembers = pgTable('org_members', {
    *  org path; a different live hash is charter drift (docs/security.md). */
   charterHash: text('charterHash').notNull().default(''),
   joinedAt: text('joinedAt').notNull(),
+  /** 1 = a function head by the chief's or the CEO's say (a unit lead and a
+   *  catalog head title are heads without it): staffs its own unit. */
+  isHead: integer('isHead').notNull().default(0),
   /** Decisions this member raises go to this person (an org_humans
    *  memberAccountId) instead of its reportsTo agent (migration 0070). */
   reportsToHumanId: text('reportsToHumanId'),
@@ -1132,6 +1135,12 @@ export const orgProjects = pgTable('org_projects', {
   breakerAt: text('breakerAt'),
   /** When the lead was asked for an update at the warn share of the appetite. */
   appetiteWarnedAt: text('appetiteWarnedAt'),
+  /** The project's channel (`#p-<key>`, its team as members), when it has a team. */
+  channelId: text('channelId'),
+  /** The project standup's five-field cron ('' = none); its next and last fire. */
+  standupCron: text('standupCron').notNull().default(''),
+  standupNextAt: text('standupNextAt'),
+  standupLastAt: text('standupLastAt'),
   createdBy: text('createdBy').notNull().default('user'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt'),
@@ -1154,6 +1163,29 @@ export const orgProjectUpdates = pgTable('org_project_updates', {
   diff: text('diff').notNull().default('{}'),
   by: text('by').notNull().default(''),
   createdAt: text('createdAt').notNull(),
+});
+
+/** A project's cross-functional team (docs/work-tracking.md "Project
+ *  teams"): members drawn from any unit, each with its role on the project
+ *  and an allocation in percent of its capacity (a member's active and
+ *  pending allocations sum to at most 100). `pending` until the member's own
+ *  manager approves the allocation (a `project_allocation` card routed to
+ *  it); `left` keeps the history. One of agentId / humanId. */
+export const orgProjectMembers = pgTable('org_project_members', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  projectId: text('projectId').notNull(),
+  agentId: text('agentId'),
+  humanId: text('humanId'),
+  role: text('role').notNull().default(''),
+  allocation: integer('allocation').notNull().default(0),
+  /** active | pending | left. */
+  status: text('status').notNull().default('active'),
+  approvalId: text('approvalId'),
+  addedBy: text('addedBy').notNull().default(''),
+  joinedAt: text('joinedAt').notNull(),
+  leftAt: text('leftAt'),
 });
 
 /** Every status change of an org task, with its actor (docs/work-tracking.md

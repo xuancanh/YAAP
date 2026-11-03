@@ -36,11 +36,13 @@ import { OrgSignalsService } from './org-signals.service';
 import { AgentsService } from '../agents/agents.service';
 import { HeartbeatService } from '../chats/heartbeat.service';
 import { chiefTunable, proxyLevelOf } from './chief-tunables';
+import { govTunable } from './governance-tunables';
+import { isHeadMember, isHeadTitle } from './heads';
 
 /** Statuses in which a handed-off task waits on its receiving side. */
 const HANDOFF_WAITING = new Set(['backlog', 'todo', 'blocked', 'waiting', 'in_review']);
-/** A function head's title: "Head of Sales" (the business catalog), "Sales manager". */
-const FUNCTION_HEAD = /^head of\b|\bmanager\b/i;
+/** A function head's title: "Head of Sales" (the business catalog), "Head of Tutoring", "Sales manager" (heads.ts). */
+const FUNCTION_HEAD = { test: (title: string) => isHeadTitle(title) };
 const H = 3_600_000;
 
 export interface OperatingSystemState {
@@ -59,6 +61,10 @@ export interface OperatingSystemState {
    *  without a decision or action — at or past `chief.sunsetEmptyCycles`:
    *  candidates for the ritual-retirement review (docs/meetings.md "Before"). */
   emptyRituals?: Array<{ kind: string; title: string; unit: string; streak: number }>;
+  /** Heads whose unit has a staffing gap — no specialists yet, or every
+   *  report at its WIP limit — for the chief to delegate the team design to
+   *  (delegate-org-design), never to staff for them. */
+  staffingGaps?: Array<{ name: string; title: string; reports: number; open: number; gap: string }>;
 }
 
 @Injectable()
@@ -176,7 +182,21 @@ export class OrgChiefService {
       }
     }
 
-    return { orgId, orgName: org.name, proxyLevel: proxyLevelOf(org), rituals, overdueDecisions, staleRisks, breachedHandoffs, functionOwners, headRequests, emptyRituals };
+    // Staffing gaps: heads with no specialists, or a unit at capacity (docs/autonomous-skills-review.md "Why heads don't hire").
+    const wip = govTunable(org, 'capacity.wipPerMember');
+    const openTasks = (await this.tasks.list(orgId)).filter((t) => ['todo', 'claimed', 'in_progress', 'blocked'].includes(t.status));
+    const openOf = (id: string) => openTasks.filter((t) => t.assigneeAgentId === id).length;
+    const staffingGaps: NonNullable<OperatingSystemState['staffingGaps']> = [];
+    for (const m of members) {
+      const u = leads.get(m.agentId);
+      if (!isHeadMember(m, org, Boolean(u && u.parentUnitId !== null))) continue;
+      const reports = members.filter((x) => x.reportsToAgentId === m.agentId && x.status === 'active');
+      const open = openOf(m.agentId);
+      const gap = reports.length === 0 ? `no specialists yet${open ? `, carries ${open} open task(s) itself` : ''}` : reports.every((r) => openOf(r.agentId) >= wip) ? `every report at its WIP limit (${wip})` : '';
+      if (gap) staffingGaps.push({ name: names.get(m.agentId) ?? m.agentId.slice(0, 8), title: m.title || 'head', reports: reports.length, open, gap });
+    }
+
+    return { orgId, orgName: org.name, proxyLevel: proxyLevelOf(org), rituals, overdueDecisions, staleRisks, breachedHandoffs, functionOwners, headRequests, emptyRituals, staffingGaps };
   }
 
   /** Wake the chief for a handoff that breached since its last beat (a
@@ -230,6 +250,7 @@ export function describeState(st: OperatingSystemState): string {
   if (st.breachedHandoffs.length) lines.push('Breached handoffs (route to the owner, then the shared manager or /org/issues.md):', ...st.breachedHandoffs.slice(0, 6).map((h) => `- ${h.key || `[${h.taskId.slice(0, 8)}]`} "${h.title}" from ${h.from} → ${h.to}, ${h.status.replace('_', ' ')} for ${h.waitedHours}h`));
   if (st.headRequests.length) lines.push('Requests from function heads in your backlog (hire, pause and re-tooling cases, asks; decide within the boundary or put them to the CEO — run function-reports-intake):', ...st.headRequests.slice(0, 6).map((r) => `- [${r.taskId.slice(0, 8)}] "${r.title}" from ${r.from}, ${r.waitedHours}h old`));
   if (st.emptyRituals?.length) lines.push('Rituals empty for chief.sunsetEmptyCycles cycles in a row (skipped, or no decision or action) — run ritual-retirement-review: propose, never retire:', ...st.emptyRituals.slice(0, 6).map((r) => `- ${r.title} of ${r.unit}: ${r.streak} empty cycle(s)`));
+  if (st.staffingGaps?.length) lines.push('Heads with a staffing gap — delegate the team design to them, do not staff their units yourself (run delegate-org-design: their mandate and envelope, a task asking for their team design, then review it):', ...st.staffingGaps.slice(0, 6).map((g) => `- ${g.name} (${g.title}): ${g.gap}`));
   if (st.functionOwners.length) lines.push(`Function owners (route function-level work to them; their weekly reports are under /org/<function>/reports/): ${st.functionOwners.map((o) => `${o.name} (${o.title}${o.unit ? `, ${o.unit}` : ''})`).join('; ')}.`);
   if (lines.length === 1) lines.push('Nothing overdue: no ritual in the lookahead, no decision past due, no stale risk, no breached handoff.');
   lines.push('The ledger lives under /org/ (operating-system.md, scorecard.md, issues.md, decisions.md, calendar.md, risks.md, handoffs.md, values.md).');

@@ -29,12 +29,14 @@ import { OrgService, MAX_DEPTH_CEILING } from './org.service';
 import { OrgTasksService, parseBrief, type TaskBrief } from './org-tasks.service';
 import { meetScopes, parseScopes } from './scopes';
 import { resolveRoleHire } from './org-roles.service';
+import { roleById } from './roles/catalog';
+import { HEAD_PLAYBOOKS, isHeadRole } from './heads';
 import { clamp01, computedAlternatives, defaultActionFor, normalizeAlternatives, RECOMMENDED_ACTIONS, reversibilityOf, type DefaultAction, type RecommendedAction } from './decision-cards';
 import { govTunable } from './governance-tunables';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill', 'project_allocation'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19; `blueprint` is OrgBlueprintsService's,
@@ -97,7 +99,10 @@ export type ReorgChange =
   | { op: 'retitle'; agentId: string; title: string }
   | { op: 'pause'; agentId: string }
   | { op: 'resume'; agentId: string }
-  | { op: 'terminate'; agentId: string };
+  | { op: 'terminate'; agentId: string }
+  /** Make a member a function head (it staffs its own unit) or take it back. */
+  | { op: 'make_head'; agentId: string }
+  | { op: 'unmake_head'; agentId: string };
 
 export interface StrategyPayload {
   goals: Array<{ title: string; description?: string; projects?: Array<{ title: string; tasks?: Array<{ title: string; brief?: Partial<TaskBrief>; assigneeAgentId?: string | null }> }> }>;
@@ -421,6 +426,7 @@ export class OrgApprovalsService {
       case 'project_now':
       case 'project_appetite':
       case 'project_kill':
+      case 'project_allocation':
       case 'experiment': {
         // Kinds another module owns (the meetings module's cadence, the memory module's charter change).
         const fn = this.appliers.get(kind);
@@ -473,7 +479,10 @@ export class OrgApprovalsService {
     const grantor = grantorId ? await this.org.member(orgId, grantorId) : null;
     const scopes = meetScopes(this.org.scopesOf(grantor), parseScopes(p.requestedScopes ?? p.scopes ?? []));
     await this.org.gate(orgId, { kind: 'hire', withinUnit: true, key: p.reportsToAgentId, summary: `hire ${p.name}` }, actor);
-    const pack = p.packId ? OrgApprovalsService.catalogItem(p.packId) : undefined;
+    // A role hire brings its role's pack (a blueprint or a role hire may carry
+    // only the role id): the playbooks travel with the role, whatever the door.
+    const role = p.roleId ? roleById(p.roleId) : undefined;
+    const pack = p.packId ? OrgApprovalsService.catalogItem(p.packId) : role?.packId ? OrgApprovalsService.catalogItem(role.packId) : undefined;
     const taken = new Set((await this.agents.list()).map((a) => a.name));
     let name = p.name; for (let n = 2; taken.has(name); n++) name = `${p.name} ${n}`;
     // No memory or connection inheritance: a fresh agent with the pack's
@@ -490,10 +499,36 @@ export class OrgApprovalsService {
       await this.skills?.create({ name: s.name, description: s.description, instructions: s.instructions, agentId: agent.id }).catch(() => {});
     }
     const member = await this.org.addMember(orgId, { agentId: agent.id, title: p.title, reportsToAgentId: p.reportsToAgentId, scopes, actor, grantedBy });
+    // A hire into a head's seat is a head from day one (docs/autonomous-skills-review.md
+    // "Why heads don't hire"): its member row says so, and it carries the head playbooks.
+    if (isHeadRole(role) || pack?.level === 'head') {
+      await this.org.setHead(orgId, agent.id, true, actor).catch(() => undefined);
+      await this.ensureHeadPlaybooks(orgId, agent.id).catch(() => undefined);
+    }
     // Assurance (docs/company-vision.md §5.3): a hire from the Auditor pack (or the Auditor role) becomes the org's auditor when the seat is empty.
     if ((p.packId === 'pack-auditor' || p.roleId === 'auditor') && !(await this.org.get(orgId)).auditorAgentId) await this.org.update(orgId, { auditorAgentId: agent.id }).catch(() => undefined);
     if (p.monthlyBudgetUsd && p.monthlyBudgetUsd > 0) await this.org.setBudget(orgId, { scope: 'agent', refId: agent.id, monthlyUsd: p.monthlyBudgetUsd, actor });
     return { agentId: agent.id, name, scopes, depth: member.depth };
+  }
+
+  /**
+   * A head carries the staffing playbooks whatever door it came through
+   * (a catalog pack, a role, a blueprint, an enrolled agent, a member the
+   * chief made a head): when it holds no `*-team-management` skill, the
+   * generic head playbooks (`unit-team-design`, `unit-team-management`) are
+   * installed on it. Idempotent; returns the skills it added.
+   */
+  async ensureHeadPlaybooks(orgId: string, agentId: string): Promise<string[]> {
+    if (!this.skills) return [];
+    const have = (await this.skills.list(undefined, agentId).catch(() => [] as Array<{ name: string; agentId: string | null }>)).filter((s) => s.agentId === agentId).map((s) => s.name);
+    if (have.some((n) => /-team-management$/.test(n) || /-team-design$/.test(n))) return [];
+    const added: string[] = [];
+    for (const sk of HEAD_PLAYBOOKS) {
+      if (have.includes(sk.name)) continue;
+      await this.skills.create({ name: sk.name, description: sk.description, instructions: sk.instructions, agentId }).then(() => added.push(sk.name)).catch(() => undefined);
+    }
+    if (added.length) await this.audit.append(orgId, { actor: 'system', action: 'head_playbooks', refType: 'agent', refId: agentId, payload: { skills: added } }).catch(() => undefined);
+    return added;
   }
 
   /** Apply reorg changes in order; stops at the first refusal (depth,
@@ -507,6 +542,10 @@ export class OrgApprovalsService {
         else if (c.op === 'pause') await this.org.setMemberStatus(orgId, c.agentId, 'paused', actor);
         else if (c.op === 'resume') await this.org.setMemberStatus(orgId, c.agentId, 'active', actor);
         else if (c.op === 'terminate') await this.org.terminateMember(orgId, c.agentId, actor);
+        else if (c.op === 'make_head' || c.op === 'unmake_head') {
+          await this.org.setHead(orgId, c.agentId, c.op === 'make_head', actor);
+          if (c.op === 'make_head') await this.ensureHeadPlaybooks(orgId, c.agentId).catch(() => undefined);
+        }
       } catch (err) {
         return { applied, failed: `${c.op}:${c.agentId} — ${err instanceof Error ? err.message : String(err)}` };
       }
@@ -570,6 +609,7 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'human_review': return `review of task "${String(payload.title ?? '')}" by ${String(payload.reviewerHumanId ?? 'a human')}`.slice(0, 160);
     case 'project_now': return `bet: move ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}" to Now${payload.appetiteDays || payload.appetiteUsd ? ` (appetite ${payload.appetiteDays ? `${String(payload.appetiteDays)}d` : ''}${payload.appetiteDays && payload.appetiteUsd ? ' / ' : ''}${payload.appetiteUsd ? `$${Number(payload.appetiteUsd).toFixed(0)}` : ''})` : ''}`.slice(0, 200);
     case 'project_appetite': return `${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}" hit its appetite: extend, cut scope or kill${payload.extendUsd || payload.extendDays ? ` (asked: +${payload.extendDays ? `${String(payload.extendDays)}d` : ''}${payload.extendDays && payload.extendUsd ? ' / ' : ''}${payload.extendUsd ? `$${Number(payload.extendUsd).toFixed(2)}` : ''})` : ''}`.slice(0, 200);
+    case 'project_allocation': return `allocate ${String(payload.agentName ?? 'a member')} to ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}" at ${Number(payload.allocation ?? 0)}%${payload.role ? ` as ${String(payload.role)}` : ''}`.slice(0, 200);
     case 'project_kill': return `kill ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}"`.slice(0, 200);
     case 'two_key': return `${payload.staged ? 'send staged' : 'run held'} ${String(payload.tool ?? 'action')} (${String(payload.class ?? '').replace(/_/g, ' ')}): ${String(payload.summary ?? '')}`.slice(0, 160);
     default: return kind;

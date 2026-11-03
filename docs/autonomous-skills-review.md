@@ -348,3 +348,98 @@ profile derivation), `tests/backend-org-capital.test.ts` and
 `tests/backend-org.test.ts` (every member reads spend, none of the spend
 writers leak).
 
+
+## 5. Why heads don't hire (2026-11-04)
+
+The owner reported that heads "don't know how to hire new agents". Decision 1
+(§4) had given them the tools; the evidence below shows why none used them,
+and each cause is now fixed in code, skills or prompts.
+
+### Evidence (dev database, read-only, 2026-11-04)
+
+- **Two of three companies' heads were never heads.** In the paused "Jong"
+  companies the leads were titled "Head of Tutoring" and "Research Lead",
+  reporting to the chief with no reports. `headOf` recognised a head only as
+  the lead of a non-root unit (a unit exists only once a member has a
+  report) or by a catalog head title ("Head of Sales", …) — so neither got
+  `org_roles` / `org_hire_agent`, neither saw the head line in its context,
+  and the "Head of Tutoring" (hired from the personal Educator pack) carried
+  no team-management playbook. Every hire in those companies (three
+  `org_hire_agent` calls) came from the chief.
+- **The catalog heads were never told to staff.** In "Real Jong"
+  (supervised, cap 20, $200) the chief hired Head of Engineering, Head of
+  Marketing and Head of Product (approved 17:36) and assigned them
+  individual-contributor work at once (REJ-4 "Landing page and qualified
+  waitlist", the competitor scan). The heads did qualify (catalog titles)
+  and carried their packs' nine skills, but every wake was a task run, and
+  the task-run context ("# Organisation run …") said nothing about being a
+  head, its reports (none) or a capacity gap; the only head guidance lived in
+  the chat/loop context. Their tool calls (fs_*, org_task*, channel_*,
+  meeting_*, web_*) include no `org_roles`, `org_capacity` or
+  `org_hire_agent` — zero attempts, so zero refusals. No heartbeat row ever
+  existed for them (no beat in their first 25 minutes), and no heartbeat
+  reason would have surfaced a staffing gap anyway.
+- **The head packs contradicted themselves.** Eleven of thirteen head
+  charters ended with "Hiring, pausing or re-tooling a member is the chief's
+  call: you bring the case", while the same pack's `<fn>-team-management`
+  step 5 said "Staff the unit yourself". A head hired by pack id (or one
+  whose charter was the pack's) got the contradiction verbatim.
+- **Doors that dropped the playbooks.** A blueprint import (and any hire
+  that names only `roleId`) applied the hire with `packId: null`, so a
+  blueprint's Head of Engineering arrived with no skills at all. Enrolled
+  agents and members the chief retitled as heads had none either.
+- **A head with no reports had no unit**, so no planning run, no
+  `org_set_goal` / `org_unit_report`, no objective could be handed to it and
+  its unit envelope could not be set.
+- The chief's own prompts pushed the other way: its heartbeat listed
+  function owners but never a head with no specialists, and its playbooks
+  asked heads for objectives, not for their team.
+
+### What changed
+
+- **Head detection** (`server/src/org/heads.ts`, used by
+  `OrgRuntimeService.headOf`, `OrgUnitsService.sync` and the chief's state):
+  a unit lead, an explicit member flag `org_members.isHead` (migration
+  0086), or a head-shaped title under the chief — any "Head of …", "VP …",
+  "Director …", "… Lead", "<function> manager" — not only the catalog's.
+  `headFunction` maps a title to its catalog function by keyword ("VP
+  Growth" → marketing) and returns null for a function the catalog lacks (a
+  "Head of Tutoring" hires specialist and generalist roles of any function;
+  never a head, the chief or the auditor). A Program Manager, coordinator,
+  analyst or engineer title is not a head.
+- **A head leads a unit from day one** (before its first hire), so
+  objectives, planning runs, cadences and unit envelopes work for it; a head
+  keeps its unit with no reports.
+- **`make_head` / `unmake_head`** reorg ops let the chief (or the CEO's
+  card) make any member a head; a hire into a catalog head role sets the
+  flag itself.
+- **Head playbooks on every door:** a role hire brings its role's pack
+  (`applyHire` resolves `roleId → packId`, which fixes blueprint imports);
+  a member that becomes a head without a `*-team-management` skill gets the
+  generic `unit-team-design` and `unit-team-management`
+  (`OrgApprovalsService.ensureHeadPlaybooks`).
+- **The staffing line** (`OrgRuntimeService.staffingLine`) in the head's
+  task-run context, chat/loop context and heartbeat: its reports with their
+  load against the WIP limit, its own open tasks, the unit's unassigned
+  work, the agent-cap headroom, and — when there is one — a "Staffing gap"
+  with the exact next steps and the roles it can hire. The gap is a
+  heartbeat reason once a day per head. A non-chief unit lead's planning
+  prompt says to staff the plan instead of planning the work for itself.
+- **Actionable refusals:** a non-head calling a head tool is told what makes
+  a head and how to get a seat filled (a case for its manager); a head hiring
+  another head is pointed at `org_escalate`.
+- **Skills:** every head pack's charter now says "You staff your own unit…"
+  (the contradiction is gone) and carries a new `<fn>-team-design` playbook
+  (read the mandate → `org_roles` → seats in `/org/<function>/team.md` →
+  hire within the envelope → onboard → report the design). The chief has a
+  new `delegate-org-design` playbook (set each head's mandate and envelope,
+  ask for the team design, review it, never staff a head's unit for it), and
+  `operating-system-setup`, `quarterly-planning`, `member-lifecycle-review`
+  and the monthly/quarterly loops point at it. The chief's heartbeat lists
+  "Heads with a staffing gap — delegate the team design to them".
+
+Tests: `tests/backend-org-heads-teams.test.ts` (non-catalog head titles,
+tools offered outside a task run, the staffing line and its once-a-day
+reason, the supervised card held by the head's manager, the autonomous hire,
+the role hire's pack and flag, `make_head` with the head playbooks, the
+chief's delegation skill and staffing-gap context, the head packs).

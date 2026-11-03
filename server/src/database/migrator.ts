@@ -2263,6 +2263,46 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_plugin_versions_plugin ON plugin_versions ("accountId", "pluginId")`);
     },
   },
+  {
+    id: '0087-project-teams',
+    up: async (db) => {
+      // Heads and cross-functional project teams (docs/work-tracking.md
+      // "Project teams", docs/autonomous-skills-review.md "Why heads don't
+      // hire"): an explicit head flag on a member (a head whose title is not
+      // a catalog head's still staffs its unit); a project's team drawn from
+      // any unit (a member, its role on the project and its allocation in
+      // percent; `pending` until the member's manager approves the
+      // allocation); and the project's channel and standup cadence.
+      // Idempotent.
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('org_members', 'isHead', 'INTEGER NOT NULL DEFAULT 0');
+      await add('org_projects', 'channelId', 'TEXT');
+      await add('org_projects', 'standupCron', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_projects', 'standupNextAt', 'TEXT');
+      await add('org_projects', 'standupLastAt', 'TEXT');
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS org_project_members (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "id" TEXT PRIMARY KEY,
+          "orgId" TEXT NOT NULL,
+          "projectId" TEXT NOT NULL,
+          "agentId" TEXT,
+          "humanId" TEXT,
+          "role" TEXT NOT NULL DEFAULT '',
+          "allocation" INTEGER NOT NULL DEFAULT 0,
+          "status" TEXT NOT NULL DEFAULT 'active',
+          "approvalId" TEXT,
+          "addedBy" TEXT NOT NULL DEFAULT '',
+          "joinedAt" TEXT NOT NULL,
+          "leftAt" TEXT
+        )
+      `);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_project_members_project ON org_project_members ("projectId", "status")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_project_members_agent ON org_project_members ("orgId", "agentId", "status")`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

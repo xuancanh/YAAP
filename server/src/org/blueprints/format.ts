@@ -11,6 +11,12 @@
  * registry publish, registry install): unknown shapes are refused, strings
  * are bounded, and the structural caps of the company apply to the document
  * itself — ≤ 256 KB, ≤ 20 roles, depth ≤ 3, fan-out ≤ 5.
+ *
+ * `projects?[]` (a backward-compatible v1 extension, docs/blueprints.md §1b):
+ * roadmap items with a lead and a cross-functional team, each named by role
+ * title — `{ title, brief, lead, team: [{ title, role?, allocation }], krs?,
+ * cadence?, appetiteDays?, appetiteUsd? }`. A role's allocations across the
+ * blueprint's projects sum to at most 100%.
  */
 import { MODEL_TIERS, type ModelTier } from '../roles/catalog';
 import { parseScopes } from '../scopes';
@@ -22,6 +28,8 @@ export const BLUEPRINT_MAX_DEPTH = 3;
 export const BLUEPRINT_MAX_FANOUT = 5;
 export const BLUEPRINT_MAX_PLAYBOOKS = 20;
 export const BLUEPRINT_MAX_CADENCES = 20;
+export const BLUEPRINT_MAX_PROJECTS = 10;
+export const BLUEPRINT_MAX_TEAM = 8;
 
 export interface BlueprintRole {
   /** A catalog role id the charter was drawn from (informative; the inline fields rule). */
@@ -37,6 +45,22 @@ export interface BlueprintRole {
 
 /** `unitTitle` is a role title that leads a unit, or 'root' for the company. */
 export interface BlueprintCadence { unitTitle: string; kind: string; cron: string }
+
+/** A roadmap item with its cross-functional team, by role title. */
+export interface BlueprintProject {
+  title: string;
+  brief: { problem: string; hypothesis: string; done_when: string; mvp: string };
+  /** The role title that leads it (a Program Manager, usually). */
+  lead: string;
+  /** Members by role title, their role on the project and their allocation (percent of their time). */
+  team: Array<{ title: string; role: string; allocation: number }>;
+  /** Key results it should move, as short titles: listed for the chief to set (the import writes them into the brief). */
+  krs?: string[];
+  /** The project standup's five-field cron. */
+  cadence?: string;
+  appetiteDays?: number;
+  appetiteUsd?: number;
+}
 
 export interface Blueprint {
   format: typeof BLUEPRINT_FORMAT;
@@ -55,10 +79,14 @@ export interface Blueprint {
   budget: { monthlyUsd: number; allocations?: Record<string, number> };
   /** Connection card ids to recommend (never granted by an import). */
   cards?: string[];
+  /** Roadmap items with their leads and cross-functional teams (v1 extension). */
+  projects?: BlueprintProject[];
   origin: { exportedFrom: string; at: string; sourceOrgId: string };
 }
 
-const TOP_KEYS = new Set(['format', 'name', 'description', 'profile', 'vision', 'roles', 'units', 'cadences', 'tunables', 'routing', 'playbooks', 'budget', 'cards', 'origin']);
+const TOP_KEYS = new Set(['format', 'name', 'description', 'profile', 'vision', 'roles', 'units', 'cadences', 'tunables', 'routing', 'playbooks', 'budget', 'cards', 'projects', 'origin']);
+const PROJECT_KEYS = new Set(['title', 'brief', 'lead', 'team', 'krs', 'cadence', 'appetiteDays', 'appetiteUsd']);
+const CRON_RE = /^[\d*,/ -]+$/;
 const ROLE_KEYS = new Set(['roleId', 'title', 'charter', 'reportsTo', 'scopes', 'modelTier', 'monthlyUsd']);
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
@@ -225,12 +253,56 @@ export function validateBlueprint(raw: unknown): Blueprint {
   if (o.cards !== undefined) {
     cards = arr(o.cards, 'cards', 40).map((c, i) => { const id = str(c, `cards[${i}]`, 64, true); if (!ID_RE.test(id)) fail(`cards[${i}] must be a card id`); return id; });
   }
+  let projects: BlueprintProject[] | undefined;
+  if (o.projects !== undefined) {
+    const load = new Map<string, number>();
+    projects = arr(o.projects, 'projects', BLUEPRINT_MAX_PROJECTS).map((pr, i) => {
+      if (!pr || typeof pr !== 'object' || Array.isArray(pr)) return fail(`projects[${i}] must be an object`);
+      const x = pr as Record<string, unknown>;
+      onlyKeys(x, PROJECT_KEYS, `projects[${i}]`);
+      const title = str(x.title, `projects[${i}].title`, 200, true).trim();
+      if (!title) fail(`projects[${i}].title is required`);
+      const known = (t: string, what: string) => { if (!titles.has(t.toLowerCase())) fail(`${what} names unknown role "${t}"`); return t; };
+      const lead = known(str(x.lead, `projects[${i}].lead`, 80, true).trim(), `projects[${i}].lead`);
+      let brief: BlueprintProject['brief'] = { problem: '', hypothesis: '', done_when: '', mvp: '' };
+      if (typeof x.brief === 'string') brief = { ...brief, problem: str(x.brief, `projects[${i}].brief`, 4_000) };
+      else if (x.brief !== undefined && x.brief !== null) {
+        if (typeof x.brief !== 'object' || Array.isArray(x.brief)) fail(`projects[${i}].brief must be a string or { problem, hypothesis, done_when, mvp }`);
+        const b = x.brief as Record<string, unknown>;
+        onlyKeys(b, new Set(['problem', 'hypothesis', 'done_when', 'mvp']), `projects[${i}].brief`);
+        brief = { problem: str(b.problem, `projects[${i}].brief.problem`, 2_000), hypothesis: str(b.hypothesis, `projects[${i}].brief.hypothesis`, 2_000), done_when: str(b.done_when, `projects[${i}].brief.done_when`, 2_000), mvp: str(b.mvp, `projects[${i}].brief.mvp`, 2_000) };
+      }
+      const seen = new Set<string>();
+      const team = arr(x.team ?? [], `projects[${i}].team`, BLUEPRINT_MAX_TEAM).map((m, j) => {
+        const y = (m ?? {}) as Record<string, unknown>;
+        if (typeof y !== 'object' || Array.isArray(y)) return fail(`projects[${i}].team[${j}] must be an object`);
+        onlyKeys(y, new Set(['title', 'role', 'allocation']), `projects[${i}].team[${j}]`);
+        const t = known(str(y.title, `projects[${i}].team[${j}].title`, 80, true).trim(), `projects[${i}].team[${j}]`);
+        if (seen.has(t.toLowerCase())) fail(`projects[${i}].team names "${t}" twice`);
+        seen.add(t.toLowerCase());
+        const allocation = Math.round(num(y.allocation, `projects[${i}].team[${j}].allocation`, 1, 100));
+        load.set(t.toLowerCase(), (load.get(t.toLowerCase()) ?? 0) + allocation);
+        if ((load.get(t.toLowerCase()) ?? 0) > 100) fail(`"${t}" is allocated more than 100% across the projects`);
+        return { title: t, role: str(y.role, `projects[${i}].team[${j}].role`, 80).trim(), allocation };
+      });
+      let krs: string[] | undefined;
+      if (x.krs !== undefined) krs = arr(x.krs, `projects[${i}].krs`, 6).map((k, j) => str(k, `projects[${i}].krs[${j}]`, 200, true).trim()).filter(Boolean);
+      let cadence: string | undefined;
+      if (x.cadence !== undefined && x.cadence !== null && x.cadence !== '') {
+        cadence = str(x.cadence, `projects[${i}].cadence`, 60).trim();
+        if (!CRON_RE.test(cadence) || cadence.split(/\s+/).length !== 5) fail(`projects[${i}].cadence must be a five-field cron`);
+      }
+      const appetiteDays = x.appetiteDays === undefined ? undefined : Math.floor(num(x.appetiteDays, `projects[${i}].appetiteDays`, 0, 3_650));
+      const appetiteUsd = x.appetiteUsd === undefined ? undefined : num(x.appetiteUsd, `projects[${i}].appetiteUsd`, 0, 1_000_000);
+      return { title, brief, lead, team, ...(krs?.length ? { krs } : {}), ...(cadence ? { cadence } : {}), ...(appetiteDays !== undefined ? { appetiteDays } : {}), ...(appetiteUsd !== undefined ? { appetiteUsd } : {}) };
+    });
+  }
   const og = (o.origin ?? {}) as Record<string, unknown>;
   if (typeof og !== 'object' || Array.isArray(og)) fail('origin must be an object');
   onlyKeys(og, new Set(['exportedFrom', 'at', 'sourceOrgId']), 'origin');
   const origin = { exportedFrom: str(og.exportedFrom, 'origin.exportedFrom', 80), at: str(og.at, 'origin.at', 40), sourceOrgId: str(og.sourceOrgId, 'origin.sourceOrgId', 64) };
 
-  return { format: BLUEPRINT_FORMAT, name, description, profile, ...(vision ? { vision } : {}), roles, ...(units ? { units } : {}), ...(cadences ? { cadences } : {}), tunables, ...(routing ? { routing } : {}), playbooks, budget, ...(cards ? { cards } : {}), origin };
+  return { format: BLUEPRINT_FORMAT, name, description, profile, ...(vision ? { vision } : {}), roles, ...(units ? { units } : {}), ...(cadences ? { cadences } : {}), tunables, ...(routing ? { routing } : {}), playbooks, budget, ...(cards ? { cards } : {}), ...(projects?.length ? { projects } : {}), origin };
 }
 
 /** The root role (reports to nobody) — validated blueprints have exactly one. */

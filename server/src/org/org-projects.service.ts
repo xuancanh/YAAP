@@ -208,6 +208,9 @@ export class OrgProjectsService {
     for (const id of goalIds) if (!goals.some((g) => g.id === id)) throw new BadRequestException(`goal ${id} is not a goal of this organization`);
     const wantsNow = (input.lane ?? (agent ? 'next' : 'now')) === 'now';
     let lead = input.ownerAgentId ?? null;
+    // A roadmap item is owned by a Program Manager when the company has one
+    // (docs/work-tracking.md "Project teams"); else the proposer leads it.
+    if (!lead && !input.leadHumanId && (input.kind ?? 'project') === 'project') lead = await this.programManagerFor(orgId);
     if (!lead && !input.leadHumanId) lead = agent ? actorAgent(actor) : null;
     if (lead) { const m = await this.org.member(orgId, lead); if (!m || m.status === 'terminated') throw new BadRequestException('the lead must be a member of this organization'); }
     const brief = parseProjectBrief(input.brief ?? {});
@@ -223,6 +226,16 @@ export class OrgProjectsService {
     let note = agent ? `Project ${project.key} "${project.title}" created as ${project.status} in ${project.lane}.` : `Project ${project.key} created.`;
     if (agent && wantsNow) { card = await this.proposeBet(orgId, project, actor, input.why ?? ''); note += ` Moving it to Now is the CEO's bet: proposed as card ${card.id.slice(0, 8)}.`; }
     return { project, card, note };
+  }
+
+  /** The company's Program Manager with the fewest open projects (title
+   *  "Program Manager", the catalog's role:ops-pm), or null when it has none. */
+  async programManagerFor(orgId: string): Promise<string | null> {
+    const pms = (await this.org.members(orgId)).filter((m) => m.status === 'active' && /\bprogram(me)? manager\b/i.test(m.title));
+    if (pms.length === 0) return null;
+    const open = (await this.org.projects(orgId)).filter((p) => p.kind === 'project' && p.status !== 'done' && p.status !== 'cancelled');
+    const load = (id: string) => open.filter((p) => p.ownerAgentId === id).length;
+    return [...pms].sort((a, b) => load(a.agentId) - load(b.agentId) || (a.joinedAt < b.joinedAt ? -1 : 1))[0].agentId;
   }
 
   /** The bet card (boundary row project_bet): the CEO moves a project to Now. */

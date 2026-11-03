@@ -167,6 +167,14 @@ ritual through its cadence (`org_set_cadence`); the calendar follows.
 
 ## 5. The heartbeat reads the operating system
 
+**Staffing gaps (2026-11-04).** The state also lists every head whose unit
+has a staffing gap — no specialists yet (and how much work it carries
+itself), or every report at its WIP limit — under "Heads with a staffing gap
+— delegate the team design to them": the chief's cue for
+`delegate-org-design`, not for hiring the specialists itself. The same gap
+reaches the head itself as a staffing line in its own context and, once a
+day, as a heartbeat reason (docs/autonomous-skills-review.md §5).
+
 `OrgChiefService` registers a reason and a context provider named `chief`
 on the gated heartbeat, next to the runtime's `org` providers. Both are for
 the chief only and model-free.
@@ -214,7 +222,15 @@ wake the chief every beat.
 skills use only tools the server offers (`org_*`, plus `fs_read`/`fs_write`
 for the ledger):
 
-`operating-system-setup`, `function-reports-intake` (the heads' weekly
+`operating-system-setup`, `delegate-org-design` (2026-11-04: the chief
+delegates staffing and team design to the heads — it sets each head's
+mandate, the objectives its unit carries, and an envelope, an allocation per
+objective; briefs the head a task for its unit's team design (seats with role
+ids, cost, the key result each serves, the rituals) per the head's
+`<fn>-team-design` playbook; reviews the design against the key results, the
+envelope, the cap and the profile; decides the heads' hire cards against the
+accepted design; and proposes a Program Manager to own each roadmap item —
+it never staffs a head's unit for it), `function-reports-intake` (the heads' weekly
 reports, escalations and cases: scorecard and risks from the reports with the
 report cited, the heads' own hires and pauses reviewed rather than redone,
 incomplete cases sent back, `Escalation:` tasks answered or taken to the CEO,

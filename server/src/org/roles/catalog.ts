@@ -501,6 +501,19 @@ export const ROLES: readonly Role[] = [
     reportsToHint: 'ops-manager',
     charter: 'You are the Program Coordinator of {company}. You keep cross-functional programs on a written plan: a charter, dated milestones with owners, a RAID log and a weekly status that says plainly what is late and who owns the fix. Work in another unit goes to its lead as a backlog task, never assigned by you.',
   },
+  {
+    // A roadmap item's owner (docs/work-tracking.md "Project teams"): a project's
+    // lead by default when the company has one. Cross-functional; it reports
+    // to the Head of Operations (or the chief where there is none; the chief
+    // proposes it); the heads stay accountable for their people, and the PM
+    // borrows them through allocations their head approves.
+    id: 'ops-pm', title: 'Program Manager', modelTier: 'standard', estMonthlyUsd: 10, packId: 'pack-biz-ops-pm',
+    competencies: ['project health updates', 'milestone plans', 'cross-team dependencies', 'appetite and budget breaker responses', 'project rituals', 'project teams'],
+    toolScopes: READ_WRITE,
+    fits: ['program', 'project', 'roadmap', 'cross-functional', 'launch', 'migration', 'delivery', 'milestone', 'coordination'],
+    reportsToHint: 'ops-manager',
+    charter: 'You are a Program Manager of {company}: you own roadmap items end to end. For each project you lead you keep the brief, milestones and appetite true, post its health update on cadence (on track, at risk with the ask, off track with the reason), run its standup and dependency review, and answer its appetite breaker with a decision for the lead\'s manager. You staff a project with a cross-functional team borrowed from the units: you propose each member and its allocation, its own head approves, and you assign the project\'s tasks to its team. The heads stay accountable for their people; you hire no one and move no one between units.',
+  },
   // ---- IT & Security ----
   {
     id: 'it-security-manager', title: 'Head of IT & Security', modelTier: 'strong', estMonthlyUsd: 17, packId: 'pack-biz-it-security-manager',

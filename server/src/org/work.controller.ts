@@ -12,6 +12,10 @@
  *  PATCH  /api/workspaces/:id/org/projects/:projectId/milestones/:mid    { name?, date?, done? }
  *  POST   /api/workspaces/:id/org/projects/:projectId/appetite           { decision: extend|cut_scope|kill, extendDays?, extendUsd?, note? }
  *  POST   /api/workspaces/:id/org/projects/:projectId/tasks              { taskId } — move a task under the project
+ *  GET    /api/workspaces/:id/org/projects/:projectId/team               the cross-functional team (home units, allocations, channel, standup)
+ *  POST   /api/workspaces/:id/org/projects/:projectId/team               { agentId, role?, allocation } — a person adds a member at once
+ *  DELETE /api/workspaces/:id/org/projects/:projectId/team/:agentId      release a member
+ *  POST   /api/workspaces/:id/org/projects/:projectId/standup            { cron | null } — the project standup
  *  GET    /api/workspaces/:id/org/tasks/:taskId/transitions             the task's status history
  *  POST   /api/workspaces/:id/org/tasks/:taskId/steps                   { add? | done? | undo? | drop? }
  *  POST   /api/workspaces/:id/org/tasks/:taskId/blocked-on              { kind, ref?, reason } or { clear: true }
@@ -19,7 +23,7 @@
  * People write as the CEO or a board member; an employee who leads a
  * project posts its updates. Agents use the tools (org-projects.tools.ts).
  */
-import { BadRequestException, Body, Controller, ForbiddenException, Get, NotFoundException, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Optional, Param, Patch, Post, Query } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { IsArray, IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
 import { actorId } from '../accounts/account-context';
@@ -28,6 +32,7 @@ import { OrgController } from './org.controller';
 import { OrgService } from './org.service';
 import { OrgTasksService } from './org-tasks.service';
 import { OrgProjectsService } from './org-projects.service';
+import { OrgProjectTeamsService } from './org-project-teams.service';
 import { BLOCKED_KINDS } from './blocked-on';
 import { PROJECT_HEALTH, PROJECT_LANES, PROJECT_STATUSES } from './work-model';
 
@@ -68,6 +73,12 @@ export class AppetiteDto {
   @IsOptional() @IsString() note?: string;
 }
 export class LinkTaskDto { @IsString() taskId!: string }
+export class TeamMemberDto {
+  @IsString() agentId!: string;
+  @IsOptional() @IsString() role?: string;
+  @IsNumber() allocation!: number;
+}
+export class StandupDto { @IsOptional() @IsString() cron?: string | null }
 export class StepDto {
   @IsOptional() @IsString() add?: string;
   @IsOptional() @IsString() done?: string;
@@ -90,6 +101,7 @@ export class WorkController {
     private readonly tasks: OrgTasksService,
     private readonly projects: OrgProjectsService,
     private readonly config: ConfigService,
+    @Optional() private readonly teams?: OrgProjectTeamsService,
   ) {}
 
   private async oid(workspaceId: string): Promise<string> {
@@ -115,7 +127,35 @@ export class WorkController {
     const r = await this.projects.create(orgId, { ...dto, title: dto.title ?? '', goalIds: dto.goalIds, goalId: dto.goalId ?? undefined }, await this.writer(orgId));
     return r.project;
   }
-  @Get('projects/:projectId') async page(@Param('id') id: string, @Param('projectId') projectId: string) { return this.projects.page(await this.oid(id), projectId); }
+  @Get('projects/:projectId') async page(@Param('id') id: string, @Param('projectId') projectId: string) {
+    const orgId = await this.oid(id);
+    const page = await this.projects.page(orgId, projectId);
+    // The cross-functional team with its home units (docs/work-tracking.md "Project teams").
+    const team = this.teams && page.project.kind === 'project' ? await this.teams.team(orgId, page.project.id).catch(() => null) : null;
+    return { ...page, team };
+  }
+  @Get('projects/:projectId/team') async team(@Param('id') id: string, @Param('projectId') projectId: string) {
+    if (!this.teams) throw new NotFoundException('project teams are not available');
+    return this.teams.team(await this.oid(id), projectId);
+  }
+  @Post('projects/:projectId/team') async addMember(@Param('id') id: string, @Param('projectId') projectId: string, @Body() dto: TeamMemberDto) {
+    if (!this.teams) throw new NotFoundException('project teams are not available');
+    const orgId = await this.oid(id);
+    const r = await this.teams.propose(orgId, projectId, { agentId: dto.agentId, role: dto.role, allocation: dto.allocation }, await this.writer(orgId));
+    return this.teams.team(orgId, r.row.projectId);
+  }
+  @Delete('projects/:projectId/team/:agentId') async removeMember(@Param('id') id: string, @Param('projectId') projectId: string, @Param('agentId') agentId: string) {
+    if (!this.teams) throw new NotFoundException('project teams are not available');
+    const orgId = await this.oid(id);
+    await this.teams.remove(orgId, projectId, agentId, await this.writer(orgId));
+    return this.teams.team(orgId, projectId);
+  }
+  @Post('projects/:projectId/standup') async standup(@Param('id') id: string, @Param('projectId') projectId: string, @Body() dto: StandupDto) {
+    if (!this.teams) throw new NotFoundException('project teams are not available');
+    const orgId = await this.oid(id);
+    await this.teams.setStandup(orgId, projectId, dto.cron && dto.cron.trim() && dto.cron.trim() !== 'off' ? dto.cron.trim() : null, await this.writer(orgId));
+    return this.teams.team(orgId, projectId);
+  }
   @Patch('projects/:projectId') async update(@Param('id') id: string, @Param('projectId') projectId: string, @Body() dto: WorkProjectDto) {
     const orgId = await this.oid(id);
     return (await this.projects.update(orgId, projectId, dto, await this.writer(orgId))).project;

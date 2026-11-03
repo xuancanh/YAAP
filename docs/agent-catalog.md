@@ -281,7 +281,11 @@ set the chief of staff hires from.
   report: RAG with an explicit rule, metrics against target, risks, asks),
   `<fn>-team-management` (four-field briefs with checks, WIP from
   `org_capacity`, reviews, written coaching, and the unit's own hires,
-  pauses and model changes, the chief told of each), plus 2-4 process skills for the function's own rituals (pipeline
+  pauses and model changes, the chief told of each), `<fn>-team-design`
+  (2026-11-04: the head designs its own team — the seats its key results
+  need within the mandate and envelope the chief set, written to
+  `/org/<function>/team.md`, hired, onboarded and reported; the chief
+  reviews instead of designing it), plus 2-4 process skills for the function's own rituals (pipeline
   review and forecast call, month-end close, sprint planning and retro,
   queue review, hiring pipeline review, access review, ...). Loops carry
   the default cadence.
@@ -488,6 +492,20 @@ Folder: `/org/operations/` (processes.md, sops/, improvements.md, vendors.md, pr
 | Business Process Analyst (`pack-biz-ops-process-analyst`) | `ops-process-analyst` | cycle time, first-pass yield, automation rate, SOP coverage | on task; maps and SOPs on review interval |
 | Procurement Specialist (`pack-biz-ops-procurement`) | `ops-procurement` | vendor spend vs budget, renewals decided before notice, seat utilisation | monthly renewals scan |
 | Program Coordinator (`pack-biz-ops-program-coordinator`) | `ops-program-coordinator` | milestones on time, RAID items owned | weekly program status (Thu) |
+| Program Manager (`pack-biz-ops-pm`) | `ops-pm` | Now projects with a fresh health update, milestones on time, dependencies accepted before needed, breaker decisions within a day | standup per project, health update per project (Thu), dependency review (Wed) |
+
+**Program Manager (2026-11-04).** Roadmap items are owned by Program
+Managers: a project created without a named lead defaults to the company's
+PM (`docs/work-tracking.md` "Project teams"), the chief proposes PMs
+(`delegate-org-design`), and the heads stay accountable for their people. A
+PM is an Operations specialist (folder `/org/operations/programs/<key>/`,
+one vocabulary with the Program Coordinator) reporting to the Head of
+Operations, or to the chief where there is none. Its playbooks:
+`program-kickoff`, `program-health-update`, `program-milestones`,
+`program-dependencies`, `program-appetite-breaker`, `program-standup`,
+`program-team` (propose members and allocations to their heads, assign the
+project's tasks to the team, release members) and `program-close`. It hires
+no one and moves no one between units; its title is not a head's.
 
 ### IT & Security
 

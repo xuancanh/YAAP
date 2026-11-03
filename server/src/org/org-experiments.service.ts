@@ -596,6 +596,8 @@ export class OrgExperimentsService implements ToolProviderHook, OnModuleInit, On
           else if (c.op === 'retitle') inverse.push({ op: 'retitle', agentId: c.agentId, title: m.title });
           else if (c.op === 'pause') inverse.push({ op: 'resume', agentId: c.agentId });
           else if (c.op === 'resume') inverse.push({ op: 'pause', agentId: c.agentId });
+          else if (c.op === 'make_head') inverse.push({ op: 'unmake_head', agentId: c.agentId });
+          else if (c.op === 'unmake_head') inverse.push({ op: 'make_head', agentId: c.agentId });
         }
         return { changes: inverse };
       }

@@ -15,7 +15,7 @@ import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { PROJECT_LANES, PROJECT_STATUSES, normalizeDay, parseIdList, parseProjectBrief, type Milestone, type ProjectBrief, type ProjectKind } from './work-model';
-import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants, orgHumans, orgAllocations, workspaces } from '../database/schema';
+import { organizations, orgMembers, orgGoals, orgProjects, orgProjectMembers, orgBudgets, orgGrants, orgHumans, orgAllocations, workspaces } from '../database/schema';
 import { TriggerBus } from '../chats/trigger-bus';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
@@ -35,6 +35,7 @@ export type Organization = typeof organizations.$inferSelect;
 export type OrgMember = typeof orgMembers.$inferSelect;
 export type OrgGoal = typeof orgGoals.$inferSelect;
 export type OrgProject = typeof orgProjects.$inferSelect;
+export type OrgProjectMember = typeof orgProjectMembers.$inferSelect;
 
 /** The fields a project is created with (docs/work-tracking.md). */
 export interface ProjectCreate {
@@ -519,7 +520,7 @@ export class OrgService {
       title: (input.title ?? agent.role ?? '').slice(0, 80),
       reportsToAgentId: input.reportsToAgentId, depth, sponsor: 'user', reportsToHumanId: null,
       scopes: JSON.stringify(scopes), status: 'active',
-      charterHash: charterHashOf(agent.charter), joinedAt: nowIso(),
+      charterHash: charterHashOf(agent.charter), joinedAt: nowIso(), isHead: 0,
     };
     await this.db.insert(orgMembers).values(row);
     await this.writeGrants(orgId, input.agentId, scopes, input.grantedBy ?? input.actor ?? 'user');
@@ -605,6 +606,56 @@ export class OrgService {
 
   /** Terminate: the member's reports move up one level (Paperclip's rule);
    *  the chief cannot be terminated (replace it through update instead). */
+  /** Mark a member a function head, or take it back (the `make_head` /
+   *  `unmake_head` reorg ops, a hire into a head role). A head staffs its own
+   *  unit; the structure hooks re-sync the units so a head leads one. */
+  async setHead(orgId: string, agentId: string, on: boolean, actor = 'user'): Promise<OrgMember> {
+    const m = await this.member(orgId, agentId);
+    if (!m) throw new NotFoundException(`member ${agentId}`);
+    const org = await this.get(orgId);
+    if (on && org.chiefOfStaffAgentId === agentId) throw new BadRequestException('the chief of staff is not a function head');
+    if (on && org.auditorAgentId === agentId) throw new BadRequestException('the auditor is independent: never a function head');
+    if ((m.isHead === 1) === on) return m;
+    await this.db.update(orgMembers).set({ isHead: on ? 1 : 0 }).where(eq(orgMembers.id, m.id));
+    await this.audit.append(orgId, { actor, action: on ? 'member_make_head' : 'member_unmake_head', refType: 'agent', refId: agentId, payload: { title: m.title } });
+    await this.structureChanged(orgId);
+    return { ...m, isHead: on ? 1 : 0 };
+  }
+
+  // ---- project teams (docs/work-tracking.md "Project teams") ----
+
+  /** A project's team rows (every status unless filtered). */
+  projectMembers(orgId: string, projectId?: string): Promise<OrgProjectMember[]> {
+    return this.db.select().from(orgProjectMembers).where(projectId ? and(eq(orgProjectMembers.orgId, orgId), eq(orgProjectMembers.projectId, projectId)) : eq(orgProjectMembers.orgId, orgId));
+  }
+
+  async projectMember(orgId: string, id: string): Promise<OrgProjectMember> {
+    const r = (await this.db.select().from(orgProjectMembers).where(and(eq(orgProjectMembers.orgId, orgId), eq(orgProjectMembers.id, id))).limit(1)).at(0);
+    if (!r) throw new NotFoundException(`project member ${id}`);
+    return r;
+  }
+
+  async addProjectMember(orgId: string, input: { projectId: string; agentId?: string | null; humanId?: string | null; role?: string; allocation: number; status: 'active' | 'pending'; approvalId?: string | null; addedBy: string }): Promise<OrgProjectMember> {
+    const row: OrgProjectMember = {
+      accountId: currentAccountId(), id: newId(), orgId, projectId: input.projectId, agentId: input.agentId ?? null, humanId: input.agentId ? null : input.humanId ?? null,
+      role: (input.role ?? '').slice(0, 80), allocation: Math.max(0, Math.min(100, Math.round(input.allocation))), status: input.status, approvalId: input.approvalId ?? null,
+      addedBy: input.addedBy.slice(0, 80), joinedAt: nowIso(), leftAt: null,
+    };
+    await this.db.insert(orgProjectMembers).values(row);
+    return row;
+  }
+
+  /** The project's channel and standup fields (OrgProjectTeamsService). */
+  async updateProjectRitual(orgId: string, projectId: string, patch: Partial<Pick<OrgProject, 'channelId' | 'standupCron' | 'standupNextAt' | 'standupLastAt'>>): Promise<OrgProject> {
+    await this.db.update(orgProjects).set(patch).where(and(eq(orgProjects.orgId, orgId), eq(orgProjects.id, projectId)));
+    return this.project(orgId, projectId);
+  }
+
+  async updateProjectMember(orgId: string, id: string, patch: Partial<Pick<OrgProjectMember, 'role' | 'allocation' | 'status' | 'approvalId' | 'leftAt'>>): Promise<OrgProjectMember> {
+    await this.db.update(orgProjectMembers).set(patch).where(and(eq(orgProjectMembers.orgId, orgId), eq(orgProjectMembers.id, id)));
+    return this.projectMember(orgId, id);
+  }
+
   async terminateMember(orgId: string, agentId: string, actor = 'user'): Promise<{ ok: true }> {
     const org = await this.get(orgId);
     if (org.chiefOfStaffAgentId === agentId) throw new BadRequestException('the chief of staff cannot be terminated; pause the organization or pick a new chief');
@@ -818,7 +869,7 @@ export class OrgService {
       startDate: fields.startDate ?? null, targetDate: fields.targetDate ?? null, milestones: JSON.stringify(fields.milestones ?? []),
       appetiteDays: fields.appetiteDays ?? 0, appetiteUsd: fields.appetiteUsd ?? 0, lane: fields.lane ?? (input.status === undefined || input.status === 'active' ? 'now' : 'later'),
       rank: input.rank ?? existing.length, health: '', healthReason: '', healthAsk: '', healthAt: null, hill: null,
-      updateCadenceDays: fields.updateCadenceDays ?? null, breakerAt: null, appetiteWarnedAt: null, createdBy: actor, createdAt: now, updatedAt: now,
+      updateCadenceDays: fields.updateCadenceDays ?? null, breakerAt: null, appetiteWarnedAt: null, channelId: null, standupCron: '', standupNextAt: null, standupLastAt: null, createdBy: actor, createdAt: now, updatedAt: now,
     };
     await this.db.insert(orgProjects).values(row);
     await this.audit.append(orgId, { actor, action: 'project_create', refType: 'project', refId: row.id, payload: { key: row.key, title, goalId: row.goalId, goalIds, kind: row.kind, lane: row.lane, status: row.status, ownerAgentId: row.ownerAgentId, leadHumanId: row.leadHumanId, unitId: row.unitId } });

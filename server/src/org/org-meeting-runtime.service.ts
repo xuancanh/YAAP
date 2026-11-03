@@ -133,6 +133,9 @@ export interface MeetingToolCtx { meeting: OrgMeeting; orgId: string; agentId: s
 export interface MeetingToolExtension { spec: AiToolSpec; kinds?: MeetingKind[]; execute(ctx: MeetingToolCtx, input: Record<string, unknown>): Promise<string> }
 /** Extra agenda text another module composes for a meeting kind (no model). */
 export type AgendaProvider = (orgId: string, meeting: OrgMeeting, unit: OrgUnit | null) => Promise<string | null>;
+/** A meeting another module's cadence says is due now (see addDueMeetings). */
+export interface DueMeeting { kind: MeetingKind; channelId: string; title: string; agenda: string; attendees: Attendee[]; facilitatorAgentId: string; createdBy: string }
+export type DueMeetingsProvider = (org: Organization, now: Date) => Promise<DueMeeting[]>;
 
 /** The chief's and a unit lead's cadence tool (docs/company-vision.md §1b). */
 const CADENCE_TOOL: AiToolSpec = {
@@ -197,6 +200,16 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
   addMeetingTool(ext: MeetingToolExtension): () => void {
     this.extensions.push(ext);
     return () => { const i = this.extensions.indexOf(ext); if (i >= 0) this.extensions.splice(i, 1); };
+  }
+
+  private readonly dueMeetings: DueMeetingsProvider[] = [];
+
+  /** Meetings another module holds on its own cadence (a project standup in
+   *  its `#p-<key>` channel, docs/work-tracking.md "Project teams"): asked on
+   *  every tick; each one returned is started like `start`. */
+  addDueMeetings(fn: DueMeetingsProvider): () => void {
+    this.dueMeetings.push(fn);
+    return () => { const i = this.dueMeetings.indexOf(fn); if (i >= 0) this.dueMeetings.splice(i, 1); };
   }
 
   /** Append model-free agenda text for a meeting (item 22: playbook outcomes in a retro). */
@@ -309,6 +322,9 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
           const prepared = (await this.meetings.list(org.id, { unitId: unit.id, status: 'scheduled', limit: 20 })).find((x) => x.kind === c.kind && x.createdBy === 'cadence');
           const m = prepared ?? await this.meetings.create(org.id, { kind: c.kind as MeetingKind, unitId: unit.id, createdBy: 'cadence', scheduledFor: now.toISOString() }).catch(() => null);
           if (m) await this.track(this.run(org.id, m.id));
+        }
+        for (const fn of this.dueMeetings) {
+          for (const input of await fn(org, now).catch(() => [] as DueMeeting[])) await this.start(org.id, input).catch((err: unknown) => this.logger.warn(`meeting start failed: ${err instanceof Error ? err.message : err}`));
         }
         await this.prepare(org, ws, now).catch((err: unknown) => this.logger.warn(`meeting prep failed: ${err instanceof Error ? err.message : err}`));
         for (const m of await this.meetings.list(org.id, { status: 'postponed', limit: 50 })) {

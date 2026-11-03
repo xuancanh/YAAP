@@ -137,13 +137,16 @@ export class OrgDecisionsService {
     if (a.status !== 'pending') return a;
     const c = await this.chart(orgId);
     const payload = JSON.parse(a.payload || '{}') as Record<string, unknown>;
-    const from = agentOfActor(a.requestedBy, c.org);
+    // A project allocation is the member's head's call, whoever asked
+    // (docs/work-tracking.md "Project teams"): it routes as if the member raised it.
+    const routeAs = a.kind === 'project_allocation' && typeof payload.routeAsAgentId === 'string' ? payload.routeAsAgentId : null;
+    const from = routeAs ?? agentOfActor(a.requestedBy, c.org);
     // A card addressed to a named person (human review) and the owner's own cards stay where they are.
     const routable = a.kind !== 'human_review' && from !== null && c.members.some((m) => m.agentId === from);
     const r = routePure({ org: c.org, members: c.members, humans: c.humans, employees: c.employees, fromAgentId: routable ? from : null, kind: a.kind, payload });
     const urgency = a.urgency === 'urgent' || a.kind === 'two_key' || payload.urgency === 'urgent' ? 'urgent' : 'normal';
     const now = new Date();
-    const hop: DecisionHop = { at: now.toISOString(), action: 'raised', by: routable ? `agent:${from}` : a.requestedBy || 'system', from: '', to: r.holder, ...(a.recommendation ? { reasoning: a.recommendation.slice(0, 600), recommendation: (a.recommendedAction || '') as DecisionHop['recommendation'] } : {}) };
+    const hop: DecisionHop = { at: now.toISOString(), action: 'raised', by: routable ? (routeAs && agentOfActor(a.requestedBy, c.org) ? `agent:${agentOfActor(a.requestedBy, c.org)}` : `agent:${from}`) : a.requestedBy || 'system', from: '', to: r.holder, ...(a.recommendation ? { reasoning: a.recommendation.slice(0, 600), recommendation: (a.recommendedAction || '') as DecisionHop['recommendation'] } : {}) };
     const patch: Partial<OrgApproval> = { holder: r.holder, holderSince: now.toISOString(), chain: JSON.stringify([hop]), reserved: r.reserved, urgency };
     if (r.holder !== CEO) {
       patch.hopDeadline = new Date(now.getTime() + this.hopHours(c.org, urgency) * H).toISOString();
@@ -248,6 +251,7 @@ export class OrgDecisionsService {
     const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
     switch (a.kind) {
       case 'hire': return [str(payload.reportsToAgentId)].filter((x): x is string => Boolean(x));
+      case 'project_allocation': return [str(payload.agentId)].filter((x): x is string => Boolean(x));
       case 'reorg': return (Array.isArray(payload.changes) ? payload.changes as Array<{ agentId?: string; reportsToAgentId?: string }> : []).flatMap((c) => [c.agentId, c.reportsToAgentId]).filter((x): x is string => Boolean(x));
       case 'escalation': {
         const taskId = str(payload.taskId);

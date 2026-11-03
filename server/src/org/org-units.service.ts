@@ -34,6 +34,7 @@ import { OrgService, type GoalIntentFields, type OrgGoal, type OrgMember } from 
 import { OrgAuditService } from './org-audit.service';
 import { OrgAnnouncer } from './org-announcer';
 import { ensureUnitPrefix, queryableOf, renamePrefix, taskRef } from '../common/task-keys';
+import { isHeadMember } from './heads';
 
 export type OrgUnit = typeof orgUnits.$inferSelect;
 
@@ -228,6 +229,9 @@ export class OrgUnitsService {
     const members = (await this.org.members(u.orgId)).filter((m) => m.status !== 'terminated');
     const lead = members.find((m) => m.agentId === u.leadAgentId);
     if (lead && members.some((m) => m.reportsToAgentId === u.leadAgentId)) return false;
+    // A head keeps its unit with no reports yet: it staffs it (docs/autonomous-skills-review.md).
+    const org = await this.org.get(u.orgId).catch(() => null);
+    if (lead && org && isHeadMember(lead, org, false)) return false;
     await this.db.update(orgUnits).set({ archivedAt: nowIso() }).where(eq(orgUnits.id, u.id));
     if (u.channelId) {
       const leadName = (await this.agents.get(u.leadAgentId).catch(() => null))?.name ?? u.leadAgentId.slice(0, 8);
@@ -272,6 +276,10 @@ export class OrgUnitsService {
     await this.rootUnit(orgId);
     // 2. A unit for every live member with live reports.
     const leads = new Set(live.filter((m) => m.reportsToAgentId && live.some((x) => x.agentId === m.reportsToAgentId)).map((m) => m.reportsToAgentId!));
+    // A function head leads a unit from its first day, before its first hire
+    // (docs/autonomous-skills-review.md "Why heads don't hire"): its unit is
+    // where objectives land, its planning runs and its hires go.
+    for (const m of live) if (isHeadMember(m, org, false)) leads.add(m.agentId);
     for (const lead of leads) if (lead !== chiefId) await this.ensureUnitFor(orgId, lead);
     // 3. Archive units whose lead lost every report (or left).
     all = await this.units(orgId);

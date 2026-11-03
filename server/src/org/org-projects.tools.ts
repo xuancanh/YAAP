@@ -20,7 +20,12 @@
  *  - `org_milestone` (lead and up): add or tick a milestone;
  *  - `org_project_appetite` (the lead's manager chain): extend | cut_scope | kill;
  *  - `org_link_task` (owner, managers, either project's lead, the chief): move a task to a project;
- *  - `org_task_steps` (the owner): the checklist on a task.
+ *  - `org_task_steps` (the owner): the checklist on a task;
+ *  - `org_project_team` (read, every member): the cross-functional team, home units, allocations;
+ *  - `org_project_add_member` / `org_project_remove_member` (the lead and up):
+ *    staff the team; the member's own head approves the allocation (a card
+ *    routed to it), at most 100% of a member's time across projects;
+ *  - `org_project_standup` (the lead and up): the project standup's cadence in `#p-<key>`.
  */
 import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -32,6 +37,7 @@ import { OrgService, type Organization } from './org.service';
 import { OrgTasksService, type OrgTask } from './org-tasks.service';
 import { OrgRuntimeService } from './org-runtime.service';
 import { OrgProjectsService, describeAppetite } from './org-projects.service';
+import { OrgProjectTeamsService } from './org-project-teams.service';
 import { BLOCKED_KINDS, describeBlockedOn, legacyBlockedOn, parseBlockedOn } from './blocked-on';
 import { PROJECT_HEALTH, PROJECT_LANES, parseSteps } from './work-model';
 import { taskRef } from '../common/task-keys';
@@ -42,7 +48,7 @@ const BRIEF = { type: 'object', description: 'The lean case in four short fields
 const PROJECT_FIELDS = {
   title: { type: 'string' },
   goalIds: { type: 'array', items: { type: 'string' }, description: 'The key result(s) it moves (ids or id prefixes from org_intent). Required for a new project.' },
-  lead: { type: 'string', description: 'The lead (a member by name); default: you.' },
+  lead: { type: 'string', description: 'The lead (a member by name); default: a Program Manager when the company has one, else you.' },
   brief: BRIEF,
   startDate: { type: 'string', description: 'YYYY-MM-DD.' },
   targetDate: { type: 'string', description: 'YYYY-MM-DD: when it should land (optional; the forecast is shown beside it).' },
@@ -63,10 +69,15 @@ const TOOLS: AiToolSpec[] = [
   { name: 'org_milestone', description: 'Add a milestone to a project you lead (name + date), or update one (by its id like m2, its number or its name): rename, re-date, or mark it done.', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, add: { type: 'string', description: 'Name of a new milestone.' }, milestone: { type: 'string', description: 'An existing milestone to change.' }, date: { type: 'string', description: 'YYYY-MM-DD.' }, done: { type: 'boolean' }, name: { type: 'string' }, org: { type: 'string' } }, required: ['project'] } },
   { name: 'org_project_appetite', description: 'Decide a project whose appetite is used up (its circuit breaker paused new task claims), as the lead\'s manager: extend (by extendDays / extendUsd; within work.extendShare of the original appetite it applies at once, beyond it goes to the CEO), cut_scope (a small extension; the lead cancels or moves out what does not fit) or kill (always the CEO\'s: a card).', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, decision: { type: 'string', enum: ['extend', 'cut_scope', 'kill'] }, extendDays: { type: 'number' }, extendUsd: { type: 'number' }, note: { type: 'string' }, org: { type: 'string' } }, required: ['project', 'decision'] } },
   { name: 'org_link_task', description: 'Move a task to the project it serves (an orphan out of Unsorted, or a task filed under the wrong project). Its owner, its owner\'s managers, either project\'s lead or the chief may.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, project: { type: 'string', description: PROJECT_REF }, org: { type: 'string' } }, required: ['taskId', 'project'] } },
+  { name: 'org_project_team', description: 'A project\'s cross-functional team (read-only): each member with its role on the project, allocation (% of its time), status (pending until its own head approves), home unit and manager, its total allocation across projects and its open tasks here; the project channel and the standup cadence.', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, org: { type: 'string' } }, required: ['project'] } },
+  { name: 'org_project_add_member', description: 'Add a member from any unit to a project you lead (or that a report of yours leads; the chief: any) with its role on the project and an allocation (percent of its time; a member\'s projects never sum past 100%). The member\'s own manager approves the allocation: a decision card routed to it, unless you are that manager. The team can then be assigned the project\'s tasks regardless of unit; the project channel #p-<key> opens with the first member.', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, agent: { type: 'string', description: 'The member, by name.' }, role: { type: 'string', description: 'Its role on the project, e.g. engineer, designer, analyst.' }, allocation: { type: 'number', description: 'Percent of its time, 1–100.' }, why: { type: 'string', description: 'The milestone or key result it serves — the card carries it.' }, org: { type: 'string' } }, required: ['project', 'agent', 'allocation'] } },
+  { name: 'org_project_remove_member', description: 'Release a member from a project\'s team (its allocation returns to its unit). The lead, its managers, the chief or the member\'s own manager may.', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, agent: { type: 'string' }, why: { type: 'string' }, org: { type: 'string' } }, required: ['project', 'agent'] } },
+  { name: 'org_project_standup', description: 'Set the project standup of a project you lead: a five-field cron (server time) for a standup in the project channel with its team (you facilitate; it skips itself when the project has no open task), or "off".', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, cron: { type: 'string', description: 'e.g. "0 9 * * 1-5", or "off".' }, org: { type: 'string' } }, required: ['project', 'cron'] } },
   { name: 'org_task_steps', description: 'The checklist on a task you own: add a step, tick one done, undo, or drop one. Steps are your notes on how the task gets done — no status, no key, no heartbeat. Name a step by its id (s2), its number or its text.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, add: { type: 'string' }, done: { type: 'string' }, undo: { type: 'string' }, drop: { type: 'string' }, org: { type: 'string' } } } },
 ];
 const NAMES = new Set(TOOLS.map((t) => t.name));
-const READ = new Set(['org_projects', 'org_project', 'org_create_project', 'org_project_update', 'org_task_steps']);
+const READ = new Set(['org_projects', 'org_project', 'org_create_project', 'org_project_update', 'org_task_steps', 'org_project_team', 'org_project_add_member']);
+const TEAM_TOOLS = new Set(['org_project_team', 'org_project_add_member', 'org_project_remove_member', 'org_project_standup']);
 
 /** The company section of the prompt for members: which tool is for what (the mirroring the report found came from this being unsaid). */
 const MEMBER_GUIDE = 'Work tracking in this company (docs/work-tracking.md): goal / key result → project → task. Every task belongs to a project; org_projects shows the roadmap. Your kanban tools act on the company board: add_task queues a task you own on your unit\'s board (pass `task` to add a checklist step to one of your tasks instead), update_task moves your org tasks (doing = in progress; done hands it to review; blocked needs `reason` and optionally `waitsOn`), list_tasks lists your tasks with their steps. Use org_create_task for briefed work for someone else, org_task_steps for the checklist on a task, org_create_project to propose a project (Now is the CEO\'s bet), and org_project_update for the health of a project you lead. Never mirror a task into a second list.';
@@ -81,6 +92,7 @@ export class OrgProjectsTools implements ToolProviderHook {
     private readonly config: ConfigService,
     @Optional() private readonly runtime?: OrgRuntimeService,
     @Optional() turns?: TurnLoopService,
+    @Optional() private readonly teams?: OrgProjectTeamsService,
   ) {
     turns?.addToolProvider(this);
     const bridge: KanbanBridge = { handles: (id) => this.handles(id), execute: (s, n, i) => this.kanban(s, n, i) };
@@ -98,7 +110,7 @@ export class OrgProjectsTools implements ToolProviderHook {
     const ctx = this.runtime?.runningCtx(session.id);
     if (ctx?.audit) return TOOLS.filter((t) => t.name === 'org_projects' || t.name === 'org_project');
     if (ctx?.aux) return [];
-    return (await this.memberships(session.agentId)).length ? [...TOOLS] : [];
+    return (await this.memberships(session.agentId)).length ? TOOLS.filter((t) => this.teams || !TEAM_TOOLS.has(t.name)) : [];
   }
 
   owns(name: string): boolean { return NAMES.has(name); }
@@ -166,6 +178,7 @@ export class OrgProjectsTools implements ToolProviderHook {
           `Health: ${p.health || 'no update yet'}${p.healthReason ? ` — ${p.healthReason}` : ''}${p.healthAsk ? ` · ask: ${p.healthAsk}` : ''}; update ${p.update.state}${p.update.dueAt ? ` (due ${p.update.dueAt.slice(0, 10)})` : ''}`,
           `Appetite: ${describeAppetite(p.appetite)}${p.appetite.tripped ? ' — BREAKER TRIPPED: claims paused' : ''}`,
           page.blockers.length ? `Blockers: ${page.blockers.map((b) => `${b.key ?? b.taskId.slice(0, 8)} ${b.text}`).join('; ')}` : 'Blockers: none',
+          this.teams ? await this.teams.describe(org.id, p.id).catch(() => '') : '',
           `Tasks:\n${page.tasks.slice(0, 40).map((t) => `- ${t.key ?? t.id.slice(0, 8)} (${t.status}) ${t.title} — ${t.assigneeName}${t.source !== 'agent' ? ` · from ${t.source}` : ''}${t.blockedText ? ` · ${t.blockedText}` : ''}`).join('\n') || '(none yet)'}`,
         ].join('\n');
       }
@@ -213,6 +226,31 @@ export class OrgProjectsTools implements ToolProviderHook {
         const t = await wrap(() => this.projects.linkTask(org.id, str('taskId'), str('project'), actor));
         progressed();
         return `Task ${taskRef(t)} is now under ${(await this.org.project(org.id, t.projectId!)).key}.`;
+      }
+      case 'org_project_team': {
+        if (!this.teams) throw new Error('project teams are not available on this server');
+        return wrap(() => this.teams!.describe(org.id, str('project')));
+      }
+      case 'org_project_add_member': {
+        if (!this.teams) throw new Error('project teams are not available on this server');
+        const who = await this.memberRef(org.id, str('agent'));
+        const r = await wrap(() => this.teams!.propose(org.id, str('project'), { agentId: who, role: str('role'), allocation: num('allocation') ?? 0, why: str('why') }, actor));
+        progressed();
+        return r.note;
+      }
+      case 'org_project_remove_member': {
+        if (!this.teams) throw new Error('project teams are not available on this server');
+        const who = await this.memberRef(org.id, str('agent'));
+        const r = await wrap(() => this.teams!.remove(org.id, str('project'), who, actor, str('why')));
+        progressed();
+        return r.note;
+      }
+      case 'org_project_standup': {
+        if (!this.teams) throw new Error('project teams are not available on this server');
+        const cron = str('cron');
+        const p = await wrap(() => this.teams!.setStandup(org.id, str('project'), !cron || cron.toLowerCase() === 'off' ? null : cron, actor));
+        progressed();
+        return p.standupCron ? `Standup of ${p.key} set to "${p.standupCron}" (next ${p.standupNextAt?.slice(0, 16).replace('T', ' ') ?? '?'} UTC) in its project channel.` : `Standup of ${p.key} is off.`;
       }
       case 'org_task_steps': {
         const t = await this.taskOf(org.id, str('taskId') || ctx?.taskId || '');

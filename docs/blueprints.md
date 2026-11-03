@@ -34,6 +34,7 @@ roles, depth ≤ 3, fan-out ≤ 5**, exactly one root, no cycles.
 | `routing? {}` | Task class → model tier, exported when `organizations.routing` (item 23) exists. |
 | `playbooks[]` | `{ name, skillMd }` — the workspace's approved, enabled shared skills rendered as `SKILL.md` (`renderSkillMd`). The only "content" a blueprint carries, and it is instruction text. |
 | `budget { monthlyUsd, allocations? }` | The company envelope and the per-title agent envelopes. |
+| `projects?[]` | Roadmap items with their cross-functional teams (§1b): `{ title, brief, lead, team: [{ title, role?, allocation }], krs?, cadence?, appetiteDays?, appetiteUsd? }`, every role named by title. |
 | `cards?[]` | Connection card ids (`docs/integrations.md` §5a) the company's members held grants on. **Recommended** by an import, never granted. |
 | `origin { exportedFrom, at, sourceOrgId }` | Provenance; `sourceOrgId` is a 16-hex SHA-256 prefix of the org id, not the id. |
 
@@ -41,6 +42,34 @@ What is **not** in a blueprint, by construction: messages, tasks, runs,
 lessons, memory, files, connections, grants, tokens, agent ids, workspace
 ids. `OrgBlueprintsService.export` reads none of those tables, and the test
 greps the document for planted history.
+
+### 1b. Projects with teams (v1 extension, 2026-11-04)
+
+`projects?[]` is an optional, **backward-compatible v1 field** (a blueprint
+without it is unchanged; a server older than it refuses the unknown field
+rather than dropping it silently). At most **10 projects**, **8 team members**
+each:
+
+| Field | What it is |
+|---|---|
+| `title` | The project title. |
+| `brief` | `{ problem, hypothesis, done_when, mvp }` or one string (the problem). |
+| `lead` | The role title that leads it — a Program Manager (`role:ops-pm`) by convention. |
+| `team[]` | `{ title, role?, allocation }`: a role title from `roles`, its role on the project (engineer, designer, analyst), and its allocation in percent. A role's allocations across all projects sum to at most 100%. |
+| `krs?[]` | Short key-result titles it should move; the import writes them into the brief for the chief to set as key results (they need an objective and a target the blueprint does not carry). |
+| `cadence?` | The project standup's five-field cron. |
+| `appetiteDays?`, `appetiteUsd?` | Its appetite. |
+
+`validateBlueprint` refuses an unknown role title, a role listed twice on a
+team, a role over 100% across projects, a malformed cron and unknown fields.
+**Export** writes the open projects whose lead and active members map to
+role titles. **Plan** lists them (`ImportPlan.projects`). **Import** creates
+them once the hires exist — at once in autonomous mode, on approval of the
+`blueprint` card in supervised mode (the projects travel in its payload) —
+in **Next** (`shaped` when brief and appetite are filled: moving one to Now
+stays the CEO's bet), with the lead, the team at its allocations (the import
+is the CEO's act, so no allocation cards), the project channel and the
+standup (`docs/work-tracking.md` "Project teams").
 
 ## 2. Export, plan, import
 

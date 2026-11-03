@@ -23,7 +23,7 @@
  */
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useApp } from '../store';
-import { api, type OrgDetail, type ProjectPage, type ProjectPatch, type ProjectSummary, type RoadmapData, type TaskSource } from '../lib/api';
+import { api, type OrgDetail, type ProjectPage, type ProjectPatch, type ProjectSummary, type ProjectTeam, type RoadmapData, type TaskSource } from '../lib/api';
 import {
   LANES, LANE_WORD, SOURCE_TONE, SOURCE_WORD, appetiteLine, appetiteUsed, buildScale, dayMs, forecastLine, groupProjects, healthColor, healthWord, hillPoint,
   laneColumns, spanOf, updateWord, xOf, type GroupBy, type Lane, type Zoom,
@@ -319,6 +319,7 @@ export function ProjectPageView({ page, ...h }: { page: ProjectPage } & ProjectP
           <div style={{ marginTop: 6 }}><Sparkline points={page.burn} /></div>
         </Block>
       </div>
+      {page.team && <ProjectTeamBlock team={page.team} />}
       <Block title="Health updates" testid="project-health" action={<button style={btn(true)} onClick={() => setPosting(!posting)}>{posting ? 'Close' : 'Post update'}</button>}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
           <HealthDot health={p.health} size={10} /><b style={{ color: healthColor(p.health) }}>{healthWord(p.health)}</b>
@@ -377,6 +378,28 @@ export function ProjectPageView({ page, ...h }: { page: ProjectPage } & ProjectP
         </Block>
       </div>
     </div>
+  );
+}
+
+/** The cross-functional team: each member with its home unit, role on the project and allocation (docs/work-tracking.md "Project teams"). */
+export function ProjectTeamBlock({ team }: { team: ProjectTeam }) {
+  const units = team.units.length;
+  return (
+    <Block title={`Team${team.members.length ? ` · ${team.members.length}` : ''}`} testid="project-team" action={<span style={faint}>{team.channel ? `#${team.channel.slug}` : 'no channel yet'}{team.standup.cron ? ` · standup ${team.standup.cron}` : ''}</span>}>
+      <div style={{ ...faint, marginBottom: 6 }}>Led by {team.lead.name}{units > 0 ? ` · drawn from ${units} unit${units === 1 ? '' : 's'}: ${team.units.join(', ')}` : ''}. Each member keeps its home unit and head; the head approves the allocation.</div>
+      {team.members.length === 0 && <div style={faint}>No team yet. The lead proposes members from any unit; their heads approve the allocation.</div>}
+      {team.members.map((m) => (
+        <div key={m.id} data-testid="project-team-member" data-status={m.status} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderTop: '1px solid var(--border-soft)', padding: '5px 0', fontSize: 12.5 }}>
+          <b>{m.name}</b>
+          <span style={faint}>{m.role || 'member'}</span>
+          <span style={pill()}>{m.allocation}%</span>
+          {m.status === 'pending' && <span style={pill('var(--amber)', '#fff')} title={`Waiting on ${m.managerName}`}>pending head approval</span>}
+          <span style={{ flex: 1 }} />
+          <span style={faint}>home {m.homeUnit?.name ?? 'the company'} · head {m.managerName}</span>
+          <span style={faint}>{m.totalAllocation}% across projects · {m.openTasks} open here</span>
+        </div>
+      ))}
+    </Block>
   );
 }
 

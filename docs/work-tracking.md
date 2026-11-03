@@ -44,7 +44,7 @@ health of the projects that move the KR is shown **beside** its RAG on Home
 | Field | Meaning |
 |---|---|
 | `key` | `P-<n>`, per organization. Projects have their own short key; tasks keep their board's key (see "Keys" below). |
-| `ownerAgentId` / `leadHumanId` | The one lead: an agent (function heads by default) or a person. |
+| `ownerAgentId` / `leadHumanId` | The one lead: an agent or a person. Without a named lead, a **Program Manager** (`role:ops-pm`, the member titled "Program Manager" with the fewest open projects) when the company has one, else the proposer. |
 | `goalIds` (and `goalId` = the first) | The key result(s) it moves. Agents must name at least one; a person may leave it empty and the roadmap shows "No key result". |
 | `brief` | `{ problem, hypothesis, done_when, mvp }` — the lean case in four lines. |
 | `startDate`, `targetDate` | Calendar days. The target is optional; the forecast is shown beside it. |
@@ -57,6 +57,8 @@ health of the projects that move the KR is shown **beside** its RAG on Home
 | `updateCadenceDays` | Per-project override of the health cadence. |
 | `breakerAt`, `appetiteWarnedAt` | The circuit breaker's state. |
 | `kind` | `project`, or a system project: `unsorted` / `operating` (below). |
+| `channelId` | The project channel `#p-<key>` (its lead and team), opened with the first team member. |
+| `standupCron`, `standupNextAt`, `standupLastAt` | The project standup's cadence (below). |
 | `unitId` | The lead's unit, for grouping. |
 
 Health updates are their own table, `org_project_updates`: health, reason,
@@ -392,6 +394,52 @@ blocker and lets a person move the task to another project.
 change batches, `org_plans`) is now **Pending changes** in the UI, so
 "plan" and "roadmap" mean the model above. API names are unchanged.
 
+### Project teams (cross-functional, 2026-11-04)
+
+A project is staffed as a **matrix**: one owner (a Program Manager by
+default) and a **team** drawn from any unit. A member keeps its home unit and
+its head — the head stays accountable for its people — and the project
+borrows a share of its time. `org_project_members` (migration 0086):
+`projectId`, `agentId` or `humanId`, `role` on the project (engineer,
+designer, analyst, …), `allocation` (percent of the member's time),
+`status` (`active`, `pending`, `left`), `approvalId`, `addedBy`, `joinedAt`,
+`leftAt`. Served by `OrgProjectTeamsService`
+(`server/src/org/org-project-teams.service.ts`).
+
+- **Proposing a member** (`org_project_add_member`; the lead, its manager
+  chain, the chief, or a person): the allocation is the **member's own
+  manager's** decision. The tool writes a `pending` row and a
+  `project_allocation` decision card that decision routing
+  (`docs/owners-seat.md` §7) places with the member's manager —
+  `payload.routeAsAgentId` routes it as if the member raised it, whoever
+  asked. The authority table lets that manager decide it in any mode (its
+  own report, within the cap). When the asker *is* that manager, the chief or
+  a person (the CEO, a blueprint import), it applies at once. A rejected card
+  drops the pending row.
+- **Capacity:** a member's live (active + pending) allocations across open
+  projects sum to at most **100%**; a proposal past it is refused with the
+  member's current total. The WIP limit (`capacity.wipPerMember`) still
+  bounds its open tasks.
+- **Assignment across units:** the project's lead assigns the project's
+  tasks (`org_assign`, `org_create_task assignee` with `projectId`) to any
+  **active team member**, whatever its unit — the allocation is the
+  permission. A lead with an active team is offered `org_assign` even when it
+  leads no unit. Work outside the project stays the member's head's.
+- **Channel:** the first active member opens `#p-<key>` (the lead, the team,
+  the CEO and board); members join and leave it with the team, and the
+  channel carries joins, departures and the standups.
+- **Standup cadence:** `org_project_standup` sets a five-field cron; the
+  meetings machinery fires it (`OrgMeetingRuntime.addDueMeetings`) as a
+  `standup` in the project channel with the team as attendees and the lead
+  facilitating, its agenda the project's open tasks by member. A project
+  with no open task skips its standup (audited `meeting_skipped`).
+- **Views:** the project page shows the team — each member's role,
+  allocation, pending state, home unit and head, total allocation and open
+  tasks here — and its tasks across units are the project-scoped board
+  (`page.tasks`). `org_project` and `org_project_team` give agents the same.
+- **Blueprints** carry projects with their teams by role title
+  (`docs/blueprints.md` §1b).
+
 ## 6. Tools (agents)
 
 | Tool | Who | Class |
@@ -404,6 +452,10 @@ change batches, `org_plans`) is now **Pending changes** in the UI, so
 | `org_project_appetite` | the lead's manager chain | internal write within the share; else a card |
 | `org_link_task` | the task's owner, its managers, either project's lead, the chief | internal write |
 | `org_task_steps` | the task's owner | bookkeeping |
+| `org_project_team` | every member | read |
+| `org_project_add_member` | the lead, its manager chain, the chief | a proposal: the member's manager decides (a `project_allocation` card) unless it is the asker |
+| `org_project_remove_member` | the lead and up, or the member's own manager | internal write |
+| `org_project_standup` | the lead and up | internal write |
 | `org_create_task` `projectId` | — | takes a project key (`P-3`) |
 | `org_task_update` `waitsOn`, `ref` | — | the structured blocker |
 | `org_task_comment` `@Name`, `notify` | every member | tags a member (woken) or a person (notified) — "Mentions" above |
@@ -429,6 +481,10 @@ POST   /api/workspaces/:id/org/projects/:projectId/milestones
 PATCH  /api/workspaces/:id/org/projects/:projectId/milestones/:milestoneId
 POST   /api/workspaces/:id/org/projects/:projectId/appetite  { decision: extend | cut_scope | kill, … }
 POST   /api/workspaces/:id/org/projects/:projectId/tasks     { taskId } — move a task under it
+GET    /api/workspaces/:id/org/projects/:projectId/team      the team (home units, allocations, channel, standup)
+POST   /api/workspaces/:id/org/projects/:projectId/team      { agentId, role?, allocation } — a person adds a member at once
+DELETE /api/workspaces/:id/org/projects/:projectId/team/:agentId
+POST   /api/workspaces/:id/org/projects/:projectId/standup   { cron | null }
 GET    /api/workspaces/:id/org/tasks/:taskId/transitions
 POST   /api/workspaces/:id/org/tasks/:taskId/steps           { add | done | undo | drop }
 POST   /api/workspaces/:id/org/tasks/:taskId/blocked-on      { kind, ref?, reason } | { clear: true }
