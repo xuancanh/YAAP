@@ -42,6 +42,15 @@ export interface TurnContext {
   /** Set when the session's own provider is degraded and the turn runs on
    *  another enabled agent type of a different provider (docs/incidents.md §4). */
   degraded?: { from: string; to: string };
+  /** The agent type the turn runs on (null on Echo-without-type), for the
+   *  model self-heal (docs/agent-types.md "Self-heal"). */
+  agentTypeId?: string | null;
+}
+
+/** What a model self-heal did: the model the turn retries on, and the notice. */
+export interface ModelHeal {
+  model: string;
+  notice: string;
 }
 
 @Injectable()
@@ -120,6 +129,38 @@ export class TurnContextService {
       } catch { /* not usable: try the next */ }
     }
     return null;
+  }
+
+  /**
+   * Self-heal (docs/agent-types.md): the provider refused `failedModel` by
+   * name. The turn may retry once on the type's default model — refreshed
+   * from the provider first when the default itself was refused. The agent
+   * (and its chats pinned to the failed model) move to it and the agent's
+   * inbox gets a notice. Null when there is nothing better to try.
+   */
+  async healModel(session: ChatSession, ctx: Pick<TurnContext, 'model' | 'agentTypeId' | 'degraded'>, failedModel: string, err: unknown): Promise<ModelHeal | null> {
+    if (ctx.degraded || !ctx.agentTypeId) return null;
+    let type = await this.agentTypes.resolve(ctx.agentTypeId).catch(() => undefined);
+    if (!type || type.provider === 'echo') return null;
+    let target = type.model;
+    if (!target || target === failedModel) {
+      const r = await this.agentTypes.refreshModels(type.id).catch(() => null) as { ok?: boolean; default?: string } | null;
+      if (!r?.ok || !r.default || r.default === failedModel) return null;
+      type = (await this.agentTypes.resolve(type.id).catch(() => undefined)) ?? type;
+      target = r.default;
+    }
+    const notice = `Model ${failedModel} isn't served by ${type.name}; switched to ${target}`;
+    if (session.agentId) {
+      await this.agents.switchModel(session.agentId, failedModel, target, type.id).catch(() => false);
+      await this.agents.addEvent(session.agentId, {
+        kind: 'info',
+        title: notice,
+        body: `The provider refused the model name: ${(err instanceof Error ? err.message : String(err)).slice(0, 400)}\nThe turn was retried on ${target}, and ${target} is now this agent's model. Pick another in the agent's Settings › Model.`,
+        sessionId: session.id,
+        payload: JSON.stringify({ kind: 'model_switched', from: failedModel, to: target, agentTypeId: type.id }),
+      }).catch(() => undefined);
+    }
+    return { model: target, notice };
   }
 
   async build(session: ChatSession): Promise<TurnContext> {
@@ -220,6 +261,7 @@ export class TurnContextService {
       maxToolRounds: this.config.get<number>('maxToolRounds') ?? 24,
       hosted: key.hosted,
       providerName,
+      agentTypeId: fallback ? fallback.type.id : type?.id ?? null,
       ...(fallback && type ? { degraded: { from: `${type.provider}:${ownModel}`, to: `${fallback.type.provider}:${fallback.type.model}` } } : {}),
     };
   }

@@ -23,6 +23,10 @@ class CreateAgentDto {
   @IsOptional() @IsString() emoji?: string;
   @IsOptional() @IsString() role?: string;
   @IsOptional() @IsArray() colors?: [string, string];
+  /** The agent type to run on; omitted = the app default enabled type. */
+  @IsOptional() @IsString() agentTypeId?: string;
+  /** The owner typed a model id the type does not list ("custom model id"). */
+  @IsOptional() @IsBoolean() customModel?: boolean;
 }
 
 class UpdateAgentDto {
@@ -44,6 +48,8 @@ class UpdateAgentDto {
   @IsOptional() @ValidateIf((_o, v) => v !== null) @IsString() agentTypeId?: string | null;
   /** With agentTypeId/model: also switch the agent's existing chats. */
   @IsOptional() @IsBoolean() applyToChats?: boolean;
+  /** The owner typed a model id the type does not list ("custom model id"). */
+  @IsOptional() @IsBoolean() customModel?: boolean;
   /** Default auto-archive for the agent's new task chats (docs/chat-archiving.md):
    *  days after the task is finished; 0 = off; null = the workspace default. */
   @IsOptional() @ValidateIf((_o, v) => v !== null) @IsInt() @Min(0) @Max(365) chatAutoArchiveDays?: number | null;

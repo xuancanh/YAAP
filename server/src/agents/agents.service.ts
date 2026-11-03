@@ -24,6 +24,8 @@ import { hashWebhookSecret, validateLoopDef, type LoopDef } from '../chats/loop-
 import { cardById, loopForUse, type CardGrantLevel } from '../connections/cards';
 import { FollowsService, agentTaskTarget, type Follower } from '../follows/follows.service';
 import { nextAgentTaskKey, queryableOf, resolveTaskRef, taskRef } from '../common/task-keys';
+import { resolveCreationType } from '../agent-types/agent-types.service';
+import { isKnownModel, pickModel, unknownModelMessage } from '../agent-types/model-resolution';
 
 /** A self-built mini app (FR-11.5): a self-contained HTML tool the agent
  *  writes for itself via save_app. Rendered only in a network-blocked
@@ -184,7 +186,36 @@ export class AgentsService {
     return rows[0];
   }
 
-  async create(input: { name: string; workspaceId?: string; charter?: string; provider?: string; model?: string; homeDir?: string; emoji?: string; colors?: [string, string]; role?: string; loops?: unknown[] }) {
+  /**
+   * The agent type and model a new agent gets (docs/agent-types.md "Which
+   * model"): the explicit type, else an enabled type of the requested
+   * provider, else the app default, else the first enabled type; then the
+   * explicit model if that type serves it (or `customModel`), else the
+   * tier's model on the type, else its default. An explicit model the type
+   * does not serve is refused with the list — unless `modelFallback` (an
+   * import, a hire proposed before the type changed), which falls through to
+   * the tier/default instead. No type at all: the input as given.
+   */
+  async resolveModelFor(input: { agentTypeId?: string | null; provider?: string | null; model?: string | null; modelTier?: string | null; customModel?: boolean; modelFallback?: boolean }): Promise<{ agentTypeId: string | null; provider: string; model: string; typeName?: string }> {
+    const type = await resolveCreationType(this.db, { agentTypeId: input.agentTypeId, provider: input.provider });
+    const model = (input.model ?? '').trim().slice(0, 120);
+    if (!type) return { agentTypeId: null, provider: input.provider || 'anthropic', model: pickModel(null, { model, tier: input.modelTier, provider: input.provider || 'anthropic' }) };
+    if (model && !input.customModel && !input.modelFallback && !isKnownModel(type, model)) throw new BadRequestException(unknownModelMessage(type, model));
+    return { agentTypeId: type.id, provider: type.provider, model: pickModel(type, { model, tier: input.modelTier, custom: input.customModel }), typeName: type.name };
+  }
+
+  /** The agent type an existing agent runs on, resolved like a turn does
+   *  (TurnContextService.typeFor, minus the session): its own enabled type,
+   *  else an enabled type of its provider, the app default, the first. */
+  async typeOf(a: { agentTypeId?: string | null; provider: string }) {
+    if (a.agentTypeId) {
+      const own = await resolveCreationType(this.db, { agentTypeId: a.agentTypeId }).catch(() => undefined);
+      if (own) return own;
+    }
+    return resolveCreationType(this.db, { provider: a.provider }).catch(() => undefined);
+  }
+
+  async create(input: { name: string; workspaceId?: string; charter?: string; provider?: string; model?: string; homeDir?: string; emoji?: string; colors?: [string, string]; role?: string; loops?: unknown[]; agentTypeId?: string | null; modelTier?: string; customModel?: boolean; modelFallback?: boolean }) {
     // The owning workspace (docs/shared-agents.md "Workspace ownership"):
     // named by every HTTP caller, defaulted for service and CLI callers.
     const workspaceId = input.workspaceId ?? await this.defaultWorkspaceId();
@@ -194,6 +225,8 @@ export class AgentsService {
       await this.accounts.assertCanCreateAgent(existing.length);
       await this.accounts.assertLoopCap(enabledLoopCount(existing) + enabledLoopCount([{ loops: JSON.stringify(input.loops ?? []) }]));
     }
+    // Resolved before anything is written: an unserved model refuses the create.
+    const resolved = await this.resolveModelFor(input);
     const id = newId();
     const row = {
       id,
@@ -203,8 +236,10 @@ export class AgentsService {
       colors: JSON.stringify(input.colors ?? ['#8b8cf0', '#5cc2f2']),
       role: input.role ?? '',
       charter: input.charter ?? '',
-      provider: input.provider ?? 'anthropic',
-      model: input.model ?? '',
+      provider: resolved.provider,
+      model: resolved.model,
+      // Stored so a turn resolves the type deterministically (typeFor).
+      agentTypeId: resolved.agentTypeId,
       // The home (docs/filesystem.md): `agents/<handle>` in the workspace's
       // tree, unique there, kept on rename. Not caller-chosen.
       homeDir: await allocateHome(this.db, workspaceId, input.name),
@@ -293,11 +328,11 @@ export class AgentsService {
     return ensureAgentHome(this.db, this.storage, row);
   }
 
-  async update(id: string, input: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string; agentTypeId: string | null; applyToChats: boolean; chatAutoArchiveDays: number | null }>) {
-    await this.get(id);
+  async update(id: string, input: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string; agentTypeId: string | null; applyToChats: boolean; chatAutoArchiveDays: number | null; customModel: boolean }>) {
+    const before = await this.get(id);
     // homeDir is allocated at creation and moves only with the agent
     // (docs/filesystem.md): never set through an update.
-    const { applyToChats, homeDir: _homeDir, ...patch } = input as typeof input & { agentTypeId?: string | null };
+    const { applyToChats, customModel, homeDir: _homeDir, ...patch } = input as typeof input & { agentTypeId?: string | null };
     void _homeDir;
     if (patch.name !== undefined) {
       patch.name = patch.name.trim();
@@ -329,6 +364,12 @@ export class AgentsService {
         patch.agentTypeId = null;
       }
     }
+    // A model the agent's type does not serve is refused with the list
+    // (docs/agent-types.md "Validation"), unless the owner chose a custom id.
+    if (patch.model && !customModel) {
+      const type = await resolveCreationType(this.db, { agentTypeId: patch.agentTypeId !== undefined ? patch.agentTypeId : before.agentTypeId, provider: patch.provider ?? before.provider }).catch(() => undefined);
+      if (type && !isKnownModel(type, patch.model)) throw new BadRequestException(unknownModelMessage(type, patch.model));
+    }
     if (patch.loops !== undefined) {
       patch.loops = validateLoopsJson(patch.loops);
       if (this.accounts) {
@@ -350,6 +391,20 @@ export class AgentsService {
       await this.db.update(chatSessions).set(set).where(eq(chatSessions.agentId, id));
     }
     return this.get(id);
+  }
+
+  /** Self-heal (docs/agent-types.md): the provider refused `from`; the
+   *  agent — when it was on `from` (or on the type default) — and every one
+   *  of its chats pinned to `from` move to `to`, and the agent is pinned to
+   *  the type it ran on. Returns whether the agent itself changed. */
+  async switchModel(id: string, from: string, to: string, agentTypeId: string | null): Promise<boolean> {
+    const a = await this.get(id);
+    const changed = a.model === from || a.model === '';
+    if (changed || (!a.agentTypeId && agentTypeId)) {
+      await this.db.update(agents).set({ ...(changed ? { model: to } : {}), ...(!a.agentTypeId && agentTypeId ? { agentTypeId } : {}) }).where(eq(agents.id, id));
+    }
+    await this.db.update(chatSessions).set({ model: to }).where(and(eq(chatSessions.agentId, id), eq(chatSessions.model, from)));
+    return changed;
   }
 
   // ---- the agent's own kanban board (§11) ----

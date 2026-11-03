@@ -147,7 +147,7 @@ test('role catalog: ranks by the operating profile with a pure string match, ids
   assert.equal(tierOfModel('claude-opus-4-1'), 'strong'); assert.equal(tierOfModel('gpt-5'), 'strong');
   assert.equal(tierOfModel('claude-sonnet-4'), 'standard'); assert.equal(tierOfModel(''), 'standard');
   assert.equal(modelForTier('cheap', 'anthropic'), 'claude-haiku-5-5');
-  assert.equal(modelForTier('strong', 'anthropic'), 'claude-opus-4-5', 'one tier table: item 23\'s tierModel');
+  assert.equal(modelForTier('strong', 'anthropic'), 'claude-opus-5-5', 'one tier table: item 23\'s tierModel');
   assert.equal(modelForTier('standard', 'anthropic'), '', 'standard keeps the default model');
   assert.equal(modelForTier('cheap', 'anthropic', undefined, { classes: {}, models: { cheap: 'pinned-cheap' } }), 'pinned-cheap', 'a CEO-pinned tier model wins');
   // the route: GET …/org/roles?profile= and the org's own profile by default

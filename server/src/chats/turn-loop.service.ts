@@ -50,6 +50,7 @@ import { CONNECTION_TOOLS } from '../connections/connections.tools';
 
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { ProviderHealthService } from '../ai/provider-health';
+import { isModelRejection } from '../agent-types/model-resolution';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 import { liveTurns, turnWatch, type WatchedEvent } from './live-turns';
 import { taskRef } from '../common/task-keys';
@@ -794,8 +795,11 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
       // it fires before the provider's real context limit, not after.
       overheadChars = system.length + JSON.stringify(toolSpecs).length;
 
+      // Model self-heal (docs/agent-types.md): at most one retry per turn.
+      let healed = false;
       for (let round = 0; ; round++) {
         let answer = '';
+        let streamed = false;
         // The round's thinking, kept on the transcript as a 'thinking' row: the
         // Work log shows it (docs/work-log.md); provider history never carries
         // it (providerHistory reads user + assistant only — FR-8.1).
@@ -812,6 +816,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             baseUrl: ctx.baseUrl,
             signal: ctl.signal,
           })) {
+            streamed = true;
             if (ev.type === 'answer') answer += ev.text;
             if (ev.type === 'thinking') thinking += ev.text;
             if (ev.type === 'usage') { tokensIn += ev.inputTokens; tokensOut += ev.outputTokens; lastContext = ev.inputTokens + ev.outputTokens; }
@@ -820,6 +825,22 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             yield ev;
           }
         } catch (err) {
+          // The provider refused the model by name before anything streamed:
+          // retry this round once on the type's default and keep it.
+          if (!healed && !streamed && !ctl.signal.aborted && isModelRejection(err) && typeof this.context.healModel === 'function') {
+            healed = true;
+            const failed = ctx.model;
+            const heal = await this.context.healModel(session, ctx, failed, err).catch(() => null);
+            if (heal && heal.model !== failed) {
+              this.logger.warn(`${heal.notice} (session ${session.id})`);
+              ctx.model = heal.model;
+              turnModel = heal.model;
+              if (session.model === failed) { session.model = heal.model; await this.repo.updateSession(sessionId, { model: heal.model }).catch(() => undefined); }
+              await this.repo.updateTurn(turn.id, { model: heal.model }).catch(() => undefined);
+              round--;
+              continue;
+            }
+          }
           // Provider health (docs/incidents.md §4): a transient failure counts
           // towards degrading this provider for the workspace; a stop does not.
           if (this.health && ctx.providerName && !ctl.signal.aborted) await this.health.recordFailure(session.workspaceId, ctx.providerName, err).catch(() => undefined);

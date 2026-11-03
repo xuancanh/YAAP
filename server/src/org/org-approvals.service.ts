@@ -293,10 +293,14 @@ export class OrgApprovalsService {
     if (!name) throw new BadRequestException('a hire needs a name');
     const charter = (input.charter ?? role?.charter ?? pack?.charter ?? '').slice(0, 20_000);
     if (!pack && !charter) throw new BadRequestException(`"${input.templateOrPack}" is not a catalog pack; a template hire needs a charter`);
+    // An explicit model must be one the hire's agent type serves (docs/agent-types.md
+    // "Validation"); refused here with the list so the chief can pick again.
+    // A role hire's card shows the tier's model on that type.
+    const resolved = input.model?.trim() || role ? await this.agents.resolveModelFor({ provider: input.provider, model: input.model, modelTier: role?.modelTier }) : null;
     const payload: HirePayload = {
       packId: pack?.id ?? null, packName: pack?.name, name, title: (input.title ?? role?.title ?? pack?.role ?? 'Specialist').slice(0, 80), charter,
       reportsToAgentId: reportsTo, requestedScopes: requested, scopes, outsideChiefHoldings: requested.filter((s) => !scopes.includes(s)),
-      provider: input.provider, model: input.model ?? (role?.model || undefined), monthlyBudgetUsd: input.monthlyBudgetUsd,
+      provider: input.provider, model: input.model ?? (role ? resolved?.model || undefined : undefined), monthlyBudgetUsd: input.monthlyBudgetUsd,
       skills: pack?.skills?.map((s) => s.name),
       ...(role ? { roleId: role.roleId, modelTier: role.modelTier } : {}),
       ...(input.grantorAgentId && input.grantorAgentId !== org.chiefOfStaffAgentId ? { grantorAgentId: input.grantorAgentId } : {}),
@@ -475,7 +479,11 @@ export class OrgApprovalsService {
     // No memory or connection inheritance: a fresh agent with the pack's
     // charter, its skills, and nothing else (§4.6).
     const agent = await this.agents.create({
+      // The model resolves on the type the hire runs on (docs/agent-types.md):
+      // the asked-for model if served, else the tier's, else the default — a
+      // card approved after the type changed falls through instead of failing.
       name, workspaceId: org.workspaceId, charter: p.charter || pack?.charter || '', role: p.title, provider: p.provider, model: p.model,
+      modelTier: p.modelTier, modelFallback: true,
       emoji: pack?.emoji, colors: pack?.colors, loops: [],
     });
     for (const s of pack?.skills ?? []) {

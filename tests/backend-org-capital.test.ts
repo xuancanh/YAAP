@@ -258,7 +258,7 @@ test('routing: the run picks its model from the task class through the org\'s ro
   const r = mergeRouting({ classes: {}, models: {} }, { classes: { research: 'cheap', review: 'strong' }, models: { cheap: 'tiny-1' } });
   assert.equal(tierModel(r, 'cheap', 'anthropic', 'default-model'), 'tiny-1', 'a pinned tier model wins');
   assert.equal(tierModel({ classes: {}, models: {} }, 'cheap', 'anthropic', 'default-model'), 'claude-haiku-5-5', 'cheap = cheapestModelFor');
-  assert.equal(tierModel({ classes: {}, models: {} }, 'strong', 'anthropic', 'default-model'), 'claude-opus-4-5');
+  assert.equal(tierModel({ classes: {}, models: {} }, 'strong', 'anthropic', 'default-model'), 'claude-opus-5-5');
   assert.equal(tierModel({ classes: {}, models: {} }, 'standard', 'anthropic', 'default-model'), 'default-model');
   assert.equal(tierModel({ classes: {}, models: {} }, 'strong', 'unknown-provider', 'default-model'), 'default-model');
   assert.equal(resolveRoute(r, 'synthesis', { provider: 'anthropic', model: '' }, 'd'), null, 'no entry → the session\'s own model');
@@ -313,7 +313,7 @@ test('org_set_routing: autonomous applies at once (decision-shaped audit row, au
   // autonomous
   await s.mode.setMode(s.ws.id, { mode: 'autonomous' });
   const out = await s.runtime.execute(chiefSession, 'org_set_routing', { class: 'review', tier: 'strong', why: 'reviews gate quality' });
-  assert.match(out, /review tasks now run on the strong tier \(e\.g\. claude-opus-4-5; was the agent's own model\); a CEO pin on an agent's model still wins\. Routing: triage → cheap, review → strong\. Audited as a decision/);
+  assert.match(out, /review tasks now run on the strong tier \(e\.g\. claude-opus-5-5; was the agent's own model\); a CEO pin on an agent's model still wins\. Routing: triage → cheap, review → strong\. Audited as a decision/);
   assert.deepEqual((await s.org.routing(orgId)).classes, { triage: 'cheap', review: 'strong' });
   const actions = (await s.audit.list(orgId, { limit: 50 })).map((r) => r.action);
   assert.ok(actions.includes('auto_routing') && actions.filter((a) => a === 'routing_set').length === 2);

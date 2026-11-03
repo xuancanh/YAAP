@@ -49,7 +49,6 @@ import { OrgUnitsService } from './org-units.service';
 import { OrgAuditService } from './org-audit.service';
 import { checkTunable, parseTunables, TUNABLES } from './org-tunables';
 import { meetScopes } from './scopes';
-import { modelForTier } from './org-roles.service';
 import { ROLES, roleById, roleCharter, tierOfModel } from './roles/catalog';
 import { BLUEPRINT_FORMAT, BlueprintError, hireOrder, rootRole, unitsOf, validateBlueprint, type Blueprint, type BlueprintRole } from './blueprints/format';
 
@@ -259,6 +258,13 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
     const existing = await this.org.byWorkspace(workspaceId);
     if (existing) notes.push(`refused: workspace "${ws.name}" already has an organization (${existing.name}); import into an empty workspace`);
     const root = rootRole(bp);
+    // Models (docs/agent-types.md "Which model"): each tier resolves on the
+    // agent type the hires will run on (the workspace's default type), never
+    // on a vendor name the type may not serve.
+    const tierModel = new Map<string, string>();
+    for (const tier of new Set([root.modelTier, ...bp.roles.map((r) => r.modelTier)])) {
+      tierModel.set(tier, (await this.agents.resolveModelFor({ modelTier: tier })).model);
+    }
     // Scopes: connection scopes never import (a connection is a grant the CEO
     // makes); everything else the chief gets as requested, and each report
     // meets the chief's holdings.
@@ -276,7 +282,7 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
       if (usd > 0 && allocated + usd > monthlyUsd) { notes.push(`allocation for "${r.title}" cut from $${usd.toFixed(2)} to fit the $${monthlyUsd.toFixed(2)} envelope`); usd = Math.max(0, monthlyUsd - allocated); }
       allocated += usd;
       if (usd > 0) allocations[r.title] = usd;
-      return { title: r.title, ...(r.roleId ? { roleId: r.roleId } : {}), reportsTo: r.reportsTo!, requestedScopes: r.scopes, scopes, dropped: r.scopes.filter((s) => !scopes.includes(s)), modelTier: r.modelTier, model: modelForTier(r.modelTier), monthlyUsd: usd };
+      return { title: r.title, ...(r.roleId ? { roleId: r.roleId } : {}), reportsTo: r.reportsTo!, requestedScopes: r.scopes, scopes, dropped: r.scopes.filter((s) => !scopes.includes(s)), modelTier: r.modelTier, model: tierModel.get(r.modelTier) ?? '', monthlyUsd: usd };
     });
     const cap = ws.orgAgentCap;
     if (bp.roles.length > cap) notes.push(`${bp.roles.length} roles exceed the workspace agent cap of ${cap}; the import raises the cap to ${bp.roles.length}`);
@@ -295,7 +301,7 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
     return {
       ok: !existing,
       name: bp.name, mode,
-      chief: { title: root.title, ...(root.roleId ? { roleId: root.roleId } : {}), scopes: chiefScopes, dropped: root.scopes.filter((s) => !chiefScopes.includes(s)), modelTier: root.modelTier, model: modelForTier(root.modelTier) },
+      chief: { title: root.title, ...(root.roleId ? { roleId: root.roleId } : {}), scopes: chiefScopes, dropped: root.scopes.filter((s) => !chiefScopes.includes(s)), modelTier: root.modelTier, model: tierModel.get(root.modelTier) ?? '' },
       hires, units: unitsOf(bp),
       budget: { monthlyUsd, allocations, allocated },
       tunables,
@@ -321,7 +327,7 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
     const taken = new Set((await this.agents.list()).map((a) => a.name));
     const uniqueName = (base: string) => { let n = base; for (let i = 2; taken.has(n); i++) n = `${base} ${i}`; taken.add(n); return n; };
     // The chief belongs to the target workspace (item 26); role hires follow through applyHire → org.workspaceId.
-    const chief = await this.agents.create({ name: uniqueName(root.title), workspaceId, charter: root.charter || `You are the chief of staff of ${bp.name}.`, role: root.title, model: plan.chief.model || undefined, emoji: '🧭', loops: [] });
+    const chief = await this.agents.create({ name: uniqueName(root.title), workspaceId, charter: root.charter || `You are the chief of staff of ${bp.name}.`, role: root.title, model: plan.chief.model || undefined, modelTier: root.modelTier, modelFallback: true, emoji: '🧭', loops: [] });
     // 2. The organization, in the chosen mode (no enrolment of other agents: the org is the blueprint's).
     const org = await this.org.create({ workspaceId, name: bp.name, mission: bp.description, chiefOfStaffAgentId: chief.id, chiefScopes: plan.chief.scopes, monthlyBudgetUsd: plan.budget.monthlyUsd });
     await this.mode.setMode(workspaceId, { mode: opts.mode, chiefOfStaffAgentId: chief.id, monthlyUsd: plan.budget.monthlyUsd, ...(bp.roles.length > ws.orgAgentCap ? { agentCap: bp.roles.length } : {}) }, actor);

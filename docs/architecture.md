@@ -101,7 +101,7 @@ and `HttpLoggingInterceptor` registered globally.
 | `files` | `WorkspaceFs`: the versioned workspace filesystem and agent homes; also provides `WorkspaceEventBus`. | `workspace-fs.service.ts`, `agent-home.ts`, `fs-http.ts` |
 | `status` | `GET /api/status` readiness and liveness. | `StatusService` |
 | `workspaces` | Workspace CRUD, durable workspace memory, quiet hours, monthly token stop. | `WorkspacesService`, `quiet-hours.ts`, `spend.util.ts` |
-| `agent-types` | Provider/model/persona presets; API keys sealed at rest. | `AgentTypesService` |
+| `agent-types` | Provider/model/persona presets; API keys sealed at rest. Each type's model list is discovered from the provider (cached, Refresh), with a default and per-tier picks; every agent-creation path resolves the type and model through `model-resolution.ts`, unserved models are refused, a provider's model rejection self-heals to the default, and a boot repair fixes stored ones ([agent-types.md](agent-types.md)). | `AgentTypesService` |
 | `agents` | Durable agents: charter, dashboard, kanban, loops, inbox events, lessons, checkpoints; `TriggerBus`. | `AgentsService`, `AgentMemoryService`, `chats/trigger-bus.ts` |
 | `ai` | Provider adapters, retry, stream timeout, health and degradation, context windows, pricing. | `AiProviderFactory`, `ProviderHealthService`, `anthropic-ai.provider.ts`, `openai-ai.provider.ts` |
 | `chats` | Sessions and transcripts (each `chat` or `work`, [work-log.md](work-log.md)), the turn loop, context assembly, core tools, compaction, loops and triggers, distillation, the heartbeat, the agents' Work log. | `TurnLoopService`, `TurnContextService`, `ToolsService`, `CompactionService`, `LoopsService`, `HeartbeatService`, `DistillService`, `ChatLocks`, `WorkLogService` |

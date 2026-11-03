@@ -357,7 +357,7 @@ export class OrgEvalsService {
     let charterLine = '';
     let playbookLine = '';
     if (kind === 'model' && value) model = value;
-    if (kind === 'routing' && value && isTier(value)) model = tierModel(parseRouting(org.routing), value as ModelTier, agent.provider, agent.model || await this.runtime.modelFor(agent.id, org.workspaceId));
+    if (kind === 'routing' && value && isTier(value)) model = tierModel(parseRouting(org.routing), value as ModelTier, agent.provider, agent.model || await this.runtime.modelFor(agent.id, org.workspaceId), undefined, await this.agents.typeOf(agent));
     if (kind === 'charter' && value !== null) charterLine = `## Your charter for this evaluation (it replaces the charter above)\n${value}`;
     if (kind === 'playbook' && value) playbookLine = `## Playbook to follow for this kind of work\n${value.slice(0, 8_000)}`;
     const session = await this.repo.createSession({ workspaceId: org.workspaceId, agentId: agent.id, name: `Eval · ${nonce}`, kind: 'work', permissionMode: 'auto', model });

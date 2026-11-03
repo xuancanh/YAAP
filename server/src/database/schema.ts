@@ -241,6 +241,13 @@ export const agentTypes = pgTable('agent_types', {
   model: text('model').notNull(),
   /** JSON array of pickable model ids (FR-9.1). */
   models: text('models').notNull().default('[]'),
+  /** When `models` was last replaced by the provider's own list
+   *  (GET /models, docs/agent-types.md "Model discovery"); null = never,
+   *  the list is what the owner configured. Migration 0082. */
+  modelsFetchedAt: text('modelsFetchedAt'),
+  /** JSON { cheap?, standard?, strong? }: the owner's designated model per
+   *  tier on this type, picked from `models` (docs/agent-types.md). */
+  tierModels: text('tierModels').notNull().default('{}'),
   baseUrl: text('baseUrl'),
   /** Provider API key. Resolved at request time, never echoed to clients or
    *  embedded in transcripts (FR-13.3). */

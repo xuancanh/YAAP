@@ -12,6 +12,7 @@
  */
 import { backfillTaskKeys } from '../common/task-keys';
 import { backfillWorkTracking } from './work-tracking-backfill';
+import { repairAgentModels } from './model-repair';
 
 export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
@@ -2195,6 +2196,16 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_channels_parent ON channels ("workspaceId", "parentChannelId", "status")`);
     },
   },
+  {
+    id: '0083-agent-type-models',
+    up: async (db) => {
+      // Model discovery per agent type (docs/agent-types.md): when the list
+      // was last fetched from the provider, and the owner's per-tier picks.
+      // Idempotent.
+      if (!(await hasColumn(db, 'agent_types', 'modelsFetchedAt'))) await db.query(`ALTER TABLE agent_types ADD COLUMN "modelsFetchedAt" TEXT`);
+      if (!(await hasColumn(db, 'agent_types', 'tierModels'))) await db.query(`ALTER TABLE agent_types ADD COLUMN "tierModels" TEXT NOT NULL DEFAULT '{}'`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */
@@ -2363,6 +2374,11 @@ export async function runPgMigrations(db: Queryable, logger: { log: (msg: string
     const reaped = await db.query(`UPDATE chat_turns SET "status" = 'error' WHERE "status" = 'running'`);
     const reapedCount = (reaped as { rowCount?: number }).rowCount ?? 0;
     if (reapedCount > 0) logger.log(`reaped ${reapedCount} orphaned running turn(s)`);
+    // Model repair on every boot (docs/agent-types.md "Backfill"): agents
+    // and pinned chat sessions on a model their agent type does not serve
+    // (e.g. claude-* on a DeepSeek type) move to the type's default.
+    const repaired = await repairAgentModels(db);
+    if (repaired.agents + repaired.sessions > 0) logger.log(`repaired models: ${repaired.agents} agent(s), ${repaired.sessions} chat session(s) moved to their agent type's default model`);
   } finally {
     await db.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]);
   }

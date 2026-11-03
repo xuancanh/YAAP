@@ -57,7 +57,7 @@ export function cheapestModelFor(providerName: string, baseUrl: string | undefin
   if (providerName === 'openai-compatible') {
     const host = (() => { try { return new URL(baseUrl ?? '').hostname; } catch { return ''; } })();
     if (host === 'api.openai.com') return 'gpt-5-mini';
-    if (host.endsWith('deepseek.com')) return 'deepseek-chat';
+    if (host.endsWith('deepseek.com')) return 'deepseek-flash';
     if (host.endsWith('googleapis.com')) return 'gemini-2.5-flash';
   }
   return sessionModel;

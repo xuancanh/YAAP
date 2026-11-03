@@ -8,6 +8,7 @@
  */
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { tierModel, type OrgRouting } from './org-routing';
+import type { ModelTypeLike } from '../agent-types/model-resolution';
 import { ROLES, rankRoles, roleById, roleCharter, roleRef, type ModelTier, type Role } from './roles/catalog';
 
 export interface RoleHireTemplate {
@@ -17,20 +18,21 @@ export interface RoleHireTemplate {
   charter: string;
   scopes: string[];
   modelTier: ModelTier;
-  /** A concrete model when the tier implies one for the provider; '' keeps the agent default. */
+  /** The model the hire asked for explicitly; '' lets creation pick the
+   *  tier's model on the agent type the hire will run on (AgentsService.resolveModelFor). */
   model: string;
   estMonthlyUsd: number;
   /** The role's authored pack (Role.packId): its skills install on the hire. */
   packId?: string;
 }
 
-/** The model a tier maps to for a provider — one tier table, item 23's
- *  `tierModel` (org-routing.ts): `cheap` is the provider's cheapest sibling,
- *  `strong` the provider's strong model, `standard` the default model (''
- *  here keeps the agent type's default). `routing` lets a CEO-pinned tier
- *  model win. */
-export function modelForTier(tier: ModelTier, provider = 'anthropic', baseUrl?: string, routing: OrgRouting = { classes: {}, models: {} }): string {
-  return tierModel(routing, tier, provider, '', baseUrl);
+/** The model a tier maps to — one tier table, item 23's `tierModel`
+ *  (org-routing.ts). Pass the agent type the agent runs on: the tier's model
+ *  on that type (docs/agent-types.md). Without a type, the vendor-name guess
+ *  by provider (`standard` → '' keeps the default). `routing` lets a
+ *  CEO-pinned tier model win. */
+export function modelForTier(tier: ModelTier, provider = 'anthropic', baseUrl?: string, routing: OrgRouting = { classes: {}, models: {} }, type?: ModelTypeLike | null): string {
+  return tierModel(routing, tier, provider, '', baseUrl, type);
 }
 
 /** `templateOrPack` names a role (`role:<id>`) → the template hire, or null.
@@ -46,7 +48,7 @@ export function resolveRoleHire(templateOrPack: string, input: { orgName: string
     charter: roleCharter(role, input.orgName),
     scopes: [...new Set([...role.toolScopes, ...(input.scopes ?? [])])],
     modelTier: role.modelTier,
-    model: input.model ?? modelForTier(role.modelTier, input.provider),
+    model: input.model ?? '',
     estMonthlyUsd: role.estMonthlyUsd,
     ...(role.packId ? { packId: role.packId } : {}),
   };

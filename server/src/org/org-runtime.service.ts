@@ -89,6 +89,7 @@ import { OrgSloService } from './org-slo.service';
 import { OrgIntentService, paceOf, type IntentEvent } from './org-intent.service';
 import { OrgCapitalService, type PlanAction, type PlanCapture } from './org-capital.service';
 import { describeRouting, isTier, MODEL_TIERS, parseRouting, resolveRoute, tierModel } from './org-routing';
+import { isKnownModel, unknownModelMessage } from '../agent-types/model-resolution';
 import { TASK_CLASSES } from './org-tasks.service';
 import { checkTunable, describeTunables, tunable } from './org-tunables';
 import { parseScopes, widenedScopes } from './scopes';
@@ -914,7 +915,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     // Capital (docs/company-vision.md §7): the model follows the task class
     // through the org's routing unless the CEO pinned one on the agent.
     const sessionModel = await this.sessionModelFor(agentId, org.workspaceId);
-    const route = agent.model ? null : resolveRoute(parseRouting(org.routing), task.class, { provider: agent.provider, model: agent.model }, sessionModel);
+    const route = agent.model ? null : resolveRoute(parseRouting(org.routing), task.class, { provider: agent.provider, model: agent.model }, sessionModel, undefined, await this.agents.typeOf(agent));
     // Budget before the call (§4.2): reserve against agent → project → company.
     const model = agent.model || route?.model || sessionModel;
     const estimate = await this.estimateUsd(model);
@@ -2064,7 +2065,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         const routing = parseRouting(org.routing);
         const from = routing.classes[cls] ?? null;
         const chiefAgent = await this.agents.get(agentId);
-        const example = tierModel(routing, tier, chiefAgent.provider, chiefAgent.model || 'the agent\'s default model');
+        const example = tierModel(routing, tier, chiefAgent.provider, chiefAgent.model || 'the agent\'s default model', undefined, await this.agents.typeOf(chiefAgent));
         const routedRouting = await boundaryRoute({ kind: 'routing', key: cls, summary: `route ${cls} → ${tier}` }, { kind: 'routing', payload: { class: cls, tier, from, why, example } });
         if (routedRouting) return routedRouting;
         if (previewing) return capture(`route ${cls}: ${from ?? 'agent model'} → ${tier} (e.g. ${example}) — ${why}`);
@@ -2102,6 +2103,11 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
           typeLabel = t.name;
         }
         if (typeof input.model === 'string') patch.model = input.model.trim();
+        // The model must be one the member's (new) type serves — refused with the list (docs/agent-types.md).
+        if (patch.model) {
+          const t = patch.agentTypeId ? await this.agents.typeOf({ agentTypeId: patch.agentTypeId, provider: '' }) : await this.agents.typeOf(target);
+          if (t && !isKnownModel(t, patch.model)) throw new Error(unknownModelMessage(t, patch.model));
+        }
         if (typeof input.workspaceFolder === 'string') patch.workspaceFolder = input.workspaceFolder;
         const hb = input.heartbeat && typeof input.heartbeat === 'object' ? input.heartbeat as { enabled?: unknown; cron?: unknown } : null;
         const heartbeat = hb ? { ...(typeof hb.enabled === 'boolean' ? { enabled: hb.enabled } : {}), ...(typeof hb.cron === 'string' ? { cron: hb.cron } : {}) } : undefined;

@@ -254,6 +254,11 @@ test('agent model setting: a type sets provider and model, carries to existing c
   ]);
   const a = await s.agents.create({ name: 'Writer', workspaceId: s.ws.id });
   const chats = new ChatsService(s.repo, s.agents);
+  // A new agent is stored on the type it will run on (the only enabled one), with its default model.
+  assert.equal(a.agentTypeId, 'tA');
+  assert.equal(a.provider, 'deepseek');
+  assert.equal(a.model, 'deepseek-chat');
+  await s.agents.update(a.id, { agentTypeId: null });
   const before = await chats.create({ workspaceId: s.ws.id, agentId: a.id });
   assert.equal(before.agentTypeId, null);
 

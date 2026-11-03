@@ -7,12 +7,15 @@
  * read through `parseRouting`. A run picks its model from the task's class
  * when a routing entry exists and the agent has no model pinned by the CEO
  * (`agents.model`); the pin always wins. Tiers resolve to model ids with the
- * same logic the action reviewer uses: `cheap` is `cheapestModelFor` on the
- * agent's provider, `standard` is the session's own model (the agent type's
- * default), `strong` is the provider's strong model from the table below —
- * unless the CEO pinned a model id per tier in `models`. Pure: no I/O.
+ * agent type the agent runs on (docs/agent-types.md "Which model"): the
+ * CEO's pinned tier model when the type serves it, else the owner's
+ * designated tier model on the type, else the type's default (`standard` is
+ * the session's own model). Only without a type — no agent types configured
+ * — does the vendor-name guess by provider apply (`cheap` is
+ * `cheapestModelFor`, `strong` the family's strong model). Pure: no I/O.
  */
 import { cheapestModelFor } from '../review/action-review.service';
+import { isKnownModel, providerFamilyOf, tierModelForType, vendorTierModel, type ModelTypeLike } from '../agent-types/model-resolution';
 
 export const MODEL_TIERS = ['cheap', 'standard', 'strong'] as const;
 export type ModelTier = typeof MODEL_TIERS[number];
@@ -21,14 +24,6 @@ export interface OrgRouting {
   classes: Record<string, ModelTier>;
   models: Partial<Record<ModelTier, string>>;
 }
-
-/** The strong tier per provider family when the CEO pinned none. */
-const STRONG_MODELS: Array<[RegExp, string]> = [
-  [/^anthropic$/, 'claude-opus-4-5'],
-  [/openai/, 'gpt-5.1'],
-  [/deepseek/, 'deepseek-reasoner'],
-  [/google|gemini/, 'gemini-2.5-pro'],
-];
 
 export function parseRouting(raw: string | null | undefined): OrgRouting {
   const out: OrgRouting = { classes: {}, models: {} };
@@ -46,17 +41,25 @@ export function isClass(v: unknown): v is string { return typeof v === 'string' 
 
 /** The model a run should use for a task class, or null when no entry
  *  routes that class (the session's own model then applies). */
-export function resolveRoute(routing: OrgRouting, cls: string, agent: { provider: string; model: string }, defaultModel: string, baseUrl?: string): { tier: ModelTier; model: string } | null {
+export function resolveRoute(routing: OrgRouting, cls: string, agent: { provider: string; model: string }, defaultModel: string, baseUrl?: string, type?: ModelTypeLike | null): { tier: ModelTier; model: string } | null {
   const tier = routing.classes[cls];
   if (!tier) return null;
-  return { tier, model: tierModel(routing, tier, agent.provider, defaultModel, baseUrl) };
+  return { tier, model: tierModel(routing, tier, agent.provider, defaultModel, baseUrl, type) };
 }
 
-export function tierModel(routing: OrgRouting, tier: ModelTier, provider: string, defaultModel: string, baseUrl?: string): string {
+/** The model a tier resolves to. With the agent's type: a pinned tier model
+ *  the type serves, else the type's tier model (`standard`: `defaultModel`
+ *  when set). Without one: the pin, else the vendor guess by provider. */
+export function tierModel(routing: OrgRouting, tier: ModelTier, provider: string, defaultModel: string, baseUrl?: string, type?: ModelTypeLike | null): string {
   const pinned = routing.models[tier];
+  if (type) {
+    if (pinned && isKnownModel(type, pinned)) return pinned;
+    if (tier === 'standard' && defaultModel && isKnownModel(type, defaultModel)) return defaultModel;
+    return tierModelForType(type, tier);
+  }
   if (pinned) return pinned;
   if (tier === 'cheap') return cheapestModelFor(provider, baseUrl, defaultModel) || defaultModel;
-  if (tier === 'strong') return STRONG_MODELS.find(([re]) => re.test(provider))?.[1] ?? defaultModel;
+  if (tier === 'strong') return vendorTierModel(providerFamilyOf(provider), 'strong') ?? defaultModel;
   return defaultModel;
 }
 
