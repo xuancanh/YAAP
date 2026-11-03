@@ -1,5 +1,5 @@
 /** The chat main pane: header (pin, token meter, model/effort popover,
- *  Ask/Auto), transcript (user/assistant/thinking/tool/system rows, inline
+ *  Ask/Auto), transcript (user/assistant/system rows, each turn's thinking and tool calls folded behind "worked on it · N steps", inline
  *  approvals, artifact chips), queue, and the composer with slash/@ menus. */
 import { memo, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
@@ -209,6 +209,26 @@ function Thinking({ text, streaming }: { text: string; streaming: boolean }) {
           {text}{streaming && <span style={{ animation: 'blink 1s infinite' }}>▋</span>}
         </div>
       )}
+    </div>
+  );
+}
+
+/** How a turn's internal work reads in a conversation (docs/work-log.md):
+ *  its thinking and tool calls folded behind one compact line — "worked on
+ *  it · N steps" — so the answer stays prominent. The owner can expand it;
+ *  the full record of the agent's own runs lives in its Work log. */
+export function WorkedOn({ steps, live = false, children }: { steps: number; live?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  if (steps === 0) return null;
+  return (
+    <div style={{ margin: '8px 0' }} data-testid="worked-on">
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: '2px 0', cursor: 'pointer', color: 'var(--text-faint)', fontSize: 11.5, fontWeight: 600 }}>
+        <I d={P.brain} size={12} stroke="var(--text-faint)" />
+        {live ? 'working' : 'worked on it'} · {steps} step{steps === 1 ? '' : 's'}{live ? '…' : ''}
+        <I d={P.chevD} size={11} style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .12s' }} />
+      </button>
+      {open && <div style={{ paddingLeft: 10, borderLeft: '1px solid var(--border-soft)', marginTop: 4 }}>{children}</div>}
     </div>
   );
 }
@@ -538,6 +558,17 @@ export function ChatView() {
   const rows: React.ReactNode[] = [];
   let dividerPlaced = cutoffSeq === null;
   const toolSeq = new Map<string, number>();
+  // A conversation keeps the answer prominent: each turn's thinking and tool
+  // calls fold into one "worked on it · N steps" line at the first of them
+  // (docs/work-log.md). An agent's run (kind 'work') shows everything.
+  const foldWork = s.kind !== 'work';
+  const workOf = new Map<string, { at: number; nodes: React.ReactNode[] }>();
+  const pushWork = (turnId: string, node: React.ReactNode) => {
+    if (!foldWork) { rows.push(node); return; }
+    let w = workOf.get(turnId);
+    if (!w) { w = { at: rows.length, nodes: [] }; workOf.set(turnId, w); rows.push(null); }
+    w.nodes.push(node);
+  };
   const pushDivider = () => {
     rows.push(<SystemDivider key="compact-divider" text="Context compacted — older turns distilled to a summary (visible transcript unchanged)" />);
     dividerPlaced = true;
@@ -548,14 +579,14 @@ export function ChatView() {
       const author = app.me?.hasMembers ? { name: app.nameOf(m.authorAccountId), mine: (m.authorAccountId || app.me.ownerAccountId) === app.me.actorId } : undefined;
       rows.push(<UserRow key={m.id} m={m} turn={turnById.get(m.turnId)} onEditResend={app.editResend} onFork={app.fork} author={author} />);
     } else if (m.role === 'thinking') {
-      rows.push(<Thinking key={m.id} text={m.content} streaming={false} />);
+      pushWork(m.turnId, <Thinking key={m.id} text={m.content} streaming={false} />);
     } else if (m.role === 'tool') {
       // Persisted tool rows carry only the result; the reviewer's verdict
       // lives on the turn's tool records, matched by position.
       const idx = toolSeq.get(m.turnId) ?? 0;
       toolSeq.set(m.turnId, idx + 1);
       const record = safeJsonParse<Array<{ review?: ToolReview; actionClass?: string; actionId?: string; held?: 'held' | 'staged' }>>(turnById.get(m.turnId)?.toolCalls ?? '', [])[idx];
-      rows.push(<ToolCard key={m.id} t={{ kind: 'tool', id: m.id, name: m.toolName ?? 'tool', input: {}, status: m.content.startsWith('Denied') ? 'denied' : 'done', result: m.content, review: record?.review, actionClass: record?.actionClass, actionId: record?.actionId, held: record?.held }} />);
+      pushWork(m.turnId, <ToolCard key={m.id} t={{ kind: 'tool', id: m.id, name: m.toolName ?? 'tool', input: {}, status: m.content.startsWith('Denied') ? 'denied' : 'done', result: m.content, review: record?.review, actionClass: record?.actionClass, actionId: record?.actionId, held: record?.held }} />);
     } else {
       rows.push(
         <AssistantRow key={m.id} m={m} turn={turnById.get(m.turnId)} agent={agent} refs={taskRefs}
@@ -566,9 +597,19 @@ export function ChatView() {
     }
   };
   app.transcript.messages.forEach(renderMsg);
+  for (const [turnId, w] of workOf) rows[w.at] = <WorkedOn key={`work-${turnId}`} steps={w.nodes.length}>{w.nodes}</WorkedOn>;
   if (!dividerPlaced && cutoffSeq !== null && app.transcript.messages.length > 0) pushDivider();
 
-  const liveRows = app.live.map((item: LiveItem, i: number) => {
+  // Live: the turn in flight folds the same way, except a call waiting on
+  // the owner's approval, which stays in view.
+  const liveWork: React.ReactNode[] = [];
+  let liveWorkAt = -1;
+  const liveRowsRaw = app.live.map((item: LiveItem, i: number) => {
+    if (foldWork && (item.kind === 'thinking' || (item.kind === 'tool' && item.status !== 'pending'))) {
+      liveWork.push(item.kind === 'thinking' ? <Thinking key={`lt${i}`} text={item.text} streaming={item.streaming} /> : <ToolCard key={item.id} t={item} />);
+      if (liveWorkAt < 0) liveWorkAt = i;
+      return null;
+    }
     if (item.kind === 'user') {
       return (
         <div key={`lu${i}`} style={{ display: 'flex', justifyContent: 'flex-end', margin: '16px 0', animation: 'msgIn .2s ease' }}>
@@ -591,6 +632,7 @@ export function ChatView() {
     }
     return <ToolCard key={item.id} t={item} />;
   });
+  const liveRows = liveWorkAt < 0 ? liveRowsRaw : liveRowsRaw.map((r, i) => (i === liveWorkAt ? <WorkedOn key="live-work" live={app.streaming} steps={liveWork.length}>{liveWork}</WorkedOn> : r));
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>

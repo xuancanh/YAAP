@@ -167,21 +167,23 @@ function useRailCollapse(): [Record<string, boolean>, (next: Record<string, bool
 
 interface RailGroupView {
   key: string; id: string; name: string; emoji: string; avatar: string; isAgent: boolean;
-  total: number; items: ChatSession[]; loops: { total: number; items: ChatSession[] };
+  total: number; items: ChatSession[];
+  /** The agent's runs (docs/work-log.md): a count and the ones waiting on
+   *  an approval — one "Work log" row, never chat rows. */
+  work: { total: number; approvals: number };
   hasMore: boolean; approvals: Set<string>; unread: number;
 }
 
 /** One root in the combined rail — everything about a single agent: identity
  *  row (opens the agent home) with its unread / approval badges and chat
- *  count, then — when open — its newest chats, "Show more", and its loop /
- *  heartbeat sessions folded into one row. */
+ *  count, then — when open — its newest chats, "Show more", and one "Work
+ *  log" row for its own runs (heartbeat, loops, task runs, meetings —
+ *  docs/work-log.md), badged when one of them waits on an approval. */
 function AgentGroup({ g, open, onToggle, searching }: { g: RailGroupView; open: boolean; onToggle: () => void; searching: boolean }) {
   const app = useApp();
-  const [loopsOpen, setLoopsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const agentActive = g.isAgent && app.selectedAgent === g.id && app.homeView === 'agent';
   const remaining = Math.max(0, g.total - g.items.length);
-  const showLoops = loopsOpen || searching || g.loops.items.some((s) => s.id === app.currentId && app.homeView === 'chat');
   const more = async () => {
     setLoading(true);
     try { await app.loadMoreChats(g.key); } catch { app.showToast('Could not load more chats'); } finally { setLoading(false); }
@@ -196,8 +198,8 @@ function AgentGroup({ g, open, onToggle, searching }: { g: RailGroupView; open: 
         {g.unread > 0 && (
           <span title="Unread activity from loops and proactive work" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px', flex: 'none' }}>{g.unread}</span>
         )}
-        {g.approvals.size > 0 && (
-          <span title={`${g.approvals.size} chat(s) waiting on your approval`} style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--red)', borderRadius: 8, padding: '1px 6px', flex: 'none' }}>{g.approvals.size}</span>
+        {g.approvals.size + g.work.approvals > 0 && (
+          <span title={g.work.approvals ? `${g.approvals.size + g.work.approvals} waiting on your approval (${g.work.approvals} in its Work log)` : `${g.approvals.size} chat(s) waiting on your approval`} style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--red)', borderRadius: 8, padding: '1px 6px', flex: 'none' }}>{g.approvals.size + g.work.approvals}</span>
         )}
         <span title={`${g.total} chat${g.total === 1 ? '' : 's'}`} style={{ fontSize: 10.5, color: 'var(--text-faint)', background: 'var(--panel-2)', borderRadius: 5, padding: '1px 6px', flex: 'none' }}>{g.total}</span>
         <button onClick={(e) => { e.stopPropagation(); void app.newChat(g.isAgent ? g.id : null); }} title="New chat" aria-label={`New chat with ${g.name}`} style={iconBtn}>
@@ -210,29 +212,23 @@ function AgentGroup({ g, open, onToggle, searching }: { g: RailGroupView; open: 
       {open && (
         <div style={{ paddingLeft: 10, borderLeft: '1px solid var(--border-soft)', marginLeft: 19 }}>
           {g.items.map((s) => <SessionRow key={s.id} s={s} approval={g.approvals.has(s.id)} />)}
-          {g.items.length === 0 && g.loops.total === 0 && <div style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--text-faint)' }}>No conversations.</div>}
+          {g.items.length === 0 && <div style={{ padding: '4px 10px', fontSize: 11.5, color: 'var(--text-faint)' }}>No conversations.</div>}
           {!searching && g.hasMore && remaining > 0 && (
             <button type="button" onClick={() => void more()} disabled={loading}
               style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', color: 'var(--accent-hi)', fontSize: 11.5, fontWeight: 600, padding: '5px 10px', cursor: loading ? 'default' : 'pointer' }}>
               {loading ? 'Loading…' : `Show more (${remaining})`}
             </button>
           )}
-          {g.loops.total > 0 && (
-            <>
-              <div role="button" tabIndex={0} onClick={() => setLoopsOpen(!loopsOpen)} onKeyDown={(e) => { if (e.key === 'Enter') setLoopsOpen(!loopsOpen); }}
-                title="Scheduled loops and heartbeat runs, one row per agent"
-                style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 9, cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12 }}>
-                <I d={P.clock} size={12} style={{ flex: 'none' }} />
-                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Heartbeat runs</span>
-                <span style={{ fontSize: 10, color: 'var(--text-faint)', flex: 'none' }}>{g.loops.total}</span>
-                <I d={P.chevD} size={11} style={{ transform: showLoops ? 'none' : 'rotate(-90deg)', transition: 'transform .12s', flex: 'none' }} />
-              </div>
-              {showLoops && (
-                <div style={{ paddingLeft: 8 }}>
-                  {g.loops.items.map((s) => <SessionRow key={s.id} s={s} approval={g.approvals.has(s.id)} />)}
-                </div>
-              )}
-            </>
+          {g.isAgent && !searching && g.work.total > 0 && (
+            <div role="button" tabIndex={0} onClick={() => app.openWorkLog(g.id)} onKeyDown={(e) => { if (e.key === 'Enter') app.openWorkLog(g.id); }}
+              title="The agent's own runs — heartbeat, loops, task runs, meetings — with their thinking and tool calls"
+              data-testid={`rail-worklog-${g.key}`}
+              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 10px', borderRadius: 9, cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12 }}>
+              <I d={P.clock} size={12} style={{ flex: 'none' }} />
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Work log</span>
+              {g.work.approvals > 0 && <span title="A run is waiting on your approval" aria-label="A run is waiting on your approval" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--red)', flex: 'none' }} />}
+              <I d={P.chevR} size={11} style={{ flex: 'none' }} />
+            </div>
           )}
         </div>
       )}
@@ -332,7 +328,8 @@ export function HomeRail() {
       if (q && !use && !nameHit) return null;
       return {
         key, ...meta,
-        total: use?.total ?? 0, items: use?.items ?? [], loops: use?.loops ?? { total: 0, items: [] },
+        total: use?.total ?? 0, items: use?.items ?? [],
+        work: { total: base.get(key)?.work?.total ?? 0, approvals: base.get(key)?.work?.approvalIds.length ?? 0 },
         hasMore: !q && !!use?.nextCursor, approvals: new Set(base.get(key)?.approvalIds ?? []),
         unread: meta.isAgent ? app.unread[meta.id] ?? 0 : 0,
       };
@@ -342,7 +339,7 @@ export function HomeRail() {
       if (v) out.push(v);
     }
     const ws = view('', { id: '__ws', name: 'Workspace', emoji: '🗂️', avatar: 'var(--panel-2)', isAgent: false });
-    if (ws && (q || ws.total > 0 || ws.loops.total > 0 || out.length === 0)) out.push(ws);
+    if (ws && (q || ws.total > 0 || out.length === 0)) out.push(ws);
     return out;
   }, [app.agents, app.chatRail, app.unread, hits, q]);
 
@@ -352,7 +349,7 @@ export function HomeRail() {
   const isOpen = (g: RailGroupView) => {
     if (q) return true;
     if (explicit[g.key] !== undefined) return explicit[g.key];
-    return g.key === currentAgentKey || g.unread > 0 || g.approvals.size > 0;
+    return g.key === currentAgentKey || g.unread > 0 || g.approvals.size > 0 || g.work.approvals > 0;
   };
   const anyOpen = groups.some(isOpen);
   const setAll = (open: boolean) => saveExplicit(Object.fromEntries(groups.map((g) => [g.key, open])));

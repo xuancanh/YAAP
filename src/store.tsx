@@ -137,7 +137,12 @@ interface Store {
   pricing: PriceTable;
 
   // chat
+  /** Open a session by id: a chat opens in the chat view; an agent's run
+   *  (`kind: 'work'`) opens in its Work log instead (docs/work-log.md). */
   currentId: string | null; openSession: (id: string) => void;
+  /** The agent's Work log, optionally focused on a run or a work session. */
+  openWorkLog: (agentId: string, focus?: { sessionId?: string; turnId?: string }) => void;
+  workLogFocus: WorkLogFocus | null; clearWorkLogFocus: () => void;
   current: ChatSession | null;
   transcript: { messages: ChatMessage[]; turns: ChatTurn[] };
   refreshTranscript: () => Promise<void>;
@@ -251,10 +256,15 @@ export const grad = (colorsJson: string): string => {
 export const gradPair = (pair: [string, string]): string => `linear-gradient(140deg,${pair[0]},${pair[1]})`;
 
 /** A chat usable as the open chat of workspace `ws`: its own, not archived,
- *  not a channel's hidden working session. */
+ *  a conversation — not an agent's run (`kind: 'work'`, read in the Work
+ *  log, docs/work-log.md) nor a channel's hidden working session. */
 function openableIn(s: ChatSession | null | undefined, ws: string | null | undefined): boolean {
-  return !!s && s.workspaceId === ws && !s.archivedAt && !isChannelSession(s);
+  return !!s && s.workspaceId === ws && !s.archivedAt && s.kind !== 'work' && !isChannelSession(s);
 }
+
+/** What the Work log should open (docs/work-log.md): a run, or a work
+ *  session's newest run. `at` makes a repeat request a new one. */
+export interface WorkLogFocus { agentId: string; sessionId?: string; turnId?: string; at: number }
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [width, setWidth] = useState(window.innerWidth);
@@ -303,10 +313,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const sessions = useMemo(() => {
     const seen = new Set<string>();
     const out: ChatSession[] = [];
-    for (const g of chatRail) for (const s of [...g.items, ...g.loops.items]) if (!seen.has(s.id) && !isChannelSession(s)) { seen.add(s.id); out.push(s); }
+    for (const g of chatRail) for (const s of g.items) if (!seen.has(s.id) && s.kind !== 'work' && !isChannelSession(s)) { seen.add(s.id); out.push(s); }
     for (const s of extraSessions) if (!seen.has(s.id)) { seen.add(s.id); out.push(s); }
     return out;
   }, [chatRail, extraSessions]);
+  const sessionsRef = useRef<ChatSession[]>([]);
+  sessionsRef.current = sessions;
   const [archived, setArchived] = useState<ChatSession[]>([]);
   const [archivedTotal, setArchivedTotal] = useState(0);
   const [archivedCursor, setArchivedCursor] = useState<string | null>(null);
@@ -332,6 +344,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [currentFile, setCurrentFile] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(() => new URLSearchParams(window.location.search).get('agent'));
   const [agentTabRequest, setAgentTabRequest] = useState<string | null>(null);
+  const [workLogFocus, setWorkLogFocus] = useState<WorkLogFocus | null>(null);
+  const openWorkLogRef = useRef<(agentId: string, focus?: { sessionId?: string; turnId?: string }) => void>(() => undefined);
   const [newAgentOpen, setNewAgentOpen] = useState(false);
   const [artifact, setArtifact] = useState<{ title: string; src: string; appCtx?: { agentId: string; miniApp: AgentApp } } | null>(null);
   const [liveBrowserSteps, setLiveBrowserSteps] = useState<BrowserStep[]>([]);
@@ -510,7 +524,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // channel, not direct messages: the server keeps them out.
     const rail = await api.chatRail(workspaceId, { limits: railLimits.current });
     // Open chats beyond the loaded pages are re-read so they stay current.
-    const inRail = new Set(rail.groups.flatMap((g) => [...g.items, ...g.loops.items].map((s) => s.id)));
+    const inRail = new Set(rail.groups.flatMap((g) => g.items.map((s) => s.id)));
     const extras = (await Promise.all(extraRef.current.filter((s) => !inRail.has(s.id)).map((s) => api.chat(s.id).catch(() => null)))).filter((s): s is ChatSession => openableIn(s, workspaceId));
     for (const s of extraRef.current) if (!extras.some((x) => x.id === s.id) && !inRail.has(s.id)) probed.current.set(s.id, 'missing');
     setChatRail(rail.groups);
@@ -525,7 +539,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!workspaceId) return;
     const g = chatRail.find((x) => (x.agentId ?? '') === groupKey);
     if (!g?.nextCursor) return;
-    const page = await api.chatPage(workspaceId, { agentId: g.agentId, loops: 'exclude', limit: 20, cursor: g.nextCursor });
+    const page = await api.chatPage(workspaceId, { agentId: g.agentId, limit: 20, cursor: g.nextCursor });
     setChatRail((rail) => rail.map((x) => {
       if ((x.agentId ?? '') !== groupKey) return x;
       const seen = new Set(x.items.map((s) => s.id));
@@ -658,6 +672,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (probed.current.has(id)) return;
     probed.current.set(id, 'pending');
     void api.chat(id).then((s) => {
+      // A deep link to an agent's run opens it in the agent's Work log
+      // (docs/work-log.md), never as the open chat.
+      if (s.kind === 'work' && s.agentId && deepLink.current === id) {
+        deepLink.current = null;
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        openWorkLogRef.current(s.agentId, { sessionId: s.id });
+      }
       if (openableIn(s, workspaceIdRef.current)) { probed.current.set(id, 'found'); setExtraSessions((x) => (x.some((y) => y.id === s.id) ? x : [...x, s])); } else probed.current.set(id, 'missing');
     }).catch(() => { probed.current.set(id, 'missing'); }).finally(() => setProbeTick((n) => n + 1));
   }, []);
@@ -709,11 +730,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const patchSession = useCallback(async (id: string, patch: Record<string, unknown>) => {
     const updated = await api.updateChat(id, patch);
-    setChatRail((rail) => rail.map((g) => ({ ...g, items: g.items.map((s) => (s.id === id ? updated : s)), loops: { ...g.loops, items: g.loops.items.map((s) => (s.id === id ? updated : s)) } })));
+    setChatRail((rail) => rail.map((g) => ({ ...g, items: g.items.map((s) => (s.id === id ? updated : s)) })));
     setExtraSessions((list) => list.map((s) => (s.id === id ? updated : s)));
   }, []);
 
-  const openSession = useCallback((id: string) => {
+  /** The chat view on a chat (the old openSession). */
+  const showChat = useCallback((id: string) => {
     setCurrentId(id);
     setSection('home');
     setHomeView('chat');
@@ -735,6 +757,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .then(() => setUnread((u) => ({ ...u, [id]: 0 })))
       .catch(() => {});
   }, []);
+
+  const openWorkLog = useCallback((agentId: string, focus: { sessionId?: string; turnId?: string } = {}) => {
+    setWorkLogFocus({ agentId, ...focus, at: Date.now() });
+    openAgent(agentId, 'Work log');
+  }, [openAgent]);
+  openWorkLogRef.current = openWorkLog;
+  const clearWorkLogFocus = useCallback(() => setWorkLogFocus(null), []);
+
+  /** Every "open this session" link (inbox, mission control, the agent
+   *  dashboard, usage, search): a chat opens in the chat view, an agent's
+   *  run in its Work log. A session on no loaded page is looked up first. */
+  const openSession = useCallback((id: string) => {
+    const known = sessionsRef.current.find((s) => s.id === id);
+    if (known) {
+      if (known.kind === 'work' && known.agentId) openWorkLog(known.agentId, { sessionId: id });
+      else showChat(id);
+      return;
+    }
+    void api.chat(id).then((s) => {
+      if (s.kind === 'work' && s.agentId) openWorkLog(s.agentId, { sessionId: id });
+      else showChat(id);
+    }).catch(() => showChat(id));
+  }, [showChat, openWorkLog]);
 
   const openFile = useCallback((target: FileTarget, path: string | null) => {
     if (target.kind === 'workspace') setSection('artifacts');
@@ -760,9 +805,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await api.updateChat(created.id, { permissionMode: 'auto' }).catch(() => {});
     }
     await refreshSessions();
-    openSession(created.id);
+    showChat(created.id);
     return created.id;
-  }, [workspaceId, settings, agents, refreshSessions, openSession]);
+  }, [workspaceId, settings, agents, refreshSessions, showChat]);
 
   useEffect(() => {
     const wanted = orgLink.current;
@@ -1044,9 +1089,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!id) return;
     const forked = await api.fork(id, turnId);
     await refreshSessions();
-    openSession(forked.id);
+    showChat(forked.id);
     showToast('Forked into a new session — original intact');
-  }, [refreshSessions, openSession, showToast]);
+  }, [refreshSessions, showChat, showToast]);
 
   const promote = useCallback(async (turnId: string) => {
     const id = currentIdRef.current;
@@ -1118,9 +1163,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const latest = sessions.filter((s) => s.agentId === agentId)
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0];
     const id = latest?.id ?? await newChat(agentId);
-    openSession(id);
+    showChat(id);
     setArtifact({ title: miniApp.name, src: miniApp.html, appCtx: { agentId, miniApp } });
-  }, [sessions, newChat, openSession]);
+  }, [sessions, newChat, showChat]);
 
   /** chat.compose: land the user in the agent's chat with the text staged —
    *  they read it and press send themselves (free-tier bridge capability). */
@@ -1129,9 +1174,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))[0];
     const id = latest?.id ?? await newChat(agentId);
     // don't re-open the current session: that would close the embedded app
-    if (currentIdRef.current !== id) openSession(id);
+    if (currentIdRef.current !== id) showChat(id);
     setDrafts((d) => ({ ...d, [id]: text }));
-  }, [sessions, newChat, openSession]);
+  }, [sessions, newChat, showChat]);
 
   const confirmHire = useCallback(async () => {
     if (!hireId) return;
@@ -1155,7 +1200,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     agents, agentStats, refreshAgents, unread, sessions, refreshSessions, chatRail, loadMoreChats, archived, archivedTotal, archivedHasMore: archivedCursor !== null, loadMoreArchived, archiveChat, restoreChat,
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, setMcp, refreshMcp,
     market, refreshMarket, settings, saveSettings, pricing,
-    currentId, openSession, current, transcript, refreshTranscript, patchSession, newChat,
+    currentId, openSession, openWorkLog, workLogFocus, clearWorkLogFocus, current, transcript, refreshTranscript, patchSession, newChat,
     streaming, live, send, stopTurn, approve, queue: sessionQueue, removeQueued,
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
     retry, editResend, fork, promote, rate,
@@ -1174,7 +1219,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     agents, agentStats, refreshAgents, unread, sessions, refreshSessions, chatRail, loadMoreChats, archived, archivedTotal, archivedCursor, loadMoreArchived, archiveChat, restoreChat,
     agentTypes, refreshAgentTypes, skills, refreshSkills, mcp, refreshMcp,
     market, refreshMarket, settings, saveSettings, pricing,
-    currentId, openSession, current, transcript, refreshTranscript, patchSession, newChat,
+    currentId, openSession, openWorkLog, workLogFocus, clearWorkLogFocus, current, transcript, refreshTranscript, patchSession, newChat,
     streaming, live, send, stopTurn, approve, sessionQueue, removeQueued,
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
     retry, editResend, fork, promote, rate,

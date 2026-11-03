@@ -473,6 +473,8 @@ function Activity({ o, now, act }: { o: AgentOverview; now: Date; act: Dashboard
           <button key={f.id} aria-pressed={filter === f.id} onClick={() => { setFilter(f.id); setAll(false); }}
             style={{ ...linkish, fontSize: 11.5, padding: '2px 9px', borderRadius: 999, border: '1px solid var(--border)', color: filter === f.id ? 'var(--text)' : 'var(--text-dim)', background: filter === f.id ? 'var(--panel-2)' : 'none', fontWeight: filter === f.id ? 600 : 500 }}>{f.label}</button>
         ))}
+        {/* the runs behind this activity, with their thinking and tool calls (docs/work-log.md) */}
+        <button onClick={() => act.openTab('Work log')} style={{ ...linkish, fontSize: 11.5, padding: '2px 9px', color: 'var(--accent-hi)', fontWeight: 600 }}>Work log →</button>
       </div>
     }>
       <ul style={{ ...panel, margin: 0, padding: '2px 0' }}>
@@ -676,6 +678,9 @@ export function AgentDashboard({ o, now = new Date(), compact = false, busy = fa
         <StatusBlock o={o} now={now} act={act} compact />
         <Signals list={list} onPick={pick} active={picked} />
         {work}
+        <button data-testid="open-work-log" onClick={() => act.openTab('Work log')} style={{ ...linkish, alignSelf: 'flex-start', fontSize: 12, color: 'var(--accent-hi)', fontWeight: 600 }}>
+          Work log: every run, its thinking and tool calls →
+        </button>
       </div>
     );
   }

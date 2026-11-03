@@ -31,6 +31,8 @@ export const chatSessionSchema = z.object({
   compactCutoff: z.string().nullable(),
   tokensIn: z.number(),
   tokensOut: z.number(),
+  /** chat (a conversation) | work (the agent's own run; docs/work-log.md). */
+  kind: z.enum(['chat', 'work']).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

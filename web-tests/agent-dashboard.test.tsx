@@ -318,8 +318,11 @@ describe('activity and the side column', () => {
 });
 
 describe('the tabs', () => {
-  it('six tabs; old names and ?tab= deep links land on the new tab and section', () => {
-    expect([...AGENT_TABS]).toEqual(['Overview', 'Work', 'Chats', 'Artifacts', 'Memory', 'Settings']);
+  it('seven tabs; old names and ?tab= deep links land on the new tab and section', () => {
+    expect([...AGENT_TABS]).toEqual(['Overview', 'Work', 'Work log', 'Chats', 'Artifacts', 'Memory', 'Settings']);
+    expect(resolveAgentTab('Work log')).toEqual({ tab: 'Work log', section: null });
+    expect(resolveAgentTab('worklog')).toEqual({ tab: 'Work log', section: null });
+    expect(resolveAgentTab('Heartbeat runs')).toEqual({ tab: 'Work log', section: null });
     expect(resolveAgentTab('Dashboard')).toEqual({ tab: 'Overview', section: null });
     expect(resolveAgentTab('Tasks')).toEqual({ tab: 'Work', section: 'Tasks' });
     expect(resolveAgentTab('Schedule')).toEqual({ tab: 'Work', section: 'Schedule' });

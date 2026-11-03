@@ -17,6 +17,7 @@ import { KEEP_FILE, agentSource, normPath, workspaceSource } from '../lib/artifa
 import { ArtifactTree } from './ArtifactTree';
 import { ArtifactPane } from './FilesView';
 import { AgentHeader, AgentOverviewBody, useAgentPage } from './AgentDashboard';
+import { WorkLogTab } from './WorkLog';
 import { AGENT_TABS, SETTINGS_SECTIONS, WORK_SECTIONS, resolveAgentTab, type AgentTab, type SettingsSection, type WorkSection } from '../lib/agent-tabs';
 import { nextFire, untilLabel } from '../lib/cron';
 import { RUNS_WHEN, lastFiredLabel, runsWhenOf, triggerGlyph, triggerLabel, type Loop, type LoopTrigger, type RunsWhen } from '../lib/triggers';
@@ -1436,9 +1437,10 @@ export function AgentHome() {
     : conversations;
   // The rail is paged (docs/chat-archiving.md): the loaded chats, the agent's full count, and its next page.
   const railGroup = (app.chatRail ?? []).find((g) => g.agentId === a.id);
-  const chatTotal = Math.max(conversations.length, (railGroup?.total ?? 0) + (railGroup?.loops.total ?? 0));
+  const chatTotal = Math.max(conversations.length, railGroup?.total ?? 0);
   const counts: Partial<Record<AgentTab, number>> = { Work: openTasks.length, Chats: chatTotal };
   const pending = page.o?.needsYou.length ?? 0;
+  const workWaiting = railGroup?.work?.approvalIds.length ?? 0;
 
   return (
     <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
@@ -1471,6 +1473,7 @@ export function AgentHome() {
             }}>
               {t}
               {t === 'Overview' && pending > 0 ? <span title={`${pending} waiting on you`} style={{ marginLeft: 6, fontSize: 10, color: 'var(--amber)', fontWeight: 700 }}>{pending}</span> : null}
+              {t === 'Work log' && workWaiting > 0 ? <span title={`${workWaiting} run(s) waiting on your approval`} style={{ marginLeft: 6, fontSize: 10, color: 'var(--red)', fontWeight: 700 }}>{workWaiting}</span> : null}
               {counts[t] ? <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-faint)' }}>{counts[t]}</span> : null}
             </button>
           ))}
@@ -1485,6 +1488,7 @@ export function AgentHome() {
         {tab === 'Settings' && <SubNav label="Settings" items={SETTINGS_SECTIONS} value={settingsSection} onChange={setSettingsSection} counts={{ 'Mini apps': apps.length }} />}
         {tab === 'Work' && workSection === 'Tasks' && <TasksBoard a={a} tasks={tasks} reload={reloadTasks} />}
         {tab === 'Work' && workSection === 'Schedule' && <ScheduleTab a={a} />}
+        {tab === 'Work log' && <WorkLogTab agentId={a.id} />}
         {tab === 'Memory' && <MemoryTab a={a} />}
         {tab === 'Settings' && settingsSection === 'Skills & tools' && <SkillsToolsTab a={a} />}
         {tab === 'Artifacts' && <AgentArtifactsTab a={a} />}

@@ -281,6 +281,10 @@ export interface ChatSession {
   /** The task this chat works on: 'org' | 'agent' (kanban) | null. */
   taskKind?: string | null;
   taskId?: string | null;
+  /** 'chat' — a conversation with people (the rail, ChatView); 'work' — the
+   *  agent's own run (heartbeat, loop, org task, meeting round, channel
+   *  wake), read in its Work log (docs/work-log.md). Absent = chat. */
+  kind?: 'chat' | 'work';
   createdAt: string;
   updatedAt: string;
 }
@@ -289,16 +293,40 @@ export interface ChatSession {
  *  null = the workspace's agent-less chats. */
 export interface ChatRailGroup {
   agentId: string | null;
-  /** Chats in the group (loop / heartbeat sessions not counted). */
+  /** Chats in the group (conversations only; the agent's runs are work). */
   total: number;
   items: ChatSession[];
   nextCursor: string | null;
-  /** The agent's loop / heartbeat sessions, folded into one row. */
-  loops: { total: number; items: ChatSession[] };
   /** Chats with an approval waiting in the inbox. */
   approvalIds: string[];
+  /** The agent's work sessions (docs/work-log.md): how many, and the ones
+   *  waiting on an approval — a badge on the agent and a Work log link,
+   *  never chat rows. */
+  work: { total: number; approvalIds: string[] };
 }
 export interface ChatRail { groups: ChatRailGroup[]; archivedTotal: number }
+
+// ---- the Work log (docs/work-log.md) ----
+export type WorkTrigger = 'heartbeat' | 'loop' | 'task' | 'meeting' | 'channel' | 'org' | 'app' | 'other';
+export type WorkOutcome = 'done' | 'blocked' | 'error' | 'stopped' | 'running';
+export interface WorkRun {
+  id: string; sessionId: string; sessionName: string;
+  trigger: WorkTrigger; triggerKey: string; label: string;
+  outcome: WorkOutcome; status: string; error: string | null;
+  input: string; answer: string;
+  tokensIn: number; tokensOut: number; usd: number | null; model: string;
+  steps: number; toolCount: number; thinkingCount: number; tools: string[];
+  files: Array<{ path: string; op: string }>;
+  task: { kind: 'org' | 'agent'; id: string; key: string | null; title: string } | null;
+  archived: boolean; createdAt: string;
+}
+export interface WorkRunDetail extends WorkRun {
+  messages: Array<{ id: string; seq: number; role: string; content: string; toolName: string | null; createdAt: string }>;
+  toolCalls: Array<{ tool: string; input: unknown; result: string; approved: string; isError: boolean; actionClass?: string }>;
+}
+export interface WorkLogGroup { trigger: WorkTrigger; key: string; label: string; count: number; lastAt: string }
+export interface WorkLogPage { runs: WorkRun[]; nextCursor: string | null; groups: WorkLogGroup[] }
+export interface WorkLogFilters { trigger?: string; key?: string; outcome?: string; task?: string; session?: string; from?: string; to?: string; q?: string; limit?: number; cursor?: string | null }
 export interface ChatPage { items: ChatSession[]; nextCursor: string | null }
 
 export interface ChatMessage {
@@ -1526,17 +1554,16 @@ export const api = {
   // chats
   chats: (workspaceId: string) => get<ChatSession[]>(`/api/chats?workspaceId=${enc(workspaceId)}`, chatSessionListSchema),
   chat: (id: string) => get<ChatSession>(`/api/chats/${id}`, chatSessionSchema),
-  /** The Home rail: per agent the first page of chats, the loop row and the counts. */
+  /** The Home rail: per agent the first page of chats, the work counts and the approvals. */
   chatRail: (workspaceId: string, opts: { limits?: Record<string, number>; q?: string; perAgent?: number } = {}) => {
     const limits = Object.entries(opts.limits ?? {}).map(([k, n]) => `${k}:${n}`).join(',');
     return get<ChatRail>(`/api/chats/rail?workspaceId=${enc(workspaceId)}${limits ? `&limits=${enc(limits)}` : ''}${opts.q ? `&q=${enc(opts.q)}` : ''}${opts.perAgent ? `&perAgent=${opts.perAgent}` : ''}`);
   },
-  /** One page of chats: an agent's ('none' = agent-less), its loops, or the archive. */
-  chatPage: (workspaceId: string, opts: { agentId?: string | null; archived?: boolean; loops?: 'only' | 'exclude'; q?: string; limit?: number; cursor?: string | null } = {}) => {
+  /** One page of chats: an agent's ('none' = agent-less) or the archive (conversations only). */
+  chatPage: (workspaceId: string, opts: { agentId?: string | null; archived?: boolean; q?: string; limit?: number; cursor?: string | null } = {}) => {
     const p = new URLSearchParams({ workspaceId });
     if (opts.agentId !== undefined) p.set('agentId', opts.agentId === null ? 'none' : opts.agentId);
     if (opts.archived) p.set('archived', 'true');
-    if (opts.loops) p.set('loops', opts.loops);
     if (opts.q) p.set('q', opts.q);
     if (opts.limit) p.set('limit', String(opts.limit));
     if (opts.cursor) p.set('cursor', opts.cursor);
@@ -1547,6 +1574,15 @@ export const api = {
   updateChat: (id: string, patch: Record<string, unknown>) => send<ChatSession>(`/api/chats/${id}`, 'PATCH', patch, chatSessionSchema),
   deleteChat: (id: string) => send<{ ok: boolean }>(`/api/chats/${id}`, 'DELETE'),
   transcript: (id: string) => get<{ messages: ChatMessage[]; turns: ChatTurn[] }>(`/api/chats/${id}/transcript`, transcriptSchema),
+  /** An agent's Work log (docs/work-log.md): one page of runs plus the trigger groups. */
+  workLog: (agentId: string, f: WorkLogFilters = {}) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(f)) if (v !== undefined && v !== null && v !== '') p.set(k, String(v));
+    const qs = p.toString();
+    return get<WorkLogPage>(`/api/agents/${enc(agentId)}/work-log${qs ? `?${qs}` : ''}`);
+  },
+  workRun: (agentId: string, turnId: string) => get<WorkRunDetail>(`/api/agents/${enc(agentId)}/work-log/runs/${enc(turnId)}`),
+  latestWorkRun: (agentId: string, sessionId: string) => get<{ turnId: string | null }>(`/api/agents/${enc(agentId)}/work-log/sessions/${enc(sessionId)}/latest`),
   clear: (id: string) => send<{ ok: boolean }>(`/api/chats/${id}/clear`, 'POST'),
   compact: (id: string) => send<{ ok: boolean; reason?: string }>(`/api/chats/${id}/compact`, 'POST'),
   stop: (id: string) => send<{ stopped: boolean }>(`/api/chats/${id}/stop`, 'POST'),

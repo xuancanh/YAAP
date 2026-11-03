@@ -174,13 +174,14 @@ test('the rail and the chat pages list chats only; a work approval badges the ag
 test('a turn keeps its thinking on the transcript as thinking rows, out of provider history', async () => {
   const s = await setup([[{ type: 'thinking', text: 'The user wants ' }, { type: 'thinking', text: 'a haiku.' }, { type: 'answer', text: 'Here it is.' }, { type: 'done' }], [{ type: 'answer', text: 'Again.' }, { type: 'done' }]]);
   const chat = await s.chats.create({ workspaceId: s.ws.id, agentId: s.agent.id, name: 'poem' });
-  for await (const _ev of s.turns.run(chat.id, { text: 'write a haiku' })) { /* drain */ }
+  const drain = async (text: string) => { const evs: unknown[] = []; for await (const ev of s.turns.run(chat.id, { text })) evs.push(ev); return evs; };
+  await drain('write a haiku');
   const msgs = await s.repo.listMessages(chat.id);
   assert.deepEqual(msgs.map((m) => m.role), ['user', 'thinking', 'assistant']);
   assert.equal(msgs[1].content, 'The user wants a haiku.');
   const history = await s.repo.providerHistory(chat.id, null);
   assert.deepEqual(history.map((m) => m.role), ['user', 'assistant']);
-  for await (const _ev of s.turns.run(chat.id, { text: 'again' })) { /* drain */ }
+  await drain('again');
   assert.ok(!JSON.stringify(s.provider.requests[1].messages).includes('a haiku.'), 'thinking never goes back to the model');
 });
 

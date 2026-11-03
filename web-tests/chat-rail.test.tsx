@@ -1,7 +1,8 @@
 /** The Home rail (docs/chat-archiving.md "The rail"): agent groups collapsed
  *  by default except the open chat's group and groups with unread activity or
  *  an approval; the header's badges and count; collapse kept per viewer;
- *  "Show more" pages; loop / heartbeat sessions folded into one row; Collapse
+ *  "Show more" pages; no work-session rows — one "Work log" row per agent,
+ *  badged when a run waits on an approval (docs/work-log.md); Collapse
  *  all / Expand all; search reaches collapsed groups and opens them; the
  *  archive pages too. And the chat header's auto-archive control and the
  *  agent Settings default. */
@@ -28,7 +29,7 @@ const agent = (id: string, name: string) => ({ id, name, emoji: '🤖', colors: 
 
 function group(agentId: string | null, n: number, extra: Partial<ChatRailGroup> = {}): ChatRailGroup {
   const items = Array.from({ length: Math.min(5, n) }, (_, i) => chat(`${agentId ?? 'ws'}-${i}`, agentId, `${agentId ?? 'ws'} chat ${i}`));
-  return { agentId, total: n, items, nextCursor: n > 5 ? 'c1' : null, loops: { total: 0, items: [] }, approvalIds: [], ...extra };
+  return { agentId, total: n, items, nextCursor: n > 5 ? 'c1' : null, approvalIds: [], work: { total: 0, approvalIds: [] }, ...extra };
 }
 
 const fetchCalls: string[] = [];
@@ -54,7 +55,7 @@ beforeEach(() => {
     archived: [], archivedTotal: 0, archivedHasMore: false,
     channels: [], currentChannel: null, me: null, nameOf: (x: string) => x,
     loadMoreChats: vi.fn(async () => undefined), loadMoreArchived: vi.fn(async () => undefined),
-    restoreChat: vi.fn(), newChat: vi.fn(), openAgent: vi.fn(), openSession: vi.fn(), setNewAgentOpen: vi.fn(),
+    restoreChat: vi.fn(), newChat: vi.fn(), openAgent: vi.fn(), openSession: vi.fn(), openWorkLog: vi.fn(), setNewAgentOpen: vi.fn(),
     refreshChannels: vi.fn(), openChannel: vi.fn(), showToast: vi.fn(), patchSession: vi.fn(async () => undefined), refreshAgents: vi.fn(async () => undefined),
     width: 1200,
   });
@@ -117,16 +118,27 @@ describe('the Home rail', () => {
     expect(within(groupEl('a2')).queryByRole('button', { name: /Show more/ })).toBeNull();
   });
 
-  it('folds loop and heartbeat sessions into one "Heartbeat runs" row per agent', () => {
+  it('lists conversations only: the agent runs are one "Work log" row, never chat rows', () => {
     storage[KEY] = JSON.stringify({ a1: true });
-    fake.chatRail = [group('a1', 2, { loops: { total: 3, items: [chat('l1', 'a1', 'Loop · heartbeat'), chat('l2', 'a1', 'Loop · digest'), chat('l3', 'a1', 'Loop · inbox sweep')] } })];
+    fake.chatRail = [group('a1', 2, { work: { total: 7, approvalIds: [] } })];
     render(<HomeRail />);
     const g = groupEl('a1');
-    expect(within(g).getByText('Heartbeat runs')).toBeInTheDocument();
-    expect(within(g).queryByText('Loop · heartbeat')).toBeNull();
-    fireEvent.click(within(g).getByText('Heartbeat runs'));
-    expect(within(g).getByText('Loop · heartbeat')).toBeInTheDocument();
-    expect(within(g).getByText('Loop · digest')).toBeInTheDocument();
+    expect(within(g).queryByText('Heartbeat runs')).toBeNull();
+    expect(within(g).queryByText(/^Loop · /)).toBeNull();
+    expect(rows('a1')).toHaveLength(2);
+    fireEvent.click(within(g).getByTestId('rail-worklog-a1'));
+    expect(fake.openWorkLog).toHaveBeenCalledWith('a1');
+    expect(fake.openSession).not.toHaveBeenCalled();
+  });
+
+  it('a run waiting on an approval badges the agent and opens its group, without a chat row', () => {
+    fake.chatRail = [group('a1', 2, { work: { total: 3, approvalIds: ['run-1'] } }), group('a2', 3)];
+    render(<HomeRail />);
+    const g = groupEl('a1');
+    expect(within(g).getByTitle(/1 waiting on your approval \(1 in its Work log\)/)).toHaveTextContent('1');
+    expect(rows('a1')).toHaveLength(2);
+    expect(within(g).getByLabelText('A run is waiting on your approval')).toBeInTheDocument();
+    expect(rows('a2')).toHaveLength(0);
   });
 
   it('Collapse all / Expand all sets every group and persists', () => {
