@@ -1,7 +1,7 @@
 /** The main menu and the company sections (docs/company-vision.md §8 "On
  *  screen"): in organization mode the menu is Home · Inbox · Chat, the five
  *  company sections (Direction, Operations, People, Money, Oversight), then
- *  Artifacts · Apps · Market, with Settings at the foot; Inbox and the
+ *  Artifacts · Apps · Foundry, with Settings at the foot; Inbox and the
  *  sections hide when the mode is off. Each section's rail is its dashboard
  *  then its pages; every page lives in exactly one section, what waits on
  *  the CEO in the Inbox. The phone bar folds the sections into a Company
@@ -42,7 +42,7 @@ beforeEach(() => {
 const labels = () => screen.getAllByRole('button').map((b) => b.getAttribute('aria-label')).filter((l) => l && l !== 'Theme');
 
 describe('main menu', () => {
-  it('in organization mode: Home · Inbox · Chat, the five company sections, Artifacts · Apps · Market, Settings', () => {
+  it('in organization mode: Home · Inbox · Chat, the five company sections, Artifacts · Apps · Foundry, Settings', () => {
     orgOn();
     render(<ActivityBar />);
     expect(labels()).toEqual(['Home', 'Inbox', 'Chat', 'Direction', 'Operations', 'People', 'Money', 'Oversight', 'Artifacts', 'Apps', 'Foundry', 'Settings']);
@@ -100,7 +100,7 @@ describe('the phone bar', () => {
     expect(fake.go).toHaveBeenCalledWith('oversight');
     expect(screen.queryByTestId('nav-sheet-company')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'More' }));
-    expect(within(screen.getByTestId('nav-sheet-more')).getAllByRole('menuitem').map((b) => b.getAttribute('aria-label'))).toEqual(['Artifacts', 'Apps', 'Market', 'Settings']);
+    expect(within(screen.getByTestId('nav-sheet-more')).getAllByRole('menuitem').map((b) => b.getAttribute('aria-label'))).toEqual(['Artifacts', 'Apps', 'Foundry', 'Settings']);
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByTestId('nav-sheet-more')).toBeNull();
   });
