@@ -2168,6 +2168,33 @@ const MIGRATIONS: Migration[] = [
       if (!(await hasColumn(db, 'chat_turns', 'rerunOf'))) await db.query(`ALTER TABLE chat_turns ADD COLUMN "rerunOf" TEXT`);
     },
   },
+  {
+    id: '0082-sub-channels',
+    up: async (db) => {
+      // Sub-channels (docs/group-chat.md §9): a temporary child channel for a
+      // meeting or a discussion. Every existing channel is an ordinary,
+      // open one ('channel', no parent); old thread meetings stay as they are
+      // (no parentChannelId). Idempotent.
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('channels', 'parentChannelId', 'TEXT');
+      await add('channels', 'channelKind', `TEXT NOT NULL DEFAULT 'channel'`);
+      await add('channels', 'purpose', `TEXT NOT NULL DEFAULT ''`);
+      await add('channels', 'status', `TEXT NOT NULL DEFAULT 'open'`);
+      await add('channels', 'closedAt', 'TEXT');
+      await add('channels', 'closedBy', 'TEXT');
+      await add('channels', 'outcome', `TEXT NOT NULL DEFAULT ''`);
+      await add('channels', 'meetingId', 'TEXT');
+      await add('channels', 'taskId', 'TEXT');
+      await add('channels', 'projectId', 'TEXT');
+      await add('channels', 'linkMessageId', 'TEXT');
+      await add('channels', 'originMessageId', 'TEXT');
+      await add('channels', 'lastActivityAt', 'TEXT');
+      await add('org_meetings', 'parentChannelId', 'TEXT');
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_channels_parent ON channels ("workspaceId", "parentChannelId", "status")`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

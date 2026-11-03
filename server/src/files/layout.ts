@@ -28,6 +28,7 @@
  *                             kpis.md, team.md, okrs/<yyyy>-Q<n>.md,
  *                             reports/<yyyy>-W<ww>.md, audits/<yyyy-mm>.md, processes/, …
  *   /channels/<slug>/         a channel's folder; meetings/<yyyy-mm-dd>-<title>.md
+ *     sub/<sub-slug>/         a discussion or meeting sub-channel's folder (docs/group-chat.md §9)
  *   /agents/<handle>/         a home: LESSONS.md, JOURNAL.md, knowledge/, apps/, work/
  *   /uploads/                 composer attachments
  */
@@ -213,6 +214,10 @@ export const ORG_ORDER: readonly string[] = [
 
 export const channelPath = {
   dir: (slug: string): string => `${CHANNELS_DIR}/${slug}`,
+  /** A sub-channel's folder (docs/group-chat.md §9): under its parent's,
+   *  `<parent folder>/sub/<sub-slug>`, so a discussion's files travel with
+   *  the channel it belongs to. */
+  sub: (parentFolder: string, subSlug: string): string => `${parentFolder.replace(/^\/+|\/+$/g, '')}/sub/${subSlug}`,
   /** Minutes of a `/meeting` in a channel that is not a unit's:
    *  `<folder>/meetings/<yyyy-mm-dd>-<title>.md` (the folder is
    *  `channels/<slug>` unless the channel names another). */

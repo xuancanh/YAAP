@@ -2,7 +2,10 @@
 
 Status: **shipped, 1 November 2026** — execution-plan item 15 (§1–§4, §6:
 channels, wake rules, threads/files/tasks, delivery), item 16 (§5,
-organization mode), item 17 (§7, units) and item 19 (§8, meetings). Each
+organization mode), item 17 (§7, units) and item 19 (§8, meetings); §9
+(sub-channels: discussions, and meetings in their own sub-channel) on
+4 November 2026, covered by `tests/backend-sub-channels.test.ts` and
+`web-tests/sub-channels.test.tsx`. Each
 section ends with a *Shipped as* note naming the code;
 `tests/backend-groupchat.test.ts` (13 tests), `tests/backend-org-units.test.ts`
 (9), `tests/backend-org-meetings.test.ts` (11) and `web-tests/channels.test.ts`
@@ -10,7 +13,7 @@ cover it.
 Supersedes the "group session that wakes nobody" in
 `docs/autonomous-company.md` §4 (see the revision note there).
 
-Last updated: 2026-11-02
+Last updated: 2026-11-04
 
 The owner's correction after items 1–14 shipped: the company is the
 workspace, and the group chat is a Slack channel, not a log. Humans and agents
@@ -426,7 +429,11 @@ later workspace renames.
 ## 8. Meetings: rituals that end in minutes
 
 **Status: shipped (1 November 2026, execution-plan item 19)** — the design
-is `docs/company-vision.md` §3 (and §1b for the tunables). A **meeting** is a
+is `docs/company-vision.md` §3 (and §1b for the tunables). *Since §9 (4
+November 2026) a meeting runs in its own sub-channel of the channel it is
+called in, and the parent gets only a link card and the minutes line; the
+text below says "thread" for what is now the sub-channel's stream, and
+meetings held before §9 stay threads.* A **meeting** is a
 thread in a unit channel: the facilitator posts the agenda as the thread
 root, then every agent attendee gets exactly one turn per round (at most
 three rounds; a standup has one) in its ordinary `#<slug> · <agent>` session
@@ -530,3 +537,146 @@ inline; Extend / Skip item / End steer it. The room is `org_meetings.room`
 `meeting_update` and the speaker's `channel_stream`; tokens and $ show in
 the room, the list and the minutes. Start meeting is in Company → Meetings
 and every channel's Meetings tab.
+
+## 9. Sub-channels: discussions and meetings out of the channel
+
+**Status: shipped (4 November 2026).** The owner's correction: "add sub
+threads to channels — a temporary sub channel. Meetings and other
+discussions should create a sub thread instead of polluting the channel.
+The main channel should only have the link to the sub channel meeting and
+maybe the meeting minutes after the meeting is finished." A **sub-channel**
+is a temporary child channel; threads stay for small side-replies.
+
+**Model.** A sub-channel is an ordinary `channels` row (migration
+`0082-sub-channels`) with:
+
+- `parentChannelId`, `channelKind` = `sub` (`channel` for every other row;
+  named `channelKind` because `kind` already holds `public | private`),
+  `purpose` (`meeting` | `discussion` | `project`), `status` (`open` |
+  `closed`), `closedAt`, `closedBy` (`human:<id>` | `agent:<id>` |
+  `system`), `outcome`, the optional links `meetingId` / `taskId` /
+  `projectId`, `linkMessageId` (the card in the parent), `originMessageId`
+  (the parent message or thread it grew out of) and `lastActivityAt`.
+- **Members** default to the parent's (each keeps its notify mode and
+  unprompted flag), or a chosen subset of them; the starter is always in
+  it. A meeting's: its attendees plus the parent's people. No agent outside
+  the parent may be added (agents still never add themselves anywhere, §6).
+- **Visibility follows the parent**: a private parent's discussion is
+  private, and only the parent's members may be in it.
+- **Folder**: `<parent folder>/sub/<slug>/` (`channelPath.sub` in
+  `server/src/files/layout.ts`), mounted as `shared/` in its sessions.
+- **Slug**: `discuss-<title>` for a discussion, `meeting-<kind>-<date>`
+  for a meeting, de-duplicated in the workspace (`-2`, `-3`). Sessions are
+  `#<sub-slug> · <agent>` like any channel's.
+- One level only: a sub-channel has no sub-channels.
+
+Everything in §2–§4 holds inside: mentions wake, unprompted repliers are
+bounded the same way, the three-round chain cap applies per thread, tasks,
+files, unread counts, search. A sub-channel spends its **parent's** daily
+token budget (the parent's tokens plus those of its sub-channels active
+today).
+
+**Lifecycle.**
+
+1. **Start.** A person: "🗣 Discussion" in a channel's header, "Discuss"
+   on a message or in a thread panel (title, why, members; that thread
+   gets "Continued in the discussion …"); `POST …/chat/channels/:slug/subs`.
+   An agent: `channel_start_discussion { channel?, title, reason,
+   members?, thread? }` — classed free internal work
+   (`FREE_INTERNAL_TOOLS`), rate-limited by `discussion.agentDailyCap` per
+   agent per day; members by name from the parent. A meeting: the runtime
+   (`MeetingChannels.openSub`, §8, docs/meetings.md). The runtime itself on
+   an agent ping-pong (below). Every start is refused past
+   `discussion.openPerChannel` open discussions in the parent (meetings
+   excepted).
+2. **The link card.** The parent gets ONE system message — "🗣 Discussion:
+   <title> · 5 members · live · 3 messages · #slug" (📅 Meeting, 📌 Project
+   discussion) with the attachment `{ kind: 'subchannel', path:
+   'subchannel/<id>' }`. It is **rewritten in place** (`editedAt`, a
+   `channel_message` event with the same id) when members or status change
+   and, throttled to once a minute, on activity; on close it reads "closed
+   — <outcome>" ("ended" for a meeting, with its summary). The SPA draws it
+   as a clickable card with the live status, members, last activity and
+   unread count from the channel list.
+3. **Close.** By its starter (the person, or the agent with
+   `channel_close_discussion { channel?, outcome }`), a channel owner of it
+   or of its parent, or the workspace owner (`POST …/:slug/close
+   { outcome? }`); by the meeting's end; or by the idle sweep after
+   `discussion.autoCloseHours` without a message (every ten minutes, per
+   account, `ChannelRuntimeService.sweepSubs`); archiving the parent closes
+   its open ones. A closed sub-channel is **read-only** (people and agents
+   are refused; system lines still land), folds out of the rail into the
+   parent's **Past discussions (N)**, and stays readable.
+4. **Reopen.** People only (`POST …/:slug/reopen`); agents cannot.
+
+**Agent ping-pong.** When agents go back and forth in one thread of a
+channel — `discussion.autoMoveReplies` agent replies since the last person
+spoke — the runtime acts by `discussion.autoMoveMode`: `0` nothing (the
+chain cap pauses as before); `1` (the conservative default) one line in the
+thread suggests a discussion, and the chain cap still pauses; `2` it opens
+a discussion with the thread's agents and the channel's people
+(`originMessageId` = the thread's root, titled from it), carries the
+triggering agent message into it as its author, and the mentions wake
+there — with a fresh three-round cap, after which it pauses like any
+thread. A thread that already moved carries later replies into the same
+discussion.
+
+**Follows and notifications** (docs/follows.md). Every member it opened
+with follows the sub-channel (`targetKind: 'channel'`, reason
+`participant`; the starter `started`; later posters `commented`). Posts
+count for followers; people get one inbox event until they look; closing
+it is told **once** with the outcome; the parent never gets a post per
+change — the card updates instead.
+
+**Tunables** (`server/src/groupchat/discussion-tunables.ts`, area `chat`,
+on the shared registry, so `org_tune` / `PUT …/org/tunables` reach them;
+`deriveDiscussionTunables` shapes them from the operating profile in
+`chief-os.ts` — speed closes idle discussions after 12 h and moves a
+ping-pong; rigour, a control culture or a writing culture keeps them open
+72 h and only suggests; workspaces without an organization use the
+defaults):
+
+| Key | Default | Bound | What |
+|---|---|---|---|
+| `discussion.autoCloseHours` | 24 | 0–720 | hours without a message before an open discussion closes itself (0 never) |
+| `discussion.agentDailyCap` | 3 | 0–20 | discussions one agent may start per day (people are not limited) |
+| `discussion.openPerChannel` | 6 | 1–30 | open discussions one channel may hold |
+| `discussion.autoMoveReplies` | 3 | 1–3 | agent replies in a row in a thread at which the ping-pong rule acts |
+| `discussion.autoMoveMode` | 1 | 0–2 | 0 off, 1 suggest, 2 move into a discussion |
+
+**Projects** get a `#p-<key>` channel; their discussions are sub-channels
+of it like any other (`purpose: 'project'`, `projectId` set when started
+for one).
+
+**HTTP.** `GET …/chat/channels` lists open sub-channels beside their
+parents (`parentChannelId`, `purpose`, `status`, …) and each top-level
+channel's closed count as `pastSubs`; `GET …/chat/channels/:slug` adds
+`parent` for a sub-channel and `subs` / `pastSubs` for a channel;
+`GET …/:slug/subs?status=open|closed|all`; `POST …/:slug/subs { title,
+reason?, members?, originMessageId?, purpose?, taskId?, projectId? }`;
+`POST …/:slug/close { outcome? }`; `POST …/:slug/reopen`.
+
+**UI.** The rail's Channels block nests each channel's open sub-channels
+under it (indented, a live dot, 📅 for a meeting, the unread badge) and a
+collapsed "Past discussions (N)" that lists the closed ones on demand. A
+sub-channel opens in `ChannelView` like a channel with the breadcrumb
+"#parent › Title", a status strip (open: last activity and Close with an
+outcome; closed: the outcome and Reopen), a Follow toggle, no composer
+once closed, and — for a meeting — the room above its stream. Everything
+works at phone width (the header wraps, the form is a full-width sheet).
+
+*Shipped as:* `server/src/groupchat/sub-channels.ts` (`SubChannels`,
+constructed by `GroupChatService` as `groupchat.subs`: `start`, `onPosted`,
+`cardText` / `refreshCard`, `close`, `reopen`, `sweep`, `closeAllOf`,
+`subsOf`, `closedCounts`, `movedFrom`); the read-only rule and the
+activity hook in `GroupChatService.post`; the list and detail fields; the
+routes in `groupchat.controller.ts`; `channel_start_discussion`,
+`channel_close_discussion`, the ping-pong rule (`pingPong`), the shared
+budget and the sweep timer in `channel-runtime.service.ts`; the meeting
+changes in `org-meeting-runtime.service.ts` (`openSub`, `stream`,
+`closeSub`, `replyRootOf`, `meetingSlug`); the follow target in
+`follows.service.ts`. SPA: `src/components/SubChannels.tsx`
+(`SubChannelCard`, `StartDiscussionForm`, `SubBreadcrumb`,
+`SubStatusBar`, `SubChannelRows`), `railChannels` / `linkCardSubId` /
+`parseLinkCardText` in `src/lib/channels.ts`, the Channels block in
+`Rails.tsx`, `ChannelView.tsx`.

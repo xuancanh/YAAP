@@ -45,6 +45,7 @@ import { WorkspaceEventBus } from './workspace-events';
 import { FollowsService, threadTarget, type Follower } from '../follows/follows.service';
 import { parseDecisionRefs, parseGoalRefs, parseMentions, slugify, type Mention, type MentionableMember } from './mentions';
 import { taskRef } from '../common/task-keys';
+import { SubChannels } from './sub-channels';
 
 export type Channel = typeof channels.$inferSelect;
 export type ChannelMember = typeof channelMembers.$inferSelect;
@@ -77,9 +78,17 @@ export interface PostInput {
 
 export type PostedListener = (message: ChannelMessage, channel: Channel) => void;
 
+/** A channel row as the list shows it: unread count, members and, for a
+ *  top-level channel, how many of its discussions are closed (the rail's
+ *  "Past discussions (N)", docs/group-chat.md §9). */
+export type ChannelListItem = Channel & { unread: number; memberCount: number; pastSubs: number };
+
 @Injectable()
 export class GroupChatService {
   private readonly postedListeners: PostedListener[] = [];
+  /** Sub-channels (docs/group-chat.md §9): meetings and discussions in a
+   *  temporary child channel with one link card in the parent. */
+  readonly subs: SubChannels;
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
@@ -104,6 +113,7 @@ export class GroupChatService {
      *  mentioned agents follow; replies reach the other followers. */
     @Optional() public follows?: FollowsService,
   ) {
+    this.subs = new SubChannels(db, this, events);
     this.workspaces.onCreated(async (ws) => { await this.ensureGeneral(ws.id); });
     bus?.onTaskStatus((ev) => { void this.onTaskStatus(ev).catch(() => undefined); });
     // The Announcer seam (`#company`) and the unit-channel operations units
@@ -133,6 +143,14 @@ export class GroupChatService {
         return { id: m.id, createdAt: m.createdAt };
       },
       thread: async (channelId, rootId) => (await this.messages(channelId, { thread: rootId })).messages.map((m) => ({ id: m.id, authorKind: m.authorKind, authorId: m.authorId, text: m.text, createdAt: m.createdAt })),
+      // Meetings run in a sub-channel (docs/group-chat.md §9): open it, read
+      // its whole stream (top level and threads), close it at the end.
+      openSub: async (parentId, input) => {
+        const c = await this.subs.start(parentId, { title: input.title, purpose: 'meeting', slug: input.slug, members: input.members, createdBy: input.createdBy ?? 'system', meetingId: input.meetingId, system: true, quiet: true });
+        return { id: c.id, slug: c.slug, linkMessageId: c.linkMessageId };
+      },
+      closeSub: async (channelId, input) => { await this.subs.close(channelId, { by: 'system', outcome: input.outcome, minutesPath: input.minutesPath ?? null, system: true }); },
+      stream: async (channelId) => (await this.stream(channelId)).map((m) => ({ id: m.id, authorKind: m.authorKind, authorId: m.authorId, text: m.text, createdAt: m.createdAt })),
       // The meeting room's live events (docs/meetings.md "During").
       live: (ev) => { this.events.emit(ev); },
     });
@@ -199,6 +217,10 @@ export class GroupChatService {
   async ensureChannel(workspaceId: string, slug: string, name: string, opts: {
     topic?: string; kind?: 'public' | 'private'; createdBy?: string; allAgents?: boolean; allHumans?: boolean;
     agentIds?: string[]; humanIds?: string[]; unprompted?: boolean;
+    /** The folder (default `channels/<slug>`; a sub-channel's sits under its parent's). */
+    folder?: string;
+    /** Sub-channel columns (docs/group-chat.md §9); SubChannels.start is the only caller. */
+    sub?: Partial<Pick<Channel, 'parentChannelId' | 'channelKind' | 'purpose' | 'status' | 'meetingId' | 'taskId' | 'projectId' | 'originMessageId' | 'lastActivityAt'>>;
   } = {}): Promise<Channel> {
     const existing = await this.bySlug(workspaceId, slug).catch(() => null);
     if (existing) return existing;
@@ -206,7 +228,10 @@ export class GroupChatService {
     const row: Channel = {
       accountId: currentAccountId(), id: newId(), workspaceId, slug, name: (name || slug).trim().slice(0, 80),
       topic: (opts.topic ?? '').slice(0, 500), kind: opts.kind ?? 'public', createdBy: opts.createdBy ?? 'system',
-      folder: `channels/${slug}`, dailyTokenBudget: 0, archivedAt: null, createdAt: nowIso(),
+      folder: opts.folder ?? `channels/${slug}`, dailyTokenBudget: 0, archivedAt: null, createdAt: nowIso(),
+      parentChannelId: null, channelKind: 'channel', purpose: '', status: 'open', closedAt: null, closedBy: null, outcome: '',
+      meetingId: null, taskId: null, projectId: null, linkMessageId: null, originMessageId: null, lastActivityAt: null,
+      ...(opts.sub ?? {}),
     };
     await this.db.insert(channels).values(row);
     const agentIds = new Set(opts.agentIds ?? []);
@@ -223,18 +248,25 @@ export class GroupChatService {
   }
 
   /** Channels the current actor may see: public ones plus private ones they
-   *  belong to. Archived ones only when asked. */
-  async list(workspaceId: string, opts: { archived?: boolean } = {}): Promise<Array<Channel & { unread: number; memberCount: number }>> {
+   *  belong to, and the open sub-channels of those (closed ones are counted
+   *  on their parent as `pastSubs`; `subs` lists them). Archived ones only
+   *  when asked. */
+  async list(workspaceId: string, opts: { archived?: boolean } = {}): Promise<ChannelListItem[]> {
     await this.ensureGeneral(workspaceId).catch(() => undefined);
     const rows = (await this.db.select().from(channels).where(eq(channels.workspaceId, workspaceId)))
-      .filter((c) => (opts.archived ? c.archivedAt !== null : c.archivedAt === null));
+      .filter((c) => (opts.archived ? c.archivedAt !== null : c.archivedAt === null))
+      .filter((c) => !(c.channelKind === 'sub' && c.status === 'closed'));
     const me = actorId();
     const members = rows.length ? await this.db.select().from(channelMembers).where(inArray(channelMembers.channelId, rows.map((c) => c.id))) : [];
     const visible = rows.filter((c) => c.kind !== 'private' || members.some((m) => m.channelId === c.id && m.memberKind === 'human' && m.memberId === me));
-    const unread = await this.unreadCounts(visible.map((c) => c.id));
-    return visible
+    // A sub-channel shows only where its parent does.
+    const shown = new Set(visible.map((c) => c.id));
+    const listed = visible.filter((c) => !c.parentChannelId || shown.has(c.parentChannelId) || opts.archived);
+    const unread = await this.unreadCounts(listed.map((c) => c.id));
+    const past = await this.subs.closedCounts(listed.filter((c) => !c.parentChannelId).map((c) => c.id));
+    return listed
       .sort((a, b) => (a.slug === GENERAL_SLUG ? -1 : b.slug === GENERAL_SLUG ? 1 : a.name.localeCompare(b.name)))
-      .map((c) => ({ ...c, unread: unread[c.id] ?? 0, memberCount: members.filter((m) => m.channelId === c.id).length }));
+      .map((c) => ({ ...c, unread: unread[c.id] ?? 0, memberCount: members.filter((m) => m.channelId === c.id).length, pastSubs: past[c.id] ?? 0 }));
   }
 
   async get(channelId: string): Promise<Channel> {
@@ -296,9 +328,21 @@ export class GroupChatService {
     if (!opts.system) await this.assertMayManage(c);
     if (c.slug === GENERAL_SLUG && archived) throw new BadRequestException('#general cannot be archived');
     if (c.slug === COMPANY_SLUG && archived) throw new BadRequestException('#company cannot be archived while the organization exists');
+    if (archived && !c.parentChannelId) await this.subs.closeAllOf(c.id).catch(() => undefined);
     await this.db.update(channels).set({ archivedAt: archived ? nowIso() : null }).where(eq(channels.id, channelId));
     this.events.emit({ type: 'channel_update', workspaceId: c.workspaceId, channelId });
     return this.get(channelId);
+  }
+
+  /** An agent's display name (sub-channel lines). */
+  async agentName(agentId: string): Promise<string | null> {
+    return (await this.db.select({ name: agents.name }).from(agents).where(eq(agents.id, agentId)).limit(1)).at(0)?.name ?? null;
+  }
+
+  /** A person's display name in a workspace (the owner when unnamed). */
+  async personName(workspaceId: string, id: string): Promise<string> {
+    const names = this.shared ? await this.shared.displayNames(workspaceId).catch(() => new Map<string, string>()) : new Map<string, string>();
+    return names.get(id) ?? (id === currentAccountId() ? 'Owner' : 'a person');
   }
 
   /** Channel owners and the workspace owner change settings and membership;
@@ -459,6 +503,13 @@ export class GroupChatService {
     return rows.sort(byTime);
   }
 
+  /** Every message of a channel, top level and thread replies, oldest
+   *  first (a meeting sub-channel's whole stream; at most `limit`, newest). */
+  async stream(channelId: string, limit = 500): Promise<ChannelMessage[]> {
+    const rows = await this.db.select().from(channelMessages).where(eq(channelMessages.channelId, channelId)).orderBy(desc(channelMessages.createdAt)).limit(Math.min(2_000, limit));
+    return rows.sort(byTime);
+  }
+
   /**
    * Post a message. Humans post as `actorId()` and join a public channel on
    * first post; an agent must already be a member; `system` lines carry no
@@ -468,6 +519,7 @@ export class GroupChatService {
   async post(channelId: string, input: PostInput): Promise<ChannelMessage> {
     const c = await this.get(channelId);
     if (c.archivedAt) throw new BadRequestException(`#${c.slug} is archived`);
+    if (c.channelKind === 'sub' && c.status === 'closed' && input.authorKind !== 'system') throw new BadRequestException(`"${c.name}" is closed and read-only — reopen it to continue, or post in its parent channel`);
     const text = (input.text ?? '').trim().slice(0, TEXT_CAP);
     const attachments = (input.attachments ?? []).slice(0, 8).map((a) => ({ path: String(a.path ?? ''), kind: String(a.kind ?? 'text') })).filter((a) => a.path);
     if (!text && attachments.length === 0) throw new BadRequestException('message text is required');
@@ -501,6 +553,7 @@ export class GroupChatService {
     this.events.emit({ type: 'channel_message', workspaceId: c.workspaceId, channelId: c.id, message: row });
     if (input.authorKind !== 'system') await this.notifyHumans(c, row, mentions).catch(() => undefined);
     if (input.authorKind !== 'system' && input.wake !== false && this.follows) await this.threadFollows(c, row, mentions).catch(() => undefined);
+    if (input.authorKind !== 'system' && this.subs.isSub(c)) await this.subs.onPosted(c, row, { follow: input.wake !== false, mentioned: mentions }).catch(() => undefined);
     // `/meeting …` by a person starts a meeting and wakes nobody else (§8).
     if (input.authorKind === 'human' && parseMeetingCommand(text)) {
       if (!this.meetings) await this.postSystem(c.id, 'Meetings need organization mode.', threadRootId).catch(() => undefined);

@@ -111,7 +111,13 @@ interface TurnCtx {
   humanNames: Map<string, string>;
   agenda: string;
   board: string;
-  threadRootId: string;
+  /** The thread the meeting posts into; null when it runs in its own
+   *  sub-channel (docs/group-chat.md §9) and posts at its top level. */
+  threadRootId: string | null;
+  /** The meeting's root (agenda) message, in either case. */
+  rootId: string;
+  /** It runs in a sub-channel: the transcript is the channel's whole stream. */
+  inSub: boolean;
   /** The org's operating profile (§1b), '' when none is written. */
   profile: string;
   /** Persist the live minutes (proposals carry their message ids for the room). */
@@ -269,10 +275,14 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
   }
 
   /** Tell the room's viewers it changed (no-op without the bound seam). */
-  private roomChanged(m: Pick<OrgMeeting, 'id' | 'channelId' | 'threadRootId' | 'status'>, workspaceId: string, status?: string): void {
+  private roomChanged(m: Pick<OrgMeeting, 'id' | 'channelId' | 'threadRootId' | 'status'> & { parentChannelId?: string | null }, workspaceId: string, status?: string): void {
     const ch = this.announcer.meetings as (MeetingChannels | null);
     if (!ch?.live || !m.channelId) return;
-    try { ch.live({ type: 'meeting_update', workspaceId, channelId: m.channelId, meetingId: m.id, threadRootId: m.threadRootId, status: status ?? m.status }); } catch { /* live events are best effort */ }
+    try {
+      ch.live({ type: 'meeting_update', workspaceId, channelId: m.channelId, meetingId: m.id, threadRootId: m.threadRootId, status: status ?? m.status });
+      // The parent's link card shows the room live too (docs/group-chat.md §9).
+      if (m.parentChannelId) ch.live({ type: 'meeting_update', workspaceId, channelId: m.parentChannelId, meetingId: m.id, threadRootId: m.threadRootId, status: status ?? m.status });
+    } catch { /* live events are best effort */ }
   }
 
   // ---- the tick: cadences, preparation, reminders, postponed meetings ----
@@ -475,9 +485,12 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       await this.meetings.cancel(orgId, meetingId, 'system', 'no channel: the group chat is not bound');
       return 'refused:no_channel';
     }
-    const channelId = m.channelId;
-    const channel = await channels.channelInfo(channelId).catch(() => null);
+    let channelId = m.channelId;
+    let channel = await channels.channelInfo(channelId).catch(() => null);
     if (!channel || channel.archivedAt) { await this.meetings.cancel(orgId, meetingId, 'system', 'channel archived'); return 'refused:channel_archived'; }
+    // The channel the meeting was called in (its sub-channel's parent, once opened).
+    const home = { id: m.parentChannelId ?? channelId, slug: channel.slug };
+    if (m.parentChannelId) home.slug = (await channels.channelInfo(m.parentChannelId).catch(() => channel!)).slug;
     const limits = this.meetings.limitsFor(org);
     const lim = roomLimits(org);
     const unit = m.unitId ? await this.units.get(orgId, m.unitId).catch(() => null) : null;
@@ -515,6 +528,24 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     const people = await this.peopleNames([...attendees.filter((a) => a.kind === 'human').map((a) => a.id)]);
     const humanNames = new Map<string, string>(attendees.filter((a) => a.kind === 'human').map((a) => [a.id, a.id === owner ? 'the CEO' : people.get(a.id) ?? 'a person']));
 
+    // 0. The meeting runs in its own sub-channel of the channel it was called
+    //    in (docs/group-chat.md §9): attendees and the channel's people are in
+    //    it, the parent gets one link card (live → ended) and, at the end, the
+    //    minutes line. Without the seam (or when the channel is itself a
+    //    sub-channel) the meeting is a thread, as before.
+    let inSub = Boolean(m.parentChannelId);
+    let linkMessageId: string | null = null;
+    if (!inSub && channels.openSub) {
+      const humans = new Set(attendees.filter((a) => a.kind === 'human').map((a) => a.id));
+      for (const x of await channels.channelMembers(home.id).catch(() => [])) if (x.kind === 'human') humans.add(x.id);
+      const members = [...speakers.map((id) => ({ kind: 'agent' as const, id })), ...[...humans].map((id) => ({ kind: 'human' as const, id }))];
+      const sub = await channels.openSub(home.id, { title: m.title, slug: meetingSlug(m.kind, now), members, meetingId: m.id, createdBy: m.createdBy.startsWith('human:') ? m.createdBy : 'system' }).catch(() => null);
+      if (sub) {
+        channelId = sub.id; channel = { ...channel, id: sub.id, slug: sub.slug }; inSub = true; linkMessageId = sub.linkMessageId;
+        m = await this.meetings.update(orgId, meetingId, { channelId: sub.id, parentChannelId: home.id });
+      }
+    }
+
     // 1. The agenda as the thread root: open items first, then the agenda,
     //    the pre-read and the proposals (no model for any of it, §3).
     const userAgenda = m.agenda;
@@ -542,9 +573,10 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       `**${m.title}** — ${KIND_TITLES[m.kind as MeetingKind] ?? 'meeting'}, facilitated by ${nm(facilitatorId)}. Attendees: ${speakers.map(nm).join(', ') || 'nobody'}${attendees.some((a) => a.kind === 'human') ? ' and the people in this channel' : ''}. ${roundCap} round${roundCap === 1 ? '' : 's'}, up to $${usdCap.toFixed(2)}.`,
       `Agenda items (up to ${lim.itemMinutes} min each): ${items.map((x, i) => `${i + 1}) ${x}`).join(' · ')}`,
       agenda,
-      'Reply in this thread to be heard in the next round — join the room to be heard at the next turn; "stop" ends the meeting.',
+      inSub ? 'Write here to be heard in the next round — join the room to be heard at the next turn; "stop" ends the meeting.' : 'Reply in this thread to be heard in the next round — join the room to be heard at the next turn; "stop" ends the meeting.',
     ].join('\n\n');
     const root = await channels.postAs(channelId, channelAgents.has(facilitatorId) ? { authorKind: 'agent', authorId: facilitatorId, text: rootText, wake: false } : { authorKind: 'system', text: rootText, wake: false });
+    const replyRoot: string | null = inSub ? null : root.id;
     const startedAt = nowIso();
     const clock = () => this.now().toISOString();
     await this.meetings.patchRoom(orgId, meetingId, (r) => {
@@ -567,7 +599,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     const actionsSeen = new Map<string, number>();
     const readRoom = async (): Promise<MeetingRoom> => parseRoom((await this.meetings.get(orgId, meetingId)).room);
     const save = async () => { m = await this.meetings.update(orgId, meetingId, { minutes: JSON.stringify(minutes), usd, tokensIn, tokensOut, rounds }); };
-    const threadOf = () => channels.thread(channelId, root.id).catch(() => [] as Array<{ id: string; authorKind: string; authorId: string; text: string; createdAt: string }>);
+    const threadOf = () => (inSub && channels.stream ? channels.stream(channelId) : channels.thread(channelId, root.id)).catch(() => [] as Array<{ id: string; authorKind: string; authorId: string; text: string; createdAt: string }>);
     const stopped = async (): Promise<boolean> => {
       const current = await this.meetings.get(orgId, meetingId);
       if (current.status !== 'running') return true;
@@ -598,7 +630,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       });
       if (notes.length) {
         const next = room.current < room.items.length ? ` Now item ${room.current + 1} of ${room.items.length}: ${room.items[room.current]}.` : ' The agenda is done.';
-        await channels.postAs(channelId, { authorKind: 'system', text: `${notes.join('; ')}.${next}`, threadRootId: root.id, wake: false }).catch(() => undefined);
+        await channels.postAs(channelId, { authorKind: 'system', text: `${notes.join('; ')}.${next}`, threadRootId: replyRoot, wake: false }).catch(() => undefined);
         this.roomChanged(m, org.workspaceId);
       }
       return room.items.length > 0 && room.current >= room.items.length;
@@ -635,7 +667,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
         await this.meetings.patchRoom(orgId, meetingId, (r) => { r.speaking = agentId; r.attendance[agentId] = 'speaking'; });
         this.roomChanged(m, org.workspaceId);
         lastTurn.set(agentId, nowIso()); actionsSeen.set(agentId, minutes.actions.length);
-        const turn = await this.turn({ m, orgId, workspaceId: org.workspaceId, agentId, round, roundCap: cap, closing: false, facilitator: agentId === facilitatorId, minutes, names, humanNames, agenda, board, profile, threadRootId: root.id, slug: channel.slug, injected: [...injected], model, estimate, ws, item, save });
+        const turn = await this.turn({ m, orgId, workspaceId: org.workspaceId, agentId, round, roundCap: cap, closing: false, facilitator: agentId === facilitatorId, minutes, names, humanNames, agenda, board, profile, threadRootId: replyRoot, rootId: root.id, inSub, slug: channel.slug, injected: [...injected], model, estimate, ws, item, save });
         usd += turn.usd; tokensIn += turn.tokensIn; tokensOut += turn.tokensOut;
         if (turn.passed) passes++;
         await this.meetings.patchRoom(orgId, meetingId, (r) => {
@@ -651,7 +683,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       if (done) { endedBy = 'items'; break; }
       if (turnSpeakers.length > 0 && passes === turnSpeakers.length) {
         endedBy = 'passed';
-        await channels.postAs(channelId, { authorKind: 'system', text: `Everyone passed in round ${round}; the rounds end here.`, threadRootId: root.id, wake: false }).catch(() => undefined);
+        await channels.postAs(channelId, { authorKind: 'system', text: `Everyone passed in round ${round}; the rounds end here.`, threadRootId: replyRoot, wake: false }).catch(() => undefined);
         break;
       }
     }
@@ -663,18 +695,20 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       // still record what was said and proposed — nothing is executed.
       if (this.minutesDocs) {
         minutes.endedBy = 'cancelled';
-        const input = await this.minutesInput({ orgId, workspaceId: org.workspaceId, m: { ...current, usd, rounds, tokensIn, tokensOut }, minutes, unit, channel: { id: channelId, slug: channel.slug }, rootId: root.id, names, usdLeft: usdCap - usd, closedBySummary: false, facilitatorId, channelAgents, cancelled: true });
+        const input = await this.minutesInput({ orgId, workspaceId: org.workspaceId, m: { ...current, usd, rounds, tokensIn, tokensOut }, minutes, unit, channel: { id: channelId, slug: channel.slug }, home, inSub, rootId: root.id, names, usdLeft: usdCap - usd, closedBySummary: false, facilitatorId, channelAgents, cancelled: true });
         const doc = await this.minutesDocs.write(input);
         await this.meetings.update(orgId, meetingId, { minutes: JSON.stringify(minutes), summary: doc.summary.slice(0, 2_000), minutesPath: doc.path, usd: usd + doc.usd });
-        if (doc.path) await channels.postAs(channelId, { authorKind: 'system', text: `Meeting cancelled; minutes (nothing executed): /${doc.path}`, threadRootId: root.id, attachments: [{ path: doc.path, kind: 'file' }], wake: false }).catch(() => undefined);
+        if (doc.path) await channels.postAs(channelId, { authorKind: 'system', text: `Meeting cancelled; minutes (nothing executed): /${doc.path}`, threadRootId: replyRoot, attachments: [{ path: doc.path, kind: 'file' }], wake: false }).catch(() => undefined);
+        if (inSub && channels.closeSub) await channels.closeSub(channelId, { outcome: 'cancelled — nothing executed', minutesPath: doc.path }).catch(() => undefined);
       }
+      if (inSub && channels.closeSub) await channels.closeSub(channelId, { outcome: 'cancelled — nothing executed' }).catch(() => undefined);
       this.roomChanged(current, org.workspaceId, 'cancelled');
       return 'cancelled';
     }
-    if (endedBy === 'stopped') await channels.postAs(channelId, { authorKind: 'system', text: 'Meeting ended by a person; writing the minutes.', threadRootId: root.id, wake: false }).catch(() => undefined);
+    if (endedBy === 'stopped') await channels.postAs(channelId, { authorKind: 'system', text: 'Meeting ended by a person; writing the minutes.', threadRootId: replyRoot, wake: false }).catch(() => undefined);
     if (endedBy === 'ended') {
       const by = parseRoom(current.room).controls.end?.by;
-      await channels.postAs(channelId, { authorKind: 'system', text: `Meeting ended by ${by ? (await this.peopleNames([by])).get(by) ?? 'a person' : 'a person'}; the facilitator closes it.`, threadRootId: root.id, wake: false }).catch(() => undefined);
+      await channels.postAs(channelId, { authorKind: 'system', text: `Meeting ended by ${by ? (await this.peopleNames([by])).get(by) ?? 'a person' : 'a person'}; the facilitator closes it.`, threadRootId: replyRoot, wake: false }).catch(() => undefined);
     }
 
     // 3. The closing turn (skipped when stopped or over budget, and for a
@@ -687,7 +721,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
         await this.meetings.patchRoom(orgId, meetingId, (r) => { r.speaking = facilitatorId; });
         this.roomChanged(m, org.workspaceId);
         const injected = await newHuman(() => true);
-        const turn = await this.turn({ m, orgId, workspaceId: org.workspaceId, agentId: facilitatorId, round: rounds, roundCap: rounds, closing: true, facilitator: true, minutes, names, humanNames, agenda, board, profile, threadRootId: root.id, slug: channel.slug, injected, model, estimate, ws, item: null, save });
+        const turn = await this.turn({ m, orgId, workspaceId: org.workspaceId, agentId: facilitatorId, round: rounds, roundCap: rounds, closing: true, facilitator: true, minutes, names, humanNames, agenda, board, profile, threadRootId: replyRoot, rootId: root.id, inSub, slug: channel.slug, injected, model, estimate, ws, item: null, save });
         usd += turn.usd; tokensIn += turn.tokensIn; tokensOut += turn.tokensOut;
         await this.meetings.patchRoom(orgId, meetingId, (r) => { r.speaking = null; });
         if (minutes.summary) endedBy = 'closed';
@@ -706,17 +740,24 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     let docInput: WriteMinutesInput | null = null;
     let told: Narration | null = null;
     if (this.minutesDocs) {
-      docInput = await this.minutesInput({ orgId, workspaceId: org.workspaceId, m: { ...m, endedAt }, minutes, unit, channel: { id: channelId, slug: channel.slug }, rootId: root.id, names, usdLeft: usdCap - usd, closedBySummary, facilitatorId, channelAgents });
+      docInput = await this.minutesInput({ orgId, workspaceId: org.workspaceId, m: { ...m, endedAt }, minutes, unit, channel: { id: channelId, slug: channel.slug }, home, inSub, rootId: root.id, names, usdLeft: usdCap - usd, closedBySummary, facilitatorId, channelAgents });
       told = await this.minutesDocs.narrate(docInput);
       usd += told.usd; tokensIn += told.tokensIn ?? 0; tokensOut += told.tokensOut ?? 0;
     }
     if (!minutes.summary) minutes.summary = autoSummary(minutes, endedBy, nm);
-    const { hash } = await this.meetings.materialise(orgId, { ...m, endedAt }, minutes, { threadRootId: root.id });
+    // Actions become tasks linked to where the meeting was called: in a
+    // sub-channel meeting, the parent and its link card (the sub-channel
+    // closes now; status lines land under the card).
+    const { hash } = inSub
+      ? await this.meetings.materialise(orgId, { ...m, endedAt, channelId: home.id, threadRootId: linkMessageId }, minutes, { threadRootId: linkMessageId })
+      : await this.meetings.materialise(orgId, { ...m, endedAt }, minutes, { threadRootId: root.id });
     const doc = this.minutesDocs && docInput && told ? await this.minutesDocs.writeDoc({ ...docInput, meeting: { ...docInput.meeting, usd, rounds, tokensIn, tokensOut } }, told) : null;
     const minutesPath = doc?.path ?? null;
     const text = this.meetings.renderMinutes({ ...m, usd, rounds, tokensIn, tokensOut }, minutes, names);
-    const posted = await channels.postAs(channelId, { authorKind: 'system', text, threadRootId: root.id, attachments: [{ path: `meetings/${meetingId}`, kind: 'minutes' }, ...(minutesPath ? [{ path: minutesPath, kind: 'file' }] : [])], wake: false });
-    await channels.postAs(channelId, { authorKind: 'system', text: `Minutes of ${m.title}: ${minutes.decisions.length} decision(s), ${minutes.actions.length} action(s), ${minutes.risks.length} risk(s), ${minutes.questions.length} question(s) for the CEO · $${usd.toFixed(2)} · ${tokensText(tokensIn + tokensOut)} tokens · thread ${root.id.slice(0, 8)}${minutesPath ? ` · Minutes: /${minutesPath}` : ''}`, attachments: minutesPath ? [{ path: minutesPath, kind: 'file' }] : undefined, wake: false }).catch(() => undefined);
+    const posted = await channels.postAs(channelId, { authorKind: 'system', text, threadRootId: replyRoot, attachments: [{ path: `meetings/${meetingId}`, kind: 'minutes' }, ...(minutesPath ? [{ path: minutesPath, kind: 'file' }] : [])], wake: false });
+    // The one line in the channel the meeting was called in (its parent, for a sub-channel meeting).
+    await channels.postAs(home.id, { authorKind: 'system', text: `Minutes of ${m.title}: ${minutes.decisions.length} decision(s), ${minutes.actions.length} action(s), ${minutes.risks.length} risk(s), ${minutes.questions.length} question(s) for the CEO · $${usd.toFixed(2)} · ${tokensText(tokensIn + tokensOut)} tokens · ${inSub ? `#${channel.slug}` : `thread ${root.id.slice(0, 8)}`}${minutesPath ? ` · Minutes: /${minutesPath}` : ''}`, attachments: minutesPath ? [{ path: minutesPath, kind: 'file' }] : undefined, wake: false }).catch(() => undefined);
+    if (inSub && channels.closeSub) await channels.closeSub(channelId, { outcome: minutes.summary.replace(/\s+/g, ' ').slice(0, 300), minutesPath }).catch(() => undefined);
     m = await this.meetings.update(orgId, meetingId, { status: 'done', endedAt, usd, tokensIn, tokensOut, summary: minutes.summary.slice(0, 2_000), minutesPath });
     this.roomChanged(m, org.workspaceId);
     await this.audit.append(orgId, { actor: 'system', action: 'meeting_end', refType: 'meeting', refId: meetingId, payload: { hash, endedBy, rounds, usd: Number(usd.toFixed(6)), tokensIn, tokensOut, decisions: minutes.decisions.length, actions: minutes.actions.length, risks: minutes.risks.length, questions: minutes.questions.length, parked: minutes.parked?.length ?? 0, minutesMessageId: posted.id, minutesPath, minutesBy: told?.source ?? null } });
@@ -756,15 +797,17 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
    *  facilitator's channel session (its model writes the summary). */
   private async minutesInput(x: {
     orgId: string; workspaceId: string; m: OrgMeeting; minutes: Minutes; unit: OrgUnit | null; channel: { id: string; slug: string }; rootId: string;
+    /** The channel it was called in (the minutes file sits in its folder) and whether it ran in a sub-channel of it. */
+    home?: { id: string; slug: string }; inSub?: boolean;
     names: Map<string, string>; usdLeft: number; closedBySummary: boolean; facilitatorId: string; channelAgents: Set<string>; cancelled?: boolean;
   }): Promise<WriteMinutesInput> {
     const channels = this.announcer.meetings!;
-    const transcript = await channels.thread(x.channel.id, x.rootId).catch(() => []);
+    const transcript = await (x.inSub && channels.stream ? channels.stream(x.channel.id) : channels.thread(x.channel.id, x.rootId)).catch(() => []);
     const agent = x.facilitatorId ? await this.agents.get(x.facilitatorId).catch(() => null) : null;
     const session = agent ? await this.channelSession(agent, x.channel.slug, x.m).catch(() => null) : null;
     return {
       orgId: x.orgId, workspaceId: x.workspaceId, meeting: x.m, minutes: x.minutes, unit: x.unit, rootUnit: Boolean(x.unit && x.unit.parentUnitId === null),
-      channel: x.channel, transcript, names: x.names, session, usdLeft: Math.max(0, x.usdLeft), closedBySummary: x.closedBySummary, cancelled: x.cancelled,
+      channel: x.home ?? x.channel, transcript, names: x.names, session, usdLeft: Math.max(0, x.usdLeft), closedBySummary: x.closedBySummary, cancelled: x.cancelled,
     };
   }
 
@@ -773,7 +816,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
    *  agent spoke with no tool and did not pass. */
   private async turn(input: {
     m: OrgMeeting; orgId: string; workspaceId: string; agentId: string; round: number; roundCap: number; closing: boolean; facilitator: boolean; minutes: Minutes;
-    names: Map<string, string>; humanNames: Map<string, string>; agenda: string; board: string; profile: string; threadRootId: string; slug: string;
+    names: Map<string, string>; humanNames: Map<string, string>; agenda: string; board: string; profile: string; threadRootId: string | null; rootId: string; inSub: boolean; slug: string;
     injected: string[]; model: string; estimate: number; ws: { quietHours: string } | null;
     item: { index: number; count: number; title: string; minutes: number; elapsed: number } | null;
     save: () => Promise<void>;
@@ -797,7 +840,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     }
     const ctx: TurnCtx = {
       meeting: m, orgId, agentId, agentName: agent.name, slug: input.slug, round: input.round, roundCap: input.roundCap, closing: input.closing, facilitator: input.facilitator,
-      minutes: input.minutes, spoke: false, passed: false, nextItem: false, closed: false, names: input.names, humanNames: input.humanNames, agenda: input.agenda, board: input.board, profile: input.profile, threadRootId: input.threadRootId,
+      minutes: input.minutes, spoke: false, passed: false, nextItem: false, closed: false, names: input.names, humanNames: input.humanNames, agenda: input.agenda, board: input.board, profile: input.profile, threadRootId: input.threadRootId, rootId: input.rootId, inSub: input.inSub,
       save: input.save,
     };
     this.active.set(session.id, ctx);
@@ -816,7 +859,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     const liveId = `meeting-${m.id.slice(0, 8)}-${agentId.slice(0, 8)}-${input.round}${input.closing ? 'c' : ''}`;
     const emit = (ev: { kind: 'typing'; on: boolean } | { kind: 'stream'; delta: string; done?: boolean }) => {
       if (!live || !m.channelId) return;
-      const base = { workspaceId: input.workspaceId, channelId: m.channelId, threadRootId: input.threadRootId, replyRootId: input.threadRootId, agentId, liveId };
+      const base = { workspaceId: input.workspaceId, channelId: m.channelId, threadRootId: input.threadRootId, replyRootId: input.threadRootId ?? undefined, agentId, liveId };
       try { live(ev.kind === 'typing' ? { type: 'channel_typing', ...base, on: ev.on } : { type: 'channel_stream', ...base, delta: ev.delta, done: ev.done }); } catch { /* best effort */ }
     };
     emit({ kind: 'typing', on: true });
@@ -921,7 +964,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       }
     });
     await this.audit.append(orgId, { actor: actor.id === currentAccountId() ? 'user' : `human:${actor.id}`, action: 'meeting_control', refType: 'meeting', refId: meetingId, payload: { action } });
-    if (m.channelId && m.threadRootId) await this.announcer.meetings?.postAs(m.channelId, { authorKind: 'system', text: line, threadRootId: m.threadRootId, wake: false }).catch(() => undefined);
+    if (m.channelId && m.threadRootId) await this.announcer.meetings?.postAs(m.channelId, { authorKind: 'system', text: line, threadRootId: replyRootOf(m), wake: false }).catch(() => undefined);
     const after = await this.meetings.get(orgId, meetingId);
     this.roomChanged(after, org.workspaceId);
     return after;
@@ -943,7 +986,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       if (!r.present.includes(actor.id)) r.present.push(actor.id);
     });
     await this.audit.append(orgId, { actor: by, action: 'meeting_verdict', refType: 'meeting', refId: meetingId, payload: { kind: input.kind, index: input.index, verdict: v, title: p.title } });
-    if (m.channelId && m.threadRootId) await this.announcer.meetings?.postAs(m.channelId, { authorKind: 'system', text: `${name} ${v} the ${input.kind} "${p.title}"${input.note ? ` — ${input.note.slice(0, 300)}` : ''}.`, threadRootId: m.threadRootId, wake: false }).catch(() => undefined);
+    if (m.channelId && m.threadRootId) await this.announcer.meetings?.postAs(m.channelId, { authorKind: 'system', text: `${name} ${v} the ${input.kind} "${p.title}"${input.note ? ` — ${input.note.slice(0, 300)}` : ''}.`, threadRootId: replyRootOf(m), wake: false }).catch(() => undefined);
     const after = await this.meetings.get(orgId, meetingId);
     this.roomChanged(after, (await this.org.get(orgId)).workspaceId);
     return after;
@@ -961,7 +1004,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     const text = (input.answer ?? '').trim().slice(0, 2_000);
     if (!text) throw new BadRequestException('answer is required');
     const name = await this.actorName(actor);
-    const posted = m.channelId && m.threadRootId ? await this.announcer.meetings?.postAs(m.channelId, { authorKind: 'human', authorId: actor.id, text: `Answer to "${q.question.slice(0, 200)}": ${text}`, threadRootId: m.threadRootId, wake: false }).catch(() => null) : null;
+    const posted = m.channelId && m.threadRootId ? await this.announcer.meetings?.postAs(m.channelId, { authorKind: 'human', authorId: actor.id, text: `Answer to "${q.question.slice(0, 200)}": ${text}`, threadRootId: replyRootOf(m), wake: false }).catch(() => null) : null;
     await this.meetings.patchRoom(orgId, meetingId, (r) => {
       r.answers[`question:${input.index}`] = { answer: text, by: actor.id, byName: name, at: nowIso(), messageId: posted?.id };
       if (!r.present.includes(actor.id)) r.present.push(actor.id);
@@ -1076,7 +1119,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       return ['# Meetings open for agenda proposals', ...open.map(({ m }) => `- ${m.title} [${m.id.slice(0, 8)}] at ${(m.scheduledFor ?? '').slice(0, 16).replace('T', ' ')} UTC — ${parseRoom(m.room).proposals.length} proposal(s) so far`), 'Propose an item with meeting_propose_agenda only when it needs the room (a decision, a blocker); status goes in writing.'].join('\n');
     }
     const channels = this.announcer.meetings;
-    const thread = channels ? await channels.thread(ctx.meeting.channelId!, ctx.threadRootId).catch(() => []) : [];
+    const thread = channels ? await (ctx.inSub && channels.stream ? channels.stream(ctx.meeting.channelId!) : channels.thread(ctx.meeting.channelId!, ctx.rootId)).catch(() => []) : [];
     const room = parseRoom((await this.meetings.get(ctx.orgId, ctx.meeting.id).catch(() => ctx.meeting)).room);
     const nm = (kind: string, id: string) => kind === 'system' ? 'system' : kind === 'human' ? (ctx.humanNames.get(id) ?? 'a person') : (ctx.names.get(id) ?? 'agent');
     const framed = thread.slice(1).slice(-40).map((x) => `[${x.createdAt.slice(11, 16)}] ${nm(x.authorKind, x.authorId)}${x.authorKind === 'agent' ? ' (agent)' : x.authorKind === 'system' ? ' (system)' : ''}: ${x.text.replace(/</g, '&lt;').slice(0, 1_200)}`);
@@ -1260,6 +1303,18 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
 }
 
 /** "Meeting: <the agenda's first words>" (at most ~60 characters, mentions dropped). */
+/** Where a meeting's people-side lines go: its thread, or the top level of
+ *  its sub-channel (docs/group-chat.md §9). */
+function replyRootOf(m: Pick<OrgMeeting, 'threadRootId' | 'parentChannelId'>): string | null {
+  return m.parentChannelId ? null : m.threadRootId;
+}
+
+/** A meeting sub-channel's slug: `meeting-<kind>-<yyyy-mm-dd>` (de-duplicated by the group chat). */
+export function meetingSlug(kind: string, at: Date): string {
+  const d = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
+  return `meeting-${kind.replace(/_/g, '-')}-${d}`;
+}
+
 export function adhocTitle(agenda: string): string {
   const first = agenda.split(/\n/)[0].replace(/@[\w-]+/g, '').replace(/\s+/g, ' ').trim();
   if (!first) return 'Meeting';

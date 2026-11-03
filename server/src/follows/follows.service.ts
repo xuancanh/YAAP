@@ -36,9 +36,10 @@ import { deliveryFor } from '../workspaces/quiet-hours';
 import { followTunable } from './follow-tunables';
 
 export type FollowerKind = 'agent' | 'user';
-export type FollowTargetKind = 'thread' | 'org_task' | 'agent_task';
-export type FollowReason = 'started' | 'commented' | 'owner' | 'assignee' | 'reviewer' | 'mentioned' | 'manual';
-export const FOLLOW_TARGET_KINDS: readonly FollowTargetKind[] = ['thread', 'org_task', 'agent_task'];
+/** `channel`: a sub-channel — a discussion or a meeting (docs/group-chat.md §9). */
+export type FollowTargetKind = 'thread' | 'org_task' | 'agent_task' | 'channel';
+export type FollowReason = 'started' | 'commented' | 'owner' | 'assignee' | 'reviewer' | 'mentioned' | 'participant' | 'manual';
+export const FOLLOW_TARGET_KINDS: readonly FollowTargetKind[] = ['thread', 'org_task', 'agent_task', 'channel'];
 export type Follow = typeof follows.$inferSelect;
 
 export interface Follower { kind: FollowerKind; id: string }
@@ -397,13 +398,28 @@ export class FollowsService {
       const t = hits[0];
       return t.kind === 'org_task' ? orgTaskTarget(workspaceId, t.id, t.title, t.key) : agentTaskTarget(workspaceId, t.id, t.title, t.key);
     }
-    throw new BadRequestException('kind must be thread or task');
+    if (kind === 'discussion' || kind === 'channel') {
+      // A sub-channel (docs/group-chat.md §9) by its slug or id; private ones for members only.
+      const slug = String(rawId ?? '').trim().replace(/^#/, '').toLowerCase();
+      const rows = (await this.db.execute(sql`
+        SELECT c."id", c."slug", c."name", c."kind" FROM channels c
+        WHERE c."workspaceId" = ${workspaceId} AND c."channelKind" = 'sub' AND (c."id" = ${slug} OR c."slug" = ${slug}) LIMIT 2
+      `)).rows as Array<{ id: string; slug: string; name: string; kind: string }>;
+      const hit = rows[0];
+      if (!hit) throw new NotFoundException(`no discussion "${slug}" in this workspace`);
+      if (hit.kind === 'private' && forAgentId) {
+        const member = (await this.db.execute(sql`SELECT 1 FROM channel_members WHERE "channelId" = ${hit.id} AND "memberKind" = 'agent' AND "memberId" = ${forAgentId} LIMIT 1`)).rows.length > 0;
+        if (!member) throw new NotFoundException(`no discussion "${slug}" in this workspace`);
+      }
+      return { kind: 'channel', id: hit.id, workspaceId, title: `#${hit.slug}: ${hit.name}`.slice(0, 200), link: `#/ws/${workspaceId}/channel/${hit.slug}` };
+    }
+    throw new BadRequestException('kind must be thread, task or discussion');
   }
 
   /** A target by its exact kind and id, checked to be in the workspace (the
    *  SPA's routes). */
   async target(workspaceId: string, kind: FollowTargetKind, id: string): Promise<FollowTarget> {
-    if (!FOLLOW_TARGET_KINDS.includes(kind)) throw new BadRequestException('targetKind must be thread, org_task or agent_task');
+    if (!FOLLOW_TARGET_KINDS.includes(kind)) throw new BadRequestException('targetKind must be thread, org_task, agent_task or channel');
     const t = await this.resolve(workspaceId, kind, id);
     if (t.id !== id && kind !== 'thread') throw new NotFoundException(`no ${kind} "${id}"`);
     return t;
@@ -418,6 +434,7 @@ export function labelOf(kind: FollowTargetKind, id: string, title: string): stri
   const body = keyed ? keyed[2] : title;
   const t = body ? ` "${body.slice(0, 80)}"` : '';
   if (kind === 'thread') return `thread${t || ` ${id.slice(0, 8)}`} (${id.slice(0, 8)})`;
+  if (kind === 'channel') return `discussion${t || ` ${id.slice(0, 8)}`}`;
   if (kind === 'org_task') return `task ${ref}${t}`;
   return `board task ${ref}${t}`;
 }

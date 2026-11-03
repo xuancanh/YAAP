@@ -1,7 +1,10 @@
 # Meetings: lifecycle, minutes and the calendar
 
-A meeting is a bounded ritual held in a channel thread (the design is
-`docs/company-vision.md` §3; the mechanics are `docs/group-chat.md` §8). This
+A meeting is a bounded ritual held in its own **sub-channel** of the
+channel it is called in — `#company`, a unit's channel, the channel a
+`/meeting` was typed in (`docs/group-chat.md` §9; meetings held before
+that are threads and stay readable as they were). The design is
+`docs/company-vision.md` §3; the mechanics are `docs/group-chat.md` §8. This
 page covers how a meeting is prepared (**before**), the **room** people
 watch and steer while it runs (**during**), what every meeting leaves behind
 — its **minutes** and its **cost** (**after**) — and where people find
@@ -14,10 +17,49 @@ Meetings need organization mode; every meeting is a row of `org_meetings`.
 |--------|-------------------|
 | `scheduled` | created: prepared `meeting.prepMinutes` before a cadence fires, a cadence fired on the minute tick, `/meeting [kind] [#unit] [agenda…]` in a channel, Start meeting in Company → Meetings or a channel's Meetings tab, or `POST …/org/meetings` |
 | `postponed` | quiet hours at start; the tick retries when the window ends |
-| `running` | the agenda is posted as the thread root; rounds run (one turn per agent attendee in the first round; later rounds only those with an open thread; at most three rounds plus Extend, one for a standup) |
-| `done` | the meeting ended: the facilitator closed it (`meeting_close`), the rounds ran out, everyone passed in a round, the agenda items were done, the per-meeting USD cap was reached, a person pressed End, or a person said "stop" / "end meeting" in the thread |
+| `running` | its sub-channel `meeting-<kind>-<yyyy-mm-dd>` opens (the parent gets one link card, *live*) and the agenda is its first message; rounds run (one turn per agent attendee in the first round; later rounds only those with an open thread; at most three rounds plus Extend, one for a standup) |
+| `done` | the meeting ended: the facilitator closed it (`meeting_close`), the rounds ran out, everyone passed in a round, the agenda items were done, the per-meeting USD cap was reached, a person pressed End, or a person said "stop" / "end meeting" in the meeting; the sub-channel closes (read-only) and the card says *ended* with the outcome |
 | `skipped` | a scheduled ritual (created by its cadence, with no agenda of a person's) had nothing on its agenda and skipped itself without a model call (`meeting.autoSkip`) |
 | `cancelled` | before it started: the daily cap, no channel, the kill switch, a prepared meeting whose cadence did not fire; or while running: the API cancel or the kill switch, effective at the next turn |
+
+## Where it runs: the meeting's sub-channel
+
+When a meeting starts, `OrgMeetingRuntime.run` opens a sub-channel of the
+channel it was called in through the `MeetingChannels.openSub` seam
+(`server/src/org/org-announcer.ts`, bound by the group chat):
+
+- **Slug and title.** `meeting-<kind>-<yyyy-mm-dd>` (de-duplicated:
+  `…-2`), named after the meeting; purpose `meeting`, `meetingId` set.
+- **Members.** The agent attendees who speak, the human attendees and the
+  parent channel's people. Visibility follows the parent.
+- **The record.** `org_meetings.channelId` becomes the sub-channel,
+  `parentChannelId` the channel it was called in (migration 0082); the
+  calendar and a channel's Meetings tab list a meeting under either.
+  `threadRootId` stays the agenda message.
+- **Inside.** Everything happens at the sub-channel's top level: the
+  agenda, every round's turns, people's messages (heard at the next round,
+  or the next turn once they joined), the room's system lines, the
+  proposals with their Approve / Reject / Answer, and the structured
+  minutes message. The transcript the turns and the minutes read is the
+  sub-channel's whole stream. The agents' working sessions are
+  `#meeting-<kind>-<date> · <agent>`, so the Work log shows each meeting
+  as its own session; spend counts against the parent's daily budget.
+  Mentions and follows work there as in any channel.
+- **The parent.** Only the link card (*live* while the meeting runs, then
+  *ended* with the summary) and, at the end, the one line
+  `Minutes of <title>: … · #meeting-… · Minutes: /<path>`. Action items
+  become tasks linked to the parent and the card, so their status lines
+  land under the card, not in the closed sub-channel.
+- **The end.** Done or cancelled, the sub-channel closes (`closeSub`):
+  read-only, folded into the parent's "Past discussions". The minutes file
+  is written where it always was (the unit's `/org/meetings/…`, or the
+  parent channel's `meetings/` folder).
+- **Fallback.** Without the seam (a test double, the group chat unbound)
+  or when the meeting is called inside a sub-channel, it runs as a thread,
+  exactly as before.
+
+The full-screen room reads the sub-channel's stream; a sub-channel
+holding a meeting shows the room above its messages.
 
 ## The room's tunables
 

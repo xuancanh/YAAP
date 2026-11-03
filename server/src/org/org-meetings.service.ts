@@ -238,14 +238,14 @@ export class OrgMeetingsService {
       kind: input.kind, title, agenda: (input.agenda ?? '').slice(0, 8_000), facilitatorAgentId: facilitator,
       attendees: JSON.stringify(attendees.slice(0, 12)), status: 'scheduled', scheduledFor: input.scheduledFor ?? null,
       startedAt: null, endedAt: null, rounds: 0, usd: 0, minutes: '', createdBy: input.createdBy ?? 'system', createdAt: nowIso(), minutesPath: null, summary: '',
-      room: '', tokensIn: 0, tokensOut: 0,
+      room: '', tokensIn: 0, tokensOut: 0, parentChannelId: null,
     };
     await this.db.insert(orgMeetings).values(row);
     await this.audit.append(orgId, { actor: row.createdBy, action: 'meeting_create', refType: 'meeting', refId: row.id, payload: { kind: row.kind, unitId: row.unitId, attendees: attendees.length } });
     return row;
   }
 
-  async update(orgId: string, meetingId: string, patch: Partial<Pick<OrgMeeting, 'status' | 'threadRootId' | 'startedAt' | 'endedAt' | 'rounds' | 'usd' | 'minutes' | 'agenda' | 'scheduledFor' | 'title' | 'minutesPath' | 'summary' | 'tokensIn' | 'tokensOut'>>): Promise<OrgMeeting> {
+  async update(orgId: string, meetingId: string, patch: Partial<Pick<OrgMeeting, 'status' | 'channelId' | 'parentChannelId' | 'threadRootId' | 'startedAt' | 'endedAt' | 'rounds' | 'usd' | 'minutes' | 'agenda' | 'scheduledFor' | 'title' | 'minutesPath' | 'summary' | 'tokensIn' | 'tokensOut'>>): Promise<OrgMeeting> {
     await this.get(orgId, meetingId);
     await this.db.update(orgMeetings).set(patch).where(eq(orgMeetings.id, meetingId));
     return this.get(orgId, meetingId);

@@ -38,7 +38,8 @@ export interface UnitChannels {
 
 /**
  * What meetings need from a channel (docs/group-chat.md §8, docs/company-
- * vision.md §3): a meeting is a thread in a unit channel, so the runtime
+ * vision.md §3): a meeting runs in a sub-channel of a unit channel (a
+ * thread in it when sub-channels are not bound), so the runtime
  * posts the agenda, the turns and the minutes through this seam and reads
  * the thread back between rounds (human messages are injected, "stop" ends
  * it). `wake: false` posts without computing a wake set — meeting turns must
@@ -49,6 +50,13 @@ export interface MeetingChannels {
   /** `human`: a person's answer posted from the room (docs/meetings.md "During"). */
   postAs(channelId: string, input: { authorKind: 'agent' | 'system' | 'human'; authorId?: string; text: string; threadRootId?: string | null; attachments?: Array<{ path: string; kind: string }>; runId?: string | null; wake?: boolean }): Promise<{ id: string; createdAt: string }>;
   thread(channelId: string, rootId: string): Promise<Array<{ id: string; authorKind: string; authorId: string; text: string; createdAt: string }>>;
+  /** Meetings run in a sub-channel of the channel they were called in
+   *  (docs/group-chat.md §9): open it (the parent gets one link card), read
+   *  its whole stream, close it when the meeting ends. Optional: unbound, a
+   *  meeting is a thread as before. */
+  openSub?(parentChannelId: string, input: { title: string; slug?: string; members: Array<{ kind: 'agent' | 'human'; id: string }>; meetingId: string; createdBy?: string }): Promise<{ id: string; slug: string; linkMessageId: string | null }>;
+  closeSub?(channelId: string, input: { outcome: string; minutesPath?: string | null }): Promise<void>;
+  stream?(channelId: string): Promise<Array<{ id: string; authorKind: string; authorId: string; text: string; createdAt: string }>>;
   /** Live events for the room (optional): the speaker's typing and streamed
    *  reply on the channel stream events (`replyRootId` = the meeting thread),
    *  and `meeting_update` when the room changes. */

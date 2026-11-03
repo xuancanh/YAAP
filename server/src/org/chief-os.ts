@@ -29,6 +29,7 @@ import { TUNABLES } from './org-tunables';
 import { orgPath } from '../files/layout';
 import { deriveMeetingTunables } from './meeting-tunables';
 import { deriveWorkTunables } from './work-tunables';
+import { deriveDiscussionTunables } from '../groupchat/discussion-tunables';
 // The assurance keys (audit.assuranceDebounceHours) join the registry at import.
 import './org-assurance-tunables';
 // The seat keys (seat.hopTimeoutHours, docs/owners-seat.md §7) too.
@@ -150,6 +151,8 @@ export function deriveOperatingSystem(p: ProfileInput): OperatingSystemPlan {
   for (const t of deriveMeetingTunables(d)) set(t.key, t.value, t.why);
   // Work tracking (docs/work-tracking.md): update cadence, back-off, breaker default, meta-work cap.
   for (const t of deriveWorkTunables(d)) set(t.key, t.value, t.why);
+  // Sub-channels (docs/group-chat.md §9): idle close, agent starts, the ping-pong move.
+  for (const t of deriveDiscussionTunables(d)) set(t.key, t.value, t.why);
 
   const decisionProtocol = {
     clan: 'Consensus-seeking with one named final decider; dissent is recorded, then the decider decides.',

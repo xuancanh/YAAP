@@ -13,9 +13,11 @@ acted from, and they live in its one workspace.
 ## 1. Data
 
 `follows` (migration 0048): `workspaceId`, `followerKind` (`agent` |
-`user`), `followerId`, `targetKind` (`thread` | `org_task` | `agent_task`),
-`targetId` (a thread is its root message id), `reason` (`started` |
-`commented` | `owner` | `assignee` | `reviewer` | `mentioned` | `manual`),
+`user`), `followerId`, `targetKind` (`thread` | `org_task` | `agent_task` |
+`channel` — a discussion or meeting sub-channel, docs/group-chat.md §9),
+`targetId` (a thread is its root message id; a sub-channel its channel id),
+`reason` (`started` | `commented` | `owner` | `assignee` | `reviewer` |
+`mentioned` | `participant` | `manual`),
 `createdAt`, `mutedAt`, `lastSeenAt`. Unique on (`followerKind`,
 `followerId`, `targetKind`, `targetId`).
 
@@ -39,6 +41,7 @@ Idempotent (an existing row, muted or not, is left as it is):
 | Channel thread | the root's author (`started`) once the thread has a reply or a mention; every replier (`commented`); agents mentioned in it (`mentioned`) | `GroupChatService.post` |
 | Org task | the creator (`started`: `agent:<id>`, or the user for `user`); the assignee at create, assign, re-assign and owner change (`assignee`, people too); the reviewer at create and on `request_review` (`reviewer`, people too); every commenter (`commented`) | `OrgTasksService` |
 | Kanban task | the owning agent (`owner`); its creator (`started`: the person who added it, or the delegating agent) | `AgentsService.addTask` |
+| Sub-channel (discussion, meeting) | its starter (`started`); every member it opened with (`participant`); whoever posts in it later (`commented`) | `SubChannels.start` / `onPosted` (`server/src/groupchat/sub-channels.ts`) |
 
 System actors (checks, cadences, the runtime) follow nothing.
 
@@ -69,6 +72,17 @@ brought up to date on the next activity. One event per target: the first update 
 until they open the thread or the task (the SPA marks it seen) or act on it
 themselves. Quiet hours apply as for every event; a person already notified
 by a mention gets no follow event for the same message.
+
+**Sub-channels** (docs/group-chat.md §9). A post in a discussion is
+activity on the sub-channel for its followers (mentions excluded as above);
+a meeting's turns, which compute no wake set, are not — a meeting reaches
+people through its reminder and its parent's link card. The parent channel
+never gets a post per change: its one link card is rewritten in place.
+Closing the sub-channel is one activity (`closed: <outcome>`, `closed:
+true` on every row), so each person who follows it gets **one** summary
+event of the close — none when they already have an unseen one; reopening
+it is another (`closed: false`). The link opens the sub-channel,
+`#/ws/<id>/channel/<slug>`.
 
 ## 4. The heartbeat
 
@@ -112,10 +126,12 @@ defaults.
 
 Offered to every durable agent (`follows.tools.ts`, a `ToolProviderHook`):
 
-- `follow { kind: 'thread' | 'task', id }` — a thread by any of its message
-  ids (full, or a unique prefix of ≥ 4 characters as `channel_read` shows
-  it); a task by an org task or kanban task id or prefix (the board's short
-  id). A private channel's thread resolves only for its members.
+- `follow { kind: 'thread' | 'task' | 'discussion', id }` — a thread by any
+  of its message ids (full, or a unique prefix of ≥ 4 characters as
+  `channel_read` shows it); a task by an org task or kanban task id or
+  prefix (the board's short id); a discussion or meeting sub-channel by its
+  slug. A private channel's thread or discussion resolves only for its
+  members.
 - `unfollow { kind, id }` — mute; it sticks.
 - `list_follows` — what it follows, why, and what is new on each.
 
@@ -131,8 +147,8 @@ heartbeat's "Following" header mention them.
 whether I follow), `GET mine`, `POST` (follow), `POST unfollow`,
 `POST seen`. The follower is always the caller; viewers read only.
 
-The channel thread panel and the org task drawer show a **Follow /
-Following** toggle with the followers' avatars (`FollowToggle.tsx`);
+The channel thread panel, a sub-channel's header and the org task drawer
+show a **Follow / Following** toggle with the followers' avatars (`FollowToggle.tsx`);
 opening one marks it seen. The agent kanban card has no detail view and
 shows none.
 

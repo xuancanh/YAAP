@@ -47,7 +47,8 @@ skills cannot drift apart.
 │                              reports/<yyyy>-W<ww>.md, audits/<yyyy-mm>.md,
 │                              processes/, and the function's own subfolders
 ├── channels/<slug>/           a channel's shared folder
-│   └── meetings/<yyyy-mm-dd>-<title>.md   minutes of `/meeting`s in a non-unit channel
+│   ├── meetings/<yyyy-mm-dd>-<title>.md   minutes of `/meeting`s in a non-unit channel
+│   └── sub/<sub-slug>/        a discussion or meeting sub-channel's folder (docs/group-chat.md §9)
 ├── agents/<handle>/           an agent's home — its default working folder
 │   ├── LESSONS.md, JOURNAL.md file brain (agent memory)
 │   ├── knowledge/             durable reference notes
@@ -184,6 +185,14 @@ author (`system` when there is none):
 |------|--------------|-------|
 | `/org/meetings/<unit-slug>/<yyyy>/<yyyy-mm-dd>-<kind>.md` | a unit's meeting (a ritual from its cadence, `/meeting <kind>` in a unit channel, Start meeting) ends | when, the unit, facilitator, attendees, agenda, summary, discussion, decisions (who decided, `#decision:` id), action items (owner, done-when, the board task), open questions and risks, lessons, the next meeting |
 | `/<channel folder>/meetings/<yyyy-mm-dd>-<title-slug>.md` | a `/meeting` in a channel that is not a unit channel ends (the folder is `channels/<slug>` unless the channel has another) | the same |
+
+A meeting runs in a sub-channel of the channel it was called in
+(docs/group-chat.md §9), but its minutes file stays where it always was:
+the unit's `/org/meetings/…` path, or the *parent* channel's
+`meetings/` folder — never the sub-channel's `sub/<slug>/` folder, which
+holds only what people and agents put there during the meeting. A
+sub-channel's folder is `channelPath.sub(<parent folder>, <slug>)` in
+`layout.ts`; its agents see it as `shared/` in their channel session.
 
 Dates are server-local, like the cadences. A second meeting at the same path
 the same day gets `-HHMM` (then `-<id8>`) appended; the first is never

@@ -13,7 +13,7 @@ import type { AiToolSpec } from '../ai/ai-provider.interface';
 import { FollowsService, labelOf, type FollowTargetKind } from './follows.service';
 
 const KIND_ID = {
-  kind: { type: 'string', enum: ['thread', 'task'], description: 'thread: a channel thread (any message id in it, as channel_read shows it); task: an org task or a kanban task, by its key (ENG-12) as the board shows it.' },
+  kind: { type: 'string', enum: ['thread', 'task', 'discussion'], description: 'thread: a channel thread (any message id in it, as channel_read shows it); task: an org task or a kanban task, by its key (ENG-12) as the board shows it; discussion: a discussion or meeting sub-channel, by its slug.' },
   id: { type: 'string', description: 'The message id, or the task key (e.g. ENG-12; an id prefix still works).' },
 };
 

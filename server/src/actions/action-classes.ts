@@ -144,8 +144,10 @@ export const FREE_INTERNAL_TOOLS: ReadonlySet<string> = new Set([
   'org_message', 'org_create_task', 'org_assign', 'org_task_update', 'org_task_comment',
   'org_request_review', 'org_review', 'org_escalate', 'org_check_in', 'org_set_goal', 'org_set_key_result',
   'org_ack_signal', 'org_report', 'org_strategy_memo', 'org_report_incident', 'org_forecast_outcome',
-  // group chat: a task from a channel message
-  'channel_make_task',
+  // group chat: a task from a channel message; a discussion sub-channel
+  // (docs/group-chat.md §9: rate-limited by discussion.agentDailyCap, members
+  // only from the parent channel, closed only by its starter)
+  'channel_make_task', 'channel_start_discussion', 'channel_close_discussion',
 ]);
 
 /** Whether a call is internal, reversible work that runs without a gate. */

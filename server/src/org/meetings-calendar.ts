@@ -33,8 +33,12 @@ export interface CalendarMeeting {
   title: string;
   unitId: string | null;
   unitName: string | null;
+  /** The channel it was called in (for a meeting held in a sub-channel, the parent). */
   channelId: string | null;
   channelSlug: string | null;
+  /** The sub-channel it ran in (docs/group-chat.md §9), when it did. */
+  subChannelId?: string | null;
+  subChannelSlug?: string | null;
   status: CalendarStatus;
   /** When it starts (started, scheduled, or the cron's next fire). */
   at: string;
@@ -152,7 +156,8 @@ export class MeetingsCalendarService {
     const slugs = new Map((await this.db.select({ id: channelsTable.id, slug: channelsTable.slug }).from(channelsTable).where(eq(channelsTable.workspaceId, workspaceId))).map((c) => [c.id, c.slug]));
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
     const rows = (await this.meetings.list(org.id, { unitId: q.unitId || null, limit: 500 }))
-      .filter((m) => !channelId || m.channelId === channelId);
+      // A meeting held in a sub-channel belongs to the channel it was called in too (docs/group-chat.md §9).
+      .filter((m) => !channelId || m.channelId === channelId || m.parentChannelId === channelId);
     const humanIds = new Set<string>();
     for (const m of rows) for (const a of parseAttendees(m.attendees)) if (a.kind === 'human') humanIds.add(a.id);
 
@@ -196,7 +201,8 @@ export class MeetingsCalendarService {
       const unit = m.unitId ? unitById.get(m.unitId) : null;
       out.push({
         id: m.id, source: 'meeting', meetingId: m.id, cadenceId: null, kind: m.kind, title: m.title || KIND_TITLES[m.kind as MeetingKind] || 'Meeting',
-        unitId: m.unitId, unitName: unitName(unit), channelId: m.channelId, channelSlug: m.channelId ? slugs.get(m.channelId) ?? null : null,
+        unitId: m.unitId, unitName: unitName(unit), channelId: m.parentChannelId ?? m.channelId, channelSlug: (m.parentChannelId ?? m.channelId) ? slugs.get((m.parentChannelId ?? m.channelId)!) ?? null : null,
+        subChannelId: m.parentChannelId ? m.channelId : null, subChannelSlug: m.parentChannelId && m.channelId ? slugs.get(m.channelId) ?? null : null,
         status: m.status as MeetingStatus, at, endedAt: m.endedAt, facilitator: facilitator(m.facilitatorAgentId), attendees: named(parseAttendees(m.attendees)),
         minutesPath: m.minutesPath ?? null, summary: m.summary || minutes.summary || '', cron: null, threadRootId: m.threadRootId,
         decisions: minutes.decisions.length, actions: minutes.actions.length, rounds: m.rounds, usd: m.usd, tokensIn: m.tokensIn ?? 0, tokensOut: m.tokensOut ?? 0,

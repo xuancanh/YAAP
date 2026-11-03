@@ -993,6 +993,10 @@ export const orgMeetings = pgTable('org_meetings', {
   /** Tokens the meeting's turns and its minutes call used (migration 0050). */
   tokensIn: integer('tokensIn').notNull().default(0),
   tokensOut: integer('tokensOut').notNull().default(0),
+  /** The channel the meeting was called in when it runs in a sub-channel of
+   *  it (`channelId` is then the sub-channel; docs/group-chat.md §9,
+   *  migration 0082); null for a meeting held as a thread. */
+  parentChannelId: text('parentChannelId'),
 });
 
 /** The decision log (docs/company-vision.md §6): what was decided, the
@@ -1634,6 +1638,31 @@ export const channels = pgTable('channels', {
   dailyTokenBudget: integer('dailyTokenBudget').notNull().default(0),
   archivedAt: text('archivedAt'),
   createdAt: text('createdAt').notNull(),
+  // Sub-channels (docs/group-chat.md §9, migration 0082): a temporary child
+  // channel for a meeting or a discussion, so the parent keeps one link card.
+  /** The parent channel; null for an ordinary channel. */
+  parentChannelId: text('parentChannelId'),
+  /** channel | sub (named `channelKind` because `kind` is the visibility). */
+  channelKind: text('channelKind').notNull().default('channel'),
+  /** What a sub-channel is for: meeting | discussion | project | '' (an ordinary channel). */
+  purpose: text('purpose').notNull().default(''),
+  /** open | closed (a closed sub-channel is read-only; people may reopen it). */
+  status: text('status').notNull().default('open'),
+  closedAt: text('closedAt'),
+  /** human:<id> | agent:<id> | system (auto-close, the meeting's end). */
+  closedBy: text('closedBy'),
+  /** One or two lines of outcome written at close (the minutes' summary for a meeting). */
+  outcome: text('outcome').notNull().default(''),
+  /** Optional links: the meeting run here, the task or project discussed. */
+  meetingId: text('meetingId'),
+  taskId: text('taskId'),
+  projectId: text('projectId'),
+  /** The link card in the parent (one system message, updated in place). */
+  linkMessageId: text('linkMessageId'),
+  /** The parent message the discussion started from (a thread moved here). */
+  originMessageId: text('originMessageId'),
+  /** The last non-system post (the auto-close clock and the card's "last activity"). */
+  lastActivityAt: text('lastActivityAt'),
 });
 
 export const channelMembers = pgTable('channel_members', {

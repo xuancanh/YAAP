@@ -98,7 +98,7 @@ export function messagesList(messages: AgentMessage[]): InboxItem[] {
   return messages.map(messageItem).sort((a, b) => Number(a.message!.read) - Number(b.message!.read) || (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
 }
 
-const TARGET_WORD: Record<FollowRow['targetKind'], string> = { thread: 'thread', org_task: 'task', agent_task: 'task' };
+const TARGET_WORD: Record<FollowRow['targetKind'], string> = { thread: 'thread', org_task: 'task', agent_task: 'task', channel: 'discussion' };
 
 /** One followed thread or task as an Inbox row: its title, the latest change and who made it. */
 export function followItem(f: FollowRow): InboxItem {

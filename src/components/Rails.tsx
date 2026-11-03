@@ -11,6 +11,8 @@ import { ArtifactTree } from './ArtifactTree';
 import { createFile, createFolder, workspaceSource } from '../lib/artifacts';
 import { COMPANY_GROUPS } from '../lib/inbox';
 import { bizFunctions, bySegment, marketCats, SEGMENT_LABEL, type MarketNav, type MarketSegment } from '../lib/market';
+import { railChannels } from '../lib/channels';
+import { SubChannelRows } from './SubChannels';
 
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)', padding: '2px 18px 8px' };
 
@@ -331,7 +333,9 @@ function ChannelsBlock({ search }: { search: string }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
-  const list = app.channels.filter((c) => !search || c.slug.includes(search) || c.topic.toLowerCase().includes(search));
+  // Sub-channels (docs/group-chat.md §9) nest under their parent; a search shows a parent when it or one of its discussions matches.
+  const matches = (c: { slug: string; name: string; topic: string }) => !search || c.slug.includes(search) || c.name.toLowerCase().includes(search) || c.topic.toLowerCase().includes(search);
+  const list = railChannels(app.channels).filter((g) => matches(g.channel) || g.subs.some(matches));
   const create = async () => {
     if (!name.trim() || creating) return;
     setCreating(true);
@@ -357,13 +361,16 @@ function ChannelsBlock({ search }: { search: string }) {
             placeholder="Channel name (every agent joins)" style={{ width: '100%', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '6px 8px', color: 'var(--text)', fontSize: 12.5, outline: 'none' }} />
         </div>
       )}
-      {list.map((c) => {
+      {list.map(({ channel: c, subs }) => {
         const active = app.homeView === 'channel' && app.currentChannel === c.slug;
         return (
-          <div key={c.id} onClick={() => app.openChannel(c.slug)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 9, cursor: 'pointer', margin: '1px 0', background: active ? 'var(--accent-dim)' : 'none' }}>
-            <span style={{ fontWeight: 700, color: c.kind === 'private' ? 'var(--text-faint)' : 'var(--accent-hi)', width: 12, textAlign: 'center' }}>{c.kind === 'private' ? '🔒' : '#'}</span>
-            <span style={{ flex: 1, fontSize: 12.5, fontWeight: (c.unread ?? 0) > 0 ? 700 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.slug}</span>
-            {(c.unread ?? 0) > 0 && <span title="Unread messages" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--accent)', borderRadius: 8, padding: '1px 6px' }}>{c.unread}</span>}
+          <div key={c.id}>
+            <div onClick={() => app.openChannel(c.slug)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 9, cursor: 'pointer', margin: '1px 0', background: active ? 'var(--accent-dim)' : 'none' }}>
+              <span style={{ fontWeight: 700, color: c.kind === 'private' ? 'var(--text-faint)' : 'var(--accent-hi)', width: 12, textAlign: 'center' }}>{c.kind === 'private' ? '🔒' : '#'}</span>
+              <span style={{ flex: 1, fontSize: 12.5, fontWeight: (c.unread ?? 0) > 0 ? 700 : 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.slug}</span>
+              {(c.unread ?? 0) > 0 && <span title="Unread messages" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--accent)', borderRadius: 8, padding: '1px 6px' }}>{c.unread}</span>}
+            </div>
+            <SubChannelRows wsId={app.workspaceId} parent={c} subs={subs} past={c.pastSubs ?? 0} current={app.homeView === 'channel' ? app.currentChannel : null} onOpen={(slug) => app.openChannel(slug)} />
           </div>
         );
       })}

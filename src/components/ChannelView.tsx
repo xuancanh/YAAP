@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
 import { api, type Agent, type ChannelDetail, type ChannelFile, type ChannelMember, type ChannelMessage, type OrgDecision, type OrgMeeting, type WorkspaceEvent } from '../lib/api';
-import { applyMention, decisionRefs, groupThreads, initials, liveInThread, meetingCommandHint, mentionQuery, mentionSuggestions, messageMentionSpans, type MentionCandidate } from '../lib/channels';
+import { applyMention, decisionRefs, groupThreads, initials, linkCardSubId, liveInThread, meetingCommandHint, mentionQuery, mentionSuggestions, messageMentionSpans, subIcon, type MentionCandidate } from '../lib/channels';
 import { Markdown, type RefResolver } from '../lib/md';
 import { keyPrefix, normalizeTaskKey, unitKeyPrefixes } from '../lib/task-keys';
 import { safeJsonParse } from '../lib/util';
@@ -19,6 +19,7 @@ import { FollowToggle } from './FollowToggle';
 import { MeetingsBoard } from './MeetingsBoard';
 import { MeetingRoom, ProposalActions } from './MeetingRoom';
 import { parseRoom } from '../lib/meetings';
+import { StartDiscussionForm, SubBreadcrumb, SubChannelCard, SubStatusBar } from './SubChannels';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 };
@@ -63,11 +64,17 @@ export function ChannelView() {
   // Meetings held in this channel (docs/group-chat.md §8): the thread root
   // each one is gets a header; the minutes message a structured card.
   const [meetings, setMeetings] = useState<OrgMeeting[]>([]);
+  // "Start a discussion" (docs/group-chat.md §9): from the header, a message or a thread.
+  const [discuss, setDiscuss] = useState<{ origin: string | null; title: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const focusRef = useRef<string | null>(null);
 
-  const channel = useMemo(() => app.channels.find((c) => c.slug === slug) ?? null, [app.channels, slug]);
+  // A closed sub-channel is not in the rail's list: its own detail stands in (docs/group-chat.md §9).
+  const listed = useMemo(() => app.channels.find((c) => c.slug === slug) ?? null, [app.channels, slug]);
+  const channel = useMemo(() => (detail && detail.slug === slug ? { ...(listed ?? {}), ...detail } : listed), [listed, detail, slug]);
+  const isSub = channel?.channelKind === 'sub';
+  const closed = isSub && channel?.status === 'closed';
   const agentOf = useCallback((id: string) => app.agents.find((a) => a.id === id), [app.agents]);
   const members = useMemo(() => detail?.members ?? [], [detail]);
   const nameOf = useCallback((kind: string, id: string): string => {
@@ -128,12 +135,16 @@ export function ChannelView() {
   useEffect(() => {
     if (!orgChannel || !wsId || !channelId) { setMeetings([]); return; }
     let stop = false;
-    const load = () => api.orgMeetings(wsId).then((list) => { if (!stop) setMeetings(list.filter((m) => m.channelId === channelId)); }).catch(() => {});
+    // Held here, or called here and run in a sub-channel of this channel (docs/group-chat.md §9).
+    const load = () => api.orgMeetings(wsId).then((list) => { if (!stop) setMeetings(list.filter((m) => m.channelId === channelId || m.parentChannelId === channelId)); }).catch(() => {});
     void load();
     const t = setInterval(() => { void load(); }, 20_000);
     return () => { stop = true; clearInterval(t); };
   }, [orgChannel, wsId, channelId, page.messages.length]);
-  const meetingByRoot = useMemo(() => new Map(meetings.filter((m) => m.threadRootId).map((m) => [m.threadRootId!, m])), [meetings]);
+  const meetingByRoot = useMemo(() => new Map(meetings.filter((m) => m.threadRootId && m.channelId === channelId).map((m) => [m.threadRootId!, m])), [meetings, channelId]);
+  // The meeting this sub-channel holds: its whole stream is the meeting.
+  const subMeeting = useMemo(() => (isSub ? meetings.find((m) => m.channelId === channelId) ?? null : null), [isSub, meetings, channelId]);
+  const meetingOfSub = useCallback((subId: string) => meetings.find((m) => m.channelId === subId) ?? null, [meetings]);
   // A room changed (docs/meetings.md "During"): the server says which; take the fresh row.
   const upsertMeeting = useCallback((m: OrgMeeting) => setMeetings((l) => (l.some((x) => x.id === m.id) ? l.map((x) => (x.id === m.id ? m : x)) : [...l, m])), []);
   const cancelMeeting = async (m: OrgMeeting) => {
@@ -273,6 +284,14 @@ export function ChannelView() {
   const mentionables: MentionCandidate[] = members.map((m) => ({ kind: m.memberKind, id: m.memberId, name: m.name }));
 
   const renderMessage = (m: ChannelMessage, opts: { replies?: number; lastReplyAt?: string | null; inThread?: boolean } = {}) => {
+    const cardOf = m.authorKind === 'system' ? linkCardSubId(m.attachments) : null;
+    if (cardOf) {
+      return (
+        <div key={m.id} id={`msg-${m.id}`} style={{ display: 'flex', gap: 11, padding: '2px 0' }}>
+          <SubChannelCard subId={cardOf} text={m.text} meeting={meetingOfSub(cardOf)} onOpen={(s) => app.openChannel(s)} />
+        </div>
+      );
+    }
     if (m.authorKind === 'system') {
       return (
         <div key={m.id} id={`msg-${m.id}`} style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0', fontSize: 11.5, color: 'var(--text-dim)' }}>
@@ -292,18 +311,20 @@ export function ChannelView() {
       <div key={m.id} id={`msg-${m.id}`} className="chan-msg" style={{ display: 'flex', gap: 11, padding: '7px 10px', margin: '2px -10px', borderRadius: 10, animation: 'msgIn .18s ease', background: focusRef.current === m.id ? 'var(--accent-dim)' : undefined, borderLeft: meeting ? `3px solid ${meeting.status === 'running' ? 'var(--green)' : 'var(--border)'}` : undefined }}>
         <Chip kind={m.authorKind} agent={agent} name={name} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          {meeting && <MeetingHeader meeting={meeting} inThread={Boolean(opts.inThread)} onOpen={() => setThread(m.id)} onCancel={() => void cancelMeeting(meeting)} />}
+          {meeting && <MeetingHeader meeting={meeting} inThread={Boolean(opts.inThread) || isSub} onOpen={() => setThread(m.id)} onCancel={() => void cancelMeeting(meeting)} />}
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
             <span style={{ fontWeight: 600, fontSize: 13, color: mine ? 'var(--accent-hi)' : 'var(--text)' }}>{name}{mine ? ' (you)' : ''}</span>
             {m.authorKind === 'agent' && <span style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 5px' }}>agent{m.unprompted === 1 ? ' · unprompted' : ''}</span>}
             <span style={{ fontSize: 10.5, color: 'var(--text-faint)', ...mono }}>{timeOf(m.createdAt)}</span>
             <span className="chan-actions" style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>
-              {!opts.inThread && <button onClick={() => setThread(m.id)} title="Reply in thread" style={ghostBtn}><I d={P.chat} size={13} />Reply</button>}
+              {!opts.inThread && !closed && <button onClick={() => setThread(m.id)} title="Reply in thread" style={ghostBtn}><I d={P.chat} size={13} />Reply</button>}
+              {!isSub && !opts.inThread && <button onClick={() => setDiscuss({ origin: m.id, title: discussTitle(m.text) })} title="Start a discussion from this message: a sub-channel with its own space" style={ghostBtn}>🗣 Discuss</button>}
               <button onClick={() => void makeTask(m)} title="Make a task from this message" style={ghostBtn}><I d={P.board} size={13} />Make task</button>
             </span>
           </div>
           {minutesOf ? <MinutesCard wsId={wsId} meetingId={minutesOf} fallback={m.text} refs={refs} onDecision={openDecision} onTask={(id) => app.openOrgTask(id)} /> : <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 2 }}><Markdown text={m.text} refs={refs} compact mentions={(s) => messageMentionSpans(s, m.mentions, mentionables).map((x) => ({ start: x.start, end: x.end, kind: x.member.kind }))} /></div>}
           {opts.inThread && thread && meetingByRoot.get(thread) && m.authorKind === 'agent' && <ProposalSlot wsId={wsId} meeting={meetingByRoot.get(thread)!} messageId={m.id} onChanged={upsertMeeting} text={m.text} />}
+          {!opts.inThread && subMeeting && m.authorKind === 'agent' && <ProposalSlot wsId={wsId} meeting={subMeeting} messageId={m.id} onChanged={upsertMeeting} text={m.text} />}
           {atts.filter((a) => a.kind !== 'minutes').length > 0 && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
               {atts.filter((a) => a.kind !== 'minutes').map((a, i) => (
@@ -392,10 +413,12 @@ export function ChannelView() {
         {app.stacked && (
           <button onClick={() => app.setMobileChatOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: 4, display: 'flex', flex: 'none' }}><I d={P.chevL} size={20} /></button>
         )}
-        <div style={{ width: 30, height: 30, borderRadius: 9, background: 'var(--panel-2)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontWeight: 700, color: 'var(--accent-hi)' }}>#</div>
+        <div style={{ width: 30, height: 30, borderRadius: 9, background: 'var(--panel-2)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontWeight: 700, color: 'var(--accent-hi)' }}>{isSub ? subIcon(channel.purpose) : '#'}</div>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: '-.2px' }}>#{channel.slug}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            {isSub
+              ? <SubBreadcrumb detail={detail} channel={channel} onParent={(s) => app.openChannel(s)} />
+              : <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: '-.2px' }}>#{channel.slug}</div>}
             {channel.kind === 'private' && <span style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 5px' }}>private</span>}
             {detail?.unit && (
               <button onClick={openUnitBoard} title="Open this unit's board" style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 6px', cursor: 'pointer' }}>
@@ -405,28 +428,38 @@ export function ChannelView() {
             {channel.archivedAt && <span style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--amber)', border: '1px solid var(--amber)', borderRadius: 4, padding: '0 5px' }}>archived</span>}
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {channel.topic || 'No topic yet'} · {members.filter((m) => m.memberKind === 'agent').length} agents · {members.filter((m) => m.memberKind === 'human').length} people
+            {isSub ? `#${channel.slug}${channel.topic ? ` · ${channel.topic}` : ''}` : channel.topic || 'No topic yet'} · {members.filter((m) => m.memberKind === 'agent').length} agents · {members.filter((m) => m.memberKind === 'human').length} people
           </div>
         </div>
+        {isSub && <FollowToggle wsId={wsId} targetKind="channel" targetId={channel.id} />}
+        {!isSub && !channel.archivedAt && (
+          <button onClick={() => setDiscuss({ origin: null, title: '' })} title="Start a discussion: a temporary sub-channel; this channel keeps one card" style={{ ...smallBtn, flex: 'none', padding: app.stacked ? '5px 7px' : '5px 10px' }}>🗣{app.stacked ? '' : ' Discussion'}</button>
+        )}
         <div style={{ display: 'flex', gap: 4, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: 3 }}>
           {(['messages', 'meetings', 'files', 'settings'] as Tab[]).map((t) => (
             <button key={t} onClick={() => setTab(t)} style={{ background: tab === t ? 'var(--accent)' : 'none', color: tab === t ? '#fff' : 'var(--text-dim)', border: 'none', borderRadius: 7, padding: app.stacked ? '5px 7px' : '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer', textTransform: 'capitalize' }}>{t}</button>
           ))}
         </div>
       </header>
+      {isSub && <SubStatusBar wsId={wsId} channel={channel} onChanged={() => void load()} />}
+      {discuss && slug && (
+        <StartDiscussionForm wsId={wsId} slug={slug} members={members} originMessageId={discuss.origin} defaultTitle={discuss.title}
+          onCancel={() => setDiscuss(null)} onDone={(c) => { setDiscuss(null); app.openChannel(c.slug); }} />
+      )}
 
       {tab === 'messages' && (
         <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
             <div ref={scrollRef} onScroll={(e) => { const el = e.currentTarget; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} style={{ flex: 1, overflowY: 'auto', padding: '16px 0 8px' }}>
               <div style={{ maxWidth: 820, margin: '0 auto', padding: '0 24px' }}>
+                {subMeeting && <div style={{ marginBottom: 10, border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}><MeetingRoom wsId={wsId} meeting={subMeeting} me={me} name={(kind, id) => nameOf(kind, id)} onChanged={upsertMeeting} /></div>}
                 {page.hasMore && (
                   <button onClick={() => void api.channelMessages(wsId, slug, { before: page.messages[0]?.id }).then((p) => setPage((cur) => ({ messages: [...p.messages, ...cur.messages], replies: { ...p.replies, ...cur.replies }, hasMore: p.hasMore })))} style={{ ...smallBtn, display: 'block', margin: '0 auto 14px' }}>Load earlier messages</button>
                 )}
                 {groups.length === 0 && topLive.length === 0 && (
                   <div style={{ textAlign: 'center', color: 'var(--text-faint)', fontSize: 13, padding: '60px 0' }}>
-                    <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>Welcome to #{channel.slug}</div>
-                    <div style={{ marginTop: 6, lineHeight: 1.55, maxWidth: 420, margin: '6px auto 0' }}>People and agents share this channel. Mention an agent with @name to bring it in; agents allowed to speak unprompted join when a message is clearly theirs.</div>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>{isSub ? channel.name : `Welcome to #${channel.slug}`}</div>
+                    <div style={{ marginTop: 6, lineHeight: 1.55, maxWidth: 420, margin: '6px auto 0' }}>{isSub ? 'A discussion with its own space: the parent channel only shows its card. Close it with an outcome when it is settled.' : 'People and agents share this channel. Mention an agent with @name to bring it in; agents allowed to speak unprompted join when a message is clearly theirs.'}</div>
                   </div>
                 )}
                 {groups.map((g) => renderMessage(g.root, { replies: g.replyCount, lastReplyAt: g.lastReplyAt }))}
@@ -435,13 +468,18 @@ export function ChannelView() {
                 {approvals.filter((a) => !a.threadRootId || !thread).map(renderApproval)}
               </div>
             </div>
-            <Composer wsId={wsId} slug={slug} folder={channel.folder} mentionables={mentionables} orgMode={orgChannel} placeholder={`Message #${channel.slug}  ·  @ to mention an agent or a person${orgChannel ? '  ·  /meeting to start one' : ''}`} />
+            {closed
+              ? <div role="status" style={{ flex: 'none', padding: '12px 24px 18px', textAlign: 'center', fontSize: 12.5, color: 'var(--text-faint)' }}>{channel.purpose === 'meeting' ? 'The meeting has ended; its stream is kept read-only.' : 'Closed — read-only. Reopen it above to continue.'}</div>
+              : <Composer wsId={wsId} slug={slug} folder={channel.folder} mentionables={mentionables} orgMode={orgChannel && !isSub}
+                  placeholder={subMeeting?.status === 'running' ? (parseRoom(subMeeting.room).present.includes(me) ? 'Speak — heard at the next turn; "stop" ends the meeting' : 'Write — read at the next round (Join to be heard at the next turn)') : isSub ? `Message ${channel.name}  ·  @ to mention` : `Message #${channel.slug}  ·  @ to mention an agent or a person${orgChannel ? '  ·  /meeting to start one' : ''}`}
+                  note={subMeeting?.status === 'running' ? 'A meeting is running here: messages are heard at the next round (the next turn once you join); "stop" ends it.' : undefined} />}
           </div>
           {thread && threadRoot && (
             <aside style={{ width: app.stacked ? '100%' : 380, flex: 'none', borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--panel)', position: app.stacked ? 'absolute' : 'relative', inset: app.stacked ? 0 : undefined, zIndex: app.stacked ? 20 : undefined }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
                 <span style={{ fontWeight: 600, fontSize: 13 }}>Thread</span>
                 <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>#{channel.slug}</span>
+                {!isSub && <button onClick={() => setDiscuss({ origin: thread, title: discussTitle(threadRoot.text) })} title="Move this thread into a discussion of its own" style={ghostBtn}>🗣 Discuss</button>}
                 <div style={{ marginLeft: 'auto' }}><FollowToggle wsId={wsId} targetKind="thread" targetId={thread} /></div>
                 <button onClick={() => setThread(null)} style={ghostBtn}><I d={P.x} size={14} /></button>
               </div>
@@ -454,9 +492,9 @@ export function ChannelView() {
                 {Object.values(typing).filter((t) => liveInThread(t, thread) && !live.some((l) => l.agentId === t.agentId && liveInThread(l, thread))).map(renderTyping)}
                 {approvals.filter((a) => a.threadRootId === thread).map(renderApproval)}
               </div>
-              <Composer wsId={wsId} slug={slug} folder={channel.folder} mentionables={mentionables} threadRootId={thread} compact orgMode={orgChannel}
+              {!closed && <Composer wsId={wsId} slug={slug} folder={channel.folder} mentionables={mentionables} threadRootId={thread} compact orgMode={orgChannel}
                 placeholder={meetingByRoot.get(thread)?.status === 'running' ? (parseRoom(meetingByRoot.get(thread)!.room).present.includes(me) ? 'Speak — heard at the next turn; "stop" ends the meeting' : 'Reply — read at the next round (Join to be heard at the next turn)') : 'Reply in thread'}
-                note={meetingByRoot.get(thread)?.status === 'running' ? (parseRoom(meetingByRoot.get(thread)!.room).present.includes(me) ? 'You are in the room: the next speaker hears you. Mentions wake nobody; "stop" ends it.' : 'A meeting is running here: your message is read at the next round — Join to be heard at the next turn. Mentions wake nobody; "stop" ends it.') : undefined} />
+                note={meetingByRoot.get(thread)?.status === 'running' ? (parseRoom(meetingByRoot.get(thread)!.room).present.includes(me) ? 'You are in the room: the next speaker hears you. Mentions wake nobody; "stop" ends it.' : 'A meeting is running here: your message is read at the next round — Join to be heard at the next turn. Mentions wake nobody; "stop" ends it.') : undefined} />}
             </aside>
           )}
         </div>
@@ -467,6 +505,12 @@ export function ChannelView() {
       {tab === 'settings' && detail && <SettingsTab detail={detail} onChange={(d) => { setDetail(d); void app.refreshChannels(); }} />}
     </div>
   );
+}
+
+/** A discussion's default title from the message it starts from: its first line, plain. */
+function discussTitle(text: string): string {
+  const line = (text.split('\n').map((x) => x.trim()).find(Boolean) ?? '').replace(/[*_`#>~]/g, '').replace(/\s+/g, ' ').trim();
+  return line.length > 60 ? `${line.slice(0, 57).trimEnd()}…` : line;
 }
 
 // ---- composer ----

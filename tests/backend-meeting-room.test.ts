@@ -102,7 +102,12 @@ async function setup(plan: Plan = () => say('ok')) {
 }
 type S = Awaited<ReturnType<typeof setup>>;
 
-const thread = async (s: S, rootId: string) => (await s.groupchat.messages(s.company.id, { thread: rootId })).messages;
+/** A meeting's stream: its sub-channel (docs/group-chat.md §9) from the agenda
+ *  on, without the closing line the sub-channel gets when the meeting ends. */
+const thread = async (s: S, m: { channelId: string | null; threadRootId: string | null }) => {
+  const all = (await s.groupchat.stream(m.channelId!)).filter((x) => !(x.authorKind === 'system' && /^Closed/.test(x.text)));
+  return all.slice(Math.max(0, all.findIndex((x) => x.id === m.threadRootId)));
+};
 const latest = async (s: S) => (await s.meetings.list(s.orgId))[0];
 const owner = () => ({ id: currentAccountId() });
 
@@ -155,7 +160,7 @@ test('meeting_pass posts nothing and shows in the room; rounds after the first h
   await s.meetingRuntime.idle();
   const m = await latest(s);
   assert.equal(m.status, 'done');
-  const msgs = await thread(s, m.threadRootId!);
+  const msgs = await thread(s, m);
   assert.ok(!msgs.some((x) => x.authorKind === 'agent' && x.authorId === s.writer.id), 'a pass is not a message');
   assert.ok(msgs.some((x) => x.authorKind === 'system' && /Everyone passed in round 2/.test(x.text)));
   // round 2: Writer (named by the facilitator) and Chief; Editor had no open thread
@@ -175,8 +180,8 @@ test('meeting_pass posts nothing and shows in the room; rounds after the first h
   const cal = await s.calendar.list(s.ws.id);
   assert.equal(cal.meetings.find((x) => x.meetingId === m.id)!.tokensIn, 100 * calls);
   // live: the speaker's reply streamed into the thread; the room announced its changes
-  assert.ok(seen.some((ev) => ev.type === 'channel_stream' && ev.replyRootId === m.threadRootId && ev.agentId === s.editor.id && /style guide/.test(ev.delta)));
-  assert.ok(seen.some((ev) => ev.type === 'channel_typing' && ev.replyRootId === m.threadRootId && ev.on));
+  assert.ok(seen.some((ev) => ev.type === 'channel_stream' && ev.channelId === m.channelId && ev.agentId === s.editor.id && /style guide/.test(ev.delta)));
+  assert.ok(seen.some((ev) => ev.type === 'channel_typing' && ev.channelId === m.channelId && ev.on));
   assert.ok(seen.filter((ev) => ev.type === 'meeting_update' && ev.meetingId === m.id).length >= 4);
   const round2 = (await s.audit.list(s.orgId, { action: 'meeting_round' })).map((r) => JSON.parse(r.payload)).find((p) => p.round === 2);
   assert.equal(round2.speakers, 2); assert.equal(round2.passes, 2);
@@ -192,8 +197,9 @@ test('a person who joined is heard by the next speaker in the same round; a pers
     heard.push(`${me}:${round}:${u.includes('Joined voice') ? 'J' : ''}${u.includes('Lurker voice') ? 'L' : ''}`);
     if (me === 'Writer' && round === 1) {
       const m = await latest(s);
-      await s.groupchat.post(s.company.id, { text: 'Joined voice: ship Thursday.', threadRootId: m.threadRootId, authorKind: 'human', authorId: currentAccountId() });
-      await s.groupchat.post(s.company.id, { text: 'Lurker voice: or Friday.', threadRootId: m.threadRootId, authorKind: 'human', authorId: 'lurker-1' });
+      // the meeting's sub-channel (docs/group-chat.md §9): people write at its top level
+      await s.groupchat.post(m.channelId!, { text: 'Joined voice: ship Thursday.', authorKind: 'human', authorId: currentAccountId() });
+      await s.groupchat.post(m.channelId!, { text: 'Lurker voice: or Friday.', authorKind: 'human', authorId: 'lurker-1' });
     }
     return say(`${me} r${round}`);
   });
@@ -249,7 +255,7 @@ test('the facilitator parks a point (minutes and a backlog task) and moves the a
   assert.equal(minutes.parked!.length, 1);
   const parked = await s.tasks.get(s.orgId, minutes.parked![0].taskId!);
   assert.equal(parked.title, 'Parked: Rebrand the newsletter'); assert.equal(parked.status, 'backlog'); assert.equal(parked.assigneeAgentId, null);
-  const msgs = await thread(s, m.threadRootId!);
+  const msgs = await thread(s, m);
   assert.ok(msgs.some((x) => /Settled: "Pricing"\. Now item 2 of 3: Hiring/.test(x.text)));
   assert.ok(msgs.some((x) => /extended the meeting by one round/.test(x.text)));
   assert.ok(msgs.some((x) => /is ending the meeting/.test(x.text)));
@@ -277,7 +283,7 @@ test('Skip item and the per-item time box move the agenda on; when the agenda is
   await s.meetingRuntime.start(s.orgId, { kind: 'adhoc', unitId: s.root.id, agenda: '- One\n- Two\n- Three', createdBy: 'user' });
   await s.meetingRuntime.idle();
   const m = await latest(s);
-  const msgs = await thread(s, m.threadRootId!);
+  const msgs = await thread(s, m);
   assert.ok(msgs.some((x) => /Skipped: "One"/.test(x.text)), 'Skip item');
   assert.ok(msgs.some((x) => /Time is up \(2 min\)/.test(x.text)), 'the time box');
   assert.ok(msgs.some((x) => /The agenda is done\./.test(x.text)));
@@ -300,7 +306,7 @@ test('people approve or reject proposed decisions and actions in the room and an
       ruled = true;
       const m = await latest(s);
       const live = parseMinutes(m.minutes);
-      const msgs = await thread(s, m.threadRootId!);
+      const msgs = await thread(s, m);
       assert.equal(msgs.find((x) => /^Decision proposed: Biweekly/.test(x.text))!.id, live.decisions[0].messageId, 'proposals carry their message for the inline buttons');
       await assert.rejects(s.meetingRuntime.verdict(s.orgId, m.id, { id: 'stranger' }, { kind: 'decision', index: 0, verdict: 'reject' }), /rule on its proposals/);
       await s.meetingRuntime.verdict(s.orgId, m.id, owner(), { kind: 'decision', index: 0, verdict: 'reject', note: 'weekly stays' });
@@ -323,7 +329,7 @@ test('people approve or reject proposed decisions and actions in the room and an
   assert.equal(task.dueAt, new Date('2026-12-01').toISOString(), 'the due date reaches the task');
   assert.equal(minutes.questions[0].answer, 'Not this year.');
   assert.equal((await s.meetings.openQuestions(s.orgId)).length, 0, 'answered: not for the brief');
-  const msgs = await thread(s, m.threadRootId!);
+  const msgs = await thread(s, m);
   assert.ok(msgs.some((x) => x.authorKind === 'human' && /^Answer to "Do we take sponsors\?": Not this year\./.test(x.text)));
   assert.ok(msgs.some((x) => x.authorKind === 'system' && /rejected the decision "Biweekly" — weekly stays/.test(x.text)));
   assert.match(msgs.at(-1)!.text, /Biweekly: Publish every other week · rejected by/);
@@ -381,7 +387,7 @@ test('a ritual is prepared ahead (pre-read, open for agenda proposals by attende
   await s.meetingRuntime.idle();
   const held = await s.meetings.get(s.orgId, prepared.id);
   assert.equal(held.status, 'done');
-  const root = (await thread(s, held.threadRootId!))[0].text;
+  const root = (await thread(s, held))[0].text;
   assert.match(root, /\*\*Proposed by attendees:\*\*\n- Sponsorship policy — two offers came in \(Writer\)\n- Hiring an illustrator/);
   assert.match(root, /\*\*Pre-read\*\*/);
   assert.deepEqual(parseRoom(held.room).items.slice(-2), ['Sponsorship policy', 'Hiring an illustrator']);
@@ -436,7 +442,7 @@ test('each ritual opens with the previous meeting\'s action items — done, late
   assert.deepEqual(room.openItems.map((i) => `${i.title}:${i.state}`), ['Draft issue 1:late', 'Collect sources:done', 'Style guide:blocked']);
   assert.equal(room.openItems[0].due, new Date('2026-01-01').toISOString());
   assert.equal(room.items[0], OPEN_ITEMS_TITLE);
-  const root = (await thread(s, second.threadRootId!))[0].text;
+  const root = (await thread(s, second))[0].text;
   const agendaStart = root.indexOf('**Open items from the last meeting**');
   assert.ok(agendaStart > 0 && agendaStart < root.indexOf('Weekly review for'), 'open items come before the agenda');
   assert.match(root, /- Style guide — Editor: blocked[\s\S]*- Draft issue 1 — Writer: late \(due 2026-01-01\)[\s\S]*- Collect sources — Writer: done/);

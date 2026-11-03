@@ -245,3 +245,61 @@ export function meetingCommandHint(text: string): { kind: string; unitSlug: stri
 export function liveInThread(l: { threadRootId: string | null; replyRootId?: string }, thread: string | null): boolean {
   return Boolean(thread) && (l.replyRootId ?? l.threadRootId) === thread;
 }
+
+// ---- sub-channels (docs/group-chat.md §9) ----
+
+/** A top-level channel with its open sub-channels (discussions, meetings). */
+export interface RailChannel<C> { channel: C; subs: C[] }
+
+type SubLike = { id: string; parentChannelId?: string | null; channelKind?: string; createdAt: string };
+
+/** The rail's tree: top-level channels in their order, each with its open
+ *  sub-channels nested (oldest first); a sub-channel whose parent is not in
+ *  the list (hidden, archived) stands on its own. */
+export function railChannels<C extends SubLike>(list: C[]): Array<RailChannel<C>> {
+  const ids = new Set(list.map((c) => c.id));
+  const isSub = (c: C) => c.channelKind === 'sub' && Boolean(c.parentChannelId) && ids.has(c.parentChannelId!);
+  return list.filter((c) => !isSub(c)).map((channel) => ({
+    channel,
+    subs: list.filter((c) => isSub(c) && c.parentChannelId === channel.id).sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0)),
+  }));
+}
+
+/** The sub-channel a parent's link card stands for (its `subchannel/<id>` attachment), or null. */
+export function linkCardSubId(attachmentsJson: string | null | undefined): string | null {
+  try {
+    const v = JSON.parse(attachmentsJson || '[]') as Array<{ kind?: string; path?: string }>;
+    const a = Array.isArray(v) ? v.find((x) => x && x.kind === 'subchannel' && typeof x.path === 'string') : undefined;
+    return a ? a.path!.replace(/^subchannel\//, '') || null : null;
+  } catch { return null; }
+}
+
+/** What a link card's text says (the server writes it, docs/group-chat.md
+ *  §9), for a closed sub-channel the list no longer carries: the title, the
+ *  member count, the status word, the outcome and the slug. */
+export function parseLinkCardText(text: string): { title: string; status: 'live' | 'closed' | 'ended'; outcome: string; slug: string | null; members: number | null } {
+  const slug = /#([a-z0-9][a-z0-9-]*)\s*$/.exec(text)?.[1] ?? null;
+  const body = text.replace(/^[^:]*:\s*/, '').replace(/\s*·\s*#[a-z0-9-]+\s*$/, '');
+  // The title may hold " · " itself ("Planning · Company"): the member count anchors the split.
+  const m = /^(.*?) · (\d+) members? · (.*)$/.exec(body);
+  const title = m ? m[1] : body;
+  const members = m ? Number(m[2]) : NaN;
+  const rest = m ? m[3] : '';
+  const status = /^ended/.test(rest) ? 'ended' : /^closed/.test(rest) ? 'closed' : 'live';
+  const outcome = status === 'live' ? '' : rest.replace(/^(ended|closed)\s*(—\s*)?/, '');
+  return { title, status, outcome, slug, members: Number.isFinite(members) ? members : null };
+}
+
+export function subIcon(purpose: string | null | undefined): string {
+  return purpose === 'meeting' ? '📅' : purpose === 'project' ? '📌' : '🗣';
+}
+
+/** "3m ago", "2h ago", "yesterday" — a card's last activity. */
+export function agoText(iso: string | null | undefined, now: number = Date.now()): string {
+  if (!iso) return '';
+  const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86_400) return `${Math.floor(s / 3600)}h ago`;
+  return s < 172_800 ? 'yesterday' : `${Math.floor(s / 86_400)}d ago`;
+}

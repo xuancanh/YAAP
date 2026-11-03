@@ -29,7 +29,7 @@
  * `channel_list`) are offered to every durable agent through
  * `TurnLoopService.addToolProvider`; posting outside membership is refused.
  */
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
@@ -50,6 +50,10 @@ import { GroupChatService, type Channel, type ChannelMessage, type NamedMember }
 import { channelSessionName, handleOf, unresolvedMentions } from './mentions';
 import { WorkspaceEventBus } from './workspace-events';
 import { taskRef } from '../common/task-keys';
+import { AccountsService } from '../accounts/accounts.service';
+
+/** How often idle discussions are swept closed (docs/group-chat.md §9). */
+export const SUB_SWEEP_MS = 10 * 60_000;
 
 export const CHAIN_ROUND_CAP = 3;
 export const UNPROMPTED_PER_MESSAGE = 2;
@@ -57,6 +61,8 @@ export const UNPROMPTED_RATE_MS = 2 * 60_000;
 export const DEFAULT_DAILY_TOKEN_BUDGET = 200_000;
 export const PAUSED_LINE = 'paused: three agent rounds — mention a person to continue';
 export const BUDGET_LINE = 'paused: the daily token budget for this channel is spent — agents resume tomorrow or when the budget is raised';
+/** The ping-pong suggestion (docs/group-chat.md §9, `discussion.autoMoveMode` 1). */
+export const SUGGEST_LINE_PREFIX = 'Agents have gone back and forth here';
 const HISTORY_FOR_CONTEXT = 30;
 const HISTORY_FOR_RELEVANCE = 12;
 const RELEVANCE_MAX_TOKENS = 200;
@@ -91,7 +97,7 @@ export const BUSY_WAIT_MS = 5 * 60_000;
 /** Channels named in an agent's prompt outside a channel session; channel_list lists all. */
 export const CONTEXT_CHANNELS = 8;
 
-const TOOL_NAMES = new Set(['channel_post', 'channel_read', 'channel_make_task', 'channel_list']);
+const TOOL_NAMES = new Set(['channel_post', 'channel_read', 'channel_make_task', 'channel_list', 'channel_start_discussion', 'channel_close_discussion']);
 const READONLY = new Set(['channel_post', 'channel_read', 'channel_list']);
 
 const CHANNEL_TOOLS: AiToolSpec[] = [
@@ -127,6 +133,33 @@ const CHANNEL_TOOLS: AiToolSpec[] = [
     },
   },
   {
+    name: 'channel_start_discussion',
+    description: 'Open a discussion: a temporary sub-channel of a channel you belong to, so a longer back-and-forth (a design question, a review, a plan with several agents) does not flood the channel. The channel gets one link card; you and the members you name (default: everyone in the channel) continue in the discussion, under the same mention and loop rules. Use it sparingly — a few replies belong in a thread; agents may start only a few a day.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'The parent channel slug; defaults to the channel you are replying in.' },
+        title: { type: 'string', description: 'What the discussion is about (short).' },
+        reason: { type: 'string', description: 'Why it needs its own space (posted as its opening line).' },
+        members: { type: 'array', items: { type: 'string' }, description: 'Optional: names or ids of channel members to include (you are always in it); default every member of the channel.' },
+        thread: { type: 'string', description: 'Optional message id of the thread it continues (that thread gets a pointer to the discussion).' },
+      },
+      required: ['title', 'reason'],
+    },
+  },
+  {
+    name: 'channel_close_discussion',
+    description: 'Close a discussion you started, with its outcome: it becomes read-only, the parent channel\'s link card shows the outcome, and its followers are told once.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'The discussion\'s slug; defaults to the discussion you are replying in.' },
+        outcome: { type: 'string', description: 'One or two lines: what was settled, who does what next.' },
+      },
+      required: ['outcome'],
+    },
+  },
+  {
     name: 'channel_make_task',
     description: 'Turn a channel message into a task on the board (the company board when the workspace runs an organisation, else the assignee\'s kanban). Links both ways; status changes post back into the thread.',
     inputSchema: {
@@ -142,7 +175,7 @@ const CHANNEL_TOOLS: AiToolSpec[] = [
 ];
 
 @Injectable()
-export class ChannelRuntimeService implements ToolProviderHook {
+export class ChannelRuntimeService implements ToolProviderHook, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ChannelRuntimeService.name);
   /** Test seam: replaces the relevance model call. */
   relevanceFn?: RelevanceFn;
@@ -173,9 +206,29 @@ export class ChannelRuntimeService implements ToolProviderHook {
     @Optional() private readonly context?: TurnContextService,
     @Optional() private readonly settings?: SettingsService,
     @Optional() private readonly shared?: SharedService,
+    /** Optional: the idle-discussion sweep runs once per active account. */
+    @Optional() private readonly accounts?: AccountsService,
   ) {
     this.groupchat.onPosted((m, c) => { this.track(this.handlePost(m, c)); });
     this.turns.addToolProvider(this);
+  }
+
+  private sweepTimer?: ReturnType<typeof setInterval>;
+
+  onModuleInit(): void {
+    this.sweepTimer = setInterval(() => { void this.sweepSubs(new Date()); }, SUB_SWEEP_MS);
+  }
+
+  onModuleDestroy(): void { clearInterval(this.sweepTimer); }
+
+  /** Close discussions idle for `discussion.autoCloseHours`, per account. Never throws. */
+  async sweepSubs(now: Date): Promise<void> {
+    const run = async () => { await this.groupchat.subs.sweep(now).catch((err) => this.logger.warn(`discussion sweep failed: ${err instanceof Error ? err.message : err}`)); };
+    try {
+      if (this.accounts) await this.accounts.forEachAccount(run); else await run();
+    } catch (err) {
+      this.logger.warn(`discussion sweep failed: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   /** Resolves once every wake started so far has settled (tests). */
@@ -206,6 +259,12 @@ export class ChannelRuntimeService implements ToolProviderHook {
     const humanActor = m.authorKind === 'human' ? m.authorId : (lastHuman(thread) ?? currentAccountId());
     const actorName = members.find((x) => x.memberKind === 'human' && x.memberId === humanActor)?.name
       ?? (this.shared ? await this.shared.nameOf(c.workspaceId, humanActor).catch(() => 'the owner') : 'the owner');
+
+    // Sub-channels (§9): agents going back and forth in a channel's thread —
+    // suggest a discussion, or move the conversation into one.
+    if (m.authorKind === 'agent' && mentioned.length > 0 && !this.groupchat.subs.isSub(c)) {
+      if (await this.pingPong(c, m, thread, mentioned, members).catch(() => false)) return;
+    }
 
     // 3. chains: rounds since the last human message in this thread.
     if (m.authorKind === 'agent' && mentioned.length > 0) {
@@ -255,6 +314,43 @@ export class ChannelRuntimeService implements ToolProviderHook {
     await Promise.all(picked.map((a) => this.wake(a, c, m, { unprompted: true, actor: humanActor, actorName })));
   }
 
+  /**
+   * Agent ↔ agent replies in one thread of a channel reached
+   * `discussion.autoMoveReplies`: with `discussion.autoMoveMode` 1 one line
+   * suggests a discussion (the wake goes on, the chain cap still holds); with
+   * 2 the runtime opens a discussion sub-channel with the thread's
+   * participants (and the channel's people), and the agent's message is
+   * carried into it, where the mentions wake as usual. True when moved.
+   */
+  private async pingPong(c: Channel, m: ChannelMessage, thread: ChannelMessage[], mentioned: NamedMember[], members: NamedMember[]): Promise<boolean> {
+    const subs = this.groupchat.subs;
+    const mode = await subs.tunable(c.workspaceId, 'discussion.autoMoveMode');
+    if (mode <= 0) return false;
+    const at = await subs.tunable(c.workspaceId, 'discussion.autoMoveReplies');
+    const rounds = agentRoundsSinceHuman(thread);
+    if (rounds < at) return false;
+    const root = thread[0] ?? m;
+    if (mode === 1) {
+      if (!thread.some((x) => x.authorKind === 'system' && x.text.startsWith(SUGGEST_LINE_PREFIX))) {
+        await this.groupchat.postSystem(c.id, `${SUGGEST_LINE_PREFIX} (${rounds} agent replies in a row). Start a discussion from this thread to give it its own space and keep #${c.slug} readable.`, root.id).catch(() => undefined);
+      }
+      return false;
+    }
+    let sub = await subs.movedFrom(root.id);
+    if (!sub) {
+      const people = members.filter((x) => x.memberKind === 'human').map((x) => ({ kind: 'human' as const, id: x.memberId }));
+      const agentIds = new Set<string>([...thread.filter((x) => x.authorKind === 'agent').map((x) => x.authorId), m.authorId, ...mentioned.map((x) => x.memberId)]);
+      sub = await subs.start(c.id, {
+        title: discussionTitle(root.text), purpose: 'discussion', createdBy: 'system', originMessageId: root.id,
+        members: [...[...agentIds].map((id) => ({ kind: 'agent' as const, id })), ...people],
+        reason: `${rounds} agent replies in a row in a thread of #${c.slug} — continued here (discussion.autoMoveMode).`,
+      }).catch(() => null);
+      if (!sub) return false; // the open cap: the thread goes on (and pauses at the chain cap)
+    }
+    await this.groupchat.post(sub.id, { text: m.text, authorKind: 'agent', authorId: m.authorId, runId: m.runId, attachments: parseJson(m.attachments, []) });
+    return true;
+  }
+
   /** One bounded, tool-free call on the cheapest sibling of the agent's
    *  provider: `{ reply, reason }`. Parse failure → no reply. */
   private async relevant(input: RelevanceInput, agentId: string, workspaceId: string): Promise<{ reply: boolean; reason: string }> {
@@ -288,6 +384,8 @@ export class ChannelRuntimeService implements ToolProviderHook {
   /** Tokens spent by this channel's sessions since midnight UTC against its
    *  budget (the channel's own, else the workspace default setting; 0 = none). */
   async budgetSpent(c: Channel): Promise<boolean> {
+    // A sub-channel spends its parent's budget (docs/group-chat.md §9).
+    if (c.parentChannelId) c = await this.groupchat.get(c.parentChannelId).catch(() => c);
     let budget = c.dailyTokenBudget;
     if (budget === 0) {
       const raw = this.settings ? (await this.settings.all().catch(() => ({} as Record<string, string>))).channelDailyTokenBudget : undefined;
@@ -297,12 +395,18 @@ export class ChannelRuntimeService implements ToolProviderHook {
     return (await this.spentToday(c)) >= budget;
   }
 
+  /** Today's tokens of the channel's sessions and, for a channel, those of
+   *  its sub-channels active today (they share its budget). */
   async spentToday(c: Channel): Promise<number> {
     const dayStart = new Date(this.now()); dayStart.setUTCHours(0, 0, 0, 0);
+    const day = dayStart.toISOString();
+    const slugs = [c.slug];
+    if (!c.parentChannelId) for (const s of await this.groupchat.subs.subsOf(c.id, { status: 'all' }).catch(() => [])) if ((s.lastActivityAt ?? s.createdAt) >= day || s.createdAt >= day) slugs.push(s.slug);
+    const names = sql.join(slugs.map((slug) => sql`s."name" LIKE ${`#${slug} · %`}`), sql` OR `);
     const res = await this.db.execute(sql`
       SELECT COALESCE(SUM(t."tokensIn" + t."tokensOut"), 0) AS spent
       FROM chat_turns t JOIN chat_sessions s ON s."id" = t."sessionId"
-      WHERE s."workspaceId" = ${c.workspaceId} AND s."name" LIKE ${`#${c.slug} · %`} AND t."createdAt" >= ${dayStart.toISOString()}
+      WHERE s."workspaceId" = ${c.workspaceId} AND (${names}) AND t."createdAt" >= ${day}
     `);
     // node-postgres answers { rows }, PGlite's drizzle driver an array.
     const rows = ((res as { rows?: unknown[] }).rows ?? (Array.isArray(res) ? res : [])) as Array<{ spent: unknown }>;
@@ -451,7 +555,8 @@ export class ChannelRuntimeService implements ToolProviderHook {
     if (!ctx) {
       const mine = await this.groupchat.list(session.workspaceId).catch(() => []);
       const memberOf: string[] = [];
-      for (const c of mine) if (await this.groupchat.isMember(c.id, 'agent', session.agentId)) memberOf.push(`#${c.slug}${c.topic ? ` — ${c.topic.slice(0, 60)}` : ''}`);
+      const slugOf = new Map(mine.map((c) => [c.id, c.slug]));
+      for (const c of mine) if (await this.groupchat.isMember(c.id, 'agent', session.agentId)) memberOf.push(c.parentChannelId ? `#${c.slug} (discussion in #${slugOf.get(c.parentChannelId) ?? '?'}: ${c.name.slice(0, 60)})` : `#${c.slug}${c.topic ? ` — ${c.topic.slice(0, 60)}` : ''}`);
       // A pointer, not a dump: past a handful, channel_list has the rest.
       if (memberOf.length > CONTEXT_CHANNELS) memberOf.splice(CONTEXT_CHANNELS, memberOf.length, `and ${memberOf.length - CONTEXT_CHANNELS} more (channel_list)`);
       return memberOf.length ? `# Group chat\nYou belong to these channels: ${memberOf.join('; ')}. channel_read shows recent messages, channel_post speaks there (mentions wake agents; they carry no approval authority), channel_make_task turns a message into a board task.` : null;
@@ -464,9 +569,12 @@ export class ChannelRuntimeService implements ToolProviderHook {
     const framed = history.filter((m) => m.id !== ctx.triggerMessageId).map((m) => `[${m.createdAt.slice(11, 16)}] ${names(m)}${m.authorKind === 'agent' ? ' (agent)' : m.authorKind === 'system' ? ' (system)' : ''}: ${m.text.replace(/</g, '&lt;').slice(0, 1_500)}`);
     const roster = members.map((m) => `${m.name} (${m.memberKind}${m.memberKind === 'agent' && m.memberId === session.agentId ? ', you' : ''})`).join(', ');
     const handles = members.filter((m) => !(m.memberKind === 'agent' && m.memberId === session.agentId)).map((m) => `@${handleOf(m.name) || m.name}`).join(', ');
+    const parent = c.parentChannelId ? await this.groupchat.get(c.parentChannelId).catch(() => null) : null;
     return [
       '# Group chat',
-      `You are replying in the channel #${c.slug}${c.topic ? ` — topic: ${c.topic}` : ''}. Members: ${roster}.${handles ? ` To tag a member write @ and their name as listed, or their handle: ${handles}.` : ''}`,
+      parent
+        ? `You are replying in "${c.name}", a ${c.purpose === 'meeting' ? 'meeting' : 'discussion'} sub-channel #${c.slug} of #${parent.slug}${c.topic ? ` — why it exists: ${c.topic}` : ''}. Keep to its subject; #${parent.slug} only sees its link card.${c.createdBy === `agent:${session.agentId}` ? ' You started it: when it is settled, call channel_close_discussion with the outcome.' : ''} Members: ${roster}.${handles ? ` To tag a member write @ and their name as listed, or their handle: ${handles}.` : ''}`
+        : `You are replying in the channel #${c.slug}${c.topic ? ` — topic: ${c.topic}` : ''}. Members: ${roster}.${handles ? ` To tag a member write @ and their name as listed, or their handle: ${handles}.` : ''}`,
       ctx.unprompted
         ? 'Nobody asked you directly: you judged the newest message relevant to your charter. Keep it short and useful, or say nothing of substance.'
         : ctx.triggerAuthor.kind === 'agent'
@@ -492,7 +600,8 @@ export class ChannelRuntimeService implements ToolProviderHook {
       case 'channel_list': {
         const all = await this.groupchat.list(session.workspaceId);
         const mine: string[] = [];
-        for (const c of all) if (await this.groupchat.isMember(c.id, 'agent', agentId)) mine.push(`#${c.slug}${c.topic ? ` — ${c.topic}` : ''} (${c.memberCount} members)`);
+        const slugOf = new Map(all.map((c) => [c.id, c.slug]));
+        for (const c of all) if (await this.groupchat.isMember(c.id, 'agent', agentId)) mine.push(c.parentChannelId ? `#${c.slug} — ${c.purpose === 'meeting' ? 'meeting' : 'discussion'} in #${slugOf.get(c.parentChannelId) ?? '?'}: ${c.name} (${c.memberCount} members, open)` : `#${c.slug}${c.topic ? ` — ${c.topic}` : ''} (${c.memberCount} members)`);
         return mine.length ? mine.join('\n') : 'You are not a member of any channel.';
       }
       case 'channel_read': {
@@ -526,6 +635,42 @@ export class ChannelRuntimeService implements ToolProviderHook {
           missing.length ? `${missing.join(', ')} — not a member of #${c.slug} by that name, so nobody was woken for ${missing.length === 1 ? 'it' : 'them'}.` : '',
         ].filter(Boolean).join(' ');
       }
+      case 'channel_start_discussion': {
+        const c = await resolve(input.channel);
+        if (this.groupchat.subs.isSub(c)) throw new Error(`#${c.slug} is already a discussion — start one in its parent channel`);
+        const title = String(input.title ?? '').trim();
+        const reason = String(input.reason ?? '').trim();
+        if (!title) throw new Error('title is required');
+        if (!reason) throw new Error('reason is required: say why this needs its own space');
+        const members = await this.groupchat.members(c.id);
+        let picked: Array<{ kind: 'agent' | 'human'; id: string }> | undefined;
+        if (Array.isArray(input.members) && input.members.length > 0) {
+          picked = [];
+          const missing: string[] = [];
+          for (const raw of input.members.map((x) => String(x).trim().replace(/^@/, '')).filter(Boolean)) {
+            const hit = members.find((x) => x.memberId === raw || x.name.toLowerCase() === raw.toLowerCase() || handleOf(x.name) === handleOf(raw));
+            if (hit) picked.push({ kind: hit.memberKind as 'agent' | 'human', id: hit.memberId }); else missing.push(raw);
+          }
+          if (missing.length) throw new Error(`not members of #${c.slug}: ${missing.join(', ')}`);
+        }
+        let origin: string | null = null;
+        if (typeof input.thread === 'string' && input.thread.trim()) {
+          const q = input.thread.trim();
+          origin = (await this.groupchat.recent(c.id, 500)).find((x) => x.id === q || x.id.startsWith(q))?.id ?? null;
+          if (!origin) throw new Error(`no message "${q}" in #${c.slug}`);
+        }
+        const sub = await this.groupchat.subs.start(c.id, { title, reason, members: picked, createdBy: `agent:${agentId}`, originMessageId: origin, purpose: 'discussion' });
+        const count = (await this.groupchat.members(sub.id)).length;
+        return `Started the discussion "${sub.name}" as #${sub.slug} with ${count} members; #${c.slug} got its link card. Post there with channel_post(channel: "${sub.slug}") and mention whoever should act; close it with channel_close_discussion when it is settled.`;
+      }
+      case 'channel_close_discussion': {
+        const c = await resolve(input.channel);
+        if (!this.groupchat.subs.isSub(c)) throw new Error(`#${c.slug} is a channel, not a discussion`);
+        const outcome = String(input.outcome ?? '').trim();
+        if (!outcome) throw new Error('outcome is required');
+        const closed = await this.groupchat.subs.close(c.id, { by: `agent:${agentId}`, outcome });
+        return `Closed "${closed.name}" (#${closed.slug}); the link card in the parent shows the outcome.`;
+      }
       case 'channel_make_task': {
         const prefix = String(input.messageId ?? '').trim();
         if (!prefix) throw new Error('messageId is required');
@@ -546,6 +691,14 @@ export class ChannelRuntimeService implements ToolProviderHook {
 
 function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   try { return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; }
+}
+
+/** A discussion's title from the message it grew out of: the first line,
+ *  mentions and markdown stripped, at most 60 characters. */
+export function discussionTitle(text: string): string {
+  const line = text.split('\n').map((x) => x.trim()).find(Boolean) ?? '';
+  const clean = line.replace(/[*_`#>~]/g, '').replace(/@[\p{L}\p{N}_.-]+/gu, '').replace(/\s+/g, ' ').trim();
+  return (clean.length > 60 ? `${clean.slice(0, 57).trimEnd()}…` : clean) || 'Agent discussion';
 }
 
 /** The actor id of the last human in a thread, or null. */

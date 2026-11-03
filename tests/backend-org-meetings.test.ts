@@ -116,11 +116,16 @@ async function enable(s: S, modeName: 'supervised' | 'autonomous' = 'autonomous'
   return st.orgId!;
 }
 
-const thread = async (s: S, channelId: string, rootId: string) => (await s.groupchat.messages(channelId, { thread: rootId })).messages;
+/** A meeting's stream: it runs in its own sub-channel (docs/group-chat.md §9),
+ *  whose messages from the agenda root on are the meeting. */
+const meetingStream = async (s: S, m: { channelId: string | null; threadRootId: string | null }) => {
+  const all = await s.groupchat.stream(m.channelId!);
+  return all.slice(Math.max(0, all.findIndex((x) => x.id === m.threadRootId)));
+};
 
 // ---- 1. a meeting runs rounds and materialises its minutes ----
 
-test('a meeting is a thread: agenda root, one turn per attendee per round (cap 3), a closing turn; minutes become tasks, decisions and brief questions; audited with the hash', async () => {
+test('a meeting runs in its own sub-channel: agenda first, one turn per attendee per round (cap 3), a closing turn; the parent gets only the link card and the minutes line; minutes become tasks, decisions and brief questions; audited with the hash', async () => {
   const s = await setup((me, round, closing, _req, toolRound) => {
     if (closing) return toolRound === 0 ? call('meeting_close', { summary: 'We ship issue 1 on Friday; Writer drafts, Editor reviews.' }) : say('Closed.');
     if (toolRound > 0) return say(`${me} done for round ${round}.`);
@@ -144,8 +149,17 @@ test('a meeting is a thread: agenda root, one turn per attendee per round (cap 3
   assert.equal(m.rounds, 3, 'three rounds, the cap');
   assert.ok(m.threadRootId && m.startedAt && m.endedAt);
   assert.ok(m.usd > 0, 'usage was priced');
-  // the thread: the agenda as the facilitator's message, the turns, the minutes
-  const msgs = await thread(s, company.id, m.threadRootId!);
+  // the sub-channel: meeting-planning-<date> under #company, closed at the end
+  assert.equal(m.parentChannelId, company.id, 'the record keeps the channel it was called in');
+  assert.notEqual(m.channelId, company.id, 'and points at the sub-channel');
+  const sub = await s.groupchat.get(m.channelId!);
+  assert.equal(sub.channelKind, 'sub'); assert.equal(sub.parentChannelId, company.id); assert.equal(sub.purpose, 'meeting'); assert.equal(sub.meetingId, m.id);
+  assert.match(sub.slug, /^meeting-planning-\d{4}-\d{2}-\d{2}$/);
+  assert.equal(sub.status, 'closed', 'a meeting sub-channel closes when the meeting ends');
+  assert.equal(sub.folder, 'channels/company/sub/' + sub.slug);
+  // the stream: the agenda as the facilitator's message, the turns, the minutes — all at the top level
+  const msgs = await meetingStream(s, m);
+  assert.ok(msgs.every((x) => x.threadRootId === null), 'no thread inside the sub-channel');
   assert.equal(msgs[0].authorKind, 'agent'); assert.equal(msgs[0].authorId, s.chief.id);
   assert.match(msgs[0].text, /Planning · .*facilitated by Chief\. Attendees: Writer, Editor, Chief/);
   assert.match(msgs[0].text, /Plan issue 1\./);
@@ -153,7 +167,7 @@ test('a meeting is a thread: agenda root, one turn per attendee per round (cap 3
   assert.equal(agentTurns.length, 9, 'three attendees × three rounds, each exactly one post');
   assert.ok(agentTurns.some((x) => x.authorId === s.chief.id && /Chief speaking in round 3/.test(x.text)));
   assert.ok(agentTurns.some((x) => /Action proposed: Draft issue 1 — owner Writer/.test(x.text)));
-  const minutesMsg = msgs.at(-1)!;
+  const minutesMsg = msgs.filter((x) => !/^Closed/.test(x.text)).at(-1)!;
   assert.equal(minutesMsg.authorKind, 'system');
   assert.match(minutesMsg.text, /^\*\*Minutes — Planning/);
   assert.match(minutesMsg.text, /We ship issue 1 on Friday/);
@@ -161,9 +175,15 @@ test('a meeting is a thread: agenda root, one turn per attendee per round (cap 3
   // the facilitator spoke last in each round
   const order = agentTurns.slice(0, 3).map((x) => x.authorId);
   assert.equal(order[2], s.chief.id);
-  // one line in the channel root
+  // the parent: the link card (ended, with the outcome) and the one minutes line — nothing else of the meeting
   const top = (await s.groupchat.messages(company.id)).messages;
-  assert.match(top.at(-1)!.text, /^Minutes of Planning · .*: 1 decision\(s\), 1 action\(s\), 1 risk\(s\), 1 question\(s\) for the CEO/);
+  const card = top.find((x) => x.id === sub.linkMessageId)!;
+  assert.match(card.text, /^📅 Meeting: Planning · .* · ended — We ship issue 1 on Friday/);
+  assert.deepEqual(JSON.parse(card.attachments), [{ path: `subchannel/${sub.id}`, kind: 'subchannel' }]);
+  assert.match(top.at(-1)!.text, /^Minutes of Planning · .*: 1 decision\(s\), 1 action\(s\), 1 risk\(s\), 1 question\(s\) for the CEO · .* · #meeting-planning-/);
+  assert.ok(!top.some((x) => x.authorKind === 'agent'), 'no agent turn landed in #company');
+  assert.ok(!top.some((x) => /Plan issue 1\./.test(x.text)), 'nor the agenda');
+  assert.equal((await s.groupchat.messages(company.id, { thread: card.id })).messages.length, 1, 'the card has no thread of meeting posts');
   // minutes materialised
   const minutes = parseMinutes(m.minutes);
   assert.equal(minutes.summary, 'We ship issue 1 on Friday; Writer drafts, Editor reviews.');
@@ -174,7 +194,7 @@ test('a meeting is a thread: agenda root, one turn per attendee per round (cap 3
   assert.equal(task.assigneeAgentId, s.writer.id, 'the chief facilitates, so the owner is assigned');
   assert.equal(task.status, 'todo');
   assert.equal(task.unitId, root.id);
-  assert.equal(task.channelId, company.id); assert.equal(task.messageId, m.threadRootId);
+  assert.equal(task.channelId, company.id); assert.equal(task.messageId, sub.linkMessageId, 'actions link to the card in the channel the meeting was called in');
   assert.match(JSON.parse(task.brief).done_when, /Editor accepted/);
   assert.match(JSON.parse(task.brief).context, /From the Planning/);
   assert.equal(minutes.decisions.length, 1);
@@ -203,7 +223,7 @@ test('a meeting is a thread: agenda root, one turn per attendee per round (cap 3
   assert.match(ev.title, /^Minutes: Planning/);
   // transcripts landed in the per-agent per-channel sessions channel wakes use
   const sessions = await s.repo.listSessions(s.ws.id);
-  assert.ok(sessions.some((x) => x.name === channelSessionName('company', 'Writer') && x.agentId === s.writer.id));
+  assert.ok(sessions.some((x) => x.name === channelSessionName(sub.slug, 'Writer') && x.agentId === s.writer.id));
   // the API
   assert.equal((await s.controller.meetingList(s.ws.id, undefined, 'done')).length, 1);
   assert.equal((await s.controller.meeting(s.ws.id, m.id)).id, m.id);
@@ -212,22 +232,20 @@ test('a meeting is a thread: agenda root, one turn per attendee per round (cap 3
 
 // ---- 2. human injection and the stop word ----
 
-test('a human message in the thread is injected into the next round; "stop" ends the meeting without a closing turn and the minutes say so', async () => {
+test('a human message in the meeting sub-channel is injected into the next round; "stop" ends the meeting without a closing turn and the minutes say so', async () => {
   let orgId = '';
-  let companyId = '';
   const seen: string[] = [];
-  // a person speaks in the thread during Editor's round-1 turn
-  const rootOf = async () => (await s.meetings.list(orgId))[0].threadRootId!;
+  // a person speaks in the meeting's sub-channel during Editor's round-1 turn
+  const subOf = async () => (await s.meetings.list(orgId))[0].channelId!;
   const s: S = await setup(async (me, round, closing, req) => {
     if (closing) return say('closing');
     seen.push(`${me}:${round}:${lastUser(req).includes('Prefer Thursday') ? 'heard' : '-'}`);
-    if (me === 'Editor' && round === 1) await s.groupchat.post(companyId, { text: 'Prefer Thursday, not Friday.', threadRootId: await rootOf(), authorKind: 'human' });
+    if (me === 'Editor' && round === 1) await s.groupchat.post(await subOf(), { text: 'Prefer Thursday, not Friday.', authorKind: 'human' });
     return say(`${me} in round ${round}.`);
   });
   orgId = await enable(s);
   await s.org.setTunable(orgId, 'meeting.selectiveRounds', 0); // everyone every round, as before
   const root = await s.units.rootUnit(orgId);
-  companyId = (await s.groupchat.bySlug(s.ws.id, COMPANY_SLUG)).id;
   await s.meetingRuntime.start(orgId, { kind: 'weekly_review', unitId: root.id });
   await s.meetingRuntime.idle();
   assert.ok(seen.includes('Writer:1:-'), 'round 1 before the human spoke');
@@ -236,19 +254,17 @@ test('a human message in the thread is injected into the next round; "stop" ends
 
   // stop: a person says so during round 1 → no round 2, no closing turn
   let orgId2 = '';
-  let company2 = '';
   let closings = 0;
   const s2: S = await setup(async (me, round, closing, _req, toolRound) => {
     if (closing) { closings++; return say('closing'); }
     if (me === 'Writer' && round === 1 && toolRound === 0) {
       return call('meeting_propose_action', { title: 'Collect sources', owner: 'Writer', done_when: 'Three sources listed' });
     }
-    if (me === 'Editor' && round === 1) await s2.groupchat.post(company2, { text: 'stop', threadRootId: (await s2.meetings.list(orgId2))[0].threadRootId, authorKind: 'human' });
+    if (me === 'Editor' && round === 1) await s2.groupchat.post((await s2.meetings.list(orgId2))[0].channelId!, { text: 'stop', authorKind: 'human' });
     return say(`${me} in round ${round}.`);
   });
   orgId2 = await enable(s2);
   await s2.org.setTunable(orgId2, 'meeting.selectiveRounds', 0);
-  company2 = (await s2.groupchat.bySlug(s2.ws.id, COMPANY_SLUG)).id;
   const m1 = await s2.meetingRuntime.start(orgId2, { kind: 'retro', unitId: (await s2.units.rootUnit(orgId2)).id });
   await s2.meetingRuntime.idle();
   const m = await s2.meetings.get(orgId2, m1.id);
@@ -260,7 +276,7 @@ test('a human message in the thread is injected into the next round; "stop" ends
   assert.equal(minutes.endedBy, 'stopped');
   assert.match(minutes.summary, /^Ended early by a person\. Actions: Collect sources \(Writer\)\./);
   assert.ok(minutes.actions[0].taskId, 'what was proposed before the stop still materialises');
-  const msgs = await thread(s2, company2, root2);
+  const msgs = await meetingStream(s2, m);
   assert.ok(msgs.some((x) => x.authorKind === 'system' && /Meeting ended by a person/.test(x.text)));
   const chiefTurns = msgs.filter((x) => x.authorKind === 'agent' && x.authorId === s2.chief.id && x.id !== root2);
   assert.equal(chiefTurns.length, 0, 'the facilitator never got round 1: the stop came before its turn');
@@ -292,7 +308,8 @@ test('a standup agenda is composed from the board without a model call — per m
   const m = await s.meetings.get(orgId, m0.id);
   assert.equal(m.status, 'done');
   assert.equal(m.rounds, 1, 'a standup is one round');
-  const msgs = await thread(s, company.id, m.threadRootId!);
+  assert.equal(m.parentChannelId, company.id);
+  const msgs = await meetingStream(s, m);
   const agenda = msgs[0].text;
   assert.match(agenda, /Standup for .* — since .*Composed from the board/);
   assert.match(agenda, /\*\*Writer\*\*\n- done: [A-Z][A-Z0-9]{1,5}-\d+ Outline issue 1\n- in progress: [A-Z][A-Z0-9]{1,5}-\d+ Draft issue 1\n- blocked: nothing/);
@@ -500,11 +517,11 @@ test('`/meeting <kind> [#unit] [agenda…]` by a person starts a meeting in that
   const replies = (await s.groupchat.messages(company.id, { thread: cmd.id })).messages.slice(1);
   assert.equal(replies.length, 0, 'no channel wake answered the command');
   const m = (await s.meetings.list(orgId))[0];
-  assert.equal(m.kind, 'adhoc'); assert.equal(m.agenda, 'Ship plan @Writer'); assert.equal(m.channelId, company.id);
+  assert.equal(m.kind, 'adhoc'); assert.equal(m.agenda, 'Ship plan @Writer'); assert.equal(m.parentChannelId, company.id, 'called in #company, run in its sub-channel');
   assert.equal(m.createdBy, 'human:single'); assert.equal(m.facilitatorAgentId, s.chief.id, 'the unit channel\'s lead facilitates');
   assert.ok(JSON.parse(m.attendees).some((a: { kind: string; id: string }) => a.kind === 'human' && a.id === 'single'), 'the caller attends');
   assert.equal(m.status, 'done');
-  const msgs = await thread(s, company.id, m.threadRootId!);
+  const msgs = await meetingStream(s, m);
   assert.match(msgs[0].text, /Ship plan @Writer/);
   assert.ok(msgs.filter((x) => x.authorKind === 'agent').length >= 4);
   // every provider call was a meeting turn, none a channel wake
@@ -517,7 +534,7 @@ test('`/meeting <kind> [#unit] [agenda…]` by a person starts a meeting in that
   await s.groupchat.post(general.id, { text: '/meeting standup #writer', authorKind: 'human' });
   await s.meetingRuntime.idle();
   const standup = (await s.meetings.list(orgId)).find((x) => x.kind === 'standup')!;
-  assert.equal(standup.channelId, writerUnit.channelId); assert.equal(standup.unitId, writerUnit.id); assert.equal(standup.facilitatorAgentId, s.writer.id);
+  assert.equal(standup.parentChannelId, writerUnit.channelId); assert.equal(standup.unitId, writerUnit.id); assert.equal(standup.facilitatorAgentId, s.writer.id);
   assert.equal(standup.status, 'done');
   await s.groupchat.post(general.id, { text: '/meeting standup #nobody', authorKind: 'human' });
   await s.meetingRuntime.idle();

@@ -826,8 +826,20 @@ export interface VoiceStatus { transcription: boolean; tts: boolean; model: stri
 export interface Channel {
   id: string; workspaceId: string; slug: string; name: string; topic: string; kind: 'public' | 'private';
   createdBy: string; folder: string; dailyTokenBudget: number; archivedAt: string | null; createdAt: string;
-  /** Present on the list route. */
-  unread?: number; memberCount?: number;
+  /** Present on the list route. `pastSubs`: closed discussions of a top-level channel. */
+  unread?: number; memberCount?: number; pastSubs?: number;
+  /** Sub-channels (docs/group-chat.md §9): a discussion or meeting has a
+   *  parent, `channelKind: 'sub'`, a purpose and a status; open ones are
+   *  listed, closed ones fold into the parent's "Past discussions". */
+  parentChannelId?: string | null; channelKind?: 'channel' | 'sub'; purpose?: string; status?: 'open' | 'closed';
+  closedAt?: string | null; closedBy?: string | null; outcome?: string; meetingId?: string | null; taskId?: string | null; projectId?: string | null;
+  linkMessageId?: string | null; originMessageId?: string | null; lastActivityAt?: string | null;
+}
+/** A discussion as its parent lists it (GET …/subs). */
+export interface SubChannelSummary {
+  id: string; slug: string; name: string; purpose: string; status: 'open' | 'closed'; kind: 'public' | 'private';
+  memberCount: number; createdAt: string; closedAt: string | null; lastActivityAt: string | null;
+  outcome: string; meetingId: string | null; linkMessageId: string | null; createdBy: string;
 }
 export interface ChannelMember {
   id: string; channelId: string; memberKind: 'agent' | 'human'; memberId: string; role: 'owner' | 'member';
@@ -837,6 +849,10 @@ export interface ChannelDetail extends Channel {
   members: ChannelMember[]; spentToday: number; orgMode: boolean;
   /** Set when this is a unit channel (docs/group-chat.md §7). */
   unit?: { id: string; name: string; slug: string; orgId: string; leadAgentId: string } | null;
+  /** A sub-channel's parent (docs/group-chat.md §9). */
+  parent?: { id: string; slug: string; name: string; kind: 'public' | 'private' } | null;
+  /** A channel's open discussions and how many closed ones it has. */
+  subs?: SubChannelSummary[]; pastSubs?: number;
 }
 export interface ChannelMessage {
   id: string; channelId: string; threadRootId: string | null; authorKind: 'agent' | 'human' | 'system'; authorId: string;
@@ -848,7 +864,7 @@ export interface ChannelFile { path: string; name: string; size: number; lastMod
 
 /** Follows (docs/follows.md): a channel thread (root message id), an org
  *  task or an agent kanban task, followed by agents and people. */
-export type FollowTargetKind = 'thread' | 'org_task' | 'agent_task';
+export type FollowTargetKind = 'thread' | 'org_task' | 'agent_task' | 'channel';
 export interface FollowView {
   following: boolean;
   reason: string | null;
@@ -1195,12 +1211,16 @@ export interface OrgMeeting {
   minutesPath?: string | null; summary?: string;
   /** The live room (JSON MeetingRoomState) and the tokens it used (migration 0050). */
   room?: string; tokensIn?: number; tokensOut?: number;
+  /** The channel it was called in when it runs in a sub-channel (`channelId`) of it (docs/group-chat.md §9). */
+  parentChannelId?: string | null;
 }
 /** One row of GET …/meetings (docs/meetings.md "The calendar"): a meeting
  *  held or scheduled, or an upcoming occurrence of a cadence (`source: 'cadence'`). */
 export interface CalendarMeeting {
   id: string; source: 'meeting' | 'cadence'; meetingId: string | null; cadenceId: string | null;
   kind: string; title: string; unitId: string | null; unitName: string | null; channelId: string | null; channelSlug: string | null;
+  /** The sub-channel it ran in (docs/group-chat.md §9); `channelId` is then the channel it was called in. */
+  subChannelId?: string | null; subChannelSlug?: string | null;
   status: MeetingStatus | 'upcoming'; at: string; endedAt: string | null;
   facilitator: { id: string; name: string } | null; attendees: Array<{ kind: 'agent' | 'human'; id: string; name: string }>;
   minutesPath: string | null; summary: string; cron: string | null; threadRootId: string | null;
@@ -1605,6 +1625,12 @@ export const api = {
   updateChannel: (wsId: string, slug: string, patch: { name?: string; topic?: string; kind?: 'public' | 'private'; dailyTokenBudget?: number }) =>
     send<Channel>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}`, 'PATCH', patch),
   archiveChannel: (wsId: string, slug: string, archived = true) => send<Channel>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/${archived ? 'archive' : 'unarchive'}`, 'POST'),
+  // sub-channels (docs/group-chat.md §9)
+  channelSubs: (wsId: string, slug: string, status: 'open' | 'closed' | 'all' = 'open') => get<SubChannelSummary[]>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/subs?status=${status}`),
+  startDiscussion: (wsId: string, slug: string, body: { title: string; reason?: string; members?: Array<{ kind: 'agent' | 'human'; id: string }>; originMessageId?: string; purpose?: 'discussion' | 'project' }) =>
+    send<Channel>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/subs`, 'POST', body),
+  closeDiscussion: (wsId: string, slug: string, outcome?: string) => send<Channel>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/close`, 'POST', { outcome }),
+  reopenDiscussion: (wsId: string, slug: string) => send<Channel>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/reopen`, 'POST'),
   addChannelMember: (wsId: string, slug: string, body: { kind: 'agent' | 'human'; id: string; notify?: string; unprompted?: boolean }) =>
     send<ChannelMember>(`/api/workspaces/${wsId}/chat/channels/${enc(slug)}/members`, 'POST', body),
   updateChannelMember: (wsId: string, slug: string, kind: 'agent' | 'human', id: string, patch: { role?: 'owner' | 'member'; notify?: string; unprompted?: boolean }) =>

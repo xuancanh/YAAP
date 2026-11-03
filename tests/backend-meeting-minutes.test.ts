@@ -113,7 +113,11 @@ async function enable(s: S) {
   return st.orgId!;
 }
 const readFile = async (s: S, path: string) => (await s.fs.read(s.ws.id, path))?.body.toString('utf8') ?? null;
-const thread = async (s: S, channelId: string, rootId: string) => (await s.groupchat.messages(channelId, { thread: rootId })).messages;
+/** A meeting's stream: its sub-channel (docs/group-chat.md §9), from the agenda on. */
+const meetingStream = async (s: S, m: { channelId: string | null; threadRootId: string | null }) => {
+  const all = await s.groupchat.stream(m.channelId!);
+  return all.slice(Math.max(0, all.findIndex((x) => x.id === m.threadRootId)));
+};
 
 // ---- pure helpers ----
 
@@ -193,9 +197,12 @@ test('a unit ritual ends with minutes at /org/meetings/<unit>/<yyyy>/<day>-<kind
   // authored by the facilitator, versioned
   const meta = await s.fs.meta(s.ws.id, m.minutesPath!);
   assert.equal(meta?.updatedBy.kind, 'agent'); assert.equal(meta?.updatedBy.id, s.chief.id); assert.equal(meta?.version, 1);
-  // the thread's minutes message links the file; the channel line says where
-  const msgs = await thread(s, company.id, m.threadRootId!);
-  assert.deepEqual(JSON.parse(msgs.at(-1)!.attachments), [{ path: `meetings/${m.id}`, kind: 'minutes' }, { path: m.minutesPath, kind: 'file' }]);
+  // the sub-channel's minutes message links the file; the parent's line says where
+  const msgs = await meetingStream(s, m);
+  const minutesMsg = msgs.find((x) => x.attachments.includes('"minutes"'))!;
+  assert.deepEqual(JSON.parse(minutesMsg.attachments), [{ path: `meetings/${m.id}`, kind: 'minutes' }, { path: m.minutesPath, kind: 'file' }]);
+  assert.equal(m.parentChannelId, company.id);
+  assert.match((await s.groupchat.get(m.channelId!)).outcome, new RegExp(`Minutes: /${m.minutesPath!.replace(/[.]/g, '\\.')}`), 'the closed sub-channel\'s outcome links the minutes');
   const top = (await s.groupchat.messages(company.id)).messages.at(-1)!;
   assert.match(top.text, new RegExp(`^Minutes of Planning · .* · Minutes: /${m.minutesPath!.replace(/[.]/g, '\\.')}$`));
   assert.deepEqual(JSON.parse(top.attachments), [{ path: m.minutesPath, kind: 'file' }]);
@@ -278,7 +285,7 @@ test('`/meeting` in an ordinary channel writes its minutes to /channels/<slug>/m
   await s.groupchat.post(launch.id, { text: '/meeting Launch checklist @Writer', authorKind: 'human' });
   await s.meetingRuntime.idle();
   const orgId = (await s.org.byWorkspace(s.ws.id))!.id;
-  const m = (await s.meetings.list(orgId)).find((x) => x.channelId === launch.id)!;
+  const m = (await s.meetings.list(orgId)).find((x) => x.parentChannelId === launch.id)!;
   assert.equal(m.status, 'done');
   assert.equal(m.unitId, null);
   assert.equal(m.title, 'Meeting: Launch checklist');

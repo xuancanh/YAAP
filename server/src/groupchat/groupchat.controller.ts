@@ -8,6 +8,8 @@
  *   /api/workspaces/:id/chat/channels/:slug/messages/:messageId/task   make a task
  *   /api/workspaces/:id/chat/channels/:slug/read       move the read cursor
  *   /api/workspaces/:id/chat/channels/:slug/files      the channel folder
+ *   /api/workspaces/:id/chat/channels/:slug/subs       its discussions (?status=open|closed|all) · start one (§9)
+ *   /api/workspaces/:id/chat/channels/:slug/close      close a discussion (its outcome) · /reopen
  *   /api/workspaces/:id/chat/goals/:goalId/messages    messages that reference #goal:<id> (§7)
  *   /api/workspaces/:id/chat/decisions/:decisionId      the decision a #decision:<id> chip names (§8)
  *   /api/workspaces/:id/events                         workspace SSE (§4)
@@ -69,6 +71,19 @@ class MakeTaskDto {
 
 class ReadDto { @IsOptional() @IsString() messageId?: string }
 
+class StartSubDto {
+  @IsString() title!: string;
+  @IsOptional() @IsString() reason?: string;
+  @IsOptional() @IsIn(['discussion', 'project']) purpose?: string;
+  @IsOptional() @IsArray() members?: Array<{ kind: 'agent' | 'human'; id: string }>;
+  /** The message (or thread) it continues: that thread gets a pointer to it. */
+  @IsOptional() @IsString() originMessageId?: string;
+  @IsOptional() @IsString() taskId?: string;
+  @IsOptional() @IsString() projectId?: string;
+}
+
+class CloseSubDto { @IsOptional() @IsString() outcome?: string }
+
 @Controller('workspaces/:id')
 export class GroupChatController {
   constructor(
@@ -93,7 +108,11 @@ export class GroupChatController {
     const c = await this.groupchat.open(id, slug);
     const members = await this.groupchat.members(c.id);
     const [spent, org, unit] = await Promise.all([this.runtime.spentToday(c).catch(() => 0), this.groupchat.orgFor(id), this.groupchat.unitOf(c.id).catch(() => null)]);
-    return { ...c, members, spentToday: spent, orgMode: Boolean(org), unit };
+    // Sub-channels (docs/group-chat.md §9): a discussion names its parent; a channel lists its open discussions.
+    const parent = c.parentChannelId ? await this.groupchat.get(c.parentChannelId).then((p) => ({ id: p.id, slug: p.slug, name: p.name, kind: p.kind }), () => null) : null;
+    const subs = c.parentChannelId ? [] : await this.groupchat.subs.subsOf(c.id, { status: 'open' });
+    const pastSubs = c.parentChannelId ? 0 : (await this.groupchat.subs.closedCounts([c.id]))[c.id] ?? 0;
+    return { ...c, members, spentToday: spent, orgMode: Boolean(org), unit, parent, subs, pastSubs };
   }
 
   /** Messages referencing `#goal:<id>` (docs/group-chat.md §3, §7): the goal page lists them. */
@@ -171,6 +190,36 @@ export class GroupChatController {
   @Get('chat/channels/:slug/files')
   async files(@Param('id') id: string, @Param('slug') slug: string) {
     return this.groupchat.files((await this.groupchat.open(id, slug)).id);
+  }
+
+  /** A channel's discussions (docs/group-chat.md §9): open ones by default,
+   *  `?status=closed` for "Past discussions", `all` for both. */
+  @Get('chat/channels/:slug/subs')
+  async subs(@Param('id') id: string, @Param('slug') slug: string, @Query('status') status?: string) {
+    const c = await this.groupchat.open(id, slug);
+    return this.groupchat.subs.subsOf(c.id, { status: status === 'closed' || status === 'all' ? status : 'open' });
+  }
+
+  /** "Start a discussion" (a person): a sub-channel with the channel's members (or the ones named). */
+  @Post('chat/channels/:slug/subs')
+  async startSub(@Param('id') id: string, @Param('slug') slug: string, @Body() dto: StartSubDto, @Req() req: Request & { accountId?: string; viewer?: { memberAccountId: string } }) {
+    const c = await this.groupchat.open(id, slug);
+    const by = req.viewer?.memberAccountId ?? req.accountId ?? '';
+    return this.groupchat.subs.start(c.id, { title: dto.title, reason: dto.reason, purpose: dto.purpose, members: dto.members, originMessageId: dto.originMessageId ?? null, taskId: dto.taskId ?? null, projectId: dto.projectId ?? null, createdBy: `human:${by}` });
+  }
+
+  @Post('chat/channels/:slug/close')
+  async closeSub(@Param('id') id: string, @Param('slug') slug: string, @Body() dto: CloseSubDto, @Req() req: Request & { accountId?: string; viewer?: { memberAccountId: string } }) {
+    const c = await this.groupchat.open(id, slug);
+    const by = req.viewer?.memberAccountId ?? req.accountId ?? '';
+    return this.groupchat.subs.close(c.id, { by: `human:${by}`, outcome: dto.outcome });
+  }
+
+  @Post('chat/channels/:slug/reopen')
+  async reopenSub(@Param('id') id: string, @Param('slug') slug: string, @Req() req: Request & { accountId?: string; viewer?: { memberAccountId: string } }) {
+    const c = await this.groupchat.open(id, slug);
+    const by = req.viewer?.memberAccountId ?? req.accountId ?? '';
+    return this.groupchat.subs.reopen(c.id, `human:${by}`);
   }
 
   /** Workspace SSE (§4): channel_message · channel_typing · channel_stream ·
