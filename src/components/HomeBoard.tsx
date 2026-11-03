@@ -11,7 +11,7 @@
  * phone one, in the same order.
  */
 import { useState, type CSSProperties, type ReactNode } from 'react';
-import type { HomeActivity, HomeAgent, HomeData, HomeGoal, HomeNeed, HomeNeedAction } from '../lib/api';
+import type { AgentMessage, HomeActivity, HomeAgent, HomeData, HomeGoal, HomeNeed, HomeNeedAction } from '../lib/api';
 import { activityFilters, activityRows, dedupeUpcoming, upcomingDetail, type ActivityFilter, NEED_KIND_LABEL, actionLabel, dayHeading, defaultSentence, greeting, headline, recommendationLine, splitPath, targetOf, needTarget, usd, when, type HomeTarget } from '../lib/home';
 import { Markdown } from '../lib/md';
 import { I, P } from '../lib/icons';
@@ -36,6 +36,8 @@ export interface HomeBoardProps {
   onStartCompany?: () => void;
   onNewAgent?: () => void;
   onRetry?: () => void;
+  /** Open a message from the team: its direct chat (default: onOpen to the chat). */
+  onMessage?: (m: AgentMessage) => void;
 }
 
 const SEV_COLOR: Record<HomeNeed['severity'], string> = { critical: 'var(--red)', high: 'var(--amber)', normal: 'var(--accent)' };
@@ -189,6 +191,43 @@ function NeedsYou({ data, now, busy, onAct, onOpen }: Pick<HomeBoardProps, 'data
           )}
         </div>
       )}
+    </Section>
+  );
+}
+
+// ---- messages from your team (docs/agent-messages.md) ----
+
+const URGENCY_COLOR: Record<AgentMessage['urgency'], string> = { urgent: 'var(--red)', normal: 'var(--accent)', fyi: 'var(--text-faint)' };
+
+/** What agents wrote to the owner with message_owner, unread first. The text
+ *  is the agent's, shown as plain text (data, never markup); a row opens the
+ *  direct chat, where the reply goes. Hidden when there is nothing. */
+function TeamMessages({ data, now, onOpen, onMessage }: Pick<HomeBoardProps, 'data' | 'onOpen' | 'onMessage'> & { now: Date }) {
+  const m = data.messages;
+  if (!m || m.items.length === 0) return null;
+  const open = (x: AgentMessage) => (onMessage ? onMessage(x) : onOpen({ to: 'chat', sessionId: x.sessionId }));
+  return (
+    <Section id="messages" title="Messages from your team" count={m.unread}
+      action={data.company ? <button style={link} onClick={() => onOpen({ to: 'inbox' })}>All in Inbox</button> : undefined}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {m.items.map((x) => (
+          <button key={x.id} data-testid={`home-message-${x.id}`} onClick={() => open(x)}
+            style={{ display: 'flex', gap: 11, alignItems: 'flex-start', textAlign: 'left', width: '100%', boxSizing: 'border-box', font: 'inherit', color: 'var(--text)', cursor: 'pointer', background: x.read ? 'none' : 'var(--panel)', border: '1px solid var(--border)', borderLeft: `3px solid ${URGENCY_COLOR[x.urgency]}`, borderRadius: 12, padding: '10px 13px' }}>
+            <Avatar emoji={x.emoji} colors={x.colors} size={28} />
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 650, fontSize: 13 }}>{x.agentName}</span>
+                {x.urgency !== 'normal' && <span data-testid="home-message-urgency" style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', color: URGENCY_COLOR[x.urgency] }}>{x.urgency}</span>}
+                {!x.read && <span data-testid="home-message-unread" aria-label="unread" style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--accent)' }} />}
+                <span style={{ flex: 1 }} />
+                <span style={faint}>{when(x.createdAt, now)}</span>
+              </span>
+              <span style={{ ...dim, ...clamp(3), whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', marginTop: 2 }}>{x.text}</span>
+              {x.refs.length > 0 && <span style={{ ...faint, display: 'block', marginTop: 3, overflowWrap: 'anywhere' }}>{x.refs.join(' · ')}</span>}
+            </span>
+          </button>
+        ))}
+      </div>
     </Section>
   );
 }
@@ -516,6 +555,7 @@ export function HomeBoard(props: HomeBoardProps) {
   const main = (
     <>
       <NeedsYou data={data} now={now} busy={busy} onAct={onAct} onOpen={onOpen} />
+      <TeamMessages data={data} now={now} onOpen={onOpen} onMessage={props.onMessage} />
       <Recap data={data} onOpen={onOpen} />
       <Goals data={data} onOpen={onOpen} />
       {!wide && <Team data={data} narrow={narrow} now={now} onOpen={onOpen} onAllAgents={onAllAgents} />}

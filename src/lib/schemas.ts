@@ -188,6 +188,10 @@ export const homeDataSchema = z.object({
   health: z.object({ status: z.enum(['ok', 'degraded', 'incident']), openIncidents: z.array(z.object({ id: z.string(), title: z.string() })), providers: z.array(z.object({ provider: z.string() })) }),
   upcoming: z.array(z.object({ id: z.string(), at: z.string(), kind: z.string(), title: z.string(), ref: homeRefSchema })),
   artifacts: z.array(z.object({ path: z.string(), version: z.number(), updatedAt: z.string() })),
+  messages: z.object({
+    unread: z.number(),
+    items: z.array(z.object({ id: z.string(), agentId: z.string(), agentName: z.string(), text: z.string(), urgency: z.enum(['fyi', 'normal', 'urgent']), sessionId: z.string(), createdAt: z.string(), read: z.boolean() })),
+  }).optional(),
   partial: z.array(z.string()),
 });
 

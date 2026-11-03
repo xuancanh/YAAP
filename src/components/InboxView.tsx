@@ -8,8 +8,8 @@
  *  used to wait on me and how it ended (InboxHistory.tsx). */
 import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
-import { api, type FollowRow, type OrgApproval, type OrgDetail, type OrgPlan, type OrgTask } from '../lib/api';
-import { buildInbox, filterInbox, followingList, waitingCount, INBOX_FILTERS, type InboxFilter, type InboxItem, type InboxMode } from '../lib/inbox';
+import { api, type AgentMessage, type FollowRow, type OrgApproval, type OrgDetail, type OrgPlan, type OrgTask } from '../lib/api';
+import { buildInbox, filterInbox, followingList, messagesList, waitingCount, INBOX_FILTERS, type InboxFilter, type InboxItem, type InboxMode } from '../lib/inbox';
 import { I, P } from '../lib/icons';
 import { card, btn, pill, h2, faint, ago } from './org-ui';
 import { Approvals } from './OrganizationView';
@@ -20,18 +20,19 @@ const IncidentsPane = lazy(() => import('./OrgIncidentsView').then((m) => ({ def
 const InboxHistory = lazy(() => import('./InboxHistory').then((m) => ({ default: m.InboxHistory })));
 
 const KIND_COLOR: Record<InboxItem['kind'], string> = {
-  approvals: 'var(--amber)', keys: 'var(--amber)', escalations: 'var(--red)', plans: 'var(--blue)', mytasks: 'var(--accent)', incidents: 'var(--red)', following: 'var(--green)',
+  messages: 'var(--blue)', approvals: 'var(--amber)', keys: 'var(--amber)', escalations: 'var(--red)', plans: 'var(--blue)', mytasks: 'var(--accent)', incidents: 'var(--red)', following: 'var(--green)',
 };
 const KIND_LABEL: Record<InboxItem['kind'], string> = {
-  approvals: 'approval', keys: 'key', escalations: 'escalation', plans: 'plan', mytasks: 'task', incidents: 'incident', following: 'following',
+  messages: 'message', approvals: 'approval', keys: 'key', escalations: 'escalation', plans: 'plan', mytasks: 'task', incidents: 'incident', following: 'following',
 };
 
 function Row({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) => void }) {
   const f = i.follow;
-  const color = f?.attention ? 'var(--amber)' : KIND_COLOR[i.kind];
+  const m = i.message;
+  const color = f?.attention || m?.urgency === 'urgent' ? (m ? 'var(--red)' : 'var(--amber)') : KIND_COLOR[i.kind];
   return (
     <button data-testid={`inbox-item-${i.key}`} onClick={() => onOpen(i)}
-      style={{ ...card, display: 'flex', width: '100%', textAlign: 'left', gap: 10, alignItems: 'flex-start', marginBottom: 8, cursor: 'pointer', borderLeft: `3px solid ${color}`, color: 'var(--text)', font: 'inherit', boxSizing: 'border-box', opacity: f && !f.attention && f.unseen === 0 ? 0.75 : 1 }}>
+      style={{ ...card, display: 'flex', width: '100%', textAlign: 'left', gap: 10, alignItems: 'flex-start', marginBottom: 8, cursor: 'pointer', borderLeft: `3px solid ${color}`, color: 'var(--text)', font: 'inherit', boxSizing: 'border-box', opacity: (f && !f.attention && f.unseen === 0) || m?.read ? 0.75 : 1 }}>
       <span style={{ ...pill(KIND_COLOR[i.kind], '#fff'), flex: 'none' }}>{KIND_LABEL[i.kind]}</span>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: 'block', fontSize: 13, fontWeight: 600, overflowWrap: 'anywhere' }}>{i.title}</span>
@@ -42,6 +43,8 @@ function Row({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) => void }) {
         {i.at && <span style={faint}>{ago(i.at)}</span>}
         {f && f.unseen > 0 && <span data-testid="follow-unseen" title={`${f.unseen} new since you looked`} style={pill('var(--accent)', '#fff')}>{f.unseen} new</span>}
         {f?.closed && <span style={pill()}>closed</span>}
+        {m && !m.read && <span data-testid="message-unread" style={pill('var(--accent)', '#fff')}>new</span>}
+        {m && m.urgency !== 'normal' && <span data-testid="message-urgency" style={m.urgency === 'urgent' ? pill('var(--red)', '#fff') : pill()}>{m.urgency}</span>}
       </span>
     </button>
   );
@@ -51,7 +54,7 @@ export function InboxView() {
   const app = useApp();
   const wsId = app.workspaceId;
   const [org, setOrg] = useState<OrgDetail | null>(null);
-  const [src, setSrc] = useState<{ approvals: OrgApproval[]; plans: OrgPlan[]; tasks: { assigned: OrgTask[]; reviewing: OrgTask[] } | null; follows: FollowRow[] } | null>(null);
+  const [src, setSrc] = useState<{ approvals: OrgApproval[]; plans: OrgPlan[]; tasks: { assigned: OrgTask[]; reviewing: OrgTask[] } | null; follows: FollowRow[]; messages: AgentMessage[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   /** Waiting (the default) or History (docs/home.md "Inbox"). */
   const [mode, setMode] = useState<InboxMode>('waiting');
@@ -60,11 +63,12 @@ export function InboxView() {
   const reload = useCallback(async () => {
     if (!wsId) return;
     try {
-      const [o, approvals, plans, tasks, follows] = await Promise.all([
+      const [o, approvals, plans, tasks, follows, messages] = await Promise.all([
         api.org(wsId), api.orgApprovals(wsId, 'pending').catch((): OrgApproval[] => []), api.orgPlans(wsId, 'pending').catch((): OrgPlan[] => []), api.orgMyTasks(wsId).catch(() => null),
         api.followsMine(wsId).catch((): FollowRow[] => []),
+        api.inboxMessages(wsId).then((r) => r.items).catch((): AgentMessage[] => []),
       ]);
-      setOrg(o); setSrc({ approvals, plans, tasks, follows }); setErr(null);
+      setOrg(o); setSrc({ approvals, plans, tasks, follows, messages }); setErr(null);
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     void app.refreshWsOrg();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -73,8 +77,9 @@ export function InboxView() {
 
   const items = useMemo(() => (src ? buildInbox({ ...src, incidents: app.orgHealth?.openIncidents ?? [], heldActions: app.orgHeldActions }) : []), [src, app.orgHealth, app.orgHeldActions]);
   const following = useMemo(() => followingList(src?.follows ?? []), [src]);
+  const messages = useMemo(() => messagesList(src?.messages ?? []), [src]);
   const filter = app.inboxFilter;
-  const count = (f: InboxFilter) => (f === 'following' ? following.filter((i) => i.follow && (i.follow.unseen > 0 || i.follow.attention)).length : filterInbox(items, f).length);
+  const count = (f: InboxFilter) => (f === 'messages' ? messages.filter((i) => !i.message?.read).length : f === 'following' ? following.filter((i) => i.follow && (i.follow.unseen > 0 || i.follow.attention)).length : filterInbox(items, f).length);
   const waiting = waitingCount(items);
 
   /** A followed thread or task: open it where it lives, and it is seen. */
@@ -85,7 +90,15 @@ export function InboxView() {
     if (f.targetKind === 'org_task') app.openOrgTask(f.targetId);
     else if (f.link) window.location.hash = f.link.replace(/^[^#]*/, '');
   };
+  /** A message: open the agent's direct chat (the reply goes there), and the chat's messages are read. */
+  const openMessage = (i: InboxItem) => {
+    const m = i.message!;
+    setSrc((s) => (s ? { ...s, messages: s.messages.map((x) => (x.sessionId === m.sessionId ? { ...x, read: true } : x)) } : s));
+    void api.markMessagesRead(wsId, { sessionId: m.sessionId }).then(() => app.refreshWsOrg()).catch(() => undefined);
+    app.openSession(m.sessionId);
+  };
   const open = (i: InboxItem) => {
+    if (i.kind === 'messages') { openMessage(i); return; }
     if (i.kind === 'following') { openFollow(i); return; }
     if (i.kind === 'mytasks') { app.openOrgTask(i.refId); return; }
     if (i.kind === 'plans') app.setOrgFocus({ kind: 'plan', id: i.refId });
@@ -133,6 +146,11 @@ export function InboxView() {
           <div style={{ maxWidth: 820 }} data-testid="inbox-list">
             {items.length === 0 && <div style={faint}>Nothing waits on you. Decisions, keys, plans, your tasks, new incidents and what changed on what you follow show up here.</div>}
             {items.map((i) => <Row key={i.key} i={i} onOpen={open} />)}
+          </div>
+        ) : filter === 'messages' ? (
+          <div style={{ maxWidth: 820 }} data-testid="messages-list">
+            {messages.length === 0 && <div style={faint}>No messages from your team. When an agent writes to you directly it lands here and in its chat with you, where your reply goes.</div>}
+            {messages.map((i) => <Row key={i.key} i={i} onOpen={open} />)}
           </div>
         ) : filter === 'following' ? (
           <div style={{ maxWidth: 820 }} data-testid="following-list">

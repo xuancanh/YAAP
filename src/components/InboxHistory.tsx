@@ -74,7 +74,7 @@ export function InboxHistory({ onWaiting }: { onWaiting: (f: InboxFilter) => voi
     const n = ++req.current;
     setLoading(true);
     try {
-      const page = await api.inboxHistory(wsId, { kind: filter === 'all' ? undefined : filter, q: q || undefined, from: historyFrom(days), without: without || undefined, cursor: after ?? undefined, limit: PAGE });
+      const page = await api.inboxHistory(wsId, { kind: filter === 'all' || filter === 'messages' ? undefined : filter, q: q || undefined, from: historyFrom(days), without: without || undefined, cursor: after ?? undefined, limit: PAGE });
       if (n !== req.current) return;
       setItems((prev) => (after && prev ? [...prev, ...page.items] : page.items));
       setCursor(page.nextCursor);
@@ -111,7 +111,8 @@ export function InboxHistory({ onWaiting }: { onWaiting: (f: InboxFilter) => voi
   return (
     <div style={{ maxWidth: 820 }} data-testid="history-list">
       <div role="tablist" aria-label="History filters" style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2, marginBottom: 10 }}>
-        {INBOX_FILTERS.map((f) => (
+        {/* Messages stay in their chats: History has no Messages filter. */}
+        {INBOX_FILTERS.filter((f) => f.id !== 'messages').map((f) => (
           <button key={f.id} role="tab" aria-selected={filter === f.id} onClick={() => setFilter(f.id)} style={{ ...btn(filter === f.id), flex: 'none', whiteSpace: 'nowrap' }}>{f.label}</button>
         ))}
       </div>

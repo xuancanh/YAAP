@@ -1,14 +1,15 @@
 /** The Inbox and the Company menu (docs/company-vision.md §8 "The CEO's
  *  seat"): everything waiting on the CEO in one list, and the company panes
  *  grouped in the Company rail. Pure — the views and the store use these. */
-import type { FollowRow, HistoryItem, HistoryOutcome, OrgApproval, OrgHealth, OrgPlan, OrgTask } from './api';
+import type { AgentMessage, FollowRow, HistoryItem, HistoryOutcome, OrgApproval, OrgHealth, OrgPlan, OrgTask } from './api';
 import type { OrgPane } from '../store';
 
 // ---- Inbox ----
 
-export type InboxFilter = 'all' | 'approvals' | 'keys' | 'escalations' | 'plans' | 'mytasks' | 'incidents' | 'following';
+export type InboxFilter = 'all' | 'messages' | 'approvals' | 'keys' | 'escalations' | 'plans' | 'mytasks' | 'incidents' | 'following';
 export const INBOX_FILTERS: Array<{ id: InboxFilter; label: string }> = [
   { id: 'all', label: 'All' },
+  { id: 'messages', label: 'Messages' },
   { id: 'approvals', label: 'Approvals' },
   { id: 'keys', label: 'Keys' },
   { id: 'escalations', label: 'Escalations' },
@@ -22,6 +23,8 @@ export interface InboxItem {
   key: string; kind: Exclude<InboxFilter, 'all'>; title: string; detail: string; at: string; refId: string;
   /** Following (docs/follows.md): the followed thread or task, its unseen count and why it needs me. */
   follow?: { targetKind: FollowRow['targetKind']; targetId: string; link: string; unseen: number; attention: string; closed: boolean };
+  /** Messages (docs/agent-messages.md): who sent it, how urgent, read or not, and the direct chat it opens. */
+  message?: { agentName: string; emoji: string; colors: string; urgency: AgentMessage['urgency']; read: boolean; sessionId: string; eventId: string | null; refs: string[] };
 }
 
 export interface InboxSource {
@@ -33,6 +36,8 @@ export interface InboxSource {
   heldActions: number;
   /** What I follow (`GET …/follows/mine`): the ones with something new are listed. */
   follows?: FollowRow[];
+  /** Messages from agents (`GET …/inbox/messages`): the unread ones wait on me. */
+  messages?: AgentMessage[];
 }
 
 const OPEN_TASK = new Set(['backlog', 'waiting', 'todo', 'claimed', 'in_progress', 'in_review', 'blocked']);
@@ -67,12 +72,29 @@ export function buildInbox(src: InboxSource): InboxItem[] {
     if (f.mutedAt || (f.unseenCount <= 0 && !f.attentionAt)) continue;
     out.push(followItem(f));
   }
+  for (const m of src.messages ?? []) if (!m.read) out.push(messageItem(m));
   // The keys row (no time) leads; the rest newest first.
   return out.sort((a, b) => (a.at === b.at ? 0 : !a.at ? -1 : !b.at ? 1 : a.at < b.at ? 1 : -1));
 }
 
 export function filterInbox(items: InboxItem[], f: InboxFilter): InboxItem[] {
   return f === 'all' ? items : items.filter((i) => i.kind === f);
+}
+
+/** One agent's message to the owner as an Inbox row: the sender, the first line, the rest as detail. The text is data (rendered as text). */
+export function messageItem(m: AgentMessage): InboxItem {
+  const lines = m.text.split('\n').map((l) => l.trim()).filter(Boolean);
+  const first = lines[0] ?? '';
+  return {
+    key: `m:${m.id}`, kind: 'messages', title: `${m.agentName}: ${first.length > 160 ? `${first.slice(0, 159)}…` : first}`,
+    detail: lines.slice(1).join(' ').slice(0, 240), at: m.createdAt, refId: m.id,
+    message: { agentName: m.agentName, emoji: m.emoji, colors: m.colors, urgency: m.urgency, read: m.read, sessionId: m.sessionId, eventId: m.eventId, refs: m.refs },
+  };
+}
+
+/** The Messages filter: every recent message, unread first, newest first. */
+export function messagesList(messages: AgentMessage[]): InboxItem[] {
+  return messages.map(messageItem).sort((a, b) => Number(a.message!.read) - Number(b.message!.read) || (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
 }
 
 const TARGET_WORD: Record<FollowRow['targetKind'], string> = { thread: 'thread', org_task: 'task', agent_task: 'task' };
@@ -100,8 +122,8 @@ export function waitingCount(items: InboxItem[]): number {
 
 /** The Inbox nav badge: everything waiting on the CEO. Followed threads and
  *  tasks count only when their latest change needs me, not for every reply. */
-export function inboxBadge(c: { pendingApprovals: number; heldActions: number; pendingPlans: number; openIncidents: number; myTasks: number; followAttention?: number }): number {
-  return c.pendingApprovals + c.heldActions + c.pendingPlans + c.openIncidents + c.myTasks + (c.followAttention ?? 0);
+export function inboxBadge(c: { pendingApprovals: number; heldActions: number; pendingPlans: number; openIncidents: number; myTasks: number; followAttention?: number; unreadMessages?: number }): number {
+  return c.pendingApprovals + c.heldActions + c.pendingPlans + c.openIncidents + c.myTasks + (c.followAttention ?? 0) + (c.unreadMessages ?? 0);
 }
 
 // ---- the Company menu ----

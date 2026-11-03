@@ -377,6 +377,8 @@ const AssistantRow = memo(function AssistantRow({ m, turn, agent, isNewest, isLa
     <div style={{ display: 'flex', gap: 12, margin: '16px 0', animation: 'msgIn .2s ease' }}>
       <div style={{ width: 28, height: 28, borderRadius: 8, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 2, fontSize: 14 }}>{agent?.emoji ?? '💬'}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
+        {/* An agent-initiated message (message_owner, docs/agent-messages.md): the agent's, not a reply to you. */}
+        {m.toolName === 'message_owner' && <div data-testid="agent-message-label" style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-faint)', marginBottom: 2 }}>{agent?.name ?? 'The agent'} wrote to you · reply here</div>}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
           <div style={{ flex: 1, minWidth: 0, lineHeight: 1.65 }}><Markdown text={bodyText} refs={refs} /></div>
           {tts && bodyText.trim() && !(streaming && isNewest) && <SpeakButton text={plainText(bodyText)} voice={ttsVoice} />}

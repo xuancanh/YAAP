@@ -12,7 +12,7 @@
  */
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../store';
-import { api, type HomeData, type HomeNeed, type HomeNeedAction } from '../lib/api';
+import { api, type AgentMessage, type HomeData, type HomeNeed, type HomeNeedAction } from '../lib/api';
 import { actionDone, type HomeTarget } from '../lib/home';
 import { HomeBoard, HomeStatus } from './HomeBoard';
 
@@ -110,6 +110,13 @@ export function HomeView() {
     }
   }, [app, wsId]);
 
+  /** A message from the team: its direct chat opens, and its messages are read. */
+  const onMessage = useCallback((m: AgentMessage) => {
+    setData((d) => (d?.messages ? { ...d, messages: { unread: Math.max(0, d.messages.unread - d.messages.items.filter((x) => x.sessionId === m.sessionId && !x.read).length), items: d.messages.items.map((x) => (x.sessionId === m.sessionId ? { ...x, read: true } : x)) } } : d));
+    if (wsId) void api.markMessagesRead(wsId, { sessionId: m.sessionId }).then(() => app.refreshWsOrg()).catch(() => undefined);
+    app.openSession(m.sessionId);
+  }, [app, wsId]);
+
   const narrow = app.width < 640;
   const wide = app.width >= 1180;
   const name = useMemo(() => {
@@ -124,7 +131,7 @@ export function HomeView() {
       {data ? (
         <HomeBoard
           data={data} narrow={narrow} wide={wide} name={name} busy={busy}
-          onAct={(n, a) => { void onAct(n, a); }} onOpen={onOpen} onAllAgents={() => app.go('agents')}
+          onAct={(n, a) => { void onAct(n, a); }} onOpen={onOpen} onMessage={onMessage} onAllAgents={() => app.go('agents')}
           onStartCompany={app.companiesEnabled && isOwner && ws && !ws.shared ? () => setWizard(true) : undefined}
           onNewAgent={isOwner ? () => app.setNewAgentOpen(true) : undefined}
         />

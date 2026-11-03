@@ -219,6 +219,8 @@ interface Store {
   orgMyTasks: number;
   /** Things I follow whose latest change needs me (docs/follows.md): they count in the Inbox badge. */
   followAttention: number;
+  /** Unread messages agents sent me with message_owner (docs/agent-messages.md): they count in the Inbox badge. */
+  unreadMessages: number;
   /** Open one org task: the Company board with its drawer, through the task
    *  deep link (`#/ws/<id>/org/board?task=<id>`) so back, forward and reload
    *  work. Fetches the task when it is not on the loaded board. */
@@ -377,6 +379,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
   const [orgMyTasks, setOrgMyTasks] = useState(0);
   const [followAttention, setFollowAttention] = useState(0);
+  const [unreadMessages, setUnreadMessages] = useState(0);
   const [orgUnitId, setOrgUnitId] = useState<string | null>(null);
   const [orgIntent, setOrgIntent] = useState<OrgIntentNode[]>([]);
   const [orgCadences, setOrgCadences] = useState<OrgCadence[]>([]);
@@ -561,7 +564,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshMcp = useCallback(async () => setMcp(await api.mcp()), []);
   const refreshMarket = useCallback(async () => setMarket(await api.market(workspaceId || undefined)), [workspaceId]);
   const refreshWsOrg = useCallback(async () => {
-    if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); setFollowAttention(0); return; }
+    if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); setFollowAttention(0); setUnreadMessages(0); return; }
     const st = await api.workspaceOrg(workspaceId).catch((): WorkspaceOrg | null => null);
     setWsOrg(st);
     // The intent tree and the cadences ride along for the rail (at-risk
@@ -575,12 +578,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         api.orgMyTasks(workspaceId).catch(() => null),
         api.followsMine(workspaceId).catch(() => []),
       ]);
+      setUnreadMessages((await api.inboxMessages(workspaceId).catch(() => ({ unread: 0 }))).unread);
       // Followed changes count in the badge only when they need me.
       setFollowAttention(follows.filter((f) => f.attentionAt && !f.mutedAt).length);
       setOrgIntent(intent); setOrgCadences(cadences); setOrgPendingPlans(plans.length);
       setOrgHealth(health); setOrgHeldActions(held.length + staged.length);
       setOrgMyTasks(mine ? [...mine.assigned, ...mine.reviewing].filter((t) => t.status !== 'done' && t.status !== 'cancelled').length : 0);
-    } else { setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); setFollowAttention(0); }
+    } else { setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); setFollowAttention(0); setUnreadMessages(0); }
   }, [workspaceId, companiesEnabled]);
   useEffect(() => {
     api.orgsStatus().then((s) => setCompaniesEnabled(s.enabled)).catch(() => setCompaniesEnabled(false));
@@ -1210,7 +1214,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, openOrgTask, inboxFilter, setInboxFilter, orgFocus, setOrgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, orgFocus, setOrgFocus,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
@@ -1229,7 +1233,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, openOrgTask, inboxFilter, orgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, orgPane, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, orgFocus,
     channels, refreshChannels, currentChannel, channelFocus, openChannel, onWorkspaceEvent,
   ]);
 

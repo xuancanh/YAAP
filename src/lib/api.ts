@@ -1521,6 +1521,10 @@ export const api = {
   unfollow: (wsId: string, targetKind: FollowTargetKind, targetId: string) =>
     send<FollowView>(`/api/workspaces/${wsId}/follows/unfollow`, 'POST', { targetKind, targetId }, followViewSchema),
   followsMine: (wsId: string) => get<FollowRow[]>(`/api/workspaces/${wsId}/follows/mine`),
+  /** Messages from your team (docs/agent-messages.md): what agents sent the owner, unread first. */
+  inboxMessages: (wsId: string) => get<{ items: AgentMessage[]; unread: number }>(`/api/workspaces/${wsId}/inbox/messages`),
+  /** Read the messages of one direct chat (by the message's inbox event, or the chat). */
+  markMessagesRead: (wsId: string, ref: { eventId?: string; sessionId?: string }) => send<{ ok: true; marked: number }>(`/api/workspaces/${wsId}/inbox/messages/read`, 'POST', ref),
   /** The Inbox's History: resolved items, newest first, a page at a time. */
   inboxHistory: (wsId: string, p: HistoryParams = {}) => {
     const qs = new URLSearchParams();
@@ -2120,6 +2124,11 @@ export interface HomeUpcoming {
   /** Rituals: the units holding it at this time. */
   units?: string[];
 }
+/** One message an agent sent the owner with message_owner (docs/agent-messages.md); it opens the agent's direct chat. */
+export interface AgentMessage {
+  id: string; eventId: string | null; agentId: string; agentName: string; emoji: string; colors: string;
+  text: string; urgency: 'fyi' | 'normal' | 'urgent'; refs: string[]; sessionId: string; createdAt: string; read: boolean;
+}
 export interface HomeArtifact { path: string; version: number; size: number; updatedAt: string; updatedBy: { kind: string; id: string; name: string } }
 export interface HomeCompany { orgId: string; name: string; mode: OrgMode; status: 'active' | 'paused'; chiefAgentId: string | null; chiefName: string | null; memberCount: number }
 /** GET /api/workspaces/:id/home. */
@@ -2129,6 +2138,8 @@ export interface HomeData {
   headline: { tasksDone: number; needsYou: number; todayUsd: number | null; monthUsd: number | null; monthCapUsd: number | null };
   needs: HomeNeed[]; recap: HomeRecap; goals: HomeGoal[]; team: HomeAgent[]; activity: HomeActivity[];
   spend: HomeSpend; health: HomeHealth; upcoming: HomeUpcoming[]; artifacts: HomeArtifact[];
+  /** Messages from your team (docs/agent-messages.md); absent from an older server. */
+  messages?: { items: AgentMessage[]; unread: number };
   /** Sections that failed to load on the server. */
   partial: string[];
 }

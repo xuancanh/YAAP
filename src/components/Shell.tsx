@@ -21,7 +21,7 @@ function useNav() {
   const badge = orgOn ? inboxBadge({
     pendingApprovals: app.wsOrg?.pendingApprovals ?? 0, heldActions: app.orgHeldActions, pendingPlans: app.orgPendingPlans,
     openIncidents: (app.orgHealth?.openIncidents ?? []).filter((i) => i.status === 'open').length, myTasks: app.orgMyTasks,
-    followAttention: app.followAttention,
+    followAttention: app.followAttention, unreadMessages: app.unreadMessages,
   }) : 0;
   return NAV.filter((n) => !n.org || orgOn).map((n) => ({ ...n, badge: n.id === 'inbox' && badge > 0 ? badge : undefined }));
 }
