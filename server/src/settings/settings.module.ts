@@ -12,6 +12,8 @@ import { appSettings } from '../database/schema';
 
 const ALLOWED_KEYS = new Set([
   'defaultPermissionMode', 'defaultAgentTypeId', 'defaultTokenCeiling', 'compactionThresholdTokens', 'compactionThresholdPct', 'autoCompact', 'theme',
+  // How agents write to people (docs/agent-writing.md): plain | concise | detailed
+  'writingStyle',
   // Telegram channel (roadmap phase 4): the paired chat and its target agent
   'telegramChatId', 'telegramDefaultAgentId',
   // Email channel (docs/channels.md): paired owner addresses (JSON array),

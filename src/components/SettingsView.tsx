@@ -331,6 +331,22 @@ function ContextPane() {
   return (
     <div style={{ ...card, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
+        <div style={{ fontSize: 14, fontWeight: 600 }}>How agents write to you</div>
+        <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>Every style uses plain, friendly language in full sentences and explains task keys and file names. Choose how much they say.</div>
+        <div role="radiogroup" aria-label="Writing style" style={{ display: 'flex', gap: 8, marginTop: 11, flexWrap: 'wrap' }}>
+          {([['plain', 'Clear', 'a short, friendly explanation'], ['concise', 'Concise', 'a few clear sentences'], ['detailed', 'Detailed', 'with the reasoning']] as const).map(([v, label, hint]) => {
+            const on = (app.settings.writingStyle || 'plain') === v;
+            return (
+              <button key={v} role="radio" aria-checked={on} onClick={() => void app.saveSettings({ writingStyle: v })}
+                style={{ background: on ? 'var(--accent-dim)' : 'var(--panel-2)', border: `1px solid ${on ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 9, padding: '7px 12px', color: 'var(--text)', fontSize: 12.5, cursor: 'pointer', textAlign: 'left' }}>
+                <div style={{ fontWeight: 600 }}>{label}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-dim)' }}>{hint}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 15 }}>
         <div style={{ fontSize: 14, fontWeight: 600 }}>Context ceiling</div>
         <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>The most context one model call in a chat may carry. Auto-compact keeps chats under it, compacting at 80% of it at the latest; with auto-compact off, a chat at the ceiling is refused until /compact. 0 = unlimited. Applies to new chats.</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 11 }}>

@@ -201,6 +201,10 @@ export class TurnContextService {
         : `This workspace is shared by several people; this session is private to ${initiator} (and the owner). Do not disclose other members' private material here.`);
     }
 
+    // Writing (docs/agent-writing.md): people read what agents write, so it
+    // must make sense to someone who was not inside the agent's head.
+    const style = this.settings ? await this.settings.all().then((x) => x.writingStyle).catch(() => undefined) : undefined;
+    parts.push(writingGuide(style));
     // Formatting: replies render as Markdown with rich fenced components (src/lib/md.tsx).
     parts.push('Your replies render as Markdown: headings, lists, task checkboxes, GFM tables, block quotes, callouts (> [!NOTE] / [!TIP] / [!WARNING]), code fences with a language label, links and images. Use them when they make the answer clearer, not by default. Rich components are fenced blocks named by language: ```chart with JSON {"type":"bar"|"line","title":"…","labels":[…],"series":[{"name":"…","values":[…]}],"unit":"…"} renders an inline chart; ```kv with "key: value" lines renders a definition grid; ```steps with one step per line renders a numbered timeline; ```progress with "label: 0-100" lines renders progress bars; ```details whose first line is the summary renders a collapsible section; ```callout whose first line is "note|tip|warning|danger Title" renders a callout. Never mention these mechanisms.');
     // Quick replies (FR-5.3): a provider-neutral text protocol the UI parses.
@@ -219,4 +223,24 @@ export class TurnContextService {
       ...(fallback && type ? { degraded: { from: `${type.provider}:${ownModel}`, to: `${fallback.type.provider}:${fallback.type.model}` } } : {}),
     };
   }
+}
+
+/** How agents write for people. `plain` (the default) is warm, plain
+ *  language in full sentences; `concise` keeps that but shorter; `detailed`
+ *  adds the reasoning. Every style keeps the same rules. */
+export function writingGuide(style?: string | null): string {
+  const length = style === 'concise'
+    ? 'Keep it short: a few clear sentences, but never so short that the reader has to guess what you mean.'
+    : style === 'detailed'
+      ? 'Explain your reasoning and the trade-offs you weighed, in a few short paragraphs.'
+      : 'Aim for a short, friendly explanation: usually two to five sentences, longer only when the reader needs it.';
+  return [
+    'How you write: people read what you write, often without the context you have. Write like a thoughtful colleague talking to a busy person.',
+    '- Use plain, everyday words and full sentences. Avoid jargon, internal codes and abbreviations; if you must use one (a task key like ENG-12, a tool or file name), say what it is the first time, e.g. "the pricing task (ENG-12)".',
+    '- Lead with what matters to the reader: what happened, what it means for them, and what (if anything) you need from them. Then the detail.',
+    '- Be warm and human: acknowledge the person, say "I" and "we", and be honest about uncertainty ("I am not sure yet because…").',
+    '- One idea per sentence. Break long text into short paragraphs or a short list. No walls of text, no telegraphic notes, no fragments like "Blocked before any edit." on their own.',
+    `- ${length}`,
+    'This applies to everything a person may read: chat replies, messages to the owner, channel posts, task comments, status updates, briefs and reports. Notes only you read (your journal, scratch files) can stay terse.',
+  ].join('\n');
 }

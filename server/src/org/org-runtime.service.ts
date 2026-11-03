@@ -1192,7 +1192,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     });
     const head = reviewer
       ? `You were woken as the REVIEWER of task ${taskRef(task)} "${task.title}" (reason: ${reason}). Check the result against the done_when rubric in your context, then call org_review with accept, request_changes (with a concrete note), or escalate. Do not do the task yourself.`
-      : `You were woken for task ${taskRef(task)} "${task.title}" (reason: ${reason}). Do the work described in your context with your tools, keep the status current with org_task_update, leave a short handoff with org_task_comment, and when done_when is met call org_request_review. If you are stuck, set status blocked with the blocker named. Be concise.`;
+      : `You were woken for task ${taskRef(task)} "${task.title}" (reason: ${reason}). Do the work described in your context with your tools, keep the status current with org_task_update, leave a short handoff with org_task_comment, and when done_when is met call org_request_review. If you are stuck, set status blocked with the blocker named. Write your comments and handoffs so a person can follow them: plain language, full sentences.`;
     return [head, comments.length ? `Task timeline (newest last):\n${framed.join('\n')}` : 'No comments on this task yet.'].join('\n\n');
   }
 
