@@ -109,6 +109,7 @@ and `HttpLoggingInterceptor` registered globally.
 | `settings` | App-wide settings in `app_settings`. | `SettingsService` |
 | `connections` | OAuth connections, grants, tool definitions, context cards, pollers. | `ConnectionsService`, `connections.tools.ts`, `connections.poll.ts`, `cards/` |
 | `runner` | Sandboxed code execution. | `RunnerService` |
+| `harness` | Coding-agent CLIs (Claude Code, Codex, Pi, DeepSeek via Claude Code) as the `code_agent` tool: detection, per-run temp dir synced through WorkspaceFs, settings at `/api/harness` (docs/coding-harnesses.md). | `HarnessService`, `harness-commands.ts`, `harness-workdir.ts`, `harness-config.ts` |
 | `browser` | The browser tool and its two backends. | `BrowserService`, `page-model.ts` |
 | `computer` | Desktop companion pairing, scopes, action queue, audit. | `ComputerService`, `CompanionGuard`, `computer-scopes.ts` |
 | `review` | The independent action reviewer (a second, tool-less model call). | `ActionReviewService`, `review-prompt.ts` |
@@ -304,6 +305,7 @@ The list for a turn is built at `turn-loop.service.ts:599-624`:
 | MCP | `mcp_<server>_<tool>` | `mcp/mcp.module.ts:221` |
 | Connections | Gmail, Calendar, Drive, Microsoft verbs, for granted agents | `connections/connections.tools.ts` |
 | Runner, browser, computer | `run_js`, `run_python`; `browser_*`; `computer_*` | `runner/`, `browser/`, `computer/computer-scopes.ts` |
+| Coding agents (agent sessions) | `code_agent` (a provider hook; streams `tool_progress`) | `harness/harness.service.ts` |
 | Hooks (agent sessions) | `org_*` (the runtime's tool matrix by role and scope), channel tools, `follow` / `unfollow` / `list_follows`, org memory, incidents, governance, sensing, experiments, predictions, meetings, `trust_status` | `setOrgTools`, `addToolProvider` |
 
 `restrictTo` then filters the list; the auditor runs with a read-only set.
