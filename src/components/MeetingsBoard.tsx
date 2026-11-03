@@ -11,7 +11,7 @@ import { api, type CalendarMeeting, type CalendarResponse } from '../lib/api';
 import { cadenceText } from '../lib/home';
 import { fmtUsd } from '../lib/pricing';
 import { MEETING_KIND_TITLES } from '../lib/org';
-import { addDays, byDay, clock, dayKey, monthGrid, rangeFor, shortTitle, splitList, startOfDay, tokensText, weekDays, whenText } from '../lib/meetings';
+import { addDays, byDay, clock, dayKey, monthGrid, openMeetingView, rangeFor, shortTitle, splitList, startOfDay, tokensText, weekDays, whenText } from '../lib/meetings';
 import { MeetingStartDialog } from './MeetingStartDialog';
 import { card, btn, pill, faint, linkBtn, label } from './org-ui';
 
@@ -63,11 +63,14 @@ export function MeetingsBoard({ wsId, unitId, channel, showUnit = true, startIn 
     setSelected(m);
   };
   const openThread = (m: CalendarMeeting) => { if (m.channelSlug) app.openChannel(m.channelSlug, m.threadRootId); };
-  // Join: present in the room (heard at the next turn), then the thread with its room header.
+  // Join: present in the room (heard at the next turn), then the full-screen room.
   const join = (m: CalendarMeeting) => {
-    if (m.meetingId) void api.joinMeeting(wsId, m.meetingId).catch((e: unknown) => app.showToast(e instanceof Error ? e.message.slice(0, 140) : 'could not join'));
-    openThread(m);
+    if (!m.meetingId) { openThread(m); return; }
+    void api.joinMeeting(wsId, m.meetingId).catch((e: unknown) => app.showToast(e instanceof Error ? e.message.slice(0, 140) : 'could not join'));
+    openMeetingView(wsId, m.meetingId);
   };
+  // View: the full-screen room (its summary once it ended).
+  const viewRoom = (m: CalendarMeeting) => { if (m.meetingId) openMeetingView(wsId, m.meetingId); else openThread(m); };
   const items = data?.meetings ?? [];
 
   const header = (
@@ -92,7 +95,7 @@ export function MeetingsBoard({ wsId, unitId, channel, showUnit = true, startIn 
       {starting && startIn && <MeetingStartDialog wsId={wsId} units={[]} channel={startIn} onDone={(m) => { setStarting(false); if (m) { void load(); setTimeout(() => { void api.orgMeeting(wsId, m.id).then((x) => { if (x.threadRootId) app.openChannel(startIn.slug, x.threadRootId); }).catch(() => {}); }, 1500); } }} />}
       {failed && <div style={{ ...faint, color: 'var(--red)' }}>{failed}</div>}
       {!data && !failed && <div style={faint}>Loading…</div>}
-      {data && view === 'list' && <ListView items={items} open={open} openThread={openThread} join={join} showUnit={showUnit} showAll={showAll} setShowAll={setShowAll} />}
+      {data && view === 'list' && <ListView items={items} open={open} openThread={openThread} join={join} view={viewRoom} showUnit={showUnit} showAll={showAll} setShowAll={setShowAll} />}
       {data && view === 'calendar' && (
         <CalendarView mode={calMode} anchor={anchor} setAnchor={(d) => { setAnchor(d); setDayOpen(null); }} items={items} open={open} dayOpen={dayOpen} setDayOpen={setDayOpen} showUnit={showUnit} />
       )}
@@ -101,7 +104,7 @@ export function MeetingsBoard({ wsId, unitId, channel, showUnit = true, startIn 
   );
 }
 
-function Row({ m, open, openThread, join, showUnit }: { m: CalendarMeeting; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; join: (m: CalendarMeeting) => void; showUnit: boolean }) {
+function Row({ m, open, join, view, showUnit }: { m: CalendarMeeting; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; join: (m: CalendarMeeting) => void; view: (m: CalendarMeeting) => void; showUnit: boolean }) {
   const tokens = (m.tokensIn ?? 0) + (m.tokensOut ?? 0);
   return (
     <div data-testid="meeting-row" style={{ display: 'flex', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border-soft)', alignItems: 'flex-start', minWidth: 0 }}>
@@ -123,26 +126,26 @@ function Row({ m, open, openThread, join, showUnit }: { m: CalendarMeeting; open
       </div>
       <div style={{ display: 'flex', gap: 5, flex: 'none' }}>
         {m.minutesPath && <button style={btn()} onClick={() => open(m)} title={`Open /${m.minutesPath}`}>Minutes</button>}
-        {m.status === 'running' && m.channelSlug && <button style={btn(true)} onClick={() => join(m)} title="Join the room: you are heard at the next turn">Join</button>}
-        {m.status !== 'running' && m.threadRootId && m.channelSlug && <button style={btn()} onClick={() => openThread(m)} title="Open the meeting thread and its room">View</button>}
+        {m.status === 'running' && m.channelSlug && <button style={btn(true)} onClick={() => join(m)} title="Join the full-screen room: you are heard at the next turn">Join</button>}
+        {m.status !== 'running' && m.meetingId && (m.threadRootId || m.status === 'scheduled' || m.status === 'postponed') && <button style={btn()} onClick={() => view(m)} title="Open the full-screen room">View</button>}
         {!m.minutesPath && !m.threadRootId && <button style={btn()} onClick={() => open(m)}>Details</button>}
       </div>
     </div>
   );
 }
 
-function ListView({ items, open, openThread, join, showUnit, showAll, setShowAll }: { items: CalendarMeeting[]; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; join: (m: CalendarMeeting) => void; showUnit: boolean; showAll: boolean; setShowAll: (v: boolean) => void }) {
+function ListView({ items, open, openThread, join, view, showUnit, showAll, setShowAll }: { items: CalendarMeeting[]; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; join: (m: CalendarMeeting) => void; view: (m: CalendarMeeting) => void; showUnit: boolean; showAll: boolean; setShowAll: (v: boolean) => void }) {
   const { upcoming, past } = splitList(items);
   const shownUpcoming = showAll ? upcoming : upcoming.slice(0, 8);
   return (
     <div>
       <div style={{ ...label, marginTop: 4 }}>Upcoming ({upcoming.length})</div>
       {upcoming.length === 0 && <div style={{ ...faint, padding: '6px 0' }}>Nothing scheduled in the next 30 days.</div>}
-      {shownUpcoming.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} join={join} showUnit={showUnit} />)}
+      {shownUpcoming.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} join={join} view={view} showUnit={showUnit} />)}
       {upcoming.length > shownUpcoming.length && <button style={{ ...linkBtn, marginTop: 6 }} onClick={() => setShowAll(true)}>Show {upcoming.length - shownUpcoming.length} more</button>}
       <div style={{ ...label, marginTop: 12 }}>Past ({past.length})</div>
       {past.length === 0 && <div style={{ ...faint, padding: '6px 0' }}>No meeting held in the last 60 days. <code>/meeting</code> in a channel starts one.</div>}
-      {past.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} join={join} showUnit={showUnit} />)}
+      {past.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} join={join} view={view} showUnit={showUnit} />)}
     </div>
   );
 }

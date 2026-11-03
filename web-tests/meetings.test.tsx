@@ -90,7 +90,8 @@ describe('MeetingsBoard', () => {
     fireEvent.click(within(screen.getAllByTestId('meeting-row')[2]).getByRole('button', { name: 'Minutes' }));
     expect(fake.openFile).toHaveBeenCalledWith({ kind: 'workspace', id: 'ws1' }, 'org/meetings/2026/2026-11-02-company-weekly-review.md');
     fireEvent.click(within(screen.getAllByTestId('meeting-row')[2]).getByRole('button', { name: 'View' }));
-    expect(fake.openChannel).toHaveBeenCalledWith('company', 'r1');
+    expect(window.location.hash).toBe('#/ws/ws1/meeting/past1'); // the full-screen room, its summary
+    window.location.hash = '';
     fireEvent.click(screen.getByRole('button', { name: 'Standup · Writer' }));
     const dialog = screen.getByRole('dialog', { name: 'Standup · Writer details' });
     expect(dialog.textContent).toMatch(/Facilitator Chief/);

@@ -1256,6 +1256,8 @@ export interface MeetingRoomState {
   remindedAt: string | null; preparedAt: string | null; speakers: string[]; skipped: string | null;
   /** The agenda and pre-read file beside the minutes, once written. */
   agendaPath?: string | null;
+  /** How each agenda item ended (settled / skipped / its time box ran out) and the minutes it took. */
+  itemLog?: Array<{ index: number; how: 'settled' | 'skipped' | 'time'; at: string; minutes: number }>;
 }
 /** A meeting (docs/group-chat.md §8): a thread in a unit channel; `minutes` is JSON (Minutes). */
 export interface OrgMeeting {

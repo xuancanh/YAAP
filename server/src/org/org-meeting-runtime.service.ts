@@ -80,7 +80,7 @@ import { chiefTunable } from './chief-tunables';
 import { normalizeDue } from './org-tasks.service';
 import {
   agendaIsEmpty, agendaItems, agendaMarkdown, hasOpenThread, itemElapsedMinutes, openItemsText, parseRoom, tokensText,
-  type MeetingRoom,
+  type ItemEnd, type MeetingRoom,
 } from './meeting-room';
 import { OrgMeetingMinutesService, type Narration, type WriteMinutesInput } from './meeting-minutes.service';
 
@@ -623,10 +623,16 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     const advance = async (facilitatorAsked: boolean): Promise<boolean> => {
       const notes: string[] = [];
       const { room } = await this.meetings.patchRoom(orgId, meetingId, (r) => {
-        const step = (why: string) => { if (r.current < r.items.length) { notes.push(`${why}: "${r.items[r.current]}"`); r.current++; r.itemStartedAt = clock(); } };
-        while (r.controls.skipped < r.controls.skip) { r.controls.skipped++; step('Skipped'); }
-        if (facilitatorAsked) step('Settled');
-        if (r.current < r.items.length && itemElapsedMinutes(r, this.now()) >= r.itemMinutes) step(`Time is up (${r.itemMinutes} min)`);
+        const step = (why: string, how: ItemEnd['how']) => {
+          if (r.current >= r.items.length) return;
+          notes.push(`${why}: "${r.items[r.current]}"`);
+          const at = clock();
+          r.itemLog = [...(r.itemLog ?? []), { index: r.current, how, at, minutes: Math.round(itemElapsedMinutes(r, this.now()) * 10) / 10 }].slice(-40);
+          r.current++; r.itemStartedAt = at;
+        };
+        while (r.controls.skipped < r.controls.skip) { r.controls.skipped++; step('Skipped', 'skipped'); }
+        if (facilitatorAsked) step('Settled', 'settled');
+        if (r.current < r.items.length && itemElapsedMinutes(r, this.now()) >= r.itemMinutes) step(`Time is up (${r.itemMinutes} min)`, 'time');
       });
       if (notes.length) {
         const next = room.current < room.items.length ? ` Now item ${room.current + 1} of ${room.items.length}: ${room.items[room.current]}.` : ' The agenda is done.';

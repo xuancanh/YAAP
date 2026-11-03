@@ -1,6 +1,6 @@
 /** Layout composition per the design comp: activity bar · secondary panel ·
  *  main pane · artifact panel, with the stacked mobile variant. */
-import { Component, Suspense, lazy, useState, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppProvider, useApp } from './store';
 import { AuthProvider, useAuth } from './auth';
 import { SignIn } from './components/SignIn';
@@ -12,6 +12,7 @@ import { FilesView } from './components/FilesView';
 import { AppsGallery } from './components/AppsView';
 import { ArtifactPanel } from './components/ArtifactPanel';
 import { useMarketNav } from './lib/market';
+import { closeMeetingView, useMeetingRoute } from './lib/meetings';
 
 /** Heavyweight views load on demand; ChatView stays eager (the hot path). */
 const AgentsDirectory = lazy(() => import('./components/AgentsView').then((m) => ({ default: m.AgentsDirectory })));
@@ -22,6 +23,7 @@ const HireModal = lazy(() => import('./components/MarketView').then((m) => ({ de
 const OrganizationView = lazy(() => import('./components/OrganizationView').then((m) => ({ default: m.OrganizationView })));
 const HomeView = lazy(() => import('./components/HomeView').then((m) => ({ default: m.HomeView })));
 const InboxView = lazy(() => import('./components/InboxView').then((m) => ({ default: m.InboxView })));
+const MeetingScreen = lazy(() => import('./components/MeetingView').then((m) => ({ default: m.MeetingScreen })));
 const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
 
 const viewFallback = (
@@ -49,6 +51,15 @@ function Layout() {
   const [settingsPane, setSettingsPane] = useState(() => new URLSearchParams(window.location.search).get('pane') ?? 'providers');
 
   const sec = app.section;
+  // The full-screen meeting room (docs/meetings.md): #/ws/<id>/meeting/<id>
+  // fills the main area; moving to another place in the app closes it.
+  const meeting = useMeetingRoute();
+  const place = `${sec}|${app.homeView}|${app.currentChannel ?? ''}|${app.orgPane ?? ''}|${app.currentFile ?? ''}`;
+  const lastPlace = useRef(place);
+  useEffect(() => {
+    if (lastPlace.current !== place && meeting) closeMeetingView();
+    lastPlace.current = place;
+  }, [place, meeting]);
   // The workspace is the company (docs/group-chat.md §5): its organization
   // panes render in the Workspace section's main pane; the files live in
   // their own Artifacts section.
@@ -56,14 +67,14 @@ function Layout() {
   // The Market's Personal | Business switch defaults to Business for a company.
   const market = useMarketNav(orgOn);
   const orgOpen = sec === 'workspace' && orgOn;
-  const detailActive =
+  const detailActive = Boolean(meeting) ||
     ((sec === 'home' || sec === 'artifacts') && app.mobileChatOpen) ||
     ((sec === 'settings' || orgOpen) && app.mobileDetail);
   const showSecondary = app.stacked ? !detailActive : true;
   const showMain = app.stacked ? !showSecondary : true;
 
   const secTitle = sec === 'home' ? 'Channels & chats' : sec === 'workspace' ? 'Company' : sec === 'artifacts' ? 'Artifacts' : sec === 'market' ? 'Market' : 'Settings';
-  const hasSecondary = sec !== 'overview' && sec !== 'agents' && sec !== 'apps' && sec !== 'inbox' // Home, the agent directory, apps gallery and the Inbox are full-width
+  const hasSecondary = !meeting && sec !== 'overview' && sec !== 'agents' && sec !== 'apps' && sec !== 'inbox' // Home, the agent directory, apps gallery and the Inbox are full-width
     && !(sec === 'market' && app.stacked); // on a phone the Market view carries its own segment switch and chips
 
   return (
@@ -84,6 +95,8 @@ function Layout() {
 
       {(showMain || !hasSecondary) && (
         <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          {meeting && <Suspense fallback={viewFallback}><MeetingScreen route={meeting} /></Suspense>}
+          {!meeting && <>
           {sec === 'home' && app.homeView === 'chat' && <ChatView />}
           {sec === 'home' && app.homeView === 'channel' && <ChannelView />}
           {sec === 'home' && app.homeView === 'file' && <FilesView />}
@@ -96,6 +109,7 @@ function Layout() {
           {sec === 'inbox' && <Suspense fallback={viewFallback}><InboxView /></Suspense>}
           {sec === 'market' && <Suspense fallback={viewFallback}><MarketView nav={market.nav} setNav={market.setNav} /></Suspense>}
           {sec === 'settings' && <Suspense fallback={viewFallback}><SettingsView pane={settingsPane} /></Suspense>}
+          </>}
         </main>
       )}
 

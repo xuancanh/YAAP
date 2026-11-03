@@ -6,7 +6,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CalendarMeeting, OrgMeeting } from '../src/lib/api';
-import { parseRoom, proposalFor, seats, tokensText } from '../src/lib/meetings';
+import { parseRoom, proposalFor, resetRoomStanding, seats, tokensText } from '../src/lib/meetings';
 
 const fake: Record<string, unknown> = {};
 vi.mock('../src/store', () => ({ useApp: () => fake, grad: () => 'none' }));
@@ -37,6 +37,8 @@ const name = (_k: 'agent' | 'human', id: string) => names[id] ?? id;
 beforeEach(() => {
   for (const k of Object.keys(fake)) delete fake[k];
   calls.length = 0;
+  resetRoomStanding();
+  window.location.hash = '';
   respond = () => meeting();
   vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined, removeItem: () => undefined });
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -61,24 +63,32 @@ describe('room helpers', () => {
 });
 
 describe('MeetingRoom', () => {
-  it('shows the agenda with the current item, round N of M, the cost and the attendee strip; Join, Extend, Skip item and End call the room API', async () => {
+  it('one line: the current item, round N/M, the cost and the avatars with their state; the drawer holds the agenda; Join, Extend, Skip item and End call the room API', async () => {
     const changed = vi.fn();
     render(<MeetingRoom wsId="ws1" meeting={meeting()} me="me" name={name} onChanged={changed} />);
-    expect(screen.getByTestId('room-round').textContent).toBe('Round 2 of 3');
-    expect(screen.getByTestId('room-cost').textContent).toContain('1.5k tokens');
+    expect(screen.getByTestId('room-item').textContent).toContain('2/3');
+    expect(screen.getByTestId('room-item').textContent).toContain('Scorecard');
+    expect(screen.getByTestId('room-round').textContent).toBe('R2/3');
+    expect(screen.getByTestId('room-round').getAttribute('title')).toBe('Round 2 of 3');
+    expect(screen.getByTestId('room-cost').textContent).toBe('1.5k · $0.12');
+    // the one speaking first, then the strip's order
+    const states = screen.getAllByTestId('seat').map((el) => el.getAttribute('data-state'));
+    expect(states).toEqual(['speaking', 'passed', 'idle', 'away', 'present']);
+    expect(screen.getAllByTestId('seat')[2].getAttribute('title')).toBe('Chief (facilitator): not called');
+    // collapsed by default: no agenda list until the drawer opens
+    expect(screen.queryByRole('list', { name: 'Agenda items' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Show the agenda' }));
     const items = screen.getByRole('list', { name: 'Agenda items' }).querySelectorAll('li');
     expect(items).toHaveLength(3);
     expect(items[1].getAttribute('aria-current')).toBe('step');
-    expect(items[1].textContent).toContain('← now');
+    expect(items[0].getAttribute('data-state')).toBe('done');
     expect(document.body.textContent).toContain('Item 2 of 3 · 4 / 10 min');
-    const states = screen.getAllByTestId('seat').map((el) => el.getAttribute('data-state'));
-    expect(states).toEqual(['passed', 'speaking', 'idle', 'away', 'present']);
-    expect(screen.getAllByTestId('seat')[2].textContent).toContain('Chief ★');
     fireEvent.click(screen.getByRole('button', { name: 'Join' }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/org/meetings/m1/join') && c.method === 'POST')).toBe(true));
     await waitFor(() => expect(changed).toHaveBeenCalled());
     for (const [label, action] of [['Extend', 'extend'], ['Skip item', 'skip'], ['End', 'end']] as const) {
-      fireEvent.click(screen.getByRole('button', { name: label }));
+      fireEvent.click(screen.getByRole('button', { name: 'Meeting controls' }));
+      fireEvent.click(screen.getByRole('menuitem', { name: label }));
       await waitFor(() => expect(calls.some((c) => c.url.endsWith('/org/meetings/m1/control') && (c.body as { action: string }).action === action)).toBe(true));
     }
   });
@@ -87,6 +97,8 @@ describe('MeetingRoom', () => {
     render(<MeetingRoom wsId="ws1" meeting={meeting({ status: 'scheduled', startedAt: null, scheduledFor: new Date(Date.now() + 3600_000).toISOString() }, { items: [], preRead: '**Pre-read**\n- Board: nothing moved', proposals: [{ text: 'Sponsors', why: 'two offers', byKind: 'agent', by: 'a2', at: '' }] })} me="h2" name={name} onChanged={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'Extend' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Join' })).toBeNull();
+    expect(document.body.textContent).not.toContain('Sponsors');
+    fireEvent.click(screen.getByRole('button', { name: 'Show the agenda' }));
     expect(document.body.textContent).toContain('Sponsors');
     fireEvent.click(screen.getByRole('button', { name: /Show the pre-read/ }));
     expect(document.body.textContent).toContain('Board: nothing moved');
@@ -102,6 +114,13 @@ describe('ProposalActions', () => {
     actions: [{ title: 'Draft', owner: 'Writer', done_when: 'x', outcome: '', by: 'a2', messageId: 'ma' }],
     questions: [{ question: 'Sponsors?', by: 'a2', messageId: 'mq' }],
   };
+  it('a viewer without standing sees no Approve / Reject', async () => {
+    respond = (url) => (url.includes('/org/humans') ? { ceoAccountId: 'boss', me: { actorId: 'me', role: 'observer' }, humans: [] } : meeting());
+    fake.me = { actorId: 'me' };
+    render(<ProposalActions wsId="ws1" meeting={meeting({ createdBy: 'human:boss' }, {}, minutes)} messageId="md" onChanged={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeTruthy(); // until the role is known
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull());
+  });
   it('approves or rejects a proposed decision inline', async () => {
     const changed = vi.fn();
     render(<ProposalActions wsId="ws1" meeting={meeting({}, {}, minutes)} messageId="md" onChanged={changed} />);
@@ -167,8 +186,9 @@ describe('MeetingsBoard', () => {
     expect(screen.getAllByTestId('meeting-cost').map((e) => e.textContent)).toEqual([' · 1.2k tokens · $0.05', ' · 12.0k tokens · $0.42']);
     fireEvent.click(screen.getByRole('button', { name: 'Join' }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/org/meetings/run/join'))).toBe(true));
-    expect(fake.openChannel).toHaveBeenCalledWith('company', 'rr');
-    expect(screen.getByRole('button', { name: 'View' })).toBeTruthy();
+    expect(window.location.hash).toBe('#/ws/ws1/meeting/run');
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    expect(window.location.hash).toBe('#/ws/ws1/meeting/old');
     fireEvent.click(screen.getByRole('button', { name: 'Start meeting' }));
     expect(screen.getByRole('dialog', { name: 'Start a meeting' })).toBeTruthy();
   });

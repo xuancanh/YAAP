@@ -69,12 +69,18 @@ export interface MeetingRoom {
   skipped: string | null;
   /** The agenda and pre-read file beside the minutes (`orgPath.agenda`), once written. */
   agendaPath: string | null;
+  /** How each agenda item ended, in order: settled by the facilitator
+   *  (`meeting_next_item`), skipped by a person, or its time box ran out —
+   *  with the minutes it took. The full-screen room draws done / skipped. */
+  itemLog: ItemEnd[];
 }
+
+export interface ItemEnd { index: number; how: 'settled' | 'skipped' | 'time'; at: string; minutes: number }
 
 export function emptyRoom(): MeetingRoom {
   return {
     items: [], current: 0, itemStartedAt: null, itemMinutes: 10, round: 0, roundCap: 0, extended: 0, speaking: null, attendance: {}, passes: [], present: [],
-    proposals: [], preRead: '', openItems: [], verdicts: {}, answers: {}, controls: { extend: 0, skip: 0, skipped: 0, end: null }, remindedAt: null, preparedAt: null, speakers: [], skipped: null, agendaPath: null,
+    proposals: [], preRead: '', openItems: [], verdicts: {}, answers: {}, controls: { extend: 0, skip: 0, skipped: 0, end: null }, remindedAt: null, preparedAt: null, speakers: [], skipped: null, agendaPath: null, itemLog: [],
   };
 }
 
@@ -97,6 +103,7 @@ export function parseRoom(raw: string | null | undefined): MeetingRoom {
       answers: v.answers && typeof v.answers === 'object' ? v.answers : {},
       controls: { ...base.controls, ...(v.controls ?? {}) },
       speakers: Array.isArray(v.speakers) ? v.speakers.map(String) : [],
+      itemLog: Array.isArray(v.itemLog) ? v.itemLog.filter((x) => x && typeof x === 'object' && Number.isInteger(x.index)) : [],
     };
   } catch { return base; }
 }

@@ -548,6 +548,8 @@ inline; Extend / Skip item / End steer it. The room is `org_meetings.room`
 the room, the list and the minutes. Start meeting is in Company → Meetings
 and every channel's Meetings tab.
 
+**The room views (4 November 2026, `docs/meetings.md` "The room header", "The full-screen room").** The in-thread room header is one compact line (title, the current item, round N/M, the time box, cost, avatars with their state, Join, the controls menu, Expand) with the agenda, pre-read and open items in a drawer collapsed by default and remembered per viewer, so the messages keep the height. `#/ws/<id>/meeting/<id>` is the full-screen room: the agenda rail, the live transcript folded per attendee with the composer, the attendees, the Proposed board with inline verdicts, the parking lot, the stats and the controls, and the summary once it ended. The room keeps how each agenda item ended (`room.itemLog`); the views read the meeting's messages through a `MeetingStream` adapter (today its thread).
+
 ## 9. Sub-channels: discussions and meetings out of the channel
 
 **Status: shipped (4 November 2026).** The owner's correction: "add sub

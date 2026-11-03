@@ -173,13 +173,93 @@ reply streams as `channel_typing` / `channel_stream` with the thread as
   facilitator close (unlike "stop", which skips the closing turn). Each is
   audited `meeting_control` and posted as a system line.
 
-In the SPA (`src/components/MeetingRoom.tsx`) the room heads the thread
-panel of ChannelView (full width on a phone): the items with the current
-one, "Round N of M", the item's minutes against its box and the meeting's
-elapsed time against the whole box, tokens and $, the attendee strip, Join
-and the controls; before the start, the pre-read and the proposal box.
-`ProposalActions` draws Approve / Reject and Answer under the proposals.
+### The room header (in the thread)
 
+In the SPA (`src/components/MeetingRoom.tsx`) the room heads the thread
+panel of ChannelView (full width on a phone), above the scrolling messages,
+as **one compact line**: the status dot, the title, the current item as a
+chip ("3/6 · Pricing…", clamped, the whole item as its tooltip), "R2/3",
+the item's time box as a small meter ("7/10m"), tokens and $, the attendee
+avatars ringed by their state (speaking pulses; the speaker first), **Join**,
+a **⋯** menu with Extend / Skip item / End (only for those who steer), and
+**⤢ Expand**, which opens the full-screen room. As the panel narrows (a
+container query) the cost, then the meter and all avatars but the speaker's,
+then the round drop out of the line; nothing wraps. The item chip toggles a
+**drawer** under the line: round, item and elapsed time with the cost; the
+whole agenda with each item's state (done / skipped / parked / now / up next,
+one line each, clamped with a tooltip); the attendees with their state; the
+open items from the last meeting; the pre-read; the agenda file; before the
+start, the proposals and the propose box. The drawer is **collapsed by
+default** and remembered per viewer in this browser
+(`yaam-meeting-drawer:<actorId>` in localStorage, read and written in
+try/catch), and capped at 42% of the height, so the messages always keep
+most of it. `ProposalActions` (built on `ProposalControls`) draws Approve /
+Reject and Answer under the proposals. Controls and verdicts follow the
+server's rules on the client too (`roomStanding`, from `GET …/org/humans`):
+the CEO or the starter steers; the CEO, a board member or the starter rules;
+the CEO or a board member answers; until the role is known they show, and
+the server still refuses.
+
+### The full-screen room
+
+`#/ws/<workspaceId>/meeting/<meetingId>` (`src/components/MeetingView.tsx`;
+the route helpers `openMeetingView`, `closeMeetingView`, `useMeetingRoute`
+in `src/lib/meetings.ts`) fills the main area, rail and all: Expand in the
+thread's header, **Room** on the agenda root in the channel, **Join** (it
+joins first) and **View** on the Meetings list and Company → Meetings'
+"Running now" open it. Moving anywhere else in the app, ‹, or Back closes
+it; **Thread** opens the meeting where its messages live.
+
+- **Top bar** — the title, Live / Ended / Starts …, the kind and channel,
+  the current item; under it the **agenda ribbon**: one segment per item,
+  sized by its time box (or the time it took when longer), done segments
+  green, skipped hatched, parked amber, the current one filling as its box
+  runs and turning red when it is over.
+- **Left** — the agenda: each item with its state (done, current, upcoming,
+  parked — the facilitator parked a point naming it —, skipped; the room's
+  `itemLog` says how each item ended: settled, skipped by a person, or its
+  time box ran out) and its time (m:ss taken, the running item against its
+  box with a meter, the box for those ahead); the open items from the last
+  meeting with their tasks; the pre-read (open before the start, folded
+  after); the agenda proposals with, before the start, the propose box
+  (item and why).
+- **Center** — the live transcript: the agenda root folded to one line,
+  each attendee's consecutive messages folded into one turn (a long turn is
+  clipped with "Show the whole turn"), system lines, people's messages, a
+  proposal with its Approve / Reject / Answer in place, the minutes card,
+  the speaker's reply streaming in; under it Join ("the next speaker hears
+  you") and the thread composer (heard at the next turn when present, else
+  at the next round).
+- **Right** — the stats (elapsed against the whole box, round N/M, this
+  item, skips, extends, tokens and $; before the start, when it starts),
+  Extend / Skip item / End for those who steer ("You are watching" for the
+  rest), **On the floor** (the speaker and the tail of their live reply),
+  the attendees (speaking now / spoke / passed / waiting / not called;
+  people present / not joined), the **Proposed** board (decisions, actions,
+  risks, questions for the CEO, with the verdicts and answers given and the
+  inline controls) and the **parking lot**.
+- **After the end** the center opens on the **Summary**: how it ended,
+  rounds, minutes taken, tokens and $; the summary; **Open the minutes**
+  (the file in Artifacts); the decisions taken (with their
+  `#decision:` link; rejected ones struck through), the action items with
+  their task keys (opening the board), the questions. The transcript is a
+  tab away.
+- On a phone the three columns are tabs: Agenda, Transcript (Summary), Room.
+
+It is live through the workspace stream — `meeting_update` refetches the
+row; `channel_message`, `channel_typing` and `channel_stream` of the
+meeting's messages update the transcript — and polls as the fallback
+(every 15 seconds while it runs, every minute otherwise).
+
+**Where the messages come from** is an adapter, `MeetingStream`
+(`src/lib/meetings.ts`): the channel, the composer target (a thread root, or
+null for a channel's top level), the opening message, `load()`, and
+`owns` / `ownsLive` to pick the meeting's messages and live replies off the
+stream. `meetingStream` derives it from the row: a meeting held in its own
+sub-channel (`parentChannelId` set, docs/group-chat.md §9) is
+`subChannelStream` — the sub-channel's top level, the composer posting
+there, Channel opening it — and one held in a thread is `threadStream`.
+`MeetingView` also takes a `stream` prop.
 
 Upcoming meetings are not rows: they are the cadences (`org_cadences`, a
 five-field cron per unit and kind, server-local time) expanded on demand.
@@ -299,8 +379,9 @@ In the SPA (`src/components/MeetingsBoard.tsx`, helpers in
 - **List** — upcoming (soonest first, a running meeting on top), then past
   (latest first), each with when, the cadence in words, the facilitator, the
   summary, tokens and $, and buttons for the minutes and the thread —
-  **Join** for a running meeting (present in the room, then the thread),
-  **View** for one held.
+  **Join** for a running meeting (present in the room, then the full-screen
+  room), **View** for one held or scheduled (the full-screen room; its
+  summary once it ended).
 - **Calendar** — a Monday-first month grid (three meetings per day, "+N
   more" lists the day); at phone width the week's agenda instead. Previous /
   Today / Next move the range.

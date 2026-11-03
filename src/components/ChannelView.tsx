@@ -18,7 +18,7 @@ import { AUDIENCE_COLOR, audienceLabel } from '../lib/org2';
 import { FollowToggle } from './FollowToggle';
 import { MeetingsBoard } from './MeetingsBoard';
 import { MeetingRoom, ProposalActions } from './MeetingRoom';
-import { parseRoom } from '../lib/meetings';
+import { meetingComposerHint, openMeetingView, parseRoom } from '../lib/meetings';
 import { StartDiscussionForm, SubBreadcrumb, SubChannelCard, SubStatusBar } from './SubChannels';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -38,7 +38,7 @@ function timeOf(iso: string): string {
 
 /** The author chip: an agent's gradient + emoji, a human's initials, or the
  *  system glyph. */
-function Chip({ kind, agent, name, size = 28 }: { kind: 'agent' | 'human' | 'system'; agent?: Agent; name: string; size?: number }) {
+export function Chip({ kind, agent, name, size = 28 }: { kind: 'agent' | 'human' | 'system'; agent?: Agent; name: string; size?: number }) {
   const base: React.CSSProperties = { width: size, height: size, borderRadius: Math.round(size * 0.3), flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.5 };
   if (kind === 'agent') return <div title={name} style={{ ...base, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))' }}>{agent?.emoji ?? '🤖'}</div>;
   if (kind === 'system') return <div title="system" style={{ ...base, background: 'var(--panel-2)', color: 'var(--text-faint)' }}><I d={P.sysLines} size={size * 0.5} /></div>;
@@ -311,7 +311,7 @@ export function ChannelView() {
       <div key={m.id} id={`msg-${m.id}`} className="chan-msg" style={{ display: 'flex', gap: 11, padding: '7px 10px', margin: '2px -10px', borderRadius: 10, animation: 'msgIn .18s ease', background: focusRef.current === m.id ? 'var(--accent-dim)' : undefined, borderLeft: meeting ? `3px solid ${meeting.status === 'running' ? 'var(--green)' : 'var(--border)'}` : undefined }}>
         <Chip kind={m.authorKind} agent={agent} name={name} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          {meeting && <MeetingHeader meeting={meeting} inThread={Boolean(opts.inThread) || isSub} onOpen={() => setThread(m.id)} onCancel={() => void cancelMeeting(meeting)} />}
+          {meeting && <MeetingHeader meeting={meeting} inThread={Boolean(opts.inThread) || isSub} onOpen={() => setThread(m.id)} onExpand={() => openMeetingView(wsId, meeting.id)} onCancel={() => void cancelMeeting(meeting)} />}
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
             <span style={{ fontWeight: 600, fontSize: 13, color: mine ? 'var(--accent-hi)' : 'var(--text)' }}>{name}{mine ? ' (you)' : ''}</span>
             {m.authorKind === 'agent' && <span style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 5px' }}>agent{m.unprompted === 1 ? ' · unprompted' : ''}</span>}
@@ -493,8 +493,7 @@ export function ChannelView() {
                 {approvals.filter((a) => a.threadRootId === thread).map(renderApproval)}
               </div>
               {!closed && <Composer wsId={wsId} slug={slug} folder={channel.folder} mentionables={mentionables} threadRootId={thread} compact orgMode={orgChannel}
-                placeholder={meetingByRoot.get(thread)?.status === 'running' ? (parseRoom(meetingByRoot.get(thread)!.room).present.includes(me) ? 'Speak — heard at the next turn; "stop" ends the meeting' : 'Reply — read at the next round (Join to be heard at the next turn)') : 'Reply in thread'}
-                note={meetingByRoot.get(thread)?.status === 'running' ? (parseRoom(meetingByRoot.get(thread)!.room).present.includes(me) ? 'You are in the room: the next speaker hears you. Mentions wake nobody; "stop" ends it.' : 'A meeting is running here: your message is read at the next round — Join to be heard at the next turn. Mentions wake nobody; "stop" ends it.') : undefined} />}
+                {...meetingComposerHint(meetingByRoot.get(thread), me)} />}
             </aside>
           )}
         </div>
@@ -515,7 +514,7 @@ function discussTitle(text: string): string {
 
 // ---- composer ----
 
-function Composer({ wsId, slug, folder, mentionables, threadRootId, placeholder, compact, note, orgMode }: {
+export function Composer({ wsId, slug, folder, mentionables, threadRootId, placeholder, compact, note, orgMode }: {
   wsId: string; slug: string; folder: string; mentionables: MentionCandidate[]; threadRootId?: string | null; placeholder: string; compact?: boolean;
   /** One line under the box (a running meeting reads replies at the next round). */
   note?: string;
@@ -659,7 +658,7 @@ function ProposalSlot({ wsId, meeting, messageId, onChanged, text }: { wsId: str
 
 /** The strip above a meeting's agenda root: "Meeting · <kind> · running/done",
  *  rounds and cost, Cancel while it runs, Open thread from the channel. */
-function MeetingHeader({ meeting: m, inThread, onOpen, onCancel }: { meeting: OrgMeeting; inThread: boolean; onOpen: () => void; onCancel: () => void }) {
+function MeetingHeader({ meeting: m, inThread, onOpen, onExpand, onCancel }: { meeting: OrgMeeting; inThread: boolean; onOpen: () => void; onExpand: () => void; onCancel: () => void }) {
   const running = m.status === 'running';
   const color = running ? 'var(--green)' : m.status === 'done' ? 'var(--text-dim)' : m.status === 'cancelled' ? 'var(--red)' : 'var(--amber)';
   return (
@@ -671,6 +670,7 @@ function MeetingHeader({ meeting: m, inThread, onOpen, onCancel }: { meeting: Or
       <span style={{ color: 'var(--text-faint)' }}>{m.rounds > 0 ? `${m.rounds} round${m.rounds === 1 ? '' : 's'} · ` : ''}{fmtUsd(m.usd)}{running ? ' · replies are read at the next round' : ''}</span>
       <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
         {!inThread && <button onClick={onOpen} style={{ ...smallBtn, padding: '2px 8px', fontSize: 11 }}>Open thread</button>}
+        {!inThread && <button onClick={onExpand} style={{ ...smallBtn, padding: '2px 8px', fontSize: 11 }} title="Open the full-screen room">Room</button>}
         {running && <button onClick={onCancel} style={{ ...smallBtn, padding: '2px 8px', fontSize: 11, color: 'var(--red)' }} title="End the meeting now; the minutes are written from what was proposed">Cancel</button>}
       </span>
     </div>
@@ -680,7 +680,7 @@ function MeetingHeader({ meeting: m, inThread, onOpen, onCancel }: { meeting: Or
 /** The minutes as a structured card (summary, decisions as `#decision:` chips,
  *  actions linking to the tasks they became, risks, questions for the CEO),
  *  read from the meeting row; the rendered text is the fallback. */
-function MinutesCard({ wsId, meetingId, fallback, refs, onDecision, onTask }: { wsId: string; meetingId: string; fallback: string; refs: RefResolver; onDecision: (id: string) => void; onTask: (taskId: string) => void }) {
+export function MinutesCard({ wsId, meetingId, fallback, refs, onDecision, onTask }: { wsId: string; meetingId: string; fallback: string; refs: RefResolver; onDecision: (id: string) => void; onTask: (taskId: string) => void }) {
   const app = useApp();
   const [m, setM] = useState<OrgMeeting | null | undefined>(undefined);
   const [raw, setRaw] = useState(false);

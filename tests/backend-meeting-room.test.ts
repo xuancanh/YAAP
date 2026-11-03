@@ -289,6 +289,10 @@ test('Skip item and the per-item time box move the agenda on; when the agenda is
   assert.ok(msgs.some((x) => /The agenda is done\./.test(x.text)));
   const room = parseRoom(m.room);
   assert.equal(room.current, 3);
+  assert.equal(room.itemLog[0].index, 0);
+  assert.equal(room.itemLog[0].how, 'skipped', 'the room keeps how each item ended');
+  assert.ok(room.itemLog.some((x) => x.how === 'time'), 'the time box is logged');
+  assert.deepEqual(room.itemLog.map((x) => x.index), [0, 1, 2]);
   assert.equal(parseMinutes(m.minutes).endedBy, 'closed');
   assert.ok(m.rounds < 3, `the agenda ran out before the rounds: ${m.rounds}`);
 });

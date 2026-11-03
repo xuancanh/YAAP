@@ -11,7 +11,7 @@ import { useApp } from '../store';
 import { api, type OrgCadence, type OrgDecision, type OrgDetail, type OrgMeeting } from '../lib/api';
 import { fmtUsd } from '../lib/pricing';
 import { decidedByLabel, decisionSource, firesOn, humanCron, MEETING_KIND_TITLES } from '../lib/org';
-import { tokensText } from '../lib/meetings';
+import { openMeetingView, tokensText } from '../lib/meetings';
 import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar, UnitChips } from './org-ui';
 import { MeetingsBoard } from './MeetingsBoard';
 import { MeetingStartDialog } from './MeetingStartDialog';
@@ -82,7 +82,8 @@ export function MeetingsPane({ org }: { org: OrgDetail }) {
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', animation: 'pulse 1.2s infinite' }} />
               <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{m.title || MEETING_KIND_TITLES[m.kind]} · {unitName(m.unitId)}</span>
               <span style={faint}>round {m.rounds} · {tokensText((m.tokensIn ?? 0) + (m.tokensOut ?? 0))} tokens · {fmtUsd(m.usd)} · started {ago(m.startedAt)}</span>
-              <button style={btn(true)} onClick={() => { void api.joinMeeting(wsId, m.id).catch(() => undefined); openMeeting(m); }}>Join</button>
+              <button style={btn(true)} onClick={() => { void api.joinMeeting(wsId, m.id).catch(() => undefined); openMeetingView(wsId, m.id); }} title="Join the full-screen room: you are heard at the next turn">Join</button>
+              <button style={btn()} onClick={() => openMeeting(m)} title="Open the meeting's thread in its channel">Thread</button>
               <button style={btn(false, true)} onClick={() => { if (confirm('Cancel this meeting? The minutes are written from what was proposed so far.')) void act(() => api.cancelOrgMeeting(wsId, m.id), 'Meeting cancelled'); }}>Cancel</button>
             </div>
           ))}
