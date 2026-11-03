@@ -69,6 +69,7 @@ const TASK = {
 const ORG = { id: 'o1', workspaceId: 'ws1', name: 'Acme', mission: '', status: 'active', chiefOfStaffAgentId: null, members: [], goals: [], projects: [], budgets: [], grants: [], charterDrift: [] };
 
 function route(url: string): unknown {
+  if (url.includes('/comments') || url.includes('/mentionables')) return [];
   if (url.startsWith('/api/workspaces/ws1/org/tasks')) return [TASK];
   if (url === '/api/workspaces/ws1/org/detail') return ORG;
   if (url.includes('/org/capacity')) return { members: [] };

@@ -1,6 +1,6 @@
 /** Layout composition per the design comp: activity bar · secondary panel ·
  *  main pane · artifact panel, with the stacked mobile variant. */
-import { Component, Suspense, lazy, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useEffect, useRef, type ReactNode } from 'react';
 import { AppProvider, useApp } from './store';
 import { AuthProvider, useAuth } from './auth';
 import { SignIn } from './components/SignIn';

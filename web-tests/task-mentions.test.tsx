@@ -60,7 +60,7 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState(
 
 describe('task mentions', () => {
   it('comments draw the server-resolved tags as chips, and nothing for a name that tagged nobody', async () => {
-    render(<OrganizationView />);
+    render(<OrganizationView section="operations" />);
     await waitFor(() => expect(screen.getAllByTestId('task-comment').length).toBe(1));
     await waitFor(() => expect(document.querySelectorAll('[data-testid="task-comment"] [data-mention]').length).toBe(2));
     const chips = [...document.querySelectorAll('[data-testid="task-comment"] [data-mention]')].map((x) => [x.getAttribute('data-mention'), x.textContent]);
@@ -68,7 +68,7 @@ describe('task mentions', () => {
   });
 
   it('the comment box autocompletes members and people and posts the tag', async () => {
-    render(<OrganizationView />);
+    render(<OrganizationView section="operations" />);
     const box = await screen.findByRole('textbox', { name: 'Comment' });
     await waitFor(() => expect(document.querySelectorAll('[data-testid="task-comment"] [data-mention]').length).toBe(2)); // mentionables loaded
     fireEvent.change(box, { target: { value: 'Please check @ed', selectionStart: 16 } });
