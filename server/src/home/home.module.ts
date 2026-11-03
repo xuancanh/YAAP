@@ -19,13 +19,14 @@ import { ChatsModule } from '../chats/chats.module';
 import { HomeController } from './home.controller';
 import { HomeService } from './home.service';
 import { InboxController } from './inbox.controller';
+import { InboxMessagesController } from './inbox-messages.controller';
 import { InboxHistoryService } from './inbox-history.service';
 import { OverviewService } from './overview.service';
 import { AgentOverviewController, MissionControlController } from './overview.controller';
 
 @Module({
   imports: [AgentsModule, WorkspacesModule, ActionsModule, UsageModule, AiModule, OrgModule, ChatsModule],
-  controllers: [HomeController, InboxController, AgentOverviewController, MissionControlController],
+  controllers: [HomeController, InboxController, InboxMessagesController, AgentOverviewController, MissionControlController],
   providers: [HomeService, InboxHistoryService, OverviewService],
 })
 export class HomeModule {}

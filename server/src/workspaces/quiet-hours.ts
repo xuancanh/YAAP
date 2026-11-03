@@ -28,8 +28,10 @@ export interface QuietHours {
 
 export const QUIET_POLICIES: readonly QuietPolicy[] = ['queue', 'silent', 'allow-urgent'];
 
-/** Event kinds that `allow-urgent` lets through a quiet window. */
-export const URGENT_EVENT_KINDS = new Set(['loop_error', 'budget_stop', 'org_incident']);
+/** Event kinds that `allow-urgent` lets through a quiet window. An agent's
+ *  message to the owner marked urgent (docs/agent-messages.md) asks for
+ *  delivery as `agent_message_urgent`. */
+export const URGENT_EVENT_KINDS = new Set(['loop_error', 'budget_stop', 'org_incident', 'agent_message_urgent']);
 
 const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 

@@ -146,6 +146,12 @@ export interface HomeUpcoming {
   units?: string[];
 }
 
+/** One message an agent sent the owner (message_owner); opens its direct chat. */
+export interface HomeMessage {
+  id: string; eventId: string | null; agentId: string; agentName: string; emoji: string; colors: string;
+  text: string; urgency: 'fyi' | 'normal' | 'urgent'; refs: string[]; sessionId: string; createdAt: string; read: boolean;
+}
+
 export interface HomeArtifact { path: string; version: number; size: number; updatedAt: string; updatedBy: { kind: string; id: string; name: string } }
 
 export interface HomeData {
@@ -169,6 +175,9 @@ export interface HomeData {
   health: HomeHealth;
   upcoming: HomeUpcoming[];
   artifacts: HomeArtifact[];
+  /** Messages from your team (docs/agent-messages.md): what agents sent the
+   *  owner with message_owner — unread first — and the unread count. */
+  messages: { items: HomeMessage[]; unread: number };
   /** Sections that failed to load; the rest still render. */
   partial: string[];
 }

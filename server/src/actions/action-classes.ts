@@ -85,6 +85,8 @@ export const TOOL_CLASSES: Record<string, Classifier> = {
   follow: 'read', unfollow: 'read', list_follows: 'read',
   // chat auto-archive (chats/chat-archive.service.ts): only the agent's own chats' setting changes — free, no approval
   set_chat_auto_archive: 'read',
+  // agents message the owner (chats/owner-messages.service.ts): it only talks to the owner, in the agent's own DM — free
+  message_owner: 'internal_write',
   // code runner: a sandbox with no credentials; the workspace is what it writes
   run_js: 'internal_write', run_python: 'internal_write',
   // coding-agent CLIs (harness/harness.service.ts): execute code like run_js, in
@@ -134,6 +136,8 @@ export const FREE_INTERNAL_TOOLS: ReadonlySet<string> = new Set([
   // agent self-maintenance and proposals (turn-loop.service.ts AGENT_TOOLS)
   'update_dashboard', 'save_app', 'delegate_task', 'add_task', 'update_task',
   'draft_skill', 'revise_skill', 'save_tool', 'update_user_profile', 'set_chat_auto_archive',
+  // a direct message to the owner (docs/agent-messages.md): rate-limited and deduped in the tool
+  'message_owner',
   // the organization's work record (board, goals, check-ins, timelines, reviews)
   'org_message', 'org_create_task', 'org_assign', 'org_task_update', 'org_task_comment',
   'org_request_review', 'org_review', 'org_escalate', 'org_check_in', 'org_set_goal', 'org_set_key_result',

@@ -157,7 +157,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
           if (dead.has(sub.id)) continue;
           try {
             const res = await sendWebPush(sub, payload, this.vapid, this.fetchFn, {
-              urgency: e.kind === 'loop_error' || e.kind === 'budget_stop' || e.kind === 'approval_request' ? 'high' : 'normal',
+              urgency: e.kind === 'loop_error' || e.kind === 'budget_stop' || e.kind === 'approval_request' || (e.kind === 'agent_message' && e.payload.includes('"urgency":"urgent"')) ? 'high' : 'normal',
             });
             if (res.gone) dead.add(sub.id);
             else if (res.ok) accepted++;

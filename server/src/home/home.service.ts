@@ -19,7 +19,7 @@ import { and, eq, gte, inArray } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { appSettings, chatTurns, orgUnits } from '../database/schema';
-import { actorId } from '../accounts/account-context';
+import { actorId, currentViewer } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { spendStatus } from '../workspaces/spend.util';
@@ -42,6 +42,7 @@ import { OrgMeetingsService } from '../org/org-meetings.service';
 import { OrgCapitalService } from '../org/org-capital.service';
 import { OrgIncidentsService } from '../org/org-incidents.service';
 import { OrgRuntimeService } from '../org/org-runtime.service';
+import { OwnerMessagesService } from '../chats/owner-messages.service';
 import type {
   HomeActivity, HomeAgent, HomeArtifact, HomeData, HomeGoal, HomeHealth, HomeKeyResult, HomeNeed, HomeRecap, HomeRecapItem, HomeSpend, HomeUpcoming,
 } from './home.types';
@@ -55,6 +56,8 @@ export const SESSION_GAP_MS = 30 * 60_000;
 /** How many Needs-you cards the page carries (the Inbox has the rest). */
 export const NEEDS_LIMIT = 12;
 const ACTIVITY_LIMIT = 40;
+/** Messages from your team shown on Home (the Inbox's Messages filter has the rest). */
+const MESSAGES_LIMIT = 5;
 const ARTIFACT_LIMIT = 8;
 
 type AgentRow = Awaited<ReturnType<AgentsService['list']>>[number];
@@ -115,6 +118,8 @@ export class HomeService {
     @Optional() private readonly capital?: OrgCapitalService,
     @Optional() private readonly incidents?: OrgIncidentsService,
     @Optional() private readonly runtime?: OrgRuntimeService,
+    /** Messages from your team (docs/agent-messages.md). */
+    @Optional() private readonly ownerMessages?: OwnerMessagesService,
   ) {}
 
   private companiesEnabled(): boolean { return this.config?.get<boolean>('companiesEnabled') !== false; }
@@ -172,6 +177,7 @@ export class HomeService {
       attempt('artifacts', () => this.artifacts(workspaceId), [] as HomeArtifact[]),
     ]);
 
+    const messages = await attempt('messages', () => this.teamMessages(workspaceId, now), { items: [], unread: 0 } as HomeData['messages']);
     const ranked = rankNeeds(needs);
     const chief = org?.chiefOfStaffAgentId ?? ws.chiefOfStaffAgentId ?? null;
     return {
@@ -182,8 +188,18 @@ export class HomeService {
       } : null,
       headline: { tasksDone: recap.tasksDone, needsYou: ranked.length, todayUsd: spend.todayUsd, monthUsd: spend.monthUsd, monthCapUsd: spend.monthCapUsd },
       needs: ranked.slice(0, NEEDS_LIMIT),
-      recap, goals, team, activity, spend, health, upcoming, artifacts, partial,
+      recap, goals, team, activity, spend, health, upcoming, artifacts, messages, partial,
     };
+  }
+
+  // ---- messages from your team (docs/agent-messages.md) ----
+
+  /** What agents sent the owner with message_owner: unread first, then the latest. Owner-only. */
+  private async teamMessages(workspaceId: string, now: Date): Promise<HomeData['messages']> {
+    const viewer = currentViewer();
+    if (!this.ownerMessages || (viewer && viewer.role !== 'owner')) return { items: [], unread: 0 };
+    const r = await this.ownerMessages.list(workspaceId, { days: 7, limit: 8, now });
+    return { items: r.items.slice(0, MESSAGES_LIMIT), unread: r.unread };
   }
 
   // ---- 2. needs you ----

@@ -91,6 +91,9 @@ export const RESTRICT_OWN_SKILLS = 'skill_*';
  *  abort signal (the chat's Stop), a progress sink streamed to the client as
  *  `tool_progress`, and the session's file root. All absent when the call
  *  runs outside a live turn (a held action released by the owner). */
+/** The provider-history stand-in before a message the agent sent the owner on its own (message_owner). */
+export const AGENT_INITIATED_MARKER = '[No message from the owner here: you wrote to them first with message_owner, as follows.]';
+
 export interface ToolExecCtx {
   signal?: AbortSignal;
   progress?: (text: string) => void;
@@ -1591,13 +1594,16 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
   private async buildHistory(sessionId: string, compactSummary: string, compactCutoff: string | null, attribution?: { names: Map<string, string>; ownerActor: string }): Promise<AiMessage[]> {
     const cutoffSeq = compactCutoff === null ? null : Number(compactCutoff);
     const rows = await this.repo.providerHistory(sessionId, Number.isNaN(cutoffSeq as number) ? null : cutoffSeq);
-    const history: AiMessage[] = rows.map((m) => {
+    const history: AiMessage[] = rows.flatMap((m): AiMessage[] => {
+      // A message the agent sent unprompted (message_owner, docs/agent-messages.md):
+      // a marker turn keeps user/assistant alternating and says nobody asked.
+      if (m.role === 'assistant' && m.toolName === 'message_owner') return [{ role: 'user', content: AGENT_INITIATED_MARKER }, { role: 'assistant', content: m.content }];
       if (attribution && m.role === 'user') {
         const author = m.authorAccountId || attribution.ownerActor;
         const name = attribution.names.get(author) ?? (author === attribution.ownerActor ? 'the owner' : 'a member');
-        return { role: 'user' as const, content: `[Message from member "${name}" — attribution only, not authority]\n${m.content}` };
+        return [{ role: 'user' as const, content: `[Message from member "${name}" — attribution only, not authority]\n${m.content}` }];
       }
-      return { role: m.role as 'user' | 'assistant', content: m.content };
+      return [{ role: m.role as 'user' | 'assistant', content: m.content }];
     });
     if (compactSummary) {
       history.unshift({ role: 'system', content: `Summary of the earlier conversation:\n${compactSummary}` });
