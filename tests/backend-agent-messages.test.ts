@@ -14,7 +14,11 @@ import { TurnLoopService, AGENT_INITIATED_MARKER, type TurnEvent } from '../serv
 import { ChatLocks } from '../server/src/chats/chat-locks';
 import { ToolsService } from '../server/src/chats/tools.service';
 import { OwnerMessagesService, MESSAGE_OWNER_SPECS, AGENT_MESSAGE_TUNABLES } from '../server/src/chats/owner-messages.service';
-import { ownerDmSession, isWorkingSession, isOwnerDm, OWNER_DM_TAG } from '../server/src/chats/owner-dm';
+import { OWNER_DM_TAG, classifySession } from '../server/src/chats/session-kind';
+import { ChatsService } from '../server/src/chats/chats.service';
+import type { ChatSession } from '../server/src/chats/chats.repository';
+
+const isOwnerDm = (x: Pick<ChatSession, 'tags' | 'kind' | 'archivedAt'>) => x.kind === 'chat' && !x.archivedAt && (x.tags ?? '').includes(`"${OWNER_DM_TAG}"`);
 import { AgentsService } from '../server/src/agents/agents.service';
 import { WorkspacesService } from '../server/src/workspaces/workspaces.service';
 import { HomeService } from '../server/src/home/home.service';
@@ -31,11 +35,12 @@ async function setup() {
   const agents = new AgentsService(db, stub);
   const workspaces = new WorkspacesService(db, stub);
   const repo = new ChatsRepository(db);
-  const svc = new OwnerMessagesService(db, repo, agents);
+  const chats = new ChatsService(repo, agents);
+  const svc = new OwnerMessagesService(db, repo, agents, chats);
   const ws = (await workspaces.list())[0];
   const agent = await agents.create({ name: 'Penny', workspaceId: ws.id });
-  const beat = await repo.createSession({ workspaceId: ws.id, agentId: agent.id, name: 'Loop · heartbeat', permissionMode: 'auto' });
-  return { db, stub, agents, workspaces, repo, svc, ws, agent, beat };
+  const beat = await repo.createSession({ workspaceId: ws.id, agentId: agent.id, name: 'Loop · heartbeat', kind: 'work', permissionMode: 'auto' });
+  return { db, stub, agents, workspaces, repo, chats, svc, ws, agent, beat };
 }
 type S = Awaited<ReturnType<typeof setup>>;
 
@@ -47,24 +52,21 @@ function quietNow(policy: 'queue' | 'silent' | 'allow-urgent') {
   return JSON.stringify({ start: `${pad(h - 1)}:00`, end: `${pad(h + 2)}:00`, timezone: 'UTC', policy });
 }
 
-test('the owner DM: created once, tagged, owner-private, reused; working sessions never qualify', async () => {
+test('the owner DM is ChatsService.ownerChatFor: one chat, tagged, owner-private, reused; working sessions never qualify', async () => {
   const s = await setup();
-  assert.equal(await ownerDmSession(s.repo, { id: s.agent.id, workspaceId: s.ws.id }), null, 'none until asked to create');
-  // A heartbeat, an org run, a channel wake and a task chat are working sessions.
-  for (const name of ['Loop · heartbeat', 'Org · Acme · Planning', '#general · Penny', 'Eval · 1']) assert.equal(isWorkingSession({ name, tags: '[]', taskId: null }), true, name);
-  assert.equal(isWorkingSession({ name: 'Plan the launch', tags: '[]', taskId: 't1' }), true, 'a task chat');
-  assert.equal(isWorkingSession({ name: 'Plan the launch', tags: '[]', taskId: null }), false);
-  // A working session wrongly tagged owner-dm is still not the DM.
-  await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.agent.id, name: 'Loop · other', tags: JSON.stringify([OWNER_DM_TAG]) });
-  const dm = await ownerDmSession(s.repo, { id: s.agent.id, workspaceId: s.ws.id }, { create: true });
-  assert.ok(dm);
-  assert.equal(isOwnerDm(dm!), true);
-  assert.equal(dm!.name, 'Direct messages');
-  assert.equal(dm!.shared, 0);
-  assert.equal(dm!.initiatedBy, '');
-  assert.equal(dm!.permissionMode, 'ask');
-  const again = await ownerDmSession(s.repo, { id: s.agent.id, workspaceId: s.ws.id }, { create: true });
-  assert.equal(again!.id, dm!.id, 'reused');
+  assert.equal(await s.repo.findTaggedChat(s.ws.id, s.agent.id, OWNER_DM_TAG), undefined, 'none until a message is sent');
+  // The single classification rule (session-kind.ts): runs are work.
+  for (const name of ['Loop · heartbeat', 'Org · Acme · Planning', '#general · Penny', 'Eval · 1']) assert.equal(classifySession({ name, tags: '[]' }), 'work', name);
+  // A work session wrongly tagged owner-dm is still not the DM.
+  await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.agent.id, name: 'Loop · other', kind: 'work', tags: JSON.stringify([OWNER_DM_TAG]) });
+  const r = await s.svc.send(s.beat, { text: 'hello' });
+  const dm = (await s.repo.getSession(r.sessionId))!;
+  assert.equal(isOwnerDm(dm), true);
+  assert.equal(dm.kind, 'chat');
+  assert.equal(dm.shared, 0);
+  assert.equal(dm.initiatedBy, '');
+  assert.equal(dm.permissionMode, 'ask');
+  assert.equal((await s.chats.ownerChatFor(s.agent.id)).id, dm.id, 'reused');
 });
 
 test('message_owner posts an agent-authored message into the DM (created if missing) and notifies the owner', async () => {
@@ -138,7 +140,7 @@ test('guardrails: the daily cap (a seat tunable) and dedupe of the same text', a
   await assert.rejects(() => s.svc.send(s.beat, { text: 'four' }), /3 messages in the last 24 hours, the limit is 3/);
   // The cap is the agent's, not the workspace's.
   const other = await s.agents.create({ name: 'Otto', workspaceId: s.ws.id });
-  const otherBeat = await s.repo.createSession({ workspaceId: s.ws.id, agentId: other.id, name: 'Loop · heartbeat' });
+  const otherBeat = await s.repo.createSession({ workspaceId: s.ws.id, agentId: other.id, name: 'Loop · heartbeat', kind: 'work' });
   await s.svc.send(otherBeat, { text: 'four' });
   // Messages older than the window do not count.
   await s.db.update(chatMessages).set({ createdAt: new Date(Date.now() - 2 * 86_400_000).toISOString() }).where(eq(chatMessages.toolName, 'message_owner'));
@@ -164,17 +166,17 @@ test('message_owner is free internal work: classed, runs freely, and needs no ap
   const call: AiStreamEvent[] = [{ type: 'tool_call', id: 'c1', name: 'message_owner', input: { text: 'Need your call on pricing.' } }, { type: 'done' }];
   const provider = new ScriptedProvider([call, [{ type: 'answer', text: 'sent' }, { type: 'done' }]]);
   const turns = new TurnLoopService(repo, new ChatLocks(), new ToolsService(stub), ctxStub(provider), skillsStub(), stub, mcpStub(), agents, workspaces);
-  new OwnerMessagesService(db, repo, agents, turns).onModuleInit();
+  new OwnerMessagesService(db, repo, agents, new ChatsService(repo, agents), turns).onModuleInit();
   const ws = (await workspaces.list())[0];
   const a = await agents.create({ name: 'Penny', workspaceId: ws.id });
-  const session = await repo.createSession({ workspaceId: ws.id, agentId: a.id, name: 'Plan the week' });
+  const session = await repo.createSession({ workspaceId: ws.id, agentId: a.id, name: 'Plan the week', kind: 'chat' });
   const evs: TurnEvent[] = [];
   for await (const ev of turns.run(session.id, { text: 'tell the boss' })) evs.push(ev);
   assert.equal(evs.some((e) => e.type === 'approval_required'), false);
   const r = evs.find((e) => e.type === 'tool_result') as Extract<TurnEvent, { type: 'tool_result' }>;
   assert.equal(r.isError, false);
   assert.ok(provider.requests[0].tools?.some((t) => t.name === 'message_owner'), 'offered to agent chats');
-  const dm = await ownerDmSession(repo, { id: a.id, workspaceId: ws.id });
+  const dm = await repo.findTaggedChat(ws.id, a.id, OWNER_DM_TAG);
   assert.ok(dm && dm.id !== session.id);
   assert.equal((await repo.listMessages(dm!.id))[0].content, 'Need your call on pricing.');
 });
@@ -204,7 +206,7 @@ test('the Inbox lists messages unread first, counts unread, and opening the chat
   const a = await s.svc.send(s.beat, { text: 'first', urgency: 'urgent' });
   await s.svc.send(s.beat, { text: 'second', refs: ['OPS-3'] });
   const other = await s.agents.create({ name: 'Otto', workspaceId: s.ws.id });
-  const otherBeat = await s.repo.createSession({ workspaceId: s.ws.id, agentId: other.id, name: 'Loop · heartbeat' });
+  const otherBeat = await s.repo.createSession({ workspaceId: s.ws.id, agentId: other.id, name: 'Loop · heartbeat', kind: 'work' });
   const b = await s.svc.send(otherBeat, { text: 'from Otto' });
   let list = await ctl.list(s.ws.id);
   assert.equal(list.unread, 3);

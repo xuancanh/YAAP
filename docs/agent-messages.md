@@ -12,8 +12,10 @@ answers in that chat like any other conversation.
 
 Code:
 
-- `server/src/chats/owner-dm.ts` — `ownerDmSession`, `isWorkingSession`,
-  `isOwnerDm`: which session is the agent's direct chat with the owner.
+- `ChatsService.ownerChatFor(agentId)` (`server/src/chats/chats.service.ts`)
+  — which session is the agent's direct chat with the owner;
+  `server/src/chats/session-kind.ts` holds the one chat-vs-work rule and
+  `OWNER_DM_TAG` (`docs/work-log.md`).
 - `server/src/chats/owner-messages.service.ts` — `OwnerMessagesService`:
   the tool, the guardrails, the list and read marking.
 - `server/src/home/inbox-messages.controller.ts` — the Inbox routes.
@@ -37,14 +39,12 @@ free internal work (`message_owner` in `FREE_INTERNAL_TOOLS`, class
 
 ## 2. The direct chat
 
-Each agent has one **direct chat** with the owner: a chat tagged
-`owner-dm`, named "Direct messages", private to the owner and in Ask mode.
-The first message creates it; later ones reuse it. It is never one of the
-agent's working sessions — a loop or heartbeat (`Loop · …`), an org run
-(`Org · …`), an eval, a red-team probe, a channel wake (`#slug · Agent` or
-tagged `channel`), an app or Telegram or email bridge, or a task chat.
-`isWorkingSession` holds that list in one place for the rail and the
-agent's Work log to reuse.
+Each agent has one **direct chat** with the owner: `ChatsService.ownerChatFor`,
+a session of kind `chat` tagged `owner-dm`, named after the agent, private
+to the owner and in Ask mode. The first message creates it; later ones reuse
+it; an archived one is replaced by a new one. Being kind `chat`, it shows in
+the rail, never in the agent's Work log (`docs/work-log.md`; the one
+classification rule is `session-kind.ts`).
 
 The message is written as a turn with no owner input and one assistant
 message marked `toolName: message_owner`. So:

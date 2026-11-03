@@ -3,9 +3,10 @@
  * (docs/agent-messages.md).
  *
  * The tool `message_owner { text, urgency?, refs? }` posts the agent's
- * message into its direct chat with the owner (owner-dm.ts: one
- * owner-private, human-facing chat per agent, created on first use — never
- * a loop, heartbeat, org run or task chat). The message is an assistant
+ * message into its direct chat with the owner (ChatsService.ownerChatFor:
+ * one owner-private chat per agent, tagged `owner-dm`, always kind `chat`
+ * — never a loop, heartbeat, org run or task session; session-kind.ts holds
+ * the one classification rule). The message is an assistant
  * row marked `toolName: message_owner`, so it renders as the agent's, never
  * as the owner's, through the same React-element markdown as every answer
  * (no raw HTML). The owner's reply in that chat is an ordinary turn.
@@ -36,7 +37,8 @@ import { AgentsService } from '../agents/agents.service';
 import type { AiToolSpec } from '../ai/ai-provider.interface';
 import { deliveryFor } from '../workspaces/quiet-hours';
 import { registerTunables, tunable, type TunableDef } from '../org/org-tunables';
-import { ownerDmSession } from './owner-dm';
+import { ChatsService } from './chats.service';
+import { OWNER_DM_TAG } from './session-kind';
 
 export const MESSAGE_OWNER_TOOL = 'message_owner';
 export const AGENT_MESSAGE_KIND = 'agent_message';
@@ -96,6 +98,8 @@ export class OwnerMessagesService implements ToolProviderHook, OnModuleInit {
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
     private readonly repo: ChatsRepository,
     private readonly agentsSvc: AgentsService,
+    /** The owner DM is ChatsService.ownerChatFor: one rule for which chat it is (docs/work-log.md). */
+    private readonly chats: ChatsService,
     @Optional() private readonly turns?: TurnLoopService,
   ) {}
 
@@ -123,13 +127,6 @@ export class OwnerMessagesService implements ToolProviderHook, OnModuleInit {
   }
 
   /** Sessions of a workspace without the viewer filter (the DM is the owner's whoever is acting). */
-  private repoForDm() {
-    return {
-      listSessions: (workspaceId: string) => this.db.select().from(chatSessions).where(and(eq(chatSessions.workspaceId, workspaceId), isNull(chatSessions.archivedAt))),
-      createSession: (input: Partial<ChatSession> & { workspaceId: string }) => this.repo.createSession(input),
-    };
-  }
-
   /** This agent's message_owner rows since `since` (the cap and dedupe count these, not inbox events, which are pruned). */
   private async sentSince(agentId: string, since: string): Promise<Array<{ content: string; createdAt: string }>> {
     return this.db.select({ content: chatMessages.content, createdAt: chatMessages.createdAt }).from(chatMessages)
@@ -153,7 +150,7 @@ export class OwnerMessagesService implements ToolProviderHook, OnModuleInit {
       .map((x) => String(x).trim().replace(/\s+/g, ' ').slice(0, 200)).filter(Boolean).slice(0, MAX_REFS);
 
     const workspaceId = agent.workspaceId || session.workspaceId;
-    const dm = await ownerDmSession(this.repoForDm(), { id: agentId, workspaceId }, { create: false });
+    const dm = await this.repo.findTaggedChat(workspaceId, agentId, OWNER_DM_TAG);
     if (dm && dm.id === session.id) throw new Error('you are already in your direct chat with the owner — answer here instead of calling message_owner');
 
     const org = await this.orgOf(workspaceId);
@@ -171,7 +168,7 @@ export class OwnerMessagesService implements ToolProviderHook, OnModuleInit {
     }
 
     // The DM: one human-facing chat per agent, created on first use.
-    const chat = dm ?? (await ownerDmSession(this.repoForDm(), { id: agentId, workspaceId }, { create: true }))!;
+    const chat = dm ?? (await this.chats.ownerChatFor(agentId));
     // An agent-initiated turn: no user message (nothing the owner said), one
     // assistant row the transcript renders as the agent's.
     const turn = await this.repo.createTurn(chat.id, { text: '' });
