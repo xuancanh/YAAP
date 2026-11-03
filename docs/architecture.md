@@ -26,7 +26,7 @@ Contents:
 12. [Deployment](#12-deployment)
 13. [Where docs and code disagree](#13-where-docs-and-code-disagree)
 
-The plugin architecture (vendor capability packs on this core) is designed in [plugins.md](plugins.md).
+The plugin architecture (interface, provider and consumer plugins on this core) is designed in [plugins.md](plugins.md).
 
 ## 1. System context
 

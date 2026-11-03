@@ -135,7 +135,11 @@ Docs: [README](https://github.com/earendil-works/pi),
 
 ### DeepSeek — the decision
 
-There is **no official DeepSeek coding CLI**.
+DeepSeek has no first-party coding CLI of the Claude Code kind, but on
+13 August 2026 it open-sourced **DeepSeek Harness (`dsh`)**, a
+plugin-composed harness. By default it uploads the session log and plugin
+inventory in the model request body (see `docs/plugins.md` §9). It is not
+wired as a harness here.
 [DeepSeek's coding-agents page](https://api-docs.deepseek.com/guides/coding_agents)
 lists third-party agents (Claude Code, Codex, OpenCode, …) and a
 developer-preview "DeepSeek Harness" for harness authors. DeepSeek
