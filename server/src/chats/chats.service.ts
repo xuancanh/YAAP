@@ -11,6 +11,7 @@ import { AgentsService } from '../agents/agents.service';
 import { SkillsService } from '../skills/skills.service';
 import { RegistryService } from '../registry/registry.service';
 import { taskRef } from '../common/task-keys';
+import { OWNER_DM_TAG } from './session-kind';
 
 @Injectable()
 export class ChatsService {
@@ -30,9 +31,11 @@ export class ChatsService {
   /** The Home rail in one call (docs/chat-archiving.md "The rail"): per agent
    *  (key '' = the workspace's agent-less chats) the chat count, the first
    *  `limits[key] ?? perAgent` chats (pinned first, newest next) with the
-   *  cursor of the next page, and the loop / heartbeat sessions folded into
-   *  one row; plus the archived count. With `q`, only matching chats count
-   *  and show, so a search reaches into collapsed groups. */
+   *  cursor of the next page, the chats waiting on an approval, and — for
+   *  the agent's own runs, which are not chat rows (docs/work-log.md) — how
+   *  many work sessions it has and which of them wait on an approval; plus
+   *  the archived chat count. With `q`, only matching chats count and show,
+   *  so a search reaches into collapsed groups. */
   async rail(workspaceId: string, opts: { perAgent?: number; limits?: Record<string, number>; q?: string } = {}) {
     const perAgent = Math.max(1, Math.min(100, Math.floor(opts.perAgent ?? 5)));
     const q = (opts.q ?? '').trim();
@@ -41,19 +44,40 @@ export class ChatsService {
     const groups = await Promise.all([...counts.entries()].map(async ([key, c]) => {
       const agentId = key || null;
       const limit = Math.max(1, Math.min(500, Math.floor(opts.limits?.[key] ?? perAgent)));
-      const page = c.chats > 0 ? await this.repo.pageSessions(workspaceId, { agentId, loops: 'exclude', q, limit }) : { items: [], nextCursor: null };
-      const loops = c.loops > 0 ? await this.repo.pageSessions(workspaceId, { agentId, loops: 'only', q, limit: 20 }) : { items: [], nextCursor: null };
-      return { agentId, total: c.chats, items: page.items, nextCursor: page.nextCursor, loops: { total: c.loops, items: loops.items }, approvalIds: approvals.get(key) ?? [] };
+      const page = c.chats > 0 ? await this.repo.pageSessions(workspaceId, { agentId, kind: 'chat', q, limit }) : { items: [], nextCursor: null };
+      const a = approvals.get(key);
+      return { agentId, total: c.chats, items: page.items, nextCursor: page.nextCursor, approvalIds: a?.chat ?? [], work: { total: c.work, approvalIds: a?.work ?? [] } };
     }));
     let archivedTotal = 0;
-    for (const c of (await this.repo.railCounts(workspaceId, { archived: true, q })).values()) archivedTotal += c.chats + c.loops;
+    for (const c of (await this.repo.railCounts(workspaceId, { archived: true, q })).values()) archivedTotal += c.chats;
     return { groups, archivedTotal };
   }
 
-  /** One page of the rail: an agent's chats ('none' = agent-less), its loop
-   *  sessions, or the archive. */
-  page(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; loops?: 'only' | 'exclude' | 'any'; q?: string; limit?: number; cursor?: string | null }) {
-    return this.repo.pageSessions(workspaceId, opts);
+  /** One page of the rail: an agent's chats ('none' = agent-less) or the
+   *  archived ones. Chats only — the agents' runs page through the Work log. */
+  page(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; q?: string; limit?: number; cursor?: string | null }) {
+    return this.repo.pageSessions(workspaceId, { ...opts, kind: 'chat' });
+  }
+
+  /**
+   * The agent's owner DM: the one conversation its messages to the owner
+   * land in (`message_owner`, docs/work-log.md). A `chat` session tagged
+   * `owner-dm`, the owner's own (initiatedBy ''), created on first use.
+   * Always a chat — never a work session — so what an agent says to its
+   * owner shows in the rail, not the Work log.
+   */
+  async ownerChatFor(agentId: string): Promise<ChatSession> {
+    const agent = await this.agents.get(agentId);
+    const workspaceId = (agent as { workspaceId?: string }).workspaceId ?? '';
+    if (!workspaceId) throw new BadRequestException(`${agent.name} belongs to no workspace`);
+    const found = await this.repo.findTaggedChat(workspaceId, agentId, OWNER_DM_TAG);
+    if (found) return found;
+    const pinnedType = (agent as { agentTypeId?: string | null }).agentTypeId ?? null;
+    return this.repo.createSession({
+      workspaceId, agentId, name: agent.name, kind: 'chat', permissionMode: 'ask',
+      initiatedBy: '', shared: 0, tags: JSON.stringify([OWNER_DM_TAG]),
+      ...(pinnedType ? { agentTypeId: pinnedType, model: agent.model || '' } : {}),
+    });
   }
 
   /** A member of a shared workspace may open shared sessions and their own;
@@ -83,9 +107,9 @@ export class ChatsService {
       const owner = (agent as { workspaceId?: string }).workspaceId;
       if (owner && owner !== input.workspaceId) throw new BadRequestException(`${agent.name} belongs to another workspace; move it first or pick an agent of this workspace`);
       const pinnedType = (agent as { agentTypeId?: string | null }).agentTypeId;
-      if (pinnedType && !input.agentTypeId) return this.repo.createSession({ ...input, agentTypeId: pinnedType, model: input.model || agent.model || '' });
+      if (pinnedType && !input.agentTypeId) return this.repo.createSession({ ...input, kind: 'chat', agentTypeId: pinnedType, model: input.model || agent.model || '' });
     }
-    return this.repo.createSession(input);
+    return this.repo.createSession({ ...input, kind: 'chat' });
   }
 
   async update(id: string, patch: Partial<Pick<ChatSession, 'name' | 'draft' | 'permissionMode' | 'thinkingEffort' | 'model' | 'agentTypeId' | 'tokenCeiling' | 'cwd' | 'autoArchiveDays'>> & { pinned?: boolean; tags?: string[] }) {

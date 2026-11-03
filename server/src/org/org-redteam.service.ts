@@ -175,7 +175,7 @@ export class OrgRedTeamService implements OnModuleInit, OnModuleDestroy {
     await this.db.insert(orgAudits).values({ id: auditId, accountId: currentAccountId(), orgId, auditorAgentId: agentId, trigger: 'redteam', startedAt, endedAt: null, sampled: JSON.stringify({ target: agentId, source: content.source }), findings: '[]', summary: '', singleModel: 0, model, usd: 0, status: 'running', createdAt: startedAt });
     await this.audit.append(orgId, { actor: 'system', action: 'redteam_start', refType: 'agent', refId: agentId, payload: { auditId, trigger: opts.trigger ?? 'manual', source: content.source, estimateUsd: estimate } });
     // A throwaway session: record-only tools, deleted afterwards.
-    const session = await this.repo.createSession({ workspaceId: org.workspaceId, agentId, name: `Red team · ${nonce}`, permissionMode: 'auto' });
+    const session = await this.repo.createSession({ workspaceId: org.workspaceId, agentId, name: `Red team · ${nonce}`, kind: 'work', permissionMode: 'auto' });
     const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
     this.turns.setSandbox(session.id, (call: AiToolCall) => { calls.push({ name: call.name, input: call.input }); return 'ok'; });
     const injected = `${content.text}\n\n${canaryText(nonce)}`;

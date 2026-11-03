@@ -280,7 +280,7 @@ test('migration 0051 links existing per-task org sessions to their task and is i
   assert.equal(rows.find((r) => r.id === 's2')!.taskId, null, 'a task-free session is not linked by a stray run');
 });
 
-test('the rail: per-agent first page, cursor pages, loops folded, channel sessions hidden, search reaches every chat', async () => {
+test('the rail: per-agent first page, cursor pages, work sessions (loops, channel sessions) out of the chat rows, search reaches every chat', async () => {
   const s = await setup();
   const ctl = new ChatsController(s.chats, {} as never, {} as never, {} as never);
   const mk = async (name: string, minutes: number, extra: Partial<typeof chatSessions.$inferInsert> = {}) => {
@@ -309,8 +309,9 @@ test('the rail: per-agent first page, cursor pages, loops folded, channel sessio
   assert.equal(g.total, 14, '12 chats + the pinned one + the waiting one; loops and channel sessions not counted');
   assert.deepEqual(g.items.map((c) => c.name), ['Old but pinned', 'Chat 0', 'Chat 1', 'Chat 2', 'Chat 3']);
   assert.ok(g.nextCursor);
-  assert.equal(g.loops.total, 2);
-  assert.deepEqual(g.loops.items.map((c) => c.name), ['Loop · heartbeat', 'Loop · digest']);
+  assert.equal(g.work.total, 4, 'two loops and two channel working sessions: the agent work, read in its Work log');
+  assert.deepEqual(g.work.approvalIds, []);
+  assert.equal('loops' in g, false, 'no Heartbeat runs row any more');
   assert.equal(rail.groups.find((x) => x.agentId === null)!.items[0].id, direct.id);
   assert.equal(rail.archivedTotal, 1);
 
@@ -318,7 +319,7 @@ test('the rail: per-agent first page, cursor pages, loops folded, channel sessio
   const seen = g.items.map((c) => c.id);
   let cursor = g.nextCursor;
   while (cursor) {
-    const page = await ctl.page(s.ws.id, s.agent.id, undefined, 'exclude', undefined, '5', cursor);
+    const page = await ctl.page(s.ws.id, s.agent.id, undefined, undefined, '5', cursor);
     seen.push(...page.items.map((c) => c.id));
     cursor = page.nextCursor;
   }
@@ -338,5 +339,5 @@ test('the rail: per-agent first page, cursor pages, loops folded, channel sessio
   assert.deepEqual((await ctl.page(s.ws.id, undefined, 'true')).items.map((c) => c.id), [gone.id]);
   assert.deepEqual((await ctl.page(s.ws.id, 'none')).items.map((c) => c.id), [direct.id]);
   // a malformed cursor reads as the first page
-  assert.equal((await ctl.page(s.ws.id, s.agent.id, undefined, 'exclude', undefined, '3', 'garbage')).items[0].id, pinned.id);
+  assert.equal((await ctl.page(s.ws.id, s.agent.id, undefined, undefined, '3', 'garbage')).items[0].id, pinned.id);
 });

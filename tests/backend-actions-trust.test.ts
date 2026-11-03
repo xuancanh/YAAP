@@ -274,6 +274,8 @@ test('idempotent replay in an org run: a re-run of the task does not book the ev
   assert.equal(row.orgId, o.orgId);
   assert.equal(row.dedupeCount, 1);
   assert.equal(row.decision, 'run_notify', 'level 1 unattended: acts, the owner hears after');
+  const runSession = (await s.repo.listSessions(s.ws.id)).find((x) => x.taskId === task.id)!;
+  assert.equal(runSession.kind, 'work', 'an org task run session is work (docs/work-log.md)');
   const events = await s.agents.listEvents(s.alice.id);
   assert.ok(events.some((e) => /Acted \(trust level 1/.test(e.title)), 'owner notified after');
 });

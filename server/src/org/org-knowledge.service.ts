@@ -204,7 +204,7 @@ export class OrgKnowledgeService {
     }
     const name = `Org · ${org.name} · Ask`;
     const session = (await this.repo.listSessions(org.workspaceId)).find((s) => s.agentId === chiefId && s.name === name)
-      ?? await this.repo.createSession({ workspaceId: org.workspaceId, agentId: chiefId, name, permissionMode: 'auto' });
+      ?? await this.repo.createSession({ workspaceId: org.workspaceId, agentId: chiefId, name, kind: 'work', permissionMode: 'auto' });
     if (this.turns.isBusy(session.id)) { await this.runtime.settle(orgId, { agentId: chiefId, projectId: null }, estimate, 0); return { answer: '', citations: [], stripped: [], usd: 0, status: 'busy', pack }; }
     const context = [
       '# Ask the company',

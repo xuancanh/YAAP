@@ -10,6 +10,7 @@ import type { DrizzleDb } from '../database/database.module';
 import { agentEvents, chatMessages, chatSessions, chatTurns, loopState } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
+import { classifySession, isSessionKind, type SessionKind } from './session-kind';
 
 export type ChatSession = typeof chatSessions.$inferSelect;
 export type LoopStateRow = typeof loopState.$inferSelect;
@@ -37,20 +38,19 @@ export class ChatsRepository {
   }
 
   /** The rail's filter (docs/chat-archiving.md "The rail"): a workspace's
-   *  direct-message sessions the current actor may see — never a channel's
-   *  hidden working session (`#slug · Agent` or tagged `channel`). `agentId`
-   *  null = the workspace's agent-less chats; `loops` 'only' = the agent's
-   *  loop / heartbeat sessions (`Loop · …`), 'exclude' = everything else. */
-  private railWhere(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; loops?: 'only' | 'exclude' | 'any'; q?: string }) {
+   *  sessions of one kind the current actor may see — `chat` unless asked
+   *  otherwise: the rail and the chat pages list conversations with people,
+   *  never the agents' own runs (loops, org runs, meeting rounds, a
+   *  channel's hidden working session — docs/work-log.md). `agentId` null =
+   *  the workspace's agent-less chats. */
+  private railWhere(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; kind?: SessionKind | 'any'; q?: string }) {
     const conds = [
       eq(chatSessions.workspaceId, workspaceId),
       opts.archived ? isNotNull(chatSessions.archivedAt) : isNull(chatSessions.archivedAt),
-      sql`NOT (${chatSessions.name} LIKE '#%' AND ${chatSessions.name} LIKE '% · %')`,
-      sql`${chatSessions.tags} NOT LIKE '%"channel"%'`,
     ];
+    const kind = opts.kind ?? 'chat';
+    if (kind !== 'any') conds.push(eq(chatSessions.kind, kind));
     if (opts.agentId !== undefined) conds.push(opts.agentId === null ? isNull(chatSessions.agentId) : eq(chatSessions.agentId, opts.agentId));
-    if (opts.loops === 'only') conds.push(sql`${chatSessions.name} LIKE 'Loop · %'`);
-    if (opts.loops === 'exclude') conds.push(notLike(chatSessions.name, 'Loop · %'));
     const q = (opts.q ?? '').trim().toLowerCase();
     if (q) {
       const pat = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -62,8 +62,9 @@ export class ChatsRepository {
   }
 
   /** One page of the rail, newest first with pinned chats on top. The
-   *  cursor is the last row's `pinned|updatedAt|id` (opaque to clients). */
-  async pageSessions(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; loops?: 'only' | 'exclude' | 'any'; q?: string; limit?: number; cursor?: string | null } = {}): Promise<{ items: ChatSession[]; nextCursor: string | null }> {
+   *  cursor is the last row's `pinned|updatedAt|id` (opaque to clients).
+   *  Chats only unless `kind` says otherwise. */
+  async pageSessions(workspaceId: string, opts: { agentId?: string | null; archived?: boolean; kind?: SessionKind | 'any'; q?: string; limit?: number; cursor?: string | null } = {}): Promise<{ items: ChatSession[]; nextCursor: string | null }> {
     const limit = Math.max(1, Math.min(200, Math.floor(opts.limit ?? 20)));
     const conds = [this.railWhere(workspaceId, opts)];
     const cur = decodeCursor(opts.cursor);
@@ -78,29 +79,46 @@ export class ChatsRepository {
     return { items, nextCursor: rows.length > limit && last ? encodeCursor(last) : null };
   }
 
-  /** How many rail sessions each agent has (key '' = no agent), split into
-   *  chats and loop / heartbeat sessions. */
-  async railCounts(workspaceId: string, opts: { archived?: boolean; q?: string } = {}): Promise<Map<string, { chats: number; loops: number }>> {
+  /** How many sessions each agent has (key '' = no agent), split into chats
+   *  and work sessions (its runs, read in its Work log). A search counts
+   *  matching chats only. */
+  async railCounts(workspaceId: string, opts: { archived?: boolean; q?: string } = {}): Promise<Map<string, { chats: number; work: number }>> {
     const rows = await this.db.select({
       agentId: chatSessions.agentId,
-      loops: sql<number>`SUM(CASE WHEN ${chatSessions.name} LIKE 'Loop · %' THEN 1 ELSE 0 END)`,
+      work: sql<number>`SUM(CASE WHEN ${chatSessions.kind} = 'work' THEN 1 ELSE 0 END)`,
       total: sql<number>`COUNT(*)`,
-    }).from(chatSessions).where(this.railWhere(workspaceId, { ...opts, loops: 'any' })).groupBy(chatSessions.agentId);
-    const out = new Map<string, { chats: number; loops: number }>();
-    for (const r of rows) out.set(r.agentId ?? '', { chats: Number(r.total) - Number(r.loops), loops: Number(r.loops) });
+    }).from(chatSessions).where(this.railWhere(workspaceId, { ...opts, kind: (opts.q ?? '').trim() ? 'chat' : 'any' })).groupBy(chatSessions.agentId);
+    const out = new Map<string, { chats: number; work: number }>();
+    for (const r of rows) out.set(r.agentId ?? '', { chats: Number(r.total) - Number(r.work), work: Number(r.work) });
     return out;
   }
 
-  /** Rail sessions with an approval waiting in the inbox (a queued action,
-   *  a routed approval), keyed by agent ('' = none): the rail opens those
-   *  groups and marks the rows. */
-  async approvalSessions(workspaceId: string): Promise<Map<string, string[]>> {
-    const rows = await this.db.selectDistinct({ id: chatSessions.id, agentId: chatSessions.agentId }).from(chatSessions)
+  /** Sessions with an approval waiting in the inbox (a queued action, a
+   *  routed approval), keyed by agent ('' = none) and split by kind: the
+   *  rail marks the chat rows, and badges the agent for the work ones —
+   *  those open in the Work log, never as a chat row. */
+  async approvalSessions(workspaceId: string): Promise<Map<string, { chat: string[]; work: string[] }>> {
+    const rows = await this.db.selectDistinct({ id: chatSessions.id, agentId: chatSessions.agentId, kind: chatSessions.kind }).from(chatSessions)
       .innerJoin(agentEvents, eq(agentEvents.sessionId, chatSessions.id))
-      .where(and(this.railWhere(workspaceId, { loops: 'any' }), inArray(agentEvents.kind, ['action_pending', 'approval_request'])));
-    const out = new Map<string, string[]>();
-    for (const r of rows) out.set(r.agentId ?? '', [...(out.get(r.agentId ?? '') ?? []), r.id]);
+      .where(and(this.railWhere(workspaceId, { kind: 'any' }), inArray(agentEvents.kind, ['action_pending', 'approval_request'])));
+    const out = new Map<string, { chat: string[]; work: string[] }>();
+    for (const r of rows) {
+      const key = r.agentId ?? '';
+      const e = out.get(key) ?? { chat: [], work: [] };
+      (r.kind === 'work' ? e.work : e.chat).push(r.id);
+      out.set(key, e);
+    }
     return out;
+  }
+
+  /** The agent's owner DM (ChatsService.ownerChatFor): its newest live
+   *  chat carrying `tag`. */
+  async findTaggedChat(workspaceId: string, agentId: string, tag: string): Promise<ChatSession | undefined> {
+    const rows = await this.db.select().from(chatSessions).where(and(
+      eq(chatSessions.workspaceId, workspaceId), eq(chatSessions.agentId, agentId), eq(chatSessions.kind, 'chat'),
+      isNull(chatSessions.archivedAt), sql`${chatSessions.tags} LIKE ${`%"${tag}"%`}`,
+    )).orderBy(sql`${chatSessions.updatedAt} DESC`).limit(1);
+    return rows[0];
   }
 
   /** Whether the current actor may open this session at all. */
@@ -169,7 +187,7 @@ export class ChatsRepository {
       approvals: '{}',
       skillSourceIds: input.skillSourceIds ?? '[]',
       pinned: 0,
-      tags: '[]',
+      tags: input.tags ?? '[]',
       archivedAt: null,
       draft: '',
       tokenCeiling: input.tokenCeiling ?? 200000,
@@ -189,6 +207,9 @@ export class ChatsRepository {
       autoArchiveDays: input.autoArchiveDays ?? null,
       taskKind: input.taskKind ?? null,
       taskId: input.taskId ?? null,
+      // Every creation path states its kind (docs/work-log.md); a caller that
+      // does not falls back to the session's own signals.
+      kind: isSessionKind(input.kind) ? input.kind : classifySession({ name: input.name, tags: input.tags, taskKind: input.taskKind }),
       createdAt: now,
       updatedAt: now,
     };
@@ -313,6 +334,8 @@ export class ChatsRepository {
         autoArchiveDays: null,
         taskKind: null,
         taskId: null,
+        // A fork is a person picking a conversation up: always a chat.
+        kind: 'chat',
         createdAt: now,
         updatedAt: now,
       };

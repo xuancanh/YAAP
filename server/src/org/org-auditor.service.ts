@@ -252,7 +252,7 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
     const name = `Org · ${org.name}${SESSION_SUFFIX}`;
     const sessions = await this.repo.listSessions(org.workspaceId);
     const existing = sessions.find((s) => s.agentId === auditorId && s.name === name && (s.agentTypeId ?? null) === (pick.agentTypeId ?? null));
-    const session = existing ?? await this.repo.createSession({ workspaceId: org.workspaceId, agentId: auditorId, name, permissionMode: 'auto', agentTypeId: pick.agentTypeId ?? null, model: pick.model ?? '' });
+    const session = existing ?? await this.repo.createSession({ workspaceId: org.workspaceId, agentId: auditorId, name, kind: 'work', permissionMode: 'auto', agentTypeId: pick.agentTypeId ?? null, model: pick.model ?? '' });
     if (this.turns.isBusy(session.id)) { await this.runtime.settle(orgId, { agentId: auditorId, projectId: null }, estimate, 0); return 'skipped:busy'; }
 
     const runId = newId();

@@ -360,7 +360,7 @@ export class OrgEvalsService {
     if (kind === 'routing' && value && isTier(value)) model = tierModel(parseRouting(org.routing), value as ModelTier, agent.provider, agent.model || await this.runtime.modelFor(agent.id, org.workspaceId));
     if (kind === 'charter' && value !== null) charterLine = `## Your charter for this evaluation (it replaces the charter above)\n${value}`;
     if (kind === 'playbook' && value) playbookLine = `## Playbook to follow for this kind of work\n${value.slice(0, 8_000)}`;
-    const session = await this.repo.createSession({ workspaceId: org.workspaceId, agentId: agent.id, name: `Eval · ${nonce}`, permissionMode: 'auto', model });
+    const session = await this.repo.createSession({ workspaceId: org.workspaceId, agentId: agent.id, name: `Eval · ${nonce}`, kind: 'work', permissionMode: 'auto', model });
     const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
     this.turns.setSandbox(session.id, (call: AiToolCall) => { calls.push({ name: call.name, input: call.input }); return call.name === 'fs_write' ? `Wrote ${String(call.input.path ?? 'the file')}.` : 'ok (recorded in an evaluation sandbox)'; });
     const context = [

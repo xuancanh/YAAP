@@ -447,7 +447,7 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     if (!ws) return 'busy';
     const name = `Loop · ${loop.name}`;
     const existing = (await this.repo.listSessions(ws.id)).find((s) => s.agentId === agentId && s.name === name);
-    const session = existing ?? await this.repo.createSession({ workspaceId: ws.id, agentId, name, permissionMode: 'auto' });
+    const session = existing ?? await this.repo.createSession({ workspaceId: ws.id, agentId, name, kind: 'work', permissionMode: 'auto' });
     const wanted: Record<string, unknown> = {};
     if ((loop.model ?? '') !== session.model) wanted.model = loop.model ?? '';
     if (loop.budgetTokens && loop.budgetTokens !== session.tokenCeiling) wanted.tokenCeiling = loop.budgetTokens;

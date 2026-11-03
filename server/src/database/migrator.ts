@@ -2015,6 +2015,33 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    id: '0080-session-kind',
+    up: async (db) => {
+      // Chat vs work (docs/work-log.md): a session is a conversation with
+      // people ('chat') or the agent's own run ('work'). Backfilled from the
+      // signals sessions already carry — the run name prefixes (`Loop · `,
+      // `Org · `, `Red team · `, `Eval · `, `App · `), a channel's hidden
+      // `#slug · Agent` working session or its `channel` tag, an org task
+      // link, and a session an org run used — the same rule as
+      // classifySession (server/src/chats/session-kind.ts). Only rows still
+      // at the default are touched, so a re-run never undoes a later change.
+      // Idempotent.
+      if (!(await hasColumn(db, 'chat_sessions', 'kind'))) await db.query(`ALTER TABLE chat_sessions ADD COLUMN "kind" TEXT NOT NULL DEFAULT 'chat'`);
+      await db.query(`
+        UPDATE chat_sessions s SET "kind" = 'work'
+         WHERE s."kind" = 'chat'
+           AND (s."name" LIKE 'Loop · %' OR s."name" LIKE 'Org · %' OR s."name" LIKE 'Red team · %'
+             OR s."name" LIKE 'Eval · %' OR s."name" LIKE 'App · %'
+             OR (s."name" LIKE '#%' AND s."name" LIKE '% · %')
+             OR s."tags" LIKE '%"channel"%'
+             OR s."taskKind" = 'org'
+             OR EXISTS (SELECT 1 FROM org_runs r WHERE r."sessionId" = s."id"))
+      `);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_chat_sessions_kind ON chat_sessions ("workspaceId", "kind", "agentId", "updatedAt")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_chat_turns_session_created ON chat_turns ("sessionId", "createdAt")`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

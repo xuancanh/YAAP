@@ -306,6 +306,11 @@ export const chatSessions = pgTable('chat_sessions', {
    *  the kanban board) | null. */
   taskKind: text('taskKind'),
   taskId: text('taskId'),
+  /** 'chat' (a conversation with people) | 'work' (the agent's own runs:
+   *  loops, org runs, meeting rounds, channel wakes). Chat surfaces list
+   *  `chat`; the agent's Work log reads `work` (docs/work-log.md, migration
+   *  0080). Set at creation; never a model input. */
+  kind: text('kind').notNull().default('chat'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });

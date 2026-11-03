@@ -93,14 +93,14 @@ export class ChatsController {
   }
 
   /** One page of chats: `agentId` ('none' = agent-less; omitted = all),
-   *  `loops` only | exclude, `archived`, `q`, `limit`, `cursor`. */
+   *  `archived`, `q`, `limit`, `cursor`. Conversations only — the agents'
+   *  runs (`kind: 'work'`) page through GET /agents/:id/work-log. */
   @Get('page')
   page(@Query('workspaceId') workspaceId: string, @Query('agentId') agentId?: string, @Query('archived') archived?: string,
-    @Query('loops') loops?: string, @Query('q') q?: string, @Query('limit') limit?: string, @Query('cursor') cursor?: string) {
+    @Query('q') q?: string, @Query('limit') limit?: string, @Query('cursor') cursor?: string) {
     return this.chats.page(workspaceId, {
       agentId: agentId === undefined || agentId === '' ? undefined : agentId === 'none' ? null : agentId,
       archived: archived === 'true',
-      loops: loops === 'only' || loops === 'exclude' ? loops : 'any',
       q, limit: limit ? Number(limit) || undefined : undefined, cursor: cursor || null,
     });
   }

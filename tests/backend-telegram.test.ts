@@ -86,6 +86,7 @@ test('paired messages run an Ask-mode turn for the default agent; gated tools de
 
   const ws = (await workspaces.list())[0];
   const session = (await repo.listSessions(ws.id)).find((s) => s.name === 'Telegram · Fieldy')!;
+  assert.equal(session.kind, 'chat', 'a person writing over Telegram is a conversation');
   assert.equal(session.permissionMode, 'ask', 'channel sessions never run in auto mode');
   const reply = sent.at(-1)!.text;
   assert.match(reply, /Noted anyway/);

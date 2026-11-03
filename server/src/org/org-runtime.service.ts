@@ -477,7 +477,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   /** The per-purpose session of an agent (one per name, created on first use). */
   private async sessionNamed(workspaceId: string, agentId: string, name: string): Promise<ChatSession> {
     const existing = (await this.repo.listSessions(workspaceId)).find((s) => s.agentId === agentId && s.name === name);
-    return existing ?? await this.repo.createSession({ workspaceId, agentId, name, permissionMode: 'auto' });
+    return existing ?? await this.repo.createSession({ workspaceId, agentId, name, kind: 'work', permissionMode: 'auto' });
   }
 
   /** One task-free turn (a chief review, a planning run): registers the run
@@ -881,7 +881,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     // auto-archive default (docs/chat-archiving.md); a session from before
     // the link existed is linked on its next run.
     const agentArchiveDays = (agent as { chatAutoArchiveDays?: number | null }).chatAutoArchiveDays ?? null;
-    const session = existing ?? await this.repo.createSession({ workspaceId: org.workspaceId, agentId, name, permissionMode: 'auto', taskKind: 'org', taskId, autoArchiveDays: agentArchiveDays });
+    const session = existing ?? await this.repo.createSession({ workspaceId: org.workspaceId, agentId, name, kind: 'work', permissionMode: 'auto', taskKind: 'org', taskId, autoArchiveDays: agentArchiveDays });
     if (existing && !existing.taskId) await this.repo.updateSession(existing.id, { taskKind: 'org', taskId, autoArchiveDays: existing.autoArchiveDays ?? agentArchiveDays }).catch(() => undefined);
     if (this.turns.isBusy(session.id)) {
       await this.settle(orgId, { agentId, projectId: task.projectId }, estimate, 0);

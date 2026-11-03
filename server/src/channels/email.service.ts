@@ -296,7 +296,7 @@ export class EmailService implements OnModuleInit, OnModuleDestroy {
     if (!ws) return { outcome: 'ignored', reason: 'no workspace' };
     const name = member ? `Email · ${agent.name} · ${member.displayName || member.memberAccountId.slice(0, 8)}` : `Email · ${agent.name}`;
     const existing = (await this.repo.listSessions(ws.id)).find((x) => x.agentId === agent.id && x.name === name);
-    const session = existing ?? await this.repo.createSession({ workspaceId: ws.id, agentId: agent.id, name, permissionMode: 'ask' });
+    const session = existing ?? await this.repo.createSession({ workspaceId: ws.id, agentId: agent.id, name, kind: 'chat', permissionMode: 'ask' });
 
     const subject = (mail.subject ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
     const text = [

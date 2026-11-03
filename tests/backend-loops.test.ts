@@ -77,6 +77,7 @@ test('a matching loop fires a real turn and journals the run (FR-11.6)', async (
   assert.ok(loopSession, 'loop session created');
   assert.equal(loopSession!.agentId, agent.id);
   assert.equal(loopSession!.permissionMode, 'auto');
+  assert.equal(loopSession!.kind, 'work', 'a loop session is work (docs/work-log.md)');
   const messages = await repo.listMessages(loopSession!.id);
   assert.ok(messages.some((m) => m.role === 'assistant' && m.content.includes('all green')));
 

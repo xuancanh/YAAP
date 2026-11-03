@@ -51,6 +51,8 @@ export class SearchService {
     }).from(chatSessions)
       .where(and(
         eq(chatSessions.workspaceId, workspaceId),
+        // chat search reaches conversations; the agents' runs are searched in their Work log
+        eq(chatSessions.kind, 'chat'),
         or(ilike(chatSessions.name, like), ilike(chatSessions.autoTitle, like)),
       ))
       .limit(MAX_SESSIONS);
@@ -64,6 +66,8 @@ export class SearchService {
       FROM chat_messages m
       JOIN chat_sessions s ON s."id" = m."sessionId"
       WHERE s."workspaceId" = ${workspaceId}
+        AND s."kind" = 'chat'
+        AND m."role" <> 'thinking'
         AND to_tsvector('english', m."content") @@ plainto_tsquery('english', ${q.slice(0, 200)})
       LIMIT ${MAX_MESSAGES}
     `);

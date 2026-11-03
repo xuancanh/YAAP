@@ -721,6 +721,10 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
 
       for (let round = 0; ; round++) {
         let answer = '';
+        // The round's thinking, kept on the transcript as a 'thinking' row: the
+        // Work log shows it (docs/work-log.md); provider history never carries
+        // it (providerHistory reads user + assistant only — FR-8.1).
+        let thinking = '';
         const calls: AiToolCall[] = [];
         try {
           for await (const ev of ctx.provider.stream({
@@ -734,6 +738,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             signal: ctl.signal,
           })) {
             if (ev.type === 'answer') answer += ev.text;
+            if (ev.type === 'thinking') thinking += ev.text;
             if (ev.type === 'usage') { tokensIn += ev.inputTokens; tokensOut += ev.outputTokens; lastContext = ev.inputTokens + ev.outputTokens; }
             if (ev.type === 'done' && calls.length > 0) continue; // round continues after tools
             if (ev.type === 'tool_call') calls.push({ id: ev.id, name: ev.name, input: ev.input });
@@ -747,6 +752,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
         }
         if (!providerOk && this.health && ctx.providerName && !ctl.signal.aborted) { providerOk = true; this.health.recordSuccess(session.workspaceId, ctx.providerName); }
 
+        if (thinking.trim()) await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'thinking', content: thinking.slice(0, 50_000) });
         if (answer) await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'assistant', content: answer });
         if (calls.length === 0 || ctl.signal.aborted) break;
         // Mid-turn, a long tool loop grows the context round by round. With

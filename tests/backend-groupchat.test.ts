@@ -279,6 +279,7 @@ test('a mentioned agent wakes in its own #channel session and its reply lands in
   assert.equal(session.shared, 1);
   assert.equal(session.permissionMode, 'ask');
   assert.deepEqual(JSON.parse(session.tags), ['channel']);
+  assert.equal(session.kind, 'work', 'a channel working session is the agent work, not a chat (docs/work-log.md)');
   const turn = (await s.repo.listTurns(session.id)).find((t) => t.id === thread[1].runId);
   assert.ok(turn, 'runId is a turn of that session');
   // the top-level page shows the reply count, the bus carried typing, stream and the message

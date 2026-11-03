@@ -314,7 +314,7 @@ export class ChannelRuntimeService implements ToolProviderHook {
     const name = channelSessionName(c.slug, agent.name);
     const existing = (await this.repo.listSessions(c.workspaceId)).find((s) => s.agentId === agent.id && s.name === name);
     if (existing) return existing;
-    const created = await this.repo.createSession({ workspaceId: c.workspaceId, agentId: agent.id, name, permissionMode: 'ask', shared: 1, initiatedBy: '' });
+    const created = await this.repo.createSession({ workspaceId: c.workspaceId, agentId: agent.id, name, kind: 'work', permissionMode: 'ask', shared: 1, initiatedBy: '' });
     await this.repo.updateSession(created.id, { tags: JSON.stringify(['channel']) });
     return { ...created, tags: JSON.stringify(['channel']) };
   }

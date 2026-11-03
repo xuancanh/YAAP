@@ -224,7 +224,7 @@ export class TelegramService implements OnModuleInit, OnModuleDestroy {
     const name = member ? `Telegram · ${agent.name} · ${member.displayName || member.memberAccountId.slice(0, 8)}` : `Telegram · ${agent.name}`;
     const existing = (await this.repo.listSessions(ws.id)).find((x) => x.agentId === agent.id && x.name === name);
     // Ask mode, deliberately: gated tools deny with a pointer to the app.
-    const session = existing ?? await this.repo.createSession({ workspaceId: ws.id, agentId: agent.id, name, permissionMode: 'ask' });
+    const session = existing ?? await this.repo.createSession({ workspaceId: ws.id, agentId: agent.id, name, kind: 'chat', permissionMode: 'ask' });
 
     let answer = '';
     const denied: string[] = [];

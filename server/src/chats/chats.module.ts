@@ -20,6 +20,8 @@ import { HeartbeatService } from './heartbeat.service';
 import { ChatArchiveService } from './chat-archive.service';
 import { HeartbeatController } from './heartbeat.controller';
 import { AgentApprovalsController } from './agent-approvals.controller';
+import { WorkLogController } from './work-log.controller';
+import { WorkLogService } from './work-log.service';
 import { AiModule } from '../ai/ai.module';
 import { SettingsModule } from '../settings/settings.module';
 import { AgentTypesModule } from '../agent-types/agent-types.module';
@@ -37,8 +39,8 @@ import { ActionsModule } from '../actions/actions.module';
 
 @Module({
   imports: [SettingsModule, AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, BrowserModule, ActionReviewModule, ComputerModule, RegistryModule, ActionsModule],
-  controllers: [ChatsController, LoopsController, HooksController, AgentApprovalsController, HeartbeatController],
-  providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService, HeartbeatService, ChatArchiveService],
-  exports: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, HeartbeatService, ChatArchiveService],
+  controllers: [ChatsController, LoopsController, HooksController, AgentApprovalsController, HeartbeatController, WorkLogController],
+  providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService, HeartbeatService, ChatArchiveService, WorkLogService],
+  exports: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, HeartbeatService, ChatArchiveService, WorkLogService],
 })
 export class ChatsModule {}

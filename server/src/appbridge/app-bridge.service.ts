@@ -263,7 +263,7 @@ export class AppBridgeService {
     const name = `App · ${agent.name}`;
     const existing = (await this.repo.listSessions(ws)).find((x) => x.agentId === agentId && x.name === name);
     // Ask mode, deliberately: an app can make its agent think, never act.
-    const session = existing ?? await this.repo.createSession({ workspaceId: ws, agentId, name, permissionMode: 'ask' });
+    const session = existing ?? await this.repo.createSession({ workspaceId: ws, agentId, name, kind: 'work', permissionMode: 'ask' });
 
     let answer = '';
     const denied: string[] = [];
