@@ -1,6 +1,7 @@
 # Plugins: interfaces, providers and consumers on an enforcing core
 
-Status: **design**, 3 November 2026. Nothing here is built yet.
+Status: **Phase 1 shipped**, 3 November 2026 (see "Shipped as (Phase 1)"
+under §10). Later phases are design.
 
 Sources:
 
@@ -2038,6 +2039,136 @@ Acceptance:
 - No secret value appears in any log, result or row (a canary test).
 - A `core.manual` record walks the whole lifecycle, and a job waiting on
   its verify window survives a restart.
+
+#### Shipped as (Phase 1)
+
+Built on 3 November 2026. Code: `server/src/plugins/` (the mechanism),
+`plugins/first-party/` (the plugins), `src/components/PluginsPane.tsx`
+(Settings › Plugins). Tests: `tests/backend-plugins-core.test.ts`,
+`tests/backend-plugins.test.ts`, `web-tests/plugins.test.tsx`.
+
+**Built.**
+
+- **Manifest v1 and the loader** (`manifest.ts`, `loader.ts`,
+  `template.ts`, `json-schema.ts`, `semver.ts`): the strict validator for
+  all three roles, as §3.2–§3.3 describe, including the steering lint, no
+  `!!` tags or code-shaped keys, plain-reference templates and the
+  declarative `$.path == value` match language. The loader enforces the
+  archive rules on first-party folders and on inline `@local` packages
+  (developer mode, `POST …/plugins/install { source: { manifest, files } }`).
+- **The interface registry, resolver and dispatcher** (`plugins.service.ts`,
+  `dispatcher.ts`): name claims per package, interface versions, providers
+  with mock conformance, bindings with the resolution order of §4.2, per
+  agent grants, owner policies (`interface_policies`), and
+  `InterfaceDispatcher`, which offers `<iface>_<op>` only through a healthy
+  binding and a grant.
+- **The fixed policy stage** (`dispatcher.ts` with
+  `TurnLoopService`'s `PolicyStageHook`): binding, grant, change gate,
+  class (the max rule over floors, interface, provider and
+  `classByInput`), owner and requested policies, and the budget stage. It
+  runs before the trust decision. `classOf` gained the operation lookup.
+  The executor refuses any call the loop did not admit, and a turn loop
+  without the action contract refuses plugin calls.
+- **The approval vocabulary**: `action_log` records
+  `approvalRequestId`, `approvalAskedAt`, `approvalDecidedAt` and
+  `approvalOutcome`. The plugin audit chain records each pair. Inline asks
+  map to `allowed-once`, `rejected`, `cancelled` (the chat's Stop) or
+  `unavailable` (the 10-minute timeout). Held calls past
+  `plugins.heldDeadlineHours`, and change gates past
+  `plugins.gateDeadlineHours`, end `unavailable`.
+- **The generic change record** (`changes.service.ts`): kinds are declared
+  by interfaces (`scm.pull_request`) or `core.manual`. It covers the review
+  by someone other than the proposer, the gate with its deadline, the
+  owner's one-shot key, and apply on the pinned bind (a provider
+  `conflict` returns the record to `proposed`). Verify checks come from
+  the kind and from `verifies`; they settle by event (`ingestEvent`) or
+  attestation, and a check whose interface is unbound is `unverifiable`.
+  An unattended rollback runs through the kind's rollback-role operation.
+  The sweep is restart-safe. Every transition emits `change.transitioned`
+  and writes an audit row.
+- **The registrar and suspension**: every contribution is a
+  `plugin_effects` row with its inverse. Disable unwinds in reverse and
+  audits each step. Enable restores exactly. Uninstall leaves no provider,
+  binding, grant or offered tool. An interface with no bound provider
+  shows `suspended: no <name> provider bound`, its tools are hidden, and
+  it resumes on rebinding.
+- **Updates** with the permission diff of §6.5: widening updates wait
+  (pending on the install). Providers re-run conformance on the candidate,
+  and a failure keeps the old version bound.
+- **Metering**: each call reserves its declared `cost` on its row and
+  settles or releases it afterwards. The install's `budgets` apply, and a
+  monthly envelope `plugins.monthlyUsd` (a tunable) refuses calls once
+  spent.
+- **Provenance**: offered definitions and returned results get
+  `context_provenance` rows before the model sees them. Text that cannot
+  be logged is withheld.
+- **First-party plugins**: the interfaces `scm@yaam` and `ci@yaam`, and
+  `scm-mock@yaam`, which provides both from deterministic fixtures. The
+  doc names the mock after `scm`; it also provides `ci`, so the
+  `pull_request` kind's CI check can be armed and verified.
+- **Data model**: migrations `0053-change-records` and
+  `0054-plugins-interfaces`. **API**: the §8.2 routes for installs, review,
+  conformance, disable, enable, uninstall, updates, grants, interfaces,
+  bindings, resolve, policies and change records, plus
+  `PATCH …/plugin-settings`, which holds the community-interface opt-in.
+- **SPA**: Settings › Plugins lists installs and why one is suspended. It
+  shows the review screen (declared beside effective class, with the
+  floor's reason), interfaces with their providers' conformance, the
+  owner's default binding, the inventory, conformance runs, per-agent
+  access and pending updates.
+
+**Refined where the code forced it.**
+
+- **The fixture stub** is a fifth `OperationImpl` kind, `{ fixture }`. It
+  is first-party and local only. HTTP templates, MCP-backed operations,
+  provider code and delegation validate, but they refuse to run until the
+  egress proxy, pinned re-listing and execution environments ship (Phase
+  2 and 3). The mock therefore runs in process as data, behind the same
+  `callProvider` seam as later runtimes.
+- **New manifest fields**: `change.verdict` (which input value of a
+  review-role operation means "approve") and `provides[].conformance.params`
+  (values for a suite's `{testHost}` placeholders).
+- **The `jobs` table is deferred.** Verify windows and gate deadlines live
+  on `change_records.deadlineAt` and `action_log.approvalAskedAt`. A
+  restart-safe sweep runs every minute and at boot.
+- **Status set.** Installs use `installed` (a provider not yet conformant),
+  `active`, `suspended`, `disabled`, `terminating` and `removed`. `ready`
+  merges into `active`, because Phase 1 has no connections or setup to
+  wait for. Effects parked by a disable are in state `disabled`.
+- **The audit chain.** Workspaces without an organization have no
+  `org_audit` chain, so plugin audit rows go to a hash-chained
+  `plugin_audit` per workspace. They are mirrored to `org_audit` through
+  the action contract's audit hook when an organization exists.
+- **Not built yet.** Pending updates show in Settings › Plugins rather
+  than as `plugin_update` cards. `GET /api/plugins/api` is behind auth.
+
+**Deferred**, with the phase that brings it:
+
+- the `ExecEnvDriver`, the egress proxy and secrets (Phase 3 with the
+  first vendor provider);
+- MCP pins and the `mcp_servers` repackaging (Phase 2);
+- taint and data-sharing switches (Phase 2);
+- webhook ingress and the events bus (Phase 3);
+- `plugin_propose` and `binding_propose` cards;
+- skills, packs and playbooks as drafts;
+- kits;
+- the secrets canary test.
+
+**Defaults taken for §12.** The owner said "execute", so open questions
+took the doc's proposed default.
+
+- Q1: requested policies always apply (only stricter).
+- Q3: a semantics change re-reviews, as the §6.5 table says.
+- Q8: Postgres-native, with deadlines on rows until `jobs` exists.
+- Q10: owner policies only raise in Phase 1; nothing lowers the
+  interface's two-key.
+- Q11: semver ranges (`yaamCore ^1.0`; this server implements `1.0.0`).
+- Q12: one interface name per claiming package; a second claim is
+  refused.
+- Q14: change kinds come only from interfaces.
+- Q15: `mock` conformance is enough to bind a first-party provider.
+- Q16: resource bindings beat unit bindings.
+
 
 ### Phase 2: repackage what exists; trust and updates
 

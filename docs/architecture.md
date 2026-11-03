@@ -129,6 +129,7 @@ and `HttpLoggingInterceptor` registered globally.
 | `groupchat` | Channels, members, messages, threads, reads, channel files, task links; who speaks after a post. | `GroupChatService`, `ChannelRuntimeService`, `mentions.ts`, `workspace-events.ts` |
 | `follows` | Who follows which thread or task; what changed since they looked; the `follow` tools. | `FollowsService`, `follows.tools.ts` (`FollowsToolsModule`) |
 | `home` | The owner's mission control: one read-only aggregate. | `HomeService`, `home-activity.ts`, `home.types.ts` |
+| `plugins` | Plugins on an enforcing core (docs/plugins.md, Phase 1): manifest v1 and its strict validator, the loader (first-party folders in `plugins/first-party/`, inline `@local` packages), the interface registry, binding resolver, the dispatcher with the fixed policy stage, generic floors and owner policies, mock conformance, the registrar of reversible effects, dependency-driven suspension, the generic change record, the plugin audit chain. Domain-free: the domains live in interface plugins. | `PluginsService`, `InterfaceDispatcher` (`dispatcher.ts`), `ChangesService`, `PluginAuditService`, `manifest.ts`, `loader.ts`, `policy.ts`, `runtime.ts`, `conformance.ts`, `template.ts` |
 
 ### Dependencies
 
@@ -154,6 +155,7 @@ flowchart TD
   usage --> settings
   voice --> agentTypes
   followsTools[FollowsToolsModule] --> chats
+  plugins --> chats & actions
 ```
 
 Two patterns keep this graph acyclic:
@@ -326,7 +328,22 @@ For each tool call (`turn-loop.service.ts:693-1040`):
 3. **`restrictTo`** refuses tools outside the allowed set.
 4. **Same-call loop breaker** (a provider's `onToolCall`): three identical
    calls end the turn.
-5. **Action contract** (`ActionsService`, `server/src/actions/`):
+5. **Plugin policy stage** (interface operations only, `server/src/plugins/dispatcher.ts`,
+   docs/plugins.md §4.3): the provider's `policyStage.preflight` resolves
+   the binding (unbound is refused with the candidates named), checks the
+   agent's grant, runs the change gate for apply and rollback operations,
+   classifies (interface ⊔ provider ⊔ generic floors ⊔ `classByInput`),
+   applies owner and requested policies (raise only; an owner `deny`
+   refuses) and the budget (per-call cap, rate, concurrency, the monthly
+   envelope). A refusal is logged and returned; without `ActionsService`
+   the call is refused outright. The stage's class is combined with
+   `classify` by `max`, every plugin call gets an action-log row (reads
+   too), its requirement overrides the trust decision (an approved change
+   record's one-shot key runs; two-key and owner-key ask or hold), and the
+   executor refuses any call the loop did not `admit` right before running
+   it. Asks and holds write the asked/decided pair with the outcome
+   `allowed-once`, `rejected`, `cancelled` or `unavailable`.
+6. **Action contract** (`ActionsService`, `server/src/actions/`):
    - `classify` assigns a class: `read`, `internal_write`,
      `external_reversible`, `external_irreversible` or `money`. Unknown tools
      default to `external_reversible`
@@ -346,30 +363,30 @@ For each tool call (`turn-loop.service.ts:693-1040`):
      to ask, stage or hold. `stage` runs a draft twin (for example
      `gmail_send` becomes `gmail_draft`) for the owner's key
      (`action-classes.ts:218-223`).
-6. **Legacy loop queue.** A loop turn without a contract turns outward
+7. **Legacy loop queue.** A loop turn without a contract turns outward
    mutations into an `action_pending` inbox event.
-7. **Routed approval.** A mutating call on another member's connection
+8. **Routed approval.** A mutating call on another member's connection
    pauses for that member only.
-8. **`checkPolicy`** (`:1299-1341`): the Ask/Auto verdict. Skills are
+9. **`checkPolicy`** (`:1299-1341`): the Ask/Auto verdict. Skills are
    read-only; MCP is never read-only; unknown tools ask; computer tools
    always ask; confirm-always tools (`gmail_send`) ask; Auto mode runs; read
    tools run; remembered grants run; everything else asks.
-9. **`contractPolicy`** (`:1351-1369`) overlays the trust decision:
+10. **`contractPolicy`** (`:1351-1369`) overlays the trust decision:
    `run`, `run_notify` and `cosign` become `auto`. Two-key classes
    (irreversible and money) are never remembered and never auto-run without
    a decision.
-10. **Reviewer** (`server/src/review/action-review.service.ts`): for
+11. **Reviewer** (`server/src/review/action-review.service.ts`): for
     `auto` or `remembered` non-read calls that are neither free nor
     co-signed. A regex precheck for secrets and PII forces at least `ask`;
     then one cheap-model call with no tools, capped at 300 tokens, which
     never sees the agent's system prompt. A deny, or any non-allow on a
     non-user turn, refuses the call and writes an inbox event; on a user
     turn a non-allow becomes `ask`.
-11. **Ask.** `approval_required` is streamed and `awaitDecision` waits for
+12. **Ask.** `approval_required` is streamed and `awaitDecision` waits for
     `POST /api/chats/:id/approve` (`allow-once`, `allow-always` for the exact
     input, `allow-tool`, `deny`). It auto-denies after 10 minutes or on
     abort.
-12. **Execute.** `rateCheck` applies outbound rate limits, then
+13. **Execute.** `rateCheck` applies outbound rate limits, then
     `executeTool`, then `actions.finish` (and a notification for
     `run_notify`).
 
@@ -774,6 +791,8 @@ migrator on PGlite.
 | Files | `workspace_files`, `workspace_file_revisions` (0047) |
 | Follows | `follows` (0048) |
 | Task keys | `task_key_counters`; the prefix on `org_units.taskKey` and `agents.taskKey`, the key on `org_tasks.key` and `agent_tasks.key` (0052, [tasks-keys.md](tasks-keys.md)) |
+| Change records and provenance | `change_records`, `context_provenance`; the plugin-call columns of `action_log` (operation, provider, binding scope, the approval pair and outcome, metered cost) (0053, [plugins.md](plugins.md) §4.8, §5.6) |
+| Plugins | `plugins`, `plugin_versions`, `plugin_installs`, `interfaces`, `interface_versions`, `interface_providers`, `interface_bindings`, `interface_policies`, `conformance_runs`, `plugin_effects`, `plugin_grants`, `plugin_audit`; `workspaces.pluginSettings` (0054, [plugins.md](plugins.md) §8) |
 
 The other migrations only add columns or backfill (for example 0038 assigns
 agents to workspaces). Mini apps have no table: their definitions are on the
