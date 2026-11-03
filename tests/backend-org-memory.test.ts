@@ -122,7 +122,11 @@ async function enable(s: S, modeName: 'supervised' | 'autonomous' = 'supervised'
   return orgId;
 }
 const session = (s: S, agentId: string, name: string) => s.repo.createSession({ workspaceId: s.ws.id, agentId, name });
-const thread = async (s: S, channelId: string, rootId: string) => (await s.groupchat.messages(channelId, { thread: rootId })).messages;
+// A meeting runs in its own sub-channel: its stream from the agenda message on.
+const thread = async (s: S, channelId: string, rootId: string) => {
+  const all = await s.groupchat.stream(channelId);
+  return all.slice(Math.max(0, all.findIndex((x) => x.id === rootId)));
+};
 
 const PLAYBOOK = `---\nname: publish-an-issue\n---\nUse this when an issue is ready to go out.\n\n1. Run the link check.\n2. Ask the editor for the final read.\n3. Schedule for Friday 09:00.`;
 
@@ -221,7 +225,7 @@ test('skill outcomes (item 10) land on org_playbooks.outcomes; the retro agenda 
   await s.meetingRuntime.idle();
   const m = await s.meetings.get(orgId, m0.id);
   const company = await s.groupchat.bySlug(s.ws.id, COMPANY_SLUG);
-  const msgs = await thread(s, company.id, m.threadRootId!);
+  const msgs = await thread(s, m.channelId ?? company.id, m.threadRootId!);
   assert.match(msgs[0].text, /Retro for .*what worked[\s\S]*## Playbooks and how they fared[\s\S]*RATED POORLY/);
   assert.match(m.agenda, /## Playbooks and how they fared/);
   // the member's context shows the stats too
@@ -264,7 +268,7 @@ test('each postmortem trigger schedules one retro for the owning unit with an ag
   assert.match(retroA.agenda, /## Decisions touching it \(1\)\n- #decision:\w{8} .* "Referral bonus"/);
   assert.match(retroA.agenda, /## What this retro produces/);
   assert.equal((await s.meetings.get(orgId, retroA.id)).status, 'done', 'the retro ran');
-  assert.match((await thread(s, company.id, (await s.meetings.get(orgId, retroA.id)).threadRootId!))[0].text, /Postmortem · Reach 5,000 subscribers/);
+  assert.match((await (async () => { const r = await s.meetings.get(orgId, retroA.id); return thread(s, r.channelId ?? company.id, r.threadRootId!); })())[0].text, /Postmortem · Reach 5,000 subscribers/);
   // dedupe: the sweep sees the abandoned goal again and schedules nothing new
   const swept = await s.memory.sweep(orgId);
   assert.ok(swept.some((x) => x.refId === objective.id && x.meetingId === null && /cooldown/.test(x.reason ?? '')));
@@ -327,8 +331,11 @@ test('each postmortem trigger schedules one retro for the owning unit with an ag
   assert.equal((await retros()).length, 4, 'goal_abandoned is off');
   assert.match((await s.memory.considerPostmortem(orgId, 'goal_abandoned', 'goal', g2.id)).reason!, /trigger goal_abandoned is off/);
   await assert.rejects(s.org.setTunable(orgId, 'memory.postmortemTriggers', 99), /must stay within 0–31/);
-  // every retro ran with the operating path of item 19: created by 'postmortem', in the unit channel
-  assert.ok((await retros()).every((m) => m.createdBy === 'postmortem' && m.channelId === company.id));
+  // every retro ran with the operating path of item 19: created by 'postmortem', in a sub-channel of the unit channel
+  for (const m of await retros()) {
+    assert.equal(m.createdBy, 'postmortem');
+    assert.equal((await s.groupchat.get(m.channelId!)).parentChannelId, company.id);
+  }
 });
 
 // ---- 4. lessons, charter cards, playbook revisions ----
@@ -385,7 +392,7 @@ test('meeting_propose_lesson in a retro: lessons land in the lessons store per a
   assert.equal((await s.agents.get(s.writer.id)).charter, 'You write the newsletter.', 'nothing until the CEO decides');
   // the minutes and the thread show it
   assert.match(s.meetings.renderMinutes(m, minutes, new Map([[s.writer.id, 'Writer'], [s.editor.id, 'Editor'], [s.chief.id, 'Chief']])), /Lessons \(3\)\n- \[member\] Check the link checker before publishing\. \(Writer\)\n- \[unit\] Sponsors need a week of notice\. · charter change for Writer \(approval \w{8}\) \(Editor\)\n- \[company\] Never publish on a holiday\. · playbook \w{8} → task \[\w{8}\] \(Chief\)/);
-  const msgs = await thread(s, company.id, m.threadRootId!);
+  const msgs = await thread(s, m.channelId ?? company.id, m.threadRootId!);
   assert.ok(msgs.some((x) => x.authorId === s.editor.id && /Lesson \(unit\): Sponsors need a week of notice\. · proposes a charter change for Writer/.test(x.text)));
   // approve: the charter changes and its hash is re-accepted (no drift)
   const { approval, result } = await s.approvals.decide(orgId, card.id, 'approve', 'Agreed.');

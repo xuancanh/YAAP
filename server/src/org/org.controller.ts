@@ -282,7 +282,7 @@ export class OrgController {
   /** A company is deleted from the archived state only, with its name typed
    *  back: `POST /api/workspaces/:id/org/archive`, then `DELETE
    *  /api/workspaces/:id/org` (docs/owners-seat.md "Archive or delete the company"). */
-  @Delete(':id') remove(@Param('id') _id: string): never {
+  @Delete(':id') remove(): never {
     this.guard();
     throw new BadRequestException('archive the company first (POST /api/workspaces/:id/org/archive), then delete it with DELETE /api/workspaces/:id/org { confirmName }');
   }

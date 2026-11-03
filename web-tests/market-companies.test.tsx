@@ -1,4 +1,4 @@
-/** The Market's Companies tab (docs/blueprints.md §3a): the first-party
+/** Foundry's Blueprints shelf (formerly the Market's Companies tab) (docs/blueprints.md §3a): the first-party
  *  starter blueprints the server lists first are badged "Official" with
  *  their seats and envelope; a published blueprint is not; search goes to
  *  the server and an empty result says so. */
@@ -38,8 +38,7 @@ const cardOf = (name: string): HTMLElement => {
 describe('the Companies tab', () => {
   it('lists the official starters first with the Official badge, their seats and envelope; a published one has no badge', async () => {
     const list = vi.spyOn(api, 'marketCompanies').mockResolvedValue({ items: LIST, remote: REMOTE });
-    render(<MarketView nav={NAV} setNav={vi.fn()} />);
-    fireEvent.click(screen.getByText('Companies'));
+    render(<MarketView nav={{ ...NAV, shelf: 'blueprints' }} setNav={vi.fn()} />);
     await waitFor(() => expect(screen.getByText('SaaS startup')).toBeInTheDocument());
     expect(list).toHaveBeenCalledWith('');
     const names = screen.getAllByRole('button', { name: 'Review & install' }).map((b) => {
@@ -59,8 +58,7 @@ describe('the Companies tab', () => {
 
   it('search asks the server and says when nothing matches', async () => {
     const list = vi.spyOn(api, 'marketCompanies').mockImplementation(async (q = '') => ({ items: q ? LIST.filter((i) => i.name.toLowerCase().includes(q.toLowerCase())) : LIST, remote: REMOTE }));
-    render(<MarketView nav={NAV} setNav={vi.fn()} />);
-    fireEvent.click(screen.getByText('Companies'));
+    render(<MarketView nav={{ ...NAV, shelf: 'blueprints' }} setNav={vi.fn()} />);
     await waitFor(() => expect(screen.getByText('Dana Co')).toBeInTheDocument());
     fireEvent.change(screen.getByRole('textbox', { name: 'Search companies' }), { target: { value: 'lab' } });
     await waitFor(() => expect(list).toHaveBeenLastCalledWith('lab'));

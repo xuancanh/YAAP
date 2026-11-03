@@ -397,7 +397,7 @@ test('a unit lead gets org_set_goal, org_assign, org_unit_report and may assign 
   // org_create_task with assignee: a report yes, an outsider no, a member never
   assert.match(await s.runtime.execute(writerSession, 'org_create_task', { title: 'Outline', outcome: 'An outline', done_when: 'Reviewed', assignee: 'Alpha' }), /assigned to Alpha/);
   await assert.rejects(s.runtime.execute(writerSession, 'org_create_task', { title: 'x', outcome: 'y', done_when: 'z', assignee: 'Editor' }), /outside your unit/);
-  await assert.rejects(s.runtime.execute(editorSession, 'org_create_task', { title: 'x', outcome: 'y', done_when: 'z', assignee: 'Alpha' }), /only the chief of staff or a unit lead assigns/);
+  await assert.rejects(s.runtime.execute(editorSession, 'org_create_task', { title: 'x', outcome: 'y', done_when: 'z', assignee: 'Alpha' }), /only the chief of staff, a unit lead, or a project.s lead \(for its team\) assigns/);
   const created = (await s.tasks.list(orgId, { unitId: writerUnit.id })).find((x) => x.title === 'Outline')!;
   assert.equal(created.assigneeAgentId, a1.id);
   // goals: the lead's goal lands in its unit; a parent above it is fine, a sibling unit's is not
