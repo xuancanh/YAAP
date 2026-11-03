@@ -1,0 +1,19 @@
+{
+  "operations": {
+    "list_runs": [
+      { "output": { "items": [ { "id": "run-1", "sha": "a1b2c3d", "status": "completed", "conclusion": "success", "url": "https://mock.example/acme/app/runs/1" } ] } }
+    ],
+    "read_run": [
+      { "output": { "id": "{{input.runId}}", "sha": "a1b2c3d", "status": "completed", "conclusion": "success" } }
+    ],
+    "read_logs": [
+      { "output": { "text": "12 tests passed" } }
+    ],
+    "rerun": [
+      { "output": { "id": "{{input.runId}}", "status": "queued" } }
+    ],
+    "cancel": [
+      { "output": { "id": "{{input.runId}}", "status": "cancelled" } }
+    ]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "manifestVersion": 1,
+  "id": "scm-mock@yaam",
+  "name": "Mock forge (provider)",
+  "description": "A deterministic provider of scm@1 and ci@1 served by the core's fixture stub: no network, no code, no secrets. For trying the interface mechanism and for tests; it serves scm://mock.example/* only.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": { "id": "yaam", "name": "yaam", "verifiedDomain": "yaam.chat" },
+  "roles": ["provider"],
+  "requires": { "yaamCore": "^1.0", "interfaces": ["scm@^1", "ci@^1"] },
+  "provides": [
+    { "interface": "scm@^1", "resources": ["scm://mock.example/*"],
+      "operations": {
+        "list_prs": { "fixture": "fixtures/scm.json" }, "read_pr": { "fixture": "fixtures/scm.json" },
+        "read_diff": { "fixture": "fixtures/scm.json" }, "create_branch": { "fixture": "fixtures/scm.json" },
+        "push": { "fixture": "fixtures/scm.json" }, "open_pr": { "fixture": "fixtures/scm.json" },
+        "comment": { "fixture": "fixtures/scm.json" }, "review": { "fixture": "fixtures/scm.json" },
+        "merge": { "fixture": "fixtures/scm.json" }, "revert": { "fixture": "fixtures/scm.json" }
+      },
+      "conformance": { "mode": "mock", "params": { "testHost": "mock.example", "testOwner": "acme" } } },
+    { "interface": "ci@^1", "resources": ["scm://mock.example/*"],
+      "operations": {
+        "list_runs": { "fixture": "fixtures/ci.json" }, "read_run": { "fixture": "fixtures/ci.json" },
+        "read_logs": { "fixture": "fixtures/ci.json" }, "rerun": { "fixture": "fixtures/ci.json" },
+        "cancel": { "fixture": "fixtures/ci.json" }
+      },
+      "conformance": { "mode": "mock", "params": { "testHost": "mock.example", "testOwner": "acme" } } }
+  ],
+  "budgets": { "callsPerMinute": 120, "concurrent": 4, "maxCostPerCallUsd": 0.01 }
+}

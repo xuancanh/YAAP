@@ -1,0 +1,64 @@
+{
+  "manifestVersion": 1,
+  "id": "ci@yaam",
+  "name": "Continuous integration (interface)",
+  "description": "The ci@1 contract: runs and checks on a repository's commits, their logs, re-runs and cancellation. No code, no egress.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": { "id": "yaam", "name": "yaam", "verifiedDomain": "yaam.chat" },
+  "roles": ["interface"],
+  "requires": { "yaamCore": "^1.0" },
+  "interfaces": [{
+    "name": "ci",
+    "version": "1.0.0",
+    "semantics": "Automated runs (builds, tests, checks) against the commits of a repository.",
+    "resources": { "scheme": "scm", "pattern": "scm://{host}/{owner}/{repo}",
+                   "schema": { "type": "string", "pattern": "^scm://[a-z0-9.-]+/[^/]+/[^/]+$" } },
+    "defs": {
+      "run": { "type": "object", "required": ["id", "sha", "status"],
+               "properties": { "id": { "type": "string" }, "sha": { "type": "string" },
+                               "status": { "enum": ["queued", "in_progress", "completed", "cancelled"] },
+                               "conclusion": { "type": ["string", "null"] }, "url": { "type": "string" } } }
+    },
+    "operations": {
+      "list_runs": { "required": true, "semantics": "Recent runs of a repository, optionally for one commit.",
+                     "input": { "type": "object", "required": ["repo"], "additionalProperties": false,
+                                "properties": { "repo": { "$ref": "#resource" }, "sha": { "type": "string" } } },
+                     "output": { "type": "object", "required": ["items"], "properties": { "items": { "type": "array", "items": { "$ref": "#/defs/run" } } } },
+                     "class": "read", "reversibility": "none", "outbound": false, "idempotent": true, "untrustedOutput": false,
+                     "cost": { "unit": "call", "usd": 0.0002 } },
+      "read_run": { "required": true, "semantics": "One run with its status and conclusion.",
+                    "input": { "type": "object", "required": ["repo", "runId"], "additionalProperties": false,
+                               "properties": { "repo": { "$ref": "#resource" }, "runId": { "type": "string" } } },
+                    "output": { "$ref": "#/defs/run" },
+                    "class": "read", "reversibility": "none", "outbound": false, "idempotent": true, "untrustedOutput": false,
+                    "cost": { "unit": "call", "usd": 0.0002 } },
+      "read_logs": { "required": true, "semantics": "The log text of a run.",
+                     "input": { "type": "object", "required": ["repo", "runId"], "additionalProperties": false,
+                                "properties": { "repo": { "$ref": "#resource" }, "runId": { "type": "string" } } },
+                     "output": { "type": "object", "required": ["text"], "properties": { "text": { "type": "string" } } },
+                     "class": "read", "reversibility": "none", "outbound": false, "idempotent": true, "untrustedOutput": true,
+                     "cost": { "unit": "call", "usd": 0.0002 } },
+      "rerun": { "required": true, "semantics": "Run a finished run again.",
+                 "input": { "type": "object", "required": ["repo", "runId"], "additionalProperties": false,
+                            "properties": { "repo": { "$ref": "#resource" }, "runId": { "type": "string" } } },
+                 "output": { "type": "object", "required": ["id", "status"], "properties": { "id": { "type": "string" }, "status": { "type": "string" } } },
+                 "class": "external_reversible", "reversibility": "reversible", "outbound": false, "idempotent": false, "untrustedOutput": false,
+                 "cost": { "unit": "call", "usd": 0.0005 } },
+      "cancel": { "required": true, "semantics": "Stop a queued or running run.",
+                  "input": { "type": "object", "required": ["repo", "runId"], "additionalProperties": false,
+                             "properties": { "repo": { "$ref": "#resource" }, "runId": { "type": "string" } } },
+                  "output": { "type": "object", "required": ["id", "status"], "properties": { "id": { "type": "string" }, "status": { "type": "string" } } },
+                  "class": "external_reversible", "reversibility": "reversible", "outbound": false, "idempotent": true, "untrustedOutput": false,
+                  "cost": { "unit": "call", "usd": 0.0005 } }
+    },
+    "events": {
+      "run.completed": { "semantics": "A run finished.", "payload": { "type": "object", "required": ["sha", "conclusion"],
+                         "properties": { "sha": { "type": "string" }, "conclusion": { "type": "string" }, "runId": { "type": "string" } } } }
+    },
+    "metrics": {
+      "failure_rate": { "kind": "ratio", "of": "ci.run.completed", "window": "7d", "unit": "ratio", "where": { "path": "$.conclusion", "equals": "failure" } }
+    },
+    "conformance": "conformance/ci/suite.json"
+  }]
+}

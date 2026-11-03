@@ -77,6 +77,10 @@ export const TOOL_CLASSES: Record<string, Classifier> = {
   update_user_profile: 'internal_write',
   // the trust ledger's own read tool
   trust_status: 'read',
+  // generic change records (plugins/changes.service.ts, docs/plugins.md §4.8):
+  // reading a record, and asking for the apply gate (a record moves to
+  // `gated`; nothing outside the workspace changes)
+  change_status: 'read', change_list: 'read', change_request_apply: 'internal_write',
   // follows (follows/follows.tools.ts): only the agent's own follow rows change — free, no approval
   follow: 'read', unfollow: 'read', list_follows: 'read',
   // chat auto-archive (chats/chat-archive.service.ts): only the agent's own chats' setting changes — free, no approval
@@ -163,9 +167,42 @@ export const MCP_PREFIX = 'mcp_';
  *  this is classed as money whatever its family). */
 const MONEY_RE = /(?:^|_)(pay|payment|payout|charge|refund|transfer|invoice_send|purchase|buy|checkout|stripe_charge)(?:_|$)/;
 
+/** Whether a name reads like a money-moving action (the generic money floor). */
+export function isMoneyName(name: string): boolean {
+  return MONEY_RE.test(name);
+}
+
 export interface ClassHint {
   /** The owning provider's read-only flag (org/channel/meeting tools, MCP annotations). */
   readOnly?: boolean;
+}
+
+/**
+ * Interface operations (docs/plugins.md §4.3): the plugin mechanism
+ * registers one lookup from a model-facing operation name to its static
+ * effective class — the maximum of the core's generic floors, the
+ * interface's class and the provider's raise — built from the installed
+ * interface versions. Unknown names answer null. Owner policies are
+ * per-workspace and raise the call further in the policy stage.
+ */
+export type OperationClassLookup = (toolName: string, input: Record<string, unknown>) => ActionClass | null;
+const OPERATION_LOOKUPS: OperationClassLookup[] = [];
+
+export function registerOperationClasses(fn: OperationClassLookup): () => void {
+  OPERATION_LOOKUPS.push(fn);
+  return () => { const i = OPERATION_LOOKUPS.indexOf(fn); if (i >= 0) OPERATION_LOOKUPS.splice(i, 1); };
+}
+
+/** The strictest class any registered lookup gives the name; null when none knows it. */
+function operationClass(toolName: string, input: Record<string, unknown>): ActionClass | null {
+  let best: ActionClass | null = null;
+  for (const fn of OPERATION_LOOKUPS) {
+    let c: ActionClass | null;
+    try { c = fn(toolName, input); } catch { c = 'external_reversible'; }
+    if (c && (best === null || ACTION_CLASSES.indexOf(c) > ACTION_CLASSES.indexOf(best))) best = c;
+  }
+  if (best && MONEY_RE.test(toolName)) return 'money';
+  return best;
 }
 
 /**
@@ -176,6 +213,8 @@ export interface ClassHint {
 export function classOf(toolName: string, input: Record<string, unknown> = {}, hint: ClassHint = {}, ctx: ClassContext = {}): ActionClass {
   const exact = TOOL_CLASSES[toolName];
   if (exact) return typeof exact === 'function' ? exact(input, ctx) : exact;
+  const op = operationClass(toolName, input);
+  if (op) return op;
   if (MONEY_RE.test(toolName)) return 'money';
   for (const f of FAMILIES) if (toolName.startsWith(f.prefix)) return f.cls;
   if (toolName.startsWith(MCP_PREFIX)) return hint.readOnly === true ? 'read' : 'external_reversible';
@@ -195,6 +234,7 @@ export function normalizeActionClass(x: string | null | undefined): ActionClass 
 /** Whether the registry knows the name (exact or by family). */
 export function isClassified(toolName: string): boolean {
   if (TOOL_CLASSES[toolName]) return true;
+  if (operationClass(toolName, {})) return true;
   if (MONEY_RE.test(toolName)) return true;
   return [...FAMILIES.map((f) => f.prefix), MCP_PREFIX, ...INTERNAL_FAMILIES].some((p) => toolName.startsWith(p));
 }

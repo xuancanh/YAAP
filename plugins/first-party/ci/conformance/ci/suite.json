@@ -1,0 +1,14 @@
+{
+  "interface": "ci@1.0.0",
+  "fixtures": { "repo": "scm://{testHost}/{testOwner}/conformance" },
+  "cases": [
+    { "id": "list-then-read", "steps": [
+      { "op": "list_runs", "input": { "repo": "{{fixtures.repo}}" }, "expect": { "schema": true }, "save": { "runId": "$.items[0].id" } },
+      { "op": "read_run", "input": { "repo": "{{fixtures.repo}}", "runId": "{{runId}}" }, "expect": { "schema": true, "match": { "$.status": "completed" } } },
+      { "op": "read_logs", "input": { "repo": "{{fixtures.repo}}", "runId": "{{runId}}" }, "expect": { "schema": true } } ] },
+    { "id": "rerun-and-cancel", "steps": [
+      { "op": "rerun", "input": { "repo": "{{fixtures.repo}}", "runId": "run-1" }, "expect": { "schema": true } },
+      { "op": "cancel", "input": { "repo": "{{fixtures.repo}}", "runId": "run-1" }, "expect": { "schema": true, "match": { "$.status": "cancelled" } } },
+      { "expectEvent": { "kind": "ci.run.completed", "within": "10m" }, "skipIn": ["mock"] } ] }
+  ]
+}

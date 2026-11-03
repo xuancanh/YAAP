@@ -1,0 +1,37 @@
+{
+  "operations": {
+    "list_prs": [
+      { "output": { "items": [ { "number": 7, "title": "Add the login page", "headSha": "a1b2c3d", "base": "main", "url": "https://mock.example/acme/app/pull/7" } ] } }
+    ],
+    "read_pr": [
+      { "output": { "number": "{{input.number}}", "title": "Add the login page", "body": "Adds the login page and its tests.",
+                    "headSha": "a1b2c3d", "base": "main", "head": "feature/login", "state": "open", "reviewState": "pending",
+                    "url": "https://mock.example/acme/app/pull/{{input.number}}" } }
+    ],
+    "read_diff": [
+      { "output": { "diff": "--- a/src/login.ts\n+++ b/src/login.ts\n@@ -0,0 +1 @@\n+export const login = () => true;\n" } }
+    ],
+    "create_branch": [
+      { "output": { "name": "{{input.name}}", "sha": "a1b2c3d" } }
+    ],
+    "push": [
+      { "output": { "branch": "{{input.branch}}", "sha": "a1b2c3d" } }
+    ],
+    "open_pr": [
+      { "output": { "number": 7, "headSha": "a1b2c3d", "base": "{{input.base}}", "state": "open", "url": "https://mock.example/acme/app/pull/7" } }
+    ],
+    "comment": [
+      { "output": { "id": "comment-1" } }
+    ],
+    "review": [
+      { "output": { "state": "{{input.event}}" } }
+    ],
+    "merge": [
+      { "when": { "$.headSha": "stale" }, "error": { "code": "conflict", "message": "the head moved since the review" } },
+      { "output": { "mergeSha": "m9e8d7c" } }
+    ],
+    "revert": [
+      { "output": { "revertSha": "r1a2b3c" } }
+    ]
+  }
+}

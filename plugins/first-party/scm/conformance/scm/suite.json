@@ -1,0 +1,27 @@
+{
+  "interface": "scm@1.0.0",
+  "fixtures": { "repo": "scm://{testHost}/{testOwner}/conformance" },
+  "cases": [
+    { "id": "list-open", "steps": [
+      { "op": "list_prs", "input": { "repo": "{{fixtures.repo}}", "state": "open" }, "expect": { "schema": true } } ] },
+    { "id": "open-then-read", "steps": [
+      { "op": "create_branch", "input": { "repo": "{{fixtures.repo}}", "name": "conf-{{run}}", "from": "main" }, "expect": { "schema": true } },
+      { "op": "open_pr", "input": { "repo": "{{fixtures.repo}}", "head": "conf-{{run}}", "base": "main", "title": "conformance" },
+        "expect": { "schema": true }, "save": { "pr": "$.number", "head": "$.headSha" } },
+      { "op": "read_pr", "input": { "repo": "{{fixtures.repo}}", "number": "{{pr}}" },
+        "expect": { "schema": true, "match": { "$.base": "main", "$.state": "open" } } },
+      { "op": "read_diff", "input": { "repo": "{{fixtures.repo}}", "number": "{{pr}}" }, "expect": { "schema": true } },
+      { "expectEvent": { "kind": "scm.pr.opened", "within": "60s" }, "skipIn": ["mock"] } ] },
+    { "id": "review-and-comment", "steps": [
+      { "op": "comment", "input": { "repo": "{{fixtures.repo}}", "number": 7, "body": "conformance" }, "expect": { "schema": true } },
+      { "op": "review", "input": { "repo": "{{fixtures.repo}}", "number": 7, "event": "APPROVE" }, "expect": { "schema": true } } ] },
+    { "id": "push-to-a-branch", "steps": [
+      { "op": "push", "input": { "repo": "{{fixtures.repo}}", "branch": "conf-{{run}}" }, "expect": { "schema": true } } ] },
+    { "id": "merge-requires-head-sha", "steps": [
+      { "op": "merge", "input": { "repo": "{{fixtures.repo}}", "number": 7, "headSha": "stale" }, "expect": { "error": "conflict" } } ] },
+    { "id": "merge-then-revert", "steps": [
+      { "op": "open_pr", "input": { "repo": "{{fixtures.repo}}", "head": "conf-{{run}}", "base": "main", "title": "conformance" }, "save": { "pr": "$.number", "head": "$.headSha" } },
+      { "op": "merge", "input": { "repo": "{{fixtures.repo}}", "number": "{{pr}}", "headSha": "{{head}}" }, "expect": { "schema": true } },
+      { "op": "revert", "input": { "repo": "{{fixtures.repo}}", "number": "{{pr}}" }, "expect": { "schema": true } } ] }
+  ]
+}
