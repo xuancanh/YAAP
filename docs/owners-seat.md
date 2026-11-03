@@ -233,7 +233,7 @@ The holder can do one of three things:
 
 Agents act with two tools:
 
-- `org_decisions` lists the cards, with the chain and the holder's
+- `org_decision_queue` lists the cards, with the chain and the holder's
   authority;
 - `org_decide { approvalId, action, recommend?, reasoning? }` acts on one.
 

@@ -671,7 +671,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
         restrictTo = new Set([...restrictTo, ...own.map((x) => SKILL_TOOL_PREFIX + x.name.replace(/-/g, '_'))]);
         restrictTo.delete(RESTRICT_OWN_SKILLS);
       }
-      const toolSpecs = [
+      const rawToolSpecs = [
         ...this.tools.specs(),
         ...(session.agentId ? AGENT_TOOLS : []),
         ...(session.agentId ? await this.agents.customToolSpecs(session.agentId) : []),
@@ -697,6 +697,9 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
         // a channel session, docs/group-chat.md §2).
         ...(session.agentId ? (await Promise.all(this.providers().map((p) => p.specsFor(session)))).flat() : []),
       ].filter((t) => !restrictTo || restrictTo.has(t.name));
+      // Providers refuse a request whose tool names repeat. Two families
+      // offering one name is a bug: keep the first, log the clash loudly.
+      const toolSpecs = uniqueToolSpecs(rawToolSpecs, (name) => this.logger.warn(`duplicate tool name "${name}" offered twice in session ${session.id}; the first definition wins`));
       const extraContext = session.agentId
         ? (await Promise.all(this.providers().map((p) => p.contextFor(session)))).filter((c): c is string => Boolean(c))
         : [];
@@ -1633,4 +1636,15 @@ function parseApprovals(raw: string): { tools: string[]; exact: string[] } {
   } catch {
     return { tools: [], exact: [] };
   }
+}
+
+/** Tool specs with repeated names dropped (first wins); `onDuplicate` is
+ *  told each name that repeated. */
+export function uniqueToolSpecs<T extends { name: string }>(specs: T[], onDuplicate?: (name: string) => void): T[] {
+  const seen = new Set<string>();
+  return specs.filter((t) => {
+    if (!seen.has(t.name)) { seen.add(t.name); return true; }
+    onDuplicate?.(t.name);
+    return false;
+  });
 }

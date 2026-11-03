@@ -132,7 +132,7 @@ providers' `specsFor`.
 | Failure | Owning skill | Trigger | Status |
 |---|---|---|---|
 | Blocked task | member `org-member-workflow` 4; chief `escalation-and-blocker-sweep` 2 | heartbeat; sweep | OK (was GAP) |
-| Escalation chain | `org-member-workflow` 8: specialist → head (`Escalation:` task), head → chief (default) or toward the CEO (`to: "ceo"`, through the chief), chief → CEO; every card to the direct manager first (owners-seat §7) | `org_escalate`, `org_decisions`, `org_decide` | OK (decision 4) |
+| Escalation chain | `org-member-workflow` 8: specialist → head (`Escalation:` task), head → chief (default) or toward the CEO (`to: "ceo"`, through the chief), chief → CEO; every card to the direct manager first (owners-seat §7) | `org_escalate`, `org_decision_queue`, `org_decide` | OK (decision 4) |
 | Abandoned task | `org-member-workflow` 7; sweep 3 | sweep | OK (was GAP) |
 | Provider / connection failure | runtime opens a minor incident; `org-member-workflow` 4; sweep 5 | sweep | OK (was GAP) |
 | No progress / loop breaker | runtime blocks; sweep 4 | sweep | OK (was GAP) |
@@ -332,7 +332,7 @@ the code as it is.
    first, who adds its recommendation and takes it up; only the CEO decides
    it. Every other card a member raises waits on its manager the same way: a
    hire, a settings change, a held outward action. Managers act with
-   `org_decisions` and `org_decide`. A card climbs on its own when a manager
+   `org_decision_queue` and `org_decide`. A card climbs on its own when a manager
    sits on it.
 5. **Built-in skills stay global — no change.** The three org built-ins
    remain visible to every agent; each says it does not apply outside a

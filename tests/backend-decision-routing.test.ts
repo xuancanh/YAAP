@@ -94,7 +94,7 @@ test('a specialist\'s escalation goes to its head, who decides it within its aut
   assert.match((await s.decisions.heartbeatContext(s.writer.id))!, /You may decide it/);
   // the head decides through its tool
   const head = await sessionOf(s, s.writer.id);
-  assert.match(await s.runtime.execute(head, 'org_decisions', {}), /you may decide it/);
+  assert.match(await s.runtime.execute(head, 'org_decision_queue', {}), /you may decide it/);
   assert.match(await s.runtime.execute(head, 'org_decide', { approvalId: a.id.slice(0, 8), action: 'approve', reasoning: 'net-60 is fine for Acme' }), /Approved/);
   const after = await card(s, a.id);
   assert.equal(after.status, 'approved');
