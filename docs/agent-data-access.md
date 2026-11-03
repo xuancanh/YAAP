@@ -41,7 +41,7 @@ org_audit_query belong to other roles"). `domain` narrows it. The domain table
 (`DATA_DOMAINS`) also lists where each domain is **writable** today, so the
 catalog doubles as the index of write tools.
 
-The member context of the org runtime carries one line pointing at it; the
+The company briefing (§7) ends with a line pointing at it; the
 `org-member-workflow` and `org-member-onboarding` skills, the chief's pack
 (operating-system-setup) and every function head's team-management skill
 name it.
@@ -134,3 +134,130 @@ runtime — are not in it), total JSON of the tool specs a chief is offered:
 The test asserts the chief stays under **66,000 bytes** and that the data
 tools cost under 7 KB. Descriptions are terse on purpose: the tool output,
 not the spec, carries the explanation.
+
+## 7. What every agent knows without asking
+
+The tools above answer what an agent asks for; this section is what it is
+told on every turn so it does not have to ask. Code:
+`server/src/org/org-briefing.service.ts` (company members) and
+`WorkspaceDataTools.contextFor` (agents outside a company). Tests:
+`tests/backend-company-briefing.test.ts` over the fixture in
+`tests/company-briefing-fixture.ts`.
+
+### 7.1 The audit (before)
+
+Built with the fixture (a chief; Writer heading a unit with one report;
+Junior, a specialist in it; a mission, five values, a vision, three key
+results, two projects, six tasks, three decisions) and a real
+`TurnContextService`, measuring the system prompt a turn sends:
+
+| Session kind | Chief | Head | Specialist | What the org part said |
+|---|---|---|---|---|
+| Chat with the owner | 7,472 | 7,920 | 7,021 | `# Organisations`: name, title, mission (≤ 300), role guidance, one `ws_catalog` line |
+| Task run | 7,709 | 7,654 | 7,693 | `# Organisation run`: title, the **whole** mission, the **whole** values and culture (≤ 3,000), the brief |
+| Heartbeat (org context in the beat's prompt) | +1,623 | +1,216 | +905 | mission (≤ 300), vision, the whole values and culture — on top of the chat system prompt, which already had the mission |
+| Meeting round, channel wake | chat + the meeting / channel block | | | the meeting block repeats vision or mission, values and culture for the room |
+
+Gaps: no values in a chat; no unit, manager or reports (only a title); no
+projects, health or milestones; no key-result progress; no count of the
+agent's own work; no recent decisions; nothing on what waits on it.
+Redundancies: the mission appeared in two or three blocks of the same beat;
+the values and culture (up to 3 KB) were repeated in full in every task run
+and every heartbeat.
+
+### 7.2 The company briefing
+
+A block of at most **2,500 characters** (`BRIEFING_BUDGET`) in every
+member's system prompt, every session kind except the auditor's run and
+the aux runs other modules frame themselves (ask-the-company). Format, in
+priority order (the measured fixture, the specialist):
+
+```
+# Company briefing: "Default"
+Mission: <first sentence, ≤ 160> Vision: <title> (by <date>).
+Values: Readers first · Candour · Ship weekly.
+You: Junior writer, in Writer's team; reports to Writer; on P-1 (contributor, 4/5 open tasks yours).
+Key results (3; red 0, amber 0):
+- [green] Paid subscribers: 120/1000 (12%), due 2026-12-31
+Your projects:
+- P-1 "Weekly issue pipeline" — at risk; lead Writer; next milestone "Template v2" 2026-11-20; target 2026-12-15; 5 open task(s)
+Your open tasks: 4 (1 blocked) — WRI-3 blocked, WRI-1 doing, WRI-4 in review, ….
+Recent decisions: "Lead stories stay under 900 words" (2026-11-03); "Publish every Friday at 8:00" (2026-11-03).
+Waiting on you: nothing.
+More: org_company (mission, values, culture), org_people (chart), org_project <key>, org_intent (goals), org_task <key>, ws_catalog (every domain); your standing context is in ~/knowledge/company.md.
+```
+
+Per role:
+
+| | Chief | Head | Specialist |
+|---|---|---|---|
+| Key results | top 5 by RAG (red, amber, grey, green), then due date | 4: its own, its reports', its unit's, those its projects move — then the rest | 3: its own and those its projects move first |
+| Projects | **Portfolio**: Now projects by health, then up to 4 exceptions (breaker, off track, at risk, no update) | **Your unit's projects**: led by it or in its unit subtree, worst first, up to 4 | **Your projects**: led by it or holding one of its tasks, up to 3 |
+| Extra line | **Exceptions**: blocked, unassigned, backlog to triage, cards waiting on the CEO, key results never checked in | **Staffing**: reports, idle reports, unassigned and blocked tasks in its unit | — |
+
+RAG is Home's rule (`ragOf`: at risk red, behind pace amber, on pace green,
+no measure grey). "Waiting on you" counts the decision cards it holds
+(`holder = agent:<id>`), the reviews assigned to it (`in_review`), and its
+unread mentions.
+
+**Budget.** Lines carry a priority (0 = always: the header, mission, "You",
+open tasks, waiting, the pointer; 1 = key results and projects heads; 2 =
+values, decisions; 3 = the third and later list rows). Over the budget the
+lowest priority goes first, latest line first; a hard clip is the last
+resort. The test builds a company with 20 more key results, projects,
+tasks and decisions with long titles and asserts every role stays within
+the budget with the priority-0 lines intact.
+
+**Scope.** As `OrgDataTools.viewer`: company-level facts (profile, key
+results, the chart) are every member's; decisions follow the viewer's units
+(the root, its home unit, the subtree it leads; the chief all); the project
+lists follow the role (a head's unit subtree, a specialist's own). No money
+— no envelopes, appetites or spend — no scopes, models or budgets of other
+members, and nothing from any agent's memory or lessons ever enters the
+block. The test checks that a specialist and its head do not see the other
+unit's decision or its project budget, and that the other head and the
+chief do.
+
+**Cache.** One snapshot per org (org, vision, members, units, live projects,
+key results with pace, open tasks, the latest 40 decisions, pending cards),
+invalidated by every `org_audit` append of that org — members, goals,
+check-ins, projects, tasks, decisions and cards are all audited — and by a
+5-minute TTL (`SNAPSHOT_TTL_MS`; pace drifts with time). Each member's
+render is cached on the snapshot's generation for a minute
+(`RENDER_TTL_MS`; mentions are not audited). Two members briefed back to
+back cost one snapshot; the test asserts a project-health and a goal change
+rebuild it.
+
+**What it replaced.** The mission and the full values and culture left the
+task-run block; the mission and the `ws_catalog` line left the
+`# Organisations` block (its role guidance stays); the heartbeat's `org`
+context provider (mission, vision, values, culture) is gone — the beat's
+system prompt carries the briefing. Left as they are: the planning and
+structure-review prompts (chief-only, they plan *from* the full profile),
+the meeting room's operating profile (it runs the room in the company's
+style), the project-health duty and the decision queue in the heartbeat
+(they ask for an act, not a fact).
+
+### 7.3 Sizes after
+
+| Session kind | Chief | Head | Specialist |
+|---|---|---|---|
+| Chat (whole system prompt) | 8,656 (+1,184) | 8,823 (+903) | 7,884 (+863) |
+| Task run | 8,377 (+668) | 8,041 (+387) | 8,040 (+347) |
+| Heartbeat org context (beat prompt) | 716 (−907) | 309 (−907) | 0 (−905) |
+| Heartbeat total (system + org context) | 9,372 (+277) | 9,132 (−4) | 7,884 (−42) |
+| The briefing itself | 1,494 | 1,213 | 1,173 |
+
+The test fails when a chat or a task run grows by more than 1,400
+characters over these "before" numbers, or a heartbeat beat by more than
+700, and when the mission appears more than once in a prompt.
+
+### 7.4 Outside a company
+
+An agent that is not a member gets a workspace briefing of at most 600
+characters (`WORKSPACE_BRIEFING_BUDGET`) from `WorkspaceDataTools`: the
+workspace's name, its open board tasks (count and the top three keys) and
+its enabled loops, with a pointer to `ws_workspace`, `list_tasks` and
+`ws_catalog`. Two indexed reads; the workspace memory and the consented
+profile were already in the prompt (`TurnContextService`). A member gets
+no workspace block — the company briefing covers it.

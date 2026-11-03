@@ -22,6 +22,7 @@ import { OrgTasksService, REVIEW_ROUND_CAP } from '../server/src/org/org-tasks.s
 import { OrgApprovalsService } from '../server/src/org/org-approvals.service';
 import { OrgBriefService, parseBriefReply } from '../server/src/org/org-brief.service';
 import { OrgRuntimeService } from '../server/src/org/org-runtime.service';
+import { OrgBriefingService } from '../server/src/org/org-briefing.service';
 import { OrgAnnouncer } from '../server/src/org/org-announcer';
 import { OrgController } from '../server/src/org/org.controller';
 import { meetScopes, isNarrowing, widenedScopes } from '../server/src/org/scopes';
@@ -52,6 +53,8 @@ async function setup(rounds: AiStreamEvent[][], opts: { enabled?: boolean } = {}
   const brief = new OrgBriefService(db, org, tasks, approvals, audit, agents, workspaces);
   const runtime = new OrgRuntimeService(db, org, tasks, approvals, audit, brief, turns, repo, agents, workspaces, config, new OrgAnnouncer(), bus);
   runtime.debounceMs = 15;
+  // The company briefing (mission, position, work) rides on every member turn, as in OrgModule.
+  new OrgBriefingService(db, org, audit, tasks, agents, config, stub, undefined, undefined, runtime, turns);
   const controller = new OrgController(org, tasks, approvals, audit, brief, runtime, config);
   const ws = (await workspaces.list())[0];
   return { db, agents, workspaces, repo, turns, provider, locks, bus, audit, org, tasks, approvals, brief, runtime, controller, ws };

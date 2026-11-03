@@ -30,6 +30,7 @@ import { OrgTasksService } from '../server/src/org/org-tasks.service';
 import { OrgApprovalsService } from '../server/src/org/org-approvals.service';
 import { OrgBriefService } from '../server/src/org/org-brief.service';
 import { OrgRuntimeService } from '../server/src/org/org-runtime.service';
+import { OrgBriefingService } from '../server/src/org/org-briefing.service';
 import { OrgModeService } from '../server/src/org/org-mode.service';
 import { OrgAnnouncer } from '../server/src/org/org-announcer';
 import { OrgUnitsService } from '../server/src/org/org-units.service';
@@ -208,8 +209,10 @@ test('check-ins update the key result and keep a history; the owner, its manager
   assert.match(reasons[1], /key result \[[0-9a-f]{8}\] "Subscribers" is due a check-in \(org_check_in; cadence 7 day\(s\)\)/);
   await s.org.setProfile(orgId, { values: 'Honest numbers.' });
   await s.intent.setVision(orgId, { title: 'A newsletter people open' });
-  assert.match((await s.runtime.heartbeatContext(alpha.id)) ?? '', /vision: A newsletter people open\. Operating profile — values: Honest numbers\./);
-  assert.equal(await s.runtime.heartbeatContext(s.chief.id) !== null, true);
+  // The profile and the vision reach the beat through the company briefing in its system prompt.
+  const briefing = new OrgBriefingService(s.db, s.org, s.audit, s.tasks, s.agents, { get: () => undefined } as unknown as ConfigService, undefined, s.units, s.intent, s.runtime);
+  assert.match((await briefing.briefingFor(alpha.id)) ?? '', /Vision: A newsletter people open\.\nValues: Honest numbers\./);
+  assert.equal(await briefing.briefingFor(s.chief.id) !== null, true);
 });
 
 // ---- 4. pace ----

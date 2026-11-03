@@ -352,3 +352,40 @@ all.
   and the prompt-injection check that closes the loop
 - `server/src/workspaces/workspaces.service.ts` — profile proposals, the
   consent pattern quarantined lessons copy
+
+## 11. What a company member knows without asking
+
+Memory above is what an agent *learned*; a company member also needs what
+is simply *true* about its company and its place in it. Two mechanisms,
+both in `server/src/org/org-briefing.service.ts`
+(docs/agent-data-access.md §7 has the format, the audit and the sizes):
+
+**The company briefing** — injected into every member's system prompt on
+every turn (chat, heartbeat, task run, review, planning, meeting round,
+channel wake), at most 2,500 characters: the company's name, one-line
+mission, vision and top values; the member's title, unit, manager, direct
+reports and the projects it is on with its part; key results with RAG;
+its projects' health, next milestone and target; its own open and blocked
+tasks with the top keys; recent decisions in its units; what is waiting on
+it (cards, reviews, mentions); and the tools that hold the detail. The
+emphasis follows the role (the chief: portfolio and exceptions; a head: its
+unit and staffing gaps; a specialist: its work and its project). Like the
+lessons digest it is hard-capped, so a bigger company never means a bigger
+prompt; unlike lessons it is computed from the company's records, never
+written by the agent, and never carries another agent's memory.
+
+**`knowledge/company.md`** — the slowly changing part (mission, values, its
+role and reporting line, its unit, its reports, its projects and whether it
+leads them) written into the member's home, so it survives outside prompts
+and `fs_search` / `fs_read` find it. It is regenerated, not appended: after
+an audit entry that can change standing (a hire, a member update or reorg,
+a unit change, a project created or re-led, a task created) the members'
+notes are recomputed after a short debounce, and on every briefing render;
+a note is rewritten only when its text changed (it carries no timestamp).
+The file says it is generated; an agent's own notes belong in other files
+under `knowledge/`. The briefing's last line points at it.
+
+Verified by `tests/backend-company-briefing.test.ts`: the note's content,
+no rewrite when nothing changed, a rewrite on a project re-lead (for both
+leads and nobody else), on a hire (the new member and its manager), on a
+promotion to head, and the debounced refresh after an audit entry.

@@ -274,7 +274,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     @Optional() private readonly slo?: OrgSloService,
     /** Optional: intent (docs/company-vision.md §2) — key results, the cascade, risk. */
     @Optional() private readonly intent?: OrgIntentService,
-    /** Optional: the gated heartbeat (docs/company-vision.md §13) — org reasons and the operating profile for its prompt. */
+    /** Optional: the gated heartbeat (docs/company-vision.md §13) — org reasons (the briefing carries the profile). */
     @Optional() private readonly heartbeat?: HeartbeatService,
     /** Optional: capital (docs/company-vision.md §7–§8) — routing, costs, forecasts, plan previews. */
     @Optional() private readonly capital?: OrgCapitalService,
@@ -284,7 +284,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     bus?.onOrgBoard((ev) => this.onBoardEvent(ev));
     intent?.onIntent((ev) => this.onIntentEvent(ev));
     heartbeat?.addReasonProvider({ name: 'org', reasons: (agentId, ctx) => this.heartbeatReasons(agentId, ctx.now) });
-    heartbeat?.addContextProvider({ name: 'org', context: (agentId) => this.heartbeatContext(agentId) });
+    // The beat's own context (mission, vision, values) is the company
+    // briefing in its system prompt (OrgBriefingService), not a second copy here.
     // A member-settings card the CEO approved (org_update_member in supervised
     // mode, or a change the boundary sends to the owner).
     approvals.onApply('member_settings', async (orgId, payload) => ({ applied: await this.applyMemberSettings(orgId, payload as unknown as MemberSettingsChange, 'user') }));
@@ -579,18 +580,6 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     if (t.wakeSig !== sig) return arm(0, `its blocker changed (${what}): check whether it can move`);
     if (t.nextWakeAt && now.toISOString() < t.nextWakeAt) return null;
     return arm(t.wakeCount + 1, `still ${what}; re-check ${t.wakeCount + 1} — record the re-check in your run, not on the task`);
-  }
-
-  /** The operating profile and the vision, for the heartbeat prompt. */
-  async heartbeatContext(agentId: string): Promise<string | null> {
-    const lines: string[] = [];
-    for (const m of (await this.org.membershipsOf(agentId)).filter((x) => x.status === 'active')) {
-      const org = await this.org.get(m.orgId).catch(() => null);
-      if (!org) continue;
-      const vision = await this.intent?.vision(org.id).catch(() => null);
-      lines.push(`"${org.name}": ${org.mission ? `mission: ${org.mission.slice(0, 300)}. ` : ''}${vision ? `vision: ${vision.title}${vision.dueAt ? ` (by ${vision.dueAt.slice(0, 10)})` : ''}. ` : ''}${profileLine(org)}`.trim());
-    }
-    return lines.length ? lines.join('\n') : null;
   }
 
   // ---- the intent cascade (docs/company-vision.md §2) ----
@@ -1272,9 +1261,10 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       const member = await this.org.member(ctx.orgId, ctx.agentId);
       return [
         `# Organisation run`,
-        `You are a member of "${org.name}"${member?.title ? ` (${member.title})` : ''}${ctx.isChief ? ', its chief of staff' : ''}. ${org.mission ? `Mission: ${org.mission}` : ''}`,
+        // Mission, values and the member's position are in the company
+        // briefing (OrgBriefingService); culture is one org_company call away.
+        `You are a member of "${org.name}"${member?.title ? ` (${member.title})` : ''}${ctx.isChief ? ', its chief of staff' : ''}.`,
         org.ceoUserNote ? `CEO note: ${org.ceoUserNote}` : '',
-        profileLine(org),
         `## Task ${taskRef(task)} ${task.title} (status: ${task.status})`,
         ctx.consulted ? '- You were tagged (@mentioned) on this task; you are not its owner — answer on the task with org_task_comment.' : '',
         `- Outcome: ${b.outcome || '(not stated)'}`,
@@ -1296,7 +1286,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       const org = await this.org.get(m.orgId).catch(() => null);
       if (!org) continue;
       const chief = org.chiefOfStaffAgentId === session.agentId;
-      lines.push(`- "${org.name}" (${org.status}${chief ? ', you are the chief of staff' : `, you are ${m.title || 'a member'}`}). ${org.mission ? `Mission: ${org.mission.slice(0, 300)}` : ''}`);
+      lines.push(`- "${org.name}" (${org.status}${chief ? ', you are the chief of staff' : `, you are ${m.title || 'a member'}`}). The company briefing has its mission, your position and your work.`);
       if (chief && await this.isAutonomous(org)) lines.push('  As chief of staff you decompose goals into briefed tasks (org_create_task, org_assign), review results (org_review), keep the board moving (org_read_board, org_escalate) and report (org_report). This company is in autonomous mode: org_hire_agent, org_reorg, org_set_scope, org_allocate_budget and org_terminate_agent act at once within caps (depth, fan-out, agent cap, company envelope, your own scopes) and are refused with the reason outside them; give a one-line why each time. Strategy still needs the CEO. Keep the roster small.');
       else if (chief) lines.push('  As chief of staff you decompose goals into briefed tasks (org_create_task, org_assign), review results (org_review), keep the board moving (org_read_board, org_escalate) and report (org_report). Hiring, scope widening, reorgs, budget raises and terminations are proposals the CEO approves in the app — they never take effect on your say-so. Keep the roster small.');
       else if (await this.headOf(org.id, session.agentId)) lines.push(`  You head a function${this.units && await this.units.isLead(org.id, session.agentId) ? ': org_create_task and org_assign work for yourself and your direct reports, org_set_goal sets a goal for your unit (a child of a goal you can see), org_unit_report shows your unit\'s board and goal progress' : ''}. You staff it yourself: org_hire_agent hires a specialist of your function into your own unit (role:<fn>-<slug>, reportsTo you or one of your reports) within the agent cap and your unit's envelope — ${await this.isAutonomous(org) ? 'at once within caps, why required' : 'an approval card for the CEO'}; org_pause_agent and org_update_member manage your own reports. The chief of staff is told of each. org_escalate takes a blocked task to the chief of staff (default) or, with to: "ceo", toward the CEO (through the chief, who adds its recommendation) — only for a decision only the CEO can make. Work outside your unit goes to the chief of staff as a backlog task.`);
@@ -1304,7 +1294,6 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       // Decision routing (docs/owners-seat.md §7): what a report raises comes to its manager first.
       if (this.decisions && (chief || (await this.org.members(org.id)).some((x) => x.reportsToAgentId === session.agentId && x.status !== 'terminated'))) lines.push('  Decisions your reports raise (approval cards, escalations, held outward actions) come to you first, not to the CEO: org_decision_queue lists them; org_decide approves or rejects what is within your authority, sends back with guidance, or escalates one level with your recommendation. CEO-reserved cards you only recommend on. A card you sit on climbs on its own with "no recommendation".');
       if (this.intent) lines.push('  Intent: org_intent shows the vision → objectives → key results tree; org_why shows what a task or goal serves; org_check_in records the current value and your confidence (0–1) on a key result you own.');
-      lines.push('  Data: ws_catalog lists every data domain you can read and the tool for it (the company, people, a task in full, meetings, decision cards, agents, plugins); look a fact up instead of guessing or asking.');
     }
     return lines.join('\n');
   }

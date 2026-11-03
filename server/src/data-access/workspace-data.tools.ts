@@ -20,10 +20,11 @@
  */
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { workspaceMembers } from '../database/schema';
+import { agentTasks, workspaceMembers } from '../database/schema';
+import type { LoopDef } from '../chats/loop-def';
 import type { ChatSession } from '../chats/chats.repository';
 import { TurnLoopService, type ToolProviderHook } from '../chats/turn-loop.service';
 import type { AiToolSpec } from '../ai/ai-provider.interface';
@@ -145,7 +146,15 @@ export class WorkspaceDataTools implements ToolProviderHook {
 
   owns(name: string): boolean { return NAMES.has(name); }
   isReadOnly(name: string): boolean { return NAMES.has(name); }
-  async contextFor(): Promise<string | null> { return null; }
+  /** Outside a company: a small workspace briefing (docs/agent-data-access.md §7)
+   *  — the workspace's name, the agent's open board tasks and its loops. A
+   *  company member gets the company briefing (OrgBriefingService) instead. */
+  async contextFor(session: ChatSession): Promise<string | null> {
+    if (!session.agentId) return null;
+    const c = await this.ctx(session);
+    if (c.org) return null;
+    return workspaceBriefing(this.db, this.agents, this.workspaces, c).catch(() => null);
+  }
 
   async execute(session: ChatSession, name: string, input: Record<string, unknown>): Promise<string> {
     const c = await this.ctx(session);
@@ -356,4 +365,28 @@ export class WorkspaceDataTools implements ToolProviderHook {
 /** Strip anything that looks like a credential from a status line. */
 function redact(s: string): string {
   return s.replace(/\b(sk|pk|rk|xox[abp]|ghp|gho|AKIA)[-_A-Za-z0-9]{8,}/g, '[redacted]').replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[redacted]');
+}
+
+/** The workspace briefing's ceiling, in characters (the tests measure it). */
+export const WORKSPACE_BRIEFING_BUDGET = 600;
+
+/** The non-company agent's briefing: the workspace, its open tasks (top 3 keys), its loops. One query per part. */
+async function workspaceBriefing(db: DrizzleDb, agents: AgentsService, workspaces: WorkspacesService, c: Ctx): Promise<string | null> {
+  const ws = await workspaces.get(c.workspaceId).catch(() => null);
+  if (!ws) return null;
+  const open = await db.select({ id: agentTasks.id, key: agentTasks.key, status: agentTasks.status }).from(agentTasks)
+    .where(and(eq(agentTasks.agentId, c.agentId), isNull(agentTasks.mergedInto), inArray(agentTasks.status, ['todo', 'doing', 'blocked'])));
+  const rank: Record<string, number> = { blocked: 0, doing: 1, todo: 2 };
+  open.sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
+  const agent = await agents.get(c.agentId).catch(() => null);
+  let loops: LoopDef[];
+  try { const v = JSON.parse(agent?.loops || '[]') as unknown; loops = Array.isArray(v) ? (v as LoopDef[]).filter((l) => l && l.enabled !== false && typeof l.name === 'string') : []; } catch { loops = []; }
+  const lines = [
+    `# Workspace briefing: "${ws.name}"`,
+    `Your open tasks: ${open.length ? `${open.length} — ${open.slice(0, 3).map((t) => `${t.key ?? t.id.slice(0, 8)}${t.status === 'todo' ? '' : ` ${t.status}`}`).join(', ')}${open.length > 3 ? ', …' : ''}` : 'none'}.`,
+    `Your loops: ${loops.length ? loops.slice(0, 4).map((l) => `"${l.name.slice(0, 40)}"${l.cron ? ` (${l.cron})` : l.trigger ? ` (on ${l.trigger.kind})` : ''}`).join(', ') + (loops.length > 4 ? ', …' : '') : 'none'}.`,
+    'More: ws_workspace (profile, people, usage), list_tasks, ws_catalog (every domain).',
+  ];
+  const text = lines.join('\n');
+  return text.length > WORKSPACE_BRIEFING_BUDGET ? `${text.slice(0, WORKSPACE_BRIEFING_BUDGET - 1)}…` : text;
 }
