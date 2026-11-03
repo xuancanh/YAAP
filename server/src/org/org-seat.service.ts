@@ -144,6 +144,8 @@ export class OrgSeatService {
     const out: Array<{ approvalId: string; decision: 'approve' | 'reject'; status: string }> = [];
     const org = await this.org.get(orgId);
     for (let a of await this.approvals.list(orgId, { status: 'pending' })) {
+      // A card still with a manager is not the owner's yet: its hop window, not this deadline, moves it (docs/owners-seat.md §7).
+      if (a.holder && a.holder !== 'ceo') continue;
       a = await this.approvals.fillCard(orgId, a);
       if (!a.deadline || a.deadline > now.toISOString() || !a.defaultAction) continue;
       if (a.expiresAt && a.expiresAt < now.toISOString()) continue;

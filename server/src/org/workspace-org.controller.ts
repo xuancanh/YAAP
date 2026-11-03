@@ -201,6 +201,9 @@ export class WorkspaceOrgController {
   @Get('approvals') async listApprovals(@Param('id') id: string, @Query('status') status?: string) { return this.orgs.listApprovals(await this.oid(id), status); }
   @Post('approvals') async propose(@Param('id') id: string, @Body() dto: ProposalDto) { return this.orgs.propose(await this.oid(id), dto); }
   @Post('approvals/:approvalId/decide') async decide(@Param('id') id: string, @Param('approvalId') approvalId: string, @Body() dto: DecideDto) { return this.orgs.decide(await this.oid(id), approvalId, dto); }
+  @Get('decisions/authority') decisionAuthority() { return this.orgs.decisionAuthority(); }
+  @Get('decisions/route') async decisionRoute(@Param('id') id: string, @Query('from') from?: string, @Query('kind') kind?: string) { return this.orgs.decisionRoute(await this.oid(id), from, kind); }
+  @Get('decisions/mine') async myDecisions(@Param('id') id: string) { return this.orgs.myDecisions(await this.oid(id)); }
 
   @Get('humans') async humans(@Param('id') id: string) { return this.orgs.humans(await this.oid(id)); }
   @Post('humans') async setHuman(@Param('id') id: string, @Body() dto: HumanDto) { return this.orgs.setHuman(await this.oid(id), dto); }

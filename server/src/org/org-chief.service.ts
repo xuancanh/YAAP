@@ -113,7 +113,7 @@ export class OrgChiefService {
 
     // Decision cards waiting on the CEO past the overdue window.
     const overdueMs = chiefTunable(org, 'chief.decisionOverdueHours') * H;
-    const overdueDecisions = (await this.approvals.pending(orgId))
+    const overdueDecisions = (await this.approvals.pendingForOwner(orgId))
       .map((a) => ({ a, waited: nowMs - Date.parse(a.createdAt) }))
       .filter((x) => Number.isFinite(x.waited) && x.waited >= overdueMs)
       .map(({ a, waited }) => ({ id: a.id, kind: a.kind, summary: (a.recommendation || a.kind).slice(0, 160), waitedHours: Math.floor(waited / H), deadline: a.deadline ?? null }));

@@ -488,7 +488,7 @@ export class OrgService {
     const row: OrgMember = {
       id: newId(), accountId: currentAccountId(), orgId, agentId: input.agentId,
       title: (input.title ?? agent.role ?? '').slice(0, 80),
-      reportsToAgentId: input.reportsToAgentId, depth, sponsor: 'user',
+      reportsToAgentId: input.reportsToAgentId, depth, sponsor: 'user', reportsToHumanId: null,
       scopes: JSON.stringify(scopes), status: 'active',
       charterHash: charterHashOf(agent.charter), joinedAt: nowIso(),
     };
@@ -499,12 +499,21 @@ export class OrgService {
     return row;
   }
 
-  async updateMember(orgId: string, agentId: string, patch: { title?: string; reportsToAgentId?: string | null }, actor = 'user', boundary: { withinUnit?: boolean } = {}): Promise<OrgMember> {
+  async updateMember(orgId: string, agentId: string, patch: { title?: string; reportsToAgentId?: string | null; reportsToHumanId?: string | null }, actor = 'user', boundary: { withinUnit?: boolean } = {}): Promise<OrgMember> {
     const m = await this.member(orgId, agentId);
     if (!m) throw new NotFoundException(`member ${agentId}`);
     await this.gate(orgId, { kind: 'reorg', key: agentId, withinUnit: boundary.withinUnit, summary: 'change a reporting line or title' }, actor);
     const set: Record<string, unknown> = {};
     if (patch.title !== undefined) set.title = patch.title.slice(0, 80);
+    // A person as the member's manager for decisions (docs/owners-seat.md §7): one of the org's humans with standing.
+    if (patch.reportsToHumanId !== undefined) {
+      if (patch.reportsToHumanId === null || patch.reportsToHumanId === '') set.reportsToHumanId = null;
+      else {
+        const role = await this.humanRole(orgId, patch.reportsToHumanId);
+        if (!role || role === 'observer') throw new BadRequestException('reportsToHumanId must be a person of this organization with standing (CEO, board or employee)');
+        set.reportsToHumanId = patch.reportsToHumanId;
+      }
+    }
     if (patch.reportsToAgentId !== undefined) {
       const org = await this.get(orgId);
       if (patch.reportsToAgentId === null) {

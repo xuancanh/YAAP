@@ -710,25 +710,44 @@ export class OrgTasksService {
 
   /** Block the task with an owner and put it in front of the user as an
    *  `escalation` approval. The chief is the default owner. */
-  async escalate(orgId: string, taskId: string, reason: string, actor: string): Promise<OrgTask> {
+  async escalate(orgId: string, taskId: string, reason: string, actor: string, opts: { to?: 'ceo'; recommendation?: string; urgency?: 'normal' | 'urgent' } = {}): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     const org = await this.org.get(orgId);
-    const blockers = [...parseList(t.blockers), `escalated: ${reason}`.slice(0, 300)].slice(-20);
-    await this.db.update(orgTasks).set({ status: 'blocked', blockers: JSON.stringify(blockers), claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
     const pending = (await this.db.select().from(orgApprovals).where(and(eq(orgApprovals.orgId, orgId), eq(orgApprovals.kind, 'escalation'), eq(orgApprovals.status, 'pending'))))
       .find((a) => (JSON.parse(a.payload) as { taskId?: string }).taskId === taskId);
+    // Decision routing (docs/owners-seat.md §7): the card goes to the raiser's
+    // direct manager first; the blocker names who holds it.
+    let holderName: string | null = null;
     if (!pending) {
+      const id = newId();
       await this.db.insert(orgApprovals).values({
-        id: newId(), accountId: currentAccountId(), orgId, kind: 'escalation',
-        payload: JSON.stringify({ taskId, taskKey: t.key, title: t.title, reason, ownerAgentId: org.chiefOfStaffAgentId, assigneeAgentId: t.assigneeAgentId }),
-        requestedBy: actor, recommendation: '', status: 'pending', decidedAt: null, decisionNote: '', expiresAt: null, createdAt: nowIso(),
+        id, accountId: currentAccountId(), orgId, kind: 'escalation',
+        payload: JSON.stringify({ taskId, taskKey: t.key, title: t.title, reason, ownerAgentId: org.chiefOfStaffAgentId, assigneeAgentId: t.assigneeAgentId, ...(opts.to === 'ceo' ? { to: 'ceo' } : {}) }),
+        requestedBy: actor, recommendation: (opts.recommendation ?? '').slice(0, 600), status: 'pending', decidedAt: null, decisionNote: '', expiresAt: null, createdAt: nowIso(),
+        urgency: opts.urgency === 'urgent' ? 'urgent' : 'normal',
       });
+      if (this.escalationRouter) holderName = (await this.escalationRouter(orgId, id).catch(() => null))?.holderName ?? null;
     }
+    const blockers = [...parseList(t.blockers), (holderName ? `escalated to ${holderName}: ${reason}` : `escalated: ${reason}`).slice(0, 300)].slice(-20);
+    await this.db.update(orgTasks).set({ status: 'blocked', blockers: JSON.stringify(blockers), claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
     await this.audit.append(orgId, { actor, action: 'task_escalate', refType: 'task', refId: taskId, payload: { reason: reason.slice(0, 300) } });
     this.bus?.emitOrgBoard({ orgId, kind: 'escalation', refId: taskId, detail: `${taskRef(t)} "${t.title}" escalated: ${reason.slice(0, 200)}` });
     const blocked = await this.get(orgId, taskId);
     await this.trackStatus(orgId, blocked, t.status, followerFromActor(actor, actorId()), { detail: `escalated: ${reason.slice(0, 200)}` });
     return blocked;
+  }
+
+  private escalationRouter?: (orgId: string, approvalId: string) => Promise<{ holderName: string | null }>;
+  /** OrgDecisionsService routes a new escalation card (docs/owners-seat.md §7);
+   *  `holderName` is null when the card went straight to the CEO. */
+  setEscalationRouter(fn: ((orgId: string, approvalId: string) => Promise<{ holderName: string | null }>) | undefined): void { this.escalationRouter = fn; }
+
+  /** Add a blocker line to a blocked task (a card climbed the chain). */
+  async addBlocker(orgId: string, taskId: string, line: string): Promise<void> {
+    const t = await this.get(orgId, taskId).catch(() => null);
+    if (!t || t.status !== 'blocked') return;
+    const blockers = [...parseList(t.blockers), line.slice(0, 300)].slice(-20);
+    await this.db.update(orgTasks).set({ blockers: JSON.stringify(blockers), updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
   }
 
   /**

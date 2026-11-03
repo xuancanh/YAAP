@@ -101,7 +101,7 @@ export class OverviewService {
     const company = orgOn ? org : null;
     const orgTasks = company && this.tasks ? await this.tasks.list(company.id).catch(() => [] as OrgTask[]) : [];
     const members = company ? await this.org!.members(company.id).catch(() => []) : [];
-    const pending = company && this.approvals ? await this.approvals.pending(company.id).catch(() => []) : [];
+    const pending = company && this.approvals ? await this.approvals.pendingForOwner(company.id).catch(() => []) : [];
     const ceoEscalations = new Set(pending.filter((a) => a.kind === 'escalation').map((a) => safe<{ taskId?: string }>(a.payload, {}).taskId).filter((x): x is string => Boolean(x)));
     return { ws, agents, org: company, orgOn, orgTasks, members, pending, ceoEscalations };
   }

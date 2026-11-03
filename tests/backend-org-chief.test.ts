@@ -291,7 +291,7 @@ test('every tool a business skill names exists and is offered to the role that r
   // a head escalates from its loops only what is its unit's (to the CEO when it says so)
   const writerLoop = await sessionOf(s, s.writer.id);
   const ours = await s.tasks.create(orgId, { title: 'Pick the launch date', createdBy: `agent:${s.writer.id}`, assigneeAgentId: s.editor.id });
-  assert.match(await s.runtime.execute(writerLoop, 'org_escalate', { taskId: ours.id, reason: 'needs the CEO', to: 'ceo' }), /escalated to the CEO/);
+  assert.match(await s.runtime.execute(writerLoop, 'org_escalate', { taskId: ours.id, reason: 'needs the CEO', to: 'ceo' }), /escalated toward the CEO: the card goes to Chief first/);
   const theirs = await s.tasks.create(orgId, { title: 'Company offsite', createdBy: 'chief' });
   await assert.rejects(s.runtime.execute(writerLoop, 'org_escalate', { taskId: theirs.id, reason: 'x' }), /your unit's board/);
   // a head sees its reports' incidents (it runs their postmortems); a member only its own
@@ -427,7 +427,11 @@ test('decision 4: the escalation chain — a specialist raises to its head (a bo
   assert.equal(toChief.assigneeAgentId, s.chief.id);
   assert.equal(await cards(), 0);
   // … or to the CEO, a decision card
-  assert.match(await s.runtime.execute(head, 'org_escalate', { taskId: theirs.id, reason: 'a 30% discount commits the company', to: 'ceo' }), /escalated to the CEO/);
+  assert.match(await s.runtime.execute(head, 'org_escalate', { taskId: theirs.id, reason: 'a 30% discount commits the company', to: 'ceo' }), /escalated toward the CEO: the card goes to Chief first/);
   assert.equal(await cards(), 1);
+  // decision routing (docs/owners-seat.md §7): the card is with the chief first, CEO-reserved
+  const [card] = (await s.db.select().from(orgApprovals).where(eq(orgApprovals.orgId, orgId))).filter((a) => a.kind === 'escalation');
+  assert.equal(card.holder, `agent:${s.chief.id}`);
+  assert.match(card.reserved, /only the CEO/);
   await assert.rejects(s.runtime.execute(head, 'org_escalate', { taskId: theirs.id, reason: 'x', to: 'board' }), /to must be "chief" or "ceo"/);
 });

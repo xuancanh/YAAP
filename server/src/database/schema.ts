@@ -853,6 +853,9 @@ export const orgMembers = pgTable('org_members', {
    *  org path; a different live hash is charter drift (docs/security.md). */
   charterHash: text('charterHash').notNull().default(''),
   joinedAt: text('joinedAt').notNull(),
+  /** Decisions this member raises go to this person (an org_humans
+   *  memberAccountId) instead of its reportsTo agent (migration 0070). */
+  reportsToHumanId: text('reportsToHumanId'),
 });
 
 export const orgGoals = pgTable('org_goals', {
@@ -1268,9 +1271,22 @@ export const orgApprovals = pgTable('org_approvals', {
   confidence: real('confidence'),
   deadline: text('deadline'),
   defaultAction: text('defaultAction').notNull().default(''),
-  /** How it was decided: '' (by hand) | default | delegate:<human:id|role:key>. */
+  /** How it was decided: '' (by hand) | default | delegate:<human:id|role:key> | manager:<agent:id|human:id>. */
   decidedVia: text('decidedVia').notNull().default(''),
   createdAt: text('createdAt').notNull(),
+  /** Decision routing (docs/owners-seat.md §7, migration 0070): who holds the
+   *  pending card now — 'ceo', 'agent:<id>' (a manager agent) or
+   *  'human:<accountId>' (a person in the org) — since when, and when the hop
+   *  times out and climbs one level on its own. */
+  holder: text('holder').notNull().default('ceo'),
+  holderSince: text('holderSince'),
+  hopDeadline: text('hopDeadline'),
+  /** JSON DecisionHop[]: every hop with its recommendation and reasoning. */
+  chain: text('chain').notNull().default('[]'),
+  /** Why only the CEO may decide it ('' = a manager within its authority may). */
+  reserved: text('reserved').notNull().default(''),
+  /** normal | urgent (urgent shortens each hop's window). */
+  urgency: text('urgency').notNull().default('normal'),
 });
 
 /** Append-only, SHA-256 hash-chained per org (org-audit.service.ts). */

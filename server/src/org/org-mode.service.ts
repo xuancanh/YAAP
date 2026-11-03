@@ -71,7 +71,7 @@ export class OrgModeService {
   async status(workspaceId: string): Promise<OrgModeStatus> {
     const ws = await this.workspaces.get(workspaceId);
     const org = await this.org.byWorkspace(workspaceId);
-    const pending = org ? (await this.approvals.pending(org.id)).length : 0;
+    const pending = org ? (await this.approvals.pendingForOwner(org.id)).length : 0;
     return {
       workspaceId, mode: ws.orgMode as OrgMode, chiefOfStaffAgentId: ws.chiefOfStaffAgentId, orgMonthlyUsd: ws.orgMonthlyUsd, orgAgentCap: ws.orgAgentCap,
       orgId: org?.id ?? null, orgStatus: org?.status ?? null, pendingApprovals: pending,

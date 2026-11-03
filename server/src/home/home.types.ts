@@ -46,6 +46,17 @@ export interface HomeNeed {
   requestedBy: string;
   ref: { approvalId?: string; actionId?: string; planId?: string; incidentId?: string; signalId?: string; agentId?: string; eventId?: string; taskId?: string; sessionId?: string };
   actions: HomeNeedAction[];
+  /** The route a card climbed to reach you (docs/owners-seat.md §7): absent when it came straight to you. */
+  chain?: HomeNeedChain;
+}
+
+export interface HomeNeedChain {
+  /** "Writer → Head of Content → Chief → you". */
+  line: string;
+  /** Each manager's hop: escalated with a recommendation, or timed out. */
+  hops: Array<{ at: string; action: string; by: string; recommendation: string; reasoning: string }>;
+  /** Why only you decide it ('' = a manager could have). */
+  reserved: string;
 }
 
 export interface HomeRecapItem { at: string; kind: 'auto' | 'default' | 'delegate' | 'decision' | 'hire' | 'pause' | 'terminate'; title: string; detail: string; ref: { type: string; id: string } | null }

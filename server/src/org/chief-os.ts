@@ -30,6 +30,8 @@ import { orgPath } from '../files/layout';
 import { deriveMeetingTunables } from './meeting-tunables';
 // The assurance keys (audit.assuranceDebounceHours) join the registry at import.
 import './org-assurance-tunables';
+// The seat keys (seat.hopTimeoutHours, docs/owners-seat.md §7) too.
+import './governance-tunables';
 
 /** The pack the chief's skills and loops come from (packs/chief-of-staff.md). */
 export const CHIEF_PACK_ID = 'pack-chief-of-staff';
@@ -141,6 +143,8 @@ export function deriveOperatingSystem(p: ProfileInput): OperatingSystemPlan {
   set('chief.offTrackWeeks', speed || c === 'market' ? 1 : 2, speed || c === 'market' ? 'off track for a week is an issue' : 'off track for two weeks with no issue raised is flagged');
   set('chief.sunsetEmptyCycles', speed || c === 'adhocracy' ? 2 : c === 'hierarchy' ? 4 : 3, speed || c === 'adhocracy' ? 'rituals that stop earning their time go fast' : c === 'hierarchy' ? 'rituals are retired deliberately' : 'three empty cycles and a ritual is up for retirement');
   set('audit.assuranceDebounceHours', speed ? 2 : c === 'hierarchy' || rigor ? 24 : stage === 'early' ? 4 : 6, speed ? 'speed is a value: a head\'s assurance request is answered within hours' : c === 'hierarchy' || rigor ? 'assurance requests are batched into one formal audit a day' : stage === 'early' ? 'a small company answers an assurance request the same morning' : 'assurance requests are batched for a few hours, then audited');
+  set('seat.hopTimeoutHours', speed ? 4 : c === 'hierarchy' || rigor ? 24 : stage === 'early' ? 8 : 12, speed ? 'speed is a value: a manager answers a decision within hours or it climbs' : c === 'hierarchy' || rigor ? 'each level of the route gets a working day to review a decision' : stage === 'early' ? 'a small company: a decision waits on a manager for a morning at most' : 'a manager gets half a day before a decision climbs on its own');
+  set('seat.urgentHopTimeoutHours', speed ? 1 : c === 'hierarchy' || rigor ? 4 : 2, speed ? 'urgent decisions climb after an hour' : c === 'hierarchy' || rigor ? 'urgent decisions still get half a morning per level' : 'urgent decisions climb after two hours');
   set('chief.memoFirst', rigor || writing || c === 'hierarchy' ? 1 : 0, rigor || writing || c === 'hierarchy' ? 'the company defaults to writing: every decision item has a pre-read' : 'written pre-reads for one-way doors only');
   for (const t of deriveMeetingTunables(d)) set(t.key, t.value, t.why);
 

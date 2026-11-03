@@ -155,6 +155,12 @@ export type AutoActionListener = (ev: { orgId: string; action: AutoAction | 'tun
 export interface BreakerEvent { orgId: string; agentId: string; taskId: string; kind: 'loop' | 'no_progress' | 'budget_stop'; detail: string; sessionId?: string; scope?: string; refId?: string }
 export type BreakerListener = (ev: BreakerEvent) => Promise<void> | void;
 
+/** The manager's side of decision routing (OrgDecisionsService, docs/owners-seat.md §7). */
+export interface DecisionsPort {
+  list(orgId: string, agentId: string): Promise<Array<{ approval: { id: string; kind: string; hopDeadline: string | null; reserved: string; urgency: string }; summary: string; requester: string; chainLine: string; mayDecide: boolean; why: string; chain: Array<{ action: string; by: string; recommendation?: string; reasoning?: string }> }>>;
+  act(orgId: string, agentId: string, input: { approvalId: string; action: 'approve' | 'reject' | 'send_back' | 'escalate'; recommendation?: string; reasoning?: string }): Promise<string>;
+}
+
 /** Another module's work on the runtime's tick (item 31: the seat's default
  *  actions and value sync, capacity's overdue sweep), per active org. */
 export interface OrgTicker { name: string; everyMinutes: number; fn: (org: Organization, now: Date) => Promise<void> }
@@ -227,6 +233,10 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
 
   /** OrgEvalsService binds the rollout gate for routing changes. */
   setRolloutGate(fn: RolloutGate | undefined): void { this.rolloutGate = fn; }
+
+  /** OrgDecisionsService binds the manager's decision tools (docs/owners-seat.md §7). */
+  private decisions?: DecisionsPort;
+  bindDecisions(p: DecisionsPort | undefined): void { this.decisions = p; }
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
@@ -1185,8 +1195,10 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       lines.push(`- "${org.name}" (${org.status}${chief ? ', you are the chief of staff' : `, you are ${m.title || 'a member'}`}). ${org.mission ? `Mission: ${org.mission.slice(0, 300)}` : ''}`);
       if (chief && await this.isAutonomous(org)) lines.push('  As chief of staff you decompose goals into briefed tasks (org_create_task, org_assign), review results (org_review), keep the board moving (org_read_board, org_escalate) and report (org_report). This company is in autonomous mode: org_hire_agent, org_reorg, org_set_scope, org_allocate_budget and org_terminate_agent act at once within caps (depth, fan-out, agent cap, company envelope, your own scopes) and are refused with the reason outside them; give a one-line why each time. Strategy still needs the CEO. Keep the roster small.');
       else if (chief) lines.push('  As chief of staff you decompose goals into briefed tasks (org_create_task, org_assign), review results (org_review), keep the board moving (org_read_board, org_escalate) and report (org_report). Hiring, scope widening, reorgs, budget raises and terminations are proposals the CEO approves in the app — they never take effect on your say-so. Keep the roster small.');
-      else if (await this.headOf(org.id, session.agentId)) lines.push(`  You head a function${this.units && await this.units.isLead(org.id, session.agentId) ? ': org_create_task and org_assign work for yourself and your direct reports, org_set_goal sets a goal for your unit (a child of a goal you can see), org_unit_report shows your unit\'s board and goal progress' : ''}. You staff it yourself: org_hire_agent hires a specialist of your function into your own unit (role:<fn>-<slug>, reportsTo you or one of your reports) within the agent cap and your unit's envelope — ${await this.isAutonomous(org) ? 'at once within caps, why required' : 'an approval card for the CEO'}; org_pause_agent and org_update_member manage your own reports. The chief of staff is told of each. org_escalate takes a blocked task to the chief of staff (default) or, with to: "ceo", to the CEO — only for a decision only the CEO can make. Work outside your unit goes to the chief of staff as a backlog task.`);
+      else if (await this.headOf(org.id, session.agentId)) lines.push(`  You head a function${this.units && await this.units.isLead(org.id, session.agentId) ? ': org_create_task and org_assign work for yourself and your direct reports, org_set_goal sets a goal for your unit (a child of a goal you can see), org_unit_report shows your unit\'s board and goal progress' : ''}. You staff it yourself: org_hire_agent hires a specialist of your function into your own unit (role:<fn>-<slug>, reportsTo you or one of your reports) within the agent cap and your unit's envelope — ${await this.isAutonomous(org) ? 'at once within caps, why required' : 'an approval card for the CEO'}; org_pause_agent and org_update_member manage your own reports. The chief of staff is told of each. org_escalate takes a blocked task to the chief of staff (default) or, with to: "ceo", toward the CEO (through the chief, who adds its recommendation) — only for a decision only the CEO can make. Work outside your unit goes to the chief of staff as a backlog task.`);
       else lines.push('  org_create_task puts work into the backlog for the chief of staff to triage; org_read_board shows the board; org_message posts to the group log (wakes nobody); org_escalate raises a blocked task of yours to your manager (your head); org_costs and org_forecast show spend (read-only).');
+      // Decision routing (docs/owners-seat.md §7): what a report raises comes to its manager first.
+      if (this.decisions && (chief || (await this.org.members(org.id)).some((x) => x.reportsToAgentId === session.agentId && x.status !== 'terminated'))) lines.push('  Decisions your reports raise (approval cards, escalations, held outward actions) come to you first, not to the CEO: org_decisions lists them; org_decide approves or rejects what is within your authority, sends back with guidance, or escalates one level with your recommendation. CEO-reserved cards you only recommend on. A card you sit on climbs on its own with "no recommendation".');
       if (this.intent) lines.push('  Intent: org_intent shows the vision → objectives → key results tree; org_why shows what a task or goal serves; org_check_in records the current value and your confidence (0–1) on a key result you own.');
     }
     return lines.join('\n');
@@ -1221,6 +1233,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     const ctx = this.running.get(session.id);
     const leadOf = async (orgIds: string[]) => { for (const id of orgIds) if (this.units && await this.units.isLead(id, session.agentId!)) return true; return false; };
     const headIn = async (orgIds: string[]) => { for (const id of orgIds) if (await this.headOf(id, session.agentId!)) return true; return false; };
+    // A manager (anyone with a report) holds the decisions its reports raise (docs/owners-seat.md §7).
+    const managesIn = async (orgIds: string[]) => { for (const id of orgIds) if ((await this.org.members(id)).some((x) => x.reportsToAgentId === session.agentId && x.status !== 'terminated')) return true; return false; };
     if (ctx?.audit) return [...AUDIT_TOOLS];
     if (ctx) {
       const specs = [...COMMON_TOOLS, ...TASK_TOOLS];
@@ -1230,13 +1244,14 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         if (await leadOf([ctx.orgId])) specs.push(...LEAD_TOOLS);
         if (await headIn([ctx.orgId])) specs.push(...HEAD_TOOLS);
       }
-      // Every member: the escalation chain (to its manager) and the spend reads.
+      // Every member: the escalation chain (to its manager) and the spend reads; a manager its decisions.
+      if (ctx.isChief || await managesIn([ctx.orgId])) specs.push(...DECISION_TOOLS);
       return uniqueSpecs([...specs, ...MEMBER_EXTRA_TOOLS]);
     }
     const memberships = (await this.org.membershipsOf(session.agentId)).filter((m) => m.status === 'active');
     if (memberships.length === 0) return [];
     const chiefOf = (await Promise.all(memberships.map((m) => this.org.get(m.orgId).catch(() => null)))).some((o) => o?.chiefOfStaffAgentId === session.agentId);
-    if (chiefOf) return uniqueSpecs([...COMMON_TOOLS, ...TASK_TOOLS, ...REVIEW_TOOLS, ...MANAGER_TOOLS, ...LEAD_TOOLS]);
+    if (chiefOf) return uniqueSpecs([...COMMON_TOOLS, ...TASK_TOOLS, ...REVIEW_TOOLS, ...MANAGER_TOOLS, ...LEAD_TOOLS, ...DECISION_TOOLS]);
     // Outside a task run (a loop, the heartbeat, a chat) every member keeps
     // its own tasks true: the heartbeat names them and asks for
     // org_task_update / org_request_review (taskId required here). A unit
@@ -1246,7 +1261,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     // chain (org_escalate: to its manager; a head to the chief or the CEO)
     // and reads spend (org_costs / org_forecast, read-only).
     const orgIds = memberships.map((m) => m.orgId);
-    return uniqueSpecs([...COMMON_TOOLS, ...TASK_TOOLS, ...((await leadOf(orgIds)) ? LEAD_TOOLS : []), ...((await headIn(orgIds)) ? HEAD_TOOLS : []), ...MEMBER_EXTRA_TOOLS]);
+    return uniqueSpecs([...COMMON_TOOLS, ...TASK_TOOLS, ...((await leadOf(orgIds)) ? LEAD_TOOLS : []), ...((await headIn(orgIds)) ? HEAD_TOOLS : []), ...MEMBER_EXTRA_TOOLS, ...((await managesIn(orgIds)) ? DECISION_TOOLS : [])]);
   }
 
   /**
@@ -1566,10 +1581,13 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         if (to && to !== 'ceo' && to !== 'chief') throw new Error('to must be "chief" or "ceo"');
         const head = await headInfo();
         if (to === 'ceo' && !isChief && !head) throw new Error('refused: a specialist escalates to its head (org_escalate without `to`); the head takes it to the chief or the CEO');
+        const urgency = str('urgency') === 'urgent' ? 'urgent' as const : 'normal' as const;
         const toCeo = async () => {
-          await this.tasks.escalate(org.id, t.id, reason, actor);
+          const after = await this.tasks.escalate(org.id, t.id, reason, actor, { to: isChief ? undefined : 'ceo', recommendation: str('recommend') || undefined, urgency });
           if (ctx) ctx.progress = true;
-          return `Task ${taskRef(t)} is blocked and escalated to the CEO (an approval card).`;
+          // Decision routing (docs/owners-seat.md §7): a head's CEO card goes through the chief first, who adds its recommendation.
+          const via = /^escalated to (.+?): /.exec(JSON.parse(after.blockers || '[]').at(-1) ?? '')?.[1];
+          return via ? `Task ${taskRef(t)} is blocked and escalated toward the CEO: the card goes to ${via} first, who adds a recommendation and takes it up (only the CEO decides it).` : `Task ${taskRef(t)} is blocked and escalated to the CEO (an approval card).`;
         };
         if (isChief || to === 'ceo') return toCeo();
         // A head goes to the chief; anyone else to its manager (the chief when it reports to the chief).
@@ -1579,6 +1597,21 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         if (ctx) ctx.progress = true;
         const who = target === org.chiefOfStaffAgentId ? `the chief of staff (${names.get(target) ?? 'chief'})` : `your head, ${names.get(target) ?? target.slice(0, 8)}`;
         return `Task ${taskRef(t)} is blocked and escalated to ${who}: ${r.reused ? `added to its open escalation ${taskRef(r.escalation)}` : `escalation task ${taskRef(r.escalation)} is on its board`}. It decides, unblocks or takes it higher${head ? '' : ' (to the chief or the CEO)'}.`;
+      }
+      // ---- decisions for you (docs/owners-seat.md §7) ----
+      case 'org_decisions': {
+        if (!this.decisions) throw new Error('decision routing is not available on this server');
+        const held = await this.decisions.list(org.id, agentId);
+        if (held.length === 0) return 'No decisions wait on you.';
+        return held.map((d) => `[${d.approval.id.slice(0, 8)}] ${d.approval.kind}${d.approval.urgency === 'urgent' ? ' (urgent)' : ''}: ${d.summary}\n  from ${d.requester} · chain ${d.chainLine}${d.approval.reserved ? ` · CEO-reserved: ${d.approval.reserved}` : ''}\n  ${d.mayDecide ? `you may decide it (${d.why})` : `recommend and escalate (${d.why})`} · climbs on its own at ${(d.approval.hopDeadline ?? '').slice(0, 16).replace('T', ' ')} UTC${d.chain.filter((h) => h.recommendation || h.reasoning).map((h) => `\n  ${h.action === 'raised' ? 'requester' : h.by}: ${h.recommendation || '—'}${h.reasoning ? ` — ${h.reasoning.slice(0, 200)}` : ''}`).join('')}`).join('\n');
+      }
+      case 'org_decide': {
+        if (!this.decisions) throw new Error('decision routing is not available on this server');
+        const action = str('action').trim().toLowerCase();
+        if (!['approve', 'reject', 'send_back', 'escalate'].includes(action)) throw new Error('action must be approve, reject, send_back or escalate');
+        const out = await this.decisions.act(org.id, agentId, { approvalId: str('approvalId'), action: action as 'approve' | 'reject' | 'send_back' | 'escalate', recommendation: str('recommend') || undefined, reasoning: str('reasoning') || undefined });
+        if (ctx) ctx.progress = true;
+        return out;
       }
       // ---- intent (docs/company-vision.md §2) ----
       case 'org_intent': {
@@ -2078,7 +2111,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     lines.push(`- ${backlog.length} unassigned task(s), ${blocked.length} blocked, ${tasks.filter((t) => t.status === 'in_review').length} in review`);
     for (const t of blocked.slice(0, 8)) lines.push(`  - blocked ${taskRef(t)} ${t.title} (${t.assigneeAgentId ? nm(t.assigneeAgentId) : 'nobody'})`);
     for (const t of backlog.slice(0, 8)) lines.push(`  - unassigned ${taskRef(t)} ${t.title}`);
-    const pending = await this.approvals.pending(org.id);
+    const pending = await this.approvals.pendingForOwner(org.id);
     if (pending.length > 0) lines.push('', `## Waiting on the CEO: ${pending.length} approval(s) (${pending.map((a) => a.kind).join(', ')})`);
     return lines.join('\n');
   }
@@ -2243,12 +2276,18 @@ const TASK_TOOLS: AiToolSpec[] = [
 
 const REVIEW_TOOLS: AiToolSpec[] = [
   { name: 'org_review', description: 'Record your review of a task you were asked to review: accept (done), request_changes (back to its owner with your note; 3 rounds then it escalates to the CEO), or escalate now.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, verdict: { type: 'string', enum: ['accept', 'request_changes', 'escalate'] }, note: { type: 'string' } }, required: ['verdict'] } },
-  { name: 'org_escalate', description: 'Block a task and raise it one step up the chain with a reason. A specialist raises to its manager (its head): an `Escalation:` task on the head\'s board, which wakes it. A function head raises to the chief of staff by default (to: "chief"), or with to: "ceo" straight to the CEO as a decision card — only for a decision only the CEO can make (money beyond the envelope, a policy, strategy or values call, an external commitment, a change the boundary reserves for the owner). The chief raises to the CEO.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, reason: { type: 'string', description: 'The question to decide, the options and your recommendation.' }, to: { type: 'string', enum: ['chief', 'ceo'], description: 'Heads only: "chief" (default) or "ceo".' } }, required: ['reason'] } },
+  { name: 'org_escalate', description: 'Block a task and raise it one step up the chain with a reason. A specialist raises to its manager (its head): an `Escalation:` task on the head\'s board, which wakes it. A function head raises to the chief of staff by default (to: "chief"), or with to: "ceo" toward the CEO as a decision card — it goes to the chief first, who adds a recommendation and takes it up; only the CEO decides it. Use to: "ceo" only for a decision only the CEO can make (money beyond the envelope, a policy, strategy or values call, an external commitment, a change the boundary reserves for the owner). The chief raises to the CEO.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, reason: { type: 'string', description: 'The question to decide, the options and your recommendation.' }, to: { type: 'string', enum: ['chief', 'ceo'], description: 'Heads only: "chief" (default) or "ceo".' }, recommend: { type: 'string', enum: ['approve', 'deny', 'modify'], description: 'For a card: what you recommend.' }, urgency: { type: 'string', enum: ['normal', 'urgent'], description: 'urgent shortens each reviewer\'s window.' } }, required: ['reason'] } },
 ];
 
 /** Every member escalates up its chain (its own task, a task it reviews, a
  *  lead's unit board): a specialist to its head, a head to the chief or the CEO. */
 const ESCALATE_TOOL = REVIEW_TOOLS[1];
+
+/** Decisions routed to a manager (docs/owners-seat.md §7): every member may hold one. */
+const DECISION_TOOLS: AiToolSpec[] = [
+  { name: 'org_decisions', description: 'The decision cards waiting on you as a manager: what your reports (or their reports, climbing) raised — approvals, escalations, held outward actions — with the chain so far, every recommendation, whether it is within your authority, and when it climbs on its own.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
+  { name: 'org_decide', description: 'Act on a decision card you hold: approve or reject it when it is within your authority (org_decisions says), send_back to the requester with guidance, or escalate it one level up with your recommendation and reasoning (they travel with the card). CEO-reserved cards (two-key actions, money beyond the envelope, policy, strategy, external commitments, boundary-reserved changes) can only be recommended and escalated. You never approve your own request.', inputSchema: { type: 'object', properties: { approvalId: { type: 'string', description: 'The card id or its first 8 characters.' }, action: { type: 'string', enum: ['approve', 'reject', 'send_back', 'escalate'] }, recommend: { type: 'string', enum: ['approve', 'deny', 'modify'], description: 'Escalate: what you recommend the next level does.' }, reasoning: { type: 'string', description: 'Why — the guidance for a send_back, the case for an escalation, the note on a decision.' }, org: { type: 'string' } }, required: ['approvalId', 'action'] } },
+];
 
 /** First occurrence wins: the role sets overlap (the chief holds them all). */
 function uniqueSpecs(specs: AiToolSpec[]): AiToolSpec[] {
@@ -2342,9 +2381,9 @@ const ALL_TOOL_NAMES = new Set([...COMMON_TOOLS, ...TASK_TOOLS, ...MANAGER_TOOLS
 /** Reads, plus proposals: in supervised mode they only create an approval
  *  card the user resolves; in autonomous mode the owner's mode choice is the
  *  gate (org runs are Auto-mode turns either way). */
-const READONLY_TOOLS = new Set(['org_read_board', 'org_read_goal', 'org_audit_query', 'org_review_structure', 'org_unit_report', 'org_intent', 'org_why', 'org_hire_agent', 'org_reorg', 'org_propose_reorg', 'org_propose_strategy', 'org_terminate_agent', 'org_signals', 'org_pulse', 'org_audit_finding', 'org_audit_close', 'org_costs', 'org_forecast']);
+const READONLY_TOOLS = new Set(['org_decisions', 'org_read_board', 'org_read_goal', 'org_audit_query', 'org_review_structure', 'org_unit_report', 'org_intent', 'org_why', 'org_hire_agent', 'org_reorg', 'org_propose_reorg', 'org_propose_strategy', 'org_terminate_agent', 'org_signals', 'org_pulse', 'org_audit_finding', 'org_audit_close', 'org_costs', 'org_forecast']);
 /** Reads a dry run lets through unrecorded (docs/company-vision.md §8); every other call is recorded and not applied. */
-const DRY_RUN_READS = new Set(['org_read_board', 'org_read_goal', 'org_signals', 'org_pulse', 'org_intent', 'org_why', 'org_unit_report', 'org_review_structure', 'org_audit_query', 'org_costs', 'org_forecast']);
+const DRY_RUN_READS = new Set(['org_decisions', 'org_read_board', 'org_read_goal', 'org_signals', 'org_pulse', 'org_intent', 'org_why', 'org_unit_report', 'org_review_structure', 'org_audit_query', 'org_costs', 'org_forecast']);
 
 export const ORG_TOOL_NAMES = ALL_TOOL_NAMES;
 

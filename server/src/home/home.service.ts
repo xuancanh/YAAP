@@ -31,6 +31,7 @@ import { cronMatches } from '../chats/cron.util';
 import { OrgService, type Organization } from '../org/org.service';
 import { OrgTasksService, type OrgTask } from '../org/org-tasks.service';
 import { OrgApprovalsService, summarize, type OrgApproval } from '../org/org-approvals.service';
+import { chainLine, parseChain } from '../org/decision-routing';
 import { OrgAuditService } from '../org/org-audit.service';
 import { OrgBriefService } from '../org/org-brief.service';
 import { OrgIntentService, type IntentNode } from '../org/org-intent.service';
@@ -198,10 +199,13 @@ export class HomeService {
     const coveredActions = new Set<string>();
     if (org && this.approvals) {
       await this.approvals.expireStale(org.id, now).catch(() => 0);
+      // Only what waits on the CEO now: a card a manager still holds is on its way up (docs/owners-seat.md §7).
+      const holderName = (h: string) => (h === 'ceo' ? 'CEO' : h === 'system' ? 'System' : h.startsWith('human:') ? 'a person' : nameOf(h));
       for (const a of await this.approvals.pending(org.id)) {
         const payload = safe<Record<string, unknown>>(a.payload, {});
         if (typeof payload.actionId === 'string') coveredActions.add(payload.actionId);
-        out.push(approvalNeed(a, payload, nameOf(a.requestedBy), now));
+        if (a.holder && a.holder !== 'ceo') continue;
+        out.push(approvalNeed(a, payload, nameOf(a.requestedBy), now, holderName));
       }
     }
     if (org && this.capital) {
@@ -499,7 +503,7 @@ export class HomeService {
         out.push({ id: `task:${t.id}`, at: t.dueAt!, kind: 'deadline', title: taskLabel(t), detail: t.dueAt! < nowIso ? 'overdue' : t.status.replace(/_/g, ' '), ref: { type: 'task', id: t.id } });
       }
       if (this.approvals) {
-        for (const a of (await this.approvals.pending(org.id)).filter((x) => x.deadline && x.deadline <= week)) {
+        for (const a of (await this.approvals.pendingForOwner(org.id)).filter((x) => x.deadline && x.deadline <= week)) {
           out.push({ id: `approval:${a.id}`, at: a.deadline!, kind: 'decision', title: summarize(a.kind, safe(a.payload, {})), detail: a.defaultAction ? `defaults to ${a.defaultAction}` : 'decision due', ref: { type: 'approval', id: a.id } });
         }
       }
@@ -568,7 +572,8 @@ const RITUALS: Record<string, string> = { planning: 'Planning', standup: 'Standu
 function titleOfRitual(kind: string): string { return RITUALS[kind] ?? kind; }
 
 /** An org approval as a decision card. Two-key cards are held actions; escalations are their own kind. */
-function approvalNeed(a: OrgApproval, payload: Record<string, unknown>, requestedBy: string, now: Date): HomeNeed {
+function approvalNeed(a: OrgApproval, payload: Record<string, unknown>, requestedBy: string, now: Date, holderName: (h: string) => string = (h) => h): HomeNeed {
+  const hops = parseChain(a.chain);
   const deadlineSoon = a.deadline ? Date.parse(a.deadline) - now.getTime() < 6 * 60 * 60_000 : false;
   const kind: HomeNeed['kind'] = a.kind === 'escalation' ? 'escalation' : a.kind === 'two_key' ? 'held_action' : 'approval';
   return {
@@ -579,5 +584,13 @@ function approvalNeed(a: OrgApproval, payload: Record<string, unknown>, requeste
     recommendation: a.recommendation ?? '', recommendedAction: a.recommendedAction ?? '', reversibility: a.reversibility ?? '', confidence: a.confidence ?? null,
     requestedBy, ref: { approvalId: a.id, actionId: typeof payload.actionId === 'string' ? payload.actionId : undefined, taskId: typeof payload.taskId === 'string' ? payload.taskId : undefined },
     actions: ['approve', 'reject'],
+    // The route it took (docs/owners-seat.md §7): "Writer → Head of Content → Chief → you", with each recommendation.
+    ...(hops.length > 1 ? {
+      chain: {
+        line: chainLine(hops, holderName),
+        hops: hops.filter((h) => h.action !== 'raised').map((h) => ({ at: h.at, action: h.action, by: holderName(h.by), recommendation: h.recommendation ?? '', reasoning: clip(h.reasoning ?? '', 300) })),
+        reserved: a.reserved ?? '',
+      },
+    } : {}),
   };
 }

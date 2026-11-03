@@ -244,7 +244,7 @@ export class OrgBriefService {
     }
 
     // 4. Pending approvals, numbered
-    const pending = await this.approvals.pending(orgId);
+    const pending = await this.approvals.pendingForOwner(orgId);
     const items: BriefItem[] = pending.map((a, i) => ({ n: i + 1, approvalId: a.id, kind: a.kind, summary: summarize(a.kind, JSON.parse(a.payload || '{}') as Record<string, unknown>) }));
     lines.push('', '## Decisions needed');
     if (items.length === 0) lines.push('- none');

@@ -39,6 +39,7 @@ import { OrgBoundaryService } from '../server/src/org/org-boundary.service';
 import { OrgEvalsService } from '../server/src/org/org-evals.service';
 import { OrgCapacityService } from '../server/src/org/org-capacity.service';
 import { OrgSeatService } from '../server/src/org/org-seat.service';
+import { OrgDecisionsService } from '../server/src/org/org-decisions.service';
 import { OrgGovernanceTools } from '../server/src/org/org-governance.tools';
 import { GovernanceController } from '../server/src/org/governance.controller';
 import { OrgTrustBridge } from '../server/src/org/org-trust-bridge';
@@ -107,6 +108,8 @@ export async function setup(plan: Plan = () => say('ok')) {
   const evals = new OrgEvalsService(db, org, tasks, audit, agents, repo, turns, runtime, approvals, playbooks);
   const capacity = new OrgCapacityService(org, tasks, agents, signals, units, runtime);
   const seat = new OrgSeatService(db, org, approvals, audit, agents, runtime, brief, signals, units, capital);
+  // Decision routing (docs/owners-seat.md §7), wired as OrgModule wires it.
+  const decisions = new OrgDecisionsService(db, org, approvals, tasks, audit, agents, workspaces, runtime, units, trust, undefined, bus);
   const tools = new OrgGovernanceTools(org, runtime, capacity, evals, config, units, turns);
   const mode = new OrgModeService(org, workspaces, agents, runtime, approvals, audit, announcer);
   const controller = new GovernanceController(mode, org, boundary, evals, capacity, seat, config);
@@ -118,7 +121,7 @@ export async function setup(plan: Plan = () => say('ok')) {
   const editor = await agents.create({ name: 'Editor', charter: 'You edit drafts.', provider: 'openai', model: 'gpt-5' });
   return {
     db, bus, agents, workspaces, repo, turns, provider, connections, trust, actions, audit, org, units, intent, tasks, approvals, signals, slo, meetings, capital, brief, runtime,
-    playbooks, memory, sensing, incidents, boundary, evals, capacity, seat, tools, mode, controller, checks, ws, chief, writer, editor, announced, config,
+    playbooks, memory, sensing, incidents, boundary, evals, capacity, seat, decisions, tools, mode, controller, checks, ws, chief, writer, editor, announced, config,
     externalCalls: () => externalCalls,
   };
 }

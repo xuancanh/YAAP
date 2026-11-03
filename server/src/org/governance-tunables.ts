@@ -38,6 +38,8 @@ export const GOVERNANCE_TUNABLES: Record<string, TunableDef> = {
   // the owner's seat (docs/owners-seat.md)
   'seat.deadlineHours': { default: 48, min: 1, max: 71, area: 'seat', description: 'Hours from a card\'s creation to its decision deadline (always before the 72 h expiry).' },
   'seat.noOutcomeWeeks': { default: 4, min: 1, max: 26, area: 'seat', description: 'Weeks a unit\'s objectives may show no measured key-result movement before a no_outcome signal tells the chief to shrink it.' },
+  'seat.hopTimeoutHours': { default: 12, min: 1, max: 48, area: 'seat', description: 'Hours a manager may hold a decision card before it climbs one level on its own with "no recommendation (timed out)" (docs/owners-seat.md §7).' },
+  'seat.urgentHopTimeoutHours': { default: 2, min: 0.25, max: 12, area: 'seat', description: 'The same window for an urgent card (a held outward action, an urgent escalation).' },
   'seat.defaultConfidence': { default: 0.5, min: 0, max: 1, area: 'seat', description: 'Confidence written on a system-generated card that states none.' },
   ...Object.fromEntries(DEFAULT_APPROVABLE_KINDS.map((k): [string, TunableDef] => [`seat.defaultApprove.${k}`, { default: DEFAULT_APPROVE_ON.has(k) ? 1 : 0, min: 0, max: 1, area: 'seat', description: `1: a ${k.replace(/_/g, ' ')} card the CEO does not answer is approved at its deadline; 0: denied. Irreversible and money cards always default to deny.` }])),
 };

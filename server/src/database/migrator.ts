@@ -2016,6 +2016,29 @@ const MIGRATIONS: Migration[] = [
     },
   },
   {
+    id: '0070-decision-routing',
+    up: async (db) => {
+      // Decisions go to the direct manager first (docs/owners-seat.md §7):
+      // who holds a pending card now ('ceo' | 'agent:<id>' | 'human:<id>'),
+      // since when and until when the hop may wait, the hops it took (JSON),
+      // why it is CEO-reserved ('' = a manager may decide it) and its
+      // urgency. A member may report to a person for decisions
+      // (org_members.reportsToHumanId, an org_humans memberAccountId).
+      // Existing cards stay with the CEO (the column default). Idempotent.
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('org_approvals', 'holder', `TEXT NOT NULL DEFAULT 'ceo'`);
+      await add('org_approvals', 'holderSince', 'TEXT');
+      await add('org_approvals', 'hopDeadline', 'TEXT');
+      await add('org_approvals', 'chain', `TEXT NOT NULL DEFAULT '[]'`);
+      await add('org_approvals', 'reserved', `TEXT NOT NULL DEFAULT ''`);
+      await add('org_approvals', 'urgency', `TEXT NOT NULL DEFAULT 'normal'`);
+      await add('org_members', 'reportsToHumanId', 'TEXT');
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_approvals_holder ON org_approvals ("orgId", "status", "holder")`);
+    },
+  },
+  {
     id: '0080-session-kind',
     up: async (db) => {
       // Chat vs work (docs/work-log.md): a session is a conversation with

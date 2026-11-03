@@ -49,6 +49,7 @@ import { OrgSloService } from './org-slo.service';
 import { OrgAuditorService } from './org-auditor.service';
 import { OrgIntentService } from './org-intent.service';
 import { OrgCapitalService } from './org-capital.service';
+import { OrgDecisionsService } from './org-decisions.service';
 import { describeTunables } from './org-tunables';
 
 export class ChiefDto {
@@ -106,6 +107,8 @@ export class AddMemberDto {
 export class UpdateMemberDto {
   @IsOptional() @IsString() title?: string;
   @IsOptional() reportsToAgentId?: string | null;
+  /** A person (an org_humans memberAccountId) the member's decisions go to first (docs/owners-seat.md §7); null clears it. */
+  @IsOptional() reportsToHumanId?: string | null;
 }
 
 export class ScopesDto { @IsArray() scopes!: string[] }
@@ -186,8 +189,11 @@ export class ReviewDto {
   @IsOptional() @IsString() note?: string;
 }
 export class DecideDto {
-  @IsIn(['approve', 'reject', 'revise']) decision!: 'approve' | 'reject' | 'revise';
+  /** send_back and escalate are a manager's (docs/owners-seat.md §7): a person holding a routed card. */
+  @IsIn(['approve', 'reject', 'revise', 'send_back', 'escalate']) decision!: 'approve' | 'reject' | 'revise' | 'send_back' | 'escalate';
   @IsOptional() @IsString() note?: string;
+  /** Escalate: what the person recommends the next level does. */
+  @IsOptional() @IsIn(['approve', 'deny', 'modify']) recommendation?: 'approve' | 'deny' | 'modify';
 }
 export class ProposalDto {
   @IsIn(APPROVAL_KINDS as unknown as string[]) kind!: ApprovalKind;
@@ -224,6 +230,8 @@ export class OrgController {
     @Optional() private readonly auditor?: OrgAuditorService,
     @Optional() private readonly intent?: OrgIntentService,
     @Optional() private readonly capital?: OrgCapitalService,
+    /** Optional: decision routing (docs/owners-seat.md §7). */
+    @Optional() private readonly decisions?: OrgDecisionsService,
   ) {}
 
   private enabled(): boolean { return this.config.get<boolean>('companiesEnabled') !== false; }
@@ -405,7 +413,27 @@ export class OrgController {
   @Get(':id/approvals') async listApprovals(@Param('id') id: string, @Query('status') status?: string) {
     this.guard();
     await this.approvals.expireStale(id);
-    return this.approvals.list(id, { status: status || undefined });
+    const rows = await this.approvals.list(id, { status: status || undefined });
+    // Each card's route (docs/owners-seat.md §7): who holds it and the chain with every recommendation.
+    const me = actorId() === currentAccountId() ? 'ceo' : `human:${actorId()}`;
+    return this.decisions ? this.decisions.withChains(id, rows, me) : rows;
+  }
+
+  // ---- decision routing (docs/owners-seat.md §7) ----
+  /** What a manager may decide on its own, per kind. */
+  @Get(':id/decisions/authority') decisionAuthority() { this.guard(); return this.decisions?.authorityTable() ?? []; }
+  /** Where a decision raised by `from` (an agent id) goes first, and the chain above it. */
+  @Get(':id/decisions/route') async decisionRoute(@Param('id') id: string, @Query('from') from?: string, @Query('kind') kind?: string) {
+    this.guard();
+    if (!this.decisions) throw new NotFoundException('decision routing is not available');
+    return this.decisions.routeDecision(id, from || null, kind || 'escalation');
+  }
+  /** The cards a person holds as a manager. */
+  @Get(':id/decisions/mine') async myDecisions(@Param('id') id: string) {
+    this.guard();
+    if (!this.decisions) return [];
+    const holder = actorId() === currentAccountId() ? 'ceo' : `human:${actorId()}`;
+    return holder === 'ceo' ? [] : this.decisions.describeFor(id, holder);
   }
   /** The user may also raise a proposal by hand (e.g. an external action to record). */
   @Post(':id/approvals') propose(@Param('id') id: string, @Body() dto: ProposalDto) {
@@ -429,13 +457,23 @@ export class OrgController {
   @Post(':id/approvals/:approvalId/decide') async decide(@Param('id') id: string, @Param('approvalId') approvalId: string, @Body() dto: DecideDto) {
     this.guard();
     const a = await this.approvals.get(id, approvalId);
+    // A person holding a routed card acts as its manager (docs/owners-seat.md §7): decide within authority, send back, escalate.
+    const holderMe = this.decisions && a.status === 'pending' && actorId() !== currentAccountId() && a.holder === `human:${actorId()}`;
+    if (holderMe) {
+      const action = dto.decision === 'approve' ? 'approve' : dto.decision === 'reject' ? 'reject' : dto.decision === 'escalate' ? 'escalate' : 'send_back';
+      const message = await this.decisions!.act(id, a.id, `human:${actorId()}`, action, { recommendation: dto.recommendation, reasoning: dto.note });
+      return { approval: await this.approvals.get(id, a.id), message };
+    }
+    if (dto.decision === 'escalate') throw new BadRequestException(a.holder === 'ceo' || !a.holder ? 'the card is with the CEO: there is nobody above to escalate to' : 'only the card\'s current holder escalates it');
+    if (dto.decision === 'send_back') dto = { ...dto, decision: 'revise' };
     // A human_review card (item 24) is its addressee's to decide (or the CEO's).
     const addressee = a.kind === 'human_review' ? (JSON.parse(a.payload || '{}') as { reviewerHumanId?: string }).reviewerHumanId : undefined;
     // A delegate (docs/owners-seat.md §2) decides the cards delegated to them, nothing else.
     const via = addressee && addressee === actorId() ? null : await this.approvals.delegateVia(id, a, actorId());
-    if (via && actorId() !== currentAccountId()) return this.approvals.decide(id, approvalId, dto.decision, dto.note ?? '', this.actor(), actorId(), { via });
+    const decision = dto.decision as 'approve' | 'reject' | 'revise';
+    if (via && actorId() !== currentAccountId()) return this.approvals.decide(id, approvalId, decision, dto.note ?? '', this.actor(), actorId(), { via });
     if (!(addressee && addressee === actorId())) await this.assertMayDecide(id, a.kind);
-    return this.approvals.decide(id, approvalId, dto.decision, dto.note ?? '', this.actor(), actorId());
+    return this.approvals.decide(id, approvalId, decision, dto.note ?? '', this.actor(), actorId());
   }
 
   // ---- humans (phase D): the CEO is the owner; board and observers are members of the shared workspace ----

@@ -132,9 +132,50 @@ export class OrgApprovalsService {
     return a;
   }
 
+  /** A card by id or an 8+ character prefix (what an agent sees). */
+  async byPrefix(orgId: string, ref: string): Promise<OrgApproval> {
+    const q = (ref ?? '').trim();
+    if (!q) throw new NotFoundException('approvalId is required');
+    const exact = (await this.db.select().from(orgApprovals).where(and(eq(orgApprovals.orgId, orgId), eq(orgApprovals.id, q))).limit(1)).at(0);
+    if (exact) return exact;
+    const hits = (await this.list(orgId)).filter((a) => a.id.startsWith(q));
+    if (hits.length !== 1) throw new NotFoundException(hits.length ? `"${q}" matches ${hits.length} cards — use more characters` : `no card "${q}"`);
+    return hits[0];
+  }
+
   async pending(orgId: string): Promise<OrgApproval[]> {
     await this.expireStale(orgId);
     return (await this.list(orgId, { status: 'pending' })).sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+  }
+
+  /** Pending cards that wait on the CEO now (docs/owners-seat.md §7): the
+   *  ones a manager still holds are on their way up, not the owner's yet. */
+  async pendingForOwner(orgId: string): Promise<OrgApproval[]> {
+    return (await this.pending(orgId)).filter((a) => !a.holder || a.holder === 'ceo');
+  }
+
+  /** Decision routing (OrgDecisionsService): place a new card with the
+   *  requester's direct manager. Returns the card as routed. */
+  private router?: (orgId: string, a: OrgApproval) => Promise<OrgApproval>;
+  setRouter(fn: ((orgId: string, a: OrgApproval) => Promise<OrgApproval>) | undefined): void { this.router = fn; }
+
+  /** Route a card written by another path (an escalation, a human review). */
+  async route(orgId: string, a: OrgApproval): Promise<OrgApproval> {
+    return this.router ? this.router(orgId, a).catch(() => a) : a;
+  }
+
+  /** A card reached the CEO (at creation, or after climbing the chain): the
+   *  chief's inbox line (pushed to the owner's channels) and the delegations. */
+  async arrived(orgId: string, a: OrgApproval): Promise<void> {
+    const org = await this.org.get(orgId);
+    const payload = JSON.parse(a.payload || '{}') as Record<string, unknown>;
+    if (org.chiefOfStaffAgentId) {
+      await this.agents.addEvent(org.chiefOfStaffAgentId, {
+        kind: 'info', title: `Approval needed (${a.kind}): ${summarize(a.kind, payload)}`.slice(0, 200),
+        body: a.recommendation ?? '', payload: JSON.stringify({ orgId, approvalId: a.id, kind: a.kind }), origin: 'loop', channel: true,
+      }).catch(() => {});
+    }
+    for (const fn of this.createdListeners) await Promise.resolve(fn(orgId, a)).catch(() => undefined);
   }
 
   private readonly appliers = new Map<ApprovalKind, ApprovalApplier>();
@@ -152,7 +193,7 @@ export class OrgApprovalsService {
 
   /** Create a proposal. The chief's inbox gets no event (it wrote it); the
    *  user sees it in the approvals queue and in the brief. */
-  async create(orgId: string, input: { kind: ApprovalKind; payload: Record<string, unknown>; requestedBy: string; recommendation?: string; card?: CardInput }): Promise<OrgApproval> {
+  async create(orgId: string, input: { kind: ApprovalKind; payload: Record<string, unknown>; requestedBy: string; recommendation?: string; card?: CardInput; urgency?: 'normal' | 'urgent' }): Promise<OrgApproval> {
     const org = await this.org.get(orgId);
     if (!APPROVAL_KINDS.includes(input.kind)) throw new BadRequestException(`approval kind must be one of ${APPROVAL_KINDS.join(', ')}`);
     const card = cardFields(org, input.kind, input.payload, input.card ?? {}, Date.now());
@@ -163,16 +204,13 @@ export class OrgApprovalsService {
       status: 'pending', decidedAt: null, decidedBy: '', decisionNote: '',
       expiresAt: new Date(Date.now() + APPROVAL_TTL_MS).toISOString(), createdAt: nowIso(),
       ...card, decidedVia: '',
+      holder: 'ceo', holderSince: null, hopDeadline: null, chain: '[]', reserved: '', urgency: input.urgency === 'urgent' ? 'urgent' : 'normal',
     };
     await this.db.insert(orgApprovals).values(row);
     await this.audit.append(orgId, { actor: input.requestedBy, action: 'approval_request', refType: 'approval', refId: row.id, payload: { kind: input.kind, summary: summarize(input.kind, input.payload) } });
-    if (org.chiefOfStaffAgentId) {
-      await this.agents.addEvent(org.chiefOfStaffAgentId, {
-        kind: 'info', title: `Approval needed (${input.kind}): ${summarize(input.kind, input.payload)}`.slice(0, 200),
-        body: input.recommendation ?? '', payload: JSON.stringify({ orgId, approvalId: row.id, kind: input.kind }), origin: 'loop', channel: true,
-      }).catch(() => {});
-    }
-    for (const fn of this.createdListeners) await Promise.resolve(fn(orgId, row)).catch(() => undefined);
+    // Decision routing (docs/owners-seat.md §7): the requester's manager first.
+    const routed = await this.route(orgId, row);
+    if (routed.status === 'pending' && (!routed.holder || routed.holder === 'ceo')) await this.arrived(orgId, routed);
     return (await this.list(orgId)).find((a) => a.id === row.id) ?? row;
   }
 
@@ -278,9 +316,12 @@ export class OrgApprovalsService {
     const payload = JSON.parse(a.payload || '{}') as Record<string, unknown>;
     let result: Record<string, unknown> | undefined;
     let status: OrgApproval['status'];
+    // A manager agent's decision (docs/owners-seat.md §7) applies as that agent, so the boundary's fence still binds it.
+    const managerAgent = opts.via?.startsWith('manager:agent:') ? opts.via.slice('manager:'.length) : null;
+    const decider = opts.via?.startsWith('manager:') ? 'Manager' : opts.via?.startsWith('delegate:') ? 'Delegate' : 'CEO';
     if (decision === 'approve') {
       for (const fn of this.beforeApply.get(a.kind) ?? []) await fn(orgId, a, payload);
-      result = await this.apply(orgId, a.kind as ApprovalKind, payload, a, note);
+      result = await this.apply(orgId, a.kind as ApprovalKind, payload, a, note, managerAgent ?? 'user', decider);
       status = 'approved';
     } else if (decision === 'reject') {
       status = 'rejected';
@@ -302,7 +343,7 @@ export class OrgApprovalsService {
     const org = await this.org.get(orgId);
     if (org.chiefOfStaffAgentId) {
       await this.agents.addEvent(org.chiefOfStaffAgentId, {
-        kind: 'info', title: `CEO ${status.replace('_', ' ')}: ${a.kind} — ${summarize(a.kind, payload)}`.slice(0, 200),
+        kind: 'info', title: `${decider} ${status.replace('_', ' ')}: ${a.kind} — ${summarize(a.kind, payload)}`.slice(0, 200),
         body: note.slice(0, 1_000), payload: JSON.stringify({ orgId, approvalId: id, status }), origin: 'user',
       }).catch(() => {});
     }
@@ -316,23 +357,23 @@ export class OrgApprovalsService {
 
   /** Apply an approved proposal. This is the only place an org tool's
    *  intent becomes a structural change. */
-  private async apply(orgId: string, kind: ApprovalKind, payload: Record<string, unknown>, approval: OrgApproval, note: string): Promise<Record<string, unknown>> {
+  private async apply(orgId: string, kind: ApprovalKind, payload: Record<string, unknown>, approval: OrgApproval, note: string, actor = 'user', decider = 'CEO'): Promise<Record<string, unknown>> {
     const by = `approval:${approval.id}`;
     switch (kind) {
       case 'hire':
-        return this.applyHire(orgId, payload as unknown as HirePayload, 'user', by);
+        return this.applyHire(orgId, payload as unknown as HirePayload, actor, by);
       case 'scope_widen': {
         const agentId = String(payload.agentId ?? '');
         const scopes = parseScopes(payload.scopes);
-        await this.org.applyScopes(orgId, agentId, scopes, 'user', by);
+        await this.org.applyScopes(orgId, agentId, scopes, actor, by);
         return { agentId, scopes };
       }
       case 'reorg':
-        return this.applyReorg(orgId, Array.isArray(payload.changes) ? (payload.changes as ReorgChange[]) : [], 'user');
+        return this.applyReorg(orgId, Array.isArray(payload.changes) ? (payload.changes as ReorgChange[]) : [], actor);
       case 'budget_raise': {
         const scope = String(payload.scope ?? 'company') as 'company' | 'agent' | 'project';
         const refId = String(payload.refId ?? orgId);
-        const b = await this.org.setBudget(orgId, { scope, refId, monthlyUsd: Number(payload.monthlyUsd ?? 0), actor: 'user' });
+        const b = await this.org.setBudget(orgId, { scope, refId, monthlyUsd: Number(payload.monthlyUsd ?? 0), actor });
         // Capital (docs/company-vision.md §7): the card said what the envelope buys; record it.
         if (typeof payload.objectiveId === 'string' && payload.objectiveId) await this.org.setAllocation(orgId, { goalId: payload.objectiveId, monthlyUsd: Number(payload.monthlyUsd ?? 0), rationale: typeof payload.buys === 'string' ? payload.buys : undefined, scope, refId, actor: 'user' }).catch(() => undefined);
         return { scope, refId, monthlyUsd: b.monthlyUsd };
@@ -356,7 +397,7 @@ export class OrgApprovalsService {
       }
       case 'terminate': {
         const agentId = String(payload.agentId ?? '');
-        await this.org.terminateMember(orgId, agentId, 'user');
+        await this.org.terminateMember(orgId, agentId, actor);
         return { agentId };
       }
       case 'tune':
@@ -403,8 +444,8 @@ export class OrgApprovalsService {
         if (taskId) {
           const t = await this.tasks.get(orgId, taskId).catch(() => null);
           if (t && t.status === 'blocked') {
-            await this.tasks.update(orgId, taskId, { status: 'todo', reviewRounds: 0, blockers: [] }, 'user');
-            await this.tasks.comment(orgId, taskId, { text: `CEO decision: ${note || 'continue'}`, fromAgentId: null, wake: false });
+            await this.tasks.update(orgId, taskId, { status: 'todo', reviewRounds: 0, blockers: [] }, actor);
+            await this.tasks.comment(orgId, taskId, { text: `${decider} decision: ${note || 'continue'}`, fromAgentId: actor.startsWith('agent:') ? actor.slice('agent:'.length) : null, wake: false });
           }
         }
         return { taskId };
@@ -463,7 +504,8 @@ export class OrgApprovalsService {
   }
 
   async expireStale(orgId: string, now: Date = new Date()): Promise<number> {
-    const stale = (await this.list(orgId, { status: 'pending' })).filter((a) => a.expiresAt && a.expiresAt < now.toISOString());
+    // A card still climbing the chain does not expire: its hops time out and it reaches the CEO with a fresh window.
+    const stale = (await this.list(orgId, { status: 'pending' })).filter((a) => a.expiresAt && a.expiresAt < now.toISOString() && (!a.holder || a.holder === 'ceo'));
     for (const a of stale) {
       await this.db.update(orgApprovals).set({ status: 'expired', decidedAt: now.toISOString() }).where(eq(orgApprovals.id, a.id));
       await this.audit.append(orgId, { actor: 'system', action: 'approval_expired', refType: 'approval', refId: a.id, payload: { kind: a.kind } });
