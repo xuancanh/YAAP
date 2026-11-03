@@ -770,6 +770,7 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
       )}
       {current !== 'off' && st?.orgId && <TunablesEditor ws={ws} />}
       {current !== 'off' && st?.orgId && <Suspense fallback={null}><BlueprintCard ws={ws} /></Suspense>}
+      <Suspense fallback={null}><OrgDangerZone ws={ws} /></Suspense>
       {isOwner && (
         <div style={{ display: 'flex', marginTop: 12 }}>
           <button disabled={busy || (mode !== 'off' && !chief && app.agents.length > 0)} onClick={() => void save()}
@@ -785,6 +786,8 @@ function OrganizationSection({ ws }: { ws: Workspace }) {
 
 /** Blueprints (docs/blueprints.md, item 24) load on demand: export COMPANY.json, import one with its dry-run plan, publish to the registry. */
 const BlueprintCard = lazy(() => import('./OrgBlueprintBits').then((m) => ({ default: m.BlueprintCard })));
+/** Archive, restore, delete the company (docs/owners-seat.md "Archive or delete the company"): the Danger zone and the archived companies. */
+const OrgDangerZone = lazy(() => import('./OrgDangerZone').then((m) => ({ default: m.OrgDangerZone })));
 /** The trust ledger (item 28, SPA item 32): agents × action classes, ceilings, overrides, held actions. */
 const TrustSection = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.TrustSection })));
 /** Delegated approvals and the boundary table (item 31, SPA item 32 part two). */

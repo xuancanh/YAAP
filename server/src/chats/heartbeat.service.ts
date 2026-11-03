@@ -343,14 +343,15 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** The org module pauses members (`org_members.status = 'paused'`); a
-   *  paused member's heartbeat does not beat. Read defensively: the table
+   *  paused member's heartbeat does not beat. A seat in an archived company
+   *  is suspended, so it does not hold the plain agent's heartbeat. Read defensively: the table
    *  belongs to another module and may be absent in a test database. */
   private async orgPaused(agentId: string): Promise<boolean> {
     this.orgMembersProbe ??= this.db.execute(sql`SELECT 1 FROM information_schema.tables WHERE table_name = 'org_members'`)
       .then((r) => r.rows.length > 0).catch(() => false);
     if (!(await this.orgMembersProbe)) return false;
     try {
-      const rows = (await this.db.execute(sql`SELECT 1 FROM org_members WHERE "agentId" = ${agentId} AND "status" = 'paused' LIMIT 1`)).rows;
+      const rows = (await this.db.execute(sql`SELECT 1 FROM org_members m WHERE m."agentId" = ${agentId} AND m."status" = 'paused' AND NOT EXISTS (SELECT 1 FROM organizations o WHERE o."id" = m."orgId" AND o."status" = 'archived') LIMIT 1`)).rows;
       return rows.length > 0;
     } catch { return false; }
   }

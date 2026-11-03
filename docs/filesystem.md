@@ -56,6 +56,7 @@ skills cannot drift apart.
 │   ├── work/                  drafts not yet ready to share
 │   └── .checkpoints/          read-only rollback history
 ├── uploads/                   files users attach from the composer
+├── archive/org-<slug>-<day>/  a deleted company's /org/, when its delete kept the files (docs/owners-seat.md)
 └── <anything else>/           user- or agent-made shared folders
 ```
 

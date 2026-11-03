@@ -6,6 +6,9 @@
  *  GET    /api/workspaces/:id/org            { mode, chiefOfStaffAgentId, orgMonthlyUsd, orgAgentCap, orgId, orgStatus, pendingApprovals, org? }
  *  PUT    /api/workspaces/:id/org            { mode, chiefOfStaffAgentId?, monthlyUsd?, agentCap? } — enable / change / turn off
  *  POST   /api/workspaces/:id/org/pause | /resume   the kill switch
+ *  lifecycle (docs/owners-seat.md "Archive or delete the company", owner only):
+ *         POST /org/archive · POST /org/restore { orgId? } · DELETE /org { orgId?, confirmName, agents?: keep|delete, files?: keep|delete, channels?: archive|keep|delete } ·
+ *         GET /org/archived · GET /org/archived/:orgId (the read-only view) · GET /org/archived/:orgId/blueprint (COMPANY.json of an archived company)
  *  GET    /api/workspaces/:id/org/caps       the autonomy caps in plain words (for the Settings card and the wizard), plus the default veto window
  *  POST   /api/workspaces/:id/org/bootstrap  company onboarding in one call (item 25): chief, mode, vision, profile, tunables, cadences, first hires, planning
  *  GET    /api/workspaces/:id/org/units      the unit tree (docs/group-chat.md §7) · PATCH units/:unitId · GET units/:unitId/board · GET units/:unitId/goals/tree · GET goals/tree
@@ -37,6 +40,8 @@ import { OrgService } from './org.service';
 import { actorId } from '../accounts/account-context';
 import { ORG_MODES, type OrgMode } from '../workspaces/workspaces.service';
 import { OrgModeService, AUTONOMY_CAPS, MAX_ORG_AGENT_CAP } from './org-mode.service';
+import { OrgLifecycleService, type AgentsChoice, type ChannelsChoice, type FilesChoice } from './org-lifecycle.service';
+import { OrgBlueprintsService } from './org-blueprints.service';
 import {
   OrgController, UpdateOrgDto, AddMemberDto, UpdateMemberDto, ScopesDto, GoalDto, TaskDto, AssignDto, TextDto, CommentDto, ReviewDto, DecideDto, ProposalDto, BudgetDto, WakeDto, HumanDto, UnitDto, SloDto, AckDto,
   VisionDto, ProfileDto, TunableDto, CheckInDto, PlanDto, RoutingDto, AllocationDto, DryRunDto, VetoDto,
@@ -76,6 +81,14 @@ export class CadenceDto {
 }
 
 export class AskDto { @IsString() question!: string }
+export class RestoreOrgDto { @IsOptional() @IsString() orgId?: string }
+export class DeleteOrgDto {
+  @IsOptional() @IsString() orgId?: string;
+  @IsString() confirmName!: string;
+  @IsOptional() @IsIn(['keep', 'delete']) agents?: AgentsChoice;
+  @IsOptional() @IsIn(['keep', 'delete']) files?: FilesChoice;
+  @IsOptional() @IsIn(['archive', 'keep', 'delete']) channels?: ChannelsChoice;
+}
 /** Company onboarding (item 25). Nested shapes are checked by the service. */
 export class BootstrapDto implements BootstrapInput {
   @IsIn(['supervised', 'autonomous']) mode!: 'supervised' | 'autonomous';
@@ -104,7 +117,12 @@ export class WorkspaceOrgController {
     @Optional() private readonly playbooks?: OrgPlaybooksService,
     @Optional() private readonly orgService?: OrgService,
     @Optional() private readonly bootstrapper?: OrgBootstrapService,
+    /** Archive, restore, delete (docs/owners-seat.md "Archive or delete the company"). */
+    @Optional() private readonly lifecycle?: OrgLifecycleService,
+    @Optional() private readonly blueprints?: OrgBlueprintsService,
   ) {}
+
+  private lifecycleOr(): OrgLifecycleService { this.guard(); if (!this.lifecycle) throw new NotFoundException('archiving a company is not available'); return this.lifecycle; }
 
   private knowledgeOr(): OrgKnowledgeService { if (!this.knowledge) throw new NotFoundException('company memory is not available'); return this.knowledge; }
 
@@ -119,7 +137,21 @@ export class WorkspaceOrgController {
     this.guard();
     const st = await this.mode.status(id);
     // Units (docs/group-chat.md §7) ride along so the rail draws them without a second call.
-    return { ...st, org: st.orgId ? await this.orgs.get(st.orgId) : null, units: st.orgId ? await this.orgs.units_(st.orgId).catch(() => []) : [] };
+    return {
+      ...st, org: st.orgId ? await this.orgs.get(st.orgId) : null, units: st.orgId ? await this.orgs.units_(st.orgId).catch(() => []) : [],
+      // Archived companies (read-only, restorable) for Settings → Workspace → Organization.
+      archived: this.lifecycle ? await this.lifecycle.listArchived(id).catch(() => []) : [],
+    };
+  }
+  @Post('archive') async archive(@Param('id') id: string) { const archived = await this.lifecycleOr().archive(id, this.orgs.actorName()); return { archived, status: await this.mode.status(id) }; }
+  @Post('restore') async restore(@Param('id') id: string, @Body() dto: RestoreOrgDto) { const restored = await this.lifecycleOr().restore(id, dto?.orgId, this.orgs.actorName()); return { restored, status: await this.mode.status(id) }; }
+  @Delete() remove(@Param('id') id: string, @Body() dto: DeleteOrgDto) { return this.lifecycleOr().remove(id, dto, this.orgs.actorName()); }
+  @Get('archived') archivedList(@Param('id') id: string) { return this.lifecycleOr().listArchived(id); }
+  @Get('archived/:orgId') archivedDetail(@Param('id') id: string, @Param('orgId') orgId: string) { return this.lifecycleOr().archivedDetail(id, orgId); }
+  @Get('archived/:orgId/blueprint') async archivedBlueprint(@Param('id') id: string, @Param('orgId') orgId: string) {
+    const detail = await this.lifecycleOr().archivedDetail(id, orgId);
+    if (!this.blueprints) throw new NotFoundException('blueprints are not available');
+    return this.blueprints.export(detail.org.id);
   }
   @Put() set(@Param('id') id: string, @Body() dto: OrgModeDto) { this.guard(); return this.mode.setMode(id, dto, this.orgs.actorName()); }
   @Get('caps') caps() { this.guard(); return { ...AUTONOMY_CAPS, vetoWindowMinutes: TUNABLES['capital.vetoWindowMinutes']?.default ?? 30 }; }

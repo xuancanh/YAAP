@@ -135,6 +135,7 @@ export class GroupChatService {
         if (patch.archived !== undefined) await this.archive(channelId, patch.archived, { system: true });
       },
       postSystem: async (channelId, text) => { await this.postSystem(channelId, text); },
+      deleteChannel: async (channelId) => { await this.removeChannel(channelId); },
       // Meetings (docs/group-chat.md §8): a thread the runtime writes into
       // and reads back; its posts never compute a wake set.
       channelInfo: async (channelId) => { const c = await this.get(channelId); return { id: c.id, slug: c.slug, workspaceId: c.workspaceId, archivedAt: c.archivedAt }; },
@@ -321,6 +322,21 @@ export class GroupChatService {
     if (Object.keys(set).length > 0) await this.db.update(channels).set(set).where(eq(channels.id, channelId));
     this.events.emit({ type: 'channel_update', workspaceId: c.workspaceId, channelId });
     return this.get(channelId);
+  }
+
+  /** Delete a channel for good: its messages, members and read marks go
+   *  with it (files under its folder stay — they are workspace files). Only
+   *  the system calls this (a permanent company delete, docs/owners-seat.md);
+   *  #general and #company never go. Idempotent: a missing channel is a no-op. */
+  async removeChannel(channelId: string): Promise<void> {
+    const c = (await this.db.select().from(channels).where(eq(channels.id, channelId)).limit(1)).at(0);
+    if (!c) return;
+    if (c.slug === GENERAL_SLUG || c.slug === COMPANY_SLUG) throw new BadRequestException(`#${c.slug} cannot be deleted`);
+    await this.db.delete(channelReads).where(eq(channelReads.channelId, channelId));
+    await this.db.delete(channelMessages).where(eq(channelMessages.channelId, channelId));
+    await this.db.delete(channelMembers).where(eq(channelMembers.channelId, channelId));
+    await this.db.delete(channels).where(eq(channels.id, channelId));
+    this.events.emit({ type: 'channel_update', workspaceId: c.workspaceId, channelId });
   }
 
   async archive(channelId: string, archived = true, opts: { system?: boolean } = {}): Promise<Channel> {

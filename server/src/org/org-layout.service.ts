@@ -348,7 +348,8 @@ export class OrgLayoutService implements OnApplicationBootstrap {
   async refresh(orgId: string, parts: LayoutPart[] = ALL_PARTS): Promise<string[]> {
     if (!this.fs) return [];
     const org = (await this.db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1)).at(0);
-    if (!org) return [];
+    // An archived company writes nothing: /org/ may already be a new company's.
+    if (!org || org.status === 'archived') return [];
     const ws = org.workspaceId;
     const want = new Set(parts);
     const written: string[] = [];
@@ -445,7 +446,7 @@ export class OrgLayoutService implements OnApplicationBootstrap {
     if (!this.fs) return out;
     try {
       const org = (await this.db.select().from(organizations).where(eq(organizations.id, orgId)).limit(1)).at(0);
-      if (!org) return out;
+      if (!org || org.status === 'archived') return out;
       const ws = org.workspaceId;
       const units = await this.db.select().from(orgUnits).where(eq(orgUnits.orgId, orgId));
       const rootSlug = units.find((u) => u.parentUnitId === null)?.slug ?? 'company';

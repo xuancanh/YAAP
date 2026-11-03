@@ -42,6 +42,9 @@ export function isOwnerOnlyRoute(method: string, path: string): boolean {
   // plugin settings are the owner's; so is the key on a change record.
   if (/^\/api\/workspaces\/[^/]+\/(plugins|interfaces|interface-policies|plugin-settings)(\/|$)/.test(p)) return true;
   if (/^\/api\/workspaces\/[^/]+\/changes\/[^/]+\/keys$/.test(p)) return true;
+  // Archive, restore and delete the company (docs/owners-seat.md "Archive or delete the company").
+  if (/^\/api\/workspaces\/[^/]+\/org\/(archive|restore)$/.test(p)) return true;
+  if (method === 'DELETE' && /^\/api\/workspaces\/[^/]+\/org$/.test(p)) return true;
   if (/^\/api\/(settings|agent-types|mcp|skills|connections|computer|harness|registry|market|push|admin)(\/|$)/.test(p)) return true;
   if (/^\/api\/agents$/.test(p)) return true;
   if (/^\/api\/agents\/[^/]+$/.test(p)) return true;

@@ -795,7 +795,12 @@ migrator on PGlite.
 | Plugins | `plugins`, `plugin_versions`, `plugin_installs`, `interfaces`, `interface_versions`, `interface_providers`, `interface_bindings`, `interface_policies`, `conformance_runs`, `plugin_effects`, `plugin_grants`, `plugin_audit`; `workspaces.pluginSettings` (0054, [plugins.md](plugins.md) §8) |
 
 The other migrations only add columns or backfill (for example 0038 assigns
-agents to workspaces). Mini apps have no table: their definitions are on the
+agents to workspaces; 0082 adds `organizations.archivedAt`, `archivedBy` and
+`archiveState` for archiving a company). Every table with an `orgId` column
+is org-scoped: a permanent company delete (`OrgLifecycleService`,
+[owners-seat.md](owners-seat.md) "Archive or delete the company") removes
+its rows in `ORG_TABLE_PLAN` order, and a test fails when a new one is not
+listed there. Mini apps have no table: their definitions are on the
 `agents` row (0004) and their data is in files.
 
 ## 7. Storage layout

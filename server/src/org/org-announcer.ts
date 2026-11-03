@@ -34,6 +34,10 @@ export interface UnitChannels {
   removeChannelMember(channelId: string, kind: 'agent' | 'human', id: string): Promise<void>;
   updateChannel(channelId: string, patch: { name?: string; topic?: string; archived?: boolean }): Promise<void>;
   postSystem(channelId: string, text: string): Promise<void>;
+  /** Delete a channel with its messages, members and read marks (a
+   *  permanent company delete that chose "delete channels"). Never #general
+   *  or #company. Optional: an implementation without it keeps channels. */
+  deleteChannel?(channelId: string): Promise<void>;
 }
 
 /**

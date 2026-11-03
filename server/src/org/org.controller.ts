@@ -32,7 +32,8 @@
  * workspace's one organization and delegates here; these routes stay as
  * aliases and keep working.
  */
-import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Optional, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException, Optional, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { ArchivedOrgGuard } from './archived-org.guard';
 import { actorId, currentAccountId, currentViewer } from '../accounts/account-context';
 import { ConfigService } from '@nestjs/config';
 import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Max, Min } from 'class-validator';
@@ -217,6 +218,8 @@ export class HumanDto {
   @IsOptional() @IsString() title?: string;
 }
 
+/** An archived company is read-only here (archived-org.guard.ts). */
+@UseGuards(ArchivedOrgGuard)
 @Controller('orgs')
 export class OrgController {
   constructor(
@@ -276,7 +279,13 @@ export class OrgController {
     return { ...org, members, goals, projects, budgets, grants, charterDrift: drift };
   }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateOrgDto) { this.guard(); return this.org.update(id, dto); }
-  @Delete(':id') remove(@Param('id') id: string) { this.guard(); return this.org.remove(id); }
+  /** A company is deleted from the archived state only, with its name typed
+   *  back: `POST /api/workspaces/:id/org/archive`, then `DELETE
+   *  /api/workspaces/:id/org` (docs/owners-seat.md "Archive or delete the company"). */
+  @Delete(':id') remove(@Param('id') _id: string): never {
+    this.guard();
+    throw new BadRequestException('archive the company first (POST /api/workspaces/:id/org/archive), then delete it with DELETE /api/workspaces/:id/org { confirmName }');
+  }
   @Post(':id/pause') pause(@Param('id') id: string) { this.guard(); return this.runtime.pause(id); }
   @Post(':id/resume') resume(@Param('id') id: string) { this.guard(); return this.runtime.resume(id); }
 

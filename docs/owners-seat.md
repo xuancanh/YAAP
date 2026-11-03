@@ -383,3 +383,82 @@ Its manager also gets an inbox line asking it to do one of three things:
 The owner meets these cards first on Home (`docs/home.md`): each decision
 card shows its recommendation, reversibility, confidence and what happens
 at its deadline if nobody answers, and can be decided there.
+
+## Archive or delete the company
+
+A company ends the way it started: by the owner, on purpose, and
+reversibly first. Code: `server/src/org/org-lifecycle.service.ts`
+(`OrgLifecycleService`), the read-only guard `archived-org.guard.ts`, the
+SPA's Danger zone `src/components/OrgDangerZone.tsx` (Settings → Workspace
+→ Organization). Migration `0082-org-archive` adds `organizations.archivedAt`,
+`archivedBy` and `archiveState`. Owner only: the routes are in the
+owner-only table (`workspace-access.guard.ts`) and the service refuses a
+member or viewer too.
+
+### Archive (reversible, the default)
+
+`POST /api/workspaces/:id/org/archive`. It does what the kill switch does —
+queued wakes, structure reviews, planning passes and re-wakes are dropped,
+in-flight runs aborted — and then puts the company away:
+
+- `organizations.status = 'archived'` with when and who. Every tick skips
+  an archived org (briefs, approval expiry and decision deadlines, signals,
+  rituals and meetings, sensing, experiments, the auditor), and
+  `OrgService.byWorkspace` does not return it, so Company, Inbox and Home
+  fall back to the non-company views and the workspace's mode is `off`.
+- Its members' seats are **suspended, not deleted**: `membershipsOf` leaves
+  archived orgs out, so the agents stay in the workspace as plain agents —
+  no org tools, no org prompt, no org heartbeat work, and a paused seat no
+  longer holds their own heartbeat.
+- Its unit channels are archived (read-only); `#company` stays for the
+  workspace. The `/org/` indexes and mirrors stop being written.
+- Nothing is deleted. `GET …/org/archived` lists archived companies (also
+  under `archived` in `GET …/org`), `GET …/org/archived/:orgId` is the
+  read-only view (members, goals, projects, units, latest decisions, the
+  audit tail, row counts), and `/api/orgs/:id/…` answers reads but refuses
+  writes. The archive dialog offers **Export COMPANY.json first**.
+
+`archiveState` remembers what **Restore** (`POST …/org/restore { orgId? }`)
+puts back: the org's status (a company paused before the archive comes
+back paused), the workspace's mode, chief and envelope, and the channels
+the archive closed. Restore is refused while the workspace has another live
+company — archive that one first. A new company can be started in the
+workspace while one is archived (the onboarding wizard, or turning the mode
+on); a workspace holds any number of archived companies and one live one.
+
+### Delete permanently
+
+`DELETE /api/workspaces/:id/org { orgId?, confirmName, agents?, files?,
+channels? }` — only from the archived state, and only with the company's
+name typed back. The dialog says what is removed and what is kept and offers
+**Export COMPANY.json first** (`GET …/org/archived/:orgId/blueprint`). The
+choices:
+
+| Choice | Default | Other options |
+|---|---|---|
+| `agents` — the agents that were members | `keep`: plain agents in the workspace | `delete` (an agent seated in another live company is kept) |
+| `files` — everything under `/org/` | `keep`: moved to `/archive/org-<slug>-<archive day>/` (`WorkspaceFs.move`) | `delete`. Neither touches `/org/` when a new company is live: the folder is its now |
+| `channels` — the unit channels | `archive` (read-only, messages kept) | `keep` (reopened as ordinary channels), `delete` (with messages, members and read marks). `#general` and `#company` never go |
+
+Then one transaction removes every org-scoped row: each table with an
+`orgId` column, in `ORG_TABLE_PLAN` order (children first), and the rows
+that hang off the org without one — metric samples (the metric sources
+carry the org's only stored secrets), follows of its tasks, its boards'
+task key counters, plugin bindings scoped to its units and projects
+(`interface_bindings`); chats and channel messages linked to its tasks keep
+their content and lose the link; a registry install or an action-log entry
+only points at the org, so its `orgId` is cleared. The organization row
+goes last. Nothing outside the org is touched: personal chats, other
+agents, other workspaces and their companies.
+
+The org's own audit chain goes with it; the final `org_deleted` entry —
+the name, the row counts and the choices — lands on the workspace's audit
+chain (`plugin_audit`, `GET /api/workspaces/:id/plugins/audit`).
+
+The delete is safe to interrupt: the attempt is recorded in `archiveState`
+(restore is refused meanwhile), every side effect is idempotent (channels,
+files, agents), the rows go in one transaction, and a retry redoes only
+what is left. A retry after success answers `alreadyDeleted: true`. A
+table added later with an `orgId` column is still swept by the delete, and
+`tests/backend-org-lifecycle.test.ts` fails until it is named in
+`ORG_TABLE_PLAN`. `DELETE /api/orgs/:id` no longer deletes: it points here.

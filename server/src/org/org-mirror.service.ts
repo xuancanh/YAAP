@@ -18,7 +18,7 @@
  * (unchanged text is skipped), logged, never throws.
  */
 import { Inject, Injectable, Logger, OnApplicationBootstrap, Optional } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { agents, organizations, orgEvalCases, orgEvalRuns, orgExperiments, orgMetricSamples, orgMetricSources, orgPlaybooks, orgPredictions } from '../database/schema';
@@ -169,7 +169,6 @@ export function renderMetrics(sources: MetricSource[], samples: Map<string, Metr
 export class OrgMirrorService implements OnApplicationBootstrap {
   private readonly logger = new Logger(OrgMirrorService.name);
   private readonly pending = new Set<Promise<unknown>>();
-  private readonly wsOf = new Map<string, string>();
   /** OrgSeatService registers itself: the outcomes table needs its spend join. */
   private outcomesOf?: (orgId: string) => Promise<OutcomeRow[]>;
 
@@ -252,11 +251,10 @@ export class OrgMirrorService implements OnApplicationBootstrap {
   }
 
   private async workspaceOf(orgId: string): Promise<string | null> {
-    const hit = this.wsOf.get(orgId);
-    if (hit) return hit;
-    const row = (await this.db.select({ workspaceId: organizations.workspaceId }).from(organizations).where(eq(organizations.id, orgId)).limit(1)).at(0);
-    if (row) this.wsOf.set(orgId, row.workspaceId);
-    return row?.workspaceId ?? null;
+    const row = (await this.db.select({ workspaceId: organizations.workspaceId, status: organizations.status }).from(organizations).where(eq(organizations.id, orgId)).limit(1)).at(0);
+    // An archived company mirrors nothing (read each time, not cached: archive and restore flip it).
+    if (!row || row.status === 'archived') return null;
+    return row.workspaceId;
   }
 
   private async agentNames(ids: string[]): Promise<Map<string, string>> {
@@ -291,7 +289,7 @@ export class OrgMirrorService implements OnApplicationBootstrap {
       try { if (await fn()) n++; } catch (err) { this.logger.warn(`org mirror backfill of ${what} failed: ${err instanceof Error ? err.message : err}`); }
     };
     let orgs: Array<{ id: string }>;
-    try { orgs = await this.db.select({ id: organizations.id }).from(organizations); } catch (err) {
+    try { orgs = await this.db.select({ id: organizations.id }).from(organizations).where(ne(organizations.status, 'archived')); } catch (err) {
       this.logger.warn(`org mirror backfill could not list organizations: ${err instanceof Error ? err.message : err}`);
       return 0;
     }

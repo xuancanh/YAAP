@@ -739,6 +739,14 @@ export const organizations = pgTable('organizations', {
    *  OrgIncidentsService.isFrozen; resolving the incident with undo lifts it. */
   frozenClasses: text('frozenClasses').notNull().default('[]'),
   createdAt: text('createdAt').notNull(),
+  /** Archive (migration 0082, docs/owners-seat.md "Archive or delete the
+   *  company"): `status = 'archived'` with when and who; `archiveState` is
+   *  the JSON restore puts back — { status, mode, chiefOfStaffAgentId,
+   *  monthlyUsd, channels: [ids the archive closed] } — plus `deleting`
+   *  while a permanent delete is in progress. */
+  archivedAt: text('archivedAt'),
+  archivedBy: text('archivedBy').notNull().default(''),
+  archiveState: text('archiveState').notNull().default('{}'),
 });
 
 /** A signal (docs/company-vision.md §5.1): a model-free observation about

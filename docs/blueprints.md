@@ -85,6 +85,19 @@ the chief's and the role's. A workspace whose agent cap is below the role
 count has the cap raised to the role count by the import (noted in the
 plan).
 
+### Export before you archive or delete
+
+A blueprint is how a company outlives its rows. Archiving a company
+(`docs/owners-seat.md` "Archive or delete the company") and deleting it
+permanently both offer **Export COMPANY.json first** in their dialogs; an
+archived company exports through `GET
+/api/workspaces/:id/org/archived/:orgId/blueprint` (same document, same
+validator). The export carries the structure, charters, profile, cadences
+and budget split — not the tasks, decisions, files or history, which a
+permanent delete removes (or moves, for `/org/` files). Import it into any
+empty workspace, or into the same one once the old company is archived, to
+start again from the same shape.
+
 ## 3. Publishing and installing through the registry
 
 A blueprint is a registry item of kind `company` (`docs/registry.md` §8).

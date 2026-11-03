@@ -2217,6 +2217,18 @@ const MIGRATIONS: Migration[] = [
       if (!(await hasColumn(db, 'org_messages', 'fromUserId'))) await db.query(`ALTER TABLE org_messages ADD COLUMN "fromUserId" TEXT NOT NULL DEFAULT ''`);
     },
   },
+  {
+    id: '0085-org-archive',
+    up: async (db) => {
+      // Archiving a company (docs/owners-seat.md "Archive or delete the
+      // company"): when and by whom, and the state restore puts back (the
+      // org's status, the workspace's mode and the unit channels the archive
+      // closed) as JSON. Idempotent.
+      if (!(await hasColumn(db, 'organizations', 'archivedAt'))) await db.query(`ALTER TABLE organizations ADD COLUMN "archivedAt" TEXT`);
+      if (!(await hasColumn(db, 'organizations', 'archivedBy'))) await db.query(`ALTER TABLE organizations ADD COLUMN "archivedBy" TEXT NOT NULL DEFAULT ''`);
+      if (!(await hasColumn(db, 'organizations', 'archiveState'))) await db.query(`ALTER TABLE organizations ADD COLUMN "archiveState" TEXT NOT NULL DEFAULT '{}'`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

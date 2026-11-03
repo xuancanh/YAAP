@@ -22,7 +22,8 @@
  * org_metric_read, org_propose_metric_source, org_task_checks and
  * org_run_checks (OrgSensingService), and none writes a sample.
  */
-import { Body, Controller, Delete, ForbiddenException, Get, Headers, HttpCode, NotFoundException, Optional, Param, Patch, PayloadTooLargeException, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Headers, HttpCode, NotFoundException, Optional, Param, Patch, PayloadTooLargeException, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { ArchivedOrgGuard } from './archived-org.guard';
 import type { Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { IsIn, IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
@@ -51,6 +52,8 @@ export class AttestDto {
 export class BindSourceDto { @IsOptional() sourceId?: string | null }
 
 /** The org-scoped half; the workspace alias delegates here. */
+/** An archived company is read-only here (archived-org.guard.ts). */
+@UseGuards(ArchivedOrgGuard)
 @Controller('orgs')
 export class OrgSensingController {
   constructor(

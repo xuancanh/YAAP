@@ -15,7 +15,7 @@ import { and, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { PROJECT_LANES, PROJECT_STATUSES, normalizeDay, parseIdList, parseProjectBrief, type Milestone, type ProjectBrief, type ProjectKind } from './work-model';
-import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants, orgHumans, orgUnits, orgCheckins, orgAllocations, workspaces } from '../database/schema';
+import { organizations, orgMembers, orgGoals, orgProjects, orgBudgets, orgGrants, orgHumans, orgAllocations, workspaces } from '../database/schema';
 import { TriggerBus } from '../chats/trigger-bus';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
@@ -285,7 +285,7 @@ export class OrgService {
       maxDepth: MAX_DEPTH_CEILING, maxDirectReports: DEFAULT_MAX_DIRECT_REPORTS,
       briefHour: clampHour(input.briefHour ?? 8), lastBriefAt: null, lastBrief: '',
       auditorAgentId: null, auditCadenceDays: 7, auditUsdCap: 2,
-      rules: '', strategyMemo: '', strategyMemoAt: null, values: '', culture: '', tunables: '{}', routing: '{}', frozenClasses: '[]',
+      rules: '', strategyMemo: '', strategyMemoAt: null, values: '', culture: '', tunables: '{}', routing: '{}', frozenClasses: '[]', archivedAt: null, archivedBy: '', archiveState: '{}',
       createdAt: nowIso(),
     };
     await this.db.insert(organizations).values(row);
@@ -460,19 +460,6 @@ export class OrgService {
     return this.get(id);
   }
 
-  async remove(id: string): Promise<{ ok: true }> {
-    const org = await this.get(id);
-    await this.db.delete(orgMembers).where(eq(orgMembers.orgId, id));
-    await this.db.delete(orgGoals).where(eq(orgGoals.orgId, id));
-    await this.db.delete(orgCheckins).where(eq(orgCheckins.orgId, id));
-    await this.db.delete(orgProjects).where(eq(orgProjects.orgId, id));
-    await this.db.delete(orgBudgets).where(eq(orgBudgets.orgId, id));
-    await this.db.delete(orgGrants).where(eq(orgGrants.orgId, id));
-    await this.db.delete(orgUnits).where(eq(orgUnits.orgId, id));
-    await this.db.delete(organizations).where(eq(organizations.id, id));
-    if (org.status !== 'archived') await this.db.update(workspaces).set({ orgMode: 'off', chiefOfStaffAgentId: null }).where(eq(workspaces.id, org.workspaceId));
-    return { ok: true };
-  }
 
   async isActive(id: string): Promise<boolean> {
     const org = (await this.db.select().from(organizations).where(eq(organizations.id, id)).limit(1)).at(0);
@@ -489,9 +476,16 @@ export class OrgService {
     return (await this.db.select().from(orgMembers).where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.agentId, agentId))).limit(1)).at(0) ?? null;
   }
 
-  /** Orgs an agent belongs to (active or paused membership). */
-  membershipsOf(agentId: string): Promise<OrgMember[]> {
-    return this.db.select().from(orgMembers).where(eq(orgMembers.agentId, agentId));
+  /** Orgs an agent belongs to (active or paused membership). A seat in an
+   *  archived company is suspended, not deleted: it is left out here, so
+   *  the agent is a plain agent (no org tools, prompts or heartbeat work)
+   *  until the company is restored (docs/owners-seat.md "Archive or delete
+   *  the company"). */
+  async membershipsOf(agentId: string): Promise<OrgMember[]> {
+    const rows = await this.db.select({ m: orgMembers, status: organizations.status }).from(orgMembers)
+      .leftJoin(organizations, eq(organizations.id, orgMembers.orgId))
+      .where(eq(orgMembers.agentId, agentId));
+    return rows.filter((r) => r.status !== 'archived').map((r) => r.m);
   }
 
   async isChief(orgId: string, agentId: string): Promise<boolean> {

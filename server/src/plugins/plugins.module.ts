@@ -20,6 +20,6 @@ import { PluginsController } from './plugins.controller';
   imports: [ChatsModule, ActionsModule],
   controllers: [PluginsController],
   providers: [PluginAuditService, PluginsService, ChangesService, InterfaceDispatcher],
-  exports: [PluginsService, ChangesService, InterfaceDispatcher],
+  exports: [PluginsService, ChangesService, InterfaceDispatcher, PluginAuditService],
 })
 export class PluginsModule {}

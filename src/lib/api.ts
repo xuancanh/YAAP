@@ -1114,6 +1114,35 @@ export interface WorkspaceOrg {
   /** The unit tree (docs/group-chat.md §7), empty without an organization. */
   units: OrgUnitNode[];
   enrolled?: string[]; notEnrolled?: Array<{ agentId: string; reason: string }>;
+  /** Archived companies of the workspace (docs/owners-seat.md "Archive or delete the company"), newest first. */
+  archived?: ArchivedOrg[];
+}
+/** An archived company: read-only, restorable, deletable. */
+export interface ArchivedOrg {
+  id: string; name: string; mission: string; archivedAt: string | null; archivedBy: string;
+  restoreStatus: 'active' | 'paused'; restoreMode: OrgMode; members: number; deleting: boolean;
+}
+/** GET …/org/archived/:orgId — the read-only "Archived company" view. */
+export interface ArchivedOrgDetail {
+  org: { id: string; name: string; mission: string; values: string; culture: string; rules: string; chiefOfStaffAgentId: string | null; monthlyBudgetUsd: number; createdAt: string; archivedAt: string | null; archivedBy: string; restoreStatus: 'active' | 'paused'; restoreMode: OrgMode; deleting: boolean };
+  members: Array<{ agentId: string; title: string; status: string; reportsToAgentId: string | null; depth: number; name: string | null; emoji: string | null; exists: boolean }>;
+  goals: Array<{ id: string; title: string; kind: string; status: string }>;
+  projects: Array<{ id: string; title: string; status: string }>;
+  units: Array<{ id: string; name: string; slug: string; leadAgentId: string; parentUnitId: string | null; channelId: string | null }>;
+  decisions: Array<{ id: string; title: string; decision: string; decidedBy: string; createdAt: string }>;
+  audit: Array<{ seq: number; actor: string; action: string; createdAt: string }>;
+  /** Rows per org table. */
+  counts: Record<string, number>;
+  orgFiles: number;
+  liveCompany: { id: string; name: string } | null;
+  canRestore: boolean;
+}
+export interface DeleteOrgBody { orgId?: string; confirmName: string; agents?: 'keep' | 'delete'; files?: 'keep' | 'delete'; channels?: 'archive' | 'keep' | 'delete' }
+export interface DeleteOrgReport {
+  ok: true; orgId: string; name: string; alreadyDeleted?: boolean; rows: Record<string, number>;
+  agents: { choice: 'keep' | 'delete'; deleted: string[]; kept: string[] };
+  files: { choice: 'keep' | 'delete'; moved?: number; to?: string; deleted?: number; skipped?: string };
+  channels: { choice: 'archive' | 'keep' | 'delete'; archived: number; reopened: number; deleted: number };
 }
 export interface OrgCaps { maxDepth: number; maxDirectReports: number; defaultAgentCap: number; rules: string[]; /** The default veto window on autonomous plans (minutes), for the wizard. */ vetoWindowMinutes?: number }
 // ---- company onboarding (execution plan item 25) ----
@@ -2025,6 +2054,12 @@ export const api = {
   },
   pauseOrg: (wsId: string) => send<WorkspaceOrg>(`/api/workspaces/${wsId}/org/pause`, 'POST'),
   resumeOrg: (wsId: string) => send<WorkspaceOrg>(`/api/workspaces/${wsId}/org/resume`, 'POST'),
+  // Archive, restore, delete the company (docs/owners-seat.md "Archive or delete the company"; owner only).
+  archiveOrg: (wsId: string) => send<{ archived: ArchivedOrg; status: WorkspaceOrg }>(`/api/workspaces/${wsId}/org/archive`, 'POST'),
+  restoreOrg: (wsId: string, orgId?: string) => send<{ restored: { orgId: string; status: 'active' | 'paused'; mode: OrgMode }; status: WorkspaceOrg }>(`/api/workspaces/${wsId}/org/restore`, 'POST', { orgId }),
+  deleteOrg: (wsId: string, body: DeleteOrgBody) => send<DeleteOrgReport>(`/api/workspaces/${wsId}/org`, 'DELETE', body),
+  archivedOrg: (wsId: string, orgId: string) => get<ArchivedOrgDetail>(`/api/workspaces/${wsId}/org/archived/${orgId}`),
+  archivedOrgBlueprint: (wsId: string, orgId: string) => get<Blueprint>(`/api/workspaces/${wsId}/org/archived/${orgId}/blueprint`),
   reviewOrgStructure: (wsId: string) => send<{ result: string }>(`/api/workspaces/${wsId}/org/review`, 'POST'),
   org: (wsId: string) => get<OrgDetail>(`/api/workspaces/${wsId}/org/detail`),
   updateOrg: (wsId: string, patch: Partial<Pick<Org, 'name' | 'mission' | 'ceoUserNote' | 'briefHour' | 'monthlyBudgetUsd'>>) => send<Org>(`/api/workspaces/${wsId}/org/detail`, 'PATCH', patch),

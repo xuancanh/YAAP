@@ -848,6 +848,14 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
    *  in-flight runs of this org; the task claims are released. */
   async pause(orgId: string, actor = 'user'): Promise<Organization> {
     const org = await this.org.setStatus(orgId, 'paused', actor);
+    await this.stopAll(orgId);
+    return org;
+  }
+
+  /** Drop every queued wake, review, planning pass and re-wake of the org
+   *  and stop its in-flight runs, without touching its status: the kill
+   *  switch's half, shared with archive (OrgLifecycleService). */
+  async stopAll(orgId: string): Promise<void> {
     for (const [key, p] of [...this.pendingWakes.entries()]) if (p.ev.orgId === orgId) { clearTimeout(p.timer); this.pendingWakes.delete(key); }
     const review = this.pendingReviews.get(orgId);
     if (review) { clearTimeout(review.timer); this.pendingReviews.delete(orgId); }
@@ -857,7 +865,6 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       if (t) { clearTimeout(r.timer); this.rewakes.delete(taskId); }
     }
     for (const ctx of [...this.running.values()]) if (ctx.orgId === orgId) { ctx.loopDetected = false; this.turns.stop(ctx.sessionId); }
-    return org;
   }
 
   async resume(orgId: string, actor = 'user'): Promise<Organization> {
