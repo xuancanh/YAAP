@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { PGlite } from '@electric-sql/pglite';
 import { testDb, memStorage, pgliteQueryable } from './helpers';
 import { WorkspacesService } from '../server/src/workspaces/workspaces.service';
@@ -20,7 +20,7 @@ import { PluginsService } from '../server/src/plugins/plugins.service';
 import { PluginRegistryService } from '../server/src/plugins/plugin-registry.service';
 import { FoundryController, SHELVES } from '../server/src/foundry/foundry.controller';
 import { KIT_PREVIEWS } from '../server/src/foundry/kits.catalog';
-import { interfaceBindings, interfaceProviders, pluginAudit, pluginEffects, pluginInstalls, pluginVersions, registryItems } from '../server/src/database/schema';
+import { interfaceBindings, interfaceProviders, pluginAudit, pluginEffects, pluginVersions, registryItems } from '../server/src/database/schema';
 import { runWithViewer } from '../server/src/accounts/account-context';
 import { runPgMigrations } from '../server/src/database/migrator';
 
@@ -28,7 +28,12 @@ const ciText = readFileSync('plugins/first-party/ci/plugin.json', 'utf8');
 const ciSuite = readFileSync('plugins/first-party/ci/conformance/ci/suite.json', 'utf8');
 
 /** A community interface: the ci contract renamed, so no first-party name is claimed. */
-function tickIface(version = '1.0.0', patch: (m: Record<string, any>) => void = () => {}) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- manifests are edited as plain JSON here
+type Json = any;
+/** An error whose Nest response body carries `text` (messages, errors, blockers). */
+const refused = (text: string) => (e: unknown) => JSON.stringify((e as { response?: unknown }).response ?? '').includes(text);
+
+function tickIface(version = '1.0.0', patch: (m: Json) => void = () => {}) {
   const m = JSON.parse(ciText);
   m.id = 'tick@community';
   m.name = 'Tick (interface)';
@@ -106,9 +111,9 @@ test('publishing: dry run writes nothing; then a listed community version pinned
   assert.deepEqual(listed.map((i) => i.id), ['tick@community']);
   // Republishing the same bytes is a no-op; the same version with other bytes is refused; versions only go up.
   assert.equal((await s.registry.publish(s.ws.id, pkg)).published, false);
-  await assert.rejects(s.registry.publish(s.ws.id, tickIface('1.0.0', (m) => { m.description = 'changed'; })), (e: any) => JSON.stringify(e.response).includes('versions are immutable'));
+  await assert.rejects(s.registry.publish(s.ws.id, tickIface('1.0.0', (m) => { m.description = 'changed'; })), refused('versions are immutable'));
   await s.registry.publish(s.ws.id, tickIface('1.2.0'));
-  await assert.rejects(s.registry.publish(s.ws.id, tickIface('1.1.0')), (e: any) => JSON.stringify(e.response).includes('older than the newest published version 1.2.0'));
+  await assert.rejects(s.registry.publish(s.ws.id, tickIface('1.1.0')), refused('older than the newest published version 1.2.0'));
   const detail = await s.registry.detail(s.ws.id, 'tick@community');
   assert.deepEqual(detail.versions.map((x) => x.version), ['1.2.0', '1.0.0']);
 });
@@ -126,10 +131,10 @@ test('publishing refuses the first-party and local namespaces, unsigned verified
   fixtureProvider.publisher = { id: 'acme', name: 'Acme' };
   const files = { 'fixtures/scm.json': readFileSync('plugins/first-party/scm-mock/fixtures/scm.json', 'utf8'), 'fixtures/ci.json': readFileSync('plugins/first-party/scm-mock/fixtures/ci.json', 'utf8') };
   assert.match(await blockersOf({ manifest: fixtureProvider, files }), /fixture implementations are for first-party and local providers only/);
-  await assert.rejects(s.registry.publish(s.ws.id, ns('tick@yaam')), (e: any) => JSON.stringify(e.response).includes('publish refused'));
+  await assert.rejects(s.registry.publish(s.ws.id, ns('tick@yaam')), refused('publish refused'));
   await assert.rejects(asMember(s, () => s.registry.publish(s.ws.id, tickIface())), /only the workspace owner/);
   // The loader's archive rules hold for published packages too.
-  await assert.rejects(s.registry.publish(s.ws.id, { ...tickIface(), files: { ...tickIface().files, 'run.sh': 'echo hi' } }), (e: any) => JSON.stringify(e.response).includes('scripts and binaries are refused'));
+  await assert.rejects(s.registry.publish(s.ws.id, { ...tickIface(), files: { ...tickIface().files, 'run.sh': 'echo hi' } }), refused('scripts and binaries are refused'));
 });
 
 test('a community plugin installs only with the owner\'s opt-in, and a community interface also needs the workspace opt-in', async () => {
@@ -139,9 +144,9 @@ test('a community plugin installs only with the owner\'s opt-in, and a community
   assert.equal(review.tier, 'community');
   assert.equal(review.communityOptIn, true);
   assert.ok((review.blockers as string[]).some((b) => b.includes('community-interface opt-in')), 'the interface needs plugins.allowCommunityInterfaces');
-  await assert.rejects(s.plugins.install(s.ws.id, { registry: { id: 'tick@community' } }, { confirm: true, acceptCommunity: true }), (e: any) => JSON.stringify(e.response).includes('community-interface opt-in'));
+  await assert.rejects(s.plugins.install(s.ws.id, { registry: { id: 'tick@community' } }, { confirm: true, acceptCommunity: true }), refused('community-interface opt-in'));
   await s.plugins.setWorkspaceSettings(s.ws.id, { allowCommunityInterfaces: true });
-  await assert.rejects(s.plugins.install(s.ws.id, { registry: { id: 'tick@community' } }, { confirm: true }), (e: any) => JSON.stringify(e.response).includes('explicit opt-in'));
+  await assert.rejects(s.plugins.install(s.ws.id, { registry: { id: 'tick@community' } }, { confirm: true }), refused('explicit opt-in'));
   await assert.rejects(asMember(s, () => s.plugins.install(s.ws.id, { registry: { id: 'tick@community' } }, { confirm: true, acceptCommunity: true })), /only the workspace owner/);
   const r = await s.plugins.install(s.ws.id, { registry: { id: 'tick@community' } }, { confirm: true, acceptCommunity: true });
   assert.equal(r.installed, true);
@@ -246,8 +251,8 @@ test('the local path: an uploaded folder or a developer folder loads as @local t
   const local = tickIface('1.0.0', (m) => { m.id = 'tick@local'; });
   const files = { 'plugin.json': JSON.stringify(local.manifest), ...local.files };
   // An upload carries plugin.json among its files; scripts and package scripts are refused.
-  await assert.rejects(s.plugins.review(s.ws.id, { files: { ...files, 'setup.sh': 'curl x | sh' } }), (e: any) => JSON.stringify(e.response).includes('scripts and binaries are refused'));
-  await assert.rejects(s.plugins.review(s.ws.id, { files: { ...files, 'package.json': JSON.stringify({ scripts: { postinstall: 'node x' } }) } }), (e: any) => JSON.stringify(e.response).includes('package scripts are refused'));
+  await assert.rejects(s.plugins.review(s.ws.id, { files: { ...files, 'setup.sh': 'curl x | sh' } }), refused('scripts and binaries are refused'));
+  await assert.rejects(s.plugins.review(s.ws.id, { files: { ...files, 'package.json': JSON.stringify({ scripts: { postinstall: 'node x' } }) } }), refused('package scripts are refused'));
   await assert.rejects(s.plugins.review(s.ws.id, { files: { ...files, 'plugin.json': JSON.stringify({ ...local.manifest, id: 'tick@community' }) } }), /loads as name@local only/);
   await s.plugins.setWorkspaceSettings(s.ws.id, { allowCommunityInterfaces: true });
   const r = await s.plugins.install(s.ws.id, { files }, { confirm: true });
@@ -279,9 +284,9 @@ test('the local path: an uploaded folder or a developer folder loads as @local t
     const script = mk('script');
     writeFileSync(join(script, 'install.sh'), 'echo hi');
     await assert.rejects(s.plugins.review(other.id, { path: '../' }), /inside YAAM_PLUGINS_DEV_DIR/);
-    await assert.rejects(s.plugins.review(other.id, { path: 'linked' }), (e: any) => JSON.stringify(e.response).includes('symlinks are refused'));
-    await assert.rejects(s.plugins.review(other.id, { path: 'exec' }), (e: any) => JSON.stringify(e.response).includes('executable bit is refused'));
-    await assert.rejects(s.plugins.review(other.id, { path: 'script' }), (e: any) => JSON.stringify(e.response).includes('scripts and binaries are refused'));
+    await assert.rejects(s.plugins.review(other.id, { path: 'linked' }), refused('symlinks are refused'));
+    await assert.rejects(s.plugins.review(other.id, { path: 'exec' }), refused('executable bit is refused'));
+    await assert.rejects(s.plugins.review(other.id, { path: 'script' }), refused('scripts and binaries are refused'));
     const ok = await s.plugins.review(other.id, { path: 'clean' });
     assert.equal(ok.tier, 'local');
     assert.equal(ok.id, 'clean@local');
