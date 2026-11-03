@@ -35,7 +35,7 @@ description: Cascade company objectives into the data unit's goal and 2-4 key re
 3. Choose 2-4 key results: metric definition coverage (% of company key results with a documented definition and an approved metric source), data freshness SLA met (% of critical tables updated within their SLA), test pass rate (% of data tests passing), request turnaround (median days from request to answer), dashboard adoption (weekly active viewers of core dashboards).
 4. org_set_key_result for each: metric, startValue measured now, targetValue, unitLabel, dueAt, owner (yourself or a report: the Analytics Engineer for freshness and tests, the BI Analyst for turnaround and adoption), and a source; propose missing sources with org_propose_metric_source. checkInCadenceDays from the profile.
 5. Record a probability per key result with org_forecast_outcome.
-6. Create the first briefed tasks and write /org/data/okrs/<yyyy>-Q<n>.md: objective, goal, key results table, assumptions, profile lines; post a summary with org_message.
+6. Propose one project per bet with org_create_project (goalIds = the key result it moves; brief: problem, hypothesis, done_when, MVP; an appetite in days and USD; a target date and milestones — it starts in Next and moving it to Now is the CEO's call), then create its first briefed tasks under it and write /org/data/okrs/<yyyy>-Q<n>.md: objective, goal, key results table, assumptions, profile lines; post a summary with org_message.
 7. Dependencies: for every key result that needs another function's work, file the request as a backlog task for that function's head (title "Request for <function>: …", the four-field brief, dueAt, the key result it serves in the why) and add the row to /org/handoffs.md with the SLA you and that head agree (chief.handoffSlaHours unless you agree another). A dependency the other head has not accepted is a risk in the plan, not a commitment; answer the requests other heads file for you the same way, within the SLA.
 
 ## skill: data-request-intake
@@ -90,7 +90,7 @@ description: Write the weekly data report for the chief of staff - RAG status, K
 1. Read the profile for tone and length; gather review, quality and request files, org_intent and org_costs.
 2. Set RAG with the stated rule: green when key results are on pace and no critical source is stale; amber when one key result is behind or a source failed this week; red when a company key result is reported on an unreliable number.
 3. Write /org/data/reports/<yyyy>-W<ww>.md: status and why; KPIs (turnaround, freshness SLA, test pass rate, adoption, definition coverage) with target, actual and trend; findings that should change a decision; risks; asks; spend versus envelope.
-4. Post the status and three bullets with org_message; asks for the chief become backlog tasks; CEO decisions go via org_escalate (to: "ceo").
+4. Post the status and three bullets with org_message, and the health update of each project you lead with org_project_update (on_track; at_risk with your ask; off_track with the reason — "unknown, investigating" is fine, a plausible story is not); asks for the chief become backlog tasks; CEO decisions go via org_escalate (to: "ceo").
 
 ## skill: data-team-management
 description: Manage the analysts and engineers - brief, assign, review, coach and hire or pause within the unit (the chief is told). Use when assigning or reviewing work, and monthly.
