@@ -74,7 +74,8 @@ export interface ImportPlan {
   profile: { values: boolean; culture: boolean; rules: boolean };
   vision: { title: string; horizonDays: number } | null;
   playbooks: Array<{ name: string }>;
-  cadences: { count: number; applied: boolean; note: string };
+  /** The rituals the blueprint lists, for the chief to set (`list`: unit title or 'root', meeting kind, cron). */
+  cadences: { count: number; applied: boolean; note: string; list: NonNullable<Blueprint['cadences']> };
   recommendedCards: string[];
   recommendedConnections: string[];
   /** The whole staffing plan as one approval card (supervised) or direct hires (autonomous). */
@@ -288,7 +289,7 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
       return { key, value, applied: clamped, note: `clamped to the bound ${def.min}–${def.max}` };
     });
     const cadencesTable = await this.tableExists('org_cadences').catch(() => false);
-    const cadences = { count: bp.cadences?.length ?? 0, applied: false, note: bp.cadences?.length ? (cadencesTable ? 'rituals are installed; cadences are listed for the chief to set (not written by the import)' : 'skipped: rituals (item 19) are not installed on this server') : 'none' };
+    const cadences = { count: bp.cadences?.length ?? 0, applied: false, note: bp.cadences?.length ? (cadencesTable ? 'rituals are installed; cadences are listed for the chief to set (not written by the import)' : 'skipped: rituals (item 19) are not installed on this server') : 'none', list: bp.cadences ?? [] };
     if (bp.playbooks.length) notes.push(`${bp.playbooks.length} playbook(s) install as skill drafts; approve them on the Skills page`);
     notes.push('nothing else is created: no connections, grants, memory, lessons, tokens or files');
     return {

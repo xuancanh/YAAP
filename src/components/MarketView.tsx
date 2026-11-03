@@ -533,20 +533,21 @@ function CompaniesDept() {
       {failed && <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 14 }}>Could not load the companies: {failed}</div>}
       {data && data.items.length === 0 && !failed && (
         <div style={{ marginTop: 18, border: '1px solid var(--border)', borderRadius: 16, background: 'var(--panel)', padding: 20, fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
-          No company published yet. Publish yours from Settings → Workspace → Organization → Blueprint; the export is scanned and shown to installers before any plan.
+          {q.trim() ? `No company matches “${q.trim()}”.` : 'No company published yet. Publish yours from Settings → Workspace → Organization → Blueprint; the export is scanned and shown to installers before any plan.'}
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: app.stacked ? '1fr' : 'repeat(2,1fr)', gap: 16, marginTop: 18 }}>
         {(data?.items ?? []).map((it) => {
           const flags = flagCount(it.scanReport);
-          const roles = it.capabilities.tools.length;
+          const scopes = it.capabilities.tools.length;
+          const co = it.capabilities.company;
           return (
             <div key={it.id} style={{ border: '1px solid var(--border)', borderRadius: 16, background: 'var(--panel)', padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <div style={{ width: 42, height: 42, borderRadius: 12, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 21 }}>🏢</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}><span style={{ fontSize: 15.5, fontWeight: 700 }}>{it.name}</span>{tag('company', 'var(--accent-hi)')}{it.source === 'remote' && tag('remote', 'var(--text-faint)')}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{it.publisherName || 'anonymous'} · v{it.version}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}><span style={{ fontSize: 15.5, fontWeight: 700 }}>{it.name}</span>{it.official && tag('Official', 'var(--green)')}{tag('company', 'var(--accent-hi)')}{it.source === 'remote' && tag('remote', 'var(--text-faint)')}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{it.official ? 'yaam · first-party starter' : `${it.publisherName || 'anonymous'} · v${it.version}`}</div>
                 </div>
                 <div style={{ textAlign: 'right', flex: 'none', fontSize: 10.5, color: 'var(--text-faint)' }}>{fmtInstalls(it.installs)} install{it.installs === 1 ? '' : 's'}</div>
               </div>
@@ -555,7 +556,8 @@ function CompaniesDept() {
                 <span title="Installs that reached a first key result" style={{ fontSize: 10.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px' }}>◎ {it.outcomes.first_key_result} reached a key result</span>
                 <span title="Installs that ran thirty days inside their envelope" style={{ fontSize: 10.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px' }}>$ {it.outcomes.thirty_days_in_envelope} thirty days in envelope</span>
                 {it.capabilities.skills.length > 0 && <span style={{ fontSize: 10.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px' }}>{it.capabilities.skills.length} playbook(s)</span>}
-                {roles > 0 && <span style={{ fontSize: 10.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px', fontFamily: 'var(--mono)' }}>{roles} scope(s)</span>}
+                {co && <span style={{ fontSize: 10.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px' }}>{co.roles} seat{co.roles === 1 ? '' : 's'} · ${co.monthlyUsd}/month</span>}
+                {scopes > 0 && <span style={{ fontSize: 10.5, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 6, padding: '2px 8px', fontFamily: 'var(--mono)' }}>{scopes} scope(s)</span>}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 11, borderTop: '1px solid var(--border-soft)' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: flags ? 'var(--amber)' : 'var(--text-faint)' }}>{flags > 0 && <I d={P.warn} size={13} />}{flags ? `${flags} scan flag${flags === 1 ? '' : 's'}` : 'scan clean'}</span>

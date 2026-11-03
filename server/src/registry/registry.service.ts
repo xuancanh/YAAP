@@ -38,6 +38,7 @@ import { SkillsService } from '../skills/skills.service';
 import { PortabilityService } from '../portability/portability.service';
 import { parseSkillMd, renderSkillMd, scanSkillMd, type ParsedSkillMd, type ScanFlag, type ScanReport } from '../portability/skill-md';
 import { scanAppHtml } from './app-scan';
+import { BUILTIN_COMPANIES } from './builtin-companies.generated';
 import { BlueprintError, validateBlueprint, type Blueprint } from '../org/blueprints/format';
 
 export type RegistryKind = 'agent' | 'skill' | 'app' | 'company';
@@ -81,10 +82,13 @@ export interface RegistryListItem {
   ratingDown: number;
   publishedAt: string;
   updatedAt: string;
-  source: 'local' | 'remote';
+  /** `builtin`: a first-party starter shipped with the server (BUILTIN_PREFIX ids, no row). */
+  source: 'local' | 'remote' | 'builtin';
   remoteUrl: string;
   /** Local only: this instance has installed it at least once. */
   installed?: boolean;
+  /** First-party (a built-in starter): the listing badges it "Official" and sorts it first. */
+  official?: boolean;
 }
 
 export interface RegistryItemDetail extends RegistryListItem {
@@ -96,7 +100,7 @@ export interface RegistryReview {
   name: string;
   version: number;
   publisherName: string;
-  source: 'local' | 'remote';
+  source: 'local' | 'remote' | 'builtin';
   capabilities: CapabilitySummary;
   loops: CapabilitySummary['loops'];
   tools: string[];
@@ -155,6 +159,10 @@ interface RemoteCache {
 
 const REMOTE_TTL_MS = 10 * 60_000;
 const REMOTE_PREFIX = 'remote:';
+/** First-party starter blueprints (docs/blueprints.md §3a): served from the
+ *  built-in catalog, never seeded into registry_items. */
+export const BUILTIN_PREFIX = 'builtin:';
+export const OFFICIAL_PUBLISHER = 'yaam';
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const NAME_MAX = 60;
 const DESC_MAX = 300;
@@ -367,6 +375,33 @@ export function normalizeManifest(kind: RegistryKind, raw: Record<string, unknow
   };
 }
 
+/** The first-party starter blueprints as registry items (docs/blueprints.md
+ *  §3a, docs/foundry.md §10.2): COMPANY.json v1 documents in
+ *  blueprints/first-party/, embedded at build time. Each goes through the
+ *  same normalizeManifest('company') as a publish — validateBlueprint and the
+ *  scan — once per process; an invalid one is a build error the test catches,
+ *  and here it is left out rather than taking the listing down. */
+let builtinCache: Array<{ item: RegistryListItem; manifest: Record<string, unknown> }> | null = null;
+export function builtinCompanies(): Array<{ item: RegistryListItem; manifest: Record<string, unknown> }> {
+  if (builtinCache) return builtinCache;
+  const out: Array<{ item: RegistryListItem; manifest: Record<string, unknown> }> = [];
+  for (const b of BUILTIN_COMPANIES) {
+    let norm: ReturnType<typeof normalizeManifest>;
+    try { norm = normalizeManifest('company', b.manifest); } catch { continue; }
+    const at = (b.manifest.origin as { at?: string } | undefined)?.at ?? '';
+    out.push({
+      manifest: norm.manifest,
+      item: {
+        id: `${BUILTIN_PREFIX}${b.slug}`, kind: 'company', slug: b.slug, name: norm.name, description: norm.description, version: 1,
+        publisherName: OFFICIAL_PUBLISHER, capabilities: norm.capabilities, scanReport: norm.scan, installs: 0, ratingUp: 0, ratingDown: 0,
+        publishedAt: at, updatedAt: at, source: 'builtin', remoteUrl: '', official: true,
+      },
+    });
+  }
+  builtinCache = out;
+  return out;
+}
+
 @Injectable()
 export class RegistryService {
   /** Test seam: swap the outbound fetch (the SSRF guard still runs). */
@@ -557,13 +592,27 @@ export class RegistryService {
     // A remote copy of something published here is the same thing; show ours.
     const merged = [...local, ...remote.items.filter((i) => !localSlugs.has(`${i.kind}/${i.slug}`)).map((i) => ({ ...i, installed: installedIds.has(i.id) }))];
     const kind = filter.kind && REGISTRY_KINDS.includes(filter.kind as RegistryKind) ? filter.kind : '';
+    // The first-party starters join a company listing (only: the community
+    // view lists what people published), first, with their install counts here.
+    if (kind === 'company') {
+      const builtinIds = builtinCompanies().map((b) => b.item.id);
+      const counts = new Map<string, number>();
+      if (builtinIds.length) for (const r of await this.db.select({ itemId: registryInstalls.itemId }).from(registryInstalls).where(inArray(registryInstalls.itemId, builtinIds))) counts.set(r.itemId, (counts.get(r.itemId) ?? 0) + 1);
+      merged.unshift(...builtinCompanies().map((b) => ({ ...b.item, installs: counts.get(b.item.id) ?? 0, installed: counts.has(b.item.id) })));
+    }
     const q = (filter.q ?? '').trim().toLowerCase();
-    const items = merged.filter((i) => (!kind || i.kind === kind) && (!q || `${i.name} ${i.description} ${i.publisherName} ${i.slug}`.toLowerCase().includes(q)));
+    const items = merged.filter((i) => (!kind || i.kind === kind) && (!q || `${i.name} ${i.description} ${i.publisherName} ${i.slug}${i.official ? ' official first-party' : ''}`.toLowerCase().includes(q)));
     return { items, remote: { url: this.cfg.registryUrl, ok: !!this.cfg.registryUrl && !remote.error, error: remote.error, fetchedAt: remote.fetchedAt ? new Date(remote.fetchedAt).toISOString() : null } };
   }
 
   async get(id: string): Promise<RegistryItemDetail> {
     if (id.startsWith(REMOTE_PREFIX)) return this.remoteDetail(id.slice(REMOTE_PREFIX.length));
+    if (id.startsWith(BUILTIN_PREFIX)) {
+      const b = builtinCompanies().find((x) => x.item.id === id);
+      if (!b) throw new NotFoundException(`registry item ${id}`);
+      const installs = (await this.db.select({ id: registryInstalls.id }).from(registryInstalls).where(eq(registryInstalls.itemId, id))).length;
+      return { ...b.item, installs, installed: installs > 0, manifest: b.manifest };
+    }
     const row = await this.row(id);
     return { ...this.project(row), manifest: parseJson(row.manifest, {}) };
   }
@@ -848,6 +897,7 @@ export class RegistryService {
     };
     await this.db.insert(registryInstalls).values(install);
     if (id.startsWith(REMOTE_PREFIX)) await this.notifyRemote(id.slice(REMOTE_PREFIX.length), 'installed');
+    else if (id.startsWith(BUILTIN_PREFIX)) { /* no row: a built-in's installs are counted from registry_installs */ }
     else await this.db.update(registryItems).set({ installs: sql`${registryItems.installs} + 1` }).where(eq(registryItems.id, id));
     return install;
   }
@@ -859,7 +909,8 @@ export class RegistryService {
   async recordOutcome(itemId: string, kind: OutcomeKind): Promise<void> {
     if (!OUTCOME_KINDS.includes(kind)) throw new BadRequestException(`outcome kind must be one of ${OUTCOME_KINDS.join(', ')}`);
     if (itemId.startsWith(REMOTE_PREFIX)) { await this.notifyRemote(itemId.slice(REMOTE_PREFIX.length), 'outcome', { kind }); return; }
-    await this.row(itemId);
+    if (itemId.startsWith(BUILTIN_PREFIX)) { if (!builtinCompanies().some((b) => b.item.id === itemId)) throw new NotFoundException(`registry item ${itemId}`); }
+    else await this.row(itemId);
     await this.db.insert(registryOutcomes).values({ id: newId(), accountId: currentAccountId(), itemId, kind, createdAt: nowIso() });
   }
 
@@ -940,7 +991,7 @@ export class RegistryService {
     } else {
       await this.db.insert(registryRatings).values({ id: newId(), accountId: currentAccountId(), itemId, installId, turnId, rating, note, createdAt: nowIso() });
     }
-    if (itemId.startsWith(REMOTE_PREFIX)) return; // the remote keeps its own counters
+    if (itemId.startsWith(REMOTE_PREFIX) || itemId.startsWith(BUILTIN_PREFIX)) return; // the remote keeps its own counters; a built-in has no row
     const up = (rating === 'up' ? 1 : 0) - (prev?.rating === 'up' ? 1 : 0);
     const down = (rating === 'down' ? 1 : 0) - (prev?.rating === 'down' ? 1 : 0);
     await this.db.update(registryItems).set({

@@ -243,6 +243,10 @@ exceptions:
 - **Browse**: `GET /api/market/companies?q=` (or `GET
   /api/registry?kind=company`) — local and remote items, each with
   `outcomes { first_key_result, thirty_days_in_envelope }` counts.
+  The first-party starters (`docs/blueprints.md` §3a) come first in either
+  listing: `source: 'builtin'`, `official: true`, ids `builtin:<slug>`,
+  served from the built-in catalog rather than `registry_items` (a listing
+  without `kind` — the Community tab — leaves them out).
 - **Review and install**: `POST /api/market/companies/:id/install {
   workspaceId, mode, monthlyUsd?, confirm? }`. Without `confirm: true`:
   `{ requiresConfirm, review, plan }` — the review (the blueprint with every

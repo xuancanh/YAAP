@@ -11,7 +11,7 @@ ships the **role catalog as data** (§4) and **hybrid human roles** (§4,
 "hybrid staff"). The SPA side is the Blueprint card in Settings →
 Workspace → Organization ("In the app" below, `src/components/OrgBlueprintBits.tsx`).
 
-Last updated: 2026-11-02
+Last updated: 2026-11-04
 
 ## 1. The format: `COMPANY.json` v1
 
@@ -112,6 +112,77 @@ A blueprint is a registry item of kind `company` (`docs/registry.md` §8).
   here. The remote feed re-validates a remote company locally like any other
   kind.
 
+### 3a. Built-in starters (first-party)
+
+Seven first-party blueprints ship with the server, the starter catalog of
+`docs/foundry.md` §10.2 as plain v1 documents (kits come later, with
+`yaam-company/2`). The sources are `blueprints/first-party/<slug>.company.json`;
+`node scripts/build-builtin-companies.mjs` (`npm run blueprints:build`)
+embeds them in `server/src/registry/builtin-companies.generated.ts`, and a
+test fails when the two drift.
+
+| Starter (`builtin:<slug>`) | Seats | Envelope | Roles (catalog ids; the chief is `chief-of-staff` in each) | Profile reads as |
+|---|---|---|---|---|
+| SaaS startup (`saas-startup`) | 9 | $600 | `engineering-manager` → `engineering-software-engineer` ×2, `engineering-qa`; `cs-manager` → `cs-support`; `marketing-manager` (Head of Growth) → `marketing-demand-gen` | early; adhocracy; speed |
+| Agency (`agency`) | 8 | $500 | `project-lead` (Head of Client Delivery) → `ops-program-coordinator`, `designer`; `marketing-content` (Editor-in-chief) → `writer-editor`, `design-brand`; `finance-billing` | growth; market |
+| E-commerce shop (`e-commerce-shop`) | 10 | $550 | `ops-manager` → `ops-procurement`; `cs-manager` → `cs-support` ×2; `marketing-manager` → `marketing-demand-gen`; `finance-manager` → `finance-accountant` | early; market; speed |
+| Open-source project (`open-source-project`) | 6 | $250 | `engineering-manager` (Lead Maintainer) → `engineering-software-engineer` ×2 (triager, core contributor), `writer-editor` (docs and changelog); `project-lead` (Community Lead) | early; clan; writing |
+| Research lab (`research-lab`) | 6 | $400 | `researcher` (Principal Investigator, strong) → `analyst`, `data-scientist`, `writer-editor`; `auditor` | early; adhocracy; rigour |
+| Solo creator (`solo-creator`) | 5 | $150 | `marketing-content` (Editor-in-chief) → `writer-editor`, `marketer`; `controller` (cash-basis books) | early; clan |
+| Professional services firm (`professional-services-firm`) | 11 | $700 | `project-lead` (Head of Delivery) → `ops-program-coordinator`, `analyst`, `researcher`; `finance-manager` → `finance-accountant`, `finance-billing`; `people-manager` → `people-recruiter`; `auditor` | growth; hierarchy; rigour |
+
+How they are written, and what the test pins
+(`tests/backend-builtin-companies.test.ts`):
+
+- **Valid v1**, inside the caps (≤ 20 roles, depth ≤ 3, fan-out ≤ 5, one
+  root, the `chief-of-staff` role), already in normal form, origin
+  `{ exportedFrom: "yaam first-party", sourceOrgId: "first-party" }`.
+- **Roles from the catalog only.** Each role names its `roleId`; its charter
+  is the catalog charter with `{company}` written as "the company" (so it
+  reads right whatever the CEO names the organization) plus one sentence of
+  focus for that company type; its scopes are the role's `toolScopes` (and,
+  for support seats, a `connection:gmail:read` that the import turns into a
+  recommendation). The chief's scopes cover every report's, so the meet
+  drops nothing on import.
+- **Within the envelope**: the seats' `monthlyUsd` sum to at most
+  `budget.monthlyUsd`, the remainder is the chief's headroom, and
+  `allocations` are the per-seat envelopes, so the plan never cuts one. The
+  envelope is a starting point; the install asks for the CEO's.
+- **Cadences and tunables derived from the profile**, never fixed: the
+  root's rituals are exactly what `deriveOperatingSystem` (chief-os.ts)
+  derives from the blueprint's own values and culture, and `tunables` are
+  that derivation's values that differ from the defaults (what the
+  onboarding wizard writes for the same profile). Unit cadences follow the
+  kits' rhythms in §10.1 (sprint planning, queue review, close…) on units
+  the blueprint has. As for every v1 import they are **listed** for the
+  chief — the plan now carries `cadences.list` and the plan screen shows
+  each in words with its unit — and not written.
+- **No playbooks**: no starter playbook exists as a shared skill yet, so
+  none is carried (a role hire brings its pack's playbooks only on the
+  `role:` hire path, not through a blueprint). Recommended **cards** are
+  calendar, mail, drive and browser as fits.
+
+**How they are served.** Merged into the listing server-side, not seeded:
+`RegistryService.list({ kind: 'company' })` prepends `builtinCompanies()` —
+each manifest run once per process through the same
+`normalizeManifest('company')` as a publish (validation and scan) — with
+`source: 'builtin'`, `official: true`, publisher `yaam`, id
+`builtin:<slug>`, searchable by name, description, slug and "official".
+`get`, `review` and `POST /api/market/companies/:id/install` resolve the
+prefix like `remote:`, so install is the ordinary review → plan → confirm.
+Install counts are read from `registry_installs` rows for the id (there is
+no `registry_items` row to bump) and outcomes attach to it through
+`registry_outcomes` as for any item. Seeding rows at boot would have meant
+per-account copies to keep in step with the files and a migration on every
+change; the built-in catalog changes with a deploy and costs no storage.
+The Community tab (no `kind`) does not list them.
+
+**Where to start one.** Market → Companies, *Review & install* into an
+empty workspace (a workspace that runs a company is refused at the plan).
+The new-workspace wizard (`NewWorkspaceWizard.tsx`) bootstraps a company
+from its own steps and has no blueprint import, so it does not list them
+yet.
+
 ### In the app
 
 Settings → Workspace → Organization has a **Blueprint** row: *Export
@@ -122,8 +193,9 @@ meet, units, budget and allocations, tunables as applied, playbooks as
 drafts, cadences listed, recommended connections) and imports on confirm —
 in supervised mode it then opens the one `blueprint` approval card; *Publish
 to registry* previews the scan first and publishes on a second click. The
-Market's **Companies** tab lists published blueprints with their two outcome
-counts and installs one into a chosen workspace through the same review →
+Market's **Companies** tab lists the official starters first (badge
+*Official*, seats and envelope on the card), then published blueprints, with
+their two outcome counts and installs one into a chosen workspace through the same review →
 plan → confirm steps, playbook bodies shown before anything is created. The
 org chart's **Hire** dialog shows the role catalog (§5) ranked against the
 operating profile, and Organization → People seats hybrid employees (§6) who
@@ -229,3 +301,9 @@ the remote's report. Outcome sharing is opt-in and anonymous.
 `org-approvals.service.ts`; `shareBlueprintOutcomes` in
 `settings.module.ts`; `/api/registry/public/:id/outcome` in
 `auth-strategy.interface.ts`; `tests/backend-org-blueprints.test.ts` (11).
+Built-in starters: `blueprints/first-party/*.company.json`,
+`scripts/build-builtin-companies.mjs`,
+`server/src/registry/builtin-companies.generated.ts`, `builtinCompanies` /
+`BUILTIN_PREFIX` in `registry.service.ts`;
+`tests/backend-builtin-companies.test.ts`,
+`web-tests/market-companies.test.tsx`.

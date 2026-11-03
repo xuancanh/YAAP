@@ -705,6 +705,8 @@ export interface RegistryCapabilities {
   skills: Array<{ name: string; description: string }>;
   apps: Array<{ name: string; capabilities: string[] }>;
   appCapabilities?: { free: string[]; elevated: string[] };
+  /** kind=company: the staffing the blueprint describes. */
+  company?: { roles: number; depth: number; monthlyUsd: number; playbooks: number; cadences: number; tunables: number; cards: string[] };
 }
 export interface RegistryItem {
   id: string;
@@ -721,9 +723,12 @@ export interface RegistryItem {
   ratingDown: number;
   publishedAt: string;
   updatedAt: string;
-  source: 'local' | 'remote';
+  /** `builtin`: a first-party starter blueprint shipped with the server. */
+  source: 'local' | 'remote' | 'builtin';
   remoteUrl: string;
   installed?: boolean;
+  /** First-party: badged "Official" and listed first. */
+  official?: boolean;
 }
 export interface RegistryList {
   items: RegistryItem[];
@@ -735,7 +740,7 @@ export interface RegistryReview {
   name: string;
   version: number;
   publisherName: string;
-  source: 'local' | 'remote';
+  source: 'local' | 'remote' | 'builtin';
   capabilities: RegistryCapabilities;
   loops: RegistryCapabilities['loops'];
   tools: string[];
@@ -1293,7 +1298,7 @@ export interface BlueprintImportPlan {
   ok: boolean; name: string; mode: ImportMode; chief: { title: string; roleId?: string; scopes: string[]; dropped: string[]; modelTier: string; model: string };
   hires: PlannedHire[]; units: Array<{ title: string; parent: string | null }>; budget: { monthlyUsd: number; allocations: Record<string, number>; allocated: number };
   tunables: Array<{ key: string; value: number; applied: number; note?: string }>; profile: { values: boolean; culture: boolean; rules: boolean };
-  vision: { title: string; horizonDays: number } | null; playbooks: Array<{ name: string }>; cadences: { count: number; applied: boolean; note: string };
+  vision: { title: string; horizonDays: number } | null; playbooks: Array<{ name: string }>; cadences: { count: number; applied: boolean; note: string; list?: Array<{ unitTitle: string; kind: string; cron: string }> };
   recommendedCards: string[]; recommendedConnections: string[]; approval: 'blueprint' | 'none'; notes: string[];
 }
 export interface BlueprintImportResult { orgId: string; importId: string; mode: ImportMode; chiefAgentId: string; hired: Array<{ agentId: string; title: string }>; approvalId: string | null; playbooks: Array<{ skillId: string; name: string }>; notes: string[] }

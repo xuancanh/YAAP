@@ -10,6 +10,7 @@ import { useApp } from '../store';
 import { api, type Blueprint, type BlueprintImportPlan, type CompanyRegistryItem, type ImportMode, type RegistryPublishResult, type Workspace } from '../lib/api';
 import { blueprintFileName, blueprintPlanSummary, hiresByRole } from '../lib/org2';
 import { flagCount, loadPublisherName, savePublisherName } from '../lib/registry';
+import { humanCron, MEETING_KIND_TITLES } from '../lib/org';
 import { card, input, btn, pill, faint, label, linkBtn } from './org-ui';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -55,6 +56,12 @@ export function ImportPlanView({ plan }: { plan: BlueprintImportPlan }) {
         {plan.vision ? <>Vision “{plan.vision.title}” over {plan.vision.horizonDays} days · </> : 'No vision · '}
         profile: {[plan.profile.values && 'values', plan.profile.culture && 'culture', plan.profile.rules && 'rules'].filter(Boolean).join(', ') || 'none'} · {plan.cadences.count} cadence(s) {plan.cadences.applied ? 'applied' : 'listed'}{plan.cadences.note ? ` (${plan.cadences.note})` : ''}
       </div>
+      {(plan.cadences.list?.length ?? 0) > 0 && (
+        <div>
+          <div style={label}>Cadences · {plan.cadences.list!.length} — listed for the chief to set; the import writes none</div>
+          {plan.cadences.list!.map((c, i) => <div key={i} style={{ fontSize: 12.5 }}>{MEETING_KIND_TITLES[c.kind] ?? c.kind.replace(/_/g, ' ')} <span style={faint}>· {c.unitTitle === 'root' ? 'company' : c.unitTitle} · {humanCron(c.cron)}</span></div>)}
+        </div>
+      )}
       {(plan.recommendedCards.length > 0 || plan.recommendedConnections.length > 0) && <div style={faint}>Recommended after import: {[...plan.recommendedConnections.map((c) => `connect ${c}`), ...plan.recommendedCards.map((c) => `card ${c}`)].join(', ')}.</div>}
       {plan.notes.length > 0 && <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--text-dim)' }}>{plan.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
     </div>

@@ -1492,6 +1492,15 @@ Maintainer (`packages.publish` two-key).
 | **Solo creator** | Content Studio, Growth (lite settings), Finance Close (cash basis) | 5 | early; clan | editorial planning; scorecard: on-time pieces, subscriber growth | $150 |
 | **Professional services firm** | Client Delivery, Hiring, Finance Close; *Compliance*, *Revenue* | 11 | growth; hierarchy; rigour | client status, close; scorecard: utilisation, days to close, time to hire | $700 |
 
+**Shipped as v1 (4 November 2026).** The seven starters now ship as
+first-party `yaam-company/1` blueprints, listed first and badged *Official*
+in Market → Companies (`docs/blueprints.md` §3a): the seats above at their
+default staffing (optional kits unticked), roles drawn from the catalog,
+the envelope above, the root's rituals and the tunables derived from each
+profile, unit rhythms after the kits' defaults, no playbooks. Kits, and so
+`companyType`, `fits`, `kits[]` and `operatingSystem.feeds`, come later with
+v2 (§3); the starters will gain them then.
+
 Envelopes are starting points; the import asks for the owner's, as today
 [B §2]. Each blueprint stays within 20 seats, depth 3 and fan-out 5 at its
 default staffing; optional kits are unticked in the plan.

@@ -465,14 +465,14 @@ test('registry: a company publishes as kind `company` through the scan and lists
   // dry run writes nothing
   const dry = await s.companies.publish({ workspaceId: s.ws.id, publisherName: 'Dana', dryRun: true });
   assert.equal(dry.dryRun, true);
-  assert.equal((await s.companies.list()).items.length, 0);
+  assert.equal((await s.companies.list()).items.filter((i) => !i.official).length, 0, 'only the built-in starters');
   assert.deepEqual(dry.capabilities.company, { roles: 2, depth: 2, monthlyUsd: 50, playbooks: 1, cadences: 0, tunables: 0, cards: [] });
   assert.deepEqual(dry.capabilities.tools.filter((t) => t.startsWith('fs_') || t.startsWith('web_')), ['fs_read', 'fs_write', 'web_fetch', 'web_search']);
   assert.deepEqual(dry.capabilities.skills, [{ name: 'publish-issue', description: 'How we publish' }]);
   const pub = await s.companies.publish({ workspaceId: s.ws.id, publisherName: 'Dana', name: 'Research Desk Co', description: 'A two-agent research shop.' });
   if (pub.dryRun) throw new Error('unreachable');
   assert.equal(pub.item.kind, 'company'); assert.equal(pub.item.slug, 'research-desk-co'); assert.equal(pub.item.version, 1);
-  const listed = await s.companies.list();
+  const listed = { items: (await s.companies.list()).items.filter((i) => !i.official) };
   assert.equal(listed.items.length, 1); assert.deepEqual(listed.items[0].outcomes, { first_key_result: 0, thirty_days_in_envelope: 0 });
   assert.equal((await s.registry.list({ kind: 'agent' })).items.length, 0, 'kinds filter');
   const detail = await s.registry.get(pub.item.id);
@@ -536,7 +536,7 @@ test('outcomes: milestones of an imported company are recorded on the import row
   const later = new Date(Date.now() + 31 * 86_400_000);
   const second = await s.blueprints.sweepOutcomes(later);
   assert.deepEqual(second, [{ importId: done.importId, kind: 'thirty_days_in_envelope', shared: true }]);
-  const outcomes = (await s.companies.list()).items[0].outcomes;
+  const outcomes = (await s.companies.list()).items.find((i) => i.id === pub.item.id)!.outcomes;
   assert.deepEqual(outcomes, { first_key_result: 0, thirty_days_in_envelope: 1 }, 'the earlier milestone was not back-reported');
   const audit = await s.audit.list(done.orgId, { action: 'blueprint_outcome' });
   assert.equal(audit.length, 2);
