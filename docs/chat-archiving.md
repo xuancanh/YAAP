@@ -85,40 +85,53 @@ counts as activity, so the chat stays at least another `days`.
 
 ## The rail
 
-The Home rail no longer loads every chat, and lists conversations only
-(`chat_sessions.kind = 'chat'`, migration 0080). `GET /api/chats/rail?workspaceId=`
-returns per agent (`agentId` null = the workspace's agent-less chats):
+The Home rail no longer loads every chat. Under each agent it lists its
+conversations (`chat_sessions.kind = 'chat'`, migration 0080) as chat rows,
+then its own runs (`kind = 'work'`: loops, heartbeat, org runs, meeting
+rounds, a channel's `#slug · Agent` working session) in a **Work**
+subsection ([work-log.md §2](work-log.md#2-work-sessions-in-the-rail-and-the-chat-view)).
+`GET /api/chats/rail?workspaceId=` returns per agent (`agentId` null = the
+workspace's agent-less sessions):
 
-- `total` — its chats; its runs (loops, heartbeat, org runs, meeting rounds,
-  a channel's hidden `#slug · Agent` working session) are `work` sessions and
-  never counted or listed here;
+- `total` — its chats;
 - `items` — the newest 5 (pinned first), or as many as `limits=<agentId>:<n>,…`
   asks for, and `nextCursor`;
 - `approvalIds` — its chats with an approval waiting in the inbox;
-- `work` — `{ total, approvalIds }`: how many work sessions it has and which
-  wait on an approval. The rail shows one **Work log** row per agent (it
-  replaced the *Heartbeat runs* row) and adds the waiting runs to the
-  agent's red badge, opening its group — never a chat row;
+- `work` — `{ total, items, nextCursor, approvalIds }`: its work sessions the
+  same way (newest activity first, 5 or `workLimits=<agentId>:<n>,…`), each
+  with its `trigger`, `triggerKey`, `triggerLabel` and `running`, and the
+  ones waiting on an approval (a dot on the row, added to the agent's red
+  badge, opening its group and the subsection);
 
-plus `archivedTotal` (chats). `GET /api/chats/page?workspaceId=&agentId=(id|none)&archived=true&q=&limit=&cursor=`
-returns one page of chats (`{ items, nextCursor }`, cursor opaque). `GET
-/api/chats` is unchanged for other callers.
+plus `archivedTotal` (chats). `GET /api/chats/page?workspaceId=&agentId=(id|none)&kind=(chat|work)&archived=true&q=&limit=&cursor=`
+returns one page (`{ items, nextCursor }`, cursor opaque) — chats by
+default, an agent's work sessions with `kind=work`. `GET /api/chats` is
+unchanged for other callers.
 
-The store keeps `sessions` as what is loaded: every group's pages and the
+The store keeps `sessions` as the chats loaded: every group's pages and the
 open chat even when it is on no page (looked up by id, e.g. from a link or a
-search hit). A link to a work session (`openSession`, `#/chat/<id>`) opens the
-agent's Work log on that session instead. *Show more (N)* fetches the next 20 of a group, and a
-refresh keeps the count each group has loaded.
+search hit); the work rows live in `chatRail[].work.items`, and an open work
+session beyond them is looked up the same way. A link to either kind
+(`openSession`, `#/chat/<id>`) opens the chat view; `#/chat/<id>/log` opens a
+work session in the agent's Work log. *Show more (N)* fetches the next 20
+of a group's chats or work sessions, and a refresh keeps the count each has
+loaded.
 
 In the rail:
 
 - Agent groups are **collapsed by default**, except the group of the open
-  chat and groups with unread activity or a chat waiting on an approval. The
-  header shows the unread badge, the approval badge and the chat count.
-- Opening or closing a group by hand is kept per viewer (`localStorage`
-  `yaam-rail-groups`, best effort) and wins over the default; **Collapse all /
-  Expand all** sets every group.
+  session and groups with unread activity or a session waiting on an
+  approval. The header shows the unread badge, the approval badge and the
+  chat count.
+- Inside a group, chats come first; the **Work** subsection follows, folded
+  unless one of its sessions is running, waits on an approval, or is open.
+- Opening or closing a group (or its Work subsection) by hand is kept per
+  viewer (`localStorage` `yaam-rail-groups`, `yaam-rail-work`, best effort)
+  and wins over the default; **Collapse all / Expand all** sets every group.
 - **Search** asks the server (`/api/chats/rail?q=`, name, auto-title and
-  tags), so it finds chats in collapsed groups and beyond the loaded pages;
-  groups with a hit open while searching.
-- The **Archived** group pages the same way (20 at a time).
+  tags), so it finds chats and work sessions in collapsed groups and beyond
+  the loaded pages; groups (and Work subsections) with a hit open while
+  searching, and *All / Chats / Work* narrows it (`kind=`).
+- The **Archived** group pages the same way (20 at a time). It lists chats;
+  auto-archive is unchanged, and an archived work session stays readable in
+  the Work log.

@@ -6,12 +6,13 @@ Close the books`), every meeting round and channel wake (`#general · Jong`).
 They all sat in the left rail and the agent's Chats tab, and the agent's
 thinking and tool calls sat inline in the conversation with its answer.
 
-Now a session is one of two kinds, and each kind has its own surface:
+Now a session is one of two kinds. Both are in the rail and open in the same
+chat view; each kind also has a surface of its own:
 
 | Kind | What it is | Where you read it |
 |---|---|---|
-| `chat` | a conversation with people | the rail, the agent's **Chats** tab, chat search, the chat view |
-| `work` | the agent's own run | the agent's **Work log** tab |
+| `chat` | a conversation with people | the rail (chat rows), the agent's **Chats** tab, chat search, the chat view |
+| `work` | the agent's own run | the rail (each agent's **Work** subsection), the chat view (steps unfolded), the agent's **Work log** tab (the timeline) |
 
 Requirements: [chat-requirements.md](chat-requirements.md) FR-1.10, FR-3.2,
 FR-5.1, FR-8.2. The rail: [chat-archiving.md](chat-archiving.md). The agent
@@ -28,11 +29,15 @@ Code:
 - `server/src/chats/work-rerun.service.ts`, `server/src/org/org-rerun.bridge.ts`
   — Rerun
 - `server/src/chats/chats.repository.ts` (`railWhere`, `railCounts`,
-  `approvalSessions`), `chats.service.ts` (`rail`, `page`, `ownerChatFor`)
-- `src/components/WorkLog.tsx` — the tab; `src/components/ChatView.tsx`
-  (`WorkedOn`) — the folded steps in a chat; `src/lib/work-live.ts` — the
-  live rows of a watched run; `src/store.tsx` (`sendToSession`,
-  `openInChat`, the server-wait queue)
+  `approvalSessions`, `sessionRunMeta`), `chats.service.ts` (`rail`, `page`,
+  `withWorkMeta`, `ownerChatFor`), `work-log.service.ts` (`sessionTrigger`)
+- `src/components/Rails.tsx` (`WorkSection`, `workGlyph`) — the rail's Work
+  subsection; `src/components/WorkLog.tsx` — the tab;
+  `src/components/ChatView.tsx` (`WorkedOn` — the folded steps in a chat;
+  `WorkSessionBar` — a work session's trigger chip, Open in Work log,
+  Rerun); `src/lib/work-live.ts` — the live rows of a watched run;
+  `src/store.tsx` (`loadMoreWork`, `openSession`, `sendToSession`, the
+  server-wait queue)
 - tests: `tests/backend-work-log.test.ts`, `tests/backend-work-log-intervene.test.ts`,
   `web-tests/work-log.test.tsx`, `web-tests/work-log-intervene.test.tsx`,
   `web-tests/work-log-store.test.tsx`,
@@ -82,26 +87,64 @@ mode, model and token ceiling.
 to its owner land in (`message_owner`): the agent's newest live chat tagged
 `owner-dm`, the owner's own (`initiatedBy ''`, not shared), created on first
 use and replaced if archived. Always `chat`, so what an agent says to its
-owner is in the rail, never the Work log.
+owner is a chat row in the rail, never a work session.
 
-## 2. Chat surfaces show chats
+## 2. Work sessions in the rail and the chat view
 
-- **The rail** (`GET /api/chats/rail`, `/api/chats/page`) lists `chat`
-  sessions only. The old *Heartbeat runs* row is one **Work log** row per
-  agent (opens the agent's Work log). The archive counts chats only.
+- **The rail** lists both kinds under each agent: its chats first (pinned,
+  then newest), then a **Work** subsection with its work sessions — the same
+  session rows (title, time, the approval dot) with a small trigger glyph
+  (*loop*, the task key, *channel*, *org*, *app*) and a pulsing green dot
+  while a run is going. A row reads by what its glyph does not say: the
+  heartbeat as *Heartbeat*, a loop by its name, a task run by its task's
+  title, a channel session by its `#slug`, an org run without `Org · `.
+  Newest activity first; the heartbeat and each loop run in one session
+  each, so they are one row however many beats ran. The subsection is
+  **folded by default**, and open by itself while one of its sessions is
+  running, waits on an approval, or is the open session; folding it by hand
+  is kept per viewer (`localStorage` `yaam-rail-work`). Its header shows the
+  count, the running and approval dots, and a clock button to the agent's
+  **Work log** tab. *Show more (N)* pages it like chats. The archive counts
+  chats only.
+- **The API.** `GET /api/chats/rail` returns per group `work: { total,
+  items, nextCursor, approvalIds }` — the first `perAgent` (5) work sessions,
+  or as many as `workLimits=<agentId>:<n>,…` asks for, so a refresh keeps
+  what *Show more* loaded. `GET /api/chats/page?kind=work&agentId=…&cursor=`
+  pages them. Every work session the rail, the page and `GET`/`PATCH
+  /api/chats/:id` return carries `trigger`, `triggerKey`, `triggerLabel`
+  (`sessionTrigger`: the session-level trigger — a channel session reads
+  `channel`, meeting rounds in it are told apart per run in the Work log)
+  and `running` (its newest turn is running). The rail re-reads itself each
+  minute so the work rows follow the runs.
 - **Approvals.** A run waiting on an approval (an `action_pending` /
   `approval_request` inbox event on a work session) is an Inbox item as
-  before and a red badge on the agent's rail group (it opens the group), a
-  dot on its Work log row, and a count on the Work log tab — never a chat
-  row. The rail group carries `work: { total, approvalIds }`.
+  before, a red badge on the agent's rail group (it opens the group and its
+  Work subsection), a dot on its row and the subsection header, and a count
+  on the Work log tab.
 - **The agent's Chats tab** lists and counts its chats.
-- **Chat search** (`/api/search`, the rail search) covers chat sessions; the
-  Work log has its own search.
-- **Links.** `openSession(id)` routes by kind: a chat opens the chat view, a
-  work session opens the agent's Work log on that session with its newest run
-  expanded. That covers the Inbox, mission control and the agent dashboard
-  (*See the run*, the error's *run*), Settings › Usage, the org run list and
-  `#/chat/<id>` deep links from notifications.
+- **Search.** The rail search (`/api/chats/rail?q=`) covers both kinds —
+  name, auto-title, tags — and opens the groups and Work subsections with
+  hits; *All / Chats / Work* under the box narrows it (`kind=chat|work`).
+  Message search (`/api/search`) covers chat sessions; the Work log has its
+  own search over runs.
+- **Links.** `openSession(id)` opens the chat view for both kinds. That
+  covers the rail, the Inbox, mission control and the agent dashboard (*See
+  the run*, the error's *run*), Settings › Usage, the org run list and
+  `#/chat/<id>` deep links from notifications (`#/chat/<id>/chat` is an
+  alias). `#/chat/<id>/log` opens a work session's timeline in the agent's
+  Work log instead, its newest run expanded; `openWorkLog` does the same
+  from code.
+
+### A work session in the chat view
+
+Everything a chat has works the same — streaming, the composer and its
+queue, Stop, inline approvals, Ask/Auto, the model menu. A strip under the
+header shows a **trigger chip** (*Heartbeat*, *Loop · digest*, *ENG-12 Close
+the books*, *#general*), **Open in Work log** (the agent's Work log filtered
+to this session), and **Rerun** when the session's last run errored or was
+stopped (the Work log's rerun endpoint below: the same trigger again, in
+this session). A person's message is a turn with origin `user`; the session
+stays `work`.
 
 ### Thinking in a chat
 
@@ -109,8 +152,8 @@ In a conversation each turn's thinking and tool calls fold behind one line,
 **worked on it · N steps**, placed where the first of them was; the answer
 stays in view. The owner can expand it. While a turn runs the line reads
 **working · N steps…**, and a tool call waiting on the owner's approval stays
-in view outside the fold. A work session opened in the chat view (it can be,
-by id) shows everything unfolded.
+in view outside the fold. A work session in the chat view shows its
+thinking and tool calls **unfolded**, as the Work log does.
 
 Thinking is now kept: each round's thinking is a `thinking` transcript row
 (bounded at 50k characters). Provider history never carries it
@@ -237,10 +280,11 @@ a steer lands on the next turn. A person's turn is stored with
 / **from <name>**, the message shown as theirs rather than as a folded prompt.
 
 **Continue in chat.** Opens the same session in the chat view — the full
-transcript and composer — while it stays `work` (out of the rail and the
-Chats tab). The view says it is the agent's work session and has **← Back to
-Work log**. Deep link: `#/chat/<id>/chat` (plain `#/chat/<id>` still opens a
-work session's Work log).
+transcript and composer, as from its rail row — while it stays `work` (in
+the rail's Work subsection, out of the Chats tab). The view's strip has its
+trigger chip and **Open in Work log** ([§2](#a-work-session-in-the-chat-view)).
+Deep link: `#/chat/<id>` (or `#/chat/<id>/chat`); `#/chat/<id>/log` opens
+the Work log.
 
 **Rerun.** A failed, stopped or blocked run — failed for a reason fixed since
 (a provider 400, an outage, a budget or tool-round limit raised) — has

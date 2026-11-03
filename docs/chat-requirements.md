@@ -46,25 +46,33 @@ sessions plus a file "brain".
   See [chat-archiving.md](chat-archiving.md).
 - **FR-1.8** The chat rail is **paged**: per agent the newest chats load
   first with "Show more"; the archive pages too. Search runs on the server
-  and reaches every chat. The rail lists **conversations only** (FR-1.10):
-  an agent's own runs are one **Work log** row per agent, never chat rows.
+  and reaches every chat and work session. Under each agent the rail lists
+  its chats, then its own runs (FR-1.10) in a **Work** subsection — the same
+  session rows with a trigger glyph, paged the same way.
 - **FR-1.9** Agent groups in the rail are **collapsed by default**, except the
-  open chat's group and groups with unread activity or a pending approval;
-  the header shows those badges and the chat count; collapse choices persist
-  per viewer, with Collapse all / Expand all.
+  open session's group and groups with unread activity or a pending
+  approval; the header shows those badges and the chat count; the Work
+  subsection is folded unless one of its sessions is running, waits on an
+  approval or is open; collapse choices persist per viewer, with Collapse
+  all / Expand all.
 - **FR-1.10** Every session has a **kind**: `chat` — a conversation with
   people (user-started chats, the owner DM agents write to with
   `message_owner`, a member's Telegram or email thread, forks) — or `work` —
   the agent's own run (heartbeat and loops, org task runs and other org runs,
   meeting rounds, channel wakes, red-team / eval runs, mini-app asks). Every
   code path that creates a session states it; existing sessions were
-  backfilled (migration 0080). Chat surfaces — the rail, the agent's Chats
-  tab, chat search, `/api/chats/page` — show `chat` only; `work` sessions are
-  read in the agent's **Work log** ([work-log.md](work-log.md)). A link to a
-  session opens the chat view for a chat and the Work log run for a work
-  session. A work session waiting on an approval is an Inbox item and a badge
-  on the agent, not a chat row. Memory and turn context do not depend on the
-  kind.
+  backfilled (migration 0080). The rail shows both — chats as chat rows,
+  `work` sessions in each agent's Work subsection with their trigger
+  (heartbeat, loop, task key, channel) and a running dot — and the rail
+  search covers both (narrowed by *All / Chats / Work*); the agent's Chats
+  tab and message search show `chat` only. A link to a session (a rail row,
+  `#/chat/<id>`) opens the **chat view** for both kinds; a work session there
+  shows its thinking and tool steps unfolded, a trigger chip, **Open in Work
+  log**, and Rerun after a failed run. The agent's **Work log**
+  ([work-log.md](work-log.md), `#/chat/<id>/log`) is the timeline of the
+  work sessions' runs. A work session waiting on an approval is an Inbox
+  item, a dot on its row and a badge on the agent. Memory and turn context
+  do not depend on the kind.
 
 ## 2. Composer & input
 
