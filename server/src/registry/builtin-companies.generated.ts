@@ -244,6 +244,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.blockedBackoffMinutes": 30,
     "work.operatingWipCap": 2,
     "work.mentionChainCap": 4,
+    "work.nextTaskDelaySeconds": 10,
+    "work.selfAssign": 2,
+    "work.chaseAfterHours": 8,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
@@ -748,6 +751,8 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.blockedBackoffMinutes": 30,
     "work.operatingWipCap": 2,
     "work.mentionChainCap": 4,
+    "work.nextTaskDelaySeconds": 10,
+    "work.chaseAfterHours": 8,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
@@ -982,6 +987,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.operatingWipCap": 5,
     "work.mentionChainCap": 4,
     "work.forecastMinSamples": 12,
+    "work.nextTaskDelaySeconds": 10,
+    "work.selfAssign": 2,
+    "work.chaseAfterHours": 8,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
@@ -1161,6 +1169,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.appetiteWarnShare": 0.7,
     "work.operatingWipCap": 5,
     "work.forecastMinSamples": 12,
+    "work.selfAssign": 2,
     "discussion.autoCloseHours": 72,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
@@ -1308,6 +1317,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.updateCadenceDays": 5,
     "work.breakerDefaultExtend": 1,
     "work.operatingWipCap": 2,
+    "work.selfAssign": 2,
     "discussion.agentDailyCap": 2
    },
    "playbooks": [],
@@ -1562,6 +1572,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.operatingWipCap": 5,
     "work.mentionChainCap": 2,
     "work.forecastMinSamples": 12,
+    "work.nextTaskDelaySeconds": 60,
+    "work.selfAssign": 0,
+    "work.chaseAfterHours": 48,
     "discussion.autoCloseHours": 72,
     "discussion.agentDailyCap": 2
    },

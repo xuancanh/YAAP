@@ -116,6 +116,7 @@
     "work.updateCadenceDays": 5,
     "work.breakerDefaultExtend": 1,
     "work.operatingWipCap": 2,
+    "work.selfAssign": 2,
     "discussion.agentDailyCap": 2
   },
   "playbooks": [],

@@ -149,6 +149,7 @@
     "work.appetiteWarnShare": 0.7,
     "work.operatingWipCap": 5,
     "work.forecastMinSamples": 12,
+    "work.selfAssign": 2,
     "discussion.autoCloseHours": 72,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2

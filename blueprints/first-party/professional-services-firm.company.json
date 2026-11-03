@@ -226,6 +226,9 @@
     "work.operatingWipCap": 5,
     "work.mentionChainCap": 2,
     "work.forecastMinSamples": 12,
+    "work.nextTaskDelaySeconds": 60,
+    "work.selfAssign": 0,
+    "work.chaseAfterHours": 48,
     "discussion.autoCloseHours": 72,
     "discussion.agentDailyCap": 2
   },

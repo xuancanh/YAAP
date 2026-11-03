@@ -399,7 +399,7 @@ change batches, `org_plans`) is now **Pending changes** in the UI, so
 A project is staffed as a **matrix**: one owner (a Program Manager by
 default) and a **team** drawn from any unit. A member keeps its home unit and
 its head — the head stays accountable for its people — and the project
-borrows a share of its time. `org_project_members` (migration 0086):
+borrows a share of its time. `org_project_members` (migration 0087):
 `projectId`, `agentId` or `humanId`, `role` on the project (engineer,
 designer, analyst, …), `allocation` (percent of the member's time),
 `status` (`active`, `pending`, `left`), `approvalId`, `addedBy`, `joinedAt`,

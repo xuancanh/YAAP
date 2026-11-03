@@ -11,7 +11,7 @@
     "build": "npm run server:build && tsc -b && vite build",
     "lint": "eslint .",
     "packs:build": "node scripts/build-authored-packs.mjs",
-    "blueprints:build": "node scripts/build-builtin-companies.mjs",
+    "blueprints:build": "TSX_TSCONFIG_PATH=tests/tsconfig.json tsx scripts/derive-starter-tunables.ts && node scripts/build-builtin-companies.mjs",
     "push:keys": "node scripts/push-keys.mjs",
     "test": "TSX_TSCONFIG_PATH=tests/tsconfig.json tsx --test --test-concurrency=${TEST_CONCURRENCY:-3} tests/*.test.ts",
     "test:web": "vitest run",

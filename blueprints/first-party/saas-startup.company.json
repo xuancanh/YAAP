@@ -235,6 +235,9 @@
     "work.blockedBackoffMinutes": 30,
     "work.operatingWipCap": 2,
     "work.mentionChainCap": 4,
+    "work.nextTaskDelaySeconds": 10,
+    "work.selfAssign": 2,
+    "work.chaseAfterHours": 8,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
