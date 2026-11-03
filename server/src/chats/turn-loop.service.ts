@@ -457,6 +457,54 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     return () => { const i = this.extraProviders.indexOf(hook); if (i >= 0) this.extraProviders.splice(i, 1); };
   }
 
+  /**
+   * Every tool a turn of this session offers the model, after the run's
+   * restriction and with repeated names dropped. The turn uses it; so does
+   * the data catalog (ws_catalog), which lists what this agent can query.
+   */
+  async offeredTools(session: ChatSession, actor = ''): Promise<{ specs: AiToolSpec[]; restrictTo: Set<string> | null }> {
+    // Core tools + the workspace's enabled skills (FR-10.2) + tools
+    // discovered from enabled MCP servers (FR-10.3).
+    let restrictTo = (session.agentId && this.orgTools?.restrictTo) ? await this.orgTools.restrictTo(session) : null;
+    // A restricted run may still load the agent's own playbooks (its
+    // private skills only return instructions), when the set asks for it.
+    if (restrictTo?.has(RESTRICT_OWN_SKILLS) && session.agentId) {
+      const own = (await this.skills.list(session.workspaceId, session.agentId)).filter((x) => x.agentId === session.agentId && x.enabled === 1 && x.draft !== 1);
+      restrictTo = new Set([...restrictTo, ...own.map((x) => SKILL_TOOL_PREFIX + x.name.replace(/-/g, '_'))]);
+      restrictTo.delete(RESTRICT_OWN_SKILLS);
+    }
+    const rawToolSpecs = [
+      ...this.tools.specs(),
+      ...(session.agentId ? AGENT_TOOLS : []),
+      ...(session.agentId ? await this.agents.customToolSpecs(session.agentId) : []),
+      ...await this.skills.toolSpecs(session.workspaceId, session.agentId ?? undefined),
+      ...await this.mcp.toolSpecs(),
+      // Connection tools appear only for agents the user granted (activation
+      // gate) — the acting member's own grants plus the agent's defaults.
+      ...(session.agentId && this.connections ? await this.connections.toolSpecs(session.agentId, actor) : []),
+      // Code runner tools exist only when a sandbox backend is available
+      // (docs/code-execution.md §5); they are mutation-class, so Ask mode
+      // pauses on the full code.
+      ...(this.runner?.specs() ?? []),
+      // Browser tools exist only when a backend is available
+      // (docs/browser-tool.md §2); browser_act is mutation-class.
+      ...(this.browser?.specs() ?? []),
+      // Computer tools exist only while a companion is paired, unpaused and
+      // scoped for them (docs/computer-control.md §3); every one is Ask-gated.
+      ...(this.computer ? await this.computer.specs() : []),
+      // Org tools appear for agents that belong to an organisation
+      // (docs/autonomous-company.md §4.3): the bounded task set in an org
+      // run, the manager set for a chief of staff.
+      // …and any other domain that registered a provider (channel tools in
+      // a channel session, docs/group-chat.md §2).
+      ...(session.agentId ? (await Promise.all(this.providers().map((p) => p.specsFor(session)))).flat() : []),
+    ].filter((t) => !restrictTo || restrictTo.has(t.name));
+    // Providers refuse a request whose tool names repeat. Two families
+    // offering one name is a bug: keep the first, log the clash loudly.
+    const specs = uniqueToolSpecs(rawToolSpecs, (name) => this.logger.warn(`duplicate tool name "${name}" offered twice in session ${session.id}; the first definition wins`));
+    return { specs, restrictTo };
+  }
+
   /** Every registered provider: the org hook first, then the extras. */
   private providers(): ToolProviderHook[] {
     return [...(this.orgTools ? [this.orgTools] : []), ...this.extraProviders];
@@ -720,45 +768,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
       const mcpReadOnly = this.actions && typeof (this.mcp as { readOnlyTools?: unknown }).readOnlyTools === 'function'
         ? await (this.mcp as unknown as { readOnlyTools(): Promise<Set<string>> }).readOnlyTools().catch(() => new Set<string>())
         : new Set<string>();
-      // Core tools + the workspace's enabled skills (FR-10.2) + tools
-      // discovered from enabled MCP servers (FR-10.3).
-      let restrictTo = (session.agentId && this.orgTools?.restrictTo) ? await this.orgTools.restrictTo(session) : null;
-      // A restricted run may still load the agent's own playbooks (its
-      // private skills only return instructions), when the set asks for it.
-      if (restrictTo?.has(RESTRICT_OWN_SKILLS) && session.agentId) {
-        const own = (await this.skills.list(session.workspaceId, session.agentId)).filter((x) => x.agentId === session.agentId && x.enabled === 1 && x.draft !== 1);
-        restrictTo = new Set([...restrictTo, ...own.map((x) => SKILL_TOOL_PREFIX + x.name.replace(/-/g, '_'))]);
-        restrictTo.delete(RESTRICT_OWN_SKILLS);
-      }
-      const rawToolSpecs = [
-        ...this.tools.specs(),
-        ...(session.agentId ? AGENT_TOOLS : []),
-        ...(session.agentId ? await this.agents.customToolSpecs(session.agentId) : []),
-        ...await this.skills.toolSpecs(session.workspaceId, session.agentId ?? undefined),
-        ...await this.mcp.toolSpecs(),
-        // Connection tools appear only for agents the user granted (activation
-        // gate) — the acting member's own grants plus the agent's defaults.
-        ...(session.agentId && this.connections ? await this.connections.toolSpecs(session.agentId, actor) : []),
-        // Code runner tools exist only when a sandbox backend is available
-        // (docs/code-execution.md §5); they are mutation-class, so Ask mode
-        // pauses on the full code.
-        ...(this.runner?.specs() ?? []),
-        // Browser tools exist only when a backend is available
-        // (docs/browser-tool.md §2); browser_act is mutation-class.
-        ...(this.browser?.specs() ?? []),
-        // Computer tools exist only while a companion is paired, unpaused and
-        // scoped for them (docs/computer-control.md §3); every one is Ask-gated.
-        ...(this.computer ? await this.computer.specs() : []),
-        // Org tools appear for agents that belong to an organisation
-        // (docs/autonomous-company.md §4.3): the bounded task set in an org
-        // run, the manager set for a chief of staff.
-        // …and any other domain that registered a provider (channel tools in
-        // a channel session, docs/group-chat.md §2).
-        ...(session.agentId ? (await Promise.all(this.providers().map((p) => p.specsFor(session)))).flat() : []),
-      ].filter((t) => !restrictTo || restrictTo.has(t.name));
-      // Providers refuse a request whose tool names repeat. Two families
-      // offering one name is a bug: keep the first, log the clash loudly.
-      const toolSpecs = uniqueToolSpecs(rawToolSpecs, (name) => this.logger.warn(`duplicate tool name "${name}" offered twice in session ${session.id}; the first definition wins`));
+      const { specs: toolSpecs, restrictTo } = await this.offeredTools(session, actor);
       const extraContext = session.agentId
         ? (await Promise.all(this.providers().map((p) => p.contextFor(session)))).filter((c): c is string => Boolean(c))
         : [];
