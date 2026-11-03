@@ -88,6 +88,8 @@ interface WakeContext {
 /** How long a tagged agent waits for its channel session to be free of a
  *  turn the runtime did not start (a meeting round) before giving up. */
 export const BUSY_WAIT_MS = 5 * 60_000;
+/** Channels named in an agent's prompt outside a channel session; channel_list lists all. */
+export const CONTEXT_CHANNELS = 8;
 
 const TOOL_NAMES = new Set(['channel_post', 'channel_read', 'channel_make_task', 'channel_list']);
 const READONLY = new Set(['channel_post', 'channel_read', 'channel_list']);
@@ -449,7 +451,9 @@ export class ChannelRuntimeService implements ToolProviderHook {
     if (!ctx) {
       const mine = await this.groupchat.list(session.workspaceId).catch(() => []);
       const memberOf: string[] = [];
-      for (const c of mine) if (await this.groupchat.isMember(c.id, 'agent', session.agentId)) memberOf.push(`#${c.slug}${c.topic ? ` — ${c.topic}` : ''}`);
+      for (const c of mine) if (await this.groupchat.isMember(c.id, 'agent', session.agentId)) memberOf.push(`#${c.slug}${c.topic ? ` — ${c.topic.slice(0, 60)}` : ''}`);
+      // A pointer, not a dump: past a handful, channel_list has the rest.
+      if (memberOf.length > CONTEXT_CHANNELS) memberOf.splice(CONTEXT_CHANNELS, memberOf.length, `and ${memberOf.length - CONTEXT_CHANNELS} more (channel_list)`);
       return memberOf.length ? `# Group chat\nYou belong to these channels: ${memberOf.join('; ')}. channel_read shows recent messages, channel_post speaks there (mentions wake agents; they carry no approval authority), channel_make_task turns a message into a board task.` : null;
     }
     const c = ctx.channel;
