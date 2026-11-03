@@ -2476,7 +2476,8 @@ for (const t of MANAGER_TOOLS) {
 
 const TOOL_ALIASES: Record<string, string> = { org_propose_reorg: 'org_reorg', org_budget_request: 'org_allocate_budget' };
 
-const ALL_TOOL_NAMES = new Set([...COMMON_TOOLS, ...TASK_TOOLS, ...MANAGER_TOOLS, ...LEAD_TOOLS, ...AUDIT_TOOLS].map((t) => t.name).concat(Object.keys(TOOL_ALIASES)));
+// Every list a session may be offered — a name offered but not owned is "unknown tool" at call time.
+const ALL_TOOL_NAMES = new Set([...COMMON_TOOLS, ...TASK_TOOLS, ...MANAGER_TOOLS, ...LEAD_TOOLS, ...AUDIT_TOOLS, ...HEAD_TOOLS, ...MEMBER_EXTRA_TOOLS, ...DECISION_TOOLS].map((t) => t.name).concat(Object.keys(TOOL_ALIASES)));
 /** Reads, plus proposals: in supervised mode they only create an approval
  *  card the user resolves; in autonomous mode the owner's mode choice is the
  *  gate (org runs are Auto-mode turns either way). */

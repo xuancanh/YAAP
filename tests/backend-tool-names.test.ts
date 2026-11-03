@@ -33,3 +33,12 @@ test('uniqueToolSpecs keeps the first of a repeated name and reports it', () => 
   assert.deepEqual(out, [{ name: 'a', v: 1 }, { name: 'b', v: 1 }]);
   assert.deepEqual(seen, ['a']);
 });
+
+test('every tool the org runtime defines is one it owns (an offered but unowned name fails as "unknown tool")', async () => {
+  const { ORG_TOOL_NAMES } = await import('../server/src/org/org-runtime.service');
+  const src = readFileSync(join(process.cwd(), 'server', 'src', 'org', 'org-runtime.service.ts'), 'utf8');
+  const defined = new Set([...src.matchAll(/\{ name: '(org_[a-z_]+)', description:/g)].map((m) => m[1]));
+  const missing = [...defined].filter((n) => !ORG_TOOL_NAMES.has(n));
+  assert.deepEqual(missing, []);
+  for (const n of ['org_decision_queue', 'org_decide', 'org_roles', 'org_escalate']) assert.ok(ORG_TOOL_NAMES.has(n), n);
+});
