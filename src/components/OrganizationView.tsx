@@ -22,6 +22,7 @@ import { spendWindowLabel } from '../lib/company-dash';
 import { UsageBars, UsageRows } from './UsageChart';
 import { I, P } from '../lib/icons';
 import { card, input, btn, pill, h2, faint, linkBtn, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
+import { PluginPanels } from './PluginUi';
 import { changeSummary, decidedViaBadge, dueBadge, expectedLabel, memberSettingsLines, verificationBadge } from '../lib/org3';
 import { FollowToggle } from './FollowToggle';
 import { GoalProgramLine, useProgram } from './ProgramMatrixView';
@@ -644,6 +645,8 @@ function TaskDrawer({ org, task, members, onClose, reload, board }: { org: OrgDe
           </div>
         </div>
         <Suspense fallback={null}><TaskChecksPanel wsId={org.workspaceId} task={task} onRan={() => void refresh()} /></Suspense>
+        {/* Extension point: panels plugins add to a task (docs/plugins.md §3.8). */}
+        <PluginPanels placement="task" context={{ taskKey: task.key ?? '', taskTitle: task.title }} />
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <select value="" onChange={(e) => { const v = e.target.value; if (!v) return; void act(() => v.startsWith('human:') ? api.assignOrgTaskHuman(org.workspaceId, task.id, v.slice(6)) : api.assignOrgTask(org.workspaceId, task.id, v)); }} style={{ ...input, width: 'auto' }} aria-label="Assign to">
             <option value="">Assign to…</option>

@@ -4,12 +4,14 @@
  *  contract sheet: every operation with the class yaam will treat it as,
  *  egress, data sharing, secrets, conformance per interface version,
  *  versions with their pins and recalls, the publisher) whose Install opens
- *  the Phase 1 review, and the Kits shelf of previews. */
+ *  the Phase 1 review, and the Kits shelf: the shipped kits with their
+ *  review (the plan), install, upgrade, rollback and uninstall, and the
+ *  designed ones still to come. */
 import { useCallback, useEffect, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
 import {
-  api, type FoundryOperation, type FoundryPlugin, type FoundryPluginDetail, type FoundryPluginList, type KitPreview, type PluginReview,
+  api, type FoundryOperation, type FoundryPlugin, type FoundryPluginDetail, type FoundryPluginList, type KitChoices, type KitDetail, type KitPlan, type KitPreview, type PluginReview,
 } from '../lib/api';
 import { functionMeta, type MarketNav, type PluginFilter } from '../lib/market';
 import { CLASS_LABEL, ReviewPanel } from './PluginsPane';
@@ -380,45 +382,201 @@ export function RecallNotice({ notice, onManage }: { notice: string; onManage?: 
   );
 }
 
-/** The Kits shelf: the starter catalog as previews, nothing installs yet. */
-export function KitsShelf({ nav }: { nav: MarketNav }) {
+/** The Kits shelf (docs/foundry.md §8): the shipped kits — installable, with
+ *  their state here — and the designed ones still to come. */
+export function KitsShelf({ nav, setNav }: { nav: MarketNav; setNav: (p: Partial<MarketNav>) => void }) {
+  const app = useApp();
+  const ws = app.workspaceId ?? '';
   const [kits, setKits] = useState<KitPreview[] | null>(null);
   const [failed, setFailed] = useState('');
-  useEffect(() => { void api.foundryKits().then(setKits).catch((e) => setFailed(errorText(e))); }, []);
+  useEffect(() => { void api.foundryKits(ws || undefined).then(setKits).catch((e) => setFailed(errorText(e))); }, [ws]);
   const shown = (kits ?? []).filter((k) => !nav.fn || k.functions.includes(nav.fn));
+  const shipped = shown.filter((k) => k.installable);
+  const soon = shown.filter((k) => !k.installable);
   return (
     <>
-      <div data-testid="kits-coming" style={{ marginTop: 18, padding: '14px 16px', borderRadius: 12, border: '1px solid var(--border)', background: 'var(--panel-2)', fontSize: 13, lineHeight: 1.6 }}>
-        <div style={{ fontWeight: 650 }}>Kits are coming — bundles of interfaces, providers and roles for a use case</div>
-        <div style={{ color: 'var(--text-dim)', fontSize: 12.5 }}>These are the designed starter kits. You can read what each will bring; none can be installed yet. Hire the people from Agents and add the parts from Plugins meanwhile.</div>
-      </div>
       {failed && <div role="alert" style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 14 }}>Could not load the kits: {failed}</div>}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 290px), 1fr))', gap: 14, marginTop: 16 }}>
-        {shown.map((k) => (
-          <div key={k.id} data-testid={`kit-${k.id}`} style={{ border: '1px dashed var(--border)', borderRadius: 14, padding: 16, display: 'flex', flexDirection: 'column', gap: 9, minWidth: 0, background: 'var(--panel)' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-              <span style={{ fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }}>{k.name}</span>
-              <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--amber)', whiteSpace: 'nowrap' }}>Coming soon</span>
-            </div>
-            <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>{k.blurb}</div>
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-              {k.interfaces.map((i) => (
-                <span key={i.name} title={i.planned ? 'Not written yet' : i.optional ? 'Optional' : 'Required'} style={{ ...mono, fontSize: 11, padding: '1px 7px', borderRadius: 5, border: `1px ${i.optional ? 'dashed' : 'solid'} var(--border-soft)`, color: i.planned ? 'var(--text-faint)' : 'var(--text-dim)' }}>{i.name}</span>
-              ))}
-            </div>
-            <div style={{ fontSize: 11.5, color: 'var(--text-faint)', lineHeight: 1.5 }}>
-              <div><span style={{ color: 'var(--text-dim)' }}>People:</span> {k.seats.join(', ')}</div>
-              <div><span style={{ color: 'var(--text-dim)' }}>Rhythm:</span> {k.cadences.slice(0, 4).join(', ')}{k.cadences.length > 4 ? ` and ${k.cadences.length - 4} more` : ''}</div>
-              <div><span style={{ color: 'var(--text-dim)' }}>Measures:</span> {k.metrics.join(', ')}</div>
-              <div><span style={{ color: 'var(--text-dim)' }}>Works with:</span> {k.providers.slice(0, 5).join(', ')}{k.providers.length > 5 ? '…' : ''}</div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto', paddingTop: 8, borderTop: '1px solid var(--border-soft)' }}>
-              <span style={{ fontSize: 11.5, color: 'var(--text-faint)', flex: 1 }}>{k.functions.map((f) => functionMeta(f).label).join(', ')}</span>
-              <button disabled aria-disabled="true" title="Kits are not installable yet" style={{ font: 'inherit', fontSize: 12, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-faint)', cursor: 'not-allowed' }}>Not installable yet</button>
-            </div>
-          </div>
+        {shipped.map((k) => <KitCard key={k.id} k={k} onOpen={() => setNav({ kit: k.id })} />)}
+      </div>
+      {soon.length > 0 && <>
+        <h3 data-testid="kits-coming" style={{ fontSize: 13.5, fontWeight: 650, margin: '26px 0 2px' }}>Coming next</h3>
+        <div style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>Designed, waiting on the interfaces they need. You can read what each will bring.</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 290px), 1fr))', gap: 14, marginTop: 12 }}>
+          {soon.map((k) => <KitCard key={k.id} k={k} />)}
+        </div>
+      </>}
+    </>
+  );
+}
+
+function KitCard({ k, onOpen }: { k: KitPreview; onOpen?: () => void }) {
+  const slug = k.id.split('@')[0];
+  const inst = k.installed ?? null;
+  return (
+    <div data-testid={`kit-${slug}`} style={{ border: `1px ${k.installable ? 'solid' : 'dashed'} var(--border)`, borderRadius: 14, padding: 16, display: 'flex', flexDirection: 'column', gap: 9, minWidth: 0, background: 'var(--panel)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <span style={{ fontSize: 15, fontWeight: 700, flex: 1, minWidth: 0 }}>{k.name}</span>
+        {k.installable
+          ? (inst ? <span data-testid={`kit-state-${slug}`} style={{ fontSize: 11.5, fontWeight: 600, color: inst.status === 'active' ? 'var(--green)' : 'var(--amber)', whiteSpace: 'nowrap' }}>Installed · {inst.status}{inst.updateAvailable ? ' · update' : ''}</span>
+            : <TierBadge tier="first_party" />)
+          : <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--amber)', whiteSpace: 'nowrap' }}>Coming soon</span>}
+      </div>
+      <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>{k.summary ?? k.blurb}</div>
+      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+        {k.interfaces.map((i) => (
+          <span key={i.name} title={i.planned ? 'Not written yet' : i.optional ? 'Optional' : 'Required'} style={{ ...mono, fontSize: 11, padding: '1px 7px', borderRadius: 5, border: `1px ${i.optional ? 'dashed' : 'solid'} var(--border-soft)`, color: i.planned ? 'var(--text-faint)' : 'var(--text-dim)' }}>{i.name}</span>
         ))}
       </div>
-    </>
+      <div style={{ fontSize: 11.5, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+        <div><span style={{ color: 'var(--text-dim)' }}>People:</span> {k.seats.join(', ') || '—'}</div>
+        {k.playbooks && k.playbooks.length > 0 && <div><span style={{ color: 'var(--text-dim)' }}>Playbooks:</span> {k.playbooks.join(', ')}</div>}
+        <div><span style={{ color: 'var(--text-dim)' }}>Rhythm:</span> {k.cadences.slice(0, 3).join(', ')}{k.cadences.length > 3 ? ` and ${k.cadences.length - 3} more` : ''}</div>
+        <div><span style={{ color: 'var(--text-dim)' }}>Measures:</span> {k.metrics.join(', ')}</div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto', paddingTop: 8, borderTop: '1px solid var(--border-soft)' }}>
+        <span style={{ fontSize: 11.5, color: 'var(--text-faint)', flex: 1 }}>{k.functions.map((f) => functionMeta(f).label).join(', ')}</span>
+        {k.installable
+          ? <button onClick={onOpen} style={{ font: 'inherit', fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--accent)', background: inst ? 'transparent' : 'var(--accent)', color: inst ? 'var(--accent-hi)' : '#fff', cursor: 'pointer' }}>{inst ? 'Manage' : 'Review and add'}</button>
+          : <button disabled aria-disabled="true" title="This kit's interfaces are not written yet" style={{ font: 'inherit', fontSize: 12, padding: '5px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-faint)', cursor: 'not-allowed' }}>Not installable yet</button>}
+      </div>
+    </div>
+  );
+}
+
+const pill = (on: boolean): React.CSSProperties => ({ font: 'inherit', fontSize: 12, fontWeight: 600, padding: '5px 12px', borderRadius: 8, cursor: 'pointer', border: `1px solid ${on ? 'var(--accent)' : 'var(--border)'}`, background: on ? 'var(--accent)' : 'var(--panel)', color: on ? '#fff' : 'var(--text)' });
+
+/** A kit's page: what it brings, the review (the plan) with the owner's choices, then install; or, once installed, its health, updates, rollback and uninstall. */
+export function KitDetailPage({ id, onBack }: { id: string; onBack: () => void }) {
+  const app = useApp();
+  const ws = app.workspaceId ?? '';
+  const [detail, setDetail] = useState<KitDetail | null>(null);
+  const [plan, setPlan] = useState<KitPlan | null>(null);
+  const [choices, setChoices] = useState<KitChoices>({});
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [failed, setFailed] = useState('');
+  const [removal, setRemoval] = useState<Array<{ kind: string; key: string; outcome: string }> | null>(null);
+  const load = useCallback(async () => {
+    setFailed('');
+    try { setDetail(await api.foundryKit(id, ws || undefined)); } catch (e) { setFailed(errorText(e)); }
+  }, [id, ws]);
+  useEffect(() => { void load(); }, [load]);
+  const installed = detail?.install ?? null;
+  useEffect(() => {
+    if (!ws || installed) return;
+    let live = true;
+    api.kitPlan(ws, id, choices).then((p) => { if (live) setPlan(p); }).catch((e) => { if (live) setMsg(errorText(e)); });
+    return () => { live = false; };
+  }, [ws, id, choices, installed]);
+  const act = async (fn: () => Promise<unknown>, done: string) => {
+    setBusy(true); setMsg('');
+    try { await fn(); if (done) setMsg(done); setRemoval(null); await load(); } catch (e) { setMsg(errorText(e)); } finally { setBusy(false); }
+  };
+  if (failed) return <div role="alert" style={{ marginTop: 18, fontSize: 13 }}>Could not load the kit: {failed} <button onClick={onBack} style={{ ...pill(false), marginLeft: 8 }}>Back</button></div>;
+  if (!detail) return <div style={{ marginTop: 18, fontSize: 13, color: 'var(--text-dim)' }}>Loading…</div>;
+  return (
+    <article data-testid="kit-detail" style={{ marginTop: 16 }}>
+      <button onClick={onBack} style={{ font: 'inherit', fontSize: 12.5, background: 'none', border: 'none', padding: 0, color: 'var(--accent-hi)', cursor: 'pointer' }}>← All kits</button>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700 }}>{detail.name}</h2>
+        <span style={{ ...mono, fontSize: 12, color: 'var(--text-faint)' }}>{detail.id} {detail.version}</span>
+        <TierBadge tier="first_party" />
+      </div>
+      <p style={{ fontSize: 13.5, color: 'var(--text-dim)', lineHeight: 1.55, maxWidth: 680 }}>{detail.summary}{detail.description ? ` ${detail.description}` : ''}</p>
+      {msg && <div role="status" data-testid="kit-message" style={{ fontSize: 12.5, padding: '8px 11px', borderRadius: 9, background: 'var(--panel-2)', border: '1px solid var(--border-soft)' }}>{msg}</div>}
+
+      {installed ? (
+        <Section title="Installed here" testid="kit-installed">
+          <div style={{ fontSize: 13 }}>Version <span style={mono}>{installed.version}</span> · <b style={{ color: installed.status === 'active' ? 'var(--green)' : 'var(--amber)' }}>{installed.status}</b>{installed.statusReason ? ` — ${installed.statusReason}` : ''}</div>
+          <ul style={{ margin: '8px 0', paddingLeft: 18, fontSize: 12.5 }}>
+            {installed.health.map((h) => <li key={h.interface}><span style={mono}>{h.interface}</span>: {h.healthy ? `bound to ${h.boundTo}` : <span style={{ color: 'var(--amber)' }}>no healthy provider bound</span>}</li>)}
+          </ul>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>{installed.members.filter((m) => m.state === 'live').length} parts: {[...new Set(installed.members.filter((m) => m.state === 'live').map((m) => m.kind))].join(', ')}. Parts that were here before the kit are reused, never removed by it.</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+            {installed.update && <button disabled={busy} style={pill(true)} onClick={() => void act(() => api.kitUpgrade(ws, detail.id), `Upgraded to ${installed.update!.version}.`)}>Upgrade to {installed.update.version}</button>}
+            {installed.revisions.some((r) => !r.rolledBackAt) && <button disabled={busy} style={pill(false)} onClick={() => void act(() => api.kitRollback(ws, detail.id), 'Rolled back.')}>Roll back to {installed.revisions.find((r) => !r.rolledBackAt)!.from}</button>}
+            <button disabled={busy} style={pill(false)} onClick={() => void api.kitUninstallPlan(ws, detail.id).then((p) => setRemoval(p.items)).catch((e) => setMsg(errorText(e)))}>Uninstall…</button>
+          </div>
+          {installed.update?.changelog && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>{installed.update.changelog}</div>}
+          {removal && (
+            <div data-testid="kit-uninstall-plan" style={{ marginTop: 10, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: 12.5 }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>What uninstall does</div>
+              <ul style={{ margin: 0, paddingLeft: 18 }}>{removal.map((r) => <li key={`${r.kind}:${r.key}`}><span style={mono}>{r.kind} {r.key}</span>: {r.outcome}</li>)}</ul>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button disabled={busy} style={{ ...pill(true), background: 'var(--red, #e5484d)', borderColor: 'var(--red, #e5484d)' }} onClick={() => void act(() => api.kitUninstall(ws, detail.id), 'Uninstalled. Seats and data stay.')}>Uninstall</button>
+                <button style={pill(false)} onClick={() => setRemoval(null)}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </Section>
+      ) : plan && <KitReview plan={plan} choices={choices} setChoices={setChoices} busy={busy}
+        onInstall={() => void act(async () => { const r = await api.kitInstall(ws, detail.id, choices); setMsg(`Installed: ${r.install.status}${r.install.statusReason ? ` — ${r.install.statusReason}` : ''}.`); }, '')} />}
+
+      <Section title="Playbooks">
+        {detail.playbookList.map((p) => <div key={p.name} style={{ fontSize: 12.5, padding: '4px 0' }}><b>{p.name}</b> — {p.description}</div>)}
+      </Section>
+      <Section title="Guidance for agents">
+        {detail.guidanceNotes.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>None.</div> : detail.guidanceNotes.map((g) => <div key={g.id} style={{ fontSize: 12.5, padding: '4px 0' }}><b>{g.title}</b> <span style={{ color: 'var(--text-faint)' }}>for {g.audience.join(', ')}</span><div style={{ color: 'var(--text-dim)' }}>{g.text}</div></div>)}
+      </Section>
+      {detail.changelog && <Section title="Changelog"><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{detail.changelog}</div></Section>}
+    </article>
+  );
+}
+
+/** The review screen (docs/foundry.md §4.2): every choice and every consent on one page; Install writes exactly what it shows. */
+function KitReview({ plan, choices, setChoices, busy, onInstall }: { plan: KitPlan; choices: KitChoices; setChoices: (c: KitChoices) => void; busy: boolean; onInstall: () => void }) {
+  const newPlugins = plan.plugins.filter((p) => p.state === 'new');
+  return (
+    <div data-testid="kit-review">
+      <Section title="Providers" testid="kit-providers">
+        {plan.interfaces.map((i) => (
+          <div key={i.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderTop: '1px solid var(--border-soft)', flexWrap: 'wrap' }}>
+            <span style={{ ...mono, fontSize: 12.5, minWidth: 110 }}>{i.name}{i.optional ? ' (optional)' : ''}</span>
+            <select aria-label={`Provider for ${i.name}`} value={i.choice} onChange={(e) => setChoices({ ...choices, providers: { ...(choices.providers ?? {}), [i.name]: e.target.value } })} style={{ font: 'inherit', fontSize: 12.5, padding: '4px 8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--panel-2)', color: 'var(--text)' }}>
+              {i.options.map((o) => <option key={o.id} value={o.id} disabled={!o.available}>{o.name}{o.trial ? ' — trial' : ''}{o.available ? '' : ' — not available yet'}</option>)}
+              <option value="later">Decide later</option>
+            </select>
+            {i.note && <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{i.note}</span>}
+            {i.options.find((o) => o.id === i.choice)?.trial && <span style={{ fontSize: 11.5, color: 'var(--amber)' }}>Trial: fixtures, no vendor account</span>}
+          </div>
+        ))}
+      </Section>
+      <Section title={`Plugins it adds (${newPlugins.length})`} testid="kit-plugins">
+        {plan.plugins.map((p) => (
+          <details key={p.id} style={{ padding: '6px 0', borderTop: '1px solid var(--border-soft)' }}>
+            <summary style={{ cursor: 'pointer', fontSize: 12.5 }}><span style={mono}>{p.id}</span> <span style={{ color: 'var(--text-faint)' }}>{p.role}{p.interface ? ` of ${p.interface}` : ''} · {p.state}</span></summary>
+            {p.review && <div style={{ fontSize: 12, color: 'var(--text-dim)', margin: '6px 0 0 14px' }}>
+              <div>{p.review.description}</div>
+              {p.review.operations.length > 0 && <div style={{ marginTop: 4 }}><ClassStrip ops={p.review.operations} /> {p.review.operations.map((o) => `${o.op} ${CLASS_LABEL[o.effectiveClass] ?? o.effectiveClass}${o.twoKey ? ' (two-key)' : ''}`).join('; ')}</div>}
+              {p.review.contributions && <div style={{ marginTop: 4 }}>Adds {p.review.contributions.skills.length} skill(s), {p.review.contributions.guidance.length} guidance note(s), {Object.values(p.review.contributions.ui).flat().length} UI element(s){Object.values(p.review.contributions.ui).flat().length ? `: ${Object.values(p.review.contributions.ui).flat().map((u) => `${u.title ?? u.id}${u.placement ? ` on ${u.placement}` : ''}`).join(', ')}` : ''}.</div>}
+              <div style={{ marginTop: 2 }}>{p.review.egress.length ? `Reaches ${p.review.egress.map((e) => e.host).join(', ')}` : 'Reaches no host outside yaam.'}</div>
+            </div>}
+          </details>
+        ))}
+      </Section>
+      <Section title="Policies (only ever stricter)">
+        {plan.policies.length === 0 ? <div style={{ fontSize: 12.5, color: 'var(--text-faint)' }}>None.</div> : plan.policies.map((p) => <div key={p.id} style={{ fontSize: 12.5, padding: '3px 0' }}><span style={mono}>{p.match.operation ?? p.match.changeKind}</span> → {p.require.replace('_', ' ')} <span style={{ color: 'var(--text-faint)' }}>({p.status})</span> — {p.why}</div>)}
+      </Section>
+      <Section title="People" testid="kit-seats">
+        {!plan.company && <div style={{ fontSize: 12.5, color: 'var(--amber)', marginBottom: 6 }}>This workspace has no company yet: seats are listed, not hired. Start a company to staff them.</div>}
+        {plan.seats.map((s) => (
+          <label key={s.key} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, padding: '4px 0' }}>
+            <input type="checkbox" aria-label={`Seat ${s.title}`} checked={s.on} disabled={s.hire === 'required' || !plan.company} onChange={(e) => setChoices({ ...choices, seats: { ...(choices.seats ?? {}), [s.key]: e.target.checked } })} />
+            <span><b>{s.title}</b> <span style={{ color: 'var(--text-faint)' }}>role:{s.role} · {s.hire}{s.filledBy ? ` · uses ${s.filledBy.name}` : ''}{Object.keys(s.grants).length ? ` · grants ${Object.entries(s.grants).map(([k, v]) => `${k} ${v}`).join(', ')}` : ''}</span></span>
+          </label>
+        ))}
+      </Section>
+      <Section title="Playbooks and guidance, in full">
+        {plan.playbooks.map((p) => <details key={p.name} style={{ fontSize: 12.5, padding: '3px 0' }}><summary style={{ cursor: 'pointer' }}><b>{p.name}</b> — {p.description}</summary><pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 12, color: 'var(--text-dim)', margin: '6px 0 0 14px' }}>{p.text}</pre></details>)}
+        {plan.guidance.map((g) => <div key={g.id} style={{ fontSize: 12.5, padding: '3px 0' }}><b>{g.title}</b> <span style={{ color: 'var(--text-faint)' }}>for {g.audience.join(', ')}</span>: {g.text}</div>)}
+      </Section>
+      {(plan.rhythm.length > 0 || plan.measures.length > 0) && <Section title="Rhythm and measures (described)"><div style={{ fontSize: 12.5, color: 'var(--text-dim)' }}>{plan.rhythm.join('; ')}{plan.measures.length ? `. Measured by ${plan.measures.join(', ')}.` : ''}</div></Section>}
+      <div style={{ marginTop: 20, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <button data-testid="kit-install" disabled={busy || plan.blockers.length > 0} onClick={onInstall} style={{ ...pill(true), padding: '7px 16px', opacity: plan.blockers.length ? 0.5 : 1 }}>Add to my company</button>
+        <span style={{ fontSize: 12.5, color: plan.outcome === 'active' ? 'var(--text-dim)' : 'var(--amber)' }}>{plan.outcome === 'active' ? 'Everything it needs is chosen.' : plan.outcome}</span>
+      </div>
+      {plan.blockers.length > 0 && <ul role="alert" style={{ fontSize: 12.5, color: 'var(--red, #e5484d)', paddingLeft: 18 }}>{plan.blockers.map((b) => <li key={b}>{b}</li>)}</ul>}
+    </div>
   );
 }

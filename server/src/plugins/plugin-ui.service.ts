@@ -61,7 +61,7 @@ export class PluginUiService {
     const r = await this.row(workspaceId, id);
     const spec = JSON.parse(r.spec) as UiCard | UiPanel | UiPage | UiBadge;
     let query: UiQuery | undefined;
-    let view: UiView | null = null;
+    let view: UiView;
     let title: string | undefined;
     if (r.kind === 'page') {
       const sec = (spec as UiPage).sections[Number(body.section ?? 0)];

@@ -1,6 +1,7 @@
 /** Foundry, the marketplace (docs/foundry.md §8; it was the Market): four
  *  shelves — Blueprints (company types: the Companies department, re-housed
- *  intact), Kits (previews until kits ship), Agents (the curated packs in two
+ *  intact), Kits (use cases: shipped kits with their review and install,
+ *  previews for the rest), Agents (the curated packs in two
  *  layers — Personal by category, Business by job function, a head and its
  *  team, docs/agent-catalog.md — plus community agents from the registry,
  *  docs/registry.md) and Plugins (interfaces, providers and consumers from
@@ -17,7 +18,7 @@ import {
 } from '../lib/market';
 import { RegistryReviewModal } from './RegistryBits';
 import { KIND_GLYPH, KIND_LABEL, flagCount, fmtInstalls, installSummary, ratingLabel } from '../lib/registry';
-import { KitsShelf, PluginDetailPage, PluginFilters, PluginsShelf } from './FoundryBits';
+import { KitDetailPage, KitsShelf, PluginDetailPage, PluginFilters, PluginsShelf } from './FoundryBits';
 
 const CompanyInstallModal = lazy(() => import('./OrgBlueprintBits').then((m) => ({ default: m.CompanyInstallModal })));
 
@@ -52,7 +53,7 @@ export function MarketView({ nav, setNav, onOpenSettings }: { nav: MarketNav; se
           {shelf === 'agents' ? (community ? DEPT_BLURB.community : SEGMENT_BLURB[nav.segment]) : shelf === 'plugins' && nav.pf === 'connectors' ? DEPT_BLURB.connectors : shelf === 'plugins' && nav.pf === 'skills' ? DEPT_BLURB.community : SHELF_BLURB[shelf]}
         </div>
         {shelf === 'blueprints' && (app.companiesEnabled ? <CompaniesDept /> : <Empty>Companies are not enabled on this server, so there are no blueprints to start from.</Empty>)}
-        {shelf === 'kits' && <KitsShelf nav={nav} />}
+        {shelf === 'kits' && (nav.kit ? <KitDetailPage id={nav.kit} onBack={() => setNav({ kit: '' })} /> : <KitsShelf nav={nav} setNav={setNav} />)}
         {shelf === 'plugins' && (nav.plugin
           ? <PluginDetailPage id={nav.plugin} onBack={() => setNav({ plugin: '' })} onOpen={(id) => setNav({ plugin: id })} onManage={manage} />
           : nav.pf === 'connectors' ? <><PluginFilters nav={nav} setNav={setNav} /><ConnectorsDept /></>
@@ -91,9 +92,9 @@ function ShelfTabs({ shelf, setNav }: { shelf: Shelf; setNav: (patch: Partial<Ma
       {SHELVES.map((s) => {
         const on = s === shelf;
         return (
-          <button key={s} role="tab" aria-selected={on} onClick={() => setNav({ shelf: s, plugin: '' })}
+          <button key={s} role="tab" aria-selected={on} onClick={() => setNav({ shelf: s, plugin: '', kit: '' })}
             style={{ font: 'inherit', textAlign: 'left', background: 'none', border: 'none', borderBottom: `2px solid ${on ? 'var(--accent)' : 'transparent'}`, marginBottom: -1, padding: '8px 10px 9px', cursor: 'pointer', color: on ? 'var(--text)' : 'var(--text-dim)' }}>
-            <span style={{ display: 'block', fontSize: 14, fontWeight: on ? 700 : 600 }}>{SHELF_LABEL[s]}{s === 'kits' && <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--amber)', marginLeft: 6 }}>soon</span>}</span>
+            <span style={{ display: 'block', fontSize: 14, fontWeight: on ? 700 : 600 }}>{SHELF_LABEL[s]}</span>
             <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-faint)' }}>{SHELF_HOLDS[s]}</span>
           </button>
         );

@@ -23,6 +23,7 @@ import { fmtUsd } from '../lib/pricing';
 import { Markdown } from '../lib/md';
 import { faint, linkBtn, ago, Avatar, useAgentNames } from './org-ui';
 import { ProgramDirectionCard, ProgramPeopleCard } from './ProgramMatrixView';
+import { PluginCards } from './PluginUi';
 
 // ---- the parts every dashboard shares ----
 
@@ -126,6 +127,8 @@ export function SectionDashboard({ section, org }: { section: CompanySection; or
       {section === 'people' && <PeopleDashboard org={org} />}
       {section === 'money' && <MoneyDashboard org={org} />}
       {section === 'oversight' && <OversightDashboard org={org} />}
+      {/* Extension point: cards and pages plugins add to this section (docs/plugins.md §3.8). */}
+      <PluginCards placement={section} />
     </div>
   );
 }

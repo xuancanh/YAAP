@@ -417,7 +417,8 @@ export class OrgApprovalsService {
       // (docs/experiments.md §1.3, OrgExperimentsService starts it), the
       // meetings module's cadence, the memory module's charter change, and the
       // action contract's two-key hold; work tracking's project bets,
-      // appetite decisions and kills (OrgProjectsService, docs/work-tracking.md).
+      // appetite decisions and kills (OrgProjectsService, docs/work-tracking.md);
+      // a kit or plugin change an agent proposed (OrgFoundryTools, docs/foundry.md §4.7).
       case 'cadence':
       case 'charter_change':
       case 'metric_source':

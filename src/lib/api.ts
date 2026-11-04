@@ -687,8 +687,60 @@ export interface PluginUpdates {
 export interface KitPreview {
   id: string; name: string; blurb: string; functions: string[]; companyTypes: string[];
   interfaces: Array<{ name: string; optional?: boolean; planned?: boolean }>; providers: string[]; seats: string[]; cadences: string[]; metrics: string[];
-  policies: string; status: 'coming_soon'; installable: false;
+  policies: string; status: 'coming_soon' | 'available'; installable: boolean;
+  /** Shipped kits (docs/foundry.md "Shipped as (kits)"). */
+  version?: string; summary?: string; playbooks?: string[]; guidance?: string[]; plugins?: string[];
+  installed?: { version: string; status: string; statusReason: string; updateAvailable: boolean } | null;
 }
+export interface KitChoices { providers?: Record<string, string>; seats?: Record<string, boolean> }
+export interface KitInstallView {
+  id: string; kitId: string; name: string; version: string; status: string; statusReason: string; installedBy: string; createdAt: string; activatedAt: string | null;
+  choices: KitChoices; health: Array<{ interface: string; boundTo: string | null; healthy: boolean }>; healthy: boolean;
+  update: { version: string; changelog: string } | null;
+  revisions: Array<{ id: string; from: string; to: string; appliedAt: string; rolledBackAt: string | null }>;
+  members: Array<{ kind: string; key: string; ref: string; owned: boolean; state: string }>;
+}
+export interface KitDetail extends KitPreview {
+  description: string; digest: string; changelog: string;
+  roles: Array<{ key: string; role: string; title: string; reportsTo: string; hire: string; grants?: Record<string, string>; playbooks?: string[] }>;
+  policyList: Array<{ id: string; match: { operation?: string; changeKind?: string }; require: string; why: string }>;
+  guidanceNotes: Array<{ id: string; title: string; text: string; audience: string[] }>;
+  playbookList: Array<{ name: string; description: string; audience: string[] }>;
+  install: KitInstallView | null;
+}
+export interface KitPlan {
+  kit: KitPreview & { digest: string; changelog: string };
+  installed: { version: string; status: string } | null;
+  interfaces: Array<{ name: string; optional: boolean; installed: boolean; boundTo: string | null; choice: string; note: string | null;
+    options: Array<{ id: string; name: string; why: string; trial: boolean; available: boolean; recommended: boolean }> }>;
+  plugins: Array<{ id: string; role: string; interface: string | null; why: string | null; state: string;
+    review: { name: string; version: string; tier: string; roles: string[]; description: string; operations: Array<{ op: string; effectiveClass: string; twoKey: boolean }>;
+      egress: Array<{ host: string }>; contributions: { skills: Array<{ name: string }>; guidance: Array<{ title: string }>; ui: Record<string, Array<{ id: string; title?: string; placement?: string }>> } | null; blockers: string[] } | null }>;
+  policies: Array<{ id: string; match: { operation?: string; changeKind?: string }; require: string; why: string; status: string }>;
+  playbooks: Array<{ name: string; description: string; audience: string[]; text: string }>;
+  guidance: Array<{ id: string; title: string; text: string; audience: string[] }>;
+  seats: Array<{ key: string; role: string; title: string; hire: string; on: boolean; reportsTo: string; grants: Record<string, string>; playbooks: string[]; filledBy: { agentId: string; name: string } | null; available: boolean }>;
+  company: boolean; rhythm: string[]; measures: string[]; outcome: string; blockers: string[];
+}
+
+// ---- declarative plugin UI (docs/plugins.md §3.8) ----
+
+export type PluginUiTone = 'neutral' | 'good' | 'warn' | 'bad';
+export type PluginUiView =
+  | { kind: 'stats'; items: Array<{ label: string; value: string; unit?: string; tone: PluginUiTone }> }
+  | { kind: 'table'; columns: string[]; rows: string[][]; more: number }
+  | { kind: 'list'; items: Array<{ title: string; subtitle?: string; badge?: string; link?: string }>; more: number }
+  | { kind: 'checklist'; items: string[] }
+  | { kind: 'text'; value: string };
+export interface PluginUiItem {
+  id: string; kind: 'card' | 'panel' | 'page' | 'action' | 'badge'; key: string; pluginId: string; version: string; ready: boolean; waitingOn: string[];
+  spec: {
+    title?: string; placement?: string; summary?: string; empty?: string; actions?: string[]; operation?: string; confirm?: string;
+    sections?: Array<{ title?: string }>; view?: { kind: string };
+    fields?: Array<{ key: string; label: string; type: 'text' | 'number' | 'textarea' | 'select'; options?: string[]; required?: boolean }>;
+  };
+}
+export type PluginUiInvoke = { status: 'confirm'; class: string; requirement: string; reasons: string[]; prompt: string } | { status: 'done'; class: string; output: unknown };
 
 // ---- coding agents (docs/coding-harnesses.md) ----
 
@@ -2113,7 +2165,18 @@ export const api = {
   foundryPlugin: (ws: string, id: string) => get<FoundryPluginDetail>(`/api/workspaces/${enc(ws)}/foundry/plugins/${enc(id)}`),
   publishPlugin: (ws: string, body: { manifest?: unknown; files?: Record<string, string>; commitSha?: string; changelog?: string; dryRun?: boolean }) => send<Record<string, unknown>>(`/api/workspaces/${enc(ws)}/foundry/plugins/publish`, 'POST', body),
   recallPlugin: (ws: string, id: string, version: string, reason: string) => send<{ recalled: boolean; frozen: number; withdrawn: number }>(`/api/workspaces/${enc(ws)}/foundry/plugins/${enc(id)}/versions/${enc(version)}/recall`, 'POST', { reason }),
-  foundryKits: () => get<KitPreview[]>('/api/foundry/kits'),
+  foundryKits: (ws?: string) => get<KitPreview[]>(`/api/foundry/kits${ws ? `?workspaceId=${enc(ws)}` : ''}`),
+  foundryKit: (id: string, ws?: string) => get<KitDetail>(`/api/foundry/kits/${enc(id)}${ws ? `?workspaceId=${enc(ws)}` : ''}`),
+  kitInstalls: (ws: string) => get<KitInstallView[]>(`/api/workspaces/${enc(ws)}/kits`),
+  kitPlan: (ws: string, kit: string, choices: KitChoices = {}) => send<KitPlan>(`/api/workspaces/${enc(ws)}/kits/plan`, 'POST', { kit, choices }),
+  kitInstall: (ws: string, kit: string, choices: KitChoices) => send<{ installed: boolean; already?: boolean; status?: string; reason?: string; install: KitInstallView }>(`/api/workspaces/${enc(ws)}/kits/install`, 'POST', { kit, choices, confirm: true }),
+  kitUpgrade: (ws: string, kit: string) => send<Record<string, unknown>>(`/api/workspaces/${enc(ws)}/kits/${enc(kit)}/upgrade`, 'POST'),
+  kitRollback: (ws: string, kit: string, revisionId?: string) => send<Record<string, unknown>>(`/api/workspaces/${enc(ws)}/kits/${enc(kit)}/rollback`, 'POST', { revisionId }),
+  kitUninstallPlan: (ws: string, kit: string) => send<{ kit: string; version: string; items: Array<{ kind: string; key: string; owned: boolean; outcome: string }> }>(`/api/workspaces/${enc(ws)}/kits/${enc(kit)}/uninstall/plan`, 'POST'),
+  kitUninstall: (ws: string, kit: string, opts: { keepPolicies?: boolean; removeBindings?: boolean } = {}) => send<{ ok: boolean; notes: string[] }>(`/api/workspaces/${enc(ws)}/kits/${enc(kit)}`, 'DELETE', opts),
+  pluginUi: (ws: string, placement?: string) => get<{ items: PluginUiItem[]; actions: PluginUiItem[] }>(`/api/workspaces/${enc(ws)}/plugins/ui${placement ? `?placement=${enc(placement)}` : ''}`),
+  pluginUiData: (ws: string, id: string, body: { section?: number; context?: Record<string, string> } = {}) => send<{ view: PluginUiView; title?: string }>(`/api/workspaces/${enc(ws)}/plugins/ui/${enc(id)}/data`, 'POST', body),
+  pluginUiInvoke: (ws: string, id: string, body: { fields?: Record<string, string>; context?: Record<string, string>; confirm?: boolean }) => send<PluginUiInvoke>(`/api/workspaces/${enc(ws)}/plugins/ui/${enc(id)}/invoke`, 'POST', body),
   pluginAction: (ws: string, id: string, action: 'disable' | 'enable' | 'conformance') => send<unknown>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}/${action}`, 'POST'),
   uninstallPlugin: (ws: string, id: string) => send<unknown>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}`, 'DELETE'),
   decidePluginUpdate: (ws: string, id: string, approve: boolean) => send<unknown>(`/api/workspaces/${enc(ws)}/plugins/${enc(id)}/updates/decide`, 'POST', { approve }),

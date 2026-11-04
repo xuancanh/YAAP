@@ -1,11 +1,11 @@
 /** Foundry (docs/foundry.md §8): the four shelves (Blueprints re-housing
- *  the Companies department, Kits as previews, Agents, Plugins), the
+ *  the Companies department, Kits with their review and install, Agents, Plugins), the
  *  Plugins shelf with its filters and tier badges, the plugin detail page,
  *  the install review flow with the community opt-in, the recall notice,
  *  and deep links (`?section=market` keeps working). */
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, type FoundryPlugin, type FoundryPluginDetail, type KitPreview, type PluginReview, type PluginSummary } from '../src/lib/api';
+import { api, type FoundryPlugin, type FoundryPluginDetail, type KitDetail, type KitPlan, type KitPreview, type PluginReview, type PluginSummary } from '../src/lib/api';
 import { navFromUrl, navQuery, useMarketNav } from '../src/lib/market';
 import { classMix, folderFiles, recallSentence } from '../src/lib/foundry';
 
@@ -52,9 +52,30 @@ const REVIEW = {
   deferred: [], diff: [], widening: true, blockers: [], communityOptIn: true,
 } as unknown as PluginReview;
 const KITS: KitPreview[] = [
-  { id: 'ship-software', name: 'Ship Software', blurb: 'An engineering team.', functions: ['engineering'], companyTypes: ['saas'], interfaces: [{ name: 'scm' }, { name: 'issues', optional: true }], providers: ['GitHub'], seats: ['Engineering manager'], cadences: ['standup'], metrics: ['lead time'], policies: '', status: 'coming_soon', installable: false },
-  { id: 'support-desk', name: 'Support Desk', blurb: 'A queue.', functions: ['customer'], companyTypes: ['saas'], interfaces: [{ name: 'support' }], providers: ['Intercom'], seats: ['CS manager'], cadences: ['queue review'], metrics: ['CSAT'], policies: '', status: 'coming_soon', installable: false },
+  { id: 'ship-software@yaam', name: 'Ship Software', blurb: 'An engineering team.', summary: 'An engineering team and its rhythm.', version: '1.0.0', functions: ['engineering'], companyTypes: ['saas'], interfaces: [{ name: 'scm' }, { name: 'flags', optional: true }], providers: ['scm-mock@yaam'], seats: ['Head of Engineering'], cadences: ['standup'], metrics: ['lead time'], policies: '', status: 'available', installable: true, playbooks: ['release-checklist'], installed: null },
+  { id: 'support-desk@yaam', name: 'Support Desk', blurb: 'A queue.', functions: ['customer'], companyTypes: ['saas'], interfaces: [{ name: 'support' }], providers: ['Intercom'], seats: ['CS manager'], cadences: ['queue review'], metrics: ['CSAT'], policies: '', status: 'coming_soon', installable: false },
 ];
+const KIT_DETAIL: KitDetail = {
+  ...KITS[0], description: 'On trial providers.', digest: 'd'.repeat(64), changelog: '', roles: [], policyList: [],
+  guidanceNotes: [{ id: 'g', title: 'How engineering ships here', text: 'Small pull requests.', audience: ['function:engineering'] }],
+  playbookList: [{ name: 'release-checklist', description: 'Ship a release safely.', audience: ['all'] }], install: null,
+};
+const PLAN: KitPlan = {
+  kit: { ...KITS[0], digest: 'd'.repeat(64), changelog: '' }, installed: null,
+  interfaces: [
+    { name: 'scm', optional: false, installed: false, boundTo: null, choice: 'scm-mock@yaam', note: null, options: [{ id: 'github@yaam', name: 'github@yaam', why: '', trial: false, available: false, recommended: true }, { id: 'scm-mock@yaam', name: 'Mock forge (provider)', why: '', trial: true, available: true, recommended: true }] },
+    { name: 'flags', optional: true, installed: false, boundTo: null, choice: 'later', note: null, options: [{ id: 'flags-mock@yaam', name: 'Mock flags (mock provider)', why: '', trial: true, available: true, recommended: true }] },
+  ],
+  plugins: [{ id: 'scm@yaam', role: 'interface', interface: 'scm', why: null, state: 'new', review: { name: 'Source control', version: '1.0.0', tier: 'first_party', roles: ['interface'], description: 'The scm contract.', operations: [{ op: 'scm.merge', effectiveClass: 'external_irreversible', twoKey: true }], egress: [], contributions: { skills: [], guidance: [], ui: {} }, blockers: [] } }],
+  policies: [{ id: 'merge-two-key', match: { operation: 'scm.merge' }, require: 'two_key', why: 'Merges keep two keys.', status: 'applies' }],
+  playbooks: [{ name: 'ship-software-release-checklist', description: 'Ship a release safely.', audience: ['all'], text: '1. List what merged.' }],
+  guidance: [{ id: 'g', title: 'How engineering ships here', text: 'Small pull requests.', audience: ['function:engineering'] }],
+  seats: [
+    { key: 'eng-head', role: 'engineering-manager', title: 'Head of Engineering', hire: 'required', on: true, reportsTo: '$chief', grants: { scm: 'write' }, playbooks: [], filledBy: null, available: true },
+    { key: 'swe', role: 'engineering-software-engineer', title: 'Software Engineer', hire: 'recommended', on: true, reportsTo: 'eng-head', grants: {}, playbooks: [], filledBy: null, available: true },
+  ],
+  company: true, rhythm: ['weekly review'], measures: ['lead time'], outcome: 'active', blockers: [],
+};
 
 const onOpenSettings = vi.fn();
 function Foundry() {
@@ -90,24 +111,59 @@ describe('shelves', () => {
     render(<Foundry />);
     expect(screen.getByRole('heading', { name: 'Foundry' })).toBeInTheDocument();
     const tabs = within(screen.getByRole('tablist', { name: 'Foundry shelves' })).getAllByRole('tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['BlueprintsCompany types', 'KitssoonUse cases', 'AgentsThe people', 'PluginsParts and connectors']);
+    expect(tabs.map((t) => t.textContent)).toEqual(['BlueprintsCompany types', 'KitsUse cases', 'AgentsThe people', 'PluginsParts and connectors']);
     expect(within(screen.getByRole('tablist', { name: 'Foundry shelves' })).getByRole('tab', { name: /Agents/ })).toHaveAttribute('aria-selected', 'true');
     fireEvent.click(within(screen.getByRole('tablist', { name: 'Foundry shelves' })).getByRole('tab', { name: /Blueprints/ }));
     expect(await screen.findByText('Acme Studio')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Search companies' })).toBeInTheDocument();
   });
 
-  it('Kits are previews: the coming-soon notice, the designed catalog, nothing installable', async () => {
+  it('Kits: shipped kits are installable with their review; the designed ones are listed as coming next', async () => {
+    vi.spyOn(api, 'foundryKit').mockResolvedValue(KIT_DETAIL);
+    const plan = vi.spyOn(api, 'kitPlan').mockResolvedValue(PLAN);
+    const install = vi.spyOn(api, 'kitInstall').mockResolvedValue({ installed: true, install: { status: 'active', statusReason: '' } } as never);
     render(<Foundry />);
     fireEvent.click(within(screen.getByRole('tablist', { name: 'Foundry shelves' })).getByRole('tab', { name: /Kits/ }));
-    expect(screen.getByTestId('kits-coming')).toHaveTextContent('Kits are coming — bundles of interfaces, providers and roles for a use case');
     const ship = await screen.findByTestId('kit-ship-software');
-    expect(ship).toHaveTextContent('Coming soon');
-    expect(within(ship).getByRole('button', { name: 'Not installable yet' })).toBeDisabled();
-    // The rail's functions filter the previews.
-    fireEvent.click(screen.getByRole('button', { name: /Customer Success/ }));
-    expect(screen.queryByTestId('kit-ship-software')).toBeNull();
-    expect(screen.getByTestId('kit-support-desk')).toBeInTheDocument();
+    expect(ship).toHaveTextContent('First party');
+    expect(screen.getByTestId('kits-coming')).toHaveTextContent('Coming next');
+    expect(within(screen.getByTestId('kit-support-desk')).getByRole('button', { name: 'Not installable yet' })).toBeDisabled();
+    // The review: providers per interface (a trial provider chosen, one not shipped yet disabled), the plugins with their classes, seats, policies, playbooks in full.
+    fireEvent.click(within(ship).getByRole('button', { name: 'Review and add' }));
+    const review = await screen.findByTestId('kit-review');
+    expect(window.location.pathname).toBe('/');
+    const scm = within(review).getByRole('combobox', { name: 'Provider for scm' }) as HTMLSelectElement;
+    expect(scm.value).toBe('scm-mock@yaam');
+    expect(within(scm).getByRole('option', { name: /github@yaam — not available yet/ })).toBeDisabled();
+    expect(within(review).getByText('Trial: fixtures, no vendor account')).toBeInTheDocument();
+    expect(screen.getByTestId('kit-plugins')).toHaveTextContent('scm.merge external, irreversible (two-key)');
+    expect(within(screen.getByTestId('kit-seats')).getByRole('checkbox', { name: 'Seat Head of Engineering' })).toBeDisabled();
+    expect(review).toHaveTextContent('scm.merge → two key');
+    expect(review).toHaveTextContent('1. List what merged.');
+    // A choice re-plans; Add installs exactly the choices shown.
+    fireEvent.click(within(screen.getByTestId('kit-seats')).getByRole('checkbox', { name: 'Seat Software Engineer' }));
+    await waitFor(() => expect(plan).toHaveBeenLastCalledWith('ws1', 'ship-software@yaam', { seats: { swe: false } }));
+    fireEvent.click(screen.getByTestId('kit-install'));
+    await waitFor(() => expect(install).toHaveBeenCalledWith('ws1', 'ship-software@yaam', { seats: { swe: false } }));
+    expect(await screen.findByTestId('kit-message')).toHaveTextContent('Installed: active');
+  });
+
+  it('an installed kit shows its health, the update waiting and the uninstall plan', async () => {
+    const installed = { id: 'k1', kitId: 'ship-software@yaam', name: 'Ship Software', version: '1.0.0', status: 'partial', statusReason: 'no observability provider bound', installedBy: 'me', createdAt: '', activatedAt: null, choices: {},
+      health: [{ interface: 'scm', boundTo: 'scm-mock@yaam', healthy: true }, { interface: 'observability', boundTo: null, healthy: false }], healthy: false,
+      update: { version: '1.1.0', changelog: 'Adds a playbook.' }, revisions: [], members: [{ kind: 'plugin', key: 'scm@yaam', ref: '', owned: true, state: 'live' }] };
+    vi.spyOn(api, 'foundryKit').mockResolvedValue({ ...KIT_DETAIL, install: installed });
+    vi.spyOn(api, 'kitUninstallPlan').mockResolvedValue({ kit: 'ship-software@yaam', version: '1.0.0', items: [{ kind: 'seat', key: 'eng-head', owned: true, outcome: 'kept (seats are never removed automatically)' }] });
+    const up = vi.spyOn(api, 'kitUpgrade').mockResolvedValue({ applied: true });
+    setUrl('?section=foundry&shelf=kits&kit=ship-software@yaam');
+    render(<Foundry />);
+    const box = await screen.findByTestId('kit-installed');
+    expect(box).toHaveTextContent('partial — no observability provider bound');
+    expect(box).toHaveTextContent('observability: no healthy provider bound');
+    fireEvent.click(within(box).getByRole('button', { name: 'Uninstall…' }));
+    expect(await screen.findByTestId('kit-uninstall-plan')).toHaveTextContent('kept (seats are never removed automatically)');
+    fireEvent.click(within(box).getByRole('button', { name: 'Upgrade to 1.1.0' }));
+    await waitFor(() => expect(up).toHaveBeenCalledWith('ws1', 'ship-software@yaam'));
   });
 
   it('community agents appear on the Agents shelf; registry plugin listings never show among them', async () => {

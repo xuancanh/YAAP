@@ -138,6 +138,8 @@ export interface MarketNav {
   iface?: string;
   tier?: string;
   plugin?: string;
+  /** Kits shelf: the open kit's detail page (`name@registry`). */
+  kit?: string;
   /** Agents shelf: '' = the curated catalog, 'community' = published by people. */
   agentTier?: '' | 'community';
 }
@@ -172,6 +174,8 @@ export function navFromUrl(search: string): Partial<MarketNav> | null {
   if (tier && ['first_party', 'verified', 'community', 'local'].includes(tier)) out.tier = tier;
   const plugin = p.get('plugin');
   if (plugin && /^[a-z0-9-]{2,40}@[a-z0-9-]{2,40}$/.test(plugin)) { out.plugin = plugin; out.shelf ??= 'plugins'; }
+  const kit = p.get('kit');
+  if (kit && /^[a-z0-9-]{2,40}@[a-z0-9-]{2,40}$/.test(kit)) { out.kit = kit; out.shelf ??= 'kits'; }
   if (p.get('agents') === 'community') out.agentTier = 'community';
   return Object.keys(out).length ? out : null;
 }
@@ -194,7 +198,8 @@ export function foundryPlaceOf(nav: Partial<MarketNav>): FoundryAddress {
     if (nav.tier) p.set('tier', nav.tier);
   }
   const query = p.toString();
-  return { ...(shelf ? { shelf } : {}), ...(shelf === 'plugins' && nav.plugin ? { item: nav.plugin } : {}), ...(query ? { query } : {}) };
+  const item = shelf === 'plugins' ? nav.plugin : shelf === 'kits' ? nav.kit : undefined;
+  return { ...(shelf ? { shelf } : {}), ...(item ? { item } : {}), ...(query ? { query } : {}) };
 }
 
 const FOUNDRY_PATH = /^\/([^/]+)\/(?:foundry|market)(?:\/([^/]+)(?:\/([^/]+))?)?\/?$/;
@@ -206,7 +211,7 @@ export function navFromLocation(pathname: string, search: string): Partial<Marke
   p.set('section', 'foundry');
   try {
     if (m[2]) p.set('shelf', decodeURIComponent(m[2]));
-    if (m[3]) p.set('plugin', decodeURIComponent(m[3]));
+    if (m[3]) p.set(m[2] === 'kits' ? 'kit' : 'plugin', decodeURIComponent(m[3]));
   } catch { /* a malformed segment: the shelf's default */ }
   return navFromUrl(`?${p.toString()}`) ?? {};
 }
@@ -226,6 +231,7 @@ export function navQuery(nav: MarketNav): string {
     if (nav.tier) p.set('tier', nav.tier);
     if (nav.plugin) p.set('plugin', nav.plugin);
   }
+  if (shelf === 'kits' && nav.kit) p.set('kit', nav.kit);
   return `?${p.toString()}`;
 }
 
@@ -275,7 +281,7 @@ export function useMarketNav(orgOn: boolean): { nav: MarketNav; setNav: (patch: 
     const on = () => {
       if (writing.current || !FOUNDRY_PATH.test(window.location.pathname)) return;
       const url = navFromLocation(window.location.pathname, window.location.search) ?? {};
-      setState((n) => ({ segment: url.segment ?? n.segment, cat: url.cat ?? 'All', fn: url.fn ?? '', shelf: url.shelf ?? 'agents', pf: url.pf, iface: url.iface, tier: url.tier, plugin: url.plugin, agentTier: url.agentTier }));
+      setState((n) => ({ segment: url.segment ?? n.segment, cat: url.cat ?? 'All', fn: url.fn ?? '', shelf: url.shelf ?? 'agents', pf: url.pf, iface: url.iface, tier: url.tier, plugin: url.plugin, kit: url.kit, agentTier: url.agentTier }));
     };
     window.addEventListener('popstate', on);
     return () => window.removeEventListener('popstate', on);
@@ -293,7 +299,7 @@ export function useMarketNav(orgOn: boolean): { nav: MarketNav; setNav: (patch: 
     const a = foundryPlaceOf(next);
     const href = `/${m[1]}/foundry${a.shelf ? `/${encodeURIComponent(a.shelf)}${a.item ? `/${encodeURIComponent(a.item).replace(/%40/g, '@')}` : ''}` : ''}${a.query ? `?${a.query}` : ''}`;
     if (href === `${window.location.pathname}${window.location.search}`) return;
-    const entry = (prev.shelf ?? 'agents') !== (next.shelf ?? 'agents') || prev.plugin !== next.plugin;
+    const entry = (prev.shelf ?? 'agents') !== (next.shelf ?? 'agents') || prev.plugin !== next.plugin || prev.kit !== next.kit;
     if (entry) window.history.pushState(null, '', href); else window.history.replaceState(null, '', href);
     writing.current = true;
     try { window.dispatchEvent(new PopStateEvent('popstate', { state: null })); } finally { writing.current = false; }
