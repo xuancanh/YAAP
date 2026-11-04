@@ -132,6 +132,18 @@ describe('the switcher', () => {
     expect(cb.onPickWorkspace).toHaveBeenCalledWith('ws2');
   });
 
+  it('a workspace whose company was archived is folded away until "Show archived"', () => {
+    view({ rows: { ws1: { workspaceId: 'ws1', company: { name: 'Acme', mode: 'autonomous', status: 'active' }, needsYou: 0, unread: 0 }, ws2: { workspaceId: 'ws2', company: null, needsYou: 0, unread: 0, archived: true } } });
+    fireEvent.click(screen.getByRole('button', { name: /Workspace: Acme/ }));
+    const menu = screen.getByRole('menu', { name: 'Workspaces' });
+    expect(within(menu).queryByText('Side project')).toBeNull();
+    fireEvent.click(within(menu).getByTestId('toggle-archived'));
+    expect(within(menu).getByText('Side project')).toBeInTheDocument();
+    expect(within(menu).getByText('Archived')).toBeInTheDocument();
+    fireEvent.click(within(menu).getByText('Hide archived'));
+    expect(within(menu).queryByText('Side project')).toBeNull();
+  });
+
   it('a paused company reads Paused; New workspace opens the wizard', () => {
     const cb = view({ rows: { ws1: { workspaceId: 'ws1', company: { name: 'Acme', mode: 'supervised', status: 'paused' }, needsYou: 0, unread: 0 } } });
     fireEvent.click(screen.getByRole('button', { name: /Workspace: Acme/ }));

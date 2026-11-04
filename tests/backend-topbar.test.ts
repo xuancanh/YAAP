@@ -9,6 +9,8 @@
  *  the workspace stream when a turn starts and ends. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { eq } from 'drizzle-orm';
+import { organizations } from '../server/src/database/schema';
 import { ConfigService } from '@nestjs/config';
 import { ChatsRepository } from '../server/src/chats/chats.repository';
 import { TurnLoopService } from '../server/src/chats/turn-loop.service';
@@ -215,4 +217,19 @@ test('pure helpers: the hash of a link, expiring soon, urgent', () => {
   assert.equal(isUrgent({ severity: 'critical', deadline: null }, now), true);
   assert.equal(isUrgent({ severity: 'normal', deadline: '2026-11-04T11:00:00Z' }, now), true);
   assert.equal(isUrgent({ severity: 'high', deadline: null }, now), false);
+});
+
+test('the switcher flags a workspace whose company was archived (and only that one)', async () => {
+  const s = await setup();
+  await s.mode.setMode(s.ws.id, { mode: 'supervised', chiefOfStaffAgentId: s.chief.id, monthlyUsd: 25 });
+  const before = (await s.topbar.workspaceRows()).find((r) => r.workspaceId === s.ws.id)!;
+  assert.ok(before.company, 'the company is live');
+  assert.equal(before.archived, false, 'a live company is not archived');
+  await s.db.update(organizations).set({ status: 'archived', archivedAt: new Date().toISOString() }).where(eq(organizations.workspaceId, s.ws.id));
+  await s.workspaces.setOrgFields(s.ws.id, { orgMode: 'off', chiefOfStaffAgentId: null });
+  const after = (await s.topbar.workspaceRows()).find((r) => r.workspaceId === s.ws.id)!;
+  assert.equal(after.company, null);
+  assert.equal(after.archived, true);
+  const other = await s.workspaces.create({ name: 'Plain' });
+  assert.equal((await s.topbar.workspaceRows()).find((r) => r.workspaceId === other.id)!.archived, false, 'never had a company: not archived');
 });

@@ -2549,7 +2549,7 @@ export interface WorkspaceStatus {
   nextMeeting: { id: string; title: string; at: string; meetingId: string | null } | null;
   partial: string[];
 }
-export interface WorkspaceGlanceRow { workspaceId: string; company: WorkspaceCompanyGlance | null; needsYou: number; unread: number }
+export interface WorkspaceGlanceRow { workspaceId: string; company: WorkspaceCompanyGlance | null; needsYou: number; unread: number; /** Its company was archived (none live): hidden until "Show archived". */ archived?: boolean }
 
 // ---- the owner's feed (docs/owners-seat.md "Inbox and notifications"; server/src/home/feed.types.ts) ----
 export type FeedSection = 'needs' | 'mentions' | 'updates';

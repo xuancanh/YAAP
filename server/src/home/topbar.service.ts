@@ -78,9 +78,10 @@ export class TopBarService {
       try {
         const g = await this.home.glance(w.id, { now, parts: [] });
         const counts = (await this.feed.feed(w.id, { now, glance: g, limit: 1 })).counts;
-        return { workspaceId: w.id, company: g.company, needsYou: counts.needsYou, unread: counts.unread };
+        const archived = g.company ? false : await this.home.hasArchivedCompany(w.id).catch(() => false);
+        return { workspaceId: w.id, company: g.company, needsYou: counts.needsYou, unread: counts.unread, archived };
       } catch {
-        return { workspaceId: w.id, company: null, needsYou: 0, unread: 0 };
+        return { workspaceId: w.id, company: null, needsYou: 0, unread: 0, archived: false };
       }
     }));
   }

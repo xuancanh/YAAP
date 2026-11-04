@@ -63,4 +63,6 @@ export interface WorkspaceGlanceRow {
   needsYou: number;
   /** Unread notifications (the bell's count). */
   unread: number;
+  /** The workspace's company was archived and none is live: the switcher hides it until "Show archived". */
+  archived: boolean;
 }

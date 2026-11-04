@@ -18,7 +18,7 @@ import { ConfigService } from '@nestjs/config';
 import { and, eq, gte, inArray } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { appSettings, chatTurns, orgUnits } from '../database/schema';
+import { appSettings, chatTurns, orgUnits, organizations } from '../database/schema';
 import { actorId, currentViewer } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
@@ -232,6 +232,12 @@ export class HomeService {
    * and what is coming up. No visit is recorded. `parts` keeps the switcher's
    * rows cheap (needs only).
    */
+  /** Whether this workspace's company was archived (it has no live one): the switcher folds such rows away. */
+  async hasArchivedCompany(workspaceId: string): Promise<boolean> {
+    const rows = await this.db.select({ status: organizations.status }).from(organizations).where(eq(organizations.workspaceId, workspaceId));
+    return rows.length > 0 && rows.every((o) => o.status === 'archived');
+  }
+
   async glance(workspaceId: string, opts: { now?: Date; parts?: Array<'spend' | 'team' | 'upcoming'> } = {}): Promise<HomeGlance> {
     const now = opts.now ?? new Date();
     const parts = new Set(opts.parts ?? ['spend', 'team', 'upcoming']);

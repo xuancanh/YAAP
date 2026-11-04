@@ -146,7 +146,11 @@ function rowLine(w: WorkspaceEntry, r: WorkspaceGlanceRow | undefined): { text: 
 function Switcher(p: TopBarViewProps & { open: boolean; setOpen: (m: Menu) => void }) {
   const ws = p.workspace;
   const company = p.status?.company ?? null;
-  const own = p.workspaces.filter((w) => !w.shared);
+  const [showArchived, setShowArchived] = useState(false);
+  // A workspace whose company was archived folds away (the current one always shows).
+  const isArchived = (w: WorkspaceEntry) => Boolean(p.rows?.[w.id]?.archived) && w.id !== ws.id;
+  const archivedCount = p.workspaces.filter((w) => !w.shared && isArchived(w)).length;
+  const own = p.workspaces.filter((w) => !w.shared && (showArchived || !isArchived(w)));
   const shared = p.workspaces.filter((w) => w.shared);
   const row = (w: WorkspaceEntry) => {
     const r = p.rows?.[w.id];
@@ -161,6 +165,7 @@ function Switcher(p: TopBarViewProps & { open: boolean; setOpen: (m: Menu) => vo
           {line.text && <span style={{ display: 'block', fontSize: 11.5, color: line.tone, marginTop: 1 }}>{line.text}</span>}
         </span>
         {r && r.unread > 0 && !current && <Count n={r.unread} tone="accent" />}
+        {isArchived(w) && <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 999, padding: '0 6px' }}>Archived</span>}
         {current && <I d={P.check} size={14} stroke="var(--accent)" sw={2.5} />}
       </button>
     );
@@ -181,6 +186,13 @@ function Switcher(p: TopBarViewProps & { open: boolean; setOpen: (m: Menu) => vo
         <div role="menu" aria-label="Workspaces">
           <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-dim)', padding: '6px 10px 4px' }}>Your workspaces</div>
           {own.map(row)}
+          {archivedCount > 0 && (
+            <button type="button" className="tb-row" data-testid="toggle-archived" aria-expanded={showArchived} onClick={() => setShowArchived(!showArchived)}
+              style={{ alignItems: 'center', color: 'var(--text-dim)', fontSize: 12 }}>
+              <I d={showArchived ? P.chevD : P.chevR} size={12} />
+              {showArchived ? 'Hide archived' : `Show ${archivedCount} archived`}
+            </button>
+          )}
           {shared.length > 0 && <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-dim)', padding: '10px 10px 4px', borderTop: '1px solid var(--border-soft)', marginTop: 4 }}>Shared with you</div>}
           {shared.map(row)}
           <div style={{ borderTop: '1px solid var(--border-soft)', marginTop: 4, paddingTop: 4 }}>
