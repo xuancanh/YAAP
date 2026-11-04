@@ -13,7 +13,7 @@ import { sectionDef, sectionOfPane, type CompanySection } from '../lib/company-n
 import { hopLine, inReviewBelow, managerHops, waitsOnViewer } from '../lib/decisions';
 import { isTaskKey, keyStyle, matchesTaskRef } from '../lib/task-keys';
 import {
-  api, ORG_TASK_STATUSES, type Agent, type ChannelMessage, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgGoalNode, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
+  api, ORG_TASK_STATUSES, type ProgramItem, type Agent, type ChannelMessage, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgGoalNode, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
   type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type OrgUnitNode, type WorkspaceMember, type TaskCheck, type OrgDelegation, type CardEval,
 } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
@@ -24,6 +24,7 @@ import { I, P } from '../lib/icons';
 import { card, input, btn, pill, h2, faint, linkBtn, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
 import { changeSummary, decidedViaBadge, dueBadge, expectedLabel, memberSettingsLines, verificationBadge } from '../lib/org3';
 import { FollowToggle } from './FollowToggle';
+import { GoalProgramLine, useProgram } from './ProgramMatrixView';
 import { MentionBox, storedMentions, useMentionables } from './MentionBox';
 import { Markdown } from '../lib/md';
 import { SOURCE_TONE, SOURCE_WORD, blockedText, parseBlockedOn, stepsCount } from '../lib/roadmap';
@@ -710,6 +711,8 @@ function Goals({ org, reload }: { org: OrgDetail; reload: () => Promise<void> })
   const { units, root, byId, current, isCompany } = useUnits();
   const [tree, setTree] = useState<OrgGoalNode[]>([]);
   const [adding, setAdding] = useState<{ parentGoalId: string } | null>(null);
+  const matrix = useProgram(org.workspaceId, String(tree.length));
+  const program = useMemo(() => new Map((matrix?.items ?? []).filter((i) => i.refType === 'goal').map((i) => [i.id, i])), [matrix]);
   const refresh = useCallback(async () => { setTree(await api.orgGoalTree(org.workspaceId, isCompany ? null : current?.id).catch(() => [])); }, [org.id, current?.id, isCompany]);
   useEffect(() => { void refresh(); const t = setInterval(() => { void refresh(); }, 30_000); return () => clearInterval(t); }, [refresh]);
   const act = async (fn: () => Promise<unknown>) => { try { await fn(); await refresh(); await reload(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
@@ -736,7 +739,7 @@ function Goals({ org, reload }: { org: OrgDetail; reload: () => Promise<void> })
       )}
       {adding && <NewGoal org={org} units={units} defaultUnitId={isCompany ? (root?.id ?? '') : (current?.id ?? '')} parents={flat} parentGoalId={adding.parentGoalId} onDone={() => { setAdding(null); void act(async () => undefined); }} />}
       {tree.length === 0 && <div style={faint}>No goals {isCompany ? 'yet' : 'in this unit yet'}.</div>}
-      {tree.map((g) => <GoalRow key={g.id} g={g} org={org} depth={0} names={names} unitOf={(id) => (id ? byId.get(id) : root) ?? root} currentUnitId={current?.id ?? null} act={act} addChild={(parentGoalId) => setAdding({ parentGoalId })} />)}
+      {tree.map((g) => <GoalRow key={g.id} g={g} org={org} depth={0} names={names} program={program} unitOf={(id) => (id ? byId.get(id) : root) ?? root} currentUnitId={current?.id ?? null} act={act} addChild={(parentGoalId) => setAdding({ parentGoalId })} />)}
       {flat.length > 0 && <div style={{ ...faint, marginTop: 10 }}>{count(tree)} goal(s) · reference one in a channel as <code>#goal:&lt;id&gt;</code> and it shows up under the goal.</div>}
     </div>
   );
@@ -772,7 +775,7 @@ function NewGoal({ org, units, defaultUnitId, parents, parentGoalId, onDone }: {
 
 /** One goal of the tracker: progress bar, owner, unit, linked tasks and
  *  messages, inline status, "add child"; children indented below. */
-function GoalRow({ g, org, depth, names, unitOf, currentUnitId, act, addChild }: { g: OrgGoalNode; org: OrgDetail; depth: number; names: Map<string, Agent>; unitOf: (id: string | null) => OrgUnitNode | null; currentUnitId: string | null; act: (fn: () => Promise<unknown>) => Promise<void>; addChild: (parentGoalId: string) => void }) {
+function GoalRow({ g, org, depth, names, program, unitOf, currentUnitId, act, addChild }: { g: OrgGoalNode; org: OrgDetail; depth: number; names: Map<string, Agent>; program: Map<string, ProgramItem>; unitOf: (id: string | null) => OrgUnitNode | null; currentUnitId: string | null; act: (fn: () => Promise<unknown>) => Promise<void>; addChild: (parentGoalId: string) => void }) {
   const app = useApp();
   const [showMsgs, setShowMsgs] = useState(false);
   const [msgs, setMsgs] = useState<Array<ChannelMessage & { slug: string }> | null>(null);
@@ -792,7 +795,7 @@ function GoalRow({ g, org, depth, names, unitOf, currentUnitId, act, addChild }:
               <span>{g.title}</span>
               <span style={{ ...faint, fontFamily: 'var(--mono)', fontSize: 10.5 }} title="Reference it in a channel">#goal:{g.id.slice(0, 8)}</span>
               {unit && unit.id !== currentUnitId && <span style={pill()} title="Unit">{unit.parentUnitId === null ? 'company' : unit.name}</span>}
-              {owner && <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }}><Avatar a={owner} size={14} />{owner.name}</span>}
+              {program.get(g.id) ? <GoalProgramLine item={program.get(g.id)!} /> : owner && <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }}><Avatar a={owner} size={14} />{owner.name}</span>}
             </div>
             {g.description && <div style={faint}>{g.description}</div>}
           </div>
@@ -826,7 +829,7 @@ function GoalRow({ g, org, depth, names, unitOf, currentUnitId, act, addChild }:
           </div>
         )}
       </div>
-      {g.children.map((c) => <GoalRow key={c.id} g={c} org={org} depth={depth + 1} names={names} unitOf={unitOf} currentUnitId={currentUnitId} act={act} addChild={addChild} />)}
+      {g.children.map((c) => <GoalRow key={c.id} g={c} org={org} depth={depth + 1} names={names} program={program} unitOf={unitOf} currentUnitId={currentUnitId} act={act} addChild={addChild} />)}
     </div>
   );
 }

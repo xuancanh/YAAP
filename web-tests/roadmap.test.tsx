@@ -5,7 +5,7 @@
  *  sections. */
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ProjectPage, ProjectSummary, RoadmapData } from '../src/lib/api';
+import type { ProgramItem, ProjectPage, ProjectSummary, RoadmapData } from '../src/lib/api';
 import { LaneBoard, ProjectPageView, RoadmapTimeline } from '../src/components/OrgRoadmapView';
 import { appetiteUsed, blockedText, buildScale, dayMs, forecastLine, groupProjects, hillPoint, laneColumns, parseBlockedOn, spanOf, stepsCount, xOf } from '../src/lib/roadmap';
 
@@ -183,5 +183,22 @@ describe('The project page', () => {
     expect(post().disabled).toBe(false);
     fireEvent.click(post());
     expect(h.onPostUpdate).toHaveBeenCalledWith({ health: 'at_risk', reason: 'vendor slow', ask: 'call them', body: undefined });
+  });
+  it('the program block: the chief named as acting PM, the rhythms and the requests waiting on heads', () => {
+    const h = handlers();
+    const program: ProgramItem = {
+      refType: 'project', id: 'a', key: 'P-a', kind: 'project', title: 'Project a', status: 'active', lane: 'now', health: 'on_track',
+      owner: { agentId: 'c', name: 'Chief', role: 'acting_chief' },
+      cadences: [{ kind: 'sync', label: 'Project sync', cron: '0 9 * * 1', everyDays: 7, nextAt: '2026-11-09T09:00:00.000Z', lastAt: null, enabled: true, stale: false }],
+      team: [], requests: [], links: [], stale: false,
+    };
+    render(<ProjectPageView page={page()} program={program} {...h} />);
+    expect(within(screen.getByTestId('project-page')).getAllByTestId('program-owner')[0].textContent).toBe('Chief · acting PM');
+    expect(screen.getByTestId('program-block').textContent).toMatch(/Project sync.*next/);
+    expect(screen.getByTestId('program-block').textContent).toMatch(/None waiting on a head/);
+  });
+  it('the board names each card\'s owner when the matrix is known', () => {
+    render(<LaneBoard projects={[proj('a')]} onOpen={vi.fn()} onLane={vi.fn()} owners={new Map([['a', { agentId: 'c', name: 'Chief', role: 'acting_chief' as const }]])} />);
+    expect(screen.getByTestId('program-owner').textContent).toBe('Chief · acting PM');
   });
 });

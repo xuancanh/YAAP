@@ -23,7 +23,8 @@
  */
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useApp } from '../store';
-import { api, type OrgDetail, type ProjectPage, type ProjectPatch, type ProjectSummary, type ProjectTeam, type RoadmapData, type TaskSource } from '../lib/api';
+import { api, type OrgDetail, type ProgramItem, type ProgramOwner, type ProjectPage, type ProjectPatch, type ProjectSummary, type ProjectTeam, type RoadmapData, type TaskSource } from '../lib/api';
+import { ProgramBlock, ProgramOwnerBadge, useProgram } from './ProgramMatrixView';
 import {
   LANES, LANE_WORD, SOURCE_TONE, SOURCE_WORD, appetiteLine, appetiteUsed, buildScale, dayMs, forecastLine, groupProjects, healthColor, healthWord, hillPoint,
   laneColumns, spanOf, updateWord, xOf, type GroupBy, type Lane, type Zoom,
@@ -149,7 +150,7 @@ function TimelineRow({ p, depth, span, scale, onOpen }: { p: ProjectSummary; dep
 
 // ---- Now / Next / Later ----
 
-export function LaneBoard({ projects, onOpen, onLane, errors = {} }: { projects: ProjectSummary[]; onOpen: (id: string) => void; onLane: (id: string, lane: Lane) => void; errors?: Record<string, string> }) {
+export function LaneBoard({ projects, onOpen, onLane, errors = {}, owners }: { projects: ProjectSummary[]; onOpen: (id: string) => void; onLane: (id: string, lane: Lane) => void; errors?: Record<string, string>; owners?: Map<string, ProgramOwner> }) {
   const cols = laneColumns(projects);
   return (
     <div data-testid="lane-board" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, alignItems: 'start' }}>
@@ -162,14 +163,14 @@ export function LaneBoard({ projects, onOpen, onLane, errors = {} }: { projects:
             <span style={{ ...faint, fontSize: 11 }}>{l === 'now' ? 'bets in flight' : l === 'next' ? 'shaped, waiting for a bet' : 'ideas'}</span>
           </div>
           {cols[l].length === 0 && <div style={{ ...faint, padding: '8px 2px' }}>{l === 'now' ? 'Nothing in Now. Move a shaped project here to bet on it.' : 'Empty.'}</div>}
-          {cols[l].map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onLane={onLane} error={errors[p.id]} />)}
+          {cols[l].map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onLane={onLane} error={errors[p.id]} owner={owners?.get(p.id)} />)}
         </section>
       ))}
     </div>
   );
 }
 
-function ProjectCard({ p, onOpen, onLane, error }: { p: ProjectSummary; onOpen: (id: string) => void; onLane: (id: string, lane: Lane) => void; error?: string }) {
+function ProjectCard({ p, onOpen, onLane, error, owner }: { p: ProjectSummary; onOpen: (id: string) => void; onLane: (id: string, lane: Lane) => void; error?: string; owner?: ProgramOwner }) {
   const upd = updateWord(p.update);
   return (
     <article data-testid="project-card" data-project={p.id} style={{ ...card, padding: '10px 12px', marginBottom: 8, borderLeft: `3px solid ${healthColor(p.health)}` }}>
@@ -181,7 +182,7 @@ function ProjectCard({ p, onOpen, onLane, error }: { p: ProjectSummary; onOpen: 
           {LANES.map((l) => <option key={l} value={l}>{LANE_WORD[l]}</option>)}
         </select>
       </div>
-      <div style={{ ...faint, marginTop: 3 }}>Lead {p.lead.name}{p.goals.length ? ` · moves ${p.goals.map((g) => g.title).join(', ')}` : ' · no key result'}</div>
+      <div style={{ ...faint, marginTop: 3 }}>{owner ? <ProgramOwnerBadge owner={owner} /> : <>Lead {p.lead.name}</>}{p.goals.length ? ` · moves ${p.goals.map((g) => g.title).join(', ')}` : ' · no key result'}</div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap', fontSize: 12 }}>
         <HealthDot health={p.health} />
         <span style={{ fontWeight: 600, color: healthColor(p.health) }}>{healthWord(p.health)}</span>
@@ -255,7 +256,7 @@ export interface ProjectPageHandlers {
   onOpenTask: (taskId: string) => void;
 }
 
-export function ProjectPageView({ page, ...h }: { page: ProjectPage } & ProjectPageHandlers) {
+export function ProjectPageView({ page, program, ...h }: { page: ProjectPage; program?: ProgramItem | null } & ProjectPageHandlers) {
   const p = page.project;
   const [editing, setEditing] = useState(false);
   const [posting, setPosting] = useState(false);
@@ -276,7 +277,7 @@ export function ProjectPageView({ page, ...h }: { page: ProjectPage } & ProjectP
           <button style={btn()} onClick={() => setEditing(!editing)}>{editing ? 'Close edit' : 'Edit'}</button>
         </div>
         <div style={{ ...faint, marginTop: 4 }}>
-          Lead {p.lead.name}{p.unitName ? ` · ${p.unitName}` : ''} · {p.goals.length ? <>moves {p.goals.map((g) => g.title).join(', ')}</> : 'no key result linked'}
+          {program ? <ProgramOwnerBadge owner={program.owner} /> : <>Lead {p.lead.name}</>}{p.unitName ? ` · ${p.unitName}` : ''} · {p.goals.length ? <>moves {p.goals.map((g) => g.title).join(', ')}</> : 'no key result linked'}
         </div>
       </div>
       {editing && <ProjectEdit page={page} onSave={async (patch) => { await h.onPatch(patch); setEditing(false); }} />}
@@ -319,6 +320,7 @@ export function ProjectPageView({ page, ...h }: { page: ProjectPage } & ProjectP
           <div style={{ marginTop: 6 }}><Sparkline points={page.burn} /></div>
         </Block>
       </div>
+      {program && <ProgramBlock item={program} />}
       {page.team && <ProjectTeamBlock team={page.team} />}
       <Block title="Health updates" testid="project-health" action={<button style={btn(true)} onClick={() => setPosting(!posting)}>{posting ? 'Close' : 'Post update'}</button>}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -468,6 +470,8 @@ export function RoadmapPane({ org }: { org: OrgDetail }) {
   const [projectId, setProjectIdRaw] = useState<string | null>(null);
   const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
   const [adding, setAdding] = useState(false);
+  const matrix = useProgram(wsId, data ? String(data.projects.length) : '');
+  const owners = useMemo(() => new Map((matrix?.items ?? []).filter((i) => i.refType === 'project').map((i) => [i.id, i.owner])), [matrix]);
   const load = useCallback(async () => {
     try { setData(await api.orgRoadmap(wsId)); setErr(null); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }, [wsId]);
@@ -510,7 +514,7 @@ export function RoadmapPane({ org }: { org: OrgDetail }) {
       {err && <div role="alert" style={{ color: 'var(--red)', fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
       {!data ? <div style={faint}>Loading…</div> : view === 'timeline'
         ? <RoadmapTimeline data={data} groupBy={groupBy} zoom={zoom} onOpen={setProjectId} />
-        : <LaneBoard projects={data.projects} onOpen={setProjectId} onLane={(id, l) => void onLane(id, l)} errors={laneErrors} />}
+        : <LaneBoard projects={data.projects} onOpen={setProjectId} onLane={(id, l) => void onLane(id, l)} errors={laneErrors} owners={owners} />}
       {data && data.system.length > 0 && (
         <div style={{ ...faint, marginTop: 12 }}>
           Also on the board: {data.system.map((p, i) => <span key={p.id}>{i > 0 && ', '}<button onClick={() => setProjectId(p.id)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--accent-hi)', cursor: 'pointer', font: 'inherit' }}>{p.title}{p.unitName ? ` (${p.unitName})` : ''}</button> {p.progress.total - p.progress.done} open</span>)}
@@ -549,7 +553,10 @@ function ProjectPane({ wsId, projectId, onBack }: { wsId: string; projectId: str
   const app = useApp();
   const [page, setPage] = useState<ProjectPage | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [gen, setGen] = useState(0);
+  const matrix = useProgram(wsId, String(gen));
   const load = useCallback(async () => {
+    setGen((g) => g + 1);
     try { setPage(await api.orgProject(wsId, projectId)); setErr(null); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }, [wsId, projectId]);
   useEffect(() => { void load(); }, [load]);
@@ -557,7 +564,7 @@ function ProjectPane({ wsId, projectId, onBack }: { wsId: string; projectId: str
   if (!page) return <div>{err ? <div role="alert" style={{ color: 'var(--red)', fontSize: 12.5 }}>{err}</div> : <div style={faint}>Loading…</div>}<button style={{ ...btn(), marginTop: 8 }} onClick={onBack}>Back to roadmap</button></div>;
   const id = page.project.id;
   return (
-    <ProjectPageView page={page} onBack={onBack}
+    <ProjectPageView page={page} program={matrix?.items.find((i) => i.refType === 'project' && i.id === id) ?? null} onBack={onBack}
       onPatch={(patch) => act(() => api.updateOrgProject(wsId, id, patch))}
       onPostUpdate={(u) => act(() => api.postProjectUpdate(wsId, id, u))}
       onAddMilestone={(m) => act(() => api.addProjectMilestone(wsId, id, m))}

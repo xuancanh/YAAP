@@ -22,6 +22,7 @@ import { healthWord, incidentCounts } from '../lib/org3';
 import { fmtUsd } from '../lib/pricing';
 import { Markdown } from '../lib/md';
 import { faint, linkBtn, ago, Avatar, useAgentNames } from './org-ui';
+import { ProgramDirectionCard, ProgramPeopleCard } from './ProgramMatrixView';
 
 // ---- the parts every dashboard shares ----
 
@@ -187,6 +188,7 @@ function DirectionDashboard({ org }: { org: OrgDetail }) {
             </>
           )}
         </Card>
+        <ProgramDirectionCard wsId={ws} />
         <Card id="decisions" title="Decisions" open={() => open('decisions')} openLabel="Decision log">
           {decisions === undefined ? <Loading /> : !decisions || decisions.length === 0 ? <Empty>Nothing decided yet. Decisions from meetings and cards land here.</Empty> : decisions.slice(0, 4).map((d) => (
             <button key={d.id} style={rowBtn} onClick={() => open('decisions', { kind: 'decision', id: d.id })}>
@@ -336,6 +338,7 @@ function PeopleDashboard({ org }: { org: OrgDetail }) {
             </button>
           ))}
         </Card>
+        <ProgramPeopleCard wsId={org.workspaceId} />
         <Card id="capacity" title="Capacity" aside={capacity ? <span style={faint}>WIP limit {capacity.wip} each</span> : undefined}>
           {capacity === undefined ? <Loading /> : !capacity || loaded.length === 0 ? <Empty>Nobody holds open work.</Empty> : loaded.map((m) => (
             <div key={m.agentId} style={row}>

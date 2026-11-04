@@ -42,6 +42,7 @@ const apiMock = {
   orgAudit: vi.fn(async () => [{ id: 'r1', orgId: 'o1', seq: 214, actor: 'chief', action: 'auto_hire', refType: 'member', refId: 'm1', payload: '{}', prevHash: '', hash: '', createdAt: day(0.1) }]),
   orgAudits: vi.fn(async () => [{ id: 'au1', status: 'done', findings: JSON.stringify([{ title: 'x' }, { title: 'y' }]), summary: 'Two tasks closed without a check.', startedAt: day(1), endedAt: day(1) }]),
   workspaceTrust: vi.fn(async () => ({ workspaceId: 'ws1', orgMode: 'supervised', ceilings: {}, matrix: [], agents: [{ agentId: 'a2', name: 'Writer', classes: [{ effective: 0 }] }] })),
+  orgProgram: vi.fn(async () => ({ pms: [], chiefActing: true, chiefName: 'Atlas', items: [], members: [], requests: [], health: { items: 2, unowned: 0, acting: 2, nonPm: 0, stretched: 0, staleCadences: 1, openRequests: 0, overdueRequests: 0 }, bounds: { syncMinDays: 1, syncMaxDays: 7, reviewMinDays: 7, reviewMaxDays: 31, allocationWarnPct: 85, requestAnswerHours: 24 } })),
   orgIncidents: vi.fn(async (): Promise<OrgIncident[]> => [{ id: 'i9', title: 'Provider outage', status: 'resolved', openedAt: day(3), resolvedAt: day(2), containedAt: day(3) } as OrgIncident]),
 };
 vi.mock('../src/lib/api', async (orig) => ({ ...(await orig<typeof import('../src/lib/api')>()), api: apiMock }));
@@ -78,6 +79,8 @@ describe('the section dashboards', () => {
     expect(screen.getByTestId('dash-card-goals')).toHaveTextContent('at risk');
     await waitFor(() => expect(screen.getByTestId('dash-card-roadmap')).toHaveTextContent('Pricing page'));
     await waitFor(() => expect(screen.getByTestId('dash-card-decisions')).toHaveTextContent('Usage-based billing'));
+    await waitFor(() => expect(screen.getByTestId('dash-card-program')).toHaveTextContent('No Program Manager yet: Atlas acts as PM.'));
+    expect(screen.getByTestId('program-fig-acting')).toHaveTextContent('2chief acting');
     // the cards link into the pages
     fireEvent.click(within(screen.getByTestId('dash-card-roadmap')).getByText('Open roadmap'));
     expect(fake.setOrgPane).toHaveBeenCalledWith('roadmap');

@@ -1102,6 +1102,44 @@ export interface ProjectTeam {
   channel: { id: string; slug: string } | null; standup: { cron: string; nextAt: string | null; lastAt: string | null };
   members: ProjectTeamMember[]; units: string[];
 }
+// ---- program management: the matrix (docs/work-tracking.md "Program management: the matrix") ----
+export type ProgramOwnerRole = 'pm' | 'acting_chief' | 'head' | 'member' | 'person' | 'inactive' | 'none';
+export interface ProgramOwner { agentId: string | null; name: string; role: ProgramOwnerRole }
+export type ProgramCadenceKind = 'sync' | 'milestone_review' | 'status_update' | 'goal_review' | 'kr_checkin';
+export interface ProgramCadence {
+  kind: ProgramCadenceKind; label: string; cron: string | null; everyDays: number | null;
+  nextAt: string | null; lastAt: string | null; enabled: boolean; stale: boolean;
+}
+export interface ResourceRequest {
+  id: string; projectId: string; projectKey: string | null; projectTitle: string; goalId: string | null;
+  pmAgentId: string | null; pmName: string; headAgentId: string | null; headName: string; unitName: string | null;
+  role: string; skills: string; agentId: string | null; agentName: string | null; allocation: number;
+  startDate: string | null; endDate: string | null; budgetUsd: number; why: string;
+  /** open | approved | adjusted | declined | hiring | granted | escalated | withdrawn. */
+  status: string; decidedAgentId: string | null; decidedAgentName: string | null; decidedAllocation: number | null;
+  decisionNote: string; decidedBy: string; decidedAt: string | null; approvalId: string | null; memberRowId: string | null;
+  answerBy: string | null; overdue: boolean; createdAt: string;
+}
+export interface ProgramSeat { agentId: string | null; name: string; role: string; allocation: number; status: string; headName: string }
+export interface ProgramItem {
+  refType: 'goal' | 'project'; id: string; key: string | null; kind: string; title: string; status: string; lane: string | null; health: string | null;
+  owner: ProgramOwner; cadences: ProgramCadence[]; team: ProgramSeat[]; requests: ResourceRequest[];
+  links: Array<{ id: string; key: string | null; title: string }>; stale: boolean;
+}
+export interface ProgramMember {
+  agentId: string; name: string; title: string; lineManager: string; unitName: string | null;
+  assignments: Array<{ projectId: string; key: string | null; title: string; role: string; allocation: number; status: string; pmName: string }>;
+  owns: Array<{ refType: 'goal' | 'project'; id: string; key: string | null; title: string }>;
+  total: number; stretched: boolean; isPm: boolean; isHead: boolean;
+}
+export interface ProgramMatrix {
+  pms: Array<{ agentId: string; name: string; owns: number }>;
+  chiefActing: boolean; chiefName: string;
+  items: ProgramItem[]; members: ProgramMember[]; requests: ResourceRequest[];
+  health: { items: number; unowned: number; acting: number; nonPm: number; stretched: number; staleCadences: number; openRequests: number; overdueRequests: number };
+  bounds: { syncMinDays: number; syncMaxDays: number; reviewMinDays: number; reviewMaxDays: number; allocationWarnPct: number; requestAnswerHours: number };
+}
+
 export interface ProjectPage {
   project: ProjectSummary & { brief: ProjectBrief; createdAt: string; createdBy: string; updateCadenceDays: number | null };
   /** The cross-functional team with its home units (null for a system project). */
@@ -2205,6 +2243,14 @@ export const api = {
   projectTeam: (wsId: string, projectId: string) => get<ProjectTeam>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/team`),
   addProjectMember: (wsId: string, projectId: string, body: { agentId: string; role?: string; allocation: number }) => send<ProjectTeam>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/team`, 'POST', body),
   removeProjectMember: (wsId: string, projectId: string, agentId: string) => send<ProjectTeam>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/team/${enc(agentId)}`, 'DELETE'),
+  // program management: the matrix — owners, rhythms, resource requests
+  orgProgram: (wsId: string) => get<ProgramMatrix>(`/api/workspaces/${wsId}/org/program`),
+  programAssign: (wsId: string, body: { ref: string; agentId: string; cascade?: boolean }) => send<ProgramMatrix>(`/api/workspaces/${wsId}/org/program/assign`, 'POST', body),
+  programCadence: (wsId: string, body: { ref: string; kind: 'sync' | 'milestone_review' | 'goal_review'; cron: string | null }) => send<ProgramMatrix>(`/api/workspaces/${wsId}/org/program/cadence`, 'POST', body),
+  resourceRequests: (wsId: string) => get<ResourceRequest[]>(`/api/workspaces/${wsId}/org/program/requests`),
+  createResourceRequest: (wsId: string, body: { project: string; role: string; allocation: number; agentId?: string | null; headAgentId?: string | null; skills?: string; startDate?: string | null; endDate?: string | null; budgetUsd?: number; why?: string }) => send<ResourceRequest>(`/api/workspaces/${wsId}/org/program/requests`, 'POST', body),
+  decideResourceRequest: (wsId: string, requestId: string, body: { action: 'approve' | 'adjust' | 'decline' | 'hire'; agentId?: string | null; allocation?: number; endDate?: string | null; note?: string }) => send<ResourceRequest>(`/api/workspaces/${wsId}/org/program/requests/${enc(requestId)}/decide`, 'POST', body),
+  withdrawResourceRequest: (wsId: string, requestId: string) => send<{ ok: true }>(`/api/workspaces/${wsId}/org/program/requests/${enc(requestId)}/withdraw`, 'POST'),
   setProjectStandup: (wsId: string, projectId: string, cron: string | null) => send<ProjectTeam>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/standup`, 'POST', { cron }),
   linkTaskToProject: (wsId: string, projectId: string, taskId: string) => send<OrgTask>(`/api/workspaces/${wsId}/org/projects/${enc(projectId)}/tasks`, 'POST', { taskId }),
   taskTransitions: (wsId: string, taskId: string) => get<TaskTransition[]>(`/api/workspaces/${wsId}/org/tasks/${enc(taskId)}/transitions`),
