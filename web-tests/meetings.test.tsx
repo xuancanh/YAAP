@@ -9,6 +9,10 @@ import { byDay, dayKey, monthGrid, rangeFor, splitList, weekDays } from '../src/
 import { MEETING_EVENT, type MeetingEventDetail } from '../src/lib/routes';
 import type { CalendarMeeting, CalendarResponse } from '../src/lib/api';
 
+// The rooms the board asked to open (the store turns these into /:c/meetings/:id).
+const rooms: MeetingEventDetail[] = [];
+window.addEventListener(MEETING_EVENT, (e) => { rooms.push((e as CustomEvent<MeetingEventDetail>).detail); });
+
 const fake: Record<string, unknown> = {};
 vi.mock('../src/store', () => ({ useApp: () => fake, grad: () => 'none' }));
 const { MeetingsBoard } = await import('../src/components/MeetingsBoard');
@@ -115,9 +119,8 @@ describe('MeetingsBoard', () => {
     expect(grid.querySelectorAll('[data-day]').length % 7).toBe(0);
     const pastDay = grid.querySelector(`[data-day="${dayKey(new Date(response.meetings[0].at))}"]`)!;
     fireEvent.click(within(pastDay as HTMLElement).getByText(/Weekly review · Company/));
-    expect(window.location.hash).toBe('#/ws/ws1/meeting/past1'); // the meeting, not its minutes file
+    expect(rooms.at(-1)).toEqual({ workspaceId: 'ws1', meetingId: 'past1' }); // the meeting, not its minutes file
     expect(fake.openFile).not.toHaveBeenCalled();
-    window.location.hash = '';
     // a meeting with no room left (cancelled, no thread) still opens its minutes
     fireEvent.click(within(grid).getAllByText(/Launch/).at(-1)!);
     expect(fake.openFile).toHaveBeenCalledWith({ kind: 'workspace', id: 'ws1' }, 'channels/launch/meetings/2026-11-02-meeting-launch.md');
@@ -137,9 +140,8 @@ describe('MeetingsBoard', () => {
     render(<MeetingsBoard wsId="ws1" channel="company" />);
     await waitFor(() => screen.getAllByTestId('meeting-row'));
     fireEvent.click(screen.getByRole('button', { name: 'Weekly review · Company' }));
-    expect(window.location.hash).toBe('#/ws/ws1/meeting/past1');
+    expect(rooms.at(-1)).toEqual({ workspaceId: 'ws1', meetingId: 'past1' });
     expect(fake.openFile).not.toHaveBeenCalled();
-    window.location.hash = '';
     fireEvent.click(within(screen.getAllByTestId('meeting-row')[2]).getByRole('button', { name: 'Minutes' }));
     expect(fake.openFile).toHaveBeenCalledTimes(1);
   });
@@ -150,8 +152,7 @@ describe('MeetingsBoard', () => {
     await waitFor(() => screen.getAllByTestId('meeting-row'));
     // its title and View open the room
     fireEvent.click(screen.getByRole('button', { name: 'Retro · Company' }));
-    expect(window.location.hash).toBe('#/ws/ws1/meeting/m9');
-    window.location.hash = '';
+    expect(rooms.at(-1)).toEqual({ workspaceId: 'ws1', meetingId: 'm9' });
     expect(within(screen.getByTestId('meeting-row')).queryByRole('button', { name: 'Details' })).toBeNull();
   });
 
@@ -160,9 +161,8 @@ describe('MeetingsBoard', () => {
     Object.assign(fake, { channels: [{ id: 'c1', slug: 'company' }] });
     const { result } = renderHook(() => useOpenMeeting());
     result.current({ id: 'm7', channelId: 'sub-gone', parentChannelId: 'c1', threadRootId: 'r7', status: 'done' } as never);
-    expect(window.location.hash).toBe('#/ws/ws1/meeting/m7');
+    expect(rooms.at(-1)).toEqual({ workspaceId: 'ws1', meetingId: 'm7' });
     expect(fake.showToast).not.toHaveBeenCalled();
-    window.location.hash = '';
     result.current({ id: 'm8', channelId: 'c1', parentChannelId: null, threadRootId: 'r8', status: 'done' } as never);
     expect(fake.openChannel).toHaveBeenCalledWith('company', 'r8');
   });
