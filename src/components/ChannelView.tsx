@@ -9,7 +9,7 @@ import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
 import { api, type Agent, type ChannelDetail, type ChannelFile, type ChannelMember, type ChannelMessage, type OrgDecision, type OrgMeeting, type WorkspaceEvent } from '../lib/api';
 import { applyMention, decisionRefs, groupThreads, initials, linkCardSubId, liveInThread, meetingCommandHint, mentionQuery, mentionSuggestions, messageMentionSpans, subIcon, type MentionCandidate } from '../lib/channels';
-import { Markdown, type RefResolver } from '../lib/md';
+import { Markdown, inline, type RefResolver } from '../lib/md';
 import { keyPrefix, normalizeTaskKey, unitKeyPrefixes } from '../lib/task-keys';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
@@ -304,7 +304,7 @@ export function ChannelView() {
       return (
         <div key={m.id} id={`msg-${m.id}`} style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '10px 0', fontSize: 11.5, color: 'var(--text-dim)' }}>
           <div style={{ flex: 1, height: 1, background: 'var(--border-soft)' }} />
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 20, padding: '3px 11px', maxWidth: '80%' }}><I d={P.sysLines} size={12} />{m.text}</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--panel-2)', border: '1px solid var(--border-soft)', borderRadius: 20, padding: '3px 11px', maxWidth: '80%' }}><I d={P.sysLines} size={12} /><span style={{ minWidth: 0 }}>{inline(m.text, `sys-${m.id}`, { refs })}</span></span>
           <div style={{ flex: 1, height: 1, background: 'var(--border-soft)' }} />
         </div>
       );

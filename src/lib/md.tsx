@@ -29,6 +29,7 @@
  */
 import { memo, useState, type CSSProperties, type ReactNode } from 'react';
 import { appHref, navigate, parseRoute } from './routes';
+import { FILE_PATH_SOURCE, filePathOf, openFileInPanel } from './file-links';
 
 export type RefKind = 'goal' | 'decision' | 'task' | 'meeting' | 'audit';
 /** `bare` is set for a task key written without `#task:` (ENG-12): the
@@ -81,7 +82,18 @@ const INLINE_RE = new RegExp([
   '(https?:\\/\\/[^\\s<>()\\[\\]"\']+[^\\s<>()\\[\\]"\'.,;:!?])', // 7 bare url
   '(#(?:goal|decision|task|meeting|audit):[A-Za-z0-9_-]+)', // 8 ref chip
   '((?<![\\w-])[A-Z][A-Z0-9]{1,5}-\\d{1,7}(?![\\w-]))', // 9 bare task key (ENG-12)
+  `(${FILE_PATH_SOURCE})`,                           // 10 workspace file path (/org/…/x.md)
 ].join('|'), 'g');
+
+const fileLinkStyle: CSSProperties = { color: 'var(--accent-hi)', textDecoration: 'underline', textDecorationColor: 'var(--accent-dim)', textUnderlineOffset: 2, cursor: 'pointer', wordBreak: 'break-all' };
+
+/** A workspace file path drawn as a link that opens it in the side panel. */
+function fileLink(key: string, path: string, label: ReactNode, code = false): ReactNode {
+  const open = (e: { preventDefault: () => void }) => { e.preventDefault(); openFileInPanel(path); };
+  return (
+    <a key={key} href={`#file:/${path}`} data-file={path} title={`Open /${path}`} onClick={open} style={code ? { ...codeStyle, ...fileLinkStyle } : fileLinkStyle}>{label}</a>
+  );
+}
 
 /** The glyph before a reference chip (goal, decision, task; a meeting or an audit row cited by ask-the-company). */
 export const REF_GLYPH: Record<RefKind, string> = { goal: '◎', decision: '⚖', task: '☐', meeting: '🗓', audit: '#' };
@@ -102,7 +114,9 @@ export function inline(text: string, keyBase: string, ctx: Ctx = {}): ReactNode[
       // that is exactly one resolved mention renders as its chip.
       const body = tok.slice(1, -1);
       const only = ctx.mentions && body.startsWith('@') ? ctx.mentions(body) : [];
+      const file = filePathOf(body);
       if (only.length === 1 && only[0].start === 0 && only[0].end === body.length) out.push(...withMentions(body, key, ctx));
+      else if (file) out.push(fileLink(key, file, body, true));
       else out.push(<code key={key} style={codeStyle}>{body}</code>);
     }
     else if (m[2]) out.push(<strong key={key}>{inline(tok.slice(2, -2), key, ctx)}</strong>);
@@ -114,8 +128,10 @@ export function inline(text: string, keyBase: string, ctx: Ctx = {}): ReactNode[
       else out.push(tok);
     } else if (m[6]) {
       const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(tok)!;
-      const inApp = SAFE_LINK.test(link[2]) ? null : appLink(link[2]);
-      if (inApp) out.push(<a key={key} href={inApp} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); navigate(inApp); }} style={{ color: 'var(--accent-hi)' }}>{inline(link[1], key, ctx)}</a>);
+      const file = SAFE_LINK.test(link[2]) ? null : filePathOf(link[2]);
+      const inApp = SAFE_LINK.test(link[2]) || file ? null : appLink(link[2]);
+      if (file) out.push(fileLink(key, file, inline(link[1], key, ctx)));
+      else if (inApp) out.push(<a key={key} href={inApp} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); navigate(inApp); }} style={{ color: 'var(--accent-hi)' }}>{inline(link[1], key, ctx)}</a>);
       else if (SAFE_LINK.test(link[2])) out.push(<a key={key} href={link[2]} target="_blank" rel="noreferrer noopener" style={{ color: 'var(--accent-hi)' }}>{inline(link[1], key, ctx)}</a>);
       else out.push(tok);
     } else if (m[7]) out.push(<a key={key} href={tok} target="_blank" rel="noreferrer noopener" style={{ color: 'var(--accent-hi)', wordBreak: 'break-all' }}>{tok}</a>);
@@ -124,7 +140,7 @@ export function inline(text: string, keyBase: string, ctx: Ctx = {}): ReactNode[
       const r = ctx.refs?.(kind as RefKind, id, !!m[9]);
       if (r) out.push(<button key={key} type="button" data-ref={kind} onClick={r.onClick} title={`${kind} ${id}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'var(--accent-dim)', color: 'var(--accent-hi)', border: 'none', borderRadius: 999, padding: '0 8px', fontSize: '.85em', fontWeight: 600, cursor: r.onClick ? 'pointer' : 'default', verticalAlign: 'baseline' }}>{REF_GLYPH[kind as RefKind]} {r.label}</button>);
       else out.push(...withMentions(tok, `${key}-t`, ctx));
-    }
+    } else if (m[10]) out.push(fileLink(key, filePathOf(tok)!, tok));
     last = m.index + tok.length;
   }
   if (last < text.length) out.push(...withMentions(text.slice(last), `${keyBase}-t${i}`, ctx));

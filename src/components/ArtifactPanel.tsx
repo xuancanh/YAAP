@@ -8,6 +8,9 @@ import { api, type BrowserStep } from '../lib/api';
 import { useApp, type ComputerFeed, type ComputerStep } from '../store';
 import { AppHost } from './AppHost';
 import { sealHtml } from '../lib/sandbox';
+import { ArtifactBody } from './ArtifactViewer';
+import { viewKind } from '../lib/artifacts';
+import type { FilePreview } from '../lib/api';
 
 type Tab = 'preview' | 'source' | 'browser' | 'computer';
 
@@ -26,6 +29,7 @@ export function ArtifactPanel() {
     const fallback: Tab = art ? 'preview' : browser ? 'browser' : 'computer';
     if ((tab === 'browser' && !browser) || (tab === 'computer' && !computer) || ((tab === 'preview' || tab === 'source') && !art)) setTab(fallback);
   }, [browser, computer, art, tab]);
+  if (app.sideFile) return <SideFile file={app.sideFile} />;
   if (!art && !browser && !computer) return null;
 
   const push = app.width >= 1300;
@@ -208,5 +212,49 @@ function ComputerStepRow({ step, latest }: { step: ComputerStep; latest: boolean
       <span style={{ color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{step.summary}</span>
       <span style={{ color: 'var(--text-faint)', flex: 'none' }}>{new Date(step.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
     </div>
+  );
+}
+
+/** A workspace file in the panel (a path clicked in chat, src/lib/file-links.ts):
+ *  read-only, the same viewer as Artifacts, with a jump to the file there. */
+function SideFile({ file }: { file: { workspaceId: string; path: string } }) {
+  const app = useApp();
+  const [state, setState] = useState<{ path: string; preview: FilePreview | null; error: string | null } | null>(null);
+  const [raw, setRaw] = useState(false);
+  useEffect(() => {
+    let on = true;
+    setState(null);
+    api.wsPreview(file.workspaceId, file.path)
+      .then((preview) => { if (on) setState({ path: file.path, preview, error: null }); })
+      .catch((e: unknown) => { if (on) setState({ path: file.path, preview: null, error: e instanceof Error && /404|not found/i.test(e.message) ? 'This file does not exist (it may have moved or not been written yet).' : 'The file could not be loaded.' }); });
+    return () => { on = false; };
+  }, [file.workspaceId, file.path]);
+  const name = file.path.split('/').pop() || file.path;
+  const kind = state?.preview ? viewKind(name, state.preview) : null;
+  const textKind = kind === 'markdown' || kind === 'csv' || kind === 'tsv' || kind === 'json';
+  const push = app.width >= 1300;
+  const base: React.CSSProperties = { flexDirection: 'column', background: 'var(--panel)', borderLeft: '1px solid var(--border)', display: 'flex', animation: 'slideIn .18s ease', zIndex: 60 };
+  const style: React.CSSProperties = push
+    ? { position: 'relative', width: 480, flex: 'none', ...base }
+    : { position: 'absolute', top: 0, right: 0, height: '100%', width: app.stacked ? '100%' : 480, boxShadow: 'var(--shadow)', ...base };
+  const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 4, display: 'flex' };
+  return (
+    <aside style={style} aria-label={`File ${name}`} data-testid="side-file">
+      <div style={{ flex: 'none', padding: '12px 15px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <I d={P.files} size={16} stroke="var(--accent-hi)" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+          <div title={`/${file.path}`} style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>/{file.path.slice(0, file.path.length - name.length)}</div>
+        </div>
+        {textKind && <button onClick={() => setRaw(!raw)} title={raw ? 'Show formatted' : 'Show source'} style={{ ...iconBtn, fontSize: 11.5 }}>{raw ? 'Formatted' : 'Source'}</button>}
+        <button onClick={() => app.openFile({ kind: 'workspace', id: file.workspaceId }, file.path)} title="Open in Artifacts" style={{ ...iconBtn, fontSize: 11.5, color: 'var(--accent-hi)' }}>Open in Artifacts</button>
+        <button onClick={app.closeArtifact} aria-label="Close" style={iconBtn}><I d={P.x} size={17} /></button>
+      </div>
+      <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+        {state === null ? <div style={{ padding: 18, fontSize: 12.5, color: 'var(--text-faint)' }}>Loading…</div>
+          : state.error ? <div style={{ padding: 18, fontSize: 13, color: 'var(--text-dim)' }}>{state.error}</div>
+            : state.preview && kind ? <ArtifactBody kind={kind} preview={state.preview} name={name} raw={raw} /> : null}
+      </div>
+    </aside>
   );
 }

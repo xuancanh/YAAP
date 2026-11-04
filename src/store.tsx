@@ -3,6 +3,7 @@
  * live turn stream. Mirrors the interaction spec in design/YAAM Chat.dc.html.
  */
 /* eslint-disable react-refresh/only-export-components */
+import { FILE_EVENT, type FileEventDetail } from './lib/file-links';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   api, sendTurn, authHeaders, setActiveSharedWorkspace, subscribeWorkspaceEvents, watchSession,
@@ -203,6 +204,9 @@ interface Store {
   artifact: ArtifactState | null;
   openArtifact: (title: string, src: string) => void;
   closeArtifact: () => void;
+  /** A workspace file shown in the side panel (a path clicked in chat, src/lib/file-links.ts). */
+  sideFile: { workspaceId: string; path: string } | null;
+  openSideFile: (path: string) => void;
   /** Browser tool steps for the current chat (persisted turns + the live
    *  turn), and whether the panel's Browser tab is showing them. */
   browserSteps: BrowserStep[];
@@ -1430,8 +1434,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => { api.pricing().then((p) => setPricing(p.prices)).catch(() => {}); }, []);
 
-  const openArtifact = useCallback((title: string, src: string) => setArtifact({ title, src }), []);
-  const closeArtifact = useCallback(() => { setArtifact(null); setBrowserOpen(false); setComputerOpen(false); }, []);
+  const [sideFile, setSideFile] = useState<{ workspaceId: string; path: string } | null>(null);
+  const openArtifact = useCallback((title: string, src: string) => { setSideFile(null); setArtifact({ title, src }); }, []);
+  const closeArtifact = useCallback(() => { setArtifact(null); setSideFile(null); setBrowserOpen(false); setComputerOpen(false); }, []);
+  const openSideFile = useCallback((path: string) => { setArtifact(null); setSideFile({ workspaceId: workspaceIdRef.current, path }); }, []);
+  // Another company's file never stays open after a switch.
+  useEffect(() => { setSideFile((f) => (f && f.workspaceId !== workspaceId ? null : f)); }, [workspaceId]);
+  // A file path clicked anywhere Markdown renders (chat, channels, tasks, minutes).
+  useEffect(() => {
+    const on = (e: Event) => { const d = (e as CustomEvent<FileEventDetail>).detail; if (d?.path) openSideFile(d.path); };
+    window.addEventListener(FILE_EVENT, on);
+    return () => window.removeEventListener(FILE_EVENT, on);
+  }, [openSideFile]);
   const openBrowserPanel = useCallback(() => setBrowserOpen(true), []);
 
   // Browser steps: the transcript's tool records (every turn so far) plus the
@@ -1498,7 +1512,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     retry, editResend, fork, promote, rate,
     fileTarget, setFileTarget, fileList, refreshFiles, currentFile, setCurrentFile: setCurrentFileNav, openFile,
     selectedAgent, setSelectedAgent: setSelectedAgentNav, openAgent, agentTabRequest, setAgentTabRequest, newAgentOpen, setNewAgentOpen, embedApp, composeInChat,
-    artifact, openArtifact, closeArtifact,
+    artifact, openArtifact, closeArtifact, sideFile, openSideFile,
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
@@ -1520,7 +1534,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     retry, editResend, fork, promote, rate,
     fileTarget, fileList, refreshFiles, currentFile, openFile,
     selectedAgent, openAgent, agentTabRequest, newAgentOpen, embedApp, composeInChat,
-    artifact, openArtifact, closeArtifact,
+    artifact, openArtifact, closeArtifact, sideFile, openSideFile,
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
