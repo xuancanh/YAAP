@@ -482,7 +482,7 @@ Engineering's team" became "Department · Engineering", `#engineering`.
   previousSlug, taskKey) and one system line in the channel: "Department
   renamed by the CEO: Engineering → Platform (#platform; #engineering still
   links here). Task keys stay ENG-n."
-- **Backfill** — migration `0090-department-names` adds
+- **Backfill** — migration `0091-department-names` adds
   `org_units.nameSource` and `channels.formerSlugs` and runs
   `backfillDepartmentNames` (idempotent): a non-root unit still on the old
   "<lead>'s team" default takes its derived name, unique in the org; its
