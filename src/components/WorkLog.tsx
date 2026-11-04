@@ -20,7 +20,7 @@ import { api, watchSession, type ApprovalDecision, type WorkLogFilters, type Wor
 import { Markdown } from '../lib/md';
 import { fmtTokens } from '../lib/util';
 import { applyWatchEvent, liveSteps } from '../lib/work-live';
-import { ToolCard } from './ChatView';
+import { Thinking, ToolCard } from './ChatView';
 
 const PAGE = 30;
 /** How often a hot log (a run in progress, a message waiting) refreshes. */
@@ -457,10 +457,7 @@ function LiveRunView({ r, items, mode, readOnly, agentId, onDecide }: { r: WorkR
       {items.map((item, i) => {
         if (item.kind === 'thinking') {
           return (
-            <div key={`t${i}`} data-testid="work-thinking">
-              <div style={{ ...faint, fontWeight: 600, marginBottom: 3 }}>Thinking{item.streaming ? ' …' : ''}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-dim)', fontStyle: 'italic', whiteSpace: 'pre-wrap', lineHeight: 1.55, borderLeft: '2px solid var(--border)', paddingLeft: 9 }}>{item.text}</div>
-            </div>
+            <div key={`t${i}`} data-testid="work-thinking"><Thinking text={item.text} streaming={item.streaming} /></div>
           );
         }
         if (item.kind === 'answer') return <div key={`a${i}`} style={{ fontSize: 13, lineHeight: 1.6 }}><Markdown text={item.text} compact /></div>;
@@ -572,10 +569,7 @@ function RunDetail({ d, agentId, hidePrompt = false }: { d: WorkRunDetail; agent
       {d.messages.filter((m) => m.role !== 'user').map((m) => {
         if (m.role === 'thinking') {
           return (
-            <div key={m.id} data-testid="work-thinking">
-              <div style={{ ...faint, fontWeight: 600, marginBottom: 3 }}>Thinking</div>
-              <div style={{ fontSize: 12, color: 'var(--text-dim)', fontStyle: 'italic', whiteSpace: 'pre-wrap', lineHeight: 1.55, borderLeft: '2px solid var(--border)', paddingLeft: 9 }}>{m.content}</div>
-            </div>
+            <div key={m.id} data-testid="work-thinking"><Thinking text={m.content} streaming={false} /></div>
           );
         }
         if (m.role === 'tool') {

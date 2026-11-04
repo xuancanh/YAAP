@@ -75,6 +75,10 @@ describe('a run in progress, live', () => {
     render(<WorkLogTab agentId="a1" />);
     const r = await waitFor(() => row('r-live'));
     await waitFor(() => expect(within(r).getByTestId('work-live')).toBeInTheDocument());
+    // thinking is folded by default; one click reads it
+    const thinking = await waitFor(() => within(r).getByTestId('work-thinking'));
+    expect(thinking).not.toHaveTextContent('Reading the inbox first.');
+    fireEvent.click(within(thinking).getByRole('button', { name: /Thinking/ }));
     await waitFor(() => expect(within(r).getByTestId('work-thinking')).toHaveTextContent('Reading the inbox first.'));
     expect(within(r).getAllByText(/running · step 2/).length).toBeGreaterThan(0);
     expect(within(r).getByTestId('run-live')).toHaveTextContent('running · step 2');

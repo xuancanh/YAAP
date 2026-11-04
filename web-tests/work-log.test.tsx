@@ -103,6 +103,8 @@ describe('the Work log tab', () => {
     await waitFor(() => expect(screen.getAllByTestId('work-run')).toHaveLength(3));
     const beat = screen.getAllByTestId('work-run').find((el) => el.getAttribute('data-run') === 'r-beat')!;
     fireEvent.click(within(beat).getByRole('button', { expanded: false }));
+    const thinking = await waitFor(() => within(beat).getByTestId('work-thinking'));
+    fireEvent.click(within(thinking).getByRole('button', { name: /Thinking/ }));
     await waitFor(() => expect(within(beat).getByTestId('work-thinking')).toHaveTextContent('Nothing urgent; write the digest first.'));
     expect(calls).toContain('/api/agents/a1/work-log/runs/r-beat');
     const tool = within(beat).getByTestId('work-tool');
@@ -173,6 +175,9 @@ describe('ChatView keeps the answer prominent', () => {
     expect(fold).toHaveTextContent('worked on it · 2 steps');
     expect(screen.queryByText('Secret reasoning about the launch.')).toBeNull();
     fireEvent.click(within(fold).getByRole('button', { expanded: false }));
+    // inside the fold, thinking and tool calls are one line each until opened
+    expect(screen.queryByText('Secret reasoning about the launch.')).toBeNull();
+    fireEvent.click(within(fold).getByRole('button', { name: /Thinking/ }));
     expect(screen.getByText('Secret reasoning about the launch.')).toBeInTheDocument();
   });
 
@@ -189,10 +194,26 @@ describe('ChatView keeps the answer prominent', () => {
     expect(screen.getAllByText(/gmail_send/).length).toBeGreaterThan(0);
   });
 
-  it('an agent run opened as a chat shows everything', () => {
+  it('an agent run opened as a chat lists every step, each folded to one line', () => {
     chatStore(session({ kind: 'work', name: 'Loop · heartbeat' }));
     render(<ChatView />);
     expect(screen.queryByTestId('worked-on')).toBeNull();
+    expect(screen.queryByText('Secret reasoning about the launch.')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Thinking/ }));
     expect(screen.getByText('Secret reasoning about the launch.')).toBeInTheDocument();
+  });
+});
+
+describe('a tool call folds to one line', () => {
+  it('shows its name and status; the result opens on click; a call waiting on approval stays open', async () => {
+    const { ToolCard } = await import('../src/components/ChatView');
+    chatStore(session());
+    const { rerender } = render(<ToolCard t={{ kind: 'tool', id: 't1', name: 'fs_read', input: { path: 'notes.md' }, status: 'done', result: 'the file body' }} />);
+    expect(screen.getByText('fs_read')).toBeInTheDocument();
+    expect(screen.queryByText('the file body')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { expanded: false }));
+    expect(screen.getByText('the file body')).toBeInTheDocument();
+    rerender(<ToolCard t={{ kind: 'tool', id: 't2', name: 'gmail_send', input: { to: 'x' }, status: 'pending' }} />);
+    expect(screen.getByText('Allow once')).toBeInTheDocument();
   });
 });

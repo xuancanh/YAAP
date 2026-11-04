@@ -66,21 +66,29 @@ export function ToolCard({ t, onDecide, readOnly = false, agentId }: { t: LiveTo
   const held = t.held ?? null;
   const cls = t.actionClass ?? null;
   const [keyOpen, setKeyOpen] = useState(false);
+  // Folded to its one-line header by default, like thinking; a call that
+  // waits on someone (approval, a key) or is still running stays open.
+  const [open, setOpen] = useState(false);
+  const expandable = t.result !== undefined && t.status !== 'pending' && t.status !== 'running';
   const wsId = app.current?.workspaceId ?? app.workspaceId;
   return (
-    <div style={{ margin: '12px 0', border: `1px solid ${border}`, borderRadius: 12, overflow: 'hidden', background: 'var(--panel)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 13px', background: 'var(--panel-2)' }}>
+    <div data-testid="tool-card" style={{ margin: '8px 0', border: `1px solid ${border}`, borderRadius: 10, overflow: 'hidden', background: 'var(--panel)' }}>
+      <div role={expandable ? 'button' : undefined} tabIndex={expandable ? 0 : undefined} aria-expanded={expandable ? open : undefined}
+        onClick={expandable ? () => setOpen(!open) : undefined}
+        onKeyDown={expandable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(!open); } } : undefined}
+        style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 12px', background: 'var(--panel-2)', cursor: expandable ? 'pointer' : undefined }}>
         <span style={{ width: 9, height: 9, borderRadius: '50%', flex: 'none', background: color, animation: t.status === 'running' ? 'pulse 1s infinite' : undefined }} />
         <span style={{ ...mono, fontSize: 12.5, fontWeight: 600 }}>{t.name}</span>
         <span style={{ ...mono, fontSize: 12, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{arg}</span>
         {t.name.startsWith('browser_') && app.browserSteps.length > 0 && !app.browserOpen && (
-          <button onClick={app.openBrowserPanel} title="Show the screenshots in the Browser panel"
+          <button onClick={(e) => { e.stopPropagation(); app.openBrowserPanel(); }} title="Show the screenshots in the Browser panel"
             style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-dim)', fontSize: 10.5, padding: '2px 7px', cursor: 'pointer' }}>
             Browser
           </button>
         )}
         {cls && cls !== 'read' && <span title={`${CLASS_LABEL[cls] ?? cls} action`} style={{ fontSize: 10, color: CLASS_COLOR[cls] ?? 'var(--text-dim)', border: `1px solid ${CLASS_COLOR[cls] ?? 'var(--border)'}`, borderRadius: 5, padding: '0 5px', whiteSpace: 'nowrap', flex: 'none' }}>{CLASS_SHORT[cls] ?? cls}</span>}
         <span style={{ fontSize: 11, color: held ? 'var(--amber)' : color, fontWeight: 600 }}>{held ? (held === 'staged' ? 'Staged' : 'Held') : label}</span>
+        {expandable && <I d={P.chevD} size={12} stroke="var(--text-faint)" style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .12s', flex: 'none' }} />}
       </div>
       {held && (
         <div style={{ padding: '9px 13px', borderTop: '1px solid var(--amber)', background: 'color-mix(in srgb, var(--amber) 10%, transparent)' }}>
@@ -136,10 +144,10 @@ export function ToolCard({ t, onDecide, readOnly = false, agentId }: { t: LiveTo
           </div>
         </div>
       )}
-      {t.result !== undefined && t.status !== 'pending' && t.status !== 'running' && (
+      {expandable && open && (
         <pre style={{ margin: 0, padding: '12px 14px', borderTop: '1px solid var(--border-soft)', background: 'var(--code)', ...mono, fontSize: 12, lineHeight: 1.6, color: 'var(--text-dim)', overflowX: 'auto', whiteSpace: 'pre', maxHeight: 260, overflowY: 'auto' }}>{t.result}</pre>
       )}
-      <ReviewLine review={t.review} />
+      {(open || !expandable) && <ReviewLine review={t.review} />}
       <NeedsGrantHint result={t.result} agentId={agentId} />
     </div>
   );
@@ -202,15 +210,17 @@ function NeedsGrantHint({ result, agentId: forAgent }: { result?: string; agentI
   );
 }
 
-function Thinking({ text, streaming }: { text: string; streaming: boolean }) {
-  const [expanded, setExpanded] = useState(true);
+/** A thinking block: one quiet line, folded by default; expand to read it. */
+export function Thinking({ text, streaming }: { text: string; streaming: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <div style={{ margin: '14px 0' }}>
-      <div onClick={() => setExpanded(!expanded)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12, fontWeight: 600 }}>
+    <div style={{ margin: '10px 0' }} data-testid="thinking">
+      <button type="button" onClick={() => setExpanded(!expanded)} aria-expanded={expanded}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer', color: 'var(--text-dim)', fontSize: 12, fontWeight: 600, background: 'none', border: 'none', padding: 0, font: 'inherit' }}>
         <I d={P.brain} size={13} stroke="var(--accent)" />Thinking
         <span style={{ color: 'var(--text-faint)', fontWeight: 400 }}>{streaming ? ' · thinking…' : ''}</span>
-        <I d={P.chevD} size={12} style={{ transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
-      </div>
+        <I d={P.chevD} size={12} style={{ transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform .12s' }} />
+      </button>
       {expanded && (
         <div style={{ marginTop: 8, padding: '11px 14px', borderLeft: '2px solid var(--accent-dim)', color: 'var(--text-dim)', fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', fontStyle: 'italic' }}>
           {text}{streaming && <span style={{ animation: 'blink 1s infinite' }}>▋</span>}
