@@ -1,0 +1,60 @@
+{
+  "operations": {
+    "list_incidents": [
+      {
+        "output": {
+          "open": 2,
+          "critical": 1,
+          "items": [
+            {
+              "id": "inc-1",
+              "title": "Checkout API 5xx above 2%",
+              "service": "checkout-api",
+              "severity": "critical",
+              "status": "open",
+              "openedAt": "2026-11-04T08:12:00Z"
+            },
+            {
+              "id": "inc-2",
+              "title": "Slow search responses (p95 1.8s)",
+              "service": "search",
+              "severity": "minor",
+              "status": "open",
+              "openedAt": "2026-11-03T21:40:00Z"
+            }
+          ]
+        }
+      }
+    ],
+    "read_incident": [
+      {
+        "output": {
+          "id": "{{input.id}}",
+          "title": "Checkout API 5xx above 2%",
+          "severity": "critical",
+          "status": "open",
+          "timeline": [
+            "08:12 alert fired",
+            "08:14 paged on-call"
+          ]
+        }
+      }
+    ],
+    "acknowledge": [
+      {
+        "output": {
+          "id": "{{input.id}}",
+          "status": "acknowledged"
+        }
+      }
+    ],
+    "resolve": [
+      {
+        "output": {
+          "id": "{{input.id}}",
+          "status": "resolved"
+        }
+      }
+    ]
+  }
+}

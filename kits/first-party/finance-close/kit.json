@@ -1,0 +1,127 @@
+{
+  "format": "yaam-kit/1",
+  "id": "finance-close@yaam",
+  "name": "Finance Close",
+  "summary": "Close the books every month, keep cash and runway visible, and get invoices out and paid.",
+  "description": "The accounting interface on a trial provider; a finance head and an accountant; month-end close and cash-review playbooks; the Cash and invoices card on Money; invoice sends are cosigned.",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "license": "AGPL-3.0-or-later",
+  "segment": "business",
+  "functions": [
+    "finance"
+  ],
+  "fits": [
+    "finance",
+    "accounting",
+    "invoices",
+    "cash",
+    "runway",
+    "bookkeeping"
+  ],
+  "companyTypes": [
+    "saas",
+    "e-commerce",
+    "services",
+    "creator"
+  ],
+  "requires": {
+    "yaamCore": "^1.0",
+    "interfaces": [
+      "accounting@^1"
+    ]
+  },
+  "recommends": {
+    "providers": {
+      "accounting": [
+        {
+          "id": "quickbooks@yaam",
+          "why": "Small-business books (not shipped yet)."
+        },
+        {
+          "id": "accounting-mock@yaam",
+          "trial": true,
+          "why": "Fixture books."
+        }
+      ]
+    }
+  },
+  "bindings": [
+    {
+      "interface": "accounting",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    }
+  ],
+  "roles": [
+    {
+      "key": "fin-head",
+      "role": "finance-manager",
+      "title": "Head of Finance",
+      "reportsTo": "$chief",
+      "hire": "required",
+      "grants": {
+        "accounting": "write"
+      },
+      "playbooks": [
+        "close-checklist",
+        "cash-review"
+      ]
+    },
+    {
+      "key": "accountant",
+      "role": "finance-accountant",
+      "title": "Accountant",
+      "reportsTo": "fin-head",
+      "hire": "recommended",
+      "grants": {
+        "accounting": "write"
+      },
+      "playbooks": [
+        "close-checklist"
+      ]
+    }
+  ],
+  "playbooks": [
+    "playbooks/close-checklist.md",
+    "playbooks/cash-review.md"
+  ],
+  "guidance": [
+    {
+      "id": "finance-close",
+      "title": "How finance works here",
+      "audience": [
+        "function:finance",
+        "chief"
+      ],
+      "text": "The books close in the first three working days of a month. Cash, runway and overdue invoices are on the Money dashboard; an invoice goes out only after its amount is checked against the contract, and the owner cosigns each send."
+    }
+  ],
+  "policies": [
+    {
+      "id": "invoice-cosign",
+      "match": {
+        "operation": "accounting.send_invoice"
+      },
+      "require": "cosign",
+      "why": "An invoice is a claim on a customer; the owner cosigns each send."
+    }
+  ],
+  "rhythm": [
+    "month-end close in the first three working days",
+    "weekly cash review",
+    "quarterly budget against actuals"
+  ],
+  "measures": [
+    "days to close",
+    "cash runway",
+    "overdue receivables",
+    "spend against budget"
+  ]
+}

@@ -20,6 +20,7 @@ import { PluginsService } from '../server/src/plugins/plugins.service';
 import { PluginRegistryService } from '../server/src/plugins/plugin-registry.service';
 import { FoundryController, SHELVES } from '../server/src/foundry/foundry.controller';
 import { KIT_PREVIEWS } from '../server/src/foundry/kits.catalog';
+import { KitsService } from '../server/src/foundry/kits.service';
 import { interfaceBindings, interfaceProviders, pluginAudit, pluginEffects, pluginVersions, registryItems } from '../server/src/database/schema';
 import { runWithViewer } from '../server/src/accounts/account-context';
 import { runPgMigrations } from '../server/src/database/migrator';
@@ -62,19 +63,20 @@ test('first-party packages are on the shelf with their tier, roles and the regis
   const s = await setup();
   const shelf = await s.registry.list(s.ws.id);
   const ids = shelf.items.map((i) => i.id).sort();
-  assert.deepEqual(ids, ['ci@yaam', 'scm-mock@yaam', 'scm@yaam']);
+  for (const id of ['ci@yaam', 'scm-mock@yaam', 'scm@yaam']) assert.ok(ids.includes(id), id);
   for (const i of shelf.items) { assert.equal(i.tier, 'first_party'); assert.equal(i.installable, true); assert.equal(i.installed, null); }
   const mock = shelf.items.find((i) => i.id === 'scm-mock@yaam')!;
   assert.deepEqual(mock.roles, ['provider']);
   assert.deepEqual(mock.conformance.map((c) => `${c.interface}@${c.interfaceVersion}:${c.result}`).sort(), ['ci@1.0.0:pass', 'scm@1.0.0:pass']);
   assert.equal(mock.noEgress, true);
   // Filters: role, interface, tier, search; facets count what the shelf holds.
-  assert.deepEqual((await s.registry.list(s.ws.id, { role: 'provider' })).items.map((i) => i.id), ['scm-mock@yaam']);
-  assert.deepEqual((await s.registry.list(s.ws.id, { iface: 'ci' })).items.map((i) => i.id).sort(), ['ci@yaam', 'scm-mock@yaam']);
+  assert.ok((await s.registry.list(s.ws.id, { role: 'provider' })).items.every((i) => i.roles.includes('provider')));
+  assert.ok((await s.registry.list(s.ws.id, { role: 'provider' })).items.some((i) => i.id === 'scm-mock@yaam'));
+  assert.deepEqual((await s.registry.list(s.ws.id, { iface: 'ci' })).items.map((i) => i.id).filter((x) => x.startsWith('ci') || x.startsWith('scm')).sort(), ['ci@yaam', 'scm-mock@yaam']);
   assert.equal((await s.registry.list(s.ws.id, { tier: 'community' })).items.length, 0);
   assert.deepEqual((await s.registry.list(s.ws.id, { q: 'mock forge' })).items.map((i) => i.id), ['scm-mock@yaam']);
-  assert.equal(shelf.facets.tiers.first_party, 3);
-  assert.deepEqual(shelf.facets.interfaces.map((f) => `${f.name}:${f.defined}:${f.providers}`), ['ci:true:1', 'scm:true:1']);
+  assert.equal(shelf.facets.tiers.first_party, ids.length);
+  assert.deepEqual(shelf.facets.interfaces.filter((f) => f.name === 'ci' || f.name === 'scm').map((f) => `${f.name}:${f.defined}:${f.providers}`), ['ci:true:1', 'scm:true:1']);
   // Detail: operations with their effective classes, versions with the pin, the install source.
   const d = await s.registry.detail(s.ws.id, 'ci@yaam');
   assert.equal(d.capabilities!.defines[0].name, 'ci');
@@ -219,7 +221,7 @@ test('recall: a recalled version never installs, its installs freeze through the
   // A recalled version never installs again, by any source.
   await s.plugins.uninstall(s.ws.id, 'scm-mock@yaam');
   await assert.rejects(s.plugins.review(s.ws.id, { firstParty: 'scm-mock' }), /was recalled/);
-  const shelf = (await s.registry.list(s.ws.id, { role: 'provider' })).items[0];
+  const shelf = (await s.registry.list(s.ws.id, { role: 'provider' })).items.find((i) => i.id === 'scm-mock@yaam')!;
   assert.equal(shelf.recalled, true);
   assert.equal(shelf.installable, false);
 });
@@ -295,16 +297,23 @@ test('the local path: an uploaded folder or a developer folder loads as @local t
   }
 });
 
-test('Foundry: four shelves, and the Kits shelf previews the starter catalog without installing anything', () => {
-  const c = new FoundryController();
+test('Foundry: four shelves; the Kits shelf lists the shipped kits as installable, then the designed ones still to come', async () => {
+  const s = await setup();
+  const kits = new KitsService(s.db, s.plugins, s.audit);
+  const c = new FoundryController(kits);
   assert.deepEqual(SHELVES.map((x) => x.id), ['blueprints', 'kits', 'agents', 'plugins']);
-  const idx = c.index();
-  assert.equal(idx.kits.installable, 0);
+  const idx = await c.index();
+  assert.equal(idx.kits.installable, 7);
   assert.equal(KIT_PREVIEWS.length, 12);
-  assert.ok(KIT_PREVIEWS.every((k) => k.installable === false && k.status === 'coming_soon'));
-  assert.deepEqual(c.kits('engineering').map((k) => k.id), ['ship-software', 'open-source-maintainer']);
-  assert.deepEqual(c.kits(undefined, 'e-commerce').map((k) => k.id).sort(), ['commerce-ops', 'finance-close', 'growth', 'support-desk']);
-  assert.deepEqual(c.kits(undefined, undefined, 'intercom').map((k) => k.id).sort(), ['commerce-ops', 'support-desk']);
+  const all = await c.list();
+  const shipped = all.filter((k) => k.installable === true).map((k) => k.id).sort();
+  assert.deepEqual(shipped, ['finance-close@yaam', 'growth@yaam', 'hiring@yaam', 'legal-review@yaam', 'revenue@yaam', 'ship-software@yaam', 'support-desk@yaam']);
+  // A preview whose kit shipped is not listed twice; the rest stay "coming soon".
+  assert.equal(all.filter((k) => String(k.id).startsWith('ship-software')).length, 1);
+  assert.ok(all.filter((k) => k.installable !== true).every((k) => k.status === 'coming_soon'));
+  assert.deepEqual((await c.list('engineering')).map((k) => k.id), ['ship-software@yaam', 'open-source-maintainer@yaam']);
+  assert.ok((await c.list(undefined, 'e-commerce')).some((k) => k.id === 'commerce-ops@yaam'));
+  assert.deepEqual((await c.list(undefined, undefined, 'crm')).map((k) => k.id), ['revenue@yaam']);
 });
 
 test('migration 0086 runs twice: columns added once, a pre-registry local package is attributed to its workspace', async () => {

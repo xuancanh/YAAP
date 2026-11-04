@@ -1,0 +1,39 @@
+{
+  "manifestVersion": 1,
+  "id": "contract-review@yaam",
+  "name": "Contract review (consumer)",
+  "description": "Legal guidance for agents that touch contracts: a contract-review skill, a guidance note on what agents may and may not agree to, and a policy checklist panel on every task and on Oversight. Pure content: no interface, no code, no egress.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": { "id": "yaam", "name": "yaam", "verifiedDomain": "yaam.chat" },
+  "roles": ["consumer"],
+  "requires": { "yaamCore": "^1.0" },
+  "skills": [
+    { "path": "skills/contract-review/SKILL.md", "audience": ["function:legal", "function:sales", "chief"] }
+  ],
+  "guidance": [
+    { "id": "contracts", "title": "Contracts", "audience": ["all"], "text": "Agents read, summarise and redline contracts; they never accept, sign or send one. Flag unlimited liability, auto-renewal longer than a year, exclusivity, data processing without terms, and payment beyond 60 days to the legal head or the chief of staff before anyone replies." }
+  ],
+  "ui": {
+    "panels": [
+      { "id": "contract-checklist", "title": "Contract checklist", "placement": "task",
+        "view": { "kind": "checklist", "items": [
+          "Parties, term and renewal are named and match the deal",
+          "Liability is capped (no unlimited liability)",
+          "No exclusivity or most-favoured-customer clause unless approved",
+          "Data processing terms cover customer personal data",
+          "Payment terms within 60 days; currency and taxes stated",
+          "Termination for convenience and its notice period are acceptable",
+          "Redlines are summarised for the owner before any reply"
+        ] } }
+    ],
+    "cards": [
+      { "id": "contract-policy", "title": "Contract policy", "placement": "oversight",
+        "view": { "kind": "checklist", "items": [
+          "Agents never accept, sign or send a contract",
+          "Unlimited liability, exclusivity and auto-renewal over a year go to legal first",
+          "Customer data is processed only under signed data processing terms"
+        ] } }
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "interface": "flags@1.0.0",
+  "cases": [
+    {
+      "id": "list-and-set",
+      "steps": [
+        {
+          "op": "list_flags",
+          "input": {},
+          "expect": {
+            "schema": true
+          },
+          "save": {
+            "key": "$.items[0].key"
+          }
+        },
+        {
+          "op": "set_flag",
+          "input": {
+            "key": "{{key}}",
+            "state": "off"
+          },
+          "expect": {
+            "schema": true,
+            "match": {
+              "$.state": "off"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

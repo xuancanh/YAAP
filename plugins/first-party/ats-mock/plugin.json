@@ -1,0 +1,49 @@
+{
+  "manifestVersion": 1,
+  "id": "ats-mock@yaam",
+  "name": "Mock applicant tracking (mock provider)",
+  "description": "A deterministic provider of ats@1 served by the core's fixture stub: no network, no code, no secrets. It makes the recruiting (interface) work out of the box for trying the kit and its dashboard cards; connect a real provider when one ships.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "provider"
+  ],
+  "requires": {
+    "yaamCore": "^1.0",
+    "interfaces": [
+      "ats@^1"
+    ]
+  },
+  "provides": [
+    {
+      "interface": "ats@^1",
+      "resources": [
+        "ats://mock.example"
+      ],
+      "operations": {
+        "pipeline": {
+          "fixture": "fixtures/ats.json"
+        },
+        "list_candidates": {
+          "fixture": "fixtures/ats.json"
+        },
+        "advance_candidate": {
+          "fixture": "fixtures/ats.json"
+        }
+      },
+      "conformance": {
+        "mode": "mock"
+      }
+    }
+  ],
+  "budgets": {
+    "callsPerMinute": 120,
+    "concurrent": 4,
+    "maxCostPerCallUsd": 0.01
+  }
+}

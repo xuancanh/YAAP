@@ -1,0 +1,234 @@
+{
+  "manifestVersion": 1,
+  "id": "flags@yaam",
+  "name": "Feature flags (interface)",
+  "description": "The flags@1 contract: feature flags — list them and switch one on or off — with a Feature flags card on Operations and guidance on shipping behind a flag.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "interface"
+  ],
+  "requires": {
+    "yaamCore": "^1.0"
+  },
+  "interfaces": [
+    {
+      "name": "flags",
+      "version": "1.0.0",
+      "semantics": "Feature flags that turn product behaviour on or off without a deploy.",
+      "resources": {
+        "scheme": "flags",
+        "pattern": "flags://{account}",
+        "schema": {
+          "type": "string",
+          "pattern": "^flags://[a-z0-9.-]+$"
+        }
+      },
+      "operations": {
+        "list_flags": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Every flag with its state and rollout percentage.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "items",
+              "on"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "key",
+                    "state",
+                    "rollout",
+                    "description"
+                  ],
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "enum": [
+                        "on",
+                        "off"
+                      ]
+                    },
+                    "rollout": {
+                      "type": "integer"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "on": {
+                "type": "integer"
+              }
+            }
+          },
+          "class": "read"
+        },
+        "set_flag": {
+          "required": true,
+          "reversibility": "reversible",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Switch a flag on or off, optionally at a rollout percentage.",
+          "input": {
+            "type": "object",
+            "required": [
+              "key",
+              "state"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "on",
+                  "off"
+                ]
+              },
+              "rollout": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "key",
+              "state",
+              "rollout",
+              "description"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "on",
+                  "off"
+                ]
+              },
+              "rollout": {
+                "type": "integer"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          },
+          "class": "external_reversible"
+        }
+      },
+      "conformance": "conformance/flags/suite.json"
+    }
+  ],
+  "guidance": [
+    {
+      "id": "ship-behind-flags",
+      "title": "Ship behind a flag",
+      "audience": [
+        "function:engineering"
+      ],
+      "text": "Risky changes ship behind a flag that starts off. Raise the rollout in steps and watch the Open incidents card between steps; switching a flag is classed external_reversible, so it asks before it runs."
+    }
+  ],
+  "ui": {
+    "cards": [
+      {
+        "id": "feature-flags",
+        "title": "Feature flags",
+        "placement": "operations",
+        "query": {
+          "operation": "flags.list_flags"
+        },
+        "view": {
+          "kind": "table",
+          "rows": "$.items",
+          "columns": [
+            {
+              "label": "Flag",
+              "value": "$.key"
+            },
+            {
+              "label": "State",
+              "value": "$.state"
+            },
+            {
+              "label": "Rollout %",
+              "value": "$.rollout"
+            }
+          ],
+          "max": 8
+        },
+        "actions": [
+          "switch-flag"
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "switch-flag",
+        "title": "Switch a flag",
+        "operation": "flags.set_flag",
+        "input": {
+          "key": "{{field.key}}",
+          "state": "{{field.state}}"
+        },
+        "fields": [
+          {
+            "key": "key",
+            "label": "Flag key",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "state",
+            "label": "State",
+            "type": "select",
+            "options": [
+              "on",
+              "off"
+            ],
+            "required": true
+          }
+        ],
+        "confirm": "Switch this flag for every user it targets?"
+      }
+    ]
+  }
+}

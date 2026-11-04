@@ -1,0 +1,49 @@
+{
+  "manifestVersion": 1,
+  "id": "campaigns-mock@yaam",
+  "name": "Mock newsletter (mock provider)",
+  "description": "A deterministic provider of campaigns@1 served by the core's fixture stub: no network, no code, no secrets. It makes the email campaigns (interface) work out of the box for trying the kit and its dashboard cards; connect a real provider when one ships.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "provider"
+  ],
+  "requires": {
+    "yaamCore": "^1.0",
+    "interfaces": [
+      "campaigns@^1"
+    ]
+  },
+  "provides": [
+    {
+      "interface": "campaigns@^1",
+      "resources": [
+        "campaigns://mock.example"
+      ],
+      "operations": {
+        "list_campaigns": {
+          "fixture": "fixtures/campaigns.json"
+        },
+        "draft_campaign": {
+          "fixture": "fixtures/campaigns.json"
+        },
+        "send_campaign": {
+          "fixture": "fixtures/campaigns.json"
+        }
+      },
+      "conformance": {
+        "mode": "mock"
+      }
+    }
+  ],
+  "budgets": {
+    "callsPerMinute": 120,
+    "concurrent": 4,
+    "maxCostPerCallUsd": 0.01
+  }
+}

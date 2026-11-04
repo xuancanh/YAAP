@@ -1,0 +1,160 @@
+{
+  "format": "yaam-kit/1",
+  "id": "support-desk@yaam",
+  "name": "Support Desk",
+  "summary": "Answer customers fast and well: a support queue with its SLA, a knowledge base, intake forms and a support team that hands real bugs to engineering.",
+  "description": "The helpdesk interface (knowledge base and forms optional) on trial providers; a customer support head and agents; queue-review and escalation playbooks; replies to customers are cosigned.",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "license": "AGPL-3.0-or-later",
+  "segment": "business",
+  "functions": [
+    "customer"
+  ],
+  "fits": [
+    "support",
+    "customers",
+    "helpdesk",
+    "tickets",
+    "saas",
+    "service"
+  ],
+  "companyTypes": [
+    "saas",
+    "e-commerce"
+  ],
+  "requires": {
+    "yaamCore": "^1.0",
+    "interfaces": [
+      "support@^1"
+    ],
+    "optionalInterfaces": [
+      "kb@^1",
+      "forms@^1"
+    ]
+  },
+  "recommends": {
+    "providers": {
+      "support": [
+        {
+          "id": "intercom@yaam",
+          "why": "Chat and email support (not shipped yet)."
+        },
+        {
+          "id": "support-mock@yaam",
+          "trial": true,
+          "why": "Fixture tickets."
+        }
+      ],
+      "kb": [
+        {
+          "id": "kb-mock@yaam",
+          "trial": true,
+          "why": "Fixture help-center articles."
+        }
+      ],
+      "forms": [
+        {
+          "id": "forms-mock@yaam",
+          "trial": true,
+          "why": "Fixture form responses."
+        }
+      ]
+    }
+  },
+  "bindings": [
+    {
+      "interface": "support",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    },
+    {
+      "interface": "kb",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    },
+    {
+      "interface": "forms",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    }
+  ],
+  "roles": [
+    {
+      "key": "cs-head",
+      "role": "cs-manager",
+      "title": "Head of Customer Support",
+      "reportsTo": "$chief",
+      "hire": "required",
+      "grants": {
+        "support": "write",
+        "kb": "read",
+        "forms": "read"
+      },
+      "playbooks": [
+        "queue-review",
+        "escalation-to-engineering"
+      ]
+    },
+    {
+      "key": "agent",
+      "role": "cs-support",
+      "title": "Support Specialist",
+      "reportsTo": "cs-head",
+      "hire": "recommended",
+      "grants": {
+        "support": "write",
+        "kb": "read"
+      },
+      "playbooks": [
+        "queue-review"
+      ]
+    }
+  ],
+  "playbooks": [
+    "playbooks/queue-review.md",
+    "playbooks/escalation-to-engineering.md"
+  ],
+  "guidance": [
+    {
+      "id": "support-desk",
+      "title": "How support works here",
+      "audience": [
+        "function:cs",
+        "chief"
+      ],
+      "text": "The queue is worked SLA breaches first, then urgent, then oldest. Answers come from the knowledge base when it has one; a real bug goes to engineering as a briefed task with the ticket id. Replies to customers are cosigned by the owner."
+    }
+  ],
+  "policies": [
+    {
+      "id": "reply-cosign",
+      "match": {
+        "operation": "support.reply_ticket"
+      },
+      "require": "cosign",
+      "why": "A reply to a customer speaks for the company."
+    }
+  ],
+  "rhythm": [
+    "queue review every working day",
+    "weekly support review",
+    "monthly macro and knowledge-base review"
+  ],
+  "measures": [
+    "first response time",
+    "CSAT",
+    "time to resolve",
+    "SLA breaches"
+  ]
+}

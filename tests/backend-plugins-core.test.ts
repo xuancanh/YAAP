@@ -38,7 +38,8 @@ test('the core never mentions a domain: the mechanism names no merge, deploy or 
 
 test('first-party plugins load and validate: scm and ci interfaces, the mock provider of both', async () => {
   const cat = await loadFirstParty('plugins/first-party');
-  assert.deepEqual([...cat.keys()].sort(), ['ci@yaam', 'scm-mock@yaam', 'scm@yaam']);
+  for (const id of ['ci@yaam', 'scm-mock@yaam', 'scm@yaam']) assert.ok(cat.has(id), id);
+  assert.ok([...cat.keys()].every((id) => id.endsWith('@yaam')));
   const scm = cat.get('scm@yaam')!;
   assert.deepEqual(scm.manifest.roles, ['interface']);
   assert.ok(scm.suites['conformance/scm/suite.json'].cases.length >= 4);

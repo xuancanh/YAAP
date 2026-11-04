@@ -1,0 +1,52 @@
+{
+  "manifestVersion": 1,
+  "id": "crm-mock@yaam",
+  "name": "Mock CRM (mock provider)",
+  "description": "A deterministic provider of crm@1 served by the core's fixture stub: no network, no code, no secrets. It makes the crm (interface) work out of the box for trying the kit and its dashboard cards; connect a real provider when one ships.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "provider"
+  ],
+  "requires": {
+    "yaamCore": "^1.0",
+    "interfaces": [
+      "crm@^1"
+    ]
+  },
+  "provides": [
+    {
+      "interface": "crm@^1",
+      "resources": [
+        "crm://mock.example"
+      ],
+      "operations": {
+        "pipeline_summary": {
+          "fixture": "fixtures/crm.json"
+        },
+        "list_deals": {
+          "fixture": "fixtures/crm.json"
+        },
+        "log_activity": {
+          "fixture": "fixtures/crm.json"
+        },
+        "move_stage": {
+          "fixture": "fixtures/crm.json"
+        }
+      },
+      "conformance": {
+        "mode": "mock"
+      }
+    }
+  ],
+  "budgets": {
+    "callsPerMinute": 120,
+    "concurrent": 4,
+    "maxCostPerCallUsd": 0.01
+  }
+}

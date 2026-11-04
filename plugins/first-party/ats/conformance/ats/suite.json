@@ -1,0 +1,40 @@
+{
+  "interface": "ats@1.0.0",
+  "cases": [
+    {
+      "id": "pipeline-and-advance",
+      "steps": [
+        {
+          "op": "pipeline",
+          "input": {},
+          "expect": {
+            "schema": true
+          }
+        },
+        {
+          "op": "list_candidates",
+          "input": {},
+          "expect": {
+            "schema": true
+          },
+          "save": {
+            "id": "$.items[0].id"
+          }
+        },
+        {
+          "op": "advance_candidate",
+          "input": {
+            "candidateId": "{{id}}",
+            "stage": "interview"
+          },
+          "expect": {
+            "schema": true,
+            "match": {
+              "$.stage": "interview"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

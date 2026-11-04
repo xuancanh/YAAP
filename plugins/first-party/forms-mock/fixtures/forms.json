@@ -1,0 +1,43 @@
+{
+  "operations": {
+    "list_responses": [
+      {
+        "output": {
+          "unread": 2,
+          "items": [
+            {
+              "id": "R-55",
+              "form": "Partner request",
+              "submittedAt": "2026-11-04T07:20:00Z",
+              "summary": "Agency wants to resell to 40 clients"
+            },
+            {
+              "id": "R-54",
+              "form": "Customer survey",
+              "submittedAt": "2026-11-03T16:02:00Z",
+              "summary": "NPS 6: reporting is slow"
+            }
+          ]
+        }
+      }
+    ],
+    "read_response": [
+      {
+        "output": {
+          "id": "{{input.id}}",
+          "form": "Partner request",
+          "answers": [
+            {
+              "question": "Company",
+              "answer": "Lumen Agency"
+            },
+            {
+              "question": "What do you need?",
+              "answer": "Reseller terms for 40 clients"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

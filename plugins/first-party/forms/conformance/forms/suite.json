@@ -1,0 +1,29 @@
+{
+  "interface": "forms@1.0.0",
+  "cases": [
+    {
+      "id": "list-then-read",
+      "steps": [
+        {
+          "op": "list_responses",
+          "input": {},
+          "expect": {
+            "schema": true
+          },
+          "save": {
+            "id": "$.items[0].id"
+          }
+        },
+        {
+          "op": "read_response",
+          "input": {
+            "id": "{{id}}"
+          },
+          "expect": {
+            "schema": true
+          }
+        }
+      ]
+    }
+  ]
+}

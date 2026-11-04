@@ -1,0 +1,52 @@
+{
+  "operations": {
+    "list_campaigns": [
+      {
+        "output": {
+          "items": [
+            {
+              "id": "C-21",
+              "name": "October product update",
+              "status": "sent",
+              "audience": "all customers",
+              "recipients": 3120,
+              "openRate": 0.46
+            },
+            {
+              "id": "C-22",
+              "name": "Webinar invite: scaling support",
+              "status": "draft",
+              "audience": "trial users",
+              "recipients": 860,
+              "openRate": 0
+            }
+          ]
+        }
+      }
+    ],
+    "draft_campaign": [
+      {
+        "output": {
+          "id": "C-30",
+          "name": "{{input.name}}",
+          "status": "draft",
+          "audience": "{{input.audience}}",
+          "recipients": 0,
+          "openRate": 0
+        }
+      }
+    ],
+    "send_campaign": [
+      {
+        "output": {
+          "id": "{{input.id}}",
+          "name": "Campaign",
+          "status": "sent",
+          "audience": "all customers",
+          "recipients": 3120,
+          "openRate": 0
+        }
+      }
+    ]
+  }
+}

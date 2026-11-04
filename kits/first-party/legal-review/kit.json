@@ -1,0 +1,101 @@
+{
+  "format": "yaam-kit/1",
+  "id": "legal-review@yaam",
+  "name": "Legal Review",
+  "summary": "Keep contracts safe: contract-review guidance and checklists, a legal head, and an intake form for requests.",
+  "description": "The contract-review consumer plugin (guidance, a skill and a checklist on every task) with forms optional for legal requests; a legal head and a contracts specialist; an NDA turnaround playbook. Agents review and redline; they never sign.",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "license": "AGPL-3.0-or-later",
+  "segment": "business",
+  "functions": [
+    "legal"
+  ],
+  "fits": [
+    "legal",
+    "contracts",
+    "nda",
+    "compliance",
+    "agreements"
+  ],
+  "companyTypes": [
+    "saas",
+    "services",
+    "agency"
+  ],
+  "requires": {
+    "yaamCore": "^1.0",
+    "interfaces": [],
+    "optionalInterfaces": [
+      "forms@^1"
+    ]
+  },
+  "plugins": [
+    {
+      "id": "contract-review@yaam",
+      "range": "^1",
+      "why": "The contract checklist, the contract-review skill and the guidance on what agents may agree to."
+    }
+  ],
+  "recommends": {
+    "providers": {
+      "forms": [
+        {
+          "id": "forms-mock@yaam",
+          "trial": true,
+          "why": "Fixture legal request forms."
+        }
+      ]
+    }
+  },
+  "bindings": [
+    {
+      "interface": "forms",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    }
+  ],
+  "roles": [
+    {
+      "key": "legal-head",
+      "role": "legal-manager",
+      "title": "Head of Legal",
+      "reportsTo": "$chief",
+      "hire": "required",
+      "grants": {
+        "forms": "read"
+      },
+      "playbooks": [
+        "nda-turnaround"
+      ]
+    },
+    {
+      "key": "contracts",
+      "role": "legal-contracts",
+      "title": "Contracts Specialist",
+      "reportsTo": "legal-head",
+      "hire": "recommended",
+      "playbooks": [
+        "nda-turnaround"
+      ]
+    }
+  ],
+  "playbooks": [
+    "playbooks/nda-turnaround.md"
+  ],
+  "rhythm": [
+    "legal request triage twice a week",
+    "monthly contract register review"
+  ],
+  "measures": [
+    "NDA turnaround days",
+    "contracts reviewed",
+    "policy exceptions raised"
+  ]
+}

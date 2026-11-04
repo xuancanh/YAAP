@@ -1,0 +1,268 @@
+{
+  "manifestVersion": 1,
+  "id": "ats@yaam",
+  "name": "Recruiting (interface)",
+  "description": "The ats@1 contract: open roles and candidates through stages — a Hiring pipeline card on People, a candidate-screen skill and guidance on candidate data.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "interface"
+  ],
+  "requires": {
+    "yaamCore": "^1.0"
+  },
+  "interfaces": [
+    {
+      "name": "ats",
+      "version": "1.0.0",
+      "semantics": "Recruiting for human roles: open roles, candidates and the stages they move through.",
+      "resources": {
+        "scheme": "ats",
+        "pattern": "ats://{account}",
+        "schema": {
+          "type": "string",
+          "pattern": "^ats://[a-z0-9.-]+$"
+        }
+      },
+      "operations": {
+        "pipeline": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Open roles and candidates per stage.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "openRoles",
+              "applied",
+              "interview",
+              "offer"
+            ],
+            "properties": {
+              "openRoles": {
+                "type": "integer"
+              },
+              "applied": {
+                "type": "integer"
+              },
+              "interview": {
+                "type": "integer"
+              },
+              "offer": {
+                "type": "integer"
+              }
+            }
+          },
+          "class": "read"
+        },
+        "list_candidates": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": true,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Candidates for open roles, longest in stage first.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {
+              "role": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "items"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "role",
+                    "stage",
+                    "daysInStage"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "stage": {
+                      "enum": [
+                        "applied",
+                        "screen",
+                        "interview",
+                        "offer",
+                        "hired",
+                        "rejected"
+                      ]
+                    },
+                    "daysInStage": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "class": "read"
+        },
+        "advance_candidate": {
+          "required": true,
+          "reversibility": "costly",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Move a candidate to the next stage or reject them.",
+          "input": {
+            "type": "object",
+            "required": [
+              "candidateId",
+              "stage"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "candidateId": {
+                "type": "string"
+              },
+              "stage": {
+                "enum": [
+                  "screen",
+                  "interview",
+                  "offer",
+                  "rejected"
+                ]
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "role",
+              "stage",
+              "daysInStage"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "stage": {
+                "enum": [
+                  "applied",
+                  "screen",
+                  "interview",
+                  "offer",
+                  "hired",
+                  "rejected"
+                ]
+              },
+              "daysInStage": {
+                "type": "integer"
+              }
+            }
+          },
+          "class": "external_reversible"
+        }
+      },
+      "conformance": "conformance/ats/suite.json"
+    }
+  ],
+  "skills": [
+    {
+      "path": "skills/candidate-screen/SKILL.md",
+      "audience": [
+        "function:people"
+      ]
+    }
+  ],
+  "guidance": [
+    {
+      "id": "candidate-data",
+      "title": "Candidate data",
+      "audience": [
+        "function:people",
+        "chief"
+      ],
+      "text": "Candidate records are personal data: read them for the hire in front of you, never copy them into shared files, and score only against the role scorecard. Offers are the owner decision."
+    }
+  ],
+  "ui": {
+    "cards": [
+      {
+        "id": "hiring-pipeline",
+        "title": "Hiring pipeline (people)",
+        "placement": "people",
+        "query": {
+          "operation": "ats.pipeline"
+        },
+        "view": {
+          "kind": "stats",
+          "items": [
+            {
+              "label": "Open roles",
+              "value": "$.openRoles"
+            },
+            {
+              "label": "Applied",
+              "value": "$.applied"
+            },
+            {
+              "label": "Interviewing",
+              "value": "$.interview"
+            },
+            {
+              "label": "Offers out",
+              "value": "$.offer",
+              "tone": "good"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

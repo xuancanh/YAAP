@@ -1,0 +1,47 @@
+{
+  "operations": {
+    "pipeline": [
+      {
+        "output": {
+          "openRoles": 2,
+          "applied": 31,
+          "interview": 4,
+          "offer": 1
+        }
+      }
+    ],
+    "list_candidates": [
+      {
+        "output": {
+          "items": [
+            {
+              "id": "cand-4",
+              "name": "R. Okafor",
+              "role": "Account Executive",
+              "stage": "screen",
+              "daysInStage": 6
+            },
+            {
+              "id": "cand-9",
+              "name": "M. Lindqvist",
+              "role": "Support Lead",
+              "stage": "interview",
+              "daysInStage": 3
+            }
+          ]
+        }
+      }
+    ],
+    "advance_candidate": [
+      {
+        "output": {
+          "id": "{{input.candidateId}}",
+          "name": "R. Okafor",
+          "role": "Account Executive",
+          "stage": "{{input.stage}}",
+          "daysInStage": 0
+        }
+      }
+    ]
+  }
+}

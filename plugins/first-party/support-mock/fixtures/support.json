@@ -1,0 +1,65 @@
+{
+  "operations": {
+    "queue_stats": [
+      {
+        "output": {
+          "open": 14,
+          "breaching": 2,
+          "firstResponseMins": 38,
+          "csat": 4.6
+        }
+      }
+    ],
+    "list_tickets": [
+      {
+        "output": {
+          "items": [
+            {
+              "id": "T-101",
+              "subject": "Cannot export invoices to CSV",
+              "customer": "Northwind",
+              "priority": "high",
+              "ageHours": 9.5,
+              "slaBreached": true
+            },
+            {
+              "id": "T-102",
+              "subject": "How do I add a teammate?",
+              "customer": "Contoso",
+              "priority": "normal",
+              "ageHours": 2,
+              "slaBreached": false
+            },
+            {
+              "id": "T-103",
+              "subject": "Charged twice this month",
+              "customer": "Fabrikam",
+              "priority": "urgent",
+              "ageHours": 1,
+              "slaBreached": false
+            }
+          ]
+        }
+      }
+    ],
+    "read_ticket": [
+      {
+        "output": {
+          "id": "{{input.id}}",
+          "subject": "Cannot export invoices to CSV",
+          "messages": [
+            "The export button spins forever since Monday."
+          ]
+        }
+      }
+    ],
+    "reply_ticket": [
+      {
+        "output": {
+          "id": "{{input.id}}",
+          "status": "pending"
+        }
+      }
+    ]
+  }
+}

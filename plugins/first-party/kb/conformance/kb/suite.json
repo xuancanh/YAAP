@@ -1,0 +1,31 @@
+{
+  "interface": "kb@1.0.0",
+  "cases": [
+    {
+      "id": "search-then-read",
+      "steps": [
+        {
+          "op": "search",
+          "input": {
+            "query": "export"
+          },
+          "expect": {
+            "schema": true
+          },
+          "save": {
+            "id": "$.items[0].id"
+          }
+        },
+        {
+          "op": "read_article",
+          "input": {
+            "id": "{{id}}"
+          },
+          "expect": {
+            "schema": true
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "interface": "support@1.0.0",
+  "cases": [
+    {
+      "id": "stats-list-read",
+      "steps": [
+        {
+          "op": "queue_stats",
+          "input": {},
+          "expect": {
+            "schema": true
+          }
+        },
+        {
+          "op": "list_tickets",
+          "input": {
+            "status": "open"
+          },
+          "expect": {
+            "schema": true
+          },
+          "save": {
+            "id": "$.items[0].id"
+          }
+        },
+        {
+          "op": "read_ticket",
+          "input": {
+            "id": "{{id}}"
+          },
+          "expect": {
+            "schema": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "reply",
+      "steps": [
+        {
+          "op": "reply_ticket",
+          "input": {
+            "id": "T-101",
+            "body": "conformance"
+          },
+          "expect": {
+            "schema": true
+          }
+        }
+      ]
+    }
+  ]
+}

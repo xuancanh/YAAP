@@ -1,0 +1,182 @@
+{
+  "manifestVersion": 1,
+  "id": "kb@yaam",
+  "name": "Knowledge base (interface)",
+  "description": "The kb@1 contract: search and read the company knowledge base or help center — with a Related articles panel on every task and an answer-from-the-docs skill.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "interface"
+  ],
+  "requires": {
+    "yaamCore": "^1.0"
+  },
+  "interfaces": [
+    {
+      "name": "kb",
+      "version": "1.0.0",
+      "semantics": "The company knowledge base: help-center articles and internal docs, searchable.",
+      "resources": {
+        "scheme": "kb",
+        "pattern": "kb://{account}",
+        "schema": {
+          "type": "string",
+          "pattern": "^kb://[a-z0-9.-]+$"
+        }
+      },
+      "operations": {
+        "search": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Articles matching a query, best first.",
+          "input": {
+            "type": "object",
+            "required": [
+              "query"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "query": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "items"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "title",
+                    "url",
+                    "snippet"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "snippet": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "class": "read"
+        },
+        "read_article": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": true,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "One article in full.",
+          "input": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "body"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              }
+            }
+          },
+          "class": "read"
+        }
+      },
+      "conformance": "conformance/kb/suite.json"
+    }
+  ],
+  "skills": [
+    {
+      "path": "skills/answer-from-docs/SKILL.md",
+      "audience": [
+        "all"
+      ]
+    }
+  ],
+  "guidance": [
+    {
+      "id": "docs-first",
+      "title": "Docs first",
+      "audience": [
+        "all"
+      ],
+      "text": "Before writing a how-to answer, search the knowledge base and cite the article you used. A missing or wrong article is a task for its owner, not a reason to invent an answer."
+    }
+  ],
+  "ui": {
+    "panels": [
+      {
+        "id": "related-articles",
+        "title": "Related articles",
+        "placement": "task",
+        "query": {
+          "operation": "kb.search",
+          "input": {
+            "query": "{{context.taskTitle}}"
+          }
+        },
+        "view": {
+          "kind": "list",
+          "items": "$.items",
+          "title": "$.title",
+          "subtitle": "$.snippet",
+          "link": "$.url",
+          "max": 3
+        },
+        "empty": "No related articles."
+      }
+    ]
+  }
+}

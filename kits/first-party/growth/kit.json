@@ -1,0 +1,154 @@
+{
+  "format": "yaam-kit/1",
+  "id": "growth@yaam",
+  "name": "Growth",
+  "summary": "Grow activation and retention with analytics, email campaigns, experiments and a weekly growth meeting.",
+  "description": "Product analytics and email campaigns on trial providers; a marketing head, a demand-gen marketer and an optional BI analyst; growth-meeting and experiment playbooks; campaign sends stay two-key.",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "license": "AGPL-3.0-or-later",
+  "segment": "business",
+  "functions": [
+    "marketing"
+  ],
+  "fits": [
+    "growth",
+    "marketing",
+    "activation",
+    "retention",
+    "newsletter",
+    "saas",
+    "e-commerce"
+  ],
+  "companyTypes": [
+    "saas",
+    "e-commerce",
+    "creator"
+  ],
+  "requires": {
+    "yaamCore": "^1.0",
+    "interfaces": [
+      "analytics@^1",
+      "campaigns@^1"
+    ]
+  },
+  "recommends": {
+    "providers": {
+      "analytics": [
+        {
+          "id": "posthog@yaam",
+          "why": "Product analytics (not shipped yet)."
+        },
+        {
+          "id": "analytics-mock@yaam",
+          "trial": true,
+          "why": "Fixture numbers."
+        }
+      ],
+      "campaigns": [
+        {
+          "id": "campaigns-mock@yaam",
+          "trial": true,
+          "why": "Fixture campaigns; nothing is sent."
+        }
+      ]
+    }
+  },
+  "bindings": [
+    {
+      "interface": "analytics",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    },
+    {
+      "interface": "campaigns",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    }
+  ],
+  "roles": [
+    {
+      "key": "mkt-head",
+      "role": "marketing-manager",
+      "title": "Head of Marketing",
+      "reportsTo": "$chief",
+      "hire": "required",
+      "grants": {
+        "analytics": "read",
+        "campaigns": "write"
+      },
+      "playbooks": [
+        "growth-meeting",
+        "experiment-review"
+      ]
+    },
+    {
+      "key": "demand-gen",
+      "role": "marketing-demand-gen",
+      "title": "Demand Generation Marketer",
+      "reportsTo": "mkt-head",
+      "hire": "recommended",
+      "grants": {
+        "analytics": "read",
+        "campaigns": "write"
+      },
+      "playbooks": [
+        "experiment-review"
+      ]
+    },
+    {
+      "key": "bi",
+      "role": "data-bi-analyst",
+      "title": "BI Analyst",
+      "reportsTo": "mkt-head",
+      "hire": "optional",
+      "grants": {
+        "analytics": "read"
+      }
+    }
+  ],
+  "playbooks": [
+    "playbooks/growth-meeting.md",
+    "playbooks/experiment-review.md"
+  ],
+  "guidance": [
+    {
+      "id": "growth",
+      "title": "How growth works here",
+      "audience": [
+        "function:marketing",
+        "chief"
+      ],
+      "text": "Every week starts from the numbers on the Direction dashboard against their key results. Changes run as experiments with a metric and a stop rule. Campaigns are drafted freely; a send is proposed with its audience size and goes out with two keys."
+    }
+  ],
+  "policies": [
+    {
+      "id": "send-two-key",
+      "match": {
+        "operation": "campaigns.send_campaign"
+      },
+      "require": "two_key",
+      "why": "A campaign send reaches every recipient and cannot be recalled."
+    }
+  ],
+  "rhythm": [
+    "weekly growth meeting",
+    "experiment review every two weeks",
+    "campaign calendar each month"
+  ],
+  "measures": [
+    "visitors",
+    "signup conversion",
+    "activation rate",
+    "campaign open rate"
+  ]
+}

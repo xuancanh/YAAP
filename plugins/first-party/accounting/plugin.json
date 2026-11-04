@@ -1,0 +1,429 @@
+{
+  "manifestVersion": 1,
+  "id": "accounting@yaam",
+  "name": "Accounting (interface)",
+  "description": "The accounting@1 contract: cash, receivables, invoices and expenses — a Cash and invoices card on Money with a Send invoice action (cosigned), a Spend page, a month-end close skill and guidance for finance.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "interface"
+  ],
+  "requires": {
+    "yaamCore": "^1.0"
+  },
+  "interfaces": [
+    {
+      "name": "accounting",
+      "version": "1.0.0",
+      "semantics": "The company books: cash, receivables, invoices to customers and expenses.",
+      "resources": {
+        "scheme": "accounting",
+        "pattern": "accounting://{account}",
+        "schema": {
+          "type": "string",
+          "pattern": "^accounting://[a-z0-9.-]+$"
+        }
+      },
+      "operations": {
+        "cash_summary": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Cash on hand, open receivables, overdue receivables and runway in months at the current burn.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "cash",
+              "receivables",
+              "overdue",
+              "runwayMonths"
+            ],
+            "properties": {
+              "cash": {
+                "type": "number"
+              },
+              "receivables": {
+                "type": "number"
+              },
+              "overdue": {
+                "type": "number"
+              },
+              "runwayMonths": {
+                "type": "number"
+              }
+            }
+          },
+          "class": "read"
+        },
+        "list_invoices": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Invoices, soonest due first, optionally by status.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "enum": [
+                  "draft",
+                  "sent",
+                  "overdue",
+                  "paid"
+                ]
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "items"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "customer",
+                    "amount",
+                    "dueDate",
+                    "status"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "customer": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "number"
+                    },
+                    "dueDate": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "draft",
+                        "sent",
+                        "overdue",
+                        "paid"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "class": "read"
+        },
+        "list_expenses": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Expenses this month by category.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "items",
+              "total"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "category",
+                    "amount"
+                  ],
+                  "properties": {
+                    "category": {
+                      "type": "string"
+                    },
+                    "amount": {
+                      "type": "number"
+                    }
+                  }
+                }
+              },
+              "total": {
+                "type": "number"
+              }
+            }
+          },
+          "class": "read"
+        },
+        "send_invoice": {
+          "required": true,
+          "reversibility": "costly",
+          "outbound": true,
+          "idempotent": false,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Send a drafted invoice to its customer.",
+          "input": {
+            "type": "object",
+            "required": [
+              "invoiceId"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "invoiceId": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "customer",
+              "amount",
+              "dueDate",
+              "status"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "customer": {
+                "type": "string"
+              },
+              "amount": {
+                "type": "number"
+              },
+              "dueDate": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "draft",
+                  "sent",
+                  "overdue",
+                  "paid"
+                ]
+              }
+            }
+          },
+          "class": "external_reversible"
+        }
+      },
+      "conformance": "conformance/accounting/suite.json"
+    }
+  ],
+  "skills": [
+    {
+      "path": "skills/month-end-close/SKILL.md",
+      "audience": [
+        "function:finance",
+        "chief"
+      ]
+    }
+  ],
+  "guidance": [
+    {
+      "id": "invoices",
+      "title": "Invoices and cash",
+      "audience": [
+        "function:finance",
+        "chief"
+      ],
+      "text": "Cash, receivables and runway are on the Money dashboard. An invoice goes out only after its amount is checked against the contract, and the owner cosigns the send. Overdue invoices are chased weekly; a customer more than 30 days late is raised to the chief of staff."
+    }
+  ],
+  "ui": {
+    "cards": [
+      {
+        "id": "cash",
+        "title": "Cash and invoices",
+        "placement": "money",
+        "query": {
+          "operation": "accounting.cash_summary"
+        },
+        "view": {
+          "kind": "stats",
+          "items": [
+            {
+              "label": "Cash",
+              "value": "$.cash",
+              "unit": "USD"
+            },
+            {
+              "label": "Receivables",
+              "value": "$.receivables",
+              "unit": "USD"
+            },
+            {
+              "label": "Overdue",
+              "value": "$.overdue",
+              "unit": "USD",
+              "toneWhen": {
+                "path": "$.overdue",
+                "gt": 0,
+                "tone": "warn"
+              }
+            },
+            {
+              "label": "Runway",
+              "value": "$.runwayMonths",
+              "unit": "months"
+            }
+          ]
+        },
+        "actions": [
+          "send-invoice"
+        ]
+      },
+      {
+        "id": "invoices-due",
+        "title": "Invoices due",
+        "placement": "money",
+        "query": {
+          "operation": "accounting.list_invoices"
+        },
+        "view": {
+          "kind": "table",
+          "rows": "$.items",
+          "columns": [
+            {
+              "label": "Invoice",
+              "value": "$.id"
+            },
+            {
+              "label": "Customer",
+              "value": "$.customer"
+            },
+            {
+              "label": "Amount",
+              "value": "$.amount"
+            },
+            {
+              "label": "Due",
+              "value": "$.dueDate"
+            },
+            {
+              "label": "Status",
+              "value": "$.status"
+            }
+          ],
+          "max": 6
+        }
+      }
+    ],
+    "pages": [
+      {
+        "id": "spend",
+        "title": "Spend by category",
+        "placement": "money",
+        "summary": "This month's expenses by category, from the books.",
+        "sections": [
+          {
+            "query": {
+              "operation": "accounting.list_expenses"
+            },
+            "view": {
+              "kind": "table",
+              "rows": "$.items",
+              "columns": [
+                {
+                  "label": "Category",
+                  "value": "$.category"
+                },
+                {
+                  "label": "Amount (USD)",
+                  "value": "$.amount"
+                }
+              ]
+            }
+          },
+          {
+            "title": "Total",
+            "query": {
+              "operation": "accounting.list_expenses"
+            },
+            "view": {
+              "kind": "stats",
+              "items": [
+                {
+                  "label": "Total this month",
+                  "value": "$.total",
+                  "unit": "USD"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "send-invoice",
+        "title": "Send invoice",
+        "operation": "accounting.send_invoice",
+        "input": {
+          "invoiceId": "{{field.invoiceId}}"
+        },
+        "fields": [
+          {
+            "key": "invoiceId",
+            "label": "Invoice id",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "confirm": "Send this invoice to the customer? It leaves the company and is costly to take back."
+      }
+    ]
+  },
+  "policies": [
+    {
+      "match": {
+        "operation": "accounting.send_invoice"
+      },
+      "require": "cosign",
+      "why": "An invoice is a claim on a customer; the owner cosigns each send."
+    }
+  ]
+}

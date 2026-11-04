@@ -1,0 +1,35 @@
+{
+  "operations": {
+    "list_flags": [
+      {
+        "output": {
+          "on": 1,
+          "items": [
+            {
+              "key": "new-checkout",
+              "state": "on",
+              "rollout": 25,
+              "description": "The redesigned checkout"
+            },
+            {
+              "key": "ai-search",
+              "state": "off",
+              "rollout": 0,
+              "description": "Semantic search in the help center"
+            }
+          ]
+        }
+      }
+    ],
+    "set_flag": [
+      {
+        "output": {
+          "key": "{{input.key}}",
+          "state": "{{input.state}}",
+          "rollout": 100,
+          "description": "switched"
+        }
+      }
+    ]
+  }
+}

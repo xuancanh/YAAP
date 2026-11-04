@@ -1,0 +1,67 @@
+{
+  "operations": {
+    "pipeline_summary": [
+      {
+        "output": {
+          "openDeals": 9,
+          "pipelineValue": 184000,
+          "wonThisMonth": 42000,
+          "winRate": 0.31
+        }
+      }
+    ],
+    "list_deals": [
+      {
+        "output": {
+          "items": [
+            {
+              "id": "D-7",
+              "name": "Annual plan, 120 seats",
+              "company": "Northwind",
+              "stage": "negotiation",
+              "value": 64000,
+              "owner": "Ada"
+            },
+            {
+              "id": "D-9",
+              "name": "Pilot to rollout",
+              "company": "Contoso",
+              "stage": "proposal",
+              "value": 38000,
+              "owner": "Ada"
+            },
+            {
+              "id": "D-12",
+              "name": "Team plan",
+              "company": "Tailspin",
+              "stage": "qualified",
+              "value": 12000,
+              "owner": "Ben"
+            }
+          ]
+        }
+      }
+    ],
+    "log_activity": [
+      {
+        "output": {
+          "id": "act-1",
+          "dealId": "{{input.dealId}}",
+          "kind": "{{input.kind}}"
+        }
+      }
+    ],
+    "move_stage": [
+      {
+        "output": {
+          "id": "{{input.dealId}}",
+          "name": "Annual plan, 120 seats",
+          "company": "Northwind",
+          "stage": "{{input.stage}}",
+          "value": 64000,
+          "owner": "Ada"
+        }
+      }
+    ]
+  }
+}

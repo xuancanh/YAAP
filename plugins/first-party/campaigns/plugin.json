@@ -1,0 +1,326 @@
+{
+  "manifestVersion": 1,
+  "id": "campaigns@yaam",
+  "name": "Email campaigns (interface)",
+  "description": "The campaigns@1 contract: newsletters and email campaigns — list, draft, send — with a Campaigns card on Direction and a Draft campaign action. Sending is outbound and irreversible, so it runs only with two keys, never from a button.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "interface"
+  ],
+  "requires": {
+    "yaamCore": "^1.0"
+  },
+  "interfaces": [
+    {
+      "name": "campaigns",
+      "version": "1.0.0",
+      "semantics": "Email campaigns and newsletters sent to an audience of subscribers or customers.",
+      "resources": {
+        "scheme": "campaigns",
+        "pattern": "campaigns://{account}",
+        "schema": {
+          "type": "string",
+          "pattern": "^campaigns://[a-z0-9.-]+$"
+        }
+      },
+      "operations": {
+        "list_campaigns": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Recent campaigns with status, audience and open rate.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "items"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "status",
+                    "audience",
+                    "recipients",
+                    "openRate"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "draft",
+                        "scheduled",
+                        "sent"
+                      ]
+                    },
+                    "audience": {
+                      "type": "string"
+                    },
+                    "recipients": {
+                      "type": "integer"
+                    },
+                    "openRate": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "class": "read"
+        },
+        "draft_campaign": {
+          "required": true,
+          "reversibility": "reversible",
+          "outbound": false,
+          "idempotent": false,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Create a draft campaign for an audience with a subject and body. Nothing is sent.",
+          "input": {
+            "type": "object",
+            "required": [
+              "name",
+              "audience",
+              "subject"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "audience": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "status",
+              "audience",
+              "recipients",
+              "openRate"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "draft",
+                  "scheduled",
+                  "sent"
+                ]
+              },
+              "audience": {
+                "type": "string"
+              },
+              "recipients": {
+                "type": "integer"
+              },
+              "openRate": {
+                "type": "number"
+              }
+            }
+          },
+          "class": "external_reversible"
+        },
+        "send_campaign": {
+          "required": true,
+          "reversibility": "irreversible",
+          "outbound": true,
+          "idempotent": false,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Send a drafted campaign to its whole audience.",
+          "input": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "status",
+              "audience",
+              "recipients",
+              "openRate"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "draft",
+                  "scheduled",
+                  "sent"
+                ]
+              },
+              "audience": {
+                "type": "string"
+              },
+              "recipients": {
+                "type": "integer"
+              },
+              "openRate": {
+                "type": "number"
+              }
+            }
+          },
+          "class": "external_irreversible"
+        }
+      },
+      "conformance": "conformance/campaigns/suite.json"
+    }
+  ],
+  "guidance": [
+    {
+      "id": "sending",
+      "title": "Sending campaigns",
+      "audience": [
+        "function:marketing",
+        "chief"
+      ],
+      "text": "Draft freely; sending is irreversible and reaches every recipient, so it runs only with two keys. Propose the send with the audience size, the subject and a test send to yourself; never send to a list the company has not been given consent for."
+    }
+  ],
+  "ui": {
+    "cards": [
+      {
+        "id": "campaigns",
+        "title": "Campaigns",
+        "placement": "direction",
+        "query": {
+          "operation": "campaigns.list_campaigns"
+        },
+        "view": {
+          "kind": "list",
+          "items": "$.items",
+          "title": "$.name",
+          "subtitle": "$.audience",
+          "badge": "$.status",
+          "max": 5
+        },
+        "actions": [
+          "draft-campaign",
+          "send-campaign"
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "draft-campaign",
+        "title": "Draft campaign",
+        "operation": "campaigns.draft_campaign",
+        "input": {
+          "name": "{{field.name}}",
+          "audience": "{{field.audience}}",
+          "subject": "{{field.subject}}"
+        },
+        "fields": [
+          {
+            "key": "name",
+            "label": "Name",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "audience",
+            "label": "Audience",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "subject",
+            "label": "Subject",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "confirm": "Create this draft in the email tool? Nothing is sent."
+      },
+      {
+        "id": "send-campaign",
+        "title": "Send campaign",
+        "operation": "campaigns.send_campaign",
+        "input": {
+          "id": "{{field.id}}"
+        },
+        "fields": [
+          {
+            "key": "id",
+            "label": "Campaign id",
+            "type": "text",
+            "required": true
+          }
+        ]
+      }
+    ]
+  },
+  "policies": [
+    {
+      "match": {
+        "operation": "campaigns.send_campaign"
+      },
+      "require": "two_key",
+      "why": "A send reaches every recipient and cannot be recalled."
+    }
+  ]
+}

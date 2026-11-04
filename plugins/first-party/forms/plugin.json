@@ -1,0 +1,185 @@
+{
+  "manifestVersion": 1,
+  "id": "forms@yaam",
+  "name": "Forms and surveys (interface)",
+  "description": "The forms@1 contract: responses to intake forms and surveys — a New form responses card on Operations and an intake-triage skill that turns each response into a briefed task.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "interface"
+  ],
+  "requires": {
+    "yaamCore": "^1.0"
+  },
+  "interfaces": [
+    {
+      "name": "forms",
+      "version": "1.0.0",
+      "semantics": "Forms and surveys the company publishes, and the responses people submit.",
+      "resources": {
+        "scheme": "forms",
+        "pattern": "forms://{account}",
+        "schema": {
+          "type": "string",
+          "pattern": "^forms://[a-z0-9.-]+$"
+        }
+      },
+      "operations": {
+        "list_responses": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": true,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "New responses, newest first, with the form they answer and a one-line summary.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {
+              "form": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "items",
+              "unread"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "form",
+                    "submittedAt",
+                    "summary"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "form": {
+                      "type": "string"
+                    },
+                    "submittedAt": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "unread": {
+                "type": "integer"
+              }
+            }
+          },
+          "class": "read"
+        },
+        "read_response": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": true,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "One response with every answer (text from outside).",
+          "input": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "form",
+              "answers"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "form": {
+                "type": "string"
+              },
+              "answers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "question",
+                    "answer"
+                  ],
+                  "properties": {
+                    "question": {
+                      "type": "string"
+                    },
+                    "answer": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "class": "read"
+        }
+      },
+      "conformance": "conformance/forms/suite.json"
+    }
+  ],
+  "skills": [
+    {
+      "path": "skills/intake-triage/SKILL.md",
+      "audience": [
+        "all"
+      ]
+    }
+  ],
+  "ui": {
+    "cards": [
+      {
+        "id": "form-responses",
+        "title": "New form responses",
+        "placement": "operations",
+        "query": {
+          "operation": "forms.list_responses"
+        },
+        "view": {
+          "kind": "list",
+          "items": "$.items",
+          "title": "$.summary",
+          "subtitle": "$.form",
+          "badge": "$.submittedAt",
+          "max": 5
+        }
+      }
+    ]
+  }
+}

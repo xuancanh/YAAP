@@ -1,0 +1,33 @@
+{
+  "operations": {
+    "search": [
+      {
+        "output": {
+          "items": [
+            {
+              "id": "kb-12",
+              "title": "Exporting invoices and reports",
+              "url": "https://help.mock.example/kb-12",
+              "snippet": "Use Reports, then Export, then CSV."
+            },
+            {
+              "id": "kb-31",
+              "title": "Inviting teammates",
+              "url": "https://help.mock.example/kb-31",
+              "snippet": "Settings, then People, then Invite."
+            }
+          ]
+        }
+      }
+    ],
+    "read_article": [
+      {
+        "output": {
+          "id": "{{input.id}}",
+          "title": "Exporting invoices and reports",
+          "body": "Open Reports, choose a range, press Export and pick CSV."
+        }
+      }
+    ]
+  }
+}

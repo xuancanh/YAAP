@@ -1,0 +1,358 @@
+{
+  "manifestVersion": 1,
+  "id": "support@yaam",
+  "name": "Helpdesk (interface)",
+  "description": "The support@1 contract: a customer support queue — stats, tickets, replies — with a Support queue card on Operations, an SLA guidance note and a ticket-triage skill.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "interface"
+  ],
+  "requires": {
+    "yaamCore": "^1.0"
+  },
+  "interfaces": [
+    {
+      "name": "support",
+      "version": "1.0.0",
+      "semantics": "A customer support queue: tickets from customers and the replies to them.",
+      "resources": {
+        "scheme": "support",
+        "pattern": "support://{account}",
+        "schema": {
+          "type": "string",
+          "pattern": "^support://[a-z0-9.-]+$"
+        }
+      },
+      "operations": {
+        "queue_stats": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "The queue at a glance: open tickets, tickets breaching the first-response SLA, median first response in minutes, CSAT.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "open",
+              "breaching",
+              "firstResponseMins",
+              "csat"
+            ],
+            "properties": {
+              "open": {
+                "type": "integer"
+              },
+              "breaching": {
+                "type": "integer"
+              },
+              "firstResponseMins": {
+                "type": "number"
+              },
+              "csat": {
+                "type": "number"
+              }
+            }
+          },
+          "class": "read"
+        },
+        "list_tickets": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Open tickets, oldest first, with priority and whether the SLA is breached.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "enum": [
+                  "open",
+                  "pending",
+                  "solved"
+                ]
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "items"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "subject",
+                    "customer",
+                    "priority",
+                    "ageHours",
+                    "slaBreached"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "customer": {
+                      "type": "string"
+                    },
+                    "priority": {
+                      "enum": [
+                        "low",
+                        "normal",
+                        "high",
+                        "urgent"
+                      ]
+                    },
+                    "ageHours": {
+                      "type": "number"
+                    },
+                    "slaBreached": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "class": "read"
+        },
+        "read_ticket": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": true,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "One ticket with the customer messages (text from outside).",
+          "input": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "subject",
+              "messages"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "class": "read"
+        },
+        "reply_ticket": {
+          "required": true,
+          "reversibility": "irreversible",
+          "outbound": true,
+          "idempotent": false,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Send a reply to the customer on a ticket.",
+          "input": {
+            "type": "object",
+            "required": [
+              "id",
+              "body"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "status"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              }
+            }
+          },
+          "class": "external_irreversible"
+        }
+      },
+      "conformance": "conformance/support/suite.json"
+    }
+  ],
+  "skills": [
+    {
+      "path": "skills/ticket-triage/SKILL.md",
+      "audience": [
+        "function:cs"
+      ]
+    }
+  ],
+  "guidance": [
+    {
+      "id": "sla",
+      "title": "First-response SLA",
+      "audience": [
+        "function:cs",
+        "chief"
+      ],
+      "text": "Every ticket gets a first response within the company SLA; breaches show on the Support queue card. Work breaches first, then urgent tickets. Replies to customers leave the company and cannot be unsent, so they go out only with the owner keys; refunds and account changes are never promised in a reply."
+    }
+  ],
+  "ui": {
+    "cards": [
+      {
+        "id": "support-queue",
+        "title": "Support queue",
+        "placement": "operations",
+        "query": {
+          "operation": "support.queue_stats"
+        },
+        "view": {
+          "kind": "stats",
+          "items": [
+            {
+              "label": "Open",
+              "value": "$.open"
+            },
+            {
+              "label": "Breaching SLA",
+              "value": "$.breaching",
+              "toneWhen": {
+                "path": "$.breaching",
+                "gt": 0,
+                "tone": "bad"
+              }
+            },
+            {
+              "label": "First response",
+              "value": "$.firstResponseMins",
+              "unit": "min"
+            },
+            {
+              "label": "CSAT",
+              "value": "$.csat",
+              "tone": "good"
+            }
+          ]
+        }
+      }
+    ],
+    "pages": [
+      {
+        "id": "support-tickets",
+        "title": "Support tickets",
+        "placement": "operations",
+        "summary": "The open queue, oldest first, with SLA breaches marked.",
+        "sections": [
+          {
+            "title": "Open tickets",
+            "query": {
+              "operation": "support.list_tickets",
+              "input": {
+                "status": "open"
+              }
+            },
+            "view": {
+              "kind": "table",
+              "rows": "$.items",
+              "columns": [
+                {
+                  "label": "Ticket",
+                  "value": "$.id"
+                },
+                {
+                  "label": "Subject",
+                  "value": "$.subject"
+                },
+                {
+                  "label": "Customer",
+                  "value": "$.customer"
+                },
+                {
+                  "label": "Priority",
+                  "value": "$.priority"
+                },
+                {
+                  "label": "SLA breached",
+                  "value": "$.slaBreached"
+                }
+              ],
+              "max": 20
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "policies": [
+    {
+      "match": {
+        "operation": "support.reply_ticket"
+      },
+      "require": "cosign",
+      "why": "A reply to a customer speaks for the company."
+    }
+  ]
+}

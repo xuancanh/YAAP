@@ -1,0 +1,143 @@
+{
+  "format": "yaam-kit/1",
+  "id": "revenue@yaam",
+  "name": "Revenue",
+  "summary": "Pipeline, forecast and follow-through: a CRM, a sales team and the weekly pipeline review, with invoices optional.",
+  "description": "The CRM interface (accounting optional for invoices) on trial providers; a sales head, an account executive and an optional SDR; pipeline-review and forecast playbooks; the Pipeline card on Money.",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "license": "AGPL-3.0-or-later",
+  "segment": "business",
+  "functions": [
+    "sales"
+  ],
+  "fits": [
+    "sales",
+    "revenue",
+    "pipeline",
+    "b2b",
+    "deals",
+    "crm"
+  ],
+  "companyTypes": [
+    "saas",
+    "services",
+    "agency"
+  ],
+  "requires": {
+    "yaamCore": "^1.0",
+    "interfaces": [
+      "crm@^1"
+    ],
+    "optionalInterfaces": [
+      "accounting@^1"
+    ]
+  },
+  "recommends": {
+    "providers": {
+      "crm": [
+        {
+          "id": "hubspot@yaam",
+          "why": "Popular CRM for small teams (not shipped yet)."
+        },
+        {
+          "id": "crm-mock@yaam",
+          "trial": true,
+          "why": "Fixture deals."
+        }
+      ],
+      "accounting": [
+        {
+          "id": "accounting-mock@yaam",
+          "trial": true,
+          "why": "Fixture books."
+        }
+      ]
+    }
+  },
+  "bindings": [
+    {
+      "interface": "crm",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    },
+    {
+      "interface": "accounting",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    }
+  ],
+  "roles": [
+    {
+      "key": "sales-head",
+      "role": "sales-manager",
+      "title": "Head of Sales",
+      "reportsTo": "$chief",
+      "hire": "required",
+      "grants": {
+        "crm": "write",
+        "accounting": "read"
+      },
+      "playbooks": [
+        "pipeline-review",
+        "forecast-call"
+      ]
+    },
+    {
+      "key": "ae",
+      "role": "sales-account-executive",
+      "title": "Account Executive",
+      "reportsTo": "sales-head",
+      "hire": "recommended",
+      "grants": {
+        "crm": "write"
+      },
+      "playbooks": [
+        "pipeline-review"
+      ]
+    },
+    {
+      "key": "sdr",
+      "role": "sales-sdr",
+      "title": "Sales Development Rep",
+      "reportsTo": "sales-head",
+      "hire": "optional",
+      "grants": {
+        "crm": "write"
+      }
+    }
+  ],
+  "playbooks": [
+    "playbooks/pipeline-review.md",
+    "playbooks/forecast-call.md"
+  ],
+  "guidance": [
+    {
+      "id": "revenue",
+      "title": "How sales works here",
+      "audience": [
+        "function:sales",
+        "chief"
+      ],
+      "text": "The CRM is the record: every call is logged against its deal and every stage is backed by evidence. The forecast is built from the pipeline on the Money dashboard each week; prices and contract terms beyond the standard ones go to the CEO."
+    }
+  ],
+  "rhythm": [
+    "weekly pipeline review",
+    "forecast call before each month end"
+  ],
+  "measures": [
+    "pipeline value",
+    "win rate",
+    "new revenue won",
+    "forecast accuracy"
+  ]
+}

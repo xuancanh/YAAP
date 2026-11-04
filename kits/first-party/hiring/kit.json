@@ -1,0 +1,114 @@
+{
+  "format": "yaam-kit/1",
+  "id": "hiring@yaam",
+  "name": "Hiring",
+  "summary": "Hire people well: a recruiting pipeline, a people team and debriefs that keep candidates moving.",
+  "description": "The recruiting interface on a trial provider; a people head and a recruiter; pipeline-review and debrief playbooks; the Hiring pipeline card on People; candidate data handled as personal data.",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "license": "AGPL-3.0-or-later",
+  "segment": "business",
+  "functions": [
+    "people"
+  ],
+  "fits": [
+    "hiring",
+    "recruiting",
+    "people",
+    "talent",
+    "hr"
+  ],
+  "companyTypes": [
+    "services",
+    "research",
+    "saas"
+  ],
+  "requires": {
+    "yaamCore": "^1.0",
+    "interfaces": [
+      "ats@^1"
+    ]
+  },
+  "recommends": {
+    "providers": {
+      "ats": [
+        {
+          "id": "ashby@yaam",
+          "why": "Applicant tracking (not shipped yet)."
+        },
+        {
+          "id": "ats-mock@yaam",
+          "trial": true,
+          "why": "Fixture candidates."
+        }
+      ]
+    }
+  },
+  "bindings": [
+    {
+      "interface": "ats",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    }
+  ],
+  "roles": [
+    {
+      "key": "people-head",
+      "role": "people-manager",
+      "title": "Head of People",
+      "reportsTo": "$chief",
+      "hire": "required",
+      "grants": {
+        "ats": "write"
+      },
+      "playbooks": [
+        "hiring-pipeline-review",
+        "debrief"
+      ]
+    },
+    {
+      "key": "recruiter",
+      "role": "people-recruiter",
+      "title": "Recruiter",
+      "reportsTo": "people-head",
+      "hire": "recommended",
+      "grants": {
+        "ats": "write"
+      },
+      "playbooks": [
+        "hiring-pipeline-review"
+      ]
+    }
+  ],
+  "playbooks": [
+    "playbooks/hiring-pipeline-review.md",
+    "playbooks/debrief.md"
+  ],
+  "guidance": [
+    {
+      "id": "hiring",
+      "title": "How hiring works here",
+      "audience": [
+        "function:people",
+        "chief"
+      ],
+      "text": "No candidate waits more than five days in a stage without a decision. Candidates are scored against the role scorecard only, and their records are personal data that never go into shared files. Offers are the owner decision."
+    }
+  ],
+  "rhythm": [
+    "weekly hiring pipeline review",
+    "debrief within a day of each final interview"
+  ],
+  "measures": [
+    "time to hire",
+    "stage conversion",
+    "offer acceptance",
+    "days waiting in stage"
+  ]
+}

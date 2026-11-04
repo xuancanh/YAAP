@@ -1,0 +1,59 @@
+{
+  "interface": "crm@1.0.0",
+  "cases": [
+    {
+      "id": "summary-and-deals",
+      "steps": [
+        {
+          "op": "pipeline_summary",
+          "input": {},
+          "expect": {
+            "schema": true
+          }
+        },
+        {
+          "op": "list_deals",
+          "input": {},
+          "expect": {
+            "schema": true
+          },
+          "save": {
+            "id": "$.items[0].id"
+          }
+        }
+      ]
+    },
+    {
+      "id": "log-and-move",
+      "steps": [
+        {
+          "op": "log_activity",
+          "input": {
+            "dealId": "D-7",
+            "kind": "call",
+            "note": "conformance"
+          },
+          "expect": {
+            "schema": true,
+            "match": {
+              "$.kind": "call"
+            }
+          }
+        },
+        {
+          "op": "move_stage",
+          "input": {
+            "dealId": "D-7",
+            "stage": "proposal"
+          },
+          "expect": {
+            "schema": true,
+            "match": {
+              "$.stage": "proposal"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,365 @@
+{
+  "manifestVersion": 1,
+  "id": "observability@yaam",
+  "name": "Observability (interface)",
+  "description": "The observability@1 contract: incidents from error monitoring and alerting — list, read, acknowledge and resolve — with an Open incidents card on Operations, an incident-triage skill and guidance for engineering.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "interface"
+  ],
+  "requires": {
+    "yaamCore": "^1.0"
+  },
+  "interfaces": [
+    {
+      "name": "observability",
+      "version": "1.0.0",
+      "semantics": "Incidents raised by error monitoring and alerting on the services the company runs.",
+      "resources": {
+        "scheme": "observability",
+        "pattern": "observability://{account}",
+        "schema": {
+          "type": "string",
+          "pattern": "^observability://[a-z0-9.-]+$"
+        }
+      },
+      "operations": {
+        "list_incidents": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Incidents, newest first, with counts of open and critical ones.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "enum": [
+                  "open",
+                  "acknowledged",
+                  "resolved",
+                  "all"
+                ]
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "items",
+              "open",
+              "critical"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "title",
+                    "service",
+                    "severity",
+                    "status",
+                    "openedAt"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "service": {
+                      "type": "string"
+                    },
+                    "severity": {
+                      "enum": [
+                        "minor",
+                        "major",
+                        "critical"
+                      ]
+                    },
+                    "status": {
+                      "enum": [
+                        "open",
+                        "acknowledged",
+                        "resolved"
+                      ]
+                    },
+                    "openedAt": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "open": {
+                "type": "integer"
+              },
+              "critical": {
+                "type": "integer"
+              }
+            }
+          },
+          "class": "read"
+        },
+        "read_incident": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": true,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "One incident with its timeline.",
+          "input": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "severity",
+              "status",
+              "timeline"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "timeline": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "class": "read"
+        },
+        "acknowledge": {
+          "required": true,
+          "reversibility": "reversible",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Acknowledge an open incident: someone is on it.",
+          "input": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "status"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              }
+            }
+          },
+          "class": "external_reversible"
+        },
+        "resolve": {
+          "required": true,
+          "reversibility": "reversible",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Mark an incident resolved, with a one-line cause.",
+          "input": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "cause": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "status"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              }
+            }
+          },
+          "class": "external_reversible"
+        }
+      },
+      "events": {
+        "incident.opened": {
+          "semantics": "An incident opened.",
+          "payload": {
+            "type": "object",
+            "required": [
+              "id",
+              "severity"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "incident.resolved": {
+          "semantics": "An incident was resolved.",
+          "payload": {
+            "type": "object",
+            "required": [
+              "id",
+              "severity"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "conformance": "conformance/observability/suite.json"
+    }
+  ],
+  "skills": [
+    {
+      "path": "skills/incident-triage/SKILL.md",
+      "audience": [
+        "function:engineering",
+        "chief"
+      ]
+    }
+  ],
+  "guidance": [
+    {
+      "id": "incidents",
+      "title": "Incidents",
+      "audience": [
+        "function:engineering",
+        "chief"
+      ],
+      "text": "Open incidents are on the Operations dashboard and in observability_list_incidents. Acknowledge before investigating so two people do not chase the same alert; resolve only after the error rate recovers, with a one-line cause. A critical incident is escalated to the chief of staff within the hour."
+    }
+  ],
+  "ui": {
+    "cards": [
+      {
+        "id": "open-incidents",
+        "title": "Open incidents",
+        "placement": "operations",
+        "query": {
+          "operation": "observability.list_incidents",
+          "input": {
+            "status": "open"
+          }
+        },
+        "view": {
+          "kind": "list",
+          "items": "$.items",
+          "title": "$.title",
+          "subtitle": "$.service",
+          "badge": "$.severity",
+          "max": 5
+        },
+        "actions": [
+          "acknowledge-incident"
+        ],
+        "empty": "No open incidents."
+      }
+    ],
+    "actions": [
+      {
+        "id": "acknowledge-incident",
+        "title": "Acknowledge",
+        "operation": "observability.acknowledge",
+        "input": {
+          "id": "{{field.id}}"
+        },
+        "fields": [
+          {
+            "key": "id",
+            "label": "Incident id",
+            "type": "text",
+            "required": true
+          }
+        ],
+        "confirm": "Acknowledge this incident in the monitoring system?"
+      }
+    ]
+  }
+}

@@ -1,0 +1,217 @@
+{
+  "manifestVersion": 1,
+  "id": "analytics@yaam",
+  "name": "Product analytics (interface)",
+  "description": "The analytics@1 contract: web traffic and product KPIs — a Web traffic card on Direction, a weekly metrics readout skill and guidance on reading numbers against key results.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "interface"
+  ],
+  "requires": {
+    "yaamCore": "^1.0"
+  },
+  "interfaces": [
+    {
+      "name": "analytics",
+      "version": "1.0.0",
+      "semantics": "Product and web analytics: traffic, signups, conversion and activation.",
+      "resources": {
+        "scheme": "analytics",
+        "pattern": "analytics://{account}",
+        "schema": {
+          "type": "string",
+          "pattern": "^analytics://[a-z0-9.-]+$"
+        }
+      },
+      "operations": {
+        "kpis": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "The headline numbers for the last 7 days: visitors, signups, signup conversion and activation rate.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {
+              "days": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 90
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "visitors",
+              "signups",
+              "conversion",
+              "activation"
+            ],
+            "properties": {
+              "visitors": {
+                "type": "integer"
+              },
+              "signups": {
+                "type": "integer"
+              },
+              "conversion": {
+                "type": "number"
+              },
+              "activation": {
+                "type": "number"
+              }
+            }
+          },
+          "class": "read"
+        },
+        "traffic": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Visitors per day and the top sources.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {
+              "days": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 90
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "items",
+              "sources"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "day",
+                    "visitors"
+                  ],
+                  "properties": {
+                    "day": {
+                      "type": "string"
+                    },
+                    "visitors": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "source",
+                    "share"
+                  ],
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "share": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "class": "read"
+        }
+      },
+      "conformance": "conformance/analytics/suite.json"
+    }
+  ],
+  "skills": [
+    {
+      "path": "skills/weekly-metrics-readout/SKILL.md",
+      "audience": [
+        "function:marketing",
+        "function:data",
+        "chief"
+      ]
+    }
+  ],
+  "guidance": [
+    {
+      "id": "numbers-to-krs",
+      "title": "Numbers against key results",
+      "audience": [
+        "function:marketing",
+        "chief"
+      ],
+      "text": "Web traffic and activation are on the Direction dashboard. Report a number beside the key result it moves, with the week before for comparison; a change nobody can explain is reported as unknown, not as a story."
+    }
+  ],
+  "ui": {
+    "cards": [
+      {
+        "id": "web-traffic",
+        "title": "Web traffic (7 days)",
+        "placement": "direction",
+        "query": {
+          "operation": "analytics.kpis",
+          "input": {
+            "days": 7
+          }
+        },
+        "view": {
+          "kind": "stats",
+          "items": [
+            {
+              "label": "Visitors",
+              "value": "$.visitors"
+            },
+            {
+              "label": "Signups",
+              "value": "$.signups"
+            },
+            {
+              "label": "Conversion",
+              "value": "$.conversion"
+            },
+            {
+              "label": "Activation",
+              "value": "$.activation",
+              "toneWhen": {
+                "path": "$.activation",
+                "lt": 0.3,
+                "tone": "warn"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

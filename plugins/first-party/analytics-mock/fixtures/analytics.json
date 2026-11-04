@@ -1,0 +1,48 @@
+{
+  "operations": {
+    "kpis": [
+      {
+        "output": {
+          "visitors": 18240,
+          "signups": 412,
+          "conversion": 0.0226,
+          "activation": 0.41
+        }
+      }
+    ],
+    "traffic": [
+      {
+        "output": {
+          "items": [
+            {
+              "day": "2026-11-01",
+              "visitors": 2410
+            },
+            {
+              "day": "2026-11-02",
+              "visitors": 2655
+            },
+            {
+              "day": "2026-11-03",
+              "visitors": 2802
+            }
+          ],
+          "sources": [
+            {
+              "source": "search",
+              "share": 0.44
+            },
+            {
+              "source": "direct",
+              "share": 0.31
+            },
+            {
+              "source": "social",
+              "share": 0.25
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

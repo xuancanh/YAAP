@@ -1,0 +1,48 @@
+{
+  "interface": "accounting@1.0.0",
+  "cases": [
+    {
+      "id": "books",
+      "steps": [
+        {
+          "op": "cash_summary",
+          "input": {},
+          "expect": {
+            "schema": true
+          }
+        },
+        {
+          "op": "list_invoices",
+          "input": {},
+          "expect": {
+            "schema": true
+          }
+        },
+        {
+          "op": "list_expenses",
+          "input": {},
+          "expect": {
+            "schema": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "send",
+      "steps": [
+        {
+          "op": "send_invoice",
+          "input": {
+            "invoiceId": "INV-1042"
+          },
+          "expect": {
+            "schema": true,
+            "match": {
+              "$.status": "sent"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

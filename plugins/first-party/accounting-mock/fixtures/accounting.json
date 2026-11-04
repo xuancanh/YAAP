@@ -1,0 +1,79 @@
+{
+  "operations": {
+    "cash_summary": [
+      {
+        "output": {
+          "cash": 412000,
+          "receivables": 96500,
+          "overdue": 18200,
+          "runwayMonths": 14.2
+        }
+      }
+    ],
+    "list_invoices": [
+      {
+        "output": {
+          "items": [
+            {
+              "id": "INV-1038",
+              "customer": "Fabrikam",
+              "amount": 18200,
+              "dueDate": "2026-10-28",
+              "status": "overdue"
+            },
+            {
+              "id": "INV-1041",
+              "customer": "Northwind",
+              "amount": 42000,
+              "dueDate": "2026-11-15",
+              "status": "sent"
+            },
+            {
+              "id": "INV-1042",
+              "customer": "Contoso",
+              "amount": 36300,
+              "dueDate": "2026-11-30",
+              "status": "draft"
+            }
+          ]
+        }
+      }
+    ],
+    "list_expenses": [
+      {
+        "output": {
+          "total": 61400,
+          "items": [
+            {
+              "category": "Payroll",
+              "amount": 38000
+            },
+            {
+              "category": "Cloud",
+              "amount": 9200
+            },
+            {
+              "category": "AI models",
+              "amount": 7400
+            },
+            {
+              "category": "Software",
+              "amount": 6800
+            }
+          ]
+        }
+      }
+    ],
+    "send_invoice": [
+      {
+        "output": {
+          "id": "{{input.invoiceId}}",
+          "customer": "Contoso",
+          "amount": 36300,
+          "dueDate": "2026-11-30",
+          "status": "sent"
+        }
+      }
+    ]
+  }
+}

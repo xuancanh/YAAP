@@ -1,0 +1,47 @@
+{
+  "manifestVersion": 1,
+  "id": "dev-workflow@yaam",
+  "name": "Developer workflow (consumer)",
+  "description": "How engineering works over the scm and ci interfaces, whichever provider is bound: a Recent builds card on Operations with a Re-run action, an Open pull requests panel on tasks, guidance on merges and builds, and pull-request review and failing-build triage skills. Pure content: no code, no egress.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": { "id": "yaam", "name": "yaam", "verifiedDomain": "yaam.chat" },
+  "roles": ["consumer"],
+  "requires": { "yaamCore": "^1.0", "interfaces": ["scm@^1", "ci@^1"] },
+  "settings": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "repo": { "type": "string", "default": "scm://mock.example/acme/app", "description": "The repository the Recent builds card and the Open pull requests panel show." }
+    }
+  },
+  "skills": [
+    { "path": "skills/pr-review/SKILL.md", "audience": ["function:engineering"] },
+    { "path": "skills/triage-failing-build/SKILL.md", "audience": ["function:engineering"] }
+  ],
+  "guidance": [
+    { "id": "merges", "title": "Pull requests and merges", "audience": ["function:engineering", "chief"], "text": "Every change reaches the default branch through a reviewed pull request. The author never reviews their own change; a merge needs green CI and runs only on an approved change record with two keys. Keep pull requests small enough to review in one sitting." },
+    { "id": "builds", "title": "Builds", "audience": ["function:engineering"], "text": "Recent builds are on the Operations dashboard. A red build on the default branch is fixed or reverted before new work merges; read the run logs before re-running, and re-run a flaky check once at most before treating it as a real failure." }
+  ],
+  "ui": {
+    "cards": [
+      { "id": "recent-builds", "title": "Recent builds", "placement": "operations",
+        "query": { "operation": "ci.list_runs", "input": { "repo": "{{settings.repo}}" } },
+        "view": { "kind": "table", "rows": "$.items", "max": 6, "columns": [
+          { "label": "Run", "value": "$.id" }, { "label": "Commit", "value": "$.sha" }, { "label": "Status", "value": "$.status" }, { "label": "Result", "value": "$.conclusion" } ] },
+        "actions": ["rerun-build"], "empty": "No builds yet." }
+    ],
+    "panels": [
+      { "id": "open-prs", "title": "Open pull requests", "placement": "task",
+        "query": { "operation": "scm.list_prs", "input": { "repo": "{{settings.repo}}", "state": "open" } },
+        "view": { "kind": "list", "items": "$.items", "title": "$.title", "subtitle": "$.base", "link": "$.url", "max": 4 },
+        "empty": "No open pull requests." }
+    ],
+    "actions": [
+      { "id": "rerun-build", "title": "Re-run a build", "operation": "ci.rerun",
+        "input": { "repo": "{{settings.repo}}", "runId": "{{field.runId}}" },
+        "fields": [{ "key": "runId", "label": "Run id", "type": "text", "required": true }],
+        "confirm": "Re-run this build on the CI provider?" }
+    ]
+  }
+}

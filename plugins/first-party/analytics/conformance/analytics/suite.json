@@ -1,0 +1,26 @@
+{
+  "interface": "analytics@1.0.0",
+  "cases": [
+    {
+      "id": "kpis-and-traffic",
+      "steps": [
+        {
+          "op": "kpis",
+          "input": {},
+          "expect": {
+            "schema": true
+          }
+        },
+        {
+          "op": "traffic",
+          "input": {
+            "days": 7
+          },
+          "expect": {
+            "schema": true
+          }
+        }
+      ]
+    }
+  ]
+}

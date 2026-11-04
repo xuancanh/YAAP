@@ -1,0 +1,413 @@
+{
+  "manifestVersion": 1,
+  "id": "crm@yaam",
+  "name": "CRM (interface)",
+  "description": "The crm@1 contract: deals, stages and activities — a Pipeline card on Money with a Log a call action, a Deals page, a deal-review skill and guidance for sales.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "interface"
+  ],
+  "requires": {
+    "yaamCore": "^1.0"
+  },
+  "interfaces": [
+    {
+      "name": "crm",
+      "version": "1.0.0",
+      "semantics": "A sales pipeline: companies, deals moving through stages, and the activities logged against them.",
+      "resources": {
+        "scheme": "crm",
+        "pattern": "crm://{account}",
+        "schema": {
+          "type": "string",
+          "pattern": "^crm://[a-z0-9.-]+$"
+        }
+      },
+      "operations": {
+        "pipeline_summary": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "The pipeline at a glance: open deals, pipeline value, value won this month, win rate.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {}
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "openDeals",
+              "pipelineValue",
+              "wonThisMonth",
+              "winRate"
+            ],
+            "properties": {
+              "openDeals": {
+                "type": "integer"
+              },
+              "pipelineValue": {
+                "type": "number"
+              },
+              "wonThisMonth": {
+                "type": "number"
+              },
+              "winRate": {
+                "type": "number"
+              }
+            }
+          },
+          "class": "read"
+        },
+        "list_deals": {
+          "required": true,
+          "reversibility": "none",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Deals, largest first, optionally in one stage.",
+          "input": {
+            "type": "object",
+            "required": [],
+            "additionalProperties": false,
+            "properties": {
+              "stage": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "items"
+            ],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name",
+                    "company",
+                    "stage",
+                    "value",
+                    "owner"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "company": {
+                      "type": "string"
+                    },
+                    "stage": {
+                      "enum": [
+                        "lead",
+                        "qualified",
+                        "proposal",
+                        "negotiation",
+                        "won",
+                        "lost"
+                      ]
+                    },
+                    "value": {
+                      "type": "number"
+                    },
+                    "owner": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "class": "read"
+        },
+        "log_activity": {
+          "required": true,
+          "reversibility": "reversible",
+          "outbound": false,
+          "idempotent": false,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Log a call, email or meeting against a deal, with a short note.",
+          "input": {
+            "type": "object",
+            "required": [
+              "dealId",
+              "kind",
+              "note"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "dealId": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "call",
+                  "email",
+                  "meeting"
+                ]
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "dealId",
+              "kind"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "dealId": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              }
+            }
+          },
+          "class": "external_reversible"
+        },
+        "move_stage": {
+          "required": true,
+          "reversibility": "reversible",
+          "outbound": false,
+          "idempotent": true,
+          "untrustedOutput": false,
+          "cost": {
+            "unit": "call",
+            "usd": 0.0001
+          },
+          "semantics": "Move a deal to another stage.",
+          "input": {
+            "type": "object",
+            "required": [
+              "dealId",
+              "stage"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "dealId": {
+                "type": "string"
+              },
+              "stage": {
+                "enum": [
+                  "lead",
+                  "qualified",
+                  "proposal",
+                  "negotiation",
+                  "won",
+                  "lost"
+                ]
+              }
+            }
+          },
+          "output": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "company",
+              "stage",
+              "value",
+              "owner"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "company": {
+                "type": "string"
+              },
+              "stage": {
+                "enum": [
+                  "lead",
+                  "qualified",
+                  "proposal",
+                  "negotiation",
+                  "won",
+                  "lost"
+                ]
+              },
+              "value": {
+                "type": "number"
+              },
+              "owner": {
+                "type": "string"
+              }
+            }
+          },
+          "class": "external_reversible"
+        }
+      },
+      "conformance": "conformance/crm/suite.json"
+    }
+  ],
+  "skills": [
+    {
+      "path": "skills/deal-review/SKILL.md",
+      "audience": [
+        "function:sales",
+        "chief"
+      ]
+    }
+  ],
+  "guidance": [
+    {
+      "id": "pipeline-hygiene",
+      "title": "Pipeline hygiene",
+      "audience": [
+        "function:sales",
+        "chief"
+      ],
+      "text": "The pipeline on the Money dashboard is the record the forecast is built from. Log every customer call against its deal, keep each deal stage backed by evidence, and mark a deal lost when it goes quiet for a month instead of leaving it open."
+    }
+  ],
+  "ui": {
+    "cards": [
+      {
+        "id": "pipeline",
+        "title": "Pipeline",
+        "placement": "money",
+        "query": {
+          "operation": "crm.pipeline_summary"
+        },
+        "view": {
+          "kind": "stats",
+          "items": [
+            {
+              "label": "Open deals",
+              "value": "$.openDeals"
+            },
+            {
+              "label": "Pipeline",
+              "value": "$.pipelineValue",
+              "unit": "USD"
+            },
+            {
+              "label": "Won this month",
+              "value": "$.wonThisMonth",
+              "unit": "USD",
+              "tone": "good"
+            },
+            {
+              "label": "Win rate",
+              "value": "$.winRate"
+            }
+          ]
+        },
+        "actions": [
+          "log-call"
+        ]
+      }
+    ],
+    "pages": [
+      {
+        "id": "deals",
+        "title": "Deals",
+        "placement": "money",
+        "summary": "Every open deal with its stage, value and owner.",
+        "sections": [
+          {
+            "title": "Open deals",
+            "query": {
+              "operation": "crm.list_deals"
+            },
+            "view": {
+              "kind": "table",
+              "rows": "$.items",
+              "columns": [
+                {
+                  "label": "Deal",
+                  "value": "$.name"
+                },
+                {
+                  "label": "Company",
+                  "value": "$.company"
+                },
+                {
+                  "label": "Stage",
+                  "value": "$.stage"
+                },
+                {
+                  "label": "Value",
+                  "value": "$.value"
+                },
+                {
+                  "label": "Owner",
+                  "value": "$.owner"
+                }
+              ],
+              "max": 25
+            }
+          }
+        ],
+        "actions": [
+          "log-call"
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "id": "log-call",
+        "title": "Log a call",
+        "operation": "crm.log_activity",
+        "input": {
+          "dealId": "{{field.dealId}}",
+          "kind": "call",
+          "note": "{{field.note}}"
+        },
+        "fields": [
+          {
+            "key": "dealId",
+            "label": "Deal id",
+            "type": "text",
+            "required": true
+          },
+          {
+            "key": "note",
+            "label": "What was said",
+            "type": "textarea",
+            "required": true
+          }
+        ],
+        "confirm": "Log this call in the CRM?"
+      }
+    ]
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "interface": "observability@1.0.0",
+  "cases": [
+    {
+      "id": "list-then-read",
+      "steps": [
+        {
+          "op": "list_incidents",
+          "input": {
+            "status": "open"
+          },
+          "expect": {
+            "schema": true
+          },
+          "save": {
+            "id": "$.items[0].id"
+          }
+        },
+        {
+          "op": "read_incident",
+          "input": {
+            "id": "{{id}}"
+          },
+          "expect": {
+            "schema": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "acknowledge-then-resolve",
+      "steps": [
+        {
+          "op": "acknowledge",
+          "input": {
+            "id": "inc-1"
+          },
+          "expect": {
+            "schema": true,
+            "match": {
+              "$.status": "acknowledged"
+            }
+          }
+        },
+        {
+          "op": "resolve",
+          "input": {
+            "id": "inc-1",
+            "cause": "conformance"
+          },
+          "expect": {
+            "schema": true,
+            "match": {
+              "$.status": "resolved"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

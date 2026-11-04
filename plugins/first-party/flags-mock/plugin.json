@@ -1,0 +1,46 @@
+{
+  "manifestVersion": 1,
+  "id": "flags-mock@yaam",
+  "name": "Mock flags (mock provider)",
+  "description": "A deterministic provider of flags@1 served by the core's fixture stub: no network, no code, no secrets. It makes the feature flags (interface) work out of the box for trying the kit and its dashboard cards; connect a real provider when one ships.",
+  "license": "AGPL-3.0-or-later",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "roles": [
+    "provider"
+  ],
+  "requires": {
+    "yaamCore": "^1.0",
+    "interfaces": [
+      "flags@^1"
+    ]
+  },
+  "provides": [
+    {
+      "interface": "flags@^1",
+      "resources": [
+        "flags://mock.example"
+      ],
+      "operations": {
+        "list_flags": {
+          "fixture": "fixtures/flags.json"
+        },
+        "set_flag": {
+          "fixture": "fixtures/flags.json"
+        }
+      },
+      "conformance": {
+        "mode": "mock"
+      }
+    }
+  ],
+  "budgets": {
+    "callsPerMinute": 120,
+    "concurrent": 4,
+    "maxCostPerCallUsd": 0.01
+  }
+}

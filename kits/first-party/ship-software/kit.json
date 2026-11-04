@@ -1,0 +1,208 @@
+{
+  "format": "yaam-kit/1",
+  "id": "ship-software@yaam",
+  "name": "Ship Software",
+  "summary": "Turn tickets into reviewed, tested and monitored code, with an engineering team, its playbooks and the dashboards to watch it.",
+  "description": "Source control, CI and incident monitoring (feature flags optional) on trial providers until you connect real ones; an engineering head, engineers and an optional SRE with their grants; release and postmortem playbooks; merges stay two-key.",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "yaam",
+    "name": "yaam",
+    "verifiedDomain": "yaam.chat"
+  },
+  "license": "AGPL-3.0-or-later",
+  "segment": "business",
+  "functions": [
+    "engineering"
+  ],
+  "fits": [
+    "software",
+    "saas",
+    "app",
+    "api",
+    "engineering",
+    "deploy",
+    "developer",
+    "code",
+    "product"
+  ],
+  "companyTypes": [
+    "saas",
+    "open-source",
+    "agency"
+  ],
+  "requires": {
+    "yaamCore": "^1.0",
+    "interfaces": [
+      "scm@^1",
+      "ci@^1",
+      "observability@^1"
+    ],
+    "optionalInterfaces": [
+      "flags@^1"
+    ]
+  },
+  "plugins": [
+    {
+      "id": "dev-workflow@yaam",
+      "range": "^1",
+      "why": "The Recent builds card, the Open pull requests panel, merge and build guidance, and the review and triage skills."
+    }
+  ],
+  "recommends": {
+    "providers": {
+      "scm": [
+        {
+          "id": "github@yaam",
+          "why": "Most common host; also provides ci through GitHub Actions (not shipped yet)."
+        },
+        {
+          "id": "scm-mock@yaam",
+          "trial": true,
+          "why": "Try the kit without a vendor account."
+        }
+      ],
+      "ci": [
+        {
+          "id": "scm-mock@yaam",
+          "trial": true,
+          "why": "Fixtures from the mock forge."
+        }
+      ],
+      "observability": [
+        {
+          "id": "sentry@yaam",
+          "why": "Errors and releases (not shipped yet)."
+        },
+        {
+          "id": "observability-mock@yaam",
+          "trial": true,
+          "why": "Fixture incidents."
+        }
+      ],
+      "flags": [
+        {
+          "id": "flags-mock@yaam",
+          "trial": true,
+          "why": "Fixture flags."
+        }
+      ]
+    }
+  },
+  "bindings": [
+    {
+      "interface": "scm",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    },
+    {
+      "interface": "ci",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    },
+    {
+      "interface": "observability",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    },
+    {
+      "interface": "flags",
+      "scope": {
+        "kind": "workspace"
+      },
+      "provider": "$choice"
+    }
+  ],
+  "roles": [
+    {
+      "key": "eng-head",
+      "role": "engineering-manager",
+      "title": "Head of Engineering",
+      "reportsTo": "$chief",
+      "hire": "required",
+      "grants": {
+        "scm": "write",
+        "ci": "write",
+        "observability": "write",
+        "flags": "write"
+      },
+      "playbooks": [
+        "release-checklist",
+        "postmortem"
+      ]
+    },
+    {
+      "key": "swe",
+      "role": "engineering-software-engineer",
+      "title": "Software Engineer",
+      "reportsTo": "eng-head",
+      "hire": "recommended",
+      "grants": {
+        "scm": "write",
+        "ci": "read",
+        "observability": "read"
+      },
+      "playbooks": [
+        "release-checklist"
+      ]
+    },
+    {
+      "key": "sre",
+      "role": "engineering-sre",
+      "title": "Site Reliability Engineer",
+      "reportsTo": "eng-head",
+      "hire": "optional",
+      "grants": {
+        "ci": "write",
+        "observability": "write",
+        "flags": "write"
+      },
+      "playbooks": [
+        "postmortem"
+      ]
+    }
+  ],
+  "playbooks": [
+    "playbooks/release-checklist.md",
+    "playbooks/postmortem.md"
+  ],
+  "guidance": [
+    {
+      "id": "ship-software",
+      "title": "How engineering ships here",
+      "audience": [
+        "function:engineering",
+        "chief"
+      ],
+      "text": "Small pull requests, reviewed by someone other than the author, merged on green CI through a change record with two keys. Risky features ship behind a flag. Every major incident gets a postmortem within three working days."
+    }
+  ],
+  "policies": [
+    {
+      "id": "merge-two-key",
+      "match": {
+        "operation": "scm.merge"
+      },
+      "require": "two_key",
+      "why": "Merges to a repository keep two keys even where the owner relaxed other change requirements."
+    }
+  ],
+  "rhythm": [
+    "sprint planning every two weeks (weekly for a speed-valuing team)",
+    "weekly delivery review",
+    "release checklist before each release",
+    "postmortem after every major incident"
+  ],
+  "measures": [
+    "deploy frequency",
+    "lead time for changes",
+    "change failure rate",
+    "time to restore"
+  ]
+}
