@@ -374,7 +374,8 @@ export interface ChatRail { groups: ChatRailGroup[]; archivedTotal: number }
 
 // ---- the Work log (docs/work-log.md) ----
 export type WorkTrigger = 'heartbeat' | 'loop' | 'task' | 'meeting' | 'channel' | 'org' | 'app' | 'other';
-export type WorkOutcome = 'done' | 'blocked' | 'error' | 'stopped' | 'running';
+/** `interrupted`: a server restart cut the run short — not an error. */
+export type WorkOutcome = 'done' | 'blocked' | 'error' | 'stopped' | 'interrupted' | 'running';
 export interface WorkRun {
   id: string; sessionId: string; sessionName: string;
   trigger: WorkTrigger; triggerKey: string; label: string;
@@ -392,8 +393,12 @@ export interface WorkRun {
   by?: string;
   /** The run this one re-runs (Rerun). */
   rerunOf?: string | null;
-  /** Failed, stopped or blocked: Rerun applies. */
+  /** Failed, stopped, blocked or interrupted: Rerun applies. */
   rerunnable?: boolean;
+  /** Interrupted runs: what the boot after the restart did (resumed |
+   *  retry | held | none | pending) and the run that resumed it. */
+  recovery?: 'pending' | 'claimed' | 'resumed' | 'retry' | 'held' | 'none';
+  resumedBy?: string | null;
 }
 /** POST …/work-log/runs/:turnId/rerun. */
 export interface WorkRerunResult { started: boolean; turnId: string | null; sessionId: string; status: string; error?: string }
@@ -441,6 +446,11 @@ export interface ChatTurn {
    *  provider was degraded (docs/incidents.md §4); absent otherwise. */
   degraded?: string | null;
   model?: string;
+  /** The failure message, or the interruption note. */
+  error?: string | null;
+  /** An interrupted turn (status 'interrupted'): what the boot after the
+   *  restart did — resumed | retry | held | none | pending. */
+  recovery?: string;
 }
 
 export interface Skill {
@@ -1657,6 +1667,11 @@ export type TurnEvent =
     workspaceId: string; screenshotPath?: string; width?: number; height?: number; at: string;
   }
   | { type: 'done' }
+  /** A server restart cut the turn short: it is recorded interrupted, not failed. */
+  | { type: 'interrupted'; reason: 'shutdown'; message: string }
+  /** The provider round failed on a transient error and is re-asked: drop
+   *  what that round streamed so far. */
+  | { type: 'retry'; message: string; attempt: number }
   | { type: 'error'; message: string };
 
 // ---- accounts (docs/accounts.md) ----
@@ -1863,8 +1878,41 @@ export const authHeaders = (url?: string): Record<string, string> => {
   return out;
 };
 
+/** Backoff for a read while the API restarts (docs/architecture.md
+ *  "Restarts and recovery"): about 20 s in all — a dev rebuild plus a boot. */
+export const RESTART_RETRY_MS = [500, 1_000, 2_000, 3_000, 4_000, 5_000, 5_000];
+
+/** Whether a response means "the API is not up right now", not an answer:
+ *  a gateway status, or the dev proxy's empty 500 when the server refused
+ *  the connection (Vite answers ECONNREFUSED that way). */
+async function apiDown(res: Response): Promise<boolean> {
+  if (res.status === 502 || res.status === 503 || res.status === 504) return true;
+  if (res.status !== 500) return false;
+  const body = await res.clone().text().catch(() => '');
+  return body.trim() === '';
+}
+
+/**
+ * A GET that rides out a server restart: a failed connection or an "API is
+ * down" response is retried with backoff instead of rendering an empty or
+ * "off" screen for the seconds the server is restarting. Reads only — a
+ * write is never repeated on its own. An abort is never retried.
+ */
+export async function fetchRetrying(url: string, init: RequestInit = {}, delays: readonly number[] = RESTART_RETRY_MS): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      if (attempt >= delays.length || !(await apiDown(res))) return res;
+    } catch (err) {
+      if ((err instanceof Error && err.name === 'AbortError') || attempt >= delays.length || init.signal?.aborted) throw err;
+    }
+    await new Promise((r) => setTimeout(r, delays[attempt]));
+    if (init.signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+  }
+}
+
 const get = <T,>(url: string, schema?: z.ZodType) =>
-  fetch(url, { headers: authHeaders(url) })
+  fetchRetrying(url, { headers: authHeaders(url) })
     .then((r) => json<T>(r))
     .then((v) => (schema ? looseParse(schema, v, `GET ${url}`) : v));
 const send = <T,>(url: string, method: string, body?: unknown, schema?: z.ZodType) =>

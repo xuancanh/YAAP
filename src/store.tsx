@@ -13,6 +13,7 @@ import {
   type OrgIntentNode, type OrgCadence, type OrgHealth,
 } from './lib/api';
 import { isChannelSession } from './lib/channels';
+import { dropFailedRound, isConnectionLost, reconnectDelay } from './lib/stream-recovery';
 import type { InboxFilter } from './lib/inbox';
 import { isCompanySection, paneHome, LEGACY_COMPANY_SECTION, type CompanySection } from './lib/company-nav';
 import { resolveAgentTab } from './lib/agent-tabs';
@@ -713,7 +714,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // ---- group chat (docs/group-chat.md) ----
   const refreshChannels = useCallback(async () => {
     if (!workspaceId) { setChannels([]); return; }
-    setChannels(await api.channels(workspaceId).catch((): Channel[] => []));
+    // a failed read (the server restarting) keeps the rail rather than emptying it
+    const list = await api.channels(workspaceId).catch((): Channel[] | null => null);
+    if (list) setChannels(list);
   }, [workspaceId]);
   useEffect(() => { void refreshChannels(); }, [refreshChannels]);
 
@@ -733,18 +736,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => { wsListeners.current.delete(listener); };
   }, []);
 
+  /** After the event stream reconnects (a server restart): re-read what may
+   *  have changed while it was down. Assigned below, once the readers exist. */
+  const resyncRef = useRef<() => void>(() => {});
+
   // One SSE connection per workspace on screen, reconnecting with backoff;
   // unread badges follow every channel message without polling.
   useEffect(() => {
     if (!workspaceId) return;
     const ctrl = new AbortController();
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    let backoff = 1_000;
+    // A server restart drops the stream: reconnect quickly and quietly
+    // (docs/architecture.md "Restarts and recovery"), then re-read what may
+    // have changed while it was down — no error, no stale "is working…".
+    let attempt = 0;
+    let dropped = false;
     const run = async () => {
       while (!ctrl.signal.aborted) {
         try {
           await subscribeWorkspaceEvents(workspaceId, (ev) => {
-            backoff = 1_000;
+            attempt = 0;
+            if (dropped) { dropped = false; resyncRef.current(); }
             for (const l of wsListeners.current) { try { l(ev); } catch { /* a listener must not break the stream */ } }
             if (ev.type === 'channel_message' || ev.type === 'channel_update') {
               clearTimeout(refreshTimer);
@@ -753,8 +765,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }, ctrl.signal);
         } catch { /* reconnect below */ }
         if (ctrl.signal.aborted) break;
-        await new Promise((r) => setTimeout(r, backoff));
-        backoff = Math.min(backoff * 2, 30_000);
+        dropped = true;
+        await new Promise((r) => setTimeout(r, reconnectDelay(attempt++)));
       }
     };
     void run();
@@ -823,9 +835,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const refreshTranscript = useCallback(async () => {
     const id = currentIdRef.current;
     if (!id) { setTranscript({ messages: [], turns: [] }); return; }
-    const t = await api.transcript(id).catch(() => ({ messages: [], turns: [] }));
-    if (currentIdRef.current === id) setTranscript(t);
+    // A failed read (the server restarting) keeps what is on screen rather
+    // than blanking the chat; reads retry through a restart first.
+    const t = await api.transcript(id).catch(() => null);
+    if (t && currentIdRef.current === id) setTranscript(t);
   }, []);
+
+  resyncRef.current = () => {
+    void refreshSessions().catch(() => {});
+    void refreshChannels().catch(() => {});
+    void refreshAgents().catch(() => {});
+    void refreshTranscript();
+  };
 
   useEffect(() => {
     // switching chats never stops a reply: the old turn keeps streaming into
@@ -1126,6 +1147,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (streamRaf.current) return;
       streamRaf.current = requestAnimationFrame(() => { streamRaf.current = 0; applyBuf(); });
     };
+    let started = false;
+    let interrupted = false;
+    let resend = false;
     try {
       await sendTurn(id, text, atts, (ev) => {
         if (ev.type === 'turn') {
@@ -1180,9 +1204,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           // the server summarised older history before this turn; the transcript
           // shows the divider once it reloads
           if (current()) { showToast('Context auto-compacted — older turns distilled to a summary'); void refreshTranscript(); }
+        } else if (ev.type === 'retry') {
+          // the provider hiccuped mid-round and the server re-asks it: what
+          // that round streamed is replaced by the new attempt
+          streamBuf.current = null;
+          patch(dropFailedRound);
+        } else if (ev.type === 'interrupted') {
+          interrupted = true;
         } else if (ev.type === 'error') {
           showToast(ev.message);
         }
+        if (ev.type === 'turn') started = true;
       }, ctrl.signal);
     } catch (err) {
       if (err instanceof Error && /^409\b/.test(err.message)) {
@@ -1190,19 +1222,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // task run): the message waits for it to end (docs/work-log.md).
         setQueue((q) => [...q, { id: Date.now(), sessionId: id, text, attachments: atts.map((a) => ({ ...a } as SentAttachment)), waitServer: true }]);
         showToast('The agent is mid-run here — your message is queued for its next turn');
+      } else if (isConnectionLost(err)) {
+        // A restart (docs/architecture.md "Restarts and recovery"): not a
+        // failure of the turn. Before the server took the message, send it
+        // again once the server is back; after, the reply (or its
+        // interruption and a Retry) shows when the transcript is re-read.
+        if (!started) {
+          resend = true;
+          showToast('The server is restarting — your message goes out as soon as it is back');
+        } else interrupted = true;
       } else if (!(err instanceof Error && err.name === 'AbortError')) showToast(err instanceof Error ? err.message : 'turn failed');
     }
+    if (interrupted) showToast('The server restarted mid-reply — the reply shows here, or a Retry, once it is back');
     if (streamRaf.current) { cancelAnimationFrame(streamRaf.current); streamRaf.current = 0; }
     streamBuf.current = null;
     if (abortBy.current.get(id) === ctrl) abortBy.current.delete(id);
     // load the persisted rows before dropping the live ones, so nothing blinks
-    if (current()) await refreshTranscript();
+    // (a read retries while the server restarts, so this waits for it)
+    if (current()) await refreshTranscript().catch(() => {});
     setStreamingIds((s) => { const n = new Set(s); n.delete(id); return n; });
     clearLiveFor(id);
     // the persisted tool records now carry the same steps
     if (current()) setLiveBrowserSteps([]);
-    await refreshSessions();
+    // Never leave the chat "working": a failed refresh must not skip the
+    // cleanup below, or every later message would queue behind a dead run.
     activeRuns.current.delete(id);
+    await refreshSessions().catch(() => {});
+    if (resend) {
+      // wait for the API (reads retry through a restart), then send it once
+      const back = await api.status().then(() => true, () => false);
+      if (back) { void runTurnRef.current(id, text, atts); return; }
+      showToast('The server is still not back — your message was not sent; it is back in the composer');
+      setDrafts((d) => ({ ...d, [id]: d[id] || text }));
+    }
     setTimeout(() => flushQueueRef.current(id, false), 300);
   }, [refreshTranscript, refreshSessions, refreshWorkspaces, showToast, setLiveFor, clearLiveFor]);
   const runTurnRef = useRef<typeof runTurn>(runTurn);

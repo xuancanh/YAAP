@@ -21,6 +21,7 @@ import { Markdown } from '../lib/md';
 import { fmtTokens } from '../lib/util';
 import { applyWatchEvent, liveSteps } from '../lib/work-live';
 import { Thinking, ToolCard } from './ChatView';
+import { interruptedLabel } from '../lib/interrupted';
 
 const PAGE = 30;
 /** How often a hot log (a run in progress, a message waiting) refreshes. */
@@ -29,7 +30,8 @@ const HOT_POLL_MS = 3_000;
 const RUN_POLL_MS = 2_000;
 
 export const OUTCOME_COLOR: Record<WorkOutcome, string> = {
-  done: 'var(--green)', blocked: 'var(--amber)', error: 'var(--red)', stopped: 'var(--text-faint)', running: 'var(--accent)',
+  // interrupted: a restart cut it short — not an error, never red
+  done: 'var(--green)', blocked: 'var(--amber)', error: 'var(--red)', stopped: 'var(--text-faint)', interrupted: 'var(--text-dim)', running: 'var(--accent)',
 };
 export const TRIGGER_LABEL: Record<WorkTrigger, string> = {
   heartbeat: 'Heartbeat', loop: 'Loop', task: 'Task', meeting: 'Meeting', channel: 'Channel', org: 'Org', app: 'Mini app', other: 'Other',
@@ -275,7 +277,7 @@ export function WorkLogTab({ agentId }: { agentId: string }) {
         <label style={faint}>Outcome{' '}
           <select aria-label="Outcome" value={filters.outcome ?? ''} onChange={(e) => set({ outcome: e.target.value || undefined })} style={input}>
             <option value="">any</option>
-            {(['done', 'blocked', 'error', 'stopped', 'running'] as const).map((o) => <option key={o} value={o}>{o}</option>)}
+            {(['done', 'blocked', 'error', 'stopped', 'interrupted', 'running'] as const).map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
         </label>
         <label style={faint}>Task{' '}
@@ -390,7 +392,7 @@ function RunRow({ r, first, open, onToggle, detail, agentId, readOnly, agentName
         {person && <span data-testid="from-person" style={{ fontSize: 10.5, fontWeight: 650, color: 'var(--accent-hi, var(--accent))', flex: 'none' }}>from {who(r.by)}</span>}
         {r.rerunOf && <span style={{ ...faint, flex: 'none' }}>rerun</span>}
         <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: r.outcome === 'error' ? 'var(--red)' : 'var(--text)' }}>
-          {r.outcome === 'error' && r.error ? r.error : (person ? (r.input || '').replace(/\s+/g, ' ').slice(0, 160) : headline(r)) || '(no answer)'}
+          {r.outcome === 'error' && r.error ? r.error : r.outcome === 'interrupted' ? <span data-testid="run-interrupted" style={{ color: 'var(--text-dim)' }}>{interruptedLabel(r.recovery)}</span> : (person ? (r.input || '').replace(/\s+/g, ' ').slice(0, 160) : headline(r)) || '(no answer)'}
         </span>
         {running
           ? <span data-testid="run-live" style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, flex: 'none' }}>running · step {Math.max(1, steps)}</span>
@@ -412,6 +414,13 @@ function RunRow({ r, first, open, onToggle, detail, agentId, readOnly, agentName
             {r.archived && <span>archived session</span>}
           </div>
           {r.outcome === 'error' && r.error && <div style={{ fontSize: 12, color: 'var(--red)' }}>{r.error}</div>}
+          {r.outcome === 'interrupted' && (
+            <div data-testid="run-interrupted-note" style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+              {interruptedLabel(r.recovery)}.{' '}
+              {r.recovery === 'resumed' ? 'It ran again after the server came back.' : r.recovery === 'held' ? 'It stopped in the middle of an outward action, so it was not replayed: check whether that action went through, then rerun it.' : 'Nothing was lost; rerun it when you are ready.'}
+              {r.resumedBy && <>{' '}<button onClick={() => focusRun(r.resumedBy!)} style={linkBtn}>the resumed run →</button></>}
+            </div>
+          )}
           {person && (
             <div data-testid="person-message" style={{ alignSelf: 'flex-start', maxWidth: '100%', background: 'var(--accent-dim)', border: '1px solid var(--accent)', borderRadius: 10, padding: '7px 11px' }}>
               <div style={{ ...faint, fontWeight: 650, marginBottom: 2 }}>Message from {who(r.by)}</div>

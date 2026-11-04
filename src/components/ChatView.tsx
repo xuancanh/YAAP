@@ -14,6 +14,7 @@ import { AutoArchiveMenu } from './ChatAutoArchive';
 import { Markdown, plainText, type RefResolver } from '../lib/md';
 import { useTaskRefs } from '../lib/useTaskRefs';
 import { CLASS_COLOR, CLASS_LABEL, CLASS_SHORT, degradedChatNote } from '../lib/org3';
+import { interruptedLabel, retryable } from '../lib/interrupted';
 
 /** The owner's key inline on a held tool card (item 28, SPA item 32). */
 const HeldInline = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.HeldInline })));
@@ -290,6 +291,26 @@ function AssistantFooter({ turn }: { turn?: ChatTurn }) {
   );
 }
 
+/** The last turn was cut short by a server restart (docs/architecture.md
+ *  "Restarts and recovery"): not an error — a quiet line saying so, and a
+ *  Retry in a person's chat (a work session's own bar offers Rerun). */
+export function InterruptedNote({ turn, onRetry }: { turn: ChatTurn; onRetry?: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const canRetry = Boolean(onRetry) && retryable(turn.recovery);
+  return (
+    <div data-testid="interrupted-note" role="status" style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '12px 0 16px 40px', fontSize: 12, color: 'var(--text-dim)' }}>
+      <I d={P.retry} size={13} stroke="var(--text-faint)" />
+      <span>{canRetry ? 'Interrupted by a restart' : interruptedLabel(turn.recovery)}</span>
+      {canRetry && (
+        <button disabled={busy} onClick={() => { setBusy(true); void onRetry!().finally(() => setBusy(false)); }}
+          style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text)', fontSize: 11.5, fontWeight: 600, padding: '2px 10px', cursor: 'pointer', opacity: busy ? 0.55 : 1 }}>
+          {busy ? 'Retrying…' : 'Retry'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function SystemDivider({ text }: { text: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0' }}>
@@ -435,7 +456,7 @@ function WorkSessionBar({ agentId, sessionId, label, agentName }: { agentId: str
   const app = useApp();
   const [rerunning, setRerunning] = useState(false);
   const last = app.transcript.turns.reduce<ChatTurn | null>((a, t) => (t.sessionId === sessionId && (!a || t.seq > a.seq) ? t : a), null);
-  const failed = !!last && !app.streaming && (last.status === 'error' || last.status === 'stopped');
+  const failed = !!last && !app.streaming && (last.status === 'error' || last.status === 'stopped' || (last.status === 'interrupted' && last.recovery !== 'resumed'));
   const rerun = () => {
     if (!last || rerunning) return;
     setRerunning(true);
@@ -795,6 +816,9 @@ export function ChatView() {
       <div ref={scrollRef} onScroll={(e) => { const el = e.currentTarget; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} style={{ flex: 1, overflowY: 'auto', padding: '22px 0 8px' }}>
         <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 20px' }}>
           {rows}
+          {!app.streaming && app.transcript.turns.at(-1)?.status === 'interrupted' && (
+            <InterruptedNote turn={app.transcript.turns.at(-1)!} onRetry={s.kind === 'work' ? undefined : () => app.retry()} />
+          )}
           {liveRows}
           {app.streaming && !app.live.some((i) => i.kind !== 'user') && (
             // nothing streamed yet (the model is reading context or a
