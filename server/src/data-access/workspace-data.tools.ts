@@ -342,7 +342,9 @@ export class WorkspaceDataTools implements ToolProviderHook {
         return pageOf(rows, input, { header: 'Interfaces (each operation is a tool; its class decides the gate).', empty: 'No interfaces: install a plugin that provides one.' });
       }
       case 'catalog': {
+        // Installed first: what the company already runs, then what it could add.
         const rows = (await this.plugins.catalogView(c.workspaceId)).filter((p) => matches(input.q, s(p.id), s(p.name), s(p.description)))
+          .sort((a, b) => Number(!!b.installed) - Number(!!a.installed))
           .map((p) => `- ${s(p.id)} ${s(p.name)} v${s(p.version)}: ${clip(s(p.description), 100)}${p.installed ? `; installed v${s(p.installedVersion)}${p.updateAvailable ? ', update available' : ''}` : ''}`);
         return pageOf(rows, input, { header: 'First-party plugin catalog (the owner installs in the app).', empty: 'The catalog is empty.' });
       }
