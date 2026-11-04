@@ -191,6 +191,12 @@ test('the chief changes a report\'s settings: identity alone; model gated (card 
   await assert.rejects(s.runtime.execute(chief, 'org_update_member', { agent: 'Editor', agentType: 'Nope', why: 'x' }), /no enabled agent type/);
   await assert.rejects(s.runtime.execute(chief, 'org_update_member', { agent: 'Chief', role: 'Boss', why: 'x' }));
   await assert.rejects(s.runtime.execute(chief, 'org_update_member', { agent: 'Editor', why: 'nothing' }), /nothing to change/);
+  // personality is identity: by id or by name, or none; applies at once; a wrong one names the catalog
+  assert.match(await s.runtime.execute(chief, 'org_update_member', { agent: 'Editor', personality: 'Skeptical reviewer', why: 'reviews need a skeptic' }), /personality → Skeptical reviewer/);
+  assert.equal((await s.agents.get(s.editor.id)).personality, 'skeptic');
+  await s.runtime.execute(chief, 'org_update_member', { agent: 'Editor', personality: 'none', why: 'neutral for the launch' });
+  assert.equal((await s.agents.get(s.editor.id)).personality, 'none');
+  await assert.rejects(s.runtime.execute(chief, 'org_update_member', { agent: 'Editor', personality: 'grumpy', why: 'x' }), /unknown personality "grumpy" — one of: warm/);
 
   // autonomous: the model change applies at once and is audited as a decision
   await s.mode.setMode(s.ws.id, { mode: 'autonomous' });

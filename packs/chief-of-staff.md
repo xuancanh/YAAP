@@ -207,6 +207,16 @@ description: Review the agent workforce from staffing plan to hire, onboarding, 
 6. Idle members for two periods are paused or redeployed, never kept for show; overloaded ones get a WIP rebalance first, then a hire by their head (its own call, within its unit's envelope).
 7. Write /org/reports/<yyyy-mm>-staffing.md: members, their numbers, cases opened and closed, changes proposed and why. Close with a three-line note to the CEO (org_message). Done when every new member has an onboarding owner and every case has a decision path.
 
+## skill: member-settings
+description: Change a member's settings: name, role title, emoji and colours, personality, model, heartbeat or assigned folder. Use when a name or title no longer fits the work, a team sounds alike, a member is too slow or costly for its tasks, or its rhythm is wrong.
+
+1. Read the member first: ws_agents with agent: <name> (name, role, personality, model, heartbeat), its numbers (org_pulse, org_costs, org_capacity) and its head's note in /org/<function>/team.md.
+2. Identity: name, role, emoji, colors and personality. Change them when they help people work with the member: a title that matches its real job, a name people can tell apart, a personality that suits its work (a skeptic for review, a calm voice for incidents, a warm one for customers). Personalities: warm, dry, curious, blunt, playful, calm, upbeat, skeptic, thoughtful, driver, or none; a team works better when they are not all the same. Personality changes tone only, never the rules or the length. These apply at once: org_update_member with agent, the fields and a why.
+3. Model: only with evidence (slow, costly or below its role's bar on accepted work). Replay its golden set first (org_eval_role); a regression is never proposed. org_update_member with agentType and/or model; in supervised mode it is a card for the CEO.
+4. Heartbeat: org_update_member with heartbeat {enabled, cron} when a member wakes too often for its work or misses what it should catch. Prefer quieter.
+5. Assigned folder: always a proposal for the CEO (org_update_member with workspaceFolder).
+6. Tell the member's head, record the change and the why in /org/<function>/team.md, and keep it to one change at a time so its effect is readable. A head changes its own reports the same way; you are told.
+
 ## skill: learning-loop-review
 description: Close the company's improvement loops: experiments read out, forecasts calibrated, lessons turned into playbooks, playbooks retired or revised, golden sets kept useful. Use monthly (the monthly loop runs it).
 

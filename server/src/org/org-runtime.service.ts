@@ -55,6 +55,7 @@
  * `execute` path the tools use, with `RunCtx.applying` set; a dry run
  * (`dryRunPlanning`) records every mutating call and applies nothing.
  */
+import { NO_PERSONALITY, PERSONALITIES, personalityById } from '../agents/personalities';
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'node:crypto';
@@ -146,7 +147,7 @@ export type AutoAction = 'hire' | 'reorg' | 'scope_widen' | 'budget' | 'terminat
 export interface MemberSettingsChange {
   agentId: string;
   agentName?: string;
-  patch: Partial<{ name: string; role: string; emoji: string; colors: string; agentTypeId: string | null; model: string; workspaceFolder: string }>;
+  patch: Partial<{ name: string; role: string; emoji: string; colors: string; personality: string; agentTypeId: string | null; model: string; workspaceFolder: string }>;
   heartbeat?: { enabled?: boolean; cron?: string | null };
   applyToChats?: boolean;
   why?: string;
@@ -2285,6 +2286,13 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         const patch: MemberSettingsChange['patch'] = {};
         for (const k of ['name', 'role', 'emoji'] as const) if (typeof input[k] === 'string') patch[k] = String(input[k]);
         if (Array.isArray(input.colors)) patch.colors = JSON.stringify(input.colors);
+        // Personality is identity too (tone only, docs/agent-writing.md): a catalog id or name, or none.
+        if (typeof input.personality === 'string' && input.personality.trim()) {
+          const ref = input.personality.trim().toLowerCase();
+          const hit = ref === NO_PERSONALITY ? NO_PERSONALITY : PERSONALITIES.find((x) => x.id === ref || x.name.toLowerCase() === ref)?.id;
+          if (!hit) throw new Error(`unknown personality "${input.personality}" — one of: ${PERSONALITIES.map((x) => `${x.id} (${x.name})`).join(', ')}, or ${NO_PERSONALITY}`);
+          patch.personality = hit;
+        }
         let typeLabel = '';
         if (typeof input.agentType === 'string' && input.agentType.trim()) {
           const types = await this.db.select().from(agentTypes);
@@ -2306,11 +2314,12 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         const modelChange = patch.agentTypeId !== undefined || patch.model !== undefined;
         const parts = [
           ...(['name', 'role', 'emoji', 'colors'].some((k) => k in patch) ? ['identity'] : []),
+          ...(patch.personality !== undefined ? [`personality → ${personalityById(patch.personality)?.name ?? 'none'}`] : []),
           ...(modelChange ? [`model → ${typeLabel ? `${typeLabel} ` : ''}${patch.model ?? '(type default)'}`] : []),
           ...(heartbeat && Object.keys(heartbeat).length ? [`heartbeat ${heartbeat.enabled === false ? 'off' : heartbeat.cron ?? 'on'}`] : []),
           ...(patch.workspaceFolder !== undefined ? [`folder → ${patch.workspaceFolder || '(none)'}`] : []),
         ];
-        if (parts.length === 0) throw new Error('nothing to change: pass name, role, emoji, colors, agentType, model, heartbeat or workspaceFolder');
+        if (parts.length === 0) throw new Error('nothing to change: pass name, role, emoji, colors, personality, agentType, model, heartbeat or workspaceFolder');
         const summary = `${target.name}: ${parts.join('; ')}`;
         const change: MemberSettingsChange = { agentId: m.agentId, agentName: target.name, patch, heartbeat, applyToChats: input.applyToChats !== false, why, summary };
         const card = { kind: 'member_settings' as ApprovalKind, payload: change as unknown as Record<string, unknown> };
@@ -2320,7 +2329,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         if (patch.workspaceFolder !== undefined) { const r = await boundaryRoute({ kind: 'member_folder', key: m.agentId, summary }, card); if (r) return told(r); }
         if (modelChange) { const r = await boundaryRoute({ kind: 'member_model', key: m.agentId, summary }, card); if (r) return told(r); }
         if (heartbeat && Object.keys(heartbeat).length) { const r = await boundaryRoute({ kind: 'member_heartbeat', key: m.agentId, summary }, card); if (r) return told(r); }
-        if (parts.includes('identity')) { const r = await boundaryRoute({ kind: 'member_identity', key: m.agentId, summary }, card); if (r) return told(r); }
+        if (parts.includes('identity') || patch.personality !== undefined) { const r = await boundaryRoute({ kind: 'member_identity', key: m.agentId, summary }, card); if (r) return told(r); }
         if (previewing && modelChange) return capture(`${summary} — ${why}`);
         if (modelChange && !autonomous) {
           const a = await this.approvals.create(org.id, { kind: 'member_settings', payload: card.payload, requestedBy: actor, recommendation: why, card: cardInput });
@@ -2650,7 +2659,7 @@ const MANAGER_TOOLS: AiToolSpec[] = [
   { name: 'org_reorg', description: 'Structural changes: move a member under another, retitle, pause, resume, terminate, make_head (the member heads a function: it staffs its own unit — hires, pauses and re-tools its reports within the caps — and gets the head playbooks) or unmake_head. Supervised: an approval card. Autonomous: applied in order within depth/fan-out caps, stopping at the first refusal. Include a cost/benefit line in why.', inputSchema: { type: 'object', properties: { changes: { type: 'array', items: { type: 'object', properties: { op: { type: 'string', enum: ['move', 'retitle', 'pause', 'resume', 'terminate', 'make_head', 'unmake_head'] }, agent: { type: 'string' }, reportsTo: { type: 'string' }, title: { type: 'string' } }, required: ['op', 'agent'] } }, why: { type: 'string' }, org: { type: 'string' } }, required: ['changes', 'why'] } },
   { name: 'org_propose_strategy', description: 'PROPOSE goals → projects → first tasks (approval card). Nothing moves to todo until the CEO approves.', inputSchema: { type: 'object', properties: { goals: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, projects: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, tasks: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, brief: { type: 'object', properties: brief4 }, assigneeAgentId: { type: 'string' } }, required: ['title'] } } }, required: ['title'] } } }, required: ['title'] } }, why: { type: 'string' }, org: { type: 'string' } }, required: ['goals', 'why'] } },
   { name: 'org_allocate_budget', description: 'Allocate USD per month to an agent or project envelope. Lowering is immediate. Raising: an approval card (supervised), or immediate while agent+project envelopes stay within the company envelope (autonomous, why required; in a planning run or review it is previewed for the CEO\'s veto window). The company envelope itself is the CEO\'s. Name the objective the envelope funds (objectiveId) and what the money buys (buys: which key results) so a cut is a scope decision.', inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: ['company', 'agent', 'project'] }, agent: { type: 'string' }, projectId: { type: 'string' }, monthlyUsd: { type: 'number' }, objectiveId: { type: 'string', description: 'The objective (goal id or prefix) this envelope funds.' }, buys: { type: 'string', description: 'What the money buys: the key results it carries.' }, why: { type: 'string' }, org: { type: 'string' } }, required: ['scope', 'monthlyUsd'] } },
-  { name: 'org_update_member', description: 'Change a report\'s own settings: identity (name, role, emoji, colors as two hex colours), its model (agentType: an enabled agent type by name, and/or model), its heartbeat ({enabled, cron}), or its assigned workspace folder. Identity and heartbeat apply at once. A model change replays the member\'s golden set first (blocked on regression) and is an approval card in supervised mode. A folder change is always a proposal for the CEO. why is required and becomes the decision record. A function head changes only members of its own reporting line; the chief of staff is told.', inputSchema: { type: 'object', properties: { agent: { type: 'string', description: 'Member name.' }, name: { type: 'string' }, role: { type: 'string' }, emoji: { type: 'string' }, colors: { type: 'array', items: { type: 'string' } }, agentType: { type: 'string' }, model: { type: 'string' }, heartbeat: { type: 'object', properties: { enabled: { type: 'boolean' }, cron: { type: 'string' } } }, workspaceFolder: { type: 'string' }, applyToChats: { type: 'boolean', description: 'Model changes: also switch the member\'s existing chats (default true).' }, why: { type: 'string' }, recommend: { type: 'string' }, org: { type: 'string' } }, required: ['agent', 'why'] } },
+  { name: 'org_update_member', description: 'Change a report\'s own settings: identity (name, role, emoji, colors as two hex colours, personality: a catalog id or name such as dry, warm, blunt, skeptic, or none), its model (agentType: an enabled agent type by name, and/or model), its heartbeat ({enabled, cron}), or its assigned workspace folder. Identity and heartbeat apply at once. A model change replays the member\'s golden set first (blocked on regression) and is an approval card in supervised mode. A folder change is always a proposal for the CEO. why is required and becomes the decision record. A function head changes only members of its own reporting line; the chief of staff is told.', inputSchema: { type: 'object', properties: { agent: { type: 'string', description: 'Member name.' }, name: { type: 'string' }, role: { type: 'string' }, emoji: { type: 'string' }, colors: { type: 'array', items: { type: 'string' } }, personality: { type: 'string', description: 'A personality id or name (tone only), or none.' }, agentType: { type: 'string' }, model: { type: 'string' }, heartbeat: { type: 'object', properties: { enabled: { type: 'boolean' }, cron: { type: 'string' } } }, workspaceFolder: { type: 'string' }, applyToChats: { type: 'boolean', description: 'Model changes: also switch the member\'s existing chats (default true).' }, why: { type: 'string' }, recommend: { type: 'string' }, org: { type: 'string' } }, required: ['agent', 'why'] } },
   { name: 'org_rename_unit', description: 'Rename a department (a unit: a lead, its reports, a board and a channel). Its channel takes the name and a matching #slug (the old one keeps linking); its board, goals and task key prefix stay (ENG-12 stays ENG-12). The chief of staff renames any department, a head only its own. Not the company itself (the CEO\'s). why is required and is audited.', inputSchema: { type: 'object', properties: { unit: { type: 'string', description: 'The department: name or #slug (a head: defaults to its own).' }, name: { type: 'string', description: 'The new name, e.g. "Platform Engineering".' }, why: { type: 'string' }, org: { type: 'string' } }, required: ['name', 'why'] } },
   { name: 'org_set_routing', description: 'Route a task class (triage | research | synthesis | review | ops | general) to a model tier (cheap | standard | strong) to trade quality for cost per class; a model the CEO pinned on an agent still wins. Autonomous: applies at once (previewed in a planning run or review); supervised: an approval card. why is required and becomes the decision record. org_costs and org_pulse show spend by class.', inputSchema: { type: 'object', properties: { class: { type: 'string' }, tier: { type: 'string', enum: ['cheap', 'standard', 'strong'] }, why: { type: 'string' }, org: { type: 'string' } }, required: ['class', 'tier', 'why'] } },
   { name: 'org_review_structure', description: 'Review the company\'s structure: idle and overloaded members, unassigned goals, unowned and blocked tasks, headroom against the agent cap and the company envelope. Read-only; act with the other tools.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
