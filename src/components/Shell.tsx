@@ -38,7 +38,8 @@ export function useNav(): NavItem[] {
   const openIncidents = (app.orgHealth?.openIncidents ?? []).filter((i) => i.status === 'open').length;
   const feed = useFeed(orgOn ? app.workspaceId : '');
   const badge = orgOn ? feed.page?.counts.needsYou ?? 0 : 0;
-  return NAV.filter((n) => !n.org || orgOn).map((n) => ({
+  // While the company state loads, keep the company items so a deep link's menu does not jump.
+  return NAV.filter((n) => !n.org || orgOn || app.wsOrgLoading).map((n) => ({
     ...n,
     badge: n.id === 'inbox' && badge > 0 ? badge : undefined,
     dot: n.id === 'operations' && openIncidents > 0 ? { color: 'var(--red)', title: `${openIncidents} open incident${openIncidents === 1 ? '' : 's'}` } : undefined,

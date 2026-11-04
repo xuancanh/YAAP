@@ -107,7 +107,7 @@ function Layout() {
           {sec === 'overview' && <Suspense fallback={viewFallback}><HomeView /></Suspense>}
           {sec === 'agents' && <Suspense fallback={viewFallback}><AgentsDirectory /></Suspense>}
           {sec === 'apps' && <AppsGallery />}
-          {company && (orgOpen ? <Suspense fallback={viewFallback}><OrganizationView section={sec} /></Suspense> : <WorkspaceOff />)}
+          {company && (orgOpen ? <Suspense fallback={viewFallback}><OrganizationView section={sec} /></Suspense> : app.wsOrgLoading ? viewFallback : <WorkspaceOff />)}
           {sec === 'artifacts' && <FilesView />}
           {sec === 'inbox' && <Suspense fallback={viewFallback}><InboxView /></Suspense>}
           {sec === 'market' && <Suspense fallback={viewFallback}><MarketView nav={market.nav} setNav={market.setNav} onOpenSettings={(pane) => { setSettingsPane(pane); app.go('settings'); }} /></Suspense>}

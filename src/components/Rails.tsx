@@ -585,7 +585,6 @@ export function MarketRail({ nav, setNav }: { nav: MarketNav; setNav: (patch: Pa
         <button key={s} onClick={() => setNav({ shelf: s, plugin: '' })} aria-current={s === shelf ? 'page' : undefined}
           style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left', border: 'none', font: 'inherit', padding: '7px 9px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: s === shelf ? 700 : 500, margin: '1px 0', background: s === shelf ? 'var(--accent-dim)' : 'none', color: s === shelf ? 'var(--text)' : 'var(--text-dim)' }}>
           <span style={{ flex: 1 }}>{RAIL_SHELF[s]}</span>
-          {s === 'kits' && <span style={{ fontSize: 10.5, color: 'var(--amber)' }}>soon</span>}
         </button>
       ))}
     </div>

@@ -228,6 +228,8 @@ interface Store {
   companiesEnabled: boolean;
   /** GET /api/workspaces/:id/org for the current workspace; null while loading or when companies are disabled. */
   wsOrg: WorkspaceOrg | null; refreshWsOrg: () => Promise<void>;
+  /** The workspace's company state has not arrived yet (a cold load or a switch): show loading, not "organization mode is off". */
+  wsOrgLoading: boolean;
   /** Which company page shows; null = the current section's dashboard. setOrgPane opens a page in its own section (or the Inbox). */
   orgPane: OrgPane | null; setOrgPane: (v: OrgPane | null) => void;
   /** The Settings pane, and a way to open one from anywhere (e.g. Oversight → Settings › Company). */
@@ -428,7 +430,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [computerOpen, setComputerOpen] = useState(false);
   const [hireId, setHireId] = useState<string | null>(null);
   const [companiesEnabled, setCompaniesEnabled] = useState(false);
+  const [orgsKnown, setOrgsKnown] = useState(false);
   const [wsOrg, setWsOrg] = useState<WorkspaceOrg | null>(null);
+  const [wsOrgFor, setWsOrgFor] = useState<string | null>(null);
+  const wsOrgLoading = !orgsKnown || (companiesEnabled && !!workspaceId && wsOrgFor !== workspaceId);
   const [orgPane, setOrgPaneRaw] = useState<OrgPane | null>(boot.nav.orgPane ?? null);
   const [inboxFilter, setInboxFilterRaw] = useState<InboxFilter>(boot.nav.inboxFilter ?? 'all');
   const [inboxItem, setInboxItemRaw] = useState<string | null>(boot.nav.inboxItem ?? null);
@@ -669,6 +674,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!workspaceId || !companiesEnabled) { setWsOrg(null); setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); setFollowAttention(0); setUnreadMessages(0); return; }
     const st = await api.workspaceOrg(workspaceId).catch((): WorkspaceOrg | null => null);
     setWsOrg(st);
+    setWsOrgFor(workspaceId);
     // The intent tree and the cadences ride along for the rail (at-risk
     // counts, today's ritual); the workspace event bus carries no org events
     // yet, so the panes poll lightly while on screen and call this on writes.
@@ -689,7 +695,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } else { setOrgIntent([]); setOrgCadences([]); setOrgPendingPlans(0); setOrgHealth(null); setOrgHeldActions(0); setOrgMyTasks(0); setFollowAttention(0); setUnreadMessages(0); }
   }, [workspaceId, companiesEnabled]);
   useEffect(() => {
-    api.orgsStatus().then((s) => setCompaniesEnabled(s.enabled)).catch(() => setCompaniesEnabled(false));
+    api.orgsStatus().then((s) => setCompaniesEnabled(s.enabled)).catch(() => setCompaniesEnabled(false)).finally(() => setOrgsKnown(true));
   }, []);
   useEffect(() => { void refreshWsOrg(); }, [refreshWsOrg]);
   // The organization panes exist only while the mode is on; fall back to the files.
@@ -1529,7 +1535,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, settingsPane, setSettingsPane, openSettings, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, inboxItem, setInboxItem, orgFocus, setOrgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, wsOrgLoading, orgPane, setOrgPane, settingsPane, setSettingsPane, openSettings, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, inboxItem, setInboxItem, orgFocus, setOrgFocus,
     routeTask, setRouteTask, routeProject, setRouteProject, setAgentTab, meetingId,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
@@ -1551,7 +1557,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, orgPane, settingsPane, openSettings, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, inboxItem, setInboxItem, orgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, wsOrgLoading, orgPane, settingsPane, openSettings, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, inboxItem, setInboxItem, orgFocus,
     channels, refreshChannels, currentChannel, channelFocus, openChannel, onWorkspaceEvent,
   ]);
 
