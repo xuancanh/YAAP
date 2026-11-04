@@ -47,6 +47,7 @@ import { orgHireRef, segmentOf } from '../market/segments';
 import { spendStatus } from '../workspaces/spend.util';
 import { actorId } from '../accounts/account-context';
 import { PAGE_PROPS, clip, matches, pageOf } from '../common/data-page';
+import { effectivePersonality } from '../agents/personalities';
 
 const PACKS = [...AUTHORED_PACKS, ...PROFESSION_PACKS];
 
@@ -263,6 +264,7 @@ export class WorkspaceDataTools implements ToolProviderHook {
         s.blocked.length ? `Blocked: ${s.blocked.map((b) => `${b.key ?? b.taskId.slice(0, 8)} on ${b.blocker.waitsOn.name || b.blocker.waitsOn.kind}${b.blocker.reason ? ` (${clip(b.blocker.reason, 100)})` : ''}`).join('; ')}` : '',
         s.errors.length ? `Errors: ${s.errors.map((e) => `${e.kind}: ${clip(redact(e.message), 140)}`).join('; ')}` : '',
         `Charter: ${clip(a.charter, 400) || '(none)'}`,
+        `Personality: ${effectivePersonality(a)?.name ?? 'neutral'}.`,
         loops.length ? `Loops: ${loops.join(', ')}` : '',
         'Its memory, lessons and private skills stay its own.',
       ].filter(Boolean).join('\n');

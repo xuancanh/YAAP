@@ -11,6 +11,7 @@ import { WorkspaceFs, resolvePath } from '../files/workspace-fs.service';
 import { fsHttp } from '../files/fs-http';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 import { TranscriptionService, isAudioUpload } from '../voice/transcription.service';
+import { PERSONALITIES, personalityIdOf } from './personalities';
 
 class CreateAgentDto {
   @IsString() name!: string;
@@ -27,6 +28,8 @@ class CreateAgentDto {
   @IsOptional() @IsString() agentTypeId?: string;
   /** The owner typed a model id the type does not list ("custom model id"). */
   @IsOptional() @IsBoolean() customModel?: boolean;
+  /** A personality id (GET /agents/personalities) or 'none'; omitted = a random pick. */
+  @IsOptional() @IsString() personality?: string;
 }
 
 class UpdateAgentDto {
@@ -53,6 +56,8 @@ class UpdateAgentDto {
   /** Default auto-archive for the agent's new task chats (docs/chat-archiving.md):
    *  days after the task is finished; 0 = off; null = the workspace default. */
   @IsOptional() @ValidateIf((_o, v) => v !== null) @IsInt() @Min(0) @Max(365) chatAutoArchiveDays?: number | null;
+  /** Personality (docs/agent-writing.md): a catalog id or 'none' (neutral). */
+  @IsOptional() @IsString() personality?: string;
 }
 
 class MoveAgentDto {
@@ -87,6 +92,12 @@ class ActOnEventDto {
   @IsIn(['approve', 'dismiss']) decision!: 'approve' | 'dismiss';
 }
 
+/** An agent as the API serves it: a not-yet-assigned personality shows as
+ *  the stable pick it resolves to (agents/personalities.ts). */
+function withPersonality<T extends { id: string; personality?: string | null }>(a: T): T & { personality: string } {
+  return { ...a, personality: personalityIdOf(a) };
+}
+
 @Controller('agents')
 export class AgentsController {
   constructor(
@@ -106,8 +117,10 @@ export class AgentsController {
 
   /** `?workspaceId=` lists that workspace's agents (the SPA always passes
    *  one); without it, every agent of the account. */
-  @Get() list(@Query('workspaceId') workspaceId?: string) { return this.agents.list({ workspaceId: workspaceId || undefined }); }
-  @Get(':id') get(@Param('id') id: string) { return this.agents.get(id); }
+  @Get() async list(@Query('workspaceId') workspaceId?: string) { return (await this.agents.list({ workspaceId: workspaceId || undefined })).map(withPersonality); }
+  /** The personality catalog for the settings picker (docs/agent-writing.md). */
+  @Get('personalities') personalities() { return PERSONALITIES; }
+  @Get(':id') async get(@Param('id') id: string) { return withPersonality(await this.agents.get(id)); }
   @Post() async create(@Body() dto: CreateAgentDto) {
     if (!dto.workspaceId?.trim()) throw new BadRequestException('workspaceId is required: an agent belongs to one workspace');
     return this.agents.create(dto);
@@ -117,7 +130,7 @@ export class AgentsController {
     if (!dto.workspaceId?.trim()) throw new BadRequestException('workspaceId is required');
     return this.agents.move(id, dto.workspaceId);
   }
-  @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateAgentDto) { return this.agents.update(id, dto); }
+  @Patch(':id') async update(@Param('id') id: string, @Body() dto: UpdateAgentDto) { return withPersonality(await this.agents.update(id, dto)); }
   @Delete(':id') remove(@Param('id') id: string) { return this.agents.remove(id); }
   @Post(':id/feedback') async feedback(@Param('id') id: string, @Body() dto: FeedbackDto) {
     const res = await this.agents.addFeedback(id, dto);

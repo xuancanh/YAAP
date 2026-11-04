@@ -142,6 +142,11 @@ export const agents = pgTable('agents', {
    *  0 = off, n = days after the task is finished. Copied onto a task chat
    *  when it is created. */
   chatAutoArchiveDays: integer('chatAutoArchiveDays'),
+  /** Personality (docs/agent-writing.md, migration 0088): a catalog id from
+   *  agents/personalities.ts, 'none' for a neutral voice, null until
+   *  assigned (resolved from the id at read time). Picked at random when the
+   *  agent is created; the owner changes it in the agent's settings. */
+  personality: text('personality'),
   createdAt: text('createdAt').notNull(),
 });
 

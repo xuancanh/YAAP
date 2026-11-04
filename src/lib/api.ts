@@ -123,11 +123,16 @@ export interface Agent {
   workspaceFolder: string;
   /** Default auto-archive for its new task chats: days; 0 = off; null = the workspace default. */
   chatAutoArchiveDays?: number | null;
+  /** Personality id (docs/agent-writing.md): one of GET /api/agents/personalities, or 'none'. */
+  personality?: string | null;
   dashboard: string;
   loops: string; // JSON array of LoopDef (src/lib/triggers.ts): { name, cron?, trigger?, … }
   apps: string; // JSON array of AgentApp
   createdAt: string;
 }
+
+/** One agent personality from the catalog (docs/agent-writing.md). */
+export interface AgentPersonality { id: string; name: string; description: string; prompt: string; example: string }
 
 /** One card on an agent's kanban board. */
 export interface AgentTask {
@@ -1906,6 +1911,8 @@ export const api = {
   moveAgent: (id: string, workspaceId: string) => send<Agent>(`/api/agents/${id}/move`, 'POST', { workspaceId }, agentSchema),
   updateAgent: (id: string, patch: Record<string, unknown>) => send<Agent>(`/api/agents/${id}`, 'PATCH', patch, agentSchema),
   deleteAgent: (id: string) => send<{ ok: boolean }>(`/api/agents/${id}`, 'DELETE'),
+  /** The personality catalog for the agent settings picker. */
+  agentPersonalities: () => get<AgentPersonality[]>('/api/agents/personalities'),
   deleteAgentApp: (id: string, appId: string) => send<{ ok: boolean }>(`/api/agents/${id}/apps/${appId}`, 'DELETE'),
   // mini-app capability bridge (docs/miniapp-capabilities.md)
   approveAppCaps: (id: string, appId: string, capabilities: string[]) =>

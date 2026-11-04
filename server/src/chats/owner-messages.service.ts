@@ -60,7 +60,7 @@ export const MESSAGE_OWNER_SPECS: AiToolSpec[] = [{
   inputSchema: {
     type: 'object',
     properties: {
-      text: { type: 'string', description: 'The message, plain language (markdown allowed). Up to 4000 characters.' },
+      text: { type: 'string', description: 'The message, written like a note to a colleague: the point first, usually a few sentences (markdown allowed). Up to 4000 characters.' },
       urgency: { type: 'string', enum: [...MESSAGE_URGENCIES], description: '"fyi" (Inbox only, no push), "normal" (default; pushed outside quiet hours) or "urgent" (pushed at once; inside quiet hours only if the workspace allows urgent interruptions).' },
       refs: { type: 'array', items: { type: 'string' }, description: 'Optional: task keys (e.g. OPS-12) or file paths the message is about.' },
     },

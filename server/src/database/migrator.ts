@@ -13,6 +13,7 @@
 import { backfillTaskKeys } from '../common/task-keys';
 import { backfillWorkTracking } from './work-tracking-backfill';
 import { repairAgentModels } from './model-repair';
+import { personalityForId } from '../agents/personalities';
 
 export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
@@ -2301,6 +2302,19 @@ const MIGRATIONS: Migration[] = [
       `);
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_project_members_project ON org_project_members ("projectId", "status")`);
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_project_members_agent ON org_project_members ("orgId", "agentId", "status")`);
+    },
+  },
+  {
+    id: '0088-agent-personality',
+    up: async (db) => {
+      // Agent personalities (docs/agent-writing.md "Personalities"): the
+      // agent's personality id from the catalog (agents/personalities.ts),
+      // 'none' for a neutral voice, null until assigned. Existing agents get
+      // the deterministic pick from their id, the same one a null resolves
+      // to at read time. Idempotent.
+      if (!(await hasColumn(db, 'agents', 'personality'))) await db.query(`ALTER TABLE agents ADD COLUMN "personality" TEXT`);
+      const rows = (await db.query(`SELECT "id" FROM agents WHERE "personality" IS NULL`)).rows as Array<{ id: string }>;
+      for (const r of rows) await db.query(`UPDATE agents SET "personality" = $1 WHERE "id" = $2 AND "personality" IS NULL`, [personalityForId(r.id), r.id]);
     },
   },
 ];

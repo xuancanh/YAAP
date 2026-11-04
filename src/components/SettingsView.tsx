@@ -386,9 +386,9 @@ function ContextPane() {
     <div style={{ ...card, display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div>
         <div style={{ fontSize: 14, fontWeight: 600 }}>How agents write to you</div>
-        <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>Every style uses plain, friendly language in full sentences and explains task keys and file names. Choose how much they say.</div>
+        <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3 }}>Agents talk like a capable colleague: the point first, everyday words, no filler. In channels and meetings they keep it to a line or two; in task work they write as much as the work needs. Choose how much they say when they chat with you.</div>
         <div role="radiogroup" aria-label="Writing style" style={{ display: 'flex', gap: 8, marginTop: 11, flexWrap: 'wrap' }}>
-          {([['plain', 'Clear', 'a short, friendly explanation'], ['concise', 'Concise', 'a few clear sentences'], ['detailed', 'Detailed', 'with the reasoning']] as const).map(([v, label, hint]) => {
+          {([['plain', 'Conversational', 'a few sentences, more when needed'], ['concise', 'Brief', 'one to three sentences'], ['detailed', 'Detailed', 'with the reasoning']] as const).map(([v, label, hint]) => {
             const on = (app.settings.writingStyle || 'plain') === v;
             return (
               <button key={v} role="radio" aria-checked={on} onClick={() => void app.saveSettings({ writingStyle: v })}
@@ -399,6 +399,14 @@ function ContextPane() {
             );
           })}
         </div>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 13, fontSize: 12.5, cursor: 'pointer' }}>
+          <input type="checkbox" aria-label="Agents have personalities" checked={(app.settings.agentPersonalities ?? 'on') !== 'off'}
+            onChange={(e) => void app.saveSettings({ agentPersonalities: e.target.checked ? 'on' : 'off' })} style={{ accentColor: 'var(--accent)', marginTop: 2 }} />
+          <span>
+            <span style={{ fontWeight: 600 }}>Agents have personalities</span>
+            <span style={{ display: 'block', fontSize: 12, color: 'var(--text-faint)', marginTop: 2 }}>Each agent gets one at random when it is hired (warm, dry, blunt, playful…); change it in the agent&apos;s Settings. It changes tone, never accuracy or length. Off: every agent speaks neutrally.</span>
+          </span>
+        </label>
       </div>
       <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 15 }}>
         <div style={{ fontSize: 14, fontWeight: 600 }}>Context ceiling</div>

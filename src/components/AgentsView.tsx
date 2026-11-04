@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } fro
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AgentAutoArchiveCard } from './ChatAutoArchive';
+import { PersonalityCard } from './PersonalityCard';
 import { AgentCodingAgents } from './CodingAgents';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
 import { ImportSkillMdButton, MemoryImportModal, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
@@ -1593,6 +1594,7 @@ export function AgentHome() {
         {tab === 'Settings' && settingsSection === 'General' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
             <IdentityCard a={a} />
+            <PersonalityCard a={a} />
             <ModelCard a={a} />
             <HeartbeatCard a={a} />
             <AgentAutoArchiveCard a={a} />

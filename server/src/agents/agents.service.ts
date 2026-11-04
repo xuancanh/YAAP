@@ -26,6 +26,7 @@ import { FollowsService, agentTaskTarget, type Follower } from '../follows/follo
 import { nextAgentTaskKey, queryableOf, resolveTaskRef, taskRef } from '../common/task-keys';
 import { resolveCreationType } from '../agent-types/agent-types.service';
 import { isKnownModel, pickModel, unknownModelMessage } from '../agent-types/model-resolution';
+import { NO_PERSONALITY, PERSONALITIES, isPersonalityId, personalityIdOf, pickPersonality } from './personalities';
 
 /** A self-built mini app (FR-11.5): a self-contained HTML tool the agent
  *  writes for itself via save_app. Rendered only in a network-blocked
@@ -215,7 +216,7 @@ export class AgentsService {
     return resolveCreationType(this.db, { provider: a.provider }).catch(() => undefined);
   }
 
-  async create(input: { name: string; workspaceId?: string; charter?: string; provider?: string; model?: string; homeDir?: string; emoji?: string; colors?: [string, string]; role?: string; loops?: unknown[]; agentTypeId?: string | null; modelTier?: string; customModel?: boolean; modelFallback?: boolean }) {
+  async create(input: { name: string; workspaceId?: string; charter?: string; provider?: string; model?: string; homeDir?: string; emoji?: string; colors?: [string, string]; role?: string; loops?: unknown[]; agentTypeId?: string | null; modelTier?: string; customModel?: boolean; modelFallback?: boolean; personality?: string | null }) {
     // The owning workspace (docs/shared-agents.md "Workspace ownership"):
     // named by every HTTP caller, defaulted for service and CLI callers.
     const workspaceId = input.workspaceId ?? await this.defaultWorkspaceId();
@@ -227,7 +228,13 @@ export class AgentsService {
     }
     // Resolved before anything is written: an unserved model refuses the create.
     const resolved = await this.resolveModelFor(input);
+    if (input.personality != null && !isPersonalityId(input.personality)) throw new BadRequestException(`unknown personality "${input.personality}"`);
     const id = newId();
+    // Personality (docs/agent-writing.md): every creation path lands here —
+    // the new-agent dialog, a market or Foundry hire, an org hire by a head or
+    // the chief, a blueprint import. A random pick, preferring the ones the
+    // workspace's agents use least.
+    const personality = input.personality ?? pickPersonality(id, (await this.list({ workspaceId }).catch(() => [])).map(personalityIdOf));
     const row = {
       id,
       workspaceId,
@@ -254,6 +261,7 @@ export class AgentsService {
       heartbeatCron: '',
       heartbeatDailyRunCap: null,
       heartbeatStaleMinutes: null,
+      personality,
       createdAt: nowIso(),
     };
     await this.db.insert(agents).values(row);
@@ -328,7 +336,7 @@ export class AgentsService {
     return ensureAgentHome(this.db, this.storage, row);
   }
 
-  async update(id: string, input: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string; agentTypeId: string | null; applyToChats: boolean; chatAutoArchiveDays: number | null; customModel: boolean }>) {
+  async update(id: string, input: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string; agentTypeId: string | null; applyToChats: boolean; chatAutoArchiveDays: number | null; customModel: boolean; personality: string }>) {
     const before = await this.get(id);
     // homeDir is allocated at creation and moves only with the agent
     // (docs/filesystem.md): never set through an update.
@@ -347,6 +355,7 @@ export class AgentsService {
       if (!ok) throw new BadRequestException('colors must be a JSON pair of hex colours, e.g. ["#8b8cf0","#5cc2f2"]');
     }
     if (patch.model !== undefined) patch.model = patch.model.trim().slice(0, 120);
+    if (patch.personality !== undefined && !isPersonalityId(patch.personality)) throw new BadRequestException(`personality must be one of: ${[...PERSONALITIES.map((p) => p.id), NO_PERSONALITY].join(', ')}`);
     if (patch.chatAutoArchiveDays !== undefined && patch.chatAutoArchiveDays !== null) {
       const d = Number(patch.chatAutoArchiveDays);
       if (!Number.isInteger(d) || d < 0 || d > 365) throw new BadRequestException('chatAutoArchiveDays must be 0–365 days (0 = off) or null for the workspace default');

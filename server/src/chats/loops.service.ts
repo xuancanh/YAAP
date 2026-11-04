@@ -484,8 +484,8 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
 
     const base = loop.prompt
       ?? (fired
-        ? `Loop "${loop.name}" was triggered. Look at what woke you (below), handle it with your tools and your charter, and keep your board and dashboard current. If nothing needs doing, say so in one plain sentence; otherwise explain briefly, in plain language, what you did and why.`
-        : `Scheduled loop firing: "${loop.name}". Check your kanban board and your charter, complete this loop's work now using your tools, and keep your dashboard current. If there is nothing to do, say so in one plain sentence; otherwise explain briefly, in plain language, what you did and why.`);
+        ? `Loop "${loop.name}" was triggered. Look at what woke you (below), handle it with your tools and your charter, and keep your board and dashboard current. If nothing needs doing, say so in one sentence; otherwise say what you did and why.`
+        : `Scheduled loop firing: "${loop.name}". Check your kanban board and your charter, complete this loop's work now using your tools, and keep your dashboard current. If there is nothing to do, say so in one sentence; otherwise say what you did and why.`);
     const prompt = fired ? `${base}\n\n${frameTrigger(fired, now)}` : base;
 
     let answer = '';

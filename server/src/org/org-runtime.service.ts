@@ -1272,13 +1272,13 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       const owner = task.assigneeAgentId ? names.get(task.assigneeAgentId) ?? 'its owner' : task.assigneeHumanId ? 'a person' : 'nobody yet';
       return [
         `You were MENTIONED on task ${taskRef(task)} "${task.title}" (status: ${task.status}, owner: ${owner}) by ${tagFrom}${tag ? `: "${tag.text.replace(/</g, '&lt;').slice(0, 1_200)}"` : '.'}`,
-        'You are not this task\'s owner: answer what you were asked on the task with org_task_comment (taskId defaults to this task). Do not claim or update it, and do not do the owner\'s work unless the comment asks you to. Tag with @Name only the one who must act next; never tag to broadcast. If you have nothing to add, say so in one short comment. Be concise.',
+        'You are not this task\'s owner: answer what you were asked on the task with org_task_comment (taskId defaults to this task). Do not claim or update it, and do not do the owner\'s work unless the comment asks you to. Tag with @Name only the one who must act next; never tag to broadcast. Nothing to add? Say so in a line. Otherwise a few sentences, the answer first.',
         comments.length ? `Task timeline (newest last):\n${framed.join('\n')}` : 'No comments on this task yet.',
       ].join('\n\n');
     }
     const head = reviewer
       ? `You were woken as the REVIEWER of task ${taskRef(task)} "${task.title}" (reason: ${reason}). Check the result against the done_when rubric in your context, then call org_review with accept, request_changes (with a concrete note), or escalate. Do not do the task yourself.`
-      : `You were woken for task ${taskRef(task)} "${task.title}" (reason: ${reason === 'next' ? 'your next work: you finished or handed off your last task and this is the top of your queue' : reason}). Do the work described in your context with your tools, keep the status current with org_task_update, leave a short handoff with org_task_comment, and when done_when is met call org_request_review. If you are stuck, set status blocked with the blocker named. Write your comments and handoffs so a person can follow them: plain language, full sentences.`;
+      : `You were woken for task ${taskRef(task)} "${task.title}" (reason: ${reason === 'next' ? 'your next work: you finished or handed off your last task and this is the top of your queue' : reason}). Do the work described in your context with your tools, keep the status current with org_task_update, leave a short handoff with org_task_comment, and when done_when is met call org_request_review. If you are stuck, set status blocked with the blocker named. A handoff must make sense to someone who wasn't here: what's done, where it is, what's left.`;
     return [head, comments.length ? `Task timeline (newest last):\n${framed.join('\n')}` : 'No comments on this task yet.'].join('\n\n');
   }
 

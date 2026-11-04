@@ -22,6 +22,8 @@ import { WorkspacesService } from '../workspaces/workspaces.service';
 import { SharedService } from '../shared/shared.service';
 import { SettingsService } from '../settings/settings.module';
 import type { agentTypes } from '../database/schema';
+import { registerFor, voiceSection } from './voice';
+import { effectivePersonality, type Personality } from '../agents/personalities';
 
 type AgentType = typeof agentTypes.$inferSelect;
 import { currentAccountId } from '../accounts/account-context';
@@ -176,10 +178,12 @@ export class TurnContextService {
     if (type?.persona) parts.push(type.persona);
 
     let agentModel = '';
+    let personality: Personality | null = null;
     if (session.agentId) {
       const agent = await this.agents.get(session.agentId).catch(() => null);
       if (agent) {
         agentModel = agent.model || '';
+        personality = effectivePersonality(agent);
         parts.push(`You are the durable agent "${agent.name}".`);
         if (agent.charter) parts.push(`Your charter:\n${agent.charter}`);
         parts.push('You maintain your own home page: use update_dashboard to keep a current markdown status board of your work, and save_app to build or refine self-contained HTML mini apps (rendered in a network-blocked sandbox) that the user can open or embed in chats. Apps can request bridge capabilities (window.yaam: storage, chat.compose, files.read/write/propose/watch, tasks.read/write, agent.ask, llm, data, connections, compute) via save_app\'s capabilities field — request only what the app uses; elevated ones wait for user review. Prefer llm.complete over agent.ask for the app\'s own text work (tagging, extraction, summaries): it is cheaper and returns structured output, while agent.ask spends a full turn of yours. Use data collections rather than cramming rows into storage, files.propose (not files.write) when the user should end up with the file, and files.watch so dashboards stay live instead of freezing at open time. Always feature-detect: if (window.yaam) — and degrade to static rendering without it.');
@@ -242,12 +246,14 @@ export class TurnContextService {
         : `This workspace is shared by several people; this session is private to ${initiator} (and the owner). Do not disclose other members' private material here.`);
     }
 
-    // Writing (docs/agent-writing.md): people read what agents write, so it
-    // must make sense to someone who was not inside the agent's head.
-    const style = this.settings ? await this.settings.all().then((x) => x.writingStyle).catch(() => undefined) : undefined;
-    parts.push(writingGuide(style));
+    // The voice (docs/agent-writing.md, chats/voice.ts): how the agent
+    // talks, in the register of where it is speaking — a chat with a person,
+    // a channel or meeting, or its own work — plus its personality when the
+    // workspace has them on. Same model, tools and memory everywhere.
+    const knobs = this.settings ? await this.settings.all().catch((): Record<string, string> => ({})) : {};
+    parts.push(voiceSection({ register: registerFor(session), style: knobs.writingStyle, personality: knobs.agentPersonalities === 'off' ? null : personality }));
     // Formatting: replies render as Markdown with rich fenced components (src/lib/md.tsx).
-    parts.push('Your replies render as Markdown: headings, lists, task checkboxes, GFM tables, block quotes, callouts (> [!NOTE] / [!TIP] / [!WARNING]), code fences with a language label, links and images. Use them when they make the answer clearer, not by default. Rich components are fenced blocks named by language: ```chart with JSON {"type":"bar"|"line","title":"…","labels":[…],"series":[{"name":"…","values":[…]}],"unit":"…"} renders an inline chart; ```kv with "key: value" lines renders a definition grid; ```steps with one step per line renders a numbered timeline; ```progress with "label: 0-100" lines renders progress bars; ```details whose first line is the summary renders a collapsible section; ```callout whose first line is "note|tip|warning|danger Title" renders a callout. Never mention these mechanisms.');
+    parts.push('Replies render as Markdown (lists, tables, callouts like > [!NOTE], code fences); use it only when it helps. Rich fenced blocks by language: ```chart with JSON {"type":"bar"|"line","title":"…","labels":[…],"series":[{"name":"…","values":[…]}],"unit":"…"}; ```kv "key: value" lines; ```steps one per line; ```progress "label: 0-100" lines; ```details first line = summary; ```callout first line "note|tip|warning|danger Title". Never mention these mechanisms.');
     // Quick replies (FR-5.3): a provider-neutral text protocol the UI parses.
     parts.push('When a short list of likely user responses would genuinely help, end your reply with exactly one final line of the form QUICK_REPLIES: ["option one","option two"] (2-4 options, each under 40 characters). Omit the line otherwise. Never mention this mechanism.');
 
@@ -265,24 +271,4 @@ export class TurnContextService {
       ...(fallback && type ? { degraded: { from: `${type.provider}:${ownModel}`, to: `${fallback.type.provider}:${fallback.type.model}` } } : {}),
     };
   }
-}
-
-/** How agents write for people. `plain` (the default) is warm, plain
- *  language in full sentences; `concise` keeps that but shorter; `detailed`
- *  adds the reasoning. Every style keeps the same rules. */
-export function writingGuide(style?: string | null): string {
-  const length = style === 'concise'
-    ? 'Keep it short: a few clear sentences, but never so short that the reader has to guess what you mean.'
-    : style === 'detailed'
-      ? 'Explain your reasoning and the trade-offs you weighed, in a few short paragraphs.'
-      : 'Aim for a short, friendly explanation: usually two to five sentences, longer only when the reader needs it.';
-  return [
-    'How you write: people read what you write, often without the context you have. Write like a thoughtful colleague talking to a busy person.',
-    '- Use plain, everyday words and full sentences. Avoid jargon, internal codes and abbreviations; if you must use one (a task key like ENG-12, a tool or file name), say what it is the first time, e.g. "the pricing task (ENG-12)".',
-    '- Lead with what matters to the reader: what happened, what it means for them, and what (if anything) you need from them. Then the detail.',
-    '- Be warm and human: acknowledge the person, say "I" and "we", and be honest about uncertainty ("I am not sure yet because…").',
-    '- One idea per sentence. Break long text into short paragraphs or a short list. No walls of text, no telegraphic notes, no fragments like "Blocked before any edit." on their own.',
-    `- ${length}`,
-    'This applies to everything a person may read: chat replies, messages to the owner, channel posts, task comments, status updates, briefs and reports. Notes only you read (your journal, scratch files) can stay terse.',
-  ].join('\n');
 }
