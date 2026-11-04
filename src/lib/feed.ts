@@ -18,7 +18,7 @@ export const FEED_LABEL: Record<FeedType, string> = {
   queued_action: 'Queued action', connection_approval: 'Approval', task_assigned: 'Your task', task_review: 'Review', blocked_on_you: 'Blocked on you',
   follow_attention: 'Following', plugin_review: 'Plugin review', message: 'Message', mention: 'Mention', follow: 'Following', channel_activity: 'Channel',
   run_failed: 'Run failed', budget: 'Budget', meeting: 'Meeting', brief: 'Brief', audit: 'Audit', experiment: 'Experiment', trust: 'Trust',
-  decided_without_you: 'Decided without you', hire: 'Hire', project_team: 'Project team', project: 'Project', blocked: 'Blocked',
+  decided_without_you: 'Decided without you', hire: 'Hire', project_team: 'Project team', program: 'Program', project: 'Project', blocked: 'Blocked',
   goal_at_risk: 'Goal at risk', plugin: 'Plugin', company: 'Company', agent_note: 'Agent note',
 };
 

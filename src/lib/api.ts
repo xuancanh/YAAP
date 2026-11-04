@@ -1179,7 +1179,7 @@ export interface OrgMessage {
 /** Who may be tagged on a company's tasks (the comment box's @ list). */
 export interface OrgMentionable { kind: 'agent' | 'human'; id: string; name: string; status?: string }
 export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review'
-  | 'two_key' | 'metric_source' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation';
+  | 'two_key' | 'metric_source' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict';
 export interface OrgApproval {
   id: string; orgId: string; kind: OrgApprovalKind; payload: string; requestedBy: string; recommendation: string;
   status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired'; decidedAt: string | null; decidedBy?: string; decisionNote: string; expiresAt: string | null; createdAt: string;
@@ -2447,7 +2447,7 @@ export type FeedType =
   | 'task_assigned' | 'task_review' | 'blocked_on_you' | 'follow_attention' | 'plugin_review'
   | 'message' | 'mention'
   | 'follow' | 'channel_activity' | 'run_failed' | 'budget' | 'meeting' | 'brief' | 'audit' | 'experiment'
-  | 'trust' | 'decided_without_you' | 'hire' | 'project_team' | 'project' | 'blocked' | 'goal_at_risk'
+  | 'trust' | 'decided_without_you' | 'hire' | 'project_team' | 'program' | 'project' | 'blocked' | 'goal_at_risk'
   | 'plugin' | 'company' | 'agent_note';
 export type FeedAction = HomeNeedAction | 'allow' | 'deny';
 export interface FeedActor { kind: 'agent' | 'person' | 'system'; id: string | null; name: string; emoji?: string; colors?: string }

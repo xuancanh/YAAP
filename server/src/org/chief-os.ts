@@ -29,6 +29,7 @@ import { TUNABLES } from './org-tunables';
 import { orgPath } from '../files/layout';
 import { deriveMeetingTunables } from './meeting-tunables';
 import { deriveWorkTunables } from './work-tunables';
+import { deriveProgramTunables } from './program-tunables';
 import { deriveDiscussionTunables } from '../groupchat/discussion-tunables';
 // The assurance keys (audit.assuranceDebounceHours) join the registry at import.
 import './org-assurance-tunables';
@@ -151,6 +152,8 @@ export function deriveOperatingSystem(p: ProfileInput): OperatingSystemPlan {
   for (const t of deriveMeetingTunables(d)) set(t.key, t.value, t.why);
   // Work tracking (docs/work-tracking.md): update cadence, back-off, breaker default, meta-work cap.
   for (const t of deriveWorkTunables(d)) set(t.key, t.value, t.why);
+  // Program management (docs/work-tracking.md "Program management: the matrix"): goal and project rhythms, resource-request answer time, stretch.
+  for (const t of deriveProgramTunables(d)) set(t.key, t.value, t.why);
   // Sub-channels (docs/group-chat.md §9): idle close, agent starts, the ping-pong move.
   for (const t of deriveDiscussionTunables(d)) set(t.key, t.value, t.why);
 

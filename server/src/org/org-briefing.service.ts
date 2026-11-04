@@ -37,7 +37,7 @@ import { createHash } from 'node:crypto';
 import { and, desc, eq, isNull } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { agentEvents, orgApprovals, orgDecisions } from '../database/schema';
+import { agentEvents, orgApprovals, orgDecisions, orgResourceRequests } from '../database/schema';
 import type { ChatSession } from '../chats/chats.repository';
 import { TurnLoopService, type ToolProviderHook } from '../chats/turn-loop.service';
 import type { AiToolSpec } from '../ai/ai-provider.interface';
@@ -46,7 +46,8 @@ import { StorageService } from '../storage/storage.service';
 import { homeKey } from '../files/agent-home';
 import { taskRef } from '../common/task-keys';
 import { OrgService, type Organization, type OrgGoal, type OrgMember, type OrgProject, type OrgProjectMember } from './org.service';
-import { isHeadMember } from './heads';
+import { isHeadMember, isProgramManagerTitle } from './heads';
+import { programTunable } from './program-tunables';
 import { OrgAuditService } from './org-audit.service';
 import { OrgTasksService, type OrgTask } from './org-tasks.service';
 import { OrgUnitsService, type OrgUnit } from './org-units.service';
@@ -80,6 +81,10 @@ interface Snapshot {
   tasks: OrgTask[];
   decisions: Array<{ title: string; unitId: string | null; createdAt: string }>;
   pending: Array<{ holder: string }>;
+  /** Live resource requests (docs/work-tracking.md "Resource requests"): open, hiring, granted, escalated, and recent answers. */
+  requests: Array<{ id: string; projectId: string; pmAgentId: string | null; headAgentId: string | null; role: string; allocation: number; status: string }>;
+  /** Goals with their owners (objectives and key results), for the program line. */
+  owned: Array<{ id: string; kind: string; ownerAgentId: string | null; unitId: string | null }>;
 }
 export type BriefingRole = 'chief' | 'head' | 'specialist';
 
@@ -206,6 +211,8 @@ export class OrgBriefingService implements ToolProviderHook {
       .from(orgDecisions).where(eq(orgDecisions.orgId, orgId)).orderBy(desc(orgDecisions.createdAt)).limit(40);
     const pending = await this.db.select({ holder: orgApprovals.holder }).from(orgApprovals)
       .where(and(eq(orgApprovals.orgId, orgId), eq(orgApprovals.status, 'pending')));
+    const requests = (await this.db.select({ id: orgResourceRequests.id, projectId: orgResourceRequests.projectId, pmAgentId: orgResourceRequests.pmAgentId, headAgentId: orgResourceRequests.headAgentId, role: orgResourceRequests.role, allocation: orgResourceRequests.allocation, status: orgResourceRequests.status })
+      .from(orgResourceRequests).where(eq(orgResourceRequests.orgId, orgId)).catch(() => [])).filter((r) => ['open', 'hiring', 'granted', 'escalated', 'declined'].includes(r.status));
     const snap: Snapshot = {
       gen, at: now.getTime(), org,
       vision: await this.intent?.vision(orgId).catch(() => null) ?? goals.find((g) => g.kind === 'vision' && g.status === 'active') ?? null,
@@ -215,7 +222,8 @@ export class OrgBriefingService implements ToolProviderHook {
       projects: (await this.org.projects(orgId)).filter((p) => p.kind === 'project' && !['done', 'cancelled'].includes(p.status)),
       krs, tasks: (await this.tasks.list(orgId)).filter((t) => OPEN.has(t.status)),
       team: (await this.org.projectMembers(orgId).catch(() => [] as OrgProjectMember[])).filter((r) => r.status === 'active' || r.status === 'pending'),
-      decisions, pending,
+      decisions, pending, requests,
+      owned: goals.filter((g) => (g.kind === 'objective' || g.kind === 'key_result') && g.status === 'active').map((g) => ({ id: g.id, kind: g.kind, ownerAgentId: g.ownerAgentId, unitId: g.unitId })),
     };
     this.snaps.set(orgId, snap);
     return snap;
@@ -275,7 +283,7 @@ export class OrgBriefingService implements ToolProviderHook {
       v.reports.length ? `- My direct reports: ${v.reports.map((r) => `${v.nm(r.agentId)}${r.title ? ` (${r.title})` : ''}`).join(', ')}` : '- No direct reports',
       '',
       '## My projects',
-      ...(v.myProjects.length ? v.myProjects.map((p) => { const seat = v.seats.get(p.id); return `- ${p.key} "${clip(p.title, 80)}" — ${p.ownerAgentId === agentId ? 'I lead it' : seat ? `on its team as ${seat.role || 'a member'}, ${seat.allocation}% of my time${seat.status === 'pending' ? ' (pending my head\'s approval)' : ''}` : 'I work on it'}`; }) : ['- None yet']),
+      ...(v.myProjects.length ? v.myProjects.map((p) => { const seat = v.seats.get(p.id); return `- ${p.key} "${clip(p.title, 80)}" — ${p.ownerAgentId === agentId ? 'I lead it' : seat ? `on its team as ${seat.role || 'a member'}, ${seat.allocation}% of my time${seat.status === 'pending' ? ' (pending my head\'s approval)' : ''}; its Program Manager ${v.nm(p.ownerAgentId)} assigns me its tasks, my head ${v.nm(v.me?.reportsToAgentId)} keeps the rest` : 'I work on it'}`; }) : ['- None yet']),
       '',
       'Current numbers (health, key results, tasks) are in the briefing of every turn; the detail is in org_company, org_people, org_project <key> and org_intent.',
     ];
@@ -333,7 +341,8 @@ function viewOf(s: Snapshot, agentId: string) {
   const seats = new Map(s.team.filter((r) => r.agentId === agentId).map((r) => [r.projectId, r]));
   const myProjects = s.projects.filter((p) => p.ownerAgentId === agentId || seats.has(p.id) || mine.some((t) => t.projectId === p.id));
   const allocation = [...seats.values()].filter((r) => r.status === 'active').reduce((sum, r) => sum + r.allocation, 0);
-  return { nm, me, isChief, role, root, led, home, units, reports, mine, myProjects, seats, allocation };
+  const isPm = isProgramManagerTitle(me?.title);
+  return { nm, me, isChief, role, root, led, home, units, reports, mine, myProjects, seats, allocation, isPm };
 }
 
 
@@ -354,17 +363,32 @@ function briefingText(s: Snapshot, v: View, agentId: string, unreadMentions: num
   // Position.
   const title = v.isChief ? 'the chief of staff' : v.me?.title ? `${v.me.title}` : 'a member';
   const unitBit = v.led ? `, head of ${v.led.name}` : v.home && v.home.parentUnitId !== null ? `, in ${v.home.name}` : '';
-  const line = v.isChief ? 'reports to the CEO' : `reports to ${nm(v.me?.reportsToAgentId)}`;
+  const line = v.isChief ? 'reports to the CEO' : `reports to ${nm(v.me?.reportsToAgentId)}${v.seats.size ? ' (your line manager: your capacity and the quality of your work)' : ''}`;
   const reports = v.reports.length ? `; direct reports: ${v.reports.slice(0, 6).map((r) => nm(r.agentId)).join(', ')}${v.reports.length > 6 ? ` +${v.reports.length - 6}` : ''}` : '';
   // The projects it is on, with its part: lead, or contributor with its share of the open work.
   const on = v.myProjects.slice(0, 4).map((p) => {
     const n = v.mine.filter((t) => t.projectId === p.id).length;
     const all = s.tasks.filter((t) => t.projectId === p.id).length;
     const seat = v.seats.get(p.id);
-    const part = p.ownerAgentId === agentId ? 'lead' : seat ? `${seat.role || 'team member'} ${seat.allocation}%${seat.status === 'pending' ? ', pending your head\'s approval' : ''}` : 'contributor';
+    const part = p.ownerAgentId === agentId ? 'lead' : seat ? `${seat.role || 'team member'} ${seat.allocation}%${seat.status === 'pending' ? ', pending your head\'s approval' : ''}, PM ${nm(p.ownerAgentId)}` : 'contributor';
     return `${p.key} (${part}${n ? `, ${n}/${all} open tasks yours` : ''})`;
   });
   add(0, `You: ${title}${unitBit}; ${line}${reports}${on.length ? `; on ${on.join(', ')}${v.myProjects.length > 4 ? ', …' : ''}` : ''}${v.allocation ? `; ${v.allocation}% of your time is allocated to project teams (their leads assign you those tasks; the rest is your unit's)` : ''}.`);
+  // The matrix (docs/work-tracking.md "Program management: the matrix").
+  const warn = programTunable(o, 'program.allocationWarnPct');
+  const liveSeats = [...v.seats.values()].reduce((sum, r) => sum + r.allocation, 0);
+  if (liveSeats > warn) add(1, `You are stretched: ${liveSeats}% of your time is on project teams (past ${warn}%) — say so to your head and the PMs before taking more.`);
+  const ownsGoals = s.owned.filter((g) => g.ownerAgentId === agentId && g.kind === 'objective').length;
+  const ownsProjects = s.projects.filter((p) => p.ownerAgentId === agentId).length;
+  const pms = s.members.filter((m) => isProgramManagerTitle(m.title));
+  if ((v.isPm || (v.isChief && pms.length === 0)) && (ownsGoals || ownsProjects)) {
+    const mine = s.requests.filter((r) => r.pmAgentId === agentId);
+    add(1, `Program: you ${v.isChief ? 'act as Program Manager (the company has none) and ' : ''}own ${ownsGoals} objective(s) and ${ownsProjects} project(s) — keep each one's rhythm and status (org_program); resource requests: ${mine.filter((r) => r.status === 'open' || r.status === 'hiring').length} with heads, ${mine.filter((r) => r.status === 'escalated').length} escalated, ${mine.filter((r) => r.status === 'declined').length} declined.`);
+  } else if (v.isChief) {
+    const unowned = s.projects.filter((p) => !p.ownerAgentId || !s.members.some((m) => m.agentId === p.ownerAgentId)).length + s.owned.filter((g) => g.kind === 'objective' && !g.ownerAgentId).length;
+    const chiefOwned = ownsGoals + ownsProjects;
+    if (unowned || chiefOwned) add(1, `Matrix: ${pms.length} Program Manager(s); ${unowned} goal(s)/project(s) without an owner, ${chiefOwned} still yours to hand to a PM (org_program_assign).`);
+  }
 
   // Goals.
   const krLine = (k: Kr) => `- [${k.rag}] ${clip(k.goal.title, 50)}: ${fmtNum(k.goal.currentValue ?? k.goal.startValue)}/${fmtNum(k.goal.targetValue)}${k.goal.unitLabel ? ` ${k.goal.unitLabel}` : ''}${k.pct !== null ? ` (${k.pct}%)` : ''}${k.goal.dueAt ? `, due ${day(k.goal.dueAt)}` : ''}${k.goal.ownerAgentId === agentId ? ', yours' : ''}`;
@@ -429,8 +453,10 @@ function briefingText(s: Snapshot, v: View, agentId: string, unreadMentions: num
   // Waiting on it.
   const cards = s.pending.filter((a) => a.holder === `agent:${agentId}` || (v.isChief && a.holder === 'chief')).length;
   const reviews = s.tasks.filter((t) => t.status === 'in_review' && t.reviewerAgentId === agentId);
+  const asks = s.requests.filter((r) => r.headAgentId === agentId && (r.status === 'open' || r.status === 'granted')).length;
   const waits = [
     cards ? `${cards} decision card(s) (org_decision_queue)` : '',
+    asks ? `${asks} resource request(s) from Program Managers (org_resource_decide)` : '',
     reviews.length ? `${reviews.length} review(s): ${reviews.slice(0, 3).map((t) => taskRef(t)).join(', ')}` : '',
     unreadMentions ? `${unreadMentions} unread mention(s)` : '',
   ].filter(Boolean);

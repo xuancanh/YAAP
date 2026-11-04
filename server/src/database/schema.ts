@@ -1193,6 +1193,80 @@ export const orgProjectMembers = pgTable('org_project_members', {
   leftAt: text('leftAt'),
 });
 
+/** A goal's or project's own rhythm, owned by its Program Manager
+ *  (docs/work-tracking.md "Program management: the matrix"): a goal review
+ *  (`goal_review`, an objective's key results, its projects and their asks)
+ *  or a project's milestone review (`milestone_review`), on a five-field
+ *  cron chosen within the company's program.* bounds; fired through the
+ *  meetings machinery. A project's sync is its standup
+ *  (`org_projects.standupCron`); key-result check-ins keep
+ *  `org_goals.checkInCadenceDays`. One row per (org, ref, kind). */
+export const orgProgramCadences = pgTable('org_program_cadences', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  /** goal | project. */
+  refType: text('refType').notNull(),
+  refId: text('refId').notNull(),
+  /** goal_review | milestone_review. */
+  kind: text('kind').notNull(),
+  cron: text('cron').notNull(),
+  enabled: integer('enabled').notNull().default(1),
+  nextAt: text('nextAt'),
+  lastAt: text('lastAt'),
+  setBy: text('setBy').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt'),
+}, (t) => [uniqueIndex('idx_org_program_cadences_ref').on(t.orgId, t.refType, t.refId, t.kind)]);
+
+/** A Program Manager's resource request to a head (docs/work-tracking.md
+ *  "Resource requests"): what a project needs — a role, a share of a
+ *  member's time, a window, a budget — and the head's answer. `open` until
+ *  the head approves (a project seat, `org_project_members`, at once),
+ *  adjusts (a seat on its terms), declines with a reason, or says it will
+ *  hire to fill (`hiring`); an unanswered or disputed request climbs as a
+ *  `resource_conflict` card through decision routing (`escalated`). */
+export const orgResourceRequests = pgTable('org_resource_requests', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  projectId: text('projectId').notNull(),
+  /** The goal it serves, when the PM named one (informative). */
+  goalId: text('goalId'),
+  requestedBy: text('requestedBy').notNull().default(''),
+  /** The project's owner when asked (the Program Manager, or the acting chief). */
+  pmAgentId: text('pmAgentId'),
+  /** The head it is addressed to: owns the people and decides. */
+  headAgentId: text('headAgentId'),
+  unitId: text('unitId'),
+  /** Its role on the project (engineer, designer, analyst, …). */
+  role: text('role').notNull().default(''),
+  /** The skills or seniority asked for, in words. */
+  skills: text('skills').notNull().default(''),
+  /** A named member, when the PM asked for one. */
+  agentId: text('agentId'),
+  allocation: integer('allocation').notNull().default(0),
+  startDate: text('startDate'),
+  endDate: text('endDate'),
+  budgetUsd: real('budgetUsd').notNull().default(0),
+  why: text('why').notNull().default(''),
+  /** open | approved | adjusted | declined | hiring | escalated | withdrawn. */
+  status: text('status').notNull().default('open'),
+  decidedAgentId: text('decidedAgentId'),
+  decidedAllocation: integer('decidedAllocation'),
+  decisionNote: text('decisionNote').notNull().default(''),
+  decidedBy: text('decidedBy').notNull().default(''),
+  decidedAt: text('decidedAt'),
+  /** The resource_conflict card while it is escalated. */
+  approvalId: text('approvalId'),
+  /** The seat it filled (org_project_members.id). */
+  memberRowId: text('memberRowId'),
+  /** When the head's answer is due (program.requestAnswerHours). */
+  answerBy: text('answerBy'),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt'),
+});
+
 /** Every status change of an org task, with its actor (docs/work-tracking.md
  *  "Done is an event"): cycle time, throughput and "done this week" read it. */
 export const taskTransitions = pgTable('task_transitions', {

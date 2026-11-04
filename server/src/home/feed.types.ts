@@ -52,7 +52,7 @@ export type FeedType =
   | 'mention'
   // ---- updates (informational; each can be turned off per workspace) ----
   | 'follow' | 'channel_activity' | 'run_failed' | 'budget' | 'meeting' | 'brief' | 'audit' | 'experiment'
-  | 'trust' | 'decided_without_you' | 'hire' | 'project_team' | 'project' | 'blocked' | 'goal_at_risk'
+  | 'trust' | 'decided_without_you' | 'hire' | 'project_team' | 'program' | 'project' | 'blocked' | 'goal_at_risk'
   | 'plugin' | 'company' | 'agent_note';
 
 /** What an item can do in place; each maps to the route that already owns it. */

@@ -53,6 +53,7 @@ export const FEED_TYPES: Record<FeedType, FeedTypeDef> = {
   decided_without_you: { section: 'updates', label: 'Decided without you', description: 'Cards decided by the default, a delegate or the chief, and cards that expired.', defaultOn: true },
   hire: { section: 'updates', label: 'Hire', description: 'An agent hired by a head or the chief.', defaultOn: true },
   project_team: { section: 'updates', label: 'Project team', description: 'Project seats proposed (waiting on a head) and filled.', defaultOn: true },
+  program: { section: 'updates', label: 'Program', description: 'Goals and projects handed to a Program Manager, its resource requests to the heads and their answers, and disputes that climbed.', defaultOn: true },
   project: { section: 'updates', label: 'Project', description: 'A project that used up its appetite or finished.', defaultOn: true },
   blocked: { section: 'updates', label: 'Blocked', description: 'Blocked tasks handed to someone to chase.', defaultOn: true },
   goal_at_risk: { section: 'updates', label: 'Goal at risk', description: 'A goal that went at risk.', defaultOn: true },
@@ -285,6 +286,7 @@ export interface AuditRow { id: string; actor: string; action: string; refType: 
 export const FEED_AUDIT_ACTIONS = [
   'meeting_start', 'meeting_end', 'member_add', 'project_member_propose', 'project_member_add', 'project_breaker', 'project_done',
   'org_archive', 'approval_default', 'delegated_decision', 'approval_expired', 'run_end', 'checks_failed', 'blocked_owner_assigned', 'goal_at_risk',
+  'program_assign', 'resource_request', 'resource_decide', 'resource_escalate',
 ] as const;
 
 /** One org audit row → a feed entry, or null (what you did yourself is not news). */
@@ -317,6 +319,37 @@ export function classifyAudit(r: AuditRow, look: FeedLookup): Classified | null 
       const role = str(p.role) ? ` as ${str(p.role)}` : '';
       const title = r.action === 'project_member_propose' ? `${actor.name} proposed ${who} for ${pr.label}${role} — waiting on their head` : `${who} joined ${pr.label}${role}`;
       return mk('project_team', title, { context: pr.context, target: { kind: 'project', projectId: r.refId }, groupKey: `project:${r.refId}`, groupLabel: pr.label, severity: r.action === 'project_member_propose' ? 'normal' : 'low' });
+    }
+    case 'program_assign': {
+      if (r.actor === 'user') return null;
+      const who = look.agent(str(p.agentId))?.name ?? 'an agent';
+      const what = r.refType === 'project' ? projectBits(look, r.refId, str(p.key)) : { context: {}, label: `the ${words(str(p.kind) || 'goal')} "${str(p.title)}"` };
+      return mk('program', `${who} now owns ${what.label}${str(p.role) ? ` as ${str(p.role)}` : ''}`, {
+        actor: r.actor === 'system' ? SYSTEM : actor, context: what.context,
+        target: r.refType === 'project' ? { kind: 'project', projectId: r.refId } : { kind: 'pane', pane: 'goals', focus: { kind: 'goal', id: r.refId } },
+        groupKey: `program:${r.refId}`, groupLabel: what.label,
+      });
+    }
+    case 'resource_request': case 'resource_decide': case 'resource_escalate': {
+      if (r.actor === 'user') return null;
+      const pr = projectBits(look, r.refId, str(p.key));
+      const head = look.agent(str(p.headAgentId))?.name ?? 'a head';
+      const who = look.agent(str(p.agentId))?.name;
+      const role = str(p.role) || 'a member';
+      const decision = str(p.decision);
+      const title = r.action === 'resource_request'
+        ? `${actor.name} asked ${head} for ${role} at ${num(p.allocation)}% on ${pr.label}`
+        : r.action === 'resource_escalate'
+          ? `${pr.label}'s request for ${role} went up the chain${p.auto ? ' (unanswered)' : ''}`
+          : decision === 'declined' ? `${actor.name} declined ${pr.label}'s request for ${role}${p.upheld ? ' (upheld)' : ''}`
+            : decision === 'hiring' ? `${actor.name} will hire to fill ${pr.label}'s request for ${role}`
+              : decision === 'granted' ? `${pr.label}'s request for ${role} was granted on escalation`
+                : `${who ?? 'A member'} lent to ${pr.label} as ${role} at ${num(p.allocation)}%${decision === 'adjusted' ? ` (asked ${num(p.asked)}%)` : ''}`;
+      return mk('program', title, {
+        body: str(p.note).slice(0, 300) || str(p.headAnswer).slice(0, 300), actor: r.actor === 'system' ? SYSTEM : actor,
+        severity: r.action === 'resource_escalate' || decision === 'declined' ? 'normal' : 'low',
+        context: pr.context, target: { kind: 'project', projectId: r.refId }, groupKey: `project:${r.refId}`, groupLabel: pr.label,
+      });
     }
     case 'project_breaker': case 'project_done': {
       const pr = projectBits(look, r.refId, str(p.key));

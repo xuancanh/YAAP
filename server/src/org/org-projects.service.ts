@@ -48,6 +48,7 @@ import { OrgApprovalsService, type OrgApproval } from './org-approvals.service';
 import { OrgAuditService } from './org-audit.service';
 import { OrgUnitsService } from './org-units.service';
 import { OrgDecisionsService } from './org-decisions.service';
+import { isProgramManagerTitle } from './heads';
 import { holderAgent } from './decision-routing';
 import { parseBlockedOn, describeBlockedOn } from './blocked-on';
 import { workTunable } from './work-tunables';
@@ -231,7 +232,7 @@ export class OrgProjectsService {
   /** The company's Program Manager with the fewest open projects (title
    *  "Program Manager", the catalog's role:ops-pm), or null when it has none. */
   async programManagerFor(orgId: string): Promise<string | null> {
-    const pms = (await this.org.members(orgId)).filter((m) => m.status === 'active' && /\bprogram(me)? manager\b/i.test(m.title));
+    const pms = (await this.org.members(orgId)).filter((m) => m.status === 'active' && isProgramManagerTitle(m.title));
     if (pms.length === 0) return null;
     const open = (await this.org.projects(orgId)).filter((p) => p.kind === 'project' && p.status !== 'done' && p.status !== 'cancelled');
     const load = (id: string) => open.filter((p) => p.ownerAgentId === id).length;

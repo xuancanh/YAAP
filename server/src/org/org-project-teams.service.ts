@@ -240,6 +240,38 @@ export class OrgProjectTeamsService {
     return { row: { ...row, approvalId: a.id }, approvalId: a.id, note: `Proposed ${name} for ${p.key}'s team as ${row.role || 'member'} at ${allocation}%: allocation card ${a.id.slice(0, 8)} is with ${holderName} (its manager decides; you are told). It is pending until then.` };
   }
 
+  /**
+   * Seat a member at once on the decider's authority — a head approving a
+   * Program Manager's resource request for its own people, or a manager
+   * granting a resource conflict (OrgProgramService, docs/work-tracking.md
+   * "Resource requests"). The 100% cap holds; the channel and the member's
+   * inbox are told as for any join. A live seat of the member on the project
+   * is resized instead of duplicated.
+   */
+  async grant(orgId: string, projectId: string, input: { agentId: string; role?: string; allocation: number; why?: string }, actor: string): Promise<OrgProjectMember> {
+    const p = await this.org.project(orgId, projectId);
+    if (p.kind !== 'project' || CLOSED_PROJECT.has(p.status)) throw new BadRequestException(`refused: ${p.key} takes no team (${p.kind === 'project' ? p.status : 'a system project'})`);
+    const org = await this.org.get(orgId);
+    const m = await this.org.member(orgId, input.agentId);
+    if (!m || m.status !== 'active') throw new BadRequestException('refused: the member must be an active member of this organization');
+    if (org.auditorAgentId === input.agentId) throw new BadRequestException('refused: the auditor stays independent of the work it audits; it joins no project team');
+    const allocation = Math.round(Number(input.allocation));
+    if (!Number.isFinite(allocation) || allocation < 1 || allocation > 100) throw new BadRequestException('allocation is a percent of the member\'s time: 1–100');
+    const existing = (await this.org.projectMembers(orgId, p.id)).find((r) => r.agentId === input.agentId && LIVE.has(r.status));
+    const held = await this.allocationOf(orgId, input.agentId, { excludeRowId: existing?.id });
+    if (held + allocation > 100) throw new BadRequestException(`refused: ${await this.nameOf(input.agentId)} is already allocated ${held}% across projects; ${allocation}% more would exceed 100% — free time on another project first, or grant less`);
+    if (existing) {
+      const row = await this.org.updateProjectMember(orgId, existing.id, { allocation, status: 'active', ...(input.role ? { role: input.role.slice(0, 80) } : {}) });
+      await this.audit.append(orgId, { actor, action: 'project_member_add', refType: 'project', refId: p.id, payload: { key: p.key, agentId: input.agentId, role: row.role, allocation, resized: true, why: (input.why ?? '').slice(0, 300) } });
+      if (existing.status === 'pending') await this.joined(orgId, p, row);
+      return row;
+    }
+    const row = await this.org.addProjectMember(orgId, { projectId: p.id, agentId: input.agentId, role: input.role, allocation, status: 'active', addedBy: actor });
+    await this.audit.append(orgId, { actor, action: 'project_member_add', refType: 'project', refId: p.id, payload: { key: p.key, agentId: input.agentId, role: row.role, allocation, why: (input.why ?? '').slice(0, 300) } });
+    await this.joined(orgId, p, row);
+    return row;
+  }
+
   /** The approved card's applier: the pending row becomes active. */
   async applyAllocation(orgId: string, rowId: string, actor: string): Promise<Record<string, unknown>> {
     const row = await this.org.projectMember(orgId, rowId);

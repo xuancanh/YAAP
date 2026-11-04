@@ -15,7 +15,9 @@
  *   2. its own to-do that was just unblocked (a blocker cleared, a
  *      dependency done);
  *   3. its own to-do, ranked by project lane (Now first), urgency (overdue,
- *      due soon), due date, project rank and age — claimed only when the WIP
+ *      due soon), its allocation (a member lent to project teams works the
+ *      seat — or its home unit — furthest below its share first), due
+ *      date, project rank and age — claimed only when the WIP
  *      limit (`capacity.wipPerMember`) allows;
  *   4. nothing of its own: unassigned backlog in its unit or the projects it
  *      works on that fits its role. `work.selfAssign` (0 off · 1 unit ·
@@ -79,6 +81,8 @@ const ASK_EVERY_MS = 24 * 3_600_000;
 /** A backlog task self-assigned this many times is left to a manager. */
 const SELF_ASSIGN_LIMIT = 2;
 const LANE_ORDER: Record<string, number> = { now: 0, next: 1, later: 2 };
+/** The window a member's started work is measured over against its allocations. */
+const ALLOCATION_WINDOW_MS = 7 * 24 * 3_600_000;
 const STOP = new Set(['about', 'after', 'agent', 'agents', 'also', 'before', 'being', 'company', 'could', 'every', 'from', 'have', 'into', 'just', 'keep', 'make', 'more', 'most', 'must', 'only', 'other', 'over', 'should', 'some', 'such', 'than', 'that', 'their', 'them', 'then', 'there', 'these', 'they', 'this', 'those', 'through', 'very', 'want', 'what', 'when', 'where', 'which', 'while', 'will', 'with', 'within', 'work', 'would', 'your', 'yours', 'task', 'tasks', 'team', 'general']);
 
 /** Lowercase word stems (first five letters of words of four or more) for the role match. Pure. */
@@ -288,8 +292,11 @@ export class OrgNextWorkService implements OnModuleDestroy {
     const projects = new Map((await this.org.projects(org.id)).map((p) => [p.id, p]));
     const soon = govTunable(org, 'capacity.dueSoonHours');
     const laneOf = (t: OrgTask) => { const p = t.projectId ? projects.get(t.projectId) : undefined; return !p ? 1 : p.kind !== 'project' ? 0 : LANE_ORDER[p.lane] ?? 2; };
+    const transitions = await this.tasks.transitions(org.id);
+    const debt = await this.allocationDebt(org.id, agentId, all, transitions, now);
     const rank = (a: OrgTask, b: OrgTask) => (laneOf(a) - laneOf(b))
       || (urgencyOf(a, now, soon) - urgencyOf(b, now, soon))
+      || (Math.round(debt(b) * 10) - Math.round(debt(a) * 10))
       || ((a.dueAt ?? '9999') < (b.dueAt ?? '9999') ? -1 : (a.dueAt ?? '9999') > (b.dueAt ?? '9999') ? 1 : 0)
       || ((a.projectId ? projects.get(a.projectId)?.rank ?? 0 : 0) - (b.projectId ? projects.get(b.projectId)?.rank ?? 0 : 0))
       || (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0);
@@ -330,7 +337,6 @@ export class OrgNextWorkService implements OnModuleDestroy {
     const roleText = [member?.title ?? '', agent?.role ?? '', (agent?.charter ?? '').slice(0, 400), ...(ROLES.find((r) => r.title.toLowerCase() === role)?.competencies ?? [])].join(' ');
     const roleStems = stems(roleText);
     const done = new Set(all.filter((x) => x.status === 'done').map((x) => x.id));
-    const transitions = await this.tasks.transitions(org.id);
     const backlog: NextCandidate[] = [];
     for (const t of all.filter((x) => x.status === 'backlog' && !x.assigneeAgentId && !x.assigneeHumanId && !x.wakesPausedAt && !exclude.has(x.id))) {
       const p = t.projectId ? projects.get(t.projectId) : undefined;
@@ -351,6 +357,37 @@ export class OrgNextWorkService implements OnModuleDestroy {
     }
     out.push(...backlog.sort((a, b) => rank(a.task, b.task)));
     return out;
+  }
+
+  /**
+   * A member lent to project teams spends its time as allocated
+   * (docs/work-tracking.md "Program management: the matrix"): its work is
+   * bucketed by the project seats it holds (each its allocation) and its
+   * home unit (the rest); the bucket furthest below its share of the work
+   * the member started in the last week ranks first among equally urgent
+   * tasks. Zero for a member with no seat. Pure over its inputs.
+   */
+  private async allocationDebt(orgId: string, agentId: string, all: OrgTask[], transitions: Array<{ taskId: string; toStatus: string; actor: string; at: string }>, now: Date): Promise<(t: OrgTask) => number> {
+    const seats = (await this.org.projectMembers(orgId).catch(() => [])).filter((r) => r.agentId === agentId && r.status === 'active');
+    if (seats.length === 0) return () => 0;
+    const share = new Map(seats.map((r) => [r.projectId, r.allocation / 100]));
+    const home = Math.max(0, 1 - [...share.values()].reduce((a, b) => a + b, 0));
+    const bucket = (t: OrgTask | undefined) => (t?.projectId && share.has(t.projectId) ? t.projectId : 'home');
+    const byId = new Map(all.map((t) => [t.id, t]));
+    const since = now.getTime() - ALLOCATION_WINDOW_MS;
+    const worked = new Map<string, number>();
+    let total = 0;
+    for (const tr of transitions) {
+      if (tr.actor !== `agent:${agentId}` || (tr.toStatus !== 'claimed' && tr.toStatus !== 'in_progress') || Date.parse(tr.at) < since) continue;
+      const k = bucket(byId.get(tr.taskId));
+      worked.set(k, (worked.get(k) ?? 0) + 1);
+      total++;
+    }
+    return (t: OrgTask) => {
+      const k = bucket(t);
+      const target = k === 'home' ? home : share.get(k) ?? 0;
+      return target - (total ? (worked.get(k) ?? 0) / total : 0);
+    };
   }
 
   // ---- the heartbeat section ----

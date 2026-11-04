@@ -2317,6 +2317,67 @@ const MIGRATIONS: Migration[] = [
       for (const r of rows) await db.query(`UPDATE agents SET "personality" = $1 WHERE "id" = $2 AND "personality" IS NULL`, [personalityForId(r.id), r.id]);
     },
   },
+  {
+    id: '0089-program-matrix',
+    up: async (db) => {
+      // Program management as a matrix (docs/work-tracking.md "Program
+      // management: the matrix"): each goal's and project's own rhythm,
+      // owned by its Program Manager, and the PM's resource requests to the
+      // heads with the heads' answers. Idempotent.
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS org_program_cadences (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "id" TEXT PRIMARY KEY,
+          "orgId" TEXT NOT NULL,
+          "refType" TEXT NOT NULL,
+          "refId" TEXT NOT NULL,
+          "kind" TEXT NOT NULL,
+          "cron" TEXT NOT NULL,
+          "enabled" INTEGER NOT NULL DEFAULT 1,
+          "nextAt" TEXT,
+          "lastAt" TEXT,
+          "setBy" TEXT NOT NULL DEFAULT '',
+          "createdAt" TEXT NOT NULL,
+          "updatedAt" TEXT
+        )
+      `);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_program_cadences_ref ON org_program_cadences ("orgId", "refType", "refId", "kind")`);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS org_resource_requests (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "id" TEXT PRIMARY KEY,
+          "orgId" TEXT NOT NULL,
+          "projectId" TEXT NOT NULL,
+          "goalId" TEXT,
+          "requestedBy" TEXT NOT NULL DEFAULT '',
+          "pmAgentId" TEXT,
+          "headAgentId" TEXT,
+          "unitId" TEXT,
+          "role" TEXT NOT NULL DEFAULT '',
+          "skills" TEXT NOT NULL DEFAULT '',
+          "agentId" TEXT,
+          "allocation" INTEGER NOT NULL DEFAULT 0,
+          "startDate" TEXT,
+          "endDate" TEXT,
+          "budgetUsd" REAL NOT NULL DEFAULT 0,
+          "why" TEXT NOT NULL DEFAULT '',
+          "status" TEXT NOT NULL DEFAULT 'open',
+          "decidedAgentId" TEXT,
+          "decidedAllocation" INTEGER,
+          "decisionNote" TEXT NOT NULL DEFAULT '',
+          "decidedBy" TEXT NOT NULL DEFAULT '',
+          "decidedAt" TEXT,
+          "approvalId" TEXT,
+          "memberRowId" TEXT,
+          "answerBy" TEXT,
+          "createdAt" TEXT NOT NULL,
+          "updatedAt" TEXT
+        )
+      `);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_resource_requests_org ON org_resource_requests ("orgId", "status")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_resource_requests_head ON org_resource_requests ("orgId", "headAgentId", "status")`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

@@ -161,6 +161,7 @@ export const AUTHORITY_TABLE: AuthorityRow[] = [
   { kind: 'budget_raise', manager: 'decide_if', when: 'autonomous; an agent or project envelope in its line, within its unit headroom (the company envelope is the CEO\'s)' },
   { kind: 'cadence', manager: 'decide_if', when: 'autonomous; a ritual of a unit it leads' },
   { kind: 'project_allocation', manager: 'decide', when: 'its own report lent to a project team (the allocation within 100% across projects); any mode — the head stays accountable for its people' },
+  { kind: 'resource_conflict', manager: 'decide', when: 'a Program Manager and a head in its line disagree on a project\'s resources (or the head did not answer): grant the request or uphold the head; any mode' },
   { kind: 'human_review', manager: 'recommend', when: 'addressed to a named person' },
   { kind: 'tune', manager: 'recommend', when: 'company-wide setting: CEO' },
   { kind: 'routing', manager: 'recommend', when: 'company-wide setting: CEO' },

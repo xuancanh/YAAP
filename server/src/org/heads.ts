@@ -29,6 +29,13 @@ const NOT_A_HEAD = /\b(program|programme|project|product|account|community|offic
 /** A head's title shape. */
 const HEAD_SHAPE = /^(head|vp|svp|evp|vice president|director|general manager|chief\s+\w+\s+officer)\b|\b(head|lead|director)$/i;
 
+/** Whether a title names a Program Manager (the catalog's role:ops-pm): the
+ *  owner of goals and projects on the matrix's outcome axis (docs/work-tracking.md
+ *  "Program management: the matrix"). */
+export function isProgramManagerTitle(title: string | null | undefined): boolean {
+  return /\bprogram(me)?\s+manager\b/i.test(title ?? '');
+}
+
 /** Whether a title reads as a function head's (catalog or not). */
 export function isHeadTitle(title: string | null | undefined): boolean {
   const t = (title ?? '').trim();

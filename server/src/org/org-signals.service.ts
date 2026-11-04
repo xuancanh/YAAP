@@ -87,12 +87,17 @@ export interface SignalThresholds {
   burnCriticalPct: number;
 }
 
+/** A module's own conditions (OrgProgramService: the matrix), computed with
+ *  the sweep and resolved by it like the built-in kinds. */
+export interface SignalSource { kinds: readonly string[]; compute(org: Organization, now: Date): Promise<SignalInput[]> }
+
 const DAY_MS = 24 * 60 * 60_000;
 const OPEN_STATES = ['todo', 'claimed', 'in_progress', 'in_review'];
 
 @Injectable()
 export class OrgSignalsService {
   private readonly logger = new Logger(OrgSignalsService.name);
+  private readonly sources: SignalSource[] = [];
 
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
@@ -104,6 +109,9 @@ export class OrgSignalsService {
     @Optional() private readonly bus?: TriggerBus,
     @Optional() private readonly units?: OrgUnitsService,
   ) {}
+
+  /** Register a module's conditions (its kinds are swept and auto-resolved). */
+  addSource(src: SignalSource): void { this.sources.push(src); }
 
   // ---- reads ----
 
@@ -201,7 +209,7 @@ export class OrgSignalsService {
     }
     // Auto-resolve: an open (or acked) sweep-owned signal whose condition is gone.
     let resolved = 0;
-    const sweepKinds = new Set<string>(SIGNAL_KINDS.filter((k) => !['slo_breach', 'audit_finding', 'burn_forecast'].includes(k)));
+    const sweepKinds = new Set<string>([...SIGNAL_KINDS.filter((k) => !['slo_breach', 'audit_finding', 'burn_forecast'].includes(k)), ...this.sources.flatMap((x) => x.kinds)]);
     for (const s of (await this.list(orgId)).filter((x) => x.status !== 'resolved' && sweepKinds.has(x.kind))) {
       if (keys.has(`${s.kind}:${s.refId}`)) continue;
       await this.db.update(orgSignals).set({ status: 'resolved', resolvedAt: nowIso() }).where(eq(orgSignals.id, s.id));
@@ -314,6 +322,7 @@ export class OrgSignalsService {
       if (ids.length < 2) continue;
       out.push({ kind: 'duplicate_title', severity: 'info', refType: 'org', refId: `title:${title}`, title: `${ids.length} members share the title "${title}": ${ids.map(nm).join(', ')}`, detail: 'Duplicate roles are a reorg candidate: merge, or differentiate the charters.', addressee: 'chief' });
     }
+    for (const src of this.sources) out.push(...await src.compute(org, now).catch((err: unknown) => { this.logger.warn(`signal source failed: ${err instanceof Error ? err.message : err}`); return [] as SignalInput[]; }));
     return out;
   }
 

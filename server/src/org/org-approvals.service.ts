@@ -35,8 +35,8 @@ import { clamp01, computedAlternatives, defaultActionFor, normalizeAlternatives,
 import { govTunable } from './governance-tunables';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill', 'project_allocation'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill', 'project_allocation', 'resource_conflict'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19; `blueprint` is OrgBlueprintsService's,
@@ -427,6 +427,7 @@ export class OrgApprovalsService {
       case 'project_appetite':
       case 'project_kill':
       case 'project_allocation':
+      case 'resource_conflict':
       case 'experiment': {
         // Kinds another module owns (the meetings module's cadence, the memory module's charter change).
         const fn = this.appliers.get(kind);
@@ -610,6 +611,7 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'project_now': return `bet: move ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}" to Now${payload.appetiteDays || payload.appetiteUsd ? ` (appetite ${payload.appetiteDays ? `${String(payload.appetiteDays)}d` : ''}${payload.appetiteDays && payload.appetiteUsd ? ' / ' : ''}${payload.appetiteUsd ? `$${Number(payload.appetiteUsd).toFixed(0)}` : ''})` : ''}`.slice(0, 200);
     case 'project_appetite': return `${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}" hit its appetite: extend, cut scope or kill${payload.extendUsd || payload.extendDays ? ` (asked: +${payload.extendDays ? `${String(payload.extendDays)}d` : ''}${payload.extendDays && payload.extendUsd ? ' / ' : ''}${payload.extendUsd ? `$${Number(payload.extendUsd).toFixed(2)}` : ''})` : ''}`.slice(0, 200);
     case 'project_allocation': return `allocate ${String(payload.agentName ?? 'a member')} to ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}" at ${Number(payload.allocation ?? 0)}%${payload.role ? ` as ${String(payload.role)}` : ''}`.slice(0, 200);
+    case 'resource_conflict': return `resources for ${String(payload.projectKey ?? '')}: ${String(payload.pmName ?? 'the PM')} asks ${String(payload.headName ?? 'a head')} for ${String(payload.role || 'a member')} at ${Number(payload.allocation ?? 0)}%${payload.headAnswer ? ` — ${String(payload.headAnswer)}` : ''}`.slice(0, 200);
     case 'project_kill': return `kill ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}"`.slice(0, 200);
     case 'two_key': return `${payload.staged ? 'send staged' : 'run held'} ${String(payload.tool ?? 'action')} (${String(payload.class ?? '').replace(/_/g, ' ')}): ${String(payload.summary ?? '')}`.slice(0, 160);
     default: return kind;

@@ -138,8 +138,11 @@ export class OrgDecisionsService {
     const c = await this.chart(orgId);
     const payload = JSON.parse(a.payload || '{}') as Record<string, unknown>;
     // A project allocation is the member's head's call, whoever asked
-    // (docs/work-tracking.md "Project teams"): it routes as if the member raised it.
-    const routeAs = a.kind === 'project_allocation' && typeof payload.routeAsAgentId === 'string' ? payload.routeAsAgentId : null;
+    // (docs/work-tracking.md "Project teams"): it routes as if the member
+    // raised it. A resource conflict (a PM and a head disagree) routes as if
+    // the head raised it: to the head's manager first (docs/work-tracking.md
+    // "Resource requests").
+    const routeAs = (a.kind === 'project_allocation' || a.kind === 'resource_conflict') && typeof payload.routeAsAgentId === 'string' ? payload.routeAsAgentId : null;
     const from = routeAs ?? agentOfActor(a.requestedBy, c.org);
     // A card addressed to a named person (human review) and the owner's own cards stay where they are.
     const routable = a.kind !== 'human_review' && from !== null && c.members.some((m) => m.agentId === from);
@@ -252,6 +255,7 @@ export class OrgDecisionsService {
     switch (a.kind) {
       case 'hire': return [str(payload.reportsToAgentId)].filter((x): x is string => Boolean(x));
       case 'project_allocation': return [str(payload.agentId)].filter((x): x is string => Boolean(x));
+      case 'resource_conflict': return [str(payload.headAgentId)].filter((x): x is string => Boolean(x));
       case 'reorg': return (Array.isArray(payload.changes) ? payload.changes as Array<{ agentId?: string; reportsToAgentId?: string }> : []).flatMap((c) => [c.agentId, c.reportsToAgentId]).filter((x): x is string => Boolean(x));
       case 'escalation': {
         const taskId = str(payload.taskId);
