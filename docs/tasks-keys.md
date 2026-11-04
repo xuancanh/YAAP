@@ -18,7 +18,7 @@ with a letter.
 |---|---|---|
 | The root unit (the company board) | The company name: a word of four letters or fewer whole, else its first three; two words, two letters and one; three or more, the initials. Filler words (Inc, Corp, the, of) drop out. `CO` when nothing is left. | Jong → `JONG`, Acme Corp → `ACME`, Acme Widget Works → `AWW` |
 | A function unit | The lead's job function (its catalog role id or a function word in its title) → a fixed code. | `ENG`, `SALES`, `MKT`, `CS`, `PROD`, `DSN`, `DATA`, `FIN`, `PPL`, `LEGAL`, `OPS`, `IT`, `REV` |
-| Any other unit | The lead's title without role words (head, lead, manager…), then the lead's name. | Head of Research → `RES`, Ava → `AVA` |
+| Any other unit (a department) | Its department name (docs/group-chat.md §7 "Department names"; not a "<lead>'s team" fallback), then the lead's title without role words (head, lead, manager…), then the lead's name. | Research → `RES`, Client Delivery → `CLD`, Ava → `AVA` |
 | An agent's own kanban | The agent's handle (`agents/<handle>`), by the same word rule. Only personal agents (no company) keep a kanban since the work-tracking merge (`docs/work-tracking.md`). | evidence-lead → `EVL`, atlas → `ATL` |
 
 Prefixes are unique in the workspace (units of the organization and every
@@ -30,7 +30,10 @@ when it is created (units) or on its first task (agents).
 (`PATCH /api/workspaces/:id/org/units/:unitId { taskKey }`). New tasks take
 the new prefix from 1 (or where it left off if the board held it before);
 existing tasks keep their keys. A prefix another board holds or ever held
-in the workspace is refused, so old keys stay unique.
+in the workspace is refused, so old keys stay unique. **Renaming the
+department** (`PATCH … { name }`, `org_rename_unit`) never moves its prefix:
+Engineering renamed Platform still files `ENG-n`, and ENG-12 stays ENG-12;
+only a new unit derives its prefix, once.
 
 ## Numbers
 

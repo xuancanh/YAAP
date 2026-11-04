@@ -45,6 +45,8 @@ export interface BlueprintRole {
 
 /** `unitTitle` is a role title that leads a unit, or 'root' for the company. */
 export interface BlueprintCadence { unitTitle: string; kind: string; cron: string }
+/** A unit of the chart: its lead's title, its parent unit's, and the department's own name (optional). */
+export interface BlueprintUnit { title: string; parent: string | null; name?: string }
 
 /** A roadmap item with its cross-functional team, by role title. */
 export interface BlueprintProject {
@@ -72,8 +74,10 @@ export interface Blueprint {
   profile: { values: string; culture: string; rules: string };
   vision?: { title: string; description: string; horizonDays: number };
   roles: BlueprintRole[];
-  /** Derived from reportsTo on export; informative on import. */
-  units?: Array<{ title: string; parent: string | null }>;
+  /** Derived from reportsTo on export; informative on import, except `name`:
+   *  a department's own name ("Engineering"), applied to the unit its lead
+   *  heads once the hires exist (docs/group-chat.md §7 "Department names"). */
+  units?: BlueprintUnit[];
   cadences?: BlueprintCadence[];
   tunables: Record<string, number>;
   routing?: Record<string, string>;
@@ -190,8 +194,9 @@ export function validateBlueprint(raw: unknown): Blueprint {
   if (o.units !== undefined) {
     units = arr(o.units, 'units', BLUEPRINT_MAX_ROLES).map((u, i) => {
       const x = (u ?? {}) as Record<string, unknown>;
-      onlyKeys(x, new Set(['title', 'parent']), `units[${i}]`);
-      return { title: str(x.title, `units[${i}].title`, 80, true), parent: x.parent === null || x.parent === undefined ? null : str(x.parent, `units[${i}].parent`, 80) };
+      onlyKeys(x, new Set(['title', 'parent', 'name']), `units[${i}]`);
+      const name = x.name === undefined || x.name === null ? '' : str(x.name, `units[${i}].name`, 60);
+      return { title: str(x.title, `units[${i}].title`, 80, true), parent: x.parent === null || x.parent === undefined ? null : str(x.parent, `units[${i}].parent`, 80), ...(name.trim() ? { name: name.trim() } : {}) };
     });
   }
   let cadences: Blueprint['cadences'];
@@ -331,12 +336,23 @@ export function hireOrder(bp: Blueprint): BlueprintRole[] {
 }
 
 /** Units implied by the chart: every role with a report leads one. */
-export function unitsOf(bp: Blueprint): Array<{ title: string; parent: string | null }> {
+export function unitsOf(bp: Blueprint): BlueprintUnit[] {
   const byTitle = new Map(bp.roles.map((r) => [r.title.toLowerCase(), r]));
   const leads = bp.roles.filter((r) => bp.roles.some((x) => x.reportsTo && x.reportsTo.toLowerCase() === r.title.toLowerCase()));
+  // A department's name rides along from the document (the derived tree has none).
+  const named = new Map((bp.units ?? []).filter((u) => u.name).map((u) => [u.title.toLowerCase(), u.name!]));
   return leads.map((l) => {
     let cur = l.reportsTo ? byTitle.get(l.reportsTo.toLowerCase()) : undefined;
     while (cur && !leads.includes(cur)) cur = cur.reportsTo ? byTitle.get(cur.reportsTo.toLowerCase()) : undefined;
-    return { title: l.title, parent: cur?.title ?? null };
+    const name = l.reportsTo ? named.get(l.title.toLowerCase()) : undefined;
+    return { title: l.title, parent: cur?.title ?? null, ...(name ? { name } : {}) };
   });
+}
+
+/** Department names by lead title (lower case), the root's excluded. */
+export function unitNamesOf(bp: Blueprint): Record<string, string> {
+  const root = bp.roles.find((r) => r.reportsTo === null)?.title.toLowerCase();
+  const out: Record<string, string> = {};
+  for (const u of bp.units ?? []) if (u.name && u.title.toLowerCase() !== root) out[u.title.toLowerCase()] = u.name;
+  return out;
 }

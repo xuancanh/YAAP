@@ -185,7 +185,7 @@ test('a reorg moves channel membership between unit channels; terminating the la
   assert.ok((await s.groupchat!.get(editorUnit.channelId!)).archivedAt, 'channel archived');
   assert.equal((await s.units.units(orgId)).length, 2, 'root + writer');
   // the unit it emptied closed with an archive line
-  assert.match((await s.groupchat!.messages(editorUnit.channelId!)).messages.at(-1)!.text, /^Unit archived: Editor has no direct reports left/);
+  assert.match((await s.groupchat!.messages(editorUnit.channelId!)).messages.at(-1)!.text, /^Department archived: Editor has no direct reports left/);
 
   // terminate Alpha (user path): Writer still has Beta, so #writer stays and Alpha leaves it and #company
   await s.org.terminateMember(orgId, a1.id);

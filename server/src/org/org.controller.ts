@@ -311,8 +311,13 @@ export class OrgController {
   // ---- units (docs/group-chat.md §7) ----
   private unitsOr(): OrgUnitsService { if (!this.units) throw new NotFoundException('units are not available'); return this.units; }
   @Get(':id/units') async units_(@Param('id') id: string) { this.guard(); return this.unitsOr().unitTree(id); }
+  /** Rename a department (docs/group-chat.md §7 "Department names") or set
+   *  its task key prefix: the CEO and the board; employees and observers
+   *  read. Agents rename through org_rename_unit (the chief and the head). */
   @Patch(':id/units/:unitId') async renameUnit(@Param('id') id: string, @Param('unitId') unitId: string, @Body() dto: UnitDto) {
     this.guard();
+    const role = await this.org.humanRole(id, actorId());
+    if (role !== 'ceo' && role !== 'board') throw new ForbiddenException(role ? 'only the CEO and the board rename departments; ask the chief of staff or the department\'s head' : 'you have no standing in this organisation');
     let u = dto.name !== undefined ? await this.unitsOr().rename(id, unitId, dto.name, this.actor()) : await this.unitsOr().get(id, unitId);
     if (dto.taskKey !== undefined) u = await this.unitsOr().setTaskKey(id, unitId, dto.taskKey, this.actor());
     return u;

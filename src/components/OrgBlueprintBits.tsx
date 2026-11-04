@@ -139,7 +139,7 @@ export function BlueprintCard({ ws }: { ws: Workspace }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 200 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Blueprint</div>
-          <div style={faint}>The company as COMPANY.json: roles with charters, scopes and tiers, units, cadences, tunables, routing, playbooks, budget. Never memory, credentials, names or history.</div>
+          <div style={faint}>The company as COMPANY.json: roles with charters, scopes and tiers, departments, cadences, tunables, routing, playbooks, budget. Never memory, credentials, names or history.</div>
         </div>
         <button style={btn()} disabled={busy === 'export'} onClick={() => void exportIt()}>{busy === 'export' ? 'Exporting…' : 'Export blueprint'}</button>
         <button style={btn()} onClick={() => setOpen(!open)} aria-expanded={open}>{open ? 'Hide import' : 'Import blueprint'}</button>

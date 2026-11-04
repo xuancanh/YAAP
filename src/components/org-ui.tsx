@@ -57,7 +57,7 @@ export function UnitChips({ count, title }: { count?: (u: OrgUnitNode) => number
   const { units, isCompany } = useUnits();
   if (units.length <= 1) return null;
   return (
-    <div role="tablist" aria-label="Unit" style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 12 }}>
+    <div role="tablist" aria-label="Department" style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 12 }}>
       {units.map((u) => {
         const active = (u.parentUnitId === null && isCompany) || (u.parentUnitId !== null && app.orgUnitId === u.id);
         const n = count?.(u);

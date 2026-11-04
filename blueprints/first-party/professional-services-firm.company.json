@@ -168,6 +168,27 @@
       "monthlyUsd": 40
     }
   ],
+  "units": [
+    {
+      "title": "Chief of staff",
+      "parent": null
+    },
+    {
+      "title": "Head of Delivery",
+      "parent": "Chief of staff",
+      "name": "Delivery"
+    },
+    {
+      "title": "Head of Finance",
+      "parent": "Chief of staff",
+      "name": "Finance"
+    },
+    {
+      "title": "Head of People",
+      "parent": "Chief of staff",
+      "name": "People"
+    }
+  ],
   "cadences": [
     {
       "unitTitle": "root",

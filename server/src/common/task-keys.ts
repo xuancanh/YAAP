@@ -112,12 +112,15 @@ export function prefixFromName(name: string | null | undefined, opts: { dropRole
 
 /** The prefix a unit board starts from: the root from the company name
  *  (else CO); a function unit its function's code; any other unit its
- *  lead's title, then its lead's name (else TEAM). */
+ *  department name (docs/group-chat.md §7 "Department names"), then its
+ *  lead's title, then its lead's name (else TEAM). Claimed once, when the
+ *  unit is made: renaming the department later never moves it. */
 export function unitPrefixBase(u: { root: boolean; orgName?: string | null; leadTitle?: string | null; leadName?: string | null; unitName?: string | null }): string {
   if (u.root) return prefixFromName(u.orgName) ?? 'CO';
   const fn = functionOfTitle(u.leadTitle);
   if (fn && FUNCTION_PREFIX[fn]) return FUNCTION_PREFIX[fn];
-  return prefixFromName(u.leadTitle, { dropRoleWords: true }) ?? prefixFromName(u.leadName) ?? prefixFromName(u.unitName) ?? 'TEAM';
+  const department = u.unitName && !/'s team$/i.test(u.unitName.trim()) ? prefixFromName(u.unitName) : null;
+  return department ?? prefixFromName(u.leadTitle, { dropRoleWords: true }) ?? prefixFromName(u.leadName) ?? prefixFromName(u.unitName) ?? 'TEAM';
 }
 
 /** The agent's handle: the last segment of `agents/<handle>`, else its slugified name. */

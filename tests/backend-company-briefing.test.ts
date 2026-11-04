@@ -171,7 +171,7 @@ test('knowledge/company.md: written with the standing context, rewritten only wh
   assert.match(note, /^# Default — my standing context/);
   assert.match(note, /- Mission: Help independent publishers/);
   assert.match(note, /- Values: Readers first; Candour; Ship weekly; Own the outcome; Frugality/);
-  assert.match(note, /- Junior writer\n- Unit: Writer's team\n- I report to Writer\n- No direct reports/);
+  assert.match(note, /- Junior writer\n- Department: Writer's team \(#writer\), led by Writer\n- I report to Writer\n- No direct reports/);
   assert.match(note, /- P-1 "Weekly issue pipeline" — I work on it/);
   assert.doesNotMatch(note, /\d{4}-\d{2}-\d{2}T/, 'no timestamp, so an unchanged standing never rewrites');
   // unchanged → nothing written
@@ -188,7 +188,7 @@ test('knowledge/company.md: written with the standing context, rewritten only wh
   const scout = await c.agents.create({ name: 'Scout', charter: 'You research.', provider: 'anthropic', model: 'claude-haiku-4-5' });
   await c.org.addMember(c.orgId, { agentId: scout.id, title: 'Researcher', reportsToAgentId: c.writer.id });
   assert.ok((await c.briefing.refreshStanding(c.orgId)).includes(scout.id));
-  assert.match((await noteOf(c, scout.id))!, /- Researcher\n- Unit: Writer's team\n- I report to Writer/);
+  assert.match((await noteOf(c, scout.id))!, /- Researcher\n- Department: Writer's team \(#writer\), led by Writer\n- I report to Writer/);
   assert.match((await noteOf(c, c.writer.id))!, /- My direct reports: Junior \(Junior writer\), Scout \(Researcher\)/, 'the manager\'s reports changed');
   // a promotion to head: Junior moves up to the chief and leads a unit once it has a report
   await c.org.updateMember(c.orgId, c.junior.id, { reportsToAgentId: c.chief.id, title: 'Head of Research' });
@@ -196,7 +196,7 @@ test('knowledge/company.md: written with the standing context, rewritten only wh
   await c.org.addMember(c.orgId, { agentId: intern.id, title: 'Intern', reportsToAgentId: c.junior.id });
   await c.units.syncMembership(c.orgId);
   assert.ok((await c.briefing.refreshStanding(c.orgId)).includes(c.junior.id));
-  assert.match((await noteOf(c, c.junior.id))!, /- Head of Research \(function head\)\n- I lead the unit [^\n]+\n- I report to Chief\n- My direct reports: Intern \(Intern\)/);
+  assert.match((await noteOf(c, c.junior.id))!, /- Head of Research \(function head\)\n- I lead the Research department \(#research\)\n- I report to Chief\n- My direct reports: Intern \(Intern\)/);
   assert.match((await c.briefing.briefingFor(c.junior.id))!, /You: Head of Research, head of [^;]+; reports to Chief; direct reports: Intern/);
 });
 

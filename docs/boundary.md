@@ -134,6 +134,12 @@ Four rows govern it:
 | `member_heartbeat`: on/off and cadence | alone | bounded by the heartbeat fence in code |
 | `member_folder`: assigned workspace folder | propose | it widens which shared files the member can read and write |
 
+`unit_name` (added 4 November 2026): a department's name, renamed with
+`org_rename_unit` by the chief (any department) or a function head (its
+own) — **alone**: presentation only; the unit id, its board, goals and task
+key prefix are unchanged and the old channel slug keeps resolving
+(docs/group-chat.md §7 "Department names").
+
 The chief cannot change its own settings, and a model change carries over to
 the member's existing chats unless `applyToChats` is false. The CEO changes
 any of these directly on the agent's Settings tab.

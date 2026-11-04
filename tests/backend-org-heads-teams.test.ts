@@ -218,7 +218,7 @@ test('project teams: the lead proposes a member from another unit, the member\'s
   await s.runtime.execute(writerS, 'org_decide', { approvalId: card.id, action: 'approve', reasoning: 'pilots are this quarter\'s bet' });
   const team = await teams.team(orgId, project.id);
   assert.equal(team.members[0].status, 'active');
-  assert.equal(team.members[0].homeUnit?.name, "Writer's team", 'the team shows each member\'s home unit');
+  assert.equal(team.members[0].homeUnit?.name, 'Sales', 'the team shows each member\'s home department by its own name');
   assert.ok(team.channel, 'the project channel opened');
   assert.equal(team.channel!.slug, `p-${project.key!.toLowerCase()}`);
   const ch = channels.get(team.channel!.id)!;

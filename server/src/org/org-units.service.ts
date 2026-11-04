@@ -5,7 +5,9 @@
  * Every member with at least one direct report leads a unit; the root unit
  * is the company, led by the chief of staff, with `#company` as its channel.
  * Units are derived from the org chart, never edited by hand (a rename is
- * the one exception): `syncMembership` recomputes them after every structural
+ * the one exception — a non-root unit is a department with its own name,
+ * unit-names.ts, renamed by the CEO, the chief or its own head through
+ * `rename`; the unit id is the identity, the task key prefix never moves): `syncMembership` recomputes them after every structural
  * change — OrgService calls it through `onStructureChange` after a hire, a
  * reorg, a termination, enrolment and a chief swap — creating a unit (and its
  * `#<slug>` channel with lead + direct reports + the human CEO and board)
@@ -35,6 +37,7 @@ import { OrgAuditService } from './org-audit.service';
 import { OrgAnnouncer } from './org-announcer';
 import { ensureUnitPrefix, queryableOf, renamePrefix, taskRef } from '../common/task-keys';
 import { isHeadMember } from './heads';
+import { departmentName, departmentSlug, isTeamPattern, normalizeDepartmentName, uniqueDepartmentName, unitSlugOf } from './unit-names';
 
 export type OrgUnit = typeof orgUnits.$inferSelect;
 
@@ -57,11 +60,8 @@ export interface GoalNode extends OrgGoal {
   children: GoalNode[];
 }
 
-/** Slug of a unit from its lead's name (mirrors groupchat/mentions.ts slugify). */
-export function unitSlug(name: string): string {
-  const s = name.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
-  return s || 'unit';
-}
+/** Slug of a unit from its department name (mirrors groupchat/mentions.ts slugify). */
+export function unitSlug(name: string): string { return unitSlugOf(name); }
 
 /** The §7 progress formula, pure so the test can pin it: tasks' done/total
  *  and the children's mean, averaged when both exist. */
@@ -192,7 +192,7 @@ export class OrgUnitsService {
       if (!existing.channelId && channels) {
         const ch = isRoot
           ? await channels.companyChannel(org.workspaceId)
-          : await channels.ensureUnitChannel(org.workspaceId, existing.slug, existing.name, { topic: `Unit channel of ${existing.name}.`, agentIds: [leadAgentId, ...reports], humanIds: humans });
+          : await channels.ensureUnitChannel(org.workspaceId, existing.slug, existing.name, { topic: `Department channel of ${existing.name}: ${leadName} and its reports.`, agentIds: [leadAgentId, ...reports], humanIds: humans });
         set.channelId = ch.id; set.slug = ch.slug;
       } else if (existing.archivedAt && existing.channelId && channels) {
         await channels.updateChannel(existing.channelId, { archived: false }).catch(() => undefined);
@@ -203,17 +203,19 @@ export class OrgUnitsService {
       }
       return { ...existing, ...set };
     }
-    const base = isRoot ? ROOT_UNIT_SLUG : unitSlug(leadName);
+    // A department's own name from its lead's title ("Head of Engineering" →
+    // Engineering), unique in the org; "<lead>'s team" only when nothing better is known.
+    const name = isRoot ? org.name : uniqueDepartmentName(departmentName({ title: lead.title, leadName }), leadName, all.map((u) => u.name));
+    const base = isRoot ? ROOT_UNIT_SLUG : departmentSlug(name, leadName);
     let slug = base; for (let n = 2; all.some((u) => u.slug === slug); n++) slug = `${base}-${n}`;
-    const name = isRoot ? org.name : `${leadName}'s team`;
     let channelId: string | null = null;
     if (channels) {
       const ch = isRoot
         ? await channels.companyChannel(org.workspaceId)
-        : await channels.ensureUnitChannel(org.workspaceId, slug, slug, { topic: `Unit channel of ${name}: ${leadName} and its reports.`, agentIds: [leadAgentId, ...reports], humanIds: humans });
+        : await channels.ensureUnitChannel(org.workspaceId, slug, name, { topic: `Department channel of ${name}: ${leadName} and its reports.`, agentIds: [leadAgentId, ...reports], humanIds: humans });
       channelId = ch.id; slug = ch.slug;
     }
-    const row: OrgUnit = { accountId: currentAccountId(), id: newId(), orgId, leadAgentId, parentUnitId: null, name, slug, channelId, archivedAt: null, taskKey: null, createdAt: nowIso() };
+    const row: OrgUnit = { accountId: currentAccountId(), id: newId(), orgId, leadAgentId, parentUnitId: null, name, slug, channelId, archivedAt: null, taskKey: null, createdAt: nowIso(), nameSource: 'derived' };
     await this.db.insert(orgUnits).values(row);
     // The board's task key prefix (docs/tasks-keys.md), claimed up front so
     // the SPA knows it before the first task.
@@ -235,7 +237,7 @@ export class OrgUnitsService {
     await this.db.update(orgUnits).set({ archivedAt: nowIso() }).where(eq(orgUnits.id, u.id));
     if (u.channelId) {
       const leadName = (await this.agents.get(u.leadAgentId).catch(() => null))?.name ?? u.leadAgentId.slice(0, 8);
-      await this.announcer.channels?.postSystem(u.channelId, `Unit archived: ${leadName} has no direct reports left. Messages and files are kept; the channel is read-only until the unit returns.`).catch(() => undefined);
+      await this.announcer.channels?.postSystem(u.channelId, `Department archived: ${leadName} has no direct reports left. Messages and files are kept; the channel is read-only until the department returns.`).catch(() => undefined);
       await this.announcer.channels?.updateChannel(u.channelId, { archived: true }).catch(() => undefined);
     }
     await this.audit.append(u.orgId, { actor: 'system', action: 'unit_archive', refType: 'unit', refId: u.id, payload: { leadAgentId: u.leadAgentId } });
@@ -341,14 +343,55 @@ export class OrgUnitsService {
     return [...out];
   }
 
+  /**
+   * Rename a department (docs/group-chat.md §7 "Department names"). The id
+   * is the identity: the board, goals, cadences and the task key prefix
+   * stay (ENG-12 is still ENG-12). A non-root unit's channel follows — its
+   * name, and its slug (`#engineering`), the old slug kept as an alias so
+   * links and `#old` references resolve — and gets one line saying so. The
+   * root is the company: its name changes, `#company` does not. The name is
+   * marked custom, so nothing re-derives it. Who may call this is the
+   * caller's check (the controller: the CEO and the board; the tool: the
+   * chief and the unit's own head, through the boundary).
+   */
   async rename(orgId: string, unitId: string, name: string, actor = 'user'): Promise<OrgUnit> {
     const u = await this.get(orgId, unitId);
-    const n = (name ?? '').trim().slice(0, 80);
-    if (!n) throw new BadRequestException('name cannot be empty');
-    await this.db.update(orgUnits).set({ name: n }).where(eq(orgUnits.id, u.id));
-    if (u.channelId && u.parentUnitId !== null) await this.announcer.channels?.updateChannel(u.channelId, { name: n }).catch(() => undefined);
-    await this.audit.append(orgId, { actor, action: 'unit_rename', refType: 'unit', refId: u.id, payload: { name: n, previous: u.name } });
-    return { ...u, name: n };
+    let n: string;
+    try { n = normalizeDepartmentName(name); } catch (err) { throw new BadRequestException((err as Error).message); }
+    if (n === u.name) return u;
+    const isRoot = u.parentUnitId === null;
+    const set: Partial<OrgUnit> = { name: n, nameSource: 'custom' };
+    const channels = this.announcer.channels;
+    if (u.channelId && !isRoot && channels) {
+      const leadName = (await this.agents.get(u.leadAgentId).catch(() => null))?.name ?? u.leadAgentId.slice(0, 8);
+      const topic = `Department channel of ${n}: ${leadName} and its reports.`;
+      const ch = channels.reslugChannel
+        ? await channels.reslugChannel(u.channelId, { name: n, slug: departmentSlug(n, leadName), topic }).catch((err: unknown) => { this.logger.warn(`reslug of unit ${u.id} failed: ${err instanceof Error ? err.message : err}`); return null; })
+        : null;
+      if (ch) set.slug = ch.slug;
+      else await channels.updateChannel(u.channelId, { name: n }).catch(() => undefined);
+    }
+    await this.db.update(orgUnits).set(set).where(eq(orgUnits.id, u.id));
+    const slug = set.slug ?? u.slug;
+    await this.audit.append(orgId, { actor, action: 'unit_rename', refType: 'unit', refId: u.id, payload: { name: n, previous: u.name, slug, previousSlug: u.slug, taskKey: u.taskKey } });
+    if (u.channelId && !isRoot && channels) {
+      const by = await this.actorLabel(actor);
+      await channels.postSystem(u.channelId, `Department renamed by ${by}: ${u.name} → ${n}${slug !== u.slug ? ` (#${slug}; #${u.slug} still links here)` : ''}. Task keys stay ${u.taskKey ? `${u.taskKey}-n` : 'as they are'}.`).catch(() => undefined);
+    }
+    return { ...u, ...set };
+  }
+
+  private async actorLabel(actor: string): Promise<string> {
+    if (actor === 'user') return 'the CEO';
+    if (actor === 'chief') return 'the chief of staff';
+    if (actor.startsWith('agent:')) return (await this.agents.get(actor.slice(6)).catch(() => null))?.name ?? 'an agent';
+    if (actor.startsWith('human:')) return 'a board member';
+    return 'the blueprint';
+  }
+
+  /** Whether a unit's name is still the old `<lead>'s team` default nobody chose. */
+  static isDefaultName(u: Pick<OrgUnit, 'name' | 'nameSource'>): boolean {
+    return u.nameSource !== 'custom' && isTeamPattern(u.name);
   }
 
   /** Rename the board's task key prefix (docs/tasks-keys.md): new tasks

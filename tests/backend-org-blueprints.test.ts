@@ -300,7 +300,7 @@ test('export renders the live company as COMPANY.json v1 — roles by title with
   assert.equal(bp.roles[0].roleId, 'chief-of-staff'); assert.equal(bp.roles[1].roleId, 'project-lead');
   assert.equal(bp.roles[1].monthlyUsd, 10); assert.equal(bp.roles[2].modelTier, 'cheap');
   assert.deepEqual(bp.roles[0].scopes, DEFAULT_CHIEF_SCOPES.slice().sort());
-  assert.deepEqual(bp.units, [{ title: 'Chief of staff', parent: null }, { title: 'Editorial lead', parent: 'Chief of staff' }]);
+  assert.deepEqual(bp.units, [{ title: 'Chief of staff', parent: null }, { title: 'Editorial lead', parent: 'Chief of staff', name: 'Editorial' }]);
   assert.deepEqual(bp.profile, { values: 'Honesty.', culture: 'Terse.', rules: 'No mail without the CEO.' });
   assert.equal(bp.vision!.title, 'Ship 12 issues'); assert.equal(bp.vision!.horizonDays, 90);
   assert.deepEqual(bp.tunables, { 'intent.checkInCadenceDays': 14 });
@@ -368,7 +368,12 @@ test('round trip: export from one workspace, import into another (autonomous) cr
   await s.intent.setVision(orgId, { title: 'Ship 12 issues', description: 'Weekly.', dueAt: new Date(Date.now() + 30 * 86_400_000).toISOString(), rules: 'No mail.' });
   await s.org.setTunable(orgId, 'intent.confidenceDrops', 3);
   await s.skills.create({ name: 'publish-issue', description: 'How we publish', instructions: '1. Draft.\n2. Ship.', workspaceId: s.ws.id });
+  // a department renamed by hand travels with the blueprint (docs/group-chat.md §7 "Department names")
+  const srcUnit = (await s.units.units(orgId)).find((u) => u.parentUnitId !== null)!;
+  assert.equal(srcUnit.name, 'Editorial', 'derived from "Editorial lead"');
+  await s.units.rename(orgId, srcUnit.id, 'Newsroom');
   const bp = await s.blueprints.export(orgId);
+  assert.deepEqual(bp.units?.map((u) => u.name ?? null), [null, 'Newsroom'], 'the root carries no name; the department its own');
 
   const target = await s.workspaces.create({ name: 'Clone' });
   const plan = await s.blueprints.importPlan(target.id, bp, { mode: 'autonomous' });
@@ -401,6 +406,8 @@ test('round trip: export from one workspace, import into another (autonomous) cr
   assert.equal(chief2.charter, (await s.agents.get(s.chief.id)).charter);
   const tree = await s.units.unitTree(org2.id);
   assert.equal(tree.length, 1); assert.equal(tree[0].children.length, 1); assert.equal(tree[0].children[0].memberAgentIds.length, 2);
+  assert.equal(tree[0].children[0].name, 'Newsroom', 'the imported department takes the blueprint\'s name');
+  assert.equal(tree[0].children[0].nameSource, 'custom');
   // playbooks as drafts in the target workspace
   assert.deepEqual(res.playbooks.map((p) => p.name), ['publish-issue']);
   const skill = await s.skills.get(res.playbooks[0].skillId);
@@ -418,6 +425,7 @@ test('round trip: export from one workspace, import into another (autonomous) cr
   // re-exporting the clone gives the same structure
   const again = await s.blueprints.export(org2.id);
   assert.deepEqual(again.roles.map((r) => [r.title, r.reportsTo, r.scopes]), bp.roles.map((r) => [r.title, r.reportsTo, r.scopes]));
+  assert.deepEqual(again.units, bp.units, 'department names round-trip');
   assert.deepEqual(again.playbooks, [], 'drafts stay drafts until approved, so they do not re-export yet');
 });
 

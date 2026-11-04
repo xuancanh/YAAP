@@ -103,7 +103,7 @@ function NodeCard({ n, mc, now, selected, lit, dimmed, childCount, collapsed, on
         <span style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
           {n.waitingOnYou > 0 && <span style={{ fontSize: 10.5, fontWeight: 650, color: 'var(--red)' }}>waits on you · {n.waitingOnYou}</span>}
           {unit && (
-            <button onClick={() => onOpenUnit?.(unit.id)} title="Open the unit's board" style={{ all: 'unset', cursor: 'pointer', fontSize: 10.5, color: 'var(--accent-hi)', fontWeight: 600 }}>
+            <button onClick={() => onOpenUnit?.(unit.id)} title="Open the department's board" style={{ all: 'unset', cursor: 'pointer', fontSize: 10.5, color: 'var(--accent-hi)', fontWeight: 600 }}>
               {unit.parentUnitId === null ? 'Company' : unit.name} · {unit.openTasks} open
             </button>
           )}
@@ -222,8 +222,8 @@ export function MissionControlBoard({ mc, now = new Date(), narrow = false, init
           {ONLY.map((o) => <button key={o.id} role="radio" aria-checked={filter.only === o.id} onClick={() => setFilter((f) => ({ ...f, only: o.id }))} style={btn(filter.only === o.id)}>{o.label}</button>)}
         </div>
         {mc.units.length > 1 && (
-          <select aria-label="Unit" value={filter.unitId ?? ''} onChange={(e) => setFilter((f) => ({ ...f, unitId: e.target.value || null }))} style={{ ...ctl, maxWidth: '100%' }}>
-            <option value="">All units</option>
+          <select aria-label="Department" value={filter.unitId ?? ''} onChange={(e) => setFilter((f) => ({ ...f, unitId: e.target.value || null }))} style={{ ...ctl, maxWidth: '100%' }}>
+            <option value="">All departments</option>
             {mc.units.filter((u) => u.parentUnitId !== null).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
         )}

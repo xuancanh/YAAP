@@ -105,6 +105,17 @@
       "monthlyUsd": 30
     }
   ],
+  "units": [
+    {
+      "title": "Chief of staff",
+      "parent": null
+    },
+    {
+      "title": "Lead Maintainer",
+      "parent": "Chief of staff",
+      "name": "Maintainers"
+    }
+  ],
   "cadences": [
     {
       "unitTitle": "root",

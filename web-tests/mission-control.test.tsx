@@ -91,9 +91,9 @@ describe('the board', () => {
     expect(visibleNodes()).toEqual(['rep']);
     expect(screen.queryByTestId('node-editor')).toBeNull();
     fireEvent.click(screen.getByRole('radio', { name: 'Everyone' }));
-    fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'u-content' } });
+    fireEvent.change(screen.getByLabelText('Department'), { target: { value: 'u-content' } });
     expect(visibleNodes().sort()).toEqual(['content', 'editor', 'writer']);
-    fireEvent.change(screen.getByLabelText('Unit'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Department'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'pipeline' } });
     expect(visibleNodes()).toEqual(['sales']);
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'nobody' } });

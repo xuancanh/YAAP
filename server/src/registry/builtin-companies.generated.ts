@@ -174,6 +174,27 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      "monthlyUsd": 40
     }
    ],
+   "units": [
+    {
+     "title": "Chief of staff",
+     "parent": null
+    },
+    {
+     "title": "Head of Engineering",
+     "parent": "Chief of staff",
+     "name": "Engineering"
+    },
+    {
+     "title": "Head of Customer",
+     "parent": "Chief of staff",
+     "name": "Customer Success"
+    },
+    {
+     "title": "Head of Growth",
+     "parent": "Chief of staff",
+     "name": "Growth"
+    }
+   ],
    "cadences": [
     {
      "unitTitle": "root",
@@ -460,6 +481,22 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      "monthlyUsd": 30
     }
    ],
+   "units": [
+    {
+     "title": "Chief of staff",
+     "parent": null
+    },
+    {
+     "title": "Head of Client Delivery",
+     "parent": "Chief of staff",
+     "name": "Client Delivery"
+    },
+    {
+     "title": "Editor-in-chief",
+     "parent": "Chief of staff",
+     "name": "Editorial"
+    }
+   ],
    "cadences": [
     {
      "unitTitle": "root",
@@ -711,6 +748,32 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      ],
      "modelTier": "standard",
      "monthlyUsd": 40
+    }
+   ],
+   "units": [
+    {
+     "title": "Chief of staff",
+     "parent": null
+    },
+    {
+     "title": "Head of Operations",
+     "parent": "Chief of staff",
+     "name": "Operations"
+    },
+    {
+     "title": "Head of Customer",
+     "parent": "Chief of staff",
+     "name": "Customer Success"
+    },
+    {
+     "title": "Head of Marketing",
+     "parent": "Chief of staff",
+     "name": "Marketing"
+    },
+    {
+     "title": "Head of Finance",
+     "parent": "Chief of staff",
+     "name": "Finance"
     }
    ],
    "cadences": [
@@ -971,6 +1034,17 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      "monthlyUsd": 30
     }
    ],
+   "units": [
+    {
+     "title": "Chief of staff",
+     "parent": null
+    },
+    {
+     "title": "Lead Maintainer",
+     "parent": "Chief of staff",
+     "name": "Maintainers"
+    }
+   ],
    "cadences": [
     {
      "unitTitle": "root",
@@ -1164,6 +1238,17 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      "monthlyUsd": 40
     }
    ],
+   "units": [
+    {
+     "title": "Chief of staff",
+     "parent": null
+    },
+    {
+     "title": "Principal Investigator",
+     "parent": "Chief of staff",
+     "name": "Research"
+    }
+   ],
    "cadences": [
     {
      "unitTitle": "root",
@@ -1331,6 +1416,17 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      ],
      "modelTier": "cheap",
      "monthlyUsd": 15
+    }
+   ],
+   "units": [
+    {
+     "title": "Chief of staff",
+     "parent": null
+    },
+    {
+     "title": "Editor-in-chief",
+     "parent": "Chief of staff",
+     "name": "Editorial"
     }
    ],
    "cadences": [
@@ -1566,6 +1662,27 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      ],
      "modelTier": "standard",
      "monthlyUsd": 40
+    }
+   ],
+   "units": [
+    {
+     "title": "Chief of staff",
+     "parent": null
+    },
+    {
+     "title": "Head of Delivery",
+     "parent": "Chief of staff",
+     "name": "Delivery"
+    },
+    {
+     "title": "Head of Finance",
+     "parent": "Chief of staff",
+     "name": "Finance"
+    },
+    {
+     "title": "Head of People",
+     "parent": "Chief of staff",
+     "name": "People"
     }
    ],
    "cadences": [

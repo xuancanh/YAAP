@@ -279,7 +279,8 @@ interface Store {
   currentChannel: string | null;
   /** A message a deep link asked to scroll to; consumed by the view. */
   channelFocus: string | null; setChannelFocus: (id: string | null) => void;
-  openChannel: (slug: string, messageId?: string | null) => void;
+  /** `replace`: a canonical rewrite (an old slug of a renamed channel), not a history entry. */
+  openChannel: (slug: string, messageId?: string | null, opts?: { replace?: boolean }) => void;
   /** Live workspace events (SSE): channel messages, typing, streams, tasks. */
   onWorkspaceEvent: (listener: (ev: WorkspaceEvent) => void) => () => void;
 }
@@ -710,8 +711,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [workspaceId]);
   useEffect(() => { void refreshChannels(); }, [refreshChannels]);
 
-  const openChannel = useCallback((slug: string, messageId?: string | null) => {
-    markPush();
+  const openChannel = useCallback((slug: string, messageId?: string | null, opts?: { replace?: boolean }) => {
+    if (!opts?.replace) markPush();
     setCurrentChannel(slug);
     setChannelFocus(messageId ?? null);
     setSection('home');

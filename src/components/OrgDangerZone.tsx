@@ -67,7 +67,7 @@ export function ArchiveDialog({ ws, name, onClose }: { ws: Workspace; name: stri
             <li>every wake, run, ritual, meeting and pending decision timer stops;</li>
             <li>the Company panes and the company parts of Inbox and Home are hidden — the workspace goes back to the plain Home;</li>
             <li>your agents stay in the workspace as plain agents: their seats are suspended, not deleted;</li>
-            <li>unit channels become read-only; #company stays.</li>
+            <li>department channels become read-only; #company stays.</li>
           </ul>
         </div>
         <div style={{ fontSize: 12.5 }}><b>Nothing is deleted.</b> Every task, goal, decision and file stays, readable here as an archived company, and <b>Restore</b> brings it back as it was. You can start a new company in this workspace meanwhile.</div>
@@ -145,7 +145,7 @@ export function DeleteOrgDialog({ ws, org, detail, onClose }: { ws: Workspace; o
           </>}
         </div>
         <div style={{ display: 'grid', gap: 6 }}>
-          <div style={label}>Unit channels</div>
+          <div style={label}>Department channels</div>
           {choice('channels', 'archive', channels, setChannels, 'Archive them', 'read-only, messages kept (default)')}
           {choice('channels', 'keep', channels, setChannels, 'Keep them open', 'as ordinary channels')}
           {choice('channels', 'delete', channels, setChannels, 'Delete them', 'with their messages; #company stays')}

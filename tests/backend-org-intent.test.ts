@@ -353,7 +353,7 @@ test('the cascade: an objective handed to a unit (org_set_goal unit=…, or PATC
   assert.equal(s.provider.requests.length, 2, 'the tool round and the answer');
   // (the turn loop extends the same messages array with the tool result, so pick the user turn)
   const prompt = String(s.provider.requests[0].messages.find((m) => m.role === 'user')!.content);
-  assert.match(prompt, /You were woken as the lead of Writer's team \(#writer\)/);
+  assert.match(prompt, /You were woken as the head of Writer's team \(#writer\)/);
   assert.match(prompt, /trigger: objective assigned/);
   assert.match(prompt, /## Objectives handed to this unit[\s\S]*Three issues drafted[\s\S]*Company-wide/);
   assert.match(prompt, /Members: Alpha \(member, active\)/);

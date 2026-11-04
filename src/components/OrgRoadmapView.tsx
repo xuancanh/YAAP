@@ -85,7 +85,7 @@ export function RoadmapTimeline({ data, groupBy, zoom, onOpen }: { data: Roadmap
     <div data-testid="roadmap-timeline" style={{ ...card, padding: 0, overflowX: 'auto' }}>
       <div style={{ minWidth: LABEL_W + 560, position: 'relative' }}>
         <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--panel)', zIndex: 2 }}>
-          <div style={{ width: LABEL_W, flex: 'none', padding: '8px 12px', ...faint }}>{groupBy === 'goal' ? 'By goal and key result' : 'By unit'}</div>
+          <div style={{ width: LABEL_W, flex: 'none', padding: '8px 12px', ...faint }}>{groupBy === 'goal' ? 'By goal and key result' : 'By department'}</div>
           <div style={{ flex: 1, position: 'relative', height: 30 }}>
             {scale.columns.map((c) => (
               <span key={c.at} style={{ position: 'absolute', left: `${xOf(scale, c.at) * 100}%`, top: 8, fontSize: 11, color: 'var(--text-faint)', paddingLeft: 4, borderLeft: '1px solid var(--border-soft)', whiteSpace: 'nowrap' }}>{c.label}</span>
@@ -388,8 +388,8 @@ export function ProjectTeamBlock({ team }: { team: ProjectTeam }) {
   const units = team.units.length;
   return (
     <Block title={`Team${team.members.length ? ` · ${team.members.length}` : ''}`} testid="project-team" action={<span style={faint}>{team.channel ? `#${team.channel.slug}` : 'no channel yet'}{team.standup.cron ? ` · standup ${team.standup.cron}` : ''}</span>}>
-      <div style={{ ...faint, marginBottom: 6 }}>Led by {team.lead.name}{units > 0 ? ` · drawn from ${units} unit${units === 1 ? '' : 's'}: ${team.units.join(', ')}` : ''}. Each member keeps its home unit and head; the head approves the allocation.</div>
-      {team.members.length === 0 && <div style={faint}>No team yet. The lead proposes members from any unit; their heads approve the allocation.</div>}
+      <div style={{ ...faint, marginBottom: 6 }}>Led by {team.lead.name}{units > 0 ? ` · drawn from ${units} department${units === 1 ? '' : 's'}: ${team.units.join(', ')}` : ''}. Each member keeps its home unit and head; the head approves the allocation.</div>
+      {team.members.length === 0 && <div style={faint}>No team yet. The lead proposes members from any department; their heads approve the allocation.</div>}
       {team.members.map((m) => (
         <div key={m.id} data-testid="project-team-member" data-status={m.status} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderTop: '1px solid var(--border-soft)', padding: '5px 0', fontSize: 12.5 }}>
           <b>{m.name}</b>
@@ -506,7 +506,7 @@ export function RoadmapPane({ org }: { org: OrgDetail }) {
           <div style={faint}>Every project the company works on, why (the key result it moves) and when. Leads post health; you choose what is Now.</div>
         </div>
         <Segmented label="Roadmap view" value={view} onChange={setView} options={[{ id: 'timeline', label: 'Timeline' }, { id: 'board', label: 'Now / Next / Later' }]} />
-        {view === 'timeline' && <Segmented label="Group by" value={groupBy} onChange={setGroupBy} options={[{ id: 'goal', label: 'Goal' }, { id: 'unit', label: 'Unit' }]} />}
+        {view === 'timeline' && <Segmented label="Group by" value={groupBy} onChange={setGroupBy} options={[{ id: 'goal', label: 'Goal' }, { id: 'unit', label: 'Department' }]} />}
         {view === 'timeline' && <Segmented label="Zoom" value={zoom} onChange={setZoom} options={[{ id: 'month', label: 'Month' }, { id: 'quarter', label: 'Quarter' }]} />}
         <button style={btn(true)} onClick={() => setAdding(!adding)}>New project</button>
       </div>

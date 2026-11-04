@@ -100,6 +100,14 @@ app — to its path, replacing the address (no extra history entry):
 | `#/ws/<id>/org/board?task=<id>` | `/:company/tasks/<id>` |
 | `#/ws/<id>/org/<pane\|section>` | the pane or section |
 | `#/ws/<id>`, `#/home` | `/:company/home` |
+| `/:company/channels/<old-slug>[/<messageId>]` (a renamed department's channel) | `/:company/channels/<current-slug>[/<messageId>]` |
+
+**Renamed channels.** A department rename (docs/group-chat.md §7
+"Department names") moves its channel to a new slug and keeps the old one
+in `channels.formerSlugs`; the server's `bySlug` falls back to it, so every
+channel route answers for the old slug, and `ChannelView` moves to the
+current slug once the channel loads (replacing the address, so Back does not bounce). A former slug stays
+reserved: no other channel takes it.
 
 ## Server links
 

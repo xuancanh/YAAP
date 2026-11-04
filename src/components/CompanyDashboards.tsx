@@ -24,6 +24,7 @@ import { Markdown } from '../lib/md';
 import { faint, linkBtn, ago, Avatar, useAgentNames } from './org-ui';
 import { ProgramDirectionCard, ProgramPeopleCard } from './ProgramMatrixView';
 import { PluginCards } from './PluginUi';
+import { DepartmentName, useMayRenameDepartments } from './DepartmentName';
 
 // ---- the parts every dashboard shares ----
 
@@ -363,18 +364,19 @@ function PeopleDashboard({ org }: { org: OrgDetail }) {
   );
 }
 
-/** People › Teams: every unit as a card — lead, members, what is open, at risk and on today, and its channel, board and goals. */
+/** People › Teams: every department as a card — lead, members, what is open, at risk and on today, and its channel, board and goals; the CEO renames one in place. */
 export function TeamsPane({ org }: { org: OrgDetail }) {
   const app = useApp();
   const open = useOpen();
   const names = useAgentNames();
+  const mayRename = useMayRenameDepartments(org.workspaceId);
   const units = flatUnits(app.wsOrg?.units ?? []);
   const atRisk = useMemo(() => atRiskByUnit(app.orgIntent ?? []), [app.orgIntent]);
   const depthOf = useMemo(() => {
     const byId = new Map(units.map((u) => [u.id, u]));
     return (u: OrgUnitNode) => { let d = 0; let p = u.parentUnitId; while (p && byId.has(p) && d < 8) { d += 1; p = byId.get(p)!.parentUnitId; } return d; };
   }, [units]);
-  if (units.length === 0) return <div style={faint}>No units yet: the company is one team. The chief of staff proposes units as the company grows.</div>;
+  if (units.length === 0) return <div style={faint}>No departments yet: the company is one team. The chief of staff proposes departments as the company grows.</div>;
   return (
     <div style={{ maxWidth: 1180 }} data-testid="teams-pane">
       <div style={{ ...faint, fontSize: 12.5, marginBottom: 14, maxWidth: 640 }}>Each team has a lead, a channel, a board and goals. The board and goals open filtered to the team. {org.name} is the top of the tree.</div>
@@ -392,7 +394,7 @@ export function TeamsPane({ org }: { org: OrgDetail }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                 <Avatar a={lead} size={28} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ ...ellipsis, fontSize: 14, fontWeight: 650 }}>{isRoot ? 'Company' : u.name}</div>
+                  <div style={{ ...ellipsis, fontSize: 14, fontWeight: 650 }}>{isRoot ? 'Company' : <DepartmentName wsId={org.workspaceId} unitId={u.id} name={u.name} editable={mayRename} />}</div>
                   <div style={{ ...faint, ...ellipsis }}>{d > 0 ? `level ${d + 1} · ` : ''}led by {lead?.name ?? 'an agent'}</div>
                 </div>
                 {risk > 0 && <span title={`${risk} goal(s) at risk`} style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--amber)' }}>{risk} at risk</span>}

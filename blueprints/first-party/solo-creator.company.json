@@ -84,6 +84,17 @@
       "monthlyUsd": 15
     }
   ],
+  "units": [
+    {
+      "title": "Chief of staff",
+      "parent": null
+    },
+    {
+      "title": "Editor-in-chief",
+      "parent": "Chief of staff",
+      "name": "Editorial"
+    }
+  ],
   "cadences": [
     {
       "unitTitle": "root",

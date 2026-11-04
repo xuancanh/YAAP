@@ -34,6 +34,8 @@ export type ChangeKind =
   | 'audit_settings' | 'audit_chain' | 'kill_switch' | 'frozen_classes'
   | 'delegation' | 'eval_cases'
   | 'member_identity' | 'member_model' | 'member_heartbeat' | 'member_folder'
+  // A department's name (docs/group-chat.md §7 "Department names").
+  | 'unit_name'
   // Work tracking (docs/work-tracking.md): the CEO's bets.
   | 'project_bet' | 'project_appetite' | 'project_kill';
 
@@ -99,6 +101,7 @@ export const BOUNDARY: BoundaryRule[] = [
   { id: 'member_identity', kind: 'member_identity', match: 'a member\'s name, role, emoji and colours', verdict: 'alone', reason: 'presentation only: it changes no authority, money or behaviour', delegable: true },
   { id: 'member_model', kind: 'member_model', match: 'a member\'s agent type and model', verdict: 'alone', reason: 'like routing, it trades cost for quality inside the envelope; the eval gate replays the member\'s golden set first', delegable: true },
   { id: 'member_heartbeat', kind: 'member_heartbeat', match: 'a member\'s heartbeat on/off and cadence', verdict: 'alone', reason: 'bounded by the heartbeat fence in code (cadence floor, daily run cap)', delegable: true },
+  { id: 'unit_name', kind: 'unit_name', match: 'a department\'s name (its channel follows; the task key prefix stays)', verdict: 'alone', reason: 'presentation only: the unit id, its board, goals and task keys are unchanged, and the old channel slug keeps resolving', delegable: true },
   { id: 'member_folder', kind: 'member_folder', match: 'a member\'s assigned workspace folder', verdict: 'propose', reason: 'it widens which shared files the member can read and write', delegable: true },
   { id: 'scope_widen', kind: 'scope_widen', match: 'widen a member\'s scopes', verdict: 'alone', reason: 'only within the chief\'s own holdings — the cap refuses anything beyond', delegable: true },
   { id: 'scope_narrow', kind: 'scope_narrow', match: 'narrow a member\'s scopes', verdict: 'alone', reason: 'narrowing removes authority', delegable: true },

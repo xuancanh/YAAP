@@ -978,6 +978,10 @@ export const orgUnits = pgTable('org_units', {
    *  company's for the root; assigned on first use, editable by the owner. */
   taskKey: text('taskKey'),
   createdAt: text('createdAt').notNull(),
+  /** Where `name` came from (migration 0090, docs/group-chat.md §7
+   *  "Department names"): derived (from the lead's title, unit-names.ts) |
+   *  custom (a person, an agent or a blueprint chose it; never re-derived). */
+  nameSource: text('nameSource').notNull().default('derived'),
 }, (t) => [uniqueIndex('idx_org_units_lead').on(t.orgId, t.leadAgentId)]);
 
 /** A meeting (docs/company-vision.md §3, execution-plan item 19): a thread
@@ -1762,6 +1766,10 @@ export const channels = pgTable('channels', {
   workspaceId: text('workspaceId').notNull(),
   /** URL-safe, unique per workspace (lowercase, [a-z0-9-]). */
   slug: text('slug').notNull(),
+  /** Slugs this channel had before a rename, space-separated (migration
+   *  0090): `bySlug` falls back to them, so old links and `#old` refs keep
+   *  resolving. A department rename reslugs its channel. */
+  formerSlugs: text('formerSlugs').notNull().default(''),
   name: text('name').notNull(),
   topic: text('topic').notNull().default(''),
   /** public | private. */

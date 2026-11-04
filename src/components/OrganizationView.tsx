@@ -25,6 +25,7 @@ import { card, input, btn, pill, h2, faint, linkBtn, ago, useAgentNames, useUnit
 import { PluginPanels } from './PluginUi';
 import { changeSummary, decidedViaBadge, dueBadge, expectedLabel, memberSettingsLines, verificationBadge } from '../lib/org3';
 import { FollowToggle } from './FollowToggle';
+import { DepartmentName, useMayRenameDepartments } from './DepartmentName';
 import { GoalProgramLine, useProgram } from './ProgramMatrixView';
 import { MentionBox, storedMentions, useMentionables } from './MentionBox';
 import { Markdown } from '../lib/md';
@@ -177,6 +178,7 @@ function OrgStructure({ org, reload }: { org: OrgDetail; reload: () => Promise<v
   const [hiring, setHiring] = useState(false);
   // Hybrid staff (item 24): employees hang under the member they report to, with a person badge.
   const [humans, setHumans] = useState<OrgHuman[]>([]);
+  const mayRename = useMayRenameDepartments(org.workspaceId);
   const live = org.members.filter((m) => m.status !== 'terminated');
   const free = app.agents.filter((a) => !live.some((m) => m.agentId === a.id));
   const act = async (fn: () => Promise<unknown>) => { try { await fn(); await reload(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
@@ -228,7 +230,7 @@ function OrgStructure({ org, reload }: { org: OrgDetail; reload: () => Promise<v
               <span style={{ width: 22, height: 22, borderRadius: 7, background: 'var(--panel-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>🧑</span>
               <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <span>{app.nameOf(h.memberAccountId)}</span>
-                <span style={pill('var(--blue)', '#fff')} title="A human employee: takes task cards, reviews, sits in the unit channel">person</span>
+                <span style={pill('var(--blue)', '#fff')} title="A human employee: takes task cards, reviews, sits in the department channel">person</span>
                 <span style={pill()}>{h.title || 'employee'}</span>
               </div>
             </div>
@@ -238,13 +240,15 @@ function OrgStructure({ org, reload }: { org: OrgDetail; reload: () => Promise<v
       </div>
     );
     if (!unit) return node;
-    // A unit boundary (docs/group-chat.md §7): a subtle box around the lead and its reports, labelled with the unit and its channel.
+    // A department boundary (docs/group-chat.md §7): a subtle box around the lead and its reports, labelled with the department's own name (renamable in place) and its channel.
     return (
       <div key={`unit-${unit.id}`} style={{ border: '1px dashed var(--border)', borderRadius: 12, padding: '6px 8px 0', marginBottom: 10, background: depth % 2 === 0 ? 'transparent' : 'var(--panel-2)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 4px 8px', fontSize: 11, color: 'var(--text-dim)' }}>
-          <span style={{ fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', fontSize: 10 }}>{unit.parentUnitId === null ? 'Company' : 'Unit'}</span>
-          <span style={{ fontWeight: 600, color: 'var(--text)' }}>{unit.name}</span>
-          <button onClick={() => app.openChannel(unit.slug)} title="Open the unit channel" style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 600 }}>#{unit.slug}</button>
+          <span style={{ fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', fontSize: 10 }}>{unit.parentUnitId === null ? 'Company' : 'Department'}</span>
+          {unit.parentUnitId === null
+            ? <span style={{ fontWeight: 600, color: 'var(--text)' }}>{unit.name}</span>
+            : <DepartmentName wsId={org.workspaceId} unitId={unit.id} name={unit.name} editable={mayRename} style={{ fontWeight: 600, color: 'var(--text)' }} />}
+          <button onClick={() => app.openChannel(unit.slug)} title={unit.parentUnitId === null ? 'Open the company channel' : 'Open the department channel'} style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 600 }}>#{unit.slug}</button>
           <span style={{ flex: 1 }} />
           <span style={faint}>{unit.counts.openTasks} open · {unit.counts.goals} goal(s)</span>
           <button style={{ ...btn(), padding: '2px 7px', fontSize: 11 }} onClick={() => openUnit(unit, 'board')}>Board</button>
@@ -257,7 +261,7 @@ function OrgStructure({ org, reload }: { org: OrgDetail; reload: () => Promise<v
   return (
     <div style={{ maxWidth: 820 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Org chart</h2><div style={faint}>You → chief of staff → specialists. Depth ≤ {org.maxDepth}, ≤ {org.maxDirectReports} direct reports. Scopes are what a member may touch and never exceed the chief's own. Every member with reports leads a unit (a board, a channel, goals) — the dashed boxes. Mode, chief and caps: Settings → Workspace → Organization.</div></div>
+        <div style={{ flex: 1 }}><h2 style={h2}>Org chart</h2><div style={faint}>You → chief of staff → specialists. Depth ≤ {org.maxDepth}, ≤ {org.maxDirectReports} direct reports. Scopes are what a member may touch and never exceed the chief's own. Every member with reports leads a department (a board, a channel, goals) — the dashed boxes; the CEO renames one in place (✎), and its channel follows. Mode, chief and caps: Settings → Workspace → Organization.</div></div>
         <button style={btn()} onClick={() => setAdding(!adding)} disabled={free.length === 0} title="Seat an existing agent of this workspace">Add member</button>
         <button style={btn(true)} onClick={() => setHiring(true)} title="Hire from the role catalog or a pack (a hire card in supervised mode)">Hire</button>
       </div>
@@ -303,7 +307,7 @@ function Humans({ org, onLoaded }: { org: OrgDetail; onLoaded?: (humans: OrgHuma
   const isCeo = meRole === 'ceo';
   const free = members.filter((m) => !humans.some((h) => h.memberAccountId === m.memberAccountId));
   const act = async (fn: () => Promise<unknown>) => { try { await fn(); await refresh(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
-  const ROLE_HINT: Record<HumanRole, string> = { ceo: 'everything', board: 'decides hire, budget and strategy approvals; gets the brief', observer: 'reads the company; decides nothing', employee: 'a hybrid staff member: takes task cards, reviews, sits in the unit channel (docs/company-vision.md §4)' };
+  const ROLE_HINT: Record<HumanRole, string> = { ceo: 'everything', board: 'decides hire, budget and strategy approvals; gets the brief', observer: 'reads the company; decides nothing', employee: 'a hybrid staff member: takes task cards, reviews, sits in the department channel (docs/company-vision.md §4)' };
   const live = org.members.filter((m) => m.status === 'active');
   return (
     <div style={{ ...card, padding: '10px 12px', marginBottom: 8 }}>
@@ -426,14 +430,14 @@ function Board({ org }: { org: OrgDetail }) {
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
         <div style={{ flex: 1 }}>
-          <h2 style={h2}>{isCompany ? 'Board' : `${current?.name ?? 'Unit'} · board`}</h2>
+          <h2 style={h2}>{isCompany ? 'Board' : `${current?.name ?? 'Department'} · board`}</h2>
           <div style={faint}>
             {isCompany ? 'One owner per task. Assigning wakes the owner; a comment wakes the owner; @Name in a comment wakes that member or notifies that person.' : <>Led by {lead?.name ?? '—'} · tasks of its reports, and what the lead hands them.</>}
             {current && <> · <span style={{ color: 'var(--accent-hi)', cursor: 'pointer' }} onClick={() => app.openChannel(current.slug)}>#{current.slug}</span></>}
             {current && <> · <TaskKeyPrefix wsId={org.workspaceId} unitId={current.id} prefix={current.taskKey ?? null} /></>}
           </div>
         </div>
-        <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }} title={isCompany ? 'Every unit\'s tasks, or only the company\'s own' : 'Include the units below this one'}><input type="checkbox" checked={rolled} onChange={(e) => setRollUp({ ...rollUp, [unitKey]: e.target.checked })} />roll up</label>
+        <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }} title={isCompany ? 'Every department\'s tasks, or only the company\'s own' : 'Include the departments below this one'}><input type="checkbox" checked={rolled} onChange={(e) => setRollUp({ ...rollUp, [unitKey]: e.target.checked })} />roll up</label>
         <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={showCold} onChange={(e) => setShowCold(e.target.checked)} />done & cancelled</label>
         {org.projects.length > 0 && (
           <select aria-label="Project" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ ...input, width: 'auto', maxWidth: 220 }}>
@@ -527,8 +531,8 @@ function NewTask({ org, members, units, tasks, defaultUnitId, onDone }: { org: O
       ))}
       <div style={{ display: 'flex', gap: 8 }}>
         <select value={assignee} onChange={(e) => setAssignee(e.target.value)} style={input}><option value="">Backlog (chief triages)</option>{members.map((m) => <option key={m.id} value={m.agentId}>assign to {names.get(m.agentId)?.name ?? m.agentId.slice(0, 8)}</option>)}</select>
-        <select value={projectId} onChange={(e) => setProjectId(e.target.value)} style={input} title="Every task has a project; without one it lands in its unit's Unsorted project"><option value="">Project: Unsorted</option>{org.projects.filter((p) => p.status !== 'cancelled' && p.status !== 'done').map((p) => <option key={p.id} value={p.id}>{p.key ? `${p.key} ` : ''}{p.title}</option>)}</select>
-        {units.length > 1 && <select value={unitId} onChange={(e) => setUnitId(e.target.value)} style={input} title="Which unit's board; by default the one led by the assignee's manager"><option value="">Board: by assignee</option>{units.map((u) => <option key={u.id} value={u.id}>{'· '.repeat(u.depth)}{u.parentUnitId === null ? 'Company' : u.name}</option>)}</select>}
+        <select value={projectId} onChange={(e) => setProjectId(e.target.value)} style={input} title="Every task has a project; without one it lands in its department's Unsorted project"><option value="">Project: Unsorted</option>{org.projects.filter((p) => p.status !== 'cancelled' && p.status !== 'done').map((p) => <option key={p.id} value={p.id}>{p.key ? `${p.key} ` : ''}{p.title}</option>)}</select>
+        {units.length > 1 && <select value={unitId} onChange={(e) => setUnitId(e.target.value)} style={input} title="Which department's board; by default the one led by the assignee's manager"><option value="">Board: by assignee</option>{units.map((u) => <option key={u.id} value={u.id}>{'· '.repeat(u.depth)}{u.parentUnitId === null ? 'Company' : u.name}</option>)}</select>}
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }}>Due <input type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} style={{ ...input, width: 'auto' }} aria-label="Due date" /></label>
@@ -727,7 +731,7 @@ function Goals({ org, reload }: { org: OrgDetail; reload: () => Promise<void> })
     <div style={{ maxWidth: 820 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
         <div style={{ flex: 1 }}>
-          <h2 style={h2}>{isCompany ? 'Goals' : `${current?.name ?? 'Unit'} · goals`}</h2>
+          <h2 style={h2}>{isCompany ? 'Goals' : `${current?.name ?? 'Department'} · goals`}</h2>
           <div style={faint}>Progress is computed: done ÷ linked tasks, averaged with the children. Status is yours to set. The chief proposes strategies you approve; unit leads add goals under ones they can see.{current && !isCompany && <> · <span style={{ color: 'var(--accent-hi)', cursor: 'pointer' }} onClick={() => app.openChannel(current.slug)}>#{current.slug}</span></>}</div>
         </div>
         <button style={btn(true)} onClick={() => setAdding(adding ? null : { parentGoalId: '' })}>Add goal</button>
@@ -741,7 +745,7 @@ function Goals({ org, reload }: { org: OrgDetail; reload: () => Promise<void> })
         </div>
       )}
       {adding && <NewGoal org={org} units={units} defaultUnitId={isCompany ? (root?.id ?? '') : (current?.id ?? '')} parents={flat} parentGoalId={adding.parentGoalId} onDone={() => { setAdding(null); void act(async () => undefined); }} />}
-      {tree.length === 0 && <div style={faint}>No goals {isCompany ? 'yet' : 'in this unit yet'}.</div>}
+      {tree.length === 0 && <div style={faint}>No goals {isCompany ? 'yet' : 'in this department yet'}.</div>}
       {tree.map((g) => <GoalRow key={g.id} g={g} org={org} depth={0} names={names} program={program} unitOf={(id) => (id ? byId.get(id) : root) ?? root} currentUnitId={current?.id ?? null} act={act} addChild={(parentGoalId) => setAdding({ parentGoalId })} />)}
       {flat.length > 0 && <div style={{ ...faint, marginTop: 10 }}>{count(tree)} goal(s) · reference one in a channel as <code>#goal:&lt;id&gt;</code> and it shows up under the goal.</div>}
     </div>
@@ -797,7 +801,7 @@ function GoalRow({ g, org, depth, names, program, unitOf, currentUnitId, act, ad
             <div style={{ fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span>{g.title}</span>
               <span style={{ ...faint, fontFamily: 'var(--mono)', fontSize: 10.5 }} title="Reference it in a channel">#goal:{g.id.slice(0, 8)}</span>
-              {unit && unit.id !== currentUnitId && <span style={pill()} title="Unit">{unit.parentUnitId === null ? 'company' : unit.name}</span>}
+              {unit && unit.id !== currentUnitId && <span style={pill()} title="Department">{unit.parentUnitId === null ? 'company' : unit.name}</span>}
               {program.get(g.id) ? <GoalProgramLine item={program.get(g.id)!} /> : owner && <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }}><Avatar a={owner} size={14} />{owner.name}</span>}
             </div>
             {g.description && <div style={faint}>{g.description}</div>}

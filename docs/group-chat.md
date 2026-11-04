@@ -355,8 +355,9 @@ an agent gains its first report (hire or reorg) and archived, data kept, when
 its last report leaves.
 
 - `org_units` — id, orgId, leadAgentId, parentUnitId (null for the root),
-  name (default "<lead>'s team"; the root is the workspace name), slug,
-  channelId, archivedAt, createdAt.
+  name (a non-root unit is a **department** with its own name, "Engineering";
+  see "Department names" below; the root is the workspace name), nameSource,
+  slug, channelId, archivedAt, taskKey, createdAt.
 - **Channel.** `#<slug>` with members = lead + direct reports + the
   workspace's human CEO and board members. Membership follows the org chart:
   hire, reorg and termination add and remove channel members. Task status
@@ -396,8 +397,9 @@ owner and `org_humans` CEO/board; root: every live member, terminated ones
 removed). Channel operations go through the `UnitChannels` seam on
 `OrgAnnouncer` (bound by `GroupChatService`, which de-duplicates `#<slug>`
 against the workspace's channels — `#editor` taken → `#editor-2`); unbound,
-units exist without channels. The unit name defaults to "<lead>'s team" and
-the root to the organization's name; `PATCH …/units/:unitId` renames.
+units exist without channels. A department's name is derived from its
+lead's title and the root takes the organization's name; `PATCH
+…/units/:unitId` renames ("Department names" below).
 Boards: `OrgTasksService.create` sets `unitId` by `defaultUnitId` (the unit
 led by the assignee's manager; an unassigned task a lead creates sits on its
 own board, one another agent creates on its manager's, anything else on the
@@ -418,7 +420,7 @@ direct reports (and to tasks on its board or owned inside it),
 `org_unit_report`; the chief has the same tools company-wide (`unit`
 argument) plus its manager set. Autonomous hires, reorgs and terminations
 post one line into the affected unit channels besides `#company`; a unit
-that empties closes with a "Unit archived" line before its channel is
+that empties closes with a "Department archived" line before its channel is
 archived. API: `GET …/org/units` (tree with members and counts, also in
 `GET …/org` as `units`), `PATCH …/org/units/:unitId`,
 `GET …/org/units/:unitId/board?rollUp=`, `GET …/org/units/:unitId/goals/tree`,
@@ -430,11 +432,74 @@ the panes scoped by `store.orgUnitId`; the Board pane has unit chips and a
 pane is the tracker (tree, progress bars, owner, unit, linked tasks and
 messages, inline status, "Add goal" with parent/unit/owner, "+ child goal");
 the org chart boxes every unit with its name, channel and counts; a unit
-channel's header says "Unit channel · <unit>" (`ChannelDetail.unit`).
+channel's header says "Department · <name>" (`ChannelDetail.unit`).
 Departures from the text above: linked tasks are the goal's projects' tasks
 (there is no `org_tasks.goalId`); `org_set_goal`'s parent is optional for
 leads too; the root unit keeps the organization's name rather than tracking
 later workspace renames.
+
+### Department names (4 November 2026, migration 0090)
+
+People call a unit a **department** ("unit" stays in code and the API). A
+non-root unit has its own name, not its lead's: "Unit channel · Head of
+Engineering's team" became "Department · Engineering", `#engineering`.
+
+- **Default** (`server/src/org/unit-names.ts` `departmentName`, pure, shared
+  with the boot backfill), from the lead's member title: a catalog head's
+  exact title names its function ("Head of Engineering" → Engineering,
+  "Head of Customer" → Customer Success, "General Counsel" → Legal); a
+  head- or manager-shaped title names what it heads ("Head of Growth" →
+  Growth, "VP of Sales" → Sales, "Support Lead" → Support, "Design Manager" →
+  Design — not a coordinator's "Program Manager" or "Account Manager"); a
+  few well-known titles ("Editor-in-chief" → Editorial, "Principal
+  Investigator" → Research); any other title naming a function ("Senior
+  Designer" → Design); else "<lead>'s team" (and `#<lead>`), only when
+  nothing better is known. A name another department of the org already
+  has becomes "Engineering (Ada)". `org_units.nameSource` is `derived` or
+  `custom`; nothing re-derives a custom name.
+- **Rename** — `OrgUnitsService.rename`. Who: `PATCH …/org/units/:unitId
+  { name }` for the CEO and the board (employees and observers are refused);
+  `org_rename_unit` for the chief of staff (any department) and a function
+  head (its own; the chief is told). Agents go through the boundary row
+  `unit_name` (alone: presentation only). Not the root: the company's name
+  is the CEO's.
+- **Identity.** The unit id is the identity: board, goals, cadences,
+  projects and task keys stay. The **task key prefix never moves** on a
+  rename (ENG-12 stays ENG-12; `PATCH { taskKey }` is the separate, explicit
+  change); only a new unit derives its prefix, from its department name
+  (`unitPrefixBase`: the function code first, then the department name).
+- **Channel.** The channel's display name and slug follow the department
+  (`#engineering`); the old slug joins `channels.formerSlugs`, and
+  `GroupChatService.bySlug` falls back to it, so `/:company/channels/<old>`
+  links, `#old` references and `/meeting #old` keep finding the channel (the
+  SPA redirects to the current slug; docs/routes.md). A slug another channel
+  holds or held is never taken: the rename gets `-2`. A topic still reading
+  "Department channel of …" (or the old "Unit channel of …") is reworded;
+  one a person wrote stays. Folders do not move (`channels.folder`); a
+  meeting's minutes already written keep their path, new ones file under
+  the new slug.
+- **Record.** One `unit_rename` audit row (name, previous, slug,
+  previousSlug, taskKey) and one system line in the channel: "Department
+  renamed by the CEO: Engineering → Platform (#platform; #engineering still
+  links here). Task keys stay ENG-n."
+- **Backfill** — migration `0090-department-names` adds
+  `org_units.nameSource` and `channels.formerSlugs` and runs
+  `backfillDepartmentNames` (idempotent): a non-root unit still on the old
+  "<lead>'s team" default takes its derived name, unique in the org; its
+  channel takes the name and slug (old slug kept as an alias) and a
+  generated topic is reworded. Any other pre-0090 name was set by hand and
+  is marked `custom`, untouched. No audit row or channel line is written
+  from the migration.
+- **Blueprints** carry the name as `units[].name` (docs/blueprints.md);
+  every starter names its departments.
+- **Prompts** name the department: the standing note says "I lead the
+  Engineering department (#engineering)" or "Department: Engineering
+  (#engineering), led by Ada"; the turn briefing "You: Engineer, in
+  Engineering (led by Ada); …".
+- **UI.** `src/components/DepartmentName.tsx`: the name with an inline
+  rename (✎, Enter saves, Escape cancels) for the CEO and the board, in the
+  channel header, the org chart's department boxes and People › Teams.
+  User-facing text says "department" where it said "unit".
 
 ## 8. Meetings: rituals that end in minutes
 

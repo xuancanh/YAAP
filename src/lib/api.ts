@@ -1090,6 +1090,8 @@ export interface OrgUnit {
   id: string; orgId: string; leadAgentId: string; parentUnitId: string | null; name: string; slug: string; channelId: string | null; archivedAt: string | null; createdAt: string;
   /** The board's task key prefix (docs/tasks-keys.md), e.g. ENG. */
   taskKey?: string | null;
+  /** Where the department name came from (docs/group-chat.md §7): derived from the lead's title, or custom (chosen; never re-derived). */
+  nameSource?: 'derived' | 'custom' | string;
 }
 export interface OrgUnitNode extends OrgUnit { memberAgentIds: string[]; counts: { openTasks: number; tasks: number; goals: number }; children: OrgUnitNode[] }
 export interface OrgGoalNode extends OrgGoal { progress: number; tasks: { total: number; done: number }; children: OrgGoalNode[] }

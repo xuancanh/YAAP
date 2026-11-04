@@ -69,17 +69,17 @@ export function VisionPane({ org, reload }: { org: OrgDetail; reload: () => Prom
     <div style={{ maxWidth: 860 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 220 }}>
-          <h2 style={h2}>{isCompany ? 'Vision' : `${current?.name ?? 'Unit'} · intent`}</h2>
+          <h2 style={h2}>{isCompany ? 'Vision' : `${current?.name ?? 'Department'} · intent`}</h2>
           <div style={faint}>One vision, a few objectives, measured key results with an owner who checks in. The chief derives the plan; you revise the vision and it re-plans. {isCeo === false && 'Only the CEO writes here.'}</div>
         </div>
-        <button style={btn()} disabled={planning} onClick={() => void planNow()} title="Run a planning session of the unit's lead now (the root by default); ignores the cooldown">{planning ? 'Planning…' : 'Plan now'}</button>
+        <button style={btn()} disabled={planning} onClick={() => void planNow()} title="Run a planning session of the department's head now (the root by default); ignores the cooldown">{planning ? 'Planning…' : 'Plan now'}</button>
       </div>
       <UnitChips count={(u) => riskByUnit[u.parentUnitId === null ? '' : u.id] ?? riskByUnit[u.id] ?? null} title={(u) => `${riskByUnit[u.parentUnitId === null ? '' : u.id] ?? 0} goal(s) at risk`} />
       {isCompany && <VisionCard info={info} isCeo={isCeo} act={act} />}
       {isCompany && <ProfileCard info={info} isCeo={isCeo} act={act} />}
       {isCompany && <StrategyCard strategy={strategy} />}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '16px 0 8px' }}>
-        <div style={{ fontSize: 13.5, fontWeight: 700 }}>{isCompany ? 'Objectives and key results' : 'Objectives handed to this unit'}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 700 }}>{isCompany ? 'Objectives and key results' : 'Objectives handed to this department'}</div>
         <span style={faint}>{objectives.length} objective(s) · {krCount} key result(s){visionNode?.dueAt ? ` · horizon ${visionNode.dueAt.slice(0, 10)}` : ''}</span>
       </div>
       {tree === null && <div style={faint}>Loading…</div>}

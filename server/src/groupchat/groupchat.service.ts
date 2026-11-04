@@ -23,7 +23,7 @@
  */
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, like, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { agents, channelMembers, channelMessages, channelReads, channels, orgDecisions, organizations, orgUnits, workspaces } from '../database/schema';
@@ -136,6 +136,7 @@ export class GroupChatService {
         if (patch.archived !== undefined) await this.archive(channelId, patch.archived, { system: true });
       },
       postSystem: async (channelId, text) => { await this.postSystem(channelId, text); },
+      reslugChannel: async (channelId, input) => { const c = await this.reslug(channelId, input); return { id: c.id, slug: c.slug }; },
       deleteChannel: async (channelId) => { await this.removeChannel(channelId); },
       // Meetings (docs/group-chat.md §8): a thread the runtime writes into
       // and reads back; its posts never compute a wake set.
@@ -224,11 +225,11 @@ export class GroupChatService {
     /** Sub-channel columns (docs/group-chat.md §9); SubChannels.start is the only caller. */
     sub?: Partial<Pick<Channel, 'parentChannelId' | 'channelKind' | 'purpose' | 'status' | 'meetingId' | 'taskId' | 'projectId' | 'originMessageId' | 'lastActivityAt'>>;
   } = {}): Promise<Channel> {
-    const existing = await this.bySlug(workspaceId, slug).catch(() => null);
+    const existing = await this.bySlug(workspaceId, slug, { exact: true }).catch(() => null);
     if (existing) return existing;
     if (!SLUG_RE.test(slug)) throw new BadRequestException('slug must be lowercase letters, digits and dashes');
     const row: Channel = {
-      accountId: currentAccountId(), id: newId(), workspaceId, slug, name: (name || slug).trim().slice(0, 80),
+      accountId: currentAccountId(), id: newId(), workspaceId, slug, formerSlugs: '', name: (name || slug).trim().slice(0, 80),
       topic: (opts.topic ?? '').slice(0, 500), kind: opts.kind ?? 'public', createdBy: opts.createdBy ?? 'system',
       folder: opts.folder ?? `channels/${slug}`, dailyTokenBudget: 0, archivedAt: null, createdAt: nowIso(),
       parentChannelId: null, channelKind: 'channel', purpose: '', status: 'open', closedAt: null, closedBy: null, outcome: '',
@@ -277,10 +278,39 @@ export class GroupChatService {
     return c;
   }
 
-  async bySlug(workspaceId: string, slug: string): Promise<Channel> {
+  /** A channel by its slug; a slug it had before a rename (`formerSlugs`,
+   *  a department rename) still finds it unless `exact`, so old links and
+   *  `#old` references keep working (docs/routes.md). */
+  async bySlug(workspaceId: string, slug: string, opts: { exact?: boolean } = {}): Promise<Channel> {
     const c = (await this.db.select().from(channels).where(and(eq(channels.workspaceId, workspaceId), eq(channels.slug, slug))).limit(1)).at(0);
-    if (!c) throw new NotFoundException(`channel #${slug}`);
-    return c;
+    if (c) return c;
+    const former = opts.exact || !SLUG_RE.test(slug) ? undefined : (await this.db.select().from(channels).where(and(eq(channels.workspaceId, workspaceId), like(channels.formerSlugs, `%${slug}%`))))
+      .find((x) => x.formerSlugs.split(' ').includes(slug));
+    if (!former) throw new NotFoundException(`channel #${slug}`);
+    return former;
+  }
+
+  /**
+   * Rename a channel and move it to a new slug (a department rename,
+   * docs/group-chat.md §7): the slug becomes `wanted` (or wanted-2… when
+   * taken by another channel's slug or former slug), the old one joins
+   * `formerSlugs` so links and references keep resolving. Messages,
+   * members, the folder and the id are unchanged. Never #general or #company.
+   */
+  async reslug(channelId: string, input: { name: string; slug: string; topic?: string }): Promise<Channel> {
+    const c = await this.get(channelId);
+    if (c.slug === GENERAL_SLUG || c.slug === COMPANY_SLUG) throw new BadRequestException(`#${c.slug} keeps its slug`);
+    const base = slugify(input.slug).slice(0, 44) || c.slug;
+    const others = (await this.db.select({ id: channels.id, slug: channels.slug, formerSlugs: channels.formerSlugs }).from(channels).where(eq(channels.workspaceId, c.workspaceId))).filter((x) => x.id !== c.id);
+    const taken = new Set([GENERAL_SLUG, COMPANY_SLUG, ...others.flatMap((x) => [x.slug, ...x.formerSlugs.split(' ').filter(Boolean)])]);
+    let slug = base; for (let n = 2; taken.has(slug); n++) slug = `${base}-${n}`;
+    const former = [...new Set([...c.formerSlugs.split(' ').filter(Boolean), c.slug])].filter((x) => x !== slug).slice(-20).join(' ');
+    const set: Partial<Channel> = { name: input.name.trim().slice(0, 80) || c.name, slug, formerSlugs: former };
+    // The topic follows only while it is still the generated one (a person's own topic stays).
+    if (input.topic !== undefined && /^(Unit|Department) channel of /.test(c.topic)) set.topic = input.topic.slice(0, 500);
+    await this.db.update(channels).set(set).where(eq(channels.id, c.id));
+    this.events.emit({ type: 'channel_update', workspaceId: c.workspaceId, channelId: c.id });
+    return this.get(c.id);
   }
 
   /** A channel as the current human actor may open it: private → members only. */

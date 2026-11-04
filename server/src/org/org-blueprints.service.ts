@@ -50,7 +50,7 @@ import { OrgAuditService } from './org-audit.service';
 import { checkTunable, parseTunables, TUNABLES } from './org-tunables';
 import { meetScopes } from './scopes';
 import { ROLES, roleById, roleCharter, tierOfModel } from './roles/catalog';
-import { BLUEPRINT_FORMAT, BlueprintError, hireOrder, rootRole, unitsOf, validateBlueprint, type Blueprint, type BlueprintProject, type BlueprintRole } from './blueprints/format';
+import { BLUEPRINT_FORMAT, BlueprintError, hireOrder, rootRole, unitNamesOf, unitsOf, validateBlueprint, type Blueprint, type BlueprintProject, type BlueprintRole, type BlueprintUnit } from './blueprints/format';
 import { OrgProjectsService } from './org-projects.service';
 import { OrgProjectTeamsService } from './org-project-teams.service';
 import { OrgProgramService } from './org-program.service';
@@ -71,7 +71,7 @@ export interface ImportPlan {
   mode: ImportMode;
   chief: { title: string; roleId?: string; scopes: string[]; dropped: string[]; modelTier: string; model: string };
   hires: PlannedHire[];
-  units: Array<{ title: string; parent: string | null }>;
+  units: BlueprintUnit[];
   budget: { monthlyUsd: number; allocations: Record<string, number>; allocated: number };
   tunables: Array<{ key: string; value: number; applied: number; note?: string }>;
   profile: { values: boolean; culture: boolean; rules: boolean };
@@ -108,6 +108,8 @@ interface BlueprintApprovalPayload {
   hires: Array<HirePayload & { reportsToTitle: string }>;
   /** Roadmap items to create once the hires exist (blueprint v1 `projects`). */
   projects?: BlueprintProject[];
+  /** Department names by lead title (lower case), applied once the hires exist. */
+  unitNames?: Record<string, string>;
 }
 
 const OUTCOME_SWEEP_MS = 60 * 60_000;
@@ -185,7 +187,7 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
       format: BLUEPRINT_FORMAT, name: org.name, description: org.mission,
       profile: { values: org.values, culture: org.culture, rules: org.rules },
       ...(vision ? { vision: { title: vision.title, description: vision.description, horizonDays } } : {}),
-      roles, units: unitsOf({ roles } as Blueprint),
+      roles, units: await this.exportUnits(orgId, roles, titles),
       tunables: parseTunables(org.tunables), playbooks,
       budget: { monthlyUsd: org.monthlyBudgetUsd, ...(Object.keys(allocations).length ? { allocations } : {}) },
       origin: { exportedFrom: 'yaap', at: nowIso(), sourceOrgId: createHash('sha256').update(orgId).digest('hex').slice(0, 16) },
@@ -199,6 +201,16 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
     const projects = await this.exportProjects(orgId, titles);
     if (projects.length) bp.projects = projects;
     return validateBlueprint(bp);
+  }
+
+  /** The unit tree by lead title, each department with its own name (the root is the company: no name). */
+  private async exportUnits(orgId: string, roles: BlueprintRole[], titles: Map<string, string>): Promise<BlueprintUnit[]> {
+    const live = (await this.units.units(orgId).catch(() => [])).filter((u) => u.parentUnitId !== null);
+    const agentOf = new Map([...titles].map(([agentId, title]) => [title.toLowerCase(), agentId]));
+    return unitsOf({ roles } as Blueprint).map((u) => {
+      const name = u.parent ? live.find((x) => x.leadAgentId === agentOf.get(u.title.toLowerCase()))?.name : undefined;
+      return { ...u, ...(name ? { name: name.slice(0, 60) } : {}) };
+    });
   }
 
   /** Open projects with their lead and team, by role title (blueprint v1 `projects`). */
@@ -398,16 +410,17 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
         model: h.model || undefined, monthlyBudgetUsd: h.monthlyUsd || undefined,
       };
     });
+    const unitNames = unitNamesOf(bp);
     let approvalId: string | null = null;
     let hired: ImportResult['hired'] = [];
     let projectsMade: ImportResult['projects'] = [];
     if (payloads.length > 0) {
       if (opts.mode === 'supervised') {
-        const a = await this.approvals.create(org.id, { kind: 'blueprint', payload: { importId, name: bp.name, hires: payloads, ...(bp.projects?.length ? { projects: bp.projects } : {}) } as unknown as Record<string, unknown>, requestedBy: actor, recommendation: `Staff "${bp.name}" from its blueprint: ${payloads.map((p) => p.title).join(', ')}.` });
+        const a = await this.approvals.create(org.id, { kind: 'blueprint', payload: { importId, name: bp.name, hires: payloads, ...(bp.projects?.length ? { projects: bp.projects } : {}), ...(Object.keys(unitNames).length ? { unitNames } : {}) } as unknown as Record<string, unknown>, requestedBy: actor, recommendation: `Staff "${bp.name}" from its blueprint: ${payloads.map((p) => p.title).join(', ')}.` });
         approvalId = a.id;
         notes.push(`${payloads.length} hire(s) wait on one approval card (${a.id.slice(0, 8)}); no agent exists until it is approved`);
       } else {
-        const res = await this.applyStaffing(org.id, { importId, name: bp.name, hires: payloads, ...(bp.projects?.length ? { projects: bp.projects } : {}) }, null);
+        const res = await this.applyStaffing(org.id, { importId, name: bp.name, hires: payloads, ...(bp.projects?.length ? { projects: bp.projects } : {}), ...(Object.keys(unitNames).length ? { unitNames } : {}) }, null);
         hired = res.hired as ImportResult['hired'];
         projectsMade = res.projects as ImportResult['projects'];
         for (const f of res.failed as string[]) notes.push(`hire failed: ${f}`);
@@ -448,6 +461,13 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
       } catch (err) { failed.push(`${h.title}: ${err instanceof Error ? err.message : String(err)}`); }
     }
     const made = Array.isArray(payload.projects) && payload.projects.length ? await this.createProjects(orgId, payload.projects, byTitle) : { projects: [], notes: [] };
+    // Department names (docs/group-chat.md §7): the units exist once their heads are hired.
+    for (const [title, name] of Object.entries(payload.unitNames && typeof payload.unitNames === 'object' ? payload.unitNames : {})) {
+      const agentId = byTitle.get(title.toLowerCase());
+      const unit = agentId ? await this.units.ledBy(orgId, agentId).catch(() => null) : null;
+      if (!unit || unit.parentUnitId === null) { made.notes.push(`department "${String(name)}" not named: ${agentId ? 'its head leads no unit yet' : 'its head was not hired'}`); continue; }
+      await this.units.rename(orgId, unit.id, String(name), 'blueprint').catch((err: unknown) => made.notes.push(`department "${String(name)}" not named: ${err instanceof Error ? err.message : String(err)}`));
+    }
     return { hired, failed: [...failed, ...made.notes], projects: made.projects };
   }
 

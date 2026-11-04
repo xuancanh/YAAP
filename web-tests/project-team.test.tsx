@@ -21,7 +21,7 @@ const team: ProjectTeam = {
 describe('ProjectTeamBlock', () => {
   it('shows the cross-functional team with home units, heads, allocations and pending approvals', () => {
     render(<ProjectTeamBlock team={team} />);
-    expect(screen.getByTestId('project-team').textContent).toMatch(/drawn from 2 units: Sales, Engineering/);
+    expect(screen.getByTestId('project-team').textContent).toMatch(/drawn from 2 departments: Sales, Engineering/);
     const rows = screen.getAllByTestId('project-team-member');
     expect(rows).toHaveLength(2);
     expect(rows[0].textContent).toMatch(/Editor.*account lead.*60%.*home Sales · head Writer.*80% across projects · 2 open here/);

@@ -20,11 +20,14 @@ import { MeetingsBoard } from './MeetingsBoard';
 import { MeetingRoom, ProposalActions } from './MeetingRoom';
 import { meetingComposerHint, openMeetingView, parseRoom } from '../lib/meetings';
 import { StartDiscussionForm, SubBreadcrumb, SubChannelCard, SubStatusBar } from './SubChannels';
+import { DepartmentName, useMayRenameDepartments } from './DepartmentName';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 };
 const field: React.CSSProperties = { width: '100%', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '8px 11px', color: 'var(--text)', fontSize: 13, outline: 'none' };
 const smallBtn: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' };
+/** The header's "Company channel" / "Department · <name>" pill (docs/group-chat.md §7). */
+const unitPill: React.CSSProperties = { fontSize: 9.5, fontWeight: 600, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 6px', cursor: 'pointer' };
 
 type Tab = 'messages' | 'meetings' | 'files' | 'settings';
 /** The tab the channel on screen is on: the view unmounts while the
@@ -92,6 +95,7 @@ export function ChannelView() {
   // Units (docs/group-chat.md §7): the goals a message references, and the unit this channel belongs to.
   const goals = useMemo(() => new Map((app.wsOrg?.org?.goals ?? []).map((g) => [g.id, g])), [app.wsOrg]);
   const rootUnitId = app.wsOrg?.units?.[0]?.id ?? null;
+  const mayRename = useMayRenameDepartments(detail?.unit ? wsId : null);
   const openGoal = (goalId: string) => {
     const g = goals.get(goalId);
     app.setOrgUnitId(g?.unitId && g.unitId !== rootUnitId ? g.unitId : null);
@@ -108,6 +112,8 @@ export function ChannelView() {
   const load = useCallback(async () => {
     if (!wsId || !slug) return;
     const [d, p] = await Promise.all([api.channel(wsId, slug).catch(() => null), api.channelMessages(wsId, slug).catch(() => ({ messages: [], replies: {}, hasMore: false }))]);
+    // An old slug (a renamed department, docs/routes.md) resolves to the channel: move to its current address.
+    if (d && d.slug !== slug) { app.openChannel(d.slug, app.channelFocus, { replace: true }); return; }
     setDetail(d);
     setPage(p);
     void api.markChannelRead(wsId, slug).then(() => app.refreshChannels()).catch(() => {});
@@ -428,11 +434,14 @@ export function ChannelView() {
               ? <SubBreadcrumb detail={detail} channel={channel} onParent={(s) => app.openChannel(s)} />
               : <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: '-.2px' }}>#{channel.slug}</div>}
             {channel.kind === 'private' && <span style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 5px' }}>private</span>}
-            {detail?.unit && (
-              <button onClick={openUnitBoard} title="Open this unit's board" style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-dim)', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 6px', cursor: 'pointer' }}>
-                {detail.unit.id === rootUnitId ? 'Company channel' : `Unit channel · ${detail.unit.name}`}
-              </button>
-            )}
+            {detail?.unit && (detail.unit.id === rootUnitId
+              ? <button onClick={openUnitBoard} title="Open the company's board" style={unitPill}>Company channel</button>
+              : (
+                <span data-testid="department-label" style={{ ...unitPill, display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'default' }}>
+                  <button onClick={openUnitBoard} title="Open this department's board" style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'inherit', cursor: 'pointer' }}>Department ·</button>
+                  <DepartmentName wsId={wsId} unitId={detail.unit.id} name={detail.unit.name} editable={mayRename} onRenamed={(u) => { if (u.slug !== slug) app.openChannel(u.slug, null, { replace: true }); else void load(); }} />
+                </span>
+              ))}
             {channel.archivedAt && <span style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--amber)', border: '1px solid var(--amber)', borderRadius: 4, padding: '0 5px' }}>archived</span>}
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -606,7 +615,7 @@ export function Composer({ wsId, slug, folder, mentionables, threadRootId, place
           {meetingHint && (
             <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 13px 0', fontSize: 11.5, color: 'var(--text-dim)' }}>
               <I d={P.slash} size={12} />
-              <span style={{ ...mono, color: 'var(--text)' }}>/meeting [planning|standup|weekly_review|retro|board] [#unit] [agenda…]</span>
+              <span style={{ ...mono, color: 'var(--text)' }}>/meeting [planning|standup|weekly_review|retro|board] [#department] [agenda…]</span>
               <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {meetingHint.complete ? `starts a ${MEETING_KIND_TITLES[meetingHint.kind]?.toLowerCase() ?? 'meeting'} ${meetingHint.unitSlug ? `in #${meetingHint.unitSlug}` : 'here'}${meetingHint.agenda ? ` — "${meetingHint.agenda.slice(0, 60)}"` : ', agenda from the board or your text'}; Enter sends` : 'starts a meeting in this channel; attendees take one turn per round'}
               </span>

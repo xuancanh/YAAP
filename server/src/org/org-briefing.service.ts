@@ -284,7 +284,7 @@ export class OrgBriefingService implements ToolProviderHook {
       '',
       '## My role',
       `- ${v.role === 'chief' ? 'Chief of staff' : v.me?.title || 'Member'}${v.role === 'head' ? ' (function head)' : ''}`,
-      v.led ? `- I lead the unit ${v.led.name} (#${v.led.slug})` : v.home ? `- Unit: ${v.home.name}` : '',
+      v.led ? `- I lead the ${v.led.name} department (#${v.led.slug})` : v.home && v.home.parentUnitId !== null ? `- Department: ${v.home.name} (#${v.home.slug}), led by ${v.nm(v.home.leadAgentId)}` : v.home ? '- Department: none (company level)' : '',
       v.isChief ? '- I report to the CEO' : `- I report to ${v.nm(v.me?.reportsToAgentId)}`,
       v.reports.length ? `- My direct reports: ${v.reports.map((r) => `${v.nm(r.agentId)}${r.title ? ` (${r.title})` : ''}`).join(', ')}` : '- No direct reports',
       '',
@@ -368,7 +368,8 @@ function briefingText(s: Snapshot, v: View, agentId: string, unreadMentions: num
 
   // Position.
   const title = v.isChief ? 'the chief of staff' : v.me?.title ? `${v.me.title}` : 'a member';
-  const unitBit = v.led ? `, head of ${v.led.name}` : v.home && v.home.parentUnitId !== null ? `, in ${v.home.name}` : '';
+  // The department by its own name (docs/group-chat.md §7 "Department names").
+  const unitBit = v.led ? `, head of ${v.led.name}` : v.home && v.home.parentUnitId !== null ? `, in ${v.home.name}${v.home.leadAgentId !== v.me?.reportsToAgentId ? ` (led by ${nm(v.home.leadAgentId)})` : ''}` : '';
   const line = v.isChief ? 'reports to the CEO' : `reports to ${nm(v.me?.reportsToAgentId)}${v.seats.size ? ' (your line manager: your capacity and the quality of your work)' : ''}`;
   const reports = v.reports.length ? `; direct reports: ${v.reports.slice(0, 6).map((r) => nm(r.agentId)).join(', ')}${v.reports.length > 6 ? ` +${v.reports.length - 6}` : ''}` : '';
   // The projects it is on, with its part: lead, or contributor with its share of the open work.

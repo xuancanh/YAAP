@@ -793,7 +793,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     const members = (await this.org.members(org.id)).filter((m) => m.status !== 'terminated');
     const reports = members.filter((m) => m.reportsToAgentId === unit.leadAgentId);
     const lines: string[] = [];
-    lines.push(`You were woken as ${isChief ? 'the chief of staff' : `the lead of ${unit.name} (#${unit.slug})`} of "${org.name}" for a planning session (trigger: ${trigger.replace('_', ' ')}).`);
+    lines.push(`You were woken as ${isChief ? 'the chief of staff' : `the head of ${unit.name} (#${unit.slug})`} of "${org.name}" for a planning session (trigger: ${trigger.replace('_', ' ')}).`);
     if (reasons.length) lines.push(`Why now:\n${reasons.map((r) => `- ${r}`).join('\n')}`);
     lines.push('## Vision', vision ? `[${vision.id.slice(0, 8)}] ${vision.title}${vision.dueAt ? ` (horizon ${vision.dueAt.slice(0, 10)})` : ''}\n${vision.description || ''}`.trim() : `No vision written yet. Mission: ${org.mission || '(none)'}`);
     if (org.rules) lines.push('## Rules that must never be broken (the CEO\'s)', org.rules);
@@ -2336,6 +2336,28 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         if (ctx) ctx.progress = true;
         return `Updated ${summary}.${modelChange ? (change.applyToChats ? ' Its existing chats switch too.' : ' New chats use it; existing chats keep their model.') : ''} Audited as a decision.`;
       }
+      case 'org_rename_unit': {
+        // A department's own name (docs/group-chat.md §7 "Department names"):
+        // the chief renames any department, a head its own; the channel
+        // follows, the task key prefix stays. Presentation only (boundary row unit_name).
+        await requireChiefOrHead();
+        if (!this.units) throw new Error('departments are not available on this server');
+        const all = await this.units.units(org.id);
+        const q = str('unit').trim().toLowerCase().replace(/^#/, '');
+        const own = isChief ? null : (await headInfo())?.unit ?? (await this.units.isLead(org.id, agentId));
+        const u = q ? all.find((x) => x.id === q || x.id.startsWith(q) || x.slug === q || x.name.toLowerCase() === q) : own;
+        if (!u) throw new Error(q ? `no department "${str('unit')}" — departments: ${all.filter((x) => x.parentUnitId !== null).map((x) => `${x.name} (#${x.slug})`).join(', ') || 'none'}` : 'unit is required: the department to rename (name or #slug)');
+        if (u.parentUnitId === null) throw new Error('refused: the company\'s name is the CEO\'s (Settings › Company); rename a department instead');
+        if (!isChief && u.id !== own?.id) throw new Error(`refused: you may rename only your own department${own ? ` (${own.name}, #${own.slug})` : ''}; ask the chief of staff for another`);
+        if (!why) throw new Error('why is required: one line the audit log carries');
+        const to = str('name');
+        await this.org.gate(org.id, { kind: 'unit_name', key: u.id, summary: `rename ${u.name} → ${to}` }, actor);
+        const r = await this.units.rename(org.id, u.id, to, actor);
+        if (r.name === u.name) return `${u.name} is already called that; nothing changed.`;
+        if (!isChief) await this.notifyChief(org, agentId, `${names.get(agentId) ?? 'A head'} renamed the department ${u.name} → ${r.name}`, why);
+        if (ctx) ctx.progress = true;
+        return `Renamed ${u.name} → ${r.name} (#${r.slug}${r.slug !== u.slug ? `; #${u.slug} still links there` : ''}). Task keys stay ${u.taskKey ? `${u.taskKey}-n` : 'as they are'}. Audited and announced in the channel.`;
+      }
       case 'org_review_structure': {
         requireChief();
         return this.structureReview(org, names, { agentCap, envelope, autonomous });
@@ -2629,6 +2651,7 @@ const MANAGER_TOOLS: AiToolSpec[] = [
   { name: 'org_propose_strategy', description: 'PROPOSE goals → projects → first tasks (approval card). Nothing moves to todo until the CEO approves.', inputSchema: { type: 'object', properties: { goals: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, projects: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, tasks: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, brief: { type: 'object', properties: brief4 }, assigneeAgentId: { type: 'string' } }, required: ['title'] } } }, required: ['title'] } } }, required: ['title'] } }, why: { type: 'string' }, org: { type: 'string' } }, required: ['goals', 'why'] } },
   { name: 'org_allocate_budget', description: 'Allocate USD per month to an agent or project envelope. Lowering is immediate. Raising: an approval card (supervised), or immediate while agent+project envelopes stay within the company envelope (autonomous, why required; in a planning run or review it is previewed for the CEO\'s veto window). The company envelope itself is the CEO\'s. Name the objective the envelope funds (objectiveId) and what the money buys (buys: which key results) so a cut is a scope decision.', inputSchema: { type: 'object', properties: { scope: { type: 'string', enum: ['company', 'agent', 'project'] }, agent: { type: 'string' }, projectId: { type: 'string' }, monthlyUsd: { type: 'number' }, objectiveId: { type: 'string', description: 'The objective (goal id or prefix) this envelope funds.' }, buys: { type: 'string', description: 'What the money buys: the key results it carries.' }, why: { type: 'string' }, org: { type: 'string' } }, required: ['scope', 'monthlyUsd'] } },
   { name: 'org_update_member', description: 'Change a report\'s own settings: identity (name, role, emoji, colors as two hex colours), its model (agentType: an enabled agent type by name, and/or model), its heartbeat ({enabled, cron}), or its assigned workspace folder. Identity and heartbeat apply at once. A model change replays the member\'s golden set first (blocked on regression) and is an approval card in supervised mode. A folder change is always a proposal for the CEO. why is required and becomes the decision record. A function head changes only members of its own reporting line; the chief of staff is told.', inputSchema: { type: 'object', properties: { agent: { type: 'string', description: 'Member name.' }, name: { type: 'string' }, role: { type: 'string' }, emoji: { type: 'string' }, colors: { type: 'array', items: { type: 'string' } }, agentType: { type: 'string' }, model: { type: 'string' }, heartbeat: { type: 'object', properties: { enabled: { type: 'boolean' }, cron: { type: 'string' } } }, workspaceFolder: { type: 'string' }, applyToChats: { type: 'boolean', description: 'Model changes: also switch the member\'s existing chats (default true).' }, why: { type: 'string' }, recommend: { type: 'string' }, org: { type: 'string' } }, required: ['agent', 'why'] } },
+  { name: 'org_rename_unit', description: 'Rename a department (a unit: a lead, its reports, a board and a channel). Its channel takes the name and a matching #slug (the old one keeps linking); its board, goals and task key prefix stay (ENG-12 stays ENG-12). The chief of staff renames any department, a head only its own. Not the company itself (the CEO\'s). why is required and is audited.', inputSchema: { type: 'object', properties: { unit: { type: 'string', description: 'The department: name or #slug (a head: defaults to its own).' }, name: { type: 'string', description: 'The new name, e.g. "Platform Engineering".' }, why: { type: 'string' }, org: { type: 'string' } }, required: ['name', 'why'] } },
   { name: 'org_set_routing', description: 'Route a task class (triage | research | synthesis | review | ops | general) to a model tier (cheap | standard | strong) to trade quality for cost per class; a model the CEO pinned on an agent still wins. Autonomous: applies at once (previewed in a planning run or review); supervised: an approval card. why is required and becomes the decision record. org_costs and org_pulse show spend by class.', inputSchema: { type: 'object', properties: { class: { type: 'string' }, tier: { type: 'string', enum: ['cheap', 'standard', 'strong'] }, why: { type: 'string' }, org: { type: 'string' } }, required: ['class', 'tier', 'why'] } },
   { name: 'org_review_structure', description: 'Review the company\'s structure: idle and overloaded members, unassigned goals, unowned and blocked tasks, headroom against the agent cap and the company envelope. Read-only; act with the other tools.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
   { name: 'org_audit_query', description: 'Read the hash-chained audit log: filter by action (task_assign, scope_widen, spend_commit, run_end, …) or refId.', inputSchema: { type: 'object', properties: { action: { type: 'string' }, refId: { type: 'string' }, limit: { type: 'number' }, org: { type: 'string' } } } },
@@ -2640,7 +2663,7 @@ const MANAGER_TOOLS: AiToolSpec[] = [
 /** A project lead's assignment tool for its team (docs/work-tracking.md "Project teams"). */
 const ASSIGN_TOOL: AiToolSpec[] = LEAD_TOOLS.filter((t) => t.name === 'org_assign');
 /** A function head's lifecycle tools for its own reporting line (decision 1). */
-const HEAD_TOOLS: AiToolSpec[] = MANAGER_TOOLS.filter((t) => ['org_roles', 'org_hire_agent', 'org_pause_agent', 'org_update_member'].includes(t.name));
+const HEAD_TOOLS: AiToolSpec[] = MANAGER_TOOLS.filter((t) => ['org_roles', 'org_hire_agent', 'org_pause_agent', 'org_update_member', 'org_rename_unit'].includes(t.name));
 /** Every member: the escalation chain and the spend reads (decision 2: read-only, nothing that writes or commits spend). */
 const MEMBER_EXTRA_TOOLS: AiToolSpec[] = [ESCALATE_TOOL, ...LEAD_TOOLS.filter((t) => t.name === 'org_costs' || t.name === 'org_forecast')];
 

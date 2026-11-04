@@ -54,7 +54,7 @@ export function MeetingStartDialog({ wsId, units, defaultUnitId, channel, onDone
         attendees: attendees && attendees.some((a) => a.kind === 'agent') ? attendees : undefined,
       });
       if (joinMe) await api.joinMeeting(wsId, m.id).catch(() => undefined);
-      app.showToast(`${MEETING_KIND_TITLES[kind]} started${channel ? ` in #${channel.slug}` : ' in the unit channel'}`);
+      app.showToast(`${MEETING_KIND_TITLES[kind]} started${channel ? ` in #${channel.slug}` : ' in the department channel'}`);
       onDone(m);
     } catch (e) { app.showToast(e instanceof Error ? e.message.slice(0, 160) : 'could not start'); } finally { setBusy(false); }
   };
@@ -77,7 +77,7 @@ export function MeetingStartDialog({ wsId, units, defaultUnitId, channel, onDone
       </div>
       <fieldset style={{ border: 'none', padding: 0, margin: 0, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <legend style={{ ...label, marginBottom: 4 }}>Attendees</legend>
-        {candidates.length === 0 && <span style={faint}>{channel && members === null ? 'Loading…' : 'The unit (lead and reports) by default'}</span>}
+        {candidates.length === 0 && <span style={faint}>{channel && members === null ? 'Loading…' : 'The department (lead and reports) by default'}</span>}
         {candidates.map((c) => (
           <label key={c.id} style={{ display: 'flex', gap: 4, alignItems: 'center', fontSize: 12.5 }}>
             <input type="checkbox" checked={isPicked(c.id)} onChange={() => toggle(c.id)} />{c.name}

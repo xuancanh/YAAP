@@ -34,6 +34,10 @@ export interface UnitChannels {
   removeChannelMember(channelId: string, kind: 'agent' | 'human', id: string): Promise<void>;
   updateChannel(channelId: string, patch: { name?: string; topic?: string; archived?: boolean }): Promise<void>;
   postSystem(channelId: string, text: string): Promise<void>;
+  /** Rename a channel onto a new slug, keeping the old one as an alias (a
+   *  department rename, docs/group-chat.md §7). Optional: without it a
+   *  rename changes the display name only. */
+  reslugChannel?(channelId: string, input: { name: string; slug: string; topic?: string }): Promise<{ id: string; slug: string }>;
   /** Delete a channel with its messages, members and read marks (a
    *  permanent company delete that chose "delete channels"). Never #general
    *  or #company. Optional: an implementation without it keeps channels. */

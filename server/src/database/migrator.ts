@@ -14,6 +14,7 @@ import { backfillTaskKeys } from '../common/task-keys';
 import { backfillWorkTracking } from './work-tracking-backfill';
 import { repairAgentModels } from './model-repair';
 import { personalityForId } from '../agents/personalities';
+import { departmentName, departmentSlug, freeSlug, isTeamPattern, uniqueDepartmentName } from '../org/unit-names';
 
 export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
@@ -2458,7 +2459,79 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_kit_revisions_install ON kit_revisions ("installId")`);
     },
   },
+  {
+    id: '0091-department-names',
+    up: async (db) => {
+      // Department names (docs/group-chat.md §7 "Department names"): a
+      // unit's name is its own ("Engineering"), not its lead's ("Ada's
+      // team"); `nameSource` says whether a person chose it. A renamed
+      // department's channel keeps its old slugs as aliases (`formerSlugs`).
+      if (!(await hasColumn(db, 'org_units', 'nameSource'))) await db.query(`ALTER TABLE org_units ADD COLUMN "nameSource" TEXT`);
+      if (!(await hasColumn(db, 'channels', 'formerSlugs'))) await db.query(`ALTER TABLE channels ADD COLUMN "formerSlugs" TEXT NOT NULL DEFAULT ''`);
+      await backfillDepartmentNames(db);
+      await db.query(`UPDATE org_units SET "nameSource" = 'derived' WHERE "nameSource" IS NULL`);
+      await db.query(`ALTER TABLE org_units ALTER COLUMN "nameSource" SET DEFAULT 'derived'`);
+      await db.query(`ALTER TABLE org_units ALTER COLUMN "nameSource" SET NOT NULL`);
+    },
+  },
 ];
+
+/**
+ * The 0090 backfill, idempotent and callable on its own: every non-root unit
+ * still on the old `<lead>'s team` default (a row from before `nameSource`,
+ * or a derived one) takes its department name from its lead's title
+ * (unit-names.ts), unique in its org; its channel takes the name and a
+ * matching slug (the old slug kept in `formerSlugs`), and a topic still
+ * reading "Unit channel of …" is reworded. Any other pre-0090 name was set
+ * by hand and is marked custom; custom names are never touched. A unit
+ * nothing better is known about keeps `<lead>'s team`.
+ */
+export async function backfillDepartmentNames(db: Queryable): Promise<{ renamed: number; custom: number }> {
+  let renamed = 0; let custom = 0;
+  const units = (await db.query(`
+    SELECT u."id", u."orgId", u."name", u."slug", u."channelId", u."parentUnitId", u."nameSource", u."leadAgentId",
+           o."workspaceId", o."chiefOfStaffAgentId" AS "chiefId", m."title", a."name" AS "leadName"
+      FROM org_units u JOIN organizations o ON o."id" = u."orgId"
+      LEFT JOIN org_members m ON m."orgId" = u."orgId" AND m."agentId" = u."leadAgentId"
+      LEFT JOIN agents a ON a."id" = u."leadAgentId"
+     ORDER BY u."createdAt" ASC`)).rows as Array<{ id: string; orgId: string; name: string; slug: string; channelId: string | null; parentUnitId: string | null; nameSource: string | null; leadAgentId: string; workspaceId: string; chiefId: string | null; title: string | null; leadName: string | null }>;
+  for (const u of units) {
+    const root = u.parentUnitId === null || u.leadAgentId === u.chiefId;
+    if (root) { if (u.nameSource === null) await db.query(`UPDATE org_units SET "nameSource" = 'derived' WHERE "id" = $1`, [u.id]); continue; }
+    if (u.nameSource === 'custom') continue;
+    const leadName = u.leadName ?? u.leadAgentId.slice(0, 8);
+    const derived = departmentName({ title: u.title, leadName });
+    if (!isTeamPattern(u.name)) {
+      // A hand-set name from before 0090 is custom; one these rules gave (the
+      // units backfill on a fresh database) is derived and already right.
+      if (u.nameSource === null) {
+        const mine = u.name === derived || u.name.startsWith(`${derived} `);
+        await db.query(`UPDATE org_units SET "nameSource" = $2 WHERE "id" = $1`, [u.id, mine ? 'derived' : 'custom']);
+        if (!mine) custom++;
+      }
+      continue;
+    }
+    if (isTeamPattern(derived)) { await db.query(`UPDATE org_units SET "nameSource" = 'derived' WHERE "id" = $1`, [u.id]); continue; }
+    const taken = units.filter((x) => x.orgId === u.orgId && x.id !== u.id).map((x) => x.name);
+    const name = uniqueDepartmentName(derived, leadName, taken);
+    let slug = u.slug;
+    if (u.channelId) {
+      const ch = (await db.query(`SELECT "id", "slug", "formerSlugs", "topic" FROM channels WHERE "id" = $1`, [u.channelId])).rows[0] as { id: string; slug: string; formerSlugs: string; topic: string } | undefined;
+      if (ch) {
+        const others = (await db.query(`SELECT "slug", "formerSlugs" FROM channels WHERE "workspaceId" = $1 AND "id" <> $2`, [u.workspaceId, ch.id])).rows as Array<{ slug: string; formerSlugs: string }>;
+        const takenSlugs = new Set(others.flatMap((c) => [c.slug, ...c.formerSlugs.split(' ').filter(Boolean)]));
+        slug = freeSlug(departmentSlug(name, leadName), takenSlugs);
+        const former = [...new Set([...ch.formerSlugs.split(' ').filter(Boolean), ...(slug !== ch.slug ? [ch.slug] : [])])].filter((x) => x !== slug).join(' ');
+        const topic = /^Unit channel of /.test(ch.topic) ? `Department channel of ${name}: ${leadName} and its reports.` : ch.topic;
+        await db.query(`UPDATE channels SET "name" = $2, "slug" = $3, "formerSlugs" = $4, "topic" = $5 WHERE "id" = $1`, [ch.id, name, slug, former, topic]);
+      }
+    }
+    await db.query(`UPDATE org_units SET "name" = $2, "slug" = $3, "nameSource" = 'derived' WHERE "id" = $1`, [u.id, name, slug]);
+    u.name = name;
+    renamed++;
+  }
+  return { renamed, custom };
+}
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */
 export async function backfillAgentWorkspaces(db: Queryable): Promise<number> {
@@ -2493,7 +2566,6 @@ export async function backfillOrgUnits(db: Queryable): Promise<{ units: number }
   const now = new Date().toISOString();
   const orgs = (await db.query(`SELECT "id", "accountId", "workspaceId", "name", "chiefOfStaffAgentId" FROM organizations WHERE "status" <> 'archived'`)).rows as Array<{ id: string; accountId: string; workspaceId: string; name: string; chiefOfStaffAgentId: string | null }>;
   let created = 0;
-  const slugOf = (name: string) => name.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'unit';
   const rid = (seed: string) => `${seed}-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`.replace(/[^a-z0-9-]/g, '').slice(0, 48);
   for (const org of orgs) {
     if (!org.chiefOfStaffAgentId) continue;
@@ -2534,12 +2606,16 @@ export async function backfillOrgUnits(db: Queryable): Promise<{ units: number }
     for (const lead of leads) {
       if (unitOfLead.has(lead)) { await db.query(`UPDATE org_units SET "archivedAt" = NULL WHERE "id" = $1`, [unitOfLead.get(lead)]); continue; }
       const leadName = ((await db.query(`SELECT "name" FROM agents WHERE "id" = $1`, [lead])).rows[0] as { name: string } | undefined)?.name ?? lead.slice(0, 8);
-      let slug = slugOf(leadName); for (let n = 2; takenSlugs.has(slug); n++) slug = `${slugOf(leadName)}-${n}`;
+      // The department's own name from its lead's title (unit-names.ts), else "<lead>'s team".
+      const title = ((await db.query(`SELECT "title" FROM org_members WHERE "orgId" = $1 AND "agentId" = $2`, [org.id, lead])).rows[0] as { title: string } | undefined)?.title ?? '';
+      const takenNames = ((await db.query(`SELECT "name" FROM org_units WHERE "orgId" = $1`, [org.id])).rows as Array<{ name: string }>).map((r) => r.name);
+      const name = uniqueDepartmentName(departmentName({ title, leadName }), leadName, takenNames);
+      const slugBase = departmentSlug(name, leadName); let slug = slugBase; for (let n = 2; takenSlugs.has(slug); n++) slug = `${slugBase}-${n}`;
       takenSlugs.add(slug);
       const reports = live.filter((m) => m.reportsToAgentId === lead).map((m) => m.agentId);
-      const ch = await ensureChannel(slug, slug, `Unit channel of ${leadName}'s team.`, [lead, ...reports], [...humans], false);
+      const ch = await ensureChannel(slug, name, `Department channel of ${name}: ${leadName} and its reports.`, [lead, ...reports], [...humans], false);
       const id = rid('unit');
-      await db.query(`INSERT INTO org_units ("accountId", "id", "orgId", "leadAgentId", "parentUnitId", "name", "slug", "channelId", "archivedAt", "createdAt") VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, NULL, $8)`, [org.accountId, id, org.id, lead, `${leadName}'s team`, ch.slug, ch.id, now]);
+      await db.query(`INSERT INTO org_units ("accountId", "id", "orgId", "leadAgentId", "parentUnitId", "name", "slug", "channelId", "archivedAt", "createdAt") VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, NULL, $8)`, [org.accountId, id, org.id, lead, name, ch.slug, ch.id, now]);
       unitOfLead.set(lead, id); created++;
     }
     // parents: the unit led by the lead's nearest unit-leading manager

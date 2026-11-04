@@ -172,6 +172,32 @@
       "monthlyUsd": 40
     }
   ],
+  "units": [
+    {
+      "title": "Chief of staff",
+      "parent": null
+    },
+    {
+      "title": "Head of Operations",
+      "parent": "Chief of staff",
+      "name": "Operations"
+    },
+    {
+      "title": "Head of Customer",
+      "parent": "Chief of staff",
+      "name": "Customer Success"
+    },
+    {
+      "title": "Head of Marketing",
+      "parent": "Chief of staff",
+      "name": "Marketing"
+    },
+    {
+      "title": "Head of Finance",
+      "parent": "Chief of staff",
+      "name": "Finance"
+    }
+  ],
   "cadences": [
     {
       "unitTitle": "root",

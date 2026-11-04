@@ -69,8 +69,8 @@ export function MeetingsPane({ org }: { org: OrgDetail }) {
     <div style={{ maxWidth: 860 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 220 }}>
-          <h2 style={h2}>{isCompany ? 'Meetings' : `${current?.name ?? 'Unit'} · meetings`}</h2>
-          <div style={faint}>Rituals are threads in the unit channel: they open with the last meeting's open items, give each attendee one turn per round (later rounds only those with something open; passing is cheap), time-box each agenda item, stay under a USD cap, skip themselves when there is nothing to discuss, and end in minutes that become tasks, decisions, risks and questions for you. Crons are server-local, like loops.</div>
+          <h2 style={h2}>{isCompany ? 'Meetings' : `${current?.name ?? 'Department'} · meetings`}</h2>
+          <div style={faint}>Rituals are threads in the department channel: they open with the last meeting's open items, give each attendee one turn per round (later rounds only those with something open; passing is cheap), time-box each agenda item, stay under a USD cap, skip themselves when there is nothing to discuss, and end in minutes that become tasks, decisions, risks and questions for you. Crons are server-local, like loops.</div>
         </div>
         <button style={btn(true)} onClick={() => setStarting(!starting)}>Start meeting</button>
       </div>
@@ -94,9 +94,9 @@ export function MeetingsPane({ org }: { org: OrgDetail }) {
       <div style={{ ...card, marginBottom: 10 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700 }}>Cadences</div>
-          <span style={faint}>per unit · five-field cron, server-local · the chief and leads reshape them with <code>org_set_cadence</code>; you edit them here</span>
+          <span style={faint}>per department · five-field cron, server-local · the chief and leads reshape them with <code>org_set_cadence</code>; you edit them here</span>
         </div>
-        {byUnit.length === 0 && <div style={faint}>No cadences yet — they are created with the first unit.</div>}
+        {byUnit.length === 0 && <div style={faint}>No cadences yet — they are created with the first department.</div>}
         {byUnit.map(([uid, rows]) => {
           const u = byId.get(uid);
           const lead = u ? names.get(u.leadAgentId) : undefined;
@@ -176,7 +176,7 @@ export function DecisionsPane({ org }: { org: OrgDetail }) {
   useEffect(() => {
     if (app.orgFocus?.kind !== 'decision' || !rows) return;
     const d = rows.find((x) => x.id === app.orgFocus!.id || x.id.startsWith(app.orgFocus!.id));
-    if (!d) { if (rows.length) { app.showToast('That decision is not in this unit\'s log'); app.setOrgFocus(null); } return; }
+    if (!d) { if (rows.length) { app.showToast('That decision is not in this department\'s log'); app.setOrgFocus(null); } return; }
     setOpen(d.id); app.setOrgFocus(null);
     requestAnimationFrame(() => document.getElementById(`decision-${d.id}`)?.scrollIntoView({ block: 'center' }));
   }, [rows, app]);
@@ -186,7 +186,7 @@ export function DecisionsPane({ org }: { org: OrgDetail }) {
     <div style={{ maxWidth: 860 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 220 }}>
-          <h2 style={h2}>{isCompany ? 'Decisions' : `${current?.name ?? 'Unit'} · decisions`}</h2>
+          <h2 style={h2}>{isCompany ? 'Decisions' : `${current?.name ?? 'Department'} · decisions`}</h2>
           <div style={faint}>The decision log (§6): what was decided, the alternatives, the rationale, who decided and where it came from. Reference one in a channel as <code>#decision:&lt;id&gt;</code>.</div>
         </div>
         <input aria-label="Search decisions" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the log" style={{ ...input, width: 180 }} />

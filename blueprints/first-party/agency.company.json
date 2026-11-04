@@ -127,6 +127,22 @@
       "monthlyUsd": 30
     }
   ],
+  "units": [
+    {
+      "title": "Chief of staff",
+      "parent": null
+    },
+    {
+      "title": "Head of Client Delivery",
+      "parent": "Chief of staff",
+      "name": "Client Delivery"
+    },
+    {
+      "title": "Editor-in-chief",
+      "parent": "Chief of staff",
+      "name": "Editorial"
+    }
+  ],
   "cadences": [
     {
       "unitTitle": "root",
