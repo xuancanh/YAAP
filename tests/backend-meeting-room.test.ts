@@ -115,6 +115,8 @@ const owner = () => ({ id: currentAccountId() });
 
 test('room helpers: bullet agenda items, open items first, proposals last; empty agendas; open threads; open-item states; the profile shapes the tunables', () => {
   assert.deepEqual(bulletItems('Intro\n- Pricing\n* Hiring\n1. Launch date\n2) Risks'), ['Pricing', 'Hiring', 'Launch date', 'Risks']);
+  // a briefing with an "## Agenda" section: only that section's bullets are items, not the record's lists
+  assert.deepEqual(bulletItems('Why\n\n## Agenda\n- What happened\n- Lessons\n\n## Timeline\n- [audit:3] agent:abc task_update {"x":1}\n- row two'), ['What happened', 'Lessons']);
   const items = agendaItems('weekly_review', '', 2, [{ text: 'Sponsors', why: '', byKind: 'agent', by: 'a', at: '' }]);
   assert.equal(items[0], OPEN_ITEMS_TITLE);
   assert.equal(items.at(-1), 'Sponsors');

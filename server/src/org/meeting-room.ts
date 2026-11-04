@@ -120,10 +120,19 @@ const STANDARD_ITEMS: Record<MeetingKind, string[]> = {
 export const MAX_AGENDA_ITEMS = 8;
 export const OPEN_ITEMS_TITLE = 'Open items from the last meeting';
 
-/** Bullet or numbered lines of an agenda the person wrote ("- x", "* x", "1. x", "1) x"). */
+/** Bullet or numbered lines of an agenda the person wrote ("- x", "* x", "1. x", "1) x").
+ *  An agenda with an "## Agenda" heading (a briefing, e.g. a postmortem's
+ *  record) takes its items from that section only, not from the record's lists. */
 export function bulletItems(agenda: string): string[] {
   const out: string[] = [];
-  for (const line of (agenda ?? '').split('\n')) {
+  let lines = (agenda ?? '').split('\n');
+  const start = lines.findIndex((l) => /^\s*#{1,6}\s*agenda\s*:?\s*$/i.test(l));
+  if (start >= 0) {
+    const rest = lines.slice(start + 1);
+    const end = rest.findIndex((l) => /^\s*#{1,6}\s/.test(l));
+    lines = end < 0 ? rest : rest.slice(0, end);
+  }
+  for (const line of lines) {
     const m = /^\s*(?:[-*•]|\d{1,2}[.)])\s+(.+?)\s*$/.exec(line);
     if (m && m[1].length >= 2) out.push(m[1].slice(0, 160));
   }

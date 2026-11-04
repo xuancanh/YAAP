@@ -41,7 +41,7 @@ import { OrgMeetingsService, parseMinutes } from '../server/src/org/org-meetings
 import { OrgMeetingRuntime } from '../server/src/org/org-meeting-runtime.service';
 import { OrgPlaybooksService, playbookSlug, offeredToRole, parseOutcomes } from '../server/src/org/org-playbooks.service';
 import { OrgKnowledgeService, keywordsOf, ASK_TOOLS } from '../server/src/org/org-knowledge.service';
-import { OrgMemoryService, lineDiff } from '../server/src/org/org-memory.service';
+import { OrgMemoryService, lineDiff, POSTMORTEM_ITEMS } from '../server/src/org/org-memory.service';
 import { MEMORY_TUNABLES, POSTMORTEM_TRIGGERS } from '../server/src/org/memory-tunables';
 import { TUNABLES } from '../server/src/org/org-tunables';
 import { OrgController } from '../server/src/org/org.controller';
@@ -262,8 +262,14 @@ test('each postmortem trigger schedules one retro for the owning unit with an ag
   assert.match(retroA.agenda, /\*\*Why this retro\*\*: an objective or key result was abandoned\./);
   assert.match(retroA.agenda, /## What happened\nobjective \[\w{8}\] "Reach 5,000 subscribers" — status abandoned, owner nobody/);
   assert.match(retroA.agenda, /1 task\(s\) under it\./);
-  assert.match(retroA.agenda, /## Timeline \(\d+ audit row\(s\)\)[\s\S]*\[audit:\d+\] .* user goal_create/);
-  assert.match(retroA.agenda, /goal_update \{"status":"abandoned"\}/);
+  // the timeline reads in plain words — who by name, what happened, the fields that changed — with the row's citation; no JSON, no actor ids
+  assert.match(retroA.agenda, /## Timeline \(\d+ audit row\(s\)\)[\s\S]*- \d{4}-\d\d-\d\d \d\d:\d\d the owner created the goal "Reach 5,000 subscribers".* \[audit:\d+\]/);
+  assert.match(retroA.agenda, /the owner updated the goal \(status: abandoned\) \[audit:\d+\]/);
+  const timeline = retroA.agenda.split('## Timeline')[1].split('\n## ')[0];
+  assert.doesNotMatch(timeline, /[{}]|agent:[0-9a-f]{8}|goal_update/);
+  // the room's agenda items are the retro's questions, not the record's lines
+  const roomA = JSON.parse((await s.meetings.get(orgId, retroA.id)).room || '{}') as { items?: string[] };
+  assert.deepEqual(roomA.items, POSTMORTEM_ITEMS);
   assert.match(retroA.agenda, /## Cost\n1 run\(s\), \$0\.25, 1500 tokens — outcomes: progressed ×1\./);
   assert.match(retroA.agenda, /## Decisions touching it \(1\)\n- #decision:\w{8} .* "Referral bonus"/);
   assert.match(retroA.agenda, /## What this retro produces/);
@@ -287,7 +293,7 @@ test('each postmortem trigger schedules one retro for the owning unit with an ag
   const retroB = list.find((m) => m.title === 'Postmortem · Write the sponsor deck')!;
   assert.match(retroB.agenda, /a task escalated to the CEO after 3 review rounds/);
   assert.match(retroB.agenda, /Task [A-Z][A-Z0-9]{1,5}-\d+ "Write the sponsor deck" — status blocked, owner Writer, 3 review round\(s\), blockers: escalated: review round cap/);
-  assert.match(retroB.agenda, /task_escalate/);
+  assert.match(retroB.agenda, /escalated task [A-Z][A-Z0-9]{1,5}-\d+/);
   // a plain escalation (round 1) does not
   const t3 = await s.tasks.create(orgId, { title: 'Pick a font', assigneeAgentId: s.writer.id });
   await s.tasks.escalate(orgId, t3.id, 'needs the CEO', 'chief');

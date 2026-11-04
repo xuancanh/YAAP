@@ -273,14 +273,20 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
       const d = await this.describers.get(refType)!(orgId, refId).catch(() => null);
       if (d) { title = `Postmortem · ${d.title}`; subject = d.subject; taskIds.push(...(d.taskIds ?? [])); }
     }
-    lines.push(`**Why this retro**: ${describeTrigger(trigger)}.`, '', '## What happened', subject || `${refType} ${refId}`);
+    // The room's agenda items are the bullets of the "## Agenda" section
+    // (bulletItems): the questions to work through, not the record's lines.
+    lines.push(`**Why this retro**: ${describeTrigger(trigger)}.`, '', '## Agenda', ...POSTMORTEM_ITEMS.map((x) => `- ${x}`), '', '## What happened', subject || `${refType} ${refId}`);
     // Timeline: the audit rows of the ref (and of its tasks), oldest first.
     const refIds = [refId, ...taskIds.filter((id) => id !== refId)];
     const rows: Array<typeof orgAudit.$inferSelect> = [];
     for (const id of refIds.slice(0, 20)) rows.push(...(await this.db.select().from(orgAudit).where(and(eq(orgAudit.orgId, orgId), eq(orgAudit.refId, id))).orderBy(desc(orgAudit.seq)).limit(40)));
     rows.sort((a, b) => a.seq - b.seq);
     const shown = rows.slice(-30);
-    lines.push('', `## Timeline (${rows.length} audit row(s)${rows.length > shown.length ? `, last ${shown.length}` : ''})`, ...(shown.length ? shown.map((r) => `- [audit:${r.seq}] ${r.createdAt.slice(0, 16).replace('T', ' ')} ${r.actor} ${r.action}${r.payload && r.payload !== '{}' ? ` ${r.payload.slice(0, 140)}` : ''}`) : ['- nothing recorded']));
+    // Plain language: who (by name) did what, the fields that changed, and the row's citation last.
+    const keys = new Map<string, string>();
+    for (const id of taskIds) { const t = await this.tasks.get(orgId, id).catch(() => null); if (t) keys.set(t.id, taskRef(t)); }
+    const who = (actor: string) => actorName(actor, nm);
+    lines.push('', `## Timeline (${rows.length} audit row(s)${rows.length > shown.length ? `, last ${shown.length}` : ''})`, ...(shown.length ? shown.map((r) => `- ${r.createdAt.slice(0, 16).replace('T', ' ')} ${auditLine(r, who, nm, keys)} [audit:${r.seq}]`) : ['- nothing recorded']));
     // Cost: the runs of the task(s).
     if (taskIds.length) {
       const runs = (await this.tasks.runs(orgId, { limit: 500 })).filter((r) => taskIds.includes(r.taskId));
@@ -298,7 +304,7 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
     const words = (subject.split('"')[1] ?? '').toLowerCase().split(/\s+/).filter((w) => w.length >= 4).slice(0, 6);
     const decisions = (await this.db.select().from(orgDecisions).where(eq(orgDecisions.orgId, orgId)).orderBy(desc(orgDecisions.createdAt)).limit(300))
       .filter((d) => refIds.includes(d.refId) || (words.length > 0 && words.filter((w) => `${d.title} ${d.decision}`.toLowerCase().includes(w)).length >= Math.min(2, words.length))).slice(0, 10);
-    lines.push('', `## Decisions touching it (${decisions.length})`, ...(decisions.length ? decisions.map((d) => `- #decision:${d.id.slice(0, 8)} ${d.createdAt.slice(0, 10)} "${d.title}": ${d.decision.slice(0, 200)} (${d.decidedBy})`) : ['- none in the log']));
+    lines.push('', `## Decisions touching it (${decisions.length})`, ...(decisions.length ? decisions.map((d) => `- #decision:${d.id.slice(0, 8)} ${d.createdAt.slice(0, 10)} "${d.title}": ${d.decision.slice(0, 200)} (${actorName(d.decidedBy, nm)})`) : ['- none in the log']));
     const outcomes = await this.playbooks.outcomesSummary(orgId).catch(() => null);
     if (outcomes) lines.push('', outcomes);
     lines.push('', '## What this retro produces', 'Lessons with an audience (meeting_propose_lesson: member | unit | company), a charter change where a member\'s purpose misled it (the CEO approves the diff), a playbook change where a procedure misled (its owner gets a revise task), and the actions that stop this repeating. Say what the record shows, not what it should have shown.');
@@ -506,6 +512,55 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
 
   /** Ask the company (the API): `OrgKnowledgeService.answer` with the asker named. */
   ask(orgId: string, question: string, asker: string) { return this.knowledge.answer(orgId, question, { asker }); }
+}
+
+/** A postmortem's agenda items: what the room works through, in order. */
+export const POSTMORTEM_ITEMS = ['What happened, from the timeline', 'Why it happened', 'What would have caught it sooner', 'Lessons and changes to propose'];
+
+/** An audit actor by name: `agent:<id>` → the agent's name, the chief, the owner, the system. */
+export function actorName(actor: string, nm: (id: string) => string): string {
+  if (actor.startsWith('agent:')) return nm(actor.slice(6));
+  if (actor === 'chief') return 'the chief of staff';
+  if (actor === 'user' || actor === 'owner') return 'the owner';
+  if (actor === 'system') return 'the system';
+  if (actor.startsWith('human:')) return 'a person';
+  return actor;
+}
+
+const PAST: Record<string, string> = { create: 'created', update: 'updated', assign: 'assigned', claim: 'claimed', escalate: 'escalated', open: 'opened', close: 'closed', comment: 'commented on', steps: 'recorded steps on', unblocked: 'unblocked', contain: 'contained', resolve: 'resolved', accept: 'accepted', reject: 'rejected', set: 'set', add: 'added', remove: 'removed', request: 'requested', terminate: 'terminated' };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Fields that carry no meaning for the people in the room. */
+const NOISE = /(?:At|Id|Ids|Seq)$|^(?:runId|previous|acceptedBy|key|title)$/;
+
+/** One audit row in plain words: "Writer updated task REJ-3 (status: blocked; blocked on: the CEO)". No JSON, no raw ids. */
+export function auditLine(r: { actor: string; action: string; refType: string; refId: string; payload: string }, who: (actor: string) => string, nm: (id: string) => string, keys: Map<string, string>): string {
+  const p = parseJson(r.payload);
+  const [noun, ...rest] = r.action.split('_');
+  const verb = rest.join('_');
+  const thing = (() => {
+    const key = typeof p.key === 'string' ? p.key : keys.get(r.refId);
+    const title = typeof p.title === 'string' ? ` "${p.title.slice(0, 80)}"` : '';
+    if (noun === 'task') return `task${key ? ` ${key}` : ''}${title}`;
+    if (['goal', 'incident', 'project', 'member', 'decision', 'meeting', 'signal', 'review'].includes(noun)) return `the ${noun}${title}`;
+    return '';
+  })();
+  const event = thing && verb && PAST[verb] ? `${PAST[verb]} ${thing}` : r.action.replace(/_/g, ' ') + (thing && !verb ? ` ${thing}` : '');
+  const value = (v: unknown): string | null => {
+    if (v === null || v === undefined || v === '') return null;
+    if (typeof v === 'string') return UUID.test(v) ? (nm(v) === v.slice(0, 8) ? null : nm(v)) : v.replace(/_/g, ' ').slice(0, 80);
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+    if (Array.isArray(v)) { const xs = v.map(value).filter((x): x is string => Boolean(x)); return xs.length ? xs.slice(0, 3).join(', ') : null; }
+    return null;
+  };
+  const details: string[] = [];
+  if (typeof p.agentId === 'string' && (verb === 'assign' || noun === 'member')) { const n = value(p.agentId); if (n) details.push(`to ${n}`); }
+  for (const [k, v] of Object.entries(p)) {
+    if (NOISE.test(k)) continue;
+    const x = value(v);
+    if (x) details.push(`${k.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()}: ${x}`);
+    if (details.length >= 4) break;
+  }
+  return `${who(r.actor)} ${event}${details.length ? ` (${details.join('; ')})` : ''}`.slice(0, 240);
 }
 
 function describeTrigger(t: PostmortemTrigger): string {
