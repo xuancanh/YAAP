@@ -383,7 +383,9 @@ test('meeting_propose_lesson in a retro: lessons land in the lessons store per a
   assert.equal(byAudience.member.lessonIds!.length, 1); assert.equal(byAudience.company.lessonIds!.length, 3);
   const row = (await s.db.select().from(agentLessons).where(eq(agentLessons.agentId, s.editor.id)))[0];
   assert.equal(row.sourceKind, 'loop'); assert.equal(row.trusted, 1); assert.equal(row.audience, 'shared');
-  assert.match(row.text, /^Retro lesson \(unit, "Retro · /);
+  assert.equal(row.text, 'Sponsors need a week of notice.', 'the rule reads as a rule');
+  assert.equal(row.cause, 'retro'); assert.match(row.context, /^unit lesson from the retro "Retro · /);
+  assert.match(row.evidence, /"meeting:/);
   // the charter card
   const card = (await s.approvals.pending(orgId)).find((a) => a.kind === 'charter_change')!;
   assert.ok(card, 'a charter_change approval exists');

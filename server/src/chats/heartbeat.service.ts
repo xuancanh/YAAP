@@ -447,7 +447,7 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
  *  stops, rather than inventing work. */
 export function heartbeatPrompt(reasons: string[], charter: string, context: string, following = '', sections: string[] = []): string {
   const parts = [
-    `Heartbeat. You were woken because:\n${reasons.map((r) => `- ${r}`).join('\n')}\nCheck each item, act with your tools, then stop. Do not invent work. Keep your board true with update_task: doing when you work on a task, done when finished, blocked (with what it waits on) when you cannot move it, abandoned (with why) when it is no longer worth doing.`,
+    `Heartbeat. You were woken because:\n${reasons.map((r) => `- ${r}`).join('\n')}\nCheck each item, act with your tools, then stop. Do not invent work. Keep your board true with update_task: doing when you work on a task, done when finished, blocked (with what it waits on) when you cannot move it, abandoned (with why) when it is no longer worth doing. Learned something this beat you'd want next time? memory_note it; a lesson that keeps repeating belongs in How you work (memory_guidance).`,
   ];
   for (const sec of sections) if (sec.trim()) parts.push(sec.trim());
   const purpose = (charter ?? '').trim();

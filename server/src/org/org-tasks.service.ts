@@ -1031,7 +1031,7 @@ export class OrgTasksService {
     const t = await this.get(orgId, taskId);
     const actor = input.byCheck ? 'check' : input.byAgentId ? `agent:${input.byAgentId}` : 'user';
     if (input.byAgentId && input.byAgentId === t.assigneeAgentId) throw new BadRequestException('a task cannot be reviewed by its own assignee');
-    for (const fn of this.reviewListeners) await Promise.resolve(fn({ orgId, taskId, assigneeAgentId: t.assigneeAgentId, verdict: input.verdict, byAgentId: input.byAgentId ?? null })).catch(() => undefined);
+    for (const fn of this.reviewListeners) await Promise.resolve(fn({ orgId, taskId, assigneeAgentId: t.assigneeAgentId, verdict: input.verdict, byAgentId: input.byAgentId ?? null, note: input.note, rounds: t.reviewRounds, byCheck: input.byCheck })).catch(() => undefined);
     if (input.verdict === 'accept') {
       await this.db.update(orgTasks).set({ status: 'done', acceptedBy: 'review', claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
       await this.recordTransition(orgId, t, 'done', actor, 'accepted by review');
@@ -1196,7 +1196,7 @@ export class OrgTasksService {
   }
 }
 
-export type ReviewVerdictListener = (ev: { orgId: string; taskId: string; assigneeAgentId: string | null; verdict: 'accept' | 'request_changes' | 'escalate'; byAgentId: string | null }) => unknown;
+export type ReviewVerdictListener = (ev: { orgId: string; taskId: string; assigneeAgentId: string | null; verdict: 'accept' | 'request_changes' | 'escalate'; byAgentId: string | null; note?: string; rounds?: number; byCheck?: boolean }) => unknown;
 
 /** Model family for the different-family reviewer rule: the provider, plus
  *  the leading token of the model id so two agents on one provider but on

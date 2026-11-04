@@ -29,6 +29,7 @@ import { TUNABLES } from './org-tunables';
 import { orgPath } from '../files/layout';
 import { deriveMeetingTunables } from './meeting-tunables';
 import { deriveWorkTunables } from './work-tunables';
+import { deriveMemoryTunables } from './memory-tunables';
 import { deriveProgramTunables } from './program-tunables';
 import { deriveDiscussionTunables } from '../groupchat/discussion-tunables';
 // The assurance keys (audit.assuranceDebounceHours) join the registry at import.
@@ -156,6 +157,8 @@ export function deriveOperatingSystem(p: ProfileInput): OperatingSystemPlan {
   for (const t of deriveProgramTunables(d)) set(t.key, t.value, t.why);
   // Sub-channels (docs/group-chat.md §9): idle close, agent starts, the ping-pong move.
   for (const t of deriveDiscussionTunables(d)) set(t.key, t.value, t.why);
+  // Learning (docs/agent-memory.md §12): when a lesson may change a charter, when one goes stale.
+  for (const t of deriveMemoryTunables(d)) set(t.key, t.value, t.why);
 
   const decisionProtocol = {
     clan: 'Consensus-seeking with one named final decider; dissent is recorded, then the decider decides.',

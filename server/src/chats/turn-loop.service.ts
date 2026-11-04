@@ -745,7 +745,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     // Live status (docs/mission-control.md): this agent is mid-turn; each tool call updates it.
     liveTurns.begin({ sessionId, turnId: turn.id, agentId: session.agentId ?? null, workspaceId: session.workspaceId, origin: input.origin ?? 'user', sessionName: session.name || session.autoTitle || '' });
     try {
-      const ctx = await this.context.build(session);
+      const ctx = await this.context.build(session, { turnText: input.text });
       hosted = ctx.hosted ?? false;
       turnModel = ctx.model || turnModel;
       // Degradation (docs/incidents.md §4): the turn says which fallback it ran on.

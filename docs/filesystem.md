@@ -50,7 +50,9 @@ skills cannot drift apart.
 │   ├── meetings/<yyyy-mm-dd>-<title>.md   minutes of `/meeting`s in a non-unit channel
 │   └── sub/<sub-slug>/        a discussion or meeting sub-channel's folder (docs/group-chat.md §9)
 ├── agents/<handle>/           an agent's home — its default working folder
-│   ├── LESSONS.md, JOURNAL.md file brain (agent memory)
+│   ├── LESSONS.md, JOURNAL.md file brain (agent memory); LESSONS.md generated from the lesson store
+│   ├── HOW-I-WORK.md          the agent's own working notes, generated (docs/agent-memory.md §12)
+│   ├── journal/<date>.md      older journal entries, rotated out of JOURNAL.md
 │   ├── knowledge/             durable reference notes
 │   ├── apps/<appId>/          mini-app state and data
 │   ├── work/                  drafts not yet ready to share

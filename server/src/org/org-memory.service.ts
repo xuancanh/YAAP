@@ -358,7 +358,10 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
         const targets = l.audience === 'member' ? [l.by] : l.audience === 'unit' ? unitAgents : members.map((m) => m.agentId);
         const ids: string[] = [];
         for (const agentId of [...new Set(targets)].filter((id) => members.some((m) => m.agentId === id))) {
-          const r = await this.memory?.record(agentId, `Retro lesson (${l.audience}, "${meeting.title}"): ${l.text}`, { source: 'loop', audience: 'shared' }).catch(() => null);
+          // The rule is the lesson; the retro it came from is context and evidence.
+          const r = await this.memory?.record(agentId, l.text, {
+            source: 'loop', audience: 'shared', cause: 'retro', context: `${l.audience} lesson from the retro "${meeting.title}"`, evidence: [`meeting:${meeting.id}`],
+          }).catch(() => null);
           if (r) ids.push(r.lesson.id);
         }
         l.lessonIds = ids;

@@ -1,6 +1,7 @@
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Optional, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Optional, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
 import { AgentsService } from './agents.service';
+import { AgentGuidanceService } from './agent-guidance.service';
 import { AgentMemoryService } from './agent-memory.service';
 import { ConnectionsService } from '../connections/connections.service';
 import { cardById } from '../connections/cards';
@@ -109,8 +110,15 @@ export class AgentsController {
     private readonly voice: TranscriptionService,
     /** Optional so test constructors without it keep working (unversioned). */
     @Optional() fs?: WorkspaceFs,
+    /** Optional so test constructors keep working; without it there is no "How I work". */
+    @Optional() private readonly guidanceOpt?: AgentGuidanceService,
   ) {
     this.fs = fs ?? new WorkspaceFs(storage);
+  }
+
+  private get guidanceSvc(): AgentGuidanceService {
+    if (!this.guidanceOpt) throw new NotFoundException('guidance is not available');
+    return this.guidanceOpt;
   }
 
   private readonly fs: WorkspaceFs;
@@ -139,8 +147,10 @@ export class AgentsController {
     // this" signal in the product the most ephemeral thing in it. A 👎 with
     // a note is now also a pinned lesson.
     if (dto.rating === 'down' && dto.note?.trim()) {
-      const { lesson } = await this.memory.record(id, `The user corrected me: ${dto.note.trim()}`, { source: 'feedback' });
-      await this.memory.update(id, lesson.id, { pinned: true });
+      await this.memory.record(id, `The user corrected me: ${dto.note.trim()}`, {
+        source: 'feedback', cause: 'feedback', pinned: true, evidence: dto.turnId ? [`message:${dto.turnId}`] : [],
+        context: 'a reply rated 👎 with a note',
+      });
     }
     return res;
   }
@@ -152,9 +162,21 @@ export class AgentsController {
   @Patch(':id/lessons/:lessonId')
   patchLesson(
     @Param('id') id: string, @Param('lessonId') lessonId: string,
-    @Body() body: { trusted?: boolean; pinned?: boolean },
+    @Body() body: { trusted?: boolean; pinned?: boolean; text?: string; status?: string },
   ) {
-    return this.memory.update(id, lessonId, body);
+    return this.memory.update(id, lessonId, { trusted: body.trusted, pinned: body.pinned, text: body.text, status: body.status });
+  }
+
+  /** "How I work" (docs/agent-memory.md §12): the agent's own section, the
+   *  log of every guidance change with the lessons it came from, and the
+   *  proposals still waiting on a decision. */
+  @Get(':id/guidance') guidance(@Param('id') id: string) { return this.guidanceSvc.view(id); }
+
+  /** A person edits the section; it is logged like the agent's own edits. */
+  @Put(':id/guidance') async putGuidance(@Param('id') id: string, @Body() body: { text?: string; why?: string }) {
+    if (typeof body.text !== 'string') throw new BadRequestException('text is required');
+    await this.guidanceSvc.writeSelf(id, { text: body.text, why: body.why ?? 'edited on the Memory tab', by: 'user' });
+    return this.guidanceSvc.view(id);
   }
 
   /** A memory nobody can delete is one nobody can correct. */

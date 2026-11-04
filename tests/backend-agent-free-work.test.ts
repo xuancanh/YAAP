@@ -116,9 +116,9 @@ test('an unattended loop at internal-write level 0 writes, edits, appends, delet
   const s = await setup();
   const session = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.alice.id, name: 'Loop · notes', permissionMode: 'ask' });
   s.provider.round(
-    ['fs_write', { path: 'LESSONS.md', content: 'lesson one' }],
-    ['fs_append', { path: 'LESSONS.md', content: 'lesson two' }],
-    ['fs_edit', { path: 'LESSONS.md', old: 'one', new: 'uno' }],
+    ['fs_write', { path: 'notes.md', content: 'lesson one' }],
+    ['fs_append', { path: 'notes.md', content: 'lesson two' }],
+    ['fs_edit', { path: 'notes.md', old: 'one', new: 'uno' }],
     ['fs_write', { path: '/org/plan.md', content: 'the plan' }],
     ['slides_create', { path: '/org/deck.html', title: 'Q4', slides: [{ title: 'Hello' }] }],
     ['fs_write', { path: 'scratch.md', content: 'temporary' }],
@@ -129,7 +129,7 @@ test('an unattended loop at internal-write level 0 writes, edits, appends, delet
   const out = results(events);
   assert.equal(out.length, 7);
   for (const r of out) assert.ok(!r.isError, `${r.name}: ${r.output}`);
-  assert.equal(s.map.get(key(s, `${s.aliceHome}/LESSONS.md`))?.toString(), 'lesson uno\nlesson two');
+  assert.equal(s.map.get(key(s, `${s.aliceHome}/notes.md`))?.toString(), 'lesson uno\nlesson two');
   assert.equal(s.map.get(key(s, 'org/plan.md'))?.toString(), 'the plan');
   assert.ok(s.map.has(key(s, 'org/deck.html')));
   assert.ok(!s.map.has(key(s, `${s.aliceHome}/scratch.md`)));

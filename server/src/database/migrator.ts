@@ -2485,6 +2485,48 @@ const MIGRATIONS: Migration[] = [
       if (!(await hasColumn(db, 'agents', 'packId'))) await db.query(`ALTER TABLE agents ADD COLUMN "packId" TEXT`);
     },
   },
+  {
+    id: '0093-agent-learning',
+    up: async (db) => {
+      // Learning as they work (docs/agent-memory.md §12): a lesson carries
+      // what made it, what happened, the refs it rests on, keywords for
+      // task-relevant recall, how often it was recalled, and whether it is
+      // retired. The agent's own "How I work" section, and the log of every
+      // guidance change with the lessons it came from.
+      const add = async (table: string, column: string, ddl: string) => {
+        if (!(await hasColumn(db, table, column))) await db.query(`ALTER TABLE ${table} ADD COLUMN "${column}" ${ddl}`);
+      };
+      await add('agent_lessons', 'cause', "TEXT NOT NULL DEFAULT ''");
+      await add('agent_lessons', 'context', "TEXT NOT NULL DEFAULT ''");
+      await add('agent_lessons', 'evidence', "TEXT NOT NULL DEFAULT '[]'");
+      await add('agent_lessons', 'tags', "TEXT NOT NULL DEFAULT ''");
+      await add('agent_lessons', 'recalls', 'INTEGER NOT NULL DEFAULT 0');
+      await add('agent_lessons', 'lastRecalledAt', 'TEXT');
+      await add('agent_lessons', 'status', "TEXT NOT NULL DEFAULT 'active'");
+      await add('agent_lessons', 'statusNote', "TEXT NOT NULL DEFAULT ''");
+      await add('agents', 'selfGuidance', "TEXT NOT NULL DEFAULT ''");
+      await db.query(`CREATE TABLE IF NOT EXISTS agent_guidance_changes (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "agentId" TEXT NOT NULL,
+        "kind" TEXT NOT NULL DEFAULT 'self',
+        "status" TEXT NOT NULL DEFAULT 'applied',
+        "text" TEXT NOT NULL DEFAULT '',
+        "lessonIds" TEXT NOT NULL DEFAULT '[]',
+        "ref" TEXT NOT NULL DEFAULT '',
+        "by" TEXT NOT NULL DEFAULT 'agent',
+        "why" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL,
+        "decidedAt" TEXT
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_guidance_changes_agent ON agent_guidance_changes ("agentId")`);
+      // Retro lessons used to carry the meeting's title in the rule itself;
+      // the title is context, so the rule reads as a rule (and dedups).
+      await db.query(`UPDATE agent_lessons SET "context" = substring("text" from '^Retro lesson \\([a-z]+, "(.*?)"\\): '), "cause" = 'retro',
+        "text" = regexp_replace("text", '^Retro lesson \\([a-z]+, ".*?"\\): ', '')
+        WHERE "text" LIKE 'Retro lesson (%' AND "cause" = ''`);
+    },
+  },
 ];
 
 /**

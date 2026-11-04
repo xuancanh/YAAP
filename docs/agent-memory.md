@@ -389,3 +389,85 @@ Verified by `tests/backend-company-briefing.test.ts`: the note's content,
 no rewrite when nothing changed, a rewrite on a project re-lead (for both
 leads and nobody else), on a hire (the new member and its manager), on a
 promotion to head, and the debounced refresh after an audit entry.
+
+## 12. Learning as they work *(4 November 2026)*
+
+An audit of a running company ("Real Jong", six members, ~150 runs) found
+the loop closed in code but not in behaviour:
+
+- **No tool to remember.** The only write path was distillation of an idle
+  session. Members that wanted to keep a lesson appended it to LESSONS.md
+  with `fs_append` / `fs_edit` (seven times across four members), and the
+  next `regenerate()` overwrote the file from the table, erasing them. One
+  wrote to `/home/user/LESSONS.md`, outside its home.
+- **No trigger to write.** The prompt said lessons existed and that
+  `search_history` existed; nothing said when to record one. The moments
+  that teach most produced no lesson: a review that sent work back, a breaker
+  stop, a CEO rejection with a note.
+- **Dedup was exact-text on PGlite.** With no `pg_trgm`, every paraphrase was
+  a new row: 86 lessons, every `useCount` 1, so "ranked by recurrence" was
+  ranking by recency.
+- **Half the lessons never reached the prompt.** The top 12 by recency
+  within 3.5 KB: 11 of 20, 11 of 26 and 11 of 29 for the three busiest
+  members, with nothing chosen for the task at hand. Retro lessons spent
+  ~130 characters each on the meeting title.
+- **Nothing ever changed guidance.** No playbook, no `charter_change` card;
+  the only path from a lesson to a charter was a retro participant typing a
+  proposal.
+
+What changed:
+
+**Capture.** `memory_note` (chats/memory-tools.service.ts) records a lesson
+the moment it is learned (the rule, what happened, the evidence), or
+confirms / retires one by the 8-character id the prompt shows; six per
+session per hour. Model-free capture at the work's own moments
+(`OrgLearningService`): a review sent back teaches the assignee the
+reviewer's note, and acceptance afterwards confirms it; a loop or
+no-progress stop teaches a rule with the task key; a proposal the CEO
+rejected with a note teaches who asked; an accepted task gets a journal
+line. A 👎 with a note is a pinned `feedback` lesson with the reply as
+evidence; retro lessons are recorded as the rule, with the retro as
+context and evidence. `memory.captureTriggers` switches each. Lessons carry
+`cause`, `context`, `evidence` (≤ 8 refs), `tags`, `recalls`, `status`
+(migration 0092); text is capped at 600 characters, and dedup falls back to
+model-free term similarity (Jaccard / overlap ≥ 0.6) when `pg_trgm` is
+absent or misses. Distillation asks for the rule and its evidence and pulls
+task keys from the transcript.
+
+**Recall.** The digest is a small always-on core (8 lessons, 2.2 KB: pinned,
+then learned-again, then recalled, then recent) plus up to 4 lessons
+relevant to this turn's text (the person's message, the task wake, the
+heartbeat), matched on rare shared words, tags, context and a task key in
+the evidence, within the same 3.5 KB. A relevant hit counts as a recall,
+which lets a useful lesson climb into the core. `memory_recall` searches the
+lessons (retired ones marked) and knowledge/ notes.
+
+**Consolidate.** `consolidateAgent` on the loops tick (once per agent per
+six hours): merge paraphrases (counts, recalls and evidence add up), retire
+lessons learned once, never recalled, not pinned and not a person's
+correction after `memory.lessonStaleDays`, then trim to 300. LESSONS.md
+lists the top 60 active by value with their evidence, the retired apart;
+JOURNAL.md rotates its older part into `journal/<date>.md` instead of
+dropping it.
+
+**Self-guidance.** `agents.selfGuidance` is the agent's own How I work
+section (1.5 KB), injected right after the charter; `memory_guidance`
+rewrites it naming the lessons, and a person edits it on the Memory tab.
+Every change is a row of `agent_guidance_changes` with its lesson ids, and
+HOW-I-WORK.md is generated from the section and its log. A lesson learned
+`memory.guidanceRepeats` times is proposed (never written): a revise task
+for an active playbook it names, otherwise one `charter_change` card at a
+time with the diff and the lessons. Boundary rows `self_guidance` (alone),
+`guidance_proposal` (propose), `lesson_audience` (never); see
+docs/boundary.md. Untrusted surfaces (an app, a channel) may only propose a
+lesson: they cannot confirm, retire or touch guidance. Agents' `fs_*`
+writes to LESSONS.md and HOW-I-WORK.md are refused with the tool to use.
+
+**Visibility.** The Memory tab (`src/components/AgentMemoryTab.tsx`) shows
+How I work and where each change came from, the proposals waiting on a
+decision, and lessons with what made them, learned / recalled counts and
+evidence, filtered to all, learned this week, or retired; a person pins,
+edits, retires, restores or forgets each.
+
+Verified by `tests/backend-agent-learning.test.ts` and
+`web-tests/agent-memory-tab.test.tsx`.

@@ -41,6 +41,7 @@ import type { CalendarEventSummary, MailSummary } from '../connections/connectio
 import { ChatsRepository, LoopStateRow } from './chats.repository';
 import { TurnLoopService } from './turn-loop.service';
 import { ChatArchiveService } from './chat-archive.service';
+import { AgentMemoryService } from '../agents/agent-memory.service';
 import { DistillService } from './distill.service';
 import { cronMatches } from './cron.util';
 import { deliveryFor } from '../workspaces/quiet-hours';
@@ -108,6 +109,8 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly accounts?: AccountsService,
     /** Optional: without it finished-task chats are never auto-archived. */
     @Optional() private readonly archive?: ChatArchiveService,
+    /** Optional: without it lessons are never consolidated (docs/agent-memory.md §12). */
+    @Optional() private readonly memory?: AgentMemoryService,
   ) {
     bus?.onTaskAdded((ev) => { void this.onTaskAdded(ev.agentId, ev.task); });
   }
@@ -150,6 +153,9 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
       await this.distillSweep(now).catch((err) => {
         this.logger.warn(`distill sweep failed: ${err instanceof Error ? err.message : err}`);
       });
+      await this.consolidateSweep(now).catch((err) => {
+        this.logger.warn(`lesson consolidation failed: ${err instanceof Error ? err.message : err}`);
+      });
     }
     // auto-archive (docs/chat-archiving.md): once an hour, archive the chats
     // whose task has been finished for their window.
@@ -188,6 +194,18 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Distill idle, changed agent sessions into their agents' brains. */
+  /** The quiet loop for memory (docs/agent-memory.md §12): merge repeats,
+   *  retire stale lessons and trim, once per agent per six hours. */
+  async consolidateSweep(now: Date): Promise<number> {
+    if (!this.memory) return 0;
+    let changed = 0;
+    for (const a of await this.agents.list()) {
+      const r = await this.memory.consolidateAgent(a.id, { now }).catch(() => null);
+      if (r && (r.merged || r.retired || r.trimmed)) changed++;
+    }
+    return changed;
+  }
+
   async distillSweep(now: Date, idleMinutes = 60): Promise<number> {
     const idleBefore = new Date(now.getTime() - idleMinutes * 60_000).toISOString();
     // Loop sessions journal once a day, not once a run (see the repository).

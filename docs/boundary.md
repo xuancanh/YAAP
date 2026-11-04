@@ -63,6 +63,9 @@ the actor `experiment`. That actor passes everything except a `never` row.
 | frozen_classes | classes frozen by an incident | never | lifted by the owner resolving the incident |
 | delegation | who decides cards for the owner | never | delegating authority is the owner's act |
 | eval_cases | golden-set cases by hand | never | the yardstick; harvesting adds cases from verified work |
+| self_guidance | a member's own "How I work" notes and its own lessons | alone | working notes within its charter; every change names its lessons, and a person can edit or undo it |
+| guidance_proposal | a charter or playbook change raised by a repeated lesson | propose | the CEO decides the charter card; the playbook's owner and reviewer the revision |
+| lesson_audience | who reads a member's private lesson | never | widening one person's private lesson to everyone is the owner's call |
 
 `delegable` on each row says whether a card for that change may be decided
 by a delegate (`docs/owners-seat.md` §2).
@@ -192,3 +195,19 @@ first is the direct manager of the member who raised it
   table still binds it.
 - Only the owner decides a card whose row says `delegable: false`.
 
+
+## Learning as they work (added 4 November 2026)
+
+`docs/agent-memory.md` §12. A member keeps its own **How I work** section
+with `memory_guidance` (`self_guidance`, `alone`): `AgentGuidanceService.writeSelf`
+asks `checkBoundary` and refuses a change that names none of the member's
+lessons. The charter stays the manager's or the owner's: no agent path
+writes it. A lesson learned `memory.guidanceRepeats` times (a tunable
+derived from the profile: 4 for rigour or a control culture, 2 for speed or
+an adhocracy, else 3) is proposed by `OrgLearningService.proposeGuidance`
+through `OrgService.boundaryDecide` (`guidance_proposal`, `propose`): a
+`charter_change` card for the CEO with the diff and `lessonIds`, or a revise
+task for the playbook the lesson names. The existing `charter` row
+(`experiment`) still governs an agent changing a charter directly; a card
+is the CEO's change, so it passes. `lesson_audience` is `never`: only the
+owner's route widens a private lesson.

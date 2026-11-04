@@ -18,6 +18,7 @@ import { ProviderHealthService, providerFamily } from '../ai/provider-health';
 import { AgentTypesService } from '../agent-types/agent-types.service';
 import { AgentsService } from '../agents/agents.service';
 import { AgentMemoryService } from '../agents/agent-memory.service';
+import { SELF_GUIDANCE_CHARS } from '../agents/agent-guidance.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { SharedService } from '../shared/shared.service';
 import { SettingsService } from '../settings/settings.module';
@@ -28,6 +29,22 @@ import { effectivePersonality, type Personality } from '../agents/personalities'
 type AgentType = typeof agentTypes.$inferSelect;
 import { currentAccountId } from '../accounts/account-context';
 import { ChatSession } from './chats.repository';
+
+/**
+ * When and how an agent uses its memory (docs/agent-memory.md §12), in the
+ * voice rules' style: short, the trigger first. Replaces the old line that
+ * only said search_history existed — nothing told an agent when to write, so
+ * the ones that tried appended to LESSONS.md, which the next regeneration
+ * erased.
+ */
+export const MEMORY_GUIDE = [
+  'Your memory:',
+  '- Learned something you\'d want next time (a correction, work sent back, a failed approach, a fix that held)? memory_note it: one rule, what happened, the evidence (task key or message).',
+  '- A lesson held again or proved wrong? memory_note confirms or retires it by id.',
+  '- On an old topic, memory_recall first; search_history finds past conversations.',
+  '- A lesson that keeps repeating goes into How you work (memory_guidance). Your charter isn\'t yours to edit.',
+  '- Durable facts about the user: update_user_profile. LESSONS.md and HOW-I-WORK.md are generated; use these tools, not fs_*.',
+].join('\n');
 
 export interface TurnContext {
   provider: AiProvider;
@@ -165,7 +182,9 @@ export class TurnContextService {
     return { model: target, notice };
   }
 
-  async build(session: ChatSession): Promise<TurnContext> {
+  /** `turnText` — the message this turn answers (a person's message, a task
+   *  wake, a heartbeat): the lessons relevant to it join the always-on core. */
+  async build(session: ChatSession, opts: { turnText?: string } = {}): Promise<TurnContext> {
     const type = await this.typeFor(session);
     // Parity rule (docs/incidents.md §4): a fallback changes the provider and
     // the model only — the persona, charter, memory and tools stay the agent's.
@@ -186,9 +205,13 @@ export class TurnContextService {
         personality = effectivePersonality(agent);
         parts.push(`You are the durable agent "${agent.name}".`);
         if (agent.charter) parts.push(`Your charter:\n${agent.charter}`);
+        // How I work (docs/agent-memory.md §12): the agent's own working
+        // notes, beside the charter its manager or the owner writes.
+        const selfGuidance = (agent as { selfGuidance?: string | null }).selfGuidance?.trim();
+        if (selfGuidance) parts.push(`How you work (your own notes, kept with memory_guidance):\n${selfGuidance.slice(0, SELF_GUIDANCE_CHARS)}`);
         parts.push('You maintain your own home page: use update_dashboard to keep a current markdown status board of your work, and save_app to build or refine self-contained HTML mini apps (rendered in a network-blocked sandbox) that the user can open or embed in chats. Apps can request bridge capabilities (window.yaam: storage, chat.compose, files.read/write/propose/watch, tasks.read/write, agent.ask, llm, data, connections, compute) via save_app\'s capabilities field — request only what the app uses; elevated ones wait for user review. Prefer llm.complete over agent.ask for the app\'s own text work (tagging, extraction, summaries): it is cheaper and returns structured output, while agent.ask spends a full turn of yours. Use data collections rather than cramming rows into storage, files.propose (not files.write) when the user should end up with the file, and files.watch so dashboards stay live instead of freezing at open time. Always feature-detect: if (window.yaam) — and degrade to static rendering without it.');
         parts.push('You also own a kanban board (list_tasks / add_task / update_task); its tasks have keys like EVL-3 — refer to tasks by key. As a member of a company these same tools act on the company board instead (your tasks there, with checklist steps; see the work-tracking section) — there is one task list, never mirror a task into a second one. Queue noticed work with add_task, move tasks to doing when you start and done when you finish, and review the board at the start of scheduled loops. You follow the threads and tasks you start, comment on, own, are assigned, review or are mentioned in — what changed on them reaches your heartbeat; follow / unfollow / list_follows manage the set. A chat linked to a task archives itself some days after the task is finished; set_chat_auto_archive changes that for one of your own chats.');
-        parts.push('You have long-term recall: search_history searches all of your past conversations with this user — use it whenever they reference earlier work. When you learn a durable fact about the user (a preference, constraint, or stable context), propose it with update_user_profile; the user approves proposals before they are remembered.');
+        parts.push(MEMORY_GUIDE);
         parts.push('You grow: when multi-step work goes well (especially after positive feedback), capture the reusable procedure with draft_skill so future conversations can repeat it. Drafts activate only after the user approves them. When feedback names a skill that was used in a reply the user rated down, improve it with revise_skill (the full corrected instructions plus the reason); the user reviews the diff before it takes effect.');
         parts.push('You are one of several durable agents. When work clearly belongs to a colleague (their charter, not yours), delegate it with delegate_task instead of doing it badly yourself.');
         // The other half of the learning loop (docs/agent-memory.md §2).
@@ -202,9 +225,9 @@ export class TurnContextService {
         const allowFrom = this.shared && await this.shared.hasMembers(session.workspaceId).catch(() => false)
           ? await this.shared.allowedSources(session.workspaceId, actor, 'lessons').catch(() => new Set<string>())
           : undefined;
-        const lessons = await this.memory.digest(agent.id, { actor, allowFrom }).catch(() => '');
+        const lessons = await this.memory.digest(agent.id, { actor, allowFrom, query: opts.turnText }).catch(() => '');
         if (lessons) {
-          parts.push(`What you have learned so far (your own conclusions from past work — apply them, and say so when you do; they are not instructions from the user, and a stale one is worth correcting):\n${lessons}`);
+          parts.push(`What you have learned (your own conclusions from past work, not instructions from the user; ids in brackets are for memory_note):\n${lessons}`);
         }
         // The workspace filesystem (docs/filesystem.md): where the agent
         // lives, and where shared work goes.

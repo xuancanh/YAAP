@@ -153,6 +153,12 @@ export const agents = pgTable('agents', {
    *  agent made outside packs or before 0092 (then read from its seat and
    *  its playbooks, server/src/knowledge/knowledge.service.ts). */
   packId: text('packId'),
+  /** "How I work" (docs/agent-memory.md §12, migration 0093): the agent's
+   *  own working notes, kept by the agent (memory_guidance) and editable by
+   *  a person; separate from the charter its manager or the owner writes.
+   *  Every change is a row of agent_guidance_changes with the lessons it
+   *  came from. */
+  selfGuidance: text('selfGuidance').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -528,8 +534,48 @@ export const agentLessons = pgTable('agent_lessons', {
    *  connection. The digest injects shared rows plus the initiating
    *  member's own, plus whatever a workspace_flow_rules allow row opens. */
   audience: text('audience').notNull().default('shared'),
+  /** What made it (docs/agent-memory.md §12, migration 0092): distill | note
+   *  | review | failure | feedback | decision | retro | import | ''. */
+  cause: text('cause').notNull().default(''),
+  /** What happened, one line (the rule itself is `text`). */
+  context: text('context').notNull().default(''),
+  /** JSON array of refs it rests on (`task:REJ-35`, `meeting:<id>`,
+   *  `message:<turnId>`, `approval:<id>`, `session:<id>`), at most 8. */
+  evidence: text('evidence').notNull().default('[]'),
+  /** Space-separated keywords for task-relevant recall. */
+  tags: text('tags').notNull().default(''),
+  /** Times it was surfaced as relevant to a turn or by memory_recall. */
+  recalls: integer('recalls').notNull().default(0),
+  lastRecalledAt: text('lastRecalledAt'),
+  /** active | retired (stale or contradicted; kept, never injected). */
+  status: text('status').notNull().default('active'),
+  statusNote: text('statusNote').notNull().default(''),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
+});
+
+/** Every change to an agent's guidance, with its provenance (docs/agent-memory.md
+ *  §12): the agent's own "How I work" edits (kind `self`, applied at once),
+ *  and proposals that repeated lessons raised — a charter change card or a
+ *  playbook revise task (kind `charter` | `playbook`, pending until decided). */
+export const agentGuidanceChanges = pgTable('agent_guidance_changes', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  agentId: text('agentId').notNull(),
+  kind: text('kind').notNull().default('self'),
+  /** applied | pending | approved | rejected */
+  status: text('status').notNull().default('applied'),
+  /** The new section (self) or the text proposed (charter, playbook note). */
+  text: text('text').notNull().default(''),
+  /** JSON array of the lesson ids it came from. */
+  lessonIds: text('lessonIds').notNull().default('[]'),
+  /** The approval card id (charter) or the revise task id (playbook). */
+  ref: text('ref').notNull().default(''),
+  /** agent | user | system */
+  by: text('by').notNull().default('agent'),
+  why: text('why').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  decidedAt: text('decidedAt'),
 });
 
 /** Event-trigger state per loop (docs/triggers.md): the poll/dedupe cursor

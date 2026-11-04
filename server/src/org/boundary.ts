@@ -37,7 +37,9 @@ export type ChangeKind =
   // A department's name (docs/group-chat.md §7 "Department names").
   | 'unit_name'
   // Work tracking (docs/work-tracking.md): the CEO's bets.
-  | 'project_bet' | 'project_appetite' | 'project_kill';
+  | 'project_bet' | 'project_appetite' | 'project_kill'
+  // Learning as they work (docs/agent-memory.md §12).
+  | 'self_guidance' | 'guidance_proposal' | 'lesson_audience';
 
 /** A proposed self-change, described enough for the table to place it. */
 export interface SelfChange {
@@ -91,6 +93,9 @@ export const BOUNDARY: BoundaryRule[] = [
   { id: 'routing', kind: 'routing', match: 'model routing by task class', verdict: 'alone', reason: 'routing trades cost for quality inside the envelope; the eval gate replays the golden set first', delegable: true },
   { id: 'playbook', kind: 'playbook', match: 'playbook activation (new version)', verdict: 'alone', reason: 'a playbook is reviewed by a peer and its new version replays the golden set first', delegable: true },
   { id: 'charter', kind: 'charter', match: 'a member\'s charter', verdict: 'experiment', reason: 'a charter changes how a member works: it must be measured, not just made', delegable: true },
+  { id: 'self_guidance', kind: 'self_guidance', match: 'a member\'s own "How I work" notes and its own lessons', verdict: 'alone', reason: 'the member\'s working notes: they change how it works only within its charter, every change names the lessons it came from, and a person can edit or undo it', delegable: true },
+  { id: 'guidance_proposal', kind: 'guidance_proposal', match: 'a charter or playbook change raised by a repeated lesson', verdict: 'propose', reason: 'a lesson that keeps repeating may change the charter or a playbook only as a proposal: the CEO decides the charter card, the playbook owner and its reviewer the revision', delegable: true },
+  { id: 'lesson_audience', kind: 'lesson_audience', match: 'who reads a member\'s private lesson', verdict: 'never', reason: 'widening a lesson from one person\'s private session to everyone is the owner\'s call (docs/shared-agents.md §4)', delegable: false },
   { id: 'role', kind: 'role', match: 'a role definition', verdict: 'experiment', reason: 'a role changes what a seat is for: it must be measured, not just made', delegable: true },
   { id: 'hire:unit', kind: 'hire', match: 'hire within one unit', verdict: 'alone', reason: 'internal structure within caps (depth, fan-out, agent cap, envelope)', delegable: true },
   { id: 'hire:beyond', kind: 'hire', match: 'hire touching more than one unit', verdict: 'experiment', reason: 'structure beyond one unit changes how units relate: measure it', delegable: true },

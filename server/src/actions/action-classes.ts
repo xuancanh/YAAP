@@ -75,6 +75,8 @@ export const TOOL_CLASSES: Record<string, Classifier> = {
   update_dashboard: 'internal_write', save_app: 'internal_write', add_task: 'read', update_task: 'read',
   delegate_task: 'internal_write', save_tool: 'internal_write', draft_skill: 'internal_write', revise_skill: 'internal_write',
   update_user_profile: 'internal_write',
+  // the agent's own memory (chats/memory-tools.service.ts, docs/agent-memory.md §12)
+  memory_recall: 'read', memory_note: 'internal_write', memory_guidance: 'internal_write',
   // the trust ledger's own read tool
   trust_status: 'read',
   // the role's knowledge base (knowledge/knowledge.tools.ts, docs/knowledge-base.md): curated, read-only reference
@@ -140,6 +142,7 @@ export const FREE_INTERNAL_TOOLS: ReadonlySet<string> = new Set([
   // agent self-maintenance and proposals (turn-loop.service.ts AGENT_TOOLS)
   'update_dashboard', 'save_app', 'delegate_task', 'add_task', 'update_task',
   'draft_skill', 'revise_skill', 'save_tool', 'update_user_profile', 'set_chat_auto_archive',
+  'memory_note', 'memory_guidance',
   // a direct message to the owner (docs/agent-messages.md): rate-limited and deduped in the tool
   'message_owner',
   // the organization's work record (board, goals, check-ins, timelines, reviews)

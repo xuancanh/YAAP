@@ -190,9 +190,43 @@ export interface AgentLesson {
   useCount: number;
   /** 'shared' or 'private:<memberAccountId>' (docs/shared-agents.md §4). */
   audience?: string;
+  /** What made it (docs/agent-memory.md §12): distill | note | review | failure | feedback | decision | retro | import. */
+  cause?: string;
+  /** What happened, one line. */
+  context?: string;
+  /** JSON array of refs: `task:REJ-35`, `meeting:<id>`, `message:<turnId>`, `approval:<id>`, `session:<id>`. */
+  evidence?: string;
+  tags?: string;
+  /** Times it was surfaced as relevant to a turn or by memory_recall. */
+  recalls?: number;
+  lastRecalledAt?: string | null;
+  /** active | retired */
+  status?: string;
+  statusNote?: string;
   createdAt: string;
   updatedAt: string;
 }
+
+/** One change to an agent's guidance and the lessons it came from (docs/agent-memory.md §12). */
+export interface GuidanceChange {
+  id: string;
+  agentId: string;
+  /** self (How I work) | charter (a charter_change card) | playbook (a revise task) */
+  kind: string;
+  /** applied | pending | approved | rejected */
+  status: string;
+  text: string;
+  /** JSON array of lesson ids. */
+  lessonIds: string;
+  /** The approval card id (charter) or the revise task id (playbook). */
+  ref: string;
+  by: string;
+  why: string;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+export interface AgentGuidanceView { selfGuidance: string; changes: GuidanceChange[]; pending: GuidanceChange[] }
 
 // ---- shared workspaces (docs/shared-agents.md) ----
 export type MemberRole = 'owner' | 'member' | 'viewer';
@@ -2083,8 +2117,10 @@ export const api = {
   agentLessons: (id: string) => get<AgentLesson[]>(`/api/agents/${id}/lessons`),
   agentKnowledge: (id: string) => get<AgentKnowledge>(`/api/agents/${id}/knowledge`),
   installAgentKnowledge: (id: string) => send<{ written: string[]; removed: string[] }>(`/api/agents/${id}/knowledge/install`, 'POST', {}),
-  patchLesson: (id: string, lessonId: string, patch: { trusted?: boolean; pinned?: boolean; audience?: string }) =>
+  patchLesson: (id: string, lessonId: string, patch: { trusted?: boolean; pinned?: boolean; audience?: string; text?: string; status?: 'active' | 'retired' }) =>
     send<AgentLesson>(`/api/agents/${id}/lessons/${lessonId}`, 'PATCH', patch),
+  agentGuidance: (id: string) => get<AgentGuidanceView>(`/api/agents/${id}/guidance`),
+  putAgentGuidance: (id: string, text: string) => send<AgentGuidanceView>(`/api/agents/${id}/guidance`, 'PUT', { text }),
   deleteLesson: (id: string, lessonId: string) =>
     send<{ ok: boolean }>(`/api/agents/${id}/lessons/${lessonId}`, 'DELETE'),
   agentEvents: (id: string) => get<AgentEvent[]>(`/api/agents/${id}/events`),

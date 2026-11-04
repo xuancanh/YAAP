@@ -9,11 +9,12 @@ import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
 import { AgentAutoArchiveCard } from './ChatAutoArchive';
 import { PersonalityCard } from './PersonalityCard';
+import { MemoryTab } from './AgentMemoryTab';
 import { AgentCodingAgents } from './CodingAgents';
 import { AppHost, CapReviewModal, pendingCaps } from './AppHost';
 import { ImportSkillMdButton, MemoryImportModal, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { PublishButton, PublishModal } from './RegistryBits';
-import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentJsonV2, type AgentLesson, type AgentTask, type Connection, type ContextCard, type FileEntry, type FilePreview, type HeartbeatView, type LoopState, type Skill } from '../lib/api';
+import { api, authHeaders, type Agent, type AgentApp, type AgentCustomTool, type AgentEvent, type AgentJsonV2, type AgentTask, type Connection, type ContextCard, type FileEntry, type FilePreview, type HeartbeatView, type LoopState, type Skill } from '../lib/api';
 import { KEEP_FILE, agentSource, normPath, workspaceSource } from '../lib/artifacts';
 import { ArtifactTree } from './ArtifactTree';
 import { ArtifactPane } from './FilesView';
@@ -1272,99 +1273,6 @@ function SharedFolderCard({ a }: { a: Agent }) {
       </div>
       <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="e.g. projects/website"
         style={{ width: '100%', background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 9, padding: '9px 12px', color: 'var(--text)', fontSize: 13, fontFamily: 'var(--mono)', outline: 'none' }} />
-    </div>
-  );
-}
-
-/** What the agent has learned (docs/agent-memory.md). Injected memory has to
- *  be inspectable and revocable: a lesson silently shapes every future turn,
- *  so a memory nobody can see is one nobody can correct. */
-function MemoryTab({ a }: { a: Agent }) {
-  const app = useApp();
-  const [rows, setRows] = useState<AgentLesson[]>([]);
-  const [busy, setBusy] = useState(false);
-  const isOwner = !app.me || app.me.role === 'owner';
-  /** 'shared' | 'private:<member>' → a badge label (docs/shared-agents.md §4). */
-  const audienceOf = (r: AgentLesson): { label: string; privateTo: string | null } => {
-    const aud = r.audience ?? 'shared';
-    if (!aud.startsWith('private:')) return { label: 'shared', privateTo: null };
-    const member = aud.slice('private:'.length);
-    return { label: `private · ${app.nameOf(member)}`, privateTo: member };
-  };
-  const reload = useCallback(() => { void api.agentLessons(a.id).then(setRows).catch(() => setRows([])); }, [a.id]);
-  useEffect(reload, [reload]);
-
-  const act = async (fn: () => Promise<unknown>) => { setBusy(true); try { await fn(); reload(); } finally { setBusy(false); } };
-  const active = rows.filter((r) => r.trusted === 1);
-  const pending = rows.filter((r) => r.trusted === 0);
-
-  const Row = ({ r }: { r: AgentLesson }) => (
-    <div style={{ ...card, padding: '11px 14px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13, lineHeight: 1.5 }}>{r.text}</div>
-        <div style={{ fontSize: 10.5, color: 'var(--text-faint)', marginTop: 4, fontFamily: 'var(--mono)', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span>{r.sourceKind}{r.useCount > 1 ? ` · learned ${r.useCount}×` : ''}{r.pinned ? ' · pinned' : ''} · {r.updatedAt.slice(0, 10)}</span>
-          {app.me?.hasMembers && (
-            <span title={audienceOf(r).privateTo ? 'Injected only into turns this member starts' : 'Injected for every member'}
-              style={{ fontSize: 9.5, fontWeight: 600, borderRadius: 4, padding: '0 5px', color: audienceOf(r).privateTo ? 'var(--amber)' : 'var(--accent)', border: `1px solid ${audienceOf(r).privateTo ? 'var(--amber)' : 'var(--accent)'}` }}>
-              {audienceOf(r).label}
-            </span>
-          )}
-        </div>
-      </div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        {app.me?.hasMembers && isOwner && audienceOf(r).privateTo && (
-          <button disabled={busy} title="Make this lesson visible to every member (the owner's call — no agent tool can do this)" onClick={() => void act(() => api.patchLesson(a.id, r.id, { audience: 'shared' }))}
-            style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '5px 11px', fontSize: 11.5, cursor: 'pointer' }}>Share</button>
-        )}
-        {r.trusted === 0 && (
-          <button disabled={busy} onClick={() => void act(() => api.patchLesson(a.id, r.id, { trusted: true }))}
-            style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '5px 11px', fontSize: 11.5, fontWeight: 700, cursor: 'pointer' }}>Promote</button>
-        )}
-        {r.trusted === 1 && (
-          <button disabled={busy} onClick={() => void act(() => api.patchLesson(a.id, r.id, { pinned: !r.pinned }))}
-            style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '5px 11px', fontSize: 11.5, cursor: 'pointer' }}>
-            {r.pinned ? 'Unpin' : 'Pin'}
-          </button>
-        )}
-        <button disabled={busy} onClick={() => void act(() => api.deleteLesson(a.id, r.id))}
-          style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text-dim)', borderRadius: 8, padding: '5px 11px', fontSize: 11.5, cursor: 'pointer' }}>Forget</button>
-      </div>
-    </div>
-  );
-
-  return (
-    <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 10 }}>
-          <span style={label}>In every turn · {active.length}</span>
-          <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
-            distilled from completed work — the top entries go into {a.name}&rsquo;s prompt, within a size budget
-          </span>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {active.map((r) => <Row key={r.id} r={r} />)}
-          {active.length === 0 && (
-            <div style={{ ...card, padding: 14, fontSize: 12.5, color: 'var(--text-dim)' }}>
-              Nothing learned yet. Lessons appear here after conversations go idle and distill.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {pending.length > 0 && (
-        <div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 9, marginBottom: 10 }}>
-            <span style={label}>Awaiting review · {pending.length}</span>
-            <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>
-              learned from a mini app or a chat channel — never used until you promote it
-            </span>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {pending.map((r) => <Row key={r.id} r={r} />)}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

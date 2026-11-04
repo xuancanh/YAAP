@@ -774,7 +774,21 @@ export class AgentsService {
     if (existing) await this.checkpointBrainFile(home, file, existing).catch(() => {});
     let text = existing ? existing.toString('utf8') : header;
     text = `${text.trimEnd()}\n\n${entry.slice(0, APPEND_CAP).trim()}\n`;
-    if (text.length > FILE_CAP) text = `${header}(older entries trimmed)\n\n…${text.slice(text.length - KEEP)}`;
+    if (text.length > FILE_CAP) {
+      // The journal is an append-only log: rotate its older part into
+      // journal/<date>.md instead of dropping it (docs/agent-memory.md §12).
+      const cut = text.indexOf('\n\n', text.length - KEEP);
+      const at = cut > 0 ? cut : text.length - KEEP;
+      if (file === 'JOURNAL.md') {
+        const older = text.slice(header.length, at).trim();
+        const archive = homeKey(home, `journal/${nowIso().slice(0, 10)}.md`);
+        const prior = await this.storage.get(archive).catch(() => null);
+        await this.storage.put(archive, Buffer.from(`${prior ? `${prior.toString('utf8').trimEnd()}\n\n` : `# Journal, rotated ${nowIso().slice(0, 10)}\n\n`}${older}\n`, 'utf8'), 'text/markdown');
+        text = `${header}(older entries are in journal/)\n\n${text.slice(at).trim()}\n`;
+      } else {
+        text = `${header}(older entries trimmed)\n\n…${text.slice(text.length - KEEP)}`;
+      }
+    }
     await this.storage.put(key, Buffer.from(text, 'utf8'), 'text/markdown');
   }
 

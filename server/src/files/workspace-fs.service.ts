@@ -129,6 +129,12 @@ export function fileRootKey(root: FileRoot, path: string): string {
 
 const SYSTEM: FsActor = { kind: 'system', id: 'system', name: 'system' };
 
+/** Home files the system writes from the memory store, and what to use instead. */
+const GENERATED_BRAIN_FILES: Record<string, string> = {
+  'LESSONS.md': 'record a lesson with memory_note (and confirm or retire one by its id there)',
+  'HOW-I-WORK.md': 'revise your How I work section with memory_guidance',
+};
+
 @Injectable()
 export class WorkspaceFs implements OnApplicationBootstrap {
   private readonly logger = new Logger(WorkspaceFs.name);
@@ -181,6 +187,12 @@ export class WorkspaceFs implements OnApplicationBootstrap {
     }
     if (actor.kind === 'agent' && actor.home !== home) {
       throw new FilePermissionError(`/${home}/ is another agent's home — you can read it but not write it; put shared work in a shared folder such as /org/ instead`);
+    }
+    // Generated from the memory store (docs/agent-memory.md §12): an agent
+    // that appended a lesson here lost it at the next regeneration, so the
+    // write is refused with the tool that keeps it.
+    if (actor.kind === 'agent' && seg.length === 3 && GENERATED_BRAIN_FILES[seg[2]]) {
+      throw new FilePermissionError(`/${path} is generated from your memory, so edits to it are overwritten — ${GENERATED_BRAIN_FILES[seg[2]]}`);
     }
   }
 

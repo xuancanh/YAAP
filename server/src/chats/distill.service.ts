@@ -38,9 +38,9 @@ export function audienceForSession(
 const DISTILL_SYSTEM = `You distill completed work into an agent's file brain. From the conversation, output exactly this format:
 
 JOURNAL: <one dated-style line, max 200 chars, of what was done and the outcome>
-LESSON: <one durable, reusable lesson with its cause, max 400 chars — or the word "none" if nothing generalizes>
+LESSON: <one durable rule for next time and the evidence it rests on (a task key, a correction, a review note), max 400 chars — or the word "none" if nothing generalizes>
 
-Output nothing else.`;
+A correction from a person or a review that sent work back is the lesson most worth keeping. Skip what the agent already recorded with memory_note. Output nothing else.`;
 
 @Injectable()
 export class DistillService {
@@ -108,7 +108,8 @@ export class DistillService {
       const initiator = session.initiatedBy || ownerActor;
       const allowed = hasMembers && this.shared ? await this.shared.allowedSources(session.workspaceId, initiator, 'connections') : undefined;
       const audience = audienceForSession(session, await this.connectionOwners(sessionId), { hasMembers, ownerActor, allowedConnectionSources: allowed });
-      const res = await this.memory.record(session.agentId, lesson, { source, sessionId: sessionId, audience });
+      const keys = [...new Set((`${transcript.slice(-8_000)}`.match(/\b[A-Z]{2,6}-\d+\b/g) ?? []))].slice(-2).map((k) => `task:${k}`);
+      const res = await this.memory.record(session.agentId, lesson, { source, sessionId: sessionId, audience, cause: 'distill', evidence: [...keys, `session:${sessionId}`] });
       quarantined = res.lesson.trusted === 0;
       if (quarantined) {
         await this.agents.addEvent(session.agentId, {
