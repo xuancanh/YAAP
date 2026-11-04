@@ -117,6 +117,12 @@
     "work.breakerDefaultExtend": 1,
     "work.operatingWipCap": 2,
     "work.selfAssign": 2,
+    "program.syncDays": 3,
+    "program.syncMaxDays": 7,
+    "program.reviewDays": 7,
+    "program.reviewMaxDays": 14,
+    "program.requestAnswerHours": 12,
+    "program.allocationWarnPct": 75,
     "discussion.agentDailyCap": 2
   },
   "playbooks": [],

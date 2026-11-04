@@ -150,6 +150,9 @@
     "work.operatingWipCap": 5,
     "work.forecastMinSamples": 12,
     "work.selfAssign": 2,
+    "program.syncDays": 2,
+    "program.requestAnswerHours": 48,
+    "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2

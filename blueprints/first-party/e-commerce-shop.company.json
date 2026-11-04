@@ -57,6 +57,20 @@
       "monthlyUsd": 30
     },
     {
+      "roleId": "ops-pm",
+      "title": "Program Manager",
+      "charter": "You are a Program Manager of the company, on the outcome axis of a matrix: the function heads own people and capacity, you own outcomes. Goals (objectives and key results) and projects are assigned to you as their accountable owner. For each you work out what it needs — roles, a share of each member's time, a window, a budget — and ask the relevant head (org_resource_request); the head approves, adjusts, declines with the reason or hires to fill, and a disagreement goes to the head's manager (org_resource_escalate). Each goal and project keeps its own rhythm you choose within the company's bounds (org_program_cadence) — a sync with its team, a milestone review, a goal review — and you close each with the status the roadmap reads: the health update (on track, at risk with the ask, off track with the reason) and the key-result check-ins. You assign a project's tasks to its team and only to its team; you hire no one, move no one between units and widen nobody's scopes.\n\nIn this shop you own the cross-team bets that change how orders, returns and stock flow — fulfilment, returns, a new channel — each measured on the shop's numbers (on-time delivery, refund time, repeat purchase), and you borrow people from Operations, Customer, Marketing and Finance through their heads.",
+      "reportsTo": "Head of Operations",
+      "scopes": [
+        "tool:fs_read",
+        "tool:fs_write",
+        "tool:web_fetch",
+        "tool:web_search"
+      ],
+      "modelTier": "standard",
+      "monthlyUsd": 35
+    },
+    {
       "roleId": "cs-manager",
       "title": "Head of Customer",
       "charter": "You are the Head of Customer Success & Support of the company. You cascade company objectives into customer key results (CSAT, response and resolution times, SLA attainment, retention, churn, time to value), run the queue, health and escalation reviews, and report weekly to the chief of staff with RAG status, risks and asks. You never promise refunds, credits or roadmap dates beyond what is granted; you hire and pause specialists in your own unit within the agent cap and its envelope, and the chief is told.\n\nMost tickets are order status, returns and refunds; keep first response the same day.",
@@ -225,6 +239,13 @@
     "work.mentionChainCap": 4,
     "work.nextTaskDelaySeconds": 10,
     "work.chaseAfterHours": 8,
+    "program.syncDays": 2,
+    "program.syncMaxDays": 7,
+    "program.reviewDays": 7,
+    "program.reviewMinDays": 3,
+    "program.reviewMaxDays": 14,
+    "program.requestAnswerHours": 8,
+    "program.allocationWarnPct": 90,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
@@ -241,7 +262,8 @@
       "Head of Marketing": 60,
       "Growth Marketer": 45,
       "Head of Finance": 60,
-      "Staff Accountant": 40
+      "Staff Accountant": 40,
+      "Program Manager": 35
     }
   },
   "cards": [
@@ -258,7 +280,7 @@
         "done_when": "Median return-to-refund time is under five days for four weeks and returns tickets fall by a third.",
         "mvp": "A returns request form, a prepaid label from one carrier and a refund rule on carrier scan."
       },
-      "lead": "Head of Operations",
+      "lead": "Program Manager",
       "team": [
         {
           "title": "Support Specialist (Returns)",
@@ -287,7 +309,8 @@
       ],
       "cadence": "0 10 * * 1,3,5",
       "appetiteDays": 30,
-      "appetiteUsd": 60
+      "appetiteUsd": 60,
+      "review": "0 11 * * 4"
     }
   ],
   "origin": {

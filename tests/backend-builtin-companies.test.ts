@@ -57,7 +57,7 @@ const SRC = join(ROOT, 'blueprints/first-party');
 const CATALOG: Record<string, { name: string; seats: number; envelope: number; stage: string; culture: string; norm?: 'speed' | 'rigor' | 'writing' }> = {
   'saas-startup': { name: 'SaaS startup', seats: 10, envelope: 600, stage: 'early', culture: 'adhocracy', norm: 'speed' },
   agency: { name: 'Agency', seats: 8, envelope: 500, stage: 'growth', culture: 'market' },
-  'e-commerce-shop': { name: 'E-commerce shop', seats: 10, envelope: 550, stage: 'early', culture: 'market', norm: 'speed' },
+  'e-commerce-shop': { name: 'E-commerce shop', seats: 11, envelope: 550, stage: 'early', culture: 'market', norm: 'speed' },
   'open-source-project': { name: 'Open-source project', seats: 6, envelope: 250, stage: 'early', culture: 'clan', norm: 'writing' },
   'research-lab': { name: 'Research lab', seats: 6, envelope: 400, stage: 'early', culture: 'adhocracy', norm: 'rigor' },
   'solo-creator': { name: 'Solo creator', seats: 5, envelope: 150, stage: 'early', culture: 'clan' },

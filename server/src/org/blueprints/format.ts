@@ -50,14 +50,17 @@ export interface BlueprintCadence { unitTitle: string; kind: string; cron: strin
 export interface BlueprintProject {
   title: string;
   brief: { problem: string; hypothesis: string; done_when: string; mvp: string };
-  /** The role title that leads it (a Program Manager, usually). */
+  /** The role title that owns it: a Program Manager (the chief of staff acts as one where the blueprint has none). */
   lead: string;
   /** Members by role title, their role on the project and their allocation (percent of their time). */
   team: Array<{ title: string; role: string; allocation: number }>;
   /** Key results it should move, as short titles: listed for the chief to set (the import writes them into the brief). */
   krs?: string[];
-  /** The project standup's five-field cron. */
+  /** The project standup's five-field cron (the project sync). */
   cadence?: string;
+  /** The project's milestone review, a five-field cron its Program Manager
+   *  holds (docs/work-tracking.md "Program management: the matrix"). */
+  review?: string;
   appetiteDays?: number;
   appetiteUsd?: number;
 }
@@ -85,7 +88,7 @@ export interface Blueprint {
 }
 
 const TOP_KEYS = new Set(['format', 'name', 'description', 'profile', 'vision', 'roles', 'units', 'cadences', 'tunables', 'routing', 'playbooks', 'budget', 'cards', 'projects', 'origin']);
-const PROJECT_KEYS = new Set(['title', 'brief', 'lead', 'team', 'krs', 'cadence', 'appetiteDays', 'appetiteUsd']);
+const PROJECT_KEYS = new Set(['title', 'brief', 'lead', 'team', 'krs', 'cadence', 'review', 'appetiteDays', 'appetiteUsd']);
 const CRON_RE = /^[\d*,/ -]+$/;
 const ROLE_KEYS = new Set(['roleId', 'title', 'charter', 'reportsTo', 'scopes', 'modelTier', 'monthlyUsd']);
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -292,9 +295,14 @@ export function validateBlueprint(raw: unknown): Blueprint {
         cadence = str(x.cadence, `projects[${i}].cadence`, 60).trim();
         if (!CRON_RE.test(cadence) || cadence.split(/\s+/).length !== 5) fail(`projects[${i}].cadence must be a five-field cron`);
       }
+      let review: string | undefined;
+      if (x.review !== undefined && x.review !== null && x.review !== '') {
+        review = str(x.review, `projects[${i}].review`, 60).trim();
+        if (!CRON_RE.test(review) || review.split(/\s+/).length !== 5) fail(`projects[${i}].review must be a five-field cron`);
+      }
       const appetiteDays = x.appetiteDays === undefined ? undefined : Math.floor(num(x.appetiteDays, `projects[${i}].appetiteDays`, 0, 3_650));
       const appetiteUsd = x.appetiteUsd === undefined ? undefined : num(x.appetiteUsd, `projects[${i}].appetiteUsd`, 0, 1_000_000);
-      return { title, brief, lead, team, ...(krs?.length ? { krs } : {}), ...(cadence ? { cadence } : {}), ...(appetiteDays !== undefined ? { appetiteDays } : {}), ...(appetiteUsd !== undefined ? { appetiteUsd } : {}) };
+      return { title, brief, lead, team, ...(krs?.length ? { krs } : {}), ...(cadence ? { cadence } : {}), ...(review ? { review } : {}), ...(appetiteDays !== undefined ? { appetiteDays } : {}), ...(appetiteUsd !== undefined ? { appetiteUsd } : {}) };
     });
   }
   const og = (o.origin ?? {}) as Record<string, unknown>;

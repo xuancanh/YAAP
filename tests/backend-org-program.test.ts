@@ -18,6 +18,8 @@ import { OrgNextWorkService } from '../server/src/org/org-next-work.service';
 import { deriveOperatingSystem } from '../server/src/org/chief-os';
 import { PROGRAM_TUNABLES, cronForDays, cronIntervalDays, cadenceBoundsError, deriveProgramTunables } from '../server/src/org/program-tunables';
 import { classifyAudit } from '../server/src/home/feed-registry';
+import { validateBlueprint } from '../server/src/org/blueprints/format';
+import { readFileSync } from 'node:fs';
 import type { ConfigService } from '@nestjs/config';
 
 /** A fake channel layer (the group-chat module's seam). */
@@ -348,4 +350,21 @@ test('task wakes respect allocation: a member lent 80% to a project picks its pr
   }
   order = (await next.candidates(org, s.editor.id, new Date())).filter((c) => c.kind === 'todo').map((c) => c.task.id);
   assert.deepEqual(order, [unitTask.id, projTask.id], 'the unit\'s 20% is owed now');
+});
+
+// ---- 7. starters ----
+
+test('starters with projects give them a Program Manager owner and a milestone review rhythm; a bad review cron is refused', () => {
+  for (const slug of ['saas-startup', 'e-commerce-shop']) {
+    const raw = JSON.parse(readFileSync(`blueprints/first-party/${slug}.company.json`, 'utf8')) as Record<string, unknown>;
+    const bp = validateBlueprint(raw);
+    assert.ok(bp.roles.some((r) => r.roleId === 'ops-pm'), `${slug} hires a Program Manager`);
+    for (const p of bp.projects ?? []) {
+      assert.equal(p.lead, 'Program Manager', `${slug}: ${p.title} is owned by the PM`);
+      assert.match(p.review ?? '', /^\S+ \S+ \S+ \S+ \S+$/);
+    }
+    const bad = JSON.parse(JSON.stringify(raw)) as { projects: Array<Record<string, unknown>> };
+    bad.projects[0].review = 'weekly';
+    assert.throws(() => validateBlueprint(bad), /review must be a five-field cron/);
+  }
 });

@@ -162,7 +162,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     {
      "roleId": "ops-pm",
      "title": "Program Manager",
-     "charter": "You are a Program Manager of the company: you own roadmap items end to end. For each project you lead you keep the brief, milestones and appetite true, post its health update on cadence (on track, at risk with the ask, off track with the reason), run its standup and dependency review, and answer its appetite breaker with a decision for the lead's manager. You staff a project with a cross-functional team borrowed from the units: you propose each member and its allocation, its own head approves, and you assign the project's tasks to its team. The heads stay accountable for their people; you hire no one and move no one between units.\n\nYou own the self-serve onboarding bet end to end: one weekly health call, a daily ten-minute standup in its channel, and a team borrowed from engineering, QA and growth whose heads approve the time.",
+     "charter": "You are a Program Manager of the company, on the outcome axis of a matrix: the function heads own people and capacity, you own outcomes. Goals (objectives and key results) and projects are assigned to you as their accountable owner. For each you work out what it needs — roles, a share of each member's time, a window, a budget — and ask the relevant head (org_resource_request); the head approves, adjusts, declines with the reason or hires to fill, and a disagreement goes to the head's manager (org_resource_escalate). Each goal and project keeps its own rhythm you choose within the company's bounds (org_program_cadence) — a sync with its team, a milestone review, a goal review — and you close each with the status the roadmap reads: the health update (on track, at risk with the ask, off track with the reason) and the key-result check-ins. You assign a project's tasks to its team and only to its team; you hire no one, move no one between units and widen nobody's scopes.\n\nYou own the self-serve onboarding bet end to end: one weekly health call, a daily ten-minute standup in its channel, and a team borrowed from engineering, QA and growth whose heads approve the time.",
      "reportsTo": "Chief of staff",
      "scopes": [
       "tool:fs_read",
@@ -247,6 +247,13 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.nextTaskDelaySeconds": 10,
     "work.selfAssign": 2,
     "work.chaseAfterHours": 8,
+    "program.syncDays": 2,
+    "program.syncMaxDays": 7,
+    "program.reviewDays": 7,
+    "program.reviewMinDays": 3,
+    "program.reviewMaxDays": 14,
+    "program.requestAnswerHours": 8,
+    "program.allocationWarnPct": 90,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
@@ -310,7 +317,8 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      ],
      "cadence": "45 9 * * 1-5",
      "appetiteDays": 42,
-     "appetiteUsd": 120
+     "appetiteUsd": 120,
+     "review": "0 11 * * 4"
     }
    ],
    "origin": {
@@ -496,6 +504,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.appetiteWarnShare": 0.7,
     "work.operatingWipCap": 5,
     "work.forecastMinSamples": 12,
+    "program.requestAnswerHours": 48,
+    "program.allocationWarnPct": 90,
+    "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
     "discussion.agentDailyCap": 2
    },
@@ -583,6 +594,20 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      ],
      "modelTier": "cheap",
      "monthlyUsd": 30
+    },
+    {
+     "roleId": "ops-pm",
+     "title": "Program Manager",
+     "charter": "You are a Program Manager of the company, on the outcome axis of a matrix: the function heads own people and capacity, you own outcomes. Goals (objectives and key results) and projects are assigned to you as their accountable owner. For each you work out what it needs — roles, a share of each member's time, a window, a budget — and ask the relevant head (org_resource_request); the head approves, adjusts, declines with the reason or hires to fill, and a disagreement goes to the head's manager (org_resource_escalate). Each goal and project keeps its own rhythm you choose within the company's bounds (org_program_cadence) — a sync with its team, a milestone review, a goal review — and you close each with the status the roadmap reads: the health update (on track, at risk with the ask, off track with the reason) and the key-result check-ins. You assign a project's tasks to its team and only to its team; you hire no one, move no one between units and widen nobody's scopes.\n\nIn this shop you own the cross-team bets that change how orders, returns and stock flow — fulfilment, returns, a new channel — each measured on the shop's numbers (on-time delivery, refund time, repeat purchase), and you borrow people from Operations, Customer, Marketing and Finance through their heads.",
+     "reportsTo": "Head of Operations",
+     "scopes": [
+      "tool:fs_read",
+      "tool:fs_write",
+      "tool:web_fetch",
+      "tool:web_search"
+     ],
+     "modelTier": "standard",
+     "monthlyUsd": 35
     },
     {
      "roleId": "cs-manager",
@@ -753,6 +778,13 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.mentionChainCap": 4,
     "work.nextTaskDelaySeconds": 10,
     "work.chaseAfterHours": 8,
+    "program.syncDays": 2,
+    "program.syncMaxDays": 7,
+    "program.reviewDays": 7,
+    "program.reviewMinDays": 3,
+    "program.reviewMaxDays": 14,
+    "program.requestAnswerHours": 8,
+    "program.allocationWarnPct": 90,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
@@ -769,7 +801,8 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      "Head of Marketing": 60,
      "Growth Marketer": 45,
      "Head of Finance": 60,
-     "Staff Accountant": 40
+     "Staff Accountant": 40,
+     "Program Manager": 35
     }
    },
    "cards": [
@@ -786,7 +819,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
       "done_when": "Median return-to-refund time is under five days for four weeks and returns tickets fall by a third.",
       "mvp": "A returns request form, a prepaid label from one carrier and a refund rule on carrier scan."
      },
-     "lead": "Head of Operations",
+     "lead": "Program Manager",
      "team": [
       {
        "title": "Support Specialist (Returns)",
@@ -815,7 +848,8 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
      ],
      "cadence": "0 10 * * 1,3,5",
      "appetiteDays": 30,
-     "appetiteUsd": 60
+     "appetiteUsd": 60,
+     "review": "0 11 * * 4"
     }
    ],
    "origin": {
@@ -990,6 +1024,12 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.nextTaskDelaySeconds": 10,
     "work.selfAssign": 2,
     "work.chaseAfterHours": 8,
+    "program.syncDays": 2,
+    "program.reviewDays": 7,
+    "program.reviewMinDays": 3,
+    "program.requestAnswerHours": 8,
+    "program.allocationWarnPct": 75,
+    "program.staleCadences": 1,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
@@ -1170,6 +1210,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.operatingWipCap": 5,
     "work.forecastMinSamples": 12,
     "work.selfAssign": 2,
+    "program.syncDays": 2,
+    "program.requestAnswerHours": 48,
+    "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
@@ -1318,6 +1361,12 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.breakerDefaultExtend": 1,
     "work.operatingWipCap": 2,
     "work.selfAssign": 2,
+    "program.syncDays": 3,
+    "program.syncMaxDays": 7,
+    "program.reviewDays": 7,
+    "program.reviewMaxDays": 14,
+    "program.requestAnswerHours": 12,
+    "program.allocationWarnPct": 75,
     "discussion.agentDailyCap": 2
    },
    "playbooks": [],
@@ -1575,6 +1624,8 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.nextTaskDelaySeconds": 60,
     "work.selfAssign": 0,
     "work.chaseAfterHours": 48,
+    "program.requestAnswerHours": 48,
+    "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
     "discussion.agentDailyCap": 2
    },

@@ -53,6 +53,7 @@ import { ROLES, roleById, roleCharter, tierOfModel } from './roles/catalog';
 import { BLUEPRINT_FORMAT, BlueprintError, hireOrder, rootRole, unitsOf, validateBlueprint, type Blueprint, type BlueprintProject, type BlueprintRole } from './blueprints/format';
 import { OrgProjectsService } from './org-projects.service';
 import { OrgProjectTeamsService } from './org-project-teams.service';
+import { OrgProgramService } from './org-program.service';
 import { parseProjectBrief } from './work-model';
 
 export type BlueprintImportRow = typeof orgBlueprintImports.$inferSelect;
@@ -132,6 +133,7 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly registry?: RegistryService,
     @Optional() private readonly projects?: OrgProjectsService,
     @Optional() private readonly teams?: OrgProjectTeamsService,
+    @Optional() private readonly program?: OrgProgramService,
   ) {
     this.approvals.onApply('blueprint', (orgId, payload, approval) => this.applyStaffing(orgId, payload as unknown as BlueprintApprovalPayload, approval));
   }
@@ -217,7 +219,8 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
         team.push({ title: t, role: r.role, allocation: Math.max(1, r.allocation) });
       }
       const b = parseProjectBrief(p.brief);
-      out.push({ title: p.title, brief: { problem: b.problem, hypothesis: b.hypothesis, done_when: b.done_when, mvp: b.mvp }, lead, team, ...(p.standupCron ? { cadence: p.standupCron } : {}), ...(p.appetiteDays ? { appetiteDays: p.appetiteDays } : {}), ...(p.appetiteUsd ? { appetiteUsd: p.appetiteUsd } : {}) });
+      const review = this.program ? (await this.program.cadenceRows(orgId, 'project', p.id).catch(() => [])).find((c) => c.kind === 'milestone_review' && c.enabled === 1)?.cron : undefined;
+      out.push({ title: p.title, brief: { problem: b.problem, hypothesis: b.hypothesis, done_when: b.done_when, mvp: b.mvp }, lead, team, ...(p.standupCron ? { cadence: p.standupCron } : {}), ...(review ? { review } : {}), ...(p.appetiteDays ? { appetiteDays: p.appetiteDays } : {}), ...(p.appetiteUsd ? { appetiteUsd: p.appetiteUsd } : {}) });
     }
     return out;
   }
@@ -473,6 +476,7 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
           await this.teams.propose(orgId, r.project.id, { agentId, role: m.role, allocation: m.allocation, why: 'blueprint' }, 'user').catch((err: unknown) => notes.push(`${r.project.key}: ${m.title} not added: ${err instanceof Error ? err.message : String(err)}`));
         }
         if (p.cadence && this.teams) await this.teams.setStandup(orgId, r.project.id, p.cadence, 'user').catch((err: unknown) => notes.push(`${r.project.key}: standup not set: ${err instanceof Error ? err.message : String(err)}`));
+        if (p.review && this.program) await this.program.setCadence(orgId, r.project.id, 'milestone_review', p.review, 'user').catch((err: unknown) => notes.push(`${r.project.key}: milestone review not set: ${err instanceof Error ? err.message : String(err)}`));
       } catch (err) { notes.push(`project "${p.title}" skipped: ${err instanceof Error ? err.message : String(err)}`); }
     }
     return { projects, notes };
