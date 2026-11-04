@@ -188,12 +188,15 @@
     "work.appetiteWarnShare": 0.7,
     "work.operatingWipCap": 5,
     "work.forecastMinSamples": 12,
+    "work.headDelegation": 2,
     "program.requestAnswerHours": 48,
     "program.allocationWarnPct": 90,
     "program.pmPromptDays": 14,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
-    "discussion.agentDailyCap": 2
+    "discussion.agentDailyCap": 2,
+    "memory.guidanceRepeats": 4,
+    "memory.lessonStaleDays": 90
   },
   "playbooks": [],
   "budget": {

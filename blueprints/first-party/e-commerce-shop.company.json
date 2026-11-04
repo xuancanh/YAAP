@@ -265,6 +265,9 @@
     "work.mentionChainCap": 4,
     "work.nextTaskDelaySeconds": 10,
     "work.chaseAfterHours": 8,
+    "work.headDelegation": 2,
+    "work.delegationSignalTasks": 3,
+    "work.delegationWindowHours": 12,
     "program.syncDays": 2,
     "program.syncMaxDays": 7,
     "program.reviewDays": 7,
@@ -275,7 +278,9 @@
     "program.pmPromptDays": 3,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
-    "discussion.agentDailyCap": 2
+    "discussion.agentDailyCap": 2,
+    "memory.guidanceRepeats": 2,
+    "memory.lessonStaleDays": 21
   },
   "playbooks": [],
   "budget": {

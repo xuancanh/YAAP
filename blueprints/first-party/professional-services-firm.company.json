@@ -250,11 +250,15 @@
     "work.nextTaskDelaySeconds": 60,
     "work.selfAssign": 0,
     "work.chaseAfterHours": 48,
+    "work.headDelegation": 2,
+    "work.delegationSignalTasks": 1,
     "program.requestAnswerHours": 48,
     "program.pmPromptDays": 14,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
-    "discussion.agentDailyCap": 2
+    "discussion.agentDailyCap": 2,
+    "memory.guidanceRepeats": 4,
+    "memory.lessonStaleDays": 90
   },
   "playbooks": [],
   "budget": {

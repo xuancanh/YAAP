@@ -268,6 +268,8 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.nextTaskDelaySeconds": 10,
     "work.selfAssign": 2,
     "work.chaseAfterHours": 8,
+    "work.delegationSignalTasks": 3,
+    "work.delegationWindowHours": 12,
     "program.syncDays": 2,
     "program.syncMaxDays": 7,
     "program.reviewDays": 7,
@@ -278,7 +280,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "program.pmPromptDays": 3,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
-    "discussion.agentDailyCap": 2
+    "discussion.agentDailyCap": 2,
+    "memory.guidanceRepeats": 2,
+    "memory.lessonStaleDays": 21
    },
    "playbooks": [],
    "budget": {
@@ -542,12 +546,15 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.appetiteWarnShare": 0.7,
     "work.operatingWipCap": 5,
     "work.forecastMinSamples": 12,
+    "work.headDelegation": 2,
     "program.requestAnswerHours": 48,
     "program.allocationWarnPct": 90,
     "program.pmPromptDays": 14,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
-    "discussion.agentDailyCap": 2
+    "discussion.agentDailyCap": 2,
+    "memory.guidanceRepeats": 4,
+    "memory.lessonStaleDays": 90
    },
    "playbooks": [],
    "budget": {
@@ -843,6 +850,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.mentionChainCap": 4,
     "work.nextTaskDelaySeconds": 10,
     "work.chaseAfterHours": 8,
+    "work.headDelegation": 2,
+    "work.delegationSignalTasks": 3,
+    "work.delegationWindowHours": 12,
     "program.syncDays": 2,
     "program.syncMaxDays": 7,
     "program.reviewDays": 7,
@@ -853,7 +863,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "program.pmPromptDays": 3,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
-    "discussion.agentDailyCap": 2
+    "discussion.agentDailyCap": 2,
+    "memory.guidanceRepeats": 2,
+    "memory.lessonStaleDays": 21
    },
    "playbooks": [],
    "budget": {
@@ -1101,6 +1113,8 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.nextTaskDelaySeconds": 10,
     "work.selfAssign": 2,
     "work.chaseAfterHours": 8,
+    "work.delegationSignalTasks": 3,
+    "work.delegationWindowHours": 12,
     "program.syncDays": 2,
     "program.reviewDays": 7,
     "program.reviewMinDays": 3,
@@ -1110,7 +1124,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
-    "discussion.agentDailyCap": 2
+    "discussion.agentDailyCap": 2,
+    "memory.guidanceRepeats": 4,
+    "memory.lessonStaleDays": 90
    },
    "playbooks": [],
    "budget": {
@@ -1299,13 +1315,16 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.operatingWipCap": 5,
     "work.forecastMinSamples": 12,
     "work.selfAssign": 2,
+    "work.delegationSignalTasks": 3,
     "program.syncDays": 2,
     "program.requestAnswerHours": 48,
     "program.pmPromptDays": 14,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
     "discussion.autoMoveMode": 2,
-    "discussion.agentDailyCap": 2
+    "discussion.agentDailyCap": 2,
+    "memory.guidanceRepeats": 4,
+    "memory.lessonStaleDays": 90
    },
    "playbooks": [],
    "budget": {
@@ -1462,13 +1481,15 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.breakerDefaultExtend": 1,
     "work.operatingWipCap": 2,
     "work.selfAssign": 2,
+    "work.delegationSignalTasks": 3,
     "program.syncDays": 3,
     "program.syncMaxDays": 7,
     "program.reviewDays": 7,
     "program.reviewMaxDays": 14,
     "program.requestAnswerHours": 12,
     "program.allocationWarnPct": 75,
-    "discussion.agentDailyCap": 2
+    "discussion.agentDailyCap": 2,
+    "memory.lessonStaleDays": 30
    },
    "playbooks": [],
    "budget": {
@@ -1746,11 +1767,15 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.nextTaskDelaySeconds": 60,
     "work.selfAssign": 0,
     "work.chaseAfterHours": 48,
+    "work.headDelegation": 2,
+    "work.delegationSignalTasks": 1,
     "program.requestAnswerHours": 48,
     "program.pmPromptDays": 14,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
-    "discussion.agentDailyCap": 2
+    "discussion.agentDailyCap": 2,
+    "memory.guidanceRepeats": 4,
+    "memory.lessonStaleDays": 90
    },
    "playbooks": [],
    "budget": {

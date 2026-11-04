@@ -161,13 +161,16 @@
     "work.operatingWipCap": 5,
     "work.forecastMinSamples": 12,
     "work.selfAssign": 2,
+    "work.delegationSignalTasks": 3,
     "program.syncDays": 2,
     "program.requestAnswerHours": 48,
     "program.pmPromptDays": 14,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
     "discussion.autoMoveMode": 2,
-    "discussion.agentDailyCap": 2
+    "discussion.agentDailyCap": 2,
+    "memory.guidanceRepeats": 4,
+    "memory.lessonStaleDays": 90
   },
   "playbooks": [],
   "budget": {
