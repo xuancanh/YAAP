@@ -170,7 +170,7 @@ test('the Program Manager role and pack: operations, a pack with the project rit
   assert.equal(new Set(ROLES.map((r) => r.id)).size, ROLES.length);
   const pack = AUTHORED_PACKS.find((p) => p.id === 'pack-biz-ops-pm')!;
   assert.equal(pack.function, 'operations');
-  for (const k of ['program-kickoff', 'program-health-update', 'program-milestones', 'program-dependencies', 'program-appetite-breaker', 'program-standup', 'program-team', 'program-close']) assert.ok(pack.skills!.some((x) => x.name === k), `PM pack has ${k}`);
+  for (const k of ['program-kickoff', 'program-health-update', 'program-milestones', 'program-dependencies', 'program-appetite-breaker', 'program-rhythm', 'program-team', 'program-close', 'program-goals', 'program-resources']) assert.ok(pack.skills!.some((x) => x.name === k), `PM pack has ${k}`);
   const s = await setup();
   const orgId = await enable(s, 'supervised');
   const { projects } = wire(s);

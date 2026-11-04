@@ -34,12 +34,21 @@ import { OrgProjectsService } from '../server/src/org/org-projects.service';
 import { OrgProjectsTools } from '../server/src/org/org-projects.tools';
 import { OrgProjectTeamsService } from '../server/src/org/org-project-teams.service';
 import { OrgDataTools } from '../server/src/org/org-data.tools';
+import { OrgProgramService } from '../server/src/org/org-program.service';
+import { OrgProgramTools } from '../server/src/org/org-program.tools';
 
 /** The work-tracking tools (docs/work-tracking.md) as the org module wires them. */
 function projectTools(s: Awaited<ReturnType<typeof setup>>): OrgProjectsTools {
   const projects = new OrgProjectsService(s.db, s.org, s.tasks, s.approvals, s.audit, s.agents, s.units);
   const teams = new OrgProjectTeamsService(s.org, s.approvals, s.audit, s.agents, s.tasks, projects, new OrgAnnouncer({ announce: async () => undefined }), s.units, s.decisions);
   return new OrgProjectsTools(s.org, projects, s.tasks, s.agents, s.config, s.runtime, s.turns, teams);
+}
+/** The program-management tools (docs/work-tracking.md "Program management: the matrix"). */
+function programTools(s: Awaited<ReturnType<typeof setup>>): OrgProgramTools {
+  const projects = new OrgProjectsService(s.db, s.org, s.tasks, s.approvals, s.audit, s.agents, s.units);
+  const teams = new OrgProjectTeamsService(s.org, s.approvals, s.audit, s.agents, s.tasks, projects, new OrgAnnouncer({ announce: async () => undefined }), s.units, s.decisions);
+  const program = new OrgProgramService(s.db, s.org, s.audit, s.agents, s.approvals, s.tasks, projects, teams, s.units, s.decisions);
+  return new OrgProgramTools(s.org, program, s.agents, s.config, s.runtime, s.turns);
 }
 /** The company data tools (docs/agent-data-access.md) as the org module wires them. */
 function dataTools(s: Awaited<ReturnType<typeof setup>>): OrgDataTools {
@@ -157,6 +166,7 @@ test('the Chief of Staff pack: Business category, deep skills that name only org
   for (const spec of await s.runtime.specsFor(await sessionOf(s, s.chief.id))) offered.add(spec.name);
   for (const spec of await projectTools(s).specsFor(await sessionOf(s, s.chief.id))) offered.add(spec.name);
   for (const spec of await dataTools(s).specsFor(await sessionOf(s, s.chief.id))) offered.add(spec.name);
+  for (const spec of await programTools(s).specsFor(await sessionOf(s, s.chief.id))) offered.add(spec.name);
   const known = new Set([...offered, 'org_set_cadence', 'org_decisions', 'org_recall', 'org_playbooks', 'org_write_playbook', 'org_capacity', 'org_eval_role', 'org_metric_sources', 'org_metric_read', 'org_incidents', 'org_propose_experiment', 'org_experiments', 'org_run_checks', 'org_calibration', 'org_eval_cases', 'org_report_incident']);
   const named = new Set(pack.skills!.flatMap((x) => (x.instructions ?? '').match(/\borg_[a-z_]+\b/g) ?? []));
   for (const n of named) assert.ok(known.has(n), `${n} exists`);
@@ -253,7 +263,7 @@ test('every tool a business skill names exists and is offered to the role that r
   const predictions = new OrgPredictionsService(s.db, s.org, s.audit, s.tasks, s.agents, s.config, s.turns, s.runtime, s.intent, s.units, s.brief);
   const experiments = new OrgExperimentsService(s.db, s.org, s.audit, s.approvals, s.agents, s.workspaces, s.config, s.turns, s.runtime, s.units, s.meetings, s.playbooks, s.capital, s.incidents, s.brief, predictions, undefined, announcer);
   const meetingRuntime = new OrgMeetingRuntime(s.db, s.meetings, s.org, s.units, s.audit, s.agents, s.workspaces, s.turns, s.repo, s.runtime, s.config, announcer, s.approvals);
-  const providers = [s.runtime, s.memory, s.sensing, s.incidents, s.tools, predictions, experiments, meetingRuntime, projectTools(s), dataTools(s)];
+  const providers = [s.runtime, s.memory, s.sensing, s.incidents, s.tools, predictions, experiments, meetingRuntime, projectTools(s), programTools(s), dataTools(s)];
   const fsTools = new ToolsService(memStorage().stub).specs().map((t) => t.name).filter((n) => n.startsWith('fs_'));
   const offered = async (session: Awaited<ReturnType<typeof sessionOf>>): Promise<Set<string>> => {
     const names = new Set<string>(fsTools);
