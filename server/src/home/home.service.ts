@@ -232,10 +232,10 @@ export class HomeService {
    * and what is coming up. No visit is recorded. `parts` keeps the switcher's
    * rows cheap (needs only).
    */
-  /** Whether this workspace's company was archived (it has no live one): the switcher folds such rows away. */
+  /** Whether this workspace has an archived company (the caller checks no live one is on): the switcher folds such rows away. */
   async hasArchivedCompany(workspaceId: string): Promise<boolean> {
-    const rows = await this.db.select({ status: organizations.status }).from(organizations).where(eq(organizations.workspaceId, workspaceId));
-    return rows.length > 0 && rows.every((o) => o.status === 'archived');
+    const rows = await this.db.select({ id: organizations.id }).from(organizations).where(and(eq(organizations.workspaceId, workspaceId), eq(organizations.status, 'archived'))).limit(1);
+    return rows.length > 0;
   }
 
   async glance(workspaceId: string, opts: { now?: Date; parts?: Array<'spend' | 'team' | 'upcoming'> } = {}): Promise<HomeGlance> {
