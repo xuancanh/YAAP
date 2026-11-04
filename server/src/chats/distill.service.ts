@@ -116,6 +116,8 @@ export class DistillService {
           title: `Learned something from ${source === 'app' ? 'a mini app' : 'a chat channel'} — review before it is used`,
           body: lesson,
           sessionId,
+          // The owner's feed lists it as an agent note to review (feed-registry.ts).
+          payload: JSON.stringify({ feed: 'agent_note' }),
         }).catch(() => {});
       }
     }

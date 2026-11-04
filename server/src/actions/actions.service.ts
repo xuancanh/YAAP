@@ -477,7 +477,8 @@ export class ActionsService {
       title: `Acted (trust level 1, you hear after): ${row.tool}`,
       body: `${summarizeInput(row.input)}\n→ ${output.replace(/\s+/g, ' ').slice(0, 300)}`,
       sessionId: row.sessionId,
-      payload: JSON.stringify({ actionId: row.id, workspaceId: row.workspaceId, class: row.class }),
+      // `feed`: the owner's feed lists it as an agent note (feed-registry.ts).
+      payload: JSON.stringify({ actionId: row.id, workspaceId: row.workspaceId, class: row.class, feed: 'agent_note' }),
       origin: 'loop',
     }).catch(() => undefined);
   }

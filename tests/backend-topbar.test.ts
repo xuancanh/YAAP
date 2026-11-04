@@ -2,11 +2,11 @@
  *  is the company at a glance (run state, Needs you with the urgent ones,
  *  spend against the envelope, agents working and failing, the turns
  *  running now, the next meeting); `GET /api/topbar/workspaces` the
- *  switcher's rows; `GET /api/workspaces/:id/notifications` the bell —
- *  waiting cards merged with the inbox events addressed to you — and
- *  `POST …/notifications/read` its read marks (an event's own `readAt`; a
- *  card's in the per-person row). The live-turn registry tells the workspace
- *  stream when a turn starts and ends. */
+ *  switcher's rows; `GET /api/workspaces/:id/notifications` the bell — the
+ *  owner's feed (FeedService; tests/backend-feed.test.ts covers it in full)
+ *  — and `POST …/notifications/read` its read marks (an event's own
+ *  `readAt`; a card's in the per-person row). The live-turn registry tells
+ *  the workspace stream when a turn starts and ends. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConfigService } from '@nestjs/config';
@@ -31,6 +31,7 @@ import type { OrgCapitalService } from '../server/src/org/org-capital.service';
 import type { OrgMeetingsService } from '../server/src/org/org-meetings.service';
 import { HomeService } from '../server/src/home/home.service';
 import { TopBarService, hashOf, isUrgent, expiresSoon } from '../server/src/home/topbar.service';
+import { FeedService } from '../server/src/home/feed.service';
 import { TopBarController, TopBarWorkspacesController } from '../server/src/home/topbar.controller';
 import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
 
@@ -57,18 +58,19 @@ async function setup(stubs: { capital?: OrgCapitalService; meetings?: OrgMeeting
     db, workspaces, agents, config, fs, undefined, undefined, undefined,
     org, tasks, approvals, audit, brief, undefined, undefined, undefined, undefined, stubs.meetings, stubs.capital, undefined, runtime,
   );
-  const topbar = new TopBarService(db, home, workspaces);
+  const feed = new FeedService(db, home, workspaces);
+  const topbar = new TopBarService(home, workspaces, feed);
   const registry = new LiveTurnRegistry();
   topbar.registry = registry;
   const ws = (await workspaces.list())[0];
   const chief = await agents.create({ name: 'Chief', charter: 'You run the company.' });
   const writer = await agents.create({ name: 'Writer', charter: 'You write.' });
-  return { db, agents, workspaces, repo, org, approvals, mode, home, topbar, registry, ws, chief, writer };
+  return { db, agents, workspaces, repo, org, approvals, mode, home, feed, topbar, registry, ws, chief, writer };
 }
 
 test('a plain workspace: no company chips, Needs you, failing agents, live runs; the bell merges cards and inbox events', async () => {
   const s = await setup();
-  const ctl = new TopBarController(s.topbar);
+  const ctl = new TopBarController(s.topbar, s.feed);
   // a queued background action (a card), a failed turn (the writer is failing)
   await s.agents.addEvent(s.writer.id, { kind: 'action_pending', title: 'Send the newsletter', body: 'gmail_send to 120 people', payload: JSON.stringify({ tool: 'gmail_send', input: {} }) });
   const session = await s.repo.createSession({ workspaceId: s.ws.id, agentId: s.writer.id, name: 'chat' });
@@ -85,6 +87,7 @@ test('a plain workspace: no company chips, Needs you, failing agents, live runs;
   assert.equal(st.nextMeeting, null);
   assert.equal(st.needsYou, 1);
   assert.equal(st.urgent, 0);
+  assert.equal(st.unread, 1, 'the bell\'s count rides along');
   assert.equal(st.agents.total, 2);
   assert.equal(st.agents.failing, 1);
   assert.equal(st.agents.faces[0].id, s.writer.id, 'failing faces lead the stack');
@@ -105,19 +108,23 @@ test('a plain workspace: no company chips, Needs you, failing agents, live runs;
   await s.agents.addEvent('unrelated-agent', { kind: 'agent_message', title: 'Another workspace' });
 
   const page = await ctl.notifications(s.ws.id);
-  assert.equal(page.items[0].kind, 'queued_action', 'waiting cards lead');
-  assert.equal(page.items[0].waiting, true);
-  assert.equal(page.items[0].target.to, 'need');
-  const kinds = page.items.map((i) => i.kind);
-  assert.deepEqual(kinds.slice(1).sort(), ['follow', 'message', 'run_failed']);
-  const msg = page.items.find((i) => i.kind === 'message')!;
-  assert.deepEqual(msg.target, { to: 'chat', sessionId: dm.id });
+  assert.equal(page.items[0].type, 'queued_action', 'Needs you leads');
+  assert.equal(page.items[0].actionable, true);
+  assert.equal(page.items[0].target.kind, 'need');
+  const types = page.items.map((i) => i.type);
+  assert.deepEqual(types.slice(1).sort(), ['follow', 'message', 'run_failed']);
+  const msg = page.items.find((i) => i.type === 'message')!;
+  assert.deepEqual(msg.target, { kind: 'chat', sessionId: dm.id });
+  assert.equal(msg.section, 'mentions');
   assert.equal(msg.severity, 'high', 'an urgent message is high');
-  assert.equal(msg.from, 'Chief');
-  const follow = page.items.find((i) => i.kind === 'follow')!;
-  assert.deepEqual(follow.target, { to: 'hash', hash: '#/ws/x/org/board?task=t1' });
-  assert.equal(follow.from, 'Following');
+  assert.equal(msg.actor?.name, 'Chief');
+  const follow = page.items.find((i) => i.type === 'follow')!;
+  assert.deepEqual(follow.target, { kind: 'link', hash: '#/ws/x/org/board?task=t1' }, 'an old event with only a link');
+  assert.equal(follow.actor?.name, 'Writer', 'who made the change');
   assert.equal(page.unread, 4);
+  assert.equal(page.counts.needsYou, 1);
+  // the same feed under its own route
+  assert.deepEqual((await ctl.feed(s.ws.id)).counts, page.counts);
 
   // mark one event and the card read: the card stays listed (it still waits)
   await ctl.read(s.ws.id, { ids: [msg.id, page.items[0].id, 'event:not-mine'] });
@@ -169,8 +176,9 @@ test('a company: run state, urgent cards, spend against the envelope, the next m
   // the card's default applies within six hours: urgent, and expiring soon in the bell
   const page = await s.topbar.notifications(s.ws.id);
   const item = page.items.find((i) => i.id === `need:approval:${card.id}`)!;
-  assert.equal(item.kind, 'decision');
-  assert.equal(item.from, 'Chief');
+  assert.equal(item.type, 'decision');
+  assert.equal(item.actor?.name, 'Chief');
+  assert.equal(item.company, st.company!.name);
   if (item.deadline && Date.parse(item.deadline) - Date.now() < 6 * 3_600_000) { assert.equal(item.expiresSoon, true); assert.equal(st.urgent, 1); }
 
   await s.mode.pause(s.ws.id);

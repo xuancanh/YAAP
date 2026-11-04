@@ -3,15 +3,14 @@
  *
  *  GET  /api/workspaces/:id/status          WorkspaceStatus — the company at a glance
  *  GET  /api/topbar/workspaces              WorkspaceGlanceRow[] — the switcher's rows
- *  GET  /api/workspaces/:id/notifications   NotificationsPage — the bell
+ *  GET  /api/workspaces/:id/notifications   FeedPage — the bell (the owner's feed, feed.types.ts)
  *  POST /api/workspaces/:id/notifications/read
  *
  * Mirrored in src/lib/api.ts. Every fact comes from the service that owns it
- * (HomeService's needs, spend, team and coming up; the live-turn registry;
- * the agent inbox events): the bar adds no state but the bell's read marks
- * for cards that have none of their own.
+ * (HomeService's spend, team and coming up; the live-turn registry; the
+ * feed's Needs you and unread counts): the bar adds no state.
  */
-import type { HomeNeed, HomeSpend } from './home.types';
+import type { HomeSpend } from './home.types';
 
 export interface WorkspaceCompanyGlance {
   name: string;
@@ -37,10 +36,12 @@ export interface WorkspaceStatus {
   generatedAt: string;
   /** Null without a company (organization mode off, or companies disabled). */
   company: WorkspaceCompanyGlance | null;
-  /** The owner's count: Home's Needs you, the same cards. */
+  /** Open items in the feed's Needs you: the Inbox's badge. */
   needsYou: number;
   /** Of those, critical or with a default due within 6 hours. */
   urgent: number;
+  /** Unread rows in the feed: the bell's count. */
+  unread: number;
   /** Company mode only; null otherwise. */
   spend: Pick<HomeSpend, 'todayUsd' | 'monthUsd' | 'monthCapUsd' | 'projectedUsd' | 'forecastState'> | null;
   agents: {
@@ -61,46 +62,5 @@ export interface WorkspaceGlanceRow {
   company: WorkspaceCompanyGlance | null;
   needsYou: number;
   /** Unread notifications (the bell's count). */
-  unread: number;
-}
-
-export type NotificationKind =
-  /** Waiting on you (Home's Needs you): a decision card, an escalation, a key, a pending change, an incident, a signal, a queued action. */
-  | 'decision' | 'escalation' | 'key' | 'plan' | 'incident' | 'signal' | 'queued_action'
-  /** Inbox events: a message from an agent, a mention in a channel, a followed thread or task that changed, a failed run, a budget stop, other news. */
-  | 'message' | 'mention' | 'follow' | 'run_failed' | 'budget_stop' | 'activity';
-
-/** Where a notification opens. */
-export type NotificationTarget =
-  | { to: 'need'; need: Pick<HomeNeed, 'kind' | 'ref'> }
-  | { to: 'chat'; sessionId: string }
-  | { to: 'agent'; agentId: string }
-  /** An in-app link: a path (`/<company>/…`, docs/routes.md) or an older `#/…` hash. */
-  | { to: 'hash'; hash: string }
-  | { to: 'inbox' };
-
-export interface TopNotification {
-  /** `need:<card id>` or `event:<agent event id>`. */
-  id: string;
-  kind: NotificationKind;
-  title: string;
-  body: string;
-  at: string;
-  severity: 'critical' | 'high' | 'normal' | 'low';
-  read: boolean;
-  /** Something waits on you: it stays until it is resolved (reading it only quiets the count). */
-  waiting: boolean;
-  /** When a card's default applies; `expiresSoon` when that is within 6 hours. */
-  deadline: string | null;
-  expiresSoon: boolean;
-  /** Who it is from: an agent, a channel, "Following", the system. */
-  from: string;
-  agentId: string | null;
-  target: NotificationTarget;
-}
-
-export interface NotificationsPage {
-  generatedAt: string;
-  items: TopNotification[];
   unread: number;
 }

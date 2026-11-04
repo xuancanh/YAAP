@@ -199,7 +199,7 @@ export class TaskMentionsService implements TaskMentionHook, OnModuleInit {
             kind: 'mention',
             title: `${key} · ${author} mentioned you${opts.source === 'brief' ? ' in the brief' : ''}`.slice(0, 200),
             body: `${task.title}: ${row.text.replace(/\s+/g, ' ')}`.slice(0, 400),
-            payload: JSON.stringify({ link, from: key, orgId, taskId: task.id, messageId: row.id, mention: true }),
+            payload: JSON.stringify({ link, from: key, orgId, taskId: task.id, messageId: row.id, mention: true, authorKind: opts.authorAgentId ? 'agent' : 'human', authorId: opts.authorAgentId ?? opts.authorUserId ?? '' }),
             origin: 'org',
             channel: true,
             forMemberAccountId: id === owner ? '' : id,

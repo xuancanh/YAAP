@@ -806,7 +806,7 @@ export class GroupChatService {
         kind: 'mention',
         title: `#${c.slug} · ${author}${isMention ? ' mentioned you' : ''}`,
         body: m.text.replace(/\s+/g, ' ').slice(0, 400),
-        payload: JSON.stringify({ link, from: `#${c.slug}`, channelId: c.id, messageId: m.id, mention: isMention }),
+        payload: JSON.stringify({ link, from: `#${c.slug}`, channelId: c.id, messageId: m.id, mention: isMention, authorKind: m.authorKind, authorId: m.authorId }),
         origin: 'user',
         channel: true,
         // The owner's events are the account's own ('' addressee); a member's

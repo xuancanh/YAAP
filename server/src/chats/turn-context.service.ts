@@ -159,7 +159,7 @@ export class TurnContextService {
         title: notice,
         body: `The provider refused the model name: ${(err instanceof Error ? err.message : String(err)).slice(0, 400)}\nThe turn was retried on ${target}, and ${target} is now this agent's model. Pick another in the agent's Settings › Model.`,
         sessionId: session.id,
-        payload: JSON.stringify({ kind: 'model_switched', from: failedModel, to: target, agentTypeId: type.id }),
+        payload: JSON.stringify({ kind: 'model_switched', from: failedModel, to: target, agentTypeId: type.id, feed: 'agent_note' }),
       }).catch(() => undefined);
     }
     return { model: target, notice };
