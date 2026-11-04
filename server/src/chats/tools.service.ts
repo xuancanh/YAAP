@@ -266,7 +266,7 @@ export class ToolsService {
         execute: async (_root, input) => {
           const query = str(input, 'query');
           const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, {
-            headers: { 'user-agent': 'Mozilla/5.0 (yaam-chat research tool)' },
+            headers: { 'user-agent': 'Mozilla/5.0 (YAAP research tool)' },
             signal: AbortSignal.timeout(15_000),
           });
           if (!res.ok) return `search failed: ${res.status} ${res.statusText}`;
@@ -293,7 +293,7 @@ export class ToolsService {
         readOnly: true,
         execute: async (_root, input) => {
           const res = await fetchPublic(str(input, 'url'), {
-            headers: { 'user-agent': 'Mozilla/5.0 (yaam-chat research tool)' },
+            headers: { 'user-agent': 'Mozilla/5.0 (YAAP research tool)' },
             signal: AbortSignal.timeout(20_000),
           });
           if (!res.ok) return `fetch failed: ${res.status} ${res.statusText}`;

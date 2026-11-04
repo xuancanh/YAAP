@@ -1,6 +1,6 @@
 # Security policy
 
-The full threat model — what yaam-chat defends against, how each defence is
+The full threat model — what YAAP defends against, how each defence is
 implemented, the approval taxonomy, the prompt-injection posture, what we
 never do, and the honest list of known gaps — is in
 [`docs/security.md`](docs/security.md). A running instance serves the same
@@ -8,7 +8,7 @@ headline summary and its disclosure contact at `GET /api/security`.
 
 ## Supported versions
 
-yaam-chat is pre-1.0 and ships from `main`. Only the current `main` (and the
+YAAP is pre-1.0 and ships from `main`. Only the current `main` (and the
 most recent tagged release, once releases exist) receives security fixes.
 Self-hosted operators should track `main`.
 

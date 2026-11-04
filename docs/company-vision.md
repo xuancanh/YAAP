@@ -1,4 +1,4 @@
-# The company that runs itself: a vision for yaam-chat
+# The company that runs itself: a vision for YAAP
 
 *Status: proposal of 1 November 2026, since built — phases A–F shipped as
 execution-plan items 18–24 (plus §12–§13, onboarding and workspace-owned
@@ -12,7 +12,7 @@ Last updated: 2026-11-02
 
 ## 0. The one-sentence version
 
-Today yaam-chat is a chat app whose agents can be arranged into a company.
+Today YAAP is a chat app whose agents can be arranged into a company.
 The next version inverts that: **the company is the product, and chat is
 one of the ways you talk to it.** A person writes a paragraph of intent and
 a budget, and a durable organisation of agents turns that into a strategy,

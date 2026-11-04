@@ -1,6 +1,6 @@
 {
-  "name": "YAAM Chat",
-  "short_name": "YAAM",
+  "name": "YAAP — Yet another agent platform",
+  "short_name": "YAAP",
   "description": "Durable AI agents you work with, that keep working when you leave.",
   "start_url": "/",
   "scope": "/",

@@ -2,7 +2,7 @@
 
 Last updated: 2026-11-02
 
-This document describes how yaam-chat is built: the runtime pieces, the
+This document describes how YAAP is built: the runtime pieces, the
 backend modules, the turn loop, the autonomy engine that runs a company of
 agents, the data model, storage, eventing, security, the SPA, testing and
 deployment. It was written by reading the code. File paths are relative to the

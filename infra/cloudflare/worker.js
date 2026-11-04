@@ -1,4 +1,4 @@
-// Thin edge proxy for the yaam-chat SPA.
+// Thin edge proxy for the YAAP SPA.
 //
 // - /api/* is forwarded to the container-hosted API origin (behind a
 //   cloudflared tunnel), preserving method/headers/body and streaming the

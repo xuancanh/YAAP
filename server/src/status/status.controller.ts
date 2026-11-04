@@ -13,7 +13,7 @@ export class StatusController {
   // on the instance and break the handler lookup.
   async readiness() {
     const db = await this.status.databaseUp();
-    const body = { ok: db, app: 'yaam-chat', db: db ? 'up' : 'down', time: new Date().toISOString() };
+    const body = { ok: db, app: 'yaap', db: db ? 'up' : 'down', time: new Date().toISOString() };
     // Readiness, not just liveness: a dead database means the API can't serve
     // real traffic, so probes should see 503 and route around this instance.
     if (!db) throw new ServiceUnavailableException(body);

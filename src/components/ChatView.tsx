@@ -790,7 +790,7 @@ export function ChatView() {
             // non-streaming provider is answering): say it is working
             <div style={{ display: 'flex', gap: 12, margin: '16px 0', alignItems: 'center', animation: 'msgIn .2s ease' }}>
               <div style={{ width: 28, height: 28, borderRadius: 8, background: agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))', flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>{agent?.emoji ?? '💬'}</div>
-              <span style={{ fontSize: 13, color: 'var(--text-faint)', animation: 'pulse 1.4s ease-in-out infinite' }}>{agent?.name ?? 'YAAM'} is working…</span>
+              <span style={{ fontSize: 13, color: 'var(--text-faint)', animation: 'pulse 1.4s ease-in-out infinite' }}>{agent?.name ?? 'YAAP'} is working…</span>
             </div>
           )}
         </div>
@@ -867,7 +867,7 @@ export function ChatView() {
                 if (menu && e.key === 'Escape') { e.preventDefault(); setMenu(null); return; }
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); doSend(); }
               }}
-              placeholder={app.streaming ? 'Queue a follow-up while streaming…' : `Message ${agent?.name ?? 'YAAM'}  ·  / for commands  ·  @ to attach`}
+              placeholder={app.streaming ? 'Queue a follow-up while streaming…' : `Message ${agent?.name ?? 'YAAP'}  ·  / for commands  ·  @ to attach`}
               rows={1}
               style={{ width: '100%', resize: 'none', border: 'none', outline: 'none', background: 'none', color: 'var(--text)', fontSize: 14, lineHeight: 1.5, padding: '14px 15px 8px', maxHeight: 200 }}
             />

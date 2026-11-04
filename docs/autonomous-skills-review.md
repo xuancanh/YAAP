@@ -1,6 +1,6 @@
 # Autonomous skills review (2026-11)
 
-A review of the skills a yaam-chat company of agents needs to run by
+A review of the skills a YAAP company of agents needs to run by
 itself — the Chief of Staff (`packs/chief-of-staff.md`), 13 function heads
 and 39 specialists (`packs/biz-*.md`), the Auditor (`packs/auditor.md`) and
 the built-in skills (`server/src/skills/builtin-skills.ts`) — judged as one

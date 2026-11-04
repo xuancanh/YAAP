@@ -98,7 +98,7 @@ test('every starter validates as COMPANY.json v1 within the structural caps, wit
       assert.ok(bp.roles.filter((x) => x.reportsTo === r.title).length <= BLUEPRINT_MAX_FANOUT, `${slug}: ${r.title} fan-out`);
     }
     assert.deepEqual(bp.playbooks, [], `${slug}: no playbook — none exists as a shared skill to carry`);
-    assert.equal(bp.origin.exportedFrom, 'yaam first-party'); assert.equal(bp.origin.sourceOrgId, 'first-party');
+    assert.equal(bp.origin.exportedFrom, 'YAAP first-party'); assert.equal(bp.origin.sourceOrgId, 'first-party');
     for (const c of bp.cards ?? []) assert.ok(CARDS.some((k) => k.id === c), `${slug}: card ${c} exists`);
   }
 });

@@ -1,7 +1,7 @@
 # Security and threat model
 
 Status: **published**, 31 October 2026 (execution plan item 3). This is the
-public statement of what yaam-chat defends against, how, and where it does
+public statement of what YAAP defends against, how, and where it does
 not. It is written from the code as it is on `main`, not from the roadmap:
 every claim below names the file that enforces it, and the gaps in §i are
 things the code does not do yet. `SECURITY.md` at the repository root points
@@ -13,7 +13,7 @@ is; either way, tell us (§j).
 
 ## a. Scope and what the product is
 
-yaam-chat is a chat workspace for **durable agents**: named agents with a
+YAAP is a chat workspace for **durable agents**: named agents with a
 charter, a working folder, scheduled loops, skills, mini apps, and
 connections to a user's calendar, mail and files. It is a single
 codebase — a React SPA (`src/`) talking only to a NestJS API

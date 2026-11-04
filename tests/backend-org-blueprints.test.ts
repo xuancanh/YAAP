@@ -117,7 +117,7 @@ function sampleBlueprint(over: Partial<Blueprint> = {}): Blueprint {
     playbooks: [{ name: 'publish-issue', skillMd: SKILL_MD('publish-issue') }],
     budget: { monthlyUsd: 40 },
     cards: ['google-gmail'],
-    origin: { exportedFrom: 'yaam-chat', at: '2026-11-01T00:00:00.000Z', sourceOrgId: 'abc123' },
+    origin: { exportedFrom: 'yaap', at: '2026-11-01T00:00:00.000Z', sourceOrgId: 'abc123' },
     ...over,
   };
 }
@@ -308,7 +308,7 @@ test('export renders the live company as COMPANY.json v1 — roles by title with
   assert.match(bp.playbooks[0].skillMd, /^---\nname: publish-issue/);
   assert.equal(bp.budget.monthlyUsd, 60); assert.deepEqual(bp.budget.allocations, { 'Editorial lead': 10 });
   const seeded = bp.cadences ?? [];
-  assert.equal(bp.origin.exportedFrom, 'yaam-chat'); assert.equal(bp.origin.sourceOrgId.length, 16); assert.notEqual(bp.origin.sourceOrgId, orgId);
+  assert.equal(bp.origin.exportedFrom, 'yaap'); assert.equal(bp.origin.sourceOrgId.length, 16); assert.notEqual(bp.origin.sourceOrgId, orgId);
   const text = JSON.stringify(bp);
   for (const leak of ['PRIVATE-EVENT', 'PRIVATE-TASK', orgId, s.chief.id, lead.id, 'apiKey', 'token']) assert.ok(!text.includes(leak), `blueprint must not carry ${leak}`);
   // the rituals table (item 19) is read defensively: enabled rows with a sane kind and cron, by unit title

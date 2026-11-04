@@ -50,7 +50,7 @@ export type Check =
   | { kind: 'file_matches'; path: string; contains?: string; regex?: string; jsonSchemaKeys?: string[] }
   | { kind: 'connection_query'; service: ConnectionQuery; query: string; days: number; atLeast: number };
 
-/** Check kinds. `github_check` is deliberately absent: yaam-chat has no
+/** Check kinds. `github_check` is deliberately absent: YAAP has no
  *  GitHub connection to read CI from (docs/sensing.md §3). */
 export const CHECK_KINDS = ['metric_at_least', 'metric_increased', 'http_status', 'http_json_match', 'file_exists', 'file_matches', 'connection_query'] as const;
 export type CheckKind = typeof CHECK_KINDS[number];

@@ -128,7 +128,7 @@ export class McpHttpClient {
     await this.rpc('initialize', {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {},
-      clientInfo: { name: 'yaam-chat', version: '0.1.0' },
+      clientInfo: { name: 'yaap', version: '0.1.0' },
     });
     await this.rpc('notifications/initialized', {}, true);
     this.initialized = true;

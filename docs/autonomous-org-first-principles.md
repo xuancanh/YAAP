@@ -2,7 +2,7 @@
 
 *Status: analysis and proposal, 1 November 2026. It re-derives what an
 organization that runs, improves and audits itself needs, starting from
-the user rather than from the features yaam-chat already has. It then
+the user rather than from the features YAAP already has. It then
 grades items 1–26 against that list. `docs/company-vision.md` is the
 earlier, feature-first vision. Where the two disagree, this document is
 the newer argument. The build order in §8 has since shipped as
@@ -105,7 +105,7 @@ organization's feedback must come from.
 ## 4. The capabilities
 
 Twelve capabilities, grouped by loop. Each says what it is, why it is
-needed, how much of it yaam-chat has today, and what is missing.
+needed, how much of it YAAP has today, and what is missing.
 *Have* means shipped and tested. *Partial* means the shape exists but the
 principle is not met. *Missing* means not built.
 
@@ -316,7 +316,7 @@ make it real.
 The owner's weekly attention falls from reviewing every issue to reading
 one page and one spot-check. It rises again only after an incident.
 
-## 7. Where yaam-chat stands
+## 7. Where YAAP stands
 
 | Capability | Status | Built on |
 |---|---|---|
@@ -333,7 +333,7 @@ one page and one spot-check. It rises again only after an incident.
 | C11 Incidents | Have (item 29) | breakers, signals, retros (items 15, 20, 22) |
 | C12 Owner's seat | Have (item 31, `docs/owners-seat.md`) | decision cards with recommendation, alternatives, reversibility, confidence, deadline and a default action (never approve-by-default for irreversible or money); delegated approvals to a person or an agent role; value events from measured key results; the brief opens with Outcomes; outcome-or-shrink signals |
 
-The honest reading: yaam-chat has built the **body** of an organization
+The honest reading: YAAP has built the **body** of an organization
 (structure, work, conversation, memory, money, rituals) and the first
 layer of its **conscience** (signals, auditor, audit chain). It has not
 yet built its **senses** (C1), its **hands' safety catches** (C2, C3), or

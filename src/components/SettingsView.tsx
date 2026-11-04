@@ -2014,7 +2014,7 @@ function SecurityPane() {
             <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.55 }}>
               Found something? Write to <span style={mono}>{policy.contact}</span> with steps to reproduce. Please do not open a public issue for security reports.
             </div>
-            <a href={`mailto:${policy.contact}?subject=${encodeURIComponent('yaam-chat vulnerability report')}`} style={{ display: 'inline-block', marginTop: 10, background: 'var(--accent)', color: '#fff', borderRadius: 9, padding: '8px 15px', fontSize: 12.5, fontWeight: 600, textDecoration: 'none' }}>
+            <a href={`mailto:${policy.contact}?subject=${encodeURIComponent('YAAP vulnerability report')}`} style={{ display: 'inline-block', marginTop: 10, background: 'var(--accent)', color: '#fff', borderRadius: 9, padding: '8px 15px', fontSize: 12.5, fontWeight: 600, textDecoration: 'none' }}>
               Report a vulnerability
             </a>
           </>

@@ -80,7 +80,7 @@ export async function registerClient(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        client_name: 'yaam-chat',
+        client_name: 'YAAP',
         redirect_uris: [redirectUri],
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],

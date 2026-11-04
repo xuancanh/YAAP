@@ -805,7 +805,7 @@ An abbreviated example:
   "budget": { "monthlyUsd": 600 },
   "tunables": {},
   "playbooks": [],
-  "origin": { "exportedFrom": "yaam-chat", "at": "2026-11-03T00:00:00Z", "sourceOrgId": "0f3a9c2e7b1d4a55" }
+  "origin": { "exportedFrom": "yaap", "at": "2026-11-03T00:00:00Z", "sourceOrgId": "0f3a9c2e7b1d4a55" }
 }
 ```
 

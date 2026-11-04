@@ -4,7 +4,7 @@
  * as (b) in docs/accounts.md).
  *
  * Intentionally the same shape as `@knowledge-loom/server`'s AuthStrategy, so
- * that if yaam-chat joins that suite the strategy written there drops in here
+ * that if YAAP joins that suite the strategy written there drops in here
  * unchanged. Three implementations exist:
  *
  *  - TokenAuthStrategy (AUTH_MODE=single): the optional shared bearer token;

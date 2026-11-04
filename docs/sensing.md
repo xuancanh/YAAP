@@ -192,7 +192,7 @@ bad one is refused with its index.
 are workspace-relative and checked like storage keys: letters, digits,
 `. _ -` segments, no `..`.
 
-**`github_check` is not offered.** yaam-chat has no GitHub connection to read
+**`github_check` is not offered.** YAAP has no GitHub connection to read
 CI from (the GitHub entry in the connector catalog is an MCP server, which
 the server cannot call unattended). A check of that kind is refused with
 that reason. It can return when a GitHub connection lands in

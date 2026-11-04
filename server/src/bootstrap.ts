@@ -60,5 +60,5 @@ export async function startApp(): Promise<void> {
   };
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);
-  new Logger('Bootstrap').log(`yaam-chat API listening on http://localhost:${port}/api`);
+  new Logger('Bootstrap').log(`YAAP API listening on http://localhost:${port}/api`);
 }

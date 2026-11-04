@@ -1,7 +1,7 @@
 {
   "name": "yaam-companion",
   "version": "0.1.0",
-  "description": "The yaam-chat desktop companion: lets your agents act on this computer through a paired, outbound-only, approval-gated connection.",
+  "description": "The YAAP desktop companion: lets your agents act on this computer through a paired, outbound-only, approval-gated connection.",
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "bin": { "yaam-companion": "dist/src/cli.js" },

@@ -35,7 +35,7 @@ clicks yes" is required most often.
 ## 2. Architecture
 
 ```
-  browser ── SSE/REST ──▶  yaam-chat API  ◀── outbound long-poll ──  yaam-companion (user's machine)
+  browser ── SSE/REST ──▶  YAAP API      ◀── outbound long-poll ──  yaam-companion (user's machine)
                            computer.service.ts                       companion/src/*
                            queue · scopes · audit                    scopes again · screencapture/osascript/xdotool/PowerShell
 ```

@@ -88,7 +88,7 @@ Contents:
 
 ## 1. Purpose, scope, non-goals
 
-**Purpose.** yaam-chat is becoming a company that runs itself
+**Purpose.** YAAP is becoming a company that runs itself
 (`docs/company-vision.md`). A software or SaaS company needs its agents to
 work in systems yaam does not own: a git host, CI, build machines, a deploy
 platform, error tracking, billing, support and CRM. Each of those is a
@@ -1402,7 +1402,7 @@ gains a job system; plugins never get their own.
 
 dsh's best discipline is that every registration is an effect that records
 its own disposer, so `getEffects()` lists a plugin's live side effects and
-unloading reverts them [D: "Cordis is the only kernel…"; "What yaam-chat
+unloading reverts them [D: "Cordis is the only kernel…"; "What YAAP
 should copy, adapt and avoid"]. yaam's core provides the same guarantee to
 out-of-process plugins. Every contribution goes through one core
 **registrar**, which writes a `plugin_effects` row recording:
@@ -1587,7 +1587,7 @@ delegable), and never below the money floor.
 ### 5.6 Model-visible means logged, and audit
 
 dsh's invariant is that every model input must be reconstructable from
-the durable log [R: "Pi and dsh run plugins in process"; D: "What yaam-chat
+the durable log [R: "Pi and dsh run plugins in process"; D: "What YAAP
 should copy, adapt and avoid"]. yaam makes it a core rule for plugins:
 **every piece of plugin-sourced text that enters a model's context is
 logged with provenance before it is sent.** That covers:
@@ -2507,11 +2507,11 @@ Acceptance:
 
 ## 11. Lessons from DeepSeek Harness
 
-dsh is a composition engine without a governance kernel; yaam-chat is a
+dsh is a composition engine without a governance kernel; YAAP is a
 governance kernel that has not yet chosen its composition engine [D:
 "Conclusion"]. The rule applied here: anything that makes composition
 reversible, observable or fail-loud transfers, and anything that makes
-governance optional does not [D: "What yaam-chat should copy, adapt and
+governance optional does not [D: "What YAAP should copy, adapt and
 avoid"].
 
 | Verdict | dsh / Cordis mechanism | yaam form (section) |

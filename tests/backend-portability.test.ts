@@ -239,7 +239,7 @@ test('SKILL.md export round-trips through import', async () => {
   const src = await skills.create({ name: 'close-month', description: 'Close the books: reconcile, then report.', instructions: '1. Reconcile.\n2. Report.', workspaceId: ws.id, proposedBy: 'Atlas' });
   const md = await skills.exportSkillMd(src.id);
   assert.match(md, /^---\nname: close-month\ndescription: "Close the books: reconcile, then report\."\n/);
-  assert.match(md, /exported-by: "yaam-chat"/);
+  assert.match(md, /exported-by: "yaap"/);
   assert.match(renderSkillMd({ name: 'x', description: '', instructions: 'body' }), /description: "x"/);
 
   const other = new SkillsService(await testDb());

@@ -1,4 +1,4 @@
-# YAAM Chat — Functional Requirements
+# YAAP — Functional Requirements
 
 Scope: the in-app **Chat** feature — provider-neutral LLM conversations that run
 *without* a PTY (distinct from terminal agent sessions). This is a

@@ -3,7 +3,7 @@
 Status: **shipped**, 1 November 2026 (execution-plan item 12, roadmap Phase
 5.3). The curated agent packs and the Connectors directory stay what they
 are; this document covers the third department of the Market — **Community**
-— where anyone running yaam-chat can publish an agent, a skill or a mini app,
+— where anyone running YAAP can publish an agent, a skill or a mini app,
 and anyone can install one behind the same capability review an AGENT.json
 import already gets.
 
@@ -176,7 +176,7 @@ options (target agent for apps, scope for skills, name for agents).
 ## 5. Remote federation
 
 One setting: `REGISTRY_URL` (default empty). A self-hosted instance points it
-at the hosted registry; the hosted registry is just another yaam-chat
+at the hosted registry; the hosted registry is just another YAAP
 serving the same `/api/registry/public`.
 
 - The listing fetches `<REGISTRY_URL>/api/registry/public` through

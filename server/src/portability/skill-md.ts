@@ -201,7 +201,7 @@ export function renderSkillMd(skill: { name: string; description: string; instru
     `name: ${skill.name}`,
     `description: ${quote(skill.description || skill.name)}`,
     'metadata:',
-    '  exported-by: "yaam-chat"',
+    '  exported-by: "yaap"',
     ...(skill.proposedBy ? [`  author: ${quote(skill.proposedBy)}`] : []),
     ...(skill.createdAt ? [`  created: ${quote(skill.createdAt.slice(0, 10))}`] : []),
     '---',

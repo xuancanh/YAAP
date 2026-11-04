@@ -1,4 +1,4 @@
-# YAAM Chat
+# YAAP — Yet another agent platform
 
 **An autonomous company of AI agents that you run as the owner.** You write a
 paragraph of intent: a vision, a budget, your rules. A Chief of Staff turns it

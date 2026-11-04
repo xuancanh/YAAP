@@ -1,5 +1,5 @@
 /**
- * Typed fetch client for the yaam-chat API. The Vite dev server proxies /api
+ * Typed fetch client for the YAAP API. The Vite dev server proxies /api
  * to the NestJS backend (see vite.config.ts).
  */
 import type { z } from 'zod';

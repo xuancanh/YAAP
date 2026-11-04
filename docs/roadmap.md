@@ -121,7 +121,7 @@ analysis matrix (has / partial / none, shortest justifying note); the last
 column is `main` after execution-plan items 1–7 and 9–14, with item 8 in
 progress. Every competitor claim is sourced in that report.
 
-| Dimension | Grok Bot | Muse | Dots | Claude Duet | OpenClaw | Hermes | **yaam-chat today** |
+| Dimension | Grok Bot | Muse | Dots | Claude Duet | OpenClaw | Hermes | **YAAP today** |
 |---|---|---|---|---|---|---|---|
 | Memory: visible, editable, with provenance | partial — no memory screen for personal Bots | has — editable Soul/Identity/Memory.md | none — delete the dot to reset | has — topic-level view/edit | partial — files/CLI, no UI | partial — two small files, write approval off | **has** — Memory tab with provenance and trust tier, pin/forget, consented profile diffs, FTS recall, daily checkpoints; lessons, skills and profile travel in AGENT.json v2 (`docs/agent-memory.md`) |
 | Proactivity controls: quiet hours, budgets, hard stop | partial — routines; limit "not a hard stop mid-run" | partial — no cadence or budget controls | partial — read-only idle research; fixed cadence | partial — "every few hours", counts against chat quota | partial — `activeHours`; no budget | partial — cron; no quiet hours, no core budget | **has** — per-loop token budget and model override, workspace quiet hours with interrupt policy, monthly spend stop enforced before the call, dollars per agent and loop over 30 days (`docs/triggers.md`, README) |

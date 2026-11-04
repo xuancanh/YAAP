@@ -1,14 +1,14 @@
 # yaam-companion
 
-The desktop companion lets your yaam-chat agents act on **this** computer:
+The desktop companion lets your YAAP agents act on **this** computer:
 take screenshots, click and type, run shell commands, and read or write files
-in folders you name. It is the one controlled hole in yaam-chat's "agents have
+in folders you name. It is the one controlled hole in YAAP's "agents have
 no host" isolation model, and it is shaped so that you stay in charge
 (design: `docs/computer-control.md` in the main repository).
 
 What makes it safe enough to run:
 
-- **Outbound only.** The companion connects to your yaam-chat server and asks
+- **Outbound only.** The companion connects to your YAAP server and asks
   for work. Nothing listens on your computer; no port is opened.
 - **Paired, once, to one server.** A 10-minute code from Settings → Computer
   binds this companion. The server stores only a hash of the token it hands
@@ -37,7 +37,7 @@ cd companion && npm install && npm run build && node dist/src/cli.js --help
 
 ## Pair
 
-1. In yaam-chat open **Settings → Computer** and click **Generate pairing
+1. In YAAP open **Settings → Computer** and click **Generate pairing
    code**. The code is valid for ten minutes and for one companion.
 2. On the computer you want agents to use:
 

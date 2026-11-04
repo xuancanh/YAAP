@@ -323,7 +323,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     }
    ],
    "origin": {
-    "exportedFrom": "yaam first-party",
+    "exportedFrom": "YAAP first-party",
     "at": "2026-11-04T00:00:00.000Z",
     "sourceOrgId": "first-party"
    }
@@ -531,7 +531,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "google-drive"
    ],
    "origin": {
-    "exportedFrom": "yaam first-party",
+    "exportedFrom": "YAAP first-party",
     "at": "2026-11-04T00:00:00.000Z",
     "sourceOrgId": "first-party"
    }
@@ -856,7 +856,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     }
    ],
    "origin": {
-    "exportedFrom": "yaam first-party",
+    "exportedFrom": "YAAP first-party",
     "at": "2026-11-04T00:00:00.000Z",
     "sourceOrgId": "first-party"
    }
@@ -1054,7 +1054,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "browser"
    ],
    "origin": {
-    "exportedFrom": "yaam first-party",
+    "exportedFrom": "YAAP first-party",
     "at": "2026-11-04T00:00:00.000Z",
     "sourceOrgId": "first-party"
    }
@@ -1239,7 +1239,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "browser"
    ],
    "origin": {
-    "exportedFrom": "yaam first-party",
+    "exportedFrom": "YAAP first-party",
     "at": "2026-11-04T00:00:00.000Z",
     "sourceOrgId": "first-party"
    }
@@ -1390,7 +1390,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "google-drive"
    ],
    "origin": {
-    "exportedFrom": "yaam first-party",
+    "exportedFrom": "YAAP first-party",
     "at": "2026-11-04T00:00:00.000Z",
     "sourceOrgId": "first-party"
    }
@@ -1657,7 +1657,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "google-drive"
    ],
    "origin": {
-    "exportedFrom": "yaam first-party",
+    "exportedFrom": "YAAP first-party",
     "at": "2026-11-04T00:00:00.000Z",
     "sourceOrgId": "first-party"
    }

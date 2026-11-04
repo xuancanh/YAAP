@@ -9,8 +9,8 @@ self.addEventListener('activate', (event) => { event.waitUntil(self.clients.clai
 
 self.addEventListener('push', (event) => {
   let data = {};
-  try { data = event.data ? event.data.json() : {}; } catch { data = { title: 'YAAM', body: event.data ? event.data.text() : '' }; }
-  const title = data.title || 'YAAM';
+  try { data = event.data ? event.data.json() : {}; } catch { data = { title: 'YAAP', body: event.data ? event.data.text() : '' }; }
+  const title = data.title || 'YAAP';
   const options = {
     body: data.body || '',
     tag: data.tag || undefined,

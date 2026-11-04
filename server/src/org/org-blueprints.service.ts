@@ -188,7 +188,7 @@ export class OrgBlueprintsService implements OnModuleInit, OnModuleDestroy {
       roles, units: unitsOf({ roles } as Blueprint),
       tunables: parseTunables(org.tunables), playbooks,
       budget: { monthlyUsd: org.monthlyBudgetUsd, ...(Object.keys(allocations).length ? { allocations } : {}) },
-      origin: { exportedFrom: 'yaam-chat', at: nowIso(), sourceOrgId: createHash('sha256').update(orgId).digest('hex').slice(0, 16) },
+      origin: { exportedFrom: 'yaap', at: nowIso(), sourceOrgId: createHash('sha256').update(orgId).digest('hex').slice(0, 16) },
     };
     const cadences = await this.probeCadences(org, titles);
     if (cadences.length) bp.cadences = cadences;

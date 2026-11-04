@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * yaam-companion — lets your yaam-chat agents act on THIS computer.
+ * yaam-companion — lets your YAAP agents act on THIS computer.
  *
  *   yaam-companion pair <server-url> <code> --scopes screen,input,shell,files:/abs/dir [--name laptop]
  *   yaam-companion run
@@ -21,7 +21,7 @@ import { isSubset, parseScopes } from './scopes.js';
 const log = (msg: string): void => { console.log(`${new Date().toISOString()}  ${msg}`); };
 
 function usage(code = 1): never {
-  console.error(`yaam-companion — act on this computer for your yaam-chat agents
+  console.error(`yaam-companion — act on this computer for your YAAP agents
 
   pair <server-url> <code> --scopes <list> [--name <label>]
         Redeem a pairing code from Settings → Computer. Scopes, comma separated:

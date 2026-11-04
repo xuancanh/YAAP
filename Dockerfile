@@ -1,4 +1,4 @@
-# yaam-chat production image.
+# YAAP production image.
 #
 #   Build:  docker build -t yaam-chat .
 #   Run:    docker run -p 8790:8790 --env-file .env yaam-chat
