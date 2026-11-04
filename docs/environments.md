@@ -35,7 +35,7 @@ page is the operational runbook for what exists today.
 - **Data**: Postgres in compose (per-env volume), workspace files in R2 with
   one bucket per environment.
 - **Images**: CI builds the root `Dockerfile` and pushes
-  `ghcr.io/xuancanh/yaam-chat`; the VPS pulls by tag.
+  `ghcr.io/xuancanh/yaap`; the VPS pulls by tag.
 
 ## What's deployed where
 

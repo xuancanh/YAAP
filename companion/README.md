@@ -31,7 +31,7 @@ Node.js 20 or newer. No native modules.
 
 ```sh
 npx yaam-companion --help
-# or, from a checkout of yaam-chat:
+# or, from a checkout of YAAP:
 cd companion && npm install && npm run build && node dist/src/cli.js --help
 ```
 

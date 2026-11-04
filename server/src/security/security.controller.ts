@@ -9,7 +9,7 @@
 import { Controller, Get, Inject } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-export const SECURITY_POLICY_URL = 'https://github.com/xuancanh/yaam-chat/blob/main/docs/security.md';
+export const SECURITY_POLICY_URL = 'https://github.com/xuancanh/YAAP/blob/main/docs/security.md';
 
 /** One line per guarantee the full document expands on; kept in step with
  *  docs/security.md §(c)-(h) by tests/backend-security.test.ts. */

@@ -9,7 +9,7 @@
 
 services:
   api:
-    image: ghcr.io/xuancanh/yaam-chat:latest
+    image: ghcr.io/xuancanh/yaap:latest
     restart: unless-stopped
     env_file: .env
     # Bound to localhost only: traffic arrives through the cloudflared tunnel,

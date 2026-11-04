@@ -36,7 +36,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
         with:
-          images: ghcr.io/xuancanh/yaam-chat
+          images: ghcr.io/xuancanh/yaap
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=sha-,format=short
