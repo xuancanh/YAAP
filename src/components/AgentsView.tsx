@@ -18,6 +18,7 @@ import { KEEP_FILE, agentSource, normPath, workspaceSource } from '../lib/artifa
 import { ArtifactTree } from './ArtifactTree';
 import { ArtifactPane } from './FilesView';
 import { AgentHeader, AgentOverviewBody, useAgentPage } from './AgentDashboard';
+import { AgentKnowledgeCard } from './KnowledgeBits';
 import { WorkLogTab } from './WorkLog';
 import { AGENT_TABS, SETTINGS_SECTIONS, WORK_SECTIONS, resolveAgentTab, type AgentTab, type SettingsSection, type WorkSection } from '../lib/agent-tabs';
 import { nextFire, untilLabel } from '../lib/cron';
@@ -1506,6 +1507,7 @@ export function AgentHome() {
         {tab === 'Overview' && (
           <div style={{ marginTop: 18 }}>
             <AgentOverviewBody page={page} />
+            <AgentKnowledgeCard agentId={a.id} />
           </div>
         )}
         {tab === 'Work' && <SubNav label="Work" items={WORK_SECTIONS} value={workSection} onChange={setWorkSection} counts={{ Tasks: openTasks.length, Schedule: activeLoops.length }} />}

@@ -32,6 +32,7 @@
  *  HarnessModule     → /api/harness                    (coding-agent CLIs as code_agent, docs/coding-harnesses.md)
  *  PluginsModule     → /api/workspaces/:id/plugins|interfaces|changes|foundry/plugins (interfaces, providers, consumers and the plugin registry, docs/plugins.md)
  *  FoundryModule     → GET  /api/foundry, /api/foundry/kits (the marketplace's shelves, docs/foundry.md)
+ *  KnowledgeModule   → GET  /api/agents/:id/knowledge, kb_* tools, /library/ (role knowledge bases, docs/knowledge-base.md; global)
  *
  * Layering: Controllers → Services → Repositories (Drizzle).
  */
@@ -79,6 +80,7 @@ import { HarnessModule } from './harness/harness.module';
 import { PluginsModule } from './plugins/plugins.module';
 import { FoundryModule } from './foundry/foundry.module';
 import { DataAccessModule } from './data-access/data-access.module';
+import { KnowledgeModule, KnowledgeToolsModule } from './knowledge/knowledge.module';
 import { WorkspaceAccessGuard } from './shared/workspace-access.guard';
 import { SessionAuthStrategy } from './accounts/session-auth.strategy';
 import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
@@ -92,6 +94,7 @@ import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
     StorageModule,
     FilesModule,
     FollowsModule,
+    KnowledgeModule,
     StatusModule,
     WorkspacesModule,
     AgentTypesModule,
@@ -122,6 +125,7 @@ import { SuiteJwtStrategy } from './accounts/suite-jwt.strategy';
     PluginsModule,
     FoundryModule,
     DataAccessModule,
+    KnowledgeToolsModule,
   ],
   providers: [
     // Identity is bound here and nowhere else: swapping this one provider

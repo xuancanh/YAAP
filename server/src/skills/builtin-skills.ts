@@ -123,5 +123,23 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
 5. A postmortem is blameless: the timeline with evidence, the impact in numbers, the contributing causes down to something the company controls, and actions to prevent, detect and mitigate, at least one due within the next cycle.
 6. On the closing turn call meeting_close with the summary; the minutes are written to /org/meetings/<unit>/<yyyy>/<yyyy-mm-dd>-retro.md when the meeting ends. Afterwards fs_append to them a Follow-up section: last time's actions, each done, working or dropped with the reason.
 7. Adapt the ritual: a retro that produced no change or lesson for several cycles running is proposed for a lighter cadence (org_set_cadence, the why naming the evidence and the operating profile). Done when every change has an owner and a date.`,
+  },  // The role's curated reference (docs/knowledge-base.md): every agent with a
+  // knowledge base gets kb_search / kb_read / kb_list and this playbook.
+  {
+    name: 'use-the-knowledge-base',
+    description: 'For agents with a knowledge base (kb_search present): when to search your role\'s curated reference and the shared topics, how to read a doc, apply it to the work in hand, and cite it',
+    instructions: `You carry a knowledge base: curated, read-only reference for your role (frameworks, checklists, templates, metric definitions with formulas, pitfalls, worked examples) plus the shared topics your role sees (OKRs, briefs and handoffs, decisions, meetings, prioritisation, planning, risk, review, sources). Without kb_search this skill does not apply.
+
+1. When to search (kb_search, plain words):
+   - before you plan or draft a deliverable in your field (a report, a plan, a memo, a brief, a review, a forecast): search for its template or method first;
+   - when you are unsure of a method, a definition or a formula ("runway formula", "how to size an audit sample");
+   - when a checklist may apply (a close, a launch, a hire, a contract, an incident, a meeting);
+   - when you review someone else's work, to check it against the standard the doc sets.
+   Skip it for small talk and for facts about this company: the company's own record (goals, decisions, files under /org/, metrics) always comes from the company, never from the knowledge base.
+2. Read the best hit with kb_read (its path as kb_search shows it; long docs come in pages). kb_list shows every doc when no search fits. If nothing fits, say so and work from first principles; do not stretch a doc to cover a case it does not.
+3. Apply, don't paste: fill the template with this company's facts, follow the checklist step by step, compute the formula on numbers from a metric source, a file or a named person (or label the result an estimate). A company playbook (org_playbooks) or the company's own tunables beat the knowledge base when they disagree: the knowledge base is a sensible default, the company decides.
+4. Cite what you used, once, where the reader will see it: "(KB: biz-finance-manager/budget-memo.md)" in the deliverable's notes or sources, or in the review note. A fact the doc itself cites keeps the doc's source (its Sources list), not just the KB path.
+5. Keep reference and memory apart: the knowledge base is shipped and read-only (/library/, refreshed when the pack updates). What you learn doing the work goes in your own memory (LESSONS.md) and your knowledge/ notes; a better method you would like shipped to every agent of your role is a suggestion for the CEO, not an edit.
+6. Done when the deliverable follows the doc that fits it, says which one, and nothing in it rests on a number the doc made up for an example.`,
   },
 ];

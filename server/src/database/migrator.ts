@@ -2474,6 +2474,17 @@ const MIGRATIONS: Migration[] = [
       await db.query(`ALTER TABLE org_units ALTER COLUMN "nameSource" SET NOT NULL`);
     },
   },
+  {
+    id: '0092-agent-pack',
+    up: async (db) => {
+      // The knowledge base (docs/knowledge-base.md): the authored pack an
+      // agent was made from, so its role's knowledge base follows it. Null
+      // for agents made outside packs; agents from before this migration
+      // resolve their pack at read time (their seat, their playbooks).
+      // Idempotent.
+      if (!(await hasColumn(db, 'agents', 'packId'))) await db.query(`ALTER TABLE agents ADD COLUMN "packId" TEXT`);
+    },
+  },
 ];
 
 /**

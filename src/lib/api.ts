@@ -839,6 +839,20 @@ export interface MarketItem {
   /** What "Hire into the company" sends as `templateOrPack` (`role:<id>` or
    *  a pack id); null or absent when the pack has no company hire. */
   orgHire?: string | null;
+  /** The role's knowledge base in brief (docs/knowledge-base.md); absent when the pack has none. */
+  knowledge?: { folder: string; docs: number; titles: string[]; shared: string[]; version: string };
+}
+
+/** GET /api/agents/:id/knowledge — the agent's knowledge base and its files under /library/. */
+export interface KbDocRef { path: string; file: string; title: string; summary: string }
+export interface AgentKnowledge {
+  packId: string | null;
+  packName: string | null;
+  folder: string | null;
+  summary: string;
+  docs: KbDocRef[];
+  shared: Array<{ topic: string; docs: KbDocRef[] }>;
+  version: string;
 }
 
 // ---- market registry (docs/registry.md) ----
@@ -2067,6 +2081,8 @@ export const api = {
     send<{ language: string; output: string }>(
       `/api/agents/${id}/apps/${appId}/compute`, 'POST', { language, code, stdin, timeoutSeconds }),
   agentLessons: (id: string) => get<AgentLesson[]>(`/api/agents/${id}/lessons`),
+  agentKnowledge: (id: string) => get<AgentKnowledge>(`/api/agents/${id}/knowledge`),
+  installAgentKnowledge: (id: string) => send<{ written: string[]; removed: string[] }>(`/api/agents/${id}/knowledge/install`, 'POST', {}),
   patchLesson: (id: string, lessonId: string, patch: { trusted?: boolean; pinned?: boolean; audience?: string }) =>
     send<AgentLesson>(`/api/agents/${id}/lessons/${lessonId}`, 'PATCH', patch),
   deleteLesson: (id: string, lessonId: string) =>

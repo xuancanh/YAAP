@@ -77,6 +77,8 @@ export const TOOL_CLASSES: Record<string, Classifier> = {
   update_user_profile: 'internal_write',
   // the trust ledger's own read tool
   trust_status: 'read',
+  // the role's knowledge base (knowledge/knowledge.tools.ts, docs/knowledge-base.md): curated, read-only reference
+  kb_search: 'read', kb_read: 'read', kb_list: 'read',
   // generic change records (plugins/changes.service.ts, docs/plugins.md §4.8):
   // reading a record, and asking for the apply gate (a record moves to
   // `gated`; nothing outside the workspace changes)

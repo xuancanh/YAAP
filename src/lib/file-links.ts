@@ -4,7 +4,7 @@
  *  one window event the store answers (it knows the workspace). */
 
 /** The top-level folders of the workspace tree a path may start with. */
-const ROOTS = ['org', 'agents', 'channels', 'uploads', 'archive'];
+const ROOTS = ['org', 'agents', 'channels', 'uploads', 'archive', 'library'];
 const PATH_BODY = `(?:${ROOTS.join('|')})\\/[^\\s<>()\\[\\]"'\`]*[^\\s<>()\\[\\]"'\`.,;:!?]\\.[A-Za-z0-9]{1,8}`;
 const EXACT = new RegExp(`^\\/?${PATH_BODY}$`);
 

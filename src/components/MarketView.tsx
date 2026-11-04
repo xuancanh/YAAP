@@ -19,6 +19,7 @@ import {
 import { RegistryReviewModal } from './RegistryBits';
 import { KIND_GLYPH, KIND_LABEL, flagCount, fmtInstalls, installSummary, ratingLabel } from '../lib/registry';
 import { KitDetailPage, KitsShelf, PluginDetailPage, PluginFilters, PluginsShelf } from './FoundryBits';
+import { KnowledgeHireSection } from './KnowledgeBits';
 
 const CompanyInstallModal = lazy(() => import('./OrgBlueprintBits').then((m) => ({ default: m.CompanyInstallModal })));
 
@@ -287,6 +288,7 @@ function AgentCard({ m, featured, showSegment }: { m: MarketItem; featured?: boo
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {fn && <span style={{ ...mini, borderColor: `color-mix(in oklab, ${fn.color} 50%, var(--border-soft))`, background: `color-mix(in oklab, ${fn.color} 14%, var(--panel-2))` }}>{fn.icon} {fn.label}</span>}
         {skills > 0 && <span style={mini}>{skills} skill{skills === 1 ? '' : 's'}</span>}
+        {(m.knowledge?.docs ?? 0) > 0 && <span style={mini} title={`Knowledge base: ${m.knowledge!.titles.join(' · ')}`}>{m.knowledge!.docs} doc{m.knowledge!.docs === 1 ? '' : 's'}</span>}
         {m.loops.length > 0 && <span style={mini} title={m.loops.map((l) => `${l.name} (${l.cron})`).join('\n')}>{m.loops.length} loop{m.loops.length === 1 ? '' : 's'}</span>}
         {m.caps.filter((c) => !/skills$/.test(c)).map((cap) => <span key={cap} style={{ ...mini, fontFamily: 'var(--mono)' }}>{cap}</span>)}
       </div>
@@ -716,6 +718,7 @@ export function HireModal() {
               </div>
             </div>
           )}
+          <KnowledgeHireSection item={item} />
           {biz && (
             <div role="radiogroup" aria-label="How to hire" style={{ marginTop: 18, display: 'grid', gap: 8 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.5px', textTransform: 'uppercase', color: 'var(--text-faint)' }}>How to hire</div>

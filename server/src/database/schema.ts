@@ -147,6 +147,12 @@ export const agents = pgTable('agents', {
    *  assigned (resolved from the id at read time). Picked at random when the
    *  agent is created; the owner changes it in the agent's settings. */
   personality: text('personality'),
+  /** The authored pack the agent was made from (docs/knowledge-base.md,
+   *  migration 0092): its role's knowledge base and playbooks. Set by every
+   *  pack door (a market hire, a company hire, the chief's kit); null for an
+   *  agent made outside packs or before 0092 (then read from its seat and
+   *  its playbooks, server/src/knowledge/knowledge.service.ts). */
+  packId: text('packId'),
   createdAt: text('createdAt').notNull(),
 });
 

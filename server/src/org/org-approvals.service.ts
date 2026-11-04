@@ -33,6 +33,7 @@ import { roleById } from './roles/catalog';
 import { HEAD_PLAYBOOKS, isHeadRole } from './heads';
 import { clamp01, computedAlternatives, defaultActionFor, normalizeAlternatives, RECOMMENDED_ACTIONS, reversibilityOf, type DefaultAction, type RecommendedAction } from './decision-cards';
 import { govTunable } from './governance-tunables';
+import { KnowledgeService } from '../knowledge/knowledge.service';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
 export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict' | 'kit_change' | 'plugin_change';
@@ -118,6 +119,8 @@ export class OrgApprovalsService {
     private readonly audit: OrgAuditService,
     @Optional() private readonly skills?: SkillsService,
     @Optional() private readonly bus?: TriggerBus,
+    /** Optional: installs the hire's role knowledge base (docs/knowledge-base.md). */
+    @Optional() private readonly knowledge?: KnowledgeService,
   ) {}
 
   static catalogItem(idOrName: string): MarketItem | undefined {
@@ -499,6 +502,8 @@ export class OrgApprovalsService {
       name, workspaceId: org.workspaceId, charter: p.charter || pack?.charter || '', role: p.title, provider: p.provider, model: p.model,
       modelTier: p.modelTier, modelFallback: true,
       emoji: pack?.emoji, colors: pack?.colors, loops: [],
+      // The role's knowledge base follows the pack (docs/knowledge-base.md).
+      packId: pack?.id ?? null,
     });
     for (const s of pack?.skills ?? []) {
       await this.skills?.create({ name: s.name, description: s.description, instructions: s.instructions, agentId: agent.id }).catch(() => {});
@@ -513,6 +518,8 @@ export class OrgApprovalsService {
     // Assurance (docs/company-vision.md §5.3): a hire from the Auditor pack (or the Auditor role) becomes the org's auditor when the seat is empty.
     if ((p.packId === 'pack-auditor' || p.roleId === 'auditor') && !(await this.org.get(orgId)).auditorAgentId) await this.org.update(orgId, { auditorAgentId: agent.id }).catch(() => undefined);
     if (p.monthlyBudgetUsd && p.monthlyBudgetUsd > 0) await this.org.setBudget(orgId, { scope: 'agent', refId: agent.id, monthlyUsd: p.monthlyBudgetUsd, actor });
+    // The role's knowledge base: installed under /library/ for the workspace.
+    await this.knowledge?.installFor(agent.id).catch(() => undefined);
     return { agentId: agent.id, name, scopes, depth: member.depth };
   }
 

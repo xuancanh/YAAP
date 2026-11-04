@@ -6,18 +6,25 @@
  * bundled skills, installed private to the hired agent (skills are read-only
  * instruction text, so the hire review is their activation gate).
  */
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, Optional } from '@nestjs/common';
 import { AgentsService } from '../agents/agents.service';
 import { SkillsService } from '../skills/skills.service';
 import { PROFESSION_PACKS } from './profession-packs.generated';
 import { AUTHORED_PACKS } from './authored-packs.generated';
 import { orgHireRef, segmentOf, segmentSummary } from './segments';
+import { KnowledgeService } from '../knowledge/knowledge.service';
+import { kbSummary } from '../knowledge/knowledge';
 
 const CATALOG = [...AUTHORED_PACKS, ...PROFESSION_PACKS];
 
 @Injectable()
 export class MarketService {
-  constructor(private readonly agents: AgentsService, private readonly skills: SkillsService) {}
+  constructor(
+    private readonly agents: AgentsService,
+    private readonly skills: SkillsService,
+    /** Optional: installs the hired role's knowledge base (docs/knowledge-base.md). */
+    @Optional() private readonly knowledge?: KnowledgeService,
+  ) {}
 
   async list(workspaceId?: string) {
     const hiredNames = new Set((await this.agents.list({ workspaceId })).map((a) => a.name));
@@ -28,6 +35,8 @@ export class MarketService {
       // The `templateOrPack` a company hire of this pack sends (null: none).
       orgHire: orgHireRef(item),
       hired: hiredNames.has(item.name),
+      // The role's knowledge base in brief (docs/knowledge-base.md): count and titles.
+      ...(kbSummary(item.id) ? { knowledge: kbSummary(item.id) } : {}),
       ...(skills ? { skills: skills.map((s) => ({ name: s.name, description: s.description })) } : {}),
     }));
   }
@@ -65,6 +74,7 @@ export class MarketService {
       role: item.role,
       charter: item.charter,
       loops: item.loops,
+      packId: item.id,
     });
     for (const s of item.skills ?? []) {
       // A name shadowed by a global/builtin skill just skips; the rest install.
@@ -72,6 +82,8 @@ export class MarketService {
         name: s.name, description: s.description, instructions: s.instructions, agentId: agent.id,
       }).catch(() => {});
     }
+    // The role's knowledge base: installed under /library/ for the workspace.
+    await this.knowledge?.installFor(agent.id).catch(() => undefined);
     return { ok: true, agent };
   }
 }

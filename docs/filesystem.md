@@ -56,6 +56,8 @@ skills cannot drift apart.
 │   ├── work/                  drafts not yet ready to share
 │   └── .checkpoints/          read-only rollback history
 ├── uploads/                   files users attach from the composer
+├── library/                   the packs' knowledge bases, read-only (docs/knowledge-base.md):
+│                              <pack>/…, _shared/<topic>/…, README.md          (generated)
 ├── archive/org-<slug>-<day>/  a deleted company's /org/, when its delete kept the files (docs/owners-seat.md)
 └── <anything else>/           user- or agent-made shared folders
 ```
@@ -227,6 +229,7 @@ Plain and predictable, checked in one place (`WorkspaceFs.assertCanWrite`):
 | `/agents/<own>/…`            | read/write       | read         | read/write |
 | `/agents/<own>/.checkpoints/`| read             | read         | read  |
 | `/agents/<other>/…`          | —                | read         | read/write |
+| `/library/…` (knowledge base) | read            | read         | read       |
 | everything else (artifacts)  | read/write       | read/write   | read/write |
 
 So: an agent's home is its own; collaboration happens in shared folders.

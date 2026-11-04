@@ -270,6 +270,7 @@ export class OrgService {
       const created = await this.agents.create({
         name: input.chief.name, workspaceId: input.workspaceId, charter: input.chief.charter ?? (pack ? `${pack.charter}\n\n${base}` : base),
         provider: input.chief.provider, model: input.chief.model, emoji: input.chief.emoji ?? '🧭', role: input.chief.role ?? 'Chief of staff',
+        packId: pack?.id ?? null,
       });
       chiefId = created.id;
     }

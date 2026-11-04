@@ -169,6 +169,11 @@ export class WorkspaceFs implements OnApplicationBootstrap {
     if (isHiddenPath(path)) throw new FilePermissionError(`/${path} is internal`);
     if (actor.kind === 'system') return;
     const seg = path.split('/');
+    // The knowledge base (docs/knowledge-base.md): shipped with the packs,
+    // installed and refreshed by the system alone.
+    if (seg[0] === 'library') {
+      throw new FilePermissionError(`/${path} is the read-only knowledge base, shipped with the agents' packs — keep your own notes in your home's knowledge/ folder or a shared folder such as /org/`);
+    }
     if (seg[0] !== 'agents' || seg.length < 2) return;
     const home = `agents/${seg[1]}`;
     if (seg[2] === '.checkpoints') {

@@ -89,6 +89,12 @@ lists the platform features that make it more than a chat prompt.
 
 ## 3. Cross-cutting decisions
 
+- **Every pack can ship a knowledge base** (docs/knowledge-base.md):
+  `knowledge/<pack>/` holds curated, read-only reference for the role
+  (frameworks, checklists, templates, metric formulas). It is installed
+  once per workspace at `/library/<pack>/` and searched with `kb_search` /
+  `kb_read`, with cross-role topics in `knowledge/_shared/`. Skills say what
+  to do; the knowledge base holds the reference behind them.
 - **Craft skills go global, not per-agent.** "Write a doc", "build a deck",
   "make a comparison spreadsheet (as markdown/CSV)", "style it nicely" —
   ship these as shared workspace skills every agent can invoke, modeled on

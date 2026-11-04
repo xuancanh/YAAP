@@ -2580,7 +2580,7 @@ const AUDIT_TOOLS: AiToolSpec[] = [
  *  providers — the shared files (the ledger under /org/ and the functions'
  *  reports it verifies), the decision log, the metric sources a reported
  *  number must reconcile with — and the auditor's own playbooks. */
-const AUDIT_TOOL_NAMES = new Set([...AUDIT_TOOLS.map((t) => t.name), 'fs_list', 'fs_read', 'fs_search', 'org_decisions', 'org_metric_sources', 'org_metric_read', RESTRICT_OWN_SKILLS]);
+const AUDIT_TOOL_NAMES = new Set([...AUDIT_TOOLS.map((t) => t.name), 'fs_list', 'fs_read', 'fs_search', 'org_decisions', 'org_metric_sources', 'org_metric_read', 'kb_search', 'kb_read', 'kb_list', RESTRICT_OWN_SKILLS]);
 
 /** Unit leads (docs/group-chat.md §7): the unit-scoped set. The chief gets
  *  these too, company-wide (`unit` names which unit). */

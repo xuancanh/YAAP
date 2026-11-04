@@ -216,7 +216,7 @@ export class AgentsService {
     return resolveCreationType(this.db, { provider: a.provider }).catch(() => undefined);
   }
 
-  async create(input: { name: string; workspaceId?: string; charter?: string; provider?: string; model?: string; homeDir?: string; emoji?: string; colors?: [string, string]; role?: string; loops?: unknown[]; agentTypeId?: string | null; modelTier?: string; customModel?: boolean; modelFallback?: boolean; personality?: string | null }) {
+  async create(input: { name: string; workspaceId?: string; charter?: string; provider?: string; model?: string; homeDir?: string; emoji?: string; colors?: [string, string]; role?: string; loops?: unknown[]; agentTypeId?: string | null; modelTier?: string; customModel?: boolean; modelFallback?: boolean; personality?: string | null; packId?: string | null }) {
     // The owning workspace (docs/shared-agents.md "Workspace ownership"):
     // named by every HTTP caller, defaulted for service and CLI callers.
     const workspaceId = input.workspaceId ?? await this.defaultWorkspaceId();
@@ -262,6 +262,8 @@ export class AgentsService {
       heartbeatDailyRunCap: null,
       heartbeatStaleMinutes: null,
       personality,
+      // The pack it was made from (docs/knowledge-base.md): its knowledge base follows it.
+      packId: input.packId ?? null,
       createdAt: nowIso(),
     };
     await this.db.insert(agents).values(row);
@@ -993,7 +995,9 @@ export class AgentsService {
     // Shared validator with the schedule editor; a webhook trigger in a
     // profile never carries a usable secret, so it is minted on import.
     const loops = JSON.parse(validateLoopsJson(JSON.stringify(rawLoops.map((l) => validateLoopDef(l, fail))))) as LoopDef[];
-    const agent = await this.create({ name: name as string, workspaceId: opts.workspaceId, charter, role, emoji, colors, loops });
+    // The pack travels by id (docs/knowledge-base.md "Portability"): its knowledge base is never inline.
+    const packId = typeof profile.packId === 'string' && /^pack-[a-z0-9-]{1,80}$/.test(profile.packId) ? profile.packId : null;
+    const agent = await this.create({ name: name as string, workspaceId: opts.workspaceId, charter, role, emoji, colors, loops, packId });
     if (typeof profile.dashboard === 'string' && profile.dashboard) {
       await this.update(agent.id, { dashboard: profile.dashboard.slice(0, DASHBOARD_CAP) });
     }
@@ -1071,6 +1075,8 @@ export class AgentsService {
       // shape only, and an import mints a fresh one.
       loops: (JSON.parse(a.loops) as LoopDef[]).map((l) => (l.trigger?.kind === 'webhook' ? { ...l, trigger: { kind: 'webhook' } } : l)),
       dashboard: a.dashboard, apps: await this.listApps(id),
+      // By reference: the importing install brings the pack's knowledge base itself.
+      ...(a.packId ? { packId: a.packId } : {}),
     };
   }
 
