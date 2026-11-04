@@ -534,7 +534,7 @@ export const agentLessons = pgTable('agent_lessons', {
    *  connection. The digest injects shared rows plus the initiating
    *  member's own, plus whatever a workspace_flow_rules allow row opens. */
   audience: text('audience').notNull().default('shared'),
-  /** What made it (docs/agent-memory.md §12, migration 0092): distill | note
+  /** What made it (docs/agent-memory.md §12, migration 0093): distill | note
    *  | review | failure | feedback | decision | retro | import | ''. */
   cause: text('cause').notNull().default(''),
   /** What happened, one line (the rule itself is `text`). */

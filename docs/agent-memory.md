@@ -429,7 +429,7 @@ line. A 👎 with a note is a pinned `feedback` lesson with the reply as
 evidence; retro lessons are recorded as the rule, with the retro as
 context and evidence. `memory.captureTriggers` switches each. Lessons carry
 `cause`, `context`, `evidence` (≤ 8 refs), `tags`, `recalls`, `status`
-(migration 0092); text is capped at 600 characters, and dedup falls back to
+(migration 0093); text is capped at 600 characters, and dedup falls back to
 model-free term similarity (Jaccard / overlap ≥ 0.6) when `pg_trgm` is
 absent or misses. Distillation asks for the rule and its evidence and pulls
 task keys from the transcript.
