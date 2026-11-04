@@ -384,6 +384,167 @@ The owner meets these cards first on Home (`docs/home.md`): each decision
 card shows its recommendation, reversibility, confidence and what happens
 at its deadline if nobody answers, and can be decided there.
 
+## Inbox and notifications
+
+The Inbox and the top bar's bell show one feed. `FeedService`
+(`server/src/home/feed.service.ts`) builds it, and both read the same page,
+so what they list and what they count cannot disagree.
+
+### What was wrong (the audit, November 2026)
+
+Before this change the Inbox and the bell were two lists. Each was built
+from its own sources and counted in its own way.
+
+- **Counts.** The Inbox's nav badge added up six client-side counters:
+  pending approvals (`wsOrg.pendingApprovals`, which counted cards a manager
+  still held), held keys, pending plans, open incidents, my open tasks,
+  follows needing me and unread messages. The bell counted every unread
+  inbox event of every agent in the workspace, plus Home's cards. On the
+  dev data one company had 87 unread events. 62 of them were routine task
+  runs (`org_run`) and agents' working notes (`info`), and 15 repeated a card
+  that was already listed. So the badge said 3 and the bell said 99+.
+- **In one and not the other.** Task @mentions (`task:<org>` events) and
+  meeting reminders sent with no channel (`org:<org>` events) reached
+  neither list. Approvals waiting on your connection (`approval_request`,
+  which time out after ten minutes) were only in the agent's own inbox. My
+  tasks, reviews and pending plans were in the Inbox but not the bell.
+  Every agent `info` note was in the bell but not the Inbox.
+- **Never shown anywhere.** Meetings started and ended, hires by heads,
+  project seats waiting on a head, project breakers, the company archived,
+  cards decided by the default or a delegate, cards that expired, failed task
+  runs and failed checks, blocked tasks handed to someone to chase, goals at
+  risk, plugin recalls and updates, and plugin updates waiting for review.
+  All of these are recorded in the org or plugin audit logs, and nothing
+  surfaced them.
+- **Addressed to the wrong person.** `blocked`, `decision` and `escalation`
+  events addressed to an agent's heartbeat (a manager's decision, a task
+  waiting on an agent) appeared in the owner's bell.
+- **Opening.** The bell opened events by the hash inside an absolute URL.
+  The Inbox opened them through store actions. They disagreed for mentions
+  and follows.
+
+### The model
+
+Each feed item has these fields:
+
+- `type`, from the table below;
+- `section`: `needs`, `mentions` or `updates`;
+- `actionable`, which is true for Needs you;
+- `read`;
+- a one-line `title` and a `body`;
+- `actor`: an agent with its avatar, a person, or the system;
+- `company`;
+- `context`: the task key, the project, the channel or the meeting;
+- `at`;
+- `severity`;
+- `deadline` and `expiresSoon`;
+- `actions` that can run in place;
+- `target`, the place it opens.
+
+`target` is structured (`task`, `chat`, `channel`, `meeting`, `agent`,
+`project`, `pane`, `plugin`, `need`). The SPA opens it through its own
+store actions and never builds a URL from it. The `link` kind exists only
+for old events that carry nothing but a link.
+
+**Resolution.** An item in Needs you stays until the record that owns it is
+resolved: the card is decided, the task is done, the follow is seen, or the
+plugin update is applied. Once resolved, it appears under **Done** (the
+Inbox's History).
+
+**Grouping.** Updates about the same thing collapse into one row, such as
+"3 updates on ENG-12" or "3 updates on Writer's runs". Marking that row
+read marks every item in it read.
+
+**Counts.**
+
+- The Inbox's nav badge and "N need you" count the open items in Needs you,
+  whether you have read them or not.
+- The bell and "N unread" count unread rows in all three sections.
+
+`GET …/status` and the workspace switcher return the same two numbers
+(`needsYou`, `unread`).
+
+**Read state.**
+
+- An item backed by an event uses the event's own `agent_events.readAt`.
+- Every other item uses a per-person `home.notifications:<ws>:<actor>`
+  row, which holds the ids you have read and the time of your last **Mark
+  all read**.
+
+**Who gets what.**
+
+- The owner gets the company-wide updates and the account's own events.
+- A member of a shared workspace gets only what is addressed to them:
+  their mentions, their tasks, and what they follow.
+- Following is decided by the follow service's auto-follow
+  (`docs/follows.md`).
+
+**Switches.** Each update type can be turned off for the workspace with the
+tunable `notify.<type>` (0 = off). The Inbox's **Customize** panel sets these
+switches. `notify.groupAfter` (default 2) sets how many updates about one
+thing it takes to collapse them into a row. These tunables are in the
+owner's area (`seat`), so an agent can only propose changing them. Needs
+you and mentions cannot be turned off.
+
+### The types
+
+| Type | Section | Source | Opens |
+|---|---|---|---|
+| decision, escalation, key, pending_change, incident, signal, queued_action | Needs you | Home's Needs-you cards (`HomeService.glance`) | the card's queue, the task, the incident, the agent |
+| connection_approval **(new)** | Needs you | `approval_request` events addressed to you, within their 10-minute TTL; Allow / Deny in place | the chat |
+| task_assigned, task_review | Needs you | org tasks assigned to you or waiting for your review | the task |
+| blocked_on_you **(new)** | Needs you | a task blocked on you (`blockedOn` person) | the task |
+| follow_attention | Needs you | a follow of yours whose last change needs you | the task or the thread |
+| plugin_review **(new)** | Needs you | a plugin update that widens access, waiting (`plugin_installs.pendingVersionId`) | Foundry |
+| message | Mentions | `agent_message` (`message_owner`) | the direct chat |
+| mention | Mentions | channel and thread @mentions; task @mentions **(new: `task:<org>` events)** | the channel message or the task |
+| follow | Updates | the first change since you last looked at what you follow | the task, the thread or the discussion |
+| channel_activity **(new)** | Updates | messages in channels you set to notify on everything | the channel |
+| run_failed | Updates | `loop_error`, `action_failed`; failed or looping task runs (`run_end`), failed checks **(new)** | the chat or the task |
+| budget | Updates | `budget_warn` **(new)**, `budget_stop` | Spend or the task |
+| meeting **(new)** | Updates | about to start (also `org:<org>` events), started (`meeting_start`), ended with its minutes | the meeting |
+| brief **(new)** | Updates | the chief of staff's daily brief | the Brief |
+| audit **(new)** | Updates | assurance audits (`org_audit`, red team), spot checks | Audit |
+| experiment **(new)** | Updates | experiments started, extended and decided | the chief |
+| trust **(new)** | Updates | trust raised or lowered | the agent |
+| decided_without_you **(new)** | Updates | cards decided by the default (`approval_default`) or a delegate (`delegated_decision`), and cards that expired (`approval_expired`) | Done |
+| hire **(new)** | Updates | a head or the chief hired an agent (`member_add`, not by you) | the agent |
+| project_team **(new)** | Updates | a seat proposed and waiting on a head, or a seat filled | the project |
+| project **(new)** | Updates | a project breaker (appetite used up), a project finished | the project |
+| blocked **(new)** | Updates | a blocked task handed to a lead to chase (`blocked_owner_assigned`) | the task |
+| goal_at_risk **(new)** | Updates | a goal or key result that went at risk | Goals |
+| plugin **(new)** | Updates | a version recalled by its publisher, an update applied (Foundry) | Foundry |
+| company **(new)** | Updates | the company archived (not by you) | the Inbox |
+| agent_note **(new)** | Updates | `info` events that an emitter tags `feed: 'agent_note'`: acted at trust level 1, a lesson to review, a model switched | the chat or the agent |
+
+**Left out on purpose:**
+
+- routine runs (`loop_run`, `org_run`);
+- untagged `info` notes, which are the agent's own log and stay on its page;
+- events addressed to an agent's heartbeat (`blocked`, `decision`,
+  `escalation`, `next_work`);
+- events that repeat a card already listed (`decision`, `action_key`,
+  `action_pending`, `org_plan`, `org_incident`, `org_signal`, `org_task`,
+  `org_review`);
+- what you did yourself.
+
+### The requests
+
+| Request | Returns |
+|---|---|
+| `GET /api/workspaces/:id/feed?limit=` | `FeedPage { items, counts: { needsYou, urgent, unread, sections }, company, unread }`. Needs you comes first, ranked; the rest is newest first. The counts cover everything, whatever the limit |
+| `POST /api/workspaces/:id/feed/read` | `{ ids }` (a row's `ids` or a `group:` id), `{ section }` or `{ all: true }` |
+| `GET /api/workspaces/:id/feed/types` | the update types with their switch (`notify.<type>`) and whether they are on |
+| `GET /api/workspaces/:id/notifications`, `POST …/notifications/read` | the same page and the same marks (older callers) |
+
+**Deferred.**
+
+- A row per rerun from the Work log (`docs/work-log.md`). A rerun that
+  fails again already arrives as `run_failed`.
+- Per-person switches. The switches are per workspace for now.
+- Push channels (Telegram, email, web push) still send the events they
+  sent before. The feed's switches do not mute them yet.
+
 ## Archive or delete the company
 
 A company ends the way it started: by the owner, on purpose, and

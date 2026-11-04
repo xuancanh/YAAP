@@ -363,7 +363,43 @@ you and Spend: no strip of zeros, no empty panels.
 
 ## Inbox
 
-The Inbox lists what waits on you now. Decisions go to the requester's
+The Inbox and the bell show the same feed (`docs/owners-seat.md` "Inbox and
+notifications": the model, every type, what each number counts). The Inbox
+has four tabs:
+
+- **Needs you** lists what waits on you until it is resolved. Each row can
+  be handled in place: Approve, Reject, Allow, Deny, Veto, Apply now,
+  Acknowledge. A chip narrows the list. Decisions, Escalations, Keys,
+  Pending changes and My tasks open that kind's full queue, with the whole
+  card.
+- **Mentions** lists what agents wrote to you and @mentions of you.
+- **Updates** lists news, grouped per thing. **Everything I follow** lists
+  every live follow.
+- **Done** is the History below.
+
+Each row shows:
+
+- the actor's avatar;
+- a one-line title;
+- the kind;
+- context chips (task key, project, channel, meeting);
+- when;
+- an unread dot.
+
+Read state:
+
+- **Mark read** marks one row read, and **m** does the same from the
+  keyboard.
+- **Mark these read** marks the current tab read.
+- **Mark all read** marks everything read.
+
+On the keyboard, ↑/↓ or j/k move between rows and Enter or o opens one.
+**Customize** chooses which update kinds arrive in this workspace.
+
+The header reads, for example, "3 need you · 12 unread". The first number
+is the nav badge and the second is the bell's count.
+
+Decisions go to the requester's
 direct manager first (`docs/owners-seat.md` §7), so a card one of your
 managers still holds is not listed yet. The Approvals header counts those
 cards as "in review by your managers".
@@ -371,23 +407,19 @@ cards as "in review by your managers".
 A card that climbed to you shows its route, such as "Writer → Head of
 Content → Chief → you", with each manager's recommendation. A person who
 manages a member sees that member's cards here, with Approve, Reject, Send
-back and Escalate. A **Waiting / History** toggle sits
-at the top, and Waiting is the default.
+back and Escalate (the Decisions chip).
 
-**Messages.** The **Messages** filter lists what agents wrote to you
-directly (`docs/agent-messages.md`) over the last two weeks: unread first,
-then newest, each with the agent, a **new** marker while unread and its
-urgency when it is not normal. An unread message also waits in **All** and
-counts in the Inbox badge. Opening one opens the agent's direct chat —
-your reply there continues the conversation — and marks that chat's
-messages read. Messages stay in their chats, so History has no Messages
-filter. `GET /api/workspaces/:id/inbox/messages` returns `{ items, unread }`
+**Messages.** **Mentions** lists what agents wrote to you directly
+(`docs/agent-messages.md`) over the last two weeks. Opening a message
+opens the agent's direct chat, where your reply continues the
+conversation, and marks that chat's messages read. Messages stay in their
+chats, so History has no Messages filter. `GET /api/workspaces/:id/inbox/messages` returns `{ items, unread }`
 and `POST /api/workspaces/:id/inbox/messages/read {eventId | sessionId}`
 marks one chat's messages read; both are the owner's.
 
 **History** lists everything that used to wait on you and is now
-resolved, newest first. It has the same filters as Waiting (Approvals,
-Keys, Escalations, Plans, My tasks, Incidents, Following), a search box, a
+resolved, newest first. It has filters (Approvals, Keys, Escalations,
+Pending changes, My tasks, Incidents, Following), a search box, a
 date range (7, 30 or 90 days, or all time; 30 by default) and **Decided
 without you**. **Load more** fetches the next page. Each row shows:
 
@@ -542,49 +574,35 @@ closes.
 
 ### Notifications
 
-The bell's count is what you have not read. The badge turns red when an
-unread card is critical or its default applies within six hours. The panel:
+The bell is the owner's feed (`docs/owners-seat.md` "Inbox and
+notifications"). It shows the same rows and counts as the Inbox, read from
+the same page in the SPA (`src/lib/feed-store.ts`). That page also feeds
+the main menu's badge, so the numbers never differ because one of them was
+fetched later.
 
-- **Waiting on you**: Home's Needs-you cards, in Home's order (decisions,
-  escalations, keys, pending changes, incidents, signals, queued actions).
-  A card whose default applies within six hours says "Expires in 2 h".
-- **Today** and **Earlier**: the inbox events addressed to you over the
-  last two weeks: messages from agents (`message_owner`), mentions in
-  channels, changes to what you follow, failed runs (`loop_error`,
-  `action_failed`) and budget stops, plus other agent notices. Routine
-  runs, queued actions (listed as their card) and action outcomes are not
-  listed.
-- Filters: All, Waiting on you, Messages (messages, mentions, follows),
-  Runs.
-- Each row: an unread dot coloured by what it is (red failing or critical,
-  amber waiting, the accent for messages), the title, the kind, who it is
-  from and when. A row opens where it belongs and marks itself read: a
-  card where Home sends it (`needTarget`), a message its direct chat, a
-  mention or a follow its link, a failed run its agent. **Mark read** on a
-  row, **Mark all read** at the top, **Open Inbox** (or Home without a
-  company) at the bottom.
-
-Read state reuses what exists. An inbox event keeps its own mark
-(`agent_events.readAt`, the one the agent inbox and the Inbox's Messages
-set). A card has none: it waits until it is decided. So the bell keeps, per
-person and workspace, the ids of the cards they have read and the time of
-their last **Mark all read**, in one app_settings row
-`home.notifications:<ws>:<actor>` (hidden from `GET /api/settings` with
-the other `home.*` rows). A card you have read stays listed while it waits;
-it only stops counting. A card that arrives later counts again.
+- **The bell's count** is unread rows in every section. It turns red when
+  an unread item is critical or expires within six hours. The panel says
+  "12 unread · 3 need you".
+- **Groups.** Needs you comes first, in rank order, then Today and
+  Earlier. A row expiring soon says "Expires in 2 h".
+- **Filters.** All, Needs you, Mentions, Updates.
+- **Rows.** The bell uses the Inbox's rows (`FeedRow`). A row with one or
+  two actions can be handled there. A row opens where it lives through the
+  store's actions and marks itself read. **Mark all read** is at the top.
+  At the bottom is **Open Inbox**, or **Open Home** without a company.
 
 The bell is in-app only. Push (Telegram, email, web push) and quiet hours
-are unchanged (`docs/channels.md`); a silent event still shows here, as it
+are unchanged (`docs/channels.md`). A silent event still shows here, as it
 does in the Inbox.
 
 ### The requests
 
 | Request | Returns |
 |---|---|
-| `GET /api/workspaces/:id/status` | `WorkspaceStatus`: `company` (name, mode, status) or null; `needsYou` and `urgent` (critical, or a default within six hours); `spend` (today, month, envelope, forecast; a company only); `agents` (total, working, failing, up to five faces, failing first); `live` (the turns running now); `nextMeeting` (a meeting or ritual within a day); `partial` |
+| `GET /api/workspaces/:id/status` | `WorkspaceStatus`: `company` (name, mode, status) or null; `needsYou` and `urgent` (the feed's Needs you: critical, or a default within six hours) and `unread` (the bell's count); `spend` (today, month, envelope, forecast; a company only); `agents` (total, working, failing, up to five faces, failing first); `live` (the turns running now); `nextMeeting` (a meeting or ritual within a day); `partial` |
 | `GET /api/topbar/workspaces` | one row per own workspace: `company`, `needsYou`, `unread`. The SPA never sends the shared-workspace header with it |
-| `GET /api/workspaces/:id/notifications` | `{ items, unread }`: waiting cards first, then events newest first, at most 80 |
-| `POST /api/workspaces/:id/notifications/read` | `{ ids: string[] }` (`need:…` or `event:…`) or `{ all: true }` |
+| `GET /api/workspaces/:id/notifications` | the owner's feed (`FeedPage`, the same as `GET …/feed`) |
+| `POST /api/workspaces/:id/notifications/read` | the same as `POST …/feed/read`: `{ ids }`, `{ section }` or `{ all: true }` |
 
 `status` reads `HomeService.glance`: the same Needs-you, spend, team
 (`agentStatuses`, so an agent is "failing" here exactly when its Home tile
@@ -601,8 +619,9 @@ viewer cannot (read-only).
   `running` at once and reloads the status behind it.
 - `task_update`, `channel_approval` and `meeting_update` refresh the status
   and the bell (debounced 1.2 s); `channel_message` refreshes the bell.
-- A 30-second poll runs while the tab is visible, and both refresh when the
-  tab regains focus or the company's mode or run state changes elsewhere.
+- A 30-second poll of the status and a 45-second poll of the feed run while
+  the tab is visible, and both refresh when the tab regains focus. The status
+  also refreshes when the company's mode or run state changes elsewhere.
 
 ### Left out
 
@@ -612,5 +631,5 @@ viewer cannot (read-only).
   finds the channels.
 - An archived state in the switcher: workspaces and companies have none;
   a company is running, paused or off.
-- Needs you as its own chip: the bell carries it, and the Inbox badge in the
+- Needs you as its own chip in the strand: the bell carries it, and the Inbox badge in the
   main menu stays.
