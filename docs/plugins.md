@@ -753,6 +753,113 @@ provider, the pack installs but its deploy tools are suspended (§4.11).
 }
 ```
 
+### 3.8 Contributions beyond tools: skills, guidance and declarative UI
+
+A plugin of any role may also contribute **skills**, **guidance** and
+**UI**. All three are declared in `plugin.json`, validated by the
+manifest validator and the loader, checked against the workspace's
+interfaces at review (contribution conformance), shown in full on the
+install review, written by the registrar as effects of the install
+(§4.10), and pinned to the installed version like everything else.
+
+```ts
+skills?: Array<string | { path: string; audience?: Audience[] }>;   // skills/<name>/SKILL.md
+guidance?: Array<{ id; title; text; audience: Audience[] }>;        // ≤ 4 notes, ≤ 480 chars each
+ui?: {
+  cards?:   Array<{ id; title; placement: Section; query?: UiQuery; view: UiView; actions?: string[]; empty? }>;
+  panels?:  Array<{ id; title; placement: 'task' | 'project' | 'agent'; query?: UiQuery; view: UiView; actions?; empty? }>;
+  pages?:   Array<{ id; title; placement: Section; summary; sections: Array<{ title?; query?: UiQuery; view: UiView }>; actions? }>;
+  actions?: Array<{ id; title; operation: 'iface.op'; input?: Record<string, Literal | Template>; fields?: UiField[]; confirm? }>;
+  badges?:  Array<{ id; placement: 'task' | 'project' | 'agent'; query: UiQuery; label: '$.path'; tone? }>;
+};
+type Audience = 'all' | 'chief' | 'heads' | 'members' | `function:${string}`;
+type Section  = 'direction' | 'operations' | 'people' | 'money' | 'oversight';
+type UiQuery  = { operation: 'iface.op'; input?: Record<string, Literal | Template> };   // a read operation
+type Template = '{{context.<key>}}' | '{{field.<key>}}' | '{{settings.<key>}}';        // exactly one, no expressions
+type UiView =
+  | { kind: 'stats'; items: Array<{ label; value: '$.path'; unit?; tone?; toneWhen?: { path; gt?; lt?; tone } }> }
+  | { kind: 'table'; rows: '$.path'; columns: Array<{ label; value: '$.path' }>; max? }
+  | { kind: 'list'; items: '$.path'; title: '$.path'; subtitle?; badge?; link?; max? }
+  | { kind: 'checklist'; items: string[] }                                              // static text
+  | { kind: 'text'; value: '$.path' };
+```
+
+**Skills.** Each path is an agentskills.io `SKILL.md` the loader parses
+(a file that does not parse refuses the package). On install it becomes
+a workspace skill named `<plugin>-<skill>` with `source = plugin:<id>` and
+its audience; a first-party skill is live, any other lands as a draft
+behind the Skills approval. The skills system offers an audienced skill
+only to agents the audience reaches (the org module's filter: the chief,
+the function heads, the company's members, or the members of one
+function — by the member's or its manager's title). Disable and uninstall
+archive the skill (never delete it: its outcomes and history stay); enable
+and a reinstall bring the same row back. A same-named skill from another
+source is never taken over: the install is refused.
+
+**Guidance.** Short notes on how and when to use the plugin's
+capabilities and its policies, linted like operation semantics (no
+"always", no plugin ids or core tool names, no invisible text). Every
+turn an agent takes carries one block, *Plugin guidance*, with the notes
+whose audience reaches it, each attributed `[plugin@registry version]`,
+kits' notes first; whole notes only, within `GUIDANCE_BUDGET` (1,200
+characters), and a note that does not fit is named, not clipped. Each
+note is logged in `context_provenance` (`sourceKind: guidance`) before the
+model sees it; a note that cannot be logged is withheld. The block is
+separate from the company briefing, whose budget is unchanged.
+
+**UI: extension points, never code.** No plugin JavaScript, HTML or CSS
+runs in the app. The app has five extension points and renders them with
+its own components:
+
+| Extension point | Where it shows | What it renders |
+|---|---|---|
+| Card | a company section dashboard (Direction, Operations, People, Money, Oversight), under "From plugins" | one view of a read query, with its actions |
+| Page | the same dashboards, as a link that opens the page in place | sections, each a view of a read query, with actions |
+| Panel | a task's drawer (`task`; `project` and `agent` are declared for later) | one view, with the placement's context (`taskKey`, `taskTitle`, …) as query input |
+| Action | a button on a card, page or panel | a form of the declared fields, then the operation through the policy stage |
+| Badge | declared for tasks, projects and agents (renderer later) | one value from a read query |
+
+A view is a **selection**: `$`-paths into the operation's output that the
+server turns into text cells, stat tiles, list rows and links; links are
+`http(s)` only, cells are bounded, nothing is evaluated. Queries must name
+`read` operations (the validator checks the package's own interfaces; the
+review checks required ones, and a contribution whose interface is not
+installed stays hidden until it is). A contribution shows only while every
+interface it reads or acts on has a healthy bound provider; otherwise the
+dashboard says what it waits on.
+
+**Actions go through the policy stage.** `POST
+…/plugins/ui/:id/invoke` calls `InterfaceDispatcher.uiCall`, the same
+stage agents' calls take, on behalf of the person: the binding resolves
+at workspace scope; the class is the max rule over the floors, the
+interface, the provider and `classByInput`; owner and requested policies
+raise it or deny; the per-call cap and the monthly plugin envelope apply.
+A query must stay `read` (members may read). Anything above `read` is the
+owner's (or CEO's) alone and runs only on an explicit confirmation that
+shows the class and the requirement — the owner's click is the key for
+trust, cosign and owner-key. A two-key operation (the floor, a policy, or
+an `external_irreversible` or `money` class) never runs from a button: the
+answer says to have an agent propose it, so the change record carries the
+second key. Applying or rolling back a change record is refused here.
+Every action is audited (`plugin_ui_call` in the plugin audit chain).
+
+**The sandboxed app runtime is not used for this.** The existing mini-app
+host (`AppHost`, `docs/miniapp-capabilities.md`) runs sealed iframes;
+schema-rendered UI covers the extension points above without a second
+runtime, so the manifest's `panels` (sealed HTML) stay deferred.
+
+**Lifecycle.** Contribution rows live in `plugin_contributions`
+(migration 0089) and each is an effect with its inverse: disable removes
+them, enable restores them exactly, an update unwinds the old version's
+and registers the new version's, uninstall leaves none (a test over the
+table). The permission diff (§6.5) treats a new or changed skill or
+guidance note, and a new action, as widening; a new read-only view is
+not.
+
+**API.** `GET /api/workspaces/:ws/plugins/ui?placement=` (members read),
+`POST …/plugins/ui/:id/data { section?, context? }` (the rendered view),
+`POST …/plugins/ui/:id/invoke { fields?, context?, confirm? }`.
+
 ## 4. Runtime model
 
 ### 4.1 Where plugin contributions execute
@@ -1313,6 +1420,8 @@ out-of-process plugins. Every contribution goes through one core
 | Interface metric | Aggregator definition | Stop evaluating; history kept |
 | Mirror | Mirror job | Stop; files marked "source removed" |
 | Panel | Placement | Unmount |
+| Skill (§3.8) | Workspace skill with its audience | Archive (enabled off); restore re-enables |
+| Guidance note, card, panel, page, action, badge (§3.8) | `plugin_contributions` row | Delete; restore re-inserts the row |
 | Tunable | `registerTunables` key | Unregister; stored value kept for re-install |
 | Skill, playbook, pack | Draft or approved row | Archive, never delete (history) |
 | Trigger subscription, cadence | Loop trigger, schedule | Disable the loop |
@@ -1361,9 +1470,12 @@ process.
 
 ### 4.12 Skills, packs, playbooks, mirrors, panels, tunables
 
-- **Skills and playbooks** install as drafts with provenance, and the
-  owner approves each. Text written against interfaces is preferred, and
-  the Market labels vendor-specific skills.
+- **Skills and playbooks** install with provenance (`source: plugin:<id>`)
+  and an audience: live for first-party packages, drafts the owner
+  approves for any other (§3.8). Text written against interfaces is
+  preferred, and the Market labels vendor-specific skills.
+- **Guidance and declarative UI** are §3.8's contributions, registered as
+  effects.
 - **Role packs** declare `requires` and the `iface.op` tools they want.
   Hiring one proposes grants on the bound providers.
 - **Mirrors, panels and tunables** are registered through the registrar
@@ -2154,8 +2266,8 @@ Built on 3 November 2026. Code: `server/src/plugins/` (the mechanism),
 - taint and data-sharing switches (Phase 2);
 - webhook ingress and the events bus (Phase 3);
 - `plugin_propose` and `binding_propose` cards;
-- skills, packs and playbooks as drafts;
-- kits;
+- skills, packs and playbooks as drafts (skills shipped with §3.8; packs and playbooks later);
+- kits (shipped: `docs/foundry.md`, "Shipped as (kits)");
 - the secrets canary test.
 
 **Defaults taken for §12.** The owner said "execute", so open questions
@@ -2245,6 +2357,62 @@ and remote plugin installs are not built — other instances see the
 listing only. Statuses gain `frozen`. **Deferred**: signing and the
 Verified tier, remote plugin installs and revocation over the feed, the
 `plugin_update` card, staged rollout, kits.
+
+#### Shipped as (contributions, first-party plugins and kits)
+
+Built on 4 November 2026. Code: `server/src/plugins/manifest.ts`
+(contribution validation, `uiConformance`), `contributions.ts` (pure:
+specs, audiences, the guidance block, view rendering), `plugins.service.ts`
+(the registrar's skill, guidance and UI effects), `dispatcher.ts`
+(`uiCall`), `plugin-ui.service.ts` and the `…/plugins/ui` routes;
+`server/src/skills/skills.service.ts` (audience and source, `contribute`);
+`server/src/foundry/` (kits, `docs/foundry.md` "Shipped as (kits)");
+`server/src/org/org-foundry.tools.ts` (the chief's and heads' tools, the
+guidance block, the people hook, the card appliers); the SPA's
+`src/components/PluginUi.tsx` (cards, pages, panels, actions) mounted in
+`CompanyDashboards.tsx` and the task drawer. Migration
+`0089-plugin-contributions-kits`. Tests: `tests/backend-plugin-contributions.test.ts`,
+`tests/backend-org-foundry.test.ts`, `web-tests/plugin-ui.test.tsx`,
+`web-tests/foundry.test.tsx`.
+
+**First-party plugins, by use case.** Every interface ships with a mock
+provider served from fixtures, so it works out of the box; a vendor
+provider binds in its place later with no change to skills, guidance, UI
+or kits. Classes are the interface's, raised by the floors.
+
+| Plugin | Interface | Contributions | Use case | Kit |
+|---|---|---|---|---|
+| `scm@yaam`, `ci@yaam`, `scm-mock@yaam` | scm, ci | (contracts and fixtures) | Source control and CI (Phase 1) | Ship Software |
+| `dev-workflow@yaam` (consumer) | requires scm, ci | Recent builds card (Operations) with Re-run; Open pull requests panel (tasks); guidance on merges and builds; pr-review and triage-failing-build skills | How engineering works over whichever forge is bound | Ship Software |
+| `observability@yaam` + mock | observability | Open incidents card (Operations) with Acknowledge; incident-triage skill; incidents guidance | Error monitoring and on-call | Ship Software |
+| `flags@yaam` + mock | flags | Feature flags table (Operations) with Switch a flag; "ship behind a flag" guidance | Dark launches and gradual rollout | Ship Software (optional) |
+| `support@yaam` + mock | support | Support queue stats (Operations), Support tickets page; ticket-triage skill; first-response SLA guidance; replies cosigned (and irreversible: two keys) | A helpdesk queue under an SLA | Support Desk |
+| `kb@yaam` + mock | kb | Related articles panel on every task (task title as the query); answer-from-docs skill; docs-first guidance | Answers from the knowledge base | Support Desk (optional) |
+| `forms@yaam` + mock | forms | New form responses card (Operations); intake-triage skill (responses become briefed tasks) | Intake forms and surveys | Support Desk, Legal Review (optional) |
+| `crm@yaam` + mock | crm | Pipeline stats (Money) with Log a call; Deals page; deal-review skill; pipeline-hygiene guidance | Sales pipeline and forecast | Revenue |
+| `analytics@yaam` + mock | analytics | Web traffic stats (Direction); weekly-metrics-readout skill; "numbers against key results" guidance | Traffic, signups, activation | Growth |
+| `campaigns@yaam` + mock | campaigns | Campaigns list (Direction) with Draft campaign (confirmed) and Send campaign (two-key: never from the button); sending guidance; send requested two-key | Newsletters and email campaigns | Growth |
+| `accounting@yaam` + mock | accounting | Cash and invoices stats and Invoices due (Money) with Send invoice (owner-cosigned); Spend by category page; month-end-close skill; invoices guidance | Cash, receivables, invoices, spend | Finance Close, Revenue (optional) |
+| `ats@yaam` + mock | ats | Hiring pipeline stats (People); candidate-screen skill; candidate-data guidance | Recruiting humans beside agent hires | Hiring |
+| `contract-review@yaam` (consumer) | none | Contract checklist panel on every task; Contract policy card (Oversight); contract-review skill; guidance on what agents may agree to | Legal review and contract safety | Legal Review |
+
+Real-vendor providers (GitHub, Sentry, Intercom, HubSpot, PostHog,
+QuickBooks, Ashby) are named in the kits' recommendations and shown on the
+review as "not available yet"; none ships, and no credential ships with
+anything.
+
+**Refined.** Interfaces are separate packages from their mocks, as in
+Phase 1: a provider installed before its interface fails conformance for
+it, so kits and tests install interfaces first. The scm and ci contracts
+are unchanged; their contributions live in `dev-workflow@yaam`, a
+consumer, which is the preferred home for content written against
+interfaces (§3.1).
+
+**Deferred.** Badges and project and agent panels are validated and
+served but not rendered yet; sealed HTML `panels` (the mini-app runtime);
+plugin metric sources from KPI queries (`metrics`, §3.3) feeding key
+results; real-vendor providers and their connect step; the
+`plugin_update` card.
 
 ### Phase 2: repackage what exists; trust and updates
 

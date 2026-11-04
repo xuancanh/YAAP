@@ -1,9 +1,11 @@
 # Foundry: kits, blueprints and the marketplace
 
 Status: **design**, 3 November 2026; **Foundry's shelves shipped** 4
-November 2026 (Blueprints, Kits as previews, Agents, Plugins; see
-"Shipped as (Foundry shelves)" under §11). Kits are pending: nothing
-installs from the Kits shelf yet. It builds on `docs/plugins.md` and
+November 2026 (Blueprints, Kits, Agents, Plugins; see "Shipped as
+(Foundry shelves)" under §11); **kits shipped** the same day — seven
+first-party kits install, upgrade, roll back and uninstall, and the chief
+of staff proposes them (see "Shipped as (kits)" and "Use cases" under
+§11). It builds on `docs/plugins.md` and
 `docs/blueprints.md` (shipped).
 
 Sources:
@@ -1672,11 +1674,137 @@ the shelf list in the rail (`Rails.tsx` `MarketRail`), `server/src/foundry/`
   can move to with their permission diff, and "Load your own plugin" (a
   folder upload as `name@local`).
 
-**Not yet.** Kits themselves (F1), Foundry › Installed, recommendations
+**Not yet.** Kits themselves (F1; since shipped, see "Shipped as (kits)"), Foundry › Installed, recommendations
 (`rankKits`), the company-type filter on Blueprints, Publish in the
 Foundry header (publishing is the API above for plugins, and the existing
 buttons for agents, skills, apps and companies), Settings › Foundry (the
 Market pane is relabelled).
+
+### Shipped as (kits)
+
+Built on 4 November 2026 with the plugin contributions
+(`docs/plugins.md` §3.8 and "Shipped as (contributions, first-party
+plugins and kits)"). Code: `server/src/foundry/kit-manifest.ts` (the
+`yaam-kit/1` validator and the folder loader), `kits.service.ts` (plan,
+install, upgrade, rollback, uninstall, the shelf), `foundry.controller.ts`;
+`server/src/org/org-foundry.tools.ts` (the chief's tools, the seats, the
+card appliers); `kits/first-party/<kit>/` (the kits); the SPA's Kits shelf
+and kit page in `src/components/FoundryBits.tsx`. Migration
+`0089-plugin-contributions-kits` (`kit_installs`, `kit_members`,
+`kit_revisions`). Tests: `tests/backend-plugin-contributions.test.ts`,
+`tests/backend-org-foundry.test.ts`, `web-tests/foundry.test.tsx`.
+
+**Built.**
+
+- **`kit.json`** with the §2.2 identity fields and, of the parts: `requires`
+  (interfaces and optional interfaces), `plugins` (consumer members),
+  `recommends.providers` (ranked; `trial` marks a mock), workspace
+  `bindings` (`$choice`), `roles` (seats: catalog role, title, reporting
+  line, required / recommended / optional, grants per interface,
+  playbooks), `playbooks` (`SKILL.md`, with audiences), `guidance` (the
+  plugin guidance shape), `policies` (raise only), and descriptive
+  `rhythm` and `measures`. Strict: unknown fields are refused, and a
+  security field (`egress`, `secrets`, `connections`, `identity`,
+  `dataSharing`, `tools`, `runtime`, `classes`, `provides`, `interfaces`)
+  is refused by name. Playbooks must parse as `SKILL.md`.
+- **The plan is the review** (`POST /api/workspaces/:ws/kits/plan`, writes
+  nothing): per interface, the provider choice among the recommendations
+  and every catalog provider (unshipped ones shown, not selectable;
+  **Decide later**), what is already bound ("keeps X"); every member
+  plugin new or reused, with its own review — operations and the classes
+  yaam treats them as, two-key ones, egress, its skills, guidance and UI;
+  policies with "applies" / "already set"; seats with the member that
+  already fills a role; playbooks and guidance in full; the outcome
+  (`active`, or `partial: no X provider`); blockers.
+- **Install is a reconciliation, atomic.** Desired members → created in
+  order: interface plugins, providers (each install runs its own review
+  and conformance), consumer plugins, workspace bindings (never replacing
+  one), policies, playbooks as skills (`source: kit:<id>`), guidance (kit
+  notes come first in the agents' guidance block). Anything the workspace
+  already had is recorded `owned: false` and is never removed by the kit.
+  A failure before the seats unwinds everything the run created and the
+  install ends `failed` with the reason; retry is a new install. Seats come
+  last, through the org's own hire path (`prepareHire` + `applyHire`: caps,
+  scopes, envelope), each with its grants on the bound providers; a seat
+  that cannot be hired (no company, a cap) leaves the kit `partial` with
+  the reason. Installing the same version twice is a no-op.
+- **Upgrade, rollback.** The catalog's newer version shows as an update;
+  `upgrade` writes a `kit_revisions` row with the previous manifest and
+  reconciles to the new one (adds what it adds, removes what it owns and
+  dropped); `rollback` reconciles back to the revision's pinned manifest
+  and marks it. Seats are never removed by either.
+- **Uninstall** shows its plan first, member by member, then unwinds in
+  reverse: owned plugins removed (unless another kit holds them), guidance
+  removed, playbooks archived, policies removed unless kept, bindings kept
+  unless asked, seats always kept.
+- **Who installs.** Only the owner (or CEO). Agents propose:
+  `org_foundry_propose` writes a `kit_change` (or `plugin_change`) card,
+  CEO-reserved, carrying the plan; approving it applies it. A workspace
+  trust policy, `agentInstalls: first_party` (Settings › Plugins API:
+  `PATCH …/plugin-settings`), lets the chief's first-party installs and
+  upgrades apply at once in an autonomous company; removals stay cards.
+- **The chief and the heads** get `org_foundry_search`,
+  `org_foundry_detail`, `org_foundry_installed` and `org_foundry_propose`;
+  the chief's pack gains the `capability-gap-review` playbook (a key result
+  without a system of record is a gap; propose the smallest kit or plugin
+  that closes it); the briefing of the chief and heads carries one
+  "Installed: kits …; plugins …" line within its budget.
+- **The Kits shelf**: shipped kits with their state here (installed,
+  status, update), the kit page (review with provider pickers, seat
+  toggles, plugins with class strips, policies, playbooks in full, then
+  **Add to my company**; once installed, health per interface, Upgrade,
+  Roll back, Uninstall with its plan), and the designed kits still to come
+  as previews. Deep link: `/:company/foundry/kits/<kit>`.
+
+**Kits shipped**, all on trial providers until vendors ship:
+
+| Kit | Interfaces | Plugins it adds | Seats | Policies |
+|---|---|---|---|---|
+| Ship Software | scm, ci, observability, *flags* | interfaces, `scm-mock`, `observability-mock`, *`flags-mock`*, `dev-workflow` | Head of Engineering, Software Engineer, *SRE* | merges two-key |
+| Support Desk | support, *kb*, *forms* | interfaces and mocks | Head of Customer Support, Support Specialist | replies cosigned |
+| Revenue | crm, *accounting* | interfaces and mocks | Head of Sales, Account Executive, *SDR* | — |
+| Growth | analytics, campaigns | interfaces and mocks | Head of Marketing, Demand Gen, *BI Analyst* | campaign sends two-key |
+| Finance Close | accounting | interface and mock | Head of Finance, Accountant | invoice sends cosigned |
+| Hiring | ats | interface and mock | Head of People, Recruiter | — |
+| Legal Review | *forms* | `contract-review` | Head of Legal, Contracts Specialist | — |
+
+**Not yet** (the rest of F1 and F3): cadence derivation from the profile
+and `org_cadences` writes (kits describe their rhythm), kit metrics,
+dashboards and scorecard feeding, goal templates, units and layout
+additions, `dependsOn` / `conflicts`, settings layers and the
+resolved-config view, the three-way merge of customisations, pins, a
+halted-and-resumable apply job (apply is atomic instead), kit
+publishing and registry kits, outcomes.
+
+### Use cases
+
+What a company can do with Foundry today, end to end on trial providers:
+
+- **"We need a sales pipeline."** The chief's planning finds a sales key
+  result with no system of record (`capability-gap-review`),
+  `org_foundry_search crm` finds the Revenue kit, `org_foundry_propose`
+  puts a card in front of the CEO with the plan. Approved: the CRM
+  interface and its mock install, the Head of Sales is hired with write
+  access to the CRM, the deal-review playbook and pipeline guidance reach
+  sales, and the Money dashboard shows the Pipeline card with Log a call.
+- **"Engineering keeps breaking the build."** Ship Software adds Recent
+  builds and Open incidents to Operations, the Open pull requests panel to
+  every task, merge and build guidance, review and triage skills, and
+  keeps merges two-key.
+- **"Customers wait too long."** Support Desk adds the Support queue card
+  with SLA breaches in red, the tickets page, the SLA note for the support
+  team, Related articles on every task, and cosigned replies.
+- **"Where is our cash?"** Finance Close puts cash, receivables, overdue
+  invoices and runway on Money, a Spend page, the month-end close
+  playbook, and an owner-cosigned Send invoice button.
+- **"Grow signups."** Growth puts traffic and activation on Direction
+  beside the key results, drafts campaigns from the dashboard, and sends
+  only with two keys.
+- **"Hire people, not just agents."** Hiring adds the candidate pipeline to
+  People with candidate-data guidance.
+- **"Do not let agents sign things."** Legal Review adds the contract
+  checklist to every task, the contract policy to Oversight, and the
+  guidance every agent carries: review and redline, never sign.
 
 ### F3: upgrades, customisation, rating
 
