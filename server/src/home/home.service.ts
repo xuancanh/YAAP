@@ -46,7 +46,7 @@ import { OwnerMessagesService } from '../chats/owner-messages.service';
 import { OrgProjectsService } from '../org/org-projects.service';
 import { parseIdList } from '../org/work-model';
 import type {
-  HomeActivity, HomeAgent, HomeArtifact, HomeData, HomeGoal, HomeHealth, HomeKeyResult, HomeNeed, HomePortfolio, HomeRecap, HomeRecapItem, HomeSpend, HomeUpcoming,
+  HomeActivity, HomeAgent, HomeArtifact, HomeData, HomeGoal, HomeHealth, HomeKeyResult, HomeNeed, HomeNeedFacts, HomePortfolio, HomeRecap, HomeRecapItem, HomeSpend, HomeUpcoming,
 } from './home.types';
 import { collapseRoutine, describeRun, loopNameOf, mergeUpcoming, runTitle, type RunCall } from './home-activity';
 import { agentStatuses, sortTeam, toHomeAgent } from './agent-status';
@@ -675,6 +675,23 @@ function emptySpend(): HomeSpend {
 const RITUALS: Record<string, string> = { planning: 'Planning', standup: 'Standup', weekly_review: 'Weekly review', retro: 'Retro', board: 'Board meeting', adhoc: 'Meeting' };
 function titleOfRitual(kind: string): string { return RITUALS[kind] ?? kind; }
 
+/** A card's payload as facts for the Inbox: short scalars and lists only
+ *  (long text clipped, objects left out), and the agent ids it names
+ *  resolved to names (`reportsTo`, `agent`). */
+export function needFacts(payload: Record<string, unknown>, nameOf: (id: string) => string = (h) => h): HomeNeedFacts {
+  const out: HomeNeedFacts = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (Object.keys(out).length >= 40) break;
+    if (typeof v === 'string' && v) out[k] = clip(v, k === 'reason' || k === 'charter' || k === 'description' ? 1_200 : 400);
+    else if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+    else if (typeof v === 'boolean') out[k] = v;
+    else if (Array.isArray(v) && v.every((x) => typeof x === 'string')) out[k] = (v as string[]).slice(0, 12).map((x) => clip(x, 120));
+  }
+  if (typeof payload.reportsToAgentId === 'string' && payload.reportsToAgentId) out.reportsTo = nameOf(payload.reportsToAgentId);
+  if (typeof payload.agentId === 'string' && payload.agentId && !payload.agentName) out.agentName = nameOf(payload.agentId);
+  return out;
+}
+
 /** An org approval as a decision card. Two-key cards are held actions; escalations are their own kind. */
 function approvalNeed(a: OrgApproval, payload: Record<string, unknown>, requestedBy: string, now: Date, holderName: (h: string) => string = (h) => h): HomeNeed {
   const hops = parseChain(a.chain);
@@ -688,6 +705,7 @@ function approvalNeed(a: OrgApproval, payload: Record<string, unknown>, requeste
     recommendation: a.recommendation ?? '', recommendedAction: a.recommendedAction ?? '', reversibility: a.reversibility ?? '', confidence: a.confidence ?? null,
     requestedBy, ref: { approvalId: a.id, actionId: typeof payload.actionId === 'string' ? payload.actionId : undefined, taskId: typeof payload.taskId === 'string' ? payload.taskId : undefined },
     actions: ['approve', 'reject'],
+    facts: needFacts(payload, holderName),
     // The route it took (docs/owners-seat.md §7): "Writer → Head of Content → Chief → you", with each recommendation.
     ...(hops.length > 1 ? {
       chain: {

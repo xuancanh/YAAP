@@ -16,6 +16,7 @@
 import { registerTunables, tunable, type TunableDef } from '../org/org-tunables';
 import type { HomeNeed } from './home.types';
 import type { FeedActor, FeedContext, FeedSection, FeedTarget, FeedType } from './feed.types';
+import { budgetTitle, firstSentence } from './feed-titles';
 
 export interface FeedTypeDef {
   section: FeedSection;
@@ -255,7 +256,7 @@ export function classifyEvent(e: EventRow, look: FeedLookup): Classified | null 
     case 'loop_error': case 'action_failed':
       return base('run_failed', { severity: 'high', groupKey: agent?.id ? `agent:${agent.id}:run_failed` : null, groupLabel: agent ? `${agent.name}'s runs` : 'runs' });
     case 'budget_stop': case 'budget_warn':
-      return base('budget', { severity: e.kind === 'budget_stop' ? 'high' : 'normal', actor: SYSTEM, target: str(p.taskId) ? { kind: 'task', taskId: str(p.taskId) } : { kind: 'pane', pane: 'spend', focus: null }, ...(str(p.taskId) ? { context: taskBits(look, str(p.taskId)).context } : {}) });
+      return base('budget', { title: budgetTitle(e.kind, e.title), severity: e.kind === 'budget_stop' ? 'high' : 'normal', actor: SYSTEM, target: str(p.taskId) ? { kind: 'task', taskId: str(p.taskId) } : { kind: 'pane', pane: 'spend', focus: null }, ...(str(p.taskId) ? { context: taskBits(look, str(p.taskId)).context } : {}) });
     case 'meeting': {
       const m = meetingBits(look, str(p.meetingId));
       const minutes = Boolean(str(p.minutesPath) || str(p.hash));
@@ -317,8 +318,8 @@ export function classifyAudit(r: AuditRow, look: FeedLookup): Classified | null 
       const pr = projectBits(look, r.refId, str(p.key));
       const who = look.agent(str(p.agentId))?.name ?? 'an agent';
       const role = str(p.role) ? ` as ${str(p.role)}` : '';
-      const title = r.action === 'project_member_propose' ? `${actor.name} proposed ${who} for ${pr.label}${role} — waiting on their head` : `${who} joined ${pr.label}${role}`;
-      return mk('project_team', title, { context: pr.context, target: { kind: 'project', projectId: r.refId }, groupKey: `project:${r.refId}`, groupLabel: pr.label, severity: r.action === 'project_member_propose' ? 'normal' : 'low' });
+      const title = r.action === 'project_member_propose' ? `${actor.name} proposed ${who} for ${pr.label}${role}` : `${who} joined ${pr.label}${role}`;
+      return mk('project_team', title, { body: r.action === 'project_member_propose' ? 'It waits on their head to approve.' : '', context: pr.context, target: { kind: 'project', projectId: r.refId }, groupKey: `project:${r.refId}`, groupLabel: pr.label, severity: r.action === 'project_member_propose' ? 'normal' : 'low' });
     }
     case 'program_assign': {
       if (r.actor === 'user') return null;
@@ -353,16 +354,16 @@ export function classifyAudit(r: AuditRow, look: FeedLookup): Classified | null 
     }
     case 'project_breaker': case 'project_done': {
       const pr = projectBits(look, r.refId, str(p.key));
-      return mk('project', r.action === 'project_breaker' ? `${pr.label} used up its appetite — its tasks stopped taking claims` : `${pr.label} is done`, {
+      return mk('project', r.action === 'project_breaker' ? `${pr.label} used up its appetite` : `${pr.label} is done`, {
         actor: r.action === 'project_breaker' ? SYSTEM : actor, severity: r.action === 'project_breaker' ? 'high' : 'low',
-        body: r.action === 'project_breaker' ? `$${num(p.spentUsd).toFixed(2)} of $${num(p.appetiteUsd).toFixed(2)}; ${num(p.daysUsed)} of ${num(p.appetiteDays)} day(s). Extend it or cut scope.` : '',
+        body: r.action === 'project_breaker' ? `Its tasks stopped taking claims: $${num(p.spentUsd).toFixed(2)} of $${num(p.appetiteUsd).toFixed(2)} and ${num(p.daysUsed)} of ${num(p.appetiteDays)} day(s) used. Extend it or cut scope.` : '',
         context: pr.context, target: { kind: 'project', projectId: r.refId }, groupKey: `project:${r.refId}`, groupLabel: pr.label,
       });
     }
     case 'org_archive':
-      return r.actor === 'user' ? null : mk('company', 'The company was archived', { body: `${num(p.channelsArchived)} channel(s) closed. Restore it in Settings › Company.`, severity: 'high', target: { kind: 'inbox' } });
+      return r.actor === 'user' ? null : mk('company', 'The company was archived', { body: `${plural(num(p.channelsArchived), 'channel')} closed. Restore it in Settings › Company.`, severity: 'high', target: { kind: 'inbox' } });
     case 'approval_default':
-      return mk('decided_without_you', `${str(p.decision) === 'approve' ? 'Approved' : 'Denied'} by default at your deadline: a ${words(str(p.kind) || 'decision')}`, { actor: SYSTEM, severity: 'normal', target: { kind: 'inbox' } });
+      return mk('decided_without_you', `A ${words(str(p.kind) || 'decision')} was ${str(p.decision) === 'approve' ? 'approved' : 'denied'} by default at your deadline`, { actor: SYSTEM, severity: 'normal', target: { kind: 'inbox' } });
     case 'delegated_decision':
       return mk('decided_without_you', `Your delegate ${words(str(p.decision) || 'decided')} a ${words(str(p.kind) || 'decision')}`, { body: str(p.delegate) ? `Delegate: ${str(p.delegate)}` : '', target: { kind: 'inbox' } });
     case 'approval_expired':
@@ -381,11 +382,11 @@ export function classifyAudit(r: AuditRow, look: FeedLookup): Classified | null 
     case 'blocked_owner_assigned': {
       const t = taskBits(look, r.refId);
       const lead = look.agent(str(p.agentId));
-      return mk('blocked', `${t.label} is blocked — ${lead?.name ?? 'its lead'} was asked to unblock it`, { actor: lead ?? SYSTEM, context: t.context, target: { kind: 'task', taskId: r.refId }, groupKey: `task:${r.refId}`, groupLabel: t.label });
+      return mk('blocked', `${lead?.name ?? 'Its lead'} was asked to unblock ${t.label}`, { actor: lead ?? SYSTEM, context: t.context, target: { kind: 'task', taskId: r.refId }, groupKey: `task:${r.refId}`, groupLabel: t.label });
     }
     case 'goal_at_risk': {
       const reasons = Array.isArray(p.reasons) ? p.reasons.map(String) : [];
-      return mk('goal_at_risk', `A ${str(p.kind) === 'objective' ? 'goal' : 'key result'} went at risk`, { body: reasons.join('; ').slice(0, 300), actor: SYSTEM, severity: 'normal', target: { kind: 'pane', pane: 'goals', focus: { kind: 'goal', id: r.refId } } });
+      return mk('goal_at_risk', `A ${str(p.kind) === 'objective' ? 'goal' : 'key result'} is at risk`, { body: firstSentence(reasons.join('; '), 300), actor: SYSTEM, severity: 'normal', target: { kind: 'pane', pane: 'goals', focus: { kind: 'goal', id: r.refId } } });
     }
     default:
       return null;

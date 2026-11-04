@@ -50,6 +50,7 @@ import {
   type Classified, type FeedLookup,
 } from './feed-registry';
 import type { FeedActor, FeedContext, FeedItem, FeedPage, FeedSection, FeedTarget, FeedTypeInfo } from './feed.types';
+import { clipWords, groupTitle, needPresentation } from './feed-titles';
 
 const DAY_MS = 24 * 3_600_000;
 /** A card whose default applies within this is "expiring soon" (and urgent). */
@@ -221,8 +222,9 @@ export class FeedService {
     for (const n of g.needs) {
       const id = `need:${n.id}`;
       const actor = (n.ref.agentId ? look.agent(n.ref.agentId) : null) ?? (n.requestedBy ? look.agentNamed(n.requestedBy) ?? { kind: n.requestedBy === 'Assurance' || n.requestedBy === 'System' ? 'system' : 'person', id: null, name: n.requestedBy } : null);
+      const said = needPresentation(n);
       needs.push(blank({
-        id, type: NEED_TYPE[n.kind], title: n.title, body: n.detail, at: n.createdAt, severity: n.severity, read: readMark(id, n.createdAt),
+        id, type: NEED_TYPE[n.kind], title: said.title, body: said.body, at: n.createdAt, severity: n.severity, read: readMark(id, n.createdAt),
         deadline: n.deadline, expiresSoon: expiresSoon(n.deadline, now), actor, context: { ...taskContext(n.ref.taskId), ...(n.ref.agentId ? { agentId: n.ref.agentId } : {}) },
         target: { kind: 'need', need: { kind: n.kind, ref: n.ref } }, actions: n.actions, need: n,
         ...(n.ref.eventId ? { ref: { agentId: n.ref.agentId, eventId: n.ref.eventId, sessionId: n.ref.sessionId } } : {}),
@@ -247,12 +249,12 @@ export class FeedService {
       const b = t.status === 'blocked' ? parseBlockedOn(t.blockedOn) : null;
       if (b?.kind === 'person' && b.ref === me) {
         const id = `task:${t.id}:blocked:${b.since}`;
-        needs.push(blank({ id, type: 'blocked_on_you', title: `${taskLabel(t)} is waiting on you`, body: b.reason, at: b.since || at, severity: 'high', read: readMark(id, b.since || at), actor: by, context: ctx, target: { kind: 'task', taskId: t.id } }));
+        needs.push(blank({ id, type: 'blocked_on_you', title: `${t.key || `"${clipWords(t.title, 60)}"`} is waiting on you`, body: b.reason, at: b.since || at, severity: 'high', read: readMark(id, b.since || at), actor: by, context: ctx, target: { kind: 'task', taskId: t.id } }));
         continue;
       }
       if (t.reviewerHumanId === me && t.status === 'in_review') {
         const id = `task:${t.id}:review`;
-        needs.push(blank({ id, type: 'task_review', title: `Review ${taskLabel(t)}`, body: by ? `${by.name} finished it and asks for your review.` : 'Waiting for your review.', at, read: readMark(id, at), actor: by, context: ctx, target: { kind: 'task', taskId: t.id } }));
+        needs.push(blank({ id, type: 'task_review', title: by ? `${by.name} asks you to review ${t.key || `"${clipWords(t.title, 60)}"`}` : `Review ${taskLabel(t)}`, body: by ? `${taskLabel(t)}. ${by.name} finished it and waits on your review.` : 'Waiting for your review.', at, read: readMark(id, at), actor: by, context: ctx, target: { kind: 'task', taskId: t.id } }));
         continue;
       }
       if (t.assigneeHumanId === me && OPEN_TASK.has(t.status)) {
@@ -274,7 +276,8 @@ export class FeedService {
         target = { kind: 'channel', channelId: ch.id, slug: ch.slug, messageId: f.targetId }; context = { channelId: ch.id, channelSlug: ch.slug };
       }
       needs.push(blank({
-        id, type: 'follow_attention', title: `${f.title || 'Something you follow'}: ${f.attention || 'needs you'}`, body: f.lastActivity ? `${f.lastActorName ? `${f.lastActorName}: ` : ''}${f.lastActivity}` : '',
+        id, type: 'follow_attention', title: `${f.title ? clipWords(f.title, 80) : 'Something you follow'} needs you`,
+        body: [f.attention ? `${f.attention.charAt(0).toUpperCase()}${f.attention.slice(1)}.` : '', f.lastActivity ? `${f.lastActorName ? `${f.lastActorName}: ` : ''}${f.lastActivity}` : ''].filter(Boolean).join(' '),
         at: f.attentionAt!, read: readMark(id, f.attentionAt!), actor: f.lastActorName ? look.agentNamed(f.lastActorName) ?? { kind: 'person', id: null, name: f.lastActorName } : null,
         context, target, ref: { follow: { targetKind: f.targetKind, targetId: f.targetId } },
       }));
@@ -339,8 +342,8 @@ export class FeedService {
       const sev = list.reduce((s, x) => (SEVERITY_RANK[x.c.severity] < SEVERITY_RANK[s] ? x.c.severity : s), top.severity);
       const actors = new Set(list.map((x) => x.c.actor?.name).filter(Boolean));
       rest.push({
-        ...top, id: `group:${key}`, title: `${list.length} updates on ${list[0].c.groupLabel || 'one thing'}`,
-        body: `Latest: ${top.title}${actors.size > 1 ? ` · from ${[...actors].slice(0, 3).join(', ')}${actors.size > 3 ? ' and others' : ''}` : ''}`,
+        ...top, id: `group:${key}`, title: groupTitle(list.map((x) => x.c.type), list[0].c.groupLabel, list.length),
+        body: `Latest: ${top.title.replace(/[.!?]$/, '')}.${actors.size > 1 ? ` From ${[...actors].slice(0, 3).join(', ')}${actors.size > 3 ? ' and others' : ''}.` : ''}`,
         severity: sev, read: list.every((x) => x.read), count: list.length, ids: list.map((x) => x.id),
       });
     }

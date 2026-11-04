@@ -51,7 +51,14 @@ export interface HomeNeed {
   /** A card about one task (an escalation, a review): the task's key and title,
    *  so the page can say "D-11" instead of repeating the title in quotes. */
   task?: { key: string | null; title: string };
+  /** A card's own facts (its payload's short fields: a hire's role, name,
+   *  pack, budget and who it reports to; an escalation's reason), so the
+   *  Inbox's reading pane and the feed's title can say what is asked
+   *  without reading the card again. Absent for what is not a card. */
+  facts?: HomeNeedFacts;
 }
+
+export type HomeNeedFacts = Record<string, string | number | boolean | string[]>;
 
 export interface HomeNeedChain {
   /** "Writer → Head of Content → Chief → you". */

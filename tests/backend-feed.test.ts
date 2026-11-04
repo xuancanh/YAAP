@@ -30,6 +30,7 @@ import { HomeService } from '../server/src/home/home.service';
 import { FeedService } from '../server/src/home/feed.service';
 import { TopBarService } from '../server/src/home/topbar.service';
 import { classifyEvent, FEED_TYPES, type FeedLookup } from '../server/src/home/feed-registry';
+import { clipWords, groupTitle, needPresentation, signalTitle } from '../server/src/home/feed-titles';
 import { agentEvents, channels, follows, organizations, orgTasks, pluginInstalls, plugins } from '../server/src/database/schema';
 import { runWithViewer } from '../server/src/accounts/account-context';
 import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
@@ -149,7 +150,14 @@ test('each source event becomes its type, with actor, company, context and a str
   assert.equal(byType.get('channel_activity')![0].section, 'updates');
   assert.deepEqual(byType.get('hire')![0].target, { kind: 'agent', agentId: s.writer.id });
   assert.equal(byType.get('hire')![0].title, 'Chief hired Writer as Content writer');
-  assert.match(byType.get('project_team')![0].title, /Chief proposed Writer for WEB as designer — waiting on their head/);
+  assert.equal(byType.get('project_team')![0].title, 'Chief proposed Writer for WEB as designer');
+  assert.match(byType.get('project_team')![0].body, /waits on their head/);
+  assert.equal(byType.get('budget')![0].title, 'The company budget is 85% used');
+  assert.equal(byType.get('blocked')![0].title, `Chief was asked to unblock ${task.key}`);
+  assert.equal(byType.get('follow_attention')![0].title, 'Write the launch post needs you');
+  assert.match(byType.get('follow_attention')![0].body, /^Blocked: waits on legal\. Writer: moved to blocked$/);
+  assert.equal(byType.get('task_review')![0].title, `Writer asks you to review ${reviewTask.key}`);
+  assert.ok(!page.items.some((i) => / — /.test(i.title)), 'a title is one sentence; the detail is in the body');
   assert.equal(byType.get('project')![0].severity, 'high');
   assert.deepEqual(byType.get('plugin')![0].target, { kind: 'plugin', pluginId: 'acme.seo' });
   assert.match(byType.get('plugin')![0].title, /SEO helper 1.2.0 was recalled/);
@@ -209,7 +217,8 @@ test('read marks: one row, a grouped row (every member), a section, everything; 
   const group = page.items.find((i) => i.id.startsWith('group:'))!;
   assert.equal(group.id, `group:agent:${s.writer.id}:run_failed`);
   assert.equal(group.count, 3);
-  assert.equal(group.title, '3 updates on Writer\'s runs');
+  assert.equal(group.title, 'Writer\'s runs failed 3 times');
+  assert.match(group.body, /^Latest: Loop "digest" failed \(\d\)\.$/);
   assert.equal(page.unread, 4);
 
   // the grouped row: every member read
@@ -286,4 +295,41 @@ test('classification of an old event: the actor and target come from its text an
   assert.deepEqual(c.target, { kind: 'link', hash: '#/ws/w/channel/a/m' });
   assert.equal(classifyEvent({ ...base, kind: 'info', payload: '' }, look), null, 'an untagged note is the agent\'s own');
   assert.equal(classifyEvent({ ...base, kind: 'loop_run' }, look), null);
+});
+
+test('Needs-you titles read as a sentence a person would write; the detail is in the body', async () => {
+  const s = await setup();
+  await s.approvals.create(s.orgId, { kind: 'hire', payload: { name: 'Content Marketer', title: 'Content Marketer', packName: 'Content Marketer', reportsToAgentId: s.chief.id, monthlyBudgetUsd: 20 }, requestedBy: `agent:${s.writer.id}` });
+  const t = await s.tasks.create(s.orgId, { title: 'Landing page and qualified waitlist for IELTS candidates' });
+  const reason = 'REJ-4 is built and unchanged since 17:54; what it waits on has moved from my manager to the owner. Two grants only the CEO can make: (1) a public static host for landing/index.html (one self-contained file, no build step, no server) and (2) a form backend.';
+  await s.approvals.create(s.orgId, { kind: 'escalation', payload: { taskId: t.id, taskKey: t.key, title: t.title, reason }, requestedBy: `agent:${s.writer.id}` });
+  const page = await s.feed.feed(s.ws.id);
+  const hire = page.items.find((i) => i.need?.subkind === 'hire')!;
+  assert.equal(hire.title, 'Writer wants to hire a Content Marketer');
+  assert.equal(hire.need?.facts?.reportsTo, 'Chief', 'the facts name who it reports to');
+  assert.equal(hire.need?.facts?.monthlyBudgetUsd, 20);
+  assert.match(hire.body, /reports to Chief, \$20 a month/i);
+  const esc = page.items.find((i) => i.type === 'escalation')!;
+  assert.equal(esc.title, `${t.key} is stuck waiting on you`);
+  assert.equal(esc.body, reason, 'the whole reason, not cut mid-sentence');
+  assert.equal(esc.context.taskTitle, t.title);
+});
+
+test('titles: signals, groups and clipping never cut a word', () => {
+  assert.equal(signalTitle('burn_rate', 'Burn rate projects $282.36 by month-end against a $200.00 envelope (141%)'), 'Spending is on track to reach $282 against a $200 budget');
+  assert.equal(signalTitle('stale_task', 'Stale: "Pricing page" has had no run in 26h'), 'No progress on "Pricing page" in 26 hours');
+  assert.equal(signalTitle('other', 'As it was'), 'As it was');
+  assert.equal(groupTitle(['run_failed', 'run_failed'], "Trạng Tí's runs", 5), "Trạng Tí's runs failed 5 times");
+  assert.equal(groupTitle(['run_failed'], 'REJ-17', 2), 'Runs on REJ-17 failed 2 times');
+  assert.equal(groupTitle(['channel_activity'], '#company', 2), '2 new messages in #company');
+  assert.equal(groupTitle(['follow', 'run_failed'], 'ENG-12', 3), '3 updates on ENG-12');
+  const long = 'what it waits on has moved from my manager to the owner and further along';
+  const c = clipWords(long, 30);
+  assert.ok(c.endsWith('…') && long.startsWith(c.slice(0, -1)) && long.charAt(c.length - 1) === ' ', `cut at a word boundary: ${c}`);
+  const base = { kind: 'approval' as const, title: '', detail: '', task: undefined };
+  assert.equal(needPresentation({ ...base, subkind: 'budget_raise', requestedBy: 'Chief', facts: { scope: 'company', monthlyUsd: 300 } }).title, 'Chief asks to raise the company budget to $300 a month');
+  assert.equal(needPresentation({ ...base, subkind: 'hire', requestedBy: 'System', facts: { title: 'Engineer' } }).title, 'Hire an Engineer');
+  assert.equal(needPresentation({ ...base, kind: 'signal', subkind: 'burn_rate', requestedBy: 'Assurance', title: 'Burn rate projects $10.00 by month-end against a $5.00 envelope (200%)' }).title, 'Spending is on track to reach $10 against a $5 budget');
+  assert.equal(needPresentation({ ...base, kind: 'queued_action', subkind: 'gmail_send', requestedBy: 'Writer', title: 'Needs your approval: gmail_send' }).title, 'Writer wants to run gmail_send');
+  assert.equal(needPresentation({ ...base, subkind: 'some_new_kind', requestedBy: 'Chief', title: 'something new' }).title, 'Something new', 'an unknown kind keeps its own title');
 });
