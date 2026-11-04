@@ -282,7 +282,7 @@ export class OrgAuditorService implements OnModuleInit, OnModuleDestroy {
       this.runtime.endAuxRun(session.id);
     }
     const usd = usdFor(model, tokensIn, tokensOut) ?? (tokensIn * FALLBACK_PRICE.input + tokensOut * FALLBACK_PRICE.output) / 1_000_000;
-    await this.runtime.settle(orgId, { agentId: auditorId, projectId: null }, estimate, usd);
+    await this.runtime.settle(orgId, { agentId: auditorId, projectId: null }, estimate, usd, 'audit');
     const state = ctx.audit!;
     const summary = (state.summary || answer.replace(/\s+/g, ' ').trim()).slice(0, 2_000) || (error ? `audit failed: ${error}` : 'no summary');
     const status = ctx.loopDetected ? 'loop' : error ? 'failed' : 'done';

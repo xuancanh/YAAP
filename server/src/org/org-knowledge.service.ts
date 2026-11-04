@@ -229,7 +229,7 @@ export class OrgKnowledgeService {
       this.runtime.endAuxRun(session.id);
     }
     const usd = this.runtime.costUsd(model, tokensIn, tokensOut);
-    await this.runtime.settle(orgId, { agentId: chiefId, projectId: null }, estimate, usd);
+    await this.runtime.settle(orgId, { agentId: chiefId, projectId: null }, estimate, usd, 'ask');
     const clean = raw.replace(/\n?QUICK_REPLIES:\s*\[[\s\S]*?\]\s*$/, '').trim();
     const verified = await this.verifyCitations(orgId, clean);
     const status = error ? 'failed' : 'answered';

@@ -360,10 +360,11 @@ export class OverviewService {
       spend.series = u.series.map((d) => ({ day: d.day, usd: d.usd }));
       spend.todayUsd = u.series.find((d) => d.day === now.toISOString().slice(0, 10))?.usd ?? 0;
     }
-    if (org && this.tasks && this.org) {
-      const month = now.toISOString().slice(0, 7);
-      spend.monthUsd = (await this.tasks.runs(org.id, { limit: 500 })).filter((r) => r.agentId === agentId && r.startedAt.slice(0, 7) === month).reduce((s, r) => s + r.usd, 0);
-      spend.monthCapUsd = (await this.org.budget(org.id, 'agent', agentId))?.monthlyUsd || null;
+    if (org && this.runtime) {
+      // The month is the member's line on the Spend page (the company's spend ledger).
+      const mine = (await this.runtime.spendTree(org.id, now)).members.find((m) => m.agentId === agentId);
+      spend.monthUsd = mine?.usd ?? 0;
+      spend.monthCapUsd = mine?.monthlyUsd || null;
     }
     const trust: AgentOverview['health']['trust'] = [];
     if (this.trust) {
@@ -388,8 +389,7 @@ export class OverviewService {
     const units = await this.db.select().from(orgUnits).where(and(eq(orgUnits.orgId, org.id), isNull(orgUnits.archivedAt))).catch(() => { partial.push('units'); return []; });
     const leads = new Map(units.map((u) => [u.leadAgentId, u.id]));
 
-    // Spend: the same sources as Home — org runs this month against the envelopes, plus today's chat ledger.
-    const today = now.toISOString().slice(0, 10);
+    // Spend: the same source as Home and the Spend page — the company's spend ledger (spendTree).
     const perAgentToday = new Map<string, number>();
     const perAgentMonth = new Map<string, { usd: number; cap: number }>();
     let spendTodayUsd: number | null = null; let monthUsd: number | null = null; let monthCapUsd: number | null = null;
@@ -397,15 +397,8 @@ export class OverviewService {
       if (this.runtime) {
         const tree = await this.runtime.spendTree(org.id, now);
         monthUsd = tree.company.usd; monthCapUsd = tree.company.monthlyUsd || null;
-        spendTodayUsd = tree.series.find((d: { day: string; usd: number }) => d.day === today)?.usd ?? 0;
-        for (const m of tree.members) perAgentMonth.set(m.agentId, { usd: m.usd, cap: m.monthlyUsd });
-        const runsToday = (await this.tasks!.runs(org.id, { limit: 500 })).filter((r) => r.startedAt.slice(0, 10) === today);
-        for (const r of runsToday) perAgentToday.set(r.agentId, (perAgentToday.get(r.agentId) ?? 0) + r.usd);
-      }
-      if (this.usage) {
-        const u = await this.usage.workspaceUsage(workspaceId, 1, now);
-        spendTodayUsd = (spendTodayUsd ?? 0) + (u.series.find((d) => d.day === today)?.usd ?? 0);
-        for (const a of u.byAgent) perAgentToday.set(a.agentId, (perAgentToday.get(a.agentId) ?? 0) + a.usd);
+        spendTodayUsd = tree.company.todayUsd;
+        for (const m of tree.members) { perAgentMonth.set(m.agentId, { usd: m.usd, cap: m.monthlyUsd }); perAgentToday.set(m.agentId, m.todayUsd); }
       }
     } catch { partial.push('spend'); }
 

@@ -533,23 +533,24 @@ export class HomeService {
     const today = now.toISOString().slice(0, 10);
     const byDay = new Map<string, number>();
     if (org && this.runtime) {
+      // With a company, every figure is the company's spend ledger (the Spend page's spendTree): today,
+      // the month and the sparkline. The chat ledger below prices the same run turns again, so it is not added.
       const tree = await this.runtime.spendTree(org.id, now);
       out.monthUsd = tree.company.usd;
       out.monthCapUsd = tree.company.monthlyUsd || null;
-      out.todayUsd = tree.series.find((d: { day: string; usd: number }) => d.day === today)?.usd ?? 0;
-      for (const d of tree.series as Array<{ day: string; usd: number }>) byDay.set(d.day, (byDay.get(d.day) ?? 0) + d.usd);
+      out.todayUsd = tree.company.todayUsd;
+      for (const d of tree.series) byDay.set(d.day, (byDay.get(d.day) ?? 0) + d.usd);
       if (this.capital) {
         const f = await this.capital.forecast(org.id, now).catch(() => null);
         if (f) { out.projectedUsd = f.company.projectedUsd; out.forecastState = f.company.state as HomeSpend['forecastState']; }
       }
     }
-    if (this.usage) {
-      // Chat, loop and channel turns: the ledger outside org runs.
+    if (this.usage && !(org && this.runtime)) {
+      // No company: chat, loop and channel turns from the usage ledger.
       // At least SERIES_DAYS for the sparkline; the month is the days of this month.
       const u = await this.usage.workspaceUsage(workspaceId, Math.max(SERIES_DAYS, now.getUTCDate()), now);
-      const todayChat = u.series.find((d) => d.day === today)?.usd ?? 0;
-      out.todayUsd = (out.todayUsd ?? 0) + todayChat;
-      if (!org) out.monthUsd = u.series.filter((d) => d.day.slice(0, 7) === today.slice(0, 7)).reduce((n, d) => n + d.usd, 0);
+      out.todayUsd = u.series.find((d) => d.day === today)?.usd ?? 0;
+      out.monthUsd = u.series.filter((d) => d.day.slice(0, 7) === today.slice(0, 7)).reduce((n, d) => n + d.usd, 0);
       for (const d of u.series) byDay.set(d.day, (byDay.get(d.day) ?? 0) + d.usd);
     }
     if (byDay.size) out.series = dayBuckets(now).map((day) => ({ day, usd: Math.round((byDay.get(day) ?? 0) * 10_000) / 10_000 }));

@@ -30,6 +30,7 @@ import { OrgSloService } from './org-slo.service';
 import { OrgIntentService } from './org-intent.service';
 import { OrgMeetingsService } from './org-meetings.service';
 import { OrgCapitalService } from './org-capital.service';
+import { monthWindow, spendLedger } from './spend-ledger';
 
 export interface BriefItem { n: number; approvalId: string; kind: string; summary: string }
 export interface Brief { orgId: string; at: string; text: string; items: BriefItem[] }
@@ -84,7 +85,6 @@ export class OrgBriefService {
     const tasks = await this.tasks.list(orgId);
     const runs = (await this.tasks.runs(orgId, { limit: 500 })).filter((r) => r.startedAt >= since);
     const budgets = await this.org.budgets(orgId);
-    const month = now.toISOString().slice(0, 7);
     const lines: string[] = [];
     lines.push(`# ${org.name} — brief for ${now.toISOString().slice(0, 10)}`);
     if (org.status === 'paused') lines.push('', '**The organization is paused (kill switch). No agent runs until you resume it.**');
@@ -106,7 +106,8 @@ export class OrgBriefService {
     activity.push('', '## Spend');
     const spentByAgent = new Map<string, number>();
     let orgSpent = 0;
-    for (const r of (await this.tasks.runs(orgId, { limit: 500 })).filter((r) => r.startedAt.slice(0, 7) === month)) {
+    // The spend ledger (spend-ledger.ts): the Spend page's figures, meetings and reviews included.
+    for (const r of await spendLedger(this.db, orgId, monthWindow(now).from, now.toISOString())) {
       orgSpent += r.usd; spentByAgent.set(r.agentId, (spentByAgent.get(r.agentId) ?? 0) + r.usd);
     }
     const company = budgets.find((b) => b.scope === 'company');

@@ -36,7 +36,7 @@ import { BadRequestException, Inject, Injectable, Logger, NotFoundException, Opt
 import { and, desc, eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { orgAudit, orgPlans, orgRuns } from '../database/schema';
+import { orgAudit, orgPlans } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
@@ -50,6 +50,7 @@ import { OrgIntentService, measuredProgress } from './org-intent.service';
 import { OrgUnitsService } from './org-units.service';
 import { classOf } from './org-slo.service';
 import { tunable } from './org-tunables';
+import { monthWindow, spendLedger, type SpendEntry } from './spend-ledger';
 
 export type OrgPlan = typeof orgPlans.$inferSelect;
 export type PlanStatus = 'pending' | 'applied' | 'vetoed' | 'expired' | 'dry_run';
@@ -149,7 +150,8 @@ export class OrgCapitalService {
     const org = await this.org.get(orgId);
     const month = now.toISOString().slice(0, 7);
     const from = period === 'month' ? `${month}-01` : null;
-    const runs = (await this.db.select().from(orgRuns).where(eq(orgRuns.orgId, orgId))).filter((r) => r.status !== 'running' && (!from || r.startedAt.slice(0, 7) === month));
+    // The spend ledger (spend-ledger.ts), as on the Spend page: spend outside a task (meetings, reviews, audits) is in the total, unattributed.
+    const runs = await spendLedger(this.db, orgId, period === 'month' ? monthWindow(now).from : '', now.toISOString());
     const tasks = await this.tasks.list(orgId);
     const taskById = new Map(tasks.map((t) => [t.id, t]));
     const projects = await this.org.projects(orgId);
@@ -175,7 +177,8 @@ export class OrgCapitalService {
     let totalUsd = 0; let attributedUsd = 0;
     for (const r of runs) {
       totalUsd += r.usd;
-      const a = byAgent.get(r.agentId) ?? { usd: 0, runs: 0 }; a.usd += r.usd; a.runs++; byAgent.set(r.agentId, a);
+      const a = byAgent.get(r.agentId) ?? { usd: 0, runs: 0 }; a.usd += r.usd; if (r.source === 'task') a.runs++; byAgent.set(r.agentId, a);
+      if (r.taskId === null) continue; // not a task: no class, no goal
       const task = taskById.get(r.taskId);
       const cls = task ? classOf(task) : 'general';
       byClass[cls] = (byClass[cls] ?? 0) + r.usd;
@@ -287,9 +290,11 @@ export class OrgCapitalService {
     const daysInMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
     const daysLeft = Math.max(0, daysInMonth - day);
     const since = new Date(now.getTime() - windowDays * DAY_MS).toISOString();
-    const runs = (await this.db.select().from(orgRuns).where(eq(orgRuns.orgId, orgId))).filter((r) => r.status !== 'running');
-    const monthRuns = runs.filter((r) => r.startedAt.slice(0, 7) === month);
-    const windowRuns = runs.filter((r) => r.startedAt >= since && r.startedAt <= now.toISOString());
+    // The spend ledger (spend-ledger.ts): task runs and the meetings, reviews and audits charged to the envelopes — the Spend page's figures.
+    const { from } = monthWindow(now);
+    const ledger = await spendLedger(this.db, orgId, since < from ? since : from, now.toISOString());
+    const monthRuns = ledger.filter((e) => e.at >= from);
+    const windowRuns = ledger.filter((e) => e.at >= since);
     const tasks = new Map((await this.tasks.list(orgId)).map((x) => [x.id, x]));
     const projects = await this.org.projects(orgId);
     const projectGoal = new Map(projects.map((p) => [p.id, p.goalId]));
@@ -301,7 +306,7 @@ export class OrgCapitalService {
     };
     const budgets = await this.org.budgets(orgId);
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
-    const build = (scope: EnvelopeForecast['scope'], refId: string, name: string, capUsd: number, pick: (r: typeof runs[number]) => boolean): EnvelopeForecast => {
+    const build = (scope: EnvelopeForecast['scope'], refId: string, name: string, capUsd: number, pick: (r: SpendEntry) => boolean): EnvelopeForecast => {
       const spentUsd = monthRuns.filter(pick).reduce((a, r) => a + r.usd, 0);
       const dailyBurnUsd = windowRuns.filter(pick).reduce((a, r) => a + r.usd, 0) / windowDays;
       const projectedUsd = spentUsd + dailyBurnUsd * daysLeft;
@@ -312,9 +317,9 @@ export class OrgCapitalService {
     const capOf = (scope: string, refId: string) => budgets.find((b) => b.scope === scope && b.refId === refId)?.monthlyUsd ?? 0;
     const company = build('company', orgId, org.name, ws?.orgMonthlyUsd ?? org.monthlyBudgetUsd, () => true);
     const agents = (await this.org.members(orgId)).filter((m) => m.status !== 'terminated').map((m) => build('agent', m.agentId, names.get(m.agentId) ?? m.agentId.slice(0, 8), capOf('agent', m.agentId), (r) => r.agentId === m.agentId));
-    const projectRows = projects.filter((p) => p.status === 'active').map((p) => build('project', p.id, p.title, capOf('project', p.id), (r) => tasks.get(r.taskId)?.projectId === p.id));
+    const projectRows = projects.filter((p) => p.status === 'active').map((p) => build('project', p.id, p.title, capOf('project', p.id), (r) => r.taskId !== null && tasks.get(r.taskId)?.projectId === p.id));
     const allocations = await this.org.allocations(orgId);
-    const objectives = [...goals.values()].filter((g) => g.kind === 'objective' && g.status === 'active').map((g) => build('objective', g.id, g.title, allocations.find((a) => a.goalId === g.id)?.monthlyUsd ?? 0, (r) => { const task = tasks.get(r.taskId); return objectiveOf(task?.projectId ? projectGoal.get(task.projectId) ?? null : null) === g.id; }));
+    const objectives = [...goals.values()].filter((g) => g.kind === 'objective' && g.status === 'active').map((g) => build('objective', g.id, g.title, allocations.find((a) => a.goalId === g.id)?.monthlyUsd ?? 0, (r) => { const task = r.taskId === null ? undefined : tasks.get(r.taskId); return objectiveOf(task?.projectId ? projectGoal.get(task.projectId) ?? null : null) === g.id; }));
     return { month, day, daysInMonth, windowDays, warnPct: t.burnWarnPct, criticalPct: t.burnCriticalPct, company, agents, projects: projectRows, objectives };
   }
 

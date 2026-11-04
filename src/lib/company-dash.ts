@@ -94,14 +94,25 @@ export function peopleLede(members: number, units: number, atLimit: number): str
 
 // ---- Money ----
 
-export interface BudgetLine { key: string; label: string; usd: number; cap: number; pct: number }
-/** Agents and projects with an envelope, most used first. */
-export function budgetLines(spend: OrgSpend, limit = 5): BudgetLine[] {
-  const rows: BudgetLine[] = [
-    ...spend.projects.map((p) => ({ key: `p:${p.id}`, label: p.title, usd: p.usd + p.reservedUsd, cap: p.monthlyUsd })),
-    ...spend.members.map((m) => ({ key: `a:${m.agentId}`, label: m.name, usd: m.usd + m.reservedUsd, cap: m.monthlyUsd })),
-  ].filter((r) => r.cap > 0).map((r) => ({ ...r, pct: r.usd / r.cap }));
-  return rows.sort((a, b) => b.pct - a.pct).slice(0, limit);
+export interface BudgetLine { key: string; label: string; usd: number; cap: number; pct: number | null }
+/** Every member that spent this month or has an envelope (members first, most
+ *  spent first; `pct` null without an envelope), then projects with an
+ *  envelope. `usd` is spent, as on the Spend page; the members' add up to the
+ *  company's (the server's spend ledger). */
+export function budgetLines(spend: OrgSpend): BudgetLine[] {
+  const line = (key: string, label: string, usd: number, cap: number): BudgetLine => ({ key, label, usd, cap, pct: cap > 0 ? usd / cap : null });
+  const members = spend.members.filter((m) => m.usd > 0 || m.monthlyUsd > 0)
+    .map((m) => line(`a:${m.agentId}`, m.status === 'terminated' ? `${m.name} (left)` : m.name, m.usd, m.monthlyUsd))
+    .sort((a, b) => b.usd - a.usd || (b.pct ?? 0) - (a.pct ?? 0));
+  const projects = spend.projects.filter((p) => p.monthlyUsd > 0).map((p) => line(`p:${p.id}`, p.title, p.usd, p.monthlyUsd)).sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0));
+  return [...members, ...projects];
+}
+
+/** What the spend window is called: "November" for the UTC month to date (`OrgSpend.month`, YYYY-MM). */
+export function spendWindowLabel(month: string): string {
+  const [y, m] = month.split('-').map(Number);
+  if (!y || !m) return 'this month';
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
 }
 
 export interface CapitalLine { goalId: string; title: string; monthlyUsd: number }
@@ -112,8 +123,9 @@ export function capitalByGoal(allocations: OrgAllocation[], titleOf: (goalId: st
   return [...by.entries()].map(([goalId, monthlyUsd]) => ({ goalId, title: titleOf(goalId) ?? 'A goal', monthlyUsd })).sort((a, b) => b.monthlyUsd - a.monthlyUsd);
 }
 
-export function moneyLede(spentUsd: number, capUsd: number, projectedUsd: number | null, fmt: (n: number) => string): string {
-  const parts = [capUsd > 0 ? `${fmt(spentUsd)} of ${fmt(capUsd)} spent this month.` : `${fmt(spentUsd)} spent this month, with no company envelope.`];
+export function moneyLede(spentUsd: number, capUsd: number, projectedUsd: number | null, fmt: (n: number) => string, window = 'this month'): string {
+  const when = window === 'this month' ? window : `in ${window}`;
+  const parts = [capUsd > 0 ? `${fmt(spentUsd)} of ${fmt(capUsd)} spent ${when}.` : `${fmt(spentUsd)} spent ${when}, with no company envelope.`];
   if (projectedUsd !== null) parts.push(capUsd > 0 && projectedUsd > capUsd ? `On pace for ${fmt(projectedUsd)}, past the envelope.` : `On pace for ${fmt(projectedUsd)} by month end.`);
   return parts.join(' ');
 }

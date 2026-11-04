@@ -1268,11 +1268,16 @@ export interface OrgRole {
   modelTier: 'cheap' | 'standard' | 'strong' | string; estMonthlyUsd: number; fits: string[];
   score?: number; matched?: string[];
 }
+/** `usd` is spent (settled); `reservedUsd` is held for runs in flight, not spent. Tokens and `runs` are task runs'. */
 export interface OrgSpendNode { usd: number; tokensIn: number; tokensOut: number; runs: number; monthlyUsd: number; reservedUsd: number }
+/** `GET …/org/spend`: the company's spend ledger over `window` (the UTC month to now; server/src/org/spend-ledger.ts).
+ *  The company's `usd` is every dollar charged to its envelope — task runs plus meetings, reviews, planning and
+ *  audits (`overheadUsd`) — and the members' `usd` add up to it. A project's is its tasks' runs. */
 export interface OrgSpend {
-  month: string; company: OrgSpendNode;
+  month: string; window?: { from: string; to: string };
+  company: OrgSpendNode & { overheadUsd?: number; todayUsd?: number };
   projects: Array<OrgSpendNode & { id: string; title: string }>;
-  members: Array<OrgSpendNode & { agentId: string; name: string; title: string }>;
+  members: Array<OrgSpendNode & { agentId: string; name: string; title: string; status?: string; overheadUsd?: number; todayUsd?: number }>;
   acceptedTasks: number; costPerAcceptedTask: number | null; series: UsageDay[];
 }
 

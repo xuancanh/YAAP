@@ -224,6 +224,17 @@ A company that cannot remember why it did things repeats its mistakes.
 
 Money is the control surface the CEO understands best.
 
+Every spend figure for a window comes from one computation, the spend
+ledger (`server/src/org/spend-ledger.ts`): task runs (`org_runs`) plus
+every other charge to the envelopes — meetings and minutes, the chief's
+review, planning, the auditor, red-team, evals, ask-the-company — which
+`settle` records as `spend_commit` audit rows with their `source`. The
+window is the UTC month to date. The company's spent is the members'
+sum; a member without its own envelope is still listed (the Budgets card
+says how much only the company envelope caps). Spent is settled spend;
+what is reserved for runs in flight is shown beside it as "held", never
+added to it.
+
 - **Allocation by expected value.** The strategy proposal states, per
   unit, what the envelope buys (which key results) so a budget cut is a
   scope decision, not a number.

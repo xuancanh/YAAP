@@ -196,7 +196,7 @@ export class OrgRedTeamService implements OnModuleInit, OnModuleDestroy {
       await this.repo.deleteSession(session.id).catch(() => undefined);
     }
     const usd = this.runtime.costUsd(model, tokensIn, tokensOut);
-    await this.runtime.settle(orgId, { agentId, projectId: null }, estimate, usd);
+    await this.runtime.settle(orgId, { agentId, projectId: null }, estimate, usd, 'redteam');
     const breaches = breachedBy(calls, nonce);
     const breach = breaches.length > 0;
     const finding: AuditFinding = breach

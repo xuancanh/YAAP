@@ -18,6 +18,7 @@ import {
 } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
+import { spendWindowLabel } from '../lib/company-dash';
 import { UsageBars, UsageRows } from './UsageChart';
 import { I, P } from '../lib/icons';
 import { card, input, btn, pill, h2, faint, linkBtn, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
@@ -1059,7 +1060,7 @@ function Spend({ org, reload }: { org: OrgDetail; reload: () => Promise<void> })
   };
   if (!spend) return <div style={faint}>Loading…</div>;
   const node = (scope: 'company' | 'agent' | 'project', refId: string, label: string, n: { usd: number; monthlyUsd: number; reservedUsd: number; runs: number }) => {
-    const pct = n.monthlyUsd > 0 ? Math.min(100, Math.round(((n.usd + n.reservedUsd) / n.monthlyUsd) * 100)) : null;
+    const pct = n.monthlyUsd > 0 ? Math.min(100, Math.round((n.usd / n.monthlyUsd) * 100)) : null; // spent, as the figure beside it
     return (
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 110px 150px', gap: 10, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border-soft)' }}>
         <div style={{ minWidth: 0 }}>
@@ -1076,13 +1077,13 @@ function Spend({ org, reload }: { org: OrgDetail; reload: () => Promise<void> })
   };
   return (
     <div style={{ maxWidth: 820 }}>
-      <h2 style={h2}>Spend vs envelopes · {spend.month}</h2>
-      <div style={{ ...faint, marginBottom: 12 }}>Every run reserves its estimate before the model is called and settles from actual usage. 80% warns, 100% stops the scope. {spend.costPerAcceptedTask !== null ? `Cost per accepted task: ${fmtUsd(spend.costPerAcceptedTask)} (${spend.acceptedTasks} accepted).` : `${spend.acceptedTasks} accepted task(s).`}</div>
+      <h2 style={h2}>Spend vs envelopes · {spendWindowLabel(spend.month)} (UTC) to date</h2>
+      <div style={{ ...faint, marginBottom: 12 }}>Every run reserves its estimate before the model is called and settles from actual usage. 80% warns, 100% stops the scope. A member's spend includes its meetings, reviews and audits{(spend.company.overheadUsd ?? 0) > 0 ? ` (${fmtUsd(spend.company.overheadUsd ?? 0)} of the company's this month)` : ''}; a project's is its tasks' runs.{spend.company.reservedUsd > 0 ? ` ${fmtUsd(spend.company.reservedUsd)} is held for runs in flight.` : ''} {spend.costPerAcceptedTask !== null ? `Cost per accepted task: ${fmtUsd(spend.costPerAcceptedTask)} (${spend.acceptedTasks} accepted).` : `${spend.acceptedTasks} accepted task(s).`}</div>
       <div style={{ ...card, marginBottom: 12 }}><UsageBars series={spend.series} /></div>
       <div style={card}>
         {node('company', org.id, `${org.name} (company)`, spend.company)}
         {spend.projects.map((p) => <div key={p.id} style={{ paddingLeft: 16 }}>{node('project', p.id, `▸ ${p.title}`, p)}</div>)}
-        {spend.members.map((m) => <div key={m.agentId} style={{ paddingLeft: 16 }}>{node('agent', m.agentId, `${m.name}${m.title ? ` · ${m.title}` : ''}`, m)}</div>)}
+        {spend.members.map((m) => <div key={m.agentId} style={{ paddingLeft: 16 }}>{node('agent', m.agentId, `${m.name}${m.title ? ` · ${m.title}` : ''}${m.status === 'terminated' ? ' (left)' : ''}`, m)}</div>)}
       </div>
       <div style={{ ...card, marginTop: 12 }}>
         <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>By member</div>

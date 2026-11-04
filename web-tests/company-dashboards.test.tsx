@@ -6,7 +6,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrgDetail, OrgIncident, OrgIntentNode, OrgSpend, OrgTask } from '../src/lib/api';
-import { boardCounts, budgetLines, capitalByGoal, directionLede, incidentHistory, laneCounts, objectivesOf, operationsLede, pausedMembers, yesterdayKey } from '../src/lib/company-dash';
+import { boardCounts, budgetLines, capitalByGoal, directionLede, incidentHistory, laneCounts, objectivesOf, operationsLede, pausedMembers, spendWindowLabel, yesterdayKey } from '../src/lib/company-dash';
 
 afterEach(cleanup);
 
@@ -35,7 +35,7 @@ const apiMock = {
   orgPulse: vi.fn(async () => ({ score: 72, breaches: [{ metric: 'cycleTimeHours', value: 40, target: 24, detail: 'Cycle time 40h against 24h' }] })),
   orgBrief: vi.fn(async () => ({ orgId: 'o1', at: day(0.2), text: '- Shipped the pricing page\n- Two hires wait on you', items: [] })),
   orgCapacity: vi.fn(async () => ({ wip: 3, byClass: {}, members: [{ agentId: 'a2', name: 'Writer', title: '', open: 4, wip: 2, atLimit: true, expectedHours: null, tasks: [] }] })),
-  orgSpend: vi.fn(async (): Promise<OrgSpend> => ({ month: '2026-11', company: { usd: 120, reservedUsd: 5, monthlyUsd: 500, runs: 40, tokensIn: 0, tokensOut: 0 }, projects: [{ id: 'p1', title: 'Pricing page', usd: 45, reservedUsd: 0, monthlyUsd: 50, runs: 3, tokensIn: 0, tokensOut: 0 }], members: [{ agentId: 'a2', name: 'Writer', title: '', usd: 10, reservedUsd: 0, monthlyUsd: 100, runs: 2, tokensIn: 0, tokensOut: 0 }], acceptedTasks: 4, costPerAcceptedTask: 2.5, series: [{ day: '2026-11-01', usd: 3, tokensIn: 0, tokensOut: 0 }, { day: '2026-11-02', usd: 6, tokensIn: 0, tokensOut: 0 }] })),
+  orgSpend: vi.fn(async (): Promise<OrgSpend> => ({ month: '2026-11', company: { usd: 120, reservedUsd: 5, monthlyUsd: 500, runs: 40, tokensIn: 0, tokensOut: 0 }, projects: [{ id: 'p1', title: 'Pricing page', usd: 45, reservedUsd: 0, monthlyUsd: 50, runs: 3, tokensIn: 0, tokensOut: 0 }], members: [{ agentId: 'a2', name: 'Writer', title: '', usd: 10, reservedUsd: 0, monthlyUsd: 100, runs: 2, tokensIn: 0, tokensOut: 0 }, { agentId: 'a1', name: 'Atlas', title: 'Chief of staff', usd: 110, reservedUsd: 0, monthlyUsd: 0, runs: 38, tokensIn: 0, tokensOut: 0 }], acceptedTasks: 4, costPerAcceptedTask: 2.5, series: [{ day: '2026-11-01', usd: 3, tokensIn: 0, tokensOut: 0 }, { day: '2026-11-02', usd: 6, tokensIn: 0, tokensOut: 0 }] })),
   orgForecast: vi.fn(async () => ({ month: '2026-11', day: 4, daysInMonth: 30, windowDays: 7, warnPct: 80, criticalPct: 100, company: { scope: 'company', refId: 'o1', name: 'Acme', capUsd: 500, spentUsd: 125, dailyBurnUsd: 20, projectedUsd: 640, projectedPct: 128, state: 'stop' }, agents: [], projects: [{ scope: 'project', refId: 'p1', name: 'Pricing page', capUsd: 50, spentUsd: 45, dailyBurnUsd: 4, projectedUsd: 90, projectedPct: 180, state: 'stop' }], objectives: [] })),
   orgAllocations: vi.fn(async () => [{ id: 'al1', orgId: 'o1', goalId: 'o1', unitId: null, scope: 'agent', refId: 'a2', monthlyUsd: 80, rationale: '' }, { id: 'al2', orgId: 'o1', goalId: 'o1', unitId: null, scope: 'project', refId: 'p1', monthlyUsd: 40, rationale: '' }]),
   verifyOrgAudit: vi.fn(async () => ({ ok: true, length: 214, brokenAt: null })),
@@ -133,9 +133,15 @@ describe('the section dashboards', () => {
 
   it('Money: this month and the forecast, budgets, capital by goal, envelopes that will stop', async () => {
     render(<SectionDashboard section="money" org={org} />);
-    await waitFor(() => expect(screen.getByTestId('dash-lede')).toHaveTextContent('$125 of $500 spent this month.'));
+    // spent is the settled figure (the Spend page's and Home's), in the labelled UTC month; the $5 held for runs in flight is said beside it
+    await waitFor(() => expect(screen.getByTestId('dash-lede')).toHaveTextContent('$120 of $500 spent in November.'));
+    expect(screen.getByTestId('dash-card-spend')).toHaveTextContent('November (UTC) to date');
+    expect(screen.getByTestId('dash-card-spend')).toHaveTextContent('$5.00 held for runs in flight');
     await waitFor(() => expect(screen.getByTestId('dash-lede')).toHaveTextContent('past the envelope'));
     expect(screen.getByTestId('dash-card-budgets')).toHaveTextContent('Pricing page');
+    // every member that spends is listed — the chief without an envelope too, and the card says what no envelope caps
+    expect(screen.getByTestId('dash-card-budgets')).toHaveTextContent('Atlasno envelope$110');
+    expect(screen.getByTestId('dash-card-budgets')).toHaveTextContent('$110 of $120 was spent by members without their own envelope');
     await waitFor(() => expect(screen.getByTestId('dash-card-capital')).toHaveTextContent('Launch Pro'));
     expect(screen.getByTestId('dash-card-capital')).toHaveTextContent('$120');
     expect(screen.getByTestId('dash-card-forecast')).toHaveTextContent('will stop');
@@ -198,7 +204,10 @@ describe('the summaries', () => {
 
   it('ranks budgets by use and sums capital per goal', async () => {
     const spend = await apiMock.orgSpend();
-    expect(budgetLines(spend).map((b) => b.label)).toEqual(['Pricing page', 'Writer']);
+    const lines = budgetLines(spend);
+    expect(lines.map((b) => [b.label, b.pct])).toEqual([['Atlas', null], ['Writer', 0.1], ['Pricing page', 0.9]]);
+    expect(lines.filter((b) => b.key.startsWith('a:')).reduce((n, b) => n + b.usd, 0)).toBe(spend.company.usd);
+    expect(spendWindowLabel('2026-11')).toBe('November');
     expect(capitalByGoal([{ goalId: 'g1', monthlyUsd: 10 }, { goalId: 'g2', monthlyUsd: 30 }, { goalId: 'g1', monthlyUsd: 5 }] as never, (id) => (id === 'g1' ? 'One' : undefined)))
       .toEqual([{ goalId: 'g2', title: 'A goal', monthlyUsd: 30 }, { goalId: 'g1', title: 'One', monthlyUsd: 15 }]);
   });

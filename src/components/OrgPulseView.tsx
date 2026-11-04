@@ -7,10 +7,11 @@
  *  approach as UsageChart). */
 import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { useApp } from '../store';
-import { api, type AuditFinding, type OrgAuditRun, type OrgDetail, type OrgMeeting, type OrgPulse, type OrgSignal, type OrgSpend } from '../lib/api';
+import { api, type AuditFinding, type OrgAuditRun, type OrgDetail, type OrgMeeting, type OrgForecast, type OrgPulse, type OrgSignal, type OrgSpend } from '../lib/api';
 import { I, P } from '../lib/icons';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
+import { spendWindowLabel } from '../lib/company-dash';
 import { openMeetingView } from '../lib/meetings';
 import { firesOn, groupSignals, humanCron, MEETING_KIND_TITLES, scoreColor, SEVERITY_COLOR, signalKindLabel, sloTiles, sparkPath } from '../lib/org';
 import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar } from './org-ui';
@@ -27,17 +28,19 @@ export function PulsePane({ org }: { org: OrgDetail }) {
   const [signals, setSignals] = useState<OrgSignal[]>([]);
   const [audits, setAudits] = useState<OrgAuditRun[]>([]);
   const [spend, setSpend] = useState<OrgSpend | null>(null);
+  const [forecast, setForecast] = useState<OrgForecast | null>(null);
   const [meetings, setMeetings] = useState<OrgMeeting[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const refresh = useCallback(async () => {
-    const [p, s, a, sp, m] = await Promise.all([
+    const [p, s, a, sp, m, f] = await Promise.all([
       api.orgPulse(wsId).then((v) => { setErr(null); return v; }).catch((e) => { setErr(e instanceof Error ? e.message.slice(0, 160) : 'pulse unavailable'); return null; }),
       api.orgSignals(wsId).catch((): OrgSignal[] => []),
       api.orgAudits(wsId, 10).catch((): OrgAuditRun[] => []),
       api.orgSpend(wsId).catch(() => null),
       api.orgMeetings(wsId).catch((): OrgMeeting[] => []),
+      api.orgForecast(wsId).catch(() => null),
     ]);
-    setPulse(p); setSignals(s); setAudits(a); setSpend(sp); setMeetings(m);
+    setPulse(p); setSignals(s); setAudits(a); setSpend(sp); setMeetings(m); setForecast(f);
   }, [wsId]);
   useEffect(() => { void refresh(); const t = setInterval(() => { void refresh(); }, 30_000); return () => clearInterval(t); }, [refresh]);
   const act = async (fn: () => Promise<unknown>, done?: string) => {
@@ -63,7 +66,7 @@ export function PulsePane({ org }: { org: OrgDetail }) {
       )}
       <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', marginBottom: 10 }}>
         <ScoreTile pulse={pulse} openCritical={open.filter((s) => s.severity === 'critical').length} />
-        <SpendTile spend={spend} org={org} />
+        <SpendTile spend={spend} forecast={forecast} org={org} />
         <RitualsTile meetings={meetings} onOpen={(m) => openMeeting(app, m)} />
       </div>
       {pulse && <SloRow pulse={pulse} />}
@@ -136,28 +139,25 @@ function SloRow({ pulse }: { pulse: OrgPulse }) {
   );
 }
 
-function SpendTile({ spend, org }: { spend: OrgSpend | null; org: OrgDetail }) {
+function SpendTile({ spend, forecast, org }: { spend: OrgSpend | null; forecast: OrgForecast | null; org: OrgDetail }) {
   const app = useApp();
   if (!spend) return <div style={{ ...card, ...faint }}>Spend: loading…</div>;
   const c = spend.company;
-  const used = c.usd + c.reservedUsd;
-  const pct = c.monthlyUsd > 0 ? Math.min(100, Math.round((used / c.monthlyUsd) * 100)) : null;
-  // Linear projection to month end from the days elapsed.
-  const now = new Date();
-  const dayOfMonth = now.getDate();
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-  const projected = dayOfMonth > 0 ? (c.usd / dayOfMonth) * daysInMonth : c.usd;
-  const projPct = c.monthlyUsd > 0 ? Math.round((projected / c.monthlyUsd) * 100) : null;
+  // Spent (settled), the Spend page's figure; the bar is the same number against the envelope.
+  const pct = c.monthlyUsd > 0 ? Math.min(100, Math.round((c.usd / c.monthlyUsd) * 100)) : null;
+  // The server's forecast (trailing burn), the one the Money dashboard and Home show — not a local projection.
+  const projected = forecast?.company.projectedUsd ?? null;
+  const projPct = projected !== null && c.monthlyUsd > 0 ? Math.round((projected / c.monthlyUsd) * 100) : null;
   return (
     <div style={{ ...card, display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}><div style={{ ...label, flex: 1 }}>Spend vs envelope · {spend.month}</div><button style={linkBtn} onClick={() => app.setOrgPane('capital')} title="Cost per outcome, forecast, allocations, routing">capital</button><button style={linkBtn} onClick={() => app.setOrgPane('spend')}>details</button></div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}><div style={{ ...label, flex: 1 }}>Spend vs envelope · {spendWindowLabel(spend.month)} (UTC) to date</div><button style={linkBtn} onClick={() => app.setOrgPane('capital')} title="Cost per outcome, forecast, allocations, routing">capital</button><button style={linkBtn} onClick={() => app.setOrgPane('spend')}>details</button></div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <span style={{ fontSize: 22, fontWeight: 700, ...mono }}>{fmtUsd(c.usd)}</span>
-        <span style={faint}>{c.monthlyUsd > 0 ? `of ${fmtUsd(c.monthlyUsd)}` : 'no company envelope'}{c.reservedUsd > 0 ? ` · ${fmtUsd(c.reservedUsd)} reserved` : ''}</span>
+        <span style={faint}>{c.monthlyUsd > 0 ? `of ${fmtUsd(c.monthlyUsd)}` : 'no company envelope'}{c.reservedUsd > 0 ? ` · ${fmtUsd(c.reservedUsd)} held for runs in flight` : ''}</span>
       </div>
       {pct !== null && <div style={{ height: 6, background: 'var(--panel-2)', borderRadius: 3, overflow: 'hidden' }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Spend against the company envelope"><div style={{ width: `${pct}%`, height: 6, background: pct >= 100 ? 'var(--red)' : pct >= 80 ? 'var(--amber)' : 'var(--green)' }} /></div>}
       <div style={faint}>
-        {projPct !== null ? <span style={{ color: projPct >= 120 ? 'var(--red)' : projPct >= 100 ? 'var(--amber)' : undefined }}>projected {fmtUsd(projected)} at month end ({projPct}%)</span> : `${c.runs} run(s) this month`}
+        {projPct !== null && projected !== null ? <span style={{ color: forecast?.company.state === 'stop' ? 'var(--red)' : forecast?.company.state === 'warn' ? 'var(--amber)' : undefined }}>projected {fmtUsd(projected)} at month end ({projPct}%)</span> : `${c.runs} task run(s) this month`}
         {spend.costPerAcceptedTask !== null && <> · {fmtUsd(spend.costPerAcceptedTask)} per accepted task</>}
         {org.monthlyBudgetUsd > 0 && c.monthlyUsd === 0 && <> · envelope {fmtUsd(org.monthlyBudgetUsd)}</>}
       </div>

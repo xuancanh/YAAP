@@ -334,7 +334,7 @@ export class OrgMeetingMinutesService {
       }
     } finally {
       usd = this.runtime.costUsd(ctx.model, tokensIn, tokensOut);
-      await this.runtime.settle(input.orgId, { agentId: facilitator, projectId: null }, estimate, usd).catch(() => undefined);
+      await this.runtime.settle(input.orgId, { agentId: facilitator, projectId: null }, estimate, usd, 'minutes').catch(() => undefined);
     }
     return { narrative: parseNarrative(out.slice(0, 16_000)), usd, tokensIn, tokensOut };
   }

@@ -58,6 +58,7 @@ import { OrgApprovalsService } from './org-approvals.service';
 import { OrgAuditService } from './org-audit.service';
 import { OrgSignalsService } from './org-signals.service';
 import { assuranceTunable, mergeTunables, parseTunables } from './org-assurance-tunables';
+import { monthWindow, spendLedger, sumUsd } from './spend-ledger';
 
 export type OrgSloSample = typeof orgSloSamples.$inferSelect;
 
@@ -207,8 +208,8 @@ export class OrgSloService {
     const atRisk = goals.length === 0 ? null : round((goals.filter((g) => g.atRisk === 1).length / goals.length) * 100);
     const ws = await this.workspaces.get(org.workspaceId).catch(() => null);
     const envelope = ws?.orgMonthlyUsd ?? org.monthlyBudgetUsd;
-    const month = now.toISOString().slice(0, 7);
-    const monthSpend = (await this.tasks.runs(orgId, { limit: 500 })).filter((r) => r.startedAt.slice(0, 7) === month).reduce((a, r) => a + r.usd, 0);
+    // Month to date from the spend ledger, the figure the Spend page shows (spend-ledger.ts).
+    const monthSpend = sumUsd(await spendLedger(this.db, orgId, monthWindow(now).from, now.toISOString()));
     const criticals = this.signals ? (await this.signals.list(orgId, { severity: 'critical' })).filter((s) => s.status !== 'resolved').length : 0;
     const cycle = median(cycles.map((c) => c.h));
     const latency = median(decided.map((a) => hours(a.createdAt, a.decidedAt!)));

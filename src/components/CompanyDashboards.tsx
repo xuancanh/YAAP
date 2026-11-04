@@ -13,7 +13,7 @@ import {
 } from '../lib/api';
 import { sectionDef, type CompanySection } from '../lib/company-nav';
 import {
-  boardCounts, budgetLines, capitalByGoal, directionLede, findingsCount, flatUnits, incidentHistory, laneCounts, moneyLede, nextRituals, objectivesOf,
+  boardCounts, budgetLines, capitalByGoal, directionLede, spendWindowLabel, findingsCount, flatUnits, incidentHistory, laneCounts, moneyLede, nextRituals, objectivesOf,
   operationsLede, oversightLede, pausedMembers, peopleLede, yesterdayKey,
 } from '../lib/company-dash';
 import { atRiskByUnit, firesOn, flattenIntent, MEETING_KIND_TITLES } from '../lib/org';
@@ -421,22 +421,26 @@ function MoneyDashboard({ org }: { org: OrgDetail }) {
   const allocations = useData<OrgAllocation[]>(api.orgAllocations, ws);
   const titles = useMemo(() => new Map(flattenIntent(app.orgIntent ?? []).map((g) => [g.id, g.title])), [app.orgIntent]);
   const cap = spend?.company.monthlyUsd ?? org.monthlyBudgetUsd ?? 0;
-  const used = spend ? spend.company.usd + spend.company.reservedUsd : 0;
+  // Spent is settled spend, the Spend page's and Home's figure; what is held for runs in flight is said beside it.
+  const used = spend ? spend.company.usd : 0;
+  const held = spend?.company.reservedUsd ?? 0;
+  const period = spend ? spendWindowLabel(spend.month) : 'this month';
   const capital = allocations ? capitalByGoal(allocations, (id) => titles.get(id)) : [];
   const budgets = spend ? budgetLines(spend) : [];
+  const unenveloped = budgets.filter((b) => b.key.startsWith('a:') && b.pct === null);
   const warn = forecast ? [...forecast.agents, ...forecast.projects, ...forecast.objectives].filter((f) => f.state !== 'onTrack').slice(0, 4) : [];
   const series = spend?.series.slice(-30) ?? [];
   const peak = Math.max(0.000001, ...series.map((d) => d.usd));
   return (
     <>
-      <Lede section="money" state={spend === undefined ? null : spend ? moneyLede(used, cap, forecast ? forecast.company.projectedUsd : null, fmtUsd) : 'Spend is not available.'} />
+      <Lede section="money" state={spend === undefined ? null : spend ? moneyLede(used, cap, forecast ? forecast.company.projectedUsd : null, fmtUsd, period) : 'Spend is not available.'} />
       <Grid>
-        <Card id="spend" title="This month" lead open={() => open('spend')} openLabel="Open spend">
+        <Card id="spend" title="This month" lead open={() => open('spend')} openLabel="Open spend" aside={spend ? <span style={faint}>{period} (UTC) to date</span> : undefined}>
           {spend === undefined ? <Loading /> : !spend ? <Empty>Spend is not available.</Empty> : (
             <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-end' }}>
               <div style={{ flex: '1 1 300px', minWidth: 0 }}>
                 <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginBottom: 10 }}>
-                  <Fig n={fmtUsd(used)} label={cap > 0 ? `of ${fmtUsd(cap)}` : 'no envelope'} />
+                  <Fig n={fmtUsd(used)} label={`${cap > 0 ? `of ${fmtUsd(cap)}` : 'no envelope'}${held > 0 ? ` · ${fmtUsd(held)} held for runs in flight` : ''}`} />
                   {forecast && <Fig n={fmtUsd(forecast.company.projectedUsd)} label="forecast" tone={forecast.company.state === 'stop' ? 'var(--red)' : forecast.company.state === 'warn' ? 'var(--amber)' : undefined} />}
                   {spend.costPerAcceptedTask !== null && <Fig n={fmtUsd(spend.costPerAcceptedTask)} label="per accepted task" />}
                 </div>
@@ -451,13 +455,17 @@ function MoneyDashboard({ org }: { org: OrgDetail }) {
           )}
         </Card>
         <Card id="budgets" title="Budgets" open={() => open('spend')} openLabel="Set budgets">
-          {spend === undefined ? <Loading /> : budgets.length === 0 ? <Empty>No agent or project has its own envelope yet.</Empty> : budgets.map((b) => (
-            <div key={b.key} style={row}>
-              <span style={{ ...ellipsis, flex: '1 1 40%' }}>{b.label}</span>
-              <Bar value={b.pct} color={b.pct >= 1 ? 'var(--red)' : b.pct >= 0.8 ? 'var(--amber)' : 'var(--green)'} label={`${b.label} against its envelope`} />
-              <span style={{ ...faint, ...num, width: 96, textAlign: 'right' }}>{fmtUsd(b.usd)} / {fmtUsd(b.cap)}</span>
-            </div>
-          ))}
+          {spend === undefined ? <Loading /> : budgets.length === 0 ? <Empty>Nobody has spent this month, and no agent or project has its own envelope yet.</Empty> : <>
+            {budgets.slice(0, 6).map((b) => (
+              <div key={b.key} style={row}>
+                <span style={{ ...ellipsis, flex: '1 1 40%' }}>{b.label}</span>
+                {b.pct !== null ? <Bar value={b.pct} color={b.pct >= 1 ? 'var(--red)' : b.pct >= 0.8 ? 'var(--amber)' : 'var(--green)'} label={`${b.label} against its envelope`} /> : <span style={{ ...faint, flex: 1, minWidth: 40 }}>no envelope</span>}
+                <span style={{ ...faint, ...num, width: 96, textAlign: 'right' }}>{fmtUsd(b.usd)}{b.pct !== null ? ` / ${fmtUsd(b.cap)}` : ''}</span>
+              </div>
+            ))}
+            {budgets.length > 6 && <div style={{ ...faint, marginTop: 4 }}>{budgets.length - 6} more on the Spend page.</div>}
+            {unenveloped.length > 0 && spend && <div style={{ ...faint, marginTop: 6 }}>{fmtUsd(unenveloped.reduce((n, b) => n + b.usd, 0))} of {fmtUsd(spend.company.usd)} was spent by members without their own envelope; only the company envelope caps it.</div>}
+          </>}
         </Card>
         <Card id="capital" title="Capital by goal" open={() => open('capital')} openLabel="Open capital">
           {allocations === undefined ? <Loading /> : capital.length === 0 ? <Empty>No capital allocated to goals yet.</Empty> : capital.slice(0, 5).map((c) => (

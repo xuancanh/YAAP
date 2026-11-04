@@ -343,9 +343,15 @@ first (`dayBuckets`, `SERIES_DAYS` in `home.service.ts`):
 
 - `recap.doneSeries`: tasks done per day (org tasks by `doneAt`; without a
   company, agent tasks by their last update while done);
-- `spend.series`: spend per day, company runs (`OrgRuntimeService.spendTree`)
-  plus chat, loop and channel turns (`UsageService.workspaceUsage`, asked
-  for at least 14 days; the month total sums this month's days).
+- `spend.series`: spend per day. With a company, every spend figure on Home
+  (today, the month, the series) is the company's spend ledger
+  (`server/src/org/spend-ledger.ts` through `OrgRuntimeService.spendTree`):
+  task runs plus what meetings, reviews, planning and audits charge the
+  envelopes — the same numbers as Money › Spend, the Money dashboard, the
+  forecast, the Pulse and the brief, over the UTC month to date. The chat
+  ledger is not added: it prices the same run turns again. Without a
+  company, chat, loop and channel turns (`UsageService.workspaceUsage`,
+  asked for at least 14 days; the month total sums this month's days).
 
 `HomeNeed.task` carries the key and title of the task a card is about
 (escalations and reviews, from the card's `taskId`), and

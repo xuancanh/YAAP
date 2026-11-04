@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { ConfigService } from '@nestjs/config';
 import { eq } from 'drizzle-orm';
 import { orgAudit, orgPlans, orgRuns } from '../server/src/database/schema';
+import { monthWindow, overheadEntries } from '../server/src/org/spend-ledger';
 import { testDb, memStorage, ctxStub, skillsStub, mcpStub, ScriptedProvider } from './helpers';
 import type { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import { ChatsRepository } from '../server/src/chats/chats.repository';
@@ -170,6 +171,47 @@ test('task class: set by the creator or derived by the one shared heuristic (cla
   assert.deepEqual((await s.runtime.spendTree(orgId)).byClass, { research: 3, synthesis: 5, review: 2, ops: 1 });
   assert.deepEqual((await s.slo.compute(orgId)).spendByClassUsd, { research: 3, synthesis: 5, review: 2, ops: 1 });
   assert.match(await s.runtime.execute(chiefSession, 'org_pulse', {}), /spend by class \(7d\): synthesis \$5\.00, research \$3\.00/);
+});
+
+test('one spend ledger: task runs plus what meetings, reviews and audits charge the envelopes — the Spend page, the forecast, cost per outcome, the pulse and the brief show the same month, and the members add up to the company', async () => {
+  const s = await setup();
+  const orgId = await enable(s, 'supervised', 50);
+  const t = await s.tasks.create(orgId, { title: 'Draft', assigneeAgentId: s.writer.id });
+  s.runtime.cancelWakesFor(orgId, s.writer.id);
+  await seedRun(s, orgId, t.id, s.writer.id, 3);
+  // a task run's commit (its run row is the entry), a meeting the chief facilitated (no run row)
+  await s.runtime.settle(orgId, { agentId: s.writer.id, projectId: null }, 0, 3, 'task');
+  await s.runtime.settle(orgId, { agentId: s.chief.id, projectId: null }, 0, 2, 'meeting');
+  // commits from before sources were recorded: one matches the writer's run, one (the editor's review) does not
+  await s.audit.append(orgId, { actor: 'system', action: 'spend_commit', refType: 'agent', refId: s.writer.id, payload: { usd: 3 } });
+  await s.audit.append(orgId, { actor: 'system', action: 'spend_commit', refType: 'agent', refId: s.editor.id, payload: { usd: 0.5 } });
+  const tree = await s.runtime.spendTree(orgId);
+  assert.equal(tree.company.usd, 5.5);
+  assert.equal(tree.company.overheadUsd, 2.5);
+  assert.equal(tree.company.runs, 1, 'runs are task runs');
+  assert.deepEqual(tree.members.map((m) => [m.name, m.usd]).sort(), [['Chief', 2], ['Editor', 0.5], ['Writer', 3]]);
+  assert.equal(tree.members.reduce((n, m) => n + m.usd, 0), tree.company.usd, 'the members add up to the company');
+  assert.equal(tree.company.todayUsd, 5.5);
+  assert.ok(tree.window.from.endsWith('-01T00:00:00.000Z'));
+  assert.equal(tree.series.reduce((n, d) => n + d.usd, 0), 5.5);
+  assert.equal((await s.capital.forecast(orgId)).company.spentUsd, 5.5);
+  assert.equal((await s.capital.forecast(orgId)).agents.find((a) => a.refId === s.chief.id)!.spentUsd, 2);
+  const c = await s.capital.costByGoal(orgId, { period: 'month' });
+  assert.equal(c.totalUsd, 5.5); assert.equal(c.unlinkedUsd, 5.5);
+  assert.equal((await s.slo.compute(orgId)).spendVsEnvelopePct, 11);
+  assert.match((await s.brief.compose(orgId, { deliver: false })).text, /- Company: \$5\.50 this month of \$50\.00/);
+});
+
+test('overheadEntries: a sourced task commit is skipped, a legacy commit matching a run is skipped, the rest is overhead', () => {
+  const e = overheadEntries([
+    { refId: 'a', payload: JSON.stringify({ usd: 1.2345671 }), createdAt: '2026-11-03T10:00:00.000Z' },
+    { refId: 'a', payload: JSON.stringify({ usd: 0.4 }), createdAt: '2026-11-03T10:01:00.000Z' },
+    { refId: 'b', payload: JSON.stringify({ usd: 2, source: 'task' }), createdAt: '2026-11-03T10:02:00.000Z' },
+    { refId: 'b', payload: JSON.stringify({ usd: 0.7, source: 'minutes' }), createdAt: '2026-11-03T10:03:00.000Z' },
+    { refId: 'b', payload: 'not json', createdAt: '2026-11-03T10:04:00.000Z' },
+  ], [{ agentId: 'a', usd: 1.234567 }, { agentId: 'b', usd: 2 }]);
+  assert.deepEqual(e.map((x) => [x.agentId, x.usd, x.source]), [['a', 0.4, 'other'], ['b', 0.7, 'minutes']]);
+  assert.deepEqual(monthWindow(new Date('2026-11-04T09:00:00.000Z')), { month: '2026-11', from: '2026-11-01T00:00:00.000Z', to: '2026-11-04T09:00:00.000Z' });
 });
 
 // ---- 2. the overspend flag ----

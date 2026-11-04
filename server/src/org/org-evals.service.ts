@@ -306,7 +306,7 @@ export class OrgEvalsService {
       await this.audit.append(orgId, { actor: 'system', action: 'eval_end', refType: 'eval_run', refId: row.id, payload: { roleKey, verdict, passRate, baselinePassRate: baseline.passRate, usd: Number(spent.toFixed(6)) } });
       return this.getRun(orgId, row.id);
     } finally {
-      await this.runtime.settle(orgId, { agentId: member.agentId, projectId: null }, cap, spent);
+      await this.runtime.settle(orgId, { agentId: member.agentId, projectId: null }, cap, spent, 'eval');
     }
   }
 

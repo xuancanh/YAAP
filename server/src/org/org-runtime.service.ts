@@ -62,6 +62,7 @@ import { eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { agentTypes, orgApprovals, orgBudgets, orgTasks } from '../database/schema';
+import { monthWindow, spendLedger, sumUsd, type SpendEntry } from './spend-ledger';
 import { nowIso } from '../common/ids.util';
 import { AccountsService } from '../accounts/accounts.service';
 import { AgentsService } from '../agents/agents.service';
@@ -493,7 +494,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       ctx.plan ? `Structural actions (hire, reorg, terminate, scope widening, budget raise, routing, tuning) are collected into one plan the CEO sees as a diff with a cost estimate; it applies ${vetoMinutes === 0 ? 'at once' : `after a ${vetoMinutes}-minute veto window`}. Assignments and tasks apply immediately.` : '',
     ].filter(Boolean).join('\n\n');
     const r = await this.taskFreeTurn(ctx, prompt, model);
-    await this.settle(orgId, { agentId: chiefId, projectId: null }, estimate, r.usd);
+    await this.settle(orgId, { agentId: chiefId, projectId: null }, estimate, r.usd, 'review');
     const status = ctx.loopDetected ? 'loop' : r.error ? 'failed' : 'done';
     const plan = ctx.plan && ctx.plan.actions.length > 0 ? await this.capital!.createPlan(orgId, ctx.plan, { runUsd: r.usd }).catch(() => null) : null;
     await this.audit.append(orgId, { actor: 'system', action: 'chief_review_end', refType: 'org', refId: orgId, payload: { trigger, status, acted: ctx.progress, planId: plan?.id ?? null, tokensIn: r.tokensIn, tokensOut: r.tokensOut, usd: Number(r.usd.toFixed(6)) } });
@@ -767,7 +768,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     await this.audit.append(orgId, { actor: 'system', action: dryRun ? 'planning_dry_run_start' : 'planning_start', refType: 'unit', refId: unit.id, payload: { trigger: opts.trigger, reasons, facilitator: leadId, estimateUsd: estimate, assume: opts.dryRun?.assumeMonthlyUsd } });
     const prompt = await this.planningPrompt(org, unit, isChief, opts.trigger, reasons, ws, plan ? { vetoMinutes: tunable(org, 'capital.vetoWindowMinutes'), dryRun: opts.dryRun } : undefined);
     const r = await this.taskFreeTurn(ctx, prompt, model);
-    await this.settle(orgId, { agentId: leadId, projectId: null }, estimate, r.usd);
+    await this.settle(orgId, { agentId: leadId, projectId: null }, estimate, r.usd, 'planning');
     const status = ctx.loopDetected ? 'loop' : r.error ? 'failed' : 'done';
     const planRow = plan && (dryRun || plan.actions.length > 0) && this.capital ? await this.capital.createPlan(orgId, plan, { runUsd: r.usd }).catch(() => null) : null;
     await this.audit.append(orgId, { actor: 'system', action: dryRun ? 'planning_dry_run_end' : 'planning_end', refType: 'unit', refId: unit.id, payload: { trigger: opts.trigger, status, acted: ctx.progress, planId: planRow?.id ?? null, tokensIn: r.tokensIn, tokensOut: r.tokensOut, usd: Number(r.usd.toFixed(6)) } });
@@ -1039,7 +1040,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     }
 
     const usd = (usdFor(model, tokensIn, tokensOut) ?? (tokensIn * FALLBACK_PRICE.input + tokensOut * FALLBACK_PRICE.output) / 1_000_000);
-    await this.settle(orgId, { agentId, projectId: task.projectId }, estimate, usd);
+    await this.settle(orgId, { agentId, projectId: task.projectId }, estimate, usd, 'task');
     const after = await this.tasks.get(orgId, taskId);
     const orgNow = await this.org.get(orgId);
     const killed = orgNow.status !== 'active';
@@ -1178,11 +1179,15 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     return { ok: true };
   }
 
-  async settle(orgId: string, scopeIds: { agentId: string; projectId: string | null }, reserved: number, actual: number): Promise<void> {
+  /** Release the reservation and charge what was spent. `source` says what
+   *  spent it: 'task' for a task run (its run row is the ledger entry), else
+   *  the kind of turn ('meeting', 'review', …) — the `spend_commit` row is
+   *  then the only record, which the spend ledger reads (spend-ledger.ts). */
+  async settle(orgId: string, scopeIds: { agentId: string; projectId: string | null }, reserved: number, actual: number, source = 'other'): Promise<void> {
     for (const b of await this.envelopes(orgId, scopeIds)) {
       await this.db.update(orgBudgets).set({ reservedUsd: Math.max(0, b.reservedUsd - reserved), spentUsd: b.spentUsd + actual }).where(eq(orgBudgets.id, b.id));
     }
-    if (actual > 0) await this.audit.append(orgId, { actor: 'system', action: 'spend_commit', refType: 'agent', refId: scopeIds.agentId, payload: { usd: Number(actual.toFixed(6)) } });
+    if (actual > 0) await this.audit.append(orgId, { actor: 'system', action: 'spend_commit', refType: 'agent', refId: scopeIds.agentId, payload: { usd: Number(actual.toFixed(6)), source } });
   }
 
   private async envelopes(orgId: string, scopeIds: { agentId: string; projectId: string | null }) {
@@ -1220,37 +1225,61 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     }).catch(() => {});
   }
 
-  /** Spend tree for the UI: company → projects → agents, each with cap,
-   *  spent (from runs this month) and reserved. */
+  /** Spend tree for the UI: company → projects → members, each with cap,
+   *  spent and reserved, over `window` (the UTC month to now). Every figure
+   *  comes from the spend ledger (spend-ledger.ts): the company's `usd` is
+   *  every dollar charged to its envelope — task runs plus meetings, reviews,
+   *  planning, audits — and the members' `usd` add up to it (a member that
+   *  has left but spent this month is listed with its status). A project's
+   *  spend is its tasks' runs. `reservedUsd` is held for runs in flight, not
+   *  spent. `series` is the trailing 30 days from the same ledger. */
   async spendTree(orgId: string, now = new Date()) {
     const org = await this.org.get(orgId);
-    const month = now.toISOString().slice(0, 7);
-    const runs = (await this.tasks.runs(orgId, { limit: 500 })).filter((r) => r.startedAt.slice(0, 7) === month);
+    const { month, from, to } = monthWindow(now);
+    const seriesFrom = new Date(now.getTime() - 29 * 86_400_000); seriesFrom.setUTCHours(0, 0, 0, 0);
+    const ledger = await spendLedger(this.db, orgId, seriesFrom.toISOString() < from ? seriesFrom.toISOString() : from, to);
+    const entries = ledger.filter((e) => e.at >= from);
+    const today = to.slice(0, 10);
     const tasks = await this.tasks.list(orgId);
     const budgets = await this.org.budgets(orgId);
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
     const capOf = (scope: string, refId: string) => budgets.find((b) => b.scope === scope && b.refId === refId);
-    const sum = (rs: typeof runs) => rs.reduce((acc, r) => ({ usd: acc.usd + r.usd, tokensIn: acc.tokensIn + r.tokensIn, tokensOut: acc.tokensOut + r.tokensOut, runs: acc.runs + 1 }), { usd: 0, tokensIn: 0, tokensOut: 0, runs: 0 });
+    const sum = (es: SpendEntry[]) => es.reduce((acc, e) => ({ usd: acc.usd + e.usd, tokensIn: acc.tokensIn + e.tokensIn, tokensOut: acc.tokensOut + e.tokensOut, runs: acc.runs + (e.source === 'task' ? 1 : 0) }), { usd: 0, tokensIn: 0, tokensOut: 0, runs: 0 });
+    const overhead = (es: SpendEntry[]) => sumUsd(es.filter((e) => e.source !== 'task'));
     const projects = (await this.org.projects(orgId)).map((p) => {
       const taskIds = new Set(tasks.filter((t) => t.projectId === p.id).map((t) => t.id));
       const b = capOf('project', p.id);
-      return { id: p.id, title: p.title, ...sum(runs.filter((r) => taskIds.has(r.taskId))), monthlyUsd: b?.monthlyUsd ?? 0, reservedUsd: b?.reservedUsd ?? 0 };
+      return { id: p.id, title: p.title, ...sum(entries.filter((e) => e.taskId !== null && taskIds.has(e.taskId))), monthlyUsd: b?.monthlyUsd ?? 0, reservedUsd: b?.reservedUsd ?? 0 };
     });
-    const members = (await this.org.members(orgId)).filter((m) => m.status !== 'terminated').map((m) => {
+    const spenders = new Set(entries.filter((e) => e.usd > 0).map((e) => e.agentId));
+    const members = (await this.org.members(orgId)).filter((m) => m.status !== 'terminated' || spenders.has(m.agentId));
+    const listed = new Set(members.map((m) => m.agentId));
+    const rows = [
+      ...members.map((m) => ({ agentId: m.agentId, title: m.title, status: m.status as string })),
+      // Charged to the company without a seat (rare: a seat removed outright); listed so the members add up.
+      ...[...spenders].filter((id) => !listed.has(id)).map((agentId) => ({ agentId, title: '', status: 'terminated' })),
+    ];
+    const memberRows = rows.map((m) => {
       const b = capOf('agent', m.agentId);
-      return { agentId: m.agentId, name: names.get(m.agentId) ?? m.agentId, title: m.title, ...sum(runs.filter((r) => r.agentId === m.agentId)), monthlyUsd: b?.monthlyUsd ?? 0, reservedUsd: b?.reservedUsd ?? 0 };
+      const mine = entries.filter((e) => e.agentId === m.agentId);
+      return {
+        agentId: m.agentId, name: names.get(m.agentId) ?? m.agentId, title: m.title, status: m.status, ...sum(mine), overheadUsd: overhead(mine),
+        todayUsd: sumUsd(mine.filter((e) => e.at.slice(0, 10) === today)), monthlyUsd: b?.monthlyUsd ?? 0, reservedUsd: b?.reservedUsd ?? 0,
+      };
     });
     const company = capOf('company', orgId);
-    const accepted = tasks.filter((t) => t.status === 'done').length;
-    const total = sum(runs);
-    // Capital (docs/company-vision.md §7): USD by task class, the routing lever's readout.
+    // Accepted in the window, as Capital's cost per outcome counts them (not every task ever done).
+    const accepted = tasks.filter((t) => t.status === 'done' && t.updatedAt >= from).length;
+    const total = sum(entries);
+    // Capital (docs/company-vision.md §7): USD by task class, the routing lever's readout (task runs only).
     const classByTask = new Map(tasks.map((t) => [t.id, t.class]));
     const byClass: Record<string, number> = {};
-    for (const r of runs) { const c = classByTask.get(r.taskId) ?? 'general'; byClass[c] = (byClass[c] ?? 0) + r.usd; }
+    for (const e of entries) if (e.taskId !== null) { const c = classByTask.get(e.taskId) ?? 'general'; byClass[c] = (byClass[c] ?? 0) + e.usd; }
     return {
-      month, company: { ...total, monthlyUsd: company?.monthlyUsd ?? org.monthlyBudgetUsd, reservedUsd: company?.reservedUsd ?? 0 },
-      projects, members, acceptedTasks: accepted, costPerAcceptedTask: accepted > 0 ? total.usd / accepted : null,
-      byClass, series: dailySeries(runs, now),
+      month, window: { from, to },
+      company: { ...total, overheadUsd: overhead(entries), todayUsd: sumUsd(entries.filter((e) => e.at.slice(0, 10) === today)), monthlyUsd: company?.monthlyUsd ?? org.monthlyBudgetUsd, reservedUsd: company?.reservedUsd ?? 0 },
+      projects, members: memberRows, acceptedTasks: accepted, costPerAcceptedTask: accepted > 0 ? total.usd / accepted : null,
+      byClass, series: dailySeries(ledger.map((e) => ({ startedAt: e.at, tokensIn: e.tokensIn, tokensOut: e.tokensOut, usd: e.usd })), now),
     };
   }
 

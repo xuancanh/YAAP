@@ -902,7 +902,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
       emit({ kind: 'typing', on: false });
     }
     const usd = this.runtime.costUsd(input.model, tokensIn, tokensOut);
-    await this.runtime.settle(orgId, { agentId, projectId: null }, input.estimate, usd);
+    await this.runtime.settle(orgId, { agentId, projectId: null }, input.estimate, usd, 'meeting');
     const clean = answer.replace(/\n?QUICK_REPLIES:\s*\[[\s\S]*?\]\s*$/, '').trim();
     const passed = ctx.passed && !ctx.spoke;
     if (!ctx.spoke && !ctx.passed && !input.closing && clean) {
