@@ -27,6 +27,8 @@ export function useOpenMeeting() {
     const ch = app.channels.find((c) => c.id === m.channelId);
     if (ch && m.threadRootId) app.openChannel(ch.slug, m.threadRootId);
     else if (ch) app.openChannel(ch.slug);
+    // A closed sub-channel is not in the rail's list: the meeting's room still opens.
+    else if (m.parentChannelId) openMeetingView(app.workspaceId, m.id);
     else app.showToast(m.status === 'scheduled' ? 'The meeting has not started yet' : 'This meeting has no channel thread');
   }, [app]);
 }

@@ -98,6 +98,10 @@ describe('room helpers', () => {
     expect(rows[2].minutes).toBeGreaterThanOrEqual(4);
     expect(agendaRows(parseRoom(m.room), 'scheduled').every((r) => r.state === 'upcoming')).toBe(true);
     expect(agendaRows(parseRoom(m.room), 'done').some((r) => r.state === 'current')).toBe(false);
+    // ended part-way: nothing is "up next" — what it never reached is unreached; what it covered stays done/skipped
+    const ended = agendaRows(parseRoom(m.room), 'done', parseMinutes(m.minutes)).map((r) => r.state);
+    expect(ended).toEqual(['done', 'skipped', 'unreached', 'parked', 'unreached']);
+    expect(agendaRows(parseRoom(m.room), 'cancelled').some((r) => r.state === 'upcoming')).toBe(false);
   });
   it('turns fold consecutive messages of one author; system lines stand alone', () => {
     const turns = foldTurns(THREAD().slice(1));
@@ -296,6 +300,29 @@ describe('the full-screen room', () => {
     expect(screen.queryByRole('button', { name: 'End' })).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));
     await waitFor(() => expect(screen.getAllByTestId('mv-turn').length).toBeGreaterThan(0));
+  });
+
+  it('an ended meeting reads as a record: its duration and how it ended, items covered and skipped, who attended — no running clock, no waiting seats, no "up next"', async () => {
+    window.history.replaceState(null, '', '/#/ws/ws1/meeting/m1');
+    // ended at the budget cap during item 3 of 5, 5 minutes after it started
+    respond = (url) => (url.includes('/org/humans') ? humans('ceo') : url.includes('/messages') ? { messages: THREAD(), replies: {}, hasMore: false } : url.includes('/chat/channels/') ? { id: 'c1', slug: 'company', members: [] }
+      : meeting({ status: 'done', startedAt: ago(60), endedAt: ago(55) }, { speaking: null, attendance: { a1: 'waiting' }, present: [] }, { endedBy: 'usd_cap', parked: [] }));
+    render(<MeetingView wsId="ws1" meetingId="m1" />);
+    await screen.findByTestId('mv-summary');
+    expect(screen.getByTestId('mv-ended').textContent).toMatch(/^5 min.*Ended/);
+    expect(screen.getByTestId('mv-ended').textContent).toMatch(/stopped at the USD cap/);
+    expect(screen.getByTestId('mv-elapsed').textContent).not.toMatch(/:/); // a duration, not a clock
+    expect(screen.queryByText(/of ~\d+ min/)).toBeNull();
+    expect(screen.getByTestId('mv-covered').textContent).toContain('1/5');
+    expect(screen.getByTestId('mv-skipped').textContent).toContain('4');
+    const items = screen.getAllByTestId('mv-item');
+    expect(items.map((i) => i.getAttribute('data-state'))).toEqual(['done', 'skipped', 'unreached', 'unreached', 'unreached']);
+    expect(items.some((i) => /up next/.test(i.textContent ?? ''))).toBe(false);
+    expect(items[2].textContent).toContain('not reached');
+    const seats = screen.getAllByTestId('mv-seat');
+    expect(seats.some((x) => /waiting|not joined/.test(x.textContent ?? ''))).toBe(false);
+    expect(seats.filter((x) => /attended/.test(x.textContent ?? ''))).toHaveLength(3);
+    expect(seats.find((x) => /Linh/.test(x.textContent ?? ''))!.textContent).toContain('did not join');
   });
 
   it('on a phone the columns are tabs', async () => {

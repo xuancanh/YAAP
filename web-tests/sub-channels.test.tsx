@@ -183,6 +183,27 @@ describe('ChannelView renders a sub-channel like a channel', () => {
     expect(screen.getByText(/Closed — read-only/)).toBeTruthy();
   });
 
+  it('closing the full-screen meeting room comes back to the tab the channel was on; another channel starts on Messages', async () => {
+    store('general', [general, launch]);
+    respond = (url) => (url.includes('/messages') ? { messages: [], replies: {}, hasMore: false } : url.includes('/meetings') ? { from: '', to: '', now: '', hasOrg: false, meetings: [] } : url.endsWith('/chat/channels/general') ? detailOf(general) : url.endsWith('/chat/channels/launch') ? detailOf(launch) : {});
+    const first = render(<ChannelView />);
+    await waitFor(() => screen.getByRole('button', { name: 'meetings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'meetings' }));
+    await waitFor(() => expect(document.body.textContent).toMatch(/Meetings run in organization mode/));
+    // the room opens over it (the view unmounts) and closes again
+    first.unmount();
+    const again = render(<ChannelView />);
+    await waitFor(() => expect(document.body.textContent).toMatch(/Meetings run in organization mode/));
+    // another channel opens on its Messages
+    fake.currentChannel = 'launch';
+    again.rerender(<ChannelView />);
+    await waitFor(() => expect(document.body.textContent).not.toMatch(/Meetings run in organization mode/));
+    again.unmount();
+    render(<ChannelView />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(document.body.textContent).not.toMatch(/Meetings run in organization mode/);
+  });
+
   it('a parent channel draws the link card and offers "Start a discussion"', async () => {
     store('general', [general, copy]);
     const card = { id: 'card1', channelId: 'c-general', threadRootId: null, authorKind: 'system', authorId: '', text: '🗣 Discussion: Launch copy · 3 members · live · #discuss-launch-copy', attachments: JSON.stringify([{ path: 'subchannel/s-copy', kind: 'subchannel' }]), mentions: '[]', taskId: null, runId: null, unprompted: 0, editedAt: null, createdAt: at };

@@ -292,7 +292,7 @@ function AgendaRail({ wsId, m, rows, onChanged }: { wsId: string; m: OrgMeeting;
                   <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, fontSize: 11, color: 'var(--text-faint)' }}>
                     <span style={{ color: s.color }}>{s.label}{r.how === 'time' ? ' · time ran out' : ''}</span>
                     <span style={{ marginLeft: 'auto', ...mono }}>
-                      {cur ? `${mmss(r.minutes ?? 0)} / ${room.itemMinutes}:00` : r.minutes !== null ? `${mmss(r.minutes)}` : `${room.itemMinutes} min`}
+                      {cur ? `${mmss(r.minutes ?? 0)} / ${room.itemMinutes}:00` : r.minutes !== null ? `${mmss(r.minutes)}` : r.state === 'unreached' ? '' : `${room.itemMinutes} min`}
                     </span>
                   </span>
                   {cur && <span style={{ display: 'block', marginTop: 5 }}><Meter value={r.minutes ?? 0} max={room.itemMinutes} width="100%" label={`Time box of item ${r.index + 1}`} /></span>}
@@ -594,10 +594,22 @@ function RoomPanel({ wsId, m, strip, live, me, nameOf, onChanged }: {
   const ended = m.status === 'done' || m.status === 'cancelled';
   const box = room.items.length * room.itemMinutes;
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1_000); return () => clearInterval(t); }, []);
+  // Only a meeting still ahead or running needs a ticking clock; an ended one is a record.
+  useEffect(() => { if (ended) return; const t = setInterval(() => setNow(Date.now()), 1_000); return () => clearInterval(t); }, [ended]);
   const elapsedMin = m.startedAt ? Math.max(0, ((m.endedAt ? Date.parse(m.endedAt) : now) - Date.parse(m.startedAt)) / 60_000) : 0;
   const tokens = (m.tokensIn ?? 0) + (m.tokensOut ?? 0);
   const itemMin = running ? minutesSince(room.itemStartedAt) : 0;
+  const rows = agendaRows(room, m.status, minutes);
+  const covered = rows.filter((r) => r.state === 'done').length;
+  const skipped = rows.filter((r) => r.state === 'skipped').length;
+  const unreached = rows.filter((r) => r.state === 'unreached').length;
+  const endedHow = minutes.endedBy === 'stopped' ? 'stopped in the thread' : minutes.endedBy === 'usd_cap' ? 'stopped at the USD cap' : minutes.endedBy === 'ended' ? 'ended by a person' : m.status === 'cancelled' ? 'cancelled' : 'closed by the facilitator';
+  /** An ended meeting's seats read as a record: who attended, who joined. */
+  const seatLabel = (s: ReturnType<typeof seats>[number]): { label: string; color: string } => {
+    if (!ended) return { label: s.state === 'speaking' ? 'speaking now' : SEAT[s.state].label, color: s.state === 'idle' || s.state === 'away' ? 'var(--text-faint)' : SEAT[s.state].color };
+    if (s.kind === 'human') return s.state === 'present' ? { label: 'joined', color: 'var(--text-dim)' } : { label: 'did not join', color: 'var(--text-faint)' };
+    return { label: 'attended', color: 'var(--text-dim)' };
+  };
   const control = async (action: 'extend' | 'skip' | 'end', done: string) => {
     if (action === 'end' && !confirm('End the meeting after the current turn? The facilitator closes it and writes the minutes.')) return;
     setBusy(true);
@@ -618,6 +630,15 @@ function RoomPanel({ wsId, m, strip, live, me, nameOf, onChanged }: {
   return (
     <>
       <section aria-label="Stats" data-testid="mv-stats" style={{ display: 'grid', gap: 10, paddingBottom: 14, borderBottom: '1px solid var(--border-soft, var(--border))' }}>
+        {ended ? (
+          <div data-testid="mv-ended" style={{ display: 'grid', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <span data-testid="mv-elapsed" style={{ ...mono, fontSize: 30, fontWeight: 600, letterSpacing: '-1px', lineHeight: 1 }}>{m.startedAt && m.endedAt ? `${Math.max(0, Math.round(elapsedMin))} min` : '—'}</span>
+              <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{m.status === 'cancelled' ? 'Cancelled' : 'Ended'}{m.endedAt ? ` ${new Date(m.endedAt).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+            </div>
+            <div style={faint}>{endedHow}{box ? ` · time box ~${box} min` : ''}</div>
+          </div>
+        ) : (
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
           {m.startedAt || !m.scheduledFor
             ? <><span data-testid="mv-elapsed" style={{ ...mono, fontSize: 30, fontWeight: 600, letterSpacing: '-1px', lineHeight: 1 }}>{m.startedAt ? mmss(elapsedMin) : '0:00'}</span>
@@ -625,11 +646,14 @@ function RoomPanel({ wsId, m, strip, live, me, nameOf, onChanged }: {
             : <><span data-testid="mv-elapsed" style={{ ...mono, fontSize: 30, fontWeight: 600, letterSpacing: '-1px', lineHeight: 1 }}>{new Date(m.scheduledFor).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span>
               <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>starts in {Math.max(0, Math.round((Date.parse(m.scheduledFor) - now) / 60_000))} min</span></>}
         </div>
-        {box > 0 && <Meter value={elapsedMin} max={box} width="100%" height={5} label="Elapsed against the whole time box" />}
+        )}
+        {box > 0 && !ended && <Meter value={elapsedMin} max={box} width="100%" height={5} label="Elapsed against the whole time box" />}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: '10px 8px' }}>
           {stat('Round', room.roundCap ? `${Math.max(1, room.round)}/${room.roundCap}` : '—', 'mv-round')}
-          {stat('This item', running && room.current < room.items.length ? `${itemMin}/${room.itemMinutes}m` : '—')}
-          {stat('Skips', room.controls.skip)}
+          {ended
+            ? stat('Covered', rows.length ? `${covered}/${rows.length}` : '—', 'mv-covered')
+            : stat('This item', running && room.current < room.items.length ? `${itemMin}/${room.itemMinutes}m` : '—')}
+          {ended ? stat('Skipped', skipped + unreached, 'mv-skipped') : stat('Skips', room.controls.skip)}
           {stat('Tokens', tokensText(tokens), 'mv-tokens')}
           {stat('Spend', fmtUsd(m.usd), 'mv-usd')}
           {stat('Extended', room.extended)}
@@ -660,12 +684,12 @@ function RoomPanel({ wsId, m, strip, live, me, nameOf, onChanged }: {
       )}
 
       <section aria-label="Attendees" style={{ display: 'grid', gap: 6 }}>
-        <h2 style={heading}>Attendees <span style={count}>{agents.length} agents · {people.filter((p) => p.state === 'present').length}/{people.length} people here</span></h2>
+        <h2 style={heading}>Attendees <span style={count}>{agents.length} agents · {people.filter((p) => p.state === 'present').length}/{people.length} people {ended ? 'joined' : 'here'}</span></h2>
         {[...agents, ...people].map((s) => (
           <div key={`${s.kind}:${s.id}`} data-testid="mv-seat" data-state={s.state} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '3px 0', minWidth: 0 }}>
-            <SeatAvatar seat={s} size={24} />
+            <SeatAvatar seat={s} size={24} as={ended ? seatLabel(s) : undefined} />
             <span style={{ fontSize: 13, minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}{s.facilitator ? ' ★' : ''}{s.kind === 'human' && s.id === me ? ' (you)' : ''}</span>
-            <span style={{ fontSize: 11.5, color: s.state === 'idle' || s.state === 'away' ? 'var(--text-faint)' : SEAT[s.state].color, flex: 'none' }}>{s.state === 'speaking' ? 'speaking now' : SEAT[s.state].label}</span>
+            <span style={{ fontSize: 11.5, color: seatLabel(s).color, flex: 'none' }}>{seatLabel(s).label}</span>
           </div>
         ))}
       </section>

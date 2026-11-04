@@ -136,18 +136,20 @@ export function proposalFor(messageId: string, minutes: Minutes): ProposalRef | 
 
 // ---- the compact room header and the full-screen room ----
 
-export type AgendaState = 'done' | 'current' | 'upcoming' | 'parked' | 'skipped';
+export type AgendaState = 'done' | 'current' | 'upcoming' | 'parked' | 'skipped' | 'unreached';
 export interface AgendaRow { index: number; text: string; state: AgendaState; minutes: number | null; how: 'settled' | 'skipped' | 'time' | null }
 
 /** Each agenda item with where it stands: done (settled, or its time box
  *  ran out), skipped by a person, parked (the facilitator parked a point
  *  naming it), current, or upcoming; with the minutes it took when known.
- *  Before the start every item is upcoming; after the end nothing is current. */
+ *  Before the start every item is upcoming; after the end nothing is current
+ *  and nothing is up next: an item the meeting never reached is unreached. */
 export function agendaRows(room: MeetingRoomState, status: string, minutes?: Minutes | null, now = Date.now()): AgendaRow[] {
   const log = new Map((room.itemLog ?? []).map((x) => [x.index, x]));
   const parked = (minutes?.parked ?? []).map((p) => p.text.toLowerCase());
   const running = status === 'running';
-  const started = running || status === 'done' || status === 'cancelled';
+  const over = status === 'done' || status === 'cancelled';
+  const started = running || over;
   return room.items.map((text, index) => {
     const ended = log.get(index);
     const lower = text.toLowerCase();
@@ -156,6 +158,7 @@ export function agendaRows(room: MeetingRoomState, status: string, minutes?: Min
     if (!started) state = 'upcoming';
     else if (index < room.current) state = ended?.how === 'skipped' ? 'skipped' : isParked ? 'parked' : 'done';
     else if (index === room.current && running) state = isParked ? 'parked' : 'current';
+    else if (over) state = isParked ? 'parked' : ended ? (ended.how === 'skipped' ? 'skipped' : 'done') : 'unreached';
     else state = isParked ? 'parked' : 'upcoming';
     const mins = ended ? ended.minutes : state === 'current' ? (room.itemStartedAt ? Math.max(0, (now - Date.parse(room.itemStartedAt)) / 60_000) : 0) : null;
     return { index, text, state, minutes: mins === null || !Number.isFinite(mins) ? null : Math.round(mins * 10) / 10, how: ended?.how ?? null };

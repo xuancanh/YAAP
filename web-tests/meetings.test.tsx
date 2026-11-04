@@ -1,9 +1,9 @@
 /** The meetings list and calendar (docs/meetings.md): the month grid and
- *  week helpers; MeetingsBoard lists upcoming then past, opens a past
- *  meeting's minutes in Artifacts and an upcoming one's details, draws a
+ *  week helpers; MeetingsBoard lists upcoming then past, opens a held
+ *  meeting's room (its minutes from Minutes) and an upcoming one's details, draws a
  *  month grid (a week agenda at phone width), filters by channel, and says
  *  what to do without an organization. */
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { byDay, dayKey, monthGrid, rangeFor, splitList, weekDays } from '../src/lib/meetings';
 import type { CalendarMeeting, CalendarResponse } from '../src/lib/api';
@@ -102,7 +102,7 @@ describe('MeetingsBoard', () => {
     expect(urls[0]).toMatch(/^\/api\/workspaces\/ws1\/meetings\?from=.*&to=/);
   });
 
-  it('draws a month grid on a wide screen: chips on their day; a past chip opens the minutes, an upcoming one the details', async () => {
+  it('draws a month grid on a wide screen: chips on their day; a past chip opens the meeting, an upcoming one the details', async () => {
     render(<MeetingsBoard wsId="ws1" />);
     await waitFor(() => screen.getAllByTestId('meeting-row'));
     fireEvent.click(screen.getByRole('button', { name: /^calendar$/i }));
@@ -111,7 +111,12 @@ describe('MeetingsBoard', () => {
     expect(grid.querySelectorAll('[data-day]').length % 7).toBe(0);
     const pastDay = grid.querySelector(`[data-day="${dayKey(new Date(response.meetings[0].at))}"]`)!;
     fireEvent.click(within(pastDay as HTMLElement).getByText(/Weekly review · Company/));
-    expect(fake.openFile).toHaveBeenCalledWith({ kind: 'workspace', id: 'ws1' }, 'org/meetings/2026/2026-11-02-company-weekly-review.md');
+    expect(window.location.hash).toBe('#/ws/ws1/meeting/past1'); // the meeting, not its minutes file
+    expect(fake.openFile).not.toHaveBeenCalled();
+    window.location.hash = '';
+    // a meeting with no room left (cancelled, no thread) still opens its minutes
+    fireEvent.click(within(grid).getAllByText(/Launch/).at(-1)!);
+    expect(fake.openFile).toHaveBeenCalledWith({ kind: 'workspace', id: 'ws1' }, 'channels/launch/meetings/2026-11-02-meeting-launch.md');
     // four on one day: three chips and "+1 more", which lists the day under the grid
     const upDay = grid.querySelector(`[data-day="${dayKey(new Date(response.meetings[3].at))}"]`)! as HTMLElement;
     const more = within(upDay).queryByRole('button', { name: '+1 more' });
@@ -122,6 +127,40 @@ describe('MeetingsBoard', () => {
     const before = urls.length;
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await waitFor(() => expect(urls.length).toBeGreaterThan(before));
+  });
+
+  it('clicking a held meeting opens that meeting (not its minutes file, which would reveal it in the Artifacts tree); Minutes opens the file', async () => {
+    render(<MeetingsBoard wsId="ws1" channel="company" />);
+    await waitFor(() => screen.getAllByTestId('meeting-row'));
+    fireEvent.click(screen.getByRole('button', { name: 'Weekly review · Company' }));
+    expect(window.location.hash).toBe('#/ws/ws1/meeting/past1');
+    expect(fake.openFile).not.toHaveBeenCalled();
+    window.location.hash = '';
+    fireEvent.click(within(screen.getAllByTestId('meeting-row')[2]).getByRole('button', { name: 'Minutes' }));
+    expect(fake.openFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('a meeting held in a sub-channel opens there, not in the channel it was called in', async () => {
+    response.meetings = [row({ id: 'm9', meetingId: 'm9', title: 'Retro · Company', kind: 'retro', status: 'cancelled', at: new Date(Date.now() - HOUR).toISOString(), threadRootId: 'root9', subChannelId: 'sub9', subChannelSlug: 'company-retro-1' })];
+    render(<MeetingsBoard wsId="ws1" channel="company" />);
+    await waitFor(() => screen.getAllByTestId('meeting-row'));
+    // its title and View open the room
+    fireEvent.click(screen.getByRole('button', { name: 'Retro · Company' }));
+    expect(window.location.hash).toBe('#/ws/ws1/meeting/m9');
+    window.location.hash = '';
+    expect(within(screen.getByTestId('meeting-row')).queryByRole('button', { name: 'Details' })).toBeNull();
+  });
+
+  it('from the company meeting lists, an ended meeting whose sub-channel closed (not in the rail any more) opens its room instead of a "no thread" toast', async () => {
+    const { useOpenMeeting } = await import('../src/components/OrgMeetingsView');
+    Object.assign(fake, { channels: [{ id: 'c1', slug: 'company' }] });
+    const { result } = renderHook(() => useOpenMeeting());
+    result.current({ id: 'm7', channelId: 'sub-gone', parentChannelId: 'c1', threadRootId: 'r7', status: 'done' } as never);
+    expect(window.location.hash).toBe('#/ws/ws1/meeting/m7');
+    expect(fake.showToast).not.toHaveBeenCalled();
+    window.location.hash = '';
+    result.current({ id: 'm8', channelId: 'c1', parentChannelId: null, threadRootId: 'r8', status: 'done' } as never);
+    expect(fake.openChannel).toHaveBeenCalledWith('company', 'r8');
   });
 
   it('shows the week agenda at phone width and filters by channel', async () => {

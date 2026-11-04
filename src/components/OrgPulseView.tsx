@@ -11,6 +11,7 @@ import { api, type AuditFinding, type OrgAuditRun, type OrgDetail, type OrgMeeti
 import { I, P } from '../lib/icons';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
+import { openMeetingView } from '../lib/meetings';
 import { firesOn, groupSignals, humanCron, MEETING_KIND_TITLES, scoreColor, SEVERITY_COLOR, signalKindLabel, sloTiles, sparkPath } from '../lib/org';
 import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar } from './org-ui';
 
@@ -78,6 +79,8 @@ function openMeeting(app: ReturnType<typeof useApp>, m: OrgMeeting): void {
   const ch = app.channels.find((c) => c.id === m.channelId);
   if (ch && m.threadRootId) app.openChannel(ch.slug, m.threadRootId);
   else if (ch) app.openChannel(ch.slug);
+  // A closed sub-channel is not in the rail's list: the meeting's room still opens.
+  else if (m.parentChannelId) openMeetingView(app.workspaceId, m.id);
   else app.showToast('This meeting has no channel thread');
 }
 

@@ -21,5 +21,6 @@ export const AGENDA_STATE: Record<AgendaState, { label: string; color: string; m
   upcoming: { label: 'up next', color: 'var(--text-faint)', mark: '○' },
   parked: { label: 'parked', color: 'var(--amber)', mark: '∥' },
   skipped: { label: 'skipped', color: 'var(--text-faint)', mark: '↷' },
+  unreached: { label: 'not reached', color: 'var(--text-faint)', mark: '–' },
 };
 export const statusColor = (s: string): string => (s === 'running' ? 'var(--green)' : s === 'done' ? 'var(--text-dim)' : s === 'cancelled' ? 'var(--red)' : 'var(--amber)');

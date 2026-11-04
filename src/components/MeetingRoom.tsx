@@ -29,11 +29,12 @@ const iconBtn: React.CSSProperties = { ...smallBtn, padding: '3px 6px', display:
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)', fontVariantNumeric: 'tabular-nums' };
 
 /** One attendee as a small round avatar ringed by their state (speaking pulses). */
-export function SeatAvatar({ seat, size = 22 }: { seat: Seat; size?: number }) {
+/** `as` overrides the state's label and ring (an ended meeting's seats read as a record). */
+export function SeatAvatar({ seat, size = 22, as }: { seat: Seat; size?: number; as?: { label: string; color: string } }) {
   const app = useApp();
   const agent = seat.kind === 'agent' ? app.agents.find((a) => a.id === seat.id) : undefined;
-  const s = SEAT[seat.state];
-  const dim = seat.state === 'idle' || seat.state === 'away' || seat.state === 'passed';
+  const s = as ?? SEAT[seat.state];
+  const dim = as ? false : seat.state === 'idle' || seat.state === 'away' || seat.state === 'passed';
   return (
     <span data-testid="seat" data-state={seat.state} title={`${seat.name}${seat.facilitator ? ' (facilitator)' : ''}: ${s.label}`}
       style={{ position: 'relative', width: size, height: size, flex: 'none', borderRadius: '50%', boxShadow: `0 0 0 2px var(--panel), 0 0 0 ${seat.state === 'speaking' ? 3.5 : 3}px ${s.color}`, background: seat.kind === 'agent' ? (agent ? grad(agent.colors) : 'linear-gradient(135deg,var(--accent),var(--blue))') : 'var(--accent-dim)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: seat.kind === 'agent' ? size * 0.52 : size * 0.4, fontWeight: 700, color: 'var(--text)', opacity: dim ? 0.55 : 1, animation: seat.state === 'speaking' ? 'pulse 1.4s infinite' : undefined }}>

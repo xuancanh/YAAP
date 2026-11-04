@@ -3,9 +3,10 @@
  *  channel's Meetings tab. One source: GET …/meetings — the meetings held
  *  (with their minutes) and the cadences' upcoming occurrences, each named by
  *  its unit. List: upcoming, then past. Calendar: a month grid, or the week's
- *  agenda at phone width. A past meeting opens its minutes in Artifacts; an
- *  upcoming one opens its details. */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+ *  agenda at phone width. A meeting that was held (or is called) opens its
+ *  room; Minutes opens its minutes in Artifacts; a cadence's upcoming
+ *  occurrence, or a meeting with no room, opens its details. */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../store';
 import { api, type CalendarMeeting, type CalendarResponse } from '../lib/api';
 import { cadenceText } from '../lib/home';
@@ -29,6 +30,8 @@ function saveView(v: View): void {
 }
 
 const statusLabel = (m: CalendarMeeting) => (m.status === 'upcoming' ? 'upcoming' : m.status);
+/** Whether a row has a room to open: a meeting that ran in a thread or a sub-channel, or one called and not started yet. */
+export const hasRoom = (m: CalendarMeeting): boolean => Boolean(m.meetingId && (m.threadRootId || m.subChannelSlug || m.status === 'running' || m.status === 'scheduled' || m.status === 'postponed'));
 
 export function MeetingsBoard({ wsId, unitId, channel, showUnit = true, startIn }: {
   wsId: string; unitId?: string | null; channel?: string | null; showUnit?: boolean;
@@ -58,11 +61,15 @@ export function MeetingsBoard({ wsId, unitId, channel, showUnit = true, startIn 
   }, [wsId, unitId, channel, range]);
   useEffect(() => { void load(); const t = setInterval(() => { void load(); }, 60_000); return () => clearInterval(t); }, [load]);
 
+  // A meeting opens its room (title, calendar chip); its minutes only from Minutes.
   const open = (m: CalendarMeeting) => {
-    if (m.minutesPath && m.status !== 'running') { app.openFile({ kind: 'workspace', id: wsId }, m.minutesPath); return; }
+    if (hasRoom(m)) { openMeetingView(wsId, m.meetingId!); return; }
+    if (m.minutesPath) { app.openFile({ kind: 'workspace', id: wsId }, m.minutesPath); return; }
     setSelected(m);
   };
-  const openThread = (m: CalendarMeeting) => { if (m.channelSlug) app.openChannel(m.channelSlug, m.threadRootId); };
+  const openMinutes = (m: CalendarMeeting) => { if (m.minutesPath) app.openFile({ kind: 'workspace', id: wsId }, m.minutesPath); };
+  // A meeting held in a sub-channel lives there, not in the channel it was called in.
+  const openThread = (m: CalendarMeeting) => { const slug = m.subChannelSlug ?? m.channelSlug; if (slug) app.openChannel(slug, m.threadRootId); };
   // Join: present in the room (heard at the next turn), then the full-screen room.
   const join = (m: CalendarMeeting) => {
     if (!m.meetingId) { openThread(m); return; }
@@ -92,10 +99,14 @@ export function MeetingsBoard({ wsId, unitId, channel, showUnit = true, startIn 
   return (
     <div style={{ ...card, minWidth: 0 }}>
       {header}
-      {starting && startIn && <MeetingStartDialog wsId={wsId} units={[]} channel={startIn} onDone={(m) => { setStarting(false); if (m) { void load(); setTimeout(() => { void api.orgMeeting(wsId, m.id).then((x) => { if (x.threadRootId) app.openChannel(startIn.slug, x.threadRootId); }).catch(() => {}); }, 1500); } }} />}
+      {starting && startIn && <MeetingStartDialog wsId={wsId} units={[]} channel={startIn} onDone={(m) => { setStarting(false); if (m) { void load(); setTimeout(() => { void api.orgMeeting(wsId, m.id).then(async (x) => {
+        // Held in its own sub-channel: open that, not the channel it was called in.
+        if (x.parentChannelId && x.channelId) { const sub = (await api.channels(wsId)).find((c) => c.id === x.channelId); await app.refreshChannels(); if (sub) app.openChannel(sub.slug); return; }
+        if (x.threadRootId) app.openChannel(startIn.slug, x.threadRootId);
+      }).catch(() => {}); }, 1500); } }} />}
       {failed && <div style={{ ...faint, color: 'var(--red)' }}>{failed}</div>}
       {!data && !failed && <div style={faint}>Loading…</div>}
-      {data && view === 'list' && <ListView items={items} open={open} openThread={openThread} join={join} view={viewRoom} showUnit={showUnit} showAll={showAll} setShowAll={setShowAll} />}
+      {data && view === 'list' && <ListView items={items} open={open} openMinutes={openMinutes} join={join} view={viewRoom} showUnit={showUnit} showAll={showAll} setShowAll={setShowAll} />}
       {data && view === 'calendar' && (
         <CalendarView mode={calMode} anchor={anchor} setAnchor={(d) => { setAnchor(d); setDayOpen(null); }} items={items} open={open} dayOpen={dayOpen} setDayOpen={setDayOpen} showUnit={showUnit} />
       )}
@@ -104,14 +115,14 @@ export function MeetingsBoard({ wsId, unitId, channel, showUnit = true, startIn 
   );
 }
 
-function Row({ m, open, join, view, showUnit }: { m: CalendarMeeting; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; join: (m: CalendarMeeting) => void; view: (m: CalendarMeeting) => void; showUnit: boolean }) {
+function Row({ m, open, openMinutes, join, view, showUnit }: { m: CalendarMeeting; open: (m: CalendarMeeting) => void; openMinutes: (m: CalendarMeeting) => void; join: (m: CalendarMeeting) => void; view: (m: CalendarMeeting) => void; showUnit: boolean }) {
   const tokens = (m.tokensIn ?? 0) + (m.tokensOut ?? 0);
   return (
     <div data-testid="meeting-row" style={{ display: 'flex', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--border-soft)', alignItems: 'flex-start', minWidth: 0 }}>
       <span style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_COLOR[m.status] ?? 'var(--border)', flex: 'none', marginTop: 6 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
-          <button onClick={() => open(m)} style={{ ...linkBtn, fontSize: 13, color: 'var(--text)', textAlign: 'left', overflowWrap: 'anywhere' }}>{m.title}</button>
+          <button onClick={() => open(m)} title={hasRoom(m) ? 'Open the meeting' : undefined} style={{ ...linkBtn, fontSize: 13, color: 'var(--text)', textAlign: 'left', overflowWrap: 'anywhere' }}>{m.title}</button>
           <span style={pill(m.status === 'upcoming' ? 'var(--accent-dim)' : undefined, 'var(--text)')}>{statusLabel(m)}</span>
           {showUnit && m.unitName && !m.title.includes(m.unitName) && <span style={pill()}>{m.unitName}</span>}
         </div>
@@ -125,27 +136,27 @@ function Row({ m, open, join, view, showUnit }: { m: CalendarMeeting; open: (m: 
         {m.summary && <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.summary}</div>}
       </div>
       <div style={{ display: 'flex', gap: 5, flex: 'none' }}>
-        {m.minutesPath && <button style={btn()} onClick={() => open(m)} title={`Open /${m.minutesPath}`}>Minutes</button>}
+        {m.minutesPath && <button style={btn()} onClick={() => openMinutes(m)} title={`Open /${m.minutesPath}`}>Minutes</button>}
         {m.status === 'running' && m.channelSlug && <button style={btn(true)} onClick={() => join(m)} title="Join the full-screen room: you are heard at the next turn">Join</button>}
-        {m.status !== 'running' && m.meetingId && (m.threadRootId || m.status === 'scheduled' || m.status === 'postponed') && <button style={btn()} onClick={() => view(m)} title="Open the full-screen room">View</button>}
-        {!m.minutesPath && !m.threadRootId && <button style={btn()} onClick={() => open(m)}>Details</button>}
+        {m.status !== 'running' && hasRoom(m) && <button style={btn()} onClick={() => view(m)} title="Open the full-screen room">View</button>}
+        {!m.minutesPath && !hasRoom(m) && <button style={btn()} onClick={() => open(m)}>Details</button>}
       </div>
     </div>
   );
 }
 
-function ListView({ items, open, openThread, join, view, showUnit, showAll, setShowAll }: { items: CalendarMeeting[]; open: (m: CalendarMeeting) => void; openThread: (m: CalendarMeeting) => void; join: (m: CalendarMeeting) => void; view: (m: CalendarMeeting) => void; showUnit: boolean; showAll: boolean; setShowAll: (v: boolean) => void }) {
+function ListView({ items, open, openMinutes, join, view, showUnit, showAll, setShowAll }: { items: CalendarMeeting[]; open: (m: CalendarMeeting) => void; openMinutes: (m: CalendarMeeting) => void; join: (m: CalendarMeeting) => void; view: (m: CalendarMeeting) => void; showUnit: boolean; showAll: boolean; setShowAll: (v: boolean) => void }) {
   const { upcoming, past } = splitList(items);
   const shownUpcoming = showAll ? upcoming : upcoming.slice(0, 8);
   return (
     <div>
       <div style={{ ...label, marginTop: 4 }}>Upcoming ({upcoming.length})</div>
       {upcoming.length === 0 && <div style={{ ...faint, padding: '6px 0' }}>Nothing scheduled in the next 30 days.</div>}
-      {shownUpcoming.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} join={join} view={view} showUnit={showUnit} />)}
+      {shownUpcoming.map((m) => <Row key={m.id} m={m} open={open} openMinutes={openMinutes} join={join} view={view} showUnit={showUnit} />)}
       {upcoming.length > shownUpcoming.length && <button style={{ ...linkBtn, marginTop: 6 }} onClick={() => setShowAll(true)}>Show {upcoming.length - shownUpcoming.length} more</button>}
       <div style={{ ...label, marginTop: 12 }}>Past ({past.length})</div>
       {past.length === 0 && <div style={{ ...faint, padding: '6px 0' }}>No meeting held in the last 60 days. <code>/meeting</code> in a channel starts one.</div>}
-      {past.map((m) => <Row key={m.id} m={m} open={open} openThread={openThread} join={join} view={view} showUnit={showUnit} />)}
+      {past.map((m) => <Row key={m.id} m={m} open={open} openMinutes={openMinutes} join={join} view={view} showUnit={showUnit} />)}
     </div>
   );
 }
@@ -153,7 +164,7 @@ function ListView({ items, open, openThread, join, view, showUnit, showAll, setS
 function Chip({ m, open, showUnit }: { m: CalendarMeeting; open: (m: CalendarMeeting) => void; showUnit: boolean }) {
   const title = showUnit ? shortTitle(m) : shortTitle(m).replace(` · ${m.unitName ?? ''}`, '');
   return (
-    <button onClick={() => open(m)} title={`${whenText(m.at)} · ${m.title}${m.minutesPath ? ' — open the minutes' : ''}`}
+    <button onClick={() => open(m)} title={`${whenText(m.at)} · ${m.title}${hasRoom(m) ? ' — open the meeting' : m.minutesPath ? ' — open the minutes' : ''}`}
       style={{ display: 'block', width: '100%', textAlign: 'left', background: 'var(--panel-2)', border: 'none', borderLeft: `3px solid ${STATUS_COLOR[m.status] ?? 'var(--border)'}`, borderRadius: 4, padding: '1px 4px', marginTop: 2, fontSize: 10.5, color: 'var(--text)', cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, opacity: m.status === 'cancelled' ? 0.6 : 1 }}>
       <span style={{ color: 'var(--text-faint)' }}>{clock(m.at)}</span> {title}
     </button>
@@ -241,8 +252,11 @@ function CalendarView({ mode, anchor, setAnchor, items, open, dayOpen, setDayOpe
 function Details({ m, onClose, openThread, openMinutes }: { m: CalendarMeeting; onClose: () => void; openThread: (m: CalendarMeeting) => void; openMinutes: (path: string) => void }) {
   const agents = m.attendees.filter((a) => a.kind === 'agent').map((a) => a.name);
   const people = m.attendees.filter((a) => a.kind === 'human').map((a) => a.name);
+  // It opens under the list or the calendar: bring it into view.
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { ref.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }); }, [m.id]);
   return (
-    <div role="dialog" aria-label={`${m.title} details`} style={{ marginTop: 10, border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', background: 'var(--panel-2)', minWidth: 0 }}>
+    <div ref={ref} role="dialog" aria-label={`${m.title} details`} style={{ marginTop: 10, border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', background: 'var(--panel-2)', minWidth: 0 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, overflowWrap: 'anywhere' }}>{m.title}</div>
@@ -259,7 +273,7 @@ function Details({ m, onClose, openThread, openMinutes }: { m: CalendarMeeting; 
       </div>
       <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
         {m.minutesPath && <button style={btn(true)} onClick={() => openMinutes(m.minutesPath!)}>Open minutes</button>}
-        {m.threadRootId && m.channelSlug && <button style={btn()} onClick={() => openThread(m)}>Open thread</button>}
+        {m.threadRootId && (m.subChannelSlug || m.channelSlug) && <button style={btn()} onClick={() => openThread(m)}>{m.subChannelSlug ? 'Open channel' : 'Open thread'}</button>}
       </div>
     </div>
   );

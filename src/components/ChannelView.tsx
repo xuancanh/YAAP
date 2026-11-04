@@ -27,6 +27,9 @@ const field: React.CSSProperties = { width: '100%', background: 'var(--panel-2)'
 const smallBtn: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 600, cursor: 'pointer' };
 
 type Tab = 'messages' | 'meetings' | 'files' | 'settings';
+/** The tab the channel on screen is on: the view unmounts while the
+ *  full-screen meeting room is open, and closing the room comes back to it. */
+let leftOn: { wsId: string; slug: string; tab: Tab } | null = null;
 interface LiveReply { liveId: string; agentId: string; threadRootId: string | null; replyRootId?: string; text: string; done: boolean }
 interface Approval { sessionId: string; callId: string; tool: string; input: Record<string, unknown>; agentId: string; threadRootId: string | null; forName: string }
 
@@ -56,7 +59,9 @@ export function ChannelView() {
   const [page, setPage] = useState<{ messages: ChannelMessage[]; replies: Record<string, { count: number; lastAt: string }>; hasMore: boolean }>({ messages: [], replies: {}, hasMore: false });
   const [thread, setThread] = useState<string | null>(null);
   const [threadMsgs, setThreadMsgs] = useState<ChannelMessage[]>([]);
-  const [tab, setTab] = useState<Tab>('messages');
+  const [tab, setTab] = useState<Tab>(() => (leftOn && leftOn.wsId === wsId && leftOn.slug === slug && !app.channelFocus ? leftOn.tab : 'messages'));
+  useEffect(() => { if (wsId && slug) leftOn = { wsId, slug, tab }; }, [wsId, slug, tab]);
+  const shown = useRef<string | null>(null);
   const [live, setLive] = useState<LiveReply[]>([]);
   const [typing, setTyping] = useState<Record<string, { agentId: string; threadRootId: string | null; replyRootId?: string }>>({});
   const [approvals, setApprovals] = useState<Approval[]>([]);
@@ -110,7 +115,11 @@ export function ChannelView() {
 
   // channel switch: reset, load, and honour a deep-linked message
   useEffect(() => {
-    setThread(null); setThreadMsgs([]); setLive([]); setTyping({}); setApprovals([]); setTab('messages');
+    // Another channel starts on Messages; the first run keeps the tab the view mounted with.
+    const key = `${wsId}|${slug}`;
+    if (shown.current !== null && shown.current !== key) setTab('messages');
+    shown.current = key;
+    setThread(null); setThreadMsgs([]); setLive([]); setTyping({}); setApprovals([]);
     stickRef.current = true;
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps

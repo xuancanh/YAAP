@@ -501,13 +501,15 @@ function PaneRow({ id, label, icon, active, badge, badgeColor = 'var(--amber)', 
  *  there), then each agent's home. */
 export function ArtifactsRail() {
   const app = useApp();
+  // The tree is this workspace's: after a workspace switch the old one's tree must not linger.
+  const stale = Boolean(app.workspaceId) && !(app.fileTarget?.kind === 'workspace' && app.fileTarget.id === app.workspaceId);
   useEffect(() => {
-    if (app.fileTarget?.kind !== 'workspace' && app.workspaceId) {
+    if (stale) {
       app.setFileTarget({ kind: 'workspace', id: app.workspaceId });
       app.setCurrentFile(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [app.workspaceId, app.fileTarget?.kind]);
+  }, [stale, app.workspaceId]);
   return (
     <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px' }}>
       <ArtifactsSection />
@@ -664,6 +666,8 @@ export function SettingsRail({ pane, setPane }: { pane: string; setPane: (p: str
   );
 }
 
+/** The rail's title: it sits right under the top bar (no workspace pill
+ *  above it any more), so it carries its own top space. */
 export function SecondaryHeader({ title }: { title: string }) {
-  return <div style={sectionLabel}>{title}</div>;
+  return <div data-testid="rail-title" style={{ ...sectionLabel, padding: '14px 18px 8px', flex: 'none' }}>{title}</div>;
 }
