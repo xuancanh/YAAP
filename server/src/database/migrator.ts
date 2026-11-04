@@ -2378,6 +2378,86 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_resource_requests_head ON org_resource_requests ("orgId", "headAgentId", "status")`);
     },
   },
+  {
+    id: '0090-plugin-contributions-kits',
+    up: async (db) => {
+      // Plugin contributions beyond tools and kits (docs/plugins.md §3.8,
+      // docs/foundry.md "Shipped as (kits)"): a skill's audience and source
+      // (`plugin:<id>` / `kit:<id>`); the registrar's contribution rows
+      // (guidance notes and declarative UI, owned by a plugin or kit
+      // install, removed and restored with it); kit installs, the members
+      // each brought or reused, and the revisions an upgrade or a rollback
+      // writes. Idempotent.
+      if (!(await hasColumn(db, 'skills', 'audience'))) await db.query(`ALTER TABLE skills ADD COLUMN "audience" TEXT NOT NULL DEFAULT ''`);
+      if (!(await hasColumn(db, 'skills', 'source'))) await db.query(`ALTER TABLE skills ADD COLUMN "source" TEXT NOT NULL DEFAULT ''`);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS plugin_contributions (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "id" TEXT PRIMARY KEY,
+          "workspaceId" TEXT NOT NULL,
+          "ownerKind" TEXT NOT NULL,
+          "ownerId" TEXT NOT NULL,
+          "installId" TEXT NOT NULL,
+          "version" TEXT NOT NULL DEFAULT '',
+          "kind" TEXT NOT NULL,
+          "key" TEXT NOT NULL,
+          "spec" TEXT NOT NULL DEFAULT '{}',
+          "createdAt" TEXT NOT NULL
+        )
+      `);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_plugin_contributions_ws ON plugin_contributions ("workspaceId", "kind")`);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS kit_installs (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "id" TEXT PRIMARY KEY,
+          "workspaceId" TEXT NOT NULL,
+          "kitId" TEXT NOT NULL,
+          "version" TEXT NOT NULL,
+          "manifest" TEXT NOT NULL DEFAULT '{}',
+          "status" TEXT NOT NULL DEFAULT 'applying',
+          "statusReason" TEXT NOT NULL DEFAULT '',
+          "choices" TEXT NOT NULL DEFAULT '{}',
+          "installedBy" TEXT NOT NULL DEFAULT '',
+          "createdAt" TEXT NOT NULL,
+          "activatedAt" TEXT,
+          "updatedAt" TEXT NOT NULL
+        )
+      `);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_kit_installs_ws ON kit_installs ("workspaceId", "kitId")`);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS kit_members (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "id" TEXT PRIMARY KEY,
+          "workspaceId" TEXT NOT NULL,
+          "installId" TEXT NOT NULL,
+          "seq" INTEGER NOT NULL DEFAULT 0,
+          "memberKind" TEXT NOT NULL,
+          "itemKey" TEXT NOT NULL,
+          "ref" TEXT NOT NULL DEFAULT '',
+          "owned" INTEGER NOT NULL DEFAULT 1,
+          "state" TEXT NOT NULL DEFAULT 'live',
+          "createdAt" TEXT NOT NULL
+        )
+      `);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_kit_members_install ON kit_members ("installId", "state")`);
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS kit_revisions (
+          "accountId" TEXT NOT NULL DEFAULT 'single',
+          "id" TEXT PRIMARY KEY,
+          "workspaceId" TEXT NOT NULL,
+          "installId" TEXT NOT NULL,
+          "fromVersion" TEXT NOT NULL,
+          "toVersion" TEXT NOT NULL,
+          "fromManifest" TEXT NOT NULL DEFAULT '{}',
+          "choices" TEXT NOT NULL DEFAULT '{}',
+          "approvedBy" TEXT NOT NULL DEFAULT '',
+          "appliedAt" TEXT NOT NULL,
+          "rolledBackAt" TEXT
+        )
+      `);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_kit_revisions_install ON kit_revisions ("installId")`);
+    },
+  },
 ];
 
 /** The 0038 backfill, also callable on its own (see the migration's rule). */

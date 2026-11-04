@@ -407,6 +407,12 @@ export const skills = pgTable('skills', {
   /** JSON array of the last 5 { instructions, replacedAt, reason }. */
   history: text('history').notNull().default('[]'),
   createdAt: text('createdAt').notNull(),
+  /** JSON array of audiences (docs/plugins.md §3.8: all | chief | heads |
+   *  members | function:<fn>) for a skill a plugin or kit contributed; '' =
+   *  everyone in the workspace. */
+  audience: text('audience').notNull().default(''),
+  /** Provenance of a contributed skill: `plugin:<id>` or `kit:<id>`; '' otherwise. */
+  source: text('source').notNull().default(''),
 });
 
 /** One rating that landed on a turn which had loaded a skill: the raw rows
@@ -2553,3 +2559,79 @@ export const contextProvenance = pgTable('context_provenance', {
   untrusted: integer('untrusted').notNull().default(0),
   createdAt: text('createdAt').notNull(),
 }, (t) => [uniqueIndex('idx_context_provenance_dedupe').on(t.sessionId, t.sourceKind, t.contentHash)]);
+
+/**
+ * A plugin's or kit's contribution beyond tools (docs/plugins.md §3.8,
+ * migration 0089): a guidance note or a declarative UI element (card, panel,
+ * page, action, badge). Written by the registrar as an effect of the
+ * install, removed on disable or uninstall and restored on enable.
+ */
+export const pluginContributions = pgTable('plugin_contributions', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  /** plugin | kit. */
+  ownerKind: text('ownerKind').notNull(),
+  /** The plugin or kit id (`name@registry`). */
+  ownerId: text('ownerId').notNull(),
+  installId: text('installId').notNull(),
+  version: text('version').notNull().default(''),
+  /** guidance | card | panel | page | action | badge. */
+  kind: text('kind').notNull(),
+  key: text('key').notNull(),
+  /** JSON: the declared contribution. */
+  spec: text('spec').notNull().default('{}'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** A kit installed into a workspace (docs/foundry.md §4, §9.2). */
+export const kitInstalls = pgTable('kit_installs', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  kitId: text('kitId').notNull(),
+  version: text('version').notNull(),
+  /** JSON: the kit.json of the installed version (pinned). */
+  manifest: text('manifest').notNull().default('{}'),
+  /** applying | active | partial | removed | failed. */
+  status: text('status').notNull().default('applying'),
+  statusReason: text('statusReason').notNull().default(''),
+  /** JSON: the owner's choices at review (providers per interface, seats). */
+  choices: text('choices').notNull().default('{}'),
+  installedBy: text('installedBy').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  activatedAt: text('activatedAt'),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_kit_installs_ws').on(t.workspaceId, t.kitId)]);
+
+/** What a kit install brought (`owned`) or reused, in apply order. */
+export const kitMembers = pgTable('kit_members', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  installId: text('installId').notNull(),
+  seq: integer('seq').notNull().default(0),
+  /** plugin | binding | policy | skill | guidance | seat. */
+  memberKind: text('memberKind').notNull(),
+  itemKey: text('itemKey').notNull(),
+  ref: text('ref').notNull().default(''),
+  owned: integer('owned').notNull().default(1),
+  /** live | removed | kept. */
+  state: text('state').notNull().default('live'),
+  createdAt: text('createdAt').notNull(),
+});
+
+/** One applied kit upgrade, with the version it came from, for rollback. */
+export const kitRevisions = pgTable('kit_revisions', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  workspaceId: text('workspaceId').notNull(),
+  installId: text('installId').notNull(),
+  fromVersion: text('fromVersion').notNull(),
+  toVersion: text('toVersion').notNull(),
+  fromManifest: text('fromManifest').notNull().default('{}'),
+  choices: text('choices').notNull().default('{}'),
+  approvedBy: text('approvedBy').notNull().default(''),
+  appliedAt: text('appliedAt').notNull(),
+  rolledBackAt: text('rolledBackAt'),
+});

@@ -89,7 +89,7 @@ export class SkillsService implements OnModuleInit {
     return rows[0];
   }
 
-  async create(input: { name: string; description?: string; instructions: string; workspaceId?: string; draft?: boolean; proposedBy?: string; agentId?: string; scanReport?: ScanReport }): Promise<SkillRow> {
+  async create(input: { name: string; description?: string; instructions: string; workspaceId?: string; draft?: boolean; proposedBy?: string; agentId?: string; scanReport?: ScanReport; audience?: string[]; source?: string }): Promise<SkillRow> {
     if (!NAME_RE.test(input.name)) {
       throw new ConflictException('skill name must be a lowercase slug (a-z, 0-9, dashes)');
     }
@@ -113,9 +113,46 @@ export class SkillsService implements OnModuleInit {
       useCount: 0, upCount: 0, downCount: 0, lastUsedAt: null,
       pendingRevision: '', history: '[]',
       createdAt: nowIso(),
+      audience: input.audience?.length ? JSON.stringify(input.audience) : '',
+      source: input.source ?? '',
     };
     await this.db.insert(skills).values(row);
     return row;
+  }
+
+  // ---- contributed skills (docs/plugins.md §3.8): a plugin's or kit's skill files ----
+
+  /** Who sees an audienced skill; set by the org module (chief, heads, members, function:<fn>). */
+  private audienceFilter: ((workspaceId: string, agentId: string | undefined, audience: string[]) => Promise<boolean>) | null = null;
+  setAudienceFilter(fn: (workspaceId: string, agentId: string | undefined, audience: string[]) => Promise<boolean>): void { this.audienceFilter = fn; }
+
+  /** Whether a skill reaches this agent: no audience, `all`, or the filter says so (deny when it cannot tell). */
+  private async reaches(s: SkillRow, workspaceId: string, agentId?: string): Promise<boolean> {
+    const aud = parseAudience(s.audience);
+    if (aud.length === 0 || aud.includes('all')) return true;
+    if (!this.audienceFilter) return false;
+    return this.audienceFilter(workspaceId, agentId, aud).catch(() => false);
+  }
+
+  /**
+   * Write a contributed skill: a new workspace skill, or the same-named one
+   * from an earlier install of the same source brought back with the new
+   * text. Live unless `draft` (non-first-party sources land as drafts).
+   */
+  async contribute(input: { workspaceId: string; name: string; description: string; instructions: string; audience: string[]; source: string; draft: boolean }): Promise<SkillRow> {
+    if (!NAME_RE.test(input.name)) throw new BadRequestException(`skill name ${input.name} must be a lowercase slug`);
+    const existing = (await this.db.select().from(skills).where(and(eq(skills.workspaceId, input.workspaceId), eq(skills.name, input.name), isNull(skills.agentId)))).at(0);
+    if (existing) {
+      if (existing.source !== input.source) throw new ConflictException(`a skill named "${input.name}" already exists and was not contributed by ${input.source}`);
+      await this.db.update(skills).set({ description: input.description, instructions: input.instructions, audience: JSON.stringify(input.audience), enabled: input.draft ? 0 : 1, draft: input.draft ? 1 : 0 }).where(eq(skills.id, existing.id));
+      return this.get(existing.id);
+    }
+    return this.create({ name: input.name, description: input.description, instructions: input.instructions, workspaceId: input.workspaceId, draft: input.draft, proposedBy: input.source, audience: input.audience, source: input.source });
+  }
+
+  /** Archive (never delete) a contributed skill: it stops being offered; its history and outcomes stay. */
+  async setContributedEnabled(id: string, enabled: boolean): Promise<void> {
+    await this.db.update(skills).set({ enabled: enabled ? 1 : 0 }).where(eq(skills.id, id));
   }
 
   // ---- agentskills.io SKILL.md (execution-plan item 9.3) ----
@@ -316,8 +353,9 @@ export class SkillsService implements OnModuleInit {
 
   /** Enabled skills of a workspace as tool specs for the provider request. */
   async toolSpecs(workspaceId: string, agentId?: string): Promise<AiToolSpec[]> {
-    const rows = await this.list(workspaceId, agentId);
-    return rows.filter((s) => s.enabled === 1 && s.draft !== 1).map((s) => ({
+    const rows: SkillRow[] = [];
+    for (const s of await this.list(workspaceId, agentId)) if (s.enabled === 1 && s.draft !== 1 && await this.reaches(s, workspaceId, agentId)) rows.push(s);
+    return rows.map((s) => ({
       name: SKILL_TOOL_PREFIX + s.name.replace(/-/g, '_'),
       description: `Skill: ${s.description || s.name}. Call with no arguments to load its step-by-step instructions, then follow them.`,
       inputSchema: { type: 'object', properties: {} },
@@ -329,13 +367,20 @@ export class SkillsService implements OnModuleInit {
     if (!toolName.startsWith(SKILL_TOOL_PREFIX)) return undefined;
     const slug = toolName.slice(SKILL_TOOL_PREFIX.length).replace(/_/g, '-');
     const rows = await this.list(workspaceId, agentId);
-    return rows.find((s) => s.name === slug && s.enabled === 1 && s.draft !== 1);
+    const hit = rows.find((s) => s.name === slug && s.enabled === 1 && s.draft !== 1);
+    return hit && await this.reaches(hit, workspaceId, agentId) ? hit : undefined;
   }
 
   /** Invoking a skill returns its instruction body to the model. */
   invocation(skill: SkillRow): string {
     return `Skill "${skill.name}" loaded. Follow these instructions now:\n\n${skill.instructions}`;
   }
+}
+
+/** A contributed skill's audience list; [] = everyone. */
+export function parseAudience(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try { const v = JSON.parse(raw) as unknown; return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
 }
 
 export function parseRevision(raw: string): PendingRevision | null {

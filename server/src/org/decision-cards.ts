@@ -21,6 +21,7 @@ const KIND_REVERSIBILITY: Record<string, Reversibility> = {
   routing: 'reversible', charter_change: 'reversible', blueprint: 'costly', human_review: 'reversible', metric_source: 'reversible',
   two_key: 'irreversible', experiment: 'reversible',
   project_now: 'reversible', project_appetite: 'costly', project_kill: 'costly', project_allocation: 'reversible', resource_conflict: 'reversible',
+  kit_change: 'costly', plugin_change: 'costly',
 };
 
 /** Reversibility of a card: the action class for a held action, else the kind's. */

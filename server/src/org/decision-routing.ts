@@ -131,6 +131,7 @@ export function reservedOf(kind: string, payload: Record<string, unknown>): stri
   if (kind === 'strategy') return 'strategy and values are the CEO\'s';
   if (kind === 'blueprint') return 'staffing a company from a blueprint is the CEO\'s';
   if (kind === 'metric_source') return 'a metric source defines what counts as truth';
+  if (kind === 'kit_change' || kind === 'plugin_change') return 'what the company is built from: plugins and kits install only with the owner\'s consent';
   if (kind === 'experiment' || kind === 'charter_change') return 'policy: a change to how the company works';
   if (kind === 'tune' || kind === 'routing') return 'a company-wide setting';
   if (kind === 'budget_raise' && String(payload.scope ?? 'company') === 'company') return 'money beyond the company envelope';
@@ -172,6 +173,8 @@ export const AUTHORITY_TABLE: AuthorityRow[] = [
   { kind: 'experiment', manager: 'recommend', when: 'CEO-reserved: policy' },
   { kind: 'charter_change', manager: 'recommend', when: 'CEO-reserved: policy' },
   { kind: 'blueprint', manager: 'recommend', when: 'CEO-reserved' },
+  { kind: 'kit_change', manager: 'recommend', when: 'CEO-reserved: what the company is built from (plugins, kits, their grants)' },
+  { kind: 'plugin_change', manager: 'recommend', when: 'CEO-reserved: what the company is built from (plugins, kits, their grants)' },
 ];
 
 export interface AuthorityInput {

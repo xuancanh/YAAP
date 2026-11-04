@@ -10,6 +10,7 @@
  */
 import { Module } from '@nestjs/common';
 import { ChatsModule } from '../chats/chats.module';
+import { SkillsModule } from '../skills/skills.module';
 import { ActionsModule } from '../actions/actions.module';
 import { PluginsService } from './plugins.service';
 import { ChangesService } from './changes.service';
@@ -18,11 +19,12 @@ import { InterfaceDispatcher } from './dispatcher';
 import { PluginsController } from './plugins.controller';
 import { PluginRegistryService } from './plugin-registry.service';
 import { PluginRegistryController } from './plugin-registry.controller';
+import { PluginUiService } from './plugin-ui.service';
 
 @Module({
-  imports: [ChatsModule, ActionsModule],
+  imports: [ChatsModule, ActionsModule, SkillsModule],
   controllers: [PluginsController, PluginRegistryController],
-  providers: [PluginAuditService, PluginsService, ChangesService, InterfaceDispatcher, PluginRegistryService],
-  exports: [PluginsService, ChangesService, InterfaceDispatcher, PluginAuditService, PluginRegistryService],
+  providers: [PluginAuditService, PluginsService, ChangesService, InterfaceDispatcher, PluginRegistryService, PluginUiService],
+  exports: [PluginsService, ChangesService, InterfaceDispatcher, PluginAuditService, PluginRegistryService, PluginUiService],
 })
 export class PluginsModule {}

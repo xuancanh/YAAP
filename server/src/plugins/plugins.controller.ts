@@ -10,6 +10,7 @@ import { CORE_API_VERSION, MANIFEST_VERSION } from './manifest';
 import { PluginsService, type InstallSource } from './plugins.service';
 import { ChangesService, MANUAL_KIND, type VerifyCheck } from './changes.service';
 import { PluginAuditService } from './plugin-audit';
+import { PluginUiService } from './plugin-ui.service';
 import { parseDuration } from './template';
 
 function sourceOf(body: Record<string, unknown> | undefined): InstallSource {
@@ -31,6 +32,7 @@ export class PluginsController {
     private readonly plugins: PluginsService,
     private readonly changes: ChangesService,
     private readonly audit: PluginAuditService,
+    private readonly pluginUi: PluginUiService,
   ) {}
 
   @Get('plugins/api')
@@ -38,6 +40,17 @@ export class PluginsController {
 
   @Get('workspaces/:ws/plugins/catalog')
   catalog(@Param('ws') ws: string) { return this.plugins.catalogView(ws); }
+
+  // ---- declarative UI (§3.8): members read; actions are the owner's beyond read ----
+
+  @Get('workspaces/:ws/plugins/ui')
+  ui(@Param('ws') ws: string, @Query('placement') placement?: string) { return this.pluginUi.list(ws, placement || undefined); }
+
+  @Post('workspaces/:ws/plugins/ui/:id/data')
+  uiData(@Param('ws') ws: string, @Param('id') id: string, @Body() body: { section?: number; context?: Record<string, unknown> }) { return this.pluginUi.data(ws, id, body ?? {}); }
+
+  @Post('workspaces/:ws/plugins/ui/:id/invoke')
+  uiInvoke(@Param('ws') ws: string, @Param('id') id: string, @Body() body: { fields?: Record<string, unknown>; context?: Record<string, unknown>; confirm?: boolean }) { return this.pluginUi.invoke(ws, id, body ?? {}); }
 
   @Get('workspaces/:ws/plugins')
   list(@Param('ws') ws: string) { return this.plugins.list(ws); }
@@ -59,7 +72,7 @@ export class PluginsController {
   settings(@Param('ws') ws: string) { return this.plugins.workspaceSettings(ws); }
 
   @Patch('workspaces/:ws/plugin-settings')
-  setSettings(@Param('ws') ws: string, @Body() body: { allowCommunityInterfaces?: boolean }) { return this.plugins.setWorkspaceSettings(ws, body ?? {}); }
+  setSettings(@Param('ws') ws: string, @Body() body: { allowCommunityInterfaces?: boolean; agentInstalls?: string }) { return this.plugins.setWorkspaceSettings(ws, body ?? {}); }
 
   @Get('workspaces/:ws/plugins-audit')
   auditLog(@Param('ws') ws: string, @Query('refId') refId?: string) { return this.audit.list(ws, { refId, limit: 200 }); }

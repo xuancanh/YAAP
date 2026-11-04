@@ -255,7 +255,14 @@ export function permissionDiff(prev: Manifest | null, next: Manifest): DiffEntry
     if (b !== undefined && (a === undefined || b > a)) w(`budgets.${k}`, `raised ${a ?? 'unset'} → ${b}`);
     else if (a !== undefined && b !== undefined && b < a) n(`budgets.${k}`, `lowered ${a} → ${b}`);
   }
-  for (const k of ['skills', 'rolePacks', 'playbooks'] as const) added(k, prev[k], next[k], (x) => x);
+  for (const k of ['rolePacks', 'playbooks'] as const) added(k, prev[k], next[k], (x) => x);
+  // Contributions (§3.8): new or changed text that reaches agents, and new buttons, need consent; new read-only views do not.
+  added('skills', prev.skills, next.skills, (x) => canonicalJson(x));
+  added('guidance', prev.guidance, next.guidance, (g) => `${g.id}: ${canonicalJson(g)}`);
+  added('ui.actions', prev.ui?.actions, next.ui?.actions, (a) => `${a.id}: ${a.operation}`);
+  const views = (m: Manifest) => new Set([...(m.ui?.cards ?? []), ...(m.ui?.panels ?? []), ...(m.ui?.pages ?? []), ...(m.ui?.badges ?? [])].map((x) => x.id));
+  const oldViews = views(prev);
+  for (const v of views(next)) if (!oldViews.has(v)) n('ui', `${v} added`);
   if (canonicalJson(prev.requires) !== canonicalJson(next.requires)) n('requires', 'requirements changed');
   return out;
 }

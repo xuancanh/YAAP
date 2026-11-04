@@ -64,6 +64,9 @@ export function inlineSchema(schema: JsonSchema, refs: SchemaRefs, depth = 0): J
 
 interface Located { iface: RegistryIface; op: string; def: OperationDef }
 
+/** A UI call the policy stage refused (a 400 with the reason). */
+export class UiRefused extends Error {}
+
 @Injectable()
 export class InterfaceDispatcher implements ToolProviderHook, PolicyStageHook, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(InterfaceDispatcher.name);
@@ -330,6 +333,69 @@ export class InterfaceDispatcher implements ToolProviderHook, PolicyStageHook, O
     const { changeId: _c, ...rest } = input;
     void _c;
     return rest;
+  }
+
+  // ---- declarative UI (§3.8): a person's query or action, through the same stage ----
+
+  /**
+   * Run an interface operation for a UI contribution, on behalf of a person
+   * (never an agent): the binding resolves at workspace scope, the class is
+   * the max rule with floors and `classByInput`, owner and requested
+   * policies raise it or deny, and the plugin envelope and per-call cap
+   * apply. A query must stay `read`. An action that is not `read` is the
+   * owner's alone and runs only on an explicit confirmation (the owner's
+   * click is the key for trust, cosign and owner-key requirements); a
+   * two-key operation never runs from a button — it needs the second key an
+   * agent's proposal and its change record carry. Apply and rollback of a
+   * change record are refused here. Every call is audited.
+   */
+  async uiCall(workspaceId: string, opId: string, input: Record<string, unknown>, who: { actor: string; owner: boolean; confirmed: boolean; mode: 'query' | 'action'; source: string }):
+    Promise<{ status: 'ok'; output: unknown; cls: ActionClass; requirement: Requirement } | { status: 'confirm'; cls: ActionClass; requirement: Requirement; reasons: string[] }> {
+    const reg = await this.reg(workspaceId);
+    const [ifn, op] = opId.split('.');
+    const iface = reg.interfaces.get(ifn);
+    const def = iface?.def.operations[op];
+    const refuse = (why: string): never => { throw new UiRefused(why); };
+    if (!iface || !def) refuse(`${opId} is not an installed interface operation`);
+    const resource = this.resourceOf(def!, input);
+    const res = this.plugins.resolveIn(reg, ifn, { resource, unitId: null, projectId: null });
+    if (!res.ok) refuse(res.reason);
+    const provider = (res as { provider: RegistryProvider }).provider;
+    if (!provider.provides.operations[op]) refuse(`${provider.pluginId} does not implement ${opId}`);
+    const role = def!.change?.role;
+    if (role === 'apply' || role === 'rollback' || role === 'review') refuse(`${opId} moves a change record; that runs through the change gate, not a button`);
+    const st = staticClassOf(op, def!, iface!.def, provider.provides);
+    let cls: ActionClass = maxClass(st.cls, classByInputOf(def!, input));
+    let requirement: Requirement = st.floor.twoKey ? 'two_key' : 'trust';
+    const kindName = def!.change ? `${ifn}.${def!.change.kind}` : null;
+    const raised = this.plugins.applyPolicies(reg, { cls, requirement }, { opId, resource, changeKind: kindName, bind: input });
+    if (raised.deny) refuse(`the owner's policy denies ${opId}: ${raised.deny}`);
+    cls = raised.cls;
+    requirement = raised.requirement;
+    if (who.mode === 'query' && cls !== 'read') refuse(`${opId} is classed ${cls}; a view may only read`);
+    const cost = def!.cost?.usd ?? 0;
+    const budgets = provider.manifest.budgets ?? {};
+    if (budgets.maxCostPerCallUsd !== undefined && cost > budgets.maxCostPerCallUsd) refuse(`${opId} costs $${cost} per call, over ${provider.pluginId}'s cap`);
+    const org = this.actions ? await this.actions.trust.orgOf(workspaceId) : null;
+    const cap = pluginsTunable(org, 'plugins.monthlyUsd');
+    if ((await this.monthSpend(workspaceId)) + cost > cap + 1e-9) refuse(`the plugin envelope is spent (plugins.monthlyUsd)`);
+    if (cls !== 'read') {
+      if (!who.owner) refuse(`${opId} is classed ${cls}; only the workspace owner runs it from a button`);
+      if (cls === 'external_irreversible' || cls === 'money') requirement = 'two_key';
+      if (requirement === 'two_key') refuse(`${opId} needs two keys (${st.floor.reasons.join('; ') || 'policy'}); ask an agent to propose it so the change record carries the second key`);
+      if (!who.confirmed) return { status: 'confirm', cls, requirement, reasons: [...st.floor.reasons, ...(requirement !== 'trust' ? [`requires ${requirement.replace('_', ' ')}`] : [])] };
+    }
+    let output: unknown;
+    try {
+      output = await callProvider({ iface: iface!.def, op, input, pkg: provider.pkg });
+    } catch (err) {
+      await this.audit.append(workspaceId, { actor: who.actor, action: 'plugin_ui_call', refType: 'operation', refId: opId, payload: { source: who.source, cls, requirement, outcome: 'error', error: err instanceof Error ? err.message.slice(0, 200) : String(err) } });
+      throw new UiRefused(`provider error from ${provider.pluginId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (who.mode === 'action' || cls !== 'read') {
+      await this.audit.append(workspaceId, { actor: who.actor, action: 'plugin_ui_call', refType: 'operation', refId: opId, payload: { source: who.source, cls, requirement, provider: provider.pluginId, outcome: 'ok', costUsd: cost } });
+    }
+    return { status: 'ok', output, cls, requirement };
   }
 
   // ---- execution ----

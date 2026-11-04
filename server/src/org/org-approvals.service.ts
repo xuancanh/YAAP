@@ -35,8 +35,8 @@ import { clamp01, computedAlternatives, defaultActionFor, normalizeAlternatives,
 import { govTunable } from './governance-tunables';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill', 'project_allocation', 'resource_conflict'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict' | 'kit_change' | 'plugin_change';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill', 'project_allocation', 'resource_conflict', 'kit_change', 'plugin_change'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19; `blueprint` is OrgBlueprintsService's,
@@ -428,6 +428,9 @@ export class OrgApprovalsService {
       case 'project_kill':
       case 'project_allocation':
       case 'resource_conflict':
+      // A kit or plugin install, upgrade or removal an agent proposed (docs/foundry.md §4.7; OrgFoundryTools applies it).
+      case 'kit_change':
+      case 'plugin_change':
       case 'experiment': {
         // Kinds another module owns (the meetings module's cadence, the memory module's charter change).
         const fn = this.appliers.get(kind);
@@ -613,6 +616,8 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'project_allocation': return `allocate ${String(payload.agentName ?? 'a member')} to ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}" at ${Number(payload.allocation ?? 0)}%${payload.role ? ` as ${String(payload.role)}` : ''}`.slice(0, 200);
     case 'resource_conflict': return `resources for ${String(payload.projectKey ?? '')}: ${String(payload.pmName ?? 'the PM')} asks ${String(payload.headName ?? 'a head')} for ${String(payload.role || 'a member')} at ${Number(payload.allocation ?? 0)}%${payload.headAnswer ? ` — ${String(payload.headAnswer)}` : ''}`.slice(0, 200);
     case 'project_kill': return `kill ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}"`.slice(0, 200);
+    case 'kit_change':
+    case 'plugin_change': return `${String(payload.action ?? 'install')} the ${kind === 'kit_change' ? 'kit' : 'plugin'} ${String(payload.name ?? payload.id ?? '')}${payload.version ? ` ${String(payload.version)}` : ''}: ${String(payload.why ?? '')}`.slice(0, 200);
     case 'two_key': return `${payload.staged ? 'send staged' : 'run held'} ${String(payload.tool ?? 'action')} (${String(payload.class ?? '').replace(/_/g, ' ')}): ${String(payload.summary ?? '')}`.slice(0, 160);
     default: return kind;
   }

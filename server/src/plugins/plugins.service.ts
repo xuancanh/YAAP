@@ -18,8 +18,12 @@ import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import {
   agents, chatSessions, conformanceRuns, interfaceBindings, interfacePolicies, interfaceProviders, interfaces, interfaceVersions,
-  orgMembers, orgTasks, orgUnits, pluginEffects, pluginGrants, pluginInstalls, plugins, pluginVersions, workspaces,
+  orgMembers, orgTasks, orgUnits, pluginContributions, pluginEffects, pluginGrants, pluginInstalls, plugins, pluginVersions, workspaces,
 } from '../database/schema';
+import { SkillsService } from '../skills/skills.service';
+import { parseSkillMd } from '../portability/skill-md';
+import { contributedSkillName, contributionSpecs, uiInterfaces } from './contributions';
+import { skillRefs, uiConformance } from './manifest';
 import { newId, nowIso } from '../common/ids.util';
 import { actorId, currentAccountId } from '../accounts/account-context';
 import { canonicalJson, isActionClass, registerOperationClasses, sha256, type ActionClass } from '../actions/action-classes';
@@ -77,9 +81,13 @@ export type Resolution =
   | { ok: false; reason: string; candidates: Array<{ providerId: string; pluginId: string }> };
 
 /** Tables the registrar may remove and restore rows of (its inverses). */
-const EFFECT_TABLES = { interface_providers: interfaceProviders, interface_bindings: interfaceBindings, plugin_grants: pluginGrants } as const;
+const EFFECT_TABLES = { interface_providers: interfaceProviders, interface_bindings: interfaceBindings, plugin_grants: pluginGrants, plugin_contributions: pluginContributions } as const;
 type EffectTable = keyof typeof EFFECT_TABLES;
-interface Inverse { op: 'delete' | 'noop'; table?: EffectTable; id?: string; snapshot?: Record<string, unknown>; note?: string }
+/** `skill`: a contributed skill is archived on unwind (never deleted) and re-enabled on restore. */
+interface Inverse { op: 'delete' | 'noop' | 'skill'; table?: EffectTable; id?: string; snapshot?: Record<string, unknown>; note?: string }
+/** Effect kinds that are contributions beyond tools (§3.8), re-registered when the version moves. */
+const EXTRA_EFFECT_KINDS = new Set(['skill', 'guidance', 'card', 'panel', 'page', 'action', 'badge']);
+export type ContributionRow = typeof pluginContributions.$inferSelect;
 
 /** Statuses an install keeps whatever its dependencies say. */
 const STICKY = new Set(['disabled', 'frozen', 'removed']);
@@ -102,6 +110,7 @@ export class PluginsService {
     @Inject(DRIZZLE_DB) private readonly db: DrizzleDb,
     readonly audit: PluginAuditService,
     @Optional() private readonly actions?: ActionsService,
+    @Optional() readonly skills?: SkillsService,
   ) {
     this.dispose = registerOperationClasses((name, input) => {
       const base = this.staticClasses.get(name);
@@ -197,6 +206,8 @@ export class PluginsService {
     if (this.actions) return this.actions.trust.isOwnerOrCeo(workspaceId, actor);
     return actor === currentAccountId();
   }
+  /** Whether the caller is the workspace owner (or the CEO), without throwing. */
+  callerIsOwner(workspaceId: string): Promise<boolean> { return this.isOwner(workspaceId); }
   /** Owner-only gate shared with the plugin registry. */
   assertOwner(workspaceId: string, what: string): Promise<string> { return this.requireOwner(workspaceId, what); }
   private async requireOwner(workspaceId: string, what: string): Promise<string> {
@@ -205,18 +216,27 @@ export class PluginsService {
     return actor;
   }
 
-  async workspaceSettings(workspaceId: string): Promise<{ allowCommunityInterfaces: boolean }> {
+  /**
+   * The workspace's plugin settings: the community-interface opt-in (§5.1),
+   * and the trust policy for agents' install proposals (docs/foundry.md
+   * §4.7): `propose` (default — every install, upgrade or removal an agent
+   * proposes is a card for the owner) or `first_party` (in an autonomous
+   * company, an install or upgrade of a first-party kit or plugin the chief
+   * proposes applies at once, audited; removals are always cards).
+   */
+  async workspaceSettings(workspaceId: string): Promise<{ allowCommunityInterfaces: boolean; agentInstalls: 'propose' | 'first_party' }> {
     const row = (await this.db.select({ s: workspaces.pluginSettings }).from(workspaces).where(eq(workspaces.id, workspaceId))).at(0);
     if (!row) throw new NotFoundException(`workspace ${workspaceId}`);
     let s: Record<string, unknown>;
     try { s = JSON.parse(row.s || '{}') as Record<string, unknown>; } catch { s = {}; }
-    return { allowCommunityInterfaces: s.allowCommunityInterfaces === true };
+    return { allowCommunityInterfaces: s.allowCommunityInterfaces === true, agentInstalls: s.agentInstalls === 'first_party' ? 'first_party' : 'propose' };
   }
 
-  async setWorkspaceSettings(workspaceId: string, patch: { allowCommunityInterfaces?: boolean }): Promise<{ allowCommunityInterfaces: boolean }> {
+  async setWorkspaceSettings(workspaceId: string, patch: { allowCommunityInterfaces?: boolean; agentInstalls?: string }): Promise<{ allowCommunityInterfaces: boolean; agentInstalls: 'propose' | 'first_party' }> {
     const actor = await this.requireOwner(workspaceId, 'changes plugin settings');
     const cur = await this.workspaceSettings(workspaceId);
-    const next = { ...cur, ...(typeof patch.allowCommunityInterfaces === 'boolean' ? { allowCommunityInterfaces: patch.allowCommunityInterfaces } : {}) };
+    if (patch.agentInstalls !== undefined && patch.agentInstalls !== 'propose' && patch.agentInstalls !== 'first_party') throw new BadRequestException('agentInstalls is propose or first_party');
+    const next = { ...cur, ...(typeof patch.allowCommunityInterfaces === 'boolean' ? { allowCommunityInterfaces: patch.allowCommunityInterfaces } : {}), ...(patch.agentInstalls ? { agentInstalls: patch.agentInstalls as 'propose' | 'first_party' } : {}) };
     await this.db.update(workspaces).set({ pluginSettings: JSON.stringify(next) }).where(eq(workspaces.id, workspaceId));
     await this.audit.append(workspaceId, { actor, action: 'plugin_settings_set', refType: 'workspace', refId: workspaceId, payload: next });
     return next;
@@ -315,9 +335,10 @@ export class PluginsService {
         ...((m.connections ?? []).length ? ['connections (Phase 3)'] : []), ...((m.events ?? []).length ? ['webhook events (Phase 3)'] : []),
         ...((m.runtime ?? []).length ? ['provider code (Phase 3)'] : []), ...((m.setup ?? []).length ? ['setup operations (Phase 3)'] : []),
         ...((m.panels ?? []).length ? ['panels (later)'] : []), ...((m.mirrors ?? []).length ? ['mirrors (later)'] : []),
-        ...((m.skills ?? []).length || (m.rolePacks ?? []).length ? ['skills and packs as drafts (Phase 2)'] : []),
+        ...((m.rolePacks ?? []).length ? ['role packs (later)'] : []),
       ],
-      diff, widening: isWidening(diff), blockers,
+      contributions: this.contributionsReview(pkg, tier),
+      diff, widening: isWidening(diff), blockers: [...blockers, ...uiConformance(m, (n) => reg.interfaces.get(n)?.def ?? (m.interfaces ?? []).find((d) => d.name === n))],
     };
   }
 
@@ -418,6 +439,82 @@ export class PluginsService {
       await this.db.insert(interfaceProviders).values(row);
       await this.effect(workspaceId, install.id, 'provider', `${ref.name}@${ref.range}`, { op: 'delete', table: 'interface_providers', id: row.id, snapshot: row });
     }
+    await this.registerExtras(workspaceId, install.id, m, pkg, version.source as Tier);
+  }
+
+  // ---- contributions beyond tools (§3.8): skills, guidance, declarative UI ----
+
+  /** What the review shows of a package's skills, guidance and UI: the real text and every extension point. */
+  private contributionsReview(pkg: PluginPackage, tier: Tier): Record<string, unknown> {
+    const m = pkg.manifest;
+    const skills = skillRefs(m).map((s) => {
+      try {
+        const p = parseSkillMd(pkg.files[s.path] ?? '');
+        return { name: contributedSkillName(m.id, p.name), description: p.description, audience: s.audience, path: s.path, text: p.body, draft: tier !== 'first_party' };
+      } catch { return { name: s.path, description: '', audience: s.audience, path: s.path, text: '', draft: true }; }
+    });
+    const ui = m.ui ?? {};
+    return {
+      skills,
+      guidance: (m.guidance ?? []).map((g) => ({ ...g })),
+      ui: {
+        cards: (ui.cards ?? []).map((c) => ({ id: c.id, title: c.title, placement: c.placement, operation: c.query?.operation ?? null })),
+        panels: (ui.panels ?? []).map((c) => ({ id: c.id, title: c.title, placement: c.placement, operation: c.query?.operation ?? null })),
+        pages: (ui.pages ?? []).map((c) => ({ id: c.id, title: c.title, placement: c.placement })),
+        actions: (ui.actions ?? []).map((a) => ({ id: a.id, title: a.title, operation: a.operation })),
+        badges: (ui.badges ?? []).map((b) => ({ id: b.id, placement: b.placement, operation: b.query.operation })),
+      },
+    };
+  }
+
+  /**
+   * Register skills, guidance and UI as effects of an install. A skill
+   * becomes a workspace skill with its audience (live for first-party,
+   * a draft behind the Skills approval otherwise); guidance and UI become
+   * `plugin_contributions` rows. Each is an effect with its inverse, so
+   * disable, enable and uninstall carry them with the plugin.
+   */
+  private async registerExtras(workspaceId: string, installId: string, m: Manifest, pkg: PluginPackage, tier: Tier): Promise<void> {
+    if (this.skills) {
+      for (const ref of skillRefs(m)) {
+        const body = pkg.files[ref.path];
+        if (body === undefined) continue;
+        const parsed = parseSkillMd(body);
+        const row = await this.skills.contribute({
+          workspaceId, name: contributedSkillName(m.id, parsed.name), description: parsed.description, instructions: parsed.body,
+          audience: ref.audience, source: `plugin:${m.id}`, draft: tier !== 'first_party',
+        });
+        await this.effect(workspaceId, installId, 'skill', row.name, { op: 'skill', id: row.id, note: 'archived, never deleted' });
+      }
+    }
+    for (const c of contributionSpecs(m)) {
+      const row: ContributionRow = {
+        accountId: currentAccountId(), id: newId(), workspaceId, ownerKind: 'plugin', ownerId: m.id, installId, version: m.version,
+        kind: c.kind, key: c.key, spec: JSON.stringify(c.spec), createdAt: nowIso(),
+      };
+      await this.db.insert(pluginContributions).values(row);
+      await this.effect(workspaceId, installId, c.kind, c.key, { op: 'delete', table: 'plugin_contributions', id: row.id, snapshot: row });
+    }
+  }
+
+  /** A version move: the old version's contributions unwind for good, the new version's register. */
+  private async refreshExtras(workspaceId: string, installId: string, m: Manifest, pkg: PluginPackage, tier: Tier, actor: string): Promise<void> {
+    for (const e of (await this.effects(installId)).filter((x) => EXTRA_EFFECT_KINDS.has(x.kind) && x.state === 'live').reverse()) {
+      await this.unwindOne(workspaceId, installId, e, actor, false);
+    }
+    await this.registerExtras(workspaceId, installId, m, pkg, tier);
+  }
+
+  /** Live contribution rows of the workspace's live installs (parked installs have none: their rows were unwound). */
+  async contributionRows(workspaceId: string, kinds?: string[]): Promise<ContributionRow[]> {
+    const rows = await this.db.select().from(pluginContributions).where(eq(pluginContributions.workspaceId, workspaceId)).orderBy(asc(pluginContributions.createdAt));
+    return kinds ? rows.filter((r) => kinds.includes(r.kind)) : rows;
+  }
+
+  /** Whether every interface a UI contribution reads or acts on has a healthy bound provider. */
+  contributionReady(reg: WorkspaceRegistry, spec: unknown): { ready: boolean; missing: string[] } {
+    const missing = uiInterfaces(spec).filter((n) => !reg.bindings.some((b) => b.interface === n && reg.providers.find((p) => p.row.id === b.providerId)?.healthy));
+    return { ready: missing.length === 0, missing };
   }
 
   // ---- the registrar (§4.10) ----
@@ -439,20 +536,24 @@ export class PluginsService {
   /** Unwind live effects in reverse order. `restorable` keeps them for enable. */
   private async unwind(workspaceId: string, installId: string, actor: string, restorable: boolean): Promise<number> {
     const live = (await this.effects(installId)).filter((e) => e.state === 'live').reverse();
-    for (const e of live) {
-      const inv = JSON.parse(e.inverse) as Inverse;
-      await this.db.update(pluginEffects).set({ state: 'unwinding' }).where(eq(pluginEffects.id, e.id));
-      if (inv.op === 'delete' && inv.table && inv.id && inv.table in EFFECT_TABLES) {
-        const t = EFFECT_TABLES[inv.table];
-        // Keep the row as it is now (conformance results and all), so enable restores it exactly.
-        const current = (await this.db.select().from(t).where(eq(t.id, inv.id))).at(0);
-        if (current) inv.snapshot = current as Record<string, unknown>;
-        await this.db.delete(t).where(eq(t.id, inv.id));
-      }
-      await this.db.update(pluginEffects).set({ state: restorable ? 'disabled' : 'unwound', unwoundAt: nowIso(), inverse: JSON.stringify(inv) }).where(eq(pluginEffects.id, e.id));
-      await this.audit.append(workspaceId, { actor, action: 'plugin_effect_unwound', refType: 'plugin_effect', refId: e.id, payload: { installId, seq: e.seq, kind: e.kind, ref: e.ref, restorable } });
-    }
+    for (const e of live) await this.unwindOne(workspaceId, installId, e, actor, restorable);
     return live.length;
+  }
+
+  private async unwindOne(workspaceId: string, installId: string, e: EffectRow, actor: string, restorable: boolean): Promise<void> {
+    const inv = JSON.parse(e.inverse) as Inverse;
+    await this.db.update(pluginEffects).set({ state: 'unwinding' }).where(eq(pluginEffects.id, e.id));
+    if (inv.op === 'delete' && inv.table && inv.id && inv.table in EFFECT_TABLES) {
+      const t = EFFECT_TABLES[inv.table];
+      // Keep the row as it is now (conformance results and all), so enable restores it exactly.
+      const current = (await this.db.select().from(t).where(eq(t.id, inv.id))).at(0);
+      if (current) inv.snapshot = current as Record<string, unknown>;
+      await this.db.delete(t).where(eq(t.id, inv.id));
+    } else if (inv.op === 'skill' && inv.id) {
+      await this.skills?.setContributedEnabled(inv.id, false);
+    }
+    await this.db.update(pluginEffects).set({ state: restorable ? 'disabled' : 'unwound', unwoundAt: nowIso(), inverse: JSON.stringify(inv) }).where(eq(pluginEffects.id, e.id));
+    await this.audit.append(workspaceId, { actor, action: 'plugin_effect_unwound', refType: 'plugin_effect', refId: e.id, payload: { installId, seq: e.seq, kind: e.kind, ref: e.ref, restorable } });
   }
 
   /** Re-register effects a disable unwound, in their original order. */
@@ -465,6 +566,8 @@ export class PluginsService {
         const exists = (await this.db.select({ id: t.id }).from(t).where(eq(t.id, String(inv.id)))).at(0);
         // A binding whose scope was taken meanwhile stays unwound.
         if (!exists) { try { await this.db.insert(t).values(inv.snapshot as never); } catch { await this.db.update(pluginEffects).set({ state: 'unwound' }).where(eq(pluginEffects.id, e.id)); continue; } }
+      } else if (inv.op === 'skill' && inv.id) {
+        await this.skills?.setContributedEnabled(inv.id, true);
       }
       await this.db.update(pluginEffects).set({ state: 'live', unwoundAt: null }).where(eq(pluginEffects.id, e.id));
       await this.audit.append(workspaceId, { actor, action: 'plugin_effect_restored', refType: 'plugin_effect', refId: e.id, payload: { installId, seq: e.seq, kind: e.kind, ref: e.ref } });
@@ -864,6 +967,7 @@ export class PluginsService {
     // Belt and braces: nothing of this install stays registered.
     await this.db.delete(interfaceProviders).where(eq(interfaceProviders.installId, li.install.id));
     await this.db.delete(pluginGrants).where(eq(pluginGrants.installId, li.install.id));
+    await this.db.delete(pluginContributions).where(eq(pluginContributions.installId, li.install.id));
     await this.db.update(pluginInstalls).set({ status: 'removed', pendingVersionId: null, pendingNote: '{}', suspendedReason: '', updatedAt: nowIso() }).where(eq(pluginInstalls.id, li.install.id));
     await this.audit.append(workspaceId, { actor, action: 'plugin_uninstalled', refType: 'plugin', refId: pluginId, payload: { unwound: n } });
     await this.refreshActivation(workspaceId);
@@ -936,6 +1040,7 @@ export class PluginsService {
       const ref = parseInterfaceRef(p.interface)!;
       await this.db.update(interfaceProviders).set({ range: ref.range, resources: JSON.stringify(p.resources) }).where(and(eq(interfaceProviders.installId, li.install.id), eq(interfaceProviders.interface, ref.name)));
     }
+    if (li.install.status !== 'disabled') await this.refreshExtras(workspaceId, li.install.id, m, pkg, version.source as Tier, actor);
     await this.audit.append(workspaceId, { actor, action: 'plugin_updated', refType: 'plugin', refId: m.id, payload: { from: li.manifest.version, to: m.version, digest: pkg.digest, changes: diff.map((d) => `${d.path}: ${d.detail}`) } });
     await this.conformAll(workspaceId, li.install.id);
     await this.refreshActivation(workspaceId);

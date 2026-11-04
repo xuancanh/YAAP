@@ -80,6 +80,8 @@ interface Snapshot {
   team: OrgProjectMember[];
   tasks: OrgTask[];
   decisions: Array<{ title: string; unitId: string | null; createdAt: string }>;
+  /** Installed kits and plugins, one short line (docs/plugins.md §3.8); '' when none. */
+  capabilities: string;
   pending: Array<{ holder: string }>;
   /** Live resource requests (docs/work-tracking.md "Resource requests"): open, hiring, granted, escalated, and recent answers. */
   requests: Array<{ id: string; projectId: string; pmAgentId: string | null; headAgentId: string | null; role: string; allocation: number; status: string }>;
@@ -131,6 +133,9 @@ export class OrgBriefingService implements ToolProviderHook {
   /** Fingerprint of the standing context last written per agent. */
   private readonly standing = new Map<string, string>();
   private readonly standingTimers = new Map<string, NodeJS.Timeout>();
+  /** The installed kits and plugins line's source (the org's foundry tools bind it). */
+  private capabilities: ((workspaceId: string) => Promise<string>) | null = null;
+  setCapabilities(fn: (workspaceId: string) => Promise<string>): void { this.capabilities = fn; }
   /** Snapshot builds, for the cache test. */
   builds = 0;
   /** Debounce before standing notes refresh after a structural change. */
@@ -224,6 +229,7 @@ export class OrgBriefingService implements ToolProviderHook {
       team: (await this.org.projectMembers(orgId).catch(() => [] as OrgProjectMember[])).filter((r) => r.status === 'active' || r.status === 'pending'),
       decisions, pending, requests,
       owned: goals.filter((g) => (g.kind === 'objective' || g.kind === 'key_result') && g.status === 'active').map((g) => ({ id: g.id, kind: g.kind, ownerAgentId: g.ownerAgentId, unitId: g.unitId })),
+      capabilities: this.capabilities ? clip(await this.capabilities(org.workspaceId).catch(() => ''), 160) : '',
     };
     this.snaps.set(orgId, snap);
     return snap;
@@ -445,6 +451,9 @@ function briefingText(s: Snapshot, v: View, agentId: string, unreadMentions: num
     const unassigned = unitTasks.filter((t) => !t.assigneeAgentId).length;
     add(1, `Staffing: ${team.length} report(s)${idle.length ? `, idle: ${idle.slice(0, 4).map((m) => nm(m.agentId)).join(', ')}` : ', none idle'}; ${unassigned} unassigned task(s) in your unit; ${unitTasks.filter((t) => t.status === 'blocked').length} blocked.`);
   }
+
+  // What the company is built from (kits and plugins), for those who propose more: the chief and the heads.
+  if (s.capabilities && v.role !== 'specialist') add(3, `Installed: ${s.capabilities}. A capability gap → org_foundry_search, then org_foundry_propose.`);
 
   // Decisions in the viewer's units (company-level ones are everyone's).
   const decisions = s.decisions.filter((d) => d.unitId === null || v.units.has(d.unitId)).slice(0, 3);

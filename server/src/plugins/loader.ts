@@ -14,7 +14,8 @@
 import { promises as fs } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { canonicalJson, sha256 } from '../actions/action-classes';
-import { validateFixtures, validateManifest, validateSuite, type Fixtures, type Manifest, type Suite } from './manifest';
+import { skillRefs, validateFixtures, validateManifest, validateSuite, type Fixtures, type Manifest, type Suite } from './manifest';
+import { parseSkillMd } from '../portability/skill-md';
 
 export const PACKAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const DATA_FILE_MAX_BYTES = 256 * 1024;
@@ -51,7 +52,7 @@ export function referencedFiles(m: Manifest): { suites: string[]; fixtures: stri
     for (const impl of Object.values(p.operations)) if ('fixture' in impl) fixtures.add(impl.fixture);
   }
   for (const t of m.tools?.items ?? []) if ('fixture' in t.impl) fixtures.add(t.impl.fixture);
-  for (const s of [...(m.skills ?? []), ...(m.rolePacks ?? []), ...(m.playbooks ?? [])]) text.add(s);
+  for (const s of [...(m.skills ?? []).map((x) => (typeof x === 'string' ? x : x.path)), ...(m.rolePacks ?? []), ...(m.playbooks ?? [])]) text.add(s);
   return { suites: [...suites], fixtures: [...fixtures], text: [...text] };
 }
 
@@ -112,6 +113,12 @@ export function packageFrom(rawManifest: unknown, files: Record<string, string>,
     if (!f.ok) errors.push(...f.errors.map((e) => `${p}: ${e}`)); else fixtures[p] = f.fixtures;
   }
   for (const p of refs.text) need(p, SKILL_MAX_BYTES);
+  // Contributed skills must be agentskills.io SKILL.md files the skills system can load (§3.8).
+  for (const s of skillRefs(m)) {
+    const body = kept[s.path];
+    if (body === undefined) continue;
+    try { parseSkillMd(body); } catch (err) { errors.push(`${s.path}: ${err instanceof Error ? err.message : String(err)}`); }
+  }
   for (const p of Object.keys(files)) if (!(p in kept) && p !== 'plugin.json' && !/^(README|CHANGELOG)\.md$|^icon\.svg$|^LICENSE/i.test(p)) warnings.push(`${p}: not referenced by the manifest (not loaded)`);
   if (errors.length > 0) throw new PluginLoadError(errors, warnings);
   const manifestHash = sha256(canonicalJson(m));

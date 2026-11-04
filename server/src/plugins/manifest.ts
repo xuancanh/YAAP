@@ -121,6 +121,40 @@ export interface PolicyDef {
   why: string;
 }
 
+// ---- contributions beyond tools (docs/plugins.md §3.8): skills, guidance, UI ----
+
+/** Who a skill or a guidance note reaches: everyone, the chief of staff, the
+ *  function heads, the company's members, or the members of one function. */
+export type Audience = string;
+export const AUDIENCE_RE = /^(all|chief|heads|members|function:[a-z][a-z-]{1,20})$/;
+/** A skill file with an optional audience (the plain-string form reaches everyone). */
+export type SkillRef = string | { path: string; audience?: Audience[] };
+/** One guidance note: how and when to use the plugin's capabilities. Bounded and attributed. */
+export interface GuidanceDef { id: string; title: string; text: string; audience: Audience[] }
+export const GUIDANCE_NOTE_MAX = 480;
+export const GUIDANCE_MAX_NOTES = 4;
+
+/** Where declarative UI may appear: the company section dashboards, a task, project or agent panel. */
+export const UI_SECTIONS = ['direction', 'operations', 'people', 'money', 'oversight'] as const;
+export const UI_PANEL_PLACES = ['task', 'project', 'agent'] as const;
+export type UiTone = 'neutral' | 'good' | 'warn' | 'bad';
+export const UI_TONES: readonly UiTone[] = ['neutral', 'good', 'warn', 'bad'];
+/** A read-only query: a `read`-class interface operation with templated input. */
+export interface UiQuery { operation: string; input?: Record<string, unknown> }
+export type UiView =
+  | { kind: 'stats'; items: Array<{ label: string; value: string; unit?: string; tone?: UiTone; toneWhen?: { path: string; gt?: number; lt?: number; tone: UiTone } }> }
+  | { kind: 'table'; rows: string; columns: Array<{ label: string; value: string }>; max?: number }
+  | { kind: 'list'; items: string; title: string; subtitle?: string; badge?: string; link?: string; max?: number }
+  | { kind: 'checklist'; items: string[] }
+  | { kind: 'text'; value: string };
+export interface UiCard { id: string; title: string; placement: typeof UI_SECTIONS[number]; query?: UiQuery; view: UiView; actions?: string[]; empty?: string }
+export interface UiPanel { id: string; title: string; placement: typeof UI_PANEL_PLACES[number]; query?: UiQuery; view: UiView; actions?: string[]; empty?: string }
+export interface UiPage { id: string; title: string; placement: typeof UI_SECTIONS[number]; summary: string; sections: Array<{ title?: string; query?: UiQuery; view: UiView }>; actions?: string[] }
+export interface UiField { key: string; label: string; type: 'text' | 'number' | 'textarea' | 'select'; options?: string[]; required?: boolean }
+export interface UiAction { id: string; title: string; operation: string; input?: Record<string, unknown>; fields?: UiField[]; confirm?: string }
+export interface UiBadge { id: string; placement: typeof UI_PANEL_PLACES[number]; query: UiQuery; label: string; tone?: UiTone }
+export interface UiContributions { cards?: UiCard[]; panels?: UiPanel[]; pages?: UiPage[]; actions?: UiAction[]; badges?: UiBadge[] }
+
 export interface Manifest {
   manifestVersion: 1;
   id: string;
@@ -143,9 +177,11 @@ export interface Manifest {
   verifies?: Array<{ changeKind: string; check: Record<string, unknown> }>;
   mirrors?: Array<Record<string, unknown>>;
   panels?: Array<Record<string, unknown>>;
-  skills?: string[];
+  skills?: SkillRef[];
   rolePacks?: string[];
   playbooks?: string[];
+  guidance?: GuidanceDef[];
+  ui?: UiContributions;
   tunables?: Record<string, Record<string, unknown>>;
   policies?: PolicyDef[];
   egress?: Array<{ host: string; category: string }>;
@@ -474,8 +510,234 @@ const TOP_KEYS = [
   'manifestVersion', 'id', 'name', 'description', 'homepage', 'license', 'version', 'publisher', 'roles', 'requires',
   'toolPrefix', 'settings', 'interfaces', 'provides', 'tools', 'connections', 'events', 'metrics', 'verifies', 'mirrors',
   'panels', 'skills', 'rolePacks', 'playbooks', 'tunables', 'policies', 'egress', 'secrets', 'dataSharing', 'identity',
-  'budgets', 'runtime', 'environments', 'setup', 'finalizers', 'guards',
+  'budgets', 'runtime', 'environments', 'setup', 'finalizers', 'guards', 'guidance', 'ui',
 ];
+
+function checkAudience(c: Checker, path: string, v: unknown): void {
+  if (!c.list(path, v, false, 8)) return;
+  if ((v as unknown[]).length === 0) c.err(path, 'names at least one audience');
+  (v as unknown[]).forEach((a, i) => c.str(`${path}[${i}]`, a, { re: AUDIENCE_RE, max: 40 }));
+}
+
+const UI_ID_RE = /^[a-z][a-z0-9-]{1,40}$/;
+const UI_OP_RE = /^([a-z][a-z0-9]{1,15})\.([a-z][a-z0-9_]{0,39})$/;
+/** A UI input value: a literal, or exactly one `{{context.x}}`, `{{field.x}}` or `{{settings.x}}`. */
+const UI_TEMPLATE_RE = /^\{\{\s*(context|field|settings)\.[A-Za-z_][A-Za-z0-9_]{0,40}\s*\}\}$/;
+/** The context keys a placement provides to templates. */
+export const UI_CONTEXT_KEYS: Record<string, string[]> = {
+  task: ['taskKey', 'taskTitle', 'projectKey'], project: ['projectKey', 'projectTitle'], agent: ['agentName', 'agentTitle'],
+  direction: [], operations: [], people: [], money: [], oversight: [],
+};
+const ALL_CONTEXT_KEYS = [...new Set(Object.values(UI_CONTEXT_KEYS).flat())];
+
+/** Guidance notes (plugins and kits): bounded, linted, attributed by the core. */
+function checkGuidance(c: Checker, path: string, v: unknown): void {
+  if (!c.list(path, v, true, GUIDANCE_MAX_NOTES)) return;
+  const ids = new Set<string>();
+  (v as unknown[]).forEach((g, i) => {
+    const p = `${path}[${i}]`;
+    if (!c.strict(p, g, ['id', 'title', 'text', 'audience'], ['id', 'title', 'text', 'audience'])) return;
+    if (c.str(`${p}.id`, g.id, { re: UI_ID_RE })) { if (ids.has(g.id as string)) c.err(`${p}.id`, 'repeats an id'); ids.add(g.id as string); }
+    c.str(`${p}.title`, g.title, { max: 80, lint: true });
+    c.str(`${p}.text`, g.text, { max: GUIDANCE_NOTE_MAX, lint: true });
+    checkAudience(c, `${p}.audience`, g.audience);
+  });
+}
+
+/** A kit's (or any package's) guidance list, validated alone. */
+export function validateGuidance(raw: unknown, path = 'guidance'): string[] {
+  const c = new Checker();
+  checkGuidance(c, path, raw);
+  return c.errors;
+}
+
+interface UiScope { interfaces: Set<string>; own: Map<string, InterfaceDef> }
+function uiScope(m: Record<string, unknown>): UiScope {
+  const own = new Map<string, InterfaceDef>();
+  for (const i of Array.isArray(m.interfaces) ? m.interfaces as InterfaceDef[] : []) if (i && typeof i.name === 'string') own.set(i.name, i);
+  const req = (m.requires as { interfaces?: unknown[] } | undefined)?.interfaces ?? [];
+  const names = new Set<string>([...own.keys(), ...(Array.isArray(req) ? req : []).map((r) => parseInterfaceRef(String(r))?.name ?? '').filter(Boolean)]);
+  return { interfaces: names, own };
+}
+
+function checkUiInput(c: Checker, path: string, v: unknown, keys: string[], fields?: string[]): void {
+  if (v === undefined) return;
+  if (!c.isObj(v)) { c.err(path, 'must be an object'); return; }
+  for (const [k, x] of Object.entries(v)) {
+    if (typeof x === 'string' && x.includes('{{')) {
+      if (!UI_TEMPLATE_RE.test(x)) { c.err(`${path}.${k}`, 'a template is exactly one {{context.x}}, {{field.x}} or {{settings.x}}'); continue; }
+      const ctx = /\{\{\s*context\.([A-Za-z_][A-Za-z0-9_]*)/.exec(x);
+      if (ctx && !keys.includes(ctx[1])) c.err(`${path}.${k}`, `context.${ctx[1]} is not provided here (${keys.join(', ') || 'no context'})`);
+      const fld = /\{\{\s*field\.([A-Za-z_][A-Za-z0-9_]*)/.exec(x);
+      if (fld && !(fields ?? []).includes(fld[1])) c.err(`${path}.${k}`, `field.${fld[1]} is not a declared field`);
+    } else if (x !== null && typeof x === 'object') c.err(`${path}.${k}`, 'must be a literal or a template');
+  }
+}
+
+function checkUiOp(c: Checker, path: string, op: unknown, scope: UiScope, read: boolean): void {
+  if (!c.str(path, op, { re: UI_OP_RE, max: 60 })) return;
+  const [, iface, name] = UI_OP_RE.exec(op as string)!;
+  if (!scope.interfaces.has(iface)) { c.err(path, `${iface} is neither defined by this package nor in requires.interfaces`); return; }
+  const def = scope.own.get(iface)?.operations?.[name];
+  if (scope.own.has(iface) && !def) { c.err(path, `${iface} has no operation ${name}`); return; }
+  if (def && read && def.class !== 'read') c.err(path, `${op as string} is not a read operation; queries are read-only`);
+  if (def && !read && (def.change?.role === 'apply' || def.change?.role === 'rollback')) c.err(path, `${op as string} applies or rolls back a change record; UI actions may not`);
+}
+
+function checkView(c: Checker, path: string, v: unknown): void {
+  if (!c.isObj(v)) { c.err(path, 'must be an object'); return; }
+  const p = (k: string, x: unknown, optional = false) => { if (x === undefined && optional) return; if (!isPath(x)) c.err(`${path}.${k}`, 'must be a $-path'); };
+  if (v.kind === 'stats') {
+    if (!c.strict(path, v, ['kind', 'items'], ['kind', 'items']) || !c.list(`${path}.items`, v.items, false, 8)) return;
+    (v.items as unknown[]).forEach((it, i) => {
+      const q = `${path}.items[${i}]`;
+      if (!c.strict(q, it, ['label', 'value', 'unit', 'tone', 'toneWhen'], ['label', 'value'])) return;
+      c.str(`${q}.label`, it.label, { max: 40, lint: true });
+      if (!isPath(it.value)) c.err(`${q}.value`, 'must be a $-path');
+      c.str(`${q}.unit`, it.unit, { optional: true, max: 12 });
+      if (it.tone !== undefined) c.oneOf(`${q}.tone`, it.tone, UI_TONES);
+      if (it.toneWhen !== undefined && c.strict(`${q}.toneWhen`, it.toneWhen, ['path', 'gt', 'lt', 'tone'], ['path', 'tone'])) {
+        const tw = it.toneWhen as Record<string, unknown>;
+        if (!isPath(tw.path)) c.err(`${q}.toneWhen.path`, 'must be a $-path');
+        c.num(`${q}.toneWhen.gt`, tw.gt, -1e12, 1e12);
+        c.num(`${q}.toneWhen.lt`, tw.lt, -1e12, 1e12);
+        c.oneOf(`${q}.toneWhen.tone`, tw.tone, UI_TONES);
+      }
+    });
+  } else if (v.kind === 'table') {
+    if (!c.strict(path, v, ['kind', 'rows', 'columns', 'max'], ['kind', 'rows', 'columns'])) return;
+    p('rows', v.rows);
+    c.num(`${path}.max`, v.max, 1, 50);
+    if (c.list(`${path}.columns`, v.columns, false, 6)) (v.columns as unknown[]).forEach((col, i) => {
+      if (!c.strict(`${path}.columns[${i}]`, col, ['label', 'value'], ['label', 'value'])) return;
+      c.str(`${path}.columns[${i}].label`, col.label, { max: 40, lint: true });
+      if (!isPath(col.value)) c.err(`${path}.columns[${i}].value`, 'must be a $-path (relative to the row)');
+    });
+  } else if (v.kind === 'list') {
+    if (!c.strict(path, v, ['kind', 'items', 'title', 'subtitle', 'badge', 'link', 'max'], ['kind', 'items', 'title'])) return;
+    p('items', v.items); p('title', v.title); p('subtitle', v.subtitle, true); p('badge', v.badge, true); p('link', v.link, true);
+    c.num(`${path}.max`, v.max, 1, 50);
+  } else if (v.kind === 'checklist') {
+    if (!c.strict(path, v, ['kind', 'items'], ['kind', 'items']) || !c.list(`${path}.items`, v.items, false, 20)) return;
+    (v.items as unknown[]).forEach((x, i) => c.str(`${path}.items[${i}]`, x, { max: 200, lint: true }));
+  } else if (v.kind === 'text') {
+    if (!c.strict(path, v, ['kind', 'value'], ['kind', 'value'])) return;
+    p('value', v.value);
+  } else c.err(`${path}.kind`, 'must be one of stats, table, list, checklist, text');
+}
+
+/** The declarative UI block (docs/plugins.md §3.8): extension points, never code. */
+function checkUi(c: Checker, path: string, raw: unknown, scope: UiScope): void {
+  if (!c.strict(path, raw, ['cards', 'panels', 'pages', 'actions', 'badges'])) return;
+  const ui = raw;
+  const ids = new Set<string>();
+  const id = (q: string, x: unknown) => { if (c.str(q, x, { re: UI_ID_RE })) { if (ids.has(x as string)) c.err(q, 'repeats an id'); ids.add(x as string); } };
+  const actionIds = new Set<string>();
+  if (c.list(`${path}.actions`, ui.actions, true, 20)) (ui.actions as unknown[]).forEach((a, i) => {
+    const q = `${path}.actions[${i}]`;
+    if (!c.strict(q, a, ['id', 'title', 'operation', 'input', 'fields', 'confirm'], ['id', 'title', 'operation'])) return;
+    id(`${q}.id`, a.id);
+    if (typeof a.id === 'string') actionIds.add(a.id);
+    c.str(`${q}.title`, a.title, { max: 40, lint: true });
+    c.str(`${q}.confirm`, a.confirm, { optional: true, max: 200, lint: true });
+    checkUiOp(c, `${q}.operation`, a.operation, scope, false);
+    const fieldKeys: string[] = [];
+    if (c.list(`${q}.fields`, a.fields, true, 8)) (a.fields as unknown[]).forEach((f, j) => {
+      const r = `${q}.fields[${j}]`;
+      if (!c.strict(r, f, ['key', 'label', 'type', 'options', 'required'], ['key', 'label', 'type'])) return;
+      if (c.str(`${r}.key`, f.key, { re: /^[A-Za-z_][A-Za-z0-9_]{0,40}$/ })) fieldKeys.push(f.key as string);
+      c.str(`${r}.label`, f.label, { max: 60, lint: true });
+      c.oneOf(`${r}.type`, f.type, ['text', 'number', 'textarea', 'select'] as const);
+      if (f.options !== undefined) c.strList(`${r}.options`, f.options);
+      c.bool(`${r}.required`, f.required, true);
+    });
+    checkUiInput(c, `${q}.input`, a.input, ALL_CONTEXT_KEYS, fieldKeys);
+  });
+  const refsActions = (q: string, v: unknown) => {
+    if (!c.list(q, v, true, 4)) return;
+    (v as unknown[]).forEach((x, i) => { if (typeof x !== 'string' || !actionIds.has(x)) c.err(`${q}[${i}]`, 'names no declared action'); });
+  };
+  const query = (q: string, v: unknown, keys: string[], optional: boolean) => {
+    if (v === undefined) { if (!optional) c.err(q, 'required'); return; }
+    if (!c.strict(q, v, ['operation', 'input'], ['operation'])) return;
+    checkUiOp(c, `${q}.operation`, v.operation, scope, true);
+    checkUiInput(c, `${q}.input`, v.input, keys);
+  };
+  const block = (key: 'cards' | 'panels', places: readonly string[]) => {
+    if (!c.list(`${path}.${key}`, ui[key], true, 12)) return;
+    (ui[key] as unknown[]).forEach((b, i) => {
+      const q = `${path}.${key}[${i}]`;
+      if (!c.strict(q, b, ['id', 'title', 'placement', 'query', 'view', 'actions', 'empty'], ['id', 'title', 'placement', 'view'])) return;
+      id(`${q}.id`, b.id);
+      c.str(`${q}.title`, b.title, { max: 60, lint: true });
+      c.str(`${q}.empty`, b.empty, { optional: true, max: 200, lint: true });
+      if (c.oneOf(`${q}.placement`, b.placement, places)) query(`${q}.query`, b.query, UI_CONTEXT_KEYS[b.placement as string] ?? [], true);
+      checkView(c, `${q}.view`, b.view);
+      if (c.isObj(b.view) && b.view.kind !== 'checklist' && b.query === undefined) c.err(`${q}.query`, 'a data view needs a query');
+      refsActions(`${q}.actions`, b.actions);
+    });
+  };
+  block('cards', UI_SECTIONS);
+  block('panels', UI_PANEL_PLACES);
+  if (c.list(`${path}.pages`, ui.pages, true, 6)) (ui.pages as unknown[]).forEach((pg, i) => {
+    const q = `${path}.pages[${i}]`;
+    if (!c.strict(q, pg, ['id', 'title', 'placement', 'summary', 'sections', 'actions'], ['id', 'title', 'placement', 'summary', 'sections'])) return;
+    id(`${q}.id`, pg.id);
+    c.str(`${q}.title`, pg.title, { max: 60, lint: true });
+    c.str(`${q}.summary`, pg.summary, { max: 200, lint: true });
+    c.oneOf(`${q}.placement`, pg.placement, UI_SECTIONS);
+    if (c.list(`${q}.sections`, pg.sections, false, 6)) (pg.sections as unknown[]).forEach((sec, j) => {
+      const r = `${q}.sections[${j}]`;
+      if (!c.strict(r, sec, ['title', 'query', 'view'], ['view'])) return;
+      c.str(`${r}.title`, sec.title, { optional: true, max: 60, lint: true });
+      query(`${r}.query`, sec.query, [], true);
+      checkView(c, `${r}.view`, sec.view);
+    });
+    refsActions(`${q}.actions`, pg.actions);
+  });
+  if (c.list(`${path}.badges`, ui.badges, true, 8)) (ui.badges as unknown[]).forEach((b, i) => {
+    const q = `${path}.badges[${i}]`;
+    if (!c.strict(q, b, ['id', 'placement', 'query', 'label', 'tone'], ['id', 'placement', 'query', 'label'])) return;
+    id(`${q}.id`, b.id);
+    if (c.oneOf(`${q}.placement`, b.placement, UI_PANEL_PLACES)) query(`${q}.query`, b.query, UI_CONTEXT_KEYS[b.placement as string] ?? [], false);
+    if (!isPath(b.label)) c.err(`${q}.label`, 'must be a $-path');
+    if (b.tone !== undefined) c.oneOf(`${q}.tone`, b.tone, UI_TONES);
+  });
+}
+
+/**
+ * Contribution conformance against the interfaces a workspace actually has
+ * (the install review's blockers): every UI query names a `read` operation
+ * and every action one that exists and neither applies nor rolls back a
+ * change. Own interfaces were checked by the validator already.
+ */
+export function uiConformance(m: Manifest, defs: (name: string) => InterfaceDef | undefined): string[] {
+  const out: string[] = [];
+  const ui = m.ui;
+  if (!ui) return out;
+  const check = (where: string, op: string, read: boolean) => {
+    const mm = UI_OP_RE.exec(op);
+    if (!mm) return;
+    const def = defs(mm[1]);
+    if (!def) return; // a requirement not installed yet: the contribution stays hidden until it is
+    const d = def.operations[mm[2]];
+    if (!d) out.push(`${where}: ${mm[1]} has no operation ${mm[2]}`);
+    else if (read && d.class !== 'read') out.push(`${where}: ${op} is not a read operation; queries are read-only`);
+    else if (!read && (d.change?.role === 'apply' || d.change?.role === 'rollback')) out.push(`${where}: ${op} applies or rolls back a change record; UI actions may not`);
+  };
+  for (const x of [...(ui.cards ?? []), ...(ui.panels ?? []), ...(ui.badges ?? [])]) if (x.query) check(`ui ${x.id}`, x.query.operation, true);
+  for (const pg of ui.pages ?? []) for (const s of pg.sections) if (s.query) check(`ui ${pg.id}`, s.query.operation, true);
+  for (const a of ui.actions ?? []) check(`ui ${a.id}`, a.operation, false);
+  return out;
+}
+
+/** The skill files a manifest contributes, each with its audience. */
+export function skillRefs(m: Manifest): Array<{ path: string; audience: Audience[] }> {
+  const out: Array<{ path: string; audience: Audience[] }> = [];
+  for (const s of m.skills ?? []) out.push(typeof s === 'string' ? { path: s, audience: ['all'] } : { path: s.path, audience: s.audience?.length ? s.audience : ['all'] });
+  for (const i of m.interfaces ?? []) for (const s of i.skills ?? []) if (!out.some((o) => o.path === s)) out.push({ path: s, audience: ['all'] });
+  return out;
+}
 
 /** Validate a parsed `plugin.json`. `bytes` is the raw size when known. */
 export function validateManifest(raw: unknown, bytes?: number): ValidationResult {
@@ -515,7 +777,7 @@ export function validateManifest(raw: unknown, bytes?: number): ValidationResult
   if (roles.includes('provider') !== has('provides') && !(roles.includes('provider') && has('tools'))) c.err('roles', roles.includes('provider') ? 'the provider role needs `provides` or `tools`' : '`provides` needs the provider role');
   if (has('tools') && !roles.includes('provider')) c.err('roles', 'vendor extras (`tools`) need the provider role');
   if (has('toolPrefix') && !roles.includes('provider')) c.err('toolPrefix', 'only providers declare a tool prefix');
-  if (roles.includes('consumer') && !has('requires') && !has('skills') && !has('rolePacks') && !has('playbooks')) c.err('roles', 'a consumer declares what it consumes');
+  if (roles.includes('consumer') && !has('requires') && !has('skills') && !has('rolePacks') && !has('playbooks') && !has('guidance') && !has('ui')) c.err('roles', 'a consumer declares what it consumes');
   if (m.toolPrefix !== undefined && c.str('toolPrefix', m.toolPrefix, { re: /^[a-z][a-z0-9]{1,15}$/ }) && RESERVED_NAMES.has(m.toolPrefix as string)) c.err('toolPrefix', 'is a name the core owns');
   if (m.settings !== undefined) c.schema('settings', m.settings);
 
@@ -606,7 +868,15 @@ export function validateManifest(raw: unknown, bytes?: number): ValidationResult
     if (!c.strict(`verifies[${i}]`, x, ['changeKind', 'check'], ['changeKind', 'check'])) return;
     if (c.isObj(x.check) && x.check.match !== undefined) for (const e of checkMatchExpr(x.check.match)) c.err(`verifies[${i}].check.match`, e);
   });
-  for (const k of ['skills', 'rolePacks', 'playbooks'] as const) if (c.list(k, m[k], true, 50)) (m[k] as unknown[]).forEach((x, i) => c.relPath(`${k}[${i}]`, x));
+  for (const k of ['rolePacks', 'playbooks'] as const) if (c.list(k, m[k], true, 50)) (m[k] as unknown[]).forEach((x, i) => c.relPath(`${k}[${i}]`, x));
+  if (c.list('skills', m.skills, true, 20)) (m.skills as unknown[]).forEach((x, i) => {
+    if (typeof x === 'string') { c.relPath(`skills[${i}]`, x); return; }
+    if (!c.strict(`skills[${i}]`, x, ['path', 'audience'], ['path'])) return;
+    c.relPath(`skills[${i}].path`, x.path);
+    if (x.audience !== undefined) checkAudience(c, `skills[${i}].audience`, x.audience);
+  });
+  checkGuidance(c, 'guidance', m.guidance);
+  if (m.ui !== undefined) checkUi(c, 'ui', m.ui, uiScope(m));
   for (const k of ['metrics', 'mirrors', 'panels', 'environments'] as const) c.list(k, m[k], true, 50);
   if (m.tunables !== undefined && !c.isObj(m.tunables)) c.err('tunables', 'must be an object');
 
