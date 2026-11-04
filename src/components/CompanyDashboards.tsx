@@ -25,78 +25,62 @@ import { faint, linkBtn, ago, Avatar, useAgentNames } from './org-ui';
 import { ProgramPeopleCard } from './ProgramMatrixView';
 import { DirectionOverview } from './DirectionOverview';
 import { PluginCards } from './PluginUi';
+import { Bar as KitBar, Card as KitCard, Empty as KitEmpty, Metric, PageHeader, Pill, SkeletonRows } from './CompanyKit';
+import type { Tone } from '../lib/direction';
 import { DepartmentName, useMayRenameDepartments } from './DepartmentName';
 
 // ---- the parts every dashboard shares ----
 
 const GAP = 14;
-const cardStyle: React.CSSProperties = { minWidth: 0, background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 13, display: 'flex', flexDirection: 'column' };
 const num: React.CSSProperties = { fontVariantNumeric: 'tabular-nums' };
-const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px solid var(--border-soft)', fontSize: 12.5, minWidth: 0 };
+const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderTop: '1px solid var(--border-soft)', fontSize: 12.5, minWidth: 0 };
 const ellipsis: React.CSSProperties = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 };
-const rowBtn: React.CSSProperties = { ...row, width: '100%', background: 'none', border: 'none', borderTop: '1px solid var(--border-soft)', color: 'var(--text)', font: 'inherit', fontSize: 12.5, textAlign: 'left', cursor: 'pointer' };
+const rowBtn: React.CSSProperties = { ...row, width: '100%', background: 'none', border: 'none', borderTop: '1px solid var(--border-soft)', color: 'var(--text)', font: 'inherit', fontSize: 12.5, textAlign: 'left', cursor: 'pointer', borderRadius: 0 };
 
-/** One card: its title opens the page it summarises. `lead` spans the row. */
+/** A colour token as a tone of the kit. */
+const toneOf = (c?: string): Tone | undefined => (!c ? undefined : c.includes('red') ? 'bad' : c.includes('amber') ? 'warn' : c.includes('green') ? 'ok' : undefined);
+
+/** One card (the kit's): its title opens the page it summarises. `lead` spans the row. */
 function Card({ id, title, open, openLabel, lead, children, aside }: { id: string; title: string; open?: () => void; openLabel?: string; lead?: boolean; children: ReactNode; aside?: ReactNode }) {
   return (
-    <section data-testid={`dash-card-${id}`} aria-labelledby={`dash-${id}`} style={{ ...cardStyle, ...(lead ? { gridColumn: '1 / -1' } : {}) }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px 8px', flexWrap: 'wrap' }}>
-        <h3 id={`dash-${id}`} style={{ margin: 0, fontSize: 15, fontWeight: 650, letterSpacing: '.05em', fontVariantCaps: 'all-small-caps', color: 'var(--text)' }}>{title}</h3>
-        {aside}
-        <span style={{ flex: 1 }} />
-        {open && <button style={linkBtn} onClick={open}>{openLabel ?? `Open ${title.toLowerCase()}`}</button>}
-      </div>
-      <div style={{ padding: '0 16px 14px', flex: 1, minWidth: 0 }}>{children}</div>
-    </section>
+    <KitCard id={id} title={title} onOpen={open} span={lead} aside={aside} action={open ? <button className="co-link" onClick={open}>{openLabel ?? `Open ${title.toLowerCase()}`}</button> : undefined}>
+      {children}
+    </KitCard>
   );
 }
 
 function Grid({ children }: { children: ReactNode }) {
-  return <div style={{ display: 'grid', gap: GAP, gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', alignItems: 'start' }}>{children}</div>;
+  return <div className="co-grid">{children}</div>;
 }
 
 /** The dashboard's opening: where the section stands, in one sentence (what it is for sits behind the (i) by the section title). */
 function Lede({ state }: { state: string | null }) {
-  return (
-    <div style={{ marginBottom: 16, maxWidth: 760 }}>
-      <p data-testid="dash-lede" style={{ margin: 0, fontSize: 18, lineHeight: 1.4, fontWeight: 560, letterSpacing: '-.2px', color: 'var(--text)', minHeight: 25 }}>{state ?? ' '}</p>
-    </div>
-  );
+  return <p data-testid="dash-lede" style={{ margin: '0 0 16px', maxWidth: 760, fontSize: 18, lineHeight: 1.4, fontWeight: 600, letterSpacing: '-.012em', color: 'var(--text)', minHeight: 25 }}>{state ?? ' '}</p>;
 }
 
 /** What waits on the CEO from this section: decided in the Inbox, linked from here. */
 function InboxRow({ text, pane }: { text: string; pane: Extract<OrgPane, 'approvals' | 'plans' | 'mytasks'> }) {
   const app = useApp();
   return (
-    <button data-testid="dash-inbox-row" onClick={() => { app.setOrgFocus(null); app.setOrgPane(pane); }}
-      style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', marginBottom: GAP, padding: '10px 14px', borderRadius: 11, border: '1px solid var(--border)', borderLeft: '3px solid var(--amber)', background: 'var(--panel-2)', color: 'var(--text)', font: 'inherit', fontSize: 13, cursor: 'pointer' }}>
+    <button data-testid="dash-inbox-row" className="co-note warn" onClick={() => { app.setOrgFocus(null); app.setOrgPane(pane); }}
+      style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left', marginBottom: GAP, cursor: 'pointer', font: 'inherit', fontSize: 13 }}>
       <span style={{ flex: 1, minWidth: 0 }}>{text}</span>
-      <span style={{ ...linkBtn, flex: 'none' }}>Open the Inbox</span>
+      <span className="co-link" style={{ flex: 'none' }}>Open the Inbox</span>
     </button>
   );
 }
 
-function Bar({ value, color = 'var(--accent)', label }: { value: number; color?: string; label: string }) {
-  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
-  return (
-    <div role="progressbar" aria-label={label} aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} style={{ height: 5, borderRadius: 3, background: 'var(--panel-2)', overflow: 'hidden', flex: 1, minWidth: 40 }}>
-      <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 3 }} />
-    </div>
-  );
+function Bar({ value, color, label }: { value: number; color?: string; label: string }) {
+  return <KitBar value={Math.max(0, Math.min(1, value))} tone={toneOf(color)} label={label} />;
 }
 
-/** A labelled figure inside a sentence-like strip ("12 in progress"). */
+/** A labelled figure ("12 in progress"). */
 function Fig({ n, label, tone }: { n: number | string; label: string; tone?: string }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5, whiteSpace: 'nowrap' }}>
-      <span style={{ ...num, fontSize: 20, fontWeight: 650, color: tone ?? 'var(--text)', letterSpacing: '-.3px' }}>{n}</span>
-      <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{label}</span>
-    </span>
-  );
+  return <Metric n={n} label={label} tone={toneOf(tone)} />;
 }
 
-const Empty = ({ children }: { children: ReactNode }) => <div style={{ ...faint, fontSize: 12.5, padding: '2px 0' }}>{children}</div>;
-const Loading = () => <div style={faint}>Loading…</div>;
+const Empty = ({ children }: { children: ReactNode }) => <div style={{ fontSize: 12.5, color: 'var(--text-dim)', padding: '4px 0', lineHeight: 1.5 }}>{children}</div>;
+const Loading = () => <SkeletonRows rows={2} />;
 
 /** Fetch a dashboard's data once per workspace: undefined while loading, null if it failed. */
 function useData<T>(load: (wsId: string) => Promise<T>, wsId: string, key = ''): T | null | undefined {
@@ -302,10 +286,11 @@ export function TeamsPane({ org }: { org: OrgDetail }) {
     const byId = new Map(units.map((u) => [u.id, u]));
     return (u: OrgUnitNode) => { let d = 0; let p = u.parentUnitId; while (p && byId.has(p) && d < 8) { d += 1; p = byId.get(p)!.parentUnitId; } return d; };
   }, [units]);
-  if (units.length === 0) return <div style={faint}>No departments yet: the company is one team. The chief of staff proposes departments as the company grows.</div>;
+  const about = <>Each department has a lead, a channel, a board and goals; the board and goals open filtered to it. {org.name} is the top of the tree.{mayRename ? ' Rename a department with its pencil.' : ''}</>;
+  if (units.length === 0) return <div className="co-page"><PageHeader title="Teams" purpose={about} /><KitEmpty title="One team: the company">The chief of staff proposes departments as the company grows.</KitEmpty></div>;
   return (
-    <div style={{ maxWidth: 1180 }} data-testid="teams-pane">
-      <div style={{ ...faint, fontSize: 12.5, marginBottom: 14, maxWidth: 640 }}>Each team has a lead, a channel, a board and goals. The board and goals open filtered to the team. {org.name} is the top of the tree.</div>
+    <div className="co-page" data-testid="teams-pane">
+      <PageHeader title="Teams" purpose={about} />
       <Grid>
         {units.map((u) => {
           const isRoot = u.parentUnitId === null;
@@ -316,14 +301,14 @@ export function TeamsPane({ org }: { org: OrgDetail }) {
           const unitId = isRoot ? null : u.id;
           const d = depthOf(u);
           return (
-            <section key={u.id} data-testid={`team-${u.slug}`} style={{ ...cardStyle, padding: '13px 16px', gap: 8 }}>
+            <section key={u.id} data-testid={`team-${u.slug}`} className="co-card" style={{ padding: '13px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                 <Avatar a={lead} size={28} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ ...ellipsis, fontSize: 14, fontWeight: 650 }}>{isRoot ? 'Company' : <DepartmentName wsId={org.workspaceId} unitId={u.id} name={u.name} editable={mayRename} />}</div>
                   <div style={{ ...faint, ...ellipsis }}>{d > 0 ? `level ${d + 1} · ` : ''}led by {lead?.name ?? 'an agent'}</div>
                 </div>
-                {risk > 0 && <span title={`${risk} goal(s) at risk`} style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--amber)' }}>{risk} at risk</span>}
+                {risk > 0 && <Pill tone="warn" title={`${risk} goal${risk === 1 ? '' : 's'} at risk`}>{risk} at risk</Pill>}
               </div>
               <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
                 {u.memberAgentIds.slice(0, 8).map((id) => <Avatar key={id} a={names.get(id)} size={18} />)}
@@ -363,7 +348,7 @@ function MoneyDashboard({ org }: { org: OrgDetail }) {
   const capital = allocations ? capitalByGoal(allocations, (id) => titles.get(id)) : [];
   const budgets = spend ? budgetLines(spend) : [];
   const unenveloped = budgets.filter((b) => b.key.startsWith('a:') && b.pct === null);
-  const warn = forecast ? [...forecast.agents, ...forecast.projects, ...forecast.objectives].filter((f) => f.state !== 'onTrack').slice(0, 4) : [];
+  const warn = forecast ? [forecast.company, ...forecast.agents, ...forecast.projects, ...forecast.objectives].filter((f) => f.state !== 'onTrack').slice(0, 4) : [];
   const series = spend?.series.slice(-30) ?? [];
   const peak = Math.max(0.000001, ...series.map((d) => d.usd));
   return (
@@ -413,8 +398,8 @@ function MoneyDashboard({ org }: { org: OrgDetail }) {
         <Card id="forecast" title="Forecast" open={() => open('capital')} openLabel="Open capital">
           {forecast === undefined ? <Loading /> : !forecast ? <Empty>No forecast yet.</Empty> : warn.length === 0 ? <Empty>Every envelope is on track for day {forecast.daysInMonth}.</Empty> : warn.map((f) => (
             <div key={`${f.scope}:${f.refId}`} style={row}>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: f.state === 'stop' ? 'var(--red)' : 'var(--amber)', flex: 'none' }}>{f.state === 'stop' ? 'will stop' : 'warning'}</span>
-              <span style={{ ...ellipsis, flex: 1 }}>{f.name}</span>
+              <Pill tone={f.state === 'stop' ? 'bad' : 'warn'}>{f.state === 'stop' ? 'will stop' : 'warning'}</Pill>
+              <span style={{ ...ellipsis, flex: 1 }}>{f.scope === 'company' ? `${f.name} (company)` : f.name}</span>
               <span style={{ ...faint, ...num }}>{fmtUsd(f.projectedUsd)} / {fmtUsd(f.capUsd)}</span>
             </div>
           ))}
@@ -465,7 +450,7 @@ function OversightDashboard({ org }: { org: OrgDetail }) {
         <Card id="auditor" title="Auditor" open={() => open('audit')} openLabel="Open audit">
           {runs === undefined ? <Loading /> : !lastRun ? <Empty>No audit has run yet.</Empty> : (
             <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>
-              <div style={{ display: 'flex', gap: 18, marginBottom: 6 }}><Fig n={findings ?? 0} label={findings === 1 ? 'finding' : 'findings'} tone={findings ? 'var(--amber)' : 'var(--green)'} /><span style={{ ...faint, alignSelf: 'center' }}>{ago(lastRun.endedAt ?? lastRun.startedAt)}</span></div>
+              <div className="co-metrics" style={{ marginBottom: 8 }}><Fig n={findings ?? 0} label={findings === 1 ? 'finding' : 'findings'} tone={findings ? 'var(--amber)' : 'var(--green)'} /><span style={{ ...faint, alignSelf: 'center' }}>{ago(lastRun.endedAt ?? lastRun.startedAt)}</span></div>
               {lastRun.summary && <div style={{ color: 'var(--text-dim)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{lastRun.summary}</div>}
             </div>
           )}
@@ -473,7 +458,7 @@ function OversightDashboard({ org }: { org: OrgDetail }) {
         <Card id="trust" title="Trust" open={() => app.openSettings('workspace')} openLabel="Trust levels">
           {trust === undefined ? <Loading /> : !trust ? <Empty>Trust levels are not available.</Empty> : (
             <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-              <div style={{ display: 'flex', gap: 18, marginBottom: 6 }}><Fig n={trust.agents.length} label="agents earning trust" />{lowTrust > 0 && <Fig n={lowTrust} label="at level 0 somewhere" tone="var(--amber)" />}</div>
+              <div className="co-metrics" style={{ marginBottom: 8 }}><Fig n={trust.agents.length} label="agents earning trust" />{lowTrust > 0 && <Fig n={lowTrust} label="at level 0 somewhere" tone="var(--amber)" />}</div>
               Levels rise after clean outcomes and fall at once on an incident. Your ceilings cap them per action class.
             </div>
           )}

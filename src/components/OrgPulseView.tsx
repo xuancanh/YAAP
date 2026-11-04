@@ -14,7 +14,8 @@ import { fmtUsd } from '../lib/pricing';
 import { spendWindowLabel } from '../lib/company-dash';
 import { openMeetingView } from '../lib/meetings';
 import { firesOn, groupSignals, humanCron, MEETING_KIND_TITLES, scoreColor, SEVERITY_COLOR, signalKindLabel, sloTiles, sparkPath } from '../lib/org';
-import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar } from './org-ui';
+import { card, input, btn, pill, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar } from './org-ui';
+import { PageHeader } from './CompanyKit';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 /** Health and audit independence (item 29, SPA item 32). */
@@ -48,14 +49,10 @@ export function PulsePane({ org }: { org: OrgDetail }) {
   };
   const open = signals.filter((s) => s.status !== 'resolved');
   return (
-    <div style={{ maxWidth: 900 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <h2 style={h2}>Pulse</h2>
-          <div style={faint}>Signals, SLOs, spend versus plan and today's rituals on one screen. The score is four weighted quarters (cycle time, first-review acceptance, decision latency, health) minus a penalty per open critical signal; weights and targets are tunables.</div>
-        </div>
-        <button style={btn()} onClick={() => void act(() => api.runOrgAudit(wsId).then((r) => { if (r.result !== 'done' && r.result !== 'ran') throw new Error(`Audit ${r.result}`); }), 'Audit ran — findings are signals')} title="Run the auditor now (needs an auditor member; capped by auditUsdCap)">Run audit now</button>
-      </div>
+    <div className="co-page" data-testid="pulse-page">
+      <PageHeader title="Pulse" purpose="Signals, SLOs, spend against plan and today's rituals on one screen. The score weighs cycle time, first-review acceptance, decision latency and health, minus a penalty per open critical signal." actions={
+        <button className="co-btn" onClick={() => void act(() => api.runOrgAudit(wsId).then((r) => { if (r.result !== 'done' && r.result !== 'ran') throw new Error(`Audit ${r.result}`); }), 'Audit ran — findings are signals')} title="Run the auditor now (needs an auditor member; capped by auditUsdCap)">Run audit now</button>
+      } />
       {err && <div style={{ ...card, color: 'var(--red)', fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
       <Suspense fallback={null}><HealthStrip health={app.orgHealth} onOpenIncidents={() => app.setOrgPane('incidents')} /></Suspense>
       {app.orgPendingPlans > 0 && (

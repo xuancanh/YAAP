@@ -12,9 +12,10 @@ import { api, type OrgCadence, type OrgDetail, type OrgMeeting } from '../lib/ap
 import { fmtUsd } from '../lib/pricing';
 import { firesOn, humanCron, MEETING_KIND_TITLES } from '../lib/org';
 import { openMeetingView, tokensText } from '../lib/meetings';
-import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar, UnitChips } from './org-ui';
+import { card, input, btn, pill, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar, UnitChips } from './org-ui';
 import { MeetingsBoard } from './MeetingsBoard';
 import { MeetingStartDialog } from './MeetingStartDialog';
+import { PageHeader } from './CompanyKit';
 
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -65,14 +66,10 @@ export function MeetingsPane({ org }: { org: OrgDetail }) {
   const unitName = (id: string | null) => { const u = id ? byId.get(id) : null; return u ? (u.parentUnitId === null ? 'Company' : u.name) : 'Company'; };
   const running = (meetings ?? []).filter((m) => m.status === 'running');
   return (
-    <div style={{ maxWidth: 860 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <h2 style={h2}>{isCompany ? 'Meetings' : `${current?.name ?? 'Department'} · meetings`}</h2>
-          <div style={faint}>Rituals are threads in the department channel: they open with the last meeting's open items, give each attendee one turn per round (later rounds only those with something open; passing is cheap), time-box each agenda item, stay under a USD cap, skip themselves when there is nothing to discuss, and end in minutes that become tasks, decisions, risks and questions for you. Crons are server-local, like loops.</div>
-        </div>
-        <button style={btn(true)} onClick={() => setStarting(!starting)}>Start meeting</button>
-      </div>
+    <div className="co-page" data-testid="meetings-page">
+      <PageHeader title={isCompany ? 'Meetings' : `${current?.name ?? 'Department'} meetings`}
+        purpose="Rituals run as threads in the department channel: one turn per attendee per round, time-boxed, under a USD cap, skipped when there is nothing to discuss. Their minutes become tasks, decisions, risks and questions for you."
+        actions={<button className="co-btn primary" onClick={() => setStarting(!starting)} aria-expanded={starting}>Start meeting</button>} />
       <UnitChips count={(u) => app.orgCadences.filter((c) => c.unitId === u.id && c.enabled === 1 && firesOn(c.cron)).length || null} title={(u) => `${app.orgCadences.filter((c) => c.unitId === u.id && c.enabled === 1 && firesOn(c.cron)).length} ritual(s) today`} />
       {starting && <MeetingStartDialog wsId={wsId} units={units} defaultUnitId={unitId ?? units.find((u) => u.parentUnitId === null)?.id ?? ''} onDone={(m) => { setStarting(false); void refresh(); if (m) setTimeout(() => { void api.orgMeeting(wsId, m.id).then(openMeeting).catch(() => {}); }, 1500); }} />}
       {running.length > 0 && (

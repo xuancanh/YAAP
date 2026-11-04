@@ -16,6 +16,7 @@ import {
 import { I, P } from '../lib/icons';
 import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useFollowRef, Avatar, Drawer } from './org-ui';
 import { useOrgRole } from './OrgSensingView';
+import { Empty, Metric, PageHeader, SkeletonRows } from './CompanyKit';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message.replace(/^\d{3} /, '').slice(0, 200) : 'failed');
 const TONE: Record<string, string> = { red: 'var(--red)', amber: 'var(--amber)', blue: 'var(--blue)' };
@@ -56,18 +57,20 @@ export function IncidentsPane({ org }: { org: OrgDetail }) {
   const { open, resolved } = sortIncidents(list ?? []);
   const shown = list?.find((i) => i.id === openId) ?? null;
   return (
-    <div style={{ maxWidth: 900 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <h2 style={h2}>Incidents</h2>
-          <div style={faint}>When something goes wrong the system contains it first (pause, freeze a class, supervised) and tells you once. Containment only narrows; resolving with "undo" reverses what is still in force.</div>
-        </div>
-        {role !== undefined && role !== null && role !== 'observer' && <button style={btn(true)} onClick={() => setReporting(!reporting)}>{reporting ? 'Close' : 'Report an incident'}</button>}
-      </div>
+    <div className="co-page narrow" data-testid="incidents-page">
+      <PageHeader title="Incidents" purpose="When something goes wrong the company contains it first (pause, freeze a class, supervised) and tells you once. Open: not yet contained. Contained: the harm is stopped, the cause is not settled. Resolved: closed, with what was undone."
+        actions={role !== undefined && role !== null && role !== 'observer' ? <button className="co-btn primary" onClick={() => setReporting(!reporting)} aria-expanded={reporting}>{reporting ? 'Close' : 'Report an incident'}</button> : undefined} />
       <HealthStrip health={app.orgHealth} />
+      {list !== null && (() => { const c = incidentCounts(open); return (
+        <div className="co-metrics" style={{ margin: '4px 0 14px' }} data-testid="incident-counts">
+          <Metric n={c.open} label="open" tone={c.open ? 'bad' : undefined} title="Not yet contained" />
+          <Metric n={c.contained} label="contained" tone={c.contained ? 'warn' : undefined} title="The harm is stopped; the cause is not settled" />
+          <Metric n={resolved.length} label="resolved" title="Closed, with what was undone" />
+        </div>
+      ); })()}
       {reporting && <ReportForm org={org} onDone={async (inc) => { setReporting(false); await refresh(); void app.refreshWsOrg(); if (inc) setOpenId(inc.id); }} />}
-      {list === null && <div style={faint}>Loading…</div>}
-      {list !== null && open.length === 0 && <div style={{ ...card, ...faint, marginBottom: 10 }}>No open incidents.</div>}
+      {list === null && <SkeletonRows rows={3} label="Loading incidents" />}
+      {list !== null && open.length === 0 && <div className="co-card" style={{ marginBottom: 10 }}><Empty compact title="No open or contained incidents">Nothing is being contained right now.</Empty></div>}
       {open.map((i) => <IncidentRow key={i.id} i={i} names={names} onOpen={() => setOpenId(i.id)} />)}
       {resolved.length > 0 && (
         <div style={{ marginTop: 14 }}>

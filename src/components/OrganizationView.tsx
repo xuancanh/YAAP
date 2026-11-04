@@ -14,16 +14,17 @@ import { hopLine, inReviewBelow, managerHops, waitsOnViewer } from '../lib/decis
 import { isTaskKey, keyStyle, matchesTaskRef } from '../lib/task-keys';
 import {
   api, ORG_TASK_STATUSES, type Agent, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
-  type OrgSpend, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type OrgUnitNode, type WorkspaceMember, type TaskCheck, type OrgDelegation, type CardEval,
+  type OrgSpend, type OrgForecast, type OrgTask, type OrgTaskBrief, type OrgTaskStatus, type OrgUnitNode, type WorkspaceMember, type TaskCheck, type OrgDelegation, type CardEval,
 } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
 import { fmtUsd } from '../lib/pricing';
 import { spendWindowLabel } from '../lib/company-dash';
 import { UsageBars, UsageRows } from './UsageChart';
 import { I, P } from '../lib/icons';
-import { card, input, btn, pill, h2, faint, linkBtn, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
+import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
 import { PluginPanels } from './PluginUi';
-import { InfoButton, PageSkeleton } from './CompanyKit';
+import { Bar as KitBar, Card as KitCard, Empty as KitEmpty, InfoButton, Menu, Metric, Owner, PageHeader, PageSkeleton, Pill, SearchBox, SkeletonRows } from './CompanyKit';
+import { actorWords, auditCategory, auditSentence, filterAudit, AUDIT_CATEGORY_LABEL, type AuditFilter } from '../lib/oversight';
 import { changeSummary, decidedViaBadge, dueBadge, expectedLabel, memberSettingsLines, verificationBadge } from '../lib/org3';
 import { FollowToggle } from './FollowToggle';
 import { DepartmentName, useMayRenameDepartments } from './DepartmentName';
@@ -157,12 +158,12 @@ function OrgChart({ org, reload }: { org: OrgDetail; reload: () => Promise<void>
   if (editing) {
     return (
       <div>
-        <button style={{ ...btn(), marginBottom: 12 }} onClick={() => setEditing(false)}>Back to mission control</button>
+        <button className="co-btn ghost small" style={{ marginBottom: 10 }} onClick={() => setEditing(false)}><I d={P.chevL} size={12} />Back to the org chart</button>
         <OrgStructure org={org} reload={reload} />
       </div>
     );
   }
-  return <Suspense fallback={<div style={faint}>Loading…</div>}><MissionControlPane org={org} onEditStructure={() => setEditing(true)} /></Suspense>;
+  return <Suspense fallback={<PageSkeleton />}><MissionControlPane org={org} onEditStructure={() => setEditing(true)} /></Suspense>;
 }
 
 /** The structure editor: members with their scopes, pause and terminate, add and hire, the humans, unit boundaries. */
@@ -260,12 +261,12 @@ function OrgStructure({ org, reload }: { org: OrgDetail; reload: () => Promise<v
     );
   });
   return (
-    <div style={{ maxWidth: 820 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Org chart</h2><div style={faint}>You → chief of staff → specialists. Depth ≤ {org.maxDepth}, ≤ {org.maxDirectReports} direct reports. Scopes are what a member may touch and never exceed the chief's own. Every member with reports leads a department (a board, a channel, goals) — the dashed boxes; the CEO renames one in place (✎), and its channel follows. Mode, chief and caps: Settings → Workspace → Organization.</div></div>
-        <button style={btn()} onClick={() => setAdding(!adding)} disabled={free.length === 0} title="Seat an existing agent of this workspace">Add member</button>
-        <button style={btn(true)} onClick={() => setHiring(true)} title="Hire from the role catalog or a pack (a hire card in supervised mode)">Hire</button>
-      </div>
+    <div className="co-page narrow" data-testid="org-structure">
+      <PageHeader title="Edit structure" purpose={<>You, then the chief of staff, then specialists: depth at most {org.maxDepth}, at most {org.maxDirectReports} direct reports. A member's scopes never exceed the chief's. Every member with reports leads a department (the dashed boxes); rename one in place with its pencil and its channel follows.</>}
+        actions={<>
+          <button className="co-btn" onClick={() => setAdding(!adding)} disabled={free.length === 0} title="Seat an existing agent of this workspace">Add member</button>
+          <button className="co-btn primary" onClick={() => setHiring(true)} title="Hire from the role catalog or a pack (a hire card in supervised mode)">Hire</button>
+        </>} />
       {hiring && <Suspense fallback={null}><HireDialog org={org} members={live} onClose={() => setHiring(false)} onDone={reload} /></Suspense>}
       {adding && (
         <div style={{ ...card, marginBottom: 12, display: 'grid', gap: 8, gridTemplateColumns: '1fr 1fr' }}>
@@ -427,81 +428,109 @@ function Board({ org }: { org: OrgDetail }) {
   const shown = projectFilter ? tasks.filter((t) => t.projectId === projectFilter) : tasks;
   const members = org.members.filter((m) => m.status === 'active');
   const lead = current ? names.get(current.leadAgentId) : undefined;
+  const STATUS_WORD: Record<string, string> = { backlog: 'Backlog', waiting: 'Waiting', todo: 'To do', claimed: 'Claimed', in_progress: 'In progress', in_review: 'In review', blocked: 'Blocked', done: 'Done', cancelled: 'Cancelled' };
+  const STATUS_HINT: Record<string, string> = { cancelled: 'Cancelled, or abandoned by its owner (the reason is on the timeline)', waiting: 'Waiting on another task; cannot be claimed yet', blocked: 'Stuck on something named on the card', claimed: 'An owner picked it up and has not started', in_review: 'Done by its owner, waiting on a reviewer' };
+  const wip = shown.filter((t) => t.status === 'in_progress' || t.status === 'claimed' || t.status === 'in_review').length;
+  const blockedN = shown.filter((t) => t.status === 'blocked').length;
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-        <div style={{ flex: 1 }}>
-          <h2 style={h2}>{isCompany ? 'Board' : `${current?.name ?? 'Department'} · board`}</h2>
-          <div style={faint}>
-            {isCompany ? 'One owner per task. Assigning wakes the owner; a comment wakes the owner; @Name in a comment wakes that member or notifies that person.' : <>Led by {lead?.name ?? '—'} · tasks of its reports, and what the lead hands them.</>}
-            {current && <> · <span style={{ color: 'var(--accent-hi)', cursor: 'pointer' }} onClick={() => app.openChannel(current.slug)}>#{current.slug}</span></>}
-            {current && <> · <TaskKeyPrefix wsId={org.workspaceId} unitId={current.id} prefix={current.taskKey ?? null} /></>}
+    <div data-testid="board-page">
+      <PageHeader title={isCompany ? 'Board' : `${current?.name ?? 'Department'} board`}
+        purpose={isCompany ? 'Every task, one owner each. Assigning or commenting wakes the owner; @Name in a comment wakes that member or notifies that person.' : <>Led by {lead?.name ?? '—'}: the tasks of its reports and what the lead hands them.</>}
+        actions={<>
+          {org.projects.length > 0 && (
+            <select aria-label="Project" className="co-input" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ width: 'auto', maxWidth: 220 }}>
+              <option value="">All projects</option>
+              {org.projects.filter((p) => p.status !== 'cancelled').map((p) => <option key={p.id} value={p.id}>{p.key ? `${p.key} ` : ''}{p.title}</option>)}
+            </select>
+          )}
+          <Menu label="Board options" trigger={<>Show<I d={P.chevD} size={12} /></>} triggerClass="co-btn" items={[
+            { id: 'roll', label: isCompany ? 'Every department’s tasks' : 'Include the departments below', checked: rolled, onSelect: () => setRollUp({ ...rollUp, [unitKey]: !rolled }) },
+            { id: 'cold', label: 'Done and cancelled columns', checked: showCold, onSelect: () => setShowCold(!showCold) },
+          ]} />
+          <button className="co-btn primary" onClick={() => setAdding(true)}>New task</button>
+        </>} />
+      <div className="co-toolbar">
+        {units.length > 1 && (
+          <div className="co-chips" role="tablist" aria-label="Department">
+            {units.map((u) => {
+              const active = (u.parentUnitId === null && isCompany) || (u.parentUnitId !== null && app.orgUnitId === u.id);
+              return (
+                <button key={u.id} role="tab" aria-selected={active} className={`co-chip${active ? ' on' : ''}`} onClick={() => app.setOrgUnitId(u.parentUnitId === null ? null : u.id)} title={`${u.counts.openTasks} open task${u.counts.openTasks === 1 ? '' : 's'}`}>
+                  {u.parentUnitId === null ? 'Whole company' : u.name}<span className="co-chip-n">{u.counts.openTasks}</span>
+                </button>
+              );
+            })}
           </div>
-        </div>
-        <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }} title={isCompany ? 'Every department\'s tasks, or only the company\'s own' : 'Include the departments below this one'}><input type="checkbox" checked={rolled} onChange={(e) => setRollUp({ ...rollUp, [unitKey]: e.target.checked })} />roll up</label>
-        <label style={{ ...faint, display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={showCold} onChange={(e) => setShowCold(e.target.checked)} />done & cancelled</label>
-        {org.projects.length > 0 && (
-          <select aria-label="Project" value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)} style={{ ...input, width: 'auto', maxWidth: 220 }}>
-            <option value="">All projects</option>
-            {org.projects.filter((p) => p.status !== 'cancelled').map((p) => <option key={p.id} value={p.id}>{p.key ? `${p.key} ` : ''}{p.title}</option>)}
-          </select>
         )}
-        <button style={btn(true)} onClick={() => setAdding(true)}>New task</button>
+        <span style={{ flex: 1 }} />
+        {current && <span className="co-faint"><button className="co-link" style={{ fontSize: 12 }} onClick={() => app.openChannel(current.slug)}>#{current.slug}</button> · <TaskKeyPrefix wsId={org.workspaceId} unitId={current.id} prefix={current.taskKey ?? null} /></span>}
       </div>
-      {units.length > 1 && (
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 12 }}>
-          {units.map((u) => {
-            const active = (u.parentUnitId === null && isCompany) || (u.parentUnitId !== null && app.orgUnitId === u.id);
-            const a = names.get(u.leadAgentId);
+      <div className="co-metrics" style={{ marginBottom: 12 }} data-testid="board-summary">
+        <Metric n={shown.filter((t) => t.status !== 'done' && t.status !== 'cancelled').length} label="open" />
+        <Metric n={wip} label="in flight" title="Claimed, in progress or in review" />
+        <Metric n={blockedN} label="blocked" tone={blockedN ? 'bad' : undefined} />
+        <Metric n={shown.filter((t) => !t.assigneeAgentId && !t.assigneeHumanId && t.status !== 'done' && t.status !== 'cancelled').length} label="unassigned" />
+      </div>
+      <Suspense fallback={null}><CapacityStrip wsId={org.workspaceId} refreshKey={tasks.length} /></Suspense>
+      {adding && <NewTask org={org} members={members} units={units} tasks={tasks} defaultUnitId={isCompany ? '' : current?.id ?? ''} onDone={() => { setAdding(false); void reload(); }} />}
+      {!loaded ? <PageSkeleton cards={4} /> : (
+        <div style={{ display: 'grid', gridAutoFlow: 'column', gridAutoColumns: 'minmax(240px, 1fr)', gap: 10, overflowX: 'auto', paddingBottom: 8, alignItems: 'start' }} data-testid="kanban">
+          {cols.map((s) => {
+            const inCol = shown.filter((t) => t.status === s).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
             return (
-              <button key={u.id} onClick={() => app.setOrgUnitId(u.parentUnitId === null ? null : u.id)} title={`${u.counts.openTasks} open task(s)`}
-                style={{ ...pill(active ? 'var(--accent)' : 'var(--panel-2)', active ? '#fff' : 'var(--text)'), display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', cursor: 'pointer', marginLeft: u.depth > 1 ? (u.depth - 1) * 6 : 0 }}>
-                {u.parentUnitId === null ? '🏢' : <Avatar a={a} size={14} />}{u.parentUnitId === null ? 'Company' : u.name}<span style={{ opacity: .7 }}>{u.counts.openTasks}</span>
-              </button>
+              <section key={s} aria-label={STATUS_WORD[s]} data-testid={`col-${s}`} style={{ background: 'var(--panel-2)', borderRadius: 12, padding: 8, minHeight: 140, border: '1px solid var(--border-soft)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '2px 4px 8px' }} title={STATUS_HINT[s]}>
+                  <span aria-hidden style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLOR[s] }} />
+                  <h3 style={{ margin: 0, fontSize: 13, fontWeight: 650 }}>{STATUS_WORD[s] ?? s}</h3>
+                  <span className="co-faint co-num">{inCol.length}</span>
+                </div>
+                {inCol.length === 0 && <div className="co-faint" style={{ padding: '14px 6px', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: 9 }}>Nothing {s === 'blocked' ? 'blocked' : 'here'}</div>}
+                {inCol.map((t) => {
+                  const a = t.assigneeAgentId ? names.get(t.assigneeAgentId) : undefined;
+                  const unit = t.unitId ? byId.get(t.unitId) : root;
+                  const foreign = unit && unit.id !== current?.id;
+                  const project = t.projectId ? projectsById.get(t.projectId) : undefined;
+                  const blocked = t.status === 'blocked' ? blockedText(parseBlockedOn(t.blockedOn), (id) => names.get(id)?.name ?? tasks.find((x) => x.id === id)?.key ?? id.slice(0, 8)) || safeJsonParse<string[]>(t.blockers, []).at(-1) || '' : '';
+                  const steps = stepsCount(t.steps);
+                  const due = dueBadge(t.dueAt, t.status);
+                  const v = verificationBadge(t.verification);
+                  return (
+                    <button key={t.id} onClick={() => openTask(t)} className="co-card" data-testid="task-card" style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 11px', marginBottom: 6, cursor: 'pointer', font: 'inherit', color: 'var(--text)', boxShadow: t.status === 'blocked' ? 'inset 3px 0 0 var(--red)' : undefined }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        {t.key && <span className="co-key" style={{ marginRight: 0 }}>{t.key}</span>}
+                        {project && <span data-testid="project-badge" className="co-key" style={{ marginRight: 0 }} title={`Project: ${project.title}`}>· {project.key ?? project.title.slice(0, 14)}</span>}
+                        <span style={{ flex: 1 }} />
+                        {due && <span className={`co-pill plain ${due.color.includes('red') ? 'bad' : due.color.includes('amber') ? 'warn' : ''}`} title={due.title}>{due.label}</span>}
+                      </span>
+                      <span style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 13, fontWeight: 600, lineHeight: 1.4, overflowWrap: 'anywhere' }}>{t.title}</span>
+                      {blocked && <span data-testid="blocked-on" className="co-alert" style={{ display: 'block', marginTop: 7, padding: '5px 8px', fontSize: 12, lineHeight: 1.4 }}>{blocked}</span>}
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                        {a ? <Owner agent={a} /> : t.assigneeHumanId ? <Owner name={app.nameOf(t.assigneeHumanId)} role="person" /> : <Owner none="Unassigned" />}
+                        <span style={{ flex: 1 }} />
+                        {t.source && t.source in SOURCE_WORD && t.source !== 'agent' && <span data-testid="source-badge" style={{ ...pill(SOURCE_TONE[t.source as TaskSource].bg, SOURCE_TONE[t.source as TaskSource].fg), border: 'none' }} title={`Source: ${SOURCE_WORD[t.source as TaskSource]}`}>{SOURCE_WORD[t.source as TaskSource]}</span>}
+                        {steps.total > 0 && <span className="co-faint co-num" title="Checklist steps done">{steps.done}/{steps.total} steps</span>}
+                      </span>
+                      {(foreign || t.claimedBy || t.reviewRounds > 0 || t.noProgressCount > 0 || v || (t.waitingOn ?? []).length > 0 || (t.class && t.class !== 'general') || (t.status === 'in_review' && t.reviewerAgentId)) && (
+                        <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                          {t.class && t.class !== 'general' && <span style={pill()} title="Task class (routing, cost by class)">{t.class}</span>}
+                          {foreign && unit && <span style={pill()} title={`On the board of ${unit.name}`}>{unit.parentUnitId === null ? 'company' : unit.name}</span>}
+                          {t.claimedBy && t.status === 'claimed' && <span style={pill()}>claimed</span>}
+                          {t.reviewRounds > 0 && <span style={pill()}>review {t.reviewRounds}/3</span>}
+                          {t.noProgressCount > 0 && <span style={pill('var(--panel-2)', 'var(--warn-text)')}>no progress ×{t.noProgressCount}</span>}
+                          {t.status === 'in_review' && t.reviewerAgentId && <span style={pill()}>reviewer {names.get(t.reviewerAgentId)?.name ?? '?'}</span>}
+                          {v && <span style={pill(v.color, '#fff')} title={v.title}>{v.label}</span>}
+                          {(t.waitingOn ?? []).map((id) => { const dep = tasks.find((x) => x.id === id); return <span key={id} style={pill()} title={`Waits on: ${dep?.title ?? id} (${dep?.status ?? 'unknown'})`}>waits on {dep ? dep.key ?? dep.title.slice(0, 18) : id.slice(0, 8)}</span>; })}
+                        </span>
+                      )}
+                      {t.status !== 'done' && t.status !== 'cancelled' && expectedLabel(t.expected) && <span className="co-faint" style={{ display: 'block', marginTop: 5 }} title={`Expected from ${t.expected?.samples} finished task(s) (${t.expected?.basis})`}>{expectedLabel(t.expected)}</span>}
+                    </button>
+                  );
+                })}
+              </section>
             );
           })}
         </div>
       )}
-      <Suspense fallback={null}><CapacityStrip wsId={org.workspaceId} refreshKey={tasks.length} /></Suspense>
-      {adding && <NewTask org={org} members={members} units={units} tasks={tasks} defaultUnitId={isCompany ? '' : current?.id ?? ''} onDone={() => { setAdding(false); void reload(); }} />}
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols.length}, minmax(150px, 1fr))`, gap: 8, overflowX: 'auto' }}>
-        {cols.map((s) => (
-          <div key={s} style={{ background: 'var(--panel-2)', borderRadius: 10, padding: 8, minHeight: 120 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.4px', textTransform: 'uppercase', color: STATUS_COLOR[s], marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}><span title={s === 'cancelled' ? 'Cancelled, or abandoned by its owner (the reason is on the timeline)' : s === 'waiting' ? 'Waiting on another task; cannot be claimed yet' : undefined}>{s === 'cancelled' ? 'cancelled · abandoned' : s.replace('_', ' ')}</span><span>{shown.filter((t) => t.status === s).length}</span></div>
-            {shown.filter((t) => t.status === s).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1)).map((t) => {
-              const a = t.assigneeAgentId ? names.get(t.assigneeAgentId) : undefined;
-              const unit = t.unitId ? byId.get(t.unitId) : root;
-              const foreign = unit && unit.id !== current?.id;
-              const project = t.projectId ? projectsById.get(t.projectId) : undefined;
-              const blocked = t.status === 'blocked' ? blockedText(parseBlockedOn(t.blockedOn), (id) => names.get(id)?.name ?? tasks.find((x) => x.id === id)?.key ?? id.slice(0, 8)) || safeJsonParse<string[]>(t.blockers, []).at(-1) || '' : '';
-              const steps = stepsCount(t.steps);
-              return (
-                <div key={t.id} onClick={() => openTask(t)} style={{ ...card, padding: '8px 10px', marginBottom: 6, cursor: 'pointer' }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 5 }}>{t.key && <span style={{ ...keyStyle, marginRight: 5 }}>{t.key}</span>}{t.title}</div>
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-                    {project && <span data-testid="project-badge" style={{ ...pill(), fontFamily: 'var(--mono)' }} title={`Project: ${project.title}`}>{project.key ?? project.title.slice(0, 14)}</span>}
-                    {t.source && t.source in SOURCE_WORD && t.source !== 'agent' && <span data-testid="source-badge" style={{ ...pill(SOURCE_TONE[t.source as TaskSource].bg, SOURCE_TONE[t.source as TaskSource].fg), border: 'none' }} title={`Source: ${SOURCE_WORD[t.source as TaskSource]}`}>{SOURCE_WORD[t.source as TaskSource]}</span>}
-                    {steps.total > 0 && <span style={pill()} title="Checklist steps done">steps {steps.done}/{steps.total}</span>}
-                    {a ? <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }}><Avatar a={a} size={14} />{a.name}</span> : t.assigneeHumanId ? <span style={pill('var(--blue)', '#fff')} title="A human employee owns this task">🧑 {app.nameOf(t.assigneeHumanId)}</span> : <span style={pill()}>unassigned</span>}
-                    {t.class && t.class !== 'general' && <span style={pill()} title="Task class (routing, cost by class)">{t.class}</span>}
-                    {foreign && unit && <span style={pill()} title={`On the board of ${unit.name}`}>{unit.parentUnitId === null ? 'company' : unit.name}</span>}
-                    {t.claimedBy && <span style={pill('var(--amber)', '#fff')}>claimed</span>}
-                    {t.reviewRounds > 0 && <span style={pill()}>review {t.reviewRounds}/3</span>}
-                    {t.noProgressCount > 0 && <span style={pill()}>no progress ×{t.noProgressCount}</span>}
-                    {t.status === 'in_review' && t.reviewerAgentId && <span style={pill()}>reviewer: {names.get(t.reviewerAgentId)?.name ?? '?'}</span>}
-                    {(() => { const v = verificationBadge(t.verification); return v ? <span style={pill(v.color, '#fff')} title={v.title}>{v.label}</span> : null; })()}
-                    {t.status !== 'done' && t.checks && t.checks !== '[]' && <span style={pill()} title="Executable checks run before review">checks</span>}
-                    {(() => { const d = dueBadge(t.dueAt, t.status); return d ? <span style={pill(d.color, d.color === 'var(--panel-2)' ? 'var(--text-dim)' : '#fff')} title={d.title}>{d.label}</span> : null; })()}
-                    {(t.waitingOn ?? []).map((id) => { const dep = tasks.find((x) => x.id === id); return <span key={id} style={pill()} title={`Waits on: ${dep?.title ?? id} (${dep?.status ?? 'unknown'})`}>⧗ {dep ? `${dep.key ? `${dep.key} ` : ''}${dep.title.slice(0, 18)}` : id.slice(0, 8)}</span>; })}
-                    {t.status !== 'done' && t.status !== 'cancelled' && expectedLabel(t.expected) && <span style={{ ...pill(), opacity: .8 }} title={`Expected from ${t.expected?.samples} finished task(s) (${t.expected?.basis})`}>{expectedLabel(t.expected)}</span>}
-                  </div>
-                  {blocked && <div data-testid="blocked-on" style={{ fontSize: 11.5, color: 'var(--red)', marginTop: 5, lineHeight: 1.35 }}>{blocked}</div>}
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
       {open && <TaskDrawer org={org} task={tasks.find((t) => t.id === open.id) ?? open} members={members} onClose={closeTask} reload={reload} board={tasks} />}
     </div>
   );
@@ -931,75 +960,141 @@ function RefButton({ kind, id, label }: { kind: string; id: string; label: strin
 
 function Spend({ org, reload }: { org: OrgDetail; reload: () => Promise<void> }) {
   const app = useApp();
-  const [spend, setSpend] = useState<OrgSpend | null>(null);
+  const [spend, setSpend] = useState<OrgSpend | null | undefined>(undefined);
+  const [forecast, setForecast] = useState<OrgForecast | null>(null);
   const [caps, setCaps] = useState<Record<string, string>>({});
-  const refresh = useCallback(async () => setSpend(await api.orgSpend(org.workspaceId).catch(() => null)), [org.id]);
+  const refresh = useCallback(async () => {
+    const [s, f] = await Promise.all([api.orgSpend(org.workspaceId).catch(() => null), api.orgForecast(org.workspaceId).catch(() => null)]);
+    setSpend(s); setForecast(f);
+  }, [org.workspaceId]);
   useEffect(() => { void refresh(); }, [refresh]);
   const setCap = async (scope: 'agent' | 'project', refId: string) => {
-    try { await api.setOrgBudget(org.workspaceId, { scope, refId, monthlyUsd: Number(caps[refId] ?? 0) }); await refresh(); await reload(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
+    try { await api.setOrgBudget(org.workspaceId, { scope, refId, monthlyUsd: Number(caps[refId] ?? 0) }); await refresh(); await reload(); app.showToast('Envelope set'); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
-  if (!spend) return <div style={faint}>Loading…</div>;
-  const node = (scope: 'company' | 'agent' | 'project', refId: string, label: string, n: { usd: number; monthlyUsd: number; reservedUsd: number; runs: number }) => {
-    const pct = n.monthlyUsd > 0 ? Math.min(100, Math.round((n.usd / n.monthlyUsd) * 100)) : null; // spent, as the figure beside it
+  if (spend === undefined) return <PageSkeleton cards={2} />;
+  if (spend === null) return <div className="co-page"><PageHeader title="Spend" /><div className="co-alert" role="alert">Spend did not load. Try again in a moment.</div></div>;
+  const windowLabel = `${spendWindowLabel(spend.month)} (UTC) to date`;
+  const fc = (scope: string, refId: string) => forecast ? (scope === 'company' ? forecast.company : [...forecast.agents, ...forecast.projects].find((f) => f.scope === scope && f.refId === refId)) : undefined;
+  const node = (scope: 'company' | 'agent' | 'project', refId: string, label: ReactNodeLike, n: { usd: number; monthlyUsd: number; reservedUsd: number; runs: number }) => {
+    const share = n.monthlyUsd > 0 ? n.usd / n.monthlyUsd : null;
+    const f = fc(scope, refId);
+    const tone = share === null ? undefined : share >= 1 ? 'bad' : share >= 0.8 ? 'warn' : 'ok';
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 110px 150px', gap: 10, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border-soft)' }}>
+      <div key={`${scope}:${refId}`} data-testid={`spend-${scope}`} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(120px, 1fr) minmax(150px, auto)', gap: 14, alignItems: 'center', padding: '10px 14px', borderTop: '1px solid var(--border-soft)' }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 600 }}>{label} <span style={faint}>· {n.runs} run(s)</span></div>
-          {pct !== null && <div style={{ height: 5, background: 'var(--panel-2)', borderRadius: 3, marginTop: 4 }}><div style={{ width: `${pct}%`, height: 5, borderRadius: 3, background: pct >= 100 ? 'var(--red)' : pct >= 80 ? 'var(--amber)' : 'var(--green)' }} /></div>}
+          <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
+          <div className="co-faint">{n.runs} run{n.runs === 1 ? '' : 's'}{f && f.dailyBurnUsd > 0 ? ` · ${fmtUsd(f.dailyBurnUsd)}/day` : ''}</div>
         </div>
-        <div style={{ fontSize: 12.5, fontFamily: 'var(--mono)', textAlign: 'right' }}>{fmtUsd(n.usd)}{n.monthlyUsd > 0 ? <span style={faint}> / {fmtUsd(n.monthlyUsd)}</span> : <span style={faint}> / no cap</span>}</div>
+        <div style={{ display: 'grid', gap: 4 }}>
+          <span className="co-num" style={{ fontSize: 12.5 }}>{fmtUsd(n.usd)}<span className="co-dim"> {n.monthlyUsd > 0 ? `of ${fmtUsd(n.monthlyUsd)}` : 'no envelope'}</span></span>
+          {share !== null && <KitBar value={Math.min(1, share)} tone={tone} marker={f && n.monthlyUsd > 0 ? Math.min(1, f.projectedUsd / n.monthlyUsd) : null} label={`${typeof label === 'string' ? label : scope} spend`} />}
+          {f && n.monthlyUsd > 0 && <span className={`co-faint${f.state === 'stop' ? ' co-bad' : ''}`} style={f.state !== 'onTrack' ? { color: f.state === 'stop' ? 'var(--red-text)' : 'var(--warn-text)' } : undefined}>Month-end forecast {fmtUsd(f.projectedUsd)}{f.projectedPct !== null ? ` (${Math.round(f.projectedPct)}%)` : ''}</span>}
+        </div>
         {scope === 'company'
           // The company envelope is set in one place: Settings › Company, beside the mode and the agent cap.
-          ? <button style={{ ...linkBtn, justifySelf: 'start' }} data-testid="envelope-settings-link" onClick={() => app.openSettings('company')}>Change in Settings</button>
-          : <div style={{ display: 'flex', gap: 4 }}><input value={caps[refId] ?? String(n.monthlyUsd || '')} onChange={(e) => setCaps({ ...caps, [refId]: e.target.value.replace(/[^\d.]/g, '') })} style={{ ...input, padding: '4px 8px' }} placeholder="cap $" /><button style={btn()} onClick={() => void setCap(scope, refId)}>Set</button></div>}
+          ? <button className="co-link" style={{ justifySelf: 'start' }} data-testid="envelope-settings-link" onClick={() => app.openSettings('company')}>Change in Settings</button>
+          : <form style={{ display: 'flex', gap: 4 }} onSubmit={(e) => { e.preventDefault(); void setCap(scope, refId); }}><label className="co-sr" htmlFor={`cap-${refId}`}>Monthly envelope in USD</label><input id={`cap-${refId}`} className="co-input co-num" value={caps[refId] ?? String(n.monthlyUsd || '')} onChange={(e) => setCaps({ ...caps, [refId]: e.target.value.replace(/[^\d.]/g, '') })} style={{ padding: '4px 8px', width: 90 }} placeholder="$ / month" /><button type="submit" className="co-btn small">Set</button></form>}
       </div>
     );
   };
+  const co = forecast?.company;
   return (
-    <div style={{ maxWidth: 820 }}>
-      <h2 style={h2}>Spend vs envelopes · {spendWindowLabel(spend.month)} (UTC) to date</h2>
-      <div style={{ ...faint, marginBottom: 12 }}>Every run reserves its estimate before the model is called and settles from actual usage. 80% warns, 100% stops the scope. A member's spend includes its meetings, reviews and audits{(spend.company.overheadUsd ?? 0) > 0 ? ` (${fmtUsd(spend.company.overheadUsd ?? 0)} of the company's this month)` : ''}; a project's is its tasks' runs.{spend.company.reservedUsd > 0 ? ` ${fmtUsd(spend.company.reservedUsd)} is held for runs in flight.` : ''} {spend.costPerAcceptedTask !== null ? `Cost per accepted task: ${fmtUsd(spend.costPerAcceptedTask)} (${spend.acceptedTasks} accepted).` : `${spend.acceptedTasks} accepted task(s).`}</div>
-      <div style={{ ...card, marginBottom: 12 }}><UsageBars series={spend.series} /></div>
-      <div style={card}>
+    <div className="co-page narrow" data-testid="spend-page">
+      <PageHeader title={`Spend · ${windowLabel}`} purpose="Every figure comes from the one spend ledger. A run reserves its estimate before the model is called and settles from actual usage; 80% of an envelope warns, 100% stops that scope." />
+      <div className="co-metrics" style={{ marginBottom: 16 }}>
+        <Metric n={fmtUsd(spend.company.usd)} label={`spent, ${windowLabel}`} />
+        <Metric n={spend.company.monthlyUsd > 0 ? fmtUsd(spend.company.monthlyUsd) : 'none'} label="company envelope" />
+        {co && <Metric n={fmtUsd(co.projectedUsd)} label="month-end forecast" tone={co.state === 'stop' ? 'bad' : co.state === 'warn' ? 'warn' : undefined} title={`Trailing ${forecast!.windowDays}-day burn of ${fmtUsd(co.dailyBurnUsd)}/day, day ${forecast!.day} of ${forecast!.daysInMonth}`} />}
+        {spend.company.reservedUsd > 0 && <Metric n={fmtUsd(spend.company.reservedUsd)} label="held for runs in flight" />}
+        <Metric n={spend.costPerAcceptedTask !== null ? fmtUsd(spend.costPerAcceptedTask) : '—'} label={`per accepted task (${spend.acceptedTasks})`} />
+      </div>
+      {co && co.state !== 'onTrack' && <div className="co-note warn" style={{ marginBottom: 14 }}>At the current burn the company spends {fmtUsd(co.projectedUsd)} by month end, {co.projectedPct !== null ? `${Math.round(co.projectedPct)}% of` : 'past'} its {fmtUsd(co.capUsd)} envelope{co.state === 'stop' ? ': work stops when it is reached' : ''}.</div>}
+      <KitCard title="Daily spend" aside={windowLabel}><UsageBars series={spend.series} /></KitCard>
+      <div style={{ height: 14 }} />
+      <KitCard title="Envelopes" aside="the bar is spent; the tick is the month-end forecast" flush>
         {node('company', org.id, `${org.name} (company)`, spend.company)}
-        {spend.projects.map((p) => <div key={p.id} style={{ paddingLeft: 16 }}>{node('project', p.id, `▸ ${p.title}`, p)}</div>)}
-        {spend.members.map((m) => <div key={m.agentId} style={{ paddingLeft: 16 }}>{node('agent', m.agentId, `${m.name}${m.title ? ` · ${m.title}` : ''}${m.status === 'terminated' ? ' (left)' : ''}`, m)}</div>)}
-      </div>
-      <div style={{ ...card, marginTop: 12 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>By member</div>
-        <UsageRows rows={spend.members.map((m) => ({ key: m.agentId, label: m.name, tokensIn: m.tokensIn, tokensOut: m.tokensOut, usd: m.usd, turns: m.runs }))} />
-      </div>
+        {spend.projects.length > 0 && <div className="co-sub" style={{ padding: '0 14px' }}>Projects</div>}
+        {spend.projects.map((p) => node('project', p.id, p.title, p))}
+        {spend.members.length > 0 && <div className="co-sub" style={{ padding: '0 14px' }}>Members · includes their meetings, reviews and audits{(spend.company.overheadUsd ?? 0) > 0 ? ` (${fmtUsd(spend.company.overheadUsd ?? 0)} of the company's)` : ''}</div>}
+        {spend.members.map((m) => node('agent', m.agentId, `${m.name}${m.title ? ` · ${m.title}` : ''}${m.status === 'terminated' ? ' (left)' : ''}`, m))}
+      </KitCard>
+      <div style={{ height: 14 }} />
+      <KitCard title="Tokens by member"><UsageRows rows={spend.members.map((m) => ({ key: m.agentId, label: m.name, tokensIn: m.tokensIn, tokensOut: m.tokensOut, usd: m.usd, turns: m.runs }))} /></KitCard>
     </div>
   );
 }
+type ReactNodeLike = string;
 
 // ---- audit ----
 
 function Audit({ org }: { org: OrgDetail }) {
+  const app = useApp();
   const names = useAgentNames();
-  const [runs, setRuns] = useState<OrgRun[]>([]);
+  const [runs, setRuns] = useState<OrgRun[] | null>(null);
   const [tasks, setTasks] = useState<OrgTask[]>([]);
-  const [audit, setAudit] = useState<OrgAuditRow[]>([]);
+  const [audit, setAudit] = useState<OrgAuditRow[] | null>(null);
   const [verify, setVerify] = useState<{ ok: boolean; length: number; brokenAt: number | null; reason?: string } | null>(null);
-  const [layer, setLayer] = useState<'runs' | 'audit'>('runs');
+  const [layer, setLayer] = useState<'audit' | 'runs'>('audit');
+  const [f, setF] = useState<AuditFilter>({ q: '', category: 'all', actor: 'all', autoOnly: false, routine: false });
+  const [limit, setLimit] = useState(300);
   useEffect(() => {
-    void Promise.all([api.orgRuns(org.workspaceId).catch(() => []), api.orgTasks(org.workspaceId).catch(() => []), api.orgAudit(org.workspaceId, 150).catch(() => []), api.verifyOrgAudit(org.workspaceId).catch(() => null)])
+    void Promise.all([api.orgRuns(org.workspaceId).catch(() => []), api.orgTasks(org.workspaceId).catch(() => []), api.orgAudit(org.workspaceId, limit).catch(() => []), api.verifyOrgAudit(org.workspaceId).catch(() => null)])
       .then(([r, t, a, v]) => { setRuns(r); setTasks(t); setAudit(a); setVerify(v); });
-  }, [org.id]);
+  }, [org.workspaceId, limit]);
   const titles = new Map(tasks.map((t) => [t.id, t.title]));
+  const agentName = (id: string) => names.get(id)?.name;
+  const refName = (refType: string, refId: string) => (refType === 'task' ? titles.get(refId) : refType === 'goal' ? org.goals.find((g) => g.id === refId)?.title : refType === 'project' ? org.projects.find((p) => p.id === refId)?.title : refType === 'member' || refType === 'agent' ? names.get(refId)?.name : undefined);
+  const rows = useMemo(() => filterAudit(audit ?? [], f, agentName), [audit, f, names]); // eslint-disable-line react-hooks/exhaustive-deps
+  const actors = useMemo(() => [...new Set((audit ?? []).map((r) => r.actor))], [audit]);
+  const counts = useMemo(() => { const c: Record<string, number> = {}; for (const r of audit ?? []) { const k = auditCategory(r.action); c[k] = (c[k] ?? 0) + 1; } return c; }, [audit]);
+  const set = (p: Partial<AuditFilter>) => setF((x) => ({ ...x, ...p }));
   return (
-    <div style={{ maxWidth: 820 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Audit</h2><div style={faint}>Runs and their outcomes, and the hash-chained log of every change — including what the chief did on its own in autonomous mode (<code>auto_*</code> rows carry its reason).</div></div>
-        <button style={btn(layer === 'runs')} onClick={() => setLayer('runs')}>Runs</button>
-        <button style={btn(layer === 'audit')} onClick={() => setLayer('audit')}>Audit log {verify && <span style={pill(verify.ok ? 'var(--green)' : 'var(--red)', '#fff')}>{verify.ok ? `chain ok · ${verify.length}` : `broken at #${verify.brokenAt}`}</span>}</button>
-      </div>
-      {layer === 'runs' && <div style={card}>{runs.length === 0 ? <div style={faint}>No runs yet. Assign a task to wake somebody.</div> : runs.map((r) => <RunRow key={r.id} r={r} names={names} title={titles.get(r.taskId)} />)}</div>}
+    <div className="co-page narrow" data-testid="audit-page">
+      <PageHeader title="Audit" purpose="Every change the company made, in a hash-chained log that cannot be edited after the fact, and every run with its outcome. Rows the chief did on its own carry its reason."
+        actions={<>
+          {verify && <Pill tone={verify.ok ? 'ok' : 'bad'} title={verify.ok ? 'Every row’s hash matches the one before it' : verify.reason}>{verify.ok ? `Chain intact · ${verify.length} rows` : `Chain broken at #${verify.brokenAt}`}</Pill>}
+          <div className="co-seg" role="tablist" aria-label="Layer"><button role="tab" aria-selected={layer === 'audit'} onClick={() => setLayer('audit')}>Changes</button><button role="tab" aria-selected={layer === 'runs'} onClick={() => setLayer('runs')}>Runs</button></div>
+        </>} />
+      {layer === 'runs' && <div className="co-card" style={{ padding: '4px 14px' }}>{runs === null ? <SkeletonRows rows={4} /> : runs.length === 0 ? <KitEmpty compact title="No runs yet">Assign a task to wake somebody.</KitEmpty> : runs.map((r) => <RunRow key={r.id} r={r} names={names} title={titles.get(r.taskId)} />)}</div>}
       {layer === 'audit' && (
-        <div style={card}>
-          {!verify?.ok && verify && <div style={{ color: 'var(--red)', fontSize: 12.5, marginBottom: 8 }}>Chain broken at #{verify.brokenAt}: {verify.reason}</div>}
-          {audit.map((r) => <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '42px 120px 1fr', gap: 8, fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--border-soft)', fontFamily: 'var(--mono)' }}><span style={faint}>#{r.seq}</span><span>{r.actor}</span><span><b>{r.action}</b> {r.refType}{r.refId ? `:${r.refId.slice(0, 8)}` : ''} <span style={faint}>{r.payload.length > 2 ? r.payload.slice(0, 140) : ''}</span></span></div>)}
-        </div>
+        <>
+          {verify && !verify.ok && <div className="co-alert" role="alert" style={{ marginBottom: 12 }}>The chain is broken at #{verify.brokenAt}: {verify.reason}. Rows after it cannot be trusted until it is explained.</div>}
+          <div className="co-toolbar">
+            <SearchBox value={f.q} onChange={(q) => set({ q })} label="Search the audit log" placeholder="Search who did what" />
+            <select className="co-input" style={{ width: 'auto' }} aria-label="Who" value={f.actor} onChange={(e) => set({ actor: e.target.value })}>
+              <option value="all">Anyone</option>
+              {actors.map((a) => <option key={a} value={a}>{actorWords(a, agentName, (id) => app.nameOf(id))}</option>)}
+            </select>
+            <label className="co-chip" style={{ cursor: 'pointer' }}><input type="checkbox" checked={f.autoOnly} onChange={(e) => set({ autoOnly: e.target.checked })} style={{ margin: 0 }} />Only what the chief did on its own</label>
+            <label className="co-chip" style={{ cursor: 'pointer' }} title="Runs starting and ending, spend reserved and settled"><input type="checkbox" checked={Boolean(f.routine)} onChange={(e) => set({ routine: e.target.checked })} style={{ margin: 0 }} />Include run bookkeeping</label>
+          </div>
+          <div className="co-chips" role="tablist" aria-label="Kind of change" style={{ marginBottom: 12 }}>
+            {(['all', 'goals', 'work', 'people', 'money', 'decisions', 'system'] as const).filter((k) => k === 'all' || counts[k]).map((k) => (
+              <button key={k} role="tab" aria-selected={f.category === k} className={`co-chip${f.category === k ? ' on' : ''}`} onClick={() => set({ category: k })}>{k === 'all' ? 'All' : AUDIT_CATEGORY_LABEL[k]}<span className="co-chip-n">{k === 'all' ? audit?.length ?? 0 : counts[k]}</span></button>
+            ))}
+          </div>
+          <div className="co-card" style={{ padding: '4px 6px' }}>
+            {audit === null ? <SkeletonRows rows={6} label="Loading the audit log" /> : rows.length === 0 ? <KitEmpty compact title={audit.length ? 'No change matches' : 'Nothing recorded yet'}>{audit.length ? 'Try fewer filters or other words.' : 'Changes appear here as the company works.'}</KitEmpty> : (
+              <ol style={{ listStyle: 'none', margin: 0, padding: 0 }} data-testid="audit-rows">
+                {rows.map((r) => {
+                  const s = auditSentence(r, agentName, (id) => app.nameOf(id), refName);
+                  return (
+                    <li key={r.id} className="co-row static" data-testid="audit-row" style={{ alignItems: 'flex-start' }}>
+                      <span className="co-row-main">
+                        <span className="co-row-title wrap" style={{ fontWeight: 550 }}>{s.text}{s.auto && <> <Pill tone="warn" plain>autonomous</Pill></>}</span>
+                        {s.detail && <span className="co-row-meta" style={{ whiteSpace: 'normal' }}>{s.detail}</span>}
+                      </span>
+                      <span className="co-row-end" style={{ flexDirection: 'column', alignItems: 'flex-end', gap: 2 }} title={`${r.action} · ${r.refType}${r.refId ? `:${r.refId}` : ''} · hash ${r.hash.slice(0, 12)}`}>
+                        <span>{ago(r.createdAt)}</span><span className="co-key" style={{ marginRight: 0 }}>#{r.seq}</span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </div>
+          {audit && audit.length >= limit && <button className="co-btn small" style={{ marginTop: 10 }} onClick={() => setLimit(limit + 500)}>Load older changes</button>}
+        </>
       )}
     </div>
   );
@@ -1009,38 +1104,47 @@ function Audit({ org }: { org: OrgDetail }) {
 
 function BriefView({ org, mode }: { org: OrgDetail; mode: string }) {
   const app = useApp();
-  const [brief, setBrief] = useState<OrgBrief | null>(null);
+  const [brief, setBrief] = useState<OrgBrief | null | undefined>(undefined);
   const [reply, setReply] = useState('');
   const [result, setResult] = useState<string | null>(null);
-  const refresh = useCallback(async () => setBrief(await api.orgBrief(org.workspaceId).catch(() => null)), [org.id]);
+  const [busy, setBusy] = useState(false);
+  const refresh = useCallback(async () => setBrief(await api.orgBrief(org.workspaceId).catch(() => null)), [org.workspaceId]);
   useEffect(() => { void refresh(); }, [refresh]);
-  const compose = async () => { try { setBrief(await api.composeOrgBrief(org.workspaceId)); setResult(null); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
-  const review = async () => { try { const r = await api.reviewOrgStructure(org.workspaceId); app.showToast(r.result === 'ran' ? 'The chief reviewed the structure — see Audit and #company' : `Review ${r.result}`); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
+  const compose = async () => { setBusy(true); try { setBrief(await api.composeOrgBrief(org.workspaceId)); setResult(null); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } finally { setBusy(false); } };
+  const review = async () => { try { const r = await api.reviewOrgStructure(org.workspaceId); app.showToast(r.result === 'ran' ? 'The chief reviewed the structure: see Audit and #company' : `Review ${r.result}`); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
   const send = async () => {
     try {
       const r = await api.replyOrgBrief(org.workspaceId, reply);
-      setResult(`${r.decisions.map((d) => `#${d.n} ${d.decision} → ${d.status}`).join(' · ') || 'nothing resolved'}${r.unresolved.length ? ` · unresolved: ${r.unresolved.join(', ')}` : ''}`);
+      setResult(`${r.decisions.map((d) => `#${d.n} ${d.decision} → ${d.status}`).join(' · ') || 'Nothing resolved'}${r.unresolved.length ? ` · unresolved: ${r.unresolved.join(', ')}` : ''}`);
       setReply(''); await app.refreshAgents(); await refresh();
     } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
+  const hour = `${String(org.briefHour).padStart(2, '0')}:00`;
   return (
-    <div style={{ maxWidth: 760 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <div style={{ flex: 1 }}><h2 style={h2}>Brief</h2><div style={faint}>Written daily at {String(org.briefHour).padStart(2, '0')}:00 (workspace time, quiet hours respected) and pushed to your channels. Answer the numbered decisions in one line.{mode === 'autonomous' ? ' In autonomous mode it also lists what the chief did on its own since the last brief, and the chief reviews the structure at this hour.' : ''}</div></div>
-        {mode === 'autonomous' && <button style={btn()} title="Wake the chief of staff now to review idle and overloaded members, unassigned goals and blocked tasks" onClick={() => void review()}>Review structure now</button>}
-        <button style={btn()} onClick={() => void compose()}>Write one now</button>
-      </div>
-      {!brief ? <div style={faint}>No brief yet.</div> : (
-        <>
-          <div style={{ ...card, whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.55 }}>{brief.text}</div>
-          <div style={{ ...faint, marginTop: 6 }}>{ago(brief.at)} · {brief.items.length} decision(s) numbered</div>
-        </>
+    <div className="co-page narrow" data-testid="brief-page">
+      <PageHeader title="Brief" purpose={<>The chief writes it daily at {hour} (workspace time, quiet hours respected) and pushes it to your channels. Answer its numbered decisions in one line.{mode === 'autonomous' ? ' In autonomous mode it also lists what the chief did on its own.' : ''}</>}
+        actions={<>
+          {mode === 'autonomous' && <button className="co-btn" title="Wake the chief of staff to review idle and overloaded members, unassigned goals and blocked tasks" onClick={() => void review()}>Review structure now</button>}
+          <button className="co-btn" disabled={busy} onClick={() => void compose()}>{busy ? 'Writing…' : 'Write one now'}</button>
+        </>} />
+      {brief === undefined ? <PageSkeleton cards={1} /> : !brief ? (
+        <div className="co-card"><KitEmpty title="No brief yet" action={<button className="co-btn primary" onClick={() => void compose()}>Write one now</button>}>The next one is written at {hour}.</KitEmpty></div>
+      ) : (
+        <article className="co-card" style={{ padding: '18px 22px' }} data-testid="brief-doc">
+          <div className="co-faint" style={{ marginBottom: 10 }}>{new Date(brief.at).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })} · written {ago(brief.at)}{brief.items.length ? ` · ${brief.items.length} decision${brief.items.length === 1 ? '' : 's'} to answer` : ''}</div>
+          <div className="co-prose"><Markdown text={brief.text} /></div>
+        </article>
       )}
-      <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
-        <input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && reply.trim()) void send(); }} placeholder='e.g. "do 1, 3, skip 2" or "revise 2: halve the budget"' style={input} disabled={!brief || brief.items.length === 0} />
-        <button style={btn(true)} onClick={() => void send()} disabled={!reply.trim() || !brief}>Reply</button>
-      </div>
-      {result && <div style={{ ...faint, marginTop: 6 }}>{result}</div>}
+      {brief && brief.items.length > 0 && (
+        <form className="co-card co-form" style={{ padding: 14, marginTop: 14 }} onSubmit={(e) => { e.preventDefault(); if (reply.trim()) void send(); }}>
+          <label className="co-field"><span>Answer the numbered decisions</span>
+            <input className="co-input" value={reply} onChange={(e) => setReply(e.target.value)} placeholder='e.g. "do 1, 3, skip 2" or "revise 2: halve the budget"' />
+            <small>{brief.items.map((it) => `#${it.n} ${it.summary}`).join(' · ').slice(0, 300)}</small>
+          </label>
+          <div className="co-form-foot"><button type="submit" className="co-btn primary" disabled={!reply.trim()}>Send answer</button></div>
+          {result && <div role="status" className="co-note">{result}</div>}
+        </form>
+      )}
     </div>
   );
 }
