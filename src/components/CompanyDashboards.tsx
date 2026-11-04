@@ -18,6 +18,7 @@ import {
 } from '../lib/company-dash';
 import { atRiskByUnit, firesOn, flattenIntent, MEETING_KIND_TITLES } from '../lib/org';
 import { briefSummary } from '../lib/home';
+import { healthWord, incidentCounts } from '../lib/org3';
 import { fmtUsd } from '../lib/pricing';
 import { Markdown } from '../lib/md';
 import { faint, linkBtn, ago, Avatar, useAgentNames } from './org-ui';
@@ -211,8 +212,9 @@ function OperationsDashboard({ org }: { org: OrgDetail }) {
   const names = useAgentNames();
   const board = tasks ? boardCounts(tasks) : null;
   const health = app.orgHealth;
-  const openIncidents = (health?.openIncidents ?? []).filter((i) => i.status === 'open');
+  const incidents = incidentCounts(health?.openIncidents);
   const live = (health?.openIncidents ?? []);
+  const word = health ? healthWord(health) : null;
   const units = app.wsOrg?.units ?? [];
   const today = (app.orgCadences ?? []).filter((c) => c.enabled === 1 && firesOn(c.cron));
   const upcoming = nextRituals(app.orgCadences ?? [], units);
@@ -220,7 +222,7 @@ function OperationsDashboard({ org }: { org: OrgDetail }) {
   const summary = brief ? briefSummary(brief.text, 2) : null;
   return (
     <>
-      <Lede section="operations" state={operationsLede(board, openIncidents.length, pulse ? pulse.score : null)} />
+      <Lede section="operations" state={operationsLede(board, incidents, pulse ? pulse.score : null)} />
       {app.orgPendingPlans > 0 && <InboxRow pane="plans" text={`${app.orgPendingPlans} pending change${app.orgPendingPlans === 1 ? '' : 's'} will apply unless you veto ${app.orgPendingPlans === 1 ? 'it' : 'them'}.`} />}
       <Grid>
         <Card id="board" title="Board" lead open={() => open('board')}>
@@ -265,7 +267,7 @@ function OperationsDashboard({ org }: { org: OrgDetail }) {
             </div>
           ))}
         </Card>
-        <Card id="incidents" title="Incidents" open={() => open('incidents')} aside={health ? <span style={{ fontSize: 11, fontWeight: 600, color: health.status === 'ok' ? 'var(--green)' : health.status === 'degraded' ? 'var(--amber)' : 'var(--red)' }}>{health.status === 'ok' ? 'healthy' : health.status}</span> : undefined}>
+        <Card id="incidents" title="Incidents" open={() => open('incidents')} aside={word ? <span data-testid="incidents-health" style={{ fontSize: 11, fontWeight: 600, color: `var(--${word.tone})` }}>{word.text}</span> : undefined}>
           {live.length === 0 ? <Empty>No open incidents{health && health.lines.length ? ` · ${health.lines[0]}` : ''}.</Empty> : live.slice(0, 4).map((i) => (
             <button key={i.id} style={rowBtn} onClick={() => open('incidents', { kind: 'incident', id: i.id })}>
               <span style={{ fontSize: 10.5, fontWeight: 700, color: i.status === 'open' ? 'var(--red)' : 'var(--amber)', flex: 'none' }}>{i.status === 'open' ? i.severity : 'contained'}</span>

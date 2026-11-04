@@ -5,6 +5,7 @@ import { I, P } from '../lib/icons';
 import { useApp, grad, type OrgPane } from '../store';
 import { api, type ChatRail, type ChatSession } from '../lib/api';
 import { safeJsonParse } from '../lib/util';
+import { incidentCounts } from '../lib/org3';
 import { ArtifactTree } from './ArtifactTree';
 import { createFile, createFolder, workspaceSource } from '../lib/artifacts';
 import { sectionDef, type CompanySection } from '../lib/company-nav';
@@ -532,7 +533,7 @@ export function CompanyRail({ section }: { section: CompanySection }) {
     );
   }
   const def = sectionDef(section);
-  const openIncidents = (app.orgHealth?.openIncidents ?? []).filter((i) => i.status === 'open').length;
+  const openIncidents = incidentCounts(app.orgHealth?.openIncidents).open;
   const atRisk = countAtRisk(app.orgIntent ?? []);
   const badgeOf = (id: OrgPane): { n: number; color?: string; title: string } | undefined => {
     if (id === 'incidents' && openIncidents > 0) return { n: openIncidents, color: 'var(--red)', title: `${openIncidents} open incident(s)` };

@@ -93,7 +93,8 @@ describe('the section dashboards', () => {
     await waitFor(() => expect(screen.getByTestId('dash-card-board')).toHaveTextContent('1in progress'));
     expect(screen.getByTestId('dash-card-board')).toHaveTextContent('1done this week');
     expect(screen.getByTestId('dash-lede')).toHaveTextContent('3 open tasks, 1 blocked.');
-    expect(screen.getByTestId('dash-lede')).toHaveTextContent('1 incident open.');
+    expect(screen.getByTestId('dash-lede')).toHaveTextContent('1 open incident.');
+    expect(screen.getByTestId('incidents-health')).toHaveTextContent('1 open');
     fireEvent.click(within(screen.getByTestId('dash-card-board')).getByText('Task 2'));
     expect(fake.openOrgTask).toHaveBeenCalledWith('ENG-2');
     await waitFor(() => expect(screen.getByTestId('dash-card-pulse')).toHaveTextContent('72 / 100'));
@@ -103,6 +104,18 @@ describe('the section dashboards', () => {
     expect(screen.getByTestId('dash-inbox-row')).toHaveTextContent('1 pending change will apply unless you veto it.');
     fireEvent.click(screen.getByTestId('dash-inbox-row'));
     expect(fake.setOrgPane).toHaveBeenCalledWith('plans');
+  });
+
+  it('Operations: contained incidents are not open — the lede, the card\'s health word and its rows agree', async () => {
+    fake.orgHealth = { status: 'degraded', lines: [], openIncidents: [
+      { id: 'i1', kind: 'breaker', severity: 'major', status: 'contained', title: 'Loop on REJ-12', agentId: null, openedAt: day(0.1) },
+      { id: 'i2', kind: 'breaker', severity: 'major', status: 'contained', title: 'Loop on REJ-14', agentId: null, openedAt: day(0.2) },
+    ] } as never;
+    render(<SectionDashboard section="operations" org={org} />);
+    await waitFor(() => expect(screen.getByTestId('dash-lede')).toHaveTextContent('No open incidents; 2 contained.'));
+    expect(screen.getByTestId('incidents-health')).toHaveTextContent('2 contained');
+    expect(screen.getByTestId('incidents-health')).not.toHaveTextContent('incident');
+    expect(screen.getByTestId('dash-card-incidents')).toHaveTextContent('Loop on REJ-12');
   });
 
   it('People: the org chart, teams, capacity and agents', async () => {
@@ -169,7 +182,10 @@ describe('the summaries', () => {
     const o = objectivesOf(intent);
     expect(o.map((x) => [x.title, x.atRisk, x.krs])).toEqual([['Launch Pro', true, 1], ['Grow support', false, 0]]);
     expect(directionLede([], null)).toBe('No objectives yet.');
-    expect(operationsLede({ open: 0, inProgress: 0, inReview: 0, blocked: 0, todo: 0, doneThisWeek: 0 }, 0, null)).toBe('The board is clear. No open incidents.');
+    const clear = { open: 0, inProgress: 0, inReview: 0, blocked: 0, todo: 0, doneThisWeek: 0 };
+    expect(operationsLede(clear, { open: 0, contained: 0 }, null)).toBe('The board is clear. No open incidents.');
+    expect(operationsLede(clear, { open: 0, contained: 2 }, null)).toBe('The board is clear. No open incidents; 2 contained.');
+    expect(operationsLede(clear, { open: 1, contained: 2 }, null)).toBe('The board is clear. 1 open incident, 2 contained.');
     const h = incidentHistory([{ id: 'a', status: 'resolved', openedAt: day(2) }, { id: 'b', status: 'open', openedAt: day(1) }, { id: 'c', status: 'contained', openedAt: day(40) }] as OrgIncident[], now);
     expect([h.opened, h.resolved, h.open, h.recent.map((i) => i.id)]).toEqual([2, 1, 2, ['a', 'c']]);
   });

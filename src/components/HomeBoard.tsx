@@ -28,6 +28,7 @@ import type { MentionCandidate } from '../lib/channels';
 import { MentionText } from './MentionBox';
 import { I, P } from '../lib/icons';
 import { hopLine, managerHops } from '../lib/decisions';
+import { incidentCounts, incidentLine } from '../lib/org3';
 
 export interface HomeBoardProps {
   data: HomeData;
@@ -942,6 +943,7 @@ function SpendHealth({ data, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'>) 
   const cap = s.monthCapUsd ?? 0;
   const projectedOver = cap > 0 && (s.projectedUsd ?? 0) > cap;
   const statusColor = h.status === 'ok' ? 'var(--green)' : h.status === 'incident' ? 'var(--red)' : 'var(--amber)';
+  const incidents = incidentCounts(h.openIncidents);
   const line = (label: string, value: ReactNode) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline', fontSize: 13 }}>
       <span style={meta}>{label}</span><span style={{ ...num, fontWeight: 600, textAlign: 'right' }}>{value}</span>
@@ -957,7 +959,7 @@ function SpendHealth({ data, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'>) 
         <div style={{ borderTop: '1px solid var(--border-soft)', marginTop: 4, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600 }}>
             <span aria-hidden style={{ width: 8, height: 8, borderRadius: '50%', background: statusColor, boxShadow: `0 0 0 3px ${tint(statusColor, 18)}` }} />
-            {h.status === 'ok' ? 'All systems normal' : h.status === 'incident' ? `${h.openIncidents.length} open incident${h.openIncidents.length === 1 ? '' : 's'}` : 'Degraded'}
+            {h.status === 'ok' ? 'All systems normal' : incidents.open || incidents.contained ? incidentLine(incidents) : 'Degraded'}
           </div>
           {h.openIncidents.slice(0, 3).map((i) => (
             <button key={i.id} className="hm-link" style={{ ...reset, ...meta, color: 'var(--text)' }} onClick={() => onOpen({ to: 'pane', pane: 'incidents', focus: { kind: 'incident', id: i.id } })}>{i.severity}: {i.title}</button>

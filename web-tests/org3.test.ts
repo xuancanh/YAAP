@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   actionCallText, actionDecisionLabel, auditorQuality, baselineVsCurrent, buildCheck, calibrationLabel, checkSummary, containedNow, containmentLabel, decisionExtras, degradedChatNote, describeCheck,
-  effectLabel, experimentGroup, experimentHints, experimentProgress, groupGaps, headerError, healthStrip, heldReason, incidentTimeline, keyButtonLabel, LEVEL_LEGEND, normalizeSeries,
+  effectLabel, experimentGroup, experimentHints, experimentProgress, groupGaps, headerError, healthStrip, healthWord, heldReason, incidentCounts, incidentLine, incidentTimeline, keyButtonLabel, LEVEL_LEGEND, normalizeSeries,
   pendingSpotChecks, provenanceLabel, revertRuleLabel, sortIncidents, testSelector, trustRows, verdictText, verificationBadge, lastRedTeam,
 } from '../src/lib/org3';
 import type { ActionLogRow, OrgAuditRun, OrgExperiment, OrgHealth, OrgIncident, TaskCheckResult, TrustOverview } from '../src/lib/api';
@@ -311,5 +311,20 @@ describe('member_settings cards', () => {
     expect(memberSettingsLines({})).toEqual([]);
     const opts = delegationOptions([{ kind: 'member_folder', match: 'a member\'s assigned workspace folder', verdict: 'propose', reason: 'it widens files', delegable: true }]);
     expect(opts.find((o) => o.kind === 'member_settings')).toMatchObject({ disabled: false, note: '' });
+  });
+});
+
+describe('open, contained and resolved: one meaning for every count and word', () => {
+  it('counts the unresolved by state and words them the same everywhere', () => {
+    const list = [{ status: 'open' }, { status: 'contained' }, { status: 'contained' }, { status: 'resolved' }];
+    expect(incidentCounts(list)).toEqual({ open: 1, contained: 2 });
+    expect(incidentCounts(null)).toEqual({ open: 0, contained: 0 });
+    expect(incidentLine({ open: 0, contained: 0 })).toBe('No open incidents');
+    expect(incidentLine({ open: 0, contained: 2 })).toBe('No open incidents; 2 contained');
+    expect(incidentLine({ open: 2, contained: 1 })).toBe('2 open incidents, 1 contained');
+    expect(healthWord({ status: 'ok', openIncidents: [] })).toEqual({ text: 'healthy', tone: 'green' });
+    expect(healthWord({ status: 'degraded', openIncidents: [{ status: 'contained' }, { status: 'contained' }] })).toEqual({ text: '2 contained', tone: 'amber' });
+    expect(healthWord({ status: 'incident', openIncidents: [{ status: 'open' }, { status: 'contained' }] })).toEqual({ text: '1 open', tone: 'red' });
+    expect(healthWord({ status: 'degraded', openIncidents: [] })).toEqual({ text: 'degraded', tone: 'amber' });
   });
 });

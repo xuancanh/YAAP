@@ -170,6 +170,18 @@ per loop.
   "lines": ["- Provider anthropic: degraded until 14:20 UTC — …"] }
 ```
 
+**Open, contained, resolved** mean one thing everywhere (`healthStatusOf`
+on the server, `incidentCounts` / `incidentLine` / `healthWord` in
+`src/lib/org3.ts`): an incident is *open* until its containment holds,
+*contained* while it holds and nobody has resolved it, *resolved* once
+closed. `openIncidents` lists the unresolved ones (open and contained).
+`status` is `incident` only while a major or critical incident is still
+open; contained or minor ones, and a degraded provider, connection or frozen
+class, make it `degraded`. So the Operations lede ("No open incidents; 2
+contained"), the Incidents card's health word ("2 contained", amber), Home's
+health line, the brief's header ("## Incidents (2 contained)") and the red
+dots (open only) always agree.
+
 ## 5. Audit independence (C9, partial)
 
 ### 5.1 Audit of the auditor

@@ -47,7 +47,7 @@ import { OrgPlaybooksService } from '../server/src/org/org-playbooks.service';
 import { OrgKnowledgeService } from '../server/src/org/org-knowledge.service';
 import { OrgMemoryService } from '../server/src/org/org-memory.service';
 import { OrgAuditorService, auditorQuality, type SpotCard } from '../server/src/org/org-auditor.service';
-import { OrgIncidentsService, isExternalClass, ownerLine, parseContainment } from '../server/src/org/org-incidents.service';
+import { OrgIncidentsService, healthStatusOf, incidentCountsLine, isExternalClass, ownerLine, parseContainment } from '../server/src/org/org-incidents.service';
 import { OrgRedTeamService, canaryText, breachedBy } from '../server/src/org/org-redteam.service';
 import { INCIDENT_TUNABLES } from '../server/src/org/incident-tunables';
 import { TUNABLES } from '../server/src/org/org-tunables';
@@ -251,9 +251,16 @@ test('the CEO\'s critical report pauses the member, freezes its external action 
   const told = (await inbox(s, s.chief.id, 'org_incident'))[0];
   assert.equal(told.title, 'Paused Writer, froze external_irreversible for the workspace and switched the company to supervised after your report (Writer emailed a customer the wrong price); nothing external was sent.');
   assert.ok(s.announced.some((a) => /supervised mode after a critical incident/.test(a)));
-  // health says it
+  // health says it: contained, so degraded (amber) — "incident" (red) is for one still open
   const h = await s.controller.health(s.ws.id);
-  assert.equal(h.status, 'incident');
+  assert.equal(h.status, 'degraded');
+  assert.deepEqual(h.openIncidents.map((i) => i.status), ['contained']);
+  assert.equal(healthStatusOf([{ severity: 'critical', status: 'open' }]), 'incident');
+  assert.equal(healthStatusOf([{ severity: 'minor', status: 'open' }]), 'degraded', 'a minor one is not red');
+  assert.equal(healthStatusOf([{ severity: 'critical', status: 'contained' }]), 'degraded');
+  assert.equal(healthStatusOf([], true), 'degraded');
+  assert.equal(healthStatusOf([]), 'ok');
+  assert.equal(incidentCountsLine([{ status: 'open' }, { status: 'contained' }, { status: 'contained' }]), '1 open, 2 contained');
   assert.deepEqual(h.frozenClasses, ['external_irreversible'], 'stored as the action contract\'s class (item 28)');
   assert.equal(h.pausedByIncident[0].agentId, s.writer.id);
   // resolution needs a note; undo reverses what is still in force
@@ -411,7 +418,7 @@ test('the brief opens with Incidents while any is open, lists the ones resolved 
   const v = await s.controller.report(s.ws.id, { title: 'Editor posted to the wrong channel', detail: '…', severity: 'major', agentId: s.editor.id });
   s.connections.markDegraded({ id: 'g9', provider: 'google', accountEmail: 'owner@example.com' }, 'its token could not be refreshed (400)');
   const b = await s.brief.compose(orgId, { deliver: true });
-  const iInc = b.text.indexOf('## Incidents (1 open)');
+  const iInc = b.text.indexOf('## Incidents (1 contained)');
   assert.ok(iInc > 0 && iInc < b.text.indexOf('## Spend'), 'Incidents leads, before Spend');
   assert.match(b.text, /- \[major\] Editor posted to the wrong channel \(Editor\) — contained: paused Editor; postmortem scheduled\./);
   await s.controller.resolve(s.ws.id, v.id, { resolution: 'Channel permissions tightened.', undo: true });

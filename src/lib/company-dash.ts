@@ -4,6 +4,7 @@
  *  src/components/CompanyDashboards.tsx. */
 import type { OrgAllocation, OrgCadence, OrgIncident, OrgIntentNode, OrgSpend, OrgTask, OrgUnitNode, ProjectSummary } from './api';
 import { flattenIntent } from './org';
+import { incidentLine, type IncidentCounts } from './org3';
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -63,11 +64,11 @@ export function nextRituals(cadences: OrgCadence[], units: OrgUnitNode[], limit 
     .map((c) => ({ id: c.id, kind: c.kind, unitName: names.get(c.unitId) ?? 'Company', at: c.nextRunAt! }));
 }
 
-export function operationsLede(board: BoardCounts | null, openIncidents: number, pulse: number | null): string {
+export function operationsLede(board: BoardCounts | null, incidents: IncidentCounts, pulse: number | null): string {
   const parts: string[] = [];
   if (board) parts.push(board.open ? `${plural(board.open, 'open task')}${board.blocked ? `, ${board.blocked} blocked` : ''}.` : 'The board is clear.');
   if (pulse !== null) parts.push(`Pulse ${Math.round(pulse)}.`);
-  parts.push(openIncidents ? `${plural(openIncidents, 'incident')} open.` : 'No open incidents.');
+  parts.push(`${incidentLine(incidents)}.`);
   return parts.join(' ');
 }
 

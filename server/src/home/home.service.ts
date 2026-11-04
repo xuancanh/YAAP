@@ -40,7 +40,7 @@ import { OrgSignalsService } from '../org/org-signals.service';
 import { OrgAuditorService } from '../org/org-auditor.service';
 import { OrgMeetingsService } from '../org/org-meetings.service';
 import { OrgCapitalService } from '../org/org-capital.service';
-import { OrgIncidentsService } from '../org/org-incidents.service';
+import { OrgIncidentsService, healthStatusOf } from '../org/org-incidents.service';
 import { OrgRuntimeService } from '../org/org-runtime.service';
 import { OwnerMessagesService } from '../chats/owner-messages.service';
 import { OrgProjectsService } from '../org/org-projects.service';
@@ -565,8 +565,7 @@ export class HomeService {
     if (this.incidents) {
       const open = (await this.incidents.list(org.id, { limit: 100 })).filter((r) => r.status !== 'resolved');
       out.openIncidents = open.map((r) => ({ id: r.id, title: r.title, severity: r.severity, status: r.status, openedAt: r.openedAt }));
-      if (open.some((r) => r.severity !== 'minor')) out.status = 'incident';
-      else if (open.length) out.status = 'degraded';
+      out.status = healthStatusOf(open, providers.length > 0);
     }
     if (this.auditor) {
       const last = (await this.auditor.list(org.id, 5)).find((a) => a.status !== 'running');

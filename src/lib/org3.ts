@@ -410,6 +410,34 @@ export const MANUAL_CONTAINMENT_LABEL: Record<string, { label: string; hint: str
   pause_org: { label: 'Pause the company', hint: 'the kill switch: every wake and run stops' },
 };
 
+/** One meaning for open, contained and resolved (docs/incidents.md §4), the
+ *  same as the server's `healthStatusOf`: an incident is *open* until its
+ *  containment holds, *contained* while it holds, *resolved* once closed. The
+ *  health route lists the unresolved ones (open and contained) as
+ *  `openIncidents`; every lede, badge and health word counts them here. */
+export interface IncidentCounts { open: number; contained: number }
+export function incidentCounts(unresolved: ReadonlyArray<{ status: string }> | null | undefined): IncidentCounts {
+  const list = (unresolved ?? []).filter((i) => i.status !== 'resolved');
+  const open = list.filter((i) => i.status === 'open').length;
+  return { open, contained: list.length - open };
+}
+
+/** "No open incidents", "1 open incident", "No open incidents; 2 contained", "1 open incident, 2 contained". */
+export function incidentLine(c: IncidentCounts): string {
+  const open = c.open ? `${c.open} open incident${c.open === 1 ? '' : 's'}` : 'No open incidents';
+  return c.contained ? `${open}${c.open ? ',' : ';'} ${c.contained} contained` : open;
+}
+
+/** The health word and its tone: green "healthy"; red while an incident is
+ *  open ("incident" from the server); amber for one contained, a minor one or
+ *  anything else degraded. */
+export function healthWord(h: { status: 'ok' | 'degraded' | 'incident'; openIncidents: ReadonlyArray<{ status: string }> }): { text: string; tone: 'green' | 'amber' | 'red' } {
+  const c = incidentCounts(h.openIncidents);
+  if (h.status === 'ok') return { text: 'healthy', tone: 'green' };
+  const text = c.open ? `${c.open} open` : c.contained ? `${c.contained} contained` : 'degraded';
+  return { text, tone: h.status === 'incident' ? 'red' : 'amber' };
+}
+
 export interface HealthItem { tone: 'red' | 'amber' | 'blue'; text: string; title?: string }
 /** The health strip: degraded providers and connections with since-when, frozen classes, members paused by an incident. */
 export function healthStrip(h: OrgHealth | null): HealthItem[] {

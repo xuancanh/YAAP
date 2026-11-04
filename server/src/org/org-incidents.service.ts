@@ -105,6 +105,25 @@ const MUTATING_CONNECTION_TOOLS = new Set(CONNECTION_TOOLS.filter((t) => !t.read
 /** An action class that reaches outside the company (and so may be frozen):
  *  a mutating connection tool, the browser's act, or a class item 28 names
  *  as external / send / publish / payment / deploy. */
+/** One meaning for open, contained and resolved (docs/incidents.md §4): an
+ *  incident is *open* until its containment holds, *contained* while it holds
+ *  and nobody has resolved it, *resolved* once closed. Open and contained are
+ *  both unresolved (`GET …/org/health` lists them as `openIncidents`). Only an
+ *  open major or critical incident puts the company at "incident"; contained
+ *  or minor ones, and anything else degraded, leave it "degraded". Home and
+ *  the org health both read it, so the word never disagrees with the list. */
+export function healthStatusOf(unresolved: ReadonlyArray<{ severity: string; status: string }>, otherDegraded = false): 'ok' | 'degraded' | 'incident' {
+  if (unresolved.some((r) => r.status === 'open' && r.severity !== 'minor')) return 'incident';
+  return unresolved.length || otherDegraded ? 'degraded' : 'ok';
+}
+
+/** "1 open", "2 contained", "1 open, 2 contained": the unresolved incidents in those words. */
+export function incidentCountsLine(unresolved: ReadonlyArray<{ status: string }>): string {
+  const open = unresolved.filter((r) => r.status === 'open').length;
+  const contained = unresolved.length - open;
+  return [open ? `${open} open` : '', contained ? `${contained} contained` : ''].filter(Boolean).join(', ') || '0 open';
+}
+
 export function isExternalClass(cls: string | null | undefined): boolean {
   if (!cls) return false;
   if (MUTATING_CONNECTION_TOOLS.has(cls) || cls === 'browser_act') return true;
@@ -589,7 +608,7 @@ export class OrgIncidentsService implements ToolProviderHook {
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
     const out: string[] = [];
     if (open.length || resolved.length) {
-      out.push(`## Incidents (${open.length} open)`);
+      out.push(`## Incidents (${incidentCountsLine(open)})`);
       const rank: Record<string, number> = { critical: 0, major: 1, minor: 2 };
       for (const r of open.sort((a, b) => (rank[a.severity] ?? 3) - (rank[b.severity] ?? 3)).slice(0, 8)) {
         const held = parseContainment(r.containment).filter((s) => s.reversible && !s.undone).map((s) => s.result);
@@ -628,7 +647,7 @@ export class OrgIncidentsService implements ToolProviderHook {
     const ws = await this.workspaces.get(org.workspaceId).catch(() => null);
     const open = (await this.list(orgId)).filter((r) => r.status !== 'resolved');
     const paused = open.flatMap((r) => parseContainment(r.containment).filter((s) => s.action === 'pause_member' && s.reversible && !s.undone).map((s) => ({ agentId: s.data?.agentId ?? '', name: s.data?.name ?? '', incidentId: r.id })));
-    const status = open.some((r) => r.severity !== 'minor') ? 'incident' : providers.length || connections.length || frozenClasses.length || open.length ? 'degraded' : 'ok';
+    const status = healthStatusOf(open, Boolean(providers.length || connections.length || frozenClasses.length));
     return {
       status, orgStatus: org.status, mode: ws?.orgMode ?? null, providers, connections, frozenClasses, pausedByIncident: paused,
       openIncidents: open.map((r) => ({ id: r.id, kind: r.kind, severity: r.severity, status: r.status, title: r.title, agentId: r.agentId, openedAt: r.openedAt })),

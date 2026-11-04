@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../store';
 import { api, type IncidentSeverity, type ManualContainment, type OrgAuditRun, type OrgDetail, type OrgHealth, type OrgIncident } from '../lib/api';
 import {
-  ACTION_CLASSES, auditorQuality, CLASS_LABEL, containedNow, healthStrip, INCIDENT_KIND_LABEL, INCIDENT_SEVERITY_COLOR, incidentTimeline, lastRedTeam, MANUAL_CONTAINMENT_LABEL, pendingSpotChecks, sortIncidents,
+  ACTION_CLASSES, auditorQuality, CLASS_LABEL, containedNow, healthStrip, incidentCounts, incidentLine, INCIDENT_KIND_LABEL, INCIDENT_SEVERITY_COLOR, incidentTimeline, lastRedTeam, MANUAL_CONTAINMENT_LABEL, pendingSpotChecks, sortIncidents,
 } from '../lib/org3';
 import { I, P } from '../lib/icons';
 import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useFollowRef, Avatar, Drawer } from './org-ui';
@@ -23,14 +23,15 @@ const TONE: Record<string, string> = { red: 'var(--red)', amber: 'var(--amber)',
 /** What is degraded right now, one chip each (Pulse, Incidents). */
 export function HealthStrip({ health, onOpenIncidents }: { health: OrgHealth | null; onOpenIncidents?: () => void }) {
   const items = healthStrip(health);
-  const open = health?.openIncidents.length ?? 0;
+  const counts = incidentCounts(health?.openIncidents);
+  const open = counts.open + counts.contained;
   if (!health || (items.length === 0 && open === 0)) return null;
   return (
     <div role="status" aria-label="Organization health" style={{ ...card, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10, borderLeft: `3px solid ${health.status === 'incident' ? 'var(--red)' : 'var(--amber)'}` }}>
       <I d={P.warn} size={14} stroke={health.status === 'incident' ? 'var(--red)' : 'var(--amber)'} />
       <b style={{ fontSize: 12.5 }}>{health.status === 'incident' ? 'Incident' : 'Degraded'}</b>
       {items.map((x, i) => <span key={i} title={x.title} style={{ ...pill('var(--panel-2)', TONE[x.tone]), borderColor: TONE[x.tone] }}>{x.text}</span>)}
-      {open > 0 && (onOpenIncidents ? <button style={{ ...linkBtn, marginLeft: 'auto' }} onClick={onOpenIncidents}>{open} open incident{open === 1 ? '' : 's'} →</button> : <span style={{ ...faint, marginLeft: 'auto' }}>{open} open</span>)}
+      {open > 0 && (onOpenIncidents ? <button style={{ ...linkBtn, marginLeft: 'auto' }} onClick={onOpenIncidents}>{incidentLine(counts)} →</button> : <span style={{ ...faint, marginLeft: 'auto' }}>{incidentLine(counts)}</span>)}
     </div>
   );
 }
