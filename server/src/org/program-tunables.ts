@@ -15,7 +15,7 @@
  */
 import { registerTunables, tunable, type TunableDef } from './org-tunables';
 import type { ProfileDiagnosis } from './chief-os';
-import { cronMatches } from '../chats/cron.util';
+import { matchField } from '../chats/cron.util';
 
 export const PROGRAM_TUNABLES: Record<string, TunableDef> = {
   'program.syncDays': { default: 7, min: 1, max: 14, area: 'work', description: 'Days between a project\'s sync (its standup with the team) when its Program Manager first takes it; the PM may change it within program.syncMinDays–program.syncMaxDays.' },
@@ -101,8 +101,17 @@ export function cadenceBoundsError(cron: string, minDays: number, maxDays: numbe
 export function nextFire(cron: string, from: Date, maxDays = 35): Date | null {
   const f = (cron ?? '').trim().split(/\s+/);
   if (f.length !== 5 || !f.every((x) => /^[\d*,/-]+$/.test(x))) return null;
+  const [m, h, dom, mon, dow] = f;
+  // cron.util's cronMatches semantics (server-local, every field must match),
+  // stepping a day or an hour at a time where the coarser field cannot match.
   const d = new Date(from.getTime()); d.setSeconds(0, 0); d.setMinutes(d.getMinutes() + 1);
-  for (let i = 0; i < maxDays * 24 * 60; i++, d.setMinutes(d.getMinutes() + 1)) if (cronMatches(cron, d)) return new Date(d.getTime());
+  const end = from.getTime() + maxDays * 86_400_000;
+  while (d.getTime() <= end) {
+    if (!(matchField(dom, d.getDate()) && matchField(mon, d.getMonth() + 1) && matchField(dow, d.getDay()))) { d.setDate(d.getDate() + 1); d.setHours(0, 0, 0, 0); continue; }
+    if (!matchField(h, d.getHours())) { d.setHours(d.getHours() + 1, 0, 0, 0); continue; }
+    if (!matchField(m, d.getMinutes())) { d.setMinutes(d.getMinutes() + 1); continue; }
+    return new Date(d.getTime());
+  }
   return null;
 }
 
