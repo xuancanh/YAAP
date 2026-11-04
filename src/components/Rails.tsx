@@ -1,5 +1,6 @@
 /** Secondary panel: workspace pill, the combined Home rail (agents → their
  *  chats + their folder, YAAM-style), market categories, and settings nav. */
+import { roleBeside } from '../lib/agent-role';
 import { useEffect, useMemo, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type OrgPane } from '../store';
@@ -158,7 +159,7 @@ interface RailWorkView {
 }
 
 interface RailGroupView {
-  key: string; id: string; name: string; emoji: string; avatar: string; isAgent: boolean;
+  key: string; id: string; name: string; role?: string; emoji: string; avatar: string; isAgent: boolean;
   total: number; items: ChatSession[];
   /** The agent's runs (docs/work-log.md): the Work subsection's rows. */
   work: RailWorkView;
@@ -235,7 +236,10 @@ function AgentGroup({ g, open, onToggle, workOpen, onToggleWork, searching }: { 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 9, cursor: 'pointer', background: agentActive ? 'var(--accent-dim)' : 'none', minWidth: 0 }}
         onClick={() => { if (g.isAgent) app.openAgent(g.id); else onToggle(); }}>
         <div style={{ width: 24, height: 24, borderRadius: 7, background: g.avatar, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none', fontSize: 12.5 }}>{g.emoji}</div>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
+        <span title={g.role ? `${g.name} · ${g.role}` : g.name} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</span>
+          {g.role && <span data-testid="rail-role" style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.role}</span>}
+        </span>
         {g.unread > 0 && (
           <span title="Unread activity from loops and proactive work" style={{ fontSize: 10, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 8, padding: '1px 6px', flex: 'none' }}>{g.unread}</span>
         )}
@@ -363,7 +367,7 @@ export function HomeRail() {
     const byKey = new Map(source.map((g) => [g.agentId ?? '', g]));
     const base = new Map(app.chatRail.map((g) => [g.agentId ?? '', g]));
     const out: RailGroupView[] = [];
-    const view = (key: string, meta: { id: string; name: string; emoji: string; avatar: string; isAgent: boolean }): RailGroupView | null => {
+    const view = (key: string, meta: { id: string; name: string; role?: string; emoji: string; avatar: string; isAgent: boolean }): RailGroupView | null => {
       const g = byKey.get(key);
       const nameHit = !!q && meta.isAgent && meta.name.toLowerCase().includes(q);
       // a search shows the groups with hits, and agents whose name matches (their usual first page)
@@ -382,7 +386,7 @@ export function HomeRail() {
       };
     };
     for (const a of app.agents) {
-      const v = view(a.id, { id: a.id, name: a.name, emoji: a.emoji, avatar: grad(a.colors), isAgent: true });
+      const v = view(a.id, { id: a.id, name: a.name, role: roleBeside(a), emoji: a.emoji, avatar: grad(a.colors), isAgent: true });
       if (v) out.push(v);
     }
     const ws = view('', { id: '__ws', name: 'Workspace', emoji: '🗂️', avatar: 'var(--panel-2)', isAgent: false });

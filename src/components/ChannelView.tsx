@@ -4,6 +4,7 @@
  *  @mention autocomplete and drag-drop uploads into the channel folder, the
  *  Meetings tab (list and calendar, docs/meetings.md), the Files tab, and
  *  channel settings (topic, members, budget, archive). */
+import { roleBeside } from '../lib/agent-role';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad } from '../store';
@@ -328,6 +329,7 @@ export function ChannelView() {
           {meeting && <MeetingHeader meeting={meeting} inThread={Boolean(opts.inThread) || isSub} onOpen={() => setThread(m.id)} onExpand={() => openMeetingView(wsId, meeting.id)} onCancel={() => void cancelMeeting(meeting)} />}
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
             <span style={{ fontWeight: 600, fontSize: 13, color: mine ? 'var(--accent-hi)' : 'var(--text)' }}>{name}{mine ? ' (you)' : ''}</span>
+            {roleBeside(agent) && <span data-testid="msg-role" style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{roleBeside(agent)}</span>}
             {m.authorKind === 'agent' && <span style={{ fontSize: 9.5, fontWeight: 600, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 4, padding: '0 5px' }}>agent{m.unprompted === 1 ? ' · unprompted' : ''}</span>}
             <span style={{ fontSize: 10.5, color: 'var(--text-faint)', ...mono }}>{timeOf(m.createdAt)}</span>
             <span className="chan-actions" style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>

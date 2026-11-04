@@ -1,6 +1,7 @@
 /** The chat main pane: header (pin, token meter, model/effort popover,
  *  Ask/Auto), transcript (user/assistant/system rows, each turn's thinking and tool calls folded behind "worked on it · N steps", inline
  *  approvals, artifact chips), queue, and the composer with slash/@ menus. */
+import { roleBeside } from '../lib/agent-role';
 import { memo, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type LiveItem, type LiveTool } from '../store';
@@ -726,7 +727,7 @@ export function ChatView() {
             )}
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>
-            <span style={{ color: 'var(--text-dim)' }}>{agent?.name ?? 'Direct chat'}</span> · <span style={mono}>{s.cwd ?? 'workspace files'}</span>
+            <span style={{ color: 'var(--text-dim)' }}>{agent?.name ?? 'Direct chat'}</span>{roleBeside(agent) && <span data-testid="chat-role"> · {roleBeside(agent)}</span>} · <span style={mono}>{s.cwd ?? 'workspace files'}</span>
           </div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 9 }}>
