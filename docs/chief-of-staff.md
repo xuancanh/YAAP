@@ -230,7 +230,17 @@ ids, cost, the key result each serves, the rituals) per the head's
 `<fn>-team-design` playbook; reviews the design against the key results, the
 envelope, the cap and the profile; decides the heads' hire cards against the
 accepted design; and proposes a Program Manager to own each roadmap item —
-it never staffs a head's unit for it), `function-reports-intake` (the heads' weekly
+it never staffs a head's unit for it. Since the matrix (2026-11-04,
+`docs/work-tracking.md` "Program management: the matrix") goals and projects
+are assigned to Program Managers: the chief assigns them
+(`org_program_assign`; a company goal it sets goes to the least-loaded PM on
+its own, and a PM who joins takes over what the chief was acting on), is
+the **acting PM** — said so in every view — while the company has none,
+proposes the first PM hire once outcomes compete for its attention, decides
+the `resource_conflict` cards a PM and a head escalate (they are placed with
+the head's manager first), and watches the matrix's health in
+`project-portfolio`: items with no PM owner, members stretched past
+`program.allocationWarnPct`, stale goal and project rhythms, requests waiting), `function-reports-intake` (the heads' weekly
 reports, escalations and cases: scorecard and risks from the reports with the
 report cited, the heads' own hires and pauses reviewed rather than redone,
 incomplete cases sent back, `Escalation:` tasks answered or taken to the CEO,

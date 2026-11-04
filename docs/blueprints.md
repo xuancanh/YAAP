@@ -54,10 +54,11 @@ each:
 |---|---|
 | `title` | The project title. |
 | `brief` | `{ problem, hypothesis, done_when, mvp }` or one string (the problem). |
-| `lead` | The role title that leads it — a Program Manager (`role:ops-pm`) by convention. |
+| `lead` | The role title that owns it — a Program Manager (`role:ops-pm`); the chief of staff acts as one where the blueprint has none. |
 | `team[]` | `{ title, role?, allocation }`: a role title from `roles`, its role on the project (engineer, designer, analyst), and its allocation in percent. A role's allocations across all projects sum to at most 100%. |
 | `krs?[]` | Short key-result titles it should move; the import writes them into the brief for the chief to set as key results (they need an objective and a target the blueprint does not carry). |
-| `cadence?` | The project standup's five-field cron. |
+| `cadence?` | The project sync's (standup's) five-field cron. |
+| `review?` | The project's milestone review, a five-field cron its PM holds (`docs/work-tracking.md` "Program management: the matrix"); export writes it back. |
 | `appetiteDays?`, `appetiteUsd?` | Its appetite. |
 
 `validateBlueprint` refuses an unknown role title, a role listed twice on a
@@ -167,7 +168,7 @@ test fails when the two drift.
 |---|---|---|---|---|
 | SaaS startup (`saas-startup`) | 10 | $600 | `engineering-manager` → `engineering-software-engineer` ×2, `engineering-qa`; `cs-manager` → `cs-support`; `marketing-manager` (Head of Growth) → `marketing-demand-gen`; `ops-pm` (Program Manager, leading the "Self-serve onboarding" project with a cross-functional team) | early; adhocracy; speed |
 | Agency (`agency`) | 8 | $500 | `project-lead` (Head of Client Delivery) → `ops-program-coordinator`, `designer`; `marketing-content` (Editor-in-chief) → `writer-editor`, `design-brand`; `finance-billing` | growth; market |
-| E-commerce shop (`e-commerce-shop`) | 10 | $550 | `ops-manager` → `ops-procurement`; `cs-manager` → `cs-support` ×2; `marketing-manager` → `marketing-demand-gen`; `finance-manager` → `finance-accountant` | early; market; speed |
+| E-commerce shop (`e-commerce-shop`) | 11 | $550 | `ops-manager` → `ops-procurement`, `ops-pm` (Program Manager, owning "Returns in five days"); `cs-manager` → `cs-support` ×2; `marketing-manager` → `marketing-demand-gen`; `finance-manager` → `finance-accountant` | early; market; speed |
 | Open-source project (`open-source-project`) | 6 | $250 | `engineering-manager` (Lead Maintainer) → `engineering-software-engineer` ×2 (triager, core contributor), `writer-editor` (docs and changelog); `project-lead` (Community Lead) | early; clan; writing |
 | Research lab (`research-lab`) | 6 | $400 | `researcher` (Principal Investigator, strong) → `analyst`, `data-scientist`, `writer-editor`; `auditor` | early; adhocracy; rigour |
 | Solo creator (`solo-creator`) | 5 | $150 | `marketing-content` (Editor-in-chief) → `writer-editor`, `marketer`; `controller` (cash-basis books) | early; clan |
@@ -176,8 +177,9 @@ test fails when the two drift.
 Two starters carry a roadmap item with a cross-functional team (§1b):
 **SaaS startup**'s Program Manager leads "Self-serve onboarding" with the
 product engineer (60%), the QA engineer (30%), the growth marketer (40%) and
-the support specialist (20%) on its team and a weekday standup;
-**E-commerce shop**'s Head of Operations leads "Returns in five days" with
+the support specialist (20%) on its team, a weekday standup and a weekly
+milestone review;
+**E-commerce shop**'s Program Manager owns "Returns in five days" with
 the returns support specialist, procurement, the staff accountant and the
 growth marketer. Both import into Next — the CEO bets Now.
 

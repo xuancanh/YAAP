@@ -492,7 +492,7 @@ Folder: `/org/operations/` (processes.md, sops/, improvements.md, vendors.md, pr
 | Business Process Analyst (`pack-biz-ops-process-analyst`) | `ops-process-analyst` | cycle time, first-pass yield, automation rate, SOP coverage | on task; maps and SOPs on review interval |
 | Procurement Specialist (`pack-biz-ops-procurement`) | `ops-procurement` | vendor spend vs budget, renewals decided before notice, seat utilisation | monthly renewals scan |
 | Program Coordinator (`pack-biz-ops-program-coordinator`) | `ops-program-coordinator` | milestones on time, RAID items owned | weekly program status (Thu) |
-| Program Manager (`pack-biz-ops-pm`) | `ops-pm` | Now projects with a fresh health update, milestones on time, dependencies accepted before needed, breaker decisions within a day | standup per project, health update per project (Thu), dependency review (Wed) |
+| Program Manager (`pack-biz-ops-pm`) | `ops-pm` | owned goals and projects with a fresh status update, key results checked in on cadence, resource requests answered before work waits, milestones on time, breaker decisions within a day | each goal and project on its own rhythm (sync, milestone review, goal review), program review (Mon), dependency review (Wed) |
 
 **Program Manager (2026-11-04).** Roadmap items are owned by Program
 Managers: a project created without a named lead defaults to the company's
@@ -502,10 +502,24 @@ PM is an Operations specialist (folder `/org/operations/programs/<key>/`,
 one vocabulary with the Program Coordinator) reporting to the Head of
 Operations, or to the chief where there is none. Its playbooks:
 `program-kickoff`, `program-health-update`, `program-milestones`,
-`program-dependencies`, `program-appetite-breaker`, `program-standup`,
-`program-team` (propose members and allocations to their heads, assign the
-project's tasks to the team, release members) and `program-close`. It hires
-no one and moves no one between units; its title is not a head's.
+`program-dependencies`, `program-appetite-breaker`, `program-team` (staff
+the team through the heads, assign the project's tasks to it, release
+members), `program-close`, and — since the matrix (`docs/work-tracking.md`
+"Program management: the matrix") — `program-goals` (own an objective and
+its key results: check-ins, the goal review), `program-resources` (work out
+what each item needs, `org_resource_request` to the heads, re-plan or
+`org_resource_escalate` on their answer) and `program-rhythm` (the weekly
+program review over `org_program`, each project's sync, stale rhythms set
+right within the company's bounds with `org_program_cadence`). Goals as well
+as projects are assigned to PMs (the chief acts as PM when the company has
+none, and says so). It hires no one and moves no one between units; its
+title is not a head's. **Heads' side:** every function head's team-design
+playbook and the head playbooks (`heads.ts`) tell it to answer PMs'
+resource requests within the company's answer time
+(`org_resource_decide`: approve with the member, adjust or decline with
+the reason, or hire to fill) — it owns its people's capacity and the
+quality of their work, the PM owns the outcome, and a disagreement climbs
+to its manager.
 
 ### IT & Security
 

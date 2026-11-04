@@ -440,6 +440,115 @@ designer, analyst, …), `allocation` (percent of the member's time),
 - **Blueprints** carry projects with their teams by role title
   (`docs/blueprints.md` §1b).
 
+### Program management: the matrix (2026-11-04)
+
+The owner: "Goals and projects should be assigned to [Program Managers],
+then they will collaborate with heads to see what kind of resources are
+needed. Each goal and project has its own cadence, managed by the program
+manager. It's like a matrix management structure."
+
+**What the audit found.** The project-team layer above existed (seats,
+allocation cards, the project standup, a PM as the default project lead),
+but at runtime nothing exercised it: in the dev company ("Real Jong") no
+Program Manager had been hired, every objective, key result and project was
+owned by the chief of staff without anything saying so, no project had a
+team row, a standup or a health update, goals had no owner other than the
+chief and no rhythm of their own, and nothing ran per goal or per project.
+The chief's pack said to propose a PM "when two or more Now projects
+compete" — two did, and nothing prompted it.
+
+**The model.** Two axes. **Function heads own people and capacity** —
+their unit, hiring, skills, the quality of their function's work. **Program
+Managers own outcomes** — goals (objectives and key results) and projects
+are assigned to a PM as the accountable owner (`ownerAgentId`). A PM may own
+several; a small company has one, or none — then the **chief of staff is the
+acting PM**, and every view says so (owner role `acting_chief`, "acting PM"
+in the UI, "you act as Program Manager" in its briefing, a
+`program_acting` signal once it holds two or more items while Now projects
+compete). Served by `OrgProgramService`
+(`server/src/org/org-program.service.ts`), model-free, every write audited.
+
+- **Ownership.** `org_program_assign` (the chief; the current owner handing
+  over; a person on `POST …/org/program/assign`) makes a member the owner of
+  a goal or project; an objective's key results the previous owner (or the
+  chief) held move with it. A company-level objective or key result the
+  chief sets goes to the least-loaded PM at once when the company has one
+  (a key result follows its objective's PM); when a PM joins (hired, or a
+  member retitled), the items the chief was acting on are handed to the PMs
+  by load. Audited `program_assign`; the new owner is told.
+- **Resource requests** (`org_resource_requests`, migration 0089): for a
+  project it owns the PM asks a head for a **role** (and skills), a **share
+  of a member's time** (1–100%), a **window** (start/end), a **budget** and
+  the **why** (`org_resource_request`). Name the member (its head — the
+  holder decision routing gives — decides) or the head (it picks). The head
+  answers within `program.requestAnswerHours` (`org_resource_decide`):
+  **approve** (the member gets a project seat at once — `org_project_members`
+  stays the allocation record, `OrgProjectTeamsService.grant`), **adjust**
+  (another member, a smaller share, a shorter window — with the reason),
+  **decline** (with the reason) or **hire** (it hires to fill, then
+  approves with the new member). A head lends only its own line. The 100%
+  cap holds. A head asking for its own people, or a person, is granted at
+  once.
+- **Escalation.** The PM escalates a decline, a cut or a slow hire
+  (`org_resource_escalate`); an unanswered request climbs on its own at its
+  answer-by time. Either way it is a `resource_conflict` card placed **as if
+  the head raised it** (`payload.routeAsAgentId`), so decision routing puts it
+  with the head's manager first (the chief), then the CEO — the authority
+  table lets that manager decide it in any mode. Approved: granted as asked
+  (the seat when a member was named, else back to the head as `granted` to
+  fill). Rejected or sent back: the head's answer stands (`upheld`).
+  Audited `resource_request`, `resource_decide`, `resource_escalate`; the
+  feed's **Program** type carries them (and `program_assign`) to the owner.
+- **Each goal and project has its own rhythm**, owned by its PM
+  (`org_program_cadences`): a **goal review** per objective (its key
+  results' pace and confidence, the projects that move them with their
+  health and asks, the resources missing) and a **milestone review** per
+  project (milestones, team and allocations, appetite), plus the project's
+  **sync** (its standup, `org_projects.standupCron`). The PM sets each with
+  `org_program_cadence` (a five-field cron) **within bounds the company's
+  profile derives** — `program.syncMinDays`–`program.syncMaxDays` and
+  `program.reviewMinDays`–`program.reviewMaxDays`, checked on the cron's mean
+  interval; defaults `program.syncDays` / `program.reviewDays` at
+  `program.cadenceHour` are seeded when an item gets its owner, and lazily
+  for older items (`deriveProgramTunables` in `program-tunables.ts`, called
+  by `deriveOperatingSystem`: speed syncs twice a week and answers requests
+  in hours; a control culture reviews formally and gives heads two days; a
+  clan culture flags stretch at 75%). The reviews fire through the meetings
+  machinery (`OrgMeetingRuntime.addDueMeetings`, so they run in a
+  sub-channel of the objective's unit channel or the project channel) as
+  `weekly_review` meetings the PM facilitates, attended by the key-result
+  owners, project leads, the team and — for a goal review — the heads
+  lending people; a review with nothing to review skips itself (audited
+  `meeting_skipped`). Each closes with the PM's status: the project health
+  update the roadmap reads ("Update missing") and the key-result check-ins.
+  The **status update** (`work.updateCadenceDays`) and the **key-result
+  check-in** (`checkInCadenceDays`) are shown beside them. A rhythm is
+  **stale** when it is off, or when its output (the health update, the
+  latest check-in) is older than `program.staleCadences` intervals.
+- **Members serve two managers.** A member's briefing names its line
+  manager ("your line manager: your capacity and the quality of your
+  work") and each seat with its PM (`P-3 (engineer 40%, PM Pat)`); its
+  standing note says which PM assigns which work. **Next work respects the
+  allocation**: among equally urgent tasks a member lent to project teams
+  works the bucket — each seat, or its home unit for the rest — furthest
+  below its share of the work it started in the last week
+  (`OrgNextWorkService`). A member allocated past
+  `program.allocationWarnPct` is **stretched**: its briefing says so, and a
+  `member_stretched` signal goes to its head and to the PM of each project
+  it serves.
+- **The chief** assigns PMs, acts as one when there is none, proposes the
+  first PM hire, decides resource conflicts within its authority, and
+  watches the matrix (`org_program`, its heartbeat and signals:
+  `program_unowned`, `program_acting`, `member_stretched`, `cadence_stale`).
+- **Views.** `GET …/org/program` is the matrix: every active objective,
+  key result and project with its owner and owner role, rhythms (next
+  occurrence, stale), team and live requests; every member with its line
+  manager, unit, seats (and their PMs), what it owns, total allocation and
+  stretch; the health counts and the bounds. The roadmap board and project
+  page show the PM owner (acting PM for the chief), the rhythms and the
+  requests waiting on heads; the goals pane the owner role and the goal
+  review; Direction a program card; People a members × projects matrix.
+
 ## 6. Tools (agents)
 
 | Tool | Who | Class |
@@ -456,6 +565,12 @@ designer, analyst, …), `allocation` (percent of the member's time),
 | `org_project_add_member` | the lead, its manager chain, the chief | a proposal: the member's manager decides (a `project_allocation` card) unless it is the asker |
 | `org_project_remove_member` | the lead and up, or the member's own manager | internal write |
 | `org_project_standup` | the lead and up | internal write |
+| `org_program` | every member | read: what you own, its rhythms, team and requests; the chief: the matrix and its health |
+| `org_program_assign` | the chief; the owner handing over | internal write |
+| `org_program_cadence` | the owner (PM), its managers, the chief | internal write, within `program.*` bounds |
+| `org_resource_request` | the owner (PM), its managers, the chief | a proposal: the head decides |
+| `org_resource_decide` | the head it is addressed to, its managers, the chief | internal write (a seat) |
+| `org_resource_escalate` | the owner (PM) | a `resource_conflict` card to the head's manager |
 | `org_create_task` `projectId` | — | takes a project key (`P-3`) |
 | `org_task_update` `waitsOn`, `ref` | — | the structured blocker |
 | `org_task_comment` `@Name`, `notify` | every member | tags a member (woken) or a person (notified) — "Mentions" above |
@@ -485,6 +600,13 @@ GET    /api/workspaces/:id/org/projects/:projectId/team      the team (home unit
 POST   /api/workspaces/:id/org/projects/:projectId/team      { agentId, role?, allocation } — a person adds a member at once
 DELETE /api/workspaces/:id/org/projects/:projectId/team/:agentId
 POST   /api/workspaces/:id/org/projects/:projectId/standup   { cron | null }
+GET    /api/workspaces/:id/org/program                       the matrix (owners, rhythms, teams, requests, members, health, bounds)
+POST   /api/workspaces/:id/org/program/assign                { ref, agentId, cascade? }
+POST   /api/workspaces/:id/org/program/cadence               { ref, kind: sync|milestone_review|goal_review, cron | null }
+GET    /api/workspaces/:id/org/program/requests
+POST   /api/workspaces/:id/org/program/requests              { project, role, allocation, agentId?, headAgentId?, skills?, startDate?, endDate?, budgetUsd?, why? }
+POST   /api/workspaces/:id/org/program/requests/:requestId/decide   { action: approve|adjust|decline|hire, agentId?, allocation?, endDate?, note? }
+POST   /api/workspaces/:id/org/program/requests/:requestId/withdraw
 GET    /api/workspaces/:id/org/tasks/:taskId/transitions
 POST   /api/workspaces/:id/org/tasks/:taskId/steps           { add | done | undo | drop }
 POST   /api/workspaces/:id/org/tasks/:taskId/blocked-on      { kind, ref?, reason } | { clear: true }
