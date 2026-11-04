@@ -8,9 +8,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp } from '../store';
 import { api, type HistoryItem } from '../lib/api';
-import { navigate } from '../lib/routes';
-import { HISTORY_RANGES, INBOX_FILTERS, OUTCOME_LABEL, historyBy, historyFrom, historyTarget, outcomeColor, type InboxFilter } from '../lib/inbox';
+import { HISTORY_FILTERS, HISTORY_RANGES, OUTCOME_LABEL, historyBy, historyFrom, historyTarget, outcomeColor, type HistoryFilter, type InboxFilter } from '../lib/inbox';
 import { card, btn, pill, faint, ago } from './org-ui';
+import { navigate } from '../lib/routes';
 
 const KIND_LABEL: Record<HistoryItem['kind'], string> = {
   approvals: 'approval', keys: 'key', escalations: 'escalation', plans: 'plan', mytasks: 'task', incidents: 'incident', following: 'following',
@@ -56,7 +56,7 @@ function HistoryRow({ i, onOpen, onUndo }: { i: HistoryItem; onOpen: (i: History
 export function InboxHistory({ onWaiting }: { onWaiting: (f: InboxFilter) => void }) {
   const app = useApp();
   const wsId = app.workspaceId;
-  const [filter, setFilter] = useState<InboxFilter>('all');
+  const [filter, setFilter] = useState<HistoryFilter>('all');
   const [days, setDays] = useState(30);
   const [without, setWithout] = useState(false);
   const [text, setText] = useState('');
@@ -75,7 +75,7 @@ export function InboxHistory({ onWaiting }: { onWaiting: (f: InboxFilter) => voi
     const n = ++req.current;
     setLoading(true);
     try {
-      const page = await api.inboxHistory(wsId, { kind: filter === 'all' || filter === 'messages' ? undefined : filter, q: q || undefined, from: historyFrom(days), without: without || undefined, cursor: after ?? undefined, limit: PAGE });
+      const page = await api.inboxHistory(wsId, { kind: filter === 'all' ? undefined : filter, q: q || undefined, from: historyFrom(days), without: without || undefined, cursor: after ?? undefined, limit: PAGE });
       if (n !== req.current) return;
       setItems((prev) => (after && prev ? [...prev, ...page.items] : page.items));
       setCursor(page.nextCursor);
@@ -113,7 +113,7 @@ export function InboxHistory({ onWaiting }: { onWaiting: (f: InboxFilter) => voi
     <div style={{ maxWidth: 820 }} data-testid="history-list">
       <div role="tablist" aria-label="History filters" style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2, marginBottom: 10 }}>
         {/* Messages stay in their chats: History has no Messages filter. */}
-        {INBOX_FILTERS.filter((f) => f.id !== 'messages').map((f) => (
+        {HISTORY_FILTERS.map((f) => (
           <button key={f.id} role="tab" aria-selected={filter === f.id} onClick={() => setFilter(f.id)} style={{ ...btn(filter === f.id), flex: 'none', whiteSpace: 'nowrap' }}>{f.label}</button>
         ))}
       </div>

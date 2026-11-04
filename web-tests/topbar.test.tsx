@@ -1,12 +1,14 @@
 /** The top bar (docs/home.md "Top bar"): per mode (a company, no company, a
  *  phone), the switcher lists workspaces with their state and switches, the
  *  kill switch confirms, the live runs open their sessions, the command
- *  palette finds and runs (and opens on ⌘K / Ctrl+K), and the bell groups,
- *  filters, marks read and deep-links. */
+ *  palette finds and runs (and opens on ⌘K / Ctrl+K), and the bell — the
+ *  owner's feed, the same rows and counts as the Inbox — groups, filters,
+ *  acts in place, marks read and opens where a row lives. */
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NotificationsPage, TopNotification, WorkspaceStatus } from '../src/lib/api';
+import type { WorkspaceStatus } from '../src/lib/api';
 import type { WorkspaceEntry } from '../src/store';
+import { NOW, iso, feedItem, feedPage, samplePage } from './feed-fixtures';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 // The first render pays for the bar's imports; a loaded machine needs the slack.
@@ -20,9 +22,8 @@ const { TopBar, TopBarView, NotificationsPanel } = await import('../src/componen
 const { CommandPalette } = await import('../src/components/CommandPalette');
 const { api } = await import('../src/lib/api');
 const lib = await import('../src/lib/topbar');
-
-const NOW = new Date('2026-11-04T10:00:00');
-const iso = (min: number) => new Date(NOW.getTime() + min * 60_000).toISOString();
+const feedLib = await import('../src/lib/feed');
+const { primeFeed } = await import('../src/lib/feed-store');
 
 const ws = (over: Partial<WorkspaceEntry> = {}): WorkspaceEntry => ({
   id: 'ws1', name: 'Acme', color: '#8b8cf0', memory: '', profile: '', profilePending: '[]', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0,
@@ -32,7 +33,7 @@ const ws = (over: Partial<WorkspaceEntry> = {}): WorkspaceEntry => ({
 const status = (over: Partial<WorkspaceStatus> = {}): WorkspaceStatus => ({
   workspaceId: 'ws1', generatedAt: NOW.toISOString(),
   company: { name: 'Acme', mode: 'autonomous', status: 'active' },
-  needsYou: 3, urgent: 1,
+  needsYou: 3, urgent: 1, unread: 4,
   spend: { todayUsd: 4.2, monthUsd: 12.4, monthCapUsd: 20, projectedUsd: 24, forecastState: 'stop' },
   agents: { total: 5, working: 3, failing: 1, faces: [{ id: 'w', name: 'Writer', emoji: '✍️', colors: '[]', state: 'error' }, { id: 'c', name: 'Chief', emoji: '🧭', colors: '[]', state: 'working' }] },
   live: [{ sessionId: 's1', agentId: 'c', agentName: 'Chief', origin: 'loop', sessionName: 'Loop · heartbeat', startedAt: iso(-3), toolLabel: 'writing reports/weekly.md' }],
@@ -41,20 +42,7 @@ const status = (over: Partial<WorkspaceStatus> = {}): WorkspaceStatus => ({
   ...over,
 });
 
-const note = (over: Partial<TopNotification> = {}): TopNotification => ({
-  id: 'event:e1', kind: 'message', title: 'Chief wrote to you', body: '', at: iso(-30), severity: 'normal', read: false, waiting: false,
-  deadline: null, expiresSoon: false, from: 'Chief', agentId: 'c', target: { to: 'chat', sessionId: 'dm1' }, ...over,
-});
-
-const page = (): NotificationsPage => ({
-  generatedAt: NOW.toISOString(), unread: 3,
-  items: [
-    note({ id: 'need:approval:a1', kind: 'decision', title: 'Ana as Researcher', waiting: true, deadline: iso(90), expiresSoon: true, at: iso(-120), target: { to: 'need', need: { kind: 'approval', ref: { approvalId: 'a1' } } } }),
-    note(),
-    note({ id: 'event:e2', kind: 'run_failed', title: 'Heartbeat failed', from: 'Writer', at: iso(-60 * 30), severity: 'high', read: true, target: { to: 'agent', agentId: 'w' } }),
-    note({ id: 'event:e3', kind: 'mention', title: '#general · Ann mentioned you', from: '#general', at: iso(-60 * 26), target: { to: 'hash', hash: '#/ws/ws1/channel/general/m9' } }),
-  ],
-});
+const page = samplePage;
 
 function view(over: Partial<Parameters<typeof TopBarView>[0]> = {}) {
   const cb = {
@@ -81,7 +69,8 @@ describe('the top bar per mode', () => {
     expect(screen.getByTestId('live-runs')).toHaveTextContent('1');
     expect(screen.getByTestId('next-meeting')).toHaveTextContent('Standup');
     expect(screen.getByTestId('next-meeting')).toHaveTextContent('in 12 min');
-    expect(screen.getByTestId('bell-count')).toHaveTextContent('3');
+    expect(screen.getByTestId('bell-count')).toHaveTextContent('4');
+    expect(screen.getByRole('button', { name: 'Notifications, 4 unread' })).toBeInTheDocument();
   });
 
   it('the failing count opens mission control; spend and the meeting open their panes', () => {
@@ -197,60 +186,88 @@ describe('live runs', () => {
 
 describe('the bell', () => {
   const panel = (over: Partial<Parameters<typeof NotificationsPanel>[0]> = {}) => {
-    const cb = { onOpen: vi.fn(), onMarkRead: vi.fn(), onMarkAllRead: vi.fn(), onInbox: vi.fn() };
+    const cb = { onOpen: vi.fn(), onMarkRead: vi.fn(), onMarkAllRead: vi.fn(), onInbox: vi.fn(), onAction: vi.fn() };
     render(<NotificationsPanel page={page()} now={NOW} orgOn {...cb} {...over} />);
     return cb;
   };
 
-  it('groups waiting on you, today and earlier; a card expiring soon says so', () => {
+  it('says what each number counts; groups Needs you, today and earlier; a card expiring soon says so', () => {
     panel();
+    expect(screen.getByTestId('bell-summary')).toHaveTextContent('4 unread · 1 needs you');
     const groups = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'));
-    expect(groups).toEqual(['Waiting on you', 'Today', 'Earlier']);
-    const waiting = screen.getByRole('region', { name: 'Waiting on you' });
-    expect(within(waiting).getByText('Ana as Researcher')).toBeInTheDocument();
-    expect(within(waiting).getByTestId('expires')).toHaveTextContent('Expires in 2 h');
+    expect(groups).toEqual(['Needs you', 'Today', 'Earlier']);
+    const needs = screen.getByRole('region', { name: 'Needs you' });
+    expect(within(needs).getByText('Hire Ana as Researcher')).toBeInTheDocument();
+    expect(within(needs).getByTestId('feed-expires')).toHaveTextContent('Expires in 2 h');
     expect(within(screen.getByRole('region', { name: 'Earlier' })).getByText('Heartbeat failed')).toBeInTheDocument();
   });
 
-  it('filters: waiting, messages (mentions too), runs', () => {
+  it('rows carry the actor, the kind, the context and the group size', () => {
     panel();
-    fireEvent.click(screen.getByRole('button', { name: 'Messages' }));
-    expect(screen.queryByText('Ana as Researcher')).toBeNull();
-    expect(screen.getByText('Chief wrote to you')).toBeInTheDocument();
-    expect(screen.getByText('#general · Ann mentioned you')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Runs' }));
-    expect(screen.getByText('Heartbeat failed')).toBeInTheDocument();
-    expect(screen.queryByText('Chief wrote to you')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Waiting on you' }));
-    expect(screen.getByText('Ana as Researcher')).toBeInTheDocument();
+    const group = screen.getByTestId('note-group:task:t1');
+    expect(within(group).getByTestId('feed-type')).toHaveTextContent('Run failed');
+    expect(within(group).getAllByTestId('feed-chip').map((c) => c.textContent)).toEqual(['WEB']);
+    expect(within(group).getByTestId('feed-count')).toHaveTextContent('3 updates');
+    expect(within(screen.getByTestId('note-event:e3')).getByTestId('feed-actor')).toHaveTextContent('Ann');
   });
 
-  it('marks one read, marks all read, opens a row and the Inbox', () => {
+  it('filters by section: Needs you, Mentions, Updates', () => {
+    panel();
+    fireEvent.click(screen.getByRole('button', { name: /^Mentions/ }));
+    expect(screen.queryByText('Hire Ana as Researcher')).toBeNull();
+    expect(screen.getByText('Chief wrote to you')).toBeInTheDocument();
+    expect(screen.getByText('Ann mentioned you in #general')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Updates/ }));
+    expect(screen.getByText('Heartbeat failed')).toBeInTheDocument();
+    expect(screen.queryByText('Chief wrote to you')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Needs you/ }));
+    expect(screen.getByText('Hire Ana as Researcher')).toBeInTheDocument();
+  });
+
+  it('marks one read, marks all read, acts in place, opens a row and the Inbox', () => {
     const cb = panel();
     fireEvent.click(screen.getByRole('button', { name: 'Mark read: Chief wrote to you' }));
-    expect(cb.onMarkRead).toHaveBeenCalledWith(['event:e1']);
+    expect(cb.onMarkRead).toHaveBeenCalledWith([expect.objectContaining({ id: 'event:e1' })]);
     expect(screen.queryByRole('button', { name: 'Mark read: Heartbeat failed' })).toBeNull();
     fireEvent.click(screen.getByText('Mark all read'));
     expect(cb.onMarkAllRead).toHaveBeenCalled();
-    fireEvent.click(screen.getByText('#general · Ann mentioned you'));
+    fireEvent.click(within(screen.getByTestId('note-need:approval:a1')).getByRole('button', { name: 'Reject' }));
+    expect(cb.onAction).toHaveBeenCalledWith(expect.objectContaining({ id: 'need:approval:a1' }), 'reject');
+    fireEvent.click(screen.getByText('Ann mentioned you in #general'));
     expect(cb.onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'event:e3' }));
     fireEvent.click(screen.getByText('Open Inbox'));
     expect(cb.onInbox).toHaveBeenCalled();
   });
 
   it('an empty bell says so', () => {
-    panel({ page: { generatedAt: NOW.toISOString(), unread: 0, items: [] } });
+    panel({ page: feedPage([]) });
     expect(screen.getByText(/all caught up/)).toBeInTheDocument();
     expect(screen.queryByText('Mark all read')).toBeNull();
   });
 
-  it('deep links: a card goes where Home sends it, an event to its chat, link or agent', () => {
-    const [card, msg, run, mention] = page().items;
-    expect(lib.notificationTarget(card)).toEqual({ to: 'inbox' });
-    expect(lib.notificationTarget(note({ target: { to: 'need', need: { kind: 'incident', ref: { incidentId: 'i1' } } } }))).toEqual({ to: 'pane', pane: 'incidents', focus: { kind: 'incident', id: 'i1' } });
-    expect(lib.notificationTarget(msg)).toEqual({ to: 'chat', sessionId: 'dm1' });
-    expect(lib.notificationTarget(run)).toEqual({ to: 'agent', agentId: 'w' });
-    expect(lib.notificationTarget(mention)).toEqual({ to: 'hash', hash: '#/ws/ws1/channel/general/m9' });
+  it('where a row opens: a card in its queue or where Home sends it, the rest by their structured target', () => {
+    const [card, msg, run, mention, group] = page().items;
+    expect(feedLib.feedOpen(card)).toEqual({ to: 'queue', filter: 'approvals' });
+    expect(feedLib.feedOpen(feedItem({ target: { kind: 'need', need: { kind: 'incident', ref: { incidentId: 'i1' } } } }))).toEqual({ to: 'pane', pane: 'incidents', focus: { kind: 'incident', id: 'i1' } });
+    expect(feedLib.feedOpen(feedItem({ target: { kind: 'need', need: { kind: 'held_action', ref: { actionId: 'x' } } } }))).toEqual({ to: 'queue', filter: 'keys' });
+    expect(feedLib.feedOpen(msg)).toEqual({ to: 'chat', sessionId: 'dm1' });
+    expect(feedLib.feedOpen(run)).toEqual({ to: 'agent', agentId: 'w' });
+    expect(feedLib.feedOpen(mention)).toEqual({ to: 'channel', slug: 'general', messageId: 'm9' });
+    expect(feedLib.feedOpen(group)).toEqual({ to: 'task', taskId: 't1' });
+    expect(feedLib.feedOpen(feedItem({ target: { kind: 'meeting', meetingId: 'm1' } }))).toEqual({ to: 'pane', pane: 'meetings', focus: { kind: 'meeting', id: 'm1' } });
+    expect(feedLib.feedOpen(feedItem({ type: 'decided_without_you', target: { kind: 'inbox' } }))).toEqual({ to: 'history' });
+    expect(feedLib.feedOpen(feedItem({ target: { kind: 'link', hash: '#/old' } }))).toEqual({ to: 'hash', hash: '#/old' });
+  });
+
+  it('a local read mark recounts like the server: a grouped row is every member', () => {
+    const p = page();
+    const after = feedLib.markLocal(p, ['audit:2']);
+    expect(after.items.find((i) => i.id === 'group:task:t1')!.read).toBe(true);
+    expect(after.unread).toBe(p.unread - 1);
+    expect(feedLib.markLocal(p, 'mentions').counts.sections.mentions.unread).toBe(0);
+    expect(feedLib.markLocal(p, 'all').unread).toBe(0);
+    expect(feedLib.dropLocal(p, ['need:approval:a1']).counts.needsYou).toBe(0);
+    expect(iso(0)).toBe(NOW.toISOString());
   });
 });
 
@@ -319,7 +336,8 @@ describe('the connected bar', () => {
       setOrgFocus: vi.fn(), setOrgUnitId: vi.fn(), setOrgPane: vi.fn(), setMobileDetail: vi.fn(), refreshWsOrg: vi.fn(async () => undefined), openSession: vi.fn(), openChannel: vi.fn(), openFile: vi.fn(),
     });
     vi.spyOn(api, 'workspaceStatus').mockResolvedValue(status());
-    vi.spyOn(api, 'notifications').mockResolvedValue(page());
+    primeFeed(null, '');
+    vi.spyOn(api, 'feed').mockResolvedValue(page());
     vi.spyOn(api, 'search').mockResolvedValue({ sessions: [], messages: [], files: [] });
   });
 
@@ -340,16 +358,39 @@ describe('the connected bar', () => {
     expect(fake.openOrgTask).toHaveBeenCalledWith('task-1');
   });
 
-  it('failing opens mission control on the error filter; opening a notification marks it read', async () => {
-    const mark = vi.spyOn(api, 'markNotificationsRead').mockResolvedValue({ ok: true, marked: 1 });
+  it('failing opens mission control on the error filter; opening a notification marks it read and opens it through the store', async () => {
+    const mark = vi.spyOn(api, 'markFeedRead').mockResolvedValue({ ok: true, marked: 1 });
+    vi.spyOn(api, 'markMessagesRead').mockResolvedValue({ ok: true, marked: 1 });
     await act(async () => { render(<TopBar onSettings={() => undefined} />); });
     fireEvent.click(screen.getByTestId('failing'));
     expect(fake.setOrgFocus).toHaveBeenCalledWith({ kind: 'mission', id: 'error' });
     expect(fake.setOrgPane).toHaveBeenCalledWith('chart');
-    fireEvent.click(screen.getByRole('button', { name: /Notifications, 3 unread/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Notifications, 4 unread/ }));
     await act(async () => { fireEvent.click(screen.getByText('Chief wrote to you')); });
     expect(mark).toHaveBeenCalledWith('ws1', { ids: ['event:e1'] });
     expect(fake.openSession).toHaveBeenCalledWith('dm1');
+    // the count dropped at once, before the server answered
+    expect(screen.getByTestId('bell-count')).toHaveTextContent('3');
+    fireEvent.click(screen.getByRole('button', { name: /Notifications, 3 unread/ }));
+    await act(async () => { fireEvent.click(screen.getByText('Ann mentioned you in #general')); });
+    expect(fake.openChannel).toHaveBeenCalledWith('general', 'm9');
+    fireEvent.click(screen.getByRole('button', { name: /Notifications, 2 unread/ }));
+    await act(async () => { fireEvent.click(screen.getByText('3 updates on ENG-12')); });
+    expect(mark).toHaveBeenLastCalledWith('ws1', { ids: ['audit:1', 'audit:2', 'event:e4'] });
+    expect(fake.openOrgTask).toHaveBeenCalledWith('t1');
+  });
+
+  it('a decision is approved from the bell through its own route and leaves the list', async () => {
+    const decide = vi.spyOn(api, 'decideOrgApproval').mockResolvedValue({} as never);
+    // the server no longer lists the decided card
+    vi.mocked(api.feed).mockReset().mockResolvedValueOnce(page()).mockResolvedValue(feedPage(page().items.slice(1)));
+    await act(async () => { render(<TopBar onSettings={() => undefined} />); });
+    fireEvent.click(screen.getByRole('button', { name: /Notifications, 4 unread/ }));
+    const row = screen.getByTestId('note-need:approval:a1');
+    await act(async () => { fireEvent.click(within(row).getByRole('button', { name: 'Approve' })); });
+    expect(decide).toHaveBeenCalledWith('ws1', 'a1', 'approve');
+    expect(fake.showToast).toHaveBeenCalledWith('Approved');
+    expect(screen.queryByTestId('note-need:approval:a1')).toBeNull();
   });
 });
 

@@ -2409,9 +2409,12 @@ export const api = {
   workspaceStatus: (wsId: string) => get<WorkspaceStatus>(`/api/workspaces/${wsId}/status`),
   /** The switcher's rows: each own workspace's company state, Needs you and unread notifications. */
   workspaceGlance: () => get<WorkspaceGlanceRow[]>('/api/topbar/workspaces'),
-  /** The bell: what waits on you, and the inbox events addressed to you. */
-  notifications: (wsId: string) => get<NotificationsPage>(`/api/workspaces/${wsId}/notifications`),
-  markNotificationsRead: (wsId: string, body: { ids: string[] } | { all: true }) => send<{ ok: true; marked: number }>(`/api/workspaces/${wsId}/notifications/read`, 'POST', body),
+  /** The owner's feed (docs/owners-seat.md "Inbox and notifications"): the Inbox and the bell read the same page. */
+  feed: (wsId: string, limit?: number) => get<FeedPage>(`/api/workspaces/${wsId}/feed${limit ? `?limit=${limit}` : ''}`),
+  /** Mark feed rows read: some ids (a row's `ids`), a section, or everything. */
+  markFeedRead: (wsId: string, body: { ids: string[] } | { section: FeedSection } | { all: true }) => send<{ ok: true; marked: number }>(`/api/workspaces/${wsId}/feed/read`, 'POST', body),
+  /** The update types this workspace can turn off (`notify.<type>` tunables; set them with setOrgTunable). */
+  feedTypes: (wsId: string) => get<FeedTypeInfo[]>(`/api/workspaces/${wsId}/feed/types`),
 };
 
 // ---- the top bar (docs/home.md "Top bar"; server/src/home/topbar.types.ts) ----
@@ -2420,7 +2423,8 @@ export interface LiveRun { sessionId: string; agentId: string | null; agentName:
 export interface WorkspaceStatus {
   workspaceId: string; generatedAt: string;
   company: WorkspaceCompanyGlance | null;
-  needsYou: number; urgent: number;
+  /** needsYou: open items in the feed's Needs you (the Inbox badge); unread: unread feed rows (the bell). */
+  needsYou: number; urgent: number; unread: number;
   spend: Pick<HomeSpend, 'todayUsd' | 'monthUsd' | 'monthCapUsd' | 'projectedUsd' | 'forecastState'> | null;
   agents: { total: number; working: number; failing: number; faces: Array<{ id: string; name: string; emoji: string; colors: string; state: 'working' | 'error' }> };
   live: LiveRun[];
@@ -2428,20 +2432,49 @@ export interface WorkspaceStatus {
   partial: string[];
 }
 export interface WorkspaceGlanceRow { workspaceId: string; company: WorkspaceCompanyGlance | null; needsYou: number; unread: number }
-export type NotificationKind = 'decision' | 'escalation' | 'key' | 'plan' | 'incident' | 'signal' | 'queued_action'
-  | 'message' | 'mention' | 'follow' | 'run_failed' | 'budget_stop' | 'activity';
-export type NotificationTarget =
-  | { to: 'need'; need: Pick<HomeNeed, 'kind' | 'ref'> }
-  | { to: 'chat'; sessionId: string }
-  | { to: 'agent'; agentId: string }
-  | { to: 'hash'; hash: string }
-  | { to: 'inbox' };
-export interface TopNotification {
-  id: string; kind: NotificationKind; title: string; body: string; at: string;
-  severity: 'critical' | 'high' | 'normal' | 'low'; read: boolean; waiting: boolean;
-  deadline: string | null; expiresSoon: boolean; from: string; agentId: string | null; target: NotificationTarget;
+
+// ---- the owner's feed (docs/owners-seat.md "Inbox and notifications"; server/src/home/feed.types.ts) ----
+export type FeedSection = 'needs' | 'mentions' | 'updates';
+export type FeedType =
+  | 'decision' | 'escalation' | 'key' | 'pending_change' | 'incident' | 'signal' | 'queued_action' | 'connection_approval'
+  | 'task_assigned' | 'task_review' | 'blocked_on_you' | 'follow_attention' | 'plugin_review'
+  | 'message' | 'mention'
+  | 'follow' | 'channel_activity' | 'run_failed' | 'budget' | 'meeting' | 'brief' | 'audit' | 'experiment'
+  | 'trust' | 'decided_without_you' | 'hire' | 'project_team' | 'project' | 'blocked' | 'goal_at_risk'
+  | 'plugin' | 'company' | 'agent_note';
+export type FeedAction = HomeNeedAction | 'allow' | 'deny';
+export interface FeedActor { kind: 'agent' | 'person' | 'system'; id: string | null; name: string; emoji?: string; colors?: string }
+export interface FeedContext {
+  taskId?: string; taskKey?: string | null; taskTitle?: string;
+  projectId?: string; projectKey?: string | null; projectTitle?: string;
+  channelId?: string; channelSlug?: string; meetingId?: string; meetingTitle?: string; agentId?: string;
 }
-export interface NotificationsPage { generatedAt: string; items: TopNotification[]; unread: number }
+export type FeedTarget =
+  | { kind: 'need'; need: Pick<HomeNeed, 'kind' | 'ref'> }
+  | { kind: 'task'; taskId: string }
+  | { kind: 'chat'; sessionId: string }
+  | { kind: 'channel'; channelId: string; slug: string; messageId: string | null }
+  | { kind: 'meeting'; meetingId: string }
+  | { kind: 'agent'; agentId: string }
+  | { kind: 'project'; projectId: string }
+  | { kind: 'pane'; pane: string; focus: { kind: string; id: string } | null }
+  | { kind: 'plugin'; pluginId: string }
+  | { kind: 'follow'; targetKind: string; targetId: string; link: string }
+  | { kind: 'link'; hash: string }
+  | { kind: 'inbox' };
+export interface FeedItem {
+  id: string; type: FeedType; section: FeedSection; title: string; body: string; at: string;
+  severity: 'critical' | 'high' | 'normal' | 'low'; read: boolean; actionable: boolean;
+  deadline: string | null; expiresSoon: boolean; actor: FeedActor | null; company: string;
+  context: FeedContext; target: FeedTarget; actions: FeedAction[];
+  /** Updates about one thing collapse into one row: how many, and every member id. */
+  count: number; ids: string[];
+  need?: HomeNeed;
+  ref?: { agentId?: string; eventId?: string; sessionId?: string; follow?: { targetKind: string; targetId: string } };
+}
+export interface FeedCounts { needsYou: number; urgent: number; unread: number; sections: Record<FeedSection, { total: number; unread: number }> }
+export interface FeedPage { workspaceId: string; generatedAt: string; company: string; items: FeedItem[]; counts: FeedCounts; unread: number }
+export interface FeedTypeInfo { type: FeedType; label: string; description: string; key: string; on: boolean; default: boolean }
 
 // ---- Home (docs/home.md; server/src/home/home.types.ts) ----
 export type HomeNeedAction = 'approve' | 'reject' | 'veto' | 'apply_now' | 'ack' | 'dismiss';

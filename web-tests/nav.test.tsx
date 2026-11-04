@@ -8,8 +8,9 @@
  *  sheet and the rest into More. */
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { OrgApproval, OrgPlan, OrgTask } from '../src/lib/api';
-import { buildInbox, filterInbox, inboxBadge } from '../src/lib/inbox';
+import { inboxView, itemsOf, NEEDS_CHIPS } from '../src/lib/feed';
+import { primeFeed } from '../src/lib/feed-store';
+import { feedItem, feedPage } from './feed-fixtures';
 import { COMPANY_SECTIONS, COMPANY_SECTION_IDS, paneHome, sectionOfPane } from '../src/lib/company-nav';
 import { ORG_PANES } from '../src/store';
 
@@ -30,9 +31,15 @@ function orgOn(extra: Record<string, unknown> = {}) {
     orgHeldActions: 1, orgPendingPlans: 1, orgMyTasks: 3,
     orgHealth: { openIncidents: [{ id: 'i1', kind: 'error_rate', severity: 'major', status: 'open', title: 'Spike', agentId: null, openedAt: '2026-11-01T00:00:00Z' }, { id: 'i2', kind: 'x', severity: 'minor', status: 'contained', title: 'Old', agentId: null, openedAt: '2026-10-01T00:00:00Z' }] },
     orgPane: null, orgUnitId: null, setOrgPane: vi.fn(), setOrgUnitId: vi.fn(), setMobileDetail: vi.fn(),
-    orgIntent: [], orgCadences: [], agents: [], channels: [], homeView: 'chat', currentChannel: null,
+    orgIntent: [], orgCadences: [], agents: [], channels: [], homeView: 'chat', currentChannel: null, workspaceId: 'ws1',
     ...extra,
   });
+}
+
+/** The owner's feed the badge reads: eight open items in Needs you, two unread updates. */
+const needs = (n: number) => Array.from({ length: n }, (_, i) => feedItem({ id: `need:${i}`, ids: [`need:${i}`], type: 'decision', section: 'needs', actionable: true, read: i % 2 === 0 }));
+function seedFeed() {
+  primeFeed(feedPage([...needs(8), feedItem({ id: 'event:u1', ids: ['event:u1'], type: 'follow', section: 'updates' }), feedItem({ id: 'event:u2', ids: ['event:u2'], type: 'trust', section: 'updates' })]), 'ws1');
 }
 
 beforeEach(() => {
@@ -44,12 +51,15 @@ const labels = () => screen.getAllByRole('button').map((b) => b.getAttribute('ar
 describe('main menu', () => {
   it('in organization mode: Home · Inbox · Chat, the five company sections, Artifacts · Apps · Foundry, Settings', () => {
     orgOn();
+    seedFeed();
     render(<ActivityBar />);
     expect(labels()).toEqual(['Home', 'Inbox', 'Chat', 'Direction', 'Operations', 'People', 'Money', 'Oversight', 'Artifacts', 'Apps', 'Foundry', 'Settings']);
     // the company sections are one visual group
     expect(within(screen.getByTestId('nav-group-company')).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Direction', 'Operations', 'People', 'Money', 'Oversight']);
-    // 2 cards + 1 key + 1 plan + 1 open (uncontained) incident + 3 tasks
-    expect(within(screen.getByRole('button', { name: 'Inbox' })).getByTestId('inbox-badge')).toHaveTextContent('8');
+    // the badge is the feed's Needs you, read or not (the bell counts unread rows: 4 + 2 here)
+    const badge = within(screen.getByRole('button', { name: 'Inbox' })).getByTestId('inbox-badge');
+    expect(badge).toHaveTextContent('8');
+    expect(badge).toHaveAttribute('title', '8 need you');
     // Operations carries the open-incident dot (the contained one does not count)
     expect(screen.getByTestId('nav-dot-operations')).toHaveAttribute('title', '1 open incident');
     fireEvent.click(screen.getByRole('button', { name: 'Money' }));
@@ -80,6 +90,8 @@ describe('main menu', () => {
 
   it('has no badge and no dot when nothing waits', () => {
     orgOn({ wsOrg: { mode: 'autonomous', pendingApprovals: 0, units: [] }, orgHeldActions: 0, orgPendingPlans: 0, orgMyTasks: 0, orgHealth: null });
+    // unread updates do not badge the Inbox: only what needs you does
+    primeFeed(feedPage([feedItem({ id: 'event:u1', ids: ['event:u1'], type: 'follow', section: 'updates' })]), 'ws1');
     render(<ActivityBar />);
     expect(screen.getByRole('button', { name: 'Inbox' })).toBeInTheDocument();
     expect(screen.queryByTestId('inbox-badge')).toBeNull();
@@ -174,20 +186,25 @@ describe('where each page lives', () => {
 });
 
 describe('the Inbox list', () => {
-  it('builds one list: cards, escalations, the keys row, plans, my tasks, open incidents', () => {
-    const appr = (id: string, kind: string, payload: Record<string, unknown>, createdAt: string, status = 'pending') => ({ id, kind, payload: JSON.stringify(payload), status, createdAt, recommendation: '' }) as unknown as OrgApproval;
-    const items = buildInbox({
-      approvals: [appr('a1', 'hire', { name: 'Ada' }, '2026-11-01T10:00:00Z'), appr('a2', 'escalation', { title: 'Ship it', reason: 'blocked' }, '2026-11-01T12:00:00Z'), appr('a3', 'two_key', {}, '2026-11-01T11:00:00Z'), appr('a4', 'hire', {}, '2026-11-01T09:00:00Z', 'approved')],
-      plans: [{ id: 'p1', status: 'pending', summary: 'Hire a writer', trigger: 't', createdAt: '2026-11-01T08:00:00Z', applyAt: null } as unknown as OrgPlan],
-      tasks: { assigned: [{ id: 't1', title: 'Write copy', status: 'todo', createdAt: '2026-10-31T00:00:00Z', updatedAt: '2026-10-31T00:00:00Z' } as OrgTask, { id: 't2', title: 'Done one', status: 'done', createdAt: '', updatedAt: '' } as OrgTask], reviewing: [] },
-      incidents: [{ id: 'i1', kind: 'error_rate', severity: 'major', status: 'open', title: 'Spike', agentId: null, openedAt: '2026-11-01T13:00:00Z' }, { id: 'i2', kind: 'x', severity: 'minor', status: 'contained', title: 'Old', agentId: null, openedAt: '2026-10-01T00:00:00Z' }],
-      heldActions: 2,
-    });
-    expect(items.map((i) => i.kind)).toEqual(['keys', 'incidents', 'escalations', 'approvals', 'plans', 'mytasks']);
-    expect(items[0].title).toBe('2 actions waiting for your key');
-    expect(items.find((i) => i.kind === 'approvals')?.title).toBe('hire: Ada');
-    expect(items.find((i) => i.kind === 'escalations')?.title).toBe('Escalation: Ship it');
-    expect(filterInbox(items, 'plans').map((i) => i.refId)).toEqual(['p1']);
-    expect(inboxBadge({ pendingApprovals: 1, heldActions: 2, pendingPlans: 3, openIncidents: 4, myTasks: 5 })).toBe(15);
+  it('a stored filter lands on its tab and chip: old deep links, Home and dashboards keep working', () => {
+    expect(inboxView('all')).toEqual({ tab: 'needs', chip: 'needs' });
+    expect(inboxView('approvals')).toEqual({ tab: 'needs', chip: 'approvals' });
+    expect(inboxView('plans')).toEqual({ tab: 'needs', chip: 'plans' });
+    expect(inboxView('messages')).toEqual({ tab: 'mentions', chip: 'mentions' });
+    expect(inboxView('following')).toEqual({ tab: 'updates', chip: 'following' });
+    expect(inboxView('history')).toEqual({ tab: 'history', chip: 'history' });
+    // the chips with a full queue are the panes that used to live in the company
+    expect(NEEDS_CHIPS.filter((c) => c.pane).map((c) => c.pane)).toEqual(['approvals', 'approvals', 'approvals', 'plans', 'mytasks']);
+  });
+
+  it('a section lists its rows; a chip narrows Needs you to its kinds', () => {
+    const page = feedPage([
+      feedItem({ id: 'a', type: 'decision', section: 'needs' }), feedItem({ id: 'b', type: 'pending_change', section: 'needs' }),
+      feedItem({ id: 'c', type: 'task_review', section: 'needs' }), feedItem({ id: 'd', type: 'mention', section: 'mentions' }),
+    ]);
+    expect(itemsOf(page, 'needs').map((i) => i.id)).toEqual(['a', 'b', 'c']);
+    expect(itemsOf(page, 'needs', 'plans').map((i) => i.id)).toEqual(['b']);
+    expect(itemsOf(page, 'needs', 'mytasks').map((i) => i.id)).toEqual(['c']);
+    expect(itemsOf(page, 'mentions').map((i) => i.id)).toEqual(['d']);
   });
 });

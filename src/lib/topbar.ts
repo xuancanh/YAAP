@@ -1,11 +1,10 @@
 /**
  * The top bar's copy and rules (docs/home.md "Top bar"), pure so they test
- * without a DOM: the spend meter's tone, the next meeting in words, the
- * bell's groups and filters, where a notification opens, and the command
- * palette's ranking and shortcut.
+ * without a DOM: the spend meter's tone, the next meeting in words and the
+ * command palette's ranking and shortcut. The bell's rows are the owner's
+ * feed (./feed.ts).
  */
-import type { HomeNeed, NotificationKind, TopNotification, WorkspaceStatus } from './api';
-import { needTarget, type HomeTarget } from './home';
+import type { WorkspaceStatus } from './api';
 
 // ---- the status strand ----
 
@@ -61,89 +60,6 @@ export function originLabel(origin: string): string {
     case 'app': return 'App';
     default: return origin ? origin[0].toUpperCase() + origin.slice(1) : 'Run';
   }
-}
-
-// ---- the bell ----
-
-export type NotificationFilter = 'all' | 'waiting' | 'messages' | 'runs';
-export const NOTIFICATION_FILTERS: Array<{ id: NotificationFilter; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'waiting', label: 'Waiting on you' },
-  { id: 'messages', label: 'Messages' },
-  { id: 'runs', label: 'Runs' },
-];
-
-const MESSAGE_KINDS: NotificationKind[] = ['message', 'mention', 'follow'];
-const RUN_KINDS: NotificationKind[] = ['run_failed', 'budget_stop'];
-
-export function filterNotifications(items: TopNotification[], f: NotificationFilter): TopNotification[] {
-  switch (f) {
-    case 'waiting': return items.filter((i) => i.waiting);
-    case 'messages': return items.filter((i) => MESSAGE_KINDS.includes(i.kind));
-    case 'runs': return items.filter((i) => RUN_KINDS.includes(i.kind));
-    default: return items;
-  }
-}
-
-export interface NotificationGroup { id: 'waiting' | 'today' | 'earlier'; label: string; items: TopNotification[] }
-
-/** Waiting on you first (in the server's rank), then today and earlier, newest first. Empty groups are dropped. */
-export function groupNotifications(items: TopNotification[], now: Date): NotificationGroup[] {
-  const midnight = new Date(now); midnight.setHours(0, 0, 0, 0);
-  const cut = midnight.toISOString();
-  const news = items.filter((i) => !i.waiting).sort((a, b) => b.at.localeCompare(a.at));
-  const groups: NotificationGroup[] = [
-    { id: 'waiting', label: 'Waiting on you', items: items.filter((i) => i.waiting) },
-    { id: 'today', label: 'Today', items: news.filter((i) => i.at >= cut) },
-    { id: 'earlier', label: 'Earlier', items: news.filter((i) => i.at < cut) },
-  ];
-  return groups.filter((g) => g.items.length > 0);
-}
-
-export const KIND_LABEL: Record<NotificationKind, string> = {
-  decision: 'Decision', escalation: 'Escalation', key: 'Needs your key', plan: 'Pending change', incident: 'Incident', signal: 'Signal',
-  queued_action: 'Queued action', message: 'Message', mention: 'Mention', follow: 'Following', run_failed: 'Run failed', budget_stop: 'Budget stop', activity: 'Update',
-};
-
-/** The tone of a row's mark: red for what is failing or critical, amber for what waits or expires, the accent for messages, faint otherwise. */
-export function kindTone(n: Pick<TopNotification, 'kind' | 'severity' | 'expiresSoon' | 'waiting'>): 'red' | 'amber' | 'accent' | 'faint' {
-  if (n.severity === 'critical' || n.kind === 'run_failed' || n.kind === 'budget_stop' || n.kind === 'incident') return 'red';
-  if (n.waiting || n.expiresSoon) return 'amber';
-  if (n.kind === 'message' || n.kind === 'mention') return 'accent';
-  return 'faint';
-}
-
-/** Where a notification opens: a card goes where Home sends it; an event to its chat, its link or its agent. */
-export type NotificationOpen = HomeTarget | { to: 'hash'; hash: string };
-export function notificationTarget(n: TopNotification): NotificationOpen {
-  const t = n.target;
-  switch (t.to) {
-    case 'need': return needTarget(t.need as HomeNeed) ?? { to: 'inbox' };
-    case 'chat': return { to: 'chat', sessionId: t.sessionId };
-    case 'agent': return { to: 'agent', agentId: t.agentId };
-    case 'hash': return { to: 'hash', hash: t.hash };
-    default: return { to: 'inbox' };
-  }
-}
-
-/** "now", "5m", "3h", "2d", or the date. */
-export function ago(iso: string, now: Date): string {
-  const m = Math.floor((now.getTime() - Date.parse(iso)) / 60_000);
-  if (m < 1) return 'now';
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  const d = Math.floor(h / 24);
-  if (d < 7) return `${d}d`;
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-/** "Expires in 40 min" / "Expires in 3 h" for a card whose default is near. */
-export function expiresLabel(deadline: string | null, now: Date): string {
-  if (!deadline) return '';
-  const min = Math.round((Date.parse(deadline) - now.getTime()) / 60_000);
-  if (min <= 0) return 'Expired';
-  return min < 60 ? `Expires in ${min} min` : `Expires in ${Math.round(min / 60)} h`;
 }
 
 // ---- the command palette ----

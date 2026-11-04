@@ -7,7 +7,7 @@
  *  table is small and the store owns the state. */
 import type { FileTarget, HomeView, OrgPane, Section } from '../store';
 import { ORG_PANES_IN_ARTIFACTS, isCompanySection, isOrgPane, paneHome, LEGACY_COMPANY_SECTION, type CompanySection } from './company-nav';
-import { INBOX_FILTERS, type InboxFilter } from './inbox';
+import { INBOX_FILTER_IDS, type InboxFilter } from './inbox';
 import { navFromUrl, foundryPlaceOf } from './market';
 
 /** Where in a company the address points. */
@@ -89,7 +89,7 @@ export function companyIdOf(seg: string): string {
 const RESERVED = new Set(['api', 'assets', 'index.html', 'favicon.ico', 'favicon.svg', 'manifest.json', 'sw.js']);
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
 const ID_RE = /^[\w-]+$/;
-const INBOX_IDS = new Set<string>(INBOX_FILTERS.map((f) => f.id));
+const INBOX_IDS = new Set<string>(INBOX_FILTER_IDS);
 
 const enc = (s: string): string => encodeURIComponent(s).replace(/%40/g, '@').replace(/%3A/gi, ':');
 const encPath = (p: string): string => p.split('/').filter(Boolean).map(enc).join('/');

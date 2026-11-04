@@ -14,6 +14,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useApp } from '../store';
 import { api, type AgentMessage, type HomeData, type HomeNeed, type HomeNeedAction } from '../lib/api';
 import { actionDone, type HomeTarget } from '../lib/home';
+import { reloadFeed } from '../lib/feed-store';
 import { HomeBoard, HomeStatus } from './HomeBoard';
 import { useMentionables } from './MentionBox';
 
@@ -88,7 +89,7 @@ export function HomeView() {
       await decide(wsId, n, a);
       app.showToast(`${actionDone(a)}: ${n.title}`);
       setData((d) => (d ? { ...d, needs: d.needs.filter((x) => x.id !== n.id), headline: { ...d.headline, needsYou: Math.max(0, d.headline.needsYou - 1) } } : d));
-      void app.refreshWsOrg(); // the Inbox badge
+      void app.refreshWsOrg(); void reloadFeed(wsId); // the Inbox badge and the bell
       soon();
     } catch (err) {
       app.showToast(err instanceof Error ? err.message : String(err));
@@ -116,7 +117,7 @@ export function HomeView() {
   /** A message from the team: its direct chat opens, and its messages are read. */
   const onMessage = useCallback((m: AgentMessage) => {
     setData((d) => (d?.messages ? { ...d, messages: { unread: Math.max(0, d.messages.unread - d.messages.items.filter((x) => x.sessionId === m.sessionId && !x.read).length), items: d.messages.items.map((x) => (x.sessionId === m.sessionId ? { ...x, read: true } : x)) } } : d));
-    if (wsId) void api.markMessagesRead(wsId, { sessionId: m.sessionId }).then(() => app.refreshWsOrg()).catch(() => undefined);
+    if (wsId) void api.markMessagesRead(wsId, { sessionId: m.sessionId }).then(() => { void app.refreshWsOrg(); void reloadFeed(wsId); }).catch(() => undefined);
     app.openSession(m.sessionId);
   }, [app, wsId]);
 

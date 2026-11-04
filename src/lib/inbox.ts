@@ -1,14 +1,26 @@
-/** The Inbox (docs/company-vision.md §8 "The CEO's seat"): everything
- *  waiting on the CEO in one list. The company sections and where each pane
- *  lives are in ./company-nav.ts. Pure — the views and the store use these. */
-import type { AgentMessage, FollowRow, HistoryItem, HistoryOutcome, OrgApproval, OrgHealth, OrgPlan, OrgTask } from './api';
+/** The Inbox (docs/owners-seat.md "Inbox and notifications"): the owner's
+ *  feed in full — Needs you, Mentions, Updates — and History. The rows and
+ *  their counts come from the feed (./feed.ts); this module keeps the Inbox's
+ *  filters, the Following list and History. The company sections and where
+ *  each pane lives are in ./company-nav.ts. Pure — the views and the store
+ *  use these. */
+import type { FollowRow, HistoryItem, HistoryOutcome } from './api';
 
 // ---- Inbox ----
 
-export type InboxFilter = 'all' | 'messages' | 'approvals' | 'keys' | 'escalations' | 'plans' | 'mytasks' | 'incidents' | 'following';
-export const INBOX_FILTERS: Array<{ id: InboxFilter; label: string }> = [
+/** Where the Inbox is: a tab ('needs' | 'mentions' | 'updates' | 'history';
+ *  'all' is Needs you), or one kind's full queue or list — the values deep
+ *  links, Home and the company dashboards set (src/lib/feed.ts inboxView). */
+export type InboxFilter =
+  | 'all' | 'needs' | 'mentions' | 'updates' | 'history'
+  | 'messages' | 'approvals' | 'keys' | 'escalations' | 'plans' | 'mytasks' | 'incidents' | 'following';
+/** Every Inbox place, for addresses like `/<company>/inbox/mentions` (docs/routes.md). */
+export const INBOX_FILTER_IDS: readonly InboxFilter[] = ['all', 'needs', 'mentions', 'updates', 'history', 'messages', 'approvals', 'keys', 'escalations', 'plans', 'mytasks', 'incidents', 'following'];
+
+/** History's kinds (what used to wait on you). */
+export type HistoryFilter = 'all' | 'approvals' | 'keys' | 'escalations' | 'plans' | 'mytasks' | 'incidents' | 'following';
+export const HISTORY_FILTERS: Array<{ id: HistoryFilter; label: string }> = [
   { id: 'all', label: 'All' },
-  { id: 'messages', label: 'Messages' },
   { id: 'approvals', label: 'Approvals' },
   { id: 'keys', label: 'Keys' },
   { id: 'escalations', label: 'Escalations' },
@@ -19,82 +31,11 @@ export const INBOX_FILTERS: Array<{ id: InboxFilter; label: string }> = [
   { id: 'following', label: 'Following' },
 ];
 
+/** A followed thread or task (docs/follows.md) as a row of the Following list. */
 export interface InboxItem {
-  key: string; kind: Exclude<InboxFilter, 'all'>; title: string; detail: string; at: string; refId: string;
-  /** Following (docs/follows.md): the followed thread or task, its unseen count and why it needs me. */
-  follow?: { targetKind: FollowRow['targetKind']; targetId: string; link: string; unseen: number; attention: string; closed: boolean };
-  /** Messages (docs/agent-messages.md): who sent it, how urgent, read or not, and the direct chat it opens. */
-  message?: { agentName: string; emoji: string; colors: string; urgency: AgentMessage['urgency']; read: boolean; sessionId: string; eventId: string | null; refs: string[] };
-}
-
-export interface InboxSource {
-  approvals: OrgApproval[];
-  plans: OrgPlan[];
-  tasks: { assigned: OrgTask[]; reviewing: OrgTask[] } | null;
-  incidents: OrgHealth['openIncidents'];
-  /** Held or staged actions waiting for the owner's key (one row for all). */
-  heldActions: number;
-  /** What I follow (`GET …/follows/mine`): the ones with something new are listed. */
-  follows?: FollowRow[];
-  /** Messages from agents (`GET …/inbox/messages`): the unread ones wait on me. */
-  messages?: AgentMessage[];
-}
-
-const OPEN_TASK = new Set(['backlog', 'waiting', 'todo', 'claimed', 'in_progress', 'in_review', 'blocked']);
-const str = (v: unknown): string => (typeof v === 'string' ? v : '');
-
-function payloadOf(a: OrgApproval): Record<string, unknown> {
-  try { const v = JSON.parse(a.payload) as unknown; return v && typeof v === 'object' ? v as Record<string, unknown> : {}; } catch { return {}; }
-}
-
-/** One list, newest first: pending cards (escalations apart; two-key cards
- *  ride on the keys row), the keys row, plans awaiting veto, my open tasks
- *  and reviews, incidents nobody has contained yet. */
-export function buildInbox(src: InboxSource): InboxItem[] {
-  const out: InboxItem[] = [];
-  for (const a of src.approvals) {
-    // A card a manager still holds is on its way up, not yours yet (docs/owners-seat.md §7).
-    if (a.status !== 'pending' || a.kind === 'two_key' || a.forYou === false) continue;
-    const p = payloadOf(a);
-    const name = str(p.title) || str(p.name) || str(p.summary) || a.recommendation;
-    // The route it climbed: "Writer → Head of Content → Chief → you".
-    const via = a.chainLine && a.chainLine.includes('→') ? a.chainLine : '';
-    const withVia = (d: string) => [d, via].filter(Boolean).join(' · ');
-    if (a.kind === 'escalation') out.push({ key: `a:${a.id}`, kind: 'escalations', title: `Escalation: ${str(p.taskKey) ? `${str(p.taskKey)} ` : ''}${str(p.title) || 'a task'}`, detail: withVia(str(p.reason)), at: a.createdAt, refId: a.id });
-    else out.push({ key: `a:${a.id}`, kind: 'approvals', title: `${a.kind.replace(/_/g, ' ')}${name ? `: ${name}` : ''}`, detail: withVia(a.recommendation && a.recommendation !== name ? a.recommendation : ''), at: a.createdAt, refId: a.id });
-  }
-  if (src.heldActions > 0) out.push({ key: 'keys', kind: 'keys', title: `${src.heldActions} action${src.heldActions === 1 ? '' : 's'} waiting for your key`, detail: 'Held or staged outward actions — the exact call runs only with your key.', at: '', refId: '' });
-  for (const p of src.plans) if (p.status === 'pending') out.push({ key: `p:${p.id}`, kind: 'plans', title: `Plan: ${p.summary || p.trigger}`, detail: p.applyAt ? `applies at ${p.applyAt.slice(0, 16).replace('T', ' ')} unless vetoed` : '', at: p.createdAt, refId: p.id });
-  for (const t of src.tasks?.assigned ?? []) if (OPEN_TASK.has(t.status)) out.push({ key: `t:${t.id}`, kind: 'mytasks', title: `${t.key ? `${t.key} ` : ''}${t.title}`, detail: `assigned to you · ${t.status.replace('_', ' ')}`, at: t.updatedAt ?? t.createdAt, refId: t.id });
-  for (const t of src.tasks?.reviewing ?? []) if (OPEN_TASK.has(t.status)) out.push({ key: `r:${t.id}`, kind: 'mytasks', title: `Review: ${t.key ? `${t.key} ` : ''}${t.title}`, detail: 'waiting for your review', at: t.updatedAt ?? t.createdAt, refId: t.id });
-  for (const i of src.incidents) if (i.status === 'open') out.push({ key: `i:${i.id}`, kind: 'incidents', title: i.title, detail: `${i.severity} · ${i.kind.replace(/_/g, ' ')}`, at: i.openedAt, refId: i.id });
-  for (const f of src.follows ?? []) {
-    if (f.mutedAt || (f.unseenCount <= 0 && !f.attentionAt)) continue;
-    out.push(followItem(f));
-  }
-  for (const m of src.messages ?? []) if (!m.read) out.push(messageItem(m));
-  // The keys row (no time) leads; the rest newest first.
-  return out.sort((a, b) => (a.at === b.at ? 0 : !a.at ? -1 : !b.at ? 1 : a.at < b.at ? 1 : -1));
-}
-
-export function filterInbox(items: InboxItem[], f: InboxFilter): InboxItem[] {
-  return f === 'all' ? items : items.filter((i) => i.kind === f);
-}
-
-/** One agent's message to the owner as an Inbox row: the sender, the first line, the rest as detail. The text is data (rendered as text). */
-export function messageItem(m: AgentMessage): InboxItem {
-  const lines = m.text.split('\n').map((l) => l.trim()).filter(Boolean);
-  const first = lines[0] ?? '';
-  return {
-    key: `m:${m.id}`, kind: 'messages', title: `${m.agentName}: ${first.length > 160 ? `${first.slice(0, 159)}…` : first}`,
-    detail: lines.slice(1).join(' ').slice(0, 240), at: m.createdAt, refId: m.id,
-    message: { agentName: m.agentName, emoji: m.emoji, colors: m.colors, urgency: m.urgency, read: m.read, sessionId: m.sessionId, eventId: m.eventId, refs: m.refs },
-  };
-}
-
-/** The Messages filter: every recent message, unread first, newest first. */
-export function messagesList(messages: AgentMessage[]): InboxItem[] {
-  return messages.map(messageItem).sort((a, b) => Number(a.message!.read) - Number(b.message!.read) || (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+  key: string; kind: 'following'; title: string; detail: string; at: string; refId: string;
+  /** The followed thread or task, its unseen count and why it needs me. */
+  follow: { targetKind: FollowRow['targetKind']; targetId: string; link: string; unseen: number; attention: string; closed: boolean };
 }
 
 const TARGET_WORD: Record<FollowRow['targetKind'], string> = { thread: 'thread', org_task: 'task', agent_task: 'task', channel: 'discussion' };
@@ -115,21 +56,7 @@ export function followingList(follows: FollowRow[]): InboxItem[] {
   return follows.filter((f) => !f.mutedAt).map(followItem).sort((a, b) => rank(a) - rank(b) || (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
 }
 
-/** What the header counts as waiting on me: everything but followed news that does not need me. */
-export function waitingCount(items: InboxItem[]): number {
-  return items.filter((i) => i.kind !== 'following' || Boolean(i.follow?.attention)).length;
-}
-
-/** The Inbox nav badge: everything waiting on the CEO. Followed threads and
- *  tasks count only when their latest change needs me, not for every reply. */
-export function inboxBadge(c: { pendingApprovals: number; heldActions: number; pendingPlans: number; openIncidents: number; myTasks: number; followAttention?: number; unreadMessages?: number }): number {
-  return c.pendingApprovals + c.heldActions + c.pendingPlans + c.openIncidents + c.myTasks + (c.followAttention ?? 0) + (c.unreadMessages ?? 0);
-}
-
 // ---- the Inbox's History ----
-
-/** Waiting (what is on me now) or History (what was, and how it ended). */
-export type InboxMode = 'waiting' | 'history';
 
 /** The History's date windows, in days (0 = all time). */
 export const HISTORY_RANGES: Array<{ days: number; label: string }> = [
@@ -173,7 +100,7 @@ export function historyBy(i: Pick<HistoryItem, 'by' | 'outcome'>): string {
 export type HistoryTarget =
   | { to: 'task'; taskId: string }
   | { to: 'chat'; sessionId: string }
-  | { to: 'inbox'; filter: InboxFilter }
+  | { to: 'inbox'; filter: HistoryFilter }
   | { to: 'pane'; pane: 'plans' | 'incidents'; focus: { kind: 'plan' | 'incident'; id: string } }
   /** An in-app link: a path (`/<company>/…`) or an older hash; opened with routes.ts `navigate`. */
   | { to: 'hash'; hash: string };

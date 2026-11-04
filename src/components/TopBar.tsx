@@ -8,21 +8,25 @@
  * keeps only the live runs. On a phone it folds to the switcher, search, the
  * bell and an overflow menu.
  *
- * `TopBar` holds the data (one status request, one notifications request,
- * kept live by the workspace stream and a light poll) and the navigation;
- * `TopBarView` is presentational (web-tests/topbar.test.tsx).
+ * `TopBar` holds the data (one status request kept live by the workspace
+ * stream and a light poll; the bell reads the owner's feed, shared with the
+ * Inbox and the main menu's badge — src/lib/feed-store.ts) and the
+ * navigation; `TopBarView` is presentational (web-tests/topbar.test.tsx).
+ * The bell's count is unread rows of the feed; its popover shows the same
+ * rows as the Inbox, with their actions, and opens the Inbox.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, type WorkspaceEntry, type Section } from '../store';
 import { useAuth } from '../auth';
-import { api, type NotificationsPage, type TopNotification, type WorkspaceGlanceRow, type WorkspaceStatus } from '../lib/api';
+import { api, type FeedAction, type FeedItem, type FeedPage, type FeedSection, type WorkspaceGlanceRow, type WorkspaceStatus } from '../lib/api';
 import {
-  ago, elapsed, expiresLabel, filterNotifications, groupNotifications, isMac, isPaletteShortcut, KIND_LABEL, kindTone, meetingWhen,
-  NOTIFICATION_FILTERS, notificationTarget, originLabel, SHORTCUTS, spendMeter, spendTone, usd, type NotificationFilter, type PaletteItem,
+  elapsed, isMac, isPaletteShortcut, meetingWhen, originLabel, SHORTCUTS, spendMeter, spendTone, usd, type PaletteItem,
 } from '../lib/topbar';
+import { bellGroups, needsYouLabel, unreadLabel } from '../lib/feed';
+import { markFeedRead, reloadFeed, useFeed } from '../lib/feed-store';
+import { FeedRow, useFeedAction, useOpenFeedItem } from './FeedRow';
 import { isTaskKey, normalizeTaskKey } from '../lib/task-keys';
-import { navigate } from '../lib/routes';
 import { CommandPalette } from './CommandPalette';
 import { NewWorkspaceWizard } from './NewWorkspaceWizard';
 import { SETTINGS_PANES } from './Rails';
@@ -69,7 +73,8 @@ export interface TopBarViewProps {
   status: WorkspaceStatus | null;
   /** A turn started or ended since the status loaded: the live count to show. */
   liveCount?: number | null;
-  notifications: NotificationsPage | null;
+  /** The owner's feed: the bell's rows and counts (the Inbox reads the same page). */
+  notifications: FeedPage | null;
   /** The owner may pause and resume the company. */
   canPause: boolean;
   orgOn: boolean;
@@ -84,9 +89,13 @@ export interface TopBarViewProps {
   onFailing: () => void;
   onRun: (sessionId: string) => void;
   onMeeting: () => void;
-  onOpenNotification: (n: TopNotification) => void;
-  onMarkRead: (ids: string[]) => void;
+  onOpenNotification: (n: FeedItem) => void;
+  onMarkRead: (items: FeedItem[]) => void;
   onMarkAllRead: () => void;
+  /** An inline action on a row (approve, reject, allow, deny…); absent = the rows only open. */
+  onNotificationAction?: (n: FeedItem, a: FeedAction) => void;
+  /** Rows whose action is running. */
+  busy?: Set<string>;
   onInbox: () => void;
   onSearch: () => void;
   onCreate: (kind: CreateKind, title?: string) => void;
@@ -328,59 +337,61 @@ function Strand(p: TopBarViewProps & { menu: Menu; setOpen: (m: Menu) => void })
   );
 }
 
-export function NotificationsPanel({ page, now, orgOn, onOpen, onMarkRead, onMarkAllRead, onInbox }: {
-  page: NotificationsPage | null; now: Date; orgOn: boolean;
-  onOpen: (n: TopNotification) => void; onMarkRead: (ids: string[]) => void; onMarkAllRead: () => void; onInbox: () => void;
+/** The bell's filters: everything, or one section of the feed. */
+type BellFilter = 'all' | FeedSection;
+const BELL_FILTERS: Array<{ id: BellFilter; label: string }> = [
+  { id: 'all', label: 'All' }, { id: 'needs', label: 'Needs you' }, { id: 'mentions', label: 'Mentions' }, { id: 'updates', label: 'Updates' },
+];
+/** Rows the popover shows; the Inbox has the rest. */
+const BELL_ROWS = 40;
+
+export function NotificationsPanel({ page, now, orgOn, onOpen, onMarkRead, onMarkAllRead, onInbox, onAction, busy }: {
+  page: FeedPage | null; now: Date; orgOn: boolean;
+  onOpen: (n: FeedItem) => void; onMarkRead: (items: FeedItem[]) => void; onMarkAllRead: () => void; onInbox: () => void;
+  onAction?: (n: FeedItem, a: FeedAction) => void; busy?: Set<string>;
 }) {
-  const [filter, setFilter] = useState<NotificationFilter>('all');
-  const items = page ? filterNotifications(page.items, filter) : [];
-  const groups = groupNotifications(items, now);
-  const tones = { red: 'var(--red)', amber: 'var(--amber)', accent: 'var(--accent)', faint: 'var(--text-faint)' };
+  const [filter, setFilter] = useState<BellFilter>('all');
+  const all = page ? (filter === 'all' ? page.items : page.items.filter((i) => i.section === filter)) : [];
+  const shown = all.slice(0, BELL_ROWS);
+  const groups = bellGroups(shown, now);
+  const c = page?.counts;
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px 8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px 2px' }}>
         <span style={{ flex: 1, fontSize: 14, fontWeight: 700 }}>Notifications</span>
         {page && page.unread > 0 && <button type="button" className="tb-link" onClick={onMarkAllRead}>Mark all read</button>}
       </div>
+      {c && (
+        <div data-testid="bell-summary" style={{ padding: '0 10px 8px', fontSize: 11.5, color: 'var(--text-dim)' }}>
+          <span title="Unread rows in every section: the bell's count">{unreadLabel(c.unread)}</span>
+          {orgOn && <> · <span title="Open items that wait on you: the Inbox's badge" style={{ color: c.needsYou ? 'var(--amber)' : undefined }}>{needsYouLabel(c.needsYou)}</span></>}
+        </div>
+      )}
       <div role="group" aria-label="Show" style={{ display: 'flex', gap: 6, padding: '0 10px 8px', flexWrap: 'wrap' }}>
-        {NOTIFICATION_FILTERS.map((f) => <button key={f.id} type="button" className="tb-chip" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>)}
+        {BELL_FILTERS.map((f) => {
+          const n = !c ? 0 : f.id === 'all' ? 0 : f.id === 'needs' ? c.needsYou : c.sections[f.id].unread;
+          return <button key={f.id} type="button" className="tb-chip" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}{n ? ` · ${n}` : ''}</button>;
+        })}
       </div>
-      <div style={{ maxHeight: 'min(62vh, 520px)', overflowY: 'auto', borderTop: '1px solid var(--border-soft)', paddingTop: 4 }}>
+      <div role="list" style={{ maxHeight: 'min(62vh, 540px)', overflowY: 'auto', borderTop: '1px solid var(--border-soft)', paddingTop: 4 }}>
         {!page && <div style={{ padding: '14px 10px', fontSize: 12.5, color: 'var(--text-dim)' }}>Loading…</div>}
         {page && groups.length === 0 && (
           <div style={{ padding: '18px 10px', fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-            {filter === 'all' ? 'You are all caught up. Decisions, messages from your team, mentions and failed runs land here.' : 'Nothing here right now.'}
+            {filter === 'all' ? 'You are all caught up. What needs you, messages and mentions, and news on what you follow land here.' : 'Nothing here right now.'}
           </div>
         )}
         {groups.map((g) => (
           <section key={g.id} aria-label={g.label}>
             <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-dim)', padding: '8px 10px 2px' }}>{g.label}</div>
-            {g.items.map((n) => {
-              const tone = tones[kindTone(n)];
-              return (
-                <div key={n.id} style={{ display: 'flex', alignItems: 'flex-start' }} data-testid={`note-${n.id}`}>
-                  <button type="button" className="tb-row" onClick={() => onOpen(n)} style={{ flex: 1, minWidth: 0 }}>
-                    <span aria-label={n.read ? undefined : 'Unread'} style={{ width: 8, height: 8, borderRadius: '50%', flex: 'none', marginTop: 5, background: n.read ? 'transparent' : tone, boxShadow: n.read ? `inset 0 0 0 1.5px ${tone}` : 'none' }} />
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 13, fontWeight: n.read ? 400 : 600, lineHeight: 1.4 }}>{n.title}</span>
-                      <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2 }}>
-                        <span style={{ color: tone === 'var(--text-faint)' ? 'var(--text-dim)' : tone, fontWeight: 600 }}>{KIND_LABEL[n.kind]}</span>
-                        {n.from && <span>{n.from}</span>}
-                        <span className="tb-num">{ago(n.at, now)}</span>
-                        {n.expiresSoon && <span data-testid="expires" style={{ color: 'var(--amber)', fontWeight: 600 }}>{expiresLabel(n.deadline, now)}</span>}
-                      </span>
-                    </span>
-                  </button>
-                  {!n.read && (
-                    <button type="button" className="tb-btn tb-icon" aria-label={`Mark read: ${n.title}`} title="Mark read" onClick={() => onMarkRead([n.id])} style={{ marginTop: 4, width: 28, height: 28 }}>
-                      <I d={P.check} size={13} sw={2.2} />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+            {g.items.map((n) => (
+              <div key={n.id} data-testid={`note-${n.id}`}>
+                <FeedRow item={n} now={now} compact onOpen={onOpen} onMarkRead={(x) => onMarkRead([x])}
+                  onAction={onAction && n.actions.length <= 2 ? onAction : undefined} busy={busy?.has(n.id)} />
+              </div>
+            ))}
           </section>
         ))}
+        {page && all.length > shown.length && <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-dim)' }}>{all.length - shown.length} more in the {orgOn ? 'Inbox' : 'list'}.</div>}
       </div>
       <div style={{ borderTop: '1px solid var(--border-soft)', padding: '8px 10px 4px', display: 'flex' }}>
         <button type="button" className="tb-link" onClick={onInbox}>{orgOn ? 'Open Inbox' : 'Open Home'}</button>
@@ -394,13 +405,14 @@ function Bell(p: TopBarViewProps & { open: boolean; setOpen: (m: Menu) => void }
   const urgent = (p.notifications?.items ?? []).some((n) => !n.read && (n.severity === 'critical' || n.expiresSoon));
   return (
     <div style={{ position: p.phone ? 'static' : 'relative' }}>
-      <button type="button" className="tb-btn tb-icon" aria-haspopup="dialog" aria-expanded={p.open} aria-label={unread ? `Notifications, ${unread} unread` : 'Notifications'} onClick={() => p.setOpen(p.open ? null : 'bell')}>
+      <button type="button" className="tb-btn tb-icon" aria-haspopup="dialog" aria-expanded={p.open} aria-label={unread ? `Notifications, ${unreadLabel(unread)}` : 'Notifications'} title={unread ? unreadLabel(unread) : 'Notifications'} onClick={() => p.setOpen(p.open ? null : 'bell')}>
         <I d={P.bell} size={17} sw={1.9} />
         {unread > 0 && <span style={{ position: 'absolute', top: 2, right: 1 }}><Count n={unread} tone={urgent ? 'red' : 'amber'} testId="bell-count" /></span>}
       </button>
-      <Popover open={p.open} onClose={() => p.setOpen(null)} width={p.phone ? 'calc(100vw - 16px)' : 380} label="Notifications" align="right">
-        <NotificationsPanel page={p.notifications} now={p.now} orgOn={p.orgOn}
-          onOpen={(n) => { p.setOpen(null); p.onOpenNotification(n); }} onMarkRead={p.onMarkRead} onMarkAllRead={p.onMarkAllRead} onInbox={() => { p.setOpen(null); p.onInbox(); }} />
+      <Popover open={p.open} onClose={() => p.setOpen(null)} width={p.phone ? 'calc(100vw - 16px)' : 400} label="Notifications" align="right">
+        <NotificationsPanel page={p.notifications} now={p.now} orgOn={p.orgOn} busy={p.busy}
+          onOpen={(n) => { p.setOpen(null); p.onOpenNotification(n); }} onMarkRead={p.onMarkRead} onMarkAllRead={p.onMarkAllRead} onInbox={() => { p.setOpen(null); p.onInbox(); }}
+          onAction={p.onNotificationAction} />
       </Popover>
     </div>
   );
@@ -595,7 +607,8 @@ type Item = PaletteItem & { run: () => void };
 function useTopBarData(wsId: string) {
   const app = useApp();
   const [status, setStatus] = useState<WorkspaceStatus | null>(null);
-  const [notes, setNotes] = useState<NotificationsPage | null>(null);
+  // The bell is the owner's feed, shared with the Inbox and the menu badge.
+  const { page: notes } = useFeed(wsId);
   const [liveCount, setLiveCount] = useState<number | null>(null);
   const current = useRef(wsId);
   current.current = wsId;
@@ -604,11 +617,7 @@ function useTopBarData(wsId: string) {
     const s = await api.workspaceStatus(wsId).catch(() => null);
     if (s && current.current === wsId) { setStatus(s); setLiveCount(null); }
   }, [wsId]);
-  const loadNotes = useCallback(async () => {
-    if (!wsId) return;
-    const n = await api.notifications(wsId).catch(() => null);
-    if (n && current.current === wsId) setNotes(n);
-  }, [wsId]);
+  const loadNotes = useCallback(() => reloadFeed(wsId), [wsId]);
   const timers = useRef<{ s?: ReturnType<typeof setTimeout>; n?: ReturnType<typeof setTimeout> }>({});
   const soon = useCallback((which: 'status' | 'notes' | 'both', ms = DEBOUNCE_MS) => {
     if (which !== 'notes') { clearTimeout(timers.current.s); timers.current.s = setTimeout(() => { void loadStatus(); }, ms); }
@@ -616,31 +625,33 @@ function useTopBarData(wsId: string) {
   }, [loadStatus, loadNotes]);
   useEffect(() => () => { clearTimeout(timers.current.s); clearTimeout(timers.current.n); }, []);
 
-  useEffect(() => { setStatus(null); setNotes(null); setLiveCount(null); void loadStatus(); void loadNotes(); }, [loadStatus, loadNotes]);
+  useEffect(() => { setStatus(null); setLiveCount(null); void loadStatus(); }, [loadStatus]);
   // The workspace stream: a turn starting or ending moves the live count at once.
   useEffect(() => app.onWorkspaceEvent((ev) => {
     if (ev.type === 'turn_live') { setLiveCount(ev.running); soon('status', 600); if (!ev.on) soon('notes', 1_500); }
     else if (ev.type === 'task_update' || ev.type === 'channel_approval' || ev.type === 'meeting_update') soon('both');
     else if (ev.type === 'channel_message') soon('notes');
   }), [app, soon]);
-  // The fallback: a light poll while the tab is visible, and on focus.
+  // The fallback: a light poll while the tab is visible, and on focus (the feed polls itself).
   useEffect(() => {
-    const id = setInterval(() => { if (document.visibilityState === 'visible') { void loadStatus(); void loadNotes(); } }, POLL_MS);
-    const onFocus = () => soon('both', 200);
+    const id = setInterval(() => { if (document.visibilityState === 'visible') void loadStatus(); }, POLL_MS);
+    const onFocus = () => soon('status', 200);
     window.addEventListener('focus', onFocus);
     return () => { clearInterval(id); window.removeEventListener('focus', onFocus); };
-  }, [loadStatus, loadNotes, soon]);
+  }, [loadStatus, soon]);
   // The company's own state changes elsewhere (the Company header's kill switch, Settings).
   const orgKey = `${app.wsOrg?.mode ?? ''}:${app.wsOrg?.orgStatus ?? ''}`;
   useEffect(() => { soon('status', 300); }, [orgKey, soon]);
-  return { status, notes, setNotes, liveCount, loadStatus, loadNotes };
+  return { status, notes, liveCount, loadStatus, loadNotes };
 }
 
 export function TopBar({ onSettings }: { onSettings: (pane: string) => void }) {
   const app = useApp();
   const auth = useAuth();
   const wsId = app.workspaceId;
-  const { status, notes, setNotes, liveCount, loadStatus, loadNotes } = useTopBarData(wsId);
+  const { status, notes, liveCount, loadStatus, loadNotes } = useTopBarData(wsId);
+  const openFeedItem = useOpenFeedItem();
+  const { busy, act } = useFeedAction();
   const [rows, setRows] = useState<Record<string, WorkspaceGlanceRow> | null>(null);
   const [palette, setPalette] = useState(false);
   const [wizard, setWizard] = useState(false);
@@ -672,28 +683,8 @@ export function TopBar({ onSettings }: { onSettings: (pane: string) => void }) {
     await app.refreshWsOrg(); await loadStatus();
   }, [app, wsId, status, loadStatus]);
 
-  const markRead = useCallback((ids: string[]) => {
-    setNotes((n) => (n ? { ...n, unread: Math.max(0, n.unread - n.items.filter((i) => ids.includes(i.id) && !i.read).length), items: n.items.map((i) => (ids.includes(i.id) ? { ...i, read: true } : i)) } : n));
-    void api.markNotificationsRead(wsId, { ids }).then(() => app.refreshWsOrg()).catch(() => undefined);
-  }, [wsId, app, setNotes]);
-  const markAll = useCallback(() => {
-    setNotes((n) => (n ? { ...n, unread: 0, items: n.items.map((i) => ({ ...i, read: true })) } : n));
-    void api.markNotificationsRead(wsId, { all: true }).then(() => app.refreshWsOrg()).catch(() => undefined);
-  }, [wsId, app, setNotes]);
-
-  const openNotification = useCallback((n: TopNotification) => {
-    if (!n.read) markRead([n.id]);
-    const t = notificationTarget(n);
-    switch (t.to) {
-      case 'pane': openPane(t.pane, t.focus ?? null); return;
-      case 'task': app.openOrgTask(t.taskId); return;
-      case 'agent': app.openAgent(t.agentId); return;
-      case 'file': app.openFile({ kind: 'workspace', id: wsId }, t.path); return;
-      case 'chat': app.openSession(t.sessionId); return;
-      case 'hash': navigate(t.hash); return;
-      case 'inbox': app.go(orgOn ? 'inbox' : 'overview'); return;
-    }
-  }, [app, wsId, orgOn, markRead, openPane]);
+  const markRead = useCallback((list: FeedItem[]) => { void markFeedRead(wsId, list); }, [wsId]);
+  const markAll = useCallback(() => { void markFeedRead(wsId, 'all'); }, [wsId]);
 
   const create = useCallback((kind: CreateKind, title?: string) => {
     switch (kind) {
@@ -781,7 +772,7 @@ export function TopBar({ onSettings }: { onSettings: (pane: string) => void }) {
         onFailing={() => (orgOn ? openPane('chart', { kind: 'mission', id: 'error' }) : app.go('agents'))}
         onRun={(id) => app.openSession(id)}
         onMeeting={() => openPane('meetings', status?.nextMeeting?.meetingId ? { kind: 'meeting', id: status.nextMeeting.meetingId } : null)}
-        onOpenNotification={openNotification} onMarkRead={markRead} onMarkAllRead={markAll}
+        onOpenNotification={openFeedItem} onMarkRead={markRead} onMarkAllRead={markAll} onNotificationAction={(n, a) => void act(n, a)} busy={busy}
         onInbox={() => app.go(orgOn ? 'inbox' : 'overview')}
         onSearch={() => setPalette(true)} onCreate={create}
         onToggleTheme={app.toggleTheme} onSettings={onSettings} onSignOut={() => { void auth.signOut(); }}

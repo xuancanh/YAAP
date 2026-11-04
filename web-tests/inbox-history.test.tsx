@@ -1,10 +1,13 @@
-/** The Inbox's History (docs/home.md "Inbox"): a Waiting / History toggle
- *  (Waiting by default); History lists what was resolved — outcome, who
+/** The Inbox's History (docs/home.md "Inbox"): the Done tab (Needs you by
+ *  default); it lists what was resolved — outcome, who
  *  (decided-without-you marked apart), when — with the Inbox's filters, a
  *  search, a date window, "Decided without you", Load more and empty states;
  *  a row opens its record and offers the existing undo routes. */
 import { cleanup, configure, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { primeFeed } from '../src/lib/feed-store';
+import { feedPage } from './feed-fixtures';
 import type { HistoryItem } from '../src/lib/api';
 import { historyBy, historyFrom, historyTarget, outcomeColor } from '../src/lib/inbox';
 
@@ -15,6 +18,13 @@ configure({ asyncUtilTimeout: 4_000 });
 const fake: Record<string, unknown> = {};
 vi.mock('../src/store', () => ({ useApp: () => fake, grad: () => 'none' }));
 const { InboxView } = await import('../src/components/InboxView');
+
+let bump: () => void = () => undefined;
+function Harness() {
+  const [, set] = useState(0);
+  bump = () => set((n) => n + 1);
+  return <InboxView />;
+}
 
 const item = (over: Partial<HistoryItem>): HistoryItem => ({
   key: 'a:1', kind: 'approvals', title: 'hire: Researcher as Analyst', detail: '', outcome: 'approved', by: { kind: 'you', name: 'You' },
@@ -35,12 +45,14 @@ let historyBody: (u: URL) => unknown;
 beforeEach(() => {
   for (const k of Object.keys(fake)) delete fake[k];
   calls.length = 0;
+  primeFeed(null, '');
   historyBody = (u) => (u.searchParams.get('cursor') ? { items: PAGE2, nextCursor: null } : { items: PAGE1, nextCursor: 'c1' });
   vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined });
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const u = new URL(String(url), 'http://x');
     calls.push({ url: String(url), method: init?.method ?? 'GET' });
     const body = u.pathname.endsWith('/inbox/history') ? historyBody(u)
+      : u.pathname.endsWith('/feed') ? feedPage([])
       : u.pathname.endsWith('/follows/mine') ? []
       : u.pathname.endsWith('/humans/me/tasks') ? { assigned: [], reviewing: [] }
       : u.pathname.includes('/org/delegations/') ? { id: 'd1', revokedAt: 'now' }
@@ -50,7 +62,7 @@ beforeEach(() => {
   }));
   Object.assign(fake, {
     workspaceId: 'ws1', companiesEnabled: true, wsOrg: { mode: 'supervised', orgId: 'o1', units: [] }, orgHealth: null, orgHeldActions: 0,
-    inboxFilter: 'all', setInboxFilter: vi.fn((f: string) => { fake.inboxFilter = f; }), setOrgFocus: vi.fn(), openOrgTask: vi.fn(), openSession: vi.fn(),
+    inboxFilter: 'all', setInboxFilter: vi.fn((f: string) => { fake.inboxFilter = f; bump(); }), me: { role: 'owner' }, stacked: false, setOrgFocus: vi.fn(), openOrgTask: vi.fn(), openSession: vi.fn(),
     setOrgPane: vi.fn(), setOrgUnitId: vi.fn(), setMobileDetail: vi.fn(), refreshWsOrg: vi.fn(async () => undefined), showToast: vi.fn(),
   });
 });
@@ -80,14 +92,14 @@ describe('history helpers (pure)', () => {
   });
 });
 
-describe('the History toggle', () => {
-  it('opens on Waiting; History lists rows with outcome, who and the decided-without-you marker; Load more appends the next page', async () => {
-    render(<InboxView />);
-    expect(screen.getByTestId('inbox-mode-waiting')).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('tablist', { name: 'Inbox filters' })).toBeInTheDocument();
+describe('the Done tab (History)', () => {
+  it('opens on Needs you; Done lists rows with outcome, who and the decided-without-you marker; Load more appends the next page', async () => {
+    render(<Harness />);
+    expect(screen.getByTestId('inbox-tab-needs')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tablist', { name: 'Inbox sections' })).toBeInTheDocument();
     expect(historyCalls()).toHaveLength(0);
 
-    fireEvent.click(screen.getByTestId('inbox-mode-history'));
+    fireEvent.click(screen.getByTestId('inbox-tab-history'));
     const list = await screen.findByTestId('history-list');
     await waitFor(() => expect(within(list).getByTestId('history-item-a:1')).toBeInTheDocument());
     expect(screen.queryByRole('tablist', { name: 'Inbox filters' })).toBeNull();
@@ -111,8 +123,8 @@ describe('the History toggle', () => {
   });
 
   it('filters by kind, search, date range and decided-without-you; an empty result says so', async () => {
-    render(<InboxView />);
-    fireEvent.click(screen.getByTestId('inbox-mode-history'));
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('inbox-tab-history'));
     await screen.findByTestId('history-item-a:1');
     const tabs = screen.getByRole('tablist', { name: 'History filters' });
     expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['All', 'Approvals', 'Keys', 'Escalations', 'Pending changes', 'My tasks', 'Incidents', 'Following']);
@@ -139,15 +151,16 @@ describe('the History toggle', () => {
 
   it('says when nothing was resolved yet', async () => {
     historyBody = () => ({ items: [], nextCursor: null });
-    render(<InboxView />);
-    fireEvent.click(screen.getByTestId('inbox-mode-history'));
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('inbox-tab-history'));
     expect(await screen.findByTestId('history-empty')).toHaveTextContent('Nothing resolved in the last 30 days');
   });
 
-  it('a row opens its record: a task through its link, a card back in Waiting, a plan in its pane', async () => {
-    fake.setInboxFilter = vi.fn(); // the approvals pane itself is not under test here
-    render(<InboxView />);
-    fireEvent.click(screen.getByTestId('inbox-mode-history'));
+  it('a row opens its record: a task through its link, a card back in Needs you, a plan in its pane', async () => {
+    // the approvals pane itself is not under test here: only the Done tab switches
+    fake.setInboxFilter = vi.fn((f: string) => { if (f === 'history') { fake.inboxFilter = f; bump(); } });
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('inbox-tab-history'));
     fireEvent.click(within(await screen.findByTestId('history-item-t:9')).getByText('Write the launch post'));
     expect(fake.openOrgTask).toHaveBeenCalledWith('9');
 
@@ -158,12 +171,11 @@ describe('the History toggle', () => {
 
     fireEvent.click(within(screen.getByTestId('history-item-a:1')).getByText('hire: Researcher as Analyst'));
     expect(fake.setInboxFilter).toHaveBeenCalledWith('approvals');
-    await waitFor(() => expect(screen.getByTestId('inbox-mode-waiting')).toHaveAttribute('aria-pressed', 'true'));
   });
 
   it('offers the existing undo routes behind a confirm: revoke the delegation, reopen the task', async () => {
-    render(<InboxView />);
-    fireEvent.click(screen.getByTestId('inbox-mode-history'));
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId('inbox-tab-history'));
     const deleg = await screen.findByTestId('history-item-a:3');
     const undo = within(deleg).getByTestId('history-undo');
     expect(undo).toHaveTextContent('Revoke budget raise delegation');

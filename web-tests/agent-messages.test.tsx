@@ -1,12 +1,13 @@
-/** Messages from your team (docs/agent-messages.md): the Inbox's Messages
- *  filter (unread first, urgency, opening the direct chat marks it read),
- *  unread messages in All and in the badge, and Home's "Messages from your
- *  team" block — agent text shown as text, never markup. */
+/** Messages from your team (docs/agent-messages.md): the Inbox's Mentions
+ *  tab lists them from the owner's feed (the same rows as the bell; opening
+ *  one opens the direct chat and marks the chat read), and Home's "Messages
+ *  from your team" block — agent text shown as text, never markup. */
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentMessage, HomeData } from '../src/lib/api';
-import { buildInbox, inboxBadge, messagesList, waitingCount, INBOX_FILTERS } from '../src/lib/inbox';
 import { HomeBoard } from '../src/components/HomeBoard';
+import { primeFeed } from '../src/lib/feed-store';
+import { feedItem, feedPage } from './feed-fixtures';
 
 const fake: Record<string, unknown> = {};
 vi.mock('../src/store', () => ({ useApp: () => fake, grad: () => 'none' }));
@@ -22,10 +23,18 @@ const MESSAGES: AgentMessage[] = [
   msg({ id: 'm3', eventId: 'e3', text: 'Old news', urgency: 'fyi', read: true, createdAt: '2026-11-02T11:00:00Z' }),
 ];
 
+/** The feed's message rows: the server lists them in Mentions (docs/owners-seat.md). */
+const FEED = feedPage([
+  feedItem({ id: 'event:e2', ids: ['event:e2'], title: 'Site is down', severity: 'high', at: '2026-11-02T10:00:00Z', actor: { kind: 'agent', id: 'a2', name: 'Otto', emoji: '🤖', colors: '[]' }, target: { kind: 'chat', sessionId: 's2' }, ref: { sessionId: 's2' } }),
+  feedItem({ id: 'event:e1', ids: ['event:e1'], title: 'The launch slipped a day.', body: 'The launch slipped a day.\nThe vendor missed the build.', at: '2026-11-02T08:00:00Z', actor: { kind: 'agent', id: 'a1', name: 'Penny', emoji: '🤖', colors: '[]' }, target: { kind: 'chat', sessionId: 's1' }, ref: { sessionId: 's1' } }),
+  feedItem({ id: 'event:e3', ids: ['event:e3'], title: 'Old news', severity: 'low', read: true, at: '2026-11-02T11:00:00Z', actor: { kind: 'agent', id: 'a1', name: 'Penny', emoji: '🤖', colors: '[]' }, target: { kind: 'chat', sessionId: 's1' }, ref: { sessionId: 's1' } }),
+]);
+
 const posts: Array<{ url: string; body: unknown }> = [];
 beforeEach(() => {
   for (const k of Object.keys(fake)) delete fake[k];
   posts.length = 0;
+  primeFeed(null, '');
   vi.stubGlobal('localStorage', { getItem: () => null, setItem: () => undefined });
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const u = String(url);
@@ -33,52 +42,36 @@ beforeEach(() => {
     const body = u.endsWith('/org/detail') ? { id: 'o1', workspaceId: 'ws1', name: 'Acme', members: [] }
       : u.endsWith('/inbox/messages') ? { items: MESSAGES, unread: 2 }
       : u.endsWith('/inbox/messages/read') ? { ok: true, marked: 1 }
+      : u.includes('/feed/read') ? { ok: true, marked: 1 }
+      : u.includes('/feed') ? FEED
       : u.endsWith('/humans/me/tasks') ? { assigned: [], reviewing: [] } : [];
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
   }));
   Object.assign(fake, {
     workspaceId: 'ws1', companiesEnabled: true, wsOrg: { mode: 'supervised', orgId: 'o1', units: [] }, orgHealth: null, orgHeldActions: 0,
     inboxFilter: 'all', setInboxFilter: vi.fn((f: string) => { fake.inboxFilter = f; }), setOrgFocus: vi.fn(), openOrgTask: vi.fn(), openSession: vi.fn(),
-    refreshWsOrg: vi.fn(async () => undefined), showToast: vi.fn(),
+    refreshWsOrg: vi.fn(async () => undefined), showToast: vi.fn(), go: vi.fn(), me: { role: 'owner' }, stacked: false,
   });
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-describe('messages in the Inbox (pure)', () => {
-  it('has a Messages filter; unread messages wait on me in All and count in the badge', () => {
-    expect(INBOX_FILTERS.map((f) => f.id)).toContain('messages');
-    const items = buildInbox({ approvals: [], plans: [], tasks: null, incidents: [], heldActions: 0, messages: MESSAGES });
-    expect(items.map((i) => i.key)).toEqual(['m:m2', 'm:m1']);
-    expect(items[1].title).toBe('Penny: The launch slipped a day.');
-    expect(items[1].detail).toBe('The vendor missed the build.');
-    expect(waitingCount(items)).toBe(2);
-    expect(inboxBadge({ pendingApprovals: 1, heldActions: 0, pendingPlans: 0, openIncidents: 0, myTasks: 0, unreadMessages: 2 })).toBe(3);
-    expect(messagesList(MESSAGES).map((i) => i.refId)).toEqual(['m2', 'm1', 'm3']);
-  });
-});
-
-describe('the Messages filter', () => {
-  it('lists every message unread first with urgency; opening one opens the direct chat and marks it read', async () => {
+describe('messages in the Inbox', () => {
+  it('Mentions lists them with the sender, unread first counted on the tab; opening one opens the direct chat and marks it read', async () => {
     fake.inboxFilter = 'messages';
     render(<InboxView />);
-    const list = await screen.findByTestId('messages-list');
-    await waitFor(() => expect(within(list).getAllByRole('button')).toHaveLength(3));
-    expect(screen.getByRole('tab', { name: 'Messages · 2' })).toBeInTheDocument();
-    const urgent = within(list).getByTestId('inbox-item-m:m2');
-    expect(within(urgent).getByTestId('message-urgency')).toHaveTextContent('urgent');
-    expect(within(urgent).getByTestId('message-unread')).toBeInTheDocument();
-    expect(within(within(list).getByTestId('inbox-item-m:m3')).queryByTestId('message-unread')).toBeNull();
-    fireEvent.click(within(list).getByTestId('inbox-item-m:m1'));
+    const list = await screen.findByTestId('inbox-list-mentions');
+    expect(within(list).getAllByRole('listitem')).toHaveLength(3);
+    expect(screen.getByTestId('inbox-tab-count-mentions')).toHaveTextContent('2');
+    const urgent = within(list).getByTestId('feed-row-event:e2');
+    expect(within(urgent).getByTestId('feed-actor')).toHaveTextContent('Otto');
+    expect(urgent).toHaveAttribute('data-read', 'false');
+    expect(within(list).getByTestId('feed-row-event:e3')).toHaveAttribute('data-read', 'true');
+    fireEvent.click(within(within(list).getByTestId('feed-row-event:e1')).getByTestId('feed-open'));
     expect(fake.openSession).toHaveBeenCalledWith('s1');
     await waitFor(() => expect(posts).toContainEqual({ url: '/api/workspaces/ws1/inbox/messages/read', body: { sessionId: 's1' } }));
-    expect(within(within(list).getByTestId('inbox-item-m:m1')).queryByTestId('message-unread')).toBeNull();
-    expect(screen.getByRole('tab', { name: 'Messages · 1' })).toBeInTheDocument();
-  });
-  it('shows unread messages in All', async () => {
-    render(<InboxView />);
-    const list = await screen.findByTestId('inbox-list');
-    await waitFor(() => expect(within(list).getAllByRole('button')).toHaveLength(2));
-    expect(screen.getByText('2 waiting on you')).toBeInTheDocument();
+    expect(posts).toContainEqual({ url: '/api/workspaces/ws1/feed/read', body: { ids: ['event:e1'] } });
+    expect(within(list).getByTestId('feed-row-event:e1')).toHaveAttribute('data-read', 'true');
+    expect(screen.getByTestId('inbox-tab-count-mentions')).toHaveTextContent('1');
   });
 });
 

@@ -7,7 +7,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HomeData, HomeNeed, OrgApproval } from '../src/lib/api';
 import { HomeBoard } from '../src/components/HomeBoard';
 import { DecisionChain } from '../src/components/OrganizationView';
-import { buildInbox } from '../src/lib/inbox';
+import { FeedRow } from '../src/components/FeedRow';
+import { feedItem } from './feed-fixtures';
 import { hopLine, inReviewBelow, managerHops, waitsOnViewer } from '../src/lib/decisions';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -43,10 +44,14 @@ describe('decision routing helpers', () => {
 });
 
 describe('the Inbox', () => {
-  it('lists only what waits on you, with the route it climbed', () => {
-    const items = buildInbox({ approvals: [approval(), approval({ id: 'a2', forYou: false, holder: 'agent:h' })], plans: [], tasks: null, incidents: [], heldActions: 0 });
-    expect(items.map((i) => i.refId)).toEqual(['a1']);
-    expect(items[0].detail).toContain('Writer → Head of Content → Chief → you');
+  it('a card in Needs you shows the route it climbed (the server lists only what waits on you)', () => {
+    const n = {
+      id: 'approval:a1', kind: 'escalation', subkind: 'escalation', title: 'Price change', detail: '', severity: 'high', createdAt: iso(-300), deadline: null, defaultAction: '',
+      recommendation: '', recommendedAction: '', reversibility: '', confidence: null, requestedBy: 'Writer', ref: { approvalId: 'a1' }, actions: ['approve', 'reject'],
+      chain: { line: 'Writer → Head of Content → Chief → you', hops: [], reserved: '' },
+    } as HomeNeed;
+    render(<FeedRow item={feedItem({ id: 'need:x', type: 'escalation', section: 'needs', actionable: true, title: n.title, need: n, target: { kind: 'need', need: { kind: n.kind, ref: n.ref } } })} now={NOW} onOpen={vi.fn()} onMarkRead={vi.fn()} />);
+    expect(screen.getByTestId('feed-route')).toHaveTextContent('Route: Writer → Head of Content → Chief → you');
   });
   it('the approvals card shows the chain and every recommendation', () => {
     render(<DecisionChain a={approval({ reserved: 'raised for a decision only the CEO can make' })} />);

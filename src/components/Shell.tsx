@@ -8,7 +8,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, type Section } from '../store';
-import { inboxBadge } from '../lib/inbox';
+import { useFeed } from '../lib/feed-store';
+import { countLabel, needsYouLabel } from '../lib/feed';
 import { COMPANY_SECTIONS, isCompanySection, type CompanySection } from '../lib/company-nav';
 
 interface NavItem { id: Section; label: string; icon: string[]; group: 'core' | 'company' | 'make'; org?: boolean; badge?: number; dot?: { color: string; title: string } }
@@ -28,16 +29,15 @@ const NAV: NavItem[] = [
   { id: 'market', label: 'Foundry', icon: P.market, group: 'make' },
 ];
 
-/** The main menu for this workspace, with the Inbox badge and the Operations incident dot. */
+/** The main menu for this workspace, with the Inbox badge (open items in
+ *  the feed's Needs you — the same number the Inbox shows; the bell counts
+ *  unread rows) and the Operations incident dot. */
 export function useNav(): NavItem[] {
   const app = useApp();
   const orgOn = app.companiesEnabled && app.wsOrg !== null && app.wsOrg.mode !== 'off';
   const openIncidents = (app.orgHealth?.openIncidents ?? []).filter((i) => i.status === 'open').length;
-  const badge = orgOn ? inboxBadge({
-    pendingApprovals: app.wsOrg?.pendingApprovals ?? 0, heldActions: app.orgHeldActions, pendingPlans: app.orgPendingPlans,
-    openIncidents, myTasks: app.orgMyTasks,
-    followAttention: app.followAttention, unreadMessages: app.unreadMessages,
-  }) : 0;
+  const feed = useFeed(orgOn ? app.workspaceId : '');
+  const badge = orgOn ? feed.page?.counts.needsYou ?? 0 : 0;
   return NAV.filter((n) => !n.org || orgOn).map((n) => ({
     ...n,
     badge: n.id === 'inbox' && badge > 0 ? badge : undefined,
@@ -53,7 +53,7 @@ function isOn(item: Section, section: Section): boolean {
 }
 
 const Badge = ({ n }: { n: number }) => (
-  <span data-testid="inbox-badge" title={`${n} waiting on you`} style={{ position: 'absolute', top: 2, right: 6, minWidth: 16, height: 16, borderRadius: 8, padding: '0 4px', background: 'var(--amber)', color: '#fff', fontSize: 9.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>{n > 99 ? '99+' : n}</span>
+  <span data-testid="inbox-badge" title={needsYouLabel(n)} aria-label={needsYouLabel(n)} style={{ position: 'absolute', top: 2, right: 6, minWidth: 16, height: 16, borderRadius: 8, padding: '0 4px', background: 'var(--amber)', color: '#fff', fontSize: 9.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', boxSizing: 'border-box' }}>{countLabel(n)}</span>
 );
 const Dot = ({ color, title, testId }: { color: string; title: string; testId: string }) => (
   <span data-testid={testId} title={title} aria-label={title} style={{ position: 'absolute', top: 5, right: 11, width: 8, height: 8, borderRadius: '50%', background: color, boxShadow: '0 0 0 2px var(--panel)' }} />

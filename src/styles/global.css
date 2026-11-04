@@ -41,3 +41,8 @@ input { font-family: inherit; }
 .md > :first-child { margin-top: 0 !important; }
 .md > :last-child { margin-bottom: 0 !important; }
 .md table code, .md li code { white-space: nowrap; }
+
+/* The owner's feed rows (src/components/FeedRow.tsx): the Inbox and the bell. */
+.feed-row:hover { background: var(--hover) !important; }
+.feed-row:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.feed-row button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 6px; }
