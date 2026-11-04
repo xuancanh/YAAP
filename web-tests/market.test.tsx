@@ -58,6 +58,12 @@ function Market({ orgOn }: { orgOn: boolean }) {
   return <><MarketRail nav={nav} setNav={setNav} /><MarketView nav={nav} setNav={setNav} /></>;
 }
 
+/** The phone layout: no rail beside the page. */
+function MarketOnly({ orgOn }: { orgOn: boolean }) {
+  const { nav, setNav } = useMarketNav(orgOn);
+  return <MarketView nav={nav} setNav={setNav} />;
+}
+
 const setUrl = (search: string) => window.history.replaceState(null, '', `/${search}`);
 
 /** A working localStorage per test (the runtime's own may be absent). */
@@ -146,16 +152,17 @@ describe('useMarketNav', () => {
 });
 
 describe('Market view', () => {
-  it('switches segments from the rail and the header; personal shows its categories, business its functions with counts', () => {
+  it('switches segments from the rail (the only switch on a desktop); personal shows its categories, business its functions with counts', () => {
     setFake({ orgOn: false });
     render(<Market orgOn={false} />);
-    const [railTabs, headerTabs] = screen.getAllByRole('tablist', { name: 'Market segment' });
+    const [railTabs, ...dup] = screen.getAllByRole('tablist', { name: 'Market segment' });
+    expect(dup).toHaveLength(0);
     expect(within(railTabs).getByRole('tab', { name: /Personal/ })).toHaveAttribute('aria-selected', 'true');
     expect(within(railTabs).getByRole('tab', { name: /Personal/ })).toHaveTextContent('3');
     expect(within(railTabs).getByRole('tab', { name: /Business/ })).toHaveTextContent('7');
     expect(screen.getByTestId('market-card-pack-trip-planner')).toBeInTheDocument();
     expect(screen.queryByTestId('market-card-pack-biz-finance-manager')).toBeNull();
-    fireEvent.click(within(headerTabs).getByRole('tab', { name: /Business/ }));
+    fireEvent.click(within(railTabs).getByRole('tab', { name: /Business/ }));
     expect(within(railTabs).getByRole('tab', { name: /Business/ })).toHaveAttribute('aria-selected', 'true');
     expect(localStorage.getItem(SEGMENT_KEY)).toBe('business');
     // the rail lists the functions with their counts
@@ -201,9 +208,10 @@ describe('Market view', () => {
     expect(screen.getByText(/Nothing matches/)).toBeInTheDocument();
   });
 
-  it('on a phone the cards stack in one column', () => {
+  it('on a phone the cards stack in one column, and the page carries its own segment switch (the rail is hidden there)', () => {
     setFake({ orgOn: true, stacked: true });
-    const { container } = render(<Market orgOn />);
+    const { container } = render(<MarketOnly orgOn />);
+    expect(screen.getAllByRole('tablist', { name: 'Market segment' })).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Finance: 4 agents' }));
     expect(container.querySelectorAll('[data-cols="1"]').length).toBeGreaterThan(0);
     expect(container.querySelectorAll('[data-cols="2"]').length).toBe(0);

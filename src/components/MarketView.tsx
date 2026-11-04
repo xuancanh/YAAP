@@ -44,7 +44,8 @@ export function MarketView({ nav, setNav, onOpenSettings }: { nav: MarketNav; se
       <div style={{ maxWidth: 980, margin: '0 auto', padding: app.stacked ? '20px 16px 60px' : '30px 28px 60px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <h1 style={{ fontSize: 23, fontWeight: 700, letterSpacing: '-.4px', flex: 1, margin: 0 }}>Foundry</h1>
-          {shelf === 'agents' && !community && <SegmentSwitch nav={nav} setNav={setNav} />}
+          {/* The rail holds the Personal | Business switch; on a phone the rail is hidden (App.tsx `hasSecondary`), so the page carries its own. */}
+          {app.stacked && shelf === 'agents' && !community && <SegmentSwitch nav={nav} setNav={setNav} />}
         </div>
         <ShelfTabs shelf={shelf} setNav={setNav} />
         <div style={{ color: 'var(--text-dim)', fontSize: 13.5, marginTop: 12, maxWidth: 620, lineHeight: 1.55 }}>
