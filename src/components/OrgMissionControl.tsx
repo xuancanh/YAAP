@@ -32,6 +32,7 @@ import {
 } from '../lib/overview';
 import { AgentOverviewPanel } from './AgentDashboard';
 import { Drawer } from './org-ui';
+import { PageHeader, PageSkeleton } from './CompanyKit';
 
 const panel: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 12, background: 'var(--panel)' };
 const faint: React.CSSProperties = { fontSize: 11.5, color: 'var(--text-faint)' };
@@ -308,15 +309,10 @@ export function MissionControlPane({ org, onEditStructure }: { org: OrgDetail; o
   const initialFilter = initial.filter;
   return (
     <div style={{ maxWidth: 1400, minWidth: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: '1 1 260px', minWidth: 0 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Org chart</h2>
-          <div style={faint}>Who is doing what, who is stuck and on whom, live. Pick an agent for its overview and its waiting chain.</div>
-        </div>
-        <button style={btn()} onClick={onEditStructure} title="Add, hire, change scopes, pause or terminate members; seat people">Edit structure</button>
-      </div>
+      <PageHeader title="Org chart" purpose="Who is doing what, who is stuck and on whom, live. Pick an agent for its overview and its waiting chain."
+        actions={<button className="co-btn" onClick={onEditStructure} title="Add, hire, change scopes, pause or terminate members; seat people">Edit structure</button>} />
       {!mc ? (
-        error ? <div role="alert" style={{ fontSize: 12.5, color: 'var(--red)' }}>{error} <button style={{ ...btn(), marginLeft: 6 }} onClick={() => void load()}>Retry</button></div> : <div style={faint}>Loading…</div>
+        error ? <div role="alert" style={{ fontSize: 12.5, color: 'var(--red)' }}>{error} <button style={{ ...btn(), marginLeft: 6 }} onClick={() => void load()}>Retry</button></div> : <PageSkeleton cards={3} />
       ) : (
         <MissionControlBoard key={initial.n} mc={mc} now={now} narrow={narrow} initialFilter={initialFilter} selected={selected} onSelect={(id) => setSelected((cur) => (cur === id ? null : id))}
           onWaitingOnYou={() => { app.setOrgFocus(null); app.setOrgPane('approvals'); }} onOpenUnit={openUnit} nameOfHuman={(id) => app.nameOf(id)} />
