@@ -34,6 +34,7 @@ localStorage), else the first, on Home.
 |---|---|
 | `/:company/home` | Home, the owner's mission control (`section` `overview`) |
 | `/:company/inbox[/:filter]` | The Inbox, on a filter (`approvals`, `mytasks`, `plans`, …) |
+| `/:company/inbox/:filter/:itemId` | The Inbox with one item open in the reading pane (a feed item id, e.g. `need:approval:<id>`; `all` for the default tab) |
 | `/:company/chat` | Channels & chats (on a phone: the list) |
 | `/:company/channels/:slug[/:messageId]` | A channel or sub-channel by slug; a message id scrolls to it (then drops from the address) |
 | `/:company/chats/:sessionId` | A chat or an agent's work session in the chat view |

@@ -198,8 +198,18 @@ describe('the bell', () => {
     expect(groups).toEqual(['Needs you', 'Today', 'Earlier']);
     const needs = screen.getByRole('region', { name: 'Needs you' });
     expect(within(needs).getByText('Hire Ana as Researcher')).toBeInTheDocument();
-    expect(within(needs).getByTestId('feed-expires')).toHaveTextContent('Expires in 2 h');
+    expect(within(needs).getByTestId('feed-expires')).toHaveTextContent('2 h left');
     expect(within(screen.getByRole('region', { name: 'Earlier' })).getByText('Heartbeat failed')).toBeInTheDocument();
+  });
+
+  it('only the top actionable rows keep their buttons; an escalation is answered in the Inbox', () => {
+    const esc = feedItem({ id: 'need:approval:x1', ids: ['need:approval:x1'], type: 'escalation', section: 'needs', actionable: true, title: 'REJ-4 is stuck waiting on you', actions: ['approve', 'reject'], target: { kind: 'need', need: { kind: 'escalation', ref: { approvalId: 'x1' } } } });
+    const more = [1, 2].map((n) => feedItem({ id: `need:approval:b${n}`, ids: [`need:approval:b${n}`], type: 'decision', section: 'needs', actionable: true, title: `Decision ${n}`, actions: ['approve', 'reject'], target: { kind: 'need', need: { kind: 'approval', ref: { approvalId: `b${n}` } } } }));
+    render(<NotificationsPanel page={feedPage([esc, ...page().items, ...more])} now={NOW} orgOn onOpen={vi.fn()} onMarkRead={vi.fn()} onMarkAllRead={vi.fn()} onInbox={vi.fn()} onAction={vi.fn()} />);
+    expect(within(screen.getByTestId('note-need:approval:x1')).queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(within(screen.getByTestId('note-need:approval:a1')).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(within(screen.getByTestId('note-need:approval:b1')).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    expect(within(screen.getByTestId('note-need:approval:b2')).queryByRole('button', { name: 'Approve' })).toBeNull();
   });
 
   it('rows carry the actor, the kind, the context and the group size', () => {
@@ -334,6 +344,7 @@ describe('the connected bar', () => {
       wsOrg: { mode: 'autonomous', orgStatus: 'active' }, me: { role: 'owner' }, agents: [{ id: 'w', name: 'Writer', role: 'writer' }], channels: [{ id: 'ch', slug: 'general', name: 'general' }], sessions: [],
       onWorkspaceEvent: () => () => undefined, openAgent: vi.fn(), openOrgTask: vi.fn(), showToast: vi.fn(), go: vi.fn(), toggleTheme: vi.fn(),
       setOrgFocus: vi.fn(), setOrgUnitId: vi.fn(), setOrgPane: vi.fn(), setMobileDetail: vi.fn(), refreshWsOrg: vi.fn(async () => undefined), openSession: vi.fn(), openChannel: vi.fn(), openFile: vi.fn(),
+      setInboxFilter: vi.fn(), setInboxItem: vi.fn(),
     });
     vi.spyOn(api, 'workspaceStatus').mockResolvedValue(status());
     primeFeed(null, '');
@@ -358,7 +369,7 @@ describe('the connected bar', () => {
     expect(fake.openOrgTask).toHaveBeenCalledWith('task-1');
   });
 
-  it('failing opens mission control on the error filter; opening a notification marks it read and opens it through the store', async () => {
+  it('failing opens mission control on the error filter; opening a notification marks it read and opens it in the Inbox\'s reading pane', async () => {
     const mark = vi.spyOn(api, 'markFeedRead').mockResolvedValue({ ok: true, marked: 1 });
     vi.spyOn(api, 'markMessagesRead').mockResolvedValue({ ok: true, marked: 1 });
     await act(async () => { render(<TopBar onSettings={() => undefined} />); });
@@ -368,16 +379,19 @@ describe('the connected bar', () => {
     fireEvent.click(screen.getByRole('button', { name: /Notifications, 4 unread/ }));
     await act(async () => { fireEvent.click(screen.getByText('Chief wrote to you')); });
     expect(mark).toHaveBeenCalledWith('ws1', { ids: ['event:e1'] });
-    expect(fake.openSession).toHaveBeenCalledWith('dm1');
+    expect(fake.go).toHaveBeenCalledWith('inbox');
+    expect(fake.setInboxFilter).toHaveBeenLastCalledWith('mentions');
+    expect(fake.setInboxItem).toHaveBeenLastCalledWith('event:e1');
     // the count dropped at once, before the server answered
     expect(screen.getByTestId('bell-count')).toHaveTextContent('3');
     fireEvent.click(screen.getByRole('button', { name: /Notifications, 3 unread/ }));
     await act(async () => { fireEvent.click(screen.getByText('Ann mentioned you in #general')); });
-    expect(fake.openChannel).toHaveBeenCalledWith('general', 'm9');
+    expect(fake.setInboxItem).toHaveBeenLastCalledWith('event:e3');
     fireEvent.click(screen.getByRole('button', { name: /Notifications, 2 unread/ }));
     await act(async () => { fireEvent.click(screen.getByText('3 updates on ENG-12')); });
     expect(mark).toHaveBeenLastCalledWith('ws1', { ids: ['audit:1', 'audit:2', 'event:e4'] });
-    expect(fake.openOrgTask).toHaveBeenCalledWith('t1');
+    expect(fake.setInboxFilter).toHaveBeenLastCalledWith('updates');
+    expect(fake.setInboxItem).toHaveBeenLastCalledWith('group:task:t1');
   });
 
   it('a decision is approved from the bell through its own route and leaves the list', async () => {
@@ -388,7 +402,7 @@ describe('the connected bar', () => {
     fireEvent.click(screen.getByRole('button', { name: /Notifications, 4 unread/ }));
     const row = screen.getByTestId('note-need:approval:a1');
     await act(async () => { fireEvent.click(within(row).getByRole('button', { name: 'Approve' })); });
-    expect(decide).toHaveBeenCalledWith('ws1', 'a1', 'approve');
+    expect(decide).toHaveBeenCalledWith('ws1', 'a1', 'approve', undefined);
     expect(fake.showToast).toHaveBeenCalledWith('Approved');
     expect(screen.queryByTestId('note-need:approval:a1')).toBeNull();
   });

@@ -114,9 +114,10 @@ function approvalTitle(kind: string, who: string, facts: Facts | undefined, fall
 function approvalBody(kind: string, facts: Facts | undefined): string {
   switch (kind) {
     case 'hire': {
+      // The reading pane lists the role, who it reports to and the budget; the body says what the hire would do.
       const name = f(facts, 'name');
-      const bits = [name && name !== f(facts, 'title') ? `Named ${name}` : '', f(facts, 'reportsTo') ? `reports to ${f(facts, 'reportsTo')}` : '', fn(facts, 'monthlyBudgetUsd') ? `${money(fn(facts, 'monthlyBudgetUsd'))} a month` : ''].filter(Boolean);
-      return bits.length ? `${upperFirst(bits.join(', '))}.` : firstSentence(f(facts, 'charter'), 200);
+      const charter = firstSentence(f(facts, 'charter'), 200);
+      return charter || (name && name !== f(facts, 'title') ? `Named ${name}.` : '');
     }
     case 'budget_raise': return f(facts, 'buys') ? `It buys: ${firstSentence(f(facts, 'buys'), 200)}` : '';
     case 'scope_widen': return fl(facts, 'widened').join(', ');
@@ -150,7 +151,7 @@ export function signalTitle(kind: string, title: string): string {
 /** A grouped row's title: what happened to the one thing, and how often. */
 export function groupTitle(types: FeedType[], label: string, n: number): string {
   const all = (t: FeedType) => types.length > 0 && types.every((x) => x === t);
-  const thing = label || 'one thing';
+  const thing = clipWords(label || 'one thing', 64);
   const times = `${n} time${n === 1 ? '' : 's'}`;
   if (all('run_failed')) return /'s runs$/.test(thing) ? `${thing} failed ${times}` : `Runs on ${thing} failed ${times}`;
   if (all('channel_activity')) return `${n} new messages in ${thing}`;
@@ -158,6 +159,20 @@ export function groupTitle(types: FeedType[], label: string, n: number): string 
   if (all('project_team')) return `${n} team changes on ${thing}`;
   if (all('plugin')) return `${n} updates to ${thing}`;
   return `${n} updates on ${thing}`;
+}
+
+/** "3 decision(s)" → "3 decisions", "1 hire(s)" → "1 hire". */
+export const fixPlurals = (s: string): string => s.replace(/\b(\d+) (\w+)\(s\)/g, (_m, n: string, w: string) => `${n} ${w}${n === '1' ? '' : 's'}`);
+
+/** An agent's note or trust change ("Acted (trust level 1, you hear after): http_request",
+ *  "Trust raised for internal write: level 2 → 3") said with the agent's name. */
+export function agentNoteTitle(agent: string, title: string): { title: string; body?: string } {
+  const who = agent || 'An agent';
+  const acted = title.match(/^Acted \(trust level (\d+), you hear after\): (.+)$/);
+  if (acted) return { title: `${who} ran ${acted[2]} on its own`, body: `At trust level ${acted[1]} it acts first and you hear after.` };
+  const trust = title.match(/^Trust (raised|lowered) for (.+): level (\d+) → (\d+)$/);
+  if (trust) return { title: `${who}'s trust for ${trust[2]} went ${trust[1] === 'raised' ? 'up' : 'down'} to level ${trust[4]}` };
+  return { title: fixPlurals(title) };
 }
 
 /** An envelope event's title ("Acme: company envelope at 85%") said plainly. */

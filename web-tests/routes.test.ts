@@ -49,6 +49,8 @@ describe('parse and href', () => {
     ['/c/home', { kind: 'home' }],
     ['/c/inbox', { kind: 'inbox' }],
     ['/c/inbox/approvals', { kind: 'inbox', filter: 'approvals' }],
+    ['/c/inbox/needs/need:approval:a1', { kind: 'inbox', filter: 'needs', item: 'need:approval:a1' }],
+    ['/c/inbox/all/group:agent:w1:run_failed', { kind: 'inbox', item: 'group:agent:w1:run_failed' }],
     ['/c/chat', { kind: 'chat' }],
     ['/c/channels/company', { kind: 'channel', slug: 'company' }],
     ['/c/channels/eng-standup-2/m-1', { kind: 'channel', slug: 'eng-standup-2', messageId: 'm-1' }],
@@ -184,6 +186,8 @@ describe('the store state ⇄ the place', () => {
     expect(at({ section: 'direction', orgPane: 'roadmap', routeProject: 'WEB-3' })).toEqual({ kind: 'project', key: 'WEB-3' });
     expect(at({ section: 'workspace' })).toEqual({ kind: 'section', section: 'operations' });
     expect(at({ section: 'inbox', inboxFilter: 'mytasks' })).toEqual({ kind: 'inbox', filter: 'mytasks' });
+    expect(at({ section: 'inbox', inboxFilter: 'updates', inboxItem: 'event:e1' })).toEqual({ kind: 'inbox', filter: 'updates', item: 'event:e1' });
+    expect(at({ section: 'inbox', inboxFilter: 'all', inboxItem: null })).toEqual({ kind: 'inbox' });
     expect(at({ section: 'market', foundry: { shelf: 'kits' } })).toEqual({ kind: 'foundry', shelf: 'kits' });
     expect(at({ section: 'settings', settingsPane: 'company' })).toEqual({ kind: 'settings', pane: 'company' });
     expect(at({ section: 'channels' as never, meetingId: 'm1' })).toEqual({ kind: 'meeting', id: 'm1' });
@@ -208,7 +212,7 @@ describe('the store state ⇄ the place', () => {
 
   it('round-trips every place that names a store state', () => {
     const places: Place[] = [
-      { kind: 'home' }, { kind: 'inbox', filter: 'plans' }, { kind: 'channel', slug: 'general' }, { kind: 'agents' },
+      { kind: 'home' }, { kind: 'inbox', filter: 'plans' }, { kind: 'inbox', filter: 'mentions', item: 'event:e9' }, { kind: 'channel', slug: 'general' }, { kind: 'agents' },
       { kind: 'agent', id: 'a1', tab: 'work' }, { kind: 'agentFiles', id: 'a1', path: 'x.md' }, { kind: 'section', section: 'money', pane: 'spend' },
       { kind: 'task', key: 'ENG-1' }, { kind: 'project', key: 'P-1' }, { kind: 'artifacts', path: 'a/b.md' }, { kind: 'apps' },
       { kind: 'foundry', shelf: 'plugins' }, { kind: 'settings', pane: 'company' }, { kind: 'meeting', id: 'm1' },
@@ -218,5 +222,16 @@ describe('the store state ⇄ the place', () => {
       const state: NavState = { ...base, ...n, fileTarget: n.fileTarget === 'workspace' ? { kind: 'workspace', id: 'ws1' } : n.fileTarget ?? base.fileTarget } as NavState;
       expect(placeOf(state)).toEqual(p);
     }
+  });
+});
+
+describe('the Inbox\'s open item in the address', () => {
+  it('keeps the older forms working and never takes an unknown filter for an item', () => {
+    expect(parseRoute('/c/inbox/mentions')?.place).toEqual({ kind: 'inbox', filter: 'mentions' });
+    expect(parseRoute('/c/inbox/nonsense/event:e1')?.place).toEqual({ kind: 'inbox' });
+    expect(routeHref({ company: 'c', place: { kind: 'inbox', filter: 'needs', item: 'need:approval:a1' } })).toBe('/c/inbox/needs/need:approval:a1');
+    expect(routeHref({ company: 'c', place: { kind: 'inbox', item: 'event:e1' } })).toBe('/c/inbox/all/event:e1');
+    expect(navOf({ kind: 'inbox', filter: 'needs', item: 'event:e1' })).toMatchObject({ section: 'inbox', inboxFilter: 'needs', inboxItem: 'event:e1' });
+    expect(navOf({ kind: 'inbox' })).toMatchObject({ inboxFilter: 'all', inboxItem: null });
   });
 });

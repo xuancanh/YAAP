@@ -1,16 +1,19 @@
 /**
  * One row of the owner's feed (docs/owners-seat.md "Inbox and notifications"),
- * the same in the Inbox and the bell: who it is from (the agent's avatar),
- * a one-line title, what kind it is, its context (task key, project,
- * channel, meeting), the company, when, the unread mark, and — where the
- * item can be handled in place — its actions (approve, reject, allow, deny,
- * veto…). A row opens where it lives through the store's own actions
- * (`useOpenFeedItem`), never a URL built here.
+ * the same in the Inbox and the bell: two quiet lines — the title a person
+ * would write, then who it is from, what kind it is and its context (task
+ * key, project, channel, meeting) — with the time, a small dot while it is
+ * unread and a quiet deadline badge ("3 h left") when one is near. Hovering
+ * (or focusing) a row shows its quick actions: mark read and open where it
+ * lives. Decisions are taken in the Inbox's reading pane (InboxDetail.tsx),
+ * where the whole card is; the bell may carry the buttons of its top one or
+ * two actionable rows. A row opens through the store's own actions
+ * (`useOpenFeedItem`, `useOpenInInbox`), never a URL built here.
  */
-import { useCallback, useState, type KeyboardEvent } from 'react';
+import { useCallback, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { grad, useApp } from '../store';
 import { api, type FeedAction, type FeedItem, type FollowTargetKind } from '../lib/api';
-import { contextChips, FEED_LABEL, feedActionLabel, feedOpen, feedTone, TONE_VAR } from '../lib/feed';
+import { contextChips, deadlineBadge, FEED_LABEL, feedActionLabel, feedOpen, feedTone, isUrgent, tabOf } from '../lib/feed';
 import { actionDone } from '../lib/home';
 import { dropFeedItems, markFeedRead, reloadFeed } from '../lib/feed-store';
 import { I, P } from '../lib/icons';
@@ -44,15 +47,16 @@ export function FeedAvatar({ item, size = 28 }: { item: Pick<FeedItem, 'actor'>;
   return <span aria-hidden style={{ ...base, background: 'var(--panel-2)', color: 'var(--text-dim)', border: '1px solid var(--border)' }}><I d={P.bell} size={size * 0.5} /></span>;
 }
 
-/** Run an inline action through the route that owns it. */
-export function runFeedAction(wsId: string, i: FeedItem, a: FeedAction): Promise<unknown> {
+/** Run an inline action through the route that owns it (with the owner's note, where the route takes one). */
+export function runFeedAction(wsId: string, i: FeedItem, a: FeedAction, note?: string): Promise<unknown> {
   const r = i.need?.ref;
+  const n = note?.trim() || undefined;
   if ((a === 'allow' || a === 'deny') && i.ref?.agentId && i.ref.eventId) return api.decideAgentEvent(i.ref.agentId, i.ref.eventId, a);
-  if (r?.approvalId && (a === 'approve' || a === 'reject')) return api.decideOrgApproval(wsId, r.approvalId, a);
-  if (r?.actionId && (a === 'approve' || a === 'reject')) return api.giveActionKey(wsId, r.actionId, a === 'approve');
+  if (r?.approvalId && (a === 'approve' || a === 'reject')) return api.decideOrgApproval(wsId, r.approvalId, a, n);
+  if (r?.actionId && (a === 'approve' || a === 'reject')) return api.giveActionKey(wsId, r.actionId, a === 'approve', n);
   if (r?.planId && a === 'veto') return api.vetoOrgPlan(wsId, r.planId);
   if (r?.planId && a === 'apply_now') return api.applyOrgPlanNow(wsId, r.planId);
-  if (r?.signalId && a === 'ack') return api.ackOrgSignal(wsId, r.signalId);
+  if (r?.signalId && a === 'ack') return api.ackOrgSignal(wsId, r.signalId, n);
   if (r?.eventId && r.agentId && (a === 'approve' || a === 'dismiss')) return api.actOnAgentEvent(r.agentId, r.eventId, a);
   return Promise.reject(new Error(`${a} is not available here; open it for details`));
 }
@@ -86,20 +90,37 @@ export function useOpenFeedItem(): (i: FeedItem) => void {
   }, [app, wsId, orgOn]);
 }
 
-/** Run an action from a row: it leaves the list at once, the toast says what happened. */
-export function useFeedAction(): { busy: Set<string>; act: (i: FeedItem, a: FeedAction) => Promise<void> } {
+/** Open a row in the Inbox's reading pane (the bell does): on its tab, read.
+ *  Without a company there is no Inbox: the row opens where it lives. */
+export function useOpenInInbox(): (i: FeedItem) => void {
+  const app = useApp();
+  const openWhere = useOpenFeedItem();
+  const orgOn = app.companiesEnabled && app.wsOrg !== null && app.wsOrg.mode !== 'off';
+  return useCallback((i: FeedItem) => {
+    if (!orgOn) { openWhere(i); return; }
+    if (!i.read) void markFeedRead(app.workspaceId, [i]);
+    app.go('inbox');
+    app.setInboxFilter(tabOf(i));
+    app.setInboxItem(i.id);
+  }, [app, orgOn, openWhere]);
+}
+
+/** Run an action from a row or the pane: it leaves the list at once, the toast says what happened. */
+export function useFeedAction(): { busy: Set<string>; act: (i: FeedItem, a: FeedAction, note?: string) => Promise<boolean> } {
   const app = useApp();
   const wsId = app.workspaceId;
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
-  const act = useCallback(async (i: FeedItem, a: FeedAction) => {
+  const act = useCallback(async (i: FeedItem, a: FeedAction, note?: string) => {
     setBusy((b) => new Set(b).add(i.id));
     try {
-      await runFeedAction(wsId, i, a);
+      await runFeedAction(wsId, i, a, note);
       dropFeedItems(wsId, [i.id]);
       app.showToast(a === 'allow' ? 'Allowed' : a === 'deny' ? 'Denied' : actionDone(a));
       void app.refreshWsOrg();
+      return true;
     } catch (e) {
       app.showToast(e instanceof Error ? e.message : String(e));
+      return false;
     } finally {
       setBusy((b) => { const n = new Set(b); n.delete(i.id); return n; });
       void reloadFeed(wsId);
@@ -111,12 +132,18 @@ export function useFeedAction(): { busy: Set<string>; act: (i: FeedItem, a: Feed
 export interface FeedRowProps {
   item: FeedItem;
   now: Date;
+  /** The row's click: the Inbox shows it in the reading pane; the bell opens it there. */
   onOpen: (i: FeedItem) => void;
   onMarkRead: (i: FeedItem) => void;
+  /** The quick action that opens it where it lives (the task, the chat…); absent = none. */
+  onGo?: (i: FeedItem) => void;
+  /** Inline actions (the bell's top rows only). */
   onAction?: (i: FeedItem, a: FeedAction) => void;
   busy?: boolean;
-  /** The bell: one line of body, fewer chips. */
+  /** The bell: a tighter row. */
   compact?: boolean;
+  /** This row is the one in the reading pane. */
+  selected?: boolean;
   /** Show the company (a workspace switcher view across companies). */
   showCompany?: boolean;
   /** Roving focus (the Inbox's ↑/↓): this row takes the tab stop. */
@@ -124,49 +151,56 @@ export interface FeedRowProps {
   onKeyDown?: (e: KeyboardEvent<HTMLDivElement>) => void;
 }
 
-export function FeedRow({ item: i, now, onOpen, onMarkRead, onAction, busy, compact, showCompany, tabIndex, onKeyDown }: FeedRowProps) {
-  const tone = TONE_VAR[feedTone(i)];
+export function FeedRow({ item: i, now, onOpen, onMarkRead, onGo, onAction, busy, compact, selected, showCompany, tabIndex, onKeyDown }: FeedRowProps) {
+  const tone = feedTone(i);
   const chips = contextChips(i);
   const actions = onAction ? i.actions : [];
+  const badge = deadlineBadge(i, now);
+  const urgent = isUrgent(i);
+  const stop = (fn: () => void) => (e: MouseEvent) => { e.stopPropagation(); fn(); };
   return (
-    <div role="listitem" data-testid={`feed-row-${i.id}`} data-read={i.read ? 'true' : 'false'} tabIndex={tabIndex} onKeyDown={onKeyDown}
-      aria-label={`${i.read ? '' : 'Unread. '}${FEED_LABEL[i.type]}: ${i.title}`}
-      className="feed-row"
-      style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: compact ? '8px 10px' : '11px 14px', borderRadius: 10, position: 'relative', outline: 'none', background: i.read ? 'transparent' : 'var(--accent-dim)' }}>
-      <span aria-hidden style={{ position: 'absolute', left: 3, top: compact ? 15 : 18, width: 6, height: 6, borderRadius: '50%', background: i.read ? 'transparent' : tone }} data-testid="feed-unread-dot" />
-      <FeedAvatar item={i} size={compact ? 26 : 30} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <button type="button" onClick={() => onOpen(i)} data-testid="feed-open"
-          style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text)', font: 'inherit' }}>
-          <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 13, fontWeight: i.read ? 500 : 650, lineHeight: 1.4, overflowWrap: 'anywhere' }}>{i.title}</span>
-          <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', fontSize: 11.5, color: 'var(--text-dim)', marginTop: 3 }}>
-            <span data-testid="feed-type" style={{ color: tone === 'var(--text-faint)' ? 'var(--text-dim)' : tone, fontWeight: 600 }}>{FEED_LABEL[i.type]}</span>
-            {i.actor && <span data-testid="feed-actor">{i.actor.name}</span>}
-            {chips.map((c) => <span key={c} data-testid="feed-chip" style={{ border: '1px solid var(--border-soft)', borderRadius: 6, padding: '0 6px', background: 'var(--panel-2)', whiteSpace: 'nowrap', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>{c}</span>)}
-            {showCompany && i.company && <span>{i.company}</span>}
-            {i.count > 1 && <span data-testid="feed-count" style={{ fontWeight: 600 }}>{i.count} updates</span>}
-            {i.expiresSoon && i.deadline && <span data-testid="feed-expires" style={{ color: 'var(--amber)', fontWeight: 600 }}>{expiresIn(i.deadline, now)}</span>}
+    <div role="listitem" data-testid={`feed-row-${i.id}`} data-read={i.read ? 'true' : 'false'} data-selected={selected ? 'true' : undefined} tabIndex={tabIndex} onKeyDown={onKeyDown}
+      aria-current={selected ? 'true' : undefined}
+      aria-label={`${i.read ? '' : 'Unread. '}${FEED_LABEL[i.type]}: ${i.title}${badge ? `. ${badge}` : ''}`}
+      className={`feed-row${compact ? ' compact' : ''}${i.read ? ' read' : ''}${selected ? ' selected' : ''}`}>
+      <span aria-hidden className={`feed-dot tone-${tone}`} data-testid="feed-unread-dot" />
+      <FeedAvatar item={i} size={compact ? 24 : 28} />
+      <div className="feed-main">
+        <button type="button" onClick={() => onOpen(i)} data-testid="feed-open" className="feed-open">
+          <span className="feed-l1">
+            <span className="feed-title">{i.title}</span>
+            <span className="feed-time" title={new Date(i.at).toLocaleString()}>{shortAgo(i.at, now)}</span>
           </span>
-          {i.need?.chain?.line && <span data-testid="feed-route" style={{ display: 'block', fontSize: 11.5, color: 'var(--text-dim)', marginTop: 3, overflowWrap: 'anywhere' }}>Route: {i.need.chain.line}</span>}
-          {i.body && <span style={{ display: '-webkit-box', WebkitLineClamp: compact ? 1 : 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: 'var(--text-faint)', marginTop: 3, overflowWrap: 'anywhere' }}>{i.body}</span>}
+          <span className="feed-l2">
+            <span className="feed-meta">
+              {i.actor && i.actor.kind !== 'system' && <span data-testid="feed-actor" className="feed-actor">{i.actor.name}</span>}
+              <span data-testid="feed-type" className={`feed-kind tone-${tone}`}>{FEED_LABEL[i.type]}</span>
+              {chips.slice(0, compact ? 1 : 2).map((c) => <span key={c} data-testid="feed-chip" className="feed-chip">{c}</span>)}
+              {showCompany && i.company && <span>{i.company}</span>}
+              {i.count > 1 && <span data-testid="feed-count" className="feed-count">{i.count} updates</span>}
+            </span>
+            {badge && <span data-testid="feed-expires" className={`feed-badge${urgent ? ' warn' : ''}${badge === 'Overdue' ? ' late' : ''}`}>{badge}</span>}
+          </span>
         </button>
         {actions.length > 0 && (
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
+          <div className="feed-actions">
             {actions.map((a, n) => (
-              <button key={a} type="button" disabled={busy} data-testid={`feed-action-${a}`} onClick={() => onAction!(i, a)}
-                style={{ border: n === 0 ? 'none' : '1px solid var(--border)', background: n === 0 ? 'var(--accent)' : 'var(--panel-2)', color: n === 0 ? '#fff' : 'var(--text)', borderRadius: 7, padding: compact ? '3px 9px' : '4px 11px', fontSize: 12, fontWeight: 600, cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>
+              <button key={a} type="button" disabled={busy} data-testid={`feed-action-${a}`} onClick={stop(() => onAction!(i, a))} className={`feed-btn${n === 0 ? ' primary' : ''}`}>
                 {feedActionLabel(i, a)}
               </button>
             ))}
           </div>
         )}
       </div>
-      <div style={{ flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-        <span style={{ fontSize: 11.5, color: 'var(--text-faint)', fontVariantNumeric: 'tabular-nums' }} title={new Date(i.at).toLocaleString()}>{shortAgo(i.at, now)}</span>
+      <div className="feed-quick">
         {!i.read && (
-          <button type="button" aria-label={`Mark read: ${i.title}`} title="Mark read (m)" data-testid="feed-mark-read" onClick={() => onMarkRead(i)}
-            style={{ width: 24, height: 24, borderRadius: 6, border: 'none', background: 'none', color: 'var(--text-faint)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <I d={P.check} size={13} sw={2.2} />
+          <button type="button" aria-label={`Mark read: ${i.title}`} title="Mark read (m)" data-testid="feed-mark-read" onClick={stop(() => onMarkRead(i))} className="feed-icon">
+            <I d={P.check} size={14} sw={2.2} />
+          </button>
+        )}
+        {onGo && feedOpen(i).to !== 'inbox' && (
+          <button type="button" aria-label={`Open where it lives: ${i.title}`} title="Open where it lives (o)" data-testid="feed-go" onClick={stop(() => onGo(i))} className="feed-icon">
+            <I d={P.external} size={14} sw={2} />
           </button>
         )}
       </div>

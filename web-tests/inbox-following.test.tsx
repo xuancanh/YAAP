@@ -58,7 +58,7 @@ beforeEach(() => {
   }));
   Object.assign(fake, {
     workspaceId: 'ws1', companiesEnabled: true, wsOrg: { mode: 'supervised', orgId: 'o1', units: [] }, orgHealth: null, orgHeldActions: 0,
-    inboxFilter: 'all', setInboxFilter: vi.fn((f: string) => { fake.inboxFilter = f; bump(); }), setOrgFocus: vi.fn(), openOrgTask: vi.fn(), openChannel: vi.fn(),
+    inboxFilter: 'all', setInboxFilter: vi.fn((f: string) => { fake.inboxFilter = f; fake.inboxItem = null; bump(); }), inboxItem: null, setInboxItem: vi.fn((id: string | null) => { fake.inboxItem = id; bump(); }), setOrgFocus: vi.fn(), openOrgTask: vi.fn(), openChannel: vi.fn(),
     refreshWsOrg: vi.fn(async () => undefined), showToast: vi.fn(), me: { role: 'owner' }, stacked: false,
   });
 });
@@ -98,14 +98,14 @@ describe('the Following list', () => {
     expect(window.location.pathname).toBe('/ws1/channels/general/m1'); // the older link, at its path (docs/routes.md)
     await waitFor(() => expect(posts.some((p) => (p.body as { targetId?: string }).targetId === 'm1')).toBe(true));
   });
-  it('a follow that needs me is in Needs you; news is an update; opening either marks the follow seen', async () => {
+  it('a follow that needs me is in Needs you; news is an update; opening either where it lives marks the follow seen', async () => {
     render(<Harness />);
     const row = await screen.findByTestId('feed-row-attention:org_task:t1:x');
-    fireEvent.click(within(row).getByTestId('feed-open'));
+    fireEvent.click(within(row).getByTestId('feed-go'));
     expect(fake.openOrgTask).toHaveBeenCalledWith('t1');
     await waitFor(() => expect(posts).toContainEqual({ url: '/api/workspaces/ws1/follows/seen', body: { targetKind: 'org_task', targetId: 't1' } }));
     fireEvent.click(screen.getByTestId('inbox-tab-updates'));
-    fireEvent.click(within(screen.getByTestId('feed-row-event:f2')).getByTestId('feed-open'));
+    fireEvent.click(within(screen.getByTestId('feed-row-event:f2')).getByTestId('feed-go'));
     expect(fake.openChannel).toHaveBeenCalledWith('general', 'm1');
     await waitFor(() => expect(posts).toContainEqual({ url: '/api/workspaces/ws1/follows/seen', body: { targetKind: 'thread', targetId: 'm1' } }));
   });

@@ -25,7 +25,7 @@ import {
 } from '../lib/topbar';
 import { bellGroups, needsYouLabel, unreadLabel } from '../lib/feed';
 import { markFeedRead, reloadFeed, useFeed } from '../lib/feed-store';
-import { FeedRow, useFeedAction, useOpenFeedItem } from './FeedRow';
+import { FeedRow, useFeedAction, useOpenInInbox } from './FeedRow';
 import { isTaskKey, normalizeTaskKey } from '../lib/task-keys';
 import { CommandPalette } from './CommandPalette';
 import { NewWorkspaceWizard } from './NewWorkspaceWizard';
@@ -344,6 +344,8 @@ const BELL_FILTERS: Array<{ id: BellFilter; label: string }> = [
 ];
 /** Rows the popover shows; the Inbox has the rest. */
 const BELL_ROWS = 40;
+/** The bell's rows that keep their buttons: the top one or two you can decide in a click (an escalation is answered in the Inbox). */
+const BELL_ACTIONABLE = 2;
 
 export function NotificationsPanel({ page, now, orgOn, onOpen, onMarkRead, onMarkAllRead, onInbox, onAction, busy }: {
   page: FeedPage | null; now: Date; orgOn: boolean;
@@ -355,45 +357,49 @@ export function NotificationsPanel({ page, now, orgOn, onOpen, onMarkRead, onMar
   const shown = all.slice(0, BELL_ROWS);
   const groups = bellGroups(shown, now);
   const c = page?.counts;
+  const withButtons = new Set(shown.filter((n) => n.section === 'needs' && n.actions.length > 0 && n.actions.length <= 2 && n.type !== 'escalation').slice(0, BELL_ACTIONABLE).map((n) => n.id));
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px 2px' }}>
-        <span style={{ flex: 1, fontSize: 14, fontWeight: 700 }}>Notifications</span>
+    <div className="bell">
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '6px 12px 6px' }}>
+        <span style={{ fontSize: 14, fontWeight: 650 }}>Notifications</span>
+        {c && (
+          <span data-testid="bell-summary" style={{ flex: 1, fontSize: 12, color: 'var(--text-dim)' }}>
+            <span title="Unread rows in every section: the bell's count">{unreadLabel(c.unread)}</span>
+            {orgOn && <> · <span title="Open items that wait on you: the Inbox's badge" style={{ color: c.needsYou ? 'var(--warn-text)' : undefined }}>{needsYouLabel(c.needsYou)}</span></>}
+          </span>
+        )}
+        {!c && <span style={{ flex: 1 }} />}
         {page && page.unread > 0 && <button type="button" className="tb-link" onClick={onMarkAllRead}>Mark all read</button>}
       </div>
-      {c && (
-        <div data-testid="bell-summary" style={{ padding: '0 10px 8px', fontSize: 11.5, color: 'var(--text-dim)' }}>
-          <span title="Unread rows in every section: the bell's count">{unreadLabel(c.unread)}</span>
-          {orgOn && <> · <span title="Open items that wait on you: the Inbox's badge" style={{ color: c.needsYou ? 'var(--amber)' : undefined }}>{needsYouLabel(c.needsYou)}</span></>}
-        </div>
-      )}
-      <div role="group" aria-label="Show" style={{ display: 'flex', gap: 6, padding: '0 10px 8px', flexWrap: 'wrap' }}>
+      <div role="group" aria-label="Show" style={{ display: 'flex', gap: 6, padding: '0 12px 10px', flexWrap: 'wrap' }}>
         {BELL_FILTERS.map((f) => {
           const n = !c ? 0 : f.id === 'all' ? 0 : f.id === 'needs' ? c.needsYou : c.sections[f.id].unread;
+          if (f.id !== 'all' && n === 0 && filter !== f.id) return null;
           return <button key={f.id} type="button" className="tb-chip" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}{n ? ` · ${n}` : ''}</button>;
         })}
       </div>
-      <div role="list" style={{ maxHeight: 'min(62vh, 540px)', overflowY: 'auto', borderTop: '1px solid var(--border-soft)', paddingTop: 4 }}>
-        {!page && <div style={{ padding: '14px 10px', fontSize: 12.5, color: 'var(--text-dim)' }}>Loading…</div>}
+      <div role="list" style={{ maxHeight: 'min(62vh, 540px)', overflowY: 'auto', borderTop: '1px solid var(--border-soft)', padding: '2px 4px 6px' }}>
+        {!page && <div style={{ padding: '14px 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>Loading…</div>}
         {page && groups.length === 0 && (
-          <div style={{ padding: '18px 10px', fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-            {filter === 'all' ? 'You are all caught up. What needs you, messages and mentions, and news on what you follow land here.' : 'Nothing here right now.'}
+          <div style={{ padding: '28px 16px', fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5, textAlign: 'center' }}>
+            <div style={{ fontSize: 13.5, fontWeight: 650, color: 'var(--text)', marginBottom: 4 }}>{filter === 'all' ? 'You\'re all caught up' : 'Nothing here right now'}</div>
+            {filter === 'all' ? 'What needs you, messages and mentions, and news on what you follow land here.' : ''}
           </div>
         )}
         {groups.map((g) => (
           <section key={g.id} aria-label={g.label}>
-            <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-dim)', padding: '8px 10px 2px' }}>{g.label}</div>
+            <div className={`ibx-group${g.id === 'needs' ? ' urgent' : ''}`} style={{ padding: '10px 10px 2px 18px' }}>{g.label}</div>
             {g.items.map((n) => (
               <div key={n.id} data-testid={`note-${n.id}`}>
                 <FeedRow item={n} now={now} compact onOpen={onOpen} onMarkRead={(x) => onMarkRead([x])}
-                  onAction={onAction && n.actions.length <= 2 ? onAction : undefined} busy={busy?.has(n.id)} />
+                  onAction={onAction && withButtons.has(n.id) ? onAction : undefined} busy={busy?.has(n.id)} />
               </div>
             ))}
           </section>
         ))}
-        {page && all.length > shown.length && <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-dim)' }}>{all.length - shown.length} more in the {orgOn ? 'Inbox' : 'list'}.</div>}
+        {page && all.length > shown.length && <div style={{ padding: '8px 18px', fontSize: 12, color: 'var(--text-dim)' }}>{all.length - shown.length} more in the {orgOn ? 'Inbox' : 'list'}.</div>}
       </div>
-      <div style={{ borderTop: '1px solid var(--border-soft)', padding: '8px 10px 4px', display: 'flex' }}>
+      <div style={{ borderTop: '1px solid var(--border-soft)', padding: '9px 12px 5px', display: 'flex', justifyContent: 'center' }}>
         <button type="button" className="tb-link" onClick={onInbox}>{orgOn ? 'Open Inbox' : 'Open Home'}</button>
       </div>
     </div>
@@ -650,7 +656,7 @@ export function TopBar({ onSettings }: { onSettings: (pane: string) => void }) {
   const auth = useAuth();
   const wsId = app.workspaceId;
   const { status, notes, liveCount, loadStatus, loadNotes } = useTopBarData(wsId);
-  const openFeedItem = useOpenFeedItem();
+  const openFeedItem = useOpenInInbox();
   const { busy, act } = useFeedAction();
   const [rows, setRows] = useState<Record<string, WorkspaceGlanceRow> | null>(null);
   const [palette, setPalette] = useState(false);

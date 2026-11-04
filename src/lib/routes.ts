@@ -13,7 +13,8 @@ import { navFromUrl, foundryPlaceOf } from './market';
 /** Where in a company the address points. */
 export type Place =
   | { kind: 'home' }
-  | { kind: 'inbox'; filter?: InboxFilter }
+  /** `item`: the row open in the Inbox's reading pane (a feed item id). */
+  | { kind: 'inbox'; filter?: InboxFilter; item?: string }
   | { kind: 'chat' }
   | { kind: 'channel'; slug: string; messageId?: string }
   /** A chat or an agent's work session; `log` opens a work session's timeline in its agent's Work log. */
@@ -115,7 +116,12 @@ function parsePlace(head: string | undefined, rest: string[], search: string): P
   const [a, b] = rest;
   switch (head) {
     case undefined: case 'home': case 'overview': return { kind: 'home' };
-    case 'inbox': return a && INBOX_IDS.has(a) && a !== 'all' ? { kind: 'inbox', filter: a as InboxFilter } : { kind: 'inbox' };
+    case 'inbox': {
+      // `/inbox/:filter/:itemId` opens one row in the reading pane; `/inbox/all/:itemId` keeps it on the default tab.
+      const filter = a && INBOX_IDS.has(a) && a !== 'all' ? a as InboxFilter : null;
+      const item = a && INBOX_IDS.has(a) && b ? b : '';
+      return { kind: 'inbox', ...(filter ? { filter } : {}), ...(item ? { item } : {}) };
+    }
     case 'chat': return { kind: 'chat' };
     case 'channels': return a && SLUG_RE.test(a) ? { kind: 'channel', slug: a, ...(b && ID_RE.test(b) ? { messageId: b } : {}) } : { kind: 'chat' };
     case 'chats': return a && ID_RE.test(a) ? { kind: 'session', id: a, ...(b === 'log' ? { log: true } : {}) } : { kind: 'chat' };
@@ -147,7 +153,7 @@ export function routeHref(route: Route): string {
   const p = route.place;
   switch (p.kind) {
     case 'home': return `${c}/home`;
-    case 'inbox': return `${c}/inbox${p.filter && p.filter !== 'all' ? `/${p.filter}` : ''}`;
+    case 'inbox': return `${c}/inbox${p.item ? `/${p.filter ?? 'all'}/${enc(p.item)}` : p.filter && p.filter !== 'all' ? `/${p.filter}` : ''}`;
     case 'chat': return `${c}/chat`;
     case 'channel': return `${c}/channels/${enc(p.slug)}${p.messageId ? `/${enc(p.messageId)}` : ''}`;
     case 'session': return `${c}/chats/${enc(p.id)}${p.log ? '/log' : ''}`;
@@ -267,6 +273,8 @@ export interface NavState {
   currentId: string | null; currentChannel: string | null; selectedAgent: string | null; agentTab: string | null;
   fileTarget: FileTarget | null; currentFile: string | null;
   orgPane: OrgPane | null; inboxFilter: InboxFilter; settingsPane: string;
+  /** The Inbox row open in the reading pane (null: none). */
+  inboxItem?: string | null;
   routeTask: string | null; routeProject: string | null; meetingId: string | null;
   foundry: FoundryPlace;
   /** Phone layout: the list is on screen, not the detail (no item in the address). */
@@ -281,7 +289,7 @@ export function placeOf(s: NavState): Place {
   switch (sec) {
     case 'overview': return { kind: 'home' };
     case 'agents': return { kind: 'agents' };
-    case 'inbox': return s.inboxFilter !== 'all' ? { kind: 'inbox', filter: s.inboxFilter } : { kind: 'inbox' };
+    case 'inbox': return { kind: 'inbox', ...(s.inboxFilter !== 'all' ? { filter: s.inboxFilter } : {}), ...(s.inboxItem ? { item: s.inboxItem } : {}) };
     case 'apps': return { kind: 'apps' };
     case 'market': return { kind: 'foundry', ...s.foundry };
     case 'settings': return s.stacked && !s.mobileDetail ? { kind: 'settings' } : { kind: 'settings', pane: s.settingsPane };
@@ -319,7 +327,7 @@ export function navOf(place: Place): NavPatch {
   const base: NavPatch = { meetingId: null, routeTask: null, routeProject: null };
   switch (place.kind) {
     case 'home': return { ...base, section: 'overview' };
-    case 'inbox': return { ...base, section: 'inbox', inboxFilter: place.filter ?? 'all' };
+    case 'inbox': return { ...base, section: 'inbox', inboxFilter: place.filter ?? 'all', inboxItem: place.item ?? null };
     case 'chat': return { ...base, section: 'home', homeView: 'chat', mobileChatOpen: false };
     case 'channel': return { ...base, section: 'home', homeView: 'channel', currentChannel: place.slug, channelFocus: place.messageId ?? null, mobileChatOpen: true };
     case 'session': return place.log ? base : { ...base, section: 'home', homeView: 'chat', currentId: place.id, mobileChatOpen: true };

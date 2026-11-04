@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { HomeData, HomeNeed, OrgApproval } from '../src/lib/api';
 import { HomeBoard } from '../src/components/HomeBoard';
 import { DecisionChain } from '../src/components/OrganizationView';
-import { FeedRow } from '../src/components/FeedRow';
+import { InboxDetail } from '../src/components/InboxDetail';
 import { feedItem } from './feed-fixtures';
 import { hopLine, inReviewBelow, managerHops, waitsOnViewer } from '../src/lib/decisions';
 
@@ -50,8 +50,10 @@ describe('the Inbox', () => {
       recommendation: '', recommendedAction: '', reversibility: '', confidence: null, requestedBy: 'Writer', ref: { approvalId: 'a1' }, actions: ['approve', 'reject'],
       chain: { line: 'Writer → Head of Content → Chief → you', hops: [], reserved: '' },
     } as HomeNeed;
-    render(<FeedRow item={feedItem({ id: 'need:x', type: 'escalation', section: 'needs', actionable: true, title: n.title, need: n, target: { kind: 'need', need: { kind: n.kind, ref: n.ref } } })} now={NOW} onOpen={vi.fn()} onMarkRead={vi.fn()} />);
-    expect(screen.getByTestId('feed-route')).toHaveTextContent('Route: Writer → Head of Content → Chief → you');
+    render(<InboxDetail item={feedItem({ id: 'need:x', type: 'escalation', section: 'needs', actionable: true, title: n.title, need: n, actions: n.actions, target: { kind: 'need', need: { kind: n.kind, ref: n.ref } } })} now={NOW} stacked={false} busy={false}
+      onAct={vi.fn()} onGo={vi.fn()} onMarkRead={vi.fn()} onTask={vi.fn()} />);
+    const route = screen.getByTestId('feed-route');
+    expect(within(route).getAllByRole('listitem').map((li) => li.textContent?.replace('→', ''))).toEqual(['Writer', 'Head of Content', 'Chief', 'you']);
   });
   it('the approvals card shows the chain and every recommendation', () => {
     render(<DecisionChain a={approval({ reserved: 'raised for a decision only the CEO can make' })} />);

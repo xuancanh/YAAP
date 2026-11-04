@@ -16,7 +16,7 @@
 import { registerTunables, tunable, type TunableDef } from '../org/org-tunables';
 import type { HomeNeed } from './home.types';
 import type { FeedActor, FeedContext, FeedSection, FeedTarget, FeedType } from './feed.types';
-import { budgetTitle, firstSentence } from './feed-titles';
+import { agentNoteTitle, budgetTitle, clipWords, firstSentence, fixPlurals } from './feed-titles';
 
 export interface FeedTypeDef {
   section: FeedSection;
@@ -201,13 +201,17 @@ export function classifyEvent(e: EventRow, look: FeedLookup): Classified | null 
   const tagged = str(p.feed) as FeedType;
   if (tagged && FEED_TYPES[tagged] && FEED_TYPES[tagged].section === 'updates') {
     const t = taskBits(look, str(p.taskId));
-    return base(tagged, { severity: 'low', context: { ...(agent?.id ? { agentId: agent.id } : {}), ...t.context }, ...(str(p.taskId) ? { target: { kind: 'task', taskId: str(p.taskId) } } : {}) });
+    const said = agentNoteTitle(agent?.name ?? '', e.title);
+    return base(tagged, { title: said.title, body: e.body || said.body || '', severity: 'low', context: { ...(agent?.id ? { agentId: agent.id } : {}), ...t.context }, ...(str(p.taskId) ? { target: { kind: 'task', taskId: str(p.taskId) } } : {}) });
   }
   switch (e.kind) {
     case 'agent_message': {
       const urgency = str(p.urgency);
+      // A long subject reads as its first sentence; the whole of it stays in the body.
+      const full = e.title.replace(/^Urgent: /, '');
+      const title = firstSentence(full, 100);
       return base('message', {
-        title: e.title.replace(/^Urgent: /, ''), severity: urgency === 'urgent' ? 'high' : urgency === 'fyi' ? 'low' : 'normal',
+        title, body: title !== full && !e.body.includes(full) ? `${full}${e.body ? `\n\n${e.body}` : ''}` : e.body, severity: urgency === 'urgent' ? 'high' : urgency === 'fyi' ? 'low' : 'normal',
         target: e.sessionId ? { kind: 'chat', sessionId: e.sessionId } : fallback,
       });
     }
@@ -248,7 +252,7 @@ export function classifyEvent(e: EventRow, look: FeedLookup): Classified | null 
       }
       const groupLabel = context.taskKey || label;
       return base('follow', {
-        title: `${who ? `${who} updated` : 'News on'} ${groupLabel}`, body: e.body.replace(/^[^:]{1,80}: /, ''), severity: 'low', actor, context, target,
+        title: `${who ? `${who.charAt(0).toUpperCase()}${who.slice(1)} updated` : 'News on'} ${clipWords(groupLabel, 72)}`, body: e.body.replace(/^[^:]{1,80}: /, ''), severity: 'low', actor, context, target,
         ...(targetKind && targetId ? { follow: { targetKind, targetId } } : {}),
         groupKey: targetKind && targetId ? `${targetKind === 'org_task' ? 'task' : targetKind}:${targetId}` : null, groupLabel,
       });
@@ -269,13 +273,13 @@ export function classifyEvent(e: EventRow, look: FeedLookup): Classified | null 
       });
     }
     case 'brief':
-      return base('brief', { title: e.title.replace(/^Daily brief( \(board copy\))? — /, 'Daily brief: '), severity: 'low', target: { kind: 'pane', pane: 'brief', focus: null } });
+      return base('brief', { title: fixPlurals(e.title.replace(/^Daily brief( \(board copy\))? — /, 'Daily brief: ')), severity: 'low', target: { kind: 'pane', pane: 'brief', focus: null } });
     case 'org_audit': case 'org_spotcheck':
       return base('audit', { severity: p.breach === true ? 'high' : 'low', target: { kind: 'pane', pane: 'audit', focus: null } });
     case 'org_experiment':
       return base('experiment', { severity: 'low' });
     case 'trust_change':
-      return base('trust', { severity: 'low', target: agent?.id ? { kind: 'agent', agentId: agent.id } : fallback });
+      return base('trust', { title: agentNoteTitle(agent?.name ?? '', e.title).title, severity: 'low', target: agent?.id ? { kind: 'agent', agentId: agent.id } : fallback });
     default:
       return null;
   }

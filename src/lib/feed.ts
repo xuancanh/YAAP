@@ -163,3 +163,191 @@ export function bellGroups(items: FeedItem[], now: Date): Array<{ id: 'needs' | 
     { id: 'earlier' as const, label: 'Earlier', items: rest.filter((i) => i.at < cut) },
   ].filter((g) => g.items.length > 0);
 }
+
+// ---- the Inbox's list and reading pane ----
+
+/** Urgent: critical, or its default applies within 6 hours (the server's `expiresSoon`). */
+export const isUrgent = (i: Pick<FeedItem, 'severity' | 'expiresSoon'>): boolean => i.severity === 'critical' || i.expiresSoon;
+
+export interface InboxGroup { id: string; label: string; items: FeedItem[] }
+
+/** The Inbox list's groups. Needs you: what is urgent first (soonest
+ *  deadline first), then the rest in the server's rank. Mentions and
+ *  Updates: Today, Yesterday, Earlier, newest first. One group carries no
+ *  heading of its own (`label` ''): a heading over everything says nothing. */
+export function inboxGroups(items: FeedItem[], section: FeedSection, now: Date): InboxGroup[] {
+  let groups: InboxGroup[];
+  if (section === 'needs') {
+    const urgent = items.filter(isUrgent).sort((a, b) => (a.deadline ?? '9999').localeCompare(b.deadline ?? '9999'));
+    groups = [{ id: 'urgent', label: 'Urgent', items: urgent }, { id: 'waiting', label: 'Waiting on you', items: items.filter((i) => !isUrgent(i)) }];
+  } else {
+    const today = new Date(now); today.setHours(0, 0, 0, 0);
+    const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+    const t = today.toISOString(); const y = yesterday.toISOString();
+    groups = [
+      { id: 'today', label: 'Today', items: items.filter((i) => i.at >= t) },
+      { id: 'yesterday', label: 'Yesterday', items: items.filter((i) => i.at < t && i.at >= y) },
+      { id: 'earlier', label: 'Earlier', items: items.filter((i) => i.at < y) },
+    ];
+  }
+  const shown = groups.filter((g) => g.items.length > 0);
+  return shown.length === 1 && shown[0].id !== 'urgent' ? [{ ...shown[0], label: '' }] : shown;
+}
+
+/** Needs you's chips worth showing: All, and each kind that has items (or is the one picked). */
+export function visibleChips(page: FeedPage | null, chip: InboxFilter): Array<(typeof NEEDS_CHIPS)[number] & { n: number }> {
+  return NEEDS_CHIPS
+    .map((c) => ({ ...c, n: c.types.length ? itemsOf(page, 'needs', c.id).length : page?.counts.needsYou ?? 0 }))
+    .filter((c) => c.id === 'needs' || c.n > 0 || c.id === chip);
+}
+
+/** What is being asked of you, in plain words ('' for news). */
+export function askOf(i: FeedItem): string {
+  const who = i.actor && i.actor.kind !== 'system' ? i.actor.name : '';
+  switch (i.type) {
+    case 'decision':
+      if (i.need?.subkind === 'hire') return `${who || 'Someone'} needs your yes before the hire goes ahead.`;
+      return `${who ? `${who} needs your decision` : 'This needs your decision'}: approve it or reject it.`;
+    case 'escalation': return `${who || 'The team'} can't go on without you. Answer the question to unblock the task, or cancel the task.`;
+    case 'key': return 'An outward action is held for your key. Give it to let the action go ahead, or deny it.';
+    case 'pending_change': return 'This change applies on its own unless you veto it.';
+    case 'incident': return 'Something broke. Look into it in Operations; it stays here until it is resolved.';
+    case 'signal': return 'Assurance flagged this for you. Acknowledge it once you have seen it, or act on it.';
+    case 'queued_action': return `${who || 'An agent'} queued this to run in the background and waits for your approval.`;
+    case 'connection_approval': return `${who || 'An agent'} wants to use your connection for one call. The turn waits a few minutes for you.`;
+    case 'task_assigned': return 'This task is yours to do.';
+    case 'task_review': return 'Review the work, then accept it or ask for changes.';
+    case 'blocked_on_you': return 'The task cannot move until you answer.';
+    case 'follow_attention': return 'Something you follow needs you.';
+    case 'plugin_review': return 'The update asks for more access than the version you run. Review it in Foundry.';
+    default: return '';
+  }
+}
+
+/** "Thu 14:00" (today: "14:00"; another week: "Nov 12, 14:00"). */
+export function whenLabel(iso: string, now: Date): string {
+  const d = new Date(iso);
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const days = Math.abs(d.getTime() - now.getTime()) / 86_400_000;
+  if (d.toDateString() === now.toDateString()) return time;
+  return days < 6 ? `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${time}` : `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`;
+}
+
+/** "in 40 min", "in 3 h", "in 2 days", "2 h ago". */
+export function relLabel(iso: string, now: Date): string {
+  const min = Math.round((Date.parse(iso) - now.getTime()) / 60_000);
+  const abs = Math.abs(min);
+  const span = abs < 60 ? `${abs} min`
+    : abs < 180 && abs % 60 >= 5 ? `${Math.floor(abs / 60)} h ${abs % 60} min`
+      : abs < 48 * 60 ? `${Math.round(abs / 60)} h` : `${Math.round(abs / 1440)} days`;
+  return min >= 0 ? `in ${span}` : `${span} ago`;
+}
+
+/** The quiet deadline badge on a row: "3 h left", "40 min left", "Overdue" ('' without one or far off). */
+export function deadlineBadge(i: Pick<FeedItem, 'deadline' | 'expiresSoon'>, now: Date): string {
+  if (!i.deadline) return '';
+  const min = Math.round((Date.parse(i.deadline) - now.getTime()) / 60_000);
+  if (min <= 0) return 'Overdue';
+  if (!i.expiresSoon && min > 24 * 60) return '';
+  return min < 60 ? `${min} min left` : `${Math.round(min / 60)} h left`;
+}
+
+/** The deadline and what happens if you do nothing, in one sentence ('' without a deadline). */
+export function defaultLine(i: FeedItem, now: Date): string {
+  if (!i.deadline) return i.type === 'pending_change' ? 'It applies on its own unless you veto it.' : '';
+  const by = `${whenLabel(i.deadline, now)} (${relLabel(i.deadline, now)})`;
+  const past = Date.parse(i.deadline) <= now.getTime();
+  if (i.type === 'connection_approval') return past ? 'It timed out and was denied.' : `If you don't answer by ${by}, it is denied.`;
+  const d = i.need?.defaultAction;
+  const outcome = d === 'approve' ? 'approved' : d === 'deny' ? 'denied' : d === 'apply' ? 'applied' : '';
+  if (past) return outcome ? `Its deadline passed; it is ${outcome} by default.` : 'Its deadline has passed.';
+  return outcome ? `If you do nothing by ${by}, it is ${outcome}.` : `Decide by ${by}.`;
+}
+
+const usd = (n: number) => `$${n >= 100 || Number.isInteger(n) ? Math.round(n).toLocaleString('en-US') : n.toFixed(2)}`;
+
+/** The card's facts worth a line in the reading pane, labelled. */
+export function feedFacts(i: FeedItem): Array<{ label: string; value: string }> {
+  const f = i.need?.facts;
+  if (!f) return [];
+  const s = (k: string) => (typeof f[k] === 'string' ? f[k] as string : typeof f[k] === 'number' ? String(f[k]) : '');
+  const n = (k: string) => (typeof f[k] === 'number' ? f[k] as number : 0);
+  const l = (k: string) => (Array.isArray(f[k]) ? (f[k] as string[]) : []);
+  const out: Array<{ label: string; value: string }> = [];
+  const add = (label: string, value: string) => { if (value) out.push({ label, value }); };
+  switch (i.need?.subkind) {
+    case 'hire':
+      add('Role', s('title'));
+      add('Name', s('name') !== s('title') ? s('name') : '');
+      add('Reports to', s('reportsTo'));
+      add('Budget', n('monthlyBudgetUsd') ? `${usd(n('monthlyBudgetUsd'))} a month` : '');
+      add('Pack', s('packName'));
+      add('Model', [s('provider'), s('model')].filter(Boolean).join(' · ') || s('modelTier'));
+      add('Access', l('scopes').join(', '));
+      add('Skills', l('skills').join(', '));
+      break;
+    case 'budget_raise':
+      add('Budget', s('scope') || 'company');
+      add('New cap', n('monthlyUsd') ? `${usd(n('monthlyUsd'))} a month` : '');
+      add('It buys', s('buys'));
+      add('Affects', l('affectedObjectives').join(', '));
+      break;
+    case 'scope_widen':
+      add('Member', s('agentName'));
+      add('Adds', l('widened').join(', '));
+      break;
+    case 'project_now': case 'project_appetite': case 'project_kill': case 'project_allocation':
+      add('Project', [s('projectKey'), s('title')].filter(Boolean).join(' '));
+      add('Member', s('agentName'));
+      add('Appetite', [n('appetiteDays') ? `${n('appetiteDays')} days` : '', n('appetiteUsd') ? usd(n('appetiteUsd')) : ''].filter(Boolean).join(' / '));
+      add('Asked', [n('extendDays') ? `${n('extendDays')} more days` : '', n('extendUsd') ? `${usd(n('extendUsd'))} more` : ''].filter(Boolean).join(' and '));
+      break;
+    case 'tune':
+      add('Setting', s('key'));
+      add('Change', `${s('from') ? `${s('from')} → ` : ''}${s('value')}`);
+      break;
+    case 'two_key':
+      add('Tool', s('tool'));
+      add('Class', s('class').replace(/_/g, ' '));
+      break;
+  }
+  return out;
+}
+
+/** The longer text worth reading in the pane: a hire's charter ('' when none). */
+export function feedLongText(i: FeedItem): { label: string; text: string } | null {
+  const f = i.need?.facts;
+  const charter = typeof f?.charter === 'string' ? f.charter : '';
+  if (i.need?.subkind === 'hire' && charter) return { label: 'What they would do', text: charter };
+  return null;
+}
+
+/** The button that opens a row where it lives ("Open task", "Open #launch"…). */
+export function openLabel(i: FeedItem): string {
+  const t = feedOpen(i);
+  switch (t.to) {
+    case 'task': return i.context.taskKey ? `Open ${i.context.taskKey}` : 'Open task';
+    case 'chat': return i.type === 'message' ? 'Reply in chat' : 'Open chat';
+    case 'channel': return `Open #${t.slug}`;
+    case 'agent': return i.actor?.kind === 'agent' && i.actor.id === t.agentId ? `Open ${i.actor.name}` : 'Open agent';
+    case 'pane': return t.pane === 'meetings' ? 'Open meeting' : t.pane === 'roadmap' ? 'Open project' : 'Open page';
+    case 'plugin': return 'Open in Foundry';
+    case 'queue': return 'Open the full card';
+    case 'history': return 'Open in Done';
+    case 'file': return 'Open file';
+    case 'hash': return 'Open';
+    default: return '';
+  }
+}
+
+/** The keyboard's a / r on an open item: its yes and its no ('' when it has none). */
+export function yesNo(i: FeedItem): { yes: FeedAction | ''; no: FeedAction | '' } {
+  const has = (a: FeedAction) => i.actions.includes(a);
+  return {
+    yes: has('approve') ? 'approve' : has('allow') ? 'allow' : '',
+    no: has('reject') ? 'reject' : has('deny') ? 'deny' : '',
+  };
+}
+
+/** The Inbox tab a row lives on (for a link from the bell). */
+export const tabOf = (i: Pick<FeedItem, 'section'>): InboxFilter => (i.section === 'needs' ? 'needs' : i.section);

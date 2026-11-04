@@ -2605,6 +2605,8 @@ export interface HomeNeed {
   chain?: { line: string; hops: Array<{ at: string; action: string; by: string; recommendation: string; reasoning: string }>; reserved: string };
   /** A card about one task (an escalation, a review): its key and title. */
   task?: { key: string | null; title: string };
+  /** A card's own facts (its payload's short fields: a hire's role, name, pack, budget, who it reports to; an escalation's reason). */
+  facts?: Record<string, string | number | boolean | string[]>;
 }
 export interface HomeRef { type: string; id: string }
 export interface HomeRecapItem { at: string; kind: 'auto' | 'default' | 'delegate' | 'decision' | 'hire' | 'pause' | 'terminate'; title: string; detail: string; ref: HomeRef | null }

@@ -308,7 +308,7 @@ test('Needs-you titles read as a sentence a person would write; the detail is in
   assert.equal(hire.title, 'Writer wants to hire a Content Marketer');
   assert.equal(hire.need?.facts?.reportsTo, 'Chief', 'the facts name who it reports to');
   assert.equal(hire.need?.facts?.monthlyBudgetUsd, 20);
-  assert.match(hire.body, /reports to Chief, \$20 a month/i);
+  assert.equal(hire.body, '', 'no reason and no charter: the pane lists the facts');
   const esc = page.items.find((i) => i.type === 'escalation')!;
   assert.equal(esc.title, `${t.key} is stuck waiting on you`);
   assert.equal(esc.body, reason, 'the whole reason, not cut mid-sentence');

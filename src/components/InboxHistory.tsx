@@ -9,7 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp } from '../store';
 import { api, type HistoryItem } from '../lib/api';
 import { HISTORY_FILTERS, HISTORY_RANGES, OUTCOME_LABEL, historyBy, historyFrom, historyTarget, outcomeColor, type HistoryFilter, type InboxFilter } from '../lib/inbox';
-import { card, btn, pill, faint, ago } from './org-ui';
+import { btn, faint, ago } from './org-ui';
 import { navigate } from '../lib/routes';
 
 const KIND_LABEL: Record<HistoryItem['kind'], string> = {
@@ -22,22 +22,23 @@ function HistoryRow({ i, onOpen, onUndo }: { i: HistoryItem; onOpen: (i: History
   const [busy, setBusy] = useState(false);
   const color = outcomeColor(i.outcome);
   return (
-    <div data-testid={`history-item-${i.key}`} style={{ ...card, padding: 0, marginBottom: 8, borderLeft: `3px solid ${i.withoutYou ? 'var(--amber)' : color}`, overflow: 'hidden' }}>
-      <button onClick={() => onOpen(i)} style={{ display: 'flex', width: '100%', textAlign: 'left', gap: 10, alignItems: 'flex-start', padding: '12px 14px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)', font: 'inherit', boxSizing: 'border-box' }}>
-        <span style={{ ...pill(), flex: 'none' }}>{KIND_LABEL[i.kind]}</span>
+    <div data-testid={`history-item-${i.key}`} className="ibx-hist">
+      <button onClick={() => onOpen(i)} className="ibx-hist-open">
+        <span aria-hidden className="ibx-hist-dot" style={{ background: i.withoutYou ? 'var(--amber)' : color }} />
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: 'block', fontSize: 13, fontWeight: 600, overflowWrap: 'anywhere' }}>{i.title}</span>
-          {i.detail && <span style={{ display: 'block', ...faint, marginTop: 2, overflowWrap: 'anywhere' }}>{i.detail}</span>}
-          <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', marginTop: 6 }}>
-            <span data-testid="history-outcome" style={pill(color, '#fff')}>{OUTCOME_LABEL[i.outcome]}</span>
-            <span data-testid="history-by" style={{ ...faint, overflowWrap: 'anywhere' }}>{historyBy(i)}</span>
-            {i.withoutYou && <span data-testid="history-without-you" title="A default or a delegate decided this, not you" style={pill('var(--amber)', '#fff')}>decided without you</span>}
+          <span className="ibx-hist-title">{i.title}</span>
+          <span className="ibx-hist-meta">
+            <span data-testid="history-outcome" style={{ color: 'var(--text)', fontWeight: 600 }}>{OUTCOME_LABEL[i.outcome]}</span>
+            <span data-testid="history-by">{historyBy(i)}</span>
+            <span>{KIND_LABEL[i.kind]}</span>
+            {i.withoutYou && <span data-testid="history-without-you" title="A default or a delegate decided this, not you" style={{ color: 'var(--warn-text)', fontWeight: 600 }}>decided without you</span>}
           </span>
+          {i.detail && <span className="ibx-hist-detail">{i.detail}</span>}
         </span>
-        <span style={{ ...faint, flex: 'none' }} title={i.at}>{ago(i.at)}</span>
+        <span className="feed-time" title={i.at}>{ago(i.at)}</span>
       </button>
       {i.undo && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, padding: '0 14px 10px' }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, padding: '0 12px 8px' }}>
           {confirm && <button style={btn()} onClick={() => setConfirm(false)}>Cancel</button>}
           <button data-testid="history-undo" disabled={busy} style={btn(false, confirm)}
             onClick={async () => {
@@ -114,7 +115,7 @@ export function InboxHistory({ onWaiting }: { onWaiting: (f: InboxFilter) => voi
       <div role="tablist" aria-label="History filters" style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 2, marginBottom: 10 }}>
         {/* Messages stay in their chats: History has no Messages filter. */}
         {HISTORY_FILTERS.map((f) => (
-          <button key={f.id} role="tab" aria-selected={filter === f.id} onClick={() => setFilter(f.id)} style={{ ...btn(filter === f.id), flex: 'none', whiteSpace: 'nowrap' }}>{f.label}</button>
+          <button key={f.id} role="tab" aria-selected={filter === f.id} onClick={() => setFilter(f.id)} className={`ibx-chip${filter === f.id ? ' on' : ''}`}>{f.label}</button>
         ))}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 12 }}>
@@ -124,14 +125,14 @@ export function InboxHistory({ onWaiting }: { onWaiting: (f: InboxFilter) => voi
           style={{ flex: 'none', padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--panel)', color: 'var(--text)', font: 'inherit', fontSize: 13 }}>
           {HISTORY_RANGES.map((r) => <option key={r.days} value={r.days}>{r.label}</option>)}
         </select>
-        <button aria-pressed={without} onClick={() => setWithout(!without)} style={{ ...btn(without), flex: 'none', whiteSpace: 'nowrap' }} title="Only what a default or a delegate decided">Decided without you</button>
+        <button aria-pressed={without} onClick={() => setWithout(!without)} className={`ibx-chip${without ? ' on' : ''}`} title="Only what a default or a delegate decided">Decided without you</button>
       </div>
       {err && <div style={{ color: 'var(--red)', fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
       {items === null ? <div style={faint}>Loading…</div> : items.length === 0 ? (
-        <div data-testid="history-empty" style={faint}>
+        <div data-testid="history-empty" className="ibx-empty" style={{ padding: '40px 16px' }}><p className="ibx-empty-title">Nothing here yet</p><p className="ibx-empty-text">
           {filtered ? 'Nothing matches — try another filter, a wider date range or a different search.'
             : `Nothing resolved in ${days ? `the last ${days} days` : 'this workspace yet'}. Decisions, keys, plans, incidents, your tasks and threads you looked at land here once they are done.`}
-        </div>
+        </p></div>
       ) : items.map((i) => <HistoryRow key={i.key} i={i} onOpen={open} onUndo={undo} />)}
       {cursor && items && (
         <button data-testid="history-more" disabled={loading} onClick={() => void load(cursor)} style={{ ...btn(), width: '100%', marginTop: 4 }}>{loading ? 'Loading…' : 'Load more'}</button>

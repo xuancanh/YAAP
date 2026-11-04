@@ -452,14 +452,37 @@ plugin update is applied. Once resolved, it appears under **Done** (the
 Inbox's History).
 
 **Grouping.** Updates about the same thing collapse into one row, such as
-"3 updates on ENG-12" or "3 updates on Writer's runs". Marking that row
+"3 updates on ENG-12" or "Writer's runs failed 3 times". Marking that row
 read marks every item in it read.
+
+**Titles** (`server/src/home/feed-titles.ts`). A title is one short
+sentence a person would write; the detail goes in the body. Names, keys and
+amounts stay, and free text is clipped at a word boundary, never mid-word.
+
+| Before | After |
+|---|---|
+| Content Marketer as Content Marketer (Content Marketer pack) | Head of Marketing wants to hire a Content Marketer |
+| task "Landing page and qualified waitlist…": REJ-4 is built and unchanged since 17:54; what it waits on has moved from my manager to the own… | REJ-4 is stuck waiting on you (the whole reason is the body) |
+| Burn rate projects $282.36 by month-end against a $200.00 envelope (141%) | Spending is on track to reach $282 against a $200 budget |
+| 5 updates on Trạng Tí's runs | Trạng Tí's runs failed 5 times |
+| 2 updates on REJ-17 (failed runs) | Runs on REJ-17 failed 2 times |
+| Acme: company envelope at 85% | The company budget is 85% used |
+| Acted (trust level 1, you hear after): http_request | Head of Engineering ran http_request on its own |
+| Trust raised for internal write: level 2 → 3 | Trạng Tí's trust for internal write went up to level 3 |
+| Daily brief: 3 decision(s) needed | Daily brief: 3 decisions needed |
+| WEB used up its appetite — its tasks stopped taking claims | WEB used up its appetite |
+
+A Needs-you card carries its `facts` (its payload's short fields: a hire's
+role, name, pack, budget and who it reports to; an escalation's reason), so
+the title and the reading pane can say what is asked without reading the
+card again. A card kind the titles do not know keeps its own title.
 
 **Counts.**
 
-- The Inbox's nav badge and "N need you" count the open items in Needs you,
-  whether you have read them or not.
-- The bell and "N unread" count unread rows in all three sections.
+- The Inbox's nav badge and the Needs you tab count the open items in Needs
+  you, whether you have read them or not.
+- The bell counts unread rows in all three sections; the Mentions and
+  Updates tabs count their own unread rows.
 
 `GET …/status` and the workspace switcher return the same two numbers
 (`needsYou`, `unread`).
@@ -485,6 +508,51 @@ switches. `notify.groupAfter` (default 2) sets how many updates about one
 thing it takes to collapse them into a row. These tunables are in the
 owner's area (`seat`), so an agent can only propose changing them. Needs
 you and mentions cannot be turned off.
+
+### On screen
+
+The Inbox (`src/components/InboxView.tsx`, `InboxDetail.tsx`, `FeedRow.tsx`)
+is two-pane triage on a wide screen:
+
+- **The list.** Each row is two quiet lines: the title, then who it is from,
+  its kind and its context (task key, project, channel), with the time. An
+  unread row has weight and a small dot; a near deadline is a soft badge
+  ("3 h left", "Overdue"). Needs you puts what is urgent first (critical, or
+  a default due within 6 hours, soonest first); Mentions and Updates group by
+  Today, Yesterday and Earlier. Hovering or focusing a row shows its quick
+  actions: mark read and open where it lives. Chips show only the kinds that
+  have items; a kind's full queue (Approvals, Pending changes, My tasks) is
+  one click from its chip.
+- **The reading pane.** The whole item: who asked and when, the title, what
+  is being asked in plain words, the deadline and what happens if you do
+  nothing, the why, the card's facts, the route it climbed with each
+  recommendation, the recommendation, the context (the task opens), then the
+  actions. A decision can carry a note. An escalation is a question: an
+  answer box sends the answer to the task as your decision and unblocks it
+  ("Answer and unblock"); "Cancel the task" asks to confirm. With nothing
+  open, the first row is previewed (not marked read).
+- **The address.** The open item is in it:
+  `/<company>/inbox/<filter>/<item>` (docs/routes.md), so it can be shared.
+  Opening an item reads it.
+- **The header.** The counts sit on the tabs. The ⋯ menu holds Mark this tab
+  read, Mark everything read, Choose which updates arrive (Customize) and the
+  keyboard shortcuts.
+- **Keyboard.** j/k or ↑/↓ move (on a wide screen the pane follows), Enter
+  opens in the pane, o opens where it lives, m marks read, e marks read and
+  moves on, Esc closes the pane. a and r approve and reject only while an
+  item is open in the pane, never from the list, and never an escalation
+  (it is answered in its box).
+- **A phone** (or a narrow Inbox) shows the list; an item opens full screen
+  with Back.
+- **Empty and done.** An empty Needs you says "You're clear" and points to
+  what is unread elsewhere. Done lists what used to wait on you as quiet
+  rows.
+
+The bell is a compact list of the same rows. Only its top one or two
+actionable rows keep their buttons (an escalation never: it is answered in
+the Inbox). A row opens the item in the Inbox's reading pane; the footer
+opens the Inbox. Without a company there is no Inbox, so a row opens where
+it lives.
 
 ### The types
 
@@ -544,6 +612,9 @@ you and mentions cannot be turned off.
 - Per-person switches. The switches are per workspace for now.
 - Push channels (Telegram, email, web push) still send the events they
   sent before. The feed's switches do not mute them yet.
+- Snooze, mark unread and a reply box for messages in the reading pane
+  (a message opens its chat to reply).
+- Done's rows keep the history service's own titles.
 
 ## Archive or delete the company
 

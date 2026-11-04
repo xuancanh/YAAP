@@ -49,7 +49,7 @@ beforeEach(() => {
   }));
   Object.assign(fake, {
     workspaceId: 'ws1', companiesEnabled: true, wsOrg: { mode: 'supervised', orgId: 'o1', units: [] }, orgHealth: null, orgHeldActions: 0,
-    inboxFilter: 'all', setInboxFilter: vi.fn((f: string) => { fake.inboxFilter = f; }), setOrgFocus: vi.fn(), openOrgTask: vi.fn(), openSession: vi.fn(),
+    inboxFilter: 'all', setInboxFilter: vi.fn((f: string) => { fake.inboxFilter = f; }), inboxItem: null, setInboxItem: vi.fn(), setOrgFocus: vi.fn(), openOrgTask: vi.fn(), openSession: vi.fn(),
     refreshWsOrg: vi.fn(async () => undefined), showToast: vi.fn(), go: vi.fn(), me: { role: 'owner' }, stacked: false,
   });
 });
@@ -66,7 +66,7 @@ describe('messages in the Inbox', () => {
     expect(within(urgent).getByTestId('feed-actor')).toHaveTextContent('Otto');
     expect(urgent).toHaveAttribute('data-read', 'false');
     expect(within(list).getByTestId('feed-row-event:e3')).toHaveAttribute('data-read', 'true');
-    fireEvent.click(within(within(list).getByTestId('feed-row-event:e1')).getByTestId('feed-open'));
+    fireEvent.click(within(within(list).getByTestId('feed-row-event:e1')).getByTestId('feed-go'));
     expect(fake.openSession).toHaveBeenCalledWith('s1');
     await waitFor(() => expect(posts).toContainEqual({ url: '/api/workspaces/ws1/inbox/messages/read', body: { sessionId: 's1' } }));
     expect(posts).toContainEqual({ url: '/api/workspaces/ws1/feed/read', body: { ids: ['event:e1'] } });

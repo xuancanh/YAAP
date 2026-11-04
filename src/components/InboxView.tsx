@@ -1,58 +1,80 @@
 /** The Inbox (docs/owners-seat.md "Inbox and notifications"): the owner's
  *  feed in full — the same page the bell shows, so the two never disagree.
  *
- *  - **Needs you**: what waits on you until it is resolved — decisions,
- *    escalations, keys, pending changes, incidents and signals, a turn
- *    waiting for your connection, your tasks and reviews, what is blocked on
- *    you, what you follow that needs you, plugin updates to review. Rows act
- *    in place (approve, reject, allow, deny, veto…); a chip opens one kind's
- *    full queue (the whole card) for Decisions, Escalations, Keys, Pending
- *    changes and My tasks.
+ *  Two-pane triage on a wide screen: a compact list on the left (one line
+ *  of title, one of who · kind · context, the time, an unread dot, a quiet
+ *  deadline badge), and the reading pane on the right (InboxDetail.tsx) with
+ *  the whole item and its actions. A phone (or a narrow window) shows the
+ *  list, and an item full screen with Back. The open item is in the
+ *  address (`/<company>/inbox/<filter>/<item>`), so it can be shared.
+ *
+ *  - **Needs you**: what waits on you until it is resolved, urgent first
+ *    (critical, or a default due within 6 hours). Chips narrow it to one
+ *    kind (only kinds that have items show); a kind's full queue (the
+ *    Approvals pane, Pending changes, My tasks) is one click from its chip.
  *  - **Mentions**: what agents wrote you and @mentions of you.
  *  - **Updates**: news on what you follow and run, grouped per thing
- *    ("3 updates on ENG-12"); the Following chip lists every live follow.
- *    Which kinds arrive is the workspace's choice (Customize).
+ *    ("Writer's runs failed 3 times"); the Following chip lists every live
+ *    follow. Which kinds arrive is the workspace's choice (the ⋯ menu).
  *  - **Done**: what used to wait on you and how it ended (InboxHistory.tsx).
  *
- *  Numbers: the nav badge and "N need you" count open Needs-you items; the
- *  bell and "N unread" count unread rows in every section. Keyboard: ↑/↓ or
- *  j/k move, Enter or o opens, m marks read. */
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+ *  Numbers sit on the tabs: Needs you counts its open items (the nav badge),
+ *  Mentions and Updates their unread rows (together, the bell). Keyboard:
+ *  j/k or ↑/↓ move, Enter opens in the pane, o opens where it lives, m marks
+ *  read, e marks read and moves on, Esc closes the pane; a/r approve or
+ *  reject only while an item is open in the pane. */
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 import { useApp } from '../store';
-import { api, type FeedItem, type FeedTypeInfo, type FollowRow, type OrgDetail } from '../lib/api';
+import { api, type FeedAction, type FeedItem, type FeedTypeInfo, type FollowRow, type OrgDetail } from '../lib/api';
 import { followingList, type InboxItem } from '../lib/inbox';
-import { INBOX_TABS, NEEDS_CHIPS, countLabel, inboxView, itemsOf, needsYouLabel, tabFilter, unreadLabel, type InboxTab } from '../lib/feed';
+import { INBOX_TABS, NEEDS_CHIPS, countLabel, feedOpen, inboxGroups, inboxView, itemsOf, needsYouLabel, tabFilter, unreadLabel, visibleChips, yesNo, type InboxTab } from '../lib/feed';
 import { markFeedRead, reloadFeed, useFeed } from '../lib/feed-store';
 import { I, P } from '../lib/icons';
-import { btn, h2, faint, pill, ago } from './org-ui';
+import { btn, faint, pill, ago } from './org-ui';
 import { Approvals } from './OrganizationView';
 import { FeedRow, useFeedAction, useOpenFeedItem } from './FeedRow';
+import { InboxDetail, InboxPaneEmpty } from './InboxDetail';
 import { navigate } from '../lib/routes';
 
 const PlansPane = lazy(() => import('./OrgCapitalView').then((m) => ({ default: m.PlansPane })));
 const MyTasksPane = lazy(() => import('./OrgPeopleView').then((m) => ({ default: m.MyTasksPane })));
 const InboxHistory = lazy(() => import('./InboxHistory').then((m) => ({ default: m.InboxHistory })));
 
-const EMPTY: Record<InboxTab, string> = {
-  needs: 'Nothing needs you. Decisions, keys, pending changes, your tasks and reviews, what is blocked on you and incidents land here, and stay until they are resolved.',
-  mentions: 'No mentions or messages. When an agent writes to you, or someone @mentions you in a channel, a thread or a task, it lands here.',
-  updates: 'No updates. News on what you follow, failed runs, budgets, meetings, briefs, audits, hires and plugin recalls land here.',
-  history: '',
+/** The pane sits beside the list from this width of the Inbox itself. */
+const TWO_PANE_MIN = 860;
+
+const EMPTY: Record<Exclude<InboxTab, 'history'>, { title: string; text: string }> = {
+  needs: { title: 'You\'re clear', text: 'Nothing waits on you. Decisions, escalations, keys, your tasks and reviews land here and stay until they are resolved.' },
+  mentions: { title: 'No mentions', text: 'When an agent writes to you, or someone @mentions you in a channel, a thread or a task, it lands here.' },
+  updates: { title: 'No news', text: 'News on what you follow, failed runs, budgets, meetings, briefs and hires lands here.' },
 };
+
+/** The Inbox's own width (the pane needs room, whatever the window). */
+function useWidth(ref: RefObject<HTMLElement | null>, fallback: number): number {
+  const [w, setW] = useState(fallback);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    setW(el.getBoundingClientRect().width || fallback);
+    const ro = new ResizeObserver((entries) => { const r = entries[0]?.contentRect; if (r) setW(r.width); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, fallback]);
+  return w;
+}
 
 /** A followed thread or task in the Following list. */
 function FollowLine({ i, onOpen }: { i: InboxItem; onOpen: (i: InboxItem) => void }) {
   const f = i.follow;
   return (
-    <button data-testid={`follow-item-${i.key}`} onClick={() => onOpen(i)}
-      style={{ display: 'flex', width: '100%', textAlign: 'left', gap: 10, alignItems: 'flex-start', padding: '10px 14px', borderRadius: 10, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text)', font: 'inherit', boxSizing: 'border-box', opacity: !f.attention && f.unseen === 0 ? 0.75 : 1 }}>
+    <button data-testid={`follow-item-${i.key}`} onClick={() => onOpen(i)} className="ibx-follow" style={{ opacity: !f.attention && f.unseen === 0 ? 0.75 : 1 }}>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: 'block', fontSize: 13, fontWeight: 600, overflowWrap: 'anywhere' }}>{i.title}</span>
         {f.attention && <span data-testid="follow-attention" style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--amber)', marginTop: 2 }}>Needs you: {f.attention}</span>}
-        <span style={{ display: 'block', ...faint, marginTop: 2, overflowWrap: 'anywhere' }}>{i.detail}</span>
+        <span style={{ display: 'block', fontSize: 12, color: 'var(--text-dim)', marginTop: 2, overflowWrap: 'anywhere' }}>{i.detail}</span>
       </span>
       <span style={{ flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-        <span style={faint}>{ago(i.at)}</span>
+        <span style={{ fontSize: 11.5, color: 'var(--text-dim)' }}>{ago(i.at)}</span>
         {f.unseen > 0 && <span data-testid="follow-unseen" style={pill('var(--accent)', '#fff')}>{f.unseen} new</span>}
         {f.closed && <span style={pill()}>closed</span>}
       </span>
@@ -77,21 +99,21 @@ function Customize({ wsId, onClose }: { wsId: string; onClose: () => void }) {
     }
   };
   return (
-    <div role="dialog" aria-label="Which updates arrive" data-testid="inbox-customize" style={{ border: '1px solid var(--border)', borderRadius: 12, background: 'var(--panel)', padding: '12px 14px', marginTop: 10, maxWidth: 820 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-        <span style={{ flex: 1, fontSize: 13, fontWeight: 700 }}>Which updates arrive</span>
+    <div role="dialog" aria-label="Which updates arrive" data-testid="inbox-customize" className="ibx-customize">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 650 }}>Which updates arrive</span>
         <button style={btn()} onClick={onClose}>Done</button>
       </div>
-      <div style={{ ...faint, marginBottom: 8 }}>For this company, in the Inbox and the bell. Needs you and mentions always arrive.</div>
+      <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>For this company, in the Inbox and the bell. Needs you and mentions always arrive.</div>
       {err && <div style={{ color: 'var(--red)', fontSize: 12.5 }}>{err}</div>}
       {!types && !err && <div style={faint}>Loading…</div>}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 4 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 2 }}>
         {types?.map((t) => (
           <label key={t.type} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '6px 4px', cursor: 'pointer' }}>
             <input type="checkbox" checked={t.on} onChange={() => void toggle(t)} data-testid={`notify-${t.type}`} style={{ marginTop: 2 }} />
             <span style={{ minWidth: 0 }}>
               <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>{t.label}</span>
-              <span style={{ display: 'block', ...faint, fontSize: 11.5 }}>{t.description}</span>
+              <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-dim)' }}>{t.description}</span>
             </span>
           </label>
         ))}
@@ -100,27 +122,64 @@ function Customize({ wsId, onClose }: { wsId: string; onClose: () => void }) {
   );
 }
 
+/** The header's ⋯ menu: mark read, which updates arrive, the keys. */
+function HeaderMenu({ items }: { items: Array<{ id: string; label: string; run: () => void; hidden?: boolean }> }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const key = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', down);
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key); };
+  }, [open]);
+  const shown = items.filter((x) => !x.hidden);
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" className="ibx-iconbtn" aria-haspopup="menu" aria-expanded={open} aria-label="Inbox options" data-testid="inbox-menu" onClick={() => setOpen((v) => !v)}>
+        <I d={P.dots} size={17} sw={2} />
+      </button>
+      {open && (
+        <div role="menu" className="ibx-menu">
+          {shown.map((x) => (
+            <button key={x.id} role="menuitem" type="button" data-testid={x.id} onClick={() => { setOpen(false); x.run(); }}>{x.label}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const typing = (t: EventTarget | null) => t instanceof HTMLElement && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+
 export function InboxView() {
   const app = useApp();
   const wsId = app.workspaceId;
   const { page, error } = useFeed(wsId);
-  const open = useOpenFeedItem();
+  const openWhere = useOpenFeedItem();
   const { busy, act } = useFeedAction();
   const view = inboxView(app.inboxFilter);
   const tab = view.tab;
   const chip = view.chip;
+  const [queue, setQueue] = useState(false);
   const paneChip = NEEDS_CHIPS.find((c) => c.id === chip && c.pane);
+  const showQueue = Boolean(queue && paneChip);
   const [org, setOrg] = useState<OrgDetail | null>(null);
   const [follows, setFollows] = useState<FollowRow[] | null>(null);
   const [customize, setCustomize] = useState(false);
+  const [keysHelp, setKeysHelp] = useState(false);
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 30_000); return () => clearInterval(t); }, []);
   useEffect(() => { setNow(new Date()); }, [page]);
   const owner = !app.me || app.me.role === 'owner';
+  const rootRef = useRef<HTMLDivElement>(null);
+  const width = useWidth(rootRef, typeof app.width === 'number' ? app.width - 72 : 1200);
+  const twoPane = !app.stacked && width >= TWO_PANE_MIN;
 
   // The full queues need the company record; the Following list its follows.
   const loadOrg = useCallback(async () => { if (wsId) setOrg(await api.org(wsId).catch(() => null)); }, [wsId]);
-  useEffect(() => { if (paneChip && !org) void loadOrg(); }, [paneChip, org, loadOrg]);
+  useEffect(() => { if (showQueue && !org) void loadOrg(); }, [showQueue, org, loadOrg]);
   useEffect(() => { setOrg(null); setFollows(null); }, [wsId]);
   useEffect(() => {
     if (chip !== 'following') return;
@@ -128,23 +187,81 @@ export function InboxView() {
   }, [chip, wsId]);
 
   const list = useMemo(() => (tab === 'history' ? [] : itemsOf(page, tab, chip)), [page, tab, chip]);
+  const groups = useMemo(() => (tab === 'history' ? [] : inboxGroups(list, tab, now)), [list, tab, now]);
+  const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
   const counts = page?.counts;
 
-  // ---- keyboard: ↑/↓ j/k move, Enter/o open, m mark read ----
-  const [focus, setFocus] = useState(0);
+  // ---- the open item: the address's, or (wide) the first row as a preview ----
+  const explicit = app.inboxItem ? flat.find((i) => i.id === app.inboxItem) ?? page?.items.find((i) => i.id === app.inboxItem) ?? null : null;
+  const listMode = tab !== 'history' && chip !== 'following' && !showQueue;
+  const selected = listMode ? explicit ?? (twoPane ? flat[0] ?? null : null) : null;
+  // Opening an item reads it (a preview does not).
+  const readOnce = useRef('');
+  useEffect(() => {
+    if (!explicit || explicit.read || readOnce.current === explicit.id) return;
+    readOnce.current = explicit.id;
+    void markFeedRead(wsId, [explicit]);
+  }, [explicit, wsId]);
+
   const listRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { setFocus(0); }, [tab, chip]);
-  const onKey = (e: KeyboardEvent<HTMLDivElement>, i: FeedItem, n: number) => {
-    if (e.target !== e.currentTarget) return; // a button inside the row handles its own keys
+  const rowEl = (id: string) => listRef.current?.querySelector<HTMLElement>(`[data-testid="feed-row-${typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id.replace(/["\\]/g, '\\$&')}"]`) ?? null;
+  // Keep the open row in view.
+  useEffect(() => { if (selected) rowEl(selected.id)?.scrollIntoView?.({ block: 'nearest' }); }, [selected?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const select = (i: FeedItem | null, opts: { replace?: boolean } = {}) => app.setInboxItem(i ? i.id : null, opts);
+  const go = (i: FeedItem) => {
+    const t = feedOpen(i);
+    if (t.to === 'queue') { app.setInboxFilter(t.filter); setQueue(true); return; }
+    openWhere(i);
+  };
+  const decide = async (i: FeedItem, a: FeedAction, note?: string) => {
+    const at = flat.findIndex((x) => x.id === i.id);
+    const next = flat[at + 1] ?? flat[at - 1] ?? null;
+    const ok = await act(i, a, note);
+    if (ok && app.inboxItem === i.id) select(next, { replace: true });
+  };
+  const setTab = (t: InboxTab) => { setQueue(false); app.setInboxFilter(tabFilter(t)); };
+  const setChip = (f: Parameters<typeof app.setInboxFilter>[0]) => { setQueue(false); app.setInboxFilter(f); };
+
+  // ---- the keyboard ----
+  const focusedIndex = () => {
+    const el = document.activeElement instanceof HTMLElement ? document.activeElement.closest<HTMLElement>('[role="listitem"]') : null;
+    const id = el?.dataset.testid?.replace(/^feed-row-/, '');
+    const n = id ? flat.findIndex((x) => x.id === id) : -1;
+    return n >= 0 ? n : selected ? flat.findIndex((x) => x.id === selected.id) : -1;
+  };
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (!listMode || typing(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+    const onButton = e.target instanceof HTMLElement && e.target.tagName === 'BUTTON';
+    const n = focusedIndex();
+    const cur = n >= 0 ? flat[n] : null;
     const move = (to: number) => {
-      const next = Math.max(0, Math.min(list.length - 1, to));
-      setFocus(next);
-      (listRef.current?.querySelectorAll<HTMLElement>('[role="listitem"]')[next])?.focus();
+      const next = flat[Math.max(0, Math.min(flat.length - 1, to))];
+      if (!next) return;
+      if (twoPane) select(next, { replace: Boolean(app.inboxItem) });
+      rowEl(next.id)?.focus();
     };
-    if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); move(n + 1); }
-    else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); move(n - 1); }
-    else if (e.key === 'Enter' || e.key === 'o') { e.preventDefault(); open(i); }
-    else if (e.key === 'm') { e.preventDefault(); void markFeedRead(wsId, [i]); }
+    switch (e.key) {
+      case 'ArrowDown': case 'j': e.preventDefault(); move(n + 1); return;
+      case 'ArrowUp': case 'k': e.preventDefault(); move(n < 0 ? 0 : n - 1); return;
+      case 'Enter':
+        if (onButton || !cur) return;
+        e.preventDefault(); select(cur); return;
+      case 'o': if (cur) { e.preventDefault(); go(cur); } return;
+      case 'm': if (cur) { e.preventDefault(); void markFeedRead(wsId, [cur]); } return;
+      case 'e': if (cur) { e.preventDefault(); void markFeedRead(wsId, [cur]); move(n + 1); } return;
+      case 'Escape': if (app.inboxItem) { e.preventDefault(); select(null); } return;
+      case 'a': case 'r': {
+        // Decide only with the item open in the pane, never from the list.
+        if (!explicit || busy.has(explicit.id)) return;
+        const { yes, no } = yesNo(explicit);
+        const a = e.key === 'a' ? yes : no;
+        if (!a || (explicit.type === 'escalation')) return; // an escalation is answered in its box
+        e.preventDefault(); void decide(explicit, a);
+        return;
+      }
+      case '?': e.preventDefault(); setKeysHelp((v) => !v); return;
+    }
   };
 
   const openFollow = (i: InboxItem) => {
@@ -158,68 +275,151 @@ export function InboxView() {
   if (!app.companiesEnabled || !app.wsOrg || app.wsOrg.mode === 'off') {
     return <div style={{ flex: 1, padding: 24, ...faint }}>The Inbox gathers what waits on you when the workspace runs as a company — turn organization mode on in Settings › Company. The bell in the top bar still lists what needs you.</div>;
   }
-  const tabCount = (t: InboxTab): { n: number; strong: boolean } | null => {
+  const tabCount = (t: InboxTab): { n: number; tone: 'warn' | 'strong' | 'soft' } | null => {
     if (!counts || t === 'history') return null;
-    if (t === 'needs') return { n: counts.needsYou, strong: true };
-    return { n: counts.sections[t].unread, strong: false };
+    if (t === 'needs') return { n: counts.needsYou, tone: counts.urgent > 0 ? 'warn' : 'strong' };
+    return { n: counts.sections[t].unread, tone: 'soft' };
   };
   const unreadHere = tab !== 'history' && list.some((i) => !i.read);
-  return (
-    <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ padding: app.stacked ? '12px 12px 8px' : '14px 16px 10px', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <I d={P.inbox} size={18} />
-          <h2 style={{ ...h2, flex: 1 }}>Inbox</h2>
-          {counts && (
-            <span data-testid="inbox-counts" style={{ ...faint, display: 'flex', alignItems: 'center', whiteSpace: 'pre' }}>
-              <span title="Open items that wait on you until they are resolved (the Inbox badge)" style={{ color: counts.needsYou ? 'var(--amber)' : undefined, fontWeight: counts.needsYou ? 600 : 400 }}>{counts.needsYou ? needsYouLabel(counts.needsYou) : 'nothing needs you'}</span>
-              <span aria-hidden>{' · '}</span>
-              <span title="Unread rows in every section (the bell's count)">{unreadLabel(counts.unread)}</span>
-            </span>
-          )}
-          {counts && counts.unread > 0 && <button style={btn()} data-testid="inbox-mark-all" onClick={() => void markFeedRead(wsId, 'all')}>Mark all read</button>}
-          {owner && <button style={btn(customize)} aria-pressed={customize} data-testid="inbox-customize-toggle" onClick={() => setCustomize((v) => !v)} title="Choose which updates arrive">Customize</button>}
-        </div>
-        <div role="tablist" aria-label="Inbox sections" style={{ display: 'flex', gap: 2, marginTop: 10, overflowX: 'auto', borderBottom: '1px solid var(--border-soft)' }}>
-          {INBOX_TABS.map((t) => {
-            const c = tabCount(t.id);
-            const on = tab === t.id;
+  const chips = tab === 'needs' ? visibleChips(page, chip) : [];
+
+  // ---- the phone (or a narrow Inbox): an open item fills the screen ----
+  if (!twoPane && listMode && explicit) {
+    return (
+      <div ref={rootRef} className="ibx-root" onKeyDown={onKey} data-testid="inbox-root">
+        <InboxDetail item={explicit} now={now} stacked busy={busy.has(explicit.id)} onBack={() => select(null)}
+          onAct={(i, a, note) => void decide(i, a, note)} onGo={go} onMarkRead={(i) => void markFeedRead(wsId, [i])} onTask={(id) => app.openOrgTask(id)} />
+      </div>
+    );
+  }
+
+  const header = (
+    <div className="ibx-head">
+      <div className="ibx-head-row">
+        <h2 className="ibx-h2">Inbox</h2>
+        <span className="ibx-sr" aria-live="polite" data-testid="inbox-counts">
+          {counts ? `${counts.needsYou ? needsYouLabel(counts.needsYou) : 'nothing needs you'} · ${unreadLabel(counts.unread)}` : ''}
+        </span>
+        <span className="ibx-spacer" />
+        <HeaderMenu items={[
+          { id: 'inbox-mark-section', label: `Mark ${tab === 'needs' ? 'Needs you' : tab === 'mentions' ? 'Mentions' : 'Updates'} read`, hidden: !unreadHere, run: () => void markFeedRead(wsId, chip !== tab && tab === 'needs' ? list : tab as 'needs' | 'mentions' | 'updates') },
+          { id: 'inbox-mark-all', label: 'Mark everything read', hidden: !counts || counts.unread === 0, run: () => void markFeedRead(wsId, 'all') },
+          { id: 'inbox-customize-toggle', label: 'Choose which updates arrive', hidden: !owner, run: () => setCustomize(true) },
+          { id: 'inbox-keys', label: 'Keyboard shortcuts', hidden: app.stacked, run: () => setKeysHelp((v) => !v) },
+        ]} />
+      </div>
+      <div role="tablist" aria-label="Inbox sections" className="ibx-tabs">
+        {INBOX_TABS.map((t) => {
+          const c = tabCount(t.id);
+          const on = tab === t.id;
+          return (
+            <button key={t.id} role="tab" aria-selected={on} data-testid={`inbox-tab-${t.id}`} title={t.hint} onClick={() => setTab(t.id)} className={`ibx-tab${on ? ' on' : ''}`}
+              aria-label={c && c.n > 0 ? `${t.label}, ${c.n} ${t.id === 'needs' ? 'open' : 'unread'}` : t.label}>
+              {t.label}
+              {c && c.n > 0 && <span data-testid={`inbox-tab-count-${t.id}`} className={`ibx-count ${c.tone}`}>{countLabel(c.n)}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const chipRow = (tab === 'needs' && chips.length > 1) ? (
+    <div role="group" aria-label="Show" className="ibx-chips">
+      {chips.map((c) => (
+        <button key={c.id} type="button" aria-pressed={chip === c.id} data-testid={`inbox-chip-${c.id}`} onClick={() => setChip(c.id)} className={`ibx-chip${chip === c.id ? ' on' : ''}`}>
+          {c.label}{c.n > 0 && <span className="ibx-chip-n">{c.n}</span>}
+        </button>
+      ))}
+    </div>
+  ) : tab === 'updates' ? (
+    <div role="group" aria-label="Show" className="ibx-chips">
+      <button type="button" aria-pressed={chip !== 'following'} data-testid="inbox-chip-updates" onClick={() => setChip('updates')} className={`ibx-chip${chip !== 'following' ? ' on' : ''}`}>All updates</button>
+      <button type="button" aria-pressed={chip === 'following'} data-testid="inbox-chip-following" onClick={() => setChip('following')} className={`ibx-chip${chip === 'following' ? ' on' : ''}`}>Everything I follow</button>
+    </div>
+  ) : null;
+
+  const otherTab = tab === 'needs' && counts ? (counts.sections.mentions.unread ? 'mentions' : counts.sections.updates.unread ? 'updates' : null) : null;
+  const empty = tab !== 'history' ? (
+    <div data-testid="inbox-empty" className="ibx-empty">
+      <span className={`ibx-empty-mark${tab === 'needs' ? ' ok' : ''}`} aria-hidden><I d={tab === 'needs' ? P.check : P.inbox} size={20} sw={2} /></span>
+      <p className="ibx-empty-title">{chip === 'incidents' ? 'No open incidents' : EMPTY[tab].title}</p>
+      <p className="ibx-empty-text">{chip === 'incidents' ? 'Contained and resolved ones are in Operations › Incidents.' : chip !== tab && tab === 'needs' ? 'Nothing of this kind waits on you.' : EMPTY[tab].text}</p>
+      {otherTab && counts && chip === 'needs' && (
+        <button type="button" className="ibx-linkbtn" onClick={() => setTab(otherTab)}>
+          Read the {counts.sections[otherTab].unread} unread {otherTab === 'mentions' ? `mention${counts.sections.mentions.unread === 1 ? '' : 's'}` : `update${counts.sections.updates.unread === 1 ? '' : 's'}`}
+        </button>
+      )}
+    </div>
+  ) : null;
+
+  const rows = (
+    <div role="list" ref={listRef} data-testid={`inbox-list-${tab}`} className="ibx-list"
+      aria-label={`${INBOX_TABS.find((t) => t.id === tab)!.label}: j and k to move, Enter to open, m to mark read`}>
+      {groups.map((g) => (
+        <div key={g.id} role="presentation">
+          {g.label && <div role="presentation" className={`ibx-group${g.id === 'urgent' ? ' urgent' : ''}`}>{g.label}</div>}
+          {g.items.map((i) => {
+            const on = selected?.id === i.id;
+            const stop = selected ? on : flat[0]?.id === i.id;
             return (
-              <button key={t.id} role="tab" aria-selected={on} data-testid={`inbox-tab-${t.id}`} title={t.hint} onClick={() => app.setInboxFilter(tabFilter(t.id))}
-                style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 6, padding: '7px 12px', border: 'none', borderBottom: `2px solid ${on ? 'var(--accent)' : 'transparent'}`, background: 'none', color: on ? 'var(--text)' : 'var(--text-dim)', font: 'inherit', fontSize: 13, fontWeight: on ? 700 : 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                {t.label}
-                {c && c.n > 0 && <span data-testid={`inbox-tab-count-${t.id}`} style={{ minWidth: 18, height: 18, borderRadius: 9, padding: '0 5px', boxSizing: 'border-box', fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: c.strong ? 'var(--amber)' : 'var(--accent)', color: '#fff' }}>{countLabel(c.n)}</span>}
-              </button>
+              <FeedRow key={i.id} item={i} now={now} selected={on && (twoPane || Boolean(explicit))} onOpen={(x) => select(x)} onGo={go}
+                onMarkRead={(x) => void markFeedRead(wsId, [x])} tabIndex={stop ? 0 : -1} />
             );
           })}
         </div>
-        {tab === 'needs' && (
-          <div role="group" aria-label="Show" style={{ display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto', paddingBottom: 2 }}>
-            {NEEDS_CHIPS.map((c) => {
-              const n = c.types.length ? itemsOf(page, 'needs', c.id).length : counts?.needsYou ?? 0;
-              return <button key={c.id} aria-pressed={chip === c.id} data-testid={`inbox-chip-${c.id}`} onClick={() => app.setInboxFilter(c.id)} style={{ ...btn(chip === c.id), flex: 'none', whiteSpace: 'nowrap' }}>{c.label}{n > 0 ? ` · ${n}` : ''}</button>;
-            })}
+      ))}
+    </div>
+  );
+
+  const listColumn = (
+    <div className={`ibx-col${twoPane ? ' side' : ''}`}>
+      {chipRow}
+      <div className="ibx-scroll">
+        {error && !page && <div style={{ color: 'var(--red)', fontSize: 12.5, margin: '8px 12px' }}>{error}</div>}
+        {chip === 'following' ? (
+          <div data-testid="following-list" style={{ padding: '4px 6px' }}>
+            {follows === null ? <div style={{ ...faint, padding: 8 }}>Loading…</div> : follows.length === 0
+              ? <div className="ibx-empty"><p className="ibx-empty-title">You follow nothing yet</p><p className="ibx-empty-text">Threads you start or reply to and tasks you create, own or review are followed for you; the Follow button on a thread or a task adds any other.</p></div>
+              : followingList(follows).map((i) => <FollowLine key={i.key} i={i} onOpen={openFollow} />)}
           </div>
+        ) : !page ? <div style={{ ...faint, padding: 14 }}>Loading…</div> : list.length === 0 ? empty : rows}
+        {listMode && paneChip && list.length > 0 && (
+          <button type="button" className="ibx-linkbtn" style={{ margin: '10px 16px' }} data-testid="inbox-queue" onClick={() => setQueue(true)}>Open the full {paneChip.label} queue</button>
         )}
-        {tab === 'updates' && (
-          <div role="group" aria-label="Show" style={{ display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto', paddingBottom: 2 }}>
-            <button aria-pressed={chip !== 'following'} data-testid="inbox-chip-updates" onClick={() => app.setInboxFilter('updates')} style={{ ...btn(chip !== 'following'), flex: 'none' }}>All updates</button>
-            <button aria-pressed={chip === 'following'} data-testid="inbox-chip-following" onClick={() => app.setInboxFilter('following')} style={{ ...btn(chip === 'following'), flex: 'none' }}>Everything I follow</button>
-          </div>
+        {listMode && chip === 'incidents' && (
+          <button type="button" className="ibx-linkbtn" style={{ margin: '10px 16px' }} onClick={() => { app.setOrgFocus(null); app.setOrgUnitId(null); app.setOrgPane('incidents'); }}>All incidents in Operations</button>
         )}
-        {customize && <Customize wsId={wsId} onClose={() => setCustomize(false)} />}
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: app.stacked ? '8px 6px' : '12px 12px' }}>
-        {error && !page && <div style={{ color: 'var(--red)', fontSize: 12.5, margin: '0 8px 10px' }}>{error}</div>}
-        {tab === 'history' ? (
-          <div style={{ padding: '4px 4px' }}>
-            <Suspense fallback={<div style={faint}>Loading…</div>}>
-              <InboxHistory onWaiting={(f) => app.setInboxFilter(f === 'all' ? 'needs' : f)} />
-            </Suspense>
-          </div>
-        ) : paneChip ? (
-          <div style={{ maxWidth: 820, padding: '4px 4px' }}>
-            <button style={{ ...btn(), marginBottom: 10 }} data-testid="inbox-back" onClick={() => app.setInboxFilter('needs')}>← All that needs you</button>
+    </div>
+  );
+
+  return (
+    <div ref={rootRef} className="ibx-root" onKeyDown={onKey} data-testid="inbox-root">
+      {header}
+      {customize && <Customize wsId={wsId} onClose={() => setCustomize(false)} />}
+      {keysHelp && (
+        <div className="ibx-keys" role="note" data-testid="inbox-keys-help">
+          <span><kbd className="ibx-kbd">J</kbd><kbd className="ibx-kbd">K</kbd> move</span>
+          <span><kbd className="ibx-kbd">Enter</kbd> open</span>
+          <span><kbd className="ibx-kbd">O</kbd> open where it lives</span>
+          <span><kbd className="ibx-kbd">M</kbd> mark read</span>
+          <span><kbd className="ibx-kbd">E</kbd> done, next</span>
+          <span><kbd className="ibx-kbd">A</kbd><kbd className="ibx-kbd">R</kbd> approve, reject (item open)</span>
+          <span><kbd className="ibx-kbd">Esc</kbd> close</span>
+          <button type="button" className="ibx-linkbtn" onClick={() => setKeysHelp(false)}>Hide</button>
+        </div>
+      )}
+      {tab === 'history' ? (
+        <div className="ibx-scroll" style={{ padding: app.stacked ? '12px' : '16px 20px' }}>
+          <Suspense fallback={<div style={faint}>Loading…</div>}>
+            <InboxHistory onWaiting={(f) => app.setInboxFilter(f === 'all' ? 'needs' : f)} />
+          </Suspense>
+        </div>
+      ) : showQueue && paneChip ? (
+        <div className="ibx-scroll" style={{ padding: app.stacked ? '12px' : '16px 20px' }}>
+          <div style={{ maxWidth: 860 }}>
+            <button className="ibx-ghost" style={{ marginBottom: 10 }} data-testid="inbox-back" onClick={() => setQueue(false)}><I d={P.chevL} size={15} sw={2} /> Back to the list</button>
             {!org ? <div style={faint}>Loading…</div> : (
               <Suspense fallback={<div style={faint}>Loading…</div>}>
                 {paneChip.pane === 'approvals' && <Approvals org={org} reload={async () => { await loadOrg(); void reloadFeed(wsId); }} />}
@@ -228,39 +428,20 @@ export function InboxView() {
               </Suspense>
             )}
           </div>
-        ) : chip === 'following' ? (
-          <div style={{ maxWidth: 820 }} data-testid="following-list">
-            {follows === null ? <div style={{ ...faint, padding: 8 }}>Loading…</div> : follows.length === 0
-              ? <div style={{ ...faint, padding: 8 }}>You follow nothing yet. Threads you start or reply to and tasks you create, own or review are followed for you; the Follow button on a thread or a task adds any other.</div>
-              : followingList(follows).map((i) => <FollowLine key={i.key} i={i} onOpen={openFollow} />)}
-          </div>
-        ) : !page ? <div style={{ ...faint, padding: 8 }}>Loading…</div> : (
-          <div style={{ maxWidth: 820 }}>
-            {unreadHere && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 6px 6px' }}>
-                <button style={{ background: 'none', border: 'none', color: 'var(--accent-hi)', cursor: 'pointer', fontSize: 12, fontWeight: 600 }} data-testid="inbox-mark-section"
-                  onClick={() => void markFeedRead(wsId, chip !== tab && tab === 'needs' ? list : tab)}>
-                  Mark these read
-                </button>
-              </div>
-            )}
-            {list.length === 0 ? (
-              <div data-testid="inbox-empty" style={{ ...faint, padding: '18px 10px', lineHeight: 1.5 }}>
-                {chip === 'incidents' ? 'No open incidents. Contained and resolved ones are in Operations › Incidents.' : EMPTY[tab]}
-              </div>
-            ) : (
-              <div role="list" ref={listRef} data-testid={`inbox-list-${tab}`} aria-label={`${INBOX_TABS.find((t) => t.id === tab)!.label}: ↑ ↓ to move, Enter to open, m to mark read`}>
-                {list.map((i, n) => (
-                  <FeedRow key={i.id} item={i} now={now} onOpen={open} onMarkRead={(x) => void markFeedRead(wsId, [x])} onAction={(x, a) => void act(x, a)} busy={busy.has(i.id)}
-                    tabIndex={n === Math.min(focus, list.length - 1) ? 0 : -1} onKeyDown={(e) => onKey(e, i, n)} />
-                ))}
-              </div>
-            )}
-            {chip === 'incidents' && <button style={{ ...btn(), margin: '6px 8px' }} onClick={() => { app.setOrgFocus(null); app.setOrgUnitId(null); app.setOrgPane('incidents'); }}>All incidents in Operations</button>}
-            {tab === 'needs' && list.length > 0 && <div style={{ ...faint, padding: '10px 10px 0', fontSize: 11.5 }}>Read items stay here until they are resolved. ↑ ↓ to move · Enter to open · m to mark read.</div>}
-          </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className={`ibx-body${twoPane ? ' two' : ''}`}>
+          {listColumn}
+          {twoPane && listMode && (
+            <div className="ibx-pane" data-testid="inbox-pane">
+              {selected ? (
+                <InboxDetail item={selected} now={now} stacked={false} busy={busy.has(selected.id)} onBack={explicit ? () => select(null) : undefined}
+                  onAct={(i, a, note) => void decide(i, a, note)} onGo={go} onMarkRead={(i) => void markFeedRead(wsId, [i])} onTask={(id) => app.openOrgTask(id)} />
+              ) : <InboxPaneEmpty clear={list.length === 0} />}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
