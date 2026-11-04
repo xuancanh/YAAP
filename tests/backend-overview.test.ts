@@ -294,7 +294,8 @@ test('pure helpers: what a blocker waits on, the state precedence, the team orde
   assert.equal(blockerOf(t(['legal review']), { tasksById, names, escalatedToCeo: true }).waitsOn.kind, 'ceo');
 
   const err = [{ kind: 'turn' as const, message: 'x', at: '' }];
-  assert.equal(deriveState({ errors: err, paused: true, blocked: true, doing: 'x', live: true }), 'error');
+  assert.equal(deriveState({ errors: err, paused: false, blocked: true, doing: 'x', live: true }), 'error');
+  assert.equal(deriveState({ errors: err, paused: true, blocked: true, doing: 'x', live: true }), 'paused', 'a paused seat runs nothing: paused wins over its error');
   assert.equal(deriveState({ errors: [{ kind: 'provider', message: 'x', at: '' }], paused: false, blocked: false, doing: '', live: false }), 'idle', 'a degraded provider alone is not red');
   assert.equal(deriveState({ errors: [], paused: true, blocked: true, doing: 'x', live: false }), 'paused');
   assert.equal(deriveState({ errors: [], paused: false, blocked: true, doing: 'x', live: true }), 'blocked');

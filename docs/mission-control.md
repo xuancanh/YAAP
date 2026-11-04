@@ -46,7 +46,7 @@ terminated:
 
 | Field | Meaning |
 |---|---|
-| `state` | error, paused, blocked, working or idle, in that precedence (`deriveState`) |
+| `state` | paused, error, blocked, working or idle, in that precedence (`deriveState`) |
 | `doing` | the current task, the review it owes, or "Blocked on … : reason" |
 | `errors` | the latest turn failed, an unread loop error or budget stop, a no-progress breaker, a degraded provider; each with its run (`sessionId`) or task (`taskId`) |
 | `live` | a turn running now, with the tool call in progress |

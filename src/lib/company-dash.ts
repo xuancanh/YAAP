@@ -78,6 +78,14 @@ export function flatUnits(nodes: OrgUnitNode[]): OrgUnitNode[] {
   return nodes.flatMap((n) => [n, ...flatUnits(n.children)]);
 }
 
+/** Members that run nothing: a paused seat, or every member while the company
+ *  is paused. The same set the org chart's "paused" counts (the server's
+ *  `deriveState` puts paused before an error), so the two never disagree. */
+export function pausedMembers(members: ReadonlyArray<{ status: string }>, orgStatus: string | null | undefined): number {
+  const live = members.filter((m) => m.status !== 'terminated');
+  return orgStatus === 'paused' ? live.length : live.filter((m) => m.status === 'paused').length;
+}
+
 export function peopleLede(members: number, units: number, atLimit: number): string {
   const parts = [`${plural(members, 'member')} in ${plural(units, 'team')}.`];
   parts.push(atLimit ? `${plural(atLimit, 'member')} at their work-in-progress limit.` : 'Nobody is at their limit.');

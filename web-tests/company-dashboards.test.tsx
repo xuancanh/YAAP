@@ -6,7 +6,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrgDetail, OrgIncident, OrgIntentNode, OrgSpend, OrgTask } from '../src/lib/api';
-import { boardCounts, budgetLines, capitalByGoal, directionLede, incidentHistory, laneCounts, objectivesOf, operationsLede, yesterdayKey } from '../src/lib/company-dash';
+import { boardCounts, budgetLines, capitalByGoal, directionLede, incidentHistory, laneCounts, objectivesOf, operationsLede, pausedMembers, yesterdayKey } from '../src/lib/company-dash';
 
 afterEach(cleanup);
 
@@ -188,6 +188,12 @@ describe('the summaries', () => {
     expect(operationsLede(clear, { open: 1, contained: 2 }, null)).toBe('The board is clear. 1 open incident, 2 contained.');
     const h = incidentHistory([{ id: 'a', status: 'resolved', openedAt: day(2) }, { id: 'b', status: 'open', openedAt: day(1) }, { id: 'c', status: 'contained', openedAt: day(40) }] as OrgIncident[], now);
     expect([h.opened, h.resolved, h.open, h.recent.map((i) => i.id)]).toEqual([2, 1, 2, ['a', 'c']]);
+  });
+
+  it('paused: a paused seat, or every member while the company is paused (the org chart\'s set)', () => {
+    const members = [{ status: 'active' }, { status: 'paused' }, { status: 'terminated' }];
+    expect(pausedMembers(members, 'active')).toBe(1);
+    expect(pausedMembers(members, 'paused')).toBe(2);
   });
 
   it('ranks budgets by use and sums capital per goal', async () => {

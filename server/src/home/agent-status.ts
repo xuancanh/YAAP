@@ -7,10 +7,13 @@
  *
  * The state, in order of precedence:
  *
+ *  - **paused** — its seat, or the whole company, is paused: nothing runs, so
+ *    this wins over an error (an incident pauses the member whose breaker
+ *    tripped; the error stays in `errors`). "Paused" is one concept: the
+ *    People dashboard's paused count and the org chart's are the same set;
  *  - **error** — the latest turn failed (a model name the provider rejects, a
  *    key that fails), an unread loop error or budget stop since it last ran,
  *    or a no-progress breaker on one of its tasks;
- *  - **paused** — its seat, or the whole company, is paused;
  *  - **blocked** — nothing in progress and a task of its own is blocked;
  *  - **working** — a task in progress or claimed, a review it owes, a task on
  *    its own board marked doing, or a turn running right now;
@@ -150,8 +153,8 @@ export function primaryError<E extends Pick<HomeAgentError, 'kind' | 'message' |
 
 /** The state from the facts, in the precedence the header lists. Pure. */
 export function deriveState(f: { errors: HomeAgent['errors']; paused: boolean; blocked: boolean; doing: string; live: boolean }): HomeAgentState {
-  if (f.errors.some((e) => e.kind === 'turn' || e.kind === 'breaker' || e.kind === 'loop' || e.kind === 'budget')) return 'error';
   if (f.paused) return 'paused';
+  if (f.errors.some((e) => e.kind === 'turn' || e.kind === 'breaker' || e.kind === 'loop' || e.kind === 'budget')) return 'error';
   if (f.blocked) return 'blocked';
   if (f.doing || f.live) return 'working';
   return 'idle';

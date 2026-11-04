@@ -258,11 +258,14 @@ task** (where a breaker tripped), when any of these happen:
 `server/src/home/agent-status.ts` (`agentStatuses`), the same helper behind
 an agent's page (its Overview tab) and the org chart's mission control
 (`docs/mission-control.md`), so an agent is never "working" on one screen
-and "blocked" on another. The precedence is error, paused, blocked,
+and "blocked" on another. The precedence is paused, error, blocked,
 working, idle:
 
+- **paused**: its seat or the whole company is paused. Nothing runs, so it
+  wins over an error (an incident pauses the member whose breaker tripped;
+  the error stays listed). One concept: the People dashboard's "paused" and
+  the org chart's count the same members;
 - **error**: one of the loud errors above, other than a degraded provider;
-- **paused**: its seat or the whole company is paused;
 - **blocked**: nothing in progress, and one of its tasks is blocked;
 - **working**: a task in progress or claimed, a review it owes, a task on
   its own board marked doing, or a turn running right now (the in-process

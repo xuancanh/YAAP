@@ -14,7 +14,7 @@ import {
 import { sectionDef, type CompanySection } from '../lib/company-nav';
 import {
   boardCounts, budgetLines, capitalByGoal, directionLede, findingsCount, flatUnits, incidentHistory, laneCounts, moneyLede, nextRituals, objectivesOf,
-  operationsLede, oversightLede, peopleLede, yesterdayKey,
+  operationsLede, oversightLede, pausedMembers, peopleLede, yesterdayKey,
 } from '../lib/company-dash';
 import { atRiskByUnit, firesOn, flattenIntent, MEETING_KIND_TITLES } from '../lib/org';
 import { briefSummary } from '../lib/home';
@@ -299,7 +299,7 @@ function PeopleDashboard({ org }: { org: OrgDetail }) {
   const capacity = useData<OrgCapacity>(api.orgCapacity, org.workspaceId);
   const members = org.members.filter((m) => m.status !== 'terminated');
   const units = flatUnits(app.wsOrg?.units ?? []);
-  const paused = members.filter((m) => m.status === 'paused').length;
+  const paused = pausedMembers(members, org.status);
   const chief = names.get(org.chiefOfStaffAgentId ?? '');
   const reports = (id: string) => members.filter((m) => m.reportsToAgentId === id).length;
   const leads = members.filter((m) => reports(m.agentId) > 0).sort((a, b) => a.depth - b.depth || reports(b.agentId) - reports(a.agentId)).slice(0, 5);
