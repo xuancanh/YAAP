@@ -196,6 +196,9 @@ test('the live-turn registry tells subscribers when a turn starts and ends in th
 test('pure helpers: the hash of a link, expiring soon, urgent', () => {
   const now = new Date('2026-11-04T10:00:00Z');
   assert.equal(hashOf('http://x/#/ws/a/channel/general/m1'), '#/ws/a/channel/general/m1');
+  assert.equal(hashOf('http://x/acme-1f2e3d/channels/general/m1'), '/acme-1f2e3d/channels/general/m1');
+  assert.equal(hashOf('/acme-1f2e3d/tasks/ENG-12'), '/acme-1f2e3d/tasks/ENG-12');
+  assert.equal(hashOf('http://x/'), '');
   assert.equal(hashOf('no hash'), '');
   assert.equal(hashOf(undefined), '');
   assert.equal(expiresSoon('2026-11-04T12:00:00Z', now), true);

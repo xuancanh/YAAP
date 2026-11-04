@@ -190,7 +190,7 @@ test('a unit ritual ends with minutes at /org/meetings/<unit>/<yyyy>/<day>-<kind
   assert.match(md, /## Discussion\n\n- Chief: Chief speaking in round 1\./);
   const minutes = parseMinutes(m.minutes);
   assert.match(md, new RegExp(`- \\*\\*Weekly cadence\\*\\* — Publish every Friday\\n  - Decided by Editor · decision log \`#decision:${minutes.decisions[0].decisionId!.slice(0, 8)}\`\\n  - Why: Readers expect a rhythm`));
-  assert.match(md, new RegExp(`\\| Draft issue 1 \\| Writer \\| — \\| Editor accepted the draft \\| \\[${minutes.actions[0].taskKey}\\]\\(#/ws/${s.ws.id}/org/board\\?task=${minutes.actions[0].taskId}\\) \\|`));
+  assert.match(md, new RegExp(`\\| Draft issue 1 \\| Writer \\| — \\| Editor accepted the draft \\| \\[${minutes.actions[0].taskKey}\\]\\(/${s.ws.id}/tasks/${minutes.actions[0].taskKey}\\) \\|`));
   assert.match(md, /- Question for the CEO: Do we take sponsors\? \(Writer\)\n- Risk: Sources are thin \(Editor\)/);
   assert.match(md, /## Next meeting\n\n_None scheduled/, 'no planning cadence');
   assert.match(md, /the summary is Chief's closing note/);

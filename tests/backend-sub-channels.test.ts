@@ -41,6 +41,7 @@ import { DISCUSSION_TUNABLES, deriveDiscussionTunables } from '../server/src/gro
 import { runsFreely } from '../server/src/actions/action-classes';
 import { deriveOperatingSystem, planValue } from '../server/src/org/chief-os';
 import type { AiProvider, AiRequest, AiStreamEvent } from '../server/src/ai/ai-provider.interface';
+import { spaPath } from '../server/src/common/spa-links';
 
 const whoAmI = (req: AiRequest): string => /([^,.;:]+?) \(agent, you\)/.exec(req.system ?? '')?.[1]?.trim() ?? 'agent';
 const lastUser = (req: AiRequest): string => [...req.messages].reverse().find((m) => m.role === 'user')?.content ?? '';
@@ -267,7 +268,7 @@ test('participants follow the discussion; activity counts for them; closing it r
   const events = await bobEvents();
   assert.equal(events.length, 2, 'the close is told once');
   assert.match(events.at(-1)!.body, /closed: Q1 then Q2/);
-  assert.match(JSON.parse(events.at(-1)!.payload).link, new RegExp(`#/ws/${s.ws.id}/channel/${sub.slug}`));
+  assert.equal(JSON.parse(events.at(-1)!.payload).link, spaPath.channel(s.ws.id, sub.slug));
   assert.ok((await s.db.select().from(follows).where(eq(follows.targetId, sub.id))).every((r) => r.closedAt), 'every follow knows it closed');
 });
 

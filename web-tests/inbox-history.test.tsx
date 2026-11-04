@@ -70,7 +70,9 @@ describe('history helpers (pure)', () => {
     expect(historyTarget(item({ kind: 'keys', link: { type: 'action', id: 'x', sessionId: 's' } }))).toEqual({ to: 'chat', sessionId: 's' });
     expect(historyTarget(item({ kind: 'escalations', link: { type: 'approval', id: 'a' } }))).toEqual({ to: 'inbox', filter: 'escalations' });
     expect(historyTarget(item({ link: { type: 'incident', id: 'i' } }))).toEqual({ to: 'pane', pane: 'incidents', focus: { kind: 'incident', id: 'i' } });
-    expect(historyTarget(item({ link: { type: 'thread', id: 'm', href: 'http://h/#/ws/ws1/channel/general/m' } }))).toEqual({ to: 'hash', hash: '#/ws/ws1/channel/general/m' });
+    // the link as written (a path, or an older hash link); routes.ts `navigate` opens either
+    expect(historyTarget(item({ link: { type: 'thread', id: 'm', href: 'http://h/#/ws/ws1/channel/general/m' } }))).toEqual({ to: 'hash', hash: 'http://h/#/ws/ws1/channel/general/m' });
+    expect(historyTarget(item({ link: { type: 'thread', id: 'm', href: '/acme-ws1/channels/general/m' } }))).toEqual({ to: 'hash', hash: '/acme-ws1/channels/general/m' });
     expect(historyFrom(0)).toBeUndefined();
     expect(historyFrom(7, new Date('2026-11-08T00:00:00Z'))).toBe('2026-11-01T00:00:00.000Z');
     expect(outcomeColor('vetoed')).toBe('var(--red)');

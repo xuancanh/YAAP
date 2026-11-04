@@ -6,6 +6,7 @@
 import { cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { byDay, dayKey, monthGrid, rangeFor, splitList, weekDays } from '../src/lib/meetings';
+import { MEETING_EVENT, type MeetingEventDetail } from '../src/lib/routes';
 import type { CalendarMeeting, CalendarResponse } from '../src/lib/api';
 
 const fake: Record<string, unknown> = {};
@@ -89,9 +90,12 @@ describe('MeetingsBoard', () => {
     expect(rows[0]).toMatch(/every weekday at|Mon/);
     fireEvent.click(within(screen.getAllByTestId('meeting-row')[2]).getByRole('button', { name: 'Minutes' }));
     expect(fake.openFile).toHaveBeenCalledWith({ kind: 'workspace', id: 'ws1' }, 'org/meetings/2026/2026-11-02-company-weekly-review.md');
+    const rooms: MeetingEventDetail[] = [];
+    const onRoom = (e: Event) => { rooms.push((e as CustomEvent<MeetingEventDetail>).detail); };
+    window.addEventListener(MEETING_EVENT, onRoom);
     fireEvent.click(within(screen.getAllByTestId('meeting-row')[2]).getByRole('button', { name: 'View' }));
-    expect(window.location.hash).toBe('#/ws/ws1/meeting/past1'); // the full-screen room, its summary
-    window.location.hash = '';
+    expect(rooms).toEqual([{ workspaceId: 'ws1', meetingId: 'past1' }]); // the full-screen room, its summary
+    window.removeEventListener(MEETING_EVENT, onRoom);
     fireEvent.click(screen.getByRole('button', { name: 'Standup · Writer' }));
     const dialog = screen.getByRole('dialog', { name: 'Standup · Writer details' });
     expect(dialog.textContent).toMatch(/Facilitator Chief/);

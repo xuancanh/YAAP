@@ -35,6 +35,7 @@ import { BUILTIN_SKILLS } from '../server/src/skills/builtin-skills';
 import { testDb, memStorage, ctxStub, skillsStub, mcpStub, pgliteQueryable, ScriptedProvider } from './helpers';
 import type { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import { setAddressLookup } from '../server/src/common/url-guard';
+import { spaPath } from '../server/src/common/spa-links';
 
 setAddressLookup(async () => [{ address: '93.184.216.34', family: 4 }]);
 
@@ -175,7 +176,7 @@ test('a tagged person gets one addressed inbox event with the task deep link and
   assert.ok(bob && owner, 'the member\'s event is addressed to them; the owner\'s is the account\'s own');
   assert.equal(bob.title, `${t.key} · Writer mentioned you`);
   const payload = JSON.parse(bob.payload) as { link: string; taskId: string };
-  assert.match(payload.link, new RegExp(`#/ws/${s.ws.id}/org/board\\?task=${t.id}$`));
+  assert.ok(payload.link.endsWith(spaPath.task(s.ws.id, t.key!, s.ws.name)), payload.link);
   assert.equal(payload.taskId, t.id);
   assert.equal(bob.channel, 1, 'pushed through the person\'s pairings (under quiet hours)');
   assert.equal((await followRow(s, 'user', 'm-bob', t.id))?.reason, 'mentioned');

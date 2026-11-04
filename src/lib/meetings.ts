@@ -3,6 +3,7 @@
  *  are the viewer's local time; weeks start on Monday. */
 import { useEffect, useState } from 'react';
 import { api, type CalendarMeeting, type ChannelMessage, type MeetingRoomState, type Minutes } from './api';
+import { companyIdOf, readLocation, MEETING_EVENT, type MeetingEventDetail } from './routes';
 
 /** `yyyy-mm-dd` in local time. */
 export function dayKey(d: Date): string {
@@ -225,9 +226,11 @@ export function saveDrawer(viewer: string, open: boolean): void {
   try { localStorage.setItem(`${DRAWER_KEY}:${viewer}`, open ? '1' : '0'); } catch { /* private mode: not remembered */ }
 }
 
-// ---- the full-screen room route: #/ws/<workspaceId>/meeting/<meetingId> ----
+// ---- the full-screen room route: /<company>/meetings/<meetingId> ----
+// (docs/routes.md; the older `#/ws/<workspaceId>/meeting/<meetingId>` redirects there)
 
 export interface MeetingRoute { workspaceId: string | null; meetingId: string }
+/** The older hash form, still in stored messages and notifications. */
 export function parseMeetingHash(hash: string): MeetingRoute | null {
   const m = /^#\/(?:ws\/([\w-]+)\/)?meeting\/([\w-]+)\/?$/.exec(hash ?? '');
   return m ? { workspaceId: m[1] ?? null, meetingId: m[2] } : null;
@@ -235,31 +238,35 @@ export function parseMeetingHash(hash: string): MeetingRoute | null {
 export function meetingHash(workspaceId: string, meetingId: string): string {
   return `#/ws/${workspaceId}/meeting/${meetingId}`;
 }
-/** Open the full-screen room (a history entry: Back closes it). */
+/** The meeting the address names, if any. */
+function meetingOfLocation(): MeetingRoute | null {
+  const r = readLocation(window.location);
+  return r?.place.kind === 'meeting' ? { workspaceId: r.company ? companyIdOf(r.company) : null, meetingId: r.place.id } : null;
+}
+const meetingEvent = (detail: MeetingEventDetail) => window.dispatchEvent(new CustomEvent<MeetingEventDetail>(MEETING_EVENT, { detail }));
+/** Open the full-screen room (a history entry: Back closes it). The store
+ *  owns the room and writes the address (src/store.tsx). */
 export function openMeetingView(workspaceId: string, meetingId: string): void {
-  const hash = meetingHash(workspaceId, meetingId);
-  if (window.location.hash === hash) return;
-  window.history.pushState({ meetingView: true }, '', `${window.location.pathname}${window.location.search}${hash}`);
-  window.dispatchEvent(new HashChangeEvent('hashchange'));
+  meetingEvent({ workspaceId, meetingId });
 }
-/** Close it: drop the hash at once (synchronously, so a navigation made in
- *  the same click lands on its own place; the browser's Back also closes it). */
+/** Close it at once (synchronously, so a navigation made in the same click
+ *  lands on its own place); the address returns to what is underneath. */
 export function closeMeetingView(): void {
-  if (!parseMeetingHash(window.location.hash)) return;
-  window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
-  window.dispatchEvent(new HashChangeEvent('hashchange'));
+  meetingEvent({ workspaceId: '', meetingId: null });
 }
-/** The meeting the address names, following hash changes and Back. */
+/** The meeting on screen, following Expand, Close, and Back and Forward. */
 export function useMeetingRoute(): MeetingRoute | null {
-  const [route, setRoute] = useState(() => parseMeetingHash(window.location.hash));
+  const [route, setRoute] = useState(meetingOfLocation);
   useEffect(() => {
-    const on = () => setRoute((cur) => {
-      const next = parseMeetingHash(window.location.hash);
-      return cur && next && cur.meetingId === next.meetingId && cur.workspaceId === next.workspaceId ? cur : next;
-    });
-    window.addEventListener('hashchange', on);
-    window.addEventListener('popstate', on);
-    return () => { window.removeEventListener('hashchange', on); window.removeEventListener('popstate', on); };
+    const keep = (next: MeetingRoute | null) => setRoute((cur) => (cur && next && cur.meetingId === next.meetingId && cur.workspaceId === next.workspaceId ? cur : next));
+    const onNav = () => keep(meetingOfLocation());
+    const onEvent = (e: Event) => {
+      const d = (e as CustomEvent<MeetingEventDetail>).detail;
+      keep(d?.meetingId ? { workspaceId: d.workspaceId || null, meetingId: d.meetingId } : null);
+    };
+    window.addEventListener('popstate', onNav);
+    window.addEventListener(MEETING_EVENT, onEvent);
+    return () => { window.removeEventListener('popstate', onNav); window.removeEventListener(MEETING_EVENT, onEvent); };
   }, []);
   return route;
 }

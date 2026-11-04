@@ -29,6 +29,23 @@ describe('Markdown', () => {
     expect(a).toHaveTextContent('docs');
   });
 
+  it('renders links into the app (paths, and the older #/ws/… links agents wrote) as in-place links to their path', () => {
+    window.history.replaceState(null, '', '/acme-ws1/chat');
+    let popped = 0;
+    const onPop = () => { popped += 1; };
+    window.addEventListener('popstate', onPop);
+    const { container } = render(<Markdown text={'Task [ENG-12](#/ws/w1/org/board?task=t1), room [here](/acme-ws1/meetings/m1), [x](//evil.example/a)'} />);
+    const links = [...container.querySelectorAll('a')];
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(['/w1/tasks/t1', '/acme-ws1/meetings/m1']);
+    expect(links[0].getAttribute('target')).toBeNull();
+    expect(container.textContent).toContain('[x](//evil.example/a)');
+    fireEvent.click(links[1]);
+    expect(window.location.pathname).toBe('/acme-ws1/meetings/m1');
+    expect(popped).toBe(1); // the store follows the address
+    window.removeEventListener('popstate', onPop);
+    window.history.replaceState(null, '', '/');
+  });
+
   it('does not render javascript: URLs as hrefs or images (security)', () => {
     const { container } = render(<Markdown text={'click [me](javascript:alert(1)) now ![x](javascript:alert(2))'} />);
     expect(container.querySelector('a')).toBeNull();

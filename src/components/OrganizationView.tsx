@@ -11,7 +11,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } fro
 import { useApp, type OrgPane } from '../store';
 import { sectionDef, sectionOfPane, type CompanySection } from '../lib/company-nav';
 import { hopLine, inReviewBelow, managerHops, waitsOnViewer } from '../lib/decisions';
-import { orgTaskHash, taskOfHash } from '../lib/links';
 import { isTaskKey, keyStyle, matchesTaskRef } from '../lib/task-keys';
 import {
   api, ORG_TASK_STATUSES, type Agent, type ChannelMessage, type HumanRole, type OrgApproval, type OrgAuditRow, type OrgBrief, type OrgDetail, type OrgGoalNode, type OrgHuman, type OrgMember, type OrgMessage, type OrgRun,
@@ -377,54 +376,44 @@ function Board({ org }: { org: OrgDetail }) {
     setLoaded(true);
   }, [org.workspaceId, current, rolled, isCompany]);
   useEffect(() => { void reload(); const t = setInterval(() => { void reload(); }, 15_000); return () => clearInterval(t); }, [reload]);
-  // A task link (#/ws/<id>/org/board?task=<id>), a signal row or a minutes
-  // card asked for one task: open its drawer once the board has loaded, and
-  // fetch the task when it is not on this board (another unit, or closed).
+  // A task in the address (/<company>/tasks/<key>), a signal row or a
+  // minutes card asked for one task: open its drawer once the board has
+  // loaded, and fetch the task when it is not on this board (another unit,
+  // or closed).
   const focusId = app.orgFocus?.kind === 'task' ? app.orgFocus.id : null;
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     if (!focusId || !loaded) return;
     const t = tasks.find((x) => matchesTaskRef(x, focusId));
     app.setOrgFocus(null);
     // Opened from inside the app (a signal row, a minutes card): put it in the address too.
-    if (taskOfHash(window.location.hash) !== focusId) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${orgTaskHash(org.workspaceId, focusId)}`);
+    if (app.routeTask !== focusId) app.setRouteTask(focusId, { replace: true });
+    // A key or prefix in the address becomes the task's key (or id) once found.
+    const canonical = (x: OrgTask) => { if (x.key && focusId !== x.key && focusId !== x.id) app.setRouteTask(x.key, { replace: true }); };
     if (t) {
       setOpen(t); if (t.status === 'done' || t.status === 'cancelled') setShowCold(true);
-      // A key or prefix in the address becomes the task's key (or id) once found.
-      if (t.key && focusId !== t.key && focusId !== t.id) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${orgTaskHash(org.workspaceId, t.key)}`);
+      canonical(t);
       return;
     }
-    let live = true;
+    // (Clearing the focus re-renders with a new `app`: only leaving the board drops the answer.)
     api.orgTask(org.workspaceId, focusId)
-      .then((found) => { if (live) setOpen(found); })
-      .catch(() => { if (live) app.showToast(`Task ${isTaskKey(focusId) ? focusId.toUpperCase() : focusId.slice(0, 8)} was not found`); });
-    return () => { live = false; };
+      .then((found) => { if (alive.current) { setOpen(found); canonical(found); } })
+      .catch(() => { if (alive.current) app.showToast(`Task ${isTaskKey(focusId) ? focusId.toUpperCase() : focusId.slice(0, 8)} was not found`); });
   }, [focusId, loaded, tasks, app, org.workspaceId]);
-  // The open drawer is in the address bar (back, forward and reload work);
-  // the address moving off it (back) closes the drawer.
+  // The open drawer is in the address (back, forward and reload work):
+  // opening and closing it are history entries, and the address moving off
+  // it (back) closes the drawer.
   const openTask = (t: OrgTask) => {
     setOpen(t);
-    const hash = orgTaskHash(org.workspaceId, t.key || t.id);
-    if (window.location.hash !== hash) window.history.pushState(null, '', `${window.location.pathname}${window.location.search}${hash}`);
+    const key = t.key || t.id;
+    if (app.routeTask !== key) app.setRouteTask(key);
   };
   const closeTask = () => {
     setOpen(null);
-    if (taskOfHash(window.location.hash)) window.history.pushState(null, '', `${window.location.pathname}${window.location.search}`);
+    if (app.routeTask) app.setRouteTask(null);
   };
-  const mounted = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    const onHash = () => { if (!taskOfHash(window.location.hash)) setOpen(null); };
-    window.addEventListener('hashchange', onHash);
-    window.addEventListener('popstate', onHash);
-    return () => {
-      mounted.current = false;
-      window.removeEventListener('hashchange', onHash);
-      window.removeEventListener('popstate', onHash);
-      // Leaving the board: a task link left behind would reopen on reload.
-      // (Deferred: StrictMode's remount is not a leave.)
-      setTimeout(() => { if (!mounted.current && taskOfHash(window.location.hash)) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`); }, 0);
-    };
-  }, []);
+  useEffect(() => { if (!app.routeTask) setOpen(null); }, [app.routeTask]);
   const cols = ORG_TASK_STATUSES.filter((s) => showCold || (s !== 'done' && s !== 'cancelled'));
   const projectsById = new Map(org.projects.map((p) => [p.id, p]));
   const shown = projectFilter ? tasks.filter((t) => t.projectId === projectFilter) : tasks;

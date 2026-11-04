@@ -83,6 +83,7 @@ import {
   type ItemEnd, type MeetingRoom,
 } from './meeting-room';
 import { OrgMeetingMinutesService, type Narration, type WriteMinutesInput } from './meeting-minutes.service';
+import { spaPath } from '../common/spa-links';
 
 export type MeetingRunResult = 'ran' | 'postponed' | 'cancelled' | `refused:${string}` | `skipped:${string}`;
 
@@ -387,7 +388,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     const channels = this.announcer.meetings;
     const ch = channels && m.channelId ? await channels.channelInfo(m.channelId).catch(() => null) : null;
     const base = (this.config.get<string>('publicAppUrl') ?? 'http://localhost:5175').replace(/\/+$/, '');
-    const link = ch ? `${base}/#/ws/${org.workspaceId}/channel/${ch.slug}` : `${base}/#/ws/${org.workspaceId}`;
+    const link = `${base}${ch ? spaPath.channel(org.workspaceId, ch.slug) : spaPath.home(org.workspaceId)}`;
     const owner = currentAccountId();
     const people = parseAttendees(m.attendees).filter((a) => a.kind === 'human');
     const room = parseRoom(m.room);

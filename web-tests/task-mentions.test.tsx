@@ -4,7 +4,6 @@
  *  snippets (Inbox, Home) draw `@names` of members and people as chips. */
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { orgTaskHash } from '../src/lib/links';
 
 const fake: Record<string, unknown> = {};
 vi.mock('../src/store', () => ({ useApp: () => fake, grad: () => 'none' }));
@@ -52,9 +51,10 @@ beforeEach(() => {
     orgPane: 'board', orgUnitId: null, orgHeldActions: 0, stacked: false, me: { actorId: 'single' },
     orgFocus: { kind: 'task', id: 'abc12345' },
     setOrgFocus: vi.fn((v: unknown) => { fake.orgFocus = v; }), setOrgPane: vi.fn(), setOrgUnitId: vi.fn(), setMobileDetail: vi.fn(),
+    routeTask: null, setRouteTask: vi.fn((k: unknown) => { fake.routeTask = k; }),
     refreshWsOrg: vi.fn(async () => undefined), showToast: vi.fn(), nameOf: (id: string) => id, openOrgTask: vi.fn(), openAgent: vi.fn(), openFile: vi.fn(),
   });
-  window.history.replaceState(null, '', `/${orgTaskHash('ws1', 'abc12345')}`);
+  window.history.replaceState(null, '', '/ws1/tasks/abc12345');
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
 

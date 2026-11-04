@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CalendarMeeting, OrgMeeting } from '../src/lib/api';
 import { parseRoom, proposalFor, resetRoomStanding, seats, tokensText } from '../src/lib/meetings';
+import { MEETING_EVENT, type MeetingEventDetail } from '../src/lib/routes';
 
 const fake: Record<string, unknown> = {};
 vi.mock('../src/store', () => ({ useApp: () => fake, grad: () => 'none' }));
@@ -184,11 +185,16 @@ describe('MeetingsBoard', () => {
     render(<MeetingsBoard wsId="ws1" channel="company" startIn={{ id: 'c1', slug: 'company' }} />);
     await waitFor(() => expect(screen.getAllByTestId('meeting-row')).toHaveLength(2));
     expect(screen.getAllByTestId('meeting-cost').map((e) => e.textContent)).toEqual([' · 1.2k tokens · $0.05', ' · 12.0k tokens · $0.42']);
+    // the full-screen room opens through the store (src/lib/meetings.ts → /<company>/meetings/<id>)
+    const rooms: MeetingEventDetail[] = [];
+    const onRoom = (e: Event) => { rooms.push((e as CustomEvent<MeetingEventDetail>).detail); };
+    window.addEventListener(MEETING_EVENT, onRoom);
     fireEvent.click(screen.getByRole('button', { name: 'Join' }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith('/org/meetings/run/join'))).toBe(true));
-    expect(window.location.hash).toBe('#/ws/ws1/meeting/run');
+    expect(rooms.at(-1)).toEqual({ workspaceId: 'ws1', meetingId: 'run' });
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
-    expect(window.location.hash).toBe('#/ws/ws1/meeting/old');
+    expect(rooms.at(-1)).toEqual({ workspaceId: 'ws1', meetingId: 'old' });
+    window.removeEventListener(MEETING_EVENT, onRoom);
     fireEvent.click(screen.getByRole('button', { name: 'Start meeting' }));
     expect(screen.getByRole('dialog', { name: 'Start a meeting' })).toBeTruthy();
   });

@@ -48,6 +48,14 @@ const INBOX_PANES: Partial<Record<OrgPane, InboxFilter>> = { approvals: 'approva
 
 export const isCompanySection = (s: string | null | undefined): s is CompanySection => (COMPANY_SECTION_IDS as string[]).includes(s ?? '');
 
+/** Every organization page id (the store re-exports it; the router reads it). */
+export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents', 'roadmap', 'teams'];
+export const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
+/** Panes folded into Artifacts (playbooks, experiments, evals, outcomes and
+ *  metrics are mirrored as files under /org/; docs/filesystem.md): a link to
+ *  one of them opens the Artifacts section instead. */
+export const ORG_PANES_IN_ARTIFACTS = ['ask', 'playbooks', 'metrics', 'experiments', 'outcomes', 'evals'];
+
 export function sectionDef(id: CompanySection): CompanySectionDef {
   return COMPANY_SECTIONS.find((s) => s.id === id) ?? COMPANY_SECTIONS[0];
 }

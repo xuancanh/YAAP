@@ -34,6 +34,7 @@ import { normalizeTaskKey } from '../common/task-keys';
 import { currentAccountId } from '../accounts/account-context';
 import { deliveryFor } from '../workspaces/quiet-hours';
 import { followTunable } from './follow-tunables';
+import { spaPath } from '../common/spa-links';
 
 export type FollowerKind = 'agent' | 'user';
 /** `channel`: a sub-channel — a discussion or a meeting (docs/group-chat.md §9). */
@@ -411,7 +412,7 @@ export class FollowsService {
         const member = (await this.db.execute(sql`SELECT 1 FROM channel_members WHERE "channelId" = ${hit.id} AND "memberKind" = 'agent' AND "memberId" = ${forAgentId} LIMIT 1`)).rows.length > 0;
         if (!member) throw new NotFoundException(`no discussion "${slug}" in this workspace`);
       }
-      return { kind: 'channel', id: hit.id, workspaceId, title: `#${hit.slug}: ${hit.name}`.slice(0, 200), link: `#/ws/${workspaceId}/channel/${hit.slug}` };
+      return { kind: 'channel', id: hit.id, workspaceId, title: `#${hit.slug}: ${hit.name}`.slice(0, 200), link: spaPath.channel(workspaceId, hit.slug) };
     }
     throw new BadRequestException('kind must be thread, task or discussion');
   }
@@ -443,12 +444,12 @@ export function labelOf(kind: FollowTargetKind, id: string, title: string): stri
 function keyedTitle(title: string, key?: string | null): string { return key ? `${key} ${title}` : title; }
 
 export function threadTarget(workspaceId: string, slug: string, rootId: string, rootText: string): FollowTarget {
-  return { kind: 'thread', id: rootId, workspaceId, title: `#${slug}: ${rootText.replace(/\s+/g, ' ').trim().slice(0, 60)}`, link: `#/ws/${workspaceId}/channel/${slug}/${rootId}` };
+  return { kind: 'thread', id: rootId, workspaceId, title: `#${slug}: ${rootText.replace(/\s+/g, ' ').trim().slice(0, 60)}`, link: spaPath.channel(workspaceId, slug, rootId) };
 }
 
-/** The SPA deep link to one org task: the Company board with its drawer open. */
+/** The SPA link to one org task (`/<workspaceId>/tasks/<id>`, docs/routes.md): Operations › Board with its drawer open. */
 export function orgTaskLink(workspaceId: string, taskId: string): string {
-  return `#/ws/${workspaceId}/org/board?task=${encodeURIComponent(taskId)}`;
+  return spaPath.task(workspaceId, taskId);
 }
 
 export function orgTaskTarget(workspaceId: string, taskId: string, title: string, key?: string | null): FollowTarget {

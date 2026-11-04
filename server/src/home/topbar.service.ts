@@ -58,11 +58,18 @@ const NEED_KIND: Record<HomeNeed['kind'], NotificationKind> = {
 
 const safe = <T,>(raw: string | null | undefined, fallback: T): T => { try { return raw ? (JSON.parse(raw) as T) : fallback; } catch { return fallback; } };
 
-/** The `#/…` part of an SPA link (events carry absolute URLs), or ''. */
+/** The in-app part of an SPA link (events carry absolute URLs), or '': the
+ *  path (`/<company>/channels/…`, docs/routes.md), or an older `#/…` link
+ *  as it was (the SPA redirects those). */
 export function hashOf(link: unknown): string {
   if (typeof link !== 'string') return '';
   const i = link.indexOf('#/');
-  return i >= 0 ? link.slice(i) : '';
+  if (i >= 0) return link.slice(i);
+  let path = link.trim();
+  if (/^https?:\/\//i.test(path)) {
+    try { const u = new URL(path); path = `${u.pathname}${u.search}`; } catch { return ''; }
+  }
+  return path.startsWith('/') && !path.startsWith('//') && path.length > 1 ? path : '';
 }
 
 /** Whether a card's default applies within 6 hours (and has not yet). */

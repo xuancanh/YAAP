@@ -964,15 +964,16 @@ The full threat model is [security.md](security.md). The mechanisms:
   | `settings` | Settings | |
   | `agents` | (none) | the full directory, linked from Home |
 
-- **Navigation and deep links.** There is no router library in use;
-  navigation is `app.go(section)` plus query parameters (`?section=`,
-  `?agent=`, `?org=`, `?workspace=`, `?pane=`, and legacy aliases) and hash
-  links handled by a `hashchange` listener: `#/chat/<sessionId>`,
-  `#/ws/<id>/org/<pane>`, `#/ws/<id>/org/board?task=<taskId>`
-  (`src/lib/links.ts`) and `#/ws/<id>/channel/<slug>[/<messageId>]`
-  (`src/lib/channels.ts`). Links to the panes in `ORG_PANES_IN_ARTIFACTS`
-  (`ask`, `playbooks`, `metrics`, `experiments`, `outcomes`, `evals`) open
-  Artifacts.
+- **Navigation and deep links.** Path routes, company first
+  (`/<company>/channels/<slug>`, `/<company>/tasks/<key>`; the table is in
+  docs/routes.md). No router library: `src/lib/routes.ts` parses and builds
+  addresses, and the store derives its navigation state from the address
+  and writes it back on every navigation (`pushState`; `replaceState` for
+  filters and rewrites), following Back and Forward (`popstate`). The
+  older query (`?section=`, `?org=`, `?workspace=`, …) and hash
+  (`#/chat/<id>`, `#/ws/<id>/…`) links redirect once to their path. Links
+  to the panes in `ORG_PANES_IN_ARTIFACTS` (`ask`, `playbooks`, `metrics`,
+  `experiments`, `outcomes`, `evals`) open Artifacts.
 - **`src/lib`.** `api.ts` (typed client and stream readers), `schemas.ts`
   (loose zod checks), `md.tsx` (markdown), `sandbox.ts` (CSP and
   `sealHtml`), `artifacts.ts` (tree grouping into Shared and Agents),

@@ -11,10 +11,14 @@ import {
   type BrowserStep, type WorkspaceOrg, type SharedWorkspace, type WorkspaceMe, type Channel, type WorkspaceEvent,
   type OrgIntentNode, type OrgCadence, type OrgHealth,
 } from './lib/api';
-import { isChannelSession, parseChannelHash } from './lib/channels';
-import { orgTaskHash, parseOrgHash } from './lib/links';
+import { isChannelSession } from './lib/channels';
 import type { InboxFilter } from './lib/inbox';
 import { isCompanySection, paneHome, LEGACY_COMPANY_SECTION, type CompanySection } from './lib/company-nav';
+import { resolveAgentTab } from './lib/agent-tabs';
+import {
+  agentTabSlug, companySlug, navOf, placeOf, readLocation, rememberCompanies, resolveCompany, routeHref, MEETING_EVENT,
+  type FoundryPlace, type MeetingEventDetail, type Place, type Route,
+} from './lib/routes';
 
 /** A workspace in the picker: one of ours, or one shared with us (then
  *  `shared` names the owner and our role; docs/shared-agents.md). */
@@ -32,13 +36,9 @@ export type Section = 'home' | 'overview' | 'agents' | 'inbox' | CompanySection 
  *  company). Each lives in exactly one company section, or in the Inbox. */
 export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'plans' | 'replay' | 'capital' | 'mytasks'
   | 'incidents' | 'roadmap' | 'teams';
-export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents', 'roadmap', 'teams'];
+export { ORG_PANES, ORG_PANES_IN_ARTIFACTS } from './lib/company-nav';
 /** The section a section id opens: the legacy Company id opens Operations. */
 export const resolveSection = (s: Section): Exclude<Section, 'workspace'> => (s === 'workspace' ? LEGACY_COMPANY_SECTION : s);
-/** Panes folded into Artifacts (playbooks, experiments, evals, outcomes and
- *  metrics are mirrored as files under /org/; docs/filesystem.md): a link to
- *  one of them opens the Artifacts section instead. */
-export const ORG_PANES_IN_ARTIFACTS = ['ask', 'playbooks', 'metrics', 'experiments', 'outcomes', 'evals'];
 /** Something a pane should open or scroll to once loaded (a signal row's
  *  deep link, docs/company-vision.md §5): a task on the board, a goal on the
  *  vision page, a meeting thread, a plan, a replay day (the id is the
@@ -46,7 +46,6 @@ export const ORG_PANES_IN_ARTIFACTS = ['ask', 'playbooks', 'metrics', 'experimen
  *  MissionOnly such as `error`, from the top bar's failing count). Consumed
  *  by the pane. */
 export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'replay' | 'incident' | 'action' | 'project' | 'mission'; id: string }
-const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
 /** What the main pane shows while in the Home section: a conversation, a
  *  group-chat channel, an agent's home page (or the directory when no agent
  *  is selected), or a file preview — all reachable from the one combined
@@ -248,10 +247,21 @@ interface Store {
   followAttention: number;
   /** Unread messages agents sent me with message_owner (docs/agent-messages.md): they count in the Inbox badge. */
   unreadMessages: number;
-  /** Open one org task: the Company board with its drawer, through the task
-   *  deep link (`#/ws/<id>/org/board?task=<id>`) so back, forward and reload
-   *  work. Fetches the task when it is not on the loaded board. */
+  /** Open one org task: Operations › Board with its drawer, at
+   *  `/<company>/tasks/<key>` so back, forward and reload work. The board
+   *  fetches the task when it is not on the loaded board. */
   openOrgTask: (taskId: string) => void;
+  /** The task whose drawer the address names (`/<company>/tasks/<key>`); the
+   *  board sets it when a drawer opens or closes (a history entry unless
+   *  `replace`), and closes its drawer when Back clears it. */
+  routeTask: string | null; setRouteTask: (key: string | null, opts?: { replace?: boolean }) => void;
+  /** The same for a project page on the Roadmap (`/<company>/projects/<key>`). */
+  routeProject: string | null; setRouteProject: (key: string | null, opts?: { replace?: boolean }) => void;
+  /** The agent page's tab in the address (`/<company>/agents/<id>/<tab>`); AgentHome reports it. */
+  setAgentTab: (slug: string | null) => void;
+  /** The full-screen meeting room on screen (`/<company>/meetings/<id>`),
+   *  over whatever was open; src/lib/meetings.ts opens and closes it. */
+  meetingId: string | null;
   inboxFilter: InboxFilter; setInboxFilter: (f: InboxFilter) => void;
   orgFocus: OrgFocus | null; setOrgFocus: (v: OrgFocus | null) => void;
 
@@ -290,6 +300,18 @@ export const gradPair = (pair: [string, string]): string => `linear-gradient(140
 function openableIn(s: ChatSession | null | undefined, ws: string | null | undefined): boolean {
   return !!s && s.workspaceId === ws && !s.archivedAt && (s.kind === 'work' || !isChannelSession(s));
 }
+/** An agent tab name (any it has had) as its address segment; the default tab has none. */
+function resolvedTabSlug(name: string): string | null {
+  const t = resolveAgentTab(name)?.tab;
+  return t && t !== 'Overview' ? agentTabSlug(t) : null;
+}
+
+/** The company opened last in this browser: `/` lands there. */
+const LAST_COMPANY_KEY = 'yaam-last-company';
+function readLastCompany(): string | null {
+  try { return localStorage.getItem(LAST_COMPANY_KEY); } catch { return null; }
+}
+
 /** `#/chat/<id>` and its alias `#/chat/<id>/chat` open the session in the
  *  chat view, whatever its kind; `#/chat/<id>/log` opens a work session's
  *  timeline in the agent's Work log (its id joins `asLog`). */
@@ -307,33 +329,26 @@ export interface WorkLogFocus { agentId: string; sessionId?: string; turnId?: st
 export function AppProvider({ children }: { children: ReactNode }) {
   const [width, setWidth] = useState(window.innerWidth);
   const [theme, setTheme] = useState(localStorage.getItem('yaam-theme') || 'dark');
-  // legacy deep links (?section=chats|agents|files) land in Home with the
-  // matching main view — used by headless screenshot verification too.
-  const [section, setSection] = useState<Section>(() => {
-    const p = new URLSearchParams(window.location.search);
-    const q = p.get('section');
-    const org = p.get('org');
-    if (org && ORG_PANES_IN_ARTIFACTS.includes(org)) return 'artifacts';
-    // ?org=<pane> opens the pane where it lives now: a company section or the Inbox.
-    if (isOrgPane(org)) return paneHome(org).section;
-    if (q === 'market' || q === 'settings' || q === 'overview' || (q === 'agents' && !p.get('agent')) || q === 'inbox' || q === 'artifacts' || q === 'apps') return q;
-    if (isCompanySection(q)) return q;
-    if (q === 'workspace' || q === 'company') return LEGACY_COMPANY_SECTION; // legacy: the one Company section
-    if (q === 'foundry') return 'market'; // Foundry is the Market's new name; `?section=market` keeps working above
-    if (q === 'files') return 'artifacts';
-    if (q === 'chats' || (q === 'agents' && p.get('agent'))) return 'home';
-    return 'overview'; // Home is the landing page
+  // The address names the company and the place (src/lib/routes.ts,
+  // docs/routes.md); every older link form (?section=, ?org=, #/ws/…,
+  // #/chat/…) reads as a route too. The first render shows the place; the
+  // company resolves once the workspace list loads, and the address is
+  // rewritten to its canonical path then.
+  const [boot] = useState(() => {
+    const route = readLocation(window.location);
+    const nav = navOf(route?.place ?? { kind: 'home' });
+    return { route, nav };
   });
-  const [homeView, setHomeView] = useState<HomeView>(() => {
-    const q = new URLSearchParams(window.location.search).get('section');
-    return q === 'agents' ? 'agent' : q === 'files' ? 'file' : 'chat';
-  });
-  const [mobileChatOpen, setMobileChatOpen] = useState(false);
-  const [mobileDetail, setMobileDetail] = useState(false);
+  const [section, setSection] = useState<Section>(boot.nav.section ?? 'overview'); // Home is the landing page
+  const [homeView, setHomeView] = useState<HomeView>(boot.nav.homeView ?? 'chat');
+  const [mobileChatOpen, setMobileChatOpen] = useState(boot.nav.mobileChatOpen ?? false);
+  const [mobileDetail, setMobileDetail] = useState(boot.nav.mobileDetail ?? false);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>([]);
+  const workspacesRef = useRef(workspaces);
+  workspacesRef.current = workspaces;
   const [workspaceId, setWorkspaceId] = useState('');
   const [me, setMe] = useState<WorkspaceMe | null>(null);
   /** Ids of workspaces shared with us, for the request header. */
@@ -352,6 +367,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /** Ids looked up by id (an open chat on no loaded page): pending or done. */
   const probed = useRef(new Map<string, 'pending' | 'missing' | 'found'>());
   const [probeTick, setProbeTick] = useState(0);
+  /** The workspace whose rail has loaded (a linked chat is looked up only then). */
+  const railFor = useRef<string | null>(null);
   /** Every openable session loaded: the rail's chats and work sessions and
    *  the open ones beyond the loaded pages. */
   const allSessions = useMemo(() => {
@@ -386,11 +403,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
 
-  const [fileTarget, setFileTarget] = useState<FileTarget | null>(null);
+  const [fileTarget, setFileTarget] = useState<FileTarget | null>(boot.nav.fileTarget && boot.nav.fileTarget !== 'workspace' ? boot.nav.fileTarget : null);
   const [fileList, setFileList] = useState<FileEntry[]>([]);
-  const [currentFile, setCurrentFile] = useState<string | null>(null);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(() => new URLSearchParams(window.location.search).get('agent'));
-  const [agentTabRequest, setAgentTabRequest] = useState<string | null>(null);
+  const [currentFile, setCurrentFile] = useState<string | null>(boot.nav.currentFile ?? null);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(boot.nav.selectedAgent ?? null);
+  const [agentTabRequest, setAgentTabRequest] = useState<string | null>(boot.nav.agentTabRequest ?? null);
+  const [agentTab, setAgentTabRaw] = useState<string | null>(boot.nav.agentTab ?? null);
   const [workLogFocus, setWorkLogFocus] = useState<WorkLogFocus | null>(null);
   const openWorkLogRef = useRef<(agentId: string, focus?: { sessionId?: string; turnId?: string }) => void>(() => undefined);
   const [newAgentOpen, setNewAgentOpen] = useState(false);
@@ -402,29 +420,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [hireId, setHireId] = useState<string | null>(null);
   const [companiesEnabled, setCompaniesEnabled] = useState(false);
   const [wsOrg, setWsOrg] = useState<WorkspaceOrg | null>(null);
-  const [orgPane, setOrgPaneRaw] = useState<OrgPane | null>(() => {
-    const p = new URLSearchParams(window.location.search);
-    const pane = p.get('org');
-    if (isOrgPane(pane) && paneHome(pane).section !== 'inbox') return pane;
-    return null;
-  });
-  const [inboxFilter, setInboxFilter] = useState<InboxFilter>(() => {
-    const pane = new URLSearchParams(window.location.search).get('org');
-    const home = isOrgPane(pane) ? paneHome(pane) : null;
-    return home?.section === 'inbox' ? home.filter : 'all';
-  });
+  const [orgPane, setOrgPaneRaw] = useState<OrgPane | null>(boot.nav.orgPane ?? null);
+  const [inboxFilter, setInboxFilter] = useState<InboxFilter>(boot.nav.inboxFilter ?? 'all');
+  const [routeTask, setRouteTaskRaw] = useState<string | null>(boot.nav.routeTask ?? null);
+  const [routeProject, setRouteProjectRaw] = useState<string | null>(boot.nav.routeProject ?? null);
+  const [meetingId, setMeetingId] = useState<string | null>(boot.nav.meetingId ?? null);
+  const [foundry, setFoundry] = useState<FoundryPlace>(boot.nav.foundry ?? {});
+
+  // ---- the address (src/lib/routes.ts) ----
+  // A navigation (opening a chat, a channel, a pane, another company…) is a
+  // history entry; anything else that changes the address — a filter, a
+  // canonical rewrite, the first chat picked for you — replaces it. Each
+  // navigation action marks itself with markPush before its state changes;
+  // the effect that writes the address consumes the mark. `navSeq` makes it
+  // run even when the place did not change (so a mark never outlives it).
+  const navMode = useRef<'push' | null>(null);
+  const [navSeq, setNavSeq] = useState(0);
+  const markPush = useCallback(() => {
+    navMode.current = 'push';
+    setNavSeq((n) => n + 1);
+    setMeetingId(null); // going anywhere leaves the full-screen room
+  }, []);
+
   /** Open a pane where it lives now (src/lib/company-nav.ts): approvals, my
    *  tasks and pending changes in the Inbox, every other page in its company
    *  section (null = the current section's dashboard). */
   const setOrgPane = useCallback((v: OrgPane | null) => {
+    markPush();
+    setRouteTaskRaw(null);
+    setRouteProjectRaw(null);
     if (v === null) { setOrgPaneRaw(null); return; }
     const home = paneHome(v);
     if (home.section === 'inbox') { setSection('inbox'); setInboxFilter(home.filter); return; }
     setSection(home.section);
     setOrgPaneRaw(home.pane);
-  }, []);
-  /** The Settings pane shown (?section=settings&pane=<id>); openSettings goes there. */
-  const [settingsPane, setSettingsPane] = useState(() => new URLSearchParams(window.location.search).get('pane') ?? 'providers');
+  }, [markPush]);
+  /** The Settings pane shown (`/<company>/settings/<pane>`); openSettings goes there. */
+  const [settingsPane, setSettingsPaneRaw] = useState(boot.nav.settingsPane ?? 'providers');
   const [orgMyTasks, setOrgMyTasks] = useState(0);
   const [followAttention, setFollowAttention] = useState(0);
   const [unreadMessages, setUnreadMessages] = useState(0);
@@ -434,10 +466,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [orgPendingPlans, setOrgPendingPlans] = useState(0);
   const [orgHealth, setOrgHealth] = useState<OrgHealth | null>(null);
   const [orgHeldActions, setOrgHeldActions] = useState(0);
-  const [orgFocus, setOrgFocus] = useState<OrgFocus | null>(null);
+  const [orgFocus, setOrgFocus] = useState<OrgFocus | null>(boot.nav.orgFocus ?? null);
   const [channels, setChannels] = useState<Channel[]>([]);
-  const [currentChannel, setCurrentChannel] = useState<string | null>(null);
-  const [channelFocus, setChannelFocus] = useState<string | null>(null);
+  const [currentChannel, setCurrentChannel] = useState<string | null>(boot.nav.currentChannel ?? null);
+  const [channelFocus, setChannelFocus] = useState<string | null>(boot.nav.channelFocus ?? null);
   const wsListeners = useRef(new Set<(ev: WorkspaceEvent) => void>());
 
   const currentIdRef = useRef<string | null>(null);
@@ -446,8 +478,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   queueRef.current = queue;
   /** Sessions this tab is running a turn in, updated synchronously (state lags). */
   const activeRuns = useRef(new Set<string>());
-  /** Work sessions deep-linked as #/chat/<id>/log: they open in the Work log. */
-  const asLog = useRef(new Set<string>());
+  /** Work sessions linked as `…/chats/<id>/log`: they open in the Work log. */
+  const asLog = useRef(new Set<string>(boot.route?.place.kind === 'session' && boot.route.place.log ? [boot.route.place.id] : []));
   // per-session fetch abort; the rAF-buffered stream text lives in each runTurn
   const abortBy = useRef(new Map<string, AbortController>());
   const streaming = currentId ? streamingIds.has(currentId) : false;
@@ -463,41 +495,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const stacked = width < 820;
   const mediumDock = !stacked && width < 1120;
 
-  // Deep links from channel notifications: <app>/#/chat/<sessionId>. The
+  // A session in the address (`/<company>/chats/<id>`, `#/chat/<id>`): the
   // session list may not have loaded yet, so the id waits in a ref and the
-  // session-pick effect below honours it once the list contains it.
-  // A work session opens in the chat view like a chat; #/chat/<id>/log
-  // opens its timeline in the Work log instead (docs/work-log.md).
-  const deepLink = useRef<string | null>(parseChatLink(window.location.hash, asLog.current));
-  // Organization deep links (#company announcements, the brief):
-  // #/ws/<workspaceId>/org/<pane> opens that pane of that workspace, and
-  // #/ws/<workspaceId>/org/board?task=<taskId> one task's drawer on the board.
-  // #/ws/<workspaceId>/org/<section> (direction, operations, …) opens that section's dashboard.
-  const orgLink = useRef<{ workspaceId: string; pane: OrgPane | 'artifacts' | CompanySection; taskId: string | null } | null>(null);
-  const parseOrgLink = (hash: string): { workspaceId: string; pane: OrgPane | 'artifacts' | CompanySection; taskId: string | null } | null => {
-    const m = parseOrgHash(hash);
-    if (!m) return null;
-    if (m.taskId) return { workspaceId: m.workspaceId, pane: 'board', taskId: m.taskId };
-    if (ORG_PANES_IN_ARTIFACTS.includes(m.pane)) return { workspaceId: m.workspaceId, pane: 'artifacts', taskId: null };
-    if (isCompanySection(m.pane)) return { workspaceId: m.workspaceId, pane: m.pane, taskId: null };
-    return isOrgPane(m.pane) ? { workspaceId: m.workspaceId, pane: m.pane, taskId: null } : null;
-  };
-  if (orgLink.current === null && !deepLink.current) orgLink.current = parseOrgLink(window.location.hash);
-  // …and from group-chat mentions: #/ws/<id>/channel/<slug>[/<messageId>]
-  // (docs/group-chat.md §4). Honoured once the workspace list has loaded.
-  const channelLink = useRef(parseChannelHash(window.location.hash));
-  useEffect(() => {
-    const onHash = () => {
-      const id = parseChatLink(window.location.hash, asLog.current);
-      if (id) { deepLink.current = id; setProbeTick((n) => n + 1); } // nudge the pick effect
-      const org = parseOrgLink(window.location.hash);
-      if (org) { orgLink.current = org; setWorkspaces((list) => [...list]); }
-      const ch = parseChannelHash(window.location.hash);
-      if (ch) { channelLink.current = ch; setWorkspaces((list) => [...list]); } // nudge the channel effect
-    };
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+  // session-pick effect below honours it once the list contains it (or a
+  // lookup finds it). A work session opens in the chat view like a chat;
+  // `…/chats/<id>/log` opens its timeline in the Work log instead
+  // (docs/work-log.md). While it waits the address is left alone.
+  const deepLink = useRef<string | null>(boot.route?.place.kind === 'session' ? boot.route.place.id : null);
+  /** The route waiting for the workspace list (the first load). */
+  const pendingRoute = useRef<Route | null>(boot.route);
+  const [routeReady, setRouteReady] = useState(false);
+  const routeReadyRef = useRef(routeReady);
+  routeReadyRef.current = routeReady;
 
   // proactive-work badges: poll unread activity counts (phase 2)
   useEffect(() => {
@@ -538,11 +547,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
         id: w.id, name: w.name, color: w.color, memory: '', profile: '', profilePending: '[]', quietHours: '', spendBudgetTokens: 0, spendMonth: '', spendTokens: 0, orgMode: 'off' as const, chiefOfStaffAgentId: null, orgMonthlyUsd: 0, orgAgentCap: 12, createdAt: '', shared: w,
       })),
     ];
+    rememberCompanies(all);
     setWorkspaces(all);
-    // An invitation link lands with ?workspace=<id>: open that one.
-    const wanted = new URLSearchParams(window.location.search).get('workspace');
+    // The first load opens the company the address names (an invitation
+    // link included); else the one open, the last one used, or the first.
+    const wanted = pendingRoute.current ? resolveCompany(pendingRoute.current.company, all)?.id : undefined;
+    const last = readLastCompany();
     setWorkspaceId((cur) => {
-      const next = wanted && all.some((w) => w.id === wanted) ? wanted : cur && all.some((w) => w.id === cur) ? cur : (all[0]?.id ?? '');
+      const has = (id: string | null | undefined): id is string => Boolean(id) && all.some((w) => w.id === id);
+      const next = has(wanted) ? wanted : has(cur) ? cur : has(last) ? last : (all[0]?.id ?? '');
       setActiveSharedWorkspace(sharedIds.current.has(next) ? next : null);
       return next;
     });
@@ -585,6 +598,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const inRail = new Set(rail.groups.flatMap((g) => [...g.items, ...(g.work?.items ?? [])].map((s) => s.id)));
     const extras = (await Promise.all(extraRef.current.filter((s) => !inRail.has(s.id)).map((s) => api.chat(s.id).catch(() => null)))).filter((s): s is ChatSession => openableIn(s, workspaceId));
     for (const s of extraRef.current) if (!extras.some((x) => x.id === s.id) && !inRail.has(s.id)) probed.current.set(s.id, 'missing');
+    railFor.current = workspaceId;
     setChatRail(rail.groups);
     setExtraSessions(extras);
     setArchivedTotal(rail.archivedTotal);
@@ -669,7 +683,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void refreshWsOrg(); }, [refreshWsOrg]);
   // The organization panes exist only while the mode is on; fall back to the files.
   useEffect(() => {
-    if (wsOrg && wsOrg.mode === 'off' && orgPane) setOrgPane(null);
+    if (wsOrg && wsOrg.mode === 'off' && orgPane) setOrgPaneRaw(null);
   }, [wsOrg, orgPane]);
   // A unit filter outlives its unit only until the next refresh.
   useEffect(() => {
@@ -687,6 +701,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void refreshChannels(); }, [refreshChannels]);
 
   const openChannel = useCallback((slug: string, messageId?: string | null) => {
+    markPush();
     setCurrentChannel(slug);
     setChannelFocus(messageId ?? null);
     setSection('home');
@@ -694,7 +709,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMobileChatOpen(true);
     setArtifact(null);
     setBrowserOpen(false);
-  }, []);
+  }, [markPush]);
 
   const onWorkspaceEvent = useCallback((listener: (ev: WorkspaceEvent) => void) => {
     wsListeners.current.add(listener);
@@ -729,20 +744,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => { ctrl.abort(); clearTimeout(refreshTimer); };
   }, [workspaceId]);
 
-  // The channel deep link: switch workspace if needed, then open it.
-  useEffect(() => {
-    const link = channelLink.current;
-    if (!link || workspaces.length === 0) return;
-    if (!workspaces.some((w) => w.id === link.workspaceId)) { channelLink.current = null; return; }
-    channelLink.current = null;
-    if (link.workspaceId !== workspaceId) {
-      setActiveSharedWorkspace(sharedIds.current.has(link.workspaceId) ? link.workspaceId : null);
-      setWorkspaceId(link.workspaceId);
-    }
-    openChannel(link.slug, link.messageId);
-    window.history.replaceState(null, '', window.location.pathname + window.location.search);
-  }, [workspaces, workspaceId, openChannel]);
-
   useEffect(() => { void refreshWorkspaces().catch(() => showToast('API offline')); }, [refreshWorkspaces, showToast]);
   useEffect(() => { void refreshAgents().catch(() => {}); void refreshAgentTypes().catch(() => {}); void refreshMcp().catch(() => {}); void refreshMarket().catch(() => {}); api.settings().then(setSettings).catch(() => {}); }, [refreshAgents, refreshAgentTypes, refreshMcp, refreshMarket]);
   useEffect(() => { void refreshSessions().catch(() => {}); void refreshSkills().catch(() => {}); void refreshMe(); }, [refreshSessions, refreshSkills, refreshMe]);
@@ -758,8 +759,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (s.kind === 'work' && s.agentId && deepLink.current === id && asLog.current.has(id)) {
         deepLink.current = null;
         asLog.current.delete(id);
-        window.history.replaceState(null, '', window.location.pathname + window.location.search);
         openWorkLogRef.current(s.agentId, { sessionId: s.id });
+        navMode.current = null; // following a link replaces it
       }
       if (openableIn(s, workspaceIdRef.current)) { probed.current.set(id, 'found'); setExtraSessions((x) => (x.some((y) => y.id === s.id) ? x : [...x, s])); } else probed.current.set(id, 'missing');
     }).catch(() => { probed.current.set(id, 'missing'); }).finally(() => setProbeTick((n) => n + 1));
@@ -771,15 +772,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const linked = wanted ? allSessions.find((s) => s.id === wanted) : undefined;
     if (wanted && linked) {
       deepLink.current = null;
-      window.history.replaceState(null, '', window.location.pathname + window.location.search);
-      if (asLog.current.delete(wanted) && linked.kind === 'work' && linked.agentId) { openWorkLogRef.current(linked.agentId, { sessionId: wanted }); return; }
+      if (asLog.current.delete(wanted) && linked.kind === 'work' && linked.agentId) { openWorkLogRef.current(linked.agentId, { sessionId: wanted }); navMode.current = null; return; }
       setCurrentId(wanted);
       setSection('home');
       setHomeView('chat');
       setMobileChatOpen(true);
+      setNavSeq((n) => n + 1); // the address follows even when nothing else changed
       return;
     }
-    if (wanted && allSessions.length > 0 && !probed.current.has(wanted)) probe(wanted);
+    // Once this workspace's rail has loaded, a link to a chat on no loaded
+    // page is looked up; one that is not here (or not ours) is let go.
+    if (wanted && railFor.current === workspaceIdRef.current && !probed.current.has(wanted)) probe(wanted);
+    if (wanted && probed.current.get(wanted) === 'missing') {
+      deepLink.current = null;
+      asLog.current.delete(wanted);
+      showToast('That chat is not in this company');
+      setNavSeq((n) => n + 1);
+    }
     const cur = currentIdRef.current;
     // the first chat of the workspace on screen (the list may still be the last workspace's)
     const firstHere = sessions.find((s) => s.workspaceId === workspaceIdRef.current)?.id ?? null;
@@ -823,19 +832,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   /** The chat view on a chat (the old openSession). */
   const showChat = useCallback((id: string) => {
+    markPush();
     setCurrentId(id);
     setSection('home');
     setHomeView('chat');
     setMobileChatOpen(true);
     setArtifact(null);
     setBrowserOpen(false);
-  }, []);
+  }, [markPush]);
 
   const openAgent = useCallback((id: string, tab?: string) => {
+    markPush();
     setSection('home');
     setHomeView('agent');
     setSelectedAgent(id);
     if (tab) setAgentTabRequest(tab);
+    // the tab in the address until the page reports the one it shows
+    setAgentTabRaw(tab ? resolvedTabSlug(tab) : null);
     setMobileChatOpen(true); // stacked: the agent page is the detail pane
     setArtifact(null);
     setBrowserOpen(false);
@@ -843,7 +856,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void api.markAgentEventsRead(id)
       .then(() => setUnread((u) => ({ ...u, [id]: 0 })))
       .catch(() => {});
-  }, []);
+  }, [markPush]);
 
   const openWorkLog = useCallback((agentId: string, focus: { sessionId?: string; turnId?: string } = {}) => {
     setWorkLogFocus({ agentId, ...focus, at: Date.now() });
@@ -867,6 +880,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const openInChat = openSession;
 
   const openFile = useCallback((target: FileTarget, path: string | null) => {
+    markPush();
     if (target.kind === 'workspace') setSection('artifacts');
     else { setSection('home'); setHomeView('file'); }
     setFileTarget(target);
@@ -874,7 +888,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (path) setMobileChatOpen(true);
     setArtifact(null);
     setBrowserOpen(false);
-  }, []);
+  }, [markPush]);
 
   const newChat = useCallback(async (agentId?: string | null) => {
     const pinned = agentId ? agents.find((x) => x.id === agentId) : undefined;
@@ -894,51 +908,154 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return created.id;
   }, [workspaceId, settings, agents, refreshSessions, showChat]);
 
-  useEffect(() => {
-    const wanted = orgLink.current;
-    if (!wanted || !workspaces.some((w) => w.id === wanted.workspaceId)) return;
-    orgLink.current = null;
-    if (wanted.workspaceId !== workspaceId) {
-      setActiveSharedWorkspace(sharedIds.current.has(wanted.workspaceId) ? wanted.workspaceId : null);
-      setWorkspaceId(wanted.workspaceId);
-      setCurrentId(null);
-    }
-    if (wanted.taskId) {
-      // The task link stays in the address bar while its drawer is open, so
-      // reload reopens it; the board clears it when the drawer closes.
-      setOrgUnitId(null);
-      setOrgFocus({ kind: 'task', id: wanted.taskId });
-      setOrgPane('board');
-      setMobileDetail(true);
-      return;
-    }
-    if (wanted.pane === 'artifacts') setSection('artifacts');
-    else if (isCompanySection(wanted.pane)) { setSection(wanted.pane); setOrgPaneRaw(null); }
-    else { setOrgPane(wanted.pane); setMobileDetail(true); }
-    window.history.replaceState(null, '', window.location.pathname + window.location.search);
-  }, [workspaces, workspaceId]);
-
-  const openOrgTask = useCallback((taskId: string) => {
-    if (!workspaceId || !taskId) return;
-    const hash = orgTaskHash(workspaceId, taskId);
-    if (window.location.hash === hash) {
-      // Already the address: no hashchange will fire, so open it directly.
-      setOrgUnitId(null); setOrgFocus({ kind: 'task', id: taskId }); setOrgPane('board'); setMobileDetail(true);
-      return;
-    }
-    window.location.hash = hash; // a history entry; the hashchange handler opens it
-  }, [workspaceId, setOrgPane]);
-
-  const pickWorkspace = useCallback((id: string) => {
-    // The header must change before the first request for the new workspace.
+  /** Show another company (the header must change before its first request).
+   *  What belonged to the old one — its open chat, channel, agent, task — goes. */
+  const switchWorkspace = useCallback((id: string) => {
     setActiveSharedWorkspace(sharedIds.current.has(id) ? id : null);
+    workspaceIdRef.current = id;
     setWorkspaceId(id);
     setCurrentId(null);
     setCurrentChannel(null);
+    setSelectedAgent(null);
+    setRouteTaskRaw(null);
+    setRouteProjectRaw(null);
+    setOrgFocus(null);
+    setFileTarget({ kind: 'workspace', id });
+    setCurrentFile(null);
+  }, []);
+
+  /** Open one org task: its drawer on Operations › Board, the task in the
+   *  address (`/<company>/tasks/<key>`). The board fetches a task it does not
+   *  have and turns a prefix into the task's key. */
+  const openOrgTask = useCallback((taskId: string) => {
+    if (!workspaceId || !taskId) return;
+    markPush();
+    setOrgUnitId(null);
+    setOrgFocus({ kind: 'task', id: taskId });
+    setSection('operations');
+    setOrgPaneRaw('board');
+    setRouteTaskRaw(taskId);
+    setRouteProjectRaw(null);
+    setMobileDetail(true);
+  }, [workspaceId, markPush]);
+  const setRouteTask = useCallback((key: string | null, opts: { replace?: boolean } = {}) => {
+    if (!opts.replace) markPush();
+    setRouteTaskRaw(key);
+  }, [markPush]);
+  const setRouteProject = useCallback((key: string | null, opts: { replace?: boolean } = {}) => {
+    if (!opts.replace) markPush();
+    setRouteProjectRaw(key);
+  }, [markPush]);
+  const setAgentTab = useCallback((slug: string | null) => setAgentTabRaw(slug), []);
+
+  const pickWorkspace = useCallback((id: string) => {
+    markPush();
+    switchWorkspace(id);
     setMobileChatOpen(false);
     // The agents list follows workspaceId (refreshAgents depends on it and
     // the mount effect re-runs); fetching here would race with the old id.
-  }, []);
+  }, [markPush, switchWorkspace]);
+
+  // ---- the address: read it, follow Back and Forward, write it back ----
+  /** Show a route: its company (switching if it names another one we have),
+   *  then its place. Not a history entry — the address is already there. */
+  const applyRoute = useCallback((route: Route) => {
+    const list = workspacesRef.current;
+    const target = route.company ? resolveCompany(route.company, list) : null;
+    const foreign = Boolean(route.company && !target && list.length > 0);
+    if (foreign) showToast('That link is for a company you are not in');
+    const wsId = target?.id ?? workspaceIdRef.current;
+    if (target && target.id !== workspaceIdRef.current) switchWorkspace(target.id);
+    applyPlace(foreign ? { kind: 'home' } : route.place, wsId);
+    navMode.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [switchWorkspace, showToast]);
+  const applyPlace = (place: Place, wsId: string) => {
+    const n = navOf(place);
+    if (place.kind === 'session') {
+      // the pick effect opens it once loaded (or looked up)
+      deepLink.current = place.id;
+      if (place.log) asLog.current.add(place.id);
+      setProbeTick((t) => t + 1);
+    }
+    if (n.meetingId !== undefined) setMeetingId(n.meetingId);
+    if (place.kind === 'meeting') return;
+    setArtifact(null);
+    setBrowserOpen(false);
+    if (n.section) setSection(n.section);
+    if (n.homeView) setHomeView(n.homeView);
+    if (n.currentChannel !== undefined) setCurrentChannel(n.currentChannel);
+    if (n.channelFocus !== undefined) setChannelFocus(n.channelFocus);
+    if (n.selectedAgent !== undefined) setSelectedAgent(n.selectedAgent);
+    if (n.agentTab !== undefined) setAgentTabRaw(n.agentTab);
+    if (n.agentTabRequest) setAgentTabRequest(n.agentTabRequest);
+    if (n.fileTarget) setFileTarget(n.fileTarget === 'workspace' ? (wsId ? { kind: 'workspace', id: wsId } : null) : n.fileTarget);
+    if (n.currentFile !== undefined) setCurrentFile(n.currentFile);
+    if (n.orgPane !== undefined) setOrgPaneRaw(n.orgPane);
+    if (n.inboxFilter) setInboxFilter(n.inboxFilter);
+    if (n.settingsPane) setSettingsPaneRaw(n.settingsPane);
+    if (n.routeTask !== undefined) setRouteTaskRaw(n.routeTask);
+    if (n.routeProject !== undefined) setRouteProjectRaw(n.routeProject);
+    if (n.orgFocus) setOrgFocus(n.orgFocus);
+    if (n.orgUnitId === null) setOrgUnitId(null);
+    if (n.foundry) setFoundry(n.foundry);
+    if (n.mobileChatOpen !== undefined) setMobileChatOpen(n.mobileChatOpen);
+    if (n.mobileDetail !== undefined) setMobileDetail(n.mobileDetail);
+  };
+
+  // The first load: once the workspace list is in and the company chosen,
+  // show the route's place there (what needs the company: a channel, a
+  // chat, a task), then start writing the address.
+  useEffect(() => {
+    if (routeReady || !workspaceId || workspaces.length === 0) return;
+    const r = pendingRoute.current;
+    pendingRoute.current = null;
+    if (r) {
+      if (r.company && !resolveCompany(r.company, workspaces)) {
+        showToast('That link is for a company you are not in');
+        applyPlace({ kind: 'home' }, workspaceId);
+      } else applyPlace(r.place, workspaceId);
+    }
+    navMode.current = null;
+    setRouteReady(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaces, workspaceId, routeReady]);
+
+  // Back and forward (and in-app links, src/lib/routes.ts `navigate`), and
+  // older hash links set while the app is open.
+  useEffect(() => {
+    const on = () => {
+      const r = readLocation(window.location);
+      if (!r) return;
+      if (!routeReadyRef.current) { pendingRoute.current = r; return; }
+      applyRoute(r);
+    };
+    window.addEventListener('popstate', on);
+    window.addEventListener('hashchange', on);
+    return () => { window.removeEventListener('popstate', on); window.removeEventListener('hashchange', on); };
+  }, [applyRoute]);
+
+  // The full-screen meeting room opens and closes through an event
+  // (src/lib/meetings.ts): opening is a history entry, closing returns the
+  // address to what is underneath.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<MeetingEventDetail>).detail;
+      if (!d) return;
+      if (!d.meetingId) { setMeetingId(null); return; }
+      markPush();
+      if (d.workspaceId && d.workspaceId !== workspaceIdRef.current && workspacesRef.current.some((w) => w.id === d.workspaceId)) switchWorkspace(d.workspaceId);
+      setMeetingId(d.meetingId);
+    };
+    window.addEventListener(MEETING_EVENT, on);
+    return () => window.removeEventListener(MEETING_EVENT, on);
+  }, [markPush, switchWorkspace]);
+
+  // `/` opens the company used last.
+  useEffect(() => {
+    if (!workspaceId) return;
+    try { localStorage.setItem(LAST_COMPANY_KEY, workspaceId); } catch { /* storage blocked: `/` opens the first company */ }
+  }, [workspaceId]);
 
   // ---- draft persistence (FR-2.1) ----
   const draftTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -1263,16 +1380,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   /** Go to a section. A company section opens on its dashboard. */
   const go = useCallback((s: Section) => {
+    markPush();
     const to = resolveSection(s);
     setSection(to);
     if (isCompanySection(to)) setOrgPaneRaw(null);
+    setRouteTaskRaw(null);
+    setRouteProjectRaw(null);
     setMobileChatOpen(false);
     setMobileDetail(false);
     setArtifact(null);
     setBrowserOpen(false);
-  }, []);
+  }, [markPush]);
 
-  const openSettings = useCallback((pane: string) => { go('settings'); setSettingsPane(pane); setMobileDetail(true); }, [go]);
+  const openSettings = useCallback((pane: string) => { go('settings'); setSettingsPaneRaw(pane); setMobileDetail(true); }, [go]);
+
+  // The setters views call to move within a section are navigations too.
+  const setSettingsPane = useCallback((p: string) => { markPush(); setSettingsPaneRaw(p); }, [markPush]);
+  const setHomeViewNav = useCallback((v: HomeView) => { markPush(); setHomeView(v); }, [markPush]);
+  const setSelectedAgentNav = useCallback((id: string | null) => { markPush(); setSelectedAgent(id); setAgentTabRaw(null); }, [markPush]);
+  const setCurrentFileNav = useCallback((p: string | null) => { markPush(); setCurrentFile(p); }, [markPush]);
+
+  // The address the store's state names; written back after every change
+  // once the first route has been shown — pushed for a navigation, replaced
+  // otherwise (and left alone while a linked chat is still being found).
+  const company = useMemo(() => {
+    const w = workspaces.find((x) => x.id === workspaceId);
+    return w ? companySlug(w) : null;
+  }, [workspaces, workspaceId]);
+  const href = useMemo(() => (company ? routeHref({
+    company,
+    place: placeOf({
+      section, homeView, currentId, currentChannel, selectedAgent, agentTab, fileTarget, currentFile, orgPane, inboxFilter, settingsPane,
+      routeTask, routeProject, meetingId, foundry, stacked, mobileChatOpen, mobileDetail,
+    }),
+  }) : null), [company, section, homeView, currentId, currentChannel, selectedAgent, agentTab, fileTarget, currentFile, orgPane, inboxFilter, settingsPane, routeTask, routeProject, meetingId, foundry, stacked, mobileChatOpen, mobileDetail]);
+  useEffect(() => {
+    const mode = navMode.current;
+    navMode.current = null;
+    if (!routeReady || !href || deepLink.current) return;
+    if (href === `${window.location.pathname}${window.location.search}${window.location.hash}`) return;
+    if (mode === 'push') window.history.pushState(null, '', href);
+    else window.history.replaceState(null, '', href);
+  }, [href, routeReady, navSeq]);
 
   const saveSettings = useCallback(async (patch: Record<string, string>) => {
     setSettings(await api.putSettings(patch));
@@ -1337,7 +1486,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [hireId, market, refreshMarket, refreshAgents, openAgent, showToast, workspaceId]);
 
   const store: Store = useMemo(() => ({
-    width, stacked, mediumDock, theme, toggleTheme, section, go, homeView, setHomeView,
+    width, stacked, mediumDock, theme, toggleTheme, section, go, homeView, setHomeView: setHomeViewNav,
     mobileChatOpen, setMobileChatOpen, mobileDetail, setMobileDetail, toast, showToast,
     workspaces, workspaceId, pickWorkspace, refreshWorkspaces, me, refreshMe, nameOf,
     agents, agentStats, refreshAgents, unread, sessions, refreshSessions, chatRail, loadMoreChats, loadMoreWork, archived, archivedTotal, archivedHasMore: archivedCursor !== null, loadMoreArchived, archiveChat, restoreChat,
@@ -1347,15 +1496,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     streaming, live, send, stopTurn, approve, queue: sessionQueue, removeQueued, queueAll: queue, sendToSession, openInChat, streamingIds,
     drafts, setDraft, attachments, addAttachment, removeAttachment, clearAttachments,
     retry, editResend, fork, promote, rate,
-    fileTarget, setFileTarget, fileList, refreshFiles, currentFile, setCurrentFile, openFile,
-    selectedAgent, setSelectedAgent, openAgent, agentTabRequest, setAgentTabRequest, newAgentOpen, setNewAgentOpen, embedApp, composeInChat,
+    fileTarget, setFileTarget, fileList, refreshFiles, currentFile, setCurrentFile: setCurrentFileNav, openFile,
+    selectedAgent, setSelectedAgent: setSelectedAgentNav, openAgent, agentTabRequest, setAgentTabRequest, newAgentOpen, setNewAgentOpen, embedApp, composeInChat,
     artifact, openArtifact, closeArtifact,
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
     companiesEnabled, wsOrg, refreshWsOrg, orgPane, setOrgPane, settingsPane, setSettingsPane, openSettings, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, orgFocus, setOrgFocus,
+    routeTask, setRouteTask, routeProject, setRouteProject, setAgentTab, meetingId,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
+    setHomeViewNav, setCurrentFileNav, setSelectedAgentNav, setSettingsPane,
+    routeTask, setRouteTask, routeProject, setRouteProject, setAgentTab, meetingId,
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
     mobileChatOpen, mobileDetail, toast, showToast,
     workspaces, workspaceId, pickWorkspace, refreshWorkspaces, me, refreshMe, nameOf,

@@ -83,7 +83,7 @@ describe('the Following filter', () => {
     fake.inboxFilter = 'following';
     render(<InboxView />);
     fireEvent.click(await screen.findByTestId('inbox-item-f:thread:m1'));
-    expect(window.location.hash).toBe('#/ws/ws1/channel/general/m1');
+    expect(window.location.pathname).toBe('/ws1/channels/general/m1'); // the older link, at its path (docs/routes.md)
     await waitFor(() => expect(posts.some((p) => (p.body as { targetId?: string }).targetId === 'm1')).toBe(true));
   });
   it('lists followed news in All too', async () => {

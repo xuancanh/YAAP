@@ -22,6 +22,7 @@ import {
   NOTIFICATION_FILTERS, notificationTarget, originLabel, SHORTCUTS, spendMeter, spendTone, usd, type NotificationFilter, type PaletteItem,
 } from '../lib/topbar';
 import { isTaskKey, normalizeTaskKey } from '../lib/task-keys';
+import { navigate } from '../lib/routes';
 import { CommandPalette } from './CommandPalette';
 import { NewWorkspaceWizard } from './NewWorkspaceWizard';
 import { SETTINGS_PANES } from './Rails';
@@ -689,7 +690,7 @@ export function TopBar({ onSettings }: { onSettings: (pane: string) => void }) {
       case 'agent': app.openAgent(t.agentId); return;
       case 'file': app.openFile({ kind: 'workspace', id: wsId }, t.path); return;
       case 'chat': app.openSession(t.sessionId); return;
-      case 'hash': window.location.hash = t.hash.slice(1); return;
+      case 'hash': navigate(t.hash); return;
       case 'inbox': app.go(orgOn ? 'inbox' : 'overview'); return;
     }
   }, [app, wsId, orgOn, markRead, openPane]);

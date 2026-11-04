@@ -23,6 +23,7 @@ import { AGENT_TABS, SETTINGS_SECTIONS, WORK_SECTIONS, resolveAgentTab, type Age
 import { nextFire, untilLabel } from '../lib/cron';
 import { RUNS_WHEN, lastFiredLabel, runsWhenOf, triggerGlyph, triggerLabel, type Loop, type LoopTrigger, type RunsWhen } from '../lib/triggers';
 import { keyStyle } from '../lib/task-keys';
+import { agentTabSlug } from '../lib/routes';
 import { effectiveType, typeModelList } from '../lib/agent-models';
 
 const card: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 14, background: 'var(--panel)' };
@@ -1420,21 +1421,27 @@ export function AgentHome() {
   }, []);
   const page = useAgentPage(agentId ?? '', goTo);
 
-  // ?tab= deep link (screenshot verification); consumed on the first open
-  const urlTab = useRef<string | null>(new URLSearchParams(window.location.search).get('tab'));
+  // A tab asked for — by the address (/<company>/agents/<id>/<tab>) or in
+  // the app (e.g. the chat's "needs a grant" hint) — is a one-shot request
+  // from the store, kept until the agent has loaded; another agent opens on
+  // its Overview otherwise.
   useEffect(() => {
-    if (!agentId) return; // agents not loaded yet — keep the deep link intact
-    if (!goTo(urlTab.current)) { setTab('Overview'); setWorkSection('Tasks'); setSettingsSection('General'); }
-    urlTab.current = null;
+    if (!agentId) return; // agents not loaded yet — keep the request intact
+    if (!goTo(app.agentTabRequest)) { setTab('Overview'); setWorkSection('Tasks'); setSettingsSection('General'); }
+    if (app.agentTabRequest) app.setAgentTabRequest(null);
     setEditingCharter(false);
     setChatQuery('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, goTo]);
-  // In-app deep link (e.g. the chat's "needs a grant" hint): one-shot tab
-  // request from the store, works even when this agent page is already open.
   useEffect(() => {
-    if (app.agentTabRequest && goTo(app.agentTabRequest)) app.setAgentTabRequest(null);
+    if (agentId && app.agentTabRequest && goTo(app.agentTabRequest)) app.setAgentTabRequest(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.agentTabRequest]);
+  // The tab on screen is in the address (replacing it: tabs are not history).
+  useEffect(() => {
+    if (agentId && !app.agentTabRequest) app.setAgentTab(tab === 'Overview' ? null : agentTabSlug(tab));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, tab, app.agentTabRequest]);
   useEffect(() => {
     if (agentId) void api.agentTasks(agentId).then(setTasks).catch(() => setTasks([]));
     else setTasks([]);

@@ -28,6 +28,7 @@
  * mention included — agents often write `` `@Name` ``).
  */
 import { memo, useState, type CSSProperties, type ReactNode } from 'react';
+import { appHref, navigate, parseRoute } from './routes';
 
 export type RefKind = 'goal' | 'decision' | 'task' | 'meeting' | 'audit';
 /** `bare` is set for a task key written without `#task:` (ENG-12): the
@@ -59,6 +60,13 @@ function withMentions(text: string, key: string, ctx: Ctx): ReactNode[] {
 }
 
 const SAFE_LINK = /^(https?:\/\/|mailto:)/i;
+/** A link into the app itself — `/<company>/…` or an older `#/ws/…` /
+ *  `#/chat/…` link agents wrote (meeting minutes, notifications) — as its
+ *  address (docs/routes.md); it opens in place, not in a new tab. */
+function appLink(raw: string): string | null {
+  if (!raw.startsWith('/') && !raw.startsWith('#/')) return null;
+  return appHref(raw, typeof window === 'undefined' ? null : parseRoute(window.location.pathname)?.company ?? null);
+}
 const SAFE_IMG = /^(https?:\/\/|data:image\/(png|jpe?g|gif|webp|svg\+xml);)/i;
 
 // ---------- inline ----------
@@ -106,7 +114,9 @@ export function inline(text: string, keyBase: string, ctx: Ctx = {}): ReactNode[
       else out.push(tok);
     } else if (m[6]) {
       const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(tok)!;
-      if (SAFE_LINK.test(link[2])) out.push(<a key={key} href={link[2]} target="_blank" rel="noreferrer noopener" style={{ color: 'var(--accent-hi)' }}>{inline(link[1], key, ctx)}</a>);
+      const inApp = SAFE_LINK.test(link[2]) ? null : appLink(link[2]);
+      if (inApp) out.push(<a key={key} href={inApp} onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); navigate(inApp); }} style={{ color: 'var(--accent-hi)' }}>{inline(link[1], key, ctx)}</a>);
+      else if (SAFE_LINK.test(link[2])) out.push(<a key={key} href={link[2]} target="_blank" rel="noreferrer noopener" style={{ color: 'var(--accent-hi)' }}>{inline(link[1], key, ctx)}</a>);
       else out.push(tok);
     } else if (m[7]) out.push(<a key={key} href={tok} target="_blank" rel="noreferrer noopener" style={{ color: 'var(--accent-hi)', wordBreak: 'break-all' }}>{tok}</a>);
     else if (m[8] || m[9]) {

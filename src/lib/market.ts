@@ -172,7 +172,43 @@ export function navFromUrl(search: string): Partial<MarketNav> | null {
   if (tier && ['first_party', 'verified', 'community', 'local'].includes(tier)) out.tier = tier;
   const plugin = p.get('plugin');
   if (plugin && /^[a-z0-9-]{2,40}@[a-z0-9-]{2,40}$/.test(plugin)) { out.plugin = plugin; out.shelf ??= 'plugins'; }
+  if (p.get('agents') === 'community') out.agentTier = 'community';
   return Object.keys(out).length ? out : null;
+}
+
+/** Foundry's part of the address (docs/routes.md):
+ *  `/<company>/foundry/<shelf>[/<plugin>]`, the filters as query parameters. */
+export interface FoundryAddress { shelf?: string; item?: string; query?: string }
+export function foundryPlaceOf(nav: Partial<MarketNav>): FoundryAddress {
+  const shelf = nav.shelf;
+  const p = new URLSearchParams();
+  if (!shelf || shelf === 'agents') {
+    if (nav.segment) p.set('segment', nav.segment);
+    if (nav.segment !== 'personal' && nav.fn) p.set('fn', nav.fn);
+    if (nav.segment !== 'business' && nav.cat && nav.cat !== 'All') p.set('cat', nav.cat);
+    if (nav.agentTier) p.set('agents', nav.agentTier);
+  }
+  if (shelf === 'plugins') {
+    if (nav.pf) p.set('role', nav.pf);
+    if (nav.iface) p.set('iface', nav.iface);
+    if (nav.tier) p.set('tier', nav.tier);
+  }
+  const query = p.toString();
+  return { ...(shelf ? { shelf } : {}), ...(shelf === 'plugins' && nav.plugin ? { item: nav.plugin } : {}), ...(query ? { query } : {}) };
+}
+
+const FOUNDRY_PATH = /^\/([^/]+)\/(?:foundry|market)(?:\/([^/]+)(?:\/([^/]+))?)?\/?$/;
+/** The Market navigation an address carries: the path form, or an older `?section=foundry…` link. */
+export function navFromLocation(pathname: string, search: string): Partial<MarketNav> | null {
+  const m = FOUNDRY_PATH.exec(pathname);
+  if (!m) return navFromUrl(search);
+  const p = new URLSearchParams(search);
+  p.set('section', 'foundry');
+  try {
+    if (m[2]) p.set('shelf', decodeURIComponent(m[2]));
+    if (m[3]) p.set('plugin', decodeURIComponent(m[3]));
+  } catch { /* a malformed segment: the shelf's default */ }
+  return navFromUrl(`?${p.toString()}`) ?? {};
 }
 
 export function navQuery(nav: MarketNav): string {
@@ -218,7 +254,7 @@ export function defaultSegment(fromUrl: MarketSegment | undefined, stored: Marke
  *  the workspace runs a company (which loads after the first render). */
 export function useMarketNav(orgOn: boolean): { nav: MarketNav; setNav: (patch: Partial<MarketNav>) => void } {
   const [init] = useState(() => {
-    const url = typeof window === 'undefined' ? null : navFromUrl(window.location.search);
+    const url = typeof window === 'undefined' ? null : navFromLocation(window.location.pathname, window.location.search);
     const stored = loadSegment();
     return { url, stored, decided: !!(url?.segment || stored) };
   });
@@ -227,13 +263,40 @@ export function useMarketNav(orgOn: boolean): { nav: MarketNav; setNav: (patch: 
     ...init.url,
     segment: defaultSegment(init.url?.segment, init.stored, orgOn), cat: init.url?.cat ?? 'All', fn: init.url?.fn ?? '', shelf: init.url?.shelf ?? 'agents',
   }));
+  const navRef = useRef(nav);
+  navRef.current = nav;
   useEffect(() => {
     if (decided.current) return;
     setState((n) => ({ ...n, segment: orgOn ? 'business' : 'personal' }));
   }, [orgOn]);
+  // Back and forward between Foundry addresses restore the shelf and filters.
+  const writing = useRef(false);
+  useEffect(() => {
+    const on = () => {
+      if (writing.current || !FOUNDRY_PATH.test(window.location.pathname)) return;
+      const url = navFromLocation(window.location.pathname, window.location.search) ?? {};
+      setState((n) => ({ segment: url.segment ?? n.segment, cat: url.cat ?? 'All', fn: url.fn ?? '', shelf: url.shelf ?? 'agents', pf: url.pf, iface: url.iface, tier: url.tier, plugin: url.plugin, agentTier: url.agentTier }));
+    };
+    window.addEventListener('popstate', on);
+    return () => window.removeEventListener('popstate', on);
+  }, []);
   const setNav = useCallback((patch: Partial<MarketNav>) => {
     if (patch.segment) { decided.current = true; saveSegment(patch.segment); }
-    setState((n) => ({ ...n, ...patch }));
+    const prev = navRef.current;
+    const next = { ...prev, ...patch };
+    navRef.current = next;
+    setState(next);
+    // In Foundry the address follows: another shelf or plugin page is a
+    // history entry, a filter replaces it; the store reads it back.
+    const m = FOUNDRY_PATH.exec(window.location.pathname);
+    if (!m) return;
+    const a = foundryPlaceOf(next);
+    const href = `/${m[1]}/foundry${a.shelf ? `/${encodeURIComponent(a.shelf)}${a.item ? `/${encodeURIComponent(a.item).replace(/%40/g, '@')}` : ''}` : ''}${a.query ? `?${a.query}` : ''}`;
+    if (href === `${window.location.pathname}${window.location.search}`) return;
+    const entry = (prev.shelf ?? 'agents') !== (next.shelf ?? 'agents') || prev.plugin !== next.plugin;
+    if (entry) window.history.pushState(null, '', href); else window.history.replaceState(null, '', href);
+    writing.current = true;
+    try { window.dispatchEvent(new PopStateEvent('popstate', { state: null })); } finally { writing.current = false; }
   }, []);
   return { nav, setNav };
 }

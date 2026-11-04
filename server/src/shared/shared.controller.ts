@@ -32,6 +32,7 @@ import { AccountsService } from '../accounts/accounts.service';
 import { ConnectionsService } from '../connections/connections.service';
 import type { ConnectionService as ServiceName } from '../connections/connections.tools';
 import { SharedService, type FlowKind } from './shared.service';
+import { spaPath } from '../common/spa-links';
 
 class InviteDto {
   @IsString() email!: string;
@@ -140,7 +141,7 @@ export class InvitesController {
       const me = await this.accounts.current();
       const joined = await this.shared.acceptInvite(token ?? '', me);
       if (wantsJson) { res.json(joined); return; }
-      res.redirect(302, `${appUrl}/?workspace=${encodeURIComponent(joined.workspaceId)}`);
+      res.redirect(302, `${appUrl}${spaPath.home(joined.workspaceId)}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'could not accept the invitation';
       const status = (err as { getStatus?: () => number }).getStatus?.() ?? 400;

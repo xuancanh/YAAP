@@ -33,7 +33,8 @@ import { orgMessages, workspaces } from '../database/schema';
 import { currentAccountId } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
 import { SharedService } from '../shared/shared.service';
-import { FollowsService, orgTaskLink, orgTaskTarget } from '../follows/follows.service';
+import { FollowsService, orgTaskTarget } from '../follows/follows.service';
+import { spaPath } from '../common/spa-links';
 import { TriggerBus } from '../chats/trigger-bus';
 import { deliveryFor } from '../workspaces/quiet-hours';
 import { mentionSpans, type Mention, type MentionableMember } from '../groupchat/mentions';
@@ -189,7 +190,7 @@ export class TaskMentionsService implements TaskMentionHook, OnModuleInit {
           ? (await this.agents.get(opts.authorAgentId).catch(() => null))?.name ?? 'An agent'
           : opts.authorUserId && this.shared ? await this.shared.nameOf(org.workspaceId, opts.authorUserId).catch(() => 'Someone') : 'Someone';
         const base = (this.config?.get<string>('publicAppUrl') ?? 'http://localhost:5175').replace(/\/+$/, '');
-        const link = `${base}/${orgTaskLink(org.workspaceId, task.id)}`;
+        const link = `${base}${spaPath.task(org.workspaceId, task.key || task.id, ws?.name)}`;
         const owner = currentAccountId();
         const key = taskRef(task);
         for (const id of people) {

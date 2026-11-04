@@ -102,8 +102,8 @@ export function emailSlugify(name: string): string {
 export type DeliveryChannel = 'telegram' | 'email' | 'push';
 
 /** Where a delivered inbox event should take the person: a deep link the
- *  event carries in its payload (group-chat mentions: `#/ws/<id>/channel/
- *  <slug>/<messageId>`, docs/group-chat.md §4), else its chat session, else
+ *  event carries in its payload (group-chat mentions: `/<company>/channels/
+ *  <slug>/<messageId>`, docs/routes.md), else its chat session, else
  *  nothing. Shared by the Telegram, email and push sweeps. */
 export function eventLink(e: { sessionId: string | null; payload?: string | null }, base: string): string {
   const link = payloadField(e.payload, 'link');

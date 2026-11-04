@@ -46,6 +46,7 @@ import { FollowsService, threadTarget, type Follower } from '../follows/follows.
 import { parseDecisionRefs, parseGoalRefs, parseMentions, slugify, type Mention, type MentionableMember } from './mentions';
 import { taskRef } from '../common/task-keys';
 import { SubChannels } from './sub-channels';
+import { spaPath } from '../common/spa-links';
 
 export type Channel = typeof channels.$inferSelect;
 export type ChannelMember = typeof channelMembers.$inferSelect;
@@ -797,7 +798,7 @@ export class GroupChatService {
       ? ((await this.db.select({ name: agents.name }).from(agents).where(eq(agents.id, m.authorId)).limit(1)).at(0)?.name ?? 'agent')
       : (members.find((x) => x.memberKind === 'human' && x.memberId === m.authorId)?.name ?? 'someone');
     const base = (this.config?.get<string>('publicAppUrl') ?? 'http://localhost:5175').replace(/\/+$/, '');
-    const link = `${base}/#/ws/${c.workspaceId}/channel/${c.slug}/${m.id}`;
+    const link = `${base}${spaPath.channel(c.workspaceId, c.slug, m.id, ws?.name)}`;
     const owner = currentAccountId();
     for (const h of targets) {
       const isMention = mentioned.has(h.memberId);

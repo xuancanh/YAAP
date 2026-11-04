@@ -1,7 +1,7 @@
 /** The meeting room views (docs/meetings.md "During" → "The room header",
  *  "The full-screen room"): the compact in-thread header and its drawer
  *  (collapsed by default, remembered per viewer, items clamped to one line),
- *  Expand and the #/ws/<id>/meeting/<id> route, and the full-screen room —
+ *  Expand and the /<company>/meetings/<id> route, and the full-screen room —
  *  agenda rail, transcript folded per attendee with the live reply, the
  *  Proposed board with inline verdicts, stats and controls, the viewer's
  *  read-only room, and the summary once it ended. */
@@ -12,6 +12,7 @@ import {
   agendaRows, closeMeetingView, foldTurns, meetingHash, openMeetingView, parseMeetingHash, parseRoom, meetingStream, proposedBoard, readDrawer, resetRoomStanding, roomStanding, saveDrawer, threadStream, useMeetingRoute,
 } from '../src/lib/meetings';
 import { parseMinutes } from '../src/lib/org';
+import { MEETING_EVENT, type MeetingEventDetail } from '../src/lib/routes';
 
 const fake: Record<string, unknown> = {};
 vi.mock('../src/store', () => ({ useApp: () => fake, grad: () => 'none' }));
@@ -181,19 +182,22 @@ describe('the compact room header', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Meeting controls' })).toBeNull());
     expect(screen.getByRole('button', { name: 'Join' })).toBeTruthy();
   });
-  it('Expand opens the full-screen room at #/ws/<id>/meeting/<id>, and the route follows it', () => {
+  it('Expand opens the full-screen room (/<company>/meetings/<id>), and the route follows it, Back included', () => {
     let seen: unknown = 'unset';
     function Probe() { seen = useMeetingRoute(); return null; }
     render(<><Probe /><MeetingRoom wsId="ws1" meeting={meeting()} me="me" name={name} onChanged={vi.fn()} /></>);
     expect(seen).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Expand the meeting' }));
-    expect(window.location.hash).toBe('#/ws/ws1/meeting/m1');
     expect(seen).toEqual({ workspaceId: 'ws1', meetingId: 'm1' });
     act(() => closeMeetingView());
-    expect(window.location.hash).toBe('');
     expect(seen).toBeNull();
     act(() => openMeetingView('ws1', 'm2'));
     expect(seen).toEqual({ workspaceId: 'ws1', meetingId: 'm2' });
+    // Back or Forward onto a meeting address (the store wrote it)
+    act(() => { window.history.replaceState(null, '', '/acme-ws1/home'); window.dispatchEvent(new PopStateEvent('popstate')); });
+    expect(seen).toBeNull();
+    act(() => { window.history.replaceState(null, '', '/ws1/meetings/m3'); window.dispatchEvent(new PopStateEvent('popstate')); });
+    expect(seen).toEqual({ workspaceId: 'ws1', meetingId: 'm3' });
   });
 });
 
@@ -281,7 +285,10 @@ describe('the full-screen room', () => {
   });
 
   it('after the end: the summary — the minutes open in Artifacts, decisions taken, action items with their task keys, the cost', async () => {
-    window.history.replaceState(null, '', '/#/ws/ws1/meeting/m1');
+    window.history.replaceState(null, '', '/ws1/meetings/m1');
+    const rooms: MeetingEventDetail[] = [];
+    const onRoom = (e: Event) => { rooms.push((e as CustomEvent<MeetingEventDetail>).detail); };
+    window.addEventListener(MEETING_EVENT, onRoom);
     respond = (url) => (url.includes('/org/humans') ? humans('ceo') : url.includes('/messages') ? { messages: THREAD(), replies: {}, hasMore: false } : url.includes('/chat/channels/') ? { id: 'c1', slug: 'company', members: [] }
       : meeting({ status: 'done', endedAt: ago(1), minutesPath: 'org/meetings/company/2026/2026-11-04-weekly_review.md', summary: 'We kept January.' }, { current: 5, speaking: null, verdicts: { 'decision:0': { verdict: 'approved', by: 'me', byName: 'Linh', at: '' } } },
         { summary: 'We kept January.', endedBy: 'closed', decisions: [{ ...MINUTES.decisions[0], decisionId: 'dec12345678' }], actions: [{ ...MINUTES.actions[0], taskId: 't1', taskKey: 'COM-142' }] }));
@@ -295,7 +302,8 @@ describe('the full-screen room', () => {
     expect(fake.openOrgTask).toHaveBeenCalledWith('t1');
     fireEvent.click(within(summary).getByRole('button', { name: 'Open the minutes' }));
     expect(fake.openFile).toHaveBeenCalledWith({ kind: 'workspace', id: 'ws1' }, 'org/meetings/company/2026/2026-11-04-weekly_review.md');
-    expect(window.location.hash).toBe('');
+    expect(rooms.at(-1)).toEqual({ workspaceId: '', meetingId: null }); // opening the minutes closed the room
+    window.removeEventListener(MEETING_EVENT, onRoom);
     // no controls once it ended; the transcript is a tab away
     expect(screen.queryByRole('button', { name: 'End' })).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Transcript' }));

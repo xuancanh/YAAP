@@ -37,6 +37,7 @@ import { classOf, unclassified } from '../server/src/actions/action-classes';
 import { TUNABLES } from '../server/src/org/org-tunables';
 import type { AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import { setAddressLookup } from '../server/src/common/url-guard';
+import { spaPath } from '../server/src/common/spa-links';
 
 setAddressLookup(async () => [{ address: '93.184.216.34', family: 4 }]);
 
@@ -132,7 +133,7 @@ test('threads: the starter, repliers and mentioned agents follow; a reply reache
   assert.equal(evs.length, 1);
   assert.equal(evs[0].agentId, `follow:${s.ws.id}`);
   assert.match(evs[0].title, /Following · #general: @Scout can you look/);
-  assert.match(JSON.parse(evs[0].payload).link, new RegExp(`#/ws/${s.ws.id}/channel/general/${root.id}`));
+  assert.equal(JSON.parse(evs[0].payload).link, spaPath.channel(s.ws.id, 'general', root.id));
   // the person replies: they have seen it; the agents count it
   await s.groupchat.post(s.general.id, { text: 'Thanks both', threadRootId: root.id, authorKind: 'human' });
   assert.equal((await rowOf(s, USER, root.id))!.unseenCount, 0);
@@ -390,16 +391,16 @@ test('people: the controller follows, unfollows and marks seen as the caller, in
 test('task links: an org task follow links to the task itself (the board with its drawer); old board links are brought up to date', async () => {
   const s = await setup();
   const { o, writer } = await company(s);
-  assert.equal(orgTaskLink('ws1', 'abc-123'), '#/ws/ws1/org/board?task=abc-123');
+  assert.equal(orgTaskLink('ws1', 'abc-123'), '/ws1/tasks/abc-123');
   const t = await s.tasks.create(o.id, { title: 'Ship the page', assigneeAgentId: writer.id, createdBy: 'user' });
   const mine = (await rowOf(s, USER, t.id))!;
-  assert.equal(mine.link, `#/ws/${s.ws.id}/org/board?task=${t.id}`);
+  assert.equal(mine.link, `/${s.ws.id}/tasks/${t.id}`);
   // a row written before the deep link existed carries the bare board link
   await s.db.update(follows).set({ link: `#/ws/${s.ws.id}/org/board` }).where(eq(follows.id, mine.id));
   await s.tasks.comment(o.id, t.id, { text: 'Draft is up', fromAgentId: writer.id });
-  assert.equal((await rowOf(s, USER, t.id))!.link, `#/ws/${s.ws.id}/org/board?task=${t.id}`);
+  assert.equal((await rowOf(s, USER, t.id))!.link, `/${s.ws.id}/tasks/${t.id}`);
   // the person's inbox event carries the task link
   const evs = (await s.db.select().from(agentEvents).where(eq(agentEvents.agentId, `follow:${s.ws.id}`))).filter((e) => e.kind === 'follow');
   assert.ok(evs.length >= 1);
-  assert.equal(JSON.parse(evs.at(-1)!.payload).link, `#/ws/${s.ws.id}/org/board?task=${t.id}`);
+  assert.equal(JSON.parse(evs.at(-1)!.payload).link, `/${s.ws.id}/tasks/${t.id}`);
 });

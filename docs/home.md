@@ -429,17 +429,19 @@ follows.
 
 ## Links
 
-A single org task opens through its deep link,
-`#/ws/<workspaceId>/org/board?task=<taskId>` (`src/lib/links.ts`; the
-server writes the same shape, `orgTaskLink` in
-`server/src/follows/follows.service.ts`). It opens Operations › Board
-and the task's drawer. When the task is not on the loaded board
-(another unit, or done or cancelled), the board fetches it with
-`GET /api/workspaces/:id/org/tasks/:taskId` (an id or its short prefix).
+A single org task opens at its address, `/<company>/tasks/<key>`
+(docs/routes.md; the server writes the same path, `orgTaskLink` in
+`server/src/follows/follows.service.ts`, and the older
+`#/ws/<workspaceId>/org/board?task=<taskId>` redirects there). It opens
+Operations › Board and the task's drawer. When the task is not on the
+loaded board (another unit, or done or cancelled), the board fetches it
+with `GET /api/workspaces/:id/org/tasks/:taskId` (a key, an id or its
+short prefix).
 
-- The link stays in the address while the drawer is open, so reload
-  reopens it. Opening a card pushes the link; closing the drawer pushes the
-  board, so back and forward move between them. Leaving the board drops it.
+- The address names the task while the drawer is open (`app.routeTask`),
+  so reload reopens it. Opening a card pushes the task's address; closing
+  the drawer pushes the board, so back and forward move between them.
+  Leaving the board drops it.
 - `app.openOrgTask(taskId)` is the one way in: Home (Needs you for an
   escalation, activity, decisions), the Inbox (Following, My tasks),
   follow notifications, channel task chips and minutes, signal and

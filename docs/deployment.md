@@ -172,6 +172,8 @@ With `NODE_ENV=production` (set in the image) the boot-time env validation
 (server/src/config/validation.ts) requires `DATABASE_URL` and the `S3_*`
 vars — see the Dockerfile header and `.env.example`. The API does not serve
 static files; publish `dist/` (also in the image at `/app/dist`) via a
-static host or reverse proxy that forwards `/api` to the container.
+static host or reverse proxy that forwards `/api` to the container and
+serves `index.html` for every other path that is not a file (the SPA's
+routes are paths, `/<company>/channels/<slug>`; docs/routes.md).
 `packs/` is compiled into `server/src/market/*.generated.ts`, so it is
 excluded from the build context (`.dockerignore`).

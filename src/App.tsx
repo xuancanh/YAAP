@@ -1,6 +1,6 @@
 /** Layout composition per the design comp: activity bar · secondary panel ·
  *  main pane · artifact panel, with the stacked mobile variant. */
-import { Component, Suspense, lazy, useEffect, useRef, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useMemo, type ReactNode } from 'react';
 import { AppProvider, useApp } from './store';
 import { AuthProvider, useAuth } from './auth';
 import { SignIn } from './components/SignIn';
@@ -14,7 +14,6 @@ import { FilesView } from './components/FilesView';
 import { AppsGallery } from './components/AppsView';
 import { ArtifactPanel } from './components/ArtifactPanel';
 import { useMarketNav } from './lib/market';
-import { closeMeetingView, useMeetingRoute } from './lib/meetings';
 
 /** Heavyweight views load on demand; ChatView stays eager (the hot path). */
 const AgentsDirectory = lazy(() => import('./components/AgentsView').then((m) => ({ default: m.AgentsDirectory })));
@@ -54,15 +53,9 @@ function Layout() {
 
   // The legacy Company id is resolved by the store; read it as Operations here too.
   const sec = app.section === 'workspace' ? 'operations' : app.section;
-  // The full-screen meeting room (docs/meetings.md): #/ws/<id>/meeting/<id>
-  // fills the main area; moving to another place in the app closes it.
-  const meeting = useMeetingRoute();
-  const place = `${sec}|${app.homeView}|${app.currentChannel ?? ''}|${app.orgPane ?? ''}|${app.currentFile ?? ''}`;
-  const lastPlace = useRef(place);
-  useEffect(() => {
-    if (lastPlace.current !== place && meeting) closeMeetingView();
-    lastPlace.current = place;
-  }, [place, meeting]);
+  // The full-screen meeting room (docs/meetings.md): /<company>/meetings/<id>
+  // fills the main area; going anywhere else in the app closes it (the store).
+  const meeting = useMemo(() => (app.meetingId ? { workspaceId: app.workspaceId, meetingId: app.meetingId } : null), [app.meetingId, app.workspaceId]);
   // The workspace is the company (docs/group-chat.md §5): each company
   // section (Direction, Operations, People, Money, Oversight) has its own
   // rail and dashboard; the files live in their own Artifacts section.

@@ -13,6 +13,7 @@ import { useApp } from '../store';
 import { api, type AgentMessage, type FollowRow, type OrgApproval, type OrgDetail, type OrgPlan, type OrgTask } from '../lib/api';
 import { buildInbox, filterInbox, followingList, messagesList, waitingCount, INBOX_FILTERS, type InboxFilter, type InboxItem, type InboxMode } from '../lib/inbox';
 import { I, P } from '../lib/icons';
+import { navigate } from '../lib/routes';
 import { card, btn, pill, h2, faint, ago } from './org-ui';
 import { Approvals } from './OrganizationView';
 import { MentionText, useMentionables } from './MentionBox';
@@ -93,7 +94,7 @@ export function InboxView() {
     setSrc((s) => (s ? { ...s, follows: s.follows.map((r) => (r.targetKind === f.targetKind && r.targetId === f.targetId ? { ...r, unseenCount: 0, attentionAt: null, attention: '' } : r)) } : s));
     void api.markFollowSeen(wsId, f.targetKind, f.targetId).then(() => app.refreshWsOrg()).catch(() => undefined);
     if (f.targetKind === 'org_task') app.openOrgTask(f.targetId);
-    else if (f.link) window.location.hash = f.link.replace(/^[^#]*/, '');
+    else if (f.link) navigate(f.link);
   };
   /** A message: open the agent's direct chat (the reply goes there), and the chat's messages are read. */
   const openMessage = (i: InboxItem) => {

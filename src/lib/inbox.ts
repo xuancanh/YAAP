@@ -175,6 +175,7 @@ export type HistoryTarget =
   | { to: 'chat'; sessionId: string }
   | { to: 'inbox'; filter: InboxFilter }
   | { to: 'pane'; pane: 'plans' | 'incidents'; focus: { kind: 'plan' | 'incident'; id: string } }
+  /** An in-app link: a path (`/<company>/…`) or an older hash; opened with routes.ts `navigate`. */
   | { to: 'hash'; hash: string };
 
 export function historyTarget(i: HistoryItem): HistoryTarget | null {
@@ -185,6 +186,6 @@ export function historyTarget(i: HistoryItem): HistoryTarget | null {
     case 'approval': return { to: 'inbox', filter: i.kind === 'escalations' ? 'escalations' : 'approvals' };
     case 'plan': return { to: 'pane', pane: 'plans', focus: { kind: 'plan', id: l.id } };
     case 'incident': return { to: 'pane', pane: 'incidents', focus: { kind: 'incident', id: l.id } };
-    default: return l.href ? { to: 'hash', hash: l.href.replace(/^[^#]*/, '') } : null;
+    default: return l.href ? { to: 'hash', hash: l.href } : null;
   }
 }

@@ -38,6 +38,7 @@ import type { Follower, FollowTarget } from '../follows/follows.service';
 import { slugify } from './mentions';
 import { discussionTunable } from './discussion-tunables';
 import { channelPath } from '../files/layout';
+import { spaPath } from '../common/spa-links';
 
 export type SubPurpose = 'meeting' | 'discussion' | 'project';
 export const SUB_PURPOSES: readonly string[] = ['meeting', 'discussion', 'project'];
@@ -332,7 +333,7 @@ export class SubChannels {
   }
 
   target(sub: Pick<Channel, 'id' | 'workspaceId' | 'slug' | 'name'>): FollowTarget {
-    return { kind: 'channel', id: sub.id, workspaceId: sub.workspaceId, title: `#${sub.slug}: ${sub.name}`.slice(0, 200), link: `#/ws/${sub.workspaceId}/channel/${sub.slug}` };
+    return { kind: 'channel', id: sub.id, workspaceId: sub.workspaceId, title: `#${sub.slug}: ${sub.name}`.slice(0, 200), link: spaPath.channel(sub.workspaceId, sub.slug) };
   }
 
   private async actorName(workspaceId: string, by: string): Promise<string> {

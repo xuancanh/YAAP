@@ -75,6 +75,7 @@ export type NotificationTarget =
   | { to: 'need'; need: Pick<HomeNeed, 'kind' | 'ref'> }
   | { to: 'chat'; sessionId: string }
   | { to: 'agent'; agentId: string }
+  /** An in-app link: a path (`/<company>/…`, docs/routes.md) or an older `#/…` hash. */
   | { to: 'hash'; hash: string }
   | { to: 'inbox' };
 

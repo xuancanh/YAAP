@@ -465,17 +465,29 @@ export function RoadmapPane({ org }: { org: OrgDetail }) {
   const [view, setView] = useState<View>('timeline');
   const [groupBy, setGroupBy] = useState<GroupBy>('goal');
   const [zoom, setZoom] = useState<Zoom>('month');
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectId, setProjectIdRaw] = useState<string | null>(null);
   const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
   const [adding, setAdding] = useState(false);
   const load = useCallback(async () => {
     try { setData(await api.orgRoadmap(wsId)); setErr(null); } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   }, [wsId]);
   useEffect(() => { void load(); }, [load]);
-  // A link to a project (Home's portfolio, a task drawer) arrives as focus.
+  // The open project is in the address (/<company>/projects/<key>): opening
+  // and closing it are history entries, and Back off it closes the page.
+  const keyOf = (id: string) => data?.projects.find((p) => p.id === id)?.key || id;
+  const setProjectId = (id: string | null) => {
+    setProjectIdRaw(id);
+    app.setRouteProject(id ? keyOf(id) : null);
+  };
+  // A link to a project (the address, Home's portfolio, a task drawer) arrives as focus.
   useEffect(() => {
-    if (app.orgFocus?.kind === 'project') { setProjectId(app.orgFocus.id); app.setOrgFocus(null); }
+    if (app.orgFocus?.kind === 'project') {
+      setProjectIdRaw(app.orgFocus.id);
+      if (app.routeProject !== app.orgFocus.id) app.setRouteProject(app.orgFocus.id, { replace: true });
+      app.setOrgFocus(null);
+    }
   }, [app, app.orgFocus]);
+  useEffect(() => { if (!app.routeProject) setProjectIdRaw(null); }, [app.routeProject]);
 
   if (projectId) return <ProjectPane wsId={wsId} projectId={projectId} onBack={() => { setProjectId(null); void load(); }} />;
   const onLane = async (id: string, lane: Lane) => {

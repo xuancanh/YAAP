@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp } from '../store';
 import { api, type HistoryItem } from '../lib/api';
+import { navigate } from '../lib/routes';
 import { HISTORY_RANGES, INBOX_FILTERS, OUTCOME_LABEL, historyBy, historyFrom, historyTarget, outcomeColor, type InboxFilter } from '../lib/inbox';
 import { card, btn, pill, faint, ago } from './org-ui';
 
@@ -95,7 +96,7 @@ export function InboxHistory({ onWaiting }: { onWaiting: (f: InboxFilter) => voi
       case 'chat': app.openSession(t.sessionId); return;
       case 'inbox': onWaiting(t.filter); return;
       case 'pane': app.setOrgFocus(t.focus); app.setOrgUnitId(null); app.setOrgPane(t.pane); app.setMobileDetail(true); return;
-      case 'hash': window.location.hash = t.hash; return;
+      case 'hash': navigate(t.hash); return;
     }
   };
   const undo = async (i: HistoryItem) => {

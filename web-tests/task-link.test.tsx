@@ -1,5 +1,5 @@
-/** The task deep link (docs/home.md "Links"): `#/ws/<id>/org/board?task=<id>`
- *  parses to the board and the task; opening it shows the task's drawer even
+/** The task link (docs/routes.md): `/<company>/tasks/<key>` (older links
+ *  `#/ws/<id>/org/board?task=<id>` still parse) opens the task's drawer even
  *  when the task is not on the loaded board (fetched by id), keeps the link
  *  in the address while the drawer is open (reload), and the address moving
  *  off it (back) closes the drawer. */
@@ -21,7 +21,7 @@ const ORG = { id: 'o1', workspaceId: 'ws1', name: 'Acme', mission: '', status: '
 const calls: string[] = [];
 function route(url: string): unknown {
   calls.push(url);
-  if (url.startsWith(`/api/workspaces/ws1/org/tasks/${encodeURIComponent('abc12345')}`)) return TASK;
+  if (/^\/api\/workspaces\/ws1\/org\/tasks\/abc12345(\?|$)/.test(url)) return TASK;
   if (url.startsWith('/api/workspaces/ws1/org/tasks')) return []; // the loaded board does not have it
   if (url === '/api/workspaces/ws1/org/detail') return ORG;
   if (url.includes('/org/capacity')) return { members: [] };
@@ -40,9 +40,10 @@ beforeEach(() => {
     orgPane: 'board', orgUnitId: null, orgHeldActions: 0, stacked: false,
     orgFocus: { kind: 'task', id: 'abc12345' },
     setOrgFocus: vi.fn((v: unknown) => { fake.orgFocus = v; }), setOrgPane: vi.fn(), setOrgUnitId: vi.fn(), setMobileDetail: vi.fn(),
+    routeTask: null, setRouteTask: vi.fn((k: unknown) => { fake.routeTask = k; }),
     refreshWsOrg: vi.fn(async () => undefined), showToast: vi.fn(), nameOf: (id: string) => id, openOrgTask: vi.fn(), openAgent: vi.fn(), openFile: vi.fn(),
   });
-  window.history.replaceState(null, '', `/${orgTaskHash('ws1', 'abc12345')}`);
+  window.history.replaceState(null, '', '/ws1/tasks/abc12345');
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
 
@@ -57,21 +58,21 @@ describe('the task link', () => {
   });
 
   it('opens the drawer for a task that is not on the loaded board, and back closes it', async () => {
-    render(<OrganizationView section="operations" />);
+    const { rerender } = render(<OrganizationView section="operations" />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Close the books' })).toBeInTheDocument());
     expect(calls.some((u) => u.endsWith('/org/tasks/abc12345'))).toBe(true);
     expect(fake.setOrgFocus).toHaveBeenCalledWith(null);
-    expect(window.location.hash).toBe('#/ws/ws1/org/board?task=abc12345'); // reload reopens it
+    expect(fake.routeTask).toBe('abc12345'); // in the address (/<company>/tasks/abc12345): reload reopens it
     // back: the address moves off the task, the drawer closes
-    act(() => { window.history.replaceState(null, '', '/'); window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    act(() => { fake.routeTask = null; rerender(<OrganizationView section="operations" />); });
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Close the books' })).toBeNull());
   });
 
-  it('closing the drawer takes the task off the address', async () => {
+  it('closing the drawer takes the task off the address (a history entry)', async () => {
     render(<OrganizationView section="operations" />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Close the books' })).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('heading', { name: 'Close the books' })).toBeNull();
-    expect(window.location.hash).toBe('');
+    expect(fake.setRouteTask).toHaveBeenLastCalledWith(null);
   });
 });

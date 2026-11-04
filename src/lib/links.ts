@@ -1,7 +1,7 @@
-/** Organization deep links (docs/home.md "Links"): `#/ws/<id>/org/<pane>`
- *  opens a Company pane; `#/ws/<id>/org/board?task=<taskId>` opens the board
- *  with that task's drawer. The server writes the same shape for follow
- *  notifications (server/src/follows/follows.service.ts `orgTaskLink`). */
+/** The older organization links, from before path routing (docs/routes.md):
+ *  `#/ws/<id>/org/<pane>` and `#/ws/<id>/org/board?task=<taskId>`. Stored
+ *  messages and notifications still carry them; src/lib/routes.ts redirects
+ *  them to `/<company>/<section>/<pane>` and `/<company>/tasks/<key>`. */
 
 export interface OrgHash { workspaceId: string; pane: string; taskId: string | null }
 

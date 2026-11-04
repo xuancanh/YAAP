@@ -58,7 +58,7 @@ export interface HistoryLink {
   id: string;
   /** The conversation a key's action ran in (actions). */
   sessionId?: string;
-  /** An SPA hash (`#/ws/…`) for follows. */
+  /** An SPA link (`/<company>/…`, docs/routes.md; older rows `#/ws/…`) for follows. */
   href?: string;
 }
 

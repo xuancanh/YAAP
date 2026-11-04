@@ -48,6 +48,7 @@ import { WorkspaceEventBus, type WorkspaceEvent } from '../server/src/groupchat/
 import { parseMentions, handleOf, slugify, unresolvedMentions } from '../server/src/groupchat/mentions';
 import type { AiProvider, AiRequest, AiStreamEvent } from '../server/src/ai/ai-provider.interface';
 import { setAddressLookup } from '../server/src/common/url-guard';
+import { companySegment } from '../server/src/common/spa-links';
 
 setAddressLookup(async () => [{ address: '93.184.216.34', family: 4 }]);
 
@@ -529,7 +530,8 @@ test('an Ask approval inside a channel wake is addressed to the human who posted
   assert.equal(mention.forMemberAccountId, '', 'the owner\'s copy is her own account event');
   assert.equal(mention.channel, 1);
   const payload = JSON.parse(mention.payload) as { link: string; from: string };
-  assert.match(payload.link, new RegExp(`^https://app.example/#/ws/${s.ws.id}/channel/general/[\\w-]+$`));
+  // the app's path (docs/routes.md): the company's slug (name + id prefix), the channel, the message
+  assert.match(payload.link, new RegExp(`^https://app.example/${companySegment(s.ws.id, s.ws.name)}/channels/general/[\\w-]+$`));
   assert.equal(payload.from, '#general');
   assert.match(mention.title, /#general · Bob mentioned you/);
 });
@@ -706,7 +708,7 @@ test('a paired Telegram chat posts into a channel with `#slug text`; unknown cha
   const delivered = await tg.deliverSweep();
   assert.ok(delivered >= 1);
   assert.match(sent.at(-1)!.text, /#general · Scout mentioned you/);
-  assert.match(sent.at(-1)!.text, /https:\/\/app\.example\/#\/ws\/[\w-]+\/channel\/general\/[\w-]+/);
+  assert.match(sent.at(-1)!.text, /https:\/\/app\.example\/[\w-]+\/channels\/general\/[\w-]+/);
   // sanity: the channel row carries the folder the files tab lists
   assert.deepEqual(await s.groupchat.files(s.general.id), []);
   assert.equal((await s.db.select().from(channelMessages)).every((m) => m.accountId === 'single'), true);

@@ -90,16 +90,18 @@ describe('the board by key', () => {
       orgPane: 'board', orgUnitId: null, orgHeldActions: 0, stacked: false,
       orgFocus: { kind: 'task', id: 'eng-12' },
       setOrgFocus: vi.fn((v: unknown) => { fake.orgFocus = v; }), setOrgPane: vi.fn(), setOrgUnitId: vi.fn(), setMobileDetail: vi.fn(),
+      routeTask: null, setRouteTask: vi.fn((k: unknown) => { fake.routeTask = k; }),
       refreshWsOrg: vi.fn(async () => undefined), showToast: vi.fn(), nameOf: (id: string) => id, openOrgTask: vi.fn(), openAgent: vi.fn(), openFile: vi.fn(),
     });
-    window.history.replaceState(null, '', `/${orgTaskHash('ws1', 'eng-12')}`);
+    window.history.replaceState(null, '', '/ws1/tasks/eng-12');
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); window.history.replaceState(null, '', '/'); });
 
   it('?task=eng-12 opens the drawer; the card and the header show the key, which copies', async () => {
     render(<OrganizationView section="operations" />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Ship the API' })).toBeInTheDocument());
-    expect(window.location.hash).toBe('#/ws/ws1/org/board?task=ENG-12');
+    expect(fake.routeTask).toBe('ENG-12'); // the address names the key (/<company>/tasks/ENG-12)
+    expect(fake.setRouteTask).toHaveBeenLastCalledWith('ENG-12', { replace: true });
     fireEvent.click(screen.getByRole('button', { name: 'Copy task key ENG-12' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('ENG-12'));
     expect(screen.getAllByText('ENG-12').length).toBeGreaterThan(0);

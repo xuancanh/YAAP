@@ -2168,7 +2168,7 @@ export const follows = pgTable('follows', {
   /** started | commented | owner | assignee | reviewer | mentioned | manual. */
   reason: text('reason').notNull().default('manual'),
   title: text('title').notNull().default(''),
-  /** SPA deep link (`#/ws/…`) for notifications. */
+  /** SPA link (`/<company>/…`, docs/routes.md; older rows `#/ws/…`) for notifications. */
   link: text('link').notNull().default(''),
   createdAt: text('createdAt').notNull(),
   mutedAt: text('mutedAt'),
