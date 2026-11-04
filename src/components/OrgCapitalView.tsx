@@ -14,6 +14,10 @@ import {
   PLAN_GROUP_COLOR, PLAN_GROUP_LABEL, PLAN_STATUS_COLOR, PLAN_STATUS_LABEL, planStoppedAt, planTriggerLabel, REPLAY_KIND_COLOR, REPLAY_KIND_LABEL, routingRows, shiftDay, TIER_HINT, tierModelLabel,
 } from '../lib/org2';
 import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useFollowRef, useUnits } from './org-ui';
+import { PageHeader, SkeletonRows } from './CompanyKit';
+import { replayTitle } from '../lib/oversight';
+
+const REPLAY_KIND_WORD: Record<string, string> = { woke: 'Woke', ran: 'Ran', decided: 'Decided', signal: 'Signals', plan: 'Plans', spend: 'Spend', change: 'Changes' };
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 
@@ -173,27 +177,36 @@ export function ReplayPane({ org }: { org: OrgDetail }) {
     setReplay(null);
     void api.orgReplay(wsId, day).then((r) => { setReplay(r); setErr(null); }).catch((e) => setErr(e instanceof Error ? e.message.slice(0, 160) : 'failed'));
   }, [wsId, day]);
-  const hours = replay ? groupReplayByHour(replay.entries) : [];
+  const [kinds, setKinds] = useState<Set<string>>(new Set());
+  const names = useAgentNames();
+  const agentName = (id: string) => names.get(id)?.name ?? [...names.values()].find((a) => a.id.startsWith(id))?.name;
+  const entries = replay ? replay.entries.filter((e) => kinds.size === 0 || kinds.has(e.kind)) : [];
+  const hours = replay ? groupReplayByHour(entries) : [];
+  const kindCounts = (replay?.entries ?? []).reduce<Record<string, number>>((m, e) => { m[e.kind] = (m[e.kind] ?? 0) + 1; return m; }, {});
   const today = dayKey();
-  const tile = (k: string, v: string | number) => <div style={{ ...card, padding: '8px 12px' }}><div style={label}>{k}</div><div style={{ fontSize: 18, fontWeight: 700, ...mono }}>{v}</div></div>;
   return (
-    <div style={{ maxWidth: 860 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <h2 style={h2}>Replay</h2>
-          <div style={faint}>One day of the company (§8): what woke, what ran and what it cost, what was decided, which signals fired, which plans were written — and whether the hash chain over that day's audit rows holds.</div>
-        </div>
-        <button style={btn()} onClick={() => setDay(shiftDay(day, -1))} aria-label="Previous day">‹</button>
-        <input aria-label="Day" type="date" value={day} max={today} onChange={(e) => { if (e.target.value) setDay(e.target.value); }} style={{ ...input, width: 'auto', ...mono }} />
-        <button style={btn()} onClick={() => setDay(shiftDay(day, 1))} disabled={day >= today} aria-label="Next day">›</button>
-        {day !== today && <button style={btn()} onClick={() => setDay(today)}>Today</button>}
-      </div>
+    <div className="co-page narrow" data-testid="replay-page">
+      <PageHeader title={`Replay · ${new Date(`${day}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}`}
+        purpose="One day of the company, hour by hour: what woke and why, what ran and what it cost, what was decided, which signals fired, which plans were written, and whether that day's audit chain holds."
+        actions={<>
+          <button className="co-btn" onClick={() => setDay(shiftDay(day, -1))} aria-label="Previous day">‹</button>
+          <input aria-label="Day" className="co-input co-num" type="date" value={day} max={today} onChange={(e) => { if (e.target.value) setDay(e.target.value); }} style={{ width: 'auto' }} />
+          <button className="co-btn" onClick={() => setDay(shiftDay(day, 1))} disabled={day >= today} aria-label="Next day">›</button>
+          {day !== today && <button className="co-btn" onClick={() => setDay(today)}>Today</button>}
+        </>} />
       {err && <div style={{ ...card, color: 'var(--red)', fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
-      {!replay && !err && <div style={faint}>Reading the day…</div>}
+      {!replay && !err && <SkeletonRows rows={5} label="Reading the day" />}
       {replay && (
         <>
-          <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', marginBottom: 10 }}>
-            {tile('Runs', replay.totals.runs)}{tile('Spent', fmtUsd(replay.totals.usd))}{tile('Decisions', replay.totals.decisions)}{tile('Signals', replay.totals.signals)}{tile('Pending changes', replay.totals.plans)}{tile('Audit rows', replay.totals.auditRows)}
+          <p data-testid="replay-lede" style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 600, lineHeight: 1.45 }}>
+            {replay.entries.length === 0 ? 'A quiet day: nothing woke, ran or changed.' : `${replay.totals.runs} run${replay.totals.runs === 1 ? '' : 's'} cost ${fmtUsd(replay.totals.usd)}; ${replay.totals.decisions} decision${replay.totals.decisions === 1 ? '' : 's'}, ${replay.totals.signals} signal${replay.totals.signals === 1 ? '' : 's'}, ${replay.totals.auditRows} change${replay.totals.auditRows === 1 ? '' : 's'} recorded.`}
+          </p>
+          <div className="co-chips" role="group" aria-label="Show only" style={{ marginBottom: 10 }}>
+            {(Object.keys(REPLAY_KIND_LABEL) as Array<keyof typeof REPLAY_KIND_LABEL>).filter((k) => kindCounts[k]).map((k) => {
+              const on = kinds.has(k);
+              return <button key={k} className={`co-chip${on ? ' on' : ''}`} aria-pressed={on} onClick={() => setKinds((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; })}><span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: REPLAY_KIND_COLOR[k] }} />{REPLAY_KIND_WORD[k] ?? REPLAY_KIND_LABEL[k]}<span className="co-chip-n">{kindCounts[k]}</span></button>;
+            })}
+            {kinds.size > 0 && <button className="co-link" style={{ fontSize: 12 }} onClick={() => setKinds(new Set())}>Show everything</button>}
           </div>
           <div style={{ ...card, display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
             <span style={pill(replay.chain.ok ? 'var(--green)' : 'var(--red)', '#fff')}>{replay.chain.ok ? 'chain verified' : `chain broken at #${replay.chain.brokenAt}`}</span>
@@ -212,7 +225,7 @@ export function ReplayPane({ org }: { org: OrgDetail }) {
                     <div key={`${e.at}-${e.seq ?? i}`} style={{ display: 'flex', gap: 8, alignItems: 'baseline', padding: '5px 0', borderBottom: i < h.rows.length - 1 ? '1px solid var(--border-soft)' : 'none', flexWrap: 'wrap' }}>
                       <span style={{ ...faint, ...mono, fontSize: 10.5, width: 38, flex: 'none' }}>{new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).slice(0, 5)}</span>
                       <span style={{ ...pill(REPLAY_KIND_COLOR[e.kind], '#fff'), width: 54, textAlign: 'center' }}>{REPLAY_KIND_LABEL[e.kind]}</span>
-                      {linkable ? <button onClick={() => follow(e.refType, e.refId)} style={{ ...linkBtn, fontWeight: 600, textAlign: 'left', fontSize: 13, color: 'var(--text)', flex: 1, minWidth: 160 }}>{e.title}</button> : <span style={{ fontSize: 13, flex: 1, minWidth: 160 }}>{e.title}</span>}
+                      {linkable ? <button onClick={() => follow(e.refType, e.refId)} style={{ ...linkBtn, fontWeight: 550, textAlign: 'left', fontSize: 13, color: 'var(--text)', flex: 1, minWidth: 160 }}>{replayTitle(e.title, agentName)}</button> : <span style={{ fontSize: 13, flex: 1, minWidth: 160 }}>{replayTitle(e.title, agentName)}</span>}
                       {e.usd !== null && e.usd > 0 && <span style={{ ...faint, ...mono }}>{fmtUsd(e.usd)}</span>}
                       {e.seq !== null && <span style={{ ...faint, ...mono, fontSize: 10.5 }} title="audit row">#{e.seq}</span>}
                     </div>
@@ -257,16 +270,9 @@ export function CapitalPane({ org }: { org: OrgDetail }) {
   const classes = costs ? classRows(costs.byClass) : [];
   const chief = org.chiefOfStaffAgentId ? names.get(org.chiefOfStaffAgentId) : undefined;
   return (
-    <div style={{ maxWidth: 900 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <h2 style={h2}>Capital</h2>
-          <div style={faint}>Money as a signal (§7): what each objective cost against what it bought, the forecast per envelope over the trailing window, the allocations you give each objective, and which model tier each task class runs on.</div>
-        </div>
-        <div role="tablist" aria-label="Period" style={{ display: 'flex', gap: 4 }}>
-          {(['month', 'all'] as const).map((p) => <button key={p} role="tab" aria-selected={period === p} style={btn(period === p)} onClick={() => setPeriod(p)}>{p === 'month' ? 'This month' : 'All time'}</button>)}
-        </div>
-      </div>
+    <div className="co-page" data-testid="capital-page">
+      <PageHeader title="Capital" purpose="Money as a signal: what each objective cost against what it bought, the month-end forecast per envelope, the allocations you give each objective, and which model tier each task class runs on. Figures come from the one spend ledger."
+        actions={<div className="co-seg" role="tablist" aria-label="Period">{(['month', 'all'] as const).map((p) => <button key={p} role="tab" aria-selected={period === p} onClick={() => setPeriod(p)}>{p === 'month' ? 'This month (UTC)' : 'All time'}</button>)}</div>} />
       {err && <div style={{ ...card, color: 'var(--red)', fontSize: 12.5, marginBottom: 10 }}>{err}</div>}
       {costs && (
         <div style={{ display: 'grid', gap: 10, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', marginBottom: 10 }}>
