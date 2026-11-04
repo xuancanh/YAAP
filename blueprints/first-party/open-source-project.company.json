@@ -166,6 +166,7 @@
     "program.reviewMinDays": 3,
     "program.requestAnswerHours": 8,
     "program.allocationWarnPct": 75,
+    "program.pmPromptDays": 3,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,

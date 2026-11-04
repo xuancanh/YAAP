@@ -152,6 +152,7 @@
     "work.selfAssign": 2,
     "program.syncDays": 2,
     "program.requestAnswerHours": 48,
+    "program.pmPromptDays": 14,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
     "discussion.autoMoveMode": 2,

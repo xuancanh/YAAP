@@ -254,6 +254,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "program.reviewMaxDays": 14,
     "program.requestAnswerHours": 8,
     "program.allocationWarnPct": 90,
+    "program.pmPromptDays": 3,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
@@ -506,6 +507,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.forecastMinSamples": 12,
     "program.requestAnswerHours": 48,
     "program.allocationWarnPct": 90,
+    "program.pmPromptDays": 14,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
     "discussion.agentDailyCap": 2
@@ -785,6 +787,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "program.reviewMaxDays": 14,
     "program.requestAnswerHours": 8,
     "program.allocationWarnPct": 90,
+    "program.pmPromptDays": 3,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2
@@ -1029,6 +1032,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "program.reviewMinDays": 3,
     "program.requestAnswerHours": 8,
     "program.allocationWarnPct": 75,
+    "program.pmPromptDays": 3,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
@@ -1212,6 +1216,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.selfAssign": 2,
     "program.syncDays": 2,
     "program.requestAnswerHours": 48,
+    "program.pmPromptDays": 14,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
     "discussion.autoMoveMode": 2,
@@ -1625,6 +1630,7 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "work.selfAssign": 0,
     "work.chaseAfterHours": 48,
     "program.requestAnswerHours": 48,
+    "program.pmPromptDays": 14,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
     "discussion.agentDailyCap": 2

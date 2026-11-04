@@ -108,8 +108,21 @@ test('without a Program Manager the chief is the acting PM, said so; a PM joinin
   assert.equal(m.chiefActing, true);
   const obj = m.items.find((i) => i.id === objective.id)!;
   assert.equal(obj.owner.role, 'acting_chief', 'explicit: the chief acts as PM');
-  assert.ok(obj.cadences.some((c) => c.kind === 'goal_review' && c.enabled && c.nextAt), 'the objective has its own review rhythm');
+  assert.ok(obj.cadences.some((c) => c.kind === 'goal_review' && !c.enabled && !c.stale), 'acting PM: no seeded review (program.actingRhythms off), and not flagged stale');
+  await program.seedAll(await s.org.get(orgId));
+  assert.equal((await program.cadenceRows(orgId)).length, 0, 'no review spend while the chief acts');
+  assert.equal((await s.org.project(orgId, p.id)).standupCron, '', 'project standups stay as they were');
   assert.match(await program.describeFor(orgId, s.chief.id), /ACTING PM/);
+  // the missing trigger: the chief is prompted to hire a PM, once per staffing-gap window
+  const reasons = await program.heartbeatReasons(s.chief.id, new Date());
+  assert.ok(reasons.some((r) => /acting Program Manager for 1 objective\(s\) and 1 project\(s\).*org_hire_agent templateOrPack "role:ops-pm"/.test(r)), reasons.join('\n'));
+  assert.ok(!(await program.heartbeatReasons(s.chief.id, new Date())).some((r) => /role:ops-pm/.test(r)), 'not again inside the window');
+  assert.ok((await program.heartbeatReasons(s.chief.id, new Date(Date.now() + 8 * 86_400_000))).some((r) => /role:ops-pm/.test(r)), 'again after program.pmPromptDays');
+  // the tunable turns acting rhythms on
+  await s.org.setTunable(orgId, 'program.actingRhythms', 1, { actor: 'user', why: 'test', decidedBy: 'user' });
+  await program.seedAll(await s.org.get(orgId));
+  assert.ok((await program.cadenceRows(orgId)).some((r) => r.refId === objective.id && r.kind === 'goal_review'), 'on: acting items get their reviews');
+  await s.org.setTunable(orgId, 'program.actingRhythms', 0, { actor: 'user', why: 'test', decidedBy: 'user' });
   // a specialist cannot assign
   await assert.rejects(program.assign(orgId, p.key!, s.editor.id, `agent:${s.editor.id}`), /assigned by the chief of staff/);
   // a PM joins: the chief's items go to it
@@ -122,6 +135,8 @@ test('without a Program Manager the chief is the acting PM, said so; a PM joinin
   assert.equal(m.chiefActing, false);
   assert.deepEqual(m.pms.map((x) => x.name), ['Pat']);
   assert.equal(m.items.find((i) => i.id === p.id)!.owner.role, 'pm');
+  assert.ok((await program.cadenceRows(orgId)).some((r) => r.refId === p.id && r.kind === 'milestone_review' && r.enabled === 1), 'a PM taking a project over seeds its review');
+  assert.equal(await program.pmHirePrompt(await s.org.get(orgId), new Date(Date.now() + 30 * 86_400_000)), null, 'no hire prompt once a PM exists');
   const assigns = (await s.audit.list(orgId, { limit: 200 })).filter((r) => r.action === 'program_assign');
   assert.ok(assigns.length >= 2, 'every hand-over is audited');
   assert.ok((await inbox(s, pm.id, 'info')).some((e) => /You own .* as its Program Manager/.test(e.title)), 'the PM is told');
@@ -242,8 +257,7 @@ test('each goal and project keeps its own rhythm: seeded from the tunables, set 
   await program.settle();
   const p = (await projects.create(orgId, { title: 'Onboarding', goalIds: [kr.id], brief: { problem: 'p' }, milestones: [{ name: 'Beta', date: '2027-01-15' }] }, 'user')).project;
   await program.assign(orgId, p.key!, pm.id, 'user');
-  const fresh = await s.org.project(orgId, p.id);
-  assert.ok(fresh.standupCron, 'the project sync is seeded from program.syncDays');
+  assert.equal((await s.org.project(orgId, p.id)).standupCron, '', 'the project sync is the PM\'s choice, never seeded');
   const rows = await program.cadenceRows(orgId);
   assert.ok(rows.some((r) => r.refId === objective.id && r.kind === 'goal_review' && r.enabled === 1));
   assert.ok(rows.some((r) => r.refId === p.id && r.kind === 'milestone_review' && r.enabled === 1));

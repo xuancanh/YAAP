@@ -246,6 +246,7 @@
     "program.reviewMaxDays": 14,
     "program.requestAnswerHours": 8,
     "program.allocationWarnPct": 90,
+    "program.pmPromptDays": 3,
     "discussion.autoCloseHours": 12,
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2

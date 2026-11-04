@@ -230,6 +230,7 @@
     "work.selfAssign": 0,
     "work.chaseAfterHours": 48,
     "program.requestAnswerHours": 48,
+    "program.pmPromptDays": 14,
     "program.staleCadences": 1,
     "discussion.autoCloseHours": 72,
     "discussion.agentDailyCap": 2

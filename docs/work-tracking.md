@@ -508,9 +508,13 @@ compete). Served by `OrgProgramService`
   `org_program_cadence` (a five-field cron) **within bounds the company's
   profile derives** — `program.syncMinDays`–`program.syncMaxDays` and
   `program.reviewMinDays`–`program.reviewMaxDays`, checked on the cron's mean
-  interval; defaults `program.syncDays` / `program.reviewDays` at
-  `program.cadenceHour` are seeded when an item gets its owner, and lazily
-  for older items (`deriveProgramTunables` in `program-tunables.ts`, called
+  interval. The default reviews (`program.reviewDays` at
+  `program.cadenceHour`) are seeded **only for items a real Program Manager
+  owns** — when it takes them over, and lazily for its older items; the
+  project sync is never seeded (standups stay the owner's choice, as before
+  the matrix). Items the chief owns as the acting PM get no seeded reviews
+  and no review spend unless `program.actingRhythms` is 1 (derived 0), and
+  their missing review is not counted stale (`deriveProgramTunables` in `program-tunables.ts`, called
   by `deriveOperatingSystem`: speed syncs twice a week and answers requests
   in hours; a control culture reviews formally and gives heads two days; a
   clan culture flags stretch at 75%). The reviews fire through the meetings
@@ -536,6 +540,15 @@ compete). Served by `OrgProgramService`
   `program.allocationWarnPct` is **stretched**: its briefing says so, and a
   `member_stretched` signal goes to its head and to the PM of each project
   it serves.
+- **The hire trigger.** While the chief acts as PM for any active
+  objective or project and no Program Manager hire is pending, its heartbeat
+  prompts it to propose one through the normal hire path
+  (`org_hire_agent role:ops-pm`, reporting to the Head of Operations or the
+  chief; a card for the CEO in supervised mode) — at most once per
+  `program.pmPromptDays` (the staffing-gap window, deduplicated through the
+  audit log as `program_pm_prompt`). This is the trigger the audit found
+  missing. When the PM joins it takes the items over, and their reviews
+  are seeded then.
 - **The chief** assigns PMs, acts as one when there is none, proposes the
   first PM hire, decides resource conflicts within its authority, and
   watches the matrix (`org_program`, its heartbeat and signals:

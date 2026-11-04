@@ -27,6 +27,8 @@ export const PROGRAM_TUNABLES: Record<string, TunableDef> = {
   'program.cadenceHour': { default: 10, min: 0, max: 23, area: 'work', description: 'Hour (server time) the default goal and project cadences are held at.' },
   'program.requestAnswerHours': { default: 24, min: 1, max: 168, area: 'work', description: 'Hours a head has to approve, adjust or decline a Program Manager\'s resource request before it climbs to the head\'s manager as a resource conflict.' },
   'program.allocationWarnPct': { default: 85, min: 50, max: 100, area: 'work', description: 'Percent of a member\'s time allocated to project teams above which it is stretched: its head and the Program Managers of its projects are told.' },
+  'program.actingRhythms': { default: 0, min: 0, max: 1, area: 'work', description: '1: goals and projects the chief of staff owns as the acting Program Manager (the company has none) get the default goal and milestone reviews too; 0: only items a real Program Manager owns do — no review spend while the chief acts, and the chief is prompted to hire a PM instead.' },
+  'program.pmPromptDays': { default: 7, min: 1, max: 60, area: 'work', description: 'Days between the chief\'s prompts to propose hiring a Program Manager while it acts as PM for active goals or projects (the staffing-gap window).' },
   'program.staleCadences': { default: 2, min: 1, max: 6, area: 'work', description: 'Missed intervals after which a goal or project cadence counts as stale (the chief and the owner are told).' },
 };
 registerTunables(PROGRAM_TUNABLES);
@@ -54,6 +56,8 @@ export function deriveProgramTunables(d: Pick<ProfileDiagnosis, 'stage' | 'cultu
     { key: 'program.reviewMaxDays', value: formal ? 31 : stage === 'early' ? 14 : 31, why: formal ? 'a goal is reviewed at least monthly' : stage === 'early' ? 'a small company reviews each goal at least every two weeks' : 'a goal is reviewed at least monthly' },
     { key: 'program.requestAnswerHours', value: speed ? 8 : formal ? 48 : stage === 'early' ? 12 : 24, why: speed ? 'a head answers a resource request the same working day' : formal ? 'a head gets two days to weigh a request against its unit\'s plan' : stage === 'early' ? 'a small company answers staffing asks within a morning' : 'a head answers a resource request within a day' },
     { key: 'program.allocationWarnPct', value: c === 'clan' ? 75 : speed || c === 'market' ? 90 : 85, why: c === 'clan' ? 'a people-first culture keeps a quarter of each member\'s time for its home unit' : speed || c === 'market' ? 'members may be lent almost fully before it is flagged' : 'a member lent more than 85% has little left for its unit' },
+    { key: 'program.actingRhythms', value: 0, why: 'reviews run for items a Program Manager owns; while the chief acts as PM it is prompted to hire one instead of spending on reviews' },
+    { key: 'program.pmPromptDays', value: speed ? 3 : formal ? 14 : 7, why: speed ? 'a missing PM is raised again within days' : formal ? 'a staffing gap is raised at the fortnightly review' : 'a missing PM is raised again weekly' },
     { key: 'program.staleCadences', value: formal ? 1 : 2, why: formal ? 'a missed review is flagged at once' : 'two missed intervals and a cadence is stale' },
   ].map((t) => { const def = PROGRAM_TUNABLES[t.key]; return { ...t, value: Math.min(def.max, Math.max(def.min, t.value)) }; });
 }

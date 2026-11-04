@@ -363,22 +363,33 @@ export class OrgProgramService {
   }
 
   /** Seed an item's default rhythm from the company's tunables (only what is unset). */
+  /**
+   * Whether an owner's items get seeded reviews: a real Program Manager's
+   * do; the acting chief's only when `program.actingRhythms` is on (no review
+   * spend while the chief acts — it is prompted to hire a PM instead).
+   */
+  async seedsFor(org: Organization, ownerAgentId: string | null): Promise<boolean> {
+    if (!ownerAgentId) return false;
+    if (ownerAgentId === org.chiefOfStaffAgentId) return programTunable(org, 'program.actingRhythms') >= 1;
+    const m = await this.org.member(org.id, ownerAgentId);
+    return Boolean(m && m.status === 'active' && isProgramManagerTitle(m.title));
+  }
+
+  /** Seed an item's default review from the company's tunables (only what is
+   *  unset, and only for a Program Manager's item — see `seedsFor`). The
+   *  project sync (standup) is never seeded: it stays the owner's choice. */
   async ensureDefaults(org: Organization, refType: 'goal' | 'project', refId: string, actor = 'system', now = new Date()): Promise<void> {
     const hour = programTunable(org, 'program.cadenceHour');
     const have = new Set((await this.cadenceRows(org.id, refType, refId)).map((r) => r.kind));
     if (refType === 'goal') {
       const g = await this.org.goal(org.id, refId).catch(() => null);
-      if (!g || g.kind !== 'objective' || g.status !== 'active') return;
+      if (!g || g.kind !== 'objective' || g.status !== 'active' || !(await this.seedsFor(org, g.ownerAgentId))) return;
       if (!have.has('goal_review')) await this.writeCadence(org.id, refType, refId, 'goal_review', cronForDays(programTunable(org, 'program.reviewDays'), hour, 2), actor, now);
       return;
     }
     const p = await this.org.project(org.id, refId).catch(() => null);
-    if (!p || p.kind !== 'project' || CLOSED_PROJECT.has(p.status)) return;
+    if (!p || p.kind !== 'project' || CLOSED_PROJECT.has(p.status) || !(await this.seedsFor(org, p.ownerAgentId))) return;
     if (!have.has('milestone_review')) await this.writeCadence(org.id, refType, refId, 'milestone_review', cronForDays(programTunable(org, 'program.reviewDays'), hour, 3), actor, now);
-    if (!p.standupCron) {
-      const cron = cronForDays(programTunable(org, 'program.syncDays'), Math.max(0, hour - 1), 1);
-      await this.org.updateProjectRitual(org.id, p.id, { standupCron: cron, standupNextAt: nextFire(cron, now)?.toISOString() ?? null });
-    }
   }
 
   private async writeCadence(orgId: string, refType: string, refId: string, kind: string, cron: string | null, actor: string, now: Date): Promise<OrgProgramCadence> {
@@ -442,13 +453,16 @@ export class OrgProgramService {
   /** The rhythms of an item, with their next occurrence and staleness. */
   async cadencesOf(org: Organization, item: { refType: 'goal'; goal: OrgGoal; krs: OrgGoal[]; projects: OrgProject[] } | { refType: 'project'; project: OrgProject }, rows: OrgProgramCadence[], now: Date): Promise<CadenceView[]> {
     const staleN = programTunable(org, 'program.staleCadences');
+    // An acting-chief item with acting rhythms off has no review by design: not stale.
+    const owner = item.refType === 'goal' ? item.goal.ownerAgentId : item.project.ownerAgentId;
+    const expectReview = !(owner && owner === org.chiefOfStaffAgentId && programTunable(org, 'program.actingRhythms') < 1);
     const out: CadenceView[] = [];
     const fromRow = (kind: CadenceKind, refId: string, output: string | null): CadenceView => {
       const r = rows.find((x) => x.refId === refId && x.kind === kind);
       const enabled = Boolean(r && r.enabled === 1);
       const every = r && enabled ? cronIntervalDays(r.cron, now) ?? 30 : null;
       const since = output ?? r?.lastAt ?? r?.createdAt ?? null;
-      const stale = !enabled || (every !== null && since !== null && now.getTime() - Date.parse(since) > staleN * every * DAY_MS);
+      const stale = enabled ? every !== null && since !== null && now.getTime() - Date.parse(since) > staleN * every * DAY_MS : r ? true : expectReview;
       return { kind, label: CADENCE_LABELS[kind], cron: enabled ? r!.cron : null, everyDays: every === null ? null : Math.round(every * 10) / 10, nextAt: enabled ? r!.nextAt : null, lastAt: r?.lastAt ?? null, enabled, stale };
     };
     if (item.refType === 'project') {
@@ -722,12 +736,14 @@ export class OrgProgramService {
     const team = (await this.org.projectMembers(org.id)).filter((r) => r.status === 'active');
     const members = await this.org.members(org.id);
     const tolerance = tunable(org, 'intent.paceTolerance');
+    const actingOff = programTunable(org, 'program.actingRhythms') < 1;
     for (const c of due) {
       await this.db.update(orgProgramCadences).set({ lastAt: now.toISOString(), nextAt: nextFire(c.cron, now)?.toISOString() ?? null }).where(eq(orgProgramCadences.id, c.id));
       const skip = async (reason: string) => { await this.audit.append(org.id, { actor: 'system', action: 'meeting_skipped', refType: c.refType, refId: c.refId, payload: { kind: c.kind, reason } }); };
       if (c.refType === 'goal') {
         const g = goals.find((x) => x.id === c.refId);
         if (!g || g.status !== 'active' || !g.ownerAgentId) { await skip('the goal is not active or has no owner'); continue; }
+        if (actingOff && c.setBy === 'system' && g.ownerAgentId === org.chiefOfStaffAgentId) { await skip('the chief is the acting PM and program.actingRhythms is off'); continue; }
         const krs = goals.filter((x) => x.parentGoalId === g.id && x.kind === 'key_result' && x.status === 'active');
         const ids = new Set([g.id, ...krs.map((k) => k.id)]);
         const linked = projects.filter((p) => p.kind === 'project' && !CLOSED_PROJECT.has(p.status) && idList(p.goalIds).some((x) => ids.has(x)));
@@ -751,6 +767,7 @@ export class OrgProgramService {
       } else {
         const p = projects.find((x) => x.id === c.refId);
         if (!p || p.kind !== 'project' || CLOSED_PROJECT.has(p.status) || !p.ownerAgentId) { await skip('the project is closed or has no owner'); continue; }
+        if (actingOff && c.setBy === 'system' && p.ownerAgentId === org.chiefOfStaffAgentId) { await skip('the chief is the acting PM and program.actingRhythms is off'); continue; }
         const open = (await this.tasks.list(org.id, { projectId: p.id })).filter((t) => !['done', 'cancelled'].includes(t.status));
         const ms = milestonesOf(p).filter((m) => !m.done);
         if (open.length === 0 && ms.length === 0) { await skip('no open task and no open milestone'); continue; }
@@ -934,7 +951,7 @@ export class OrgProgramService {
     const acting = m.items.filter((x) => (x.refType === 'project' || x.kind === 'objective') && x.owner.role === 'acting_chief');
     const nowProjects = m.items.filter((x) => x.refType === 'project' && x.lane === 'now').length;
     if (acting.length >= 2 && (m.chiefActing ? nowProjects >= 2 || acting.length >= 3 : true)) {
-      out.push({ kind: 'program_acting', severity: 'info', refType: 'org', refId: `${org.id}:acting`, title: m.chiefActing ? `The chief acts as Program Manager for ${acting.length} goals/projects: no PM yet` : `The chief still owns ${acting.length} goals/projects a Program Manager should`, detail: m.chiefActing ? 'Propose a Program Manager hire (role:ops-pm, org_hire_agent) so outcomes have an owner who is not running the company.' : 'Hand them to the Program Managers (org_program_assign).', addressee: 'chief' });
+      out.push({ kind: 'program_acting', severity: 'info', refType: 'org', refId: `${org.id}:acting`, title: m.chiefActing ? `The chief acts as Program Manager for ${acting.length} goals/projects: no PM yet` : `The chief still owns ${acting.length} goals/projects a Program Manager should`, detail: m.chiefActing ? 'Propose a Program Manager hire through the normal hire path (org_hire_agent role:ops-pm, to the Head of Operations or the CEO) so outcomes have an owner who is not running the company; until then they hold no goal or milestone reviews (program.actingRhythms).' : 'Hand them to the Program Managers (org_program_assign).', addressee: 'chief' });
     }
     for (const mm of m.members.filter((x) => x.stretched)) {
       const member = (await this.org.member(org.id, mm.agentId))!;
@@ -982,9 +999,40 @@ export class OrgProgramService {
         const pms = await this.programManagers(org.id);
         const chiefOwned = owned.length;
         if (pms.length && chiefOwned) out.push(`you still own ${chiefOwned} goal(s)/project(s) the company's Program Managers should: hand them over (org_program_assign)`);
+        const prompt = await this.pmHirePrompt(org, now);
+        if (prompt) out.push(prompt);
       }
     }
     return out;
+  }
+
+  /**
+   * The missing trigger the audit found: while the chief acts as PM for any
+   * active goal or project and no PM hire is pending, prompt it — once per
+   * `program.pmPromptDays` (the staffing-gap window, deduplicated through
+   * the audit log as `program_pm_prompt`) — to propose a Program Manager
+   * through the normal hire path. Null when there is nothing to prompt.
+   */
+  async pmHirePrompt(org: Organization, now = new Date()): Promise<string | null> {
+    const chief = org.chiefOfStaffAgentId;
+    if (!chief || (await this.programManagers(org.id)).length) return null;
+    const objectives = (await this.org.goals(org.id)).filter((g) => g.kind === 'objective' && g.status === 'active' && g.ownerAgentId === chief);
+    const projects = (await this.org.projects(org.id)).filter((p) => p.kind === 'project' && !CLOSED_PROJECT.has(p.status) && p.ownerAgentId === chief);
+    if (objectives.length + projects.length === 0) return null;
+    const pending = (await this.approvals.pending(org.id)).some((a) => {
+      if (a.kind !== 'hire') return false;
+      const p = JSON.parse(a.payload || '{}') as { roleId?: string; title?: string };
+      return p.roleId === 'ops-pm' || isProgramManagerTitle(p.title);
+    });
+    if (pending) return null;
+    const windowMs = programTunable(org, 'program.pmPromptDays') * DAY_MS;
+    const last = (await this.audit.list(org.id, { action: 'program_pm_prompt', limit: 1 }))[0];
+    if (last && now.getTime() - Date.parse(last.createdAt) < windowMs) return null;
+    await this.audit.append(org.id, { actor: 'system', action: 'program_pm_prompt', refType: 'org', refId: org.id, payload: { objectives: objectives.length, projects: projects.length } });
+    const members = await this.org.members(org.id);
+    const opsHead = members.find((m) => m.status === 'active' && /\b(head of )?operations\b|\bcoo\b/i.test(m.title) && isHeadMember(m, org, members.some((x) => x.reportsToAgentId === m.agentId)));
+    const to = opsHead ? `reporting to ${await this.nameOf(opsHead.agentId)} (Head of Operations — its hire, so ask it with org_message or a backlog task, or raise it yourself)` : 'reporting to you';
+    return `you are the acting Program Manager for ${objectives.length} objective(s) and ${projects.length} project(s) (${[...objectives.map((g) => `"${g.title}"`), ...projects.map((p) => p.key)].slice(0, 4).join(', ')}): goals and projects need an owner who is not running the company — propose hiring a Program Manager (org_hire_agent templateOrPack "role:ops-pm", ${to}; the why names these items, the alternatives including staying acting, and the cost). It goes the normal hire path (a card for the CEO in supervised mode). Once one joins, it takes these items over with their reviews.`;
   }
 
   private async nameOf(agentId: string | null | undefined): Promise<string> {
