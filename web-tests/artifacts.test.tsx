@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // No `globals: true` in vitest.config.ts, so RTL does not auto-clean between tests.
@@ -6,7 +6,7 @@ afterEach(cleanup);
 import { ApiError, type Agent, type FileEntry } from '../src/lib/api';
 import { buildTree, groupTree, isConflict, parseConflict, parseDelimited, viewKind, compareCells, ownerOf, ORG_ORDER } from '../src/lib/artifacts';
 import { ORG_ORDER as SERVER_ORG_ORDER } from '../server/src/files/layout';
-import { CsvTable, FileEditor, JsonTree } from '../src/components/ArtifactViewer';
+import { CsvTable, JsonTree } from '../src/components/ArtifactViewer';
 import { ArtifactTree } from '../src/components/ArtifactTree';
 
 const agent = (id: string, name: string, homeDir: string | null, emoji = '🤖'): Agent =>
@@ -130,7 +130,7 @@ describe('tree grouping', () => {
     render(<ArtifactTree entries={entries} agents={agents} grouped selected={null} onOpen={onOpen} />);
     const shared = screen.getByTestId('artifact-shared');
     const homes = screen.getByTestId('artifact-agents');
-    expect(shared).toHaveTextContent('org/');
+    expect(within(shared).getAllByRole('treeitem').map((r) => r.textContent)).toContain('org');
     expect(shared).toHaveTextContent('README.md');
     expect(shared).not.toHaveTextContent('agents');
     expect(homes).toHaveTextContent('Ada');
@@ -141,7 +141,8 @@ describe('tree grouping', () => {
     expect(onOpen).toHaveBeenCalledWith('README.md');
     // folders are collapsible
     expect(within(shared).queryByText('plan.md')).toBeNull();
-    fireEvent.click(within(shared).getByText('org/'));
+    fireEvent.click(within(shared).getByText('org'));
+    expect(within(shared).getByText('org').closest('[role="treeitem"]')).toHaveAttribute('aria-expanded', 'true');
     expect(within(shared).getByText('plan.md')).toBeInTheDocument();
     // the group itself collapses
     fireEvent.click(screen.getByTestId('artifact-group-agents'));
@@ -181,13 +182,13 @@ describe('the /org/ folder (docs/filesystem.md "Layout")', () => {
     const onOpen = vi.fn();
     render(<ArtifactTree entries={entries} agents={agents} grouped selected={null} onOpen={onOpen} />);
     const pin = screen.getByTestId('artifact-pinned');
-    expect(pin).toHaveTextContent('org/README.md');
-    fireEvent.click(within(pin).getByText('org/README.md'));
+    expect(pin).toHaveTextContent('README.mdorg/');
+    fireEvent.click(within(pin).getByText('README.md'));
     expect(onOpen).toHaveBeenCalledWith('org/README.md');
   });
 });
 
-describe('FileEditor version conflict', () => {
+describe('version conflicts (docs/filesystem.md "Collaboration")', () => {
   const conflict = () => new ApiError(409, JSON.stringify({ statusCode: 409, message: 'version conflict', currentVersion: 5, updatedBy: { kind: 'agent', id: 'a1', name: 'Ada' } }));
 
   it('parses the 409 body', () => {
@@ -196,42 +197,5 @@ describe('FileEditor version conflict', () => {
     expect(parseConflict(conflict())).toEqual({ version: 5, by: 'Ada' });
     expect(parseConflict(new ApiError(409, 'not json'))).toEqual({});
   });
-
-  it('sends expectedVersion, shows the banner on 409, Reload takes theirs', async () => {
-    const onSave = vi.fn().mockRejectedValueOnce(conflict());
-    const onReload = vi.fn().mockResolvedValue({ text: 'their text', version: 5 });
-    render(<FileEditor text="v4 text" version={4} onSave={onSave} onReload={onReload} onCancel={() => {}} />);
-    fireEvent.change(screen.getByLabelText('File contents'), { target: { value: 'my text' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    const banner = await screen.findByTestId('conflict-banner');
-    expect(onSave).toHaveBeenCalledWith('my text', 4);
-    expect(banner).toHaveTextContent('Ada');
-    expect(banner).toHaveTextContent('version 5');
-    fireEvent.click(within(banner).getByRole('button', { name: 'Reload' }));
-    await waitFor(() => expect(screen.queryByTestId('conflict-banner')).toBeNull());
-    expect(screen.getByLabelText('File contents')).toHaveValue('their text');
-    // the next save is checked against the reloaded version
-    onSave.mockResolvedValueOnce(undefined);
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(onSave).toHaveBeenLastCalledWith('their text', 5));
-  });
-
-  it('Overwrite writes my text without the version check', async () => {
-    const onSave = vi.fn().mockRejectedValueOnce(conflict()).mockResolvedValueOnce(undefined);
-    render(<FileEditor text="base" version={2} onSave={onSave} onReload={vi.fn()} onCancel={() => {}} />);
-    fireEvent.change(screen.getByLabelText('File contents'), { target: { value: 'mine' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    const banner = await screen.findByTestId('conflict-banner');
-    fireEvent.click(within(banner).getByRole('button', { name: 'Overwrite' }));
-    await waitFor(() => expect(onSave).toHaveBeenLastCalledWith('mine', undefined));
-    await waitFor(() => expect(screen.queryByTestId('conflict-banner')).toBeNull());
-  });
-
-  it('shows other errors without the conflict banner', async () => {
-    const onSave = vi.fn().mockRejectedValueOnce(new ApiError(500, 'boom'));
-    render(<FileEditor text="x" onSave={onSave} onReload={vi.fn()} onCancel={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('status')).toHaveTextContent('500 boom');
-    expect(screen.queryByTestId('conflict-banner')).toBeNull();
-  });
+  // the editor's conflict flow (keep mine / take theirs) is in artifacts-editor.test.tsx
 });

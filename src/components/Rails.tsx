@@ -113,7 +113,7 @@ function ArtifactsSection() {
         <span style={{ flex: 1 }}>Artifacts</span>
         {source && wsId && (
           <>
-            <button title={`New file${here ? ` in /${here}/` : ''}`} aria-label="New file" style={iconBtn}
+            <button title={`New page${here ? ` in /${here}/` : ''}`} aria-label="New page" style={iconBtn}
               onClick={() => void createFile(source, here, app.showToast).then(async (p) => { if (p) { await refreshFiles(); app.openFile({ kind: 'workspace', id: wsId }, p); } })}>
               <I d={P.plus} size={14} />
             </button>

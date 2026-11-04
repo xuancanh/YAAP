@@ -33,7 +33,7 @@ import type { DrizzleDb } from '../database/database.module';
 import { agents, channelMessages, channels, organizations, orgCadences, orgCheckins, orgGoals, orgMeetings, orgMembers, orgUnits } from '../database/schema';
 import { WorkspaceFs, type FsActor } from '../files/workspace-fs.service';
 import { AccountsService } from '../accounts/accounts.service';
-import { FUNCTION_IDS, FUNCTION_LAYOUT, ORG_FUNCTIONS, functionOfRole, legacyTarget, localDay, orgPath, withNumber } from '../files/layout';
+import { FUNCTION_IDS, FUNCTION_LAYOUT, NOTES_MARKER, ORG_FUNCTIONS, functionOfRole, legacyTarget, localDay, orgPath, withNumber } from '../files/layout';
 import { OrgAuditService, type AuditEntry } from './org-audit.service';
 import { KIND_TITLES, type MeetingKind } from './org-meetings.service';
 import { roleById } from './roles/catalog';
@@ -42,8 +42,9 @@ import { tunable } from './org-tunables';
 import './chief-tunables';
 
 export const LAYOUT_AUTHOR: FsActor = { kind: 'system', id: 'system', name: 'org index' };
-/** Everything after this line in a generated README.md / calendar.md is kept. */
-export const NOTES_MARKER = '<!-- notes: everything below this line is kept when the file is regenerated -->';
+/** Everything after this line in a generated README.md / calendar.md is
+ *  kept (defined with the layout so the web editor can share it). */
+export { NOTES_MARKER };
 /** Debounce of the audit-driven refresh, per org. */
 export const LAYOUT_DEBOUNCE_MS = 2_000;
 

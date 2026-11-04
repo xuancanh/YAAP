@@ -342,10 +342,56 @@ Shipped as (backend): `server/src/files/` — `WorkspaceFs` (resolution,
 
 ## Rich display
 
-The Artifacts view renders by kind: Markdown through the chat renderer
-(`src/lib/md.tsx`, including rich components); CSV/TSV as a sortable table;
-JSON as a collapsible tree; code with line numbers; images, PDF, audio with
-transcript, HTML in the sealed sandbox; slides decks. Text files are
-editable in place (Edit → Save, with the version check). The header shows
-the owner (agent avatar or "Shared"), version, last editor and time, and a
-History drawer with revisions and Restore.
+A file opens as a page (`src/components/FilesView.tsx`): breadcrumbs and a
+compact actions menu (Edit, History, Show source, Copy link, Attach to chat,
+Download, new page/folder, rename, delete) above a reading column of about
+720px; over the title, the owner (agent avatar or "Shared"), the last editor
+and time, and the version. Markdown is a document (`DocView.tsx`, the chat
+renderer's parser and inline rules): the first H1 is the title (else the
+file name), headings get anchors, a long doc gets an "On this page" outline
+on wide screens, quotes are callouts (`> [!NOTE]` kinds tinted), tables
+scroll sideways instead of breaking words and keep a sticky header, code is
+highlighted with a copy button, front matter shows as properties, HTML
+comments are hidden and the Notes marker of generated files shows as a
+divider. CSV/TSV is a sortable table, JSON a tree (or source), code
+line-numbered and highlighted, images framed with actual-size zoom; PDF,
+audio with transcript, HTML in the sealed sandbox. The side panel (a file
+path clicked in chat) shows the same page, narrower, and refreshes live.
+
+## Editing
+
+Edit turns the page into the editor in place, by kind
+(`src/components/FileEditor.tsx`; the editors are lazy chunks):
+
+- **Markdown** — a WYSIWYG block editor (TipTap/ProseMirror,
+  `src/components/editor/`): `/` block menu, Markdown shortcuts as you type,
+  a toolbar over a selection, drag handles, tables with a row/column bar,
+  task lists, code blocks with a language, ⌘B/I/E/K/Z/S. Markdown stays the
+  storage format (`src/lib/markdownDoc.ts`): a file opened and saved without
+  edits is byte-identical (and is not written at all); untouched top-level
+  blocks and the text between them are written back verbatim, so an edit
+  rewrites only the blocks it touched. Front matter, HTML blocks and
+  comments, CRLF, bullet markers and list tightness are kept. Edited blocks
+  are normalised (emphasis to `*`/`**`, setext to ATX headings, indented to
+  fenced code, table padding, escapes, a hard break as a plain newline).
+- **Generated files** — a file with the Notes marker (`/org/README.md`,
+  `calendar.md`) edits only the tail below it; the generated part is shown
+  read-only. A wholly generated file (`_Generated from … edits are
+  overwritten_`) opens read-only with an "Edit anyway".
+- **Code, text, JSON** — CodeMirror 6: language by file name, line numbers,
+  search, JSON linted as you type.
+- **CSV/TSV** — an editable grid (type, Enter, arrows/Tab, Delete, paste a
+  block, add/remove rows and columns); untouched rows keep their exact text.
+- **Read-only** with the reason: `.checkpoints/`, `.revisions/`, a viewer's
+  role, a truncated preview.
+
+Saving: autosave after a pause, ⌘S, and Done; the bar says Saved / Unsaved
+changes / Saving… / Not saved. Every write sends `expectedVersion`. A 409
+stops autosave and shows a conflict panel with a line diff (theirs vs
+yours): **Keep mine** writes over their version explicitly, **Take theirs**
+loads it — never a silent overwrite. While a file is open, `file.changed`
+from someone else refreshes the page in place (or the editor, when the
+draft is clean); with unsaved changes the draft is kept and the next save
+meets the conflict. Task checkboxes in the page write back with the version
+check. New page (tree, folder view, menu) creates `<name>.md` with
+`expectedVersion: 0` and its title, and opens it in the editor.

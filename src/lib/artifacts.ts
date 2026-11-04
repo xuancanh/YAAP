@@ -206,6 +206,39 @@ export function parseDelimited(text: string, sep = ','): string[][] {
   return rows.filter((r) => !(r.length === 1 && r[0] === ''));
 }
 
+/** Each row's exact source text (no line ending), in parseDelimited's
+ *  order — so an untouched row is written back as it was. */
+export function delimitedRowSources(text: string, sep = ','): string[] {
+  const out: string[] = [];
+  let start = 0; let quoted = false; let fieldStart = true;
+  const push = (end: number) => { const raw = text.slice(start, end); if (raw !== '') out.push(raw); };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) { if (c === '"') { if (text[i + 1] === '"') i++; else quoted = false; } continue; }
+    if (c === '"' && fieldStart) { quoted = true; fieldStart = false; continue; }
+    if (c === sep) { fieldStart = true; continue; }
+    if (c === '\n' || c === '\r') {
+      push(i);
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      start = i + 1; fieldStart = true; continue;
+    }
+    fieldStart = false;
+  }
+  if (start < text.length) push(text.length);
+  return out;
+}
+
+/** Rows back to CSV/TSV: a field is quoted only when it must be (the
+ *  separator, a quote or a newline in it). */
+export function serializeDelimited(rows: string[][], sep = ',', eol = '\n', trailingNewline = true, original?: { rows: string[][]; sources: string[] }): string {
+  const q = (f: string) => (f.includes(sep) || f.includes('"') || f.includes('\n') || f.includes('\r') ? `"${f.replace(/"/g, '""')}"` : f);
+  // rows nobody touched keep their exact text (quoting, spacing)
+  const kept = new Map<string, string[]>();
+  if (original && original.rows.length === original.sources.length) original.rows.forEach((r, i) => { const k = JSON.stringify(r); kept.set(k, [...(kept.get(k) ?? []), original.sources[i]]); });
+  const out = rows.map((r) => kept.get(JSON.stringify(r))?.shift() ?? r.map(q).join(sep)).join(eol);
+  return trailingNewline && rows.length ? out + eol : out;
+}
+
 /** Numbers sort numerically, everything else by locale; blanks last. */
 export function compareCells(a: string, b: string): number {
   if (a === b) return 0;
@@ -264,13 +297,27 @@ export const authorName = (by: FileAuthor | string | null | undefined): string =
 
 // ------------------------------------------------------- create actions
 
-/** Ask for a name and create an empty file under `folder`; returns its path. */
-export async function createFile(source: FileSource, folder: string, toast: (m: string) => void): Promise<string | null> {
+/** A new Markdown page starts with its title. */
+export const newPageText = (path: string): string => {
+  if (!/\.(md|markdown)$/i.test(path)) return '';
+  const base = (path.split('/').pop() ?? '').replace(/\.(md|markdown)$/i, '').replace(/[-_]+/g, ' ').trim();
+  return base ? `# ${base.charAt(0).toUpperCase()}${base.slice(1)}\n\n` : '';
+};
+
+/** Files just created here: the viewer opens them straight into the editor. */
+const freshFiles = new Set<string>();
+export const takeFreshFile = (key: string, path: string): boolean => freshFiles.delete(`${key}:${path}`);
+
+/** Ask for a name and create a file under `folder` (a Markdown page gets its
+ *  title); returns its path. It opens in the editor. */
+export async function createFile(source: FileSource, folder: string, toast: (m: string) => void, initial: (path: string) => string = newPageText): Promise<string | null> {
   const prefix = normPath(folder);
-  const name = window.prompt(`New file in ${prefix ? `/${prefix}/` : '/'}`, 'notes.md')?.trim();
-  if (!name) return null;
+  const raw = window.prompt(`New page in ${prefix ? `/${prefix}/` : '/'}`, 'untitled.md')?.trim();
+  if (!raw) return null;
+  const name = /\.[A-Za-z0-9]+$/.test(raw) ? raw : `${raw}.md`;
   const path = [prefix, normPath(name)].filter(Boolean).join('/');
-  try { await source.write(path, ''); toast(`Created ${path.split('/').pop()}`); return path; } catch (e) { toast(e instanceof Error ? e.message.slice(0, 120) : 'Could not create the file'); return null; }
+  // `expectedVersion: 0`: must not exist yet — never clobber a file by its name
+  try { await source.write(path, initial(path), 0); freshFiles.add(`${source.key}:${path}`); toast(`Created ${path.split('/').pop()}`); return path; } catch (e) { toast(isConflict(e) ? `${name} already exists` : e instanceof Error ? e.message.slice(0, 120) : 'Could not create the file'); return null; }
 }
 
 /** Folders exist by their contents, so a new one gets a `.keep` marker. */

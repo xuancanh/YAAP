@@ -30,6 +30,7 @@
 import { memo, useState, type CSSProperties, type ReactNode } from 'react';
 import { appHref, navigate, parseRoute } from './routes';
 import { FILE_PATH_SOURCE, filePathOf, openFileInPanel } from './file-links';
+import { Highlighted } from './highlight';
 
 export type RefKind = 'goal' | 'decision' | 'task' | 'meeting' | 'audit';
 /** `bare` is set for a task key written without `#task:` (ENG-12): the
@@ -40,7 +41,7 @@ export type RefResolver = (kind: RefKind, id: string, bare?: boolean) => { label
  *  span is drawn as a chip. */
 export type MentionFinder = (text: string) => Array<{ start: number; end: number; kind: 'agent' | 'human' }>;
 
-interface Ctx { refs?: RefResolver; compact?: boolean; mentions?: MentionFinder }
+export interface Ctx { refs?: RefResolver; compact?: boolean; mentions?: MentionFinder }
 
 const mentionStyle: CSSProperties = { display: 'inline', background: 'var(--accent-dim)', color: 'var(--accent-hi)', borderRadius: 4, padding: '0 3px', fontWeight: 600 };
 
@@ -156,15 +157,18 @@ function para(lines: string[], key: string, ctx: Ctx): ReactNode[] {
 
 // ---------- block parsing ----------
 
-type Block =
+export type Block =
   | { t: 'h'; level: number; text: string }
   | { t: 'p'; lines: string[] }
   | { t: 'code'; lang: string; body: string; open: boolean }
   | { t: 'list'; ordered: boolean; start: number; items: ListItem[] }
   | { t: 'quote'; lines: string[] }
   | { t: 'table'; align: Array<'left' | 'center' | 'right' | null>; head: string[]; rows: string[][] }
-  | { t: 'hr' };
-interface ListItem { text: string; check: boolean | null; children: Block[] }
+  | { t: 'hr' }
+  /** An HTML comment (`<!-- … -->`): not shown, kept in the source. */
+  | { t: 'comment'; text: string };
+/** `line`: the item's source line (0-based) — what a task toggle rewrites. */
+export interface ListItem { text: string; check: boolean | null; children: Block[]; line: number }
 
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
 const TABLE_SEP_RE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
@@ -184,6 +188,13 @@ export function parseBlocks(src: string): Block[] {
   while (i < lines.length) {
     const line = lines[i];
     if (!line.trim()) { i++; continue; }
+
+    if (line.trimStart().startsWith('<!--')) {
+      const buf: string[] = [];
+      while (i < lines.length) { buf.push(lines[i]); if (lines[i++].includes('-->')) break; }
+      blocks.push({ t: 'comment', text: buf.join('\n') });
+      continue;
+    }
 
     const fence = /^\s*(```+|~~~+)\s*([\w+#.-]*)\s*$/.exec(line);
     if (fence) {
@@ -218,7 +229,7 @@ export function parseBlocks(src: string): Block[] {
     if (li) { const [list, next] = parseList(lines, i, li[1].length); blocks.push(list); i = next; continue; }
 
     const buf: string[] = [];
-    while (i < lines.length && lines[i].trim() && !/^\s*(```|~~~)/.test(lines[i]) && !/^\s{0,3}#{1,6}\s/.test(lines[i]) && !lines[i].trimStart().startsWith('>') && !LIST_RE.test(lines[i]) && !HR_RE.test(lines[i]) && !(lines[i].includes('|') && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1]))) buf.push(lines[i++]);
+    while (i < lines.length && lines[i].trim() && !/^\s*(```|~~~)/.test(lines[i]) && !/^\s{0,3}#{1,6}\s/.test(lines[i]) && !lines[i].trimStart().startsWith('>') && !lines[i].trimStart().startsWith('<!--') && !LIST_RE.test(lines[i]) && !HR_RE.test(lines[i]) && !(lines[i].includes('|') && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1]))) buf.push(lines[i++]);
     if (buf.length) blocks.push({ t: 'p', lines: buf });
     else i++;
   }
@@ -236,14 +247,14 @@ function parseList(lines: string[], start: number, indent: number): [Block, numb
     if (m[1].length > indent) { // nested list belongs to the previous item
       const last = list.items[list.items.length - 1];
       const [child, next] = parseList(lines, i, m[1].length);
-      if (last) last.children.push(child); else list.items.push({ text: '', check: null, children: [child] });
+      if (last) last.children.push(child); else list.items.push({ text: '', check: null, children: [child], line: i });
       i = next; continue;
     }
     if (/\d/.test(m[2]) !== ordered) break;
     let text = m[3]; let check: boolean | null = null;
     const c = /^\[([ xX])\]\s+(.*)$/.exec(text);
     if (c) { check = c[1] !== ' '; text = c[2]; }
-    const item: ListItem = { text, check, children: [] };
+    const item: ListItem = { text, check, children: [], line: i };
     i++;
     // continuation lines (indented, not list markers, not blank)
     while (i < lines.length && lines[i].trim() && !LIST_RE.test(lines[i]) && /^\s{2,}/.test(lines[i])) item.text += ' ' + lines[i++].trim();
@@ -265,7 +276,7 @@ const KINDS: Record<string, { color: string; icon: string; label: string }> = {
   danger: { color: 'var(--red)', icon: '⛔', label: 'Danger' },
 };
 
-function Callout({ kind, title, children }: { kind: string; title?: string; children: ReactNode }) {
+export function Callout({ kind, title, children }: { kind: string; title?: string; children: ReactNode }) {
   const k = KINDS[kind] ?? KINDS.note;
   return (
     <div role="note" style={{ margin: '10px 0', borderLeft: `3px solid ${k.color}`, background: 'var(--panel)', borderRadius: '0 10px 10px 0', padding: '9px 13px' }}>
@@ -275,7 +286,7 @@ function Callout({ kind, title, children }: { kind: string; title?: string; chil
   );
 }
 
-function CodeBlock({ lang, body, open }: { lang: string; body: string; open: boolean }) {
+export function CodeBlock({ lang, body, open }: { lang: string; body: string; open: boolean }) {
   const [copied, setCopied] = useState(false);
   const copy = () => { void navigator.clipboard?.writeText(body).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }); };
   return (
@@ -284,7 +295,7 @@ function CodeBlock({ lang, body, open }: { lang: string; body: string; open: boo
         <span>{lang || 'text'}{open ? ' · …' : ''}</span>
         <button type="button" onClick={copy} style={{ background: 'none', border: 'none', color: copied ? 'var(--green)' : 'var(--text-faint)', cursor: 'pointer', fontSize: 11, padding: '2px 4px' }}>{copied ? 'copied' : 'copy'}</button>
       </div>
-      <pre style={{ margin: 0, padding: '12px 14px', fontFamily: 'var(--mono)', fontSize: 12, lineHeight: 1.6, overflowX: 'auto', whiteSpace: 'pre' }}>{body}</pre>
+      <pre style={{ margin: 0, padding: '12px 14px', fontFamily: 'var(--mono)', fontSize: 12, lineHeight: 1.6, overflowX: 'auto', whiteSpace: 'pre' }}><Highlighted code={body} lang={lang} /></pre>
     </div>
   );
 }
@@ -395,7 +406,7 @@ function Details({ body, ctx }: { body: string; ctx: Ctx }) {
   );
 }
 
-function richBlock(b: Extract<Block, { t: 'code' }>, key: string, ctx: Ctx): ReactNode {
+export function richBlock(b: Extract<Block, { t: 'code' }>, key: string, ctx: Ctx): ReactNode {
   switch (b.lang) {
     case 'chart': { const spec = parseChart(b.body); return spec ? <Chart key={key} spec={spec} /> : <CodeBlock key={key} lang="chart" body={b.body} open={b.open} />; }
     case 'kv': return <KeyValues key={key} body={b.body} ctx={ctx} />;
@@ -439,6 +450,7 @@ function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
     case 'code': return richBlock(b, key, ctx);
     case 'list': return renderList(b, key, ctx);
     case 'hr': return <hr key={key} style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '14px 0' }} />;
+    case 'comment': return null;
     case 'quote': {
       const callout = /^\[!(\w+)\]\s*(.*)$/.exec(b.lines[0] ?? '');
       if (callout) return <Callout key={key} kind={callout[1].toLowerCase()} title={callout[2]}>{renderBlocks(parseBlocks(b.lines.slice(1).join('\n')), `${key}q`, ctx)}</Callout>;

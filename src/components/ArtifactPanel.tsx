@@ -9,7 +9,8 @@ import { useApp, type ComputerFeed, type ComputerStep } from '../store';
 import { AppHost } from './AppHost';
 import { sealHtml } from '../lib/sandbox';
 import { ArtifactBody } from './ArtifactViewer';
-import { viewKind } from '../lib/artifacts';
+import { relTime, viewKind } from '../lib/artifacts';
+import { FileIcon } from './FileIcon';
 import type { FilePreview } from '../lib/api';
 
 type Tab = 'preview' | 'source' | 'browser' | 'computer';
@@ -221,39 +222,49 @@ function SideFile({ file }: { file: { workspaceId: string; path: string } }) {
   const app = useApp();
   const [state, setState] = useState<{ path: string; preview: FilePreview | null; error: string | null } | null>(null);
   const [raw, setRaw] = useState(false);
+  const [tick, setTick] = useState(0);
+  useEffect(() => { setState(null); }, [file.workspaceId, file.path]);
+  // live: someone saved it while it is open here
+  const onWorkspaceEvent = app.onWorkspaceEvent;
+  useEffect(() => onWorkspaceEvent((ev) => {
+    if ((ev.type === 'file.changed' || ev.type === 'file_changed') && typeof ev.path === 'string' && ev.path.replace(/^\/+/, '') === file.path.replace(/^\/+/, '')) setTick((t) => t + 1);
+  }), [onWorkspaceEvent, file.path]);
   useEffect(() => {
     let on = true;
-    setState(null);
     api.wsPreview(file.workspaceId, file.path)
       .then((preview) => { if (on) setState({ path: file.path, preview, error: null }); })
       .catch((e: unknown) => { if (on) setState({ path: file.path, preview: null, error: e instanceof Error && /404|not found/i.test(e.message) ? 'This file does not exist (it may have moved or not been written yet).' : 'The file could not be loaded.' }); });
     return () => { on = false; };
-  }, [file.workspaceId, file.path]);
+  }, [file.workspaceId, file.path, tick]);
   const name = file.path.split('/').pop() || file.path;
   const kind = state?.preview ? viewKind(name, state.preview) : null;
   const textKind = kind === 'markdown' || kind === 'csv' || kind === 'tsv' || kind === 'json';
+  const version = state?.preview?.version;
+  const editor = state?.preview?.updatedBy;
+  const when = relTime(state?.preview?.updatedAt);
+  const meta = (version !== undefined || editor || when)
+    ? <div className="doc-meta">{(editor || when) && <span>{editor ? `Edited by ${editor.name}` : 'Updated'}{when ? `, ${when}` : ''}</span>}{version !== undefined && <span className="chip ver">v{version}</span>}</div>
+    : undefined;
   const push = app.width >= 1300;
-  const base: React.CSSProperties = { flexDirection: 'column', background: 'var(--panel)', borderLeft: '1px solid var(--border)', display: 'flex', animation: 'slideIn .18s ease', zIndex: 60 };
+  const base: React.CSSProperties = { flexDirection: 'column', background: 'var(--bg)', borderLeft: '1px solid var(--border)', display: 'flex', animation: 'slideIn .18s ease', zIndex: 60 };
   const style: React.CSSProperties = push
-    ? { position: 'relative', width: 480, flex: 'none', ...base }
-    : { position: 'absolute', top: 0, right: 0, height: '100%', width: app.stacked ? '100%' : 480, boxShadow: 'var(--shadow)', ...base };
-  const iconBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 4, display: 'flex' };
+    ? { position: 'relative', width: 500, flex: 'none', ...base }
+    : { position: 'absolute', top: 0, right: 0, height: '100%', width: app.stacked ? '100%' : 500, boxShadow: 'var(--shadow)', ...base };
   return (
     <aside style={style} aria-label={`File ${name}`} data-testid="side-file">
-      <div style={{ flex: 'none', padding: '12px 15px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <I d={P.files} size={16} stroke="var(--accent-hi)" />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
-          <div title={`/${file.path}`} style={{ fontSize: 11, color: 'var(--text-faint)', fontFamily: 'var(--mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>/{file.path.slice(0, file.path.length - name.length)}</div>
+      <div className="art-bar" style={{ gap: 6 }}>
+        <span style={{ display: 'flex', flex: 'none', color: 'var(--text-faint)' }}><FileIcon name={name} /></span>
+        <div title={`/${file.path}`} className="art-crumbs" style={{ fontFamily: 'var(--mono)', fontSize: 11.5 }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>/{file.path.slice(0, file.path.length - name.length)}<span style={{ color: 'var(--text)' }}>{name}</span></span>
         </div>
-        {textKind && <button onClick={() => setRaw(!raw)} title={raw ? 'Show formatted' : 'Show source'} style={{ ...iconBtn, fontSize: 11.5 }}>{raw ? 'Formatted' : 'Source'}</button>}
-        <button onClick={() => app.openFile({ kind: 'workspace', id: file.workspaceId }, file.path)} title="Open in Artifacts" style={{ ...iconBtn, fontSize: 11.5, color: 'var(--accent-hi)' }}>Open in Artifacts</button>
-        <button onClick={app.closeArtifact} aria-label="Close" style={iconBtn}><I d={P.x} size={17} /></button>
+        {textKind && <button type="button" onClick={() => setRaw(!raw)} title={raw ? 'Show formatted' : 'Show source'} className="art-btn">{raw ? 'Formatted' : 'Source'}</button>}
+        <button type="button" onClick={() => app.openFile({ kind: 'workspace', id: file.workspaceId }, file.path)} title="Open in Artifacts to edit" className="art-btn solid">Open</button>
+        <button type="button" onClick={app.closeArtifact} aria-label="Close" className="art-btn icon"><I d={P.x} size={16} /></button>
       </div>
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+      <div className="art-scroll">
         {state === null ? <div style={{ padding: 18, fontSize: 12.5, color: 'var(--text-faint)' }}>Loading…</div>
           : state.error ? <div style={{ padding: 18, fontSize: 13, color: 'var(--text-dim)' }}>{state.error}</div>
-            : state.preview && kind ? <ArtifactBody kind={kind} preview={state.preview} name={name} raw={raw} /> : null}
+            : state.preview && kind ? <ArtifactBody kind={kind} preview={state.preview} name={name} raw={raw} meta={meta} compact /> : null}
       </div>
     </aside>
   );

@@ -33,6 +33,10 @@
  *   /uploads/                 composer attachments
  */
 
+/** Everything after this line in a generated README.md / calendar.md is
+ *  kept when the server regenerates it (OrgLayoutService.withNotes); the web
+ *  editor edits only that tail (src/lib/markdownDoc.ts mirrors it). */
+export const NOTES_MARKER = '<!-- notes: everything below this line is kept when the file is regenerated -->';
 export const ORG_DIR = 'org';
 export const AGENTS_DIR = 'agents';
 export const CHANNELS_DIR = 'channels';
