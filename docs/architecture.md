@@ -214,7 +214,7 @@ sequenceDiagram
   T-->>C: turn
   T->>X: build(): type, model, system prompt
   T->>T: tool list + provider contextFor + connection cards
-  loop up to MAX_TOOL_ROUNDS
+  loop until no tool calls (MAX_TOOL_ROUNDS caps it only when set)
     T->>P: stream(system, history, tools)
     P-->>T: thinking / answer / tool_call / usage
     T-->>C: thinking, answer, tool_call, usage
@@ -423,7 +423,9 @@ transcript is never rewritten.
 
 ### Ceilings and stops
 
-- `MAX_TOOL_ROUNDS` (default 24) rounds per turn.
+- No cap on tool rounds per turn by default: the loop breaker (repeated
+  calls), budgets and spending caps, and Stop end a runaway turn.
+  `MAX_TOOL_ROUNDS` > 0 is an optional operator hard cap.
 - The session token ceiling: a `spend` ceiling refuses before and during a
   turn; a `context` ceiling refuses only when auto-compaction is off.
 - The workspace monthly token stop (`spendStatus`,

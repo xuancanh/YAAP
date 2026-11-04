@@ -7,7 +7,8 @@
  *  3. build provider history from persisted user/assistant messages past the
  *     compaction cutoff, prefixed by the compaction summary when present
  *     (FR-7.4 / FR-8.1), plus the resolved system context (FR-3.6);
- *  4. stream the provider loop for up to maxToolRounds rounds (FR-3.1),
+ *  4. stream the provider loop until the model stops calling tools (FR-3.1;
+ *     no round cap unless the operator sets MAX_TOOL_ROUNDS),
  *     executing tool calls between rounds under the Ask/Auto policy (§4):
  *     read-only tools run automatically; mutations and raw HTTP pause for an
  *     inline approval, with allow-once / allow-always (exact input) /
@@ -1290,7 +1291,9 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
         // as 'stopped' — starting another round would fetch with an aborted
         // signal and mis-record the turn as 'error'.
         if (ctl.signal.aborted) break;
-        if (round + 1 >= ctx.maxToolRounds) {
+        // No cap by default: the loop breaker, budgets and Stop end a runaway
+        // turn. MAX_TOOL_ROUNDS > 0 is an operator's optional hard cap.
+        if (ctx.maxToolRounds > 0 && round + 1 >= ctx.maxToolRounds) {
           yield { type: 'error', message: `tool round limit (${ctx.maxToolRounds}) reached` };
           break;
         }

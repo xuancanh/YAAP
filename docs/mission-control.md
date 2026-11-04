@@ -145,7 +145,7 @@ last turn failed"; that loop error is then not listed a second time.
 `cause` is the error the page leads with (`primaryError`): a red one before
 a degraded provider, one with a fix before one without, a specific message
 before a generic one, then the newest. Its `fix` (`fixHint`) covers the
-tool round limit (split the work or raise `MAX_TOOL_ROUNDS`), a loop's
+tool round limit (only when an operator set `MAX_TOOL_ROUNDS`; unset it for no cap), a loop's
 token budget, a spending cap, a no-progress breaker, a refused key, a model
 the provider rejects, rate limits and a connection that failed to poll.
 

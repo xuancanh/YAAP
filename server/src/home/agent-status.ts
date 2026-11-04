@@ -128,7 +128,7 @@ function taskWait(dep: Pick<OrgTask, 'id' | 'title' | 'assigneeAgentId'>, names:
 export function fixHint(e: Pick<HomeAgentError, 'kind' | 'message'>): { text: string; tab: string | null } | null {
   const m = e.message.toLowerCase();
   const rounds = /tool round limit \((\d+)\)/.exec(m);
-  if (rounds) return { text: `It used all ${rounds[1]} tool rounds in one turn. Split the work into smaller steps, or raise the server's MAX_TOOL_ROUNDS.`, tab: null };
+  if (rounds) return { text: `It used all ${rounds[1]} tool rounds in one turn. The server caps tool rounds with MAX_TOOL_ROUNDS; unset it (or set 0) for no cap.`, tab: null };
   if (/token ceiling|budget reached/.test(m)) return { text: 'The loop ran out of its token budget. Raise the loop budget or clear its conversation.', tab: 'Work:Schedule' };
   if (e.kind === 'budget' || /monthly budget|budget stop|over budget/.test(m)) return { text: 'Its spending cap stopped it. Raise its monthly budget or wait for the month to turn.', tab: null };
   if (e.kind === 'breaker') return { text: 'It keeps running without moving the task. Answer on the task, split it, or reassign it.', tab: null };

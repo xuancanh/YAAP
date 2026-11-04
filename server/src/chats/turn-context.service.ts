@@ -264,7 +264,7 @@ export class TurnContextService {
       apiKey: key.apiKey,
       baseUrl: fallback ? fallback.type.baseUrl ?? this.providers.defaultBaseUrl(providerName) : type?.baseUrl ?? this.providers.defaultBaseUrl(providerName),
       system: parts.join('\n\n'),
-      maxToolRounds: this.config.get<number>('maxToolRounds') ?? 24,
+      maxToolRounds: this.config.get<number>('maxToolRounds') ?? 0,
       hosted: key.hosted,
       providerName,
       agentTypeId: fallback ? fallback.type.id : type?.id ?? null,

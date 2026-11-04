@@ -24,7 +24,8 @@ export default () => ({
   /** Default per-chat token ceiling (FR-7.1). 0 = unlimited. */
   defaultTokenCeiling: parseInt(process.env.DEFAULT_TOKEN_CEILING || '200000', 10),
   /** Max tool rounds inside a single turn (FR-3.1). */
-  maxToolRounds: parseInt(process.env.MAX_TOOL_ROUNDS || '24', 10),
+  /** 0 = no cap on tool rounds per turn (the default); a positive value is a hard cap. */
+  maxToolRounds: parseInt(process.env.MAX_TOOL_ROUNDS || '0', 10),
   /** Scheduled agent loops master switch (FR-11.6). */
   loopsEnabled: (process.env.LOOPS_ENABLED || 'true') === 'true',
   /** Autonomous companies master switch (docs/autonomous-company.md §4.6):
