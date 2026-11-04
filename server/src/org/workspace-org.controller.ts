@@ -16,7 +16,7 @@
  *  intent (docs/company-vision.md §1b–§2): GET|PUT vision · GET|PUT profile · GET|PUT tunables · GET intent?unitId= · POST goals/:goalId/checkin · GET goals/:goalId/checkins · GET why?taskId=|goalId= · POST plan · GET strategy
  *  capital (docs/company-vision.md §7–§8): GET costs?period=&unitId= · GET forecast · GET|PUT routing · GET|PUT allocations · GET plans?status= · GET plans/:planId · POST plans/:planId/veto | /apply-now · POST plan/dry-run · GET replay?day=
  *
- *  meetings (docs/company-vision.md §3, item 19): GET /org/meetings?unitId=&status= · POST /org/meetings { kind, unitId?, agenda?, attendees? } (starts now)
+ *  meetings (docs/company-vision.md §3, item 19): GET /org/meetings?unitId=&status=&channelId= · POST /org/meetings { kind, unitId?, agenda?, attendees? } (starts now)
  *           GET /org/meetings/:meetingId · POST /org/meetings/:meetingId/cancel ·
  *           the room (docs/meetings.md): POST …/:meetingId/join · /control { action: extend|skip|end } · /verdict { kind, index, verdict } · /answer { index, answer } · /agenda { text, why? } · GET /org/decisions?unitId= · GET /org/cadences · PATCH /org/cadences/:cadenceId { cron, enabled }
  *  memory (docs/company-vision.md §6, item 22): GET /org/decisions/search?q=&unitId= · POST /org/ask { question } (CEO, board, observers) · GET /org/recall?q= ·
@@ -266,7 +266,7 @@ export class WorkspaceOrgController {
   @Post('audit/run') async runAudit(@Param('id') id: string) { return this.orgs.runAudit(await this.oid(id)); }
 
   // ---- meetings, decisions, cadences (docs/company-vision.md §3, §6; item 19) ----
-  @Get('meetings') async meetingList(@Param('id') id: string, @Query('unitId') unitId?: string, @Query('status') status?: string) { return this.meetingsOr().list(await this.oid(id), { unitId: unitId || null, status: status || null }); }
+  @Get('meetings') async meetingList(@Param('id') id: string, @Query('unitId') unitId?: string, @Query('status') status?: string, @Query('channelId') channelId?: string) { return this.meetingsOr().list(await this.oid(id), { unitId: unitId || null, status: status || null, channelId: channelId || null }); }
   @Post('meetings') async startMeeting(@Param('id') id: string, @Body() dto: MeetingDto) {
     if (!this.meetingRuntime) throw new NotFoundException('meetings are not available');
     const orgId = await this.oid(id);

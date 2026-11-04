@@ -667,3 +667,15 @@ test('the organization\'s operating profile (values, culture, vision) is read de
   assert.ok(s2.provider.requests.length > 0);
   assert.ok(s2.provider.requests.every((r) => !/Operating profile/.test(r.system ?? '')));
 });
+
+test('a channel or sub-channel finds its meetings by id (GET …/org/meetings?channelId=), not among the newest page', async () => {
+  const s = await setup();
+  const orgId = await enable(s, 'supervised');
+  const company = await s.groupchat.bySlug(s.ws.id, COMPANY_SLUG);
+  const old = await s.meetings.create(orgId, { kind: 'adhoc', channelId: 'sub-old', title: 'Old room' });
+  await s.meetings.update(orgId, old.id, { parentChannelId: company.id });
+  for (let i = 0; i < 101; i++) await s.meetings.create(orgId, { kind: 'adhoc', channelId: `sub-${i}`, title: `Newer ${i}` });
+  assert.ok(!(await s.meetings.list(orgId)).some((m) => m.id === old.id), 'the newest page no longer holds the old room');
+  assert.deepEqual((await s.controller.meetingList(s.ws.id, undefined, undefined, 'sub-old')).map((m) => m.id), [old.id], 'the sub-channel finds its meeting');
+  assert.ok((await s.controller.meetingList(s.ws.id, undefined, undefined, company.id)).some((m) => m.id === old.id), 'and the channel it was called in does too');
+});

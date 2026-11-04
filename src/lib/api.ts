@@ -2271,9 +2271,11 @@ export const api = {
   setOrgSlo: (wsId: string, body: Partial<SloTargets> & { tunables?: Record<string, number | null> }) => send<SloTargets>(`/api/workspaces/${wsId}/org/slo`, 'PATCH', body),
   orgAudits: (wsId: string, limit = 20) => get<OrgAuditRun[]>(`/api/workspaces/${wsId}/org/audits?limit=${limit}`),
   runOrgAudit: (wsId: string) => send<{ result: string }>(`/api/workspaces/${wsId}/org/audit/run`, 'POST'),
-  orgMeetings: (wsId: string, opts: { unitId?: string | null; status?: string } = {}) => {
+  /** `channelId`: the meetings held in that channel or run in a sub-channel of it, looked up by id (not a page of the newest). */
+  orgMeetings: (wsId: string, opts: { unitId?: string | null; status?: string; channelId?: string | null } = {}) => {
     const q = new URLSearchParams();
     if (opts.unitId) q.set('unitId', opts.unitId);
+    if (opts.channelId) q.set('channelId', opts.channelId);
     if (opts.status) q.set('status', opts.status);
     const qs = q.toString();
     return get<OrgMeeting[]>(`/api/workspaces/${wsId}/org/meetings${qs ? `?${qs}` : ''}`);

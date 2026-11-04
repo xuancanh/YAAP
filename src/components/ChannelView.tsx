@@ -143,7 +143,8 @@ export function ChannelView() {
     if (!orgChannel || !wsId || !channelId) { setMeetings([]); return; }
     let stop = false;
     // Held here, or called here and run in a sub-channel of this channel (docs/group-chat.md §9).
-    const load = () => api.orgMeetings(wsId).then((list) => { if (!stop) setMeetings(list.filter((m) => m.channelId === channelId || m.parentChannelId === channelId)); }).catch(() => {});
+    // Asked by channel id, so an old sub-channel still finds its room (not a scan of the newest page).
+    const load = () => api.orgMeetings(wsId, { channelId }).then((list) => { if (!stop) setMeetings(list.filter((m) => m.channelId === channelId || m.parentChannelId === channelId)); }).catch(() => {});
     void load();
     const t = setInterval(() => { void load(); }, 20_000);
     return () => { stop = true; clearInterval(t); };

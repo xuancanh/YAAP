@@ -23,7 +23,7 @@
  */
 import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, or } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { orgCadences, orgDecisions, orgMeetings } from '../database/schema';
@@ -199,9 +199,13 @@ export class OrgMeetingsService {
 
   // ---- meetings ----
 
-  async list(orgId: string, opts: { unitId?: string | null; status?: string | null; limit?: number } = {}): Promise<OrgMeeting[]> {
+  /** Newest first. `channelId` keeps the meetings held in that channel or
+   *  called there and run in a sub-channel of it (`parentChannelId`), so a
+   *  channel or a sub-channel finds its meetings however old they are. */
+  async list(orgId: string, opts: { unitId?: string | null; status?: string | null; channelId?: string | null; limit?: number } = {}): Promise<OrgMeeting[]> {
     const conds = [eq(orgMeetings.orgId, orgId)];
     if (opts.unitId) conds.push(eq(orgMeetings.unitId, opts.unitId));
+    if (opts.channelId) conds.push(or(eq(orgMeetings.channelId, opts.channelId), eq(orgMeetings.parentChannelId, opts.channelId))!);
     if (opts.status) conds.push(eq(orgMeetings.status, opts.status));
     return this.db.select().from(orgMeetings).where(and(...conds)).orderBy(desc(orgMeetings.createdAt)).limit(Math.min(500, opts.limit ?? 100));
   }
