@@ -34,7 +34,7 @@ const apiMock = {
   orgTasks: vi.fn(async () => [task('1', 'in_progress'), task('2', 'blocked'), task('3', 'todo'), task('4', 'done'), task('5', 'done', day(20))]),
   orgPulse: vi.fn(async () => ({ score: 72, breaches: [{ metric: 'cycleTimeHours', value: 40, target: 24, detail: 'Cycle time 40h against 24h' }] })),
   orgBrief: vi.fn(async () => ({ orgId: 'o1', at: day(0.2), text: '- Shipped the pricing page\n- Two hires wait on you', items: [] })),
-  orgCapacity: vi.fn(async () => ({ wip: 3, byClass: {}, members: [{ agentId: 'a2', name: 'Writer', title: '', open: 4, wip: 2, atLimit: true, expectedHours: null, tasks: [] }] })),
+  orgCapacity: vi.fn(async () => ({ wip: 3, byClass: {}, members: [{ agentId: 'a2', name: 'Writer', title: '', open: 3, wip: 3, atLimit: true, expectedHours: null, tasks: [] }, { agentId: 'a1', name: 'Atlas', title: '', open: 0, wip: 3, atLimit: false, expectedHours: null, tasks: [] }] })),
   orgSpend: vi.fn(async (): Promise<OrgSpend> => ({ month: '2026-11', company: { usd: 120, reservedUsd: 5, monthlyUsd: 500, runs: 40, tokensIn: 0, tokensOut: 0 }, projects: [{ id: 'p1', title: 'Pricing page', usd: 45, reservedUsd: 0, monthlyUsd: 50, runs: 3, tokensIn: 0, tokensOut: 0 }], members: [{ agentId: 'a2', name: 'Writer', title: '', usd: 10, reservedUsd: 0, monthlyUsd: 100, runs: 2, tokensIn: 0, tokensOut: 0 }, { agentId: 'a1', name: 'Atlas', title: 'Chief of staff', usd: 110, reservedUsd: 0, monthlyUsd: 0, runs: 38, tokensIn: 0, tokensOut: 0 }], acceptedTasks: 4, costPerAcceptedTask: 2.5, series: [{ day: '2026-11-01', usd: 3, tokensIn: 0, tokensOut: 0 }, { day: '2026-11-02', usd: 6, tokensIn: 0, tokensOut: 0 }] })),
   orgForecast: vi.fn(async () => ({ month: '2026-11', day: 4, daysInMonth: 30, windowDays: 7, warnPct: 80, criticalPct: 100, company: { scope: 'company', refId: 'o1', name: 'Acme', capUsd: 500, spentUsd: 125, dailyBurnUsd: 20, projectedUsd: 640, projectedPct: 128, state: 'stop' }, agents: [], projects: [{ scope: 'project', refId: 'p1', name: 'Pricing page', capUsd: 50, spentUsd: 45, dailyBurnUsd: 4, projectedUsd: 90, projectedPct: 180, state: 'stop' }], objectives: [] })),
   orgAllocations: vi.fn(async () => [{ id: 'al1', orgId: 'o1', goalId: 'o1', unitId: null, scope: 'agent', refId: 'a2', monthlyUsd: 80, rationale: '' }, { id: 'al2', orgId: 'o1', goalId: 'o1', unitId: null, scope: 'project', refId: 'p1', monthlyUsd: 40, rationale: '' }]),
@@ -123,6 +123,10 @@ describe('the section dashboards', () => {
     expect(screen.getByTestId('dash-card-chart')).toHaveTextContent('Atlas');
     expect(screen.getByTestId('dash-card-teams')).toHaveTextContent('Content');
     await waitFor(() => expect(screen.getByTestId('dash-card-capacity')).toHaveTextContent('at limit'));
+    // `wip` is the limit, `open` what a member holds (Governance › Capacity says "open of WIP")
+    expect(screen.getByTestId('dash-card-capacity')).toHaveTextContent('WIP limit 3 each');
+    expect(screen.getByTestId('dash-card-capacity')).toHaveTextContent('3 of 3 open');
+    expect(screen.getByTestId('dash-card-capacity')).not.toHaveTextContent('Atlas');
     expect(screen.getByTestId('dash-lede')).toHaveTextContent('2 members in 2 teams. 1 member at their work-in-progress limit.');
     expect(screen.getByTestId('dash-card-agents')).toHaveTextContent('3 agents in this workspace, 1 outside the company');
     fireEvent.click(within(screen.getByTestId('dash-card-chart')).getByText('Open mission control'));

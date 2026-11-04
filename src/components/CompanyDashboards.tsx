@@ -304,7 +304,8 @@ function PeopleDashboard({ org }: { org: OrgDetail }) {
   const reports = (id: string) => members.filter((m) => m.reportsToAgentId === id).length;
   const leads = members.filter((m) => reports(m.agentId) > 0).sort((a, b) => a.depth - b.depth || reports(b.agentId) - reports(a.agentId)).slice(0, 5);
   const atLimit = capacity ? capacity.members.filter((m) => m.atLimit).length : 0;
-  const loaded = capacity ? [...capacity.members].sort((a, b) => b.wip - a.wip || b.open - a.open).slice(0, 4) : [];
+  // `wip` is the per-member limit (capacity.wipPerMember), `open` what a member holds — as on Governance › Capacity.
+  const loaded = capacity ? capacity.members.filter((m) => m.open > 0).sort((a, b) => b.open - a.open || a.name.localeCompare(b.name)).slice(0, 4) : [];
   const outside = app.agents.filter((a) => !members.some((m) => m.agentId === a.id)).length;
   return (
     <>
@@ -335,13 +336,13 @@ function PeopleDashboard({ org }: { org: OrgDetail }) {
             </button>
           ))}
         </Card>
-        <Card id="capacity" title="Capacity" aside={capacity ? <span style={faint}>{capacity.wip} in progress</span> : undefined}>
-          {capacity === undefined ? <Loading /> : !capacity || loaded.length === 0 ? <Empty>No work in progress.</Empty> : loaded.map((m) => (
+        <Card id="capacity" title="Capacity" aside={capacity ? <span style={faint}>WIP limit {capacity.wip} each</span> : undefined}>
+          {capacity === undefined ? <Loading /> : !capacity || loaded.length === 0 ? <Empty>Nobody holds open work.</Empty> : loaded.map((m) => (
             <div key={m.agentId} style={row}>
               <Avatar a={names.get(m.agentId)} size={18} />
               <span style={{ ...ellipsis, flex: 1 }}>{m.name}</span>
               {m.atLimit && <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--amber)' }}>at limit</span>}
-              <span style={{ ...faint, ...num }}>{m.wip} doing · {m.open} open</span>
+              <span style={{ ...faint, ...num }}>{m.open} of {m.wip} open</span>
             </div>
           ))}
         </Card>
