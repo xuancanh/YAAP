@@ -47,7 +47,7 @@ localStorage), else the first, on Home.
 | `/:company/meetings/:id` | The full-screen meeting room, over whatever was open |
 | `/:company/artifacts[/<path…>]` | Artifacts, a file open |
 | `/:company/apps` | The apps gallery |
-| `/:company/foundry[/:shelf[/:plugin]]` | Foundry on a shelf (`blueprints`, `kits`, `agents`, `plugins`); filters are query parameters (`segment`, `fn`, `cat`, `agents`, `role`, `iface`, `tier`) |
+| `/:company/foundry[/:shelf[/:item]]` | Foundry on a shelf (`blueprints`, `kits`, `agents`, `plugins`); the item is a plugin (`plugins/<id>`) or a kit (`kits/<id>`) page; filters are query parameters (`segment`, `fn`, `cat`, `agents`, `role`, `iface`, `tier`) |
 | `/:company/settings[/:pane]` | Settings, on a pane (on a phone without a pane: the list) |
 
 A page asked for in the wrong section lands where it lives
