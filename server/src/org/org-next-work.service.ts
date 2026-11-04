@@ -22,7 +22,12 @@
  *   4. nothing of its own: unassigned backlog in its unit or the projects it
  *      works on that fits its role. `work.selfAssign` (0 off · 1 unit ·
  *      2 project) says whether it takes it itself; otherwise it asks its
- *      manager on the task and in the manager's inbox, once a day per task;
+ *      manager on the task and in the manager's inbox, once a day per task.
+ *      A function head with a report that has room never takes execution
+ *      backlog (anything not head-level, heads.ts `isHeadLevelTask`) for
+ *      itself (`work.headDelegation` >= 1): it delegates it — at 2, backlog
+ *      on its own unit's board goes straight to the best-fit report with
+ *      room (its role matches the task), audited `next_work_delegate`;
  *   5. nothing at all: no wake, no model call.
  *
  * Gated like every wake: a paused org or member, quiet hours, the spend
@@ -56,6 +61,7 @@ import { govTunable } from './governance-tunables';
 import { workTunable } from './work-tunables';
 import { describeBlockedOn, parseBlockedOn } from './blocked-on';
 import { ROLES } from './roles/catalog';
+import { isHeadLevelTask } from './heads';
 
 export type NextKind = 'review' | 'unblocked' | 'todo' | 'backlog';
 export interface NextCandidate {
@@ -65,8 +71,12 @@ export interface NextCandidate {
   why: string;
   /** Backlog only: whether the member may take it itself (work.selfAssign). */
   selfAssign?: boolean;
+  /** Backlog only: a head's execution work it delegates instead of taking (work.headDelegation). */
+  delegate?: boolean;
+  /** With `delegate` at work.headDelegation 2: the best-fit report with room it goes to. */
+  routeTo?: { agentId: string; name: string };
 }
-export type PullOutcome = 'review' | 'claim' | 'self_assign' | 'ask_manager' | 'none' | `skipped:${string}`;
+export type PullOutcome = 'review' | 'claim' | 'self_assign' | 'delegate' | 'ask_manager' | 'none' | `skipped:${string}`;
 export interface PullResult { outcome: PullOutcome; taskId: string | null; why: string }
 
 /** Statuses a task is "in the owner's hands" in, and the ones it leaves them for. */
@@ -230,6 +240,13 @@ export class OrgNextWorkService implements OnModuleDestroy {
         if (blocker) continue;
         return this.dispatch(org, agentId, c, 'next', 'claim', now, opts.source);
       }
+      // A head's execution backlog goes to its team, never into its own hands.
+      if (c.delegate) {
+        if (!c.routeTo) continue;
+        await this.tasks.assign(orgId, c.task.id, c.routeTo.agentId, `agent:${agentId}`);
+        await this.audit.append(orgId, { actor: `agent:${agentId}`, action: 'next_work_delegate', refType: 'task', refId: c.task.id, payload: { headAgentId: agentId, agentId: c.routeTo.agentId, why: c.why.slice(0, 200), source: opts.source ?? 'finish', mode: workTunable(org, 'work.headDelegation') } });
+        return { outcome: 'delegate', taskId: c.task.id, why: c.why };
+      }
       // Backlog: only with room under the WIP limit (open tasks of any kind count).
       if ((await this.tasks.openTasksOf(orgId, agentId)).length >= wip) return skip('wip');
       if (c.selfAssign) {
@@ -337,6 +354,15 @@ export class OrgNextWorkService implements OnModuleDestroy {
     const roleText = [member?.title ?? '', agent?.role ?? '', (agent?.charter ?? '').slice(0, 400), ...(ROLES.find((r) => r.title.toLowerCase() === role)?.competencies ?? [])].join(' ');
     const roleStems = stems(roleText);
     const done = new Set(all.filter((x) => x.status === 'done').map((x) => x.id));
+    // A head with a report that has room delegates execution backlog (work.headDelegation).
+    const headTeam = await this.runtime.headTeam(org, agentId).catch(() => null);
+    const free = headTeam ? await Promise.all(headTeam.free.map(async (r) => {
+      const m = await this.org.member(org.id, r.agentId);
+      const a = await this.agents.get(r.agentId).catch(() => null);
+      const title = (m?.title ?? '').toLowerCase();
+      return { ...r, stems: stems([m?.title ?? '', a?.role ?? '', (a?.charter ?? '').slice(0, 400), ...(ROLES.find((x) => x.title.toLowerCase() === title)?.competencies ?? [])].join(' ')) };
+    })) : [];
+    const route = workTunable(org, 'work.headDelegation') >= 2;
     const backlog: NextCandidate[] = [];
     for (const t of all.filter((x) => x.status === 'backlog' && !x.assigneeAgentId && !x.assigneeHumanId && !x.wakesPausedAt && !exclude.has(x.id))) {
       const p = t.projectId ? projects.get(t.projectId) : undefined;
@@ -351,6 +377,15 @@ export class OrgNextWorkService implements OnModuleDestroy {
       if (!inUnit && !inProject) continue;
       const b = parseBrief(t.brief);
       const matched = [...stems(`${t.title} ${b.outcome} ${t.class}`)].filter((x) => roleStems.has(x));
+      if (free.length && !isHeadLevelTask(t)) {
+        // The best-fit report: most role stems in common with the task, then the least loaded.
+        const words = stems(`${t.title} ${b.outcome} ${t.class}`);
+        const fits = free.map((r) => ({ r, n: [...words].filter((x) => r.stems.has(x)).length })).filter((x) => x.n > 0).sort((a, z) => z.n - a.n || a.r.open - z.r.open);
+        if (matched.length === 0 && !inProject && fits.length === 0) continue;
+        const best = route && headTeam?.unit && t.unitId === headTeam.unit.id ? fits[0]?.r : undefined;
+        backlog.push({ kind: 'backlog', task: t, selfAssign: false, delegate: true, ...(best ? { routeTo: { agentId: best.agentId, name: best.name } } : {}), why: `unassigned execution work in ${inProject ? `project ${p?.key ?? p?.title ?? ''}` : 'your unit\'s backlog'}; ${best ? `goes to ${best.name} (fits the role, has room)` : 'brief and assign it to a report with room'}; ${where(t)}` });
+        continue;
+      }
       if (matched.length === 0 && !inProject) continue;
       const may = mode >= 2 ? inUnit || inProject : mode >= 1 ? inUnit : false;
       backlog.push({ kind: 'backlog', task: t, selfAssign: may, why: `unassigned in ${inProject ? `project ${p?.key ?? p?.title ?? ''} you work on` : 'your unit\'s backlog'}${matched.length ? `, fits your role (${matched.slice(0, 3).join(', ')}…)` : ''}; ${where(t)}` });
@@ -404,7 +439,7 @@ export class OrgNextWorkService implements OnModuleDestroy {
       const byId = new Map(all.map((t) => [t.id, t]));
       const cands = await this.candidates(org, agentId, now);
       const ordered = [...cands.filter((c) => c.kind === 'unblocked'), ...cands.filter((c) => c.kind !== 'unblocked')].slice(0, 3);
-      const verb = (c: NextCandidate) => (c.kind === 'review' ? 'review' : c.kind === 'unblocked' ? 'unblocked' : c.kind === 'todo' ? 'to do' : c.selfAssign ? 'backlog (you may take it)' : 'backlog (ask your manager for it)');
+      const verb = (c: NextCandidate) => (c.kind === 'review' ? 'review' : c.kind === 'unblocked' ? 'unblocked' : c.kind === 'todo' ? 'to do' : c.delegate ? 'backlog (delegate it to a report)' : c.selfAssign ? 'backlog (you may take it)' : 'backlog (ask your manager for it)');
       if (ordered.length) lines.push(`Next (in this order):\n${ordered.map((c, i) => `${i + 1}. ${verb(c)} ${taskRef(c.task)} "${c.task.title.slice(0, 80)}" — ${c.why}`).join('\n')}`);
       const chase = workTunable(org, 'work.chaseAfterHours') * 3_600_000;
       const blocked = all.filter((t) => t.assigneeAgentId === agentId && (t.status === 'blocked' || t.status === 'waiting')).slice(0, 5).map((t) => {

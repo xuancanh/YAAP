@@ -119,8 +119,9 @@ export const HEAD_PLAYBOOKS: ReadonlyArray<{ name: string; description: string; 
   },
   {
     name: 'unit-team-management',
-    description: 'Manage your unit\'s members - brief and assign, review, balance load, coach, onboard, and pause or re-tool within your line (the chief is told). Use whenever work is assigned or reviewed, and monthly.',
+    description: 'Manage your unit\'s members - brief and assign, review, balance load, coach, onboard, and pause or re-tool within your line (the chief is told). Use first whenever a task lands on you (split, brief and assign before doing it yourself), and whenever work is assigned or reviewed, and monthly.',
     instructions: [
+      'Lead, don\'t do: when a task lands on you, first split it into briefed tasks for your reports and assign them (org_create_task with assignee: one subtask per report, the parent stays yours; or org_assign to hand it over whole), then track them, review the results (you are your reports\' reviewer) and unblock or escalate. Do it yourself only when it is head-level work (planning, reporting, reviews, cross-functional decisions), nobody in your unit has the skill or the room, or it is small; say which in your handoff.',
       '1. Brief every task with outcome, context, constraints and a testable done_when; add checks where you can, a dueAt, and dependsOn for sequenced work. Assign only to yourself or your reports (or, on a project you lead, its team).',
       '2. Read org_capacity first and keep each member under its WIP limit; a member at its limit gets no new task until one closes.',
       '3. Onboard every new member: an onboarding task (read its charter, your team.md and the latest report; write a first-week plan naming the key result it serves) and one small real task with checks; review its first three results yourself.',
@@ -130,3 +131,21 @@ export const HEAD_PLAYBOOKS: ReadonlyArray<{ name: string; description: string; 
     ].join('\n'),
   },
 ];
+
+/** Work a head keeps for itself: planning, reporting, reviews, staffing,
+ *  cross-functional calls and the escalations and requests it answers. */
+const HEAD_LEVEL = /^(escalation|request for|assurance request)\b|\b(plan|planning|okrs?|key results?|(weekly|monthly|quarterly|function|status|unit|board)\s+(\w+\s+){0,2}report|reporting|reviews?|retro|retrospective|team design|team\.md|hires?|hiring|staffing|onboard(ing)?|coach(ing)?|budget|envelope|allocations?|cadence|rituals?|decide|decision|prioriti[sz]e|roadmap|strategy|escalat\w*|mandate|assign|delegate|triage|one-on-ones?)\b/i;
+
+/**
+ * Whether a task is a head's own work (head-level) rather than individual
+ * execution its reports could do: a triage or review class, or a title that
+ * names planning, reporting, reviewing, staffing, a decision or an
+ * escalation. Execution work ("Fix the price band in the claims sheet",
+ * "Draft the landing copy") is what a head with reports splits, briefs and
+ * assigns first. Pure, model-free; a heuristic the prompt states to the head,
+ * who has the last word and says why in its handoff.
+ */
+export function isHeadLevelTask(t: { title: string; class?: string | null }): boolean {
+  if (t.class === 'triage' || t.class === 'review') return true;
+  return HEAD_LEVEL.test(t.title ?? '');
+}

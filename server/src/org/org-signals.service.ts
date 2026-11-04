@@ -8,7 +8,9 @@
  * no owner, a review queue that is ageing, a burn rate that projects past
  * the envelope, breaker trips, charter drift, and org debt (§4: idle and
  * overloaded members, a lead with one report, a unit with no goal, a goal
- * with no owner or unit, duplicate titles). Each condition is a *signal*
+ * with no owner or unit, duplicate titles), and a head doing its people's
+ * work (`delegation_gap`: execution tasks it started itself while a report
+ * sat idle, `work.delegationSignalTasks` within `work.delegationWindowHours`). Each condition is a *signal*
  * addressed to the party that can act on it:
  *
  *   owner → an inbox event on the task's owner
@@ -42,6 +44,8 @@ import { OrgTasksService } from './org-tasks.service';
 import { OrgAuditService } from './org-audit.service';
 import { OrgUnitsService } from './org-units.service';
 import { assuranceTunable } from './org-assurance-tunables';
+import { workTunable } from './work-tunables';
+import { isHeadLevelTask, isHeadMember } from './heads';
 
 export type OrgSignal = typeof orgSignals.$inferSelect;
 export type SignalSeverity = 'info' | 'warn' | 'critical';
@@ -54,7 +58,7 @@ export const SIGNAL_SEVERITIES: readonly SignalSeverity[] = ['info', 'warn', 'cr
  *  OrgCapitalService through `open()`. */
 export const SIGNAL_KINDS = [
   'stale_task', 'blocked_unowned', 'review_age', 'burn_rate', 'breaker_trip', 'charter_drift',
-  'idle_member', 'overloaded_member', 'thin_unit', 'unit_no_goal', 'goal_unowned', 'duplicate_title',
+  'idle_member', 'overloaded_member', 'thin_unit', 'unit_no_goal', 'goal_unowned', 'duplicate_title', 'delegation_gap',
   'slo_breach', 'audit_finding', 'burn_forecast',
   // Sensing (docs/sensing.md §1.5): opened and resolved by OrgSensingService.
   'metric_stale',
@@ -302,6 +306,27 @@ export class OrgSignalsService {
       if (lead.agentId !== chiefId && reports.length === 1) {
         out.push({ kind: 'thin_unit', severity: 'info', refType: 'agent', refId: lead.agentId, title: `${nm(lead.agentId)} leads a unit of one (${nm(reports[0].agentId)})`, detail: 'A reporting layer for a single report costs a hop and a channel; flatten it or grow it.', addressee: 'chief', unitId: this.units ? (await this.units.isLead(org.id, lead.agentId))?.id ?? null : null });
       }
+    }
+    // 7b. a head doing its people's work: execution tasks it started itself in
+    // the window while a report had no open task and no run → the head (the chief sees it too)
+    const windowH = workTunable(org, 'work.delegationWindowHours');
+    const minTasks = workTunable(org, 'work.delegationSignalTasks');
+    const windowStart = nowMs - windowH * 3_600_000;
+    const recentRuns = (await this.tasks.runs(org.id, { limit: 500 })).filter((r) => Date.parse(r.startedAt) >= windowStart);
+    const starts = (await this.tasks.transitions(org.id)).filter((tr) => ['claimed', 'in_progress'].includes(tr.toStatus) && Date.parse(tr.at) >= windowStart);
+    for (const head of active) {
+      if (head.agentId === chiefId || head.agentId === org.auditorAgentId) continue;
+      const reports = active.filter((x) => x.reportsToAgentId === head.agentId);
+      if (reports.length === 0 || !isHeadMember(head, org, true)) continue;
+      const idle = reports.filter((r) => openOf(r.agentId).length === 0 && !recentRuns.some((x) => x.agentId === r.agentId));
+      if (idle.length === 0) continue;
+      // Only work it started once an idle report was there to take it.
+      const since = Math.max(windowStart, Math.min(...idle.map((r) => Date.parse(r.joinedAt) || windowStart)));
+      const own = new Set(starts.filter((tr) => tr.actor === `agent:${head.agentId}` && Date.parse(tr.at) >= since).map((tr) => tr.taskId));
+      const did = tasks.filter((x) => own.has(x.id) && x.assigneeAgentId === head.agentId && !isHeadLevelTask(x));
+      if (did.length < minTasks) continue;
+      const unit = this.units ? await this.units.isLead(org.id, head.agentId).catch(() => null) : null;
+      out.push({ kind: 'delegation_gap', severity: 'warn', refType: 'agent', refId: head.agentId, title: `${nm(head.agentId)} did ${did.length} execution task(s) itself in ${windowH}h while ${idle.map((r) => nm(r.agentId)).join(', ')} sat idle`, detail: `${did.slice(0, 5).map((x) => x.key ?? x.id.slice(0, 8)).join(', ')}. Split, brief and assign execution work to your reports (org_create_task with assignee, org_assign) and review it; keep planning, reports, reviews and cross-functional calls.`, addressee: 'lead', addresseeId: head.agentId, unitId: unit?.id ?? null });
     }
     const goals = await this.org.goals(org.id);
     const activeGoals = goals.filter((g) => g.status === 'active');

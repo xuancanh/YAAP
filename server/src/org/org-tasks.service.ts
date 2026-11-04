@@ -27,6 +27,7 @@ import { nextOrgTaskKey, queryableOf, resolveTaskRef, taskLabel, taskRef } from 
 import { BLOCKED_KINDS, blockerLine, describeBlockedOn, isBlockedKind, legacyBlockedOn, parseBlockedOn, sameBlocker, serializeBlockedOn, type BlockedKind, type BlockedOn } from './blocked-on';
 import type { MentionDelivery, TaskMentionHook } from './task-mentions.service';
 import { STEPS_CAP, TASK_SOURCES, deriveSource, isTaskSource, nextStepId, parseSteps, type TaskSource, type TaskStep } from './work-model';
+import { workTunable } from './work-tunables';
 
 export type OrgTask = typeof orgTasks.$inferSelect;
 export type OrgRun = typeof orgRuns.$inferSelect;
@@ -994,13 +995,20 @@ export class OrgTasksService {
     }
     let reviewer = t.reviewerAgentId;
     if (!reviewer || reviewer === t.assigneeAgentId) {
-      const candidates = (await this.org.members(orgId)).filter((m) => m.status === 'active' && m.agentId !== t.assigneeAgentId);
+      const members = await this.org.members(orgId);
+      const candidates = members.filter((m) => m.status === 'active' && m.agentId !== t.assigneeAgentId);
+      // A report's work is reviewed by its head (work.headReviewsReports): the
+      // line manager owns the quality of its people's work. The chief's
+      // direct reports keep the cross-family reviewer.
+      const managerId = members.find((m) => m.agentId === t.assigneeAgentId)?.reportsToAgentId ?? null;
+      const head = managerId && workTunable(org, 'work.headReviewsReports') >= 1 && managerId !== org.chiefOfStaffAgentId && managerId !== org.auditorAgentId
+        ? candidates.find((m) => m.agentId === managerId) : undefined;
       const mine = t.assigneeAgentId ? input.agentModels?.get(t.assigneeAgentId) : undefined;
       const differentFamily = candidates.find((m) => {
         const theirs = input.agentModels?.get(m.agentId);
         return mine && theirs && familyOf(theirs) !== familyOf(mine);
       });
-      reviewer = differentFamily?.agentId ?? candidates.find((m) => m.agentId === org.chiefOfStaffAgentId)?.agentId ?? candidates[0]?.agentId ?? null;
+      reviewer = head?.agentId ?? differentFamily?.agentId ?? candidates.find((m) => m.agentId === org.chiefOfStaffAgentId)?.agentId ?? candidates[0]?.agentId ?? null;
     }
     await this.db.update(orgTasks).set({ status: 'in_review', reviewerAgentId: reviewer, claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
     await this.recordTransition(orgId, t, 'in_review', input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', 'review requested');

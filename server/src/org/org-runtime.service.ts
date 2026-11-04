@@ -100,7 +100,7 @@ import type { ApprovalKind } from './org-approvals.service';
 import { govTunable } from './governance-tunables';
 import { urgencyOf } from './org-capacity.service';
 import { ROLES, rankRoles, roleRef } from './roles/catalog';
-import { headFunction, isHeadMember, isHeadRole, rolesForHead } from './heads';
+import { headFunction, isHeadLevelTask, isHeadMember, isHeadRole, rolesForHead } from './heads';
 import { CHIEF_PACK_ID } from './chief-os';
 import { taskRef } from '../common/task-keys';
 import { blockerSignature, describeBlockedOn, legacyBlockedOn, parseBlockedOn } from './blocked-on';
@@ -220,6 +220,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   private readonly lastPlanning = new Map<string, number>();
   /** A head woken for its staffing gap: once a day per org and head (orgId:agentId → YYYY-MM-DD). */
   private readonly staffingNudged = new Map<string, string>();
+  /** `${orgId}:${agentId}` → the last team-board line a head was woken for (once per day per state). */
+  private readonly teamNudged = new Map<string, string>();
   /** Test seams: when set they override the org's `planning.debounceSeconds`
    *  / `planning.cooldownSeconds` tunables (docs/company-vision.md §1b). */
   planningDebounceMs: number | null = null;
@@ -573,6 +575,9 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
           const gap = line?.split('\n').find((x) => x.includes('Staffing gap:'));
           if (gap) { this.staffingNudged.set(key, day); out.push(`${gap.trim()} (run your team-design playbook)`); }
         }
+        // A head reviews its team's board (work.headDelegation): once a day per state of it.
+        const team = await this.teamBoardLine(org, agentId, now).catch(() => null);
+        if (team && this.teamNudged.get(key) !== `${day}:${team}`) { this.teamNudged.set(key, `${day}:${team}`); out.push(team); }
       }
       for (const g of (await this.org.goals(org.id)).filter((g) => g.kind === 'key_result' && g.status === 'active' && g.ownerAgentId === agentId)) {
         const last = Date.parse(g.lastCheckInAt ?? g.createdAt);
@@ -1308,7 +1313,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     }
     const head = reviewer
       ? `You were woken as the REVIEWER of task ${taskRef(task)} "${task.title}" (reason: ${reason}). Check the result against the done_when rubric in your context, then call org_review with accept, request_changes (with a concrete note), or escalate. Do not do the task yourself.`
-      : `You were woken for task ${taskRef(task)} "${task.title}" (reason: ${reason === 'next' ? 'your next work: you finished or handed off your last task and this is the top of your queue' : reason}). Do the work described in your context with your tools, keep the status current with org_task_update, leave a short handoff with org_task_comment, and when done_when is met call org_request_review. If you are stuck, set status blocked with the blocker named. A handoff must make sense to someone who wasn't here: what's done, where it is, what's left. Changes requested on the timeline, or something you'd do differently next time? memory_note it with ${taskRef(task)} as the evidence.`;
+      : `You were woken for task ${taskRef(task)} "${task.title}" (reason: ${reason === 'next' ? 'your next work: you finished or handed off your last task and this is the top of your queue' : reason}). ${(await this.delegatePath(org, task, task.assigneeAgentId ?? '')) ?? 'Do the work described in your context with your tools.'} Keep the status current with org_task_update, leave a short handoff with org_task_comment, and when done_when is met call org_request_review. If you are stuck, set status blocked with the blocker named. A handoff must make sense to someone who wasn't here: what's done, where it is, what's left. Changes requested on the timeline, or something you'd do differently next time? memory_note it with ${taskRef(task)} as the evidence.`;
     return [head, comments.length ? `Task timeline (newest last):\n${framed.join('\n')}` : 'No comments on this task yet.'].join('\n\n');
   }
 
@@ -1389,7 +1394,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       if (chief && await this.isAutonomous(org)) lines.push('  As chief of staff you decompose goals into briefed tasks (org_create_task, org_assign), review results (org_review), keep the board moving (org_read_board, org_escalate) and report (org_report). This company is in autonomous mode: org_hire_agent, org_reorg, org_set_scope, org_allocate_budget and org_terminate_agent act at once within caps (depth, fan-out, agent cap, company envelope, your own scopes) and are refused with the reason outside them; give a one-line why each time. Strategy still needs the CEO. Keep the roster small.');
       else if (chief) lines.push('  As chief of staff you decompose goals into briefed tasks (org_create_task, org_assign), review results (org_review), keep the board moving (org_read_board, org_escalate) and report (org_report). Hiring, scope widening, reorgs, budget raises and terminations are proposals the CEO approves in the app — they never take effect on your say-so. Keep the roster small.');
       else if (await this.headOf(org.id, session.agentId)) {
-        lines.push(`  You head a function${this.units && await this.units.isLead(org.id, session.agentId) ? ': org_create_task and org_assign work for yourself and your direct reports, org_set_goal sets a goal for your unit (a child of a goal you can see), org_unit_report shows your unit\'s board and goal progress' : ''}. You staff it yourself: org_hire_agent hires a specialist of your function into your own unit (role:<fn>-<slug>, reportsTo you or one of your reports) within the agent cap and your unit's envelope — ${await this.isAutonomous(org) ? 'at once within caps, why required' : 'an approval card for the CEO'}; org_pause_agent and org_update_member manage your own reports. The chief of staff is told of each. org_escalate takes a blocked task to the chief of staff (default) or, with to: "ceo", toward the CEO (through the chief, who adds its recommendation) — only for a decision only the CEO can make. Work outside your unit goes to the chief of staff as a backlog task.`);
+        lines.push(`  You head a function${this.units && await this.units.isLead(org.id, session.agentId) ? ': org_create_task and org_assign work for yourself and your direct reports, org_set_goal sets a goal for your unit (a child of a goal you can see), org_unit_report shows your unit\'s board and goal progress' : ''}. Lead it rather than do it: split execution work into briefed tasks for your reports and review their results; keep head-level work (plans, reports, reviews, cross-functional calls). You staff it yourself: org_hire_agent hires a specialist of your function into your own unit (role:<fn>-<slug>, reportsTo you or one of your reports) within the agent cap and your unit's envelope — ${await this.isAutonomous(org) ? 'at once within caps, why required' : 'an approval card for the CEO'}; org_pause_agent and org_update_member manage your own reports. The chief of staff is told of each. org_escalate takes a blocked task to the chief of staff (default) or, with to: "ceo", toward the CEO (through the chief, who adds its recommendation) — only for a decision only the CEO can make. Work outside your unit goes to the chief of staff as a backlog task.`);
         const staffing = await this.staffingLine(org, session.agentId).catch(() => null);
         if (staffing) lines.push(staffing);
       } else lines.push('  org_create_task puts work into the backlog for the chief of staff to triage; org_read_board shows the board; org_message posts to the group log (wakes nobody); org_escalate raises a blocked task of yours to your manager (your head); org_costs and org_forecast show spend (read-only).');
@@ -1445,9 +1450,11 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       if (ctx.reviewer || ctx.isChief) specs.push(...REVIEW_TOOLS);
       if (ctx.isChief) specs.push(...MANAGER_TOOLS, ...LEAD_TOOLS);
       else {
-        if (await leadOf([ctx.orgId])) specs.push(...LEAD_TOOLS);
+        // A head first: headOf gives a title-only head its unit, so it leads.
+        const head = await headIn([ctx.orgId]);
+        if (head || await leadOf([ctx.orgId])) specs.push(...LEAD_TOOLS);
         else if (await leadsTeam([ctx.orgId])) specs.push(...ASSIGN_TOOL);
-        if (await headIn([ctx.orgId])) specs.push(...HEAD_TOOLS);
+        if (head) specs.push(...HEAD_TOOLS);
       }
       // Every member: the escalation chain (to its manager) and the spend reads; a manager its decisions.
       if (ctx.isChief || await managesIn([ctx.orgId])) specs.push(...DECISION_TOOLS);
@@ -1466,7 +1473,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     // chain (org_escalate: to its manager; a head to the chief or the CEO)
     // and reads spend (org_costs / org_forecast, read-only).
     const orgIds = memberships.map((m) => m.orgId);
-    return uniqueSpecs([...COMMON_TOOLS, ...TASK_TOOLS, ...((await leadOf(orgIds)) ? LEAD_TOOLS : (await leadsTeam(orgIds)) ? ASSIGN_TOOL : []), ...((await headIn(orgIds)) ? HEAD_TOOLS : []), ...MEMBER_EXTRA_TOOLS, ...((await managesIn(orgIds)) ? DECISION_TOOLS : [])]);
+    const head = await headIn(orgIds);
+    return uniqueSpecs([...COMMON_TOOLS, ...TASK_TOOLS, ...(head || (await leadOf(orgIds)) ? LEAD_TOOLS : (await leadsTeam(orgIds)) ? ASSIGN_TOOL : []), ...(head ? HEAD_TOOLS : []), ...MEMBER_EXTRA_TOOLS, ...((await managesIn(orgIds)) ? DECISION_TOOLS : [])]);
   }
 
   /**
@@ -1482,10 +1490,14 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     if (!org || org.chiefOfStaffAgentId === agentId || org.auditorAgentId === agentId) return null;
     const m = await this.org.member(orgId, agentId);
     if (!m || m.status !== 'active') return null;
-    const unit = this.units ? await this.units.isLead(orgId, agentId) : null;
+    let unit = this.units ? await this.units.isLead(orgId, agentId) : null;
     // heads.ts: a unit lead, a member flagged a head, or a head-shaped title
     // under the chief ("Head of Tutoring" too — not only the catalog's titles).
     if (!isHeadMember(m, org, unit !== null)) return null;
+    // A head by title or flag whose unit row is missing (it joined before the
+    // chart was last synced) leads one from now: it gets the lead's tools
+    // (org_assign, assignee on org_create_task) in every session kind.
+    if (!unit && this.units && org.chiefOfStaffAgentId && org.status === 'active') { await this.units.syncMembership(orgId); unit = await this.units.isLead(orgId, agentId); }
     return { unit, fn: headFunction(m.title) };
   }
 
@@ -1522,12 +1534,80 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     if (unassigned > 0 && (reports.length === 0 || atLimit.length === reports.length)) gaps.push(`${unassigned} unassigned task(s) on your board`);
     const team = reports.length ? `${reports.slice(0, 4).map((r) => `${names.get(r.agentId) ?? r.agentId.slice(0, 8)} ${openOf(r.agentId)}/${wip}`).join(', ')}${reports.length > 4 ? ` +${reports.length - 4}` : ''}` : 'none';
     const autonomous = ws?.orgMode === 'autonomous';
+    // Delegation (work.headDelegation): execution work it carries while a report has room.
+    const execMine = all.filter((t) => t.assigneeAgentId === agentId && OPEN.includes(t.status) && !isHeadLevelTask(t)).length;
+    const free = reports.filter((r) => openOf(r.agentId) < wip).map((r) => names.get(r.agentId) ?? r.agentId.slice(0, 8));
+    const delegate = workTunable(org, 'work.headDelegation') >= 1 && free.length > 0 && execMine > 0;
     return [
       `  Staffing: reports ${team}; you ${mine}/${wip} open; agent-cap headroom ${headroom}.`,
       gaps.length
         ? `  Staffing gap: ${gaps.join('; ')}. Run your team-design playbook: org_roles${head.fn ? ` q "${head.fn}"` : ''}, then org_hire_agent "role:<id>" reportsTo you within your envelope (${autonomous ? 'acts at once within caps' : 'a card for your manager'})${roles.length ? `, e.g. ${roles.join(', ')}` : ''}; hand the work to your hires.`
         : '',
+      delegate ? `  Delegate: you carry ${execMine} execution task(s) while ${free.slice(0, 3).join(', ')} ${free.length === 1 ? 'has' : 'have'} room. Split, brief and assign (org_create_task with assignee, org_assign), then review; keep head-level work.` : '',
     ].filter(Boolean).join('\n');
+  }
+
+  /**
+   * A head's team as delegation sees it (`work.headDelegation` >= 1): its
+   * active reports with their open work against the WIP limit, the ones
+   * with room, and the execution tasks (not head-level) it carries itself.
+   * Null when it is no head, has no active report, or delegation is off.
+   * Model-free.
+   */
+  async headTeam(org: Organization, agentId: string): Promise<HeadTeam | null> {
+    if (workTunable(org, 'work.headDelegation') < 1 || org.chiefOfStaffAgentId === agentId) return null;
+    const head = await this.headOf(org.id, agentId);
+    if (!head) return null;
+    const members = (await this.org.members(org.id)).filter((m) => m.reportsToAgentId === agentId && m.status === 'active');
+    if (members.length === 0) return null;
+    const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
+    const wip = govTunable(org, 'capacity.wipPerMember');
+    const all = await this.tasks.list(org.id);
+    const OPEN = ['todo', 'claimed', 'in_progress', 'blocked'];
+    const reports = members.map((m) => ({ agentId: m.agentId, name: names.get(m.agentId) ?? m.agentId.slice(0, 8), open: all.filter((t) => t.assigneeAgentId === m.agentId && OPEN.includes(t.status)).length }));
+    const execution = all.filter((t) => t.assigneeAgentId === agentId && OPEN.includes(t.status) && !isHeadLevelTask(t));
+    return { unit: head.unit, reports, free: reports.filter((r) => r.open < wip), wip, execution, all };
+  }
+
+  /**
+   * The head's team board on its heartbeat: reports idle while it carries
+   * execution work, unassigned work on its unit's board while a report has
+   * room, reports' work blocked past `work.chaseAfterHours`, and its own
+   * tasks whose subtasks have all settled (ready to roll up). Null when
+   * there is nothing to act on, or it is no head with reports. Model-free.
+   */
+  async teamBoardLine(org: Organization, agentId: string, now: Date): Promise<string | null> {
+    const team = await this.headTeam(org, agentId);
+    if (!team) return null;
+    const keys = (ts: OrgTask[]) => ts.slice(0, 3).map((t) => taskRef(t)).join(', ') + (ts.length > 3 ? ', …' : '');
+    const parts: string[] = [];
+    const idle = team.reports.filter((r) => r.open === 0);
+    if (idle.length && team.execution.length) parts.push(`${idle.slice(0, 3).map((r) => r.name).join(', ')} idle while you carry ${team.execution.length} execution task(s) (${keys(team.execution)})`);
+    const unassigned = team.unit ? team.all.filter((t) => t.unitId === team.unit!.id && !t.assigneeAgentId && !t.assigneeHumanId && ['backlog', 'todo'].includes(t.status)) : [];
+    if (unassigned.length && team.free.length) parts.push(`${unassigned.length} unassigned task(s) on your unit's board (${keys(unassigned)})`);
+    const ids = new Set(team.reports.map((r) => r.agentId));
+    const chaseH = workTunable(org, 'work.chaseAfterHours');
+    const stuck = team.all.filter((t) => t.assigneeAgentId && ids.has(t.assigneeAgentId) && t.status === 'blocked'
+      && now.getTime() - Date.parse(parseBlockedOn(t.blockedOn)?.since || t.updatedAt) >= chaseH * 3_600_000);
+    if (stuck.length) parts.push(`${stuck.length} of your reports' task(s) blocked over ${chaseH}h (${keys(stuck)})`);
+    const settled = team.all.filter((p) => {
+      if (p.assigneeAgentId !== agentId || !['todo', 'claimed', 'in_progress', 'blocked'].includes(p.status)) return false;
+      const kids = team.all.filter((k) => k.parentTaskId === p.id && !k.title.startsWith('Escalation:'));
+      return kids.length > 0 && kids.every((k) => ['done', 'cancelled'].includes(k.status)) && kids.some((k) => k.status === 'done');
+    });
+    if (settled.length) parts.push(`the subtasks of ${keys(settled)} are done: check them against its done_when and request review`);
+    if (parts.length === 0) return null;
+    return `Your team: ${parts.join('; ')}. Delegate (org_create_task with assignee, org_assign), unblock or escalate; do it yourself only when it is head-level work or nobody in your unit can.`;
+  }
+
+  /** The delegate path of a head's task wake: an execution task while a
+   *  report has room. Null otherwise (the ordinary "do the work"). */
+  private async delegatePath(org: Organization, task: OrgTask, agentId: string): Promise<string | null> {
+    if (!agentId || isHeadLevelTask(task)) return null;
+    const team = await this.headTeam(org, agentId).catch(() => null);
+    if (!team || team.free.length === 0) return null;
+    const who = team.free.slice(0, 4).map((r) => `${r.name} ${r.open}/${team.wip}`).join(', ');
+    return `You lead a team (${who} open): split, brief and assign before doing it yourself. Break this task into briefed subtasks for your reports with org_create_task (assignee a report; outcome, done_when, the key result it serves), or hand it over whole with org_assign. Then follow up, review their results, and request review here once the parts are done. Do it yourself only if it is head-level work, nobody in your unit has the skill or the room, or it is small; say which in your handoff.`;
   }
 
   /** A head's structural act reaches the chief, who keeps the one view of
@@ -1573,7 +1653,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     const requireChief = () => { if (!isChief) throw new Error(`${name} is a chief-of-staff tool`); };
     // Units (docs/group-chat.md §7): a member that leads a unit gets a
     // unit-scoped set — its reports and itself, its board, its goal subtree.
-    const leadUnit: OrgUnit | null = !isChief && this.units ? await this.units.isLead(org.id, agentId) : null;
+    const leadUnit: OrgUnit | null = !isChief && this.units ? (await this.units.isLead(org.id, agentId)) ?? (await this.headOf(org.id, agentId))?.unit ?? null : null;
     const requireChiefOrLead = () => { if (!isChief && !leadUnit) throw new Error(`${name} is for the chief of staff and unit leads`); };
     const inMyUnit = (m: OrgMember) => isChief || (leadUnit !== null && (m.agentId === agentId || m.reportsToAgentId === agentId));
     const requireInMyUnit = (m: OrgMember) => { if (!inMyUnit(m)) throw new Error(`refused: ${names.get(m.agentId) ?? m.agentId.slice(0, 8)} is outside your unit — you may assign only yourself and your direct reports (or, on a project you lead, its team: org_project_add_member)`); };
@@ -2557,7 +2637,7 @@ const COMMON_TOOLS: AiToolSpec[] = [
   { name: 'org_read_board', description: 'Read the organisation\'s shared task board: id, status, title, owner. Pass mine=true for only your tasks.', inputSchema: { type: 'object', properties: { mine: { type: 'boolean' }, org: { type: 'string', description: 'Organisation name when you belong to several.' } } } },
   { name: 'org_read_goal', description: 'Read the organisation\'s goals and their projects.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
   { name: 'org_message', description: 'Post a short attributed message to the organisation\'s group log. It wakes nobody and carries no authority; use it for summaries, not for asking someone to act.', inputSchema: { type: 'object', properties: { text: { type: 'string' }, org: { type: 'string' } }, required: ['text'] } },
-  { name: 'org_create_task', description: 'Create a task on the shared board with the four-field brief. As a member it lands in the backlog (a subtask of your current task) for the chief of staff to triage; the chief, or a unit lead for its own reports, may assign it directly. `class` (triage | research | synthesis | review | ops | general) drives cost roll-ups and model routing; derived from the brief when omitted.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, ...brief4, class: { type: 'string', description: 'triage | research | synthesis | review | ops | general' }, checks: CHECKS_PARAM, projectId: { type: 'string', description: 'The project it serves (its key, e.g. P-3; org_projects lists them). Default: your current task\'s project, else your unit\'s Unsorted project for the head to place.' }, assignee: { type: 'string', description: 'Chief or unit lead only: member name to assign to (a lead: itself or a direct report).' }, org: { type: 'string' } }, required: ['title', 'outcome', 'done_when'] } },
+  { name: 'org_create_task', description: 'Create a task on the shared board with the four-field brief. As a member it lands in the backlog (a subtask of your current task) for the chief of staff to triage; the chief, or a unit lead or function head for its own reports, may assign it directly (a head splitting its task: one briefed subtask per report). `class` (triage | research | synthesis | review | ops | general) drives cost roll-ups and model routing; derived from the brief when omitted.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, ...brief4, class: { type: 'string', description: 'triage | research | synthesis | review | ops | general' }, checks: CHECKS_PARAM, projectId: { type: 'string', description: 'The project it serves (its key, e.g. P-3; org_projects lists them). Default: your current task\'s project, else your unit\'s Unsorted project for the head to place.' }, assignee: { type: 'string', description: 'Chief, unit lead or head only: member name to assign to (a lead or head: itself or a direct report).' }, org: { type: 'string' } }, required: ['title', 'outcome', 'done_when'] } },
   { name: 'org_signals', description: 'Open signals (docs/company-vision.md §5): stale or blocked tasks, ageing reviews, burn rate, breaker trips, org debt, SLO breaches, audit findings. You see the ones addressed to you; a unit lead its unit\'s; the chief all. Filter by severity (info|warn|critical) or unit.', inputSchema: { type: 'object', properties: { severity: { type: 'string', enum: ['info', 'warn', 'critical'] }, unit: { type: 'string' }, org: { type: 'string' } } } },
   { name: 'org_ack_signal', description: 'Acknowledge a signal addressed to you (the chief: any) with an optional note. It stays visible as acked and resolves itself when the condition clears.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, note: { type: 'string' }, org: { type: 'string' } }, required: ['id'] } },
   // Intent (docs/company-vision.md §2): read the tree, ask why, check in.
@@ -2584,6 +2664,18 @@ const AUDIT_TOOL_NAMES = new Set([...AUDIT_TOOLS.map((t) => t.name), 'fs_list', 
 
 /** Unit leads (docs/group-chat.md §7): the unit-scoped set. The chief gets
  *  these too, company-wide (`unit` names which unit). */
+/** A head's team (OrgRuntimeService.headTeam). */
+export interface HeadTeam {
+  unit: OrgUnit | null;
+  reports: Array<{ agentId: string; name: string; open: number }>;
+  /** Reports under the WIP limit. */
+  free: Array<{ agentId: string; name: string; open: number }>;
+  wip: number;
+  /** Execution tasks (not head-level) the head carries itself. */
+  execution: OrgTask[];
+  all: OrgTask[];
+}
+
 const LEAD_TOOLS: AiToolSpec[] = [
   { name: 'org_assign', description: 'Assign a board task to a member (by name); they are woken. Keep each member to a few open tasks. A unit lead may assign only itself and its direct reports. `human` instead of `agent` assigns a human employee (by title or account id) — a lead only one who reports to it.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, agent: { type: 'string' }, human: { type: 'string', description: 'A human employee instead of an agent.' }, org: { type: 'string' } }, required: ['taskId'] } },
   { name: 'org_set_goal', description: 'Set a goal for your unit (the chief: for the company, or for a unit named in `unit`). Optionally a child of a goal you can see (parentGoalId: a goal of your unit or of a unit above it). Progress is computed from linked tasks and child goals.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string' }, parentGoalId: { type: 'string' }, unit: { type: 'string', description: 'Chief only: unit name or #slug; defaults to the company.' }, org: { type: 'string' } }, required: ['title'] } },

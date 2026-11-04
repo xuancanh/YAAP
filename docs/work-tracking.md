@@ -233,6 +233,10 @@ tunes them with `org_tune`, the CEO in Settings.
 | `work.selfAssign` | 1 | Fitting unassigned backlog a member with nothing to do may take itself: 0 off (it asks its manager), 1 in its unit, 2 in its unit or the projects it works on (a control culture 0, clan / adhocracy 2). |
 | `work.nextTaskMaxPerHour` | 6 | Next-work wakes per member per hour (a loop guard). |
 | `work.chaseAfterHours` | 24 | Hours a task waits on its blocker before the owner is nudged to chase or escalate (speed 8, a control culture 48). |
+| `work.headDelegation` | 1 | How a function head with reports treats execution work (anything not head-level: planning, reports, reviews, staffing, decisions, escalations — `isHeadLevelTask`): 0 like any member; 1 its task wake carries the delegate path, its heartbeat reviews its team's board, and it never pulls execution backlog for itself while a report has room; 2 also, fitting backlog on its unit's board goes straight to the best-fit report with room (a control or results culture 2, otherwise 1). |
+| `work.delegationSignalTasks` | 2 | Execution tasks a head starts itself within the window, while a report sits idle, before a `delegation_gap` signal opens for it (a control culture 1, an early company 3). |
+| `work.delegationWindowHours` | 24 | The window of that signal (speed 12). |
+| `work.headReviewsReports` | 1 | 1: a report's finished task is reviewed by its head (its line manager, when that is not the chief); 0: by a member of another model family, as for everyone else. |
 
 **The bet.** Moving a project to Now is the CEO's decision. An agent's
 request — `org_create_project` with lane now, or `org_update_project` to
@@ -291,6 +295,10 @@ the member's queue in order, waking it (an ordinary task run, wake reason
    the ordinary assignment wake runs it); otherwise it asks its manager —
    a comment on the task and an inbox event for an agent manager — at most
    once a day per task;
+   a function head with a report that has room never takes execution
+   backlog for itself (`work.headDelegation` ≥ 1): it delegates it, and at
+   2 backlog on its unit's board goes straight to the best-fit report with
+   room (audited `next_work_delegate`);
 5. **nothing at all** → nothing: no wake, no model call.
 
 It respects the org's and the member's status, quiet hours, the spend stop,
