@@ -331,3 +331,19 @@ test('the market lists each pack\'s knowledge base in brief', async () => {
   const none = items.find((i) => !Object.values(KNOWLEDGE.packs).some((p) => p.packId === i.id));
   if (none) assert.equal(none.knowledge, undefined);
 });
+
+test('prompt size in a real company: the pointer is one section, within its cap, chief and members alike', async () => {
+  const { setupCompany, systemOf } = await import('./company-briefing-fixture');
+  const c = await setupCompany();
+  const before = { chief: await systemOf(c, c.chief.id), junior: await systemOf(c, c.junior.id) };
+  const service = new KnowledgeService(c.db, new WorkspaceFs(c.storage, c.db));
+  new KnowledgeTools(service, c.turns).onModuleInit();
+  const after = { chief: await systemOf(c, c.chief.id), junior: await systemOf(c, c.junior.id) };
+  for (const k of ['chief', 'junior'] as const) {
+    assert.equal(after[k].split('# Knowledge base').length - 1, 1, `${k}: one pointer`);
+    const grew = after[k].length - before[k].length;
+    assert.ok(grew > 0 && grew <= KB_POINTER_CAP + 2, `${k}: grew by ${grew} ≤ ${KB_POINTER_CAP + 2}`);
+  }
+  assert.match(after.chief, /\/library\/chief-of-staff\//, 'the chief\'s seat brings the Chief of Staff knowledge base');
+  assert.match(after.junior, /\/library\/_shared\//, 'a custom member: the shared topics');
+});
