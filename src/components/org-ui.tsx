@@ -105,7 +105,8 @@ export function useFollowRef() {
     app.setMobileDetail(true);
     if (kind === 'task') app.openOrgTask(id);
     else if (kind === 'decision') { app.setOrgFocus({ kind: 'decision', id }); app.setOrgPane('decisions'); }
-    else if (kind === 'goal' || kind === 'objective' || kind === 'key_result' || kind === 'vision') { app.setOrgFocus({ kind: 'goal', id }); app.setOrgUnitId(null); app.setOrgPane('vision'); }
+    else if (kind === 'vision') { app.setOrgFocus(null); app.setOrgUnitId(null); app.setOrgPane('vision'); }
+    else if (kind === 'goal' || kind === 'objective' || kind === 'key_result') { app.setOrgFocus({ kind: 'goal', id }); app.setOrgUnitId(null); app.setOrgPane('goals'); }
     else if (kind === 'meeting') { app.setOrgFocus({ kind: 'meeting', id }); app.setOrgPane('meetings'); }
     else if (kind === 'plan') { app.setOrgFocus({ kind: 'plan', id }); app.setOrgPane('plans'); }
     else if (kind === 'playbook') openOrgFile('org/playbooks/', id);

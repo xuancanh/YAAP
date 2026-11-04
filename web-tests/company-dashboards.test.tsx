@@ -76,9 +76,19 @@ describe('the section dashboards', () => {
     await waitFor(() => expect(screen.getByTestId('dash-card-vision')).toHaveTextContent('Every small team runs like a big one'));
     await waitFor(() => expect(screen.getByTestId('dash-lede')).toHaveTextContent('1 project in Now.'));
     expect(screen.getByTestId('dash-card-goals')).toHaveTextContent('Launch Pro');
-    expect(screen.getByTestId('dash-card-goals')).toHaveTextContent('at risk');
+    expect(screen.getByTestId('dash-card-goals')).toHaveTextContent(/at risk/i);
+    expect(screen.getByTestId('dash-card-goals')).toHaveTextContent('0 of 1 key result on track');
     await waitFor(() => expect(screen.getByTestId('dash-card-roadmap')).toHaveTextContent('Pricing page'));
     await waitFor(() => expect(screen.getByTestId('dash-card-decisions')).toHaveTextContent('Usage-based billing'));
+    // needs attention: the key result at risk and the Now project the lead called at risk, each linking to its page
+    await waitFor(() => expect(screen.getAllByTestId('attention-row').length).toBeGreaterThanOrEqual(2));
+    const attention = screen.getByTestId('dash-card-attention');
+    expect(attention).toHaveTextContent('At risk: Goal k1');
+    expect(attention).toHaveTextContent('At risk: PRO Pricing page');
+    fireEvent.click(within(attention).getByText('At risk: Goal k1'));
+    expect(fake.setOrgPane).toHaveBeenCalledWith('goals');
+    expect(fake.setOrgFocus).toHaveBeenCalledWith({ kind: 'goal', id: 'k1' });
+    expect(screen.getByTestId('vision-horizon')).toHaveTextContent(/By January 2028/);
     await waitFor(() => expect(screen.getByTestId('dash-card-program')).toHaveTextContent('No Program Manager yet: Atlas acts as PM.'));
     expect(screen.getByTestId('program-fig-acting')).toHaveTextContent('2chief acting');
     // the cards link into the pages

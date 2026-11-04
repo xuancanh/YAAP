@@ -8,12 +8,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useApp, type OrgFocus, type OrgPane } from '../store';
 import {
-  api, type OrgAllocation, type OrgAuditRow, type OrgAuditRun, type OrgBrief, type OrgCapacity, type OrgDecision, type OrgDetail, type OrgForecast,
-  type OrgIncident, type OrgPulse, type OrgSpend, type OrgTask, type OrgVisionInfo, type RoadmapData, type TrustOverview, type OrgUnitNode,
+  api, type OrgAllocation, type OrgAuditRow, type OrgAuditRun, type OrgBrief, type OrgCapacity, type OrgDetail, type OrgForecast,
+  type OrgIncident, type OrgPulse, type OrgSpend, type OrgTask, type TrustOverview, type OrgUnitNode,
 } from '../lib/api';
-import { sectionDef, type CompanySection } from '../lib/company-nav';
+import { type CompanySection } from '../lib/company-nav';
 import {
-  boardCounts, budgetLines, capitalByGoal, directionLede, spendWindowLabel, findingsCount, flatUnits, incidentHistory, laneCounts, moneyLede, nextRituals, objectivesOf,
+  boardCounts, budgetLines, capitalByGoal, spendWindowLabel, findingsCount, flatUnits, incidentHistory, moneyLede, nextRituals, 
   operationsLede, oversightLede, pausedMembers, peopleLede, yesterdayKey,
 } from '../lib/company-dash';
 import { atRiskByUnit, firesOn, flattenIntent, MEETING_KIND_TITLES } from '../lib/org';
@@ -22,7 +22,8 @@ import { healthWord, incidentCounts } from '../lib/org3';
 import { fmtUsd } from '../lib/pricing';
 import { Markdown } from '../lib/md';
 import { faint, linkBtn, ago, Avatar, useAgentNames } from './org-ui';
-import { ProgramDirectionCard, ProgramPeopleCard } from './ProgramMatrixView';
+import { ProgramPeopleCard } from './ProgramMatrixView';
+import { DirectionOverview } from './DirectionOverview';
 import { PluginCards } from './PluginUi';
 import { DepartmentName, useMayRenameDepartments } from './DepartmentName';
 
@@ -54,13 +55,11 @@ function Grid({ children }: { children: ReactNode }) {
   return <div style={{ display: 'grid', gap: GAP, gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', alignItems: 'start' }}>{children}</div>;
 }
 
-/** The dashboard's opening: what the section is for, then where it stands, in one sentence. */
-function Lede({ section, state }: { section: CompanySection; state: string | null }) {
-  const def = sectionDef(section);
+/** The dashboard's opening: where the section stands, in one sentence (what it is for sits behind the (i) by the section title). */
+function Lede({ state }: { state: string | null }) {
   return (
     <div style={{ marginBottom: 16, maxWidth: 760 }}>
       <p data-testid="dash-lede" style={{ margin: 0, fontSize: 18, lineHeight: 1.4, fontWeight: 560, letterSpacing: '-.2px', color: 'var(--text)', minHeight: 25 }}>{state ?? ' '}</p>
-      <p style={{ margin: '4px 0 0', fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>{def.blurb}</p>
     </div>
   );
 }
@@ -98,7 +97,6 @@ function Fig({ n, label, tone }: { n: number | string; label: string; tone?: str
 
 const Empty = ({ children }: { children: ReactNode }) => <div style={{ ...faint, fontSize: 12.5, padding: '2px 0' }}>{children}</div>;
 const Loading = () => <div style={faint}>Loading…</div>;
-const HEALTH_COLOR: Record<string, string> = { on_track: 'var(--green)', at_risk: 'var(--amber)', off_track: 'var(--red)' };
 
 /** Fetch a dashboard's data once per workspace: undefined while loading, null if it failed. */
 function useData<T>(load: (wsId: string) => Promise<T>, wsId: string, key = ''): T | null | undefined {
@@ -123,7 +121,7 @@ function useOpen() {
 export function SectionDashboard({ section, org }: { section: CompanySection; org: OrgDetail }) {
   return (
     <div data-testid={`dashboard-${section}`} style={{ maxWidth: 1180 }}>
-      {section === 'direction' && <DirectionDashboard org={org} />}
+      {section === 'direction' && <DirectionOverview org={org} />}
       {section === 'operations' && <OperationsDashboard org={org} />}
       {section === 'people' && <PeopleDashboard org={org} />}
       {section === 'money' && <MoneyDashboard org={org} />}
@@ -131,78 +129,6 @@ export function SectionDashboard({ section, org }: { section: CompanySection; or
       {/* Extension point: cards and pages plugins add to this section (docs/plugins.md §3.8). */}
       <PluginCards placement={section} />
     </div>
-  );
-}
-
-// ---- Direction ----
-
-function DirectionDashboard({ org }: { org: OrgDetail }) {
-  const app = useApp();
-  const open = useOpen();
-  const ws = org.workspaceId;
-  const vision = useData<OrgVisionInfo>(api.orgVision, ws);
-  const roadmap = useData<RoadmapData>(api.orgRoadmap, ws);
-  const decisions = useData<OrgDecision[]>((w) => api.orgDecisions(w), ws);
-  const objectives = useMemo(() => objectivesOf(app.orgIntent ?? []), [app.orgIntent]);
-  const lanes = roadmap ? laneCounts(roadmap.projects) : null;
-  const pending = app.wsOrg?.pendingApprovals ?? 0;
-  const nowProjects = (roadmap?.projects ?? []).filter((p) => p.lane === 'now' && p.status !== 'done' && p.status !== 'cancelled').sort((a, b) => a.rank - b.rank).slice(0, 4);
-  return (
-    <>
-      <Lede section="direction" state={directionLede(objectives, lanes)} />
-      {pending > 0 && <InboxRow pane="approvals" text={`${pending} decision card${pending === 1 ? '' : 's'} wait${pending === 1 ? 's' : ''} on you.`} />}
-      <Grid>
-        <Card id="vision" title="Vision" lead open={() => open('vision')}>
-          {vision === undefined ? <Loading /> : !vision?.vision ? <Empty>No vision yet. Write the one sentence the company works toward.</Empty> : (
-            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-              <div style={{ flex: '2 1 320px', minWidth: 0 }}>
-                <div style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.4 }}>{vision.vision.title}</div>
-                {vision.vision.description && <div style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 4, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{vision.vision.description}</div>}
-              </div>
-              {(vision.values || vision.vision.dueAt) && (
-                <div style={{ flex: '1 1 200px', minWidth: 0, fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-                  {vision.vision.dueAt && <div>Horizon: <span style={{ color: 'var(--text)' }}>{new Date(vision.vision.dueAt).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}</span></div>}
-                  {vision.values && <div style={{ ...ellipsis, whiteSpace: 'normal', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>Values: <span style={{ color: 'var(--text)' }}>{vision.values.replace(/\n+/g, ' · ')}</span></div>}
-                </div>
-              )}
-            </div>
-          )}
-        </Card>
-        <Card id="goals" title="Goals" open={() => open('goals')} aside={objectives.length > 0 ? <span style={faint}>{objectives.length} objective{objectives.length === 1 ? '' : 's'}</span> : undefined}>
-          {objectives.length === 0 ? <Empty>No objectives yet.</Empty> : objectives.slice(0, 5).map((o) => (
-            <button key={o.id} style={rowBtn} onClick={() => open('vision', { kind: 'goal', id: o.id })} title={o.atRisk ? o.reason || 'At risk' : undefined}>
-              <span style={{ ...ellipsis, flex: '1 1 50%' }}>{o.title}</span>
-              {o.atRisk && <span style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--amber)' }}>at risk</span>}
-              <Bar value={o.progress} color={o.atRisk ? 'var(--amber)' : 'var(--accent)'} label={`${o.title} progress`} />
-              <span style={{ ...num, ...faint, width: 34, textAlign: 'right' }}>{Math.round(o.progress * 100)}%</span>
-            </button>
-          ))}
-        </Card>
-        <Card id="roadmap" title="Roadmap" open={() => open('roadmap')}>
-          {roadmap === undefined ? <Loading /> : !roadmap ? <Empty>The roadmap is not available.</Empty> : (
-            <>
-              <div style={{ display: 'flex', gap: 18, marginBottom: 6 }}><Fig n={lanes!.now} label="now" /><Fig n={lanes!.next} label="next" /><Fig n={lanes!.later} label="later" /></div>
-              {nowProjects.length === 0 ? <Empty>Nothing in Now.</Empty> : nowProjects.map((p) => (
-                <button key={p.id} style={rowBtn} onClick={() => open('roadmap', { kind: 'project', id: p.id })}>
-                  <span aria-label={p.health || 'no update'} style={{ width: 8, height: 8, borderRadius: '50%', flex: 'none', background: HEALTH_COLOR[p.health] ?? 'var(--border)' }} />
-                  <span style={{ ...ellipsis, flex: 1 }}>{p.key ? <span style={{ ...faint, marginRight: 5 }}>{p.key}</span> : null}{p.title}</span>
-                  <span style={{ ...num, ...faint }}>{p.progress.pct}%</span>
-                </button>
-              ))}
-            </>
-          )}
-        </Card>
-        <ProgramDirectionCard wsId={ws} />
-        <Card id="decisions" title="Decisions" open={() => open('decisions')} openLabel="Decision log">
-          {decisions === undefined ? <Loading /> : !decisions || decisions.length === 0 ? <Empty>Nothing decided yet. Decisions from meetings and cards land here.</Empty> : decisions.slice(0, 4).map((d) => (
-            <button key={d.id} style={rowBtn} onClick={() => open('decisions', { kind: 'decision', id: d.id })}>
-              <span style={{ ...ellipsis, flex: 1 }}>{d.title || d.decision}</span>
-              <span style={faint}>{ago(d.createdAt)}</span>
-            </button>
-          ))}
-        </Card>
-      </Grid>
-    </>
   );
 }
 
@@ -228,7 +154,7 @@ function OperationsDashboard({ org }: { org: OrgDetail }) {
   const summary = brief ? briefSummary(brief.text, 2) : null;
   return (
     <>
-      <Lede section="operations" state={operationsLede(board, incidents, pulse ? pulse.score : null)} />
+      <Lede state={operationsLede(board, incidents, pulse ? pulse.score : null)} />
       {app.orgPendingPlans > 0 && <InboxRow pane="plans" text={`${app.orgPendingPlans} pending change${app.orgPendingPlans === 1 ? '' : 's'} will apply unless you veto ${app.orgPendingPlans === 1 ? 'it' : 'them'}.`} />}
       <Grid>
         <Card id="board" title="Board" lead open={() => open('board')}>
@@ -315,7 +241,7 @@ function PeopleDashboard({ org }: { org: OrgDetail }) {
   const outside = app.agents.filter((a) => !members.some((m) => m.agentId === a.id)).length;
   return (
     <>
-      <Lede section="people" state={peopleLede(members.length, Math.max(1, units.length), atLimit)} />
+      <Lede state={peopleLede(members.length, Math.max(1, units.length), atLimit)} />
       <Grid>
         <Card id="chart" title="Org chart" lead open={() => open('chart')} openLabel="Open mission control">
           <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
@@ -442,7 +368,7 @@ function MoneyDashboard({ org }: { org: OrgDetail }) {
   const peak = Math.max(0.000001, ...series.map((d) => d.usd));
   return (
     <>
-      <Lede section="money" state={spend === undefined ? null : spend ? moneyLede(used, cap, forecast ? forecast.company.projectedUsd : null, fmtUsd, period) : 'Spend is not available.'} />
+      <Lede state={spend === undefined ? null : spend ? moneyLede(used, cap, forecast ? forecast.company.projectedUsd : null, fmtUsd, period) : 'Spend is not available.'} />
       <Grid>
         <Card id="spend" title="This month" lead open={() => open('spend')} openLabel="Open spend" aside={spend ? <span style={faint}>{period} (UTC) to date</span> : undefined}>
           {spend === undefined ? <Loading /> : !spend ? <Empty>Spend is not available.</Empty> : (
@@ -517,7 +443,7 @@ function OversightDashboard({ org }: { org: OrgDetail }) {
   const lowTrust = trust ? trust.agents.filter((a) => a.classes.some((c) => c.effective === 0)).length : 0;
   return (
     <>
-      <Lede section="oversight" state={verify === undefined ? null : oversightLede(verify ? verify.ok : null, findings)} />
+      <Lede state={verify === undefined ? null : oversightLede(verify ? verify.ok : null, findings)} />
       {app.orgHeldActions > 0 && <InboxRow pane="approvals" text={`${app.orgHeldActions} action${app.orgHeldActions === 1 ? '' : 's'} wait${app.orgHeldActions === 1 ? 's' : ''} for your key.`} />}
       <Grid>
         <Card id="audit" title="Audit trail" lead open={() => open('audit')} openLabel="Open audit"

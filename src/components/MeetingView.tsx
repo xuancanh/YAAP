@@ -515,7 +515,7 @@ function Summary({ wsId, m, nameOf }: { wsId: string; m: OrgMeeting; nameOf: (ki
   const took = m.startedAt && m.endedAt ? Math.max(0, Math.round((Date.parse(m.endedAt) - Date.parse(m.startedAt)) / 60_000)) : null;
   const how = minutes.endedBy === 'stopped' ? 'stopped in the thread' : minutes.endedBy === 'usd_cap' ? 'stopped at the USD cap' : minutes.endedBy === 'ended' ? 'ended by a person' : m.status === 'cancelled' ? 'cancelled' : 'closed by the facilitator';
   const openMinutes = () => { if (!m.minutesPath) return; closeMeetingView(); app.openFile({ kind: 'workspace', id: wsId }, m.minutesPath); };
-  const openDecision = (id: string) => { closeMeetingView(); app.setOrgFocus({ kind: 'decision', id }); app.setOrgUnitId(null); app.setOrgPane('decisions'); app.go('workspace'); app.setMobileDetail(true); };
+  const openDecision = (id: string) => { closeMeetingView(); app.setOrgFocus({ kind: 'decision', id }); app.setOrgUnitId(null); app.setOrgPane('decisions'); app.setMobileDetail(true); };
   const rowStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 10, alignItems: 'start', padding: '9px 0', borderTop: '1px solid var(--border-soft, var(--border))' };
   return (
     <div data-testid="mv-summary" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>

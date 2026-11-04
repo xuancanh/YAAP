@@ -8,6 +8,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { api, type ProgramCadence, type ProgramItem, type ProgramMatrix, type ProgramOwner, type ResourceRequest } from '../lib/api';
 import { faint, pill } from './org-ui';
+import { Card, Metric, SkeletonRows } from './CompanyKit';
 
 /** The matrix for a workspace: undefined while loading, null when it failed. */
 export function useProgram(wsId: string, key = ''): ProgramMatrix | null | undefined {
@@ -107,43 +108,28 @@ export function GoalProgramLine({ item }: { item: ProgramItem }) {
   );
 }
 
-const cardStyle: CSSProperties = { minWidth: 0, background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 13, display: 'flex', flexDirection: 'column' };
-const titleStyle: CSSProperties = { margin: 0, fontSize: 15, fontWeight: 650, letterSpacing: '.05em', fontVariantCaps: 'all-small-caps', color: 'var(--text)' };
-const numStyle: CSSProperties = { fontVariantNumeric: 'tabular-nums', fontSize: 20, fontWeight: 650, letterSpacing: '-.3px' };
-
-function Fig({ n, label, tone, id }: { n: number; label: string; tone?: string; id: string }) {
-  return (
-    <span data-testid={`program-fig-${id}`} style={{ display: 'inline-flex', alignItems: 'baseline', gap: 5, whiteSpace: 'nowrap' }}>
-      <span style={{ ...numStyle, color: n > 0 && tone ? tone : 'var(--text)' }}>{n}</span>
-      <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{label}</span>
-    </span>
-  );
-}
 
 /** Direction › Program matrix: who owns the outcomes and how healthy the matrix is. */
 export function ProgramHealthCard({ matrix }: { matrix: ProgramMatrix | null | undefined }) {
   return (
-    <section data-testid="dash-card-program" aria-labelledby="dash-program" style={cardStyle}>
-      <div style={{ padding: '12px 16px 8px' }}><h3 id="dash-program" style={titleStyle}>Program matrix</h3></div>
-      <div style={{ padding: '0 16px 14px' }}>
-        {matrix === undefined ? <div style={faint}>Loading…</div> : !matrix ? <div style={faint}>The program matrix is not available.</div> : (
-          <>
-            <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginBottom: 8, lineHeight: 1.5 }}>
-              {matrix.chiefActing
-                ? <>No Program Manager yet: <span style={{ color: 'var(--text)' }}>{matrix.chiefName}</span> acts as PM.</>
-                : <>Program Managers: {matrix.pms.map((p) => `${p.name} (${p.owns})`).join(', ')}.</>}
-            </div>
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-              <Fig id="unowned" n={matrix.health.unowned} label="unowned" tone="var(--red)" />
-              <Fig id="acting" n={matrix.health.acting} label="chief acting" tone="var(--amber)" />
-              <Fig id="stretched" n={matrix.health.stretched} label="stretched" tone="var(--amber)" />
-              <Fig id="stale" n={matrix.health.staleCadences} label="stale rhythms" tone="var(--amber)" />
-              <Fig id="requests" n={matrix.health.openRequests} label={`open requests${matrix.health.overdueRequests ? ` (${matrix.health.overdueRequests} overdue)` : ''}`} />
-            </div>
-          </>
-        )}
-      </div>
-    </section>
+    <Card id="program" title="Program matrix">
+      {matrix === undefined ? <SkeletonRows rows={2} /> : !matrix ? <div style={faint}>The program matrix is not available.</div> : (
+        <>
+          <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginBottom: 10, lineHeight: 1.5 }}>
+            {matrix.chiefActing
+              ? <>No Program Manager yet: <span style={{ color: 'var(--text)' }}>{matrix.chiefName}</span> acts as PM.</>
+              : <>Program Managers: {matrix.pms.map((p) => `${p.name} (${p.owns})`).join(', ')}.</>}
+          </div>
+          <div className="co-metrics">
+            <Metric testid="program-fig-unowned" n={matrix.health.unowned} label="unowned" tone={matrix.health.unowned ? 'bad' : undefined} />
+            <Metric testid="program-fig-acting" n={matrix.health.acting} label="chief acting" tone={matrix.health.acting ? 'warn' : undefined} />
+            <Metric testid="program-fig-stretched" n={matrix.health.stretched} label="stretched" tone={matrix.health.stretched ? 'warn' : undefined} />
+            <Metric testid="program-fig-stale" n={matrix.health.staleCadences} label="stale rhythms" tone={matrix.health.staleCadences ? 'warn' : undefined} />
+            <Metric testid="program-fig-requests" n={matrix.health.openRequests} label={`open requests${matrix.health.overdueRequests ? ` (${matrix.health.overdueRequests} overdue)` : ''}`} />
+          </div>
+        </>
+      )}
+    </Card>
   );
 }
 
@@ -192,12 +178,9 @@ export function ProgramMatrixTable({ matrix }: { matrix: ProgramMatrix }) {
 export function ProgramPeopleCard({ wsId }: { wsId: string }) {
   const matrix = useProgram(wsId);
   return (
-    <section data-testid="dash-card-matrix" aria-labelledby="dash-matrix" style={{ ...cardStyle, gridColumn: '1 / -1' }}>
-      <div style={{ padding: '12px 16px 8px' }}><h3 id="dash-matrix" style={titleStyle}>Matrix</h3></div>
-      <div style={{ padding: '0 16px 14px', minWidth: 0 }}>
-        {matrix === undefined ? <div style={faint}>Loading…</div> : !matrix ? <div style={faint}>The matrix is not available.</div> : <ProgramMatrixTable matrix={matrix} />}
-      </div>
-    </section>
+    <Card id="matrix" title="Members × projects" span>
+      {matrix === undefined ? <SkeletonRows rows={3} /> : !matrix ? <div style={faint}>The matrix is not available.</div> : <ProgramMatrixTable matrix={matrix} />}
+    </Card>
   );
 }
 

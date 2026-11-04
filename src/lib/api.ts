@@ -1142,6 +1142,8 @@ export interface OrgUnit {
   nameSource?: 'derived' | 'custom' | string;
 }
 export interface OrgUnitNode extends OrgUnit { memberAgentIds: string[]; counts: { openTasks: number; tasks: number; goals: number }; children: OrgUnitNode[] }
+/** The intent fields a goal is created or changed with (server GoalDto). */
+export interface OrgGoalIntentInput { kind?: 'objective' | 'key_result'; metric?: string; targetValue?: number | null; startValue?: number | null; unitLabel?: string; dueAt?: string | null; checkInCadenceDays?: number }
 export interface OrgGoalNode extends OrgGoal { progress: number; tasks: { total: number; done: number }; children: OrgGoalNode[] }
 /** A project (docs/work-tracking.md): the middle level, goal / key result → project → task. */
 export interface OrgProject {
@@ -2337,8 +2339,8 @@ export const api = {
   pauseOrgMember: (wsId: string, agentId: string) => send<OrgMember>(`/api/workspaces/${wsId}/org/members/${agentId}/pause`, 'POST'),
   resumeOrgMember: (wsId: string, agentId: string) => send<OrgMember>(`/api/workspaces/${wsId}/org/members/${agentId}/resume`, 'POST'),
   acceptOrgCharter: (wsId: string, agentId: string) => send<OrgMember>(`/api/workspaces/${wsId}/org/members/${agentId}/charter/accept`, 'POST'),
-  addOrgGoal: (wsId: string, body: { title: string; description?: string; unitId?: string | null; parentGoalId?: string | null; ownerAgentId?: string | null }) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals`, 'POST', body),
-  updateOrgGoal: (wsId: string, goalId: string, patch: { title?: string; description?: string; status?: string; parentGoalId?: string | null; unitId?: string | null; ownerAgentId?: string | null }) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals/${goalId}`, 'PATCH', patch),
+  addOrgGoal: (wsId: string, body: { title: string; description?: string; unitId?: string | null; parentGoalId?: string | null; ownerAgentId?: string | null } & OrgGoalIntentInput) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals`, 'POST', body),
+  updateOrgGoal: (wsId: string, goalId: string, patch: { title?: string; description?: string; status?: string; parentGoalId?: string | null; unitId?: string | null; ownerAgentId?: string | null } & OrgGoalIntentInput) => send<OrgGoal>(`/api/workspaces/${wsId}/org/goals/${goalId}`, 'PATCH', patch),
   // units (docs/group-chat.md §7)
   orgUnits: (wsId: string) => get<OrgUnitNode[]>(`/api/workspaces/${wsId}/org/units`),
   renameOrgUnit: (wsId: string, unitId: string, name: string) => send<OrgUnit>(`/api/workspaces/${wsId}/org/units/${unitId}`, 'PATCH', { name }),

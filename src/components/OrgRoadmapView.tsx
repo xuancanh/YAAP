@@ -14,6 +14,11 @@
  *    burn, the forecast range (or "not enough history"), tasks by status,
  *    blockers, decisions and files.
  *
+ * The board's cards drag between lanes (or move with their menu); a
+ * person's move applies at once, an agent's move to Now becomes a card and
+ * the card says so. Below the timeline: milestones coming up and the
+ * projects with no dates yet.
+ *
  * Decision: the timeline is read-only — no dragging bars. A project's dates
  * are commitments the CEO approves, so they change in the project page's
  * form (one deliberate edit, audited) rather than by an accidental drag.
@@ -30,23 +35,14 @@ import {
   laneColumns, spanOf, updateWord, xOf, type GroupBy, type Lane, type Zoom,
 } from '../lib/roadmap';
 import { card, input, btn, pill, h2, faint, ago } from './org-ui';
+import { Bar, Card, Empty, Menu, PageHeader, PageSkeleton, Pill } from './CompanyKit';
+import { HEALTH_LABEL, HEALTH_TONE, inDays, nextMilestone, projectHealth, shortDate } from '../lib/direction';
+import { I, P } from '../lib/icons';
+
+const DAY_MS = 86_400_000;
 import { keyStyle } from '../lib/task-keys';
 
 type View = 'timeline' | 'board';
-
-const seg = (active: boolean): CSSProperties => ({
-  border: 'none', font: 'inherit', fontSize: 12, fontWeight: 600, padding: '5px 11px', borderRadius: 7, cursor: 'pointer',
-  background: active ? 'var(--panel)' : 'none', color: active ? 'var(--text)' : 'var(--text-dim)', boxShadow: active ? 'var(--shadow-sm, 0 1px 2px rgba(0,0,0,.15))' : 'none',
-});
-const segWrap: CSSProperties = { display: 'inline-flex', gap: 2, padding: 3, borderRadius: 9, background: 'var(--panel-2)', border: '1px solid var(--border-soft)' };
-
-function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: Array<{ id: T; label: string }>; onChange: (v: T) => void }) {
-  return (
-    <div role="tablist" aria-label={label} style={segWrap}>
-      {options.map((o) => <button key={o.id} role="tab" aria-selected={o.id === value} onClick={() => onChange(o.id)} style={seg(o.id === value)}>{o.label}</button>)}
-    </div>
-  );
-}
 
 function HealthDot({ health, size = 8 }: { health: string; size?: number }) {
   return <span aria-hidden style={{ width: size, height: size, borderRadius: '50%', background: healthColor(health), flex: 'none', display: 'inline-block' }} />;
@@ -72,75 +68,106 @@ function Appetite({ p }: { p: ProjectSummary }) {
 
 // ---- the timeline ----
 
-const LABEL_W = 250;
-const ROW_H = 36;
+const LABEL_W = 300;
+const ROW_H = 54;
 
-export function RoadmapTimeline({ data, groupBy, zoom, onOpen }: { data: RoadmapData; groupBy: GroupBy; zoom: Zoom; onOpen: (projectId: string) => void }) {
+/** "P-3 Beta IELTS Writing tutor" with the owner, health and progress under it. */
+function RowLabel({ p, owner }: { p: ProjectSummary; owner?: ProgramOwner }) {
+  const h = projectHealth(p.health);
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: 1 }}>
+      <span title={`${p.key ? `${p.key} ` : ''}${p.title}`} style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere' }}>
+        {p.key && <span className="co-key">{p.key}</span>}{p.title}
+      </span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-dim)', minWidth: 0 }}>
+        <Pill tone={HEALTH_TONE[h]}>{h === 'unknown' ? 'No update' : HEALTH_LABEL[h]}</Pill>
+        <span className="co-num">{p.progress.pct}%</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{owner && owner.role !== 'none' ? owner.name : p.lead.kind === 'none' ? 'No lead' : p.lead.name}</span>
+      </span>
+    </span>
+  );
+}
+
+export function RoadmapTimeline({ data, groupBy, zoom, onOpen, owners }: { data: RoadmapData; groupBy: GroupBy; zoom: Zoom; onOpen: (projectId: string) => void; owners?: Map<string, ProgramOwner> }) {
   const groups = useMemo(() => groupProjects(data, groupBy), [data, groupBy]);
   const spans = useMemo(() => new Map(data.projects.map((p) => [p.id, spanOf(p)])), [data.projects]);
   const scale = useMemo(() => buildScale(data.today, [...spans.values()], zoom), [data.today, spans, zoom]);
   const today = xOf(scale, dayMs(data.today));
-  if (data.projects.length === 0) return <div style={{ ...card, ...faint }}>No projects yet. The chief of staff and the function heads propose them; you can add one from the Now / Next / Later board.</div>;
+  if (data.projects.length === 0) return <div className="co-card"><Empty title="No projects yet">The chief of staff and the function heads propose them as they plan. You can add one with New project.</Empty></div>;
+  const scheduled = groups.map((g) => ({ ...g, projects: g.projects.filter((p) => spans.get(p.id)) }));
   return (
-    <div data-testid="roadmap-timeline" style={{ ...card, padding: 0, overflowX: 'auto' }}>
+    <div data-testid="roadmap-timeline" className="co-card" style={{ padding: 0, overflowX: 'auto' }}>
       <div style={{ minWidth: LABEL_W + 560, position: 'relative' }}>
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--panel)', zIndex: 2 }}>
-          <div style={{ width: LABEL_W, flex: 'none', padding: '8px 12px', ...faint }}>{groupBy === 'goal' ? 'By goal and key result' : 'By department'}</div>
-          <div style={{ flex: 1, position: 'relative', height: 30 }}>
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--panel)', zIndex: 4, borderRadius: '12px 12px 0 0' }}>
+          <div style={{ width: LABEL_W, flex: 'none', padding: '9px 14px', fontSize: 12, fontWeight: 600, color: 'var(--text-dim)' }}>{groupBy === 'goal' ? 'Grouped by objective and key result' : 'Grouped by department'}</div>
+          <div style={{ flex: 1, position: 'relative', height: 32 }}>
             {scale.columns.map((c) => (
-              <span key={c.at} style={{ position: 'absolute', left: `${xOf(scale, c.at) * 100}%`, top: 8, fontSize: 11, color: 'var(--text-faint)', paddingLeft: 4, borderLeft: '1px solid var(--border-soft)', whiteSpace: 'nowrap' }}>{c.label}</span>
+              <span key={c.at} style={{ position: 'absolute', left: `${xOf(scale, c.at) * 100}%`, top: 9, fontSize: 11, color: 'var(--text-faint)', paddingLeft: 4, borderLeft: '1px solid var(--border-soft)', whiteSpace: 'nowrap' }}>{c.label}</span>
             ))}
+            <span style={{ position: 'absolute', left: `${today * 100}%`, top: 0, transform: 'translateX(-50%)', fontSize: 10.5, fontWeight: 700, color: '#fff', background: 'var(--accent)', borderRadius: '0 0 5px 5px', padding: '0 5px', lineHeight: '15px' }}>Today</span>
           </div>
         </div>
         <div style={{ position: 'relative' }}>
-          {/* The today line spans every row of the track. */}
           <div style={{ position: 'absolute', top: 0, bottom: 0, left: LABEL_W, right: 0, pointerEvents: 'none', zIndex: 1 }}>
             {scale.columns.map((c) => <span key={c.at} style={{ position: 'absolute', top: 0, bottom: 0, left: `${xOf(scale, c.at) * 100}%`, borderLeft: '1px solid var(--border-soft)', opacity: .6 }} />)}
             <span data-testid="today-line" data-x={today.toFixed(4)} title={`Today, ${data.today}`} style={{ position: 'absolute', top: 0, bottom: 0, left: `${today * 100}%`, borderLeft: '2px solid var(--accent)' }} />
           </div>
-          {groups.map((g) => (
+          {scheduled.map((g) => (
             <div key={g.id} data-testid="roadmap-group" data-group={g.title}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: `10px 12px 4px ${12 + g.depth * 16}px`, borderTop: '1px solid var(--border-soft)' }}>
-                {g.subtitle && <span style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>{g.subtitle}</span>}
-                <span style={{ fontSize: 12.5, fontWeight: 650, color: g.id === 'none' ? 'var(--text-dim)' : 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.title}</span>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: `10px 14px 4px ${14 + g.depth * 16}px`, borderTop: '1px solid var(--border-soft)', width: LABEL_W, boxSizing: 'border-box' }}>
+                {g.subtitle && <span style={{ fontSize: 11, color: 'var(--text-faint)', flex: 'none' }}>{g.subtitle}</span>}
+                <span style={{ fontSize: 12.5, fontWeight: 650, color: g.id === 'none' ? 'var(--text-dim)' : 'var(--text)', overflowWrap: 'anywhere' }}>{g.title}</span>
               </div>
-              {g.projects.map((p) => <TimelineRow key={p.id} p={p} depth={g.depth} span={spans.get(p.id) ?? null} scale={scale} onOpen={onOpen} />)}
+              {g.projects.map((p) => <TimelineRow key={p.id} p={p} depth={g.depth} span={spans.get(p.id) ?? null} scale={scale} onOpen={onOpen} owner={owners?.get(p.id)} />)}
             </div>
           ))}
         </div>
       </div>
+      <Legend />
     </div>
   );
 }
 
-function TimelineRow({ p, depth, span, scale, onOpen }: { p: ProjectSummary; depth: number; span: ReturnType<typeof spanOf>; scale: ReturnType<typeof buildScale>; onOpen: (id: string) => void }) {
+function Legend() {
+  const item: CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6 };
+  const diamond = (filled: boolean): CSSProperties => ({ width: 9, height: 9, transform: 'rotate(45deg)', border: '1.5px solid var(--text)', background: filled ? 'var(--text)' : 'var(--panel)', display: 'inline-block' });
+  return (
+    <div data-testid="roadmap-legend" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', padding: '10px 14px', borderTop: '1px solid var(--border-soft)', fontSize: 11.5, color: 'var(--text-dim)' }}>
+      <span style={item}><span style={{ width: 22, height: 9, borderRadius: 3, background: 'color-mix(in srgb, var(--green) 30%, var(--panel))', border: '1px solid var(--green)', display: 'inline-block' }} />Start to target, filled by tasks done</span>
+      <span style={item}><span style={{ width: 22, height: 9, borderRadius: 3, border: '1px dashed var(--text-faint)', display: 'inline-block' }} />Dates estimated from the appetite</span>
+      <span style={item}><span style={diamond(false)} />Milestone</span>
+      <span style={item}><span style={diamond(true)} />Milestone done</span>
+      <span style={item}><span style={{ width: 2, height: 12, background: 'var(--accent)', display: 'inline-block' }} />Today</span>
+      <span style={item}>Bar colour is the lead’s latest health call</span>
+    </div>
+  );
+}
+
+function TimelineRow({ p, depth, span, scale, onOpen, owner }: { p: ProjectSummary; depth: number; span: ReturnType<typeof spanOf>; scale: ReturnType<typeof buildScale>; onOpen: (id: string) => void; owner?: ProgramOwner }) {
   const left = span ? xOf(scale, span.start) : 0;
   const right = span ? xOf(scale, span.end) : 0;
   const color = healthColor(p.health);
   const missing = p.update.state === 'missing';
+  const label = `${p.progress.pct}% done${p.targetDate ? ` · target ${shortDate(p.targetDate)}` : ''}`;
+  const used = appetiteUsed(p.appetite);
   return (
-    <div data-testid="roadmap-row" data-project={p.id} style={{ display: 'flex', alignItems: 'center', height: ROW_H }}>
-      <button onClick={() => onOpen(p.id)} style={{ width: LABEL_W, flex: 'none', display: 'flex', alignItems: 'center', gap: 7, padding: `0 10px 0 ${20 + depth * 16}px`, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text)', font: 'inherit', textAlign: 'left', minWidth: 0 }}>
-        <HealthDot health={p.health} />
-        {p.key && <span style={keyStyle}>{p.key}</span>}
-        <span style={{ fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>{p.title}</span>
-        <Appetite p={p} />
+    <div data-testid="roadmap-row" data-project={p.id} style={{ display: 'flex', alignItems: 'center', minHeight: ROW_H }}>
+      <button onClick={() => onOpen(p.id)} className="co-row" style={{ width: LABEL_W, flex: 'none', padding: `6px 10px 6px ${22 + depth * 16}px`, borderRadius: 0 }} aria-label={`Open ${p.key ?? ''} ${p.title}`}>
+        <RowLabel p={p} owner={owner} />
       </button>
-      <div style={{ flex: 1, position: 'relative', height: '100%' }}>
-        {span ? (
+      <div style={{ flex: 1, position: 'relative', height: ROW_H }}>
+        {span && (
           <button data-testid="roadmap-bar" data-left={left.toFixed(4)} data-width={(right - left).toFixed(4)} data-health={p.health || 'none'} onClick={() => onOpen(p.id)}
-            title={`${p.title}: ${p.startDate ?? '?'} → ${p.targetDate ?? '?'}${span.estimated ? ' (estimated)' : ''} · ${p.progress.done}/${p.progress.total} tasks done · ${healthWord(p.health)}${missing ? ' · update missing' : ''}`}
-            style={{ position: 'absolute', left: `${left * 100}%`, width: `max(${(right - left) * 100}%, 6px)`, top: 9, height: 18, borderRadius: 5, padding: 0, cursor: 'pointer', overflow: 'hidden',
-              border: `1px ${span.estimated ? 'dashed' : 'solid'} ${color}`, background: `color-mix(in srgb, ${color} 18%, var(--panel))`, zIndex: 2 }}>
-            <span data-testid="roadmap-fill" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${p.progress.pct}%`, background: color, opacity: .75 }} />
-            {missing && <span title="Update missing" style={{ position: 'absolute', right: 3, top: 1, fontSize: 11, fontWeight: 700, color: 'var(--red)' }}>!</span>}
+            title={`${p.title}: ${p.startDate ?? '?'} → ${p.targetDate ?? '?'}${span.estimated ? ' (estimated)' : ''} · ${p.progress.done}/${p.progress.total} tasks done · ${healthWord(p.health)}${missing ? ' · update missing' : ''}${used !== null ? ` · ${Math.round(used * 100)}% of appetite used` : ''}`}
+            style={{ position: 'absolute', left: `${left * 100}%`, width: `max(${(right - left) * 100}%, 6px)`, top: 9, height: 22, borderRadius: 6, padding: 0, cursor: 'pointer', overflow: 'hidden',
+              border: `1px ${span.estimated ? 'dashed' : 'solid'} ${color}`, background: `color-mix(in srgb, ${color} 16%, var(--panel))`, zIndex: 2, font: 'inherit' }}>
+            <span data-testid="roadmap-fill" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${p.progress.pct}%`, background: color, opacity: .55 }} />
+            <span style={{ position: 'relative', display: 'block', padding: '0 8px', fontSize: 11, fontWeight: 650, lineHeight: '20px', color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'left' }}>{missing ? `Update missing · ${label}` : label}</span>
           </button>
-        ) : (
-          <span style={{ ...pill(), position: 'absolute', left: 6, top: 9 }}>unscheduled</span>
         )}
         {p.milestones.filter((m) => m.date).map((m) => (
-          <span key={m.id} data-testid="milestone" data-done={m.done ? '1' : '0'} title={`${m.name} — ${m.date}${m.done ? ' (done)' : ''}`}
-            style={{ position: 'absolute', left: `calc(${xOf(scale, dayMs(m.date!)) * 100}% - 6px)`, top: 12, width: 11, height: 11, transform: 'rotate(45deg)', zIndex: 3,
+          <span key={m.id} data-testid="milestone" data-done={m.done ? '1' : '0'} role="img" aria-label={`Milestone ${m.name}, ${m.date}${m.done ? ', done' : ''}`} title={`${m.name} — ${shortDate(m.date, { month: 'short', day: 'numeric', year: 'numeric' })}${m.done ? ' (done)' : ''}`}
+            style={{ position: 'absolute', left: `calc(${xOf(scale, dayMs(m.date!)) * 100}% - 5px)`, top: 36, width: 10, height: 10, transform: 'rotate(45deg)', zIndex: 3, cursor: 'help',
               border: '1.5px solid var(--text)', background: m.done ? 'var(--text)' : 'var(--panel)' }} />
         ))}
       </div>
@@ -148,55 +175,101 @@ function TimelineRow({ p, depth, span, scale, onOpen }: { p: ProjectSummary; dep
   );
 }
 
+/** Below the timeline: milestones coming up, and the projects with no dates yet. */
+function RoadmapBelow({ data, onOpen }: { data: RoadmapData; onOpen: (id: string) => void }) {
+  const unscheduled = data.projects.filter((p) => !spanOf(p) && p.status !== 'done' && p.status !== 'cancelled');
+  const t = dayMs(data.today);
+  const upcoming = data.projects.flatMap((p) => p.milestones.filter((m) => !m.done && m.date && dayMs(m.date) >= t - DAY_MS && dayMs(m.date) <= t + 45 * DAY_MS).map((m) => ({ p, m })))
+    .sort((a, b) => (a.m.date ?? '').localeCompare(b.m.date ?? '')).slice(0, 8);
+  return (
+    <div className="co-grid" style={{ marginTop: 14 }}>
+      <Card id="milestones" title="Coming up" aside="next 45 days">
+        {upcoming.length === 0 ? <Empty compact title="No milestones in the next 45 days">Leads add milestones on the project page.</Empty> : (
+          <div className="co-rows" style={{ margin: '0 -10px' }}>
+            {upcoming.map(({ p, m }) => (
+              <button key={`${p.id}:${m.id}`} className="co-row" onClick={() => onOpen(p.id)}>
+                <span aria-hidden style={{ width: 9, height: 9, transform: 'rotate(45deg)', border: '1.5px solid var(--text)', flex: 'none', marginLeft: 3 }} />
+                <span className="co-row-main"><span className="co-row-title">{m.name}</span><span className="co-row-meta">{p.key ? `${p.key} ` : ''}{p.title}</span></span>
+                <span className="co-row-end">{shortDate(m.date)} · {inDays(m.date, new Date(t))}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+      <Card id="unscheduled" title="Not on the timeline yet" aside={unscheduled.length || undefined}>
+        {unscheduled.length === 0 ? <Empty compact title="Every project has dates">Projects without a start or target date are listed here.</Empty> : (
+          <div className="co-rows" style={{ margin: '0 -10px' }} data-testid="unscheduled">
+            {unscheduled.map((p) => (
+              <button key={p.id} className="co-row" onClick={() => onOpen(p.id)}>
+                <span className="co-row-main"><span className="co-row-title wrap">{p.key && <span className="co-key">{p.key}</span>}{p.title}</span><span className="co-row-meta">{LANE_WORD[p.lane as Lane] ?? p.lane} · unscheduled: add a start or target date on its page</span></span>
+                <Pill tone={HEALTH_TONE[projectHealth(p.health)]}>{p.progress.pct}%</Pill>
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 // ---- Now / Next / Later ----
 
-export function LaneBoard({ projects, onOpen, onLane, errors = {}, owners }: { projects: ProjectSummary[]; onOpen: (id: string) => void; onLane: (id: string, lane: Lane) => void; errors?: Record<string, string>; owners?: Map<string, ProgramOwner> }) {
+const LANE_HINT: Record<Lane, string> = { now: 'Bets in flight', next: 'Shaped, waiting for a bet', later: 'Ideas' };
+
+export function LaneBoard({ projects, onOpen, onLane, errors = {}, notes = {}, owners, pending }: { projects: ProjectSummary[]; onOpen: (id: string) => void; onLane: (id: string, lane: Lane) => void; errors?: Record<string, string>; notes?: Record<string, string>; owners?: Map<string, ProgramOwner>; pending?: string | null }) {
   const cols = laneColumns(projects);
+  const [over, setOver] = useState<Lane | null>(null);
+  const [drag, setDrag] = useState<string | null>(null);
   return (
-    <div data-testid="lane-board" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, alignItems: 'start' }}>
+    <div data-testid="lane-board" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12, alignItems: 'start' }}>
       {LANES.map((l) => (
-        <section key={l} data-testid={`lane-${l}`} aria-label={LANE_WORD[l]} style={{ background: 'var(--panel-2)', borderRadius: 12, padding: 10, minHeight: 140 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8, padding: '0 2px' }}>
+        <section key={l} data-testid={`lane-${l}`} aria-label={LANE_WORD[l]}
+          onDragOver={(e) => { if (drag) { e.preventDefault(); setOver(l); } }} onDragLeave={() => setOver((o) => (o === l ? null : o))}
+          onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData('text/project') || drag; setOver(null); setDrag(null); const p = projects.find((x) => x.id === id); if (p && p.lane !== l) onLane(p.id, l); }}
+          style={{ background: 'var(--panel-2)', borderRadius: 12, padding: 10, minHeight: 160, outline: over === l ? '2px dashed var(--accent)' : 'none', outlineOffset: -2, transition: 'outline-color .1s' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8, padding: '0 4px' }}>
             <h3 style={{ margin: 0, fontSize: 13.5, fontWeight: 700 }}>{LANE_WORD[l]}</h3>
-            <span style={faint}>{cols[l].length}</span>
+            <span className="co-faint co-num">{cols[l].length}</span>
             <span style={{ flex: 1 }} />
-            <span style={{ ...faint, fontSize: 11 }}>{l === 'now' ? 'bets in flight' : l === 'next' ? 'shaped, waiting for a bet' : 'ideas'}</span>
+            <span className="co-faint" style={{ fontSize: 11.5 }}>{LANE_HINT[l]}</span>
           </div>
-          {cols[l].length === 0 && <div style={{ ...faint, padding: '8px 2px' }}>{l === 'now' ? 'Nothing in Now. Move a shaped project here to bet on it.' : 'Empty.'}</div>}
-          {cols[l].map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onLane={onLane} error={errors[p.id]} owner={owners?.get(p.id)} />)}
+          {cols[l].length === 0 && <div className="co-faint" style={{ padding: '18px 6px', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: 10 }}>{l === 'now' ? 'Nothing in Now. Drag a shaped project here to bet on it.' : 'Drop a project here.'}</div>}
+          {cols[l].map((p) => <ProjectCard key={p.id} p={p} onOpen={onOpen} onLane={onLane} error={errors[p.id]} note={notes[p.id]} owner={owners?.get(p.id)} busy={pending === p.id} onDrag={setDrag} />)}
         </section>
       ))}
     </div>
   );
 }
 
-function ProjectCard({ p, onOpen, onLane, error, owner }: { p: ProjectSummary; onOpen: (id: string) => void; onLane: (id: string, lane: Lane) => void; error?: string; owner?: ProgramOwner }) {
+function ProjectCard({ p, onOpen, onLane, error, note, owner, busy, onDrag }: { p: ProjectSummary; onOpen: (id: string) => void; onLane: (id: string, lane: Lane) => void; error?: string; note?: string; owner?: ProgramOwner; busy?: boolean; onDrag?: (id: string | null) => void }) {
   const upd = updateWord(p.update);
+  const h = projectHealth(p.health);
+  const ms = nextMilestone(p);
+  const lane = (LANES.includes(p.lane as Lane) ? p.lane : 'later') as Lane;
   return (
-    <article data-testid="project-card" data-project={p.id} style={{ ...card, padding: '10px 12px', marginBottom: 8, borderLeft: `3px solid ${healthColor(p.health)}` }}>
+    <article data-testid="project-card" data-project={p.id} draggable onDragStart={(e) => { e.dataTransfer.setData('text/project', p.id); e.dataTransfer.effectAllowed = 'move'; onDrag?.(p.id); }} onDragEnd={() => onDrag?.(null)}
+      className="co-card" style={{ padding: '10px 12px', marginBottom: 8, cursor: 'grab', opacity: busy ? .6 : 1, boxShadow: `inset 3px 0 0 ${healthColor(p.health)}` }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-        <button onClick={() => onOpen(p.id)} style={{ flex: 1, minWidth: 0, background: 'none', border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer', color: 'var(--text)', font: 'inherit' }}>
-          {p.key && <span style={{ ...keyStyle, marginRight: 5 }}>{p.key}</span>}<span style={{ fontSize: 13, fontWeight: 650 }}>{p.title}</span>
+        <button onClick={() => onOpen(p.id)} className="co-link" style={{ flex: 1, minWidth: 0, color: 'var(--text)', fontSize: 13, fontWeight: 650, lineHeight: 1.35, overflowWrap: 'anywhere' }}>
+          {p.key && <span className="co-key">{p.key}</span>}{p.title}
         </button>
-        <select aria-label={`Lane of ${p.title}`} value={LANES.includes(p.lane as Lane) ? p.lane : 'later'} onChange={(e) => onLane(p.id, e.target.value as Lane)} style={{ ...input, width: 'auto', padding: '2px 4px', fontSize: 11 }}>
-          {LANES.map((l) => <option key={l} value={l}>{LANE_WORD[l]}</option>)}
-        </select>
+        <Menu label={`Lane of ${p.title}`} trigger={<I d={P.dots} size={15} />} triggerClass="co-iconbtn" items={LANES.map((l) => ({ id: l, label: `Move to ${LANE_WORD[l]}`, checked: lane === l, onSelect: () => { if (l !== lane) onLane(p.id, l); } }))} />
       </div>
-      <div style={{ ...faint, marginTop: 3 }}>{owner ? <ProgramOwnerBadge owner={owner} /> : <>Lead {p.lead.name}</>}{p.goals.length ? ` · moves ${p.goals.map((g) => g.title).join(', ')}` : ' · no key result'}</div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap', fontSize: 12 }}>
-        <HealthDot health={p.health} />
-        <span style={{ fontWeight: 600, color: healthColor(p.health) }}>{healthWord(p.health)}</span>
-        {upd && <span style={p.update.state === 'missing' ? pill('var(--red)', '#fff') : p.update.state === 'due' ? pill('var(--amber)', '#fff') : faint}>{upd}</span>}
-      </div>
-      {p.healthReason && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 3 }}>{p.healthReason}{p.healthAsk ? <> <b>Ask:</b> {p.healthAsk}</> : null}</div>}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 7, flexWrap: 'wrap' }}>
-        <Meter value={p.progress.pct / 100} color={healthColor(p.health)} label={`${p.title} progress`} width={70} />
-        <span style={faint}>{p.progress.done}/{p.progress.total} done</span>
-        {p.hill !== null && <span style={faint} title={p.hillInferred ? 'Inferred from the tasks' : 'Placed by the lead'}>hill {Math.round(p.hill * 100)}%{p.hillInferred ? ' (inferred)' : ''}</span>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+        <Pill tone={HEALTH_TONE[h]}>{h === 'unknown' ? 'No update yet' : HEALTH_LABEL[h]}</Pill>
+        {upd && <Pill tone={p.update.state === 'missing' ? 'bad' : p.update.state === 'due' ? 'warn' : 'muted'} plain>{upd}</Pill>}
         <Appetite p={p} />
       </div>
-      <div style={{ ...faint, marginTop: 4 }}>{forecastLine(p.forecast)}{p.targetDate ? ` · target ${p.targetDate}` : ''}</div>
-      {error && <div role="alert" style={{ fontSize: 12, color: 'var(--red)', marginTop: 4 }}>{error}</div>}
+      <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-dim)' }}>{owner ? <ProgramOwnerBadge owner={owner} /> : <>Lead {p.lead.name}</>}</div>
+      {p.healthReason && <div title={`${p.healthReason}${p.healthAsk ? ` Ask: ${p.healthAsk}` : ''}`} style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.45, display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p.healthReason}{p.healthAsk ? <> <b>Ask:</b> {p.healthAsk}</> : null}</div>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+        <Bar value={p.progress.pct / 100} tone={HEALTH_TONE[h] === 'muted' ? undefined : HEALTH_TONE[h]} label={`${p.title} progress`} />
+        <span className="co-num co-faint">{p.progress.done}/{p.progress.total} done</span>
+      </div>
+      <div className="co-faint" style={{ marginTop: 5 }}>{ms ? `Next: ${ms.name}, ${shortDate(ms.date)} · ` : ''}{forecastLine(p.forecast)}{p.targetDate ? ` · target ${p.targetDate}` : ''}</div>
+      {p.goals.length > 0 && <div className="co-faint" title={p.goals.map((g) => g.title).join(', ')} style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Moves {p.goals.map((g) => g.title).join(', ')}</div>}
+      {note && <div role="status" className="co-note" style={{ marginTop: 6 }}>{note}</div>}
+      {error && <div role="alert" className="co-alert" style={{ marginTop: 6 }}>{error}</div>}
     </article>
   );
 }
@@ -459,6 +532,8 @@ function ProjectEdit({ page, onSave }: { page: ProjectPage; onSave: (patch: Proj
 
 // ---- the pane (store-connected) ----
 
+const VIEW_WORD: Record<View, string> = { timeline: 'Timeline', board: 'Now / Next / Later' };
+
 export function RoadmapPane({ org }: { org: OrgDetail }) {
   const app = useApp();
   const wsId = org.workspaceId;
@@ -469,6 +544,8 @@ export function RoadmapPane({ org }: { org: OrgDetail }) {
   const [zoom, setZoom] = useState<Zoom>('month');
   const [projectId, setProjectIdRaw] = useState<string | null>(null);
   const [laneErrors, setLaneErrors] = useState<Record<string, string>>({});
+  const [laneNotes, setLaneNotes] = useState<Record<string, string>>({});
+  const [moving, setMoving] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const matrix = useProgram(wsId, data ? String(data.projects.length) : '');
   const owners = useMemo(() => new Map((matrix?.items ?? []).filter((i) => i.refType === 'project').map((i) => [i.id, i.owner])), [matrix]);
@@ -495,29 +572,40 @@ export function RoadmapPane({ org }: { org: OrgDetail }) {
 
   if (projectId) return <ProjectPane wsId={wsId} projectId={projectId} onBack={() => { setProjectId(null); void load(); }} />;
   const onLane = async (id: string, lane: Lane) => {
-    try { await api.updateOrgProject(wsId, id, { lane }); setLaneErrors((e) => { const n = { ...e }; delete n[id]; return n; }); await load(); }
-    catch (e) { setLaneErrors((x) => ({ ...x, [id]: e instanceof Error ? e.message : String(e) })); }
+    const before = data?.projects.find((p) => p.id === id);
+    setMoving(id);
+    setLaneErrors((e) => { const n = { ...e }; delete n[id]; return n; });
+    setLaneNotes((e) => { const n = { ...e }; delete n[id]; return n; });
+    try {
+      const after = await api.updateOrgProject(wsId, id, { lane });
+      // A person's move applies at once; when the server keeps the old lane
+      // the move became a decision card (an agent's bet): say so, do not pretend.
+      if (after && after.lane && after.lane !== lane) setLaneNotes((x) => ({ ...x, [id]: `Moving it to ${LANE_WORD[lane]} needs a decision: a card is waiting in the Inbox.` }));
+      else app.showToast(`${before?.key ?? 'Project'} moved to ${LANE_WORD[lane]}${lane === 'now' ? ': its appetite clock starts' : ''}`);
+      await load();
+    } catch (e) { setLaneErrors((x) => ({ ...x, [id]: e instanceof Error ? e.message : String(e) })); }
+    finally { setMoving(null); }
   };
+  const summary = `${VIEW_WORD[view]}${view === 'timeline' ? ` · by ${groupBy === 'goal' ? 'goal' : 'department'} · ${zoom === 'month' ? 'weeks' : 'months'}` : ''}`;
   return (
-    <div data-testid="roadmap-pane">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-        <div style={{ flex: '1 1 260px' }}>
-          <h2 style={h2}>Roadmap</h2>
-          <div style={faint}>Every project the company works on, why (the key result it moves) and when. Leads post health; you choose what is Now.</div>
-        </div>
-        <Segmented label="Roadmap view" value={view} onChange={setView} options={[{ id: 'timeline', label: 'Timeline' }, { id: 'board', label: 'Now / Next / Later' }]} />
-        {view === 'timeline' && <Segmented label="Group by" value={groupBy} onChange={setGroupBy} options={[{ id: 'goal', label: 'Goal' }, { id: 'unit', label: 'Department' }]} />}
-        {view === 'timeline' && <Segmented label="Zoom" value={zoom} onChange={setZoom} options={[{ id: 'month', label: 'Month' }, { id: 'quarter', label: 'Quarter' }]} />}
-        <button style={btn(true)} onClick={() => setAdding(!adding)}>New project</button>
-      </div>
+    <div data-testid="roadmap-pane" className="co-page">
+      <PageHeader title="Roadmap" purpose="Every project the company works on, the key result it moves, and when. Leads post health; you choose what is in Now."
+        actions={<>
+          <Menu label="View options" testid="roadmap-view-options" trigger={<><I d={P.rows} size={13} />{summary}<I d={P.chevD} size={12} /></>} triggerClass="co-btn" sections={[
+            { label: 'View', items: (['timeline', 'board'] as View[]).map((v) => ({ id: v, label: VIEW_WORD[v], checked: view === v, onSelect: () => setView(v) })) },
+            { label: 'Group the timeline by', items: [{ id: 'goal', label: 'Goal', checked: groupBy === 'goal', onSelect: () => { setGroupBy('goal'); setView('timeline'); } }, { id: 'unit', label: 'Department', checked: groupBy === 'unit', onSelect: () => { setGroupBy('unit'); setView('timeline'); } }] },
+            { label: 'Zoom', items: [{ id: 'month', label: 'Weeks (about 3 months)', checked: zoom === 'month', onSelect: () => { setZoom('month'); setView('timeline'); } }, { id: 'quarter', label: 'Months (about a year)', checked: zoom === 'quarter', onSelect: () => { setZoom('quarter'); setView('timeline'); } }] },
+          ]} />
+          <button className="co-btn primary" onClick={() => setAdding(!adding)} aria-expanded={adding}>New project</button>
+        </>} />
       {adding && <NewProject org={org} onDone={async (id) => { setAdding(false); await load(); if (id) setProjectId(id); }} />}
-      {err && <div role="alert" style={{ color: 'var(--red)', fontSize: 12.5, marginBottom: 8 }}>{err}</div>}
-      {!data ? <div style={faint}>Loading…</div> : view === 'timeline'
-        ? <RoadmapTimeline data={data} groupBy={groupBy} zoom={zoom} onOpen={setProjectId} />
-        : <LaneBoard projects={data.projects} onOpen={setProjectId} onLane={(id, l) => void onLane(id, l)} errors={laneErrors} owners={owners} />}
+      {err && <div role="alert" className="co-alert" style={{ marginBottom: 10 }}>The roadmap did not load: {err}</div>}
+      {!data ? (err ? null : <PageSkeleton cards={1} />) : view === 'timeline'
+        ? <><RoadmapTimeline data={data} groupBy={groupBy} zoom={zoom} onOpen={setProjectId} owners={owners} /><RoadmapBelow data={data} onOpen={setProjectId} /></>
+        : <LaneBoard projects={data.projects} onOpen={setProjectId} onLane={(id, l) => void onLane(id, l)} errors={laneErrors} notes={laneNotes} owners={owners} pending={moving} />}
       {data && data.system.length > 0 && (
-        <div style={{ ...faint, marginTop: 12 }}>
-          Also on the board: {data.system.map((p, i) => <span key={p.id}>{i > 0 && ', '}<button onClick={() => setProjectId(p.id)} style={{ background: 'none', border: 'none', padding: 0, color: 'var(--accent-hi)', cursor: 'pointer', font: 'inherit' }}>{p.title}{p.unitName ? ` (${p.unitName})` : ''}</button> {p.progress.total - p.progress.done} open</span>)}
+        <div className="co-faint" style={{ marginTop: 14 }}>
+          Also on the board: {data.system.map((p, i) => <span key={p.id}>{i > 0 && ', '}<button className="co-link" style={{ fontSize: 12 }} onClick={() => setProjectId(p.id)}>{p.title}{p.unitName ? ` (${p.unitName})` : ''}</button> {p.progress.total - p.progress.done} open</span>)}
         </div>
       )}
     </div>
@@ -538,14 +626,16 @@ function NewProject({ org, onDone }: { org: OrgDetail; onDone: (id: string | nul
     } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); }
   };
   return (
-    <div style={{ ...card, display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-      <input aria-label="Project title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Project title" style={{ ...input, flex: '2 1 220px' }} />
-      <select aria-label="Key result" value={goalId} onChange={(e) => setGoalId(e.target.value)} style={{ ...input, flex: '2 1 200px' }}><option value="">Key result it moves…</option>{krs.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</select>
-      <select aria-label="Lane" value={lane} onChange={(e) => setLane(e.target.value as Lane)} style={{ ...input, width: 'auto' }}>{LANES.map((l) => <option key={l} value={l}>{LANE_WORD[l]}</option>)}</select>
-      <input aria-label="Target date" type="date" value={targetDate} onChange={(e) => setTarget(e.target.value)} style={{ ...input, width: 150 }} />
-      <button style={btn()} onClick={() => void onDone(null)}>Cancel</button>
-      <button style={btn(true)} disabled={!title.trim()} onClick={() => void save()}>Create</button>
-    </div>
+    <form className="co-card co-form" style={{ padding: 16, marginBottom: 14 }} onSubmit={(e) => { e.preventDefault(); if (title.trim()) void save(); }}>
+      <div style={{ fontSize: 14, fontWeight: 650 }}>New project</div>
+      <label className="co-field"><span>Title</span><input className="co-input" aria-label="Project title" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What will be built or changed" /></label>
+      <div className="co-form-row">
+        <label className="co-field"><span>Key result it moves</span><select className="co-input" aria-label="Key result" value={goalId} onChange={(e) => setGoalId(e.target.value)}><option value="">None yet</option>{krs.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</select></label>
+        <label className="co-field"><span>Lane</span><select className="co-input" aria-label="Lane" value={lane} onChange={(e) => setLane(e.target.value as Lane)}>{LANES.map((l) => <option key={l} value={l}>{LANE_WORD[l]}</option>)}</select></label>
+        <label className="co-field"><span>Target date</span><input className="co-input" aria-label="Target date" type="date" value={targetDate} onChange={(e) => setTarget(e.target.value)} /></label>
+      </div>
+      <div className="co-form-foot"><button type="button" className="co-btn ghost" onClick={() => void onDone(null)}>Cancel</button><button type="submit" className="co-btn primary" disabled={!title.trim()}>Create project</button></div>
+    </form>
   );
 }
 
@@ -561,7 +651,7 @@ function ProjectPane({ wsId, projectId, onBack }: { wsId: string; projectId: str
   }, [wsId, projectId]);
   useEffect(() => { void load(); }, [load]);
   const act = async (fn: () => Promise<unknown>) => { try { await fn(); await load(); } catch (e) { app.showToast(e instanceof Error ? e.message : 'failed'); } };
-  if (!page) return <div>{err ? <div role="alert" style={{ color: 'var(--red)', fontSize: 12.5 }}>{err}</div> : <div style={faint}>Loading…</div>}<button style={{ ...btn(), marginTop: 8 }} onClick={onBack}>Back to roadmap</button></div>;
+  if (!page) return <div>{err ? <div role="alert" className="co-alert">{err}</div> : <PageSkeleton cards={4} />}<button className="co-btn" style={{ marginTop: 10 }} onClick={onBack}>Back to roadmap</button></div>;
   const id = page.project.id;
   return (
     <ProjectPageView page={page} program={matrix?.items.find((i) => i.refType === 'project' && i.id === id) ?? null} onBack={onBack}

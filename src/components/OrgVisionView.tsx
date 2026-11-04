@@ -1,318 +1,210 @@
-/** The Vision page (docs/company-vision.md §2, §8; execution plan item 18):
- *  the CEO writes and revises the vision (one line, a paragraph, a horizon,
- *  the standing rules) and the operating profile (values, culture), reads
- *  the chief's latest strategy memo and asks for a planning session now; the
- *  intent tree below shows objectives → key results with measured progress
- *  AND the owner's confidence side by side (they can disagree), the pace
- *  badge, the at-risk flag with its reason, owner, due date and last
- *  check-in, an inline check-in form, and a "Why" drawer on any goal that
- *  walks task → key result → objective → vision and names a broken link. */
+/** The Vision page (docs/company-vision.md §2, §8; execution plan item 18),
+ *  read as a document: the statement with its horizon, what it looks like
+ *  when reached, the mission, the operating profile (values, culture), the
+ *  standing rules and the chief's latest strategy memo. The CEO revises the
+ *  vision (the chief re-plans) and the profile, and asks for a planning
+ *  session now with what it will do spelled out first. The objectives and
+ *  key results live on the Goals page; this page links to them. The "Why"
+ *  drawer walks task → key result → objective → vision. */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
-import { api, type MetricSource, type OrgCheckin, type OrgDetail, type OrgGoal, type OrgIntentNode, type OrgVisionInfo, type WhyChain } from '../lib/api';
-import { KrSourceLine } from './OrgSensingView';
+import { api, type OrgDetail, type OrgVisionInfo, type WhyChain } from '../lib/api';
 import { I, P } from '../lib/icons';
-import { atRiskByUnit, checkInDue, confidenceGap, daysUntil, dueLabel, flattenIntent, KIND_LABEL, paceBadge, summarizeChildren } from '../lib/org';
-import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar, UnitChips, Drawer } from './org-ui';
-
-const textarea: React.CSSProperties = { ...input, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 };
+import { Markdown } from '../lib/md';
+import { KIND_LABEL } from '../lib/org';
+import { HEALTH_LABEL, HEALTH_TONE, horizonOf, objectiveHealth, objectivesOfTree, plural } from '../lib/direction';
+import { card, btn, pill, h2, faint, linkBtn, ago, Drawer } from './org-ui';
+import { Bar, Empty, PageHeader, Pill, Skeleton } from './CompanyKit';
 
 /** Is the person on screen the CEO? The server refuses writes otherwise; the
  *  page says so instead of failing. */
-function useIsCeo(wsId: string): boolean | null {
+export function useIsCeo(wsId: string): boolean | null {
   const [role, setRole] = useState<boolean | null>(null);
   useEffect(() => { void api.orgHumans(wsId).then((h) => setRole(h.me.role === 'ceo')).catch(() => setRole(null)); }, [wsId]);
   return role;
 }
 
+const PLAN_STEPS = [
+  'The chief of staff reads the vision, the values and culture, the standing rules and where every objective stands.',
+  'It proposes objectives and measurable key results, and the projects that move them.',
+  'It writes a strategy memo explaining the plan; the memo appears on this page.',
+];
+
 export function VisionPane({ org, reload }: { org: OrgDetail; reload: () => Promise<void> }) {
   const app = useApp();
   const wsId = org.workspaceId;
-  const { current, isCompany } = useUnits();
   const isCeo = useIsCeo(wsId);
-  const [info, setInfo] = useState<OrgVisionInfo | null>(null);
-  const [strategy, setStrategy] = useState<{ memo: string; at: string | null } | null>(null);
-  const [tree, setTree] = useState<OrgIntentNode[] | null>(null);
-  const [why, setWhy] = useState<{ goalId: string; title: string } | null>(null);
+  const mode = app.wsOrg?.mode ?? 'supervised';
+  const [info, setInfo] = useState<OrgVisionInfo | null | undefined>(undefined);
+  const [strategy, setStrategy] = useState<{ memo: string; at: string | null } | null | undefined>(undefined);
+  const [editing, setEditing] = useState<'vision' | 'profile' | null>(null);
+  const [planOpen, setPlanOpen] = useState(false);
   const [planning, setPlanning] = useState(false);
-  const [sources, setSources] = useState<MetricSource[]>([]);
-  const unitId = isCompany ? null : current?.id ?? null;
+  const [planResult, setPlanResult] = useState<string | null>(null);
   const refresh = useCallback(async () => {
-    const [v, s, t, src] = await Promise.all([api.orgVision(wsId).catch(() => null), api.orgStrategy(wsId).catch(() => null), api.orgIntent(wsId, unitId).catch((): OrgIntentNode[] => []), api.orgMetricSources(wsId).catch((): MetricSource[] => [])]);
-    setInfo(v); setStrategy(s); setTree(t); setSources(src);
-  }, [wsId, unitId]);
-  useEffect(() => { void refresh(); const t = setInterval(() => { void refresh(); }, 30_000); return () => clearInterval(t); }, [refresh]);
-  // A deep link (a signal row, a chip) names a goal: scroll to it once rendered.
-  useEffect(() => {
-    if (app.orgFocus?.kind !== 'goal' || !tree) return;
-    const el = document.getElementById(`goal-${app.orgFocus.id}`) ?? document.querySelector<HTMLElement>(`[id^="goal-${app.orgFocus.id}"]`);
-    if (el) { el.scrollIntoView({ block: 'center' }); el.style.outline = '2px solid var(--accent)'; setTimeout(() => { el.style.outline = ''; }, 2400); app.setOrgFocus(null); }
-  }, [tree, app]);
+    const [v, s] = await Promise.all([api.orgVision(wsId).catch(() => null), api.orgStrategy(wsId).catch(() => null)]);
+    setInfo(v); setStrategy(s);
+  }, [wsId]);
+  useEffect(() => { void refresh(); const t = setInterval(() => { void refresh(); }, 60_000); return () => clearInterval(t); }, [refresh]);
   const act = useCallback(async (fn: () => Promise<unknown>, done?: string) => {
-    try { await fn(); await refresh(); void reload(); if (done) app.showToast(done); } catch (e) { app.showToast(e instanceof Error ? e.message.slice(0, 160) : 'failed'); }
+    try { await fn(); await refresh(); void reload(); if (done) app.showToast(done); return true; } catch (e) { app.showToast(e instanceof Error ? e.message.slice(0, 160) : 'failed'); return false; }
   }, [refresh, reload, app]);
   const planNow = async () => {
-    setPlanning(true);
+    setPlanning(true); setPlanResult(null);
     try {
-      const r = await api.orgPlanNow(wsId, unitId ? { unitId, reason: 'planning requested by the CEO from the vision page' } : { reason: 'planning requested by the CEO from the vision page' });
-      app.showToast(r.result === 'done' || r.result === 'ran' ? 'Planning session ran — the tree is refreshed' : `Planning: ${r.result}`);
-      await refresh();
-    } catch (e) { app.showToast(e instanceof Error ? e.message.slice(0, 160) : 'planning failed'); } finally { setPlanning(false); }
+      const r = await api.orgPlanNow(wsId, { reason: 'planning requested by the CEO from the vision page' });
+      const ran = r.result === 'done' || r.result === 'ran';
+      setPlanResult(ran ? (mode === 'autonomous' ? 'Planning ran. The objectives on the Goals page are refreshed.' : 'Planning ran. Its plan waits for you in the Inbox; the memo below is refreshed.') : `Planning did not run: ${r.result}.`);
+      await refresh(); void reload();
+    } catch (e) { setPlanResult(e instanceof Error ? e.message.slice(0, 200) : 'Planning failed.'); } finally { setPlanning(false); }
   };
-  const riskByUnit = useMemo(() => atRiskByUnit(app.orgIntent), [app.orgIntent]);
-  // The tree's root is the vision when the company is on screen; objectives otherwise.
-  const roots = tree ?? [];
-  const visionNode = roots.find((n) => n.kind === 'vision');
-  const objectives = visionNode ? visionNode.children : roots;
-  const krCount = flattenIntent(objectives).filter((g) => g.kind === 'key_result' && g.status === 'active').length;
-  return (
-    <div style={{ maxWidth: 860 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <h2 style={h2}>{isCompany ? 'Vision' : `${current?.name ?? 'Department'} · intent`}</h2>
-          <div style={faint}>One vision, a few objectives, measured key results with an owner who checks in. The chief derives the plan; you revise the vision and it re-plans. {isCeo === false && 'Only the CEO writes here.'}</div>
-        </div>
-        <button style={btn()} disabled={planning} onClick={() => void planNow()} title="Run a planning session of the department's head now (the root by default); ignores the cooldown">{planning ? 'Planning…' : 'Plan now'}</button>
-      </div>
-      <UnitChips count={(u) => riskByUnit[u.parentUnitId === null ? '' : u.id] ?? riskByUnit[u.id] ?? null} title={(u) => `${riskByUnit[u.parentUnitId === null ? '' : u.id] ?? 0} goal(s) at risk`} />
-      {isCompany && <VisionCard info={info} isCeo={isCeo} act={act} />}
-      {isCompany && <ProfileCard info={info} isCeo={isCeo} act={act} />}
-      {isCompany && <StrategyCard strategy={strategy} />}
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '16px 0 8px' }}>
-        <div style={{ fontSize: 13.5, fontWeight: 700 }}>{isCompany ? 'Objectives and key results' : 'Objectives handed to this department'}</div>
-        <span style={faint}>{objectives.length} objective(s) · {krCount} key result(s){visionNode?.dueAt ? ` · horizon ${visionNode.dueAt.slice(0, 10)}` : ''}</span>
-      </div>
-      {tree === null && <div style={faint}>Loading…</div>}
-      {tree !== null && objectives.length === 0 && (
-        <div style={{ ...card, ...faint }}>
-          {visionNode || info?.vision ? 'No objectives yet. Planning runs when the vision is written or revised (debounced); "Plan now" runs it immediately.' : 'No vision yet. Write one above — one line, a horizon, your standing rules — and the chief plans the objectives.'}
-        </div>
-      )}
-      {objectives.map((g) => <IntentRow key={g.id} g={g} depth={0} org={org} act={act} onWhy={(goal) => setWhy({ goalId: goal.id, title: goal.title })} sources={sources} isCeo={isCeo} onSourceChanged={async () => { await refresh(); void reload(); }} />)}
-      {why && <WhyDrawer wsId={wsId} goalId={why.goalId} title={why.title} onClose={() => setWhy(null)} />}
-    </div>
-  );
-}
-
-// ---- the vision, the profile, the memo ----
-
-function VisionCard({ info, isCeo, act }: { info: OrgVisionInfo | null; isCeo: boolean | null; act: (fn: () => Promise<unknown>, done?: string) => Promise<void> }) {
-  const app = useApp();
+  const objectives = useMemo(() => objectivesOfTree(app.orgIntent ?? []).filter((o) => o.kind === 'objective' && o.status !== 'abandoned'), [app.orgIntent]);
   const v = info?.vision ?? null;
-  const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState('');
-  const [desc, setDesc] = useState('');
-  const [due, setDue] = useState('');
-  const [rules, setRules] = useState('');
-  useEffect(() => { setTitle(v?.title ?? ''); setDesc(v?.description ?? ''); setDue(v?.dueAt ? v.dueAt.slice(0, 10) : ''); setRules(info?.rules ?? ''); }, [v?.id, v?.title, v?.description, v?.dueAt, info?.rules]);
-  const save = () => void act(async () => {
-    await api.setOrgVision(app.workspaceId, { title: title.trim(), description: desc, dueAt: due ? new Date(`${due}T23:59:59`).toISOString() : null, rules });
-    setEditing(false);
-  }, v ? 'Vision revised — the chief re-plans' : 'Vision set — the chief plans the objectives');
   const canWrite = isCeo !== false;
-  if (!editing) {
-    return (
-      <div style={{ ...card, marginBottom: 10, borderLeft: `3px solid ${v ? (v.atRisk ? 'var(--amber)' : 'var(--accent)') : 'var(--border)'}` }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={label}>Vision{v?.dueAt ? ` · by ${v.dueAt.slice(0, 10)}` : ''}{v?.atRisk ? ' · at risk' : ''}</div>
-            <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4, lineHeight: 1.35 }}>{v ? v.title : <span style={{ color: 'var(--text-faint)', fontWeight: 500 }}>No vision written yet.</span>}</div>
-            {v?.description && <div style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 6, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{v.description}</div>}
-            {v?.atRisk === 1 && v.atRiskReason && <div style={{ fontSize: 12, color: 'var(--amber)', marginTop: 6 }}>⚠ {v.atRiskReason}</div>}
-            {info?.rules && <div style={{ marginTop: 10 }}><div style={label}>Standing rules</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', marginTop: 3, lineHeight: 1.5 }}>{info.rules}</div></div>}
-          </div>
-          {canWrite && <button style={btn(!v)} onClick={() => setEditing(true)}>{v ? 'Revise' : 'Write the vision'}</button>}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div style={{ ...card, marginBottom: 10, display: 'grid', gap: 8 }}>
-      <label style={label} htmlFor="vision-title">Vision (one line)</label>
-      <input id="vision-title" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} style={{ ...input, fontSize: 14, fontWeight: 600 }} placeholder="Where the company is going, in one sentence" maxLength={200} />
-      <label style={label} htmlFor="vision-desc">The paragraph</label>
-      <textarea id="vision-desc" value={desc} onChange={(e) => setDesc(e.target.value)} rows={3} style={textarea} placeholder="What it looks like when the vision is reached, and why it matters" />
-      <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(140px, 200px) 1fr' }}>
-        <div><label style={label} htmlFor="vision-due">Horizon</label><input id="vision-due" type="date" value={due} onChange={(e) => setDue(e.target.value)} style={input} /></div>
-        <div><label style={label} htmlFor="vision-rules">Standing rules</label><textarea id="vision-rules" value={rules} onChange={(e) => setRules(e.target.value)} rows={2} style={textarea} placeholder="What must never happen; what every plan must respect" /></div>
-      </div>
-      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-        <button style={btn()} onClick={() => setEditing(false)}>Cancel</button>
-        <button style={btn(true)} disabled={!title.trim()} onClick={save}>{v ? 'Revise and re-plan' : 'Set the vision'}</button>
-      </div>
-    </div>
-  );
-}
+  const horizon = horizonOf(v);
+  const openGoals = (id?: string) => { app.setOrgFocus(id ? { kind: 'goal', id } : null); app.setOrgUnitId(null); app.setOrgPane('goals'); };
 
-function ProfileCard({ info, isCeo, act }: { info: OrgVisionInfo | null; isCeo: boolean | null; act: (fn: () => Promise<unknown>, done?: string) => Promise<void> }) {
-  const app = useApp();
-  const [editing, setEditing] = useState(false);
-  const [values, setValues] = useState('');
-  const [culture, setCulture] = useState('');
-  useEffect(() => { setValues(info?.values ?? ''); setCulture(info?.culture ?? ''); }, [info?.values, info?.culture]);
-  const save = () => void act(async () => { await api.setOrgProfile(app.workspaceId, { values, culture }); setEditing(false); }, 'Operating profile saved — every prompt carries it');
   return (
-    <div style={{ ...card, marginBottom: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={label}>Operating profile</div>
-          <div style={{ ...faint, marginTop: 2 }}>Values and culture (§1b): read by every planning session, meeting, audit and heartbeat; the chief tunes thresholds to it.</div>
-          {!editing && (
-            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', marginTop: 8 }}>
-              <div><div style={label}>Values</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', marginTop: 3, lineHeight: 1.5, color: info?.values ? 'var(--text)' : 'var(--text-faint)' }}>{info?.values || 'not written'}</div></div>
-              <div><div style={label}>Culture</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', marginTop: 3, lineHeight: 1.5, color: info?.culture ? 'var(--text)' : 'var(--text-faint)' }}>{info?.culture || 'not written'}</div></div>
-            </div>
+    <div className="co-page narrow" data-testid="vision-page">
+      <PageHeader title="Vision" purpose={<>Where the company is going and how it works. The chief of staff plans every objective from this page.{isCeo === false ? ' Only the CEO writes here.' : ''}</>}
+        actions={<>
+          <button className="co-btn" aria-expanded={planOpen} onClick={() => setPlanOpen(!planOpen)} disabled={!v}>Plan now</button>
+          {canWrite && v && editing !== 'vision' && <button className="co-btn primary" onClick={() => setEditing('vision')}>Revise vision</button>}
+        </>} />
+
+      {planOpen && (
+        <div className="co-card" style={{ padding: '14px 16px', marginBottom: 16 }} data-testid="plan-now">
+          <div style={{ fontSize: 13.5, fontWeight: 650, marginBottom: 6 }}>Run a planning session now</div>
+          <ol style={{ margin: '0 0 8px', paddingLeft: 18, fontSize: 13, lineHeight: 1.6, color: 'var(--text-dim)' }}>{PLAN_STEPS.map((s) => <li key={s}>{s}</li>)}</ol>
+          <p style={{ margin: '0 0 12px', fontSize: 12.5, color: 'var(--text-dim)' }}>{mode === 'autonomous' ? 'In autonomous mode the plan applies within the caps; you can veto it from the Inbox.' : 'In supervised mode the plan arrives in your Inbox as a card: nothing changes until you approve it.'} It ignores the planning cooldown and spends from the chief’s budget.</p>
+          {planResult && <div className="co-note" role="status" style={{ marginBottom: 10 }}>{planResult}</div>}
+          <div className="co-form-foot" style={{ justifyContent: 'flex-start' }}>
+            <button className="co-btn primary" disabled={planning} onClick={() => void planNow()}>{planning ? 'Planning…' : 'Run planning'}</button>
+            <button className="co-btn ghost" onClick={() => { setPlanOpen(false); setPlanResult(null); }}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {info === undefined ? (
+        <div style={{ display: 'grid', gap: 12 }} role="status" aria-label="Loading"><Skeleton w="75%" h={30} /><Skeleton w="40%" h={12} /><Skeleton h={12} /><Skeleton w="90%" h={12} /></div>
+      ) : editing === 'vision' || (!v && canWrite && editing !== 'profile') ? (
+        <VisionForm info={info} first={!v} onCancel={v ? () => setEditing(null) : undefined} onSave={(body) => act(async () => { await api.setOrgVision(wsId, body); setEditing(null); }, v ? 'Vision revised. The chief re-plans.' : 'Vision set. The chief plans the objectives.')} />
+      ) : !v ? (
+        <Empty title="No vision yet">Only the CEO writes the vision. Once it exists, the chief plans objectives from it.</Empty>
+      ) : (
+        <article data-testid="vision-doc">
+          <p style={{ margin: 0, fontSize: 'clamp(24px, 3vw, 32px)', lineHeight: 1.18, fontWeight: 650, letterSpacing: '-.024em', textWrap: 'balance', maxWidth: '26ch' } as React.CSSProperties} data-testid="vision-statement">{v.title}</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '12px 0 4px', flexWrap: 'wrap', fontSize: 12.5, color: 'var(--text-dim)' }}>
+            {horizon ? <><Bar value={horizon.elapsed} label="Time elapsed toward the horizon" width={140} tone={v.atRisk ? 'warn' : undefined} /><span>{horizon.label}</span></> : <span>No horizon set. {canWrite && <button className="co-link" onClick={() => setEditing('vision')}>Add one</button>}</span>}
+            <span className="co-faint">Revised {ago(v.createdAt)}</span>
+          </div>
+          {v.atRisk === 1 && <div className="co-note warn" style={{ marginTop: 10 }}>The vision is at risk: {v.atRiskReason || 'the objectives under it are behind.'}</div>}
+          {v.description && <Section title="What it looks like when we get there"><div className="co-prose" style={{ whiteSpace: 'pre-wrap' }}>{v.description}</div></Section>}
+          {org.mission && org.mission.trim() !== (v.description ?? '').trim() && <Section title="Mission"><div className="co-prose" style={{ whiteSpace: 'pre-wrap' }}>{org.mission}</div></Section>}
+          {editing === 'profile' ? (
+            <Section title="How we work"><ProfileForm info={info} onCancel={() => setEditing(null)} onSave={(body) => act(async () => { await api.setOrgProfile(wsId, body); setEditing(null); }, 'Saved. Every planning session, meeting and audit reads it.')} /></Section>
+          ) : (
+            <Section title="How we work" action={canWrite && (info?.values || info?.culture) ? <button className="co-btn small" onClick={() => setEditing('profile')}>Edit</button> : undefined}>
+              <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+                <ProfileBlock name="Values" text={info?.values ?? ''} example="Ship small and often. Ask before you widen scope. Write it down." canWrite={canWrite} onWrite={() => setEditing('profile')} />
+                <ProfileBlock name="Culture" text={info?.culture ?? ''} example="Few meetings, short ones. Decisions logged with their alternatives." canWrite={canWrite} onWrite={() => setEditing('profile')} />
+              </div>
+            </Section>
           )}
-        </div>
-        {isCeo !== false && !editing && <button style={btn()} onClick={() => setEditing(true)}>Edit</button>}
-      </div>
-      {editing && (
-        <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
-          <label style={label} htmlFor="profile-values">Values</label>
-          <textarea id="profile-values" value={values} onChange={(e) => setValues(e.target.value)} rows={2} style={textarea} placeholder="e.g. Ship small and often. Ask before you widen. Write it down." />
-          <label style={label} htmlFor="profile-culture">Culture</label>
-          <textarea id="profile-culture" value={culture} onChange={(e) => setCulture(e.target.value)} rows={2} style={textarea} placeholder="e.g. Few meetings, short ones; decisions logged with their alternatives." />
-          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}><button style={btn()} onClick={() => setEditing(false)}>Cancel</button><button style={btn(true)} onClick={save}>Save</button></div>
-        </div>
+          {info?.rules && <Section title="Standing rules"><div className="co-prose" style={{ whiteSpace: 'pre-wrap', fontSize: 13.5 }}>{info.rules}</div></Section>}
+          <Section title="Strategy memo" action={strategy?.at ? <span className="co-faint">By the chief of staff, {ago(strategy.at)}</span> : undefined}>
+            {strategy === undefined ? <Skeleton h={12} /> : <StrategyMemo memo={strategy?.memo ?? ''} onPlan={() => setPlanOpen(true)} />}
+          </Section>
+          <Section title="Objectives" action={<button className="co-link" onClick={() => openGoals()}>Open goals</button>}>
+            {objectives.length === 0 ? <Empty compact title="No objectives yet">Planning runs when the vision is written or revised. Plan now runs it at once.</Empty> : (
+              <div className="co-rows" style={{ margin: '0 -10px' }}>
+                {objectives.map((o) => {
+                  const h = objectiveHealth(o);
+                  return (
+                    <button key={o.id} className="co-row" onClick={() => openGoals(o.id)}>
+                      <span className="co-row-main"><span className="co-row-title wrap">{o.title}</span><span className="co-row-meta">{plural(o.children.filter((c) => c.kind === 'key_result').length, 'key result')} · {Math.round(o.progress * 100)}%</span></span>
+                      <Pill tone={HEALTH_TONE[h]}>{HEALTH_LABEL[h]}</Pill>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </Section>
+        </article>
       )}
     </div>
   );
 }
 
-function StrategyCard({ strategy }: { strategy: { memo: string; at: string | null } | null }) {
-  const [open, setOpen] = useState(false);
-  if (!strategy || !strategy.memo) return <div style={{ ...card, marginBottom: 10, ...faint }}>No strategy memo yet — the chief writes one after planning (<code>org_strategy_memo</code>).</div>;
-  const long = strategy.memo.length > 600;
+function Section({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div style={{ ...card, marginBottom: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}><div style={label}>Strategy memo</div><span style={faint}>by the chief · {ago(strategy.at)}</span></div>
-      <div style={{ fontSize: 13, whiteSpace: 'pre-wrap', lineHeight: 1.55, marginTop: 6 }}>{open || !long ? strategy.memo : `${strategy.memo.slice(0, 600)}…`}</div>
-      {long && <button style={{ ...linkBtn, marginTop: 6 }} onClick={() => setOpen(!open)}>{open ? 'show less' : 'read the whole memo'}</button>}
-    </div>
-  );
-}
-
-// ---- the intent tree ----
-
-function Bar({ value, color, title }: { value: number | null; color: string; title: string }) {
-  return (
-    <div title={title} role="progressbar" aria-valuenow={value === null ? undefined : Math.round(value * 100)} aria-valuemin={0} aria-valuemax={100} aria-label={title} style={{ height: 6, background: 'var(--panel-2)', borderRadius: 3, overflow: 'hidden', flex: 1 }}>
-      {value !== null && <div style={{ width: `${Math.min(100, Math.round(value * 100))}%`, height: 6, background: color, transition: 'width .3s' }} />}
-    </div>
-  );
-}
-
-/** One goal: an objective (blended progress, children summary) or a key
- *  result (measured vs confidence, pace, risk, owner, due, check-in). */
-function IntentRow({ g, depth, org, act, onWhy, sources, isCeo, onSourceChanged }: { g: OrgIntentNode; depth: number; org: OrgDetail; act: (fn: () => Promise<unknown>, done?: string) => Promise<void>; onWhy: (g: OrgGoal) => void; sources: MetricSource[]; isCeo: boolean | null; onSourceChanged: () => Promise<void> }) {
-  const names = useAgentNames();
-  const [checkIn, setCheckIn] = useState(false);
-  const [history, setHistory] = useState<OrgCheckin[] | null>(null);
-  const owner = g.ownerAgentId ? names.get(g.ownerAgentId) : undefined;
-  const isKr = g.kind === 'key_result';
-  const pace = paceBadge(g.pace, g.expected, g.measured);
-  const gap = confidenceGap(g.measured, g.confidence);
-  const pct = Math.round(g.progress * 100);
-  const edge = g.status === 'achieved' ? 'var(--green)' : g.status === 'abandoned' ? 'var(--text-faint)' : g.atRisk ? 'var(--amber)' : pct > 0 ? 'var(--accent)' : 'var(--border)';
-  const fmt = (v: number | null | undefined) => (v === null || v === undefined ? '?' : Number.isInteger(v) ? String(v) : v.toFixed(2));
-  const due = dueLabel(g.dueAt);
-  const overdue = g.status === 'active' && (daysUntil(g.dueAt) ?? 0) < 0;
-  return (
-    <div style={{ marginLeft: depth * 18, marginBottom: 8 }}>
-      <div id={`goal-${g.id}`} style={{ ...card, padding: '10px 12px', borderLeft: `3px solid ${edge}`, opacity: g.status === 'abandoned' ? .6 : 1 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ ...pill(), fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '.4px' }}>{KIND_LABEL[g.kind] ?? g.kind}</span>
-              <span>{g.title}</span>
-              <span style={{ ...faint, fontFamily: 'var(--mono)', fontSize: 10.5 }} title="Reference it in a channel">#goal:{g.id.slice(0, 8)}</span>
-              {g.status !== 'active' && <span style={pill()}>{g.status}</span>}
-              {isKr && <span style={{ ...pill(pace.color, '#fff') }} title={pace.title}>{pace.label}</span>}
-              {g.atRisk === 1 && <span style={{ ...pill('var(--amber)', '#fff'), display: 'inline-flex', alignItems: 'center', gap: 4 }} title={g.atRiskReason}><I d={P.warn} size={11} />at risk</span>}
-            </div>
-            {g.description && <div style={{ ...faint, marginTop: 2 }}>{g.description}</div>}
-            {g.atRisk === 1 && g.atRiskReason && <div style={{ fontSize: 12, color: 'var(--amber)', marginTop: 4 }}>{g.atRiskReason}</div>}
-          </div>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flex: 'none' }}>
-            {owner ? <span style={{ ...pill(), display: 'inline-flex', gap: 4, alignItems: 'center' }} title="Owner"><Avatar a={owner} size={14} />{owner.name}</span> : isKr && <span style={pill('var(--amber)', '#fff')}>no owner</span>}
-            {g.dueAt && <span style={{ ...pill(), color: overdue ? 'var(--red)' : undefined }} title={g.dueAt.slice(0, 10)}>{due}</span>}
-            <button style={{ ...btn(), padding: '3px 8px', fontSize: 11 }} onClick={() => onWhy(g)} title="Why does this exist? The chain up to the vision">Why</button>
-          </div>
-        </div>
-        {isKr ? (
-          <div style={{ marginTop: 8, display: 'grid', gap: 6, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', ...faint, marginBottom: 3 }}>
-                <span>Measured · {g.metric || 'metric'} {fmt(g.currentValue ?? g.startValue)} → {fmt(g.targetValue)}{g.unitLabel ? ` ${g.unitLabel}` : ''}</span>
-                <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--text)' }}>{g.measured === null ? '—' : `${Math.round(g.measured * 100)}%`}</span>
-              </div>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <Bar value={g.measured} color={g.pace === 'behind' ? 'var(--amber)' : 'var(--accent)'} title={`Measured progress ${g.measured === null ? 'unknown' : `${Math.round(g.measured * 100)}%`}; ${Math.round((g.expected ?? 0) * 100)}% expected by now`} />
-                {g.expected !== null && <span style={{ ...faint, fontSize: 10.5, whiteSpace: 'nowrap' }} title="Linear expectation between creation and due date">exp. {Math.round(g.expected * 100)}%</span>}
-              </div>
-            </div>
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', ...faint, marginBottom: 3 }}>
-                <span>Owner's confidence</span>
-                <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--text)' }}>{g.confidence === null ? '—' : `${Math.round(g.confidence * 100)}%`}</span>
-              </div>
-              <Bar value={g.confidence} color={gap.gap !== null && Math.abs(gap.gap) >= 0.15 ? 'var(--blue)' : 'var(--green)'} title={`Confidence ${g.confidence === null ? 'never given' : `${Math.round(g.confidence * 100)}%`} — ${gap.note}`} />
-              <div style={{ ...faint, fontSize: 10.5, marginTop: 3 }}>{gap.note}</div>
-            </div>
-          </div>
-        ) : (
-          <div style={{ marginTop: 8 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', ...faint, marginBottom: 3 }}><span>{summarizeChildren(g.children) || `${g.tasks.done}/${g.tasks.total} task(s) done`}</span><span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: 'var(--text)' }}>{pct}%</span></div>
-            <Bar value={g.progress} color={edge === 'var(--border)' ? 'var(--accent)' : edge} title={`Blended progress ${pct}%: measured key results averaged with linked tasks`} />
-          </div>
-        )}
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 7, flexWrap: 'wrap', ...faint }}>
-          {isKr && <KrSourceLine g={g} wsId={org.workspaceId} sources={sources} isCeo={isCeo} onChanged={onSourceChanged} />}
-          {isKr && <span title={g.lastCheckInAt ?? 'never'} style={{ color: checkInDue(g) && g.status === 'active' ? 'var(--amber)' : undefined }}>last check-in {g.lastCheckInAt ? ago(g.lastCheckInAt) : 'never'} · every {g.checkInCadenceDays}d{checkInDue(g) && g.status === 'active' ? ' · due' : ''}</span>}
-          {!isKr && g.tasks.total > 0 && <span>{g.tasks.done}/{g.tasks.total} task(s) done</span>}
-          {isKr && g.status === 'active' && <button style={linkBtn} onClick={() => setCheckIn(!checkIn)}>{checkIn ? 'close check-in' : 'check in'}</button>}
-          {isKr && <button style={linkBtn} onClick={() => { if (history === null) void api.orgCheckIns(org.workspaceId, g.id).then(setHistory).catch(() => setHistory([])); else setHistory(null); }}>{history === null ? 'history' : 'hide history'}</button>}
-        </div>
-        {checkIn && <CheckInForm g={g} org={org} onDone={() => { setCheckIn(false); setHistory(null); }} act={act} />}
-        {history && (
-          <div style={{ marginTop: 8, borderTop: '1px solid var(--border-soft)', paddingTop: 6 }}>
-            {history.length === 0 && <div style={faint}>No check-ins yet.</div>}
-            {history.slice().reverse().slice(0, 8).map((c) => (
-              <div key={c.id} style={{ fontSize: 12, display: 'flex', gap: 8, padding: '3px 0', flexWrap: 'wrap' }}>
-                <span style={faint}>{ago(c.createdAt)}</span>
-                <span style={{ fontFamily: 'var(--mono)' }}>{fmt(c.currentValue)}{g.unitLabel ? ` ${g.unitLabel}` : ''}</span>
-                <span style={{ fontFamily: 'var(--mono)' }}>{c.confidence === null ? '—' : `${Math.round(c.confidence * 100)}%`} confident</span>
-                <span style={{ flex: 1, minWidth: 120 }}>{c.note}</span>
-                <span style={faint}>{c.actor}</span>
-              </div>
-            ))}
-          </div>
-        )}
+    <section style={{ marginTop: 26 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8, paddingBottom: 6, borderBottom: '1px solid var(--border-soft)' }}>
+        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 650 }}>{title}</h3><span style={{ flex: 1 }} />{action}
       </div>
-      {g.children.map((c) => <IntentRow key={c.id} g={c} depth={depth + 1} org={org} act={act} onWhy={onWhy} sources={sources} isCeo={isCeo} onSourceChanged={onSourceChanged} />)}
+      {children}
+    </section>
+  );
+}
+
+function ProfileBlock({ name, text, example, canWrite, onWrite }: { name: string; text: string; example: string; canWrite: boolean; onWrite: () => void }) {
+  if (text) return <div><div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', marginBottom: 4 }}>{name}</div><div className="co-prose" style={{ whiteSpace: 'pre-wrap', fontSize: 13.5 }}>{text}</div></div>;
+  return (
+    <div style={{ border: '1px dashed var(--border)', borderRadius: 10, padding: '12px 14px' }} data-testid={`profile-empty-${name.toLowerCase()}`}>
+      <div style={{ fontSize: 13, fontWeight: 650, marginBottom: 4 }}>Write the company’s {name.toLowerCase()}</div>
+      <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5, marginBottom: 10 }}>Every planning session, meeting, audit and heartbeat reads them, and the chief tunes its thresholds to them. For example: “{example}”</div>
+      {canWrite && <button className="co-btn small" onClick={onWrite}>Write {name.toLowerCase()}</button>}
     </div>
   );
 }
 
-function CheckInForm({ g, org, onDone, act }: { g: OrgIntentNode; org: OrgDetail; onDone: () => void; act: (fn: () => Promise<unknown>, done?: string) => Promise<void> }) {
-  const [value, setValue] = useState(g.currentValue === null ? '' : String(g.currentValue));
-  const [conf, setConf] = useState(g.confidence === null ? 70 : Math.round(g.confidence * 100));
-  const [note, setNote] = useState('');
-  // A measured key result takes its value only from its source: the check-in records confidence and a note.
-  const measured = g.measuredBy ?? null;
-  const save = () => void act(async () => {
-    await api.orgCheckIn(org.workspaceId, g.id, measured ? { confidence: conf / 100, note } : { currentValue: value.trim() === '' ? null : Number(value), confidence: conf / 100, note });
-    onDone();
-  }, 'Check-in recorded');
+function StrategyMemo({ memo, onPlan }: { memo: string; onPlan: () => void }) {
+  const [open, setOpen] = useState(false);
+  if (!memo) return <Empty compact title="No strategy memo yet" action={<button className="co-btn small" onClick={onPlan}>Plan now</button>}>The chief writes one after each planning session: the bets, why these, and what it will not do.</Empty>;
+  const long = memo.length > 1400;
   return (
-    <div style={{ marginTop: 8, borderTop: '1px solid var(--border-soft)', paddingTop: 8, display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', alignItems: 'end' }}>
-      {measured
-        ? <div style={{ fontSize: 12 }}><div style={label}>Current {g.metric || 'value'}</div><span style={{ fontFamily: 'var(--mono)' }}>{g.currentValue ?? '—'}{g.unitLabel ? ` ${g.unitLabel}` : ''}</span> <span style={faint}>from {measured.name} — your confidence is recorded next to it</span></div>
-        : <div><label style={label} htmlFor={`ci-value-${g.id}`}>Current {g.metric || 'value'}{g.unitLabel ? ` (${g.unitLabel})` : ''}</label><input id={`ci-value-${g.id}`} value={value} onChange={(e) => setValue(e.target.value.replace(/[^\d.-]/g, ''))} inputMode="decimal" style={{ ...input, fontFamily: 'var(--mono)' }} placeholder={`target ${g.targetValue ?? '?'}`} /></div>}
-      <div><label style={label} htmlFor={`ci-conf-${g.id}`}>Confidence · {conf}%</label><input id={`ci-conf-${g.id}`} type="range" min={0} max={100} step={5} value={conf} onChange={(e) => setConf(Number(e.target.value))} style={{ width: '100%' }} /></div>
-      <div><label style={label} htmlFor={`ci-note-${g.id}`}>Note</label><input id={`ci-note-${g.id}`} value={note} onChange={(e) => setNote(e.target.value)} style={input} placeholder="What moved, what is in the way" onKeyDown={(e) => { if (e.key === 'Enter') save(); }} /></div>
-      <button style={btn(true)} onClick={save}>Record</button>
+    <div data-testid="strategy-memo">
+      <div className="co-prose" style={long && !open ? { maxHeight: 320, overflow: 'hidden', maskImage: 'linear-gradient(#000 70%, transparent)', WebkitMaskImage: 'linear-gradient(#000 70%, transparent)' } : undefined}><Markdown text={memo} /></div>
+      {long && <button className="co-link" style={{ marginTop: 6 }} aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Show less' : 'Read the whole memo'}</button>}
     </div>
+  );
+}
+
+function VisionForm({ info, first, onSave, onCancel }: { info: OrgVisionInfo | null; first: boolean; onSave: (b: { title: string; description: string; dueAt: string | null; rules: string }) => Promise<boolean>; onCancel?: () => void }) {
+  const v = info?.vision ?? null;
+  const [title, setTitle] = useState(v?.title ?? '');
+  const [desc, setDesc] = useState(v?.description ?? '');
+  const [due, setDue] = useState(v?.dueAt ? v.dueAt.slice(0, 10) : '');
+  const [rules, setRules] = useState(info?.rules ?? '');
+  const [busy, setBusy] = useState(false);
+  const save = async () => { setBusy(true); await onSave({ title: title.trim(), description: desc, dueAt: due ? new Date(`${due}T23:59:59`).toISOString() : null, rules }); setBusy(false); };
+  return (
+    <form className="co-card co-form" style={{ padding: 16 }} data-testid="vision-form" onSubmit={(e) => { e.preventDefault(); if (title.trim()) void save(); }}>
+      <div style={{ fontSize: 14, fontWeight: 650 }}>{first ? 'Write the vision' : 'Revise the vision'}</div>
+      <label className="co-field"><span>The statement</span><input className="co-input" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} placeholder="Where the company is going, in one sentence" style={{ fontSize: 15, fontWeight: 600 }} /><small>{title.length}/200 · one sentence a new hire could repeat</small></label>
+      <label className="co-field"><span>What it looks like when we get there</span><textarea className="co-input" rows={4} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Who it serves, what is true then that is not now, and why it matters" /></label>
+      <div className="co-form-row">
+        <label className="co-field"><span>Horizon</span><input className="co-input" type="date" value={due} onChange={(e) => setDue(e.target.value)} /><small>When the vision should be true</small></label>
+        <label className="co-field" style={{ gridColumn: 'span 2' }}><span>Standing rules</span><textarea className="co-input" rows={2} value={rules} onChange={(e) => setRules(e.target.value)} placeholder="What must never happen; what every plan must respect" /></label>
+      </div>
+      <div className="co-form-foot">
+        <span className="co-faint" style={{ marginRight: 'auto' }}>{first ? 'Saving sets the vision; the chief plans objectives from it.' : 'Saving revises the vision; the chief re-plans shortly after.'}</span>
+        {onCancel && <button type="button" className="co-btn ghost" onClick={onCancel}>Cancel</button>}
+        <button type="submit" className="co-btn primary" disabled={!title.trim() || busy}>{first ? 'Set the vision' : 'Save and re-plan'}</button>
+      </div>
+    </form>
+  );
+}
+
+function ProfileForm({ info, onSave, onCancel }: { info: OrgVisionInfo | null; onSave: (b: { values: string; culture: string }) => Promise<boolean>; onCancel: () => void }) {
+  const [values, setValues] = useState(info?.values ?? '');
+  const [culture, setCulture] = useState(info?.culture ?? '');
+  return (
+    <form className="co-form" data-testid="profile-form" onSubmit={(e) => { e.preventDefault(); void onSave({ values, culture }); }}>
+      <label className="co-field"><span>Values</span><textarea className="co-input" autoFocus rows={3} value={values} onChange={(e) => setValues(e.target.value)} placeholder="Ship small and often. Ask before you widen scope. Write it down." /></label>
+      <label className="co-field"><span>Culture</span><textarea className="co-input" rows={3} value={culture} onChange={(e) => setCulture(e.target.value)} placeholder="Few meetings, short ones. Decisions logged with their alternatives." /></label>
+      <div className="co-form-foot"><button type="button" className="co-btn ghost" onClick={onCancel}>Cancel</button><button type="submit" className="co-btn primary">Save</button></div>
+    </form>
   );
 }
 
@@ -326,7 +218,7 @@ export function WhyDrawer({ wsId, goalId, taskId, title, onClose }: { wsId: stri
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { void api.orgWhy(wsId, taskId ? { taskId } : { goalId }).then((w) => { setWhy(w); setErr(null); }).catch((e) => setErr(e instanceof Error ? e.message : 'failed')); }, [wsId, goalId, taskId]);
   const openLink = (l: WhyChain['chain'][number]) => {
-    if (l.kind === 'task') app.openOrgTask(l.id); else { app.setOrgFocus({ kind: 'goal', id: l.id }); app.setOrgUnitId(null); app.setOrgPane('vision'); }
+    if (l.kind === 'task') app.openOrgTask(l.id); else { app.setOrgFocus({ kind: 'goal', id: l.id }); app.setOrgUnitId(null); app.setOrgPane(l.kind === 'vision' ? 'vision' : 'goals'); }
     onClose();
   };
   // Shown top-down: vision first, the asked-about item last.

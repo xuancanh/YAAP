@@ -6,17 +6,16 @@
  *  Decisions: the decision log — what was decided, the alternatives, the
  *  rationale, who decided, where it came from, with a link to the meeting. */
 /* eslint-disable react-refresh/only-export-components */
-import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
-import { api, type OrgCadence, type OrgDecision, type OrgDetail, type OrgMeeting } from '../lib/api';
+import { api, type OrgCadence, type OrgDetail, type OrgMeeting } from '../lib/api';
 import { fmtUsd } from '../lib/pricing';
-import { decidedByLabel, decisionSource, firesOn, humanCron, MEETING_KIND_TITLES } from '../lib/org';
+import { firesOn, humanCron, MEETING_KIND_TITLES } from '../lib/org';
 import { openMeetingView, tokensText } from '../lib/meetings';
 import { card, input, btn, pill, h2, faint, label, linkBtn, ago, useAgentNames, useUnits, Avatar, UnitChips } from './org-ui';
 import { MeetingsBoard } from './MeetingsBoard';
 import { MeetingStartDialog } from './MeetingStartDialog';
 
-const RelatedDrawer = lazy(() => import('./OrgMemoryView').then((m) => ({ default: m.RelatedDrawer })));
 
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
 
@@ -153,79 +152,3 @@ const MEETING_TITLE = (k: string) => MEETING_KIND_TITLES[k] ?? k;
 
 // ---- decisions ----
 
-export function DecisionsPane({ org }: { org: OrgDetail }) {
-  const app = useApp();
-  const wsId = org.workspaceId;
-  const names = useAgentNames();
-  const { current, isCompany, byId } = useUnits();
-  const openMeeting = useOpenMeeting();
-  const [rows, setRows] = useState<OrgDecision[] | null>(null);
-  const [meetings, setMeetings] = useState<Map<string, OrgMeeting>>(new Map());
-  const [open, setOpen] = useState<string | null>(null);
-  const [q, setQ] = useState('');
-  const [related, setRelated] = useState<OrgDecision | null>(null);
-  const unitId = isCompany ? null : current?.id ?? null;
-  // The search runs server-side over title, decision and rationale (GET …/decisions/search, item 22), debounced.
-  const refresh = useCallback(async () => {
-    const needle = q.trim();
-    const [d, m] = await Promise.all([(needle ? api.orgSearchDecisions(wsId, needle, unitId) : api.orgDecisions(wsId, unitId)).catch((): OrgDecision[] => []), api.orgMeetings(wsId).catch((): OrgMeeting[] => [])]);
-    setRows(d); setMeetings(new Map(m.map((x) => [x.id, x])));
-  }, [wsId, unitId, q]);
-  useEffect(() => { const d = setTimeout(() => { void refresh(); }, q ? 250 : 0); const t = setInterval(() => { void refresh(); }, 60_000); return () => { clearTimeout(d); clearInterval(t); }; }, [refresh, q]);
-  // A `#decision:` chip deep-linked here (an id or its prefix): expand and scroll to it.
-  useEffect(() => {
-    if (app.orgFocus?.kind !== 'decision' || !rows) return;
-    const d = rows.find((x) => x.id === app.orgFocus!.id || x.id.startsWith(app.orgFocus!.id));
-    if (!d) { if (rows.length) { app.showToast('That decision is not in this department\'s log'); app.setOrgFocus(null); } return; }
-    setOpen(d.id); app.setOrgFocus(null);
-    requestAnimationFrame(() => document.getElementById(`decision-${d.id}`)?.scrollIntoView({ block: 'center' }));
-  }, [rows, app]);
-  const shown = rows ?? [];
-  const SOURCE_HINT: Record<string, string> = { meeting: 'proposed in a meeting and logged when it closed', approval: 'an approval card you decided', cadence: 'a cadence change', autonomous: 'the chief acted on its own within the caps' };
-  return (
-    <div style={{ maxWidth: 860 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <h2 style={h2}>{isCompany ? 'Decisions' : `${current?.name ?? 'Department'} · decisions`}</h2>
-          <div style={faint}>The decision log (§6): what was decided, the alternatives, the rationale, who decided and where it came from. Reference one in a channel as <code>#decision:&lt;id&gt;</code>.</div>
-        </div>
-        <input aria-label="Search decisions" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search the log" style={{ ...input, width: 180 }} />
-      </div>
-      <UnitChips />
-      {related && <Suspense fallback={null}><RelatedDrawer wsId={wsId} ref={`decision:${related.id}`} title={related.title} onClose={() => setRelated(null)} /></Suspense>}
-      {rows === null && <div style={faint}>Loading…</div>}
-      {rows && shown.length === 0 && <div style={{ ...card, ...faint }}>{q ? 'No decision matches.' : 'No decision logged yet. Meetings log theirs when they close; approvals and cadence changes log themselves.'}</div>}
-      {shown.map((d) => {
-        const src = decisionSource(d);
-        const meeting = d.meetingId ? meetings.get(d.meetingId) : undefined;
-        const unit = d.unitId ? byId.get(d.unitId) : null;
-        const by = decidedByLabel(d.decidedBy, (id) => names.get(id)?.name, (id) => app.nameOf(id));
-        const expanded = open === d.id;
-        return (
-          <div key={d.id} id={`decision-${d.id}`} style={{ ...card, padding: '10px 12px', marginBottom: 8, borderLeft: `3px solid ${src === 'meeting' ? 'var(--accent)' : src === 'approval' ? 'var(--green)' : src === 'autonomous' ? 'var(--amber)' : 'var(--border)'}` }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              <div style={{ flex: 1, minWidth: 220 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span>{d.title}</span>
-                  <span style={{ ...faint, ...mono, fontSize: 10.5 }} title="Reference it in a channel">#decision:{d.id.slice(0, 8)}</span>
-                  <span style={pill()} title={SOURCE_HINT[src]}>{src}</span>
-                  {unit && isCompany && <span style={pill()}>{unit.parentUnitId === null ? 'company' : unit.name}</span>}
-                </div>
-                {d.decision && <div style={{ fontSize: 13, marginTop: 4, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{d.decision}</div>}
-                <div style={{ ...faint, marginTop: 4 }}>decided by {by} · {ago(d.createdAt)}{meeting ? <> · in <button style={linkBtn} onClick={() => openMeeting(meeting)}>{meeting.title || MEETING_KIND_TITLES[meeting.kind]}</button></> : d.approvalId ? <> · <button style={linkBtn} onClick={() => app.setOrgPane('approvals')}>approval</button></> : null}</div>
-              </div>
-              <button style={btn()} onClick={() => setRelated(d)} title="Everything linked to this decision in the record">Related</button>
-              {(d.rationale || d.alternatives) && <button style={btn()} onClick={() => setOpen(expanded ? null : d.id)} aria-expanded={expanded}>{expanded ? 'Less' : 'Why'}</button>}
-            </div>
-            {expanded && (
-              <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', marginTop: 8, borderTop: '1px solid var(--border-soft)', paddingTop: 8 }}>
-                <div><div style={label}>Rationale</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', marginTop: 3, lineHeight: 1.5, color: d.rationale ? 'var(--text)' : 'var(--text-faint)' }}>{d.rationale || 'none given'}</div></div>
-                <div><div style={label}>Alternatives considered</div><div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', marginTop: 3, lineHeight: 1.5, color: d.alternatives ? 'var(--text)' : 'var(--text-faint)' }}>{d.alternatives || 'none recorded'}</div></div>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}

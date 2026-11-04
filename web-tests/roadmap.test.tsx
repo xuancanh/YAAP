@@ -99,7 +99,10 @@ describe('Timeline', () => {
     expect(ms[0].getAttribute('title')).toContain('Beta');
     const today = screen.getByTestId('today-line');
     expect(Number(today.dataset.x)).toBeGreaterThan(Number(a.dataset.left));
-    expect(screen.getByText('unscheduled')).toBeTruthy();
+    // the dateless project is not drawn; the legend explains the marks and the bar is labelled
+    expect(screen.getAllByTestId('roadmap-row')).toHaveLength(2);
+    expect(screen.getByTestId('roadmap-legend').textContent).toMatch(/Milestone done/);
+    expect(a.textContent).toContain('25% done · target');
     fireEvent.click(b);
     expect(onOpen).toHaveBeenCalledWith('b');
   });
@@ -127,8 +130,17 @@ describe('Now / Next / Later', () => {
     expect(now.textContent).toMatch(/Not enough history/);
     expect(within(screen.getByTestId('lane-next')).getByRole('alert').textContent).toContain('only the CEO');
     expect(screen.getByTestId('lane-later').textContent).toContain('breaker tripped');
-    fireEvent.change(screen.getByLabelText('Lane of Project b'), { target: { value: 'now' } });
+    // the card's menu moves it (keyboard path), dragging onto a lane does the same
+    fireEvent.click(screen.getByLabelText('Lane of Project b'));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Move to Now' }));
     expect(onLane).toHaveBeenCalledWith('b', 'now');
+    const card = within(screen.getByTestId('lane-later')).getByTestId('project-card');
+    const data = new Map<string, string>();
+    const dataTransfer = { setData: (k: string, v: string) => data.set(k, v), getData: (k: string) => data.get(k) ?? '', effectAllowed: '' };
+    fireEvent.dragStart(card, { dataTransfer });
+    fireEvent.dragOver(screen.getByTestId('lane-next'), { dataTransfer });
+    fireEvent.drop(screen.getByTestId('lane-next'), { dataTransfer });
+    expect(onLane).toHaveBeenCalledWith('c', 'next');
     fireEvent.click(within(now).getByText('Project a'));
     expect(onOpen).toHaveBeenCalledWith('a');
   });
