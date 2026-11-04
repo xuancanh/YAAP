@@ -29,7 +29,8 @@
  * reached, a loop is refused before any model call and says so with one
  * budget_stop event per loop per day — not one per tick.
  */
-import { ConflictException, HttpException, HttpStatus, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional, PayloadTooLargeException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, HttpException, HttpStatus, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional, PayloadTooLargeException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { isDraining } from '../common/lifecycle';
 import { ConfigService } from '@nestjs/config';
 import { timingSafeEqual } from 'node:crypto';
 import { AgentsService } from '../agents/agents.service';
@@ -43,7 +44,7 @@ import { TurnLoopService } from './turn-loop.service';
 import { ChatArchiveService } from './chat-archive.service';
 import { AgentMemoryService } from '../agents/agent-memory.service';
 import { DistillService } from './distill.service';
-import { cronMatches } from './cron.util';
+import { cronMatches, prevCronMatch } from './cron.util';
 import { deliveryFor } from '../workspaces/quiet-hours';
 import { spendStatus } from '../workspaces/spend.util';
 import { TriggerBus, TaskAddedEvent } from './trigger-bus';
@@ -61,7 +62,10 @@ export interface TriggerFire {
   payload: string;
 }
 
-export type LoopRunStatus = 'ran' | 'busy' | 'budget_stop';
+/** `interrupted`: a server restart cut the run short (or it would have
+ *  started while the process drains) — not a failure, no loop_error; the
+ *  next boot re-runs it (docs/architecture.md "Restarts and recovery"). */
+export type LoopRunStatus = 'ran' | 'busy' | 'budget_stop' | 'interrupted';
 
 interface MailCursor { ids?: string[]; baselined?: boolean }
 interface CalendarCursor { events?: Record<string, string>; started?: string[]; baselined?: boolean }
@@ -130,6 +134,7 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
    *  dropping under agents.list()) must be caught — an unhandled rejection
    *  terminates Node ≥15. Per-loop failures are already isolated below. */
   async tick(now: Date): Promise<void> {
+    if (isDraining()) return; // shutting down: start nothing new
     try {
       await this.tickInner(now);
     } catch (err) {
@@ -191,6 +196,48 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
     await this.triggerSweep(now, all).catch((err) => {
       this.logger.warn(`trigger sweep failed: ${err instanceof Error ? err.message : err}`);
     });
+  }
+
+  /**
+   * After a restart (docs/architecture.md "Restarts and recovery"): each
+   * cron loop that fell due while the server was down fires once now — not
+   * once per missed tick. "Fell due": its latest cron match before the
+   * current minute (and within `lookbackMs`) is later than its session's
+   * last run. A loop that never ran has nothing to catch up. `skip` holds
+   * `agentId:loopName` keys the recovery already re-ran. Returns the keys run.
+   */
+  async catchUp(now: Date, opts: { lookbackMs: number; skip?: Set<string> }): Promise<string[]> {
+    if (this.config.get<boolean>('loopsEnabled') === false || isDraining()) return [];
+    const ran: string[] = [];
+    const pass = async () => {
+      const stamp = now.toISOString().slice(0, 16);
+      for (const agent of await this.agents.list()) {
+        let loops: LoopDef[];
+        try { loops = JSON.parse(agent.loops) as LoopDef[]; } catch { continue; }
+        const ws = await this.workspaceOf(agent.id).catch(() => null);
+        if (!ws) continue;
+        const sessions = (await this.repo.listSessions(ws.id)).filter((x) => x.agentId === agent.id);
+        for (const loop of loops) {
+          if (loop?.enabled === false || !loop?.cron) continue;
+          const key = `${agent.id}:${loop.name}`;
+          if (opts.skip?.has(key) || this.lastRun.get(key) === stamp) continue;
+          const session = sessions.find((x) => x.name === `Loop · ${loop.name}`);
+          if (!session) continue;
+          const last = await this.repo.lastTurnAt(session.id);
+          const due = prevCronMatch(loop.cron, new Date(now.getTime() - 60_000), new Date(now.getTime() - opts.lookbackMs));
+          if (!due || !last || Date.parse(last) >= due.getTime()) continue;
+          this.lastRun.set(key, stamp);
+          ran.push(key);
+          await this.runLoop(agent.id, agent.name, loop).catch((err: unknown) => {
+            this.logger.warn(`catch-up of loop "${loop.name}" for ${agent.name} failed: ${err instanceof Error ? err.message : err}`);
+          });
+        }
+      }
+    };
+    if (!this.accounts) await pass();
+    else await this.accounts.forEachAccount(pass);
+    if (ran.length > 0) this.logger.log(`caught up ${ran.length} loop(s) that fell due while the server was down`);
+    return ran;
   }
 
   /** Distill idle, changed agent sessions into their agents' brains. */
@@ -508,13 +555,18 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
 
     let answer = '';
     let turnId: string | undefined;
+    let interrupted = false;
+    if (isDraining()) return 'interrupted';
     try {
       for await (const ev of this.turns.run(session.id, { text: prompt, origin: 'loop' })) {
         if (ev.type === 'turn') turnId = ev.turnId;
         if (ev.type === 'answer') answer += ev.text;
+        if (ev.type === 'interrupted') interrupted = true;
         if (ev.type === 'error') throw new Error(ev.message);
       }
     } catch (err) {
+      // Refused because the process is draining: a restart, not a failure.
+      if (err instanceof ServiceUnavailableException || isDraining()) return 'interrupted';
       const message = err instanceof Error ? err.message : String(err);
       await this.agents.addEvent(agentId, {
         kind: 'loop_error',
@@ -528,6 +580,9 @@ export class LoopsService implements OnModuleInit, OnModuleDestroy {
       }).catch(() => {});
       throw err;
     }
+    // Cut short by a restart: the turn is recorded `interrupted` and the
+    // next boot re-runs it — no loop_error, no "ran" journal line.
+    if (interrupted) return 'interrupted';
     const summary = answer.replace(/\s+/g, ' ').slice(0, 300);
     await this.agents.addEvent(agentId, {
       kind: 'loop_run',

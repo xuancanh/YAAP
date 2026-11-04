@@ -56,7 +56,8 @@
  * (`dryRunPlanning`) records every mutating call and applies nothing.
  */
 import { NO_PERSONALITY, PERSONALITIES, personalityById } from '../agents/personalities';
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { isDraining, onDrain } from '../common/lifecycle';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
@@ -329,10 +330,24 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
 
   onModuleInit(): void {
     if (!this.enabled()) return;
-    this.timer = setInterval(() => { void this.tick(new Date()); }, 60_000);
+    this.timer = setInterval(() => { if (!isDraining()) void this.tick(new Date()); }, 60_000);
+    // A restart begins: no queued wake, review or plan fires while draining.
+    this.offDrain = onDrain(() => this.pauseTimers());
+  }
+
+  private offDrain?: () => void;
+
+  /** Clear every timer that would start a run (shutdown; the drain). */
+  private pauseTimers(): void {
+    clearInterval(this.timer);
+    for (const p of this.pendingWakes.values()) clearTimeout(p.timer);
+    for (const r of this.rewakes.values()) clearTimeout(r.timer);
+    for (const r of this.pendingReviews.values()) clearTimeout(r.timer);
+    for (const p of this.pendingPlans.values()) clearTimeout(p.timer);
   }
 
   onModuleDestroy(): void {
+    this.offDrain?.();
     clearInterval(this.timer);
     for (const p of this.pendingWakes.values()) clearTimeout(p.timer);
     for (const r of this.rewakes.values()) clearTimeout(r.timer);
@@ -498,7 +513,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     ].filter(Boolean).join('\n\n');
     const r = await this.taskFreeTurn(ctx, prompt, model);
     await this.settle(orgId, { agentId: chiefId, projectId: null }, estimate, r.usd, 'review');
-    const status = ctx.loopDetected ? 'loop' : r.error ? 'failed' : 'done';
+    const status = r.interrupted ? 'interrupted' : ctx.loopDetected ? 'loop' : r.error ? 'failed' : 'done';
     const plan = ctx.plan && ctx.plan.actions.length > 0 ? await this.capital!.createPlan(orgId, ctx.plan, { runUsd: r.usd }).catch(() => null) : null;
     await this.audit.append(orgId, { actor: 'system', action: 'chief_review_end', refType: 'org', refId: orgId, payload: { trigger, status, acted: ctx.progress, planId: plan?.id ?? null, tokensIn: r.tokensIn, tokensOut: r.tokensOut, usd: Number(r.usd.toFixed(6)) } });
     await this.agents.addEvent(chiefId, {
@@ -517,21 +532,23 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
 
   /** One task-free turn (a chief review, a planning run): registers the run
    *  context for the tool matrix, streams the turn, returns usage and cost. */
-  private async taskFreeTurn(ctx: RunCtx, prompt: string, model: string): Promise<{ tokensIn: number; tokensOut: number; answer: string; error: string | null; usd: number }> {
+  private async taskFreeTurn(ctx: RunCtx, prompt: string, model: string): Promise<{ tokensIn: number; tokensOut: number; answer: string; error: string | null; usd: number; interrupted: boolean }> {
     this.running.set(ctx.sessionId, ctx);
-    let tokensIn = 0; let tokensOut = 0; let answer = ''; let error: string | null = null;
+    let tokensIn = 0; let tokensOut = 0; let answer = ''; let error: string | null = null; let interrupted = false;
     try {
       for await (const ev of this.turns.run(ctx.sessionId, { text: prompt, origin: 'loop' })) {
         if (ev.type === 'answer') answer += ev.text;
         if (ev.type === 'usage') { tokensIn += ev.inputTokens; tokensOut += ev.outputTokens; }
+        if (ev.type === 'interrupted') interrupted = true;
         if (ev.type === 'error') error = ev.message;
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      if (err instanceof ServiceUnavailableException || isDraining()) interrupted = true;
+      else error = err instanceof Error ? err.message : String(err);
     } finally {
       this.running.delete(ctx.sessionId);
     }
-    return { tokensIn, tokensOut, answer, error, usd: this.costUsd(model, tokensIn, tokensOut) };
+    return { tokensIn, tokensOut, answer, error, usd: this.costUsd(model, tokensIn, tokensOut), interrupted };
   }
 
   // ---- the gated heartbeat (docs/company-vision.md §13) ----
@@ -775,7 +792,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     const prompt = await this.planningPrompt(org, unit, isChief, opts.trigger, reasons, ws, plan ? { vetoMinutes: tunable(org, 'capital.vetoWindowMinutes'), dryRun: opts.dryRun } : undefined);
     const r = await this.taskFreeTurn(ctx, prompt, model);
     await this.settle(orgId, { agentId: leadId, projectId: null }, estimate, r.usd, 'planning');
-    const status = ctx.loopDetected ? 'loop' : r.error ? 'failed' : 'done';
+    const status = r.interrupted ? 'interrupted' : ctx.loopDetected ? 'loop' : r.error ? 'failed' : 'done';
     const planRow = plan && (dryRun || plan.actions.length > 0) && this.capital ? await this.capital.createPlan(orgId, plan, { runUsd: r.usd }).catch(() => null) : null;
     await this.audit.append(orgId, { actor: 'system', action: dryRun ? 'planning_dry_run_end' : 'planning_end', refType: 'unit', refId: unit.id, payload: { trigger: opts.trigger, status, acted: ctx.progress, planId: planRow?.id ?? null, tokensIn: r.tokensIn, tokensOut: r.tokensOut, usd: Number(r.usd.toFixed(6)) } });
     if (dryRun) return { result: 'ran', plan: planRow };
@@ -952,6 +969,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
 
   async runTask(orgId: string, taskId: string, agentId: string, reason: OrgWakeReason): Promise<RunResult> {
     if (!this.enabled()) return 'skipped:disabled';
+    // A draining process starts no run: the boot after it re-queues the work.
+    if (isDraining()) return 'skipped:restarting';
     const org = await this.org.get(orgId);
     if (org.status !== 'active') return 'skipped:paused';
     const member = await this.org.member(orgId, agentId);
@@ -1033,14 +1052,20 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
 
     const prompt = await this.wakePrompt(org, task, agent.name, reason, reviewer, consulted ? agentId : null);
     let tokensIn = 0; let tokensOut = 0; let answer = ''; let error: string | null = null;
+    // Cut short by a restart (docs/architecture.md "Restarts and recovery"):
+    // not a failure — no breaker, no no-progress count, no circular
+    // signature; the boot after re-queues it once.
+    let interrupted = false;
     try {
       for await (const ev of this.turns.run(session.id, { text: prompt, origin: 'loop' })) {
         if (ev.type === 'answer') answer += ev.text;
         if (ev.type === 'usage') { tokensIn += ev.inputTokens; tokensOut += ev.outputTokens; }
+        if (ev.type === 'interrupted') interrupted = true;
         if (ev.type === 'error') error = ev.message;
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      if (err instanceof ServiceUnavailableException || isDraining()) interrupted = true;
+      else error = err instanceof Error ? err.message : String(err);
     } finally {
       this.running.delete(session.id);
     }
@@ -1051,8 +1076,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     const orgNow = await this.org.get(orgId);
     const killed = orgNow.status !== 'active';
     const progressed = ctx.progress || after.status !== task.status || after.status === 'done';
-    const status = killed ? 'killed' : ctx.loopDetected ? 'loop' : error ? 'failed' : 'done';
-    const outcome = killed ? 'killed' : ctx.loopDetected ? 'loop' : progressed ? (after.status === 'done' ? 'done' : 'progressed') : 'no_progress';
+    const status = killed ? 'killed' : interrupted ? 'interrupted' : ctx.loopDetected ? 'loop' : error ? 'failed' : 'done';
+    const outcome = killed ? 'killed' : interrupted ? 'interrupted' : ctx.loopDetected ? 'loop' : progressed ? (after.status === 'done' ? 'done' : 'progressed') : 'no_progress';
     await this.tasks.endRun(run.id, { status, outcome, tokensIn, tokensOut, usd, sessionId: session.id });
     await this.audit.append(orgId, { actor: `agent:${agentId}`, action: 'run_end', refType: 'run', refId: run.id, payload: { taskId, status, outcome, tokensIn, tokensOut, usd: Number(usd.toFixed(6)) } });
 
@@ -1062,7 +1087,9 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     if (!reviewer && !consulted && current.claimedBy === run.id) {
       await this.tasks.release(orgId, taskId, run.id, killed ? 'todo' : progressed ? 'in_progress' : 'todo');
     }
-    if (ctx.loopDetected) {
+    if (interrupted) {
+      // nothing counts against the run: the boot after the restart resumes it
+    } else if (ctx.loopDetected) {
       await this.tasks.update(orgId, taskId, { status: 'blocked', blockers: [...listOf(current.blockers), 'loop detected: the same tool call repeated 3 times'] }, 'system');
       await this.ownerEvent(org, agentId, `Run stopped: loop detected on "${task.title}"`, `${agent.name} repeated the same tool call ${this.identicalCallLimit} times. The task is blocked with the chief of staff as owner.`, session.id, ws);
       await this.emitBreaker({ orgId, agentId, taskId, kind: 'loop', detail: `${agent.name} repeated the same tool call ${this.identicalCallLimit} times on "${task.title}"`, sessionId: session.id });
@@ -1074,6 +1101,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
       await this.tasks.update(orgId, taskId, { noProgressCount: 0 }, 'system').catch(() => {});
     }
     if (progressed && !error && current.failSig) await this.db.update(orgTasks).set({ failSig: '', failRepeats: 0 }).where(eq(orgTasks.id, taskId)).catch(() => undefined);
+    if (interrupted) return 'ran';
     await this.agents.addEvent(agentId, {
       kind: 'org_run', title: `${reviewer ? 'Reviewed' : consulted ? 'Answered a mention on' : 'Worked on'} "${task.title}" (${outcome})`,
       body: (error ? `${error}. ` : '') + answer.replace(/\s+/g, ' ').slice(0, 400), sessionId: session.id,

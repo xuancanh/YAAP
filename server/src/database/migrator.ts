@@ -10,6 +10,7 @@
  * Runs against anything with a pg-shaped `query()` — the node-postgres Pool
  * in production, PGlite in tests.
  */
+import { INTERRUPTED_NOTE } from '../common/lifecycle';
 import { backfillTaskKeys } from '../common/task-keys';
 import { backfillWorkTracking } from './work-tracking-backfill';
 import { repairAgentModels } from './model-repair';
@@ -2527,6 +2528,29 @@ const MIGRATIONS: Migration[] = [
         WHERE "text" LIKE 'Retro lesson (%' AND "cause" = ''`);
     },
   },
+  {
+    id: '0094-turn-recovery',
+    up: async (db) => {
+      // Restarts and recovery (docs/architecture.md): a turn cut short by a
+      // restart is `interrupted`, and `recovery` says what the next boot did
+      // with it — pending (not yet looked at) | resumed (re-run by its
+      // trigger; the new turn's rerunOf points here) | retry (a person's
+      // chat: a Retry button) | held (stopped mid-action with an outcome
+      // nobody knows; surfaced for a decision) | none. '' for every other
+      // turn. Turns the old boot sweep reaped to 'error' with no message are
+      // interrupted ones too. Idempotent.
+      if (!(await hasColumn(db, 'chat_turns', 'recovery'))) await db.query(`ALTER TABLE chat_turns ADD COLUMN "recovery" TEXT NOT NULL DEFAULT ''`);
+      // Before this, a restart's abort was recorded as a failure: the turn
+      // 'error' with the provider's "This operation was aborted" (or with no
+      // message, from the old boot sweep), and the loop that ran it wrote an
+      // unread loop_error — so every restart showed agents failing. They are
+      // interruptions; nothing re-runs them now (recovery 'none').
+      await db.query(`UPDATE chat_turns SET "status" = 'interrupted', "error" = '${INTERRUPTED_NOTE}', "recovery" = 'none'
+        WHERE "status" = 'error' AND ("error" IS NULL OR "error" = '' OR "error" ~* '^(this|the) operation was aborted\\.?$')`);
+      await db.query(`UPDATE agent_events SET "readAt" = "createdAt"
+        WHERE "kind" = 'loop_error' AND "readAt" IS NULL AND "body" ~* '^(this|the) operation was aborted\\.?$'`);
+    },
+  },
 ];
 
 /**
@@ -2750,11 +2774,12 @@ export async function runPgMigrations(db: Queryable, logger: { log: (msg: string
     const fenced = await ensureAccountColumns(db);
     if (fenced.length > 0) logger.log(`added accountId to ${fenced.join(', ')}`);
     // Data repair on every boot (not a tracked migration): turns are created
-    // 'running' and finalized in-process, so a crash mid-turn orphans them.
-    // Reap them to 'error' so they stop rendering as live.
-    const reaped = await db.query(`UPDATE chat_turns SET "status" = 'error' WHERE "status" = 'running'`);
+    // 'running' and finalized in-process, so a crash or a restart mid-turn
+    // orphans them. They were interrupted, not failed: mark them so, pending
+    // recovery (chats/restart-recovery.service.ts resumes what is safe to).
+    const reaped = await db.query(`UPDATE chat_turns SET "status" = 'interrupted', "error" = COALESCE(NULLIF("error", ''), '${INTERRUPTED_NOTE}'), "recovery" = 'pending' WHERE "status" = 'running'`);
     const reapedCount = (reaped as { rowCount?: number }).rowCount ?? 0;
-    if (reapedCount > 0) logger.log(`reaped ${reapedCount} orphaned running turn(s)`);
+    if (reapedCount > 0) logger.log(`marked ${reapedCount} turn(s) left running by the last process as interrupted`);
     // Model repair on every boot (docs/agent-types.md "Backfill"): agents
     // and pinned chat sessions on a model their agent type does not serve
     // (e.g. claude-* on a DeepSeek type) move to the type's default.

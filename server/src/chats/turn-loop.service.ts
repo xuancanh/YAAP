@@ -20,7 +20,7 @@
  * unparseable arguments, and unknown tool names return an error result to the
  * model instead of executing.
  */
-import { Injectable, ConflictException, ForbiddenException, Logger, NotFoundException, OnApplicationBootstrap, OnModuleDestroy, Optional } from '@nestjs/common';
+import { Injectable, ConflictException, ForbiddenException, Logger, NotFoundException, OnApplicationBootstrap, OnModuleDestroy, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { ChatsRepository, ChatSession } from './chats.repository';
 import { ChatLocks } from './chat-locks';
@@ -55,6 +55,7 @@ import { isModelRejection } from '../agent-types/model-resolution';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 import { liveTurns, turnWatch, type WatchedEvent } from './live-turns';
 import { taskRef } from '../common/task-keys';
+import { abortCauseOf, beginDrain, INTERRUPTED_NOTE, InterruptedError, isDraining, isTransientError, shutdownGraceMs } from '../common/lifecycle';
 
 export type ApprovalDecision = 'allow-once' | 'allow-always' | 'allow-tool' | 'deny';
 
@@ -202,7 +203,19 @@ export type TurnEvent =
     type: 'computer'; callId: string; tool: string; summary: string; status: 'ok' | 'error';
     workspaceId: string; screenshotPath?: string; width?: number; height?: number; at: string;
   }
+  /** The turn was cut short by a server restart (docs/architecture.md
+   *  "Restarts and recovery"): it is recorded `interrupted`, not `error`, and
+   *  the next boot recovers it. Never sent for the owner's Stop. */
+  | { type: 'interrupted'; reason: 'shutdown'; message: string }
+  /** A provider round failed on a transient error (a reset connection, an
+   *  overloaded provider) and is being re-asked: the client drops what that
+   *  round streamed so far. Nothing of the failed round was persisted. */
+  | { type: 'retry'; message: string; attempt: number }
   | { type: 'error'; message: string };
+
+/** Mid-stream re-asks of one round on a transient provider error, per turn. */
+const STREAM_RETRIES = 2;
+const STREAM_RETRY_DELAYS_MS = [1_000, 3_000];
 
 interface ToolRecord {
   tool: string;
@@ -589,18 +602,48 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     if (unknown.length > 0) this.logger.warn(`action classes: ${unknown.length} tool(s) not in the registry run as external_reversible until classified: ${unknown.join(', ')}`);
   }
 
-  /** Graceful shutdown: abort every in-flight turn through the same path as
-   *  /stop, so providers stop streaming and turns settle as 'stopped' before
-   *  the module graph (and the pg pool) tears down under them. */
-  onModuleDestroy(): void {
-    for (const sessionId of [...this.aborts.keys()]) this.stop(sessionId);
+  /** How long a draining process waits for aborted turns to write their
+   *  final state before the module graph (and the pg pool) tears down. */
+  settleMs = 2_000;
+
+  /**
+   * Graceful shutdown (docs/architecture.md "Restarts and recovery"): stop
+   * accepting turns, give the ones in flight `shutdownGraceMs()` to finish
+   * the provider stream or tool call they are in, then abort the rest with
+   * the `shutdown` reason — they settle as `interrupted`, not `error` — and
+   * wait (bounded) for them to write that before the pool drains.
+   */
+  async onModuleDestroy(): Promise<void> {
+    await this.drain(shutdownGraceMs());
+  }
+
+  /** The drain itself (onModuleDestroy; tests call it with a short grace). */
+  async drain(graceMs: number): Promise<{ finished: number; interrupted: number }> {
+    beginDrain();
+    const before = this.aborts.size;
+    if (before === 0) return { finished: 0, interrupted: 0 };
+    this.logger.log(`shutdown: ${before} turn(s) in flight; waiting up to ${graceMs}ms for them to finish`);
+    await this.waitIdle(graceMs);
+    const left = [...this.aborts.keys()];
+    for (const sessionId of left) this.aborts.get(sessionId)?.abort(new InterruptedError('shutdown'));
+    if (left.length > 0) {
+      this.logger.log(`shutdown: interrupting ${left.length} turn(s); they resume after the restart`);
+      await this.waitIdle(this.settleMs);
+    }
+    return { finished: before - left.length, interrupted: left.length };
+  }
+
+  /** Resolves when no turn is in flight, or after `ms`. */
+  private async waitIdle(ms: number): Promise<void> {
+    const until = Date.now() + ms;
+    while (this.aborts.size > 0 && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
   }
 
   /** Stop the in-flight turn for a chat; the partial turn is retained (FR-5.4). */
   stop(sessionId: string): boolean {
     const ctl = this.aborts.get(sessionId);
     if (!ctl) return false;
-    ctl.abort();
+    ctl.abort(new InterruptedError('stop'));
     return true;
   }
 
@@ -702,6 +745,9 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
       ? await this.compaction.maybeAutoCompact(sessionId, undefined, { force: atCeiling }).catch(() => false)
       : false;
     if (atCeiling && !autoCompact) throw new ForbiddenException('token ceiling reached — run /compact, turn auto-compact on, or raise the ceiling');
+    // A draining process starts nothing new: the run would be cut off in
+    // seconds. The client retries once the server is back.
+    if (isDraining()) throw new ServiceUnavailableException('the server is restarting — try again in a few seconds');
     if (!this.locks.tryAcquire(sessionId)) throw new ConflictException('chat is busy');
     this.turnOrigins.set(sessionId, input.origin ?? 'user');
     // Who is acting (docs/shared-agents.md): the member who sent this turn, or
@@ -798,6 +844,8 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
 
       // Model self-heal (docs/agent-types.md): at most one retry per turn.
       let healed = false;
+      // Transient mid-stream failures re-ask the round (STREAM_RETRIES per turn).
+      let streamRetries = 0;
       for (let round = 0; ; round++) {
         let answer = '';
         let streamed = false;
@@ -841,6 +889,23 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
               round--;
               continue;
             }
+          }
+          // A transient transport failure (a reset connection, an overloaded
+          // provider, a 5xx stream error) re-asks the round: nothing of it was
+          // persisted — the answer and tool calls are written only once the
+          // stream completes — and the client drops what it streamed.
+          if (!ctl.signal.aborted && streamRetries < STREAM_RETRIES && isTransientError(err)) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.logger.warn(`provider stream failed mid-round (${message.slice(0, 160)}); re-asking (attempt ${streamRetries + 2}, session ${session.id})`);
+            yield { type: 'retry', message: message.slice(0, 300), attempt: streamRetries + 1 };
+            const wait = STREAM_RETRY_DELAYS_MS[streamRetries] ?? 3_000;
+            streamRetries++;
+            await new Promise<void>((resolve) => {
+              const t = setTimeout(() => { ctl.signal.removeEventListener('abort', done); resolve(); }, wait);
+              const done = () => { clearTimeout(t); resolve(); };
+              ctl.signal.addEventListener('abort', done, { once: true });
+            });
+            if (!ctl.signal.aborted) { round--; continue; }
           }
           // Provider health (docs/incidents.md §4): a transient failure counts
           // towards degrading this provider for the workspace; a stop does not.
@@ -982,7 +1047,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
               const prior = await this.actions.byKey(key);
               const seen = await this.actions.priorOutcome(prior, cls);
               if (seen) {
-                const output = seen.kind === 'replay' ? await this.actions.replay(seen.row) : this.actions.waitingText(seen.row);
+                const output = seen.kind === 'replay' ? await this.actions.replay(seen.row) : seen.kind === 'unknown' ? this.actions.unknownText(seen.row) : this.actions.waitingText(seen.row);
                 await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
                 history.push({ role: 'tool', content: output, toolCallId: call.id, isError: false });
                 toolRecords.push({ tool: call.name, input: call.input, result: output.slice(0, 2000), approved: seen.kind === 'replay' ? 'deduplicated' : 'queued', isError: false });
@@ -1299,12 +1364,15 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
         }
       }
 
+      const cause = abortCauseOf(ctl.signal);
       await this.repo.updateTurn(turn.id, {
-        status: ctl.signal.aborted ? 'stopped' : 'done',
+        status: cause === 'shutdown' ? 'interrupted' : cause ? 'stopped' : 'done',
+        ...(cause === 'shutdown' ? { error: INTERRUPTED_NOTE, recovery: 'pending' } : {}),
         toolCalls: JSON.stringify(toolRecords),
         skillsUsed: JSON.stringify([...new Set(skillsUsed)]),
         tokensIn, tokensOut,
       });
+      if (cause === 'shutdown') yield { type: 'interrupted', reason: 'shutdown', message: INTERRUPTED_NOTE };
       if (skillsUsed.length > 0) await this.skills.recordUse(skillsUsed).catch(() => {});
       await this.repo.updateSession(sessionId, {
         tokensIn: session.tokensIn + tokensIn,
@@ -1312,11 +1380,25 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
         ...(lastContext > 0 ? { contextTokens: lastContext } : {}),
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      await this.repo.updateTurn(turn.id, {
-        status: 'error', error: message, toolCalls: JSON.stringify(toolRecords), skillsUsed: JSON.stringify([...new Set(skillsUsed)]), tokensIn, tokensOut,
-      });
-      yield { type: 'error', message };
+      // An abort we started (the owner's Stop, a restart) surfaces here as
+      // the provider's "This operation was aborted": it is not an agent
+      // error. Stop settles 'stopped'; a restart settles 'interrupted' and
+      // is recovered on the next boot (docs/architecture.md "Restarts and recovery").
+      const cause = abortCauseOf(ctl.signal);
+      if (cause) {
+        await this.repo.updateTurn(turn.id, {
+          status: cause === 'shutdown' ? 'interrupted' : 'stopped',
+          ...(cause === 'shutdown' ? { error: INTERRUPTED_NOTE, recovery: 'pending' } : {}),
+          toolCalls: JSON.stringify(toolRecords), skillsUsed: JSON.stringify([...new Set(skillsUsed)]), tokensIn, tokensOut,
+        }).catch((e: unknown) => this.logger.warn(`could not record the ${cause === 'shutdown' ? 'interrupted' : 'stopped'} turn ${turn.id}: ${e instanceof Error ? e.message : e}`));
+        if (cause === 'shutdown') yield { type: 'interrupted', reason: 'shutdown', message: INTERRUPTED_NOTE };
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        await this.repo.updateTurn(turn.id, {
+          status: 'error', error: message, toolCalls: JSON.stringify(toolRecords), skillsUsed: JSON.stringify([...new Set(skillsUsed)]), tokensIn, tokensOut,
+        });
+        yield { type: 'error', message };
+      }
     } finally {
       // Every token the provider billed counts against the workspace month,
       // whether the turn ended well, stopped, or errored.
@@ -1336,7 +1418,8 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
       // estimate must be pessimistic enough to fire before the NEXT turn
       // starts. Loop turns rely on this path (no controller around them);
       // for user turns it races the controller's call and the loser skips.
-      if (this.compaction) void this.compaction.maybeAutoCompact(sessionId, overheadChars);
+      // Not while draining: the pool is about to close under it.
+      if (this.compaction && !isDraining()) void this.compaction.maybeAutoCompact(sessionId, overheadChars);
     }
   }
 

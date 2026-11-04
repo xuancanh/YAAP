@@ -135,6 +135,7 @@ export function fixHint(e: Pick<HomeAgentError, 'kind' | 'message'>): { text: st
   if (/api key|unauthori[sz]ed|\b401\b|invalid x-api-key|authentication/.test(m)) return { text: 'The provider refused the key. Check the provider key in Settings.', tab: null };
   if (/model/.test(m) && /not found|rejected|does not exist|unknown|invalid|unsupported|\b404\b/.test(m)) return { text: 'The provider does not accept this model. Pick another one.', tab: 'Settings:General' };
   if (/rate.?limit|\b429\b|overloaded|\b529\b/.test(m)) return { text: 'The provider is rate-limiting or overloaded. It tries again on its next run.', tab: null };
+  if (/aborted due to timeout|timed out|\btimeout\b/.test(m)) return { text: 'The provider stopped responding and the run timed out. It tries again on its next run; raise PROVIDER_TIMEOUT_MS if long pauses are normal for this model.', tab: null };
   if (/could not poll|connection|reconnect/.test(m)) return { text: 'A connection it reads from failed. Reconnect it in Settings.', tab: 'Settings:Skills & tools' };
   return null;
 }

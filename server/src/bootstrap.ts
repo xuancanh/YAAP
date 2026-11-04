@@ -11,6 +11,7 @@ import { ConfigService } from '@nestjs/config';
 import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { accountContextMiddleware } from './accounts/account-context';
+import { beginDrain, shutdownGraceMs } from './common/lifecycle';
 
 export async function createApp(): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
@@ -53,10 +54,18 @@ export async function startApp(): Promise<void> {
   // own, so a restart used to hang in "waiting for graceful termination".
   // Drop the long-lived connections once the listener is closed, and hard-exit
   // if something still holds the process a few seconds later.
+  // Restarts (docs/architecture.md "Restarts and recovery"): draining starts
+  // at once — schedulers pause, new turns are refused — and the turns in
+  // flight get SHUTDOWN_GRACE_MS before TurnLoopService interrupts them, so
+  // the hard exit waits for the grace period plus time to record them.
   const server = app.getHttpServer() as import('node:http').Server;
+  // Open turn streams stay up through the grace period, so a reply that
+  // finishes in it still reaches its chat; then every long-lived connection
+  // is dropped so server.close() can return.
   const stop = () => {
-    setTimeout(() => { server.closeIdleConnections?.(); server.closeAllConnections?.(); }, 200).unref();
-    setTimeout(() => process.exit(0), 5_000).unref();
+    beginDrain();
+    setTimeout(() => { server.closeIdleConnections?.(); server.closeAllConnections?.(); }, Math.max(200, shutdownGraceMs() + 2_500)).unref();
+    setTimeout(() => process.exit(0), shutdownGraceMs() + 8_000).unref();
   };
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);

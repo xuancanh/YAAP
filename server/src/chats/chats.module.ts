@@ -25,6 +25,7 @@ import { AgentApprovalsController } from './agent-approvals.controller';
 import { WorkLogController } from './work-log.controller';
 import { WorkLogService } from './work-log.service';
 import { WorkRerunService } from './work-rerun.service';
+import { RestartRecoveryService } from './restart-recovery.service';
 import { AiModule } from '../ai/ai.module';
 import { SettingsModule } from '../settings/settings.module';
 import { AgentTypesModule } from '../agent-types/agent-types.module';
@@ -43,7 +44,7 @@ import { ActionsModule } from '../actions/actions.module';
 @Module({
   imports: [SettingsModule, AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, BrowserModule, ActionReviewModule, ComputerModule, RegistryModule, ActionsModule],
   controllers: [ChatsController, LoopsController, HooksController, AgentApprovalsController, HeartbeatController, WorkLogController],
-  providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService, HeartbeatService, ChatArchiveService, WorkLogService, WorkRerunService, OwnerMessagesService, MemoryToolsService],
-  exports: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, HeartbeatService, ChatArchiveService, WorkLogService, WorkRerunService, OwnerMessagesService, MemoryToolsService],
+  providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService, HeartbeatService, ChatArchiveService, WorkLogService, WorkRerunService, RestartRecoveryService, OwnerMessagesService, MemoryToolsService],
+  exports: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, HeartbeatService, ChatArchiveService, WorkLogService, WorkRerunService, RestartRecoveryService, OwnerMessagesService, MemoryToolsService],
 })
 export class ChatsModule {}

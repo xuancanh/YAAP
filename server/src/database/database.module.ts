@@ -51,7 +51,7 @@ const drizzleProvider = {
     // Migrations hold a session-level advisory lock, so they need one
     // dedicated client — pool.query could scatter lock/unlock across
     // sessions.
-    const client = await pool.connect();
+    const client = await connectWithRetry(pool, logger);
     try {
       await runPgMigrations(client, logger);
     } finally {
@@ -62,6 +62,25 @@ const drizzleProvider = {
     return scopeDb(drizzle(pool, { schema }));
   },
 };
+
+/** The first connection, retried while Postgres is still starting (a
+ *  `docker compose up` racing `npm run dev`, a database restarting under a
+ *  deploy): boot used to crash on ECONNREFUSED and stay down until the next
+ *  file change. DB_CONNECT_RETRY_MS bounds the wait (default 30 s). */
+async function connectWithRetry(pool: Pool, logger: Logger): Promise<import('pg').PoolClient> {
+  const budget = Number(process.env.DB_CONNECT_RETRY_MS ?? 30_000);
+  const until = Date.now() + (Number.isFinite(budget) ? budget : 30_000);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await pool.connect();
+    } catch (err) {
+      if (Date.now() >= until) throw err;
+      const wait = Math.min(5_000, 500 * attempt);
+      logger.warn(`database not reachable yet (${err instanceof Error ? err.message : err}); retrying in ${wait}ms`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
 
 @Global()
 @Module({

@@ -48,6 +48,7 @@
  * org's operating profile (values, culture, vision).
  */
 import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { InterruptedError, isDraining } from '../common/lifecycle';
 import { ConfigService } from '@nestjs/config';
 import { inArray } from 'drizzle-orm';
 import type { DrizzleDb } from '../database/database.module';
@@ -271,7 +272,7 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
 
   onModuleInit(): void {
     if (!this.enabled()) return;
-    this.timer = setInterval(() => { void this.tick(new Date()); }, 60_000);
+    this.timer = setInterval(() => { if (!isDraining()) void this.tick(new Date()); }, 60_000);
   }
 
   onModuleDestroy(): void { clearInterval(this.timer); }
@@ -282,7 +283,12 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
   }
 
   private track<T>(p: Promise<T>): Promise<T | undefined> {
-    const wrapped = p.catch((err) => { this.logger.warn(`meeting failed: ${err instanceof Error ? err.message : String(err)}`); return undefined; });
+    const wrapped = p.catch((err) => {
+      // A restart mid-meeting: the next boot closes it with a note (OrgRecovery).
+      if (err instanceof InterruptedError) this.logger.log('a meeting was interrupted by a restart; the next boot closes it');
+      else this.logger.warn(`meeting failed: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    });
     this.inFlight.add(wrapped);
     void wrapped.finally(() => this.inFlight.delete(wrapped));
     return wrapped;
@@ -618,6 +624,9 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     const save = async () => { m = await this.meetings.update(orgId, meetingId, { minutes: JSON.stringify(minutes), usd, tokensIn, tokensOut, rounds }); };
     const threadOf = () => (inSub && channels.stream ? channels.stream(channelId) : channels.thread(channelId, root.id)).catch(() => [] as Array<{ id: string; authorKind: string; authorId: string; text: string; createdAt: string }>);
     const stopped = async (): Promise<boolean> => {
+      // A restart: abandon here, mid-meeting — the minutes are not written
+      // from a half-held meeting; the next boot closes it with a note.
+      if (isDraining()) throw new InterruptedError('shutdown');
       const current = await this.meetings.get(orgId, meetingId);
       if (current.status !== 'running') return true;
       if (!(await this.org.isActive(orgId))) { await this.meetings.cancel(orgId, meetingId, 'system', 'kill switch'); return true; }
@@ -887,15 +896,18 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     };
     emit({ kind: 'typing', on: true });
     let tokensIn = 0; let tokensOut = 0; let answer = ''; let error: string | null = null; let runId: string | null = null;
+    let interrupted = false;
     try {
       for await (const ev of this.turns.run(session.id, { text: prompt, origin: 'loop' })) {
         if (ev.type === 'turn') runId = ev.turnId;
         if (ev.type === 'answer') { answer += ev.text; emit({ kind: 'stream', delta: ev.text }); }
         if (ev.type === 'usage') { tokensIn += ev.inputTokens; tokensOut += ev.outputTokens; }
+        if (ev.type === 'interrupted') interrupted = true;
         if (ev.type === 'error') error = ev.message;
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      if (isDraining()) interrupted = true;
+      else error = err instanceof Error ? err.message : String(err);
     } finally {
       this.active.delete(session.id);
       emit({ kind: 'stream', delta: '', done: true });
@@ -903,6 +915,9 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     }
     const usd = this.runtime.costUsd(input.model, tokensIn, tokensOut);
     await this.runtime.settle(orgId, { agentId, projectId: null }, input.estimate, usd, 'meeting');
+    // Cut short by a restart: post nothing half-said; the meeting is closed
+    // with a note on the next boot.
+    if (interrupted) throw new InterruptedError('shutdown');
     const clean = answer.replace(/\n?QUICK_REPLIES:\s*\[[\s\S]*?\]\s*$/, '').trim();
     const passed = ctx.passed && !ctx.spoke;
     if (!ctx.spoke && !ctx.passed && !input.closing && clean) {
@@ -1323,6 +1338,27 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
 
   /** The runtime's view of a meeting's minutes so far (tests, the API). */
   minutesOf(m: OrgMeeting): Minutes { return parseMinutes(m.minutes); }
+
+  /**
+   * A meeting left `running` by a process that no longer exists (a restart
+   * mid-meeting, docs/architecture.md "Restarts and recovery"): close it
+   * cleanly — cancelled, nobody speaking, a note in its thread, its
+   * sub-channel closed — rather than leaving it "in progress" forever.
+   * Nothing is executed; the minutes are not written from half a meeting.
+   */
+  async closeInterrupted(orgId: string, meetingId: string): Promise<void> {
+    const m = await this.meetings.get(orgId, meetingId);
+    if (m.status !== 'running') return;
+    await this.meetings.patchRoom(orgId, meetingId, (r) => { r.speaking = null; }).catch(() => undefined);
+    const closed = await this.meetings.cancel(orgId, meetingId, 'system', 'interrupted by a server restart');
+    const channels = this.announcer.meetings;
+    if (channels && m.channelId) {
+      await channels.postAs(m.channelId, { authorKind: 'system', text: `The server restarted mid-meeting, so ${m.title} was closed here; nothing was executed. Start it again when you are ready (/meeting).`, threadRootId: replyRootOf(m), wake: false }).catch(() => undefined);
+      if (m.parentChannelId && channels.closeSub) await channels.closeSub(m.channelId, { outcome: 'interrupted by a restart — nothing executed' }).catch(() => undefined);
+    }
+    const org = await this.org.get(orgId).catch(() => null);
+    if (org) this.roomChanged(closed, org.workspaceId, 'cancelled');
+  }
 }
 
 /** "Meeting: <the agenda's first words>" (at most ~60 characters, mentions dropped). */

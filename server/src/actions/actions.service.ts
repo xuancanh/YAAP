@@ -45,7 +45,9 @@ import { TrustService } from './trust.service';
 import type { TrustLevel } from './trust-policy';
 
 export type ActionRow = typeof actionLog.$inferSelect;
-export type ActionStatus = 'started' | 'succeeded' | 'failed' | 'held' | 'staged' | 'refused' | 'denied';
+/** `interrupted`: the call was in flight when the server restarted, so
+ *  whether it took effect is unknown (docs/actions-and-trust.md §2). */
+export type ActionStatus = 'started' | 'succeeded' | 'failed' | 'held' | 'staged' | 'refused' | 'denied' | 'interrupted';
 
 export interface ActionCtx {
   sessionId: string;
@@ -141,12 +143,18 @@ export class ActionsService {
    * What a prior row with the same key means for this call:
    *  - `replay`: it succeeded inside the dedupe window → answer from the record;
    *  - `waiting`: it is held or staged for a key → say so, do nothing;
+   *  - `unknown`: it was in flight when the server restarted → say so once,
+   *    do nothing; the row then reads as failed, so a deliberate retry runs;
    *  - null: act (a failed, refused, denied or stale attempt is retried).
    * Only outward classes deduplicate; an internal write may repeat.
    */
-  async priorOutcome(prior: ActionRow | null, cls: ActionClass): Promise<{ kind: 'replay' | 'waiting'; row: ActionRow } | null> {
+  async priorOutcome(prior: ActionRow | null, cls: ActionClass): Promise<{ kind: 'replay' | 'waiting' | 'unknown'; row: ActionRow } | null> {
     if (!prior || !EXTERNAL_CLASSES.includes(cls)) return null;
     if (prior.status === 'held' || prior.status === 'staged') return { kind: 'waiting', row: prior };
+    if (prior.status === 'interrupted') {
+      await this.db.update(actionLog).set({ status: 'failed', note: `${prior.note ? `${prior.note} ` : ''}The agent was told the outcome is unknown.`.slice(0, 1_000) }).where(eq(actionLog.id, prior.id));
+      return { kind: 'unknown', row: prior };
+    }
     if (prior.status !== 'succeeded' || !prior.finishedAt) return null;
     const org = await this.trust.orgOf(prior.workspaceId);
     const windowMs = actionsTunable(org, 'actions.dedupeWindowMinutes') * 60_000;
@@ -159,6 +167,11 @@ export class ActionsService {
     await this.db.update(actionLog).set({ dedupeCount: row.dedupeCount + 1 }).where(eq(actionLog.id, row.id));
     if (row.agentId && isActionClass(row.class)) await this.trust.record(row.workspaceId, row.agentId, row.class, 'deduplicated', { refType: 'action', refId: row.id });
     return `Deduplicated: this exact call already succeeded at ${(row.finishedAt ?? row.createdAt).slice(0, 16).replace('T', ' ')} UTC (action ${row.id.slice(0, 8)}); nothing was done again. The recorded result follows.\n${row.result}`;
+  }
+
+  /** What the model hears for a call a restart cut off mid-flight. */
+  unknownText(row: ActionRow): string {
+    return `Not run again: this exact ${row.tool} call (action ${row.id.slice(0, 8)}) was in flight when the server restarted at ${(row.finishedAt ?? row.createdAt).slice(0, 16).replace('T', ' ')} UTC, so whether it took effect is unknown. Check first (read back what it would have changed, e.g. the sent folder or the record it writes). Only if it clearly did not happen, call it again; if you cannot tell, tell the owner instead of repeating it.`;
   }
 
   waitingText(row: ActionRow): string {

@@ -355,7 +355,9 @@ export const chatTurns = pgTable('chat_turns', {
   /** JSON array of attachment descriptors (FR-2.2). */
   attachments: text('attachments').notNull().default('[]'),
   model: text('model').notNull().default(''),
-  /** running | done | stopped | error (FR-5.4). */
+  /** running | done | stopped | error (FR-5.4) | interrupted (a server
+   *  restart cut it short — not an agent error; docs/architecture.md
+   *  "Restarts and recovery"). */
   status: text('status').notNull().default('running'),
   /** JSON array of tool calls: { tool, input, result, approved } (FR-6.6). */
   toolCalls: text('toolCalls').notNull().default('[]'),
@@ -379,6 +381,10 @@ export const chatTurns = pgTable('chat_turns', {
   source: text('source').notNull().default(''),
   /** The Work log's Rerun: the run this turn re-runs; null otherwise. */
   rerunOf: text('rerunOf'),
+  /** What the boot after an interruption did with this turn (migration
+   *  0094): pending | resumed | retry | held | none; '' when it was not
+   *  interrupted. */
+  recovery: text('recovery').notNull().default(''),
   createdAt: text('createdAt').notNull(),
 });
 

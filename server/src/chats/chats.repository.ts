@@ -4,7 +4,7 @@
  * the services above it.
  */
 import { Injectable, Inject } from '@nestjs/common';
-import { and, asc, eq, gt, gte, inArray, isNull, isNotNull, lt, notLike, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, inArray, isNull, isNotNull, lt, notLike, or, sql } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import { agentEvents, chatMessages, chatSessions, chatTurns, loopState } from '../database/schema';
@@ -285,6 +285,13 @@ export class ChatsRepository {
     return this.db.select().from(chatTurns)
       .where(eq(chatTurns.sessionId, sessionId))
       .orderBy(asc(chatTurns.seq));
+  }
+
+  /** When the session's newest turn started; null without turns. */
+  async lastTurnAt(sessionId: string): Promise<string | null> {
+    const rows = await this.db.select({ createdAt: chatTurns.createdAt }).from(chatTurns)
+      .where(eq(chatTurns.sessionId, sessionId)).orderBy(desc(chatTurns.seq)).limit(1);
+    return rows[0]?.createdAt ?? null;
   }
 
   async getTurn(id: string): Promise<ChatTurn | undefined> {

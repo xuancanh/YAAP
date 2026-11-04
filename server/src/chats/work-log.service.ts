@@ -20,8 +20,12 @@ import { SettingsService } from '../settings/settings.module';
 
 export const WORK_TRIGGERS = ['heartbeat', 'loop', 'task', 'meeting', 'channel', 'org', 'app', 'other'] as const;
 export type WorkTrigger = (typeof WORK_TRIGGERS)[number];
-export const WORK_OUTCOMES = ['done', 'blocked', 'error', 'stopped', 'running'] as const;
+/** `interrupted`: a server restart cut the run short — not an error
+ *  (docs/work-log.md "Interrupted"); `recovery` says what the boot did. */
+export const WORK_OUTCOMES = ['done', 'blocked', 'error', 'stopped', 'interrupted', 'running'] as const;
 export type WorkOutcome = (typeof WORK_OUTCOMES)[number];
+/** What the boot after a restart did with an interrupted run (chat_turns.recovery). */
+export type WorkRecovery = 'pending' | 'claimed' | 'resumed' | 'retry' | 'held' | 'none';
 
 /** The prompts a meeting round opens with (OrgMeetingRuntimeService.turn):
  *  a meeting shares the channel's working session, so the turn tells them
@@ -71,8 +75,14 @@ export interface WorkRun {
   by: string;
   /** The run this one re-runs (the Work log's Rerun), else null. */
   rerunOf: string | null;
-  /** Failed, stopped or blocked: the Rerun action applies. */
+  /** Failed, stopped, blocked or interrupted: the Rerun action applies. */
   rerunnable: boolean;
+  /** Interrupted runs only (docs/work-log.md "Interrupted"): what the boot
+   *  after the restart did — resumed (re-run; `resumedBy` is the new run),
+   *  retry (left for a person), held (stopped mid-action; check it), none,
+   *  or pending while the recovery has not run yet. */
+  recovery?: WorkRecovery;
+  resumedBy?: string | null;
   createdAt: string;
 }
 export interface WorkRunDetail extends WorkRun {
@@ -94,6 +104,7 @@ interface Row {
   taskKind: 'org' | 'agent' | null; taskId: string | null; taskKey: string | null; taskTitle: string | null; taskStatus?: string | null;
   answer: string | null; thinkingCount: number;
   source: string | null; rerunOf: string | null; by: string | null;
+  recovery?: string | null; resumedBy?: string | null;
 }
 
 const rowsOf = (res: unknown): unknown[] => ((res as { rows?: unknown[] }).rows ?? (Array.isArray(res) ? res : []));
@@ -201,7 +212,8 @@ export class WorkLogService {
       FROM (
         SELECT t."id", t."sessionId", t."seq", LEFT(t."input", 2000) AS "input", t."status", t."error",
           t."tokensIn", t."tokensOut", t."model", s."model" AS "sessionModel", t."toolCalls", t."createdAt",
-          t."source", t."rerunOf",
+          t."source", t."rerunOf", t."recovery",
+          (SELECT t2."id" FROM chat_turns t2 WHERE t2."rerunOf" = t."id" ORDER BY t2."seq" ASC LIMIT 1) AS "resumedBy",
           (SELECT m."authorAccountId" FROM chat_messages m WHERE m."turnId" = t."id" AND m."role" = 'user' ORDER BY m."seq" ASC LIMIT 1) AS "by",
           s."name" AS "sessionName", s."archivedAt",
           CASE
@@ -216,6 +228,7 @@ export class WorkLogService {
           END AS "trigger",
           CASE
             WHEN t."status" = 'running' THEN 'running'
+            WHEN t."status" = 'interrupted' THEN 'interrupted'
             WHEN t."status" = 'error' OR r."status" IN ('failed', 'loop', 'killed') THEN 'error'
             WHEN r."outcome" = 'blocked' OR r."status" IN ('budget_stop', 'refused') THEN 'blocked'
             WHEN t."status" = 'stopped' THEN 'stopped'
@@ -299,7 +312,8 @@ export class WorkLogService {
       archived: !!r.archivedAt,
       source: r.source ?? '', by: r.source === 'person' ? (r.by ?? '') : '', rerunOf: r.rerunOf ?? null,
       // A run whose task has since closed would only be refused: no Rerun then.
-      rerunnable: (r.outcome === 'error' || r.outcome === 'stopped' || r.outcome === 'blocked') && !isClosedTask(r.taskStatus),
+      rerunnable: (r.outcome === 'error' || r.outcome === 'stopped' || r.outcome === 'blocked' || r.outcome === 'interrupted') && !isClosedTask(r.taskStatus),
+      ...(r.outcome === 'interrupted' ? { recovery: (r.recovery || 'none') as WorkRecovery, resumedBy: r.resumedBy ?? null } : {}),
       createdAt: r.createdAt,
     };
   }

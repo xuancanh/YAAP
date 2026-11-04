@@ -77,7 +77,12 @@ channel, inputHash, input, status, decision, level, keys, stagedRef, result,
 resultHash, dedupeCount, revertedAt, note, createdAt, finishedAt`.
 
 Statuses: `started → succeeded | failed`, or `held`, `staged`, `refused`,
-`denied`. `decision` is the trust decision (`run`, `run_notify`, `ask`,
+`denied`, or `interrupted` — the call was in flight when the server
+restarted, so whether it took effect is unknown (set by the boot recovery,
+docs/architecture.md "Restarts and recovery"). The next identical call is
+not executed: the model is told the outcome is unknown and to check first;
+the row then reads `failed`, so a deliberate retry after checking runs.
+A read or an internal write left `started` is simply `failed`. `decision` is the trust decision (`run`, `run_notify`, `ask`,
 `hold`, `stage`, `cosign`, `cosign→stage`, …) or `legacy` when the Ask
 gates decided (§7).
 

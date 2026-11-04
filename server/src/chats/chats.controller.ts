@@ -8,6 +8,7 @@
  */
 import { Body, Controller, Delete, Get, Optional, Param, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
+import { isDraining } from '../common/lifecycle';
 import { AccountsService } from '../accounts/accounts.service';
 import { actorId } from '../accounts/account-context';
 import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
@@ -162,7 +163,9 @@ export class ChatsController {
     // abort the turn through the same path as /stop, otherwise the busy lock
     // and the pending approval resolver leak until restart.
     let finished = false;
-    res.on('close', () => { if (!finished) this.turns.stop(id); });
+    // A restart drops the connection too: then the drain decides (the turn
+    // gets its grace period and is recorded interrupted, not stopped).
+    res.on('close', () => { if (!finished && !isDraining()) this.turns.stop(id); });
     // A dead socket must never crash the process with an unhandled error.
     res.on('error', () => {});
     // SSE keepalive: idle-timeout proxies kill the connection during long
@@ -184,7 +187,7 @@ export class ChatsController {
       clearInterval(keepalive);
       if (!res.writableEnded) res.end();
     }
-    void this.compaction.maybeAutoCompact(id);
+    if (!isDraining()) void this.compaction.maybeAutoCompact(id);
   }
 
   /** Distill this chat's work into the owning agent's brain (FR-11.4). */

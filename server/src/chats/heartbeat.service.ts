@@ -43,6 +43,7 @@ import type { LoopDef } from './loop-def';
 import { effectiveHeartbeat, validateHeartbeatCron, validateHeartbeatDefaults, type HeartbeatTunables } from './heartbeat-config';
 import { FollowsService } from '../follows/follows.service';
 import { taskRef } from '../common/task-keys';
+import { isDraining } from '../common/lifecycle';
 
 /** The loop name every heartbeat run carries ("Loop · heartbeat" session). */
 export const HEARTBEAT_LOOP_NAME = 'heartbeat';
@@ -80,7 +81,7 @@ export interface HeartbeatContext {
   lastRunAt: string | null;
 }
 
-export type BeatStatus = 'ran' | 'empty' | 'disabled' | 'paused' | 'quiet' | 'spend_stop' | 'cap' | 'busy' | 'budget_stop' | 'loops_off';
+export type BeatStatus = 'ran' | 'empty' | 'disabled' | 'paused' | 'quiet' | 'spend_stop' | 'cap' | 'busy' | 'budget_stop' | 'loops_off' | 'interrupted';
 
 export interface BeatResult {
   status: BeatStatus;
@@ -170,6 +171,7 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
   // ---- the tick ----
 
   async tick(now: Date): Promise<void> {
+    if (isDraining()) return; // shutting down: start nothing new
     try {
       if (!this.accounts) await this.tickAccount(now);
       else await this.accounts.forEachAccount(() => this.tickAccount(now));
@@ -193,6 +195,37 @@ export class HeartbeatService implements OnModuleInit, OnModuleDestroy {
       });
     }
     for (const id of [...this.lastBeat.keys()]) if (!live.has(id)) this.lastBeat.delete(id);
+  }
+
+  /**
+   * After a restart (docs/architecture.md "Restarts and recovery"): a beat
+   * that fell due while the server was down runs once now — not once per
+   * missed minute. "Due" is the `nextDueAt` the last beat recorded, in the
+   * past by more than a minute (the tick owns the current minute) and no
+   * older than `lookbackMs`. `skip` holds agents the recovery already
+   * re-ran. Returns the agents beaten.
+   */
+  async catchUp(now: Date, opts: { lookbackMs: number; skip?: Set<string> }): Promise<string[]> {
+    if (!this.loopsEnabled() || isDraining()) return [];
+    const beaten: string[] = [];
+    const pass = async () => {
+      const stamp = now.toISOString().slice(0, 16);
+      for (const agent of await this.agents.list()) {
+        if (!agent.heartbeatEnabled || opts.skip?.has(agent.id)) continue;
+        const st = await this.state(agent.id).catch(() => undefined);
+        const due = st?.nextDueAt ? Date.parse(st.nextDueAt) : NaN;
+        if (!Number.isFinite(due) || due > now.getTime() - 60_000 || due < now.getTime() - opts.lookbackMs) continue;
+        if (st?.lastBeatAt && Date.parse(st.lastBeatAt) >= due) continue;
+        if (this.lastBeat.get(agent.id) === stamp) continue;
+        this.lastBeat.set(agent.id, stamp);
+        const r = await this.beat(agent.id, now).catch((err: unknown) => { this.logger.warn(`catch-up heartbeat for ${agent.name} failed: ${err instanceof Error ? err.message : err}`); return null; });
+        if (r) beaten.push(agent.id);
+      }
+    };
+    if (!this.accounts) await pass();
+    else await this.accounts.forEachAccount(pass);
+    if (beaten.length > 0) this.logger.log(`caught up ${beaten.length} heartbeat(s) that fell due while the server was down`);
+    return beaten;
   }
 
   /** The agent's own workspace (execution-plan item 26); the account's

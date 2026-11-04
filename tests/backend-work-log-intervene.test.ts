@@ -232,7 +232,7 @@ test('rerun: only failed or stopped runs; the default re-sends the input in the 
   assert.equal(done, 0);
   await drain(s.turns.run(chan.id, { text: '@Jong look at the numbers', origin: 'user' }));
   const ok = (await s.repo.listTurns(chan.id))[0];
-  await assert.rejects(s.wl.rerun(s.agent.id, ok.id), /only a failed or stopped run/);
+  await assert.rejects(s.wl.rerun(s.agent.id, ok.id), /only a failed, stopped or interrupted run/);
   await s.db.update(chatTurns).set({ status: 'stopped' }).where(eq(chatTurns.id, ok.id));
   const res = await s.wl.rerun(s.agent.id, ok.id);
   assert.equal(res.started, true);

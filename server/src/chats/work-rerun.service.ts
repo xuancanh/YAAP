@@ -30,7 +30,7 @@ import { TurnLoopService, type TurnOrigin, type TurnSource } from './turn-loop.s
 import { WorkLogService, type WorkOutcome, type WorkRunDetail, type WorkTrigger } from './work-log.service';
 
 /** The outcomes a run can be rerun from. */
-export const RERUNNABLE: readonly WorkOutcome[] = ['error', 'stopped', 'blocked'];
+export const RERUNNABLE: readonly WorkOutcome[] = ['error', 'stopped', 'blocked', 'interrupted'];
 /** How long the request waits for the new turn to start before answering. */
 const START_WAIT_MS = 8_000;
 
@@ -75,7 +75,7 @@ export class WorkRerunService {
 
   async rerun(agentId: string, turnId: string): Promise<RerunResult> {
     const run = await this.log.run(agentId, turnId); // 404 for a run the caller cannot see
-    if (!RERUNNABLE.includes(run.outcome)) throw new BadRequestException(`only a failed or stopped run can be rerun (this one is ${run.outcome})`);
+    if (!RERUNNABLE.includes(run.outcome)) throw new BadRequestException(`only a failed, stopped or interrupted run can be rerun (this one is ${run.outcome})`);
     const session = await this.chats.get(run.sessionId); // 404 for a session the caller may not open
     if (this.inFlight.has(session.id)) throw new ConflictException('a rerun of this session is already running');
     if (this.turns.isBusy(session.id)) throw new ConflictException('this session is running a turn now: stop it or wait for it to end');

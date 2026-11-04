@@ -185,10 +185,29 @@ Eng*), *Mini app · Jong*. A chip filters to that group; *All* clears it.
 | `org` | other `Org · …`, red-team and eval sessions | the session name |
 | `app` | `App · …` | the session name |
 
-**Outcome.** `running`; `error` (the turn errored, or its org run failed,
-looped or was killed); `blocked` (its org run ended blocked, a budget stop,
-or was refused); `stopped`; else `done`. A task run's outcome and cost come
+**Outcome.** `running`; `interrupted` (a server restart cut it short — see
+below); `error` (the turn errored, or its org run failed, looped or was
+killed); `blocked` (its org run ended blocked, a budget stop, or was
+refused); `stopped`; else `done`. A task run's outcome and cost come
 from the `org_runs` row that ran it (the latest started before the turn).
+
+### Interrupted
+
+A run a server restart cut short is **interrupted**, not an error
+([architecture.md](architecture.md#restarts-and-recovery)): a grey dot, no
+red text, and it never counts as a failing agent, a loop error, a breaker or
+a *Run failed* in the Inbox. The row reads what the boot after did with it
+(`recovery` on the run, `resumedBy` the run that resumed it):
+
+- **Interrupted by a restart · resumed** — a heartbeat, loop or task run,
+  re-run once by its trigger; the detail links *the resumed run*, which
+  reads *rerun*;
+- **Interrupted by a restart · retry** — a person's chat (never re-sent on
+  its own: the chat shows the same line with **Retry**), or a run left to
+  its own schedule; **Rerun** applies;
+- **Interrupted by a restart mid-action · check it** — it stopped inside an
+  outward call whose outcome nobody knows, so it was not replayed: the owner
+  is told, an org task is blocked on the CEO until someone checks.
 
 **Cost.** The org run's settled USD when there is one, else the model's list
 price for the turn's tokens (Settings › Usage overrides apply); blank for a
@@ -286,8 +305,9 @@ trigger chip and **Open in Work log** ([§2](#a-work-session-in-the-chat-view)).
 Deep link: `#/chat/<id>` (or `#/chat/<id>/chat`); `#/chat/<id>/log` opens
 the Work log.
 
-**Rerun.** A failed, stopped or blocked run — failed for a reason fixed since
-(a provider 400, an outage, a budget or tool-round limit raised) — has
+**Rerun.** A failed, stopped, blocked or interrupted run — failed for a
+reason fixed since (a provider 400, an outage, a budget or tool-round limit
+raised), or cut short by a restart — has
 **Rerun**: the same trigger again, in the same work session.
 
 | Trigger | Rerun |

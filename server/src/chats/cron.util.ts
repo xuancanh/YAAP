@@ -40,3 +40,16 @@ export function cronMatches(expr: string, date: Date): boolean {
     matchField(dow, date.getDay())
   );
 }
+
+/** The latest minute in (`after`, `before`] matching `expr`, scanning back
+ *  minute by minute; null when none does (or the expression never matches).
+ *  Restart catch-up (docs/architecture.md "Restarts and recovery"). */
+export function prevCronMatch(expr: string, before: Date, after: Date): Date | null {
+  const start = Math.floor(before.getTime() / 60_000) * 60_000;
+  const stop = after.getTime();
+  for (let t = start; t > stop; t -= 60_000) {
+    const d = new Date(t);
+    if (cronMatches(expr, d)) return d;
+  }
+  return null;
+}

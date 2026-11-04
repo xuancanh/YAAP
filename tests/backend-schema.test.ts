@@ -22,7 +22,7 @@ test('migrations run and are idempotent', async () => {
   await pg.close();
 });
 
-test('boot reaps orphaned running turns left by a crash mid-turn', async () => {
+test('boot marks turns left running by a dead process interrupted, pending recovery', async () => {
   const pg = new PGlite();
   const q = pgliteQueryable(pg);
   await runPgMigrations(q, silent);
@@ -35,10 +35,37 @@ test('boot reaps orphaned running turns left by a crash mid-turn', async () => {
 
   await runPgMigrations(q, silent); // reboot: the repair sweep runs again
 
-  const res = await q.query(`SELECT "id", "status" FROM chat_turns ORDER BY "seq"`);
+  const res = await q.query(`SELECT "id", "status", "recovery" FROM chat_turns ORDER BY "seq"`);
   assert.deepEqual(res.rows, [
-    { id: 't1', status: 'error' }, // orphaned turn reaped
-    { id: 't2', status: 'done' }, // finalized turns untouched
+    // a restart or a crash interrupted it — not an agent error; pending recovery
+    { id: 't1', status: 'interrupted', recovery: 'pending' },
+    { id: 't2', status: 'done', recovery: '' }, // finalized turns untouched
   ]);
+  await pg.close();
+});
+
+test('0094: turns a restart recorded as errors (the abort message, or the old sweep\'s blank) become interrupted; their loop_errors are read', async () => {
+  const pg = new PGlite();
+  const q = pgliteQueryable(pg);
+  await runPgMigrations(q, silent);
+  await q.query(`INSERT INTO chat_sessions ("id", "workspaceId", "createdAt", "updatedAt") VALUES ('s1', 'ws1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`);
+  await q.query(`INSERT INTO chat_turns ("id", "sessionId", "seq", "input", "status", "error", "createdAt") VALUES
+    ('t1', 's1', 0, 'a', 'error', 'This operation was aborted', '2026-01-01T00:00:00Z'),
+    ('t2', 's1', 1, 'b', 'error', NULL, '2026-01-01T00:00:00Z'),
+    ('t3', 's1', 2, 'c', 'error', 'anthropic 401: invalid x-api-key', '2026-01-01T00:00:00Z')`);
+  await q.query(`INSERT INTO agent_events ("id", "agentId", "kind", "title", "body", "createdAt") VALUES
+    ('e1', 'a1', 'loop_error', 'Loop failed', 'This operation was aborted', '2026-01-01T00:00:00Z'),
+    ('e2', 'a1', 'loop_error', 'Loop failed', 'anthropic 429', '2026-01-01T00:00:00Z')`);
+  await q.query(`DELETE FROM __migrations WHERE "id" = '0094-turn-recovery'`);
+  await runPgMigrations(q, silent); // 0094 again (idempotent), as on the first boot after the upgrade
+
+  const turns = await q.query(`SELECT "id", "status", "recovery" FROM chat_turns ORDER BY "seq"`);
+  assert.deepEqual(turns.rows, [
+    { id: 't1', status: 'interrupted', recovery: 'none' },
+    { id: 't2', status: 'interrupted', recovery: 'none' },
+    { id: 't3', status: 'error', recovery: '' }, // a real failure stays one
+  ]);
+  const events = await q.query(`SELECT "id", "readAt" IS NOT NULL AS "read" FROM agent_events ORDER BY "id"`);
+  assert.deepEqual(events.rows, [{ id: 'e1', read: true }, { id: 'e2', read: false }]);
   await pg.close();
 });

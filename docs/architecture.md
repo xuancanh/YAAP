@@ -436,7 +436,9 @@ transcript is never rewritten.
 - Breakers: same-call loop, no-progress backoff, provider degradation,
   incident freezes, per-channel rate limits.
 - `stop()` aborts the per-chat `AbortController`; the turn settles as
-  `stopped`.
+  `stopped` — even when the provider throws "This operation was aborted".
+  A restart's abort settles `interrupted` instead ([Restarts and
+  recovery](#restarts-and-recovery)).
 
 ### What a turn writes
 
@@ -446,6 +448,94 @@ transcript is never rewritten.
 `workspaces.spendTokens`, `account_usage`, `action_log` for every non-read
 call, `trust_records` on a co-sign deny or a replay, and `agent_events` for
 queued, refused, held or routed calls.
+
+### Restarts and recovery
+
+A restart — `npm run dev` recompiling, a deploy, Ctrl-C — is not an agent
+error, and nothing it cuts short counts as one
+(`server/src/common/lifecycle.ts`).
+
+**The interruption model.** Three aborts are told apart by the reason the
+turn's `AbortController` carries: the owner's **Stop** (`stopped`), a
+**restart** (`interrupted`, with `error` = "Interrupted by a server restart"),
+and everything else — a provider timeout, a 4xx, a crash in a tool — which
+stays `error`. Before, the provider's "This operation was aborted" landed in
+the generic catch and was recorded `error`, the loop that ran it wrote an
+unread `loop_error`, and the boot sweep reaped turns left `running` to
+`error` too: every restart showed agents "failing". An interrupted turn
+yields `{ type: 'interrupted' }` instead of `error`, so loops write no
+`loop_error`, org runs end `interrupted` (no breaker, no no-progress count,
+no circular signature, no `run_failed`), provider health records nothing,
+and Home, the agent page and the top bar's failing count never see it.
+`chat_turns.recovery` (migration 0094) says what the next boot did with it:
+`pending` → `resumed` | `retry` | `held` | `none`. Migration 0094 also turns
+the old restart "errors" (the abort message, or the blank the old sweep
+left) into `interrupted` and marks their `loop_error`s read.
+
+**Shutdown.** On SIGTERM/SIGINT the process *drains*: the heartbeat, loop,
+org and meeting schedulers stop starting runs, queued org wakes are dropped,
+and the turn loop refuses new turns (`503`). Turns in flight get
+`SHUTDOWN_GRACE_MS` (default 3 s, 0–60 s) to finish the provider stream or
+tool call they are in — a turn that finishes is simply `done`, and its chat
+stream stays open through the grace period so the reply still arrives. The
+rest are aborted with the `shutdown` reason, recorded `interrupted`
+(`TurnLoopService.drain`, bounded so the pool is still open), and a meeting
+mid-round abandons rather than writing minutes from half a meeting. The
+hard exit waits for the grace period plus 8 s.
+
+**Boot recovery** (`chats/restart-recovery.service.ts`, the org part in
+`org/org-recovery.service.ts`). Single-process by design: at boot, nothing
+"in flight" belongs to a live run. The migrator marks turns still `running`
+interrupted; then, before the app listens, per account:
+
+| Left behind | Recovered |
+|---|---|
+| a turn `running` or drained `interrupted` | claimed once (`recovery` pending → claimed) and decided below |
+| an org run still `running` | ended `interrupted`, so the one-run-per-task guard stops skipping the task as busy |
+| a task claim | released — in progress stays in progress, claimed goes back to todo |
+| a budget reservation | released (only runs in flight hold one; a leaked one cut the envelope's headroom until the month turned), with a `spend_release` audit row |
+| a meeting `running` | cancelled with a note in its thread, its sub-channel closed; nothing executed |
+| an action-log row `started` | `failed` for a read or an internal write (harmless to repeat); `interrupted` for an outward call — its outcome is unknown |
+| an `approval_request` | expired (its turn, which held the resolver in memory, is gone) |
+| chat locks, the live-turn registry, turn watches | in memory: gone with the process |
+
+**What is re-run, a few seconds later.** A heartbeat, loop or task run is
+re-run once by its trigger through the Work log's Rerun (the new turn's
+`rerunOf` points at the interrupted one; the heartbeat gate, the loop's
+budget, the task's claim and reservation all apply again) — `resumed`. An
+org run that died before its turn began is re-queued for its assignee, once.
+A person's chat is never re-sent on its own: it shows **Interrupted by a
+restart · Retry** — `retry`. A background run stopped in the middle of an
+outward call (`external_*` or `money`) is **not** replayed: the owner gets a
+message to check whether it went through, an org task is blocked on the CEO
+— `held`; and a later identical call is told the outcome is unknown instead
+of executing (`ActionsService.priorOutcome` → `unknown`, once). Channel
+wakes, meeting rounds and org reviews are left to their own schedules —
+`none`. Then a heartbeat or a cron loop that fell due while the server was
+down runs once, not once per missed tick (`catchUp`, within
+`RECOVERY_CATCHUP_HOURS`, default 24). `RECOVERY_ON_BOOT=false` turns the
+recovery off.
+
+**Transient errors.** A provider request is retried before it streams
+(`ai/provider-retry.ts`: 429, 5xx, network); a round that fails *mid-stream*
+on a transient error (a reset connection, `overloaded`, a 5xx stream error)
+is re-asked up to twice per turn — nothing of it was persisted, and the
+client drops what it streamed on the `retry` event. The first database
+connection is retried for `DB_CONNECT_RETRY_MS` (30 s) while Postgres
+starts. In the SPA, reads retry for about 20 s while the API is down (a
+refused connection, the dev proxy's empty 500, a 502–504) instead of
+rendering an empty screen; the workspace event stream reconnects within
+seconds and re-reads sessions, channels, agents and the open transcript; a
+message sent while the server restarts goes out once it is back; a chat
+whose stream was cut by a restart never stays "working".
+
+**The dev loop** (`scripts/dev.mjs`). The server restarts once per finished
+compile (not on every emitted file, as `node --watch` did), after a
+graceful drain; a crash waits for the next compile (or `rs`); compile errors
+get a banner; and a watchdog restarts `tsc --watch` when a real source
+change (by content hash) has gone uncompiled for 15 s — the watcher can lose
+a file's watch when it is replaced by rename, and `server/dist` then
+silently stops updating.
 
 ## 5. The autonomy engine
 
