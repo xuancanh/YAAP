@@ -2562,7 +2562,7 @@ export const contextProvenance = pgTable('context_provenance', {
 
 /**
  * A plugin's or kit's contribution beyond tools (docs/plugins.md §3.8,
- * migration 0089): a guidance note or a declarative UI element (card, panel,
+ * migration 0090): a guidance note or a declarative UI element (card, panel,
  * page, action, badge). Written by the registrar as an effect of the
  * install, removed on disable or uninstall and restored on enable.
  */

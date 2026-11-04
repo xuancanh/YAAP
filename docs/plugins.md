@@ -849,7 +849,7 @@ schema-rendered UI covers the extension points above without a second
 runtime, so the manifest's `panels` (sealed HTML) stay deferred.
 
 **Lifecycle.** Contribution rows live in `plugin_contributions`
-(migration 0089) and each is an effect with its inverse: disable removes
+(migration 0090) and each is an effect with its inverse: disable removes
 them, enable restores them exactly, an update unwinds the old version's
 and registers the new version's, uninstall leaves none (a test over the
 table). The permission diff (§6.5) treats a new or changed skill or
@@ -2371,7 +2371,7 @@ specs, audiences, the guidance block, view rendering), `plugins.service.ts`
 guidance block, the people hook, the card appliers); the SPA's
 `src/components/PluginUi.tsx` (cards, pages, panels, actions) mounted in
 `CompanyDashboards.tsx` and the task drawer. Migration
-`0089-plugin-contributions-kits`. Tests: `tests/backend-plugin-contributions.test.ts`,
+`0090-plugin-contributions-kits`. Tests: `tests/backend-plugin-contributions.test.ts`,
 `tests/backend-org-foundry.test.ts`, `web-tests/plugin-ui.test.tsx`,
 `web-tests/foundry.test.tsx`.
 

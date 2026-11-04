@@ -1690,7 +1690,7 @@ install, upgrade, rollback, uninstall, the shelf), `foundry.controller.ts`;
 `server/src/org/org-foundry.tools.ts` (the chief's tools, the seats, the
 card appliers); `kits/first-party/<kit>/` (the kits); the SPA's Kits shelf
 and kit page in `src/components/FoundryBits.tsx`. Migration
-`0089-plugin-contributions-kits` (`kit_installs`, `kit_members`,
+`0090-plugin-contributions-kits` (`kit_installs`, `kit_members`,
 `kit_revisions`). Tests: `tests/backend-plugin-contributions.test.ts`,
 `tests/backend-org-foundry.test.ts`, `web-tests/foundry.test.tsx`.
 
