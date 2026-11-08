@@ -59,7 +59,8 @@ const apiMock = {
   orgHumans: vi.fn(async () => ({ me: { role: 'ceo' } })),
   orgProcesses: vi.fn(async () => ({ processes: [proc], runs: [detail.runs[0]], suggestions: [suggestion] })),
   orgProcess: vi.fn(async (_ws: string, id: string) => (id === 'p2' ? later : detail)),
-  orgProcessTemplates: vi.fn(async () => []),
+  orgProcessTemplates: vi.fn(async () => [{ id: 'release-checklist', title: 'Release checklist', summary: 'Ship a release safely.', category: 'delivery', mode: 'strict', triggers: 'by hand', steps: 3, def: detail.def }]),
+  createOrgProcess: vi.fn(async () => ({ ...detail, process: { ...proc, id: 'p9' } })),
   rollbackOrgProcess: vi.fn(async () => detail),
   rolloutOrgProcess: vi.fn(async () => detail),
   decideProcessSuggestion: vi.fn(async () => ({ ...suggestion, status: 'accepted' })),
@@ -71,82 +72,135 @@ const org = { workspaceId: 'ws1', members: [] } as unknown as OrgDetail;
 
 beforeEach(() => {
   for (const k of Object.keys(fake)) delete fake[k];
-  Object.assign(fake, { agents: [{ id: 'a1', name: 'Writer', colors: ['#000', '#111'], emoji: 'W' }], wsOrg: { units: [] }, routeProcess: null, setRouteProcess: vi.fn((id: string | null) => { fake.routeProcess = id; }), showToast: vi.fn(), openOrgTask: vi.fn() });
+  Object.assign(fake, { agents: [{ id: 'a1', name: 'Writer', colors: ['#000', '#111'], emoji: 'W' }], wsOrg: { units: [] }, routeProcess: null, setRouteProcess: vi.fn((id: string | null) => { fake.routeProcess = id; }), showToast: vi.fn(), openOrgTask: vi.fn(), go: vi.fn(), setInboxFilter: vi.fn() });
 });
 
+/** Answer an inline "why?" form and confirm it. */
+function answer(reason: string, confirm: string | RegExp) {
+  const form = screen.getByTestId('reason-form');
+  fireEvent.change(within(form).getByLabelText('Reason'), { target: { value: reason } });
+  fireEvent.click(within(form).getByRole('button', { name: confirm }));
+}
+
 describe('the Processes pane', () => {
-  it('lists processes with mode, owner, runs and health, and the open runs', async () => {
+  it('leads with what needs attention, lists processes by department with owner, runs and health, and the open runs', async () => {
     render(<ProcessesPane org={org} />);
     await waitFor(() => expect(screen.getByTestId('process-list')).toHaveTextContent('Release checklist'));
     const row = screen.getByTestId('process-row');
-    expect(row).toHaveTextContent('Strict · delivery · Engineering · Writer · by hand · 4 runs, 100% completed, cycle 5.0h');
+    expect(row).toHaveTextContent('Strict · starts by hand · 100% of runs complete, median 5.0h');
+    expect(row).toHaveTextContent('Writer');
+    expect(row).toHaveTextContent('1 open · 4 runs');
     expect(row).toHaveTextContent('Needs revising');
     expect(row).toHaveTextContent('review due');
     expect(screen.getByTestId('process-counts')).toHaveTextContent('1need revising');
-    expect(screen.getByText(/PR-4 · Release v2\.3/)).toBeInTheDocument();
+    expect(screen.getByTestId('process-attention')).toHaveTextContent('Release checklist: needs revising');
+    expect(screen.getByTestId('process-open-runs')).toHaveTextContent('PR-4Release v2.3');
     fireEvent.click(row);
     expect(fake.setRouteProcess).toHaveBeenCalledWith('p1');
   });
 
-  it('a process page: the graph in the engine\'s order, the runs with step states, versions with the diff and a rollback', async () => {
+  it('the library is a dialog of templates; picking one previews its graph, and adding it opens the new process', async () => {
+    render(<ProcessesPane org={org} />);
+    await waitFor(() => expect(screen.getByTestId('process-list')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Add from library/ }));
+    const dialog = await screen.findByTestId('process-library-dialog');
+    await waitFor(() => expect(within(dialog).getByTestId('process-template')).toHaveTextContent('Release checklist'));
+    expect(within(dialog).getByTestId('process-template')).toHaveTextContent('added');
+    fireEvent.click(within(dialog).getByTestId('process-template'));
+    expect(within(dialog).getByTestId('process-template-graph')).toHaveTextContent('List the changes');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add another copy' }));
+    await waitFor(() => expect(apiMock.createOrgProcess).toHaveBeenCalledWith('ws1', { template: 'release-checklist', unitId: null, reason: 'added from the library by the CEO' }));
+    await waitFor(() => expect(fake.setRouteProcess).toHaveBeenCalledWith('p9'));
+  });
+
+  it('a process page: the graph in lanes with the open run laid over it, the run as a step timeline, versions with the diff and a rollback', async () => {
     fake.routeProcess = 'p1';
     render(<ProcessesPane org={org} />);
     await waitFor(() => expect(screen.getByTestId('process-page')).toBeInTheDocument());
+    const graph = screen.getByTestId('process-graph');
+    expect(graph).toHaveTextContent('Owner');
+    expect(graph).toHaveTextContent("Owner's manager");
     const steps = screen.getAllByTestId('process-step').map((s) => s.textContent ?? '');
-    expect(steps[0]).toMatch(/List the changes/);
-    expect(steps[1]).toMatch(/CI green.*deviated 67%.*after List the changes/);
-    expect(steps[2]).toMatch(/Go \/ no-go.*Approval.*asks the manager/);
+    expect(steps[0]).toMatch(/List the changes.*1 MUST.*Done · Writer/);
+    expect(steps[1]).toMatch(/CI green.*deviated 67%.*In progress/);
+    expect(steps[2]).toMatch(/Approval.*Go \/ no-go.*Asks the owner's manager/);
+    expect(screen.getByTestId('process-run-banner')).toHaveTextContent('PR-4 · Release v2.3');
+    expect(screen.getByTestId('process-run-banner')).toHaveTextContent('1/3 steps');
+    // a step opens its detail, with what the run did there
+    fireEvent.click(screen.getAllByTestId('process-step')[1]);
+    expect(screen.getByTestId('process-step-detail')).toHaveTextContent('On the release commit');
+    expect(screen.getByTestId('process-step-detail')).toHaveTextContent('In PR-4');
+    // the definition only
+    fireEvent.change(screen.getByTestId('process-overlay-select'), { target: { value: '' } });
+    expect(screen.queryByTestId('process-run-banner')).toBeNull();
+    expect(screen.getAllByTestId('process-step')[0].textContent).not.toMatch(/Done/);
     expect(screen.getByTestId('process-metrics')).toHaveTextContent('50%steps deviated');
     const runs = screen.getByTestId('process-runs');
-    expect(runs).toHaveTextContent('ENG-8');
-    expect(runs).toHaveTextContent('1 deviation');
+    expect(runs).toHaveTextContent('Now: CI green (Writer)');
+    expect(runs).toHaveTextContent('SHOULD skipped (s2): r');
+    expect(runs).toHaveTextContent('Go / no-go');
     fireEvent.click(within(runs).getByText('ENG-8'));
     expect(fake.openOrgTask).toHaveBeenCalledWith('t2');
     const versions = screen.getByTestId('process-versions');
-    expect(versions).toHaveTextContent('v3 · security scan added');
+    expect(versions).toHaveTextContent('v3security scan added');
     expect(versions).toHaveTextContent('by Writer');
-    fireEvent.click(within(versions).getByText(/v2 · instantiated/));
-    vi.spyOn(window, 'prompt').mockReturnValue('v3 blocks every release');
+    fireEvent.click(within(versions).getByText(/instantiated/));
     fireEvent.click(screen.getByText('Roll back to v2'));
+    answer('v3 blocks every release', 'Roll back to v2');
     await waitFor(() => expect(apiMock.rollbackOrgProcess).toHaveBeenCalledWith('ws1', 'p1', { version: 2, reason: 'v3 blocks every release' }));
   });
 
   it('lists the processes suggested from repeated work; the CEO creates one from its draft', async () => {
     render(<ProcessesPane org={org} />);
-    await waitFor(() => expect(screen.getByTestId('process-suggestions')).toHaveTextContent('Draft process: Weekly report'));
+    await waitFor(() => expect(screen.getByTestId('process-suggestions')).toHaveTextContent('Weekly report'));
     const box = screen.getByTestId('process-suggestions');
     expect(box).toHaveTextContent('Recurring work · seen 4× · for Writer');
-    fireEvent.click(within(box).getByText('Draft process: Weekly report'));
-    expect(box).toHaveTextContent('Drafted steps: Weekly report (Editor)');
+    fireEvent.click(within(box).getByText('Weekly report'));
+    expect(box).toHaveTextContent('Drafted steps');
+    expect(box).toHaveTextContent('Weekly report · Editor');
+    fireEvent.click(within(box).getByText('ENG-3'));
+    expect(fake.openOrgTask).toHaveBeenCalledWith('ENG-3');
     fireEvent.click(within(box).getByText('Create from the draft'));
     await waitFor(() => expect(apiMock.decideProcessSuggestion).toHaveBeenCalledWith('ws1', 'sg1', { action: 'accept', reason: 'created from the draft by the CEO' }));
   });
 
-  it('a meeting step and the compensations in the graph, the ramp\'s comparison with promote / roll back, conformance on its own tab, a revision suggestion', async () => {
+  it('dismissing a suggestion asks why inline', async () => {
+    render(<ProcessesPane org={org} />);
+    await waitFor(() => expect(screen.getByTestId('process-suggestions')).toBeInTheDocument());
+    const box = screen.getByTestId('process-suggestions');
+    fireEvent.click(within(box).getByText('Weekly report'));
+    fireEvent.click(within(box).getByText('Dismiss'));
+    answer('a one-off', 'Dismiss');
+    await waitFor(() => expect(apiMock.decideProcessSuggestion).toHaveBeenCalledWith('ws1', 'sg1', { action: 'dismiss', reason: 'a one-off' }));
+  });
+
+  it('a meeting step and the undo steps in the graph, the ramp\'s comparison with promote / roll back, conformance on its own tab, a revision suggestion', async () => {
     fake.routeProcess = 'p2';
     render(<ProcessesPane org={org} />);
     await waitFor(() => expect(screen.getByTestId('process-page')).toBeInTheDocument());
     const steps = screen.getAllByTestId('process-step').map((s) => s.textContent ?? '');
     expect(steps).toHaveLength(2);
-    expect(steps[0]).toMatch(/Deploy.*undone by Roll the deploy back if the run fails/);
-    expect(steps[1]).toMatch(/Sync on the release.*Meeting.*holds a planning meeting with the owner, Editor/);
-    expect(screen.getByTestId('process-compensation')).toHaveTextContent('Roll the deploy backUndoundoes Deploy · lane: owner · 1 MUST');
+    expect(steps[0]).toMatch(/Deploy.*Undoable/);
+    expect(steps[1]).toMatch(/Meeting.*Sync on the release.*Holds a planning meeting with the owner, Editor/);
+    expect(screen.getByTestId('process-compensation')).toHaveTextContent('DeployRoll the deploy backOwner · 1 MUST');
     expect(screen.getByTestId('process-runs')).toHaveTextContent('undoing');
     const ramp = screen.getByTestId('process-rollout');
-    expect(ramp).toHaveTextContent('Ramp: v4 on 25% of new runs');
+    expect(ramp).toHaveTextContent('Trying v4 on 25% of new runs');
     expect(ramp).toHaveTextContent('Worse — roll back');
     expect(ramp).toHaveTextContent('Steps deviated10%60% · worse');
-    expect(screen.getByTestId('process-suggestion')).toHaveTextContent('Revise process: Release checklist — step "CI green"');
+    expect(screen.getByTestId('process-attention')).toHaveTextContent('Suggested revision: step "CI green"');
     expect(screen.queryByTestId('process-conformance')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: 'Conformance' }));
     const c = screen.getByTestId('process-conformance');
     expect(c).toHaveTextContent('62% of steps followed the definition');
     expect(c).toHaveTextContent('2/4runs fully followed');
-    expect(c).toHaveTextContent('1out of order');
-    expect(c).toHaveTextContent('Deploy4 runs · 1 waived · 2 SHOULD skipped · 1 out of order25% followed');
+    expect(c).toHaveTextContent('1 out of order');
+    expect(c).toHaveTextContent('Deploy');
+    expect(c).toHaveTextContent('25% followed');
+    expect(c).toHaveTextContent('4 runs · 1 waived · 2 SHOULD skipped · 1 out of order');
     expect(screen.queryByTestId('process-metrics')).toBeNull();
-    vi.spyOn(window, 'prompt').mockReturnValue('deviations doubled');
     fireEvent.click(within(ramp).getByText('Roll back'));
+    answer('deviations doubled', 'Roll back');
     await waitFor(() => expect(apiMock.rolloutOrgProcess).toHaveBeenCalledWith('ws1', 'p1', { action: 'rollback', reason: 'deviations doubled' }));
   });
 });

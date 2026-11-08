@@ -2000,7 +2000,7 @@ export interface OrgProcessDetail {
   events: Array<{ id: string; runId: string; nodeId: string; activity: string; actor: string; detail: Record<string, unknown>; at: string }>;
   rollout?: ProcessRollout | null; suggestions?: ProcessSuggestion[];
 }
-export interface ProcessTemplate { id: string; title: string; summary: string; category: string; mode: string; triggers: string; steps: number }
+export interface ProcessTemplate { id: string; title: string; summary: string; category: string; mode: string; triggers: string; steps: number; /** The definition, for a preview (absent from older servers). */ def?: ProcessDef }
 
 export interface OrgIncident {
   id: string; orgId: string; workspaceId: string; kind: string; severity: IncidentSeverity; status: IncidentStatus; title: string; detail: string;

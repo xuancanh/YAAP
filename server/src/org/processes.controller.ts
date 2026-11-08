@@ -98,7 +98,7 @@ export class ProcessesController {
 
   @Get('templates') async templates(@Param('id') id: string) {
     await this.oid(id);
-    return PROCESS_TEMPLATES.map((t) => ({ id: t.id, title: t.def.title, summary: t.summary, category: t.def.category, mode: modeOf(t.def), triggers: describeTriggers(t.def.triggers), steps: t.def.nodes.length }));
+    return PROCESS_TEMPLATES.map((t) => ({ id: t.id, title: t.def.title, summary: t.summary, category: t.def.category, mode: modeOf(t.def), triggers: describeTriggers(t.def.triggers), steps: t.def.nodes.length, def: t.def }));
   }
 
   @Get(':pid') async detail(@Param('id') id: string, @Param('pid') pid: string) {

@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { navOf, parseRoute, placeOf, routeHref, type NavState } from '../src/lib/routes';
 import { sectionDef, sectionOfPane } from '../src/lib/company-nav';
-import { authorWords, availabilityWords, cohortRows, compensationsOf, edgeWords, hrs, layoutStage, meetingWords, pct, processSummary, triggerWords } from '../src/lib/processes';
+import { authorWords, availabilityWords, cohortRows, compensationsOf, conditionWords, edgeWords, hrs, laneTitle, layoutStage, meetingWords, pct, processAttention, processCardRows, processSummary, runProgress, runStates, stageLayout, triggerWords, varsOf } from '../src/lib/processes';
 import type { OrgProcess, ProcessDef, ProcessRollout } from '../src/lib/api';
 
 const def: ProcessDef = {
@@ -54,7 +54,7 @@ describe('the graph in words', () => {
     expect(availabilityWords(def, def.nodes[5])).toBe('Available when "Set up" is done and users is known');
   });
   it('words for triggers, authors, numbers and the summary', () => {
-    expect(triggerWords(def.triggers)).toBe('by hand · when an incident opens (major or worse) · on a schedule (0 9 * * 1) (off)');
+    expect(triggerWords(def.triggers)).toBe('by hand · when an incident opens (major or worse) · Mondays at 09:00 (off)');
     expect(authorWords('agent:a1', (id) => (id === 'a1' ? 'Writer' : undefined))).toBe('Writer');
     expect(authorWords('approval:x', () => undefined)).toBe('an approved card');
     expect(authorWords('system', () => undefined)).toBe('the template library');
@@ -77,5 +77,47 @@ describe('the graph in words', () => {
     expect(compensationsOf(saga).map((x) => `${x.comp.title} ← ${x.undoes.map((u) => u.title).join(',')}`)).toEqual(['Delete the draft ← Draft']);
     const r = { rows: [{ metric: 'completion', stable: 1, candidate: 0.5, worse: true }, { metric: 'cycle', stable: 2, candidate: 3, worse: false }] } as unknown as ProcessRollout;
     expect(cohortRows(r)).toEqual([{ label: 'Completed', stable: '100%', candidate: '50%', worse: true }, { label: 'Cycle time (median)', stable: '2.0h', candidate: '3.0h', worse: false }]);
+  });
+});
+
+describe('the graph on screen', () => {
+  it('a strict stage in swimlanes: columns in walk order, a lane per role, the loop apart and conditions in words', () => {
+    const lanes: ProcessDef = { ...def, nodes: def.nodes.map((n) => (n.id === 'edit' ? { ...n, lane: 'Editor' } : n.id === 'legal' ? { ...n, kind: 'approval' as const, approver: 'ceo' as const } : n)) };
+    const l = stageLayout(lanes, 'make');
+    expect(l.cols.map((c) => c.map((n) => n.id))).toEqual([['draft'], ['edit', 'legal'], ['publish']]);
+    expect(l.lanes).toEqual(['owner', 'Editor', 'ceo']);
+    expect(l.lanes.map(laneTitle)).toEqual(['Owner', 'Editor', 'CEO']);
+    expect(l.edges.find((e) => e.loop)).toEqual({ from: 'edit', to: 'draft', label: 'if verdict is revise', loop: true, dotted: false, loopMax: 2 });
+    expect(l.edges.filter((e) => !e.loop)).toHaveLength(4);
+    expect(conditionWords('answer != declined')).toBe('if answer is not declined');
+    expect(conditionWords('!urgent')).toBe('unless urgent');
+    expect(conditionWords('requester_agent')).toBe('if requester agent is set');
+  });
+  it('a dynamic stage by what each step is available after, drawn dotted', () => {
+    const l = stageLayout(def, 'adopt');
+    expect(l.cols.map((c) => c.map((n) => n.id))).toEqual([['setup'], ['train']]);
+    expect(l.edges).toEqual([{ from: 'setup', to: 'train', label: '', loop: false, dotted: true }]);
+  });
+  it('a run over the graph: the latest round of each step, an undo on its undo step, and how far it came', () => {
+    const saga: ProcessDef = { ...def, nodes: [...def.nodes.slice(0, 4).map((n) => (n.id === 'publish' ? { ...n, compensate: 'unpublish' } : n)), { id: 'unpublish', title: 'Unpublish', kind: 'task', compensation: true }] };
+    const s = (nodeId: string, status: string, attempt = 1, current = 1) => ({ nodeId, status, attempt, current });
+    const st = runStates(saga, [s('draft', 'done', 1, 0), s('edit', 'done', 1, 0), s('draft', 'active', 2), s('legal', 'skipped'), s('undo:publish', 'done')]);
+    expect(st.get('draft')).toMatchObject({ state: 'active', rounds: 2 });
+    expect(st.get('legal')?.state).toBe('skipped');
+    expect(st.get('unpublish')?.state).toBe('done');
+    expect(runProgress(saga, [s('draft', 'done'), s('edit', 'done'), s('legal', 'skipped')])).toEqual({ done: 3, total: 4 });
+  });
+  it('the inputs a run starts with: the names in ${…} that no step produces', () => {
+    const d: ProcessDef = { ...def, nodes: [{ id: 'a', title: 'Ship ${release}', kind: 'task', outputs: [{ name: 'notes' }] }, { id: 'b', title: 'Post ${notes} for ${audience}', kind: 'task' }] };
+    expect(varsOf(d)).toEqual(['release', 'audience']);
+    expect(varsOf(null)).toEqual([]);
+  });
+  it('what a process asks for, and the dashboard card most pressing first', () => {
+    const m = (health: OrgProcess['metrics']['health']) => ({ health, why: 'w', active: 0 }) as OrgProcess['metrics'];
+    const p = (id: string, health: OrgProcess['metrics']['health'], over: Partial<OrgProcess> = {}) => ({ id, title: id, status: 'active', reviewDue: false, pendingVersion: null, metrics: m(health), ...over }) as OrgProcess;
+    expect(processAttention(p('a', 'revise', { pendingVersion: 3, reviewDue: true }), { blockedRuns: 1 }).map((x) => x.title)).toEqual(['Needs revising', 'v3 waits for approval', '1 run blocked', "The owner's review is due"]);
+    expect(processAttention(p('r', 'healthy', { status: 'retired' }))).toEqual([]);
+    const rows = processCardRows([p('quiet', 'healthy'), p('busy', 'healthy'), p('bad', 'revise'), p('old', 'healthy', { status: 'retired' })], [{ processId: 'busy', status: 'running' }]);
+    expect(rows.map((r) => `${r.p.id}:${r.flag}:${r.open}`)).toEqual(['bad:revise:0', 'busy:running:1', 'quiet:idle:0']);
   });
 });

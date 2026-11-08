@@ -808,3 +808,13 @@ test('discovery: work done by hand on several days becomes a "Draft process" tas
   await s.org.setTunable(orgId, 'process.discoveryRepeats', 0, { actor: 'user', why: 'test', decidedBy: 'user' });
   assert.deepEqual(await processes.discover(orgId), [], 'discovery off');
 });
+
+test('the library route sends each template with its definition, for the page\'s preview', async () => {
+  const { ProcessesController } = await import('../server/src/org/processes.controller');
+  const ctl = new ProcessesController({ orgIdOf: async () => 'o1' } as never, {} as never, {} as never, {} as never, { get: () => true } as never);
+  const list = await ctl.templates('ws1');
+  assert.equal(list.length, PROCESS_TEMPLATES.length);
+  const rel = list.find((t) => t.id === 'release-checklist')!;
+  assert.equal(rel.steps, rel.def.nodes.length);
+  assert.deepEqual(rel.def.stages.map((x) => x.id), ['check', 'ship']);
+});

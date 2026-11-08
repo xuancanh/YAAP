@@ -324,7 +324,7 @@ choose in a dynamic stage, and — for heads — own their unit's processes).
 
 ```
 GET    /api/workspaces/:id/org/processes                      list + open runs
-GET    /api/workspaces/:id/org/processes/templates            the library
+GET    /api/workspaces/:id/org/processes/templates            the library (each with its definition, for the preview)
 GET    /api/workspaces/:id/org/processes/:pid                 definition, versions (diffs), runs (steps), events
 POST   /api/workspaces/:id/org/processes                      { template? | def?, name?, unitId?, reason }
 PUT    /api/workspaces/:id/org/processes/:pid                 { def, reason } — a new version
@@ -352,6 +352,22 @@ verdict and Promote / Roll back; a revision suggestion shows on its
 process. The list carries "Suggested from repeated work" (evidence, the
 drafted steps, the owner's task, Create from the draft, Dismiss). The
 Operations dashboard has a Processes card.
+
+The graph (`src/components/ProcessGraph.tsx`) stacks the stages in order;
+inside each, a row per role (swimlanes — roles, never agents) and the
+engine's columns, with arrows: solid for an edge, dashed when it holds only
+on a condition (said on the step: "Only if answer is accepted"), dotted for
+a dynamic step's "available after", a loop curving back underneath with its
+bound. A step card shows its kind, MUST items, checkpoint, timer or SLA,
+outputs, whether it can be undone, and its deviation rate; clicking it opens
+its detail. The newest open run is laid over the graph (each step's state;
+"Show" picks another run or the definition only), and each run reads as a
+timeline of its steps, with the deviations in full and the steps not
+reached yet. Too narrow for the lanes, the graph becomes a vertical list.
+Every decision on the page (dismiss, retire, cancel, promote, roll back)
+asks why inline. The library is a dialog whose templates preview their
+graph; the editor previews the definition as it is typed; starting a run
+asks for each `${input}` the steps use.
 
 ## 10. Not built yet
 

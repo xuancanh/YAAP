@@ -12,6 +12,7 @@ import {
   type OrgIncident, type OrgProcess, type OrgServiceEntry, type OrgProcessRunRow, type OrgPulse, type OrgSpend, type OrgTask, type TrustOverview, type OrgUnitNode, type QualityOverview,
 } from '../lib/api';
 import { pct, qualityLede } from '../lib/quality';
+import { processCardRows } from '../lib/processes';
 import { type CompanySection } from '../lib/company-nav';
 import {
   boardCounts, budgetLines, capitalByGoal, spendWindowLabel, findingsCount, flatUnits, incidentHistory, moneyLede, nextRituals, 
@@ -34,6 +35,8 @@ import { DepartmentName, useMayRenameDepartments } from './DepartmentName';
 
 const GAP = 14;
 const num: React.CSSProperties = { fontVariantNumeric: 'tabular-nums' };
+/** A row's one-word state in the dashboards' row language (the Processes card). */
+const TONE_COLOR: Record<Tone, string> = { bad: 'var(--red)', warn: 'var(--amber)', info: 'var(--blue)', ok: 'var(--green)', muted: 'var(--text-faint)' };
 const row: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderTop: '1px solid var(--border-soft)', fontSize: 12.5, minWidth: 0 };
 const ellipsis: React.CSSProperties = { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 };
 const rowBtn: React.CSSProperties = { ...row, width: '100%', background: 'none', border: 'none', borderTop: '1px solid var(--border-soft)', color: 'var(--text)', font: 'inherit', fontSize: 12.5, textAlign: 'left', cursor: 'pointer', borderRadius: 0 };
@@ -186,10 +189,11 @@ function OperationsDashboard({ org }: { org: OrgDetail }) {
           ))}
         </Card>
         <Card id="processes" title="Processes" open={() => open('processes')} openLabel="All processes" aside={procs ? <span style={faint}>{procs.runs.length} open run{procs.runs.length === 1 ? '' : 's'}</span> : undefined}>
-          {procs === undefined ? <Loading /> : !procs || procs.processes.length === 0 ? <Empty>No processes yet.</Empty> : [...procs.processes].filter((p) => p.status === 'active').sort((a, b) => (b.metrics.health === 'revise' ? 1 : 0) - (a.metrics.health === 'revise' ? 1 : 0) || b.metrics.active - a.metrics.active).slice(0, 4).map((p) => (
-            <button key={p.id} style={rowBtn} onClick={() => { open('processes'); app.setRouteProcess(p.id); }}>
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: p.metrics.health === 'revise' ? 'var(--red)' : p.metrics.health === 'watch' ? 'var(--amber)' : 'var(--text-faint)', flex: 'none' }}>{p.metrics.health === 'revise' ? 'revise' : p.metrics.active ? `${p.metrics.active} open` : p.mode}</span>
-              <span style={{ ...ellipsis, flex: 1 }}>{p.title} <span style={faint}>· v{p.version}</span></span>
+          {procs === undefined ? <Loading /> : !procs || procs.processes.length === 0 ? <Empty>No processes yet. Add one from the library.</Empty> : processCardRows(procs.processes, procs.runs).slice(0, 4).map(({ p, flag, tone, open: n }) => (
+            <button key={p.id} style={rowBtn} onClick={() => { open('processes'); app.setRouteProcess(p.id); }} data-testid="dash-process-row">
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: TONE_COLOR[tone], flex: 'none', minWidth: 52 }}>{flag}</span>
+              <span style={{ ...ellipsis, flex: 1 }}>{p.title}</span>
+              <span style={{ ...faint, ...num }}>{n ? `${n} open` : ''}</span>
             </button>
           ))}
         </Card>

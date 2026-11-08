@@ -1,29 +1,66 @@
 /** Operations › Processes (docs/processes.md): the company's standing
- *  procedures. The list shows each process's mode, owner, version, runs and
- *  health, the runs open now, and — for the CEO — the template library. A
- *  process's page (`/<company>/processes/<id>`) shows its stages as a
- *  readable graph (strict: columns in the order the engine walks them, with
- *  loops as "back to"; dynamic: each step with when it is available), every
- *  version with its author, reason and diff (roll back to one), the runs
- *  with each step's state, and the CEO's edit, start and retire. Meeting
- *  steps say what they hold and who comes; compensations are listed as what
- *  a failed run undoes; a ramped version shows its comparison with the
- *  stable one (promote or roll back); outcomes and conformance are two tabs;
- *  the list carries the processes the engine suggests from repeated work.
- *  Lib: src/lib/processes.ts. */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+ *  procedures. The list leads with what needs the CEO (a process to revise,
+ *  a ramp with a verdict, a change waiting for approval, blocked runs), then
+ *  every process by department with its owner, runs and health, the runs
+ *  open now, what the engine suggests from repeated work, and the template
+ *  library (a dialog with a preview of each template's graph).
+ *
+ *  A process's page (`/<company>/processes/<id>`) shows what needs attention,
+ *  the ramp's comparison (promote / roll back), the graph (ProcessGraph.tsx:
+ *  stages, swimlanes by role, MUST items, approvals, timers, meetings, the
+ *  undo steps) with a run laid over it, the runs as step timelines, the
+ *  measures (Outcomes / Conformance) and the versions with their diffs and
+ *  rollback. The CEO starts a run (a field per input the steps use), edits
+ *  the definition beside a live preview, and retires it; every decision
+ *  asks why inline. Lib: src/lib/processes.ts. */
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApp } from '../store';
-import { api, type OrgDetail, type OrgProcess, type OrgProcessDetail, type OrgProcessRunRow, type ProcessConformance, type ProcessDef, type ProcessNodeDef, type ProcessRollout, type ProcessSuggestion, type ProcessTemplate } from '../lib/api';
+import { api, type OrgDetail, type OrgProcess, type OrgProcessDetail, type OrgProcessRunRow, type ProcessConformance, type ProcessDef, type ProcessRollout, type ProcessSuggestion, type ProcessTemplate } from '../lib/api';
 import {
-  CONFORMANCE_TONE, CONFORMANCE_WORD, HEALTH_TONE, HEALTH_WORD, KIND_WORD, MODE_HINT, MODE_WORD, RAMP_TONE, RAMP_WORD, SUGGESTION_WORD, authorWords, availabilityWords, cohortRows,
-  compensationsOf, edgeWords, hrs, layoutStage, meetingWords, pct, processSummary, runTone, stageNodes, stepTone, triggerWords,
+  CONFORMANCE_TONE, CONFORMANCE_WORD, HEALTH_TONE, HEALTH_WORD, MODE_HINT, MODE_WORD, RAMP_TONE, RAMP_WORD, RUN_STATUS_WORD, STEP_STATE_WORD, SUGGESTION_WORD, authorWords, cohortRows,
+  hrs, laneTitle, pct, processAttention, runProgress, runStates, runTone, triggerWords, varsOf, type StepState,
 } from '../lib/processes';
 import { I, P } from '../lib/icons';
+import { MEETING_EVENT, type MeetingEventDetail } from '../lib/routes';
 import { ago, useAgentNames, useUnits } from './org-ui';
 import { useOrgRole } from './OrgSensingView';
-import { Card, Empty, Metric, Owner, PageHeader, Pill, Segmented, SkeletonRows } from './CompanyKit';
+import { AttentionList, Avatar, Bar, Card, Empty, Menu, Metric, Owner, PageHeader, Pill, Segmented, SkeletonRows, type AttentionRow } from './CompanyKit';
+import { GraphLegend, ProcessGraph, type StepOverlay } from './ProcessGraph';
+import '../styles/processes.css';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message.replace(/^\d{3} /, '').slice(0, 600) : 'failed');
+const CATEGORY_WORD: Record<string, string> = { operating: 'Runs the company', delivery: 'Delivers work' };
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const TONE_RANK: Record<string, number> = { bad: 0, warn: 1, info: 2, ok: 3, muted: 4 };
+
+type RunDetail = OrgProcessDetail['runs'][number];
+
+/** Ask why before a decision, inline (never a browser prompt): the question, a reason, confirm or cancel. */
+export function ReasonForm({ question, placeholder = 'Why?', confirm, danger, initial = '', onConfirm, onCancel, testid }: { question: ReactNode; placeholder?: string; confirm: string; danger?: boolean; initial?: string; onConfirm: (reason: string) => Promise<void>; onCancel: () => void; testid?: string }) {
+  const [reason, setReason] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => { ref.current?.focus(); }, []);
+  const go = async () => {
+    if (!reason.trim() || busy) return;
+    setBusy(true); setErr(null);
+    try { await onConfirm(reason.trim()); } catch (e) { setErr(errText(e)); setBusy(false); }
+  };
+  return (
+    <form className="pr-reason" data-testid={testid ?? 'reason-form'} onSubmit={(e) => { e.preventDefault(); void go(); }} onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onCancel(); } }}>
+      <div className="pr-reason-q">{question}</div>
+      <div className="pr-reason-row">
+        <input ref={ref} className="co-input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={placeholder} aria-label="Reason" />
+        <button type="submit" className={`co-btn small${danger ? '' : ' primary'}`} style={danger ? { color: 'var(--red-text)', borderColor: 'var(--red-line)' } : undefined} disabled={!reason.trim() || busy}>{busy ? 'Working…' : confirm}</button>
+        <button type="button" className="co-btn small ghost" onClick={onCancel}>Cancel</button>
+      </div>
+      {err && <div className="co-alert" role="alert">{err}</div>}
+    </form>
+  );
+}
+
+// ---- the list ----
 
 export function ProcessesPane({ org }: { org: OrgDetail }) {
   const app = useApp();
@@ -33,7 +70,7 @@ export function ProcessesPane({ org }: { org: OrgDetail }) {
   const names = useAgentNames();
   const [data, setData] = useState<{ processes: OrgProcess[]; runs: OrgProcessRunRow[]; suggestions?: ProcessSuggestion[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [library, setLibrary] = useState(false);
+  const [library, setLibrary] = useState<false | { pick: string | null }>(false);
   const [showRetired, setShowRetired] = useState(false);
   const load = useCallback(async () => {
     try { setData(await api.orgProcesses(wsId)); setErr(null); } catch (e) { setErr(errText(e)); }
@@ -42,58 +79,129 @@ export function ProcessesPane({ org }: { org: OrgDetail }) {
 
   const open = app.routeProcess;
   if (open) return <ProcessPage wsId={wsId} processId={open} decider={decider} onBack={() => { app.setRouteProcess(null); void load(); }} />;
-  const live = (data?.processes ?? []).filter((p) => p.status !== 'retired');
-  const retired = (data?.processes ?? []).filter((p) => p.status === 'retired');
-  const sum = processSummary(data?.processes ?? []);
-  const byId = new Map((data?.processes ?? []).map((p) => [p.id, p]));
+  const all = data?.processes ?? [];
+  const live = all.filter((p) => p.status !== 'retired');
+  const retired = all.filter((p) => p.status === 'retired');
+  const byId = new Map(all.map((p) => [p.id, p]));
+  const runs = data?.runs ?? [];
+  const revise = live.filter((p) => p.status === 'active' && p.metrics.health === 'revise').length;
+  const attention: AttentionRow[] = live.flatMap((p) => processAttention(p, { blockedRuns: runs.filter((r) => r.processId === p.id && r.status === 'blocked').length })
+    .filter((a) => !a.id.endsWith(':review') && !a.id.endsWith(':watch'))
+    .map((a) => ({ ...a, title: `${p.title}: ${a.title.charAt(0).toLowerCase()}${a.title.slice(1)}`, go: 'Open', onOpen: () => app.setRouteProcess(p.id) }))).sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone]);
+  const due = live.filter((p) => p.reviewDue).length;
+  const groups = groupByUnit(live);
+  const openLibrary = (pick: string | null = null) => setLibrary({ pick });
   return (
     <div className="co-page" data-testid="processes-page">
-      <PageHeader title="Processes" purpose="The company's standing procedures: how recurring, handoff-heavy or risky work is done. Each run is pinned to a version; each step an agent performs is an ordinary task with a step card. Strict stages follow the graph; in dynamic stages the performer chooses. The chief changes any process and the heads their own, from what the runs show."
-        actions={decider ? <button className="co-btn primary" onClick={() => setLibrary(!library)} aria-expanded={library}>{library ? 'Close library' : 'Add from library'}</button> : undefined} />
-      {err && <div className="co-alert" role="alert">{err}</div>}
-      {data && (
-        <div className="co-metrics" style={{ margin: '4px 0 14px' }} data-testid="process-counts">
-          <Metric n={sum.active} label="processes" />
-          <Metric n={sum.open} label="open runs" tone={sum.open ? 'info' : undefined} />
-          <Metric n={sum.revise} label="need revising" tone={sum.revise ? 'bad' : undefined} title="A step most runs deviate from, or runs that rarely complete" />
-          <Metric n={sum.due} label="review due" tone={sum.due ? 'warn' : undefined} title="The owner has not reviewed its runs within the company's review cadence" />
+      <PageHeader title="Processes"
+        purpose={<>The company's standing procedures: how recurring, hand-off-heavy or risky work is done. Each run is pinned to a version, and each step an agent performs is an ordinary task with a step card. In a strict stage the engine follows the graph; in a dynamic stage the performer chooses. The chief of staff changes any process, and the heads their own, from what the runs show.</>}
+        actions={decider ? <button className="co-btn primary" onClick={() => openLibrary()}><I d={P.plus} size={13} />Add from library</button> : undefined} />
+      {err && <div className="co-alert" role="alert" style={{ marginBottom: 12 }}>{err}</div>}
+      {!data && !err && <SkeletonRows rows={4} label="Loading processes" />}
+      {data && live.length === 0 && (
+        <div className="co-card" style={{ marginBottom: 14 }}>
+          <Empty title="No processes yet" icon={P.rows} action={decider ? <button className="co-btn primary" onClick={() => openLibrary()}>Browse the library</button> : undefined}>
+            A process turns work that repeats — a release, an incident, a hire — into steps the agents follow and the company can improve. Start from a template; the chief of staff and the heads also add them as work recurs.
+          </Empty>
+          {decider && <div style={{ padding: '0 16px 16px' }}><div className="co-sub" style={{ marginTop: 0 }}>Common starting points</div><LibraryGrid wsId={wsId} have={new Set()} onPick={(t) => openLibrary(t.id)} limit={3} /></div>}
         </div>
       )}
-      {library && <Library wsId={wsId} have={new Set((data?.processes ?? []).map((p) => p.templateId).filter(Boolean))} onAdded={async (id) => { setLibrary(false); await load(); app.setRouteProcess(id); }} />}
-      {!data && !err && <SkeletonRows rows={4} label="Loading processes" />}
-      {data && live.length === 0 && <div className="co-card"><Empty title="No processes yet">Add one from the library; the chief of staff and the heads also add them as work recurs.</Empty></div>}
-      {live.length > 0 && (
-        <Card title="All processes" aside={`${live.length}`} flush>
-          <div className="co-rows" data-testid="process-list">
-            {live.map((p) => <ProcessRow key={p.id} p={p} owner={p.ownerAgentId ? names.get(p.ownerAgentId) : undefined} onOpen={() => app.setRouteProcess(p.id)} />)}
+      {data && live.length > 0 && (
+        <>
+          <div className="co-metrics" style={{ margin: '0 0 14px' }} data-testid="process-counts">
+            <Metric n={live.filter((p) => p.status === 'active').length} label="processes" />
+            <Metric n={runs.length} label="runs open now" tone={runs.length ? 'info' : undefined} />
+            <Metric n={revise} label="need revising" tone={revise ? 'bad' : undefined} title="A step most runs deviate from, or runs that rarely complete" />
+            <Metric n={due} label="review due" tone={due ? 'warn' : undefined} title="The owner has not reviewed its runs within the company's review cadence" />
           </div>
-        </Card>
+          {attention.length > 0 && <div style={{ marginBottom: 14 }}><Card title="Needs attention" aside={`${attention.length}`} flush><AttentionList items={attention} limit={5} testid="process-attention" /></Card></div>}
+          <div className="co-stack">
+            <Card title="All processes" aside={`${live.length}`} flush>
+              <div className="co-rows pr-list" data-testid="process-list">
+                {groups.map(([unit, list]) => (
+                  <div key={unit} role="group" aria-label={unit}>
+                    {groups.length > 1 && <div className="pr-group">{unit}</div>}
+                    {list.map((p) => <ProcessRow key={p.id} p={p} openRuns={runs.filter((r) => r.processId === p.id).length} owner={p.ownerAgentId ? names.get(p.ownerAgentId) : undefined} onOpen={() => app.setRouteProcess(p.id)} />)}
+                  </div>
+                ))}
+              </div>
+            </Card>
+            {runs.length > 0 && (
+              <Card title="Runs open now" aside={`${runs.length}`} flush>
+                <div className="co-rows" data-testid="process-open-runs">
+                  {runs.map((r) => {
+                    const p = byId.get(r.processId);
+                    return (
+                      <button key={r.id} className="co-row" onClick={() => app.setRouteProcess(r.processId)}>
+                        <span className="co-row-main">
+                          <span className="co-row-title"><span className="co-key">{r.key}</span>{r.title || p?.title}</span>
+                          <span className="co-row-meta">{p?.title ?? 'A process'} · stage {r.stage.replace(/[-_]/g, ' ')} · started {ago(r.startedAt)}{r.note ? ` · ${r.note}` : ''}</span>
+                        </span>
+                        <span className="co-row-end">{r.ownerAgentId && <Avatar a={names.get(r.ownerAgentId)} size={18} />}<Pill tone={runTone(r.status)}>{RUN_STATUS_WORD[r.status] ?? r.status}</Pill></span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Card>
+            )}
+          </div>
+        </>
       )}
       {data && (data.suggestions?.length ?? 0) > 0 && <Suggestions wsId={wsId} list={data.suggestions!} decider={decider} onChanged={load} />}
-      {data && data.runs.length > 0 && (
-        <div style={{ marginTop: 14 }}>
-          <Card title="Open runs" aside={`${data.runs.length}`} flush>
-            <div className="co-rows">
-              {data.runs.map((r) => (
-                <button key={r.id} className="co-row" onClick={() => app.setRouteProcess(r.processId)}>
-                  <span className="co-row-main">
-                    <span className="co-row-title">{r.key} · {r.title || byId.get(r.processId)?.title}</span>
-                    <span className="co-row-meta">{byId.get(r.processId)?.title ?? 'process'} v{r.version} · stage {r.stage} · started {ago(r.startedAt)}{r.note ? ` · ${r.note}` : ''}</span>
-                  </span>
-                  <span className="co-row-end"><Pill tone={runTone(r.status)}>{r.status}</Pill></span>
-                </button>
-              ))}
-            </div>
-          </Card>
-        </div>
-      )}
       {retired.length > 0 && (
         <div style={{ marginTop: 14 }}>
           <button className="co-link" onClick={() => setShowRetired(!showRetired)} aria-expanded={showRetired}>{showRetired ? 'Hide' : 'Show'} retired ({retired.length})</button>
-          {showRetired && <div className="co-card" style={{ marginTop: 8 }}><div className="co-rows">{retired.map((p) => <ProcessRow key={p.id} p={p} owner={p.ownerAgentId ? names.get(p.ownerAgentId) : undefined} onOpen={() => app.setRouteProcess(p.id)} />)}</div></div>}
+          {showRetired && <div className="co-card" style={{ marginTop: 8 }}><div className="co-rows pr-list">{retired.map((p) => <ProcessRow key={p.id} p={p} openRuns={0} owner={p.ownerAgentId ? names.get(p.ownerAgentId) : undefined} onOpen={() => app.setRouteProcess(p.id)} />)}</div></div>}
         </div>
       )}
+      {library && <LibraryDialog wsId={wsId} initial={library.pick} have={new Set(all.map((p) => p.templateId).filter(Boolean))} onClose={() => setLibrary(false)} onAdded={async (id) => { setLibrary(false); await load(); app.setRouteProcess(id); }} />}
     </div>
+  );
+}
+
+/** The company's own processes first, then each department's, by name. */
+function groupByUnit(list: OrgProcess[]): Array<[string, OrgProcess[]]> {
+  const m = new Map<string, OrgProcess[]>();
+  for (const p of list) { const k = p.unitId ? p.unitName : 'Company-wide'; m.set(k, [...(m.get(k) ?? []), p]); }
+  return [...m.entries()].sort((a, b) => (a[0] === 'Company-wide' ? -1 : b[0] === 'Company-wide' ? 1 : a[0].localeCompare(b[0])));
+}
+
+function ProcessRow({ p, owner, openRuns, onOpen }: { p: OrgProcess; owner?: ReturnType<ReturnType<typeof useAgentNames>['get']>; openRuns: number; onOpen: () => void }) {
+  const m = p.metrics;
+  const flags = [
+    p.pendingVersion ? <Pill key="pv" tone="warn" plain title="A change waits for approval in the Inbox">v{p.pendingVersion} waits for approval</Pill> : null,
+    p.rollout ? <Pill key="ro" tone={RAMP_TONE[p.rollout.verdict as ProcessRollout['verdict']] ?? 'info'} plain title={RAMP_WORD[p.rollout.verdict as ProcessRollout['verdict']]}>v{p.rollout.candidateVersion} on {p.rollout.percent}% of runs</Pill> : null,
+    p.conformance?.verdict === 'drifting' ? <Pill key="dr" tone="warn" plain title={p.conformance.why}>drifting</Pill> : null,
+    p.reviewDue ? <Pill key="rd" plain title="The owner has not reviewed its runs within the review cadence">review due</Pill> : null,
+  ].filter(Boolean);
+  return (
+    <button className="co-row" onClick={onOpen} aria-label={`Open process ${p.title}`} data-testid="process-row">
+      <span className="co-row-main">
+        <span className="co-row-title">{p.title} <span className="co-faint" style={{ fontWeight: 500 }}>v{p.version}</span></span>
+        <span className="co-row-meta">{MODE_WORD[p.mode] ?? p.mode} · starts {triggerWords(p.triggers)}{m.runs > 0 ? ` · ${pct(m.completionRate)} of runs complete, median ${hrs(m.cycleHoursP50)}` : ''}</span>
+        {flags.length > 0 && <span className="pr-row-flags">{flags}</span>}
+      </span>
+      <span className="pr-row-end">
+        <Owner agent={owner} name={p.ownerName} />
+        <span className="pr-runs-n" title={`${m.runs} runs in the window`}>{m.runs === 0 && !openRuns ? '—' : `${openRuns ? `${openRuns} open · ` : ''}${plural(m.runs, 'run')}`}</span>
+        {p.status !== 'active' ? <Pill tone="muted">{p.status}</Pill> : <Pill tone={HEALTH_TONE[m.health]} title={m.why}>{HEALTH_WORD[m.health]}</Pill>}
+      </span>
+    </button>
+  );
+}
+
+/** A drafted chain of steps in a line: "Collect → Write → Review", with who does each. */
+function Chain({ def }: { def: ProcessDef }) {
+  const nodes = def.nodes.filter((n) => !n.compensation);
+  return (
+    <span className="pr-chain">
+      {nodes.map((n, i) => (
+        <span key={n.id} style={{ display: 'contents' }}>
+          {i > 0 && <span className="pr-chain-arrow" aria-hidden>→</span>}
+          <Pill plain>{n.title} <span className="co-faint" style={{ fontWeight: 500 }}>· {laneTitle(n.lane ?? 'owner')}</span></Pill>
+        </span>
+      ))}
+    </span>
   );
 }
 
@@ -102,10 +210,12 @@ function Suggestions({ wsId, list, decider, onChanged }: { wsId: string; list: P
   const app = useApp();
   const names = useAgentNames();
   const [open, setOpen] = useState<string | null>(null);
-  const decide = async (sg: ProcessSuggestion, action: 'accept' | 'dismiss') => {
-    const reason = action === 'dismiss' ? prompt('Why not? The owner\'s draft task is cancelled with it.') : 'created from the draft by the CEO';
-    if (reason === null) return;
-    try { await api.decideProcessSuggestion(wsId, sg.id, { action, reason }); app.showToast(action === 'accept' ? 'Process created from the draft' : 'Suggestion dismissed'); await onChanged(); } catch (e) { app.showToast(errText(e)); }
+  const [dismissing, setDismissing] = useState<string | null>(null);
+  const decide = async (sg: ProcessSuggestion, action: 'accept' | 'dismiss', reason: string) => {
+    await api.decideProcessSuggestion(wsId, sg.id, { action, reason });
+    app.showToast(action === 'accept' ? 'Process created from the draft' : 'Suggestion dismissed');
+    setDismissing(null);
+    await onChanged();
   };
   return (
     <div style={{ marginTop: 14 }}>
@@ -115,20 +225,30 @@ function Suggestions({ wsId, list, decider, onChanged }: { wsId: string; list: P
             <div key={sg.id}>
               <button className="co-row" onClick={() => setOpen(open === sg.id ? null : sg.id)} aria-expanded={open === sg.id}>
                 <span className="co-row-main">
-                  <span className="co-row-title">{sg.title}</span>
-                  <span className="co-row-meta" style={{ whiteSpace: 'normal' }}>{SUGGESTION_WORD[sg.kind] ?? sg.kind} · seen {sg.count}× · for {sg.ownerAgentId ? names.get(sg.ownerAgentId)?.name ?? 'a member' : 'the chief'} · {sg.summary}</span>
+                  <span className="co-row-title">{sg.title.replace(/^Draft process: /, '')}</span>
+                  <span className="co-row-meta">{SUGGESTION_WORD[sg.kind] ?? sg.kind} · seen {sg.count}× · for {sg.ownerAgentId ? names.get(sg.ownerAgentId)?.name ?? 'a member' : 'the chief'}</span>
                 </span>
-                <span className="co-row-end"><Pill tone={sg.kind === 'revise' ? 'warn' : 'accent'} plain>{sg.kind === 'revise' || sg.kind === 'adhoc_step' ? 'revision' : 'new process'}</Pill><I d={open === sg.id ? P.chevD : P.chevR} size={12} /></span>
+                <span className="co-row-end"><Pill tone={sg.kind === 'revise' || sg.kind === 'adhoc_step' ? 'warn' : 'accent'} plain>{sg.kind === 'revise' || sg.kind === 'adhoc_step' ? 'revision' : 'new process'}</Pill><I d={open === sg.id ? P.chevD : P.chevR} size={12} /></span>
               </button>
               {open === sg.id && (
-                <div style={{ padding: '2px 12px 10px 22px', display: 'grid', gap: 6, fontSize: 12, color: 'var(--text-dim)' }}>
-                  {sg.evidence.length > 0 && <div><b>Evidence:</b> {sg.evidence.map((e) => `${e.ref} “${e.title}”`).join(' · ')}</div>}
-                  {sg.draft && <div><b>Drafted steps:</b> {sg.draft.nodes.map((n) => `${n.title} (${n.lane ?? 'owner'})`).join(' → ')}</div>}
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {sg.taskId && <button className="co-btn small" onClick={() => app.openOrgTask(sg.taskId!)}>Open the owner's task</button>}
-                    {decider && sg.draft && <button className="co-btn small primary" onClick={() => void decide(sg, 'accept')}>Create from the draft</button>}
-                    {decider && <button className="co-btn small ghost" onClick={() => void decide(sg, 'dismiss')}>Dismiss</button>}
-                  </div>
+                <div style={{ padding: '2px 12px 12px 12px', display: 'grid', gap: 10, fontSize: 12.5 }}>
+                  <div className="co-dim" style={{ lineHeight: 1.5 }}>{sg.summary}</div>
+                  {sg.evidence.length > 0 && (
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span className="co-faint">Seen in</span>
+                      {sg.evidence.map((e) => <button key={e.ref} className="co-chip" onClick={() => app.openOrgTask(e.ref)} title={e.title}><span className="co-key" style={{ margin: 0 }}>{e.ref}</span>{e.title.length > 36 ? `${e.title.slice(0, 36)}…` : e.title}</button>)}
+                    </div>
+                  )}
+                  {sg.draft && <div style={{ display: 'grid', gap: 6 }}><span className="co-faint">Drafted steps</span><Chain def={sg.draft} /></div>}
+                  {dismissing === sg.id
+                    ? <ReasonForm question="Why not? The owner's draft task is cancelled with it." placeholder="e.g. a one-off, not worth a process" confirm="Dismiss" danger onConfirm={(r) => decide(sg, 'dismiss', r)} onCancel={() => setDismissing(null)} />
+                    : (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {decider && sg.draft && <button className="co-btn small primary" onClick={() => void decide(sg, 'accept', 'created from the draft by the CEO').catch((e) => app.showToast(errText(e)))}>Create from the draft</button>}
+                        {sg.taskId && <button className="co-btn small" onClick={() => app.openOrgTask(sg.taskId!)}>Open the owner's task</button>}
+                        {decider && <button className="co-btn small ghost" onClick={() => setDismissing(sg.id)}>Dismiss</button>}
+                      </div>
+                    )}
                 </div>
               )}
             </div>
@@ -139,59 +259,92 @@ function Suggestions({ wsId, list, decider, onChanged }: { wsId: string; list: P
   );
 }
 
-function ProcessRow({ p, owner, onOpen }: { p: OrgProcess; owner?: ReturnType<ReturnType<typeof useAgentNames>['get']>; onOpen: () => void }) {
-  const m = p.metrics;
+// ---- the library ----
+
+function useTemplates(wsId: string) {
+  const [list, setList] = useState<ProcessTemplate[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => { void api.orgProcessTemplates(wsId).then(setList).catch((e) => { setErr(errText(e)); setList([]); }); }, [wsId]);
+  return { list, err };
+}
+
+function TemplateCard({ t, added, on, onClick }: { t: ProcessTemplate; added: boolean; on?: boolean; onClick: () => void }) {
   return (
-    <button className="co-row" onClick={onOpen} aria-label={`Open process ${p.title}`} data-testid="process-row">
-      <span className="co-row-main">
-        <span className="co-row-title">{p.title} <span style={{ color: 'var(--text-faint)', fontWeight: 500 }}>v{p.version}</span></span>
-        <span className="co-row-meta">
-          {MODE_WORD[p.mode] ?? p.mode} · {p.category} · {p.unitName} · {owner?.name ?? p.ownerName} · {triggerWords(p.triggers)}
-          {m.runs > 0 ? ` · ${m.runs} run${m.runs === 1 ? '' : 's'}, ${pct(m.completionRate)} completed, cycle ${hrs(m.cycleHoursP50)}` : ''}
-        </span>
-      </span>
-      <span className="co-row-end">
-        {p.pendingVersion && <Pill tone="warn" title="A change waits for approval">v{p.pendingVersion} pending</Pill>}
-        {p.rollout && <Pill tone={RAMP_TONE[p.rollout.verdict as ProcessRollout['verdict']] ?? 'info'} plain title={RAMP_WORD[p.rollout.verdict as ProcessRollout['verdict']]}>v{p.rollout.candidateVersion} on {p.rollout.percent}%</Pill>}
-        {p.conformance?.verdict === 'drifting' && <Pill tone="warn" plain title={p.conformance.why}>drifting</Pill>}
-        {p.reviewDue && <Pill tone="warn" plain>review due</Pill>}
-        {p.status !== 'active' ? <Pill tone="muted">{p.status}</Pill> : <Pill tone={HEALTH_TONE[m.health]} title={m.why}>{HEALTH_WORD[m.health]}</Pill>}
-      </span>
+    <button type="button" className="pr-tpl" aria-pressed={on} onClick={onClick} data-testid="process-template">
+      <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}><b style={{ flex: 1 }}>{t.title}</b>{added && <Pill tone="ok" plain>added</Pill>}</span>
+      <p>{t.summary}</p>
+      <span className="pr-tpl-meta"><span>{MODE_WORD[t.mode] ?? t.mode}</span>·<span>{plural(t.steps, 'step')}</span>·<span>{CATEGORY_WORD[t.category] ?? t.category}</span></span>
     </button>
   );
 }
 
-function Library({ wsId, have, onAdded }: { wsId: string; have: Set<string>; onAdded: (processId: string) => Promise<void> }) {
+/** A few templates as cards (the empty state's teaser). */
+function LibraryGrid({ wsId, have, onPick, limit }: { wsId: string; have: Set<string>; onPick: (t: ProcessTemplate) => void; limit?: number }) {
+  const { list } = useTemplates(wsId);
+  if (!list) return <SkeletonRows rows={2} label="Loading templates" />;
+  return <div className="pr-lib" data-testid="process-library">{list.slice(0, limit ?? list.length).map((t) => <TemplateCard key={t.id} t={t} added={have.has(t.id)} onClick={() => onPick(t)} />)}</div>;
+}
+
+function LibraryDialog({ wsId, initial, have, onClose, onAdded }: { wsId: string; initial: string | null; have: Set<string>; onClose: () => void; onAdded: (processId: string) => Promise<void> }) {
   const app = useApp();
   const { units } = useUnits();
-  const [list, setList] = useState<ProcessTemplate[] | null>(null);
+  const { list, err } = useTemplates(wsId);
+  const [pick, setPick] = useState<string | null>(initial);
   const [unit, setUnit] = useState('');
-  useEffect(() => { void api.orgProcessTemplates(wsId).then(setList).catch(() => setList([])); }, [wsId]);
-  const add = async (t: ProcessTemplate) => {
-    try { const d = await api.createOrgProcess(wsId, { template: t.id, unitId: unit || null, reason: `added from the library by the CEO` }); app.showToast(`${t.title} added`); await onAdded(d.process.id); } catch (e) { app.showToast(errText(e)); }
+  const [busy, setBusy] = useState(false);
+  const dlg = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement | null;
+    dlg.current?.focus();
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('keydown', esc); prev?.focus?.(); };
+  }, [onClose]);
+  const t = list?.find((x) => x.id === pick) ?? null;
+  const add = async () => {
+    if (!t) return;
+    setBusy(true);
+    try { const d = await api.createOrgProcess(wsId, { template: t.id, unitId: unit || null, reason: 'added from the library by the CEO' }); app.showToast(`${t.title} added`); await onAdded(d.process.id); } catch (e) { app.showToast(errText(e)); setBusy(false); }
   };
   return (
-    <div style={{ marginBottom: 14 }}>
-      <Card title="Template library" aside="instantiate, then it is yours to change" action={
-        <label className="co-field" style={{ minWidth: 200 }}><span className="sr-only">Owning department</span>
-          <select className="co-input" value={unit} onChange={(e) => setUnit(e.target.value)} aria-label="Owning department">
-            <option value="">Owned by the company (the chief)</option>
-            {units.filter((u) => u.parentUnitId !== null).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-          </select>
-        </label>}>
-        {!list && <SkeletonRows rows={3} label="Loading templates" />}
-        <div className="co-rows" data-testid="process-library">
-          {(list ?? []).map((t) => (
-            <div key={t.id} className="co-row static">
-              <span className="co-row-main">
-                <span className="co-row-title">{t.title}</span>
-                <span className="co-row-meta" style={{ whiteSpace: 'normal' }}>{t.summary} · {MODE_WORD[t.mode] ?? t.mode} · {t.steps} steps · {t.triggers}</span>
-              </span>
-              <span className="co-row-end">{have.has(t.id) ? <Pill tone="ok" plain>added</Pill> : <button className="co-btn small" onClick={() => void add(t)}>Add</button>}</span>
-            </div>
-          ))}
+    <div className="pr-dialog-scrim" onClick={onClose}>
+      <div className="pr-dialog" role="dialog" aria-modal="true" aria-label="Add a process from the library" ref={dlg} tabIndex={-1} onClick={(e) => e.stopPropagation()} data-testid="process-library-dialog">
+        <div className="pr-dialog-head">
+          {t && <button className="co-iconbtn" onClick={() => setPick(null)} aria-label="Back to the library"><I d={P.chevL} size={14} /></button>}
+          <h3>{t ? t.title : 'Add a process from the library'}</h3>
+          <button className="co-iconbtn" onClick={onClose} aria-label="Close"><I d={P.x} size={14} /></button>
         </div>
-      </Card>
+        <div className="pr-dialog-body">
+          {err && <div className="co-alert" role="alert">{err}</div>}
+          {!list && <SkeletonRows rows={3} label="Loading templates" />}
+          {list && !t && (
+            <>
+              <div className="co-dim" style={{ fontSize: 12.5 }}>Pick a template to see how it runs. Once added it is the company's own: the owner changes it from what its runs show.</div>
+              <div className="pr-lib" data-testid="process-library">{list.map((x) => <TemplateCard key={x.id} t={x} added={have.has(x.id)} onClick={() => setPick(x.id)} />)}</div>
+            </>
+          )}
+          {t && (
+            <>
+              <div className="co-dim" style={{ fontSize: 13, lineHeight: 1.5 }}>{t.summary}</div>
+              <div className="pr-tpl-meta"><Pill plain>{MODE_WORD[t.mode] ?? t.mode}</Pill><Pill plain>{plural(t.steps, 'step')}</Pill><Pill plain>{CATEGORY_WORD[t.category] ?? t.category}</Pill><span>starts {t.triggers}</span></div>
+              {t.def ? <ProcessGraph def={t.def} compact testid="process-template-graph" /> : <Empty compact title="No preview">This server does not send the template's steps.</Empty>}
+            </>
+          )}
+        </div>
+        {t && (
+          <div className="pr-dialog-foot">
+            <label className="co-field" style={{ flex: '1 1 220px', maxWidth: 320 }}><span>Owned by</span>
+              <select className="co-input" value={unit} onChange={(e) => setUnit(e.target.value)} aria-label="Owning department">
+                <option value="">The company (the chief of staff)</option>
+                {units.filter((u) => u.parentUnitId !== null).map((u) => <option key={u.id} value={u.id}>{u.name} (its head)</option>)}
+              </select>
+            </label>
+            <span style={{ flex: 1 }} />
+            <button className="co-btn ghost" onClick={() => setPick(null)}>Back</button>
+            <button className="co-btn primary" onClick={() => void add()} disabled={busy}>{have.has(t.id) ? 'Add another copy' : 'Add this process'}</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -203,102 +356,170 @@ function ProcessPage({ wsId, processId, decider, onBack }: { wsId: string; proce
   const names = useAgentNames();
   const [d, setD] = useState<OrgProcessDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [starting, setStarting] = useState(false);
-  const [tab, setTab] = useState<'outcomes' | 'conformance'>('outcomes');
+  const [panel, setPanel] = useState<null | 'start' | 'edit' | 'retire'>(null);
+  const [overlayRun, setOverlayRun] = useState<string | null | undefined>(undefined);
+  const graphRef = useRef<HTMLDivElement>(null);
   const load = useCallback(async () => {
     try { setD(await api.orgProcess(wsId, processId)); setErr(null); } catch (e) { setErr(errText(e)); }
   }, [wsId, processId]);
   useEffect(() => { void load(); const t = setInterval(() => { void load(); }, 20_000); return () => clearInterval(t); }, [load]);
   const nameOf = useCallback((id: string) => names.get(id)?.name, [names]);
-  if (err && !d) return <div className="co-page"><button className="co-link" onClick={onBack}>← Processes</button><div className="co-alert" role="alert" style={{ marginTop: 10 }}>{err}</div></div>;
+  // The graph shows the newest open run until the CEO picks another (or none).
+  const runId = overlayRun === undefined ? d?.runs.find((r) => r.status === 'running' || r.status === 'blocked')?.id ?? null : overlayRun;
+  const run = d?.runs.find((r) => r.id === runId) ?? null;
+  const overlay = useMemo(() => {
+    if (!d?.def || !run) return null;
+    const m = new Map<string, StepOverlay>();
+    for (const [id, x] of runStates(d.def, run.steps)) m.set(id, { state: x.state, rounds: x.rounds, who: x.step.assigneeAgentId ? names.get(x.step.assigneeAgentId)?.name : undefined });
+    return m;
+  }, [d, run, names]);
+  if (err && !d) return <div className="co-page"><button className="co-link pr-back" onClick={onBack}>← Processes</button><div className="co-alert" role="alert">{err}</div></div>;
   if (!d) return <div className="co-page"><SkeletonRows rows={5} label="Loading the process" /></div>;
   const p = d.process;
   const m = p.metrics;
-  const retire = async () => {
-    const reason = prompt(p.status === 'retired' ? 'Why bring it back?' : 'Why retire it? Open runs finish on their version.');
-    if (!reason) return;
-    try { setD(await api.retireOrgProcess(wsId, p.id, { reason, restore: p.status === 'retired' })); } catch (e) { app.showToast(errText(e)); }
+  const blocked = d.runs.filter((r) => r.status === 'blocked');
+  const openSuggestions = (d.suggestions ?? []).filter((x) => x.status === 'open');
+  const attention: AttentionRow[] = [
+    ...processAttention(p, { blockedRuns: blocked.length }).filter((a) => !a.id.endsWith(':ramp') && !a.id.endsWith(':suggest')).map((a): AttentionRow => ({
+      ...a,
+      ...(a.id.endsWith(':pending') ? { go: 'Inbox', onOpen: () => { app.go('inbox'); app.setInboxFilter('approvals'); } } : a.id.endsWith(':blocked') ? { go: 'See runs', onOpen: () => { setOverlayRun(blocked[0].id); graphRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } } : {}),
+    })),
+    ...openSuggestions.map((sg): AttentionRow => ({ id: sg.id, tone: 'warn', title: sg.title.replace(/^Revise process: [^—]+— /, 'Suggested revision: '), why: sg.summary, ...(sg.taskId ? { go: "Owner's task", onOpen: () => app.openOrgTask(sg.taskId!) } : {}) })),
+  ].sort((a, b) => TONE_RANK[a.tone] - TONE_RANK[b.tone]);
+  const stepExtra = (nodeId: string) => {
+    if (!run || !d.def) return null;
+    const x = runStates(d.def, run.steps).get(nodeId);
+    if (!x) return <div className="co-faint">Not reached in {run.key}.</div>;
+    return <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 8 }}><div className="co-faint" style={{ marginBottom: 6 }}>In {run.key}{run.title ? ` · ${run.title}` : ''}</div><StepLine s={x.step} state={x.state} /></div>;
   };
   return (
     <div className="co-page" data-testid="process-page">
-      <button className="co-link" onClick={onBack} style={{ marginBottom: 8 }}>← Processes</button>
-      <PageHeader title={<>{p.title} <span style={{ color: 'var(--text-faint)', fontWeight: 500 }}>v{p.version}</span></>}
+      <button className="co-link pr-back" onClick={onBack}><I d={P.chevL} size={12} />Processes</button>
+      <PageHeader title={<>{p.title} <span className="co-faint" style={{ fontWeight: 500, fontSize: 15 }}>v{p.version}</span></>}
         purpose={<>{p.description || 'A standing procedure of the company.'} {MODE_HINT[p.mode] ?? ''}</>}
         actions={decider ? <>
-          {p.status === 'active' && <button className="co-btn primary" onClick={() => setStarting(!starting)} aria-expanded={starting}>Start a run</button>}
-          {d.def && <button className="co-btn" onClick={() => setEditing(!editing)} aria-expanded={editing}>{editing ? 'Close editor' : 'Edit'}</button>}
-          <button className="co-btn ghost" onClick={() => void retire()}>{p.status === 'retired' ? 'Restore' : 'Retire'}</button>
+          {p.status === 'active' && <button className="co-btn primary" onClick={() => setPanel(panel === 'start' ? null : 'start')} aria-expanded={panel === 'start'}><I d={P.play} size={12} />Start a run</button>}
+          {d.def && <button className="co-btn" onClick={() => setPanel(panel === 'edit' ? null : 'edit')} aria-expanded={panel === 'edit'}><I d={P.edit} size={12} />{panel === 'edit' ? 'Close editor' : 'Edit'}</button>}
+          <Menu label="More actions" trigger={<I d={P.dots} size={15} fill="currentColor" />} triggerClass="co-iconbtn" items={[{ id: 'retire', label: p.status === 'retired' ? 'Restore the process' : 'Retire the process', onSelect: () => setPanel('retire') }]} />
         </> : undefined} />
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '-6px 0 12px' }}>
+      <div className="pr-meta">
         <Pill tone={p.status === 'active' ? HEALTH_TONE[m.health] : 'muted'} title={m.why}>{p.status === 'active' ? HEALTH_WORD[m.health] : p.status}</Pill>
-        <Pill plain>{MODE_WORD[p.mode] ?? p.mode}</Pill>
-        <Pill plain>{p.category}</Pill>
-        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{p.unitName} · owner</span>
-        <Owner agent={p.ownerAgentId ? names.get(p.ownerAgentId) : undefined} name={p.ownerName} compact />
-        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>· starts {triggerWords(p.triggers)}</span>
-        {p.pendingVersion && <Pill tone="warn">v{p.pendingVersion} waits for approval (Inbox)</Pill>}
+        <span>{MODE_WORD[p.mode] ?? p.mode}</span><span className="sep">·</span>
+        <span>{CATEGORY_WORD[p.category] ?? p.category}</span><span className="sep">·</span>
+        <Owner agent={p.ownerAgentId ? names.get(p.ownerAgentId) : undefined} name={p.ownerName} /><span>owns it for {p.unitId ? p.unitName : 'the company'}</span><span className="sep">·</span>
+        <span>Starts {triggerWords(p.triggers)}</span>
       </div>
-      <div style={{ marginBottom: 10 }}><Segmented label="Measures" value={tab} onChange={setTab} options={[{ id: 'outcomes', label: 'Outcomes' }, { id: 'conformance', label: 'Conformance' }]} /></div>
-      {tab === 'outcomes' ? <>
-        {m.health !== 'healthy' && m.health !== 'new' && <div className="co-alert" role="status" style={{ marginBottom: 12 }}>{m.why}</div>}
-        <div className="co-metrics" style={{ margin: '0 0 14px' }} data-testid="process-metrics">
-          <Metric n={m.runs} label="runs" />
-          <Metric n={pct(m.completionRate)} label="completed" tone={m.completionRate !== null && m.completionRate < 0.5 ? 'bad' : undefined} />
-          <Metric n={hrs(m.cycleHoursP50)} label="cycle time (median)" />
-          <Metric n={pct(m.deviationRate)} label="steps deviated" tone={m.health === 'revise' ? 'bad' : undefined} />
-          <Metric n={pct(m.reworkRate)} label="rework" />
-          <Metric n={m.slaBreaches} label="SLA breaches" tone={m.slaBreaches ? 'warn' : undefined} />
+      {panel === 'retire' && (
+        <div style={{ marginBottom: 14 }}>
+          <ReasonForm question={p.status === 'retired' ? 'Bring it back? New runs can start again.' : 'Retire it? No new runs start; open runs finish on their version.'} confirm={p.status === 'retired' ? 'Restore' : 'Retire'} danger={p.status !== 'retired'}
+            onConfirm={async (reason) => { setD(await api.retireOrgProcess(wsId, p.id, { reason, restore: p.status === 'retired' })); setPanel(null); app.showToast(p.status === 'retired' ? 'Restored' : 'Retired'); }} onCancel={() => setPanel(null)} />
         </div>
-      </> : <Conformance c={p.conformance} def={d.def} />}
-      {(d.suggestions ?? []).filter((x) => x.status === 'open').map((sg) => (
-        <div key={sg.id} className="co-alert" role="status" style={{ marginBottom: 12 }} data-testid="process-suggestion">
-          <b>{sg.title}.</b> {sg.summary} {sg.taskId && <button className="co-link" onClick={() => app.openOrgTask(sg.taskId!)}>The owner's task</button>}
-        </div>
-      ))}
-      {d.rollout && <Rollout wsId={wsId} processId={p.id} r={d.rollout} decider={decider} onChanged={(x) => setD(x)} />}
-      {starting && <StartForm wsId={wsId} p={p} onDone={async () => { setStarting(false); await load(); }} />}
-      {editing && d.def && <Editor wsId={wsId} p={p} def={d.def} onDone={async (next) => { setEditing(false); if (next) setD(next); else await load(); }} />}
+      )}
+      {panel === 'start' && <StartForm wsId={wsId} p={p} def={d.def} onCancel={() => setPanel(null)} onDone={async () => { setPanel(null); setOverlayRun(undefined); await load(); }} />}
+      {panel === 'edit' && d.def && <Editor wsId={wsId} p={p} def={d.def} onDone={async (next) => { setPanel(null); if (next) setD(next); else await load(); }} />}
+      {attention.length > 0 && <div style={{ marginBottom: 14 }}><Card title="Needs attention" aside={`${attention.length}`} flush><AttentionList items={attention} limit={3} testid="process-attention" /></Card></div>}
+      {d.rollout && d.rollout.verdict !== 'collecting' && <Rollout wsId={wsId} processId={p.id} r={d.rollout} decider={decider} onChanged={(x) => setD(x)} />}
       <div className="co-stack">
-        {d.def ? <Graph def={d.def} metrics={m} /> : <div className="co-card"><Empty compact title="No active version">Its first version waits for approval.</Empty></div>}
-        <Runs wsId={wsId} d={d} decider={decider} onChanged={load} />
-        <Versions wsId={wsId} d={d} decider={decider} nameOf={nameOf} onChanged={(x) => setD(x)} />
+        <div ref={graphRef} style={{ scrollMarginTop: 12 }}>
+          {d.def
+            ? (
+              <Card title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>How it runs<GraphLegend /></span>}
+                action={d.runs.length > 0 ? (
+                  <label className="co-field" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="co-faint" style={{ fontWeight: 500 }}>Show</span>
+                    <select className="co-input" style={{ width: 'auto', maxWidth: 240, padding: '4px 8px', fontSize: 12.5 }} value={runId ?? ''} onChange={(e) => setOverlayRun(e.target.value || null)} aria-label="Show a run on the graph" data-testid="process-overlay-select">
+                      <option value="">The definition only</option>
+                      {d.runs.slice(0, 20).map((r) => <option key={r.id} value={r.id}>{r.key}{r.title ? ` · ${r.title}` : ''} ({(RUN_STATUS_WORD[r.status] ?? r.status).toLowerCase()})</option>)}
+                    </select>
+                  </label>
+                ) : undefined}>
+                {run && <RunBanner run={run} def={d.def} onClear={() => setOverlayRun(null)} />}
+                <ProcessGraph def={d.def} ownerName={p.ownerAgentId ? names.get(p.ownerAgentId)?.name ?? p.ownerName : p.ownerName} deviation={new Map(m.steps.map((s) => [s.nodeId, s.deviationRate]))} overlay={overlay} stepExtra={stepExtra} />
+              </Card>
+            )
+            : <div className="co-card"><Empty compact title="No active version">Its first version waits for approval.</Empty></div>}
+        </div>
+        {d.rollout && d.rollout.verdict === 'collecting' && <Rollout wsId={wsId} processId={p.id} r={d.rollout} decider={decider} onChanged={(x) => setD(x)} />}
+        <div className="pr-lower">
+          <Runs wsId={wsId} d={d} decider={decider} shown={runId} onShow={(id) => { setOverlayRun(id); graphRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }} onChanged={load} />
+          <div className="co-stack">
+            <Measures p={p} def={d.def} />
+            <Versions wsId={wsId} d={d} decider={decider} nameOf={nameOf} onChanged={(x) => setD(x)} />
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-/** Did the runs follow the definition — apart from whether they got there. */
-function Conformance({ c, def }: { c?: ProcessConformance; def: ProcessDef | null }) {
-  if (!c) return <div className="co-card" style={{ marginBottom: 14 }}><Empty compact title="No conformance yet">It is computed from the runs' steps.</Empty></div>;
-  const title = (id: string) => (id === 'ad-hoc' ? 'Ad-hoc steps' : def?.nodes.find((n) => n.id === id)?.title ?? id);
+/** Which run the graph shows, and how far it has come. */
+function RunBanner({ run, def, onClear }: { run: RunDetail; def: ProcessDef; onClear: () => void }) {
+  const prog = runProgress(def, run.steps);
   return (
-    <div data-testid="process-conformance" style={{ marginBottom: 14 }}>
-      {c.verdict === 'drifting' && <div className="co-alert" role="status" style={{ marginBottom: 12 }}>{c.why}</div>}
-      <div className="co-metrics" style={{ margin: '0 0 10px' }}>
-        <Metric n={<Pill tone={CONFORMANCE_TONE[c.verdict]}>{CONFORMANCE_WORD[c.verdict]}</Pill>} label="the definition" title={c.why} />
+    <div className="co-note" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }} data-testid="process-run-banner">
+      <Pill tone={runTone(run.status)}>{RUN_STATUS_WORD[run.status] ?? run.status}</Pill>
+      <span style={{ color: 'var(--text)', fontWeight: 600 }}>{run.key}{run.title ? ` · ${run.title}` : ''}</span>
+      <span className="pr-run-progress"><Bar value={prog.total ? prog.done / prog.total : 0} tone={run.status === 'failed' ? 'bad' : run.status === 'done' ? 'ok' : undefined} label={`${prog.done} of ${prog.total} steps`} width={90} /><span className="co-num">{prog.done}/{prog.total} steps</span></span>
+      {run.note && <span style={{ color: run.status === 'blocked' || run.status === 'failed' ? 'var(--warn-text)' : undefined }}>{run.note}</span>}
+      <span style={{ flex: 1 }} />
+      <button className="co-link" onClick={onClear}>Hide the run</button>
+    </div>
+  );
+}
+
+/** Outcomes (did runs get there) and conformance (did they follow the definition), side by side as a toggle. */
+function Measures({ p, def }: { p: OrgProcess; def: ProcessDef | null }) {
+  const [tab, setTab] = useState<'outcomes' | 'conformance'>('outcomes');
+  const m = p.metrics;
+  return (
+    <Card title="Measures" aside={m.runs ? `last ${plural(m.runs, 'run')}` : undefined} action={<Segmented label="Measures" value={tab} onChange={setTab} options={[{ id: 'outcomes', label: 'Outcomes' }, { id: 'conformance', label: 'Conformance' }]} />}>
+      {tab === 'outcomes'
+        ? m.runs === 0
+          ? <Empty compact title="No runs yet">Completion, cycle time and deviations show once runs finish.</Empty>
+          : (
+            <div style={{ display: 'grid', gap: 10 }}>
+              {m.health !== 'healthy' && m.health !== 'new' && <div className={`co-note${m.health === 'watch' || m.health === 'revise' ? ' warn' : ''}`}>{m.why}</div>}
+              <div className="co-metrics" data-testid="process-metrics">
+                <Metric n={pct(m.completionRate)} label="completed" tone={m.completionRate !== null && m.completionRate < 0.5 ? 'bad' : undefined} />
+                <Metric n={hrs(m.cycleHoursP50)} label="median cycle" />
+                <Metric n={pct(m.deviationRate)} label="steps deviated" tone={m.health === 'revise' ? 'bad' : undefined} />
+                <Metric n={pct(m.reworkRate)} label="rework" />
+                <Metric n={m.slaBreaches} label="past deadline" tone={m.slaBreaches ? 'warn' : undefined} title="Steps past their SLA" />
+              </div>
+              <div className="co-faint">{m.done} done · {m.failed} failed · {m.cancelled} cancelled · {m.active} open</div>
+            </div>
+          )
+        : <Conformance c={p.conformance} def={def} />}
+    </Card>
+  );
+}
+
+function Conformance({ c, def }: { c?: ProcessConformance; def: ProcessDef | null }) {
+  if (!c || c.runs === 0) return <Empty compact title="No conformance yet">It is computed from the steps of finished runs.</Empty>;
+  const title = (id: string) => (id === 'ad-hoc' ? 'Ad-hoc steps' : def?.nodes.find((n) => n.id === id)?.title ?? id);
+  const counts: Array<[number, string, boolean]> = [[c.mustOpen, 'MUST left open', true], [c.waivers, `MUST waived${c.waiversPending ? ` (${c.waiversPending} pending)` : ''}`, false], [c.shouldSkips, 'SHOULD skipped', false], [c.adHoc, 'ad-hoc steps', false], [c.outOfOrder, 'out of order', true]];
+  return (
+    <div data-testid="process-conformance" style={{ display: 'grid', gap: 10 }}>
+      <div className={`co-note${c.verdict === 'drifting' ? ' warn' : ''}`} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><Pill tone={CONFORMANCE_TONE[c.verdict]}>{CONFORMANCE_WORD[c.verdict]}</Pill>{c.why}</div>
+      <div className="co-metrics">
         <Metric n={pct(c.rate)} label="steps followed" tone={c.verdict === 'drifting' ? 'warn' : undefined} />
         <Metric n={`${c.conformantRuns}/${c.runs}`} label="runs fully followed" />
-        <Metric n={c.mustOpen} label="MUST items left open" tone={c.mustOpen ? 'bad' : undefined} />
-        <Metric n={c.waivers} label="MUST waivers" title={c.waiversPending ? `${c.waiversPending} waiting for a decision` : 'Sanctioned exceptions, not drift'} />
-        <Metric n={c.shouldSkips} label="SHOULD skips" />
-        <Metric n={c.adHoc} label="ad-hoc steps" />
-        <Metric n={c.outOfOrder} label="out of order" tone={c.outOfOrder ? 'bad' : undefined} />
       </div>
+      <div className="co-faint" style={{ lineHeight: 1.6 }}>{counts.filter(([n]) => n > 0).map(([n, w, bad]) => <span key={w} style={{ marginRight: 12, color: bad ? 'var(--red-text)' : undefined }}><b className="co-num">{n}</b> {w}</span>)}{counts.every(([n]) => n === 0) && 'No deviations.'}</div>
       {c.steps.length > 0 && (
-        <Card title="By step" flush>
-          <div className="co-rows">
-            {c.steps.map((s) => (
-              <div key={s.nodeId} className="co-row static">
-                <span className="co-row-main">
-                  <span className="co-row-title">{title(s.nodeId)}</span>
-                  <span className="co-row-meta">{s.checked} run{s.checked === 1 ? '' : 's'}{s.mustOpen ? ` · ${s.mustOpen} MUST open` : ''}{s.waivers ? ` · ${s.waivers} waived` : ''}{s.shouldSkips ? ` · ${s.shouldSkips} SHOULD skipped` : ''}{s.adHoc ? ` · ${s.adHoc} ad hoc` : ''}{s.outOfOrder ? ` · ${s.outOfOrder} out of order` : ''}</span>
-                </span>
-                <span className="co-row-end"><Pill tone={s.rate < 0.7 ? 'warn' : 'ok'} plain>{pct(s.rate)} followed</Pill></span>
+        <div style={{ display: 'grid', gap: 8 }}>
+          <div className="co-sub" style={{ margin: 0 }}>By step</div>
+          {c.steps.map((s) => (
+            <div key={s.nodeId} style={{ display: 'grid', gap: 3 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5 }}>
+                <span style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title(s.nodeId)}</span>
+                <Bar value={s.rate} tone={s.rate < 0.7 ? 'warn' : 'ok'} label={`${title(s.nodeId)}: ${pct(s.rate)} followed`} width={70} />
+                <span className="co-num" style={{ width: 82, textAlign: 'right', color: s.rate < 0.7 ? 'var(--warn-text)' : 'var(--text-dim)' }}>{pct(s.rate)} followed</span>
               </div>
-            ))}
-          </div>
-        </Card>
+              <div className="co-faint">{plural(s.checked, 'run')}{s.mustOpen ? ` · ${s.mustOpen} MUST open` : ''}{s.waivers ? ` · ${s.waivers} waived` : ''}{s.shouldSkips ? ` · ${s.shouldSkips} SHOULD skipped` : ''}{s.adHoc ? ` · ${s.adHoc} ad hoc` : ''}{s.outOfOrder ? ` · ${s.outOfOrder} out of order` : ''}</div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -307,242 +528,241 @@ function Conformance({ c, def }: { c?: ProcessConformance; def: ProcessDef | nul
 /** A ramped version beside the stable one: the comparison, the verdict, and the owner's promote or roll back. */
 function Rollout({ wsId, processId, r, decider, onChanged }: { wsId: string; processId: string; r: ProcessRollout; decider: boolean; onChanged: (d: OrgProcessDetail) => void }) {
   const app = useApp();
-  const act = async (action: 'promote' | 'rollback') => {
-    const reason = prompt(action === 'promote' ? `Promote v${r.candidateVersion}? Every new run then starts on it. Why?` : `Roll back v${r.candidateVersion}? It takes no more runs (open ones finish on it). Why?`);
-    if (!reason) return;
-    try { onChanged(await api.rolloutOrgProcess(wsId, processId, { action, reason })); app.showToast(action === 'promote' ? 'Promoted' : 'Rolled back'); } catch (e) { app.showToast(errText(e)); }
+  const [ask, setAsk] = useState<null | 'promote' | 'rollback'>(null);
+  const act = async (action: 'promote' | 'rollback', reason: string) => {
+    onChanged(await api.rolloutOrgProcess(wsId, processId, { action, reason }));
+    app.showToast(action === 'promote' ? `v${r.candidateVersion} promoted` : `v${r.candidateVersion} rolled back`);
+    setAsk(null);
   };
+  const rows = cohortRows(r);
   return (
     <div style={{ marginBottom: 14 }} data-testid="process-rollout">
-      <Card title={`Ramp: v${r.candidateVersion} on ${r.percent}% of new runs`} aside={<Pill tone={RAMP_TONE[r.verdict]}>{RAMP_WORD[r.verdict]}</Pill>}>
-        <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginBottom: 8 }}>{r.why}.{r.auto ? ' The engine applies the verdict (process.rampAuto).' : ' The owner decides.'}</div>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-          <thead><tr style={{ color: 'var(--text-faint)', textAlign: 'left' }}><th style={{ fontWeight: 600, padding: '4px 0' }}>Measure</th><th style={{ fontWeight: 600 }}>v{r.stableVersion} (stable, {r.stableFinished} finished)</th><th style={{ fontWeight: 600 }}>v{r.candidateVersion} (ramped, {r.candidateFinished} finished)</th></tr></thead>
-          <tbody>
-            {cohortRows(r).map((x) => (
-              <tr key={x.label} style={{ borderTop: '1px solid var(--border-soft)' }}>
-                <td style={{ padding: '4px 0' }}>{x.label}</td><td>{x.stable}</td>
-                <td style={{ color: x.worse ? 'var(--red-text)' : undefined, fontWeight: x.worse ? 600 : undefined }}>{x.candidate}{x.worse ? ' · worse' : ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {decider && <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-          <button className="co-btn small primary" onClick={() => void act('promote')}>Promote v{r.candidateVersion}</button>
-          <button className="co-btn small ghost" onClick={() => void act('rollback')}>Roll back</button>
-        </div>}
+      <Card title={`Trying v${r.candidateVersion} on ${r.percent}% of new runs`} aside={<Pill tone={RAMP_TONE[r.verdict]}>{RAMP_WORD[r.verdict]}</Pill>}>
+        <div className="co-dim" style={{ fontSize: 12.5, marginBottom: 10, lineHeight: 1.5 }}>{r.why}. {r.auto ? 'The engine applies the verdict by itself.' : 'The owner decides when the verdict is in.'}</div>
+        <div style={{ overflowX: 'auto', maxWidth: 680 }}>
+          <table className="pr-cohorts">
+            <thead><tr><th scope="col">Measure</th><th scope="col">v{r.stableVersion} · stable<br /><span style={{ fontWeight: 500 }}>{plural(r.stableFinished, 'finished run')}</span></th><th scope="col">v{r.candidateVersion} · trying<br /><span style={{ fontWeight: 500 }}>{plural(r.candidateFinished, 'finished run')}</span></th></tr></thead>
+            <tbody>
+              {rows.map((x) => <tr key={x.label}><td>{x.label}</td><td>{x.stable}</td><td className={x.worse ? 'worse' : undefined}>{x.candidate}{x.worse ? ' · worse' : ''}</td></tr>)}
+            </tbody>
+          </table>
+        </div>
+        {decider && (ask
+          ? <ReasonForm question={ask === 'promote' ? `Promote v${r.candidateVersion}? Every new run then starts on it.` : `Roll back v${r.candidateVersion}? It takes no more runs; open ones finish on it.`} confirm={ask === 'promote' ? `Promote v${r.candidateVersion}` : 'Roll back'} danger={ask === 'rollback'} onConfirm={(reason) => act(ask, reason)} onCancel={() => setAsk(null)} />
+          : (
+            <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
+              <button className={`co-btn small${r.verdict === 'promote' ? ' primary' : ''}`} onClick={() => setAsk('promote')}>Promote v{r.candidateVersion}</button>
+              <button className={`co-btn small${r.verdict === 'rollback' ? ' primary' : ' ghost'}`} onClick={() => setAsk('rollback')}>Roll back</button>
+            </div>
+          ))}
       </Card>
     </div>
   );
 }
 
-function StartForm({ wsId, p, onDone }: { wsId: string; p: OrgProcess; onDone: () => Promise<void> }) {
+function StartForm({ wsId, p, def, onCancel, onDone }: { wsId: string; p: OrgProcess; def: ProcessDef | null; onCancel: () => void; onDone: () => Promise<void> }) {
   const app = useApp();
+  const inputs = useMemo(() => varsOf(def), [def]);
   const [title, setTitle] = useState('');
-  const [vars, setVars] = useState('');
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
   const go = async () => {
-    const parsed: Record<string, string> = {};
-    for (const line of vars.split('\n')) { const m = /^\s*([a-z][a-z0-9_]*)\s*[:=]\s*(.+)$/i.exec(line); if (m) parsed[m[1]] = m[2].trim(); }
-    try { const r = await api.startOrgProcessRun(wsId, p.id, { title: title.trim() || undefined, vars: parsed }); app.showToast(`${r.key} started`); await onDone(); } catch (e) { app.showToast(errText(e)); }
+    const vars = Object.fromEntries(Object.entries(vals).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v));
+    setBusy(true); setProblem(null);
+    try { const r = await api.startOrgProcessRun(wsId, p.id, { title: title.trim() || undefined, vars }); app.showToast(`${r.key} started`); await onDone(); } catch (e) { setProblem(errText(e)); setBusy(false); }
   };
   return (
-    <div className="co-card" style={{ padding: 14, marginBottom: 14 }} role="form" aria-label={`Start a run of ${p.title}`}>
+    <form className="co-card" style={{ padding: 14, marginBottom: 14 }} aria-label={`Start a run of ${p.title}`} data-testid="process-start-form" onSubmit={(e) => { e.preventDefault(); void go(); }}>
       <div className="co-form">
+        <div className="co-card-title">Start a run of {p.title}</div>
         <div className="co-form-row">
-          <label className="co-field"><span>What this run is for</span><input className="co-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={`${p.title}: …`} /></label>
-          <label className="co-field"><span>Inputs (one per line, name: value)</span><textarea className="co-input" rows={2} value={vars} onChange={(e) => setVars(e.target.value)} placeholder="release: v2.3" /><small>The steps' briefs name them as ${'{'}name{'}'}.</small></label>
+          <label className="co-field"><span>What this run is for</span><input className="co-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={`${p.title}: …`} autoFocus /></label>
+          {inputs.map((k) => (
+            <label key={k} className="co-field"><span>{k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' ')}</span><input className="co-input" value={vals[k] ?? ''} onChange={(e) => setVals({ ...vals, [k]: e.target.value })} aria-label={k} /><small>The steps' briefs use it as {'${'}{k}{'}'}.</small></label>
+          ))}
         </div>
-        <div className="co-form-foot"><button className="co-btn primary" onClick={() => void go()}>Start</button></div>
+        {problem && <div className="co-alert" role="alert">{problem}</div>}
+        <div className="co-form-foot">
+          <button type="button" className="co-btn ghost" onClick={onCancel}>Cancel</button>
+          <button type="submit" className="co-btn primary" disabled={busy}>{busy ? 'Starting…' : 'Start the run'}</button>
+        </div>
       </div>
-    </div>
+    </form>
   );
 }
 
+/** The definition as JSON beside a live preview of the graph it makes. */
 function Editor({ wsId, p, def, onDone }: { wsId: string; p: OrgProcess; def: ProcessDef; onDone: (d: OrgProcessDetail | null) => Promise<void> }) {
   const app = useApp();
   const [text, setText] = useState(() => JSON.stringify(def, null, 2));
   const [reason, setReason] = useState('');
   const [ramp, setRamp] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
-  const save = async () => {
-    let parsed: ProcessDef;
-    try { parsed = JSON.parse(text) as ProcessDef; } catch (e) { setProblem(`Not valid JSON: ${errText(e)}`); return; }
-    const pctRamp = ramp.trim() === '' ? undefined : Math.max(0, Math.min(90, Math.round(Number(ramp))));
+  const [busy, setBusy] = useState(false);
+  const parsed = useMemo((): { def: ProcessDef | null; error: string | null } => {
     try {
-      const d = await api.editOrgProcess(wsId, p.id, { def: parsed, reason: reason.trim(), ...(pctRamp !== undefined && Number.isFinite(pctRamp) ? { ramp: pctRamp } : {}) });
-      app.showToast(d.rollout ? `v${d.rollout.candidateVersion} ramps on ${d.rollout.percent}% of new runs` : `${p.title} v${d.process.version} is active`);
+      const x = JSON.parse(text) as ProcessDef;
+      if (!x || !Array.isArray(x.stages) || !Array.isArray(x.nodes) || !Array.isArray(x.edges)) return { def: null, error: 'A definition needs stages, nodes and edges (lists).' };
+      return { def: x, error: null };
+    } catch (e) { return { def: null, error: `Not valid JSON: ${errText(e)}` }; }
+  }, [text]);
+  const changed = text !== JSON.stringify(def, null, 2);
+  const save = async () => {
+    if (!parsed.def) { setProblem(parsed.error); return; }
+    const pctRamp = ramp.trim() === '' ? undefined : Math.max(0, Math.min(90, Math.round(Number(ramp))));
+    setBusy(true); setProblem(null);
+    try {
+      const d = await api.editOrgProcess(wsId, p.id, { def: parsed.def, reason: reason.trim(), ...(pctRamp !== undefined && Number.isFinite(pctRamp) ? { ramp: pctRamp } : {}) });
+      app.showToast(d.rollout ? `v${d.rollout.candidateVersion} ramps on ${d.rollout.percent}% of new runs` : d.process.pendingVersion ? `v${d.process.pendingVersion} waits for approval` : `${p.title} v${d.process.version} is active`);
       await onDone(d);
-    } catch (e) { setProblem(errText(e)); }
+    } catch (e) { setProblem(errText(e)); setBusy(false); }
   };
   return (
-    <div className="co-card" style={{ padding: 14, marginBottom: 14 }} role="form" aria-label={`Edit ${p.title}`}>
+    <form className="co-card" style={{ padding: 14, marginBottom: 14 }} aria-label={`Edit ${p.title}`} data-testid="process-editor" onSubmit={(e) => { e.preventDefault(); void save(); }}>
       <div className="co-form">
-        <label className="co-field"><span>Definition</span>
-          <textarea className="co-input" rows={18} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} style={{ fontFamily: 'var(--mono, ui-monospace, monospace)', fontSize: 12 }} />
-          <small>Stages (strict or dynamic), steps (task, approval, wait, subprocess, meeting) with MUST / SHOULD / MAY items (at most nine), and edges in strict stages; an edge that closes a loop needs loopMax; a step with side effects may name a compensation step (compensate) that undoes it if a run fails. Saving makes a new version (ramped on a share of runs when the process has a track record); the old one stays and can be rolled back to.</small>
-        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="co-card-title">Edit {p.title}</span>
+          <span className="co-faint">— saving makes v{p.version + 1}; v{p.version} stays and can be rolled back to</span>
+        </div>
+        <div className="pr-editor">
+          <label className="co-field"><span>Definition</span>
+            <textarea className="co-input pr-code" rows={22} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
+            <small>Stages (strict or dynamic); steps (task, approval, wait, subprocess, meeting) with at most nine MUST / SHOULD / MAY items; edges in strict stages, and a loop needs loopMax; a step with outside effects may name the step that undoes it (compensate).</small>
+          </label>
+          <div className="co-field"><span>Preview</span>
+            <div className="pr-preview" aria-live="polite">
+              {parsed.def ? <ProcessGraph def={parsed.def} compact testid="process-editor-preview" /> : <div className="co-alert" role="status">{parsed.error}</div>}
+            </div>
+          </div>
+        </div>
         <div className="co-form-row">
-          <label className="co-field"><span>Why (what the runs showed)</span><input className="co-input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="the security scan was skipped in two runs" /></label>
-          <label className="co-field" style={{ maxWidth: 220 }}><span>Ramp (% of new runs)</span><input className="co-input" inputMode="numeric" value={ramp} onChange={(e) => setRamp(e.target.value)} placeholder="company default" aria-label="Ramp percent" /><small>0 = every new run at once.</small></label>
+          <label className="co-field"><span>Why (what the runs showed)</span><input className="co-input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. the security scan was skipped in two runs" /></label>
+          <label className="co-field" style={{ maxWidth: 240 }}><span>Try it on (% of new runs)</span><input className="co-input" inputMode="numeric" value={ramp} onChange={(e) => setRamp(e.target.value.replace(/[^\d]/g, ''))} placeholder="company default" aria-label="Ramp percent" /><small>0 = every new run at once. Used when the process has a track record.</small></label>
         </div>
         {problem && <div className="co-alert" role="alert" style={{ whiteSpace: 'pre-wrap' }}>{problem}</div>}
         <div className="co-form-foot">
-          <button className="co-btn ghost" onClick={() => void onDone(null)}>Cancel</button>
-          <button className="co-btn primary" disabled={!reason.trim()} onClick={() => void save()}>Save as a new version</button>
+          <button type="button" className="co-btn ghost" onClick={() => void onDone(null)}>Cancel</button>
+          <button type="submit" className="co-btn primary" disabled={!reason.trim() || !changed || !parsed.def || busy} title={!changed ? 'Nothing changed yet' : !reason.trim() ? 'Say why first' : undefined}>{busy ? 'Saving…' : 'Save as a new version'}</button>
         </div>
       </div>
-    </div>
-  );
-}
-
-// ---- the graph ----
-
-function Graph({ def, metrics }: { def: ProcessDef; metrics: OrgProcess['metrics'] }) {
-  const [open, setOpen] = useState<string | null>(null);
-  const dev = new Map(metrics.steps.map((s) => [s.nodeId, s]));
-  const comps = compensationsOf(def);
-  return (
-    <Card title="How it runs" aside={`${def.stages.length} stage${def.stages.length === 1 ? '' : 's'} · ${def.nodes.length - comps.length} steps`}>
-      <div style={{ display: 'grid', gap: 14 }} data-testid="process-graph">
-        {def.stages.map((st, i) => (
-          <section key={st.id} aria-label={`Stage ${st.title}`}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 650, color: 'var(--text-dim)' }}>Stage {i + 1} · {st.title}</span>
-              <Pill tone={st.mode === 'strict' ? 'info' : 'accent'} plain>{st.mode}</Pill>
-              <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{MODE_HINT[st.mode]}</span>
-            </div>
-            {st.mode === 'strict'
-              ? <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 4, alignItems: 'flex-start' }}>
-                  {layoutStage(def, st.id).map((col, c) => (
-                    <div key={c} style={{ display: 'grid', gap: 8, minWidth: 200, flex: '0 0 auto' }}>
-                      {col.map((n) => <StepBox key={n.id} def={def} n={n} strict open={open === n.id} onToggle={() => setOpen(open === n.id ? null : n.id)} stat={dev.get(n.id)} />)}
-                    </div>
-                  ))}
-                </div>
-              : <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 240px), 1fr))' }}>
-                  {stageNodes(def, st.id).map((n) => <StepBox key={n.id} def={def} n={n} open={open === n.id} onToggle={() => setOpen(open === n.id ? null : n.id)} stat={dev.get(n.id)} />)}
-                </div>}
-          </section>
-        ))}
-        {comps.length > 0 && (
-          <section aria-label="If a run fails or is cancelled" data-testid="process-compensations">
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 650, color: 'var(--text-dim)' }}>If a run fails or is cancelled</span>
-              <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>The done steps are undone, latest first, each by its own task.</span>
-            </div>
-            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 240px), 1fr))' }}>
-              {comps.map(({ comp, undoes }) => (
-                <div key={comp.id} style={{ border: '1px dashed var(--border)', borderRadius: 10, padding: '8px 10px' }} data-testid="process-compensation">
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><span style={{ fontSize: 13, fontWeight: 600 }}>{comp.title}</span><Pill plain tone="warn">{KIND_WORD.compensation}</Pill></div>
-                  <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2 }}>undoes {undoes.map((u) => u.title).join(', ') || '—'} · lane: {comp.lane ?? 'owner'}{comp.must?.length ? ` · ${comp.must.length} MUST` : ''}</div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function StepBox({ def, n, strict, open, onToggle, stat }: { def: ProcessDef; n: ProcessNodeDef; strict?: boolean; open: boolean; onToggle: () => void; stat?: OrgProcess['metrics']['steps'][number] }) {
-  const e = strict ? edgeWords(def, n.id) : null;
-  const items = (n.must?.length ?? 0) + (n.should?.length ?? 0) + (n.may?.length ?? 0);
-  return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 10, background: 'var(--panel-2)', padding: '8px 10px', minWidth: 0 }} data-testid="process-step">
-      <button onClick={onToggle} aria-expanded={open} style={{ all: 'unset', cursor: 'pointer', display: 'block', width: '100%' }}>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{n.title}</span>
-          {n.kind !== 'task' && <Pill plain tone="info">{KIND_WORD[n.kind]}</Pill>}
-          {n.required && <Pill tone="warn" plain title="The stage cannot finish without it">checkpoint</Pill>}
-        </div>
-        <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2 }}>
-          {n.kind === 'approval' ? `asks ${n.approver === 'ceo' ? 'the CEO' : 'the manager'}` : n.kind === 'wait' ? `waits ${n.waitHours}h` : n.kind === 'subprocess' ? `runs ${n.process}` : n.kind === 'meeting' ? meetingWords(n) : `lane: ${n.lane ?? 'owner'}`}
-          {n.must?.length ? ` · ${n.must.length} MUST` : ''}{items > (n.must?.length ?? 0) ? ` · ${items - (n.must?.length ?? 0)} more` : ''}{n.slaHours ? ` · SLA ${n.slaHours}h` : ''}
-          {stat && stat.deviations > 0 ? <span style={{ color: 'var(--warn-text)' }}> · deviated {Math.round(stat.deviationRate * 100)}%</span> : null}
-        </div>
-        {e && (e.after.length > 0 || e.loops.length > 0) && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>{e.after.length ? `after ${e.after.join(', ')}` : ''}{e.loops.length ? `${e.after.length ? ' · ' : ''}↺ ${e.loops.join('; ')}` : ''}</div>}
-        {!strict && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>{availabilityWords(def, n)}</div>}
-        {n.compensate && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>↩ undone by {def.nodes.find((x) => x.id === n.compensate)?.title ?? n.compensate} if the run fails</div>}
-      </button>
-      {open && (
-        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8, display: 'grid', gap: 6 }}>
-          {n.why && <div><b>Why:</b> {n.why}</div>}
-          {n.question && <div><b>Question:</b> {n.question}</div>}
-          {n.agenda && <div><b>Agenda:</b> {n.agenda} (plus what earlier steps produced; the minutes' decisions and actions become its outputs)</div>}
-          {n.doneWhen && <div><b>Exit:</b> {n.doneWhen}</div>}
-          {(['must', 'should', 'may'] as const).map((lvl) => (n[lvl]?.length ? <div key={lvl}><b>{lvl.toUpperCase()}</b><ul style={{ margin: '2px 0 0 16px', padding: 0 }}>{n[lvl]!.map((x, i) => <li key={i}>{x}</li>)}</ul></div> : null))}
-          {n.outputs?.length ? <div><b>Outputs:</b> {n.outputs.map((o) => `${o.name}${o.required ? ' (required)' : ''}`).join(', ')}</div> : null}
-          {n.deny?.length ? <div><b>Not in this step:</b> {n.deny.join(', ')}</div> : null}
-          {n.playbook && <div><b>Playbook:</b> {n.playbook}</div>}
-          {e?.next.length ? <div><b>Then:</b> {e.next.join(', ')}</div> : null}
-        </div>
-      )}
-    </div>
+    </form>
   );
 }
 
 // ---- runs and versions ----
 
-function Runs({ wsId, d, decider, onChanged }: { wsId: string; d: OrgProcessDetail; decider: boolean; onChanged: () => Promise<void> }) {
+const TL_STATE = (s: { status: string; current: number }): StepState | 'superseded' => (!s.current ? 'superseded' : (['done', 'active', 'failed', 'skipped', 'cancelled'] as string[]).includes(s.status) ? s.status as StepState : 'pending');
+
+/** One step of a run: its state, who has it, its task, the deviations in full. */
+function StepLine({ s, state }: { s: RunDetail['steps'][number]; state: StepState | 'superseded' }) {
+  const app = useApp();
+  const names = useAgentNames();
+  const who = s.assigneeAgentId ? names.get(s.assigneeAgentId) : undefined;
+  const outputs = Object.entries(s.outputs ?? {});
+  const kind = s.nodeId.startsWith('undo:') ? 'Undo' : s.kind === 'stage' ? 'Choosing the next step' : s.kind === 'approval' ? 'Approval' : s.kind === 'meeting' ? 'Meeting' : s.kind === 'wait' ? 'Timer' : s.kind === 'subprocess' ? 'Sub-process' : null;
+  const openMeeting = (id: string) => window.dispatchEvent(new CustomEvent<MeetingEventDetail>(MEETING_EVENT, { detail: { workspaceId: '', meetingId: id } }));
+  return (
+    <div className="pr-tl-body">
+      <span className="pr-tl-title">
+        {s.title}{s.attempt > 1 ? <Pill plain>round {s.attempt}</Pill> : null}
+        {kind && <span className="co-faint" style={{ fontWeight: 500 }}>{kind}</span>}
+      </span>
+      <span className="pr-tl-meta">
+        <span>{state === 'superseded' ? 'Sent back for another round' : `${STEP_STATE_WORD[state]}${s.outcome && s.outcome !== s.status && s.outcome !== 'done' ? `: ${s.outcome}` : ''}`}</span>
+        {who && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>· <Avatar a={who} size={15} />{who.name}</span>}
+        {s.taskKey && s.taskId && <>· <button className="co-link" onClick={() => app.openOrgTask(s.taskId!)}>{s.taskKey}</button></>}
+        {s.meetingId && <>· <button className="co-link" onClick={() => openMeeting(s.meetingId!)}>Open the meeting</button></>}
+        {s.approvalId && state === 'active' && <span>· waits in the Inbox</span>}
+        {s.endedAt ? <span>· {ago(s.endedAt)}</span> : s.startedAt ? <span>· since {ago(s.startedAt)}</span> : null}
+        {s.slaBreachedAt && <Pill tone="warn" plain>past its deadline</Pill>}
+      </span>
+      {outputs.length > 0 && <span className="pr-outputs">{outputs.map(([k, v]) => <span key={k} style={{ marginRight: 10 }}><b>{k}</b>: {String(v).slice(0, 80)}</span>)}</span>}
+      {s.deviations.map((x, i) => (
+        <div key={i} className="pr-dev">
+          <b>{x.level.toUpperCase()} {x.status === 'waived' ? 'waived' : x.status === 'pending' ? 'waiver asked' : 'skipped'}</b>{x.item ? ` (${x.item})` : ''}: {x.reason}{x.alternative ? `. Instead: ${x.alternative}` : ''}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Runs({ wsId, d, decider, shown, onShow, onChanged }: { wsId: string; d: OrgProcessDetail; decider: boolean; shown: string | null; onShow: (id: string) => void; onChanged: () => Promise<void> }) {
   const app = useApp();
   const names = useAgentNames();
   const [open, setOpen] = useState<string | null>(() => d.runs.find((r) => r.status === 'running' || r.status === 'blocked')?.id ?? null);
-  const cancel = async (id: string) => {
-    const reason = prompt('Why cancel this run? Its open step tasks are cancelled.');
-    if (!reason) return;
-    try { await api.cancelOrgProcessRun(wsId, id, reason); await onChanged(); } catch (e) { app.showToast(errText(e)); }
-  };
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
+  const list = all ? d.runs : d.runs.slice(0, 8);
   return (
     <Card title="Runs" aside={`${d.runs.length}`} flush>
-      {d.runs.length === 0 && <div style={{ padding: '4px 10px 8px' }}><Empty compact title="No runs yet">A trigger starts one, or start it by hand.</Empty></div>}
+      {d.runs.length === 0 && <div style={{ padding: '4px 10px 8px' }}><Empty compact title="No runs yet">{`Runs start ${triggerWords(d.process.triggers)}.`}</Empty></div>}
       <div className="co-rows" data-testid="process-runs">
-        {d.runs.map((r) => (
-          <div key={r.id}>
-            <button className="co-row" onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>
-              <span className="co-row-main">
-                <span className="co-row-title">{r.key}{r.title ? ` · ${r.title}` : ''}</span>
-                <span className="co-row-meta">v{r.version} · {r.trigger.kind ?? 'manual'}{r.trigger.event ? ` (${r.trigger.event.replace(/_/g, ' ')})` : ''} · started {ago(r.startedAt)}{r.endedAt ? ` · ended ${ago(r.endedAt)}` : ` · stage ${r.stage}`}{r.note ? ` · ${r.note}` : ''}</span>
-              </span>
-              <span className="co-row-end">
-                {r.compensation && <Pill tone={r.compensation === 'partial' ? 'bad' : r.compensation === 'running' ? 'warn' : 'muted'} plain title="The done steps' compensations (a saga)">{r.compensation === 'running' ? 'undoing' : r.compensation === 'partial' ? 'partly undone' : 'undone'}</Pill>}
-                <Pill tone={runTone(r.status)}>{r.status}</Pill><I d={open === r.id ? P.chevD : P.chevR} size={12} />
-              </span>
-            </button>
-            {open === r.id && (
-              <div style={{ padding: '2px 12px 10px 22px', display: 'grid', gap: 4 }}>
-                {r.steps.map((s) => (
-                  <div key={s.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, opacity: s.current ? 1 : 0.6 }}>
-                    <Pill tone={stepTone(s.status, s.current)} plain>{s.current ? s.status : 'sent back'}</Pill>
-                    <span style={{ fontWeight: 600 }}>{s.title}{s.attempt > 1 ? ` (round ${s.attempt})` : ''}</span>
-                    {s.kind !== 'task' && <span style={{ color: 'var(--text-faint)' }}>{KIND_WORD[s.kind] ?? s.kind}</span>}
-                    {s.taskKey && s.taskId && <button className="co-link" onClick={() => app.openOrgTask(s.taskId!)}>{s.taskKey}</button>}
-                    {s.assigneeAgentId && <span style={{ color: 'var(--text-dim)' }}>{names.get(s.assigneeAgentId)?.name}</span>}
-                    {s.outcome && s.outcome !== s.status && <span style={{ color: 'var(--text-dim)' }}>→ {s.outcome}</span>}
-                    {s.deviations.length > 0 && <span style={{ color: 'var(--warn-text)' }} title={s.deviations.map((x) => `${x.level} ${x.item}: ${x.reason} (${x.status})`).join('\n')}>{s.deviations.length} deviation{s.deviations.length === 1 ? '' : 's'}</span>}
-                    {s.slaBreachedAt && <span style={{ color: 'var(--warn-text)' }}>past SLA</span>}
+        {list.map((r) => {
+          const prog = runProgress(d.def, r.steps);
+          const live = r.steps.filter((s) => s.current && s.status === 'active' && s.kind !== 'stage');
+          const ordered = [...r.steps].sort((a, b) => (a.startedAt || '').localeCompare(b.startedAt || '') || a.attempt - b.attempt);
+          return (
+            <div key={r.id}>
+              <button className="co-row" onClick={() => setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>
+                <span className="co-row-main">
+                  <span className="co-row-title"><span className="co-key">{r.key}</span>{r.title || 'Run'}</span>
+                  <span className="co-row-meta">
+                    {live.length ? `Now: ${live.map((s) => `${s.title}${s.assigneeAgentId ? ` (${names.get(s.assigneeAgentId)?.name ?? 'a member'})` : ''}`).join(', ')}` : r.endedAt ? `Ended ${ago(r.endedAt)}` : `Started ${ago(r.startedAt)}`}
+                    {` · v${r.version}`}
+                  </span>
+                </span>
+                <span className="co-row-end">
+                  {prog.total > 0 && <span className="pr-run-progress" title={`${prog.done} of ${prog.total} steps`}><Bar value={prog.done / prog.total} tone={r.status === 'failed' ? 'bad' : r.status === 'done' ? 'ok' : undefined} label={`${r.key}: ${prog.done} of ${prog.total} steps`} width={48} /><span className="co-num">{prog.done}/{prog.total}</span></span>}
+                  {r.compensation && <Pill tone={r.compensation === 'partial' ? 'bad' : r.compensation === 'running' ? 'warn' : 'muted'} plain title="Undoing what the run did">{r.compensation === 'running' ? 'undoing' : r.compensation === 'partial' ? 'partly undone' : 'undone'}</Pill>}
+                  <Pill tone={runTone(r.status)}>{RUN_STATUS_WORD[r.status] ?? r.status}</Pill><I d={open === r.id ? P.chevD : P.chevR} size={12} />
+                </span>
+              </button>
+              {open === r.id && (
+                <div style={{ padding: '6px 12px 12px 14px', display: 'grid', gap: 10 }}>
+                  {r.note && <div className={`co-note${r.status === 'blocked' || r.status === 'failed' ? ' warn' : ''}`}>{r.note}</div>}
+                  <ol className="pr-timeline" aria-label={`Steps of ${r.key}`}>
+                    {ordered.filter((s) => s.kind !== 'stage').map((s) => {
+                      const st = TL_STATE(s);
+                      return (
+                        <li key={s.id} className="pr-tl" data-state={st}>
+                          <span className="pr-tl-mark" aria-label={st === 'superseded' ? 'sent back' : STEP_STATE_WORD[st]}>{st === 'done' ? <I d={P.check} size={10} sw={3} /> : st === 'failed' ? <I d={P.x} size={10} sw={3} /> : null}</span>
+                          <StepLine s={s} state={st} />
+                        </li>
+                      );
+                    })}
+                    {(r.status === 'running' || r.status === 'blocked') && d.def && d.def.nodes.filter((n) => !n.compensation && !r.steps.some((s) => s.nodeId === n.id)).map((n) => (
+                      <li key={`next-${n.id}`} className="pr-tl" data-state="pending">
+                        <span className="pr-tl-mark" aria-label="not reached yet" />
+                        <div className="pr-tl-body"><span className="pr-tl-title" style={{ color: 'var(--text-faint)', fontWeight: 500 }}>{n.title}</span></div>
+                      </li>
+                    ))}
+                  </ol>
+                  {Object.keys(r.vars).length > 0 && <div className="co-faint">Inputs: {Object.entries(r.vars).map(([k, v]) => `${k.replace(/_/g, ' ')} = ${String(v).slice(0, 60)}`).join(' · ')}</div>}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {d.def && <button className="co-btn small" onClick={() => onShow(r.id)} disabled={shown === r.id}>{shown === r.id ? 'Shown on the graph' : 'Show on the graph'}</button>}
+                    {decider && (r.status === 'running' || r.status === 'blocked') && cancelling !== r.id && <button className="co-btn small ghost" onClick={() => setCancelling(r.id)}>Cancel run</button>}
                   </div>
-                ))}
-                {Object.keys(r.vars).length > 0 && <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 4 }}>Variables: {Object.entries(r.vars).map(([k, v]) => `${k} = ${String(v).slice(0, 60)}`).join(' · ')}</div>}
-                {decider && (r.status === 'running' || r.status === 'blocked') && <div><button className="co-btn small ghost" onClick={() => void cancel(r.id)}>Cancel run</button></div>}
-              </div>
-            )}
-          </div>
-        ))}
+                  {cancelling === r.id && <ReasonForm question="Cancel this run? Its open step tasks are cancelled, and what it did is undone where the process says how." confirm="Cancel the run" danger
+                    onConfirm={async (reason) => { await api.cancelOrgProcessRun(wsId, r.id, reason); app.showToast(`${r.key} cancelled`); setCancelling(null); await onChanged(); }} onCancel={() => setCancelling(null)} />}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {d.runs.length > 8 && <button className="co-link" style={{ margin: '6px 10px' }} onClick={() => setAll(!all)}>{all ? 'Show fewer' : `Show all ${d.runs.length} runs`}</button>}
       </div>
     </Card>
   );
 }
 
+const VERSION_WORD: Record<string, string> = { active: 'active', superseded: 'earlier', pending: 'waits for approval', rejected: 'rejected', candidate: 'trying', rolled_back: 'rolled back' };
+
 function Versions({ wsId, d, decider, nameOf, onChanged }: { wsId: string; d: OrgProcessDetail; decider: boolean; nameOf: (id: string) => string | undefined; onChanged: (d: OrgProcessDetail) => void }) {
   const app = useApp();
   const [open, setOpen] = useState<number | null>(null);
-  const rollback = async (version: number) => {
-    const reason = prompt(`Roll back to v${version}? This writes a new version with v${version}'s definition. Why?`);
-    if (!reason) return;
-    try { onChanged(await api.rollbackOrgProcess(wsId, d.process.id, { version, reason })); app.showToast('Rolled back'); } catch (e) { app.showToast(errText(e)); }
-  };
-  const tone = useMemo(() => ({ active: 'ok', superseded: 'muted', pending: 'warn', rejected: 'bad', candidate: 'info', rolled_back: 'bad' } as const), []);
+  const [ask, setAsk] = useState<number | null>(null);
+  const tone = { active: 'ok', superseded: 'muted', pending: 'warn', rejected: 'bad', candidate: 'info', rolled_back: 'bad' } as const;
   return (
     <Card title="Versions" aside={`${d.versions.length}`} flush>
       <div className="co-rows" data-testid="process-versions">
@@ -550,17 +770,21 @@ function Versions({ wsId, d, decider, nameOf, onChanged }: { wsId: string; d: Or
           <div key={v.id}>
             <button className="co-row" onClick={() => setOpen(open === v.version ? null : v.version)} aria-expanded={open === v.version}>
               <span className="co-row-main">
-                <span className="co-row-title">v{v.version} · {v.reason}</span>
-                <span className="co-row-meta">by {authorWords(v.author, nameOf)} · {ago(v.createdAt)}{v.diff.length ? ` · ${v.diff.length} change${v.diff.length === 1 ? '' : 's'}` : ''}</span>
+                <span className="co-row-title"><span className="co-key">v{v.version}</span>{v.reason}</span>
+                <span className="co-row-meta">by {authorWords(v.author, nameOf)} · {ago(v.createdAt)}{v.diff.length ? ` · ${plural(v.diff.length, 'change')}` : ''}</span>
               </span>
-              <span className="co-row-end"><Pill tone={tone[v.status]}>{v.status}</Pill></span>
+              <span className="co-row-end"><Pill tone={tone[v.status]} plain={v.status === 'superseded'}>{VERSION_WORD[v.status] ?? v.status}</Pill></span>
             </button>
             {open === v.version && (
-              <div style={{ padding: '2px 12px 10px 22px' }}>
-                <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: 'var(--text-dim)', display: 'grid', gap: 2 }} data-testid="process-diff">
-                  {v.diff.map((l, i) => <li key={i} style={{ color: l.startsWith('+') || / \+ /.test(l) ? 'var(--ok-text)' : l.startsWith('-') || / − /.test(l) ? 'var(--red-text)' : undefined }}>{l}</li>)}
+              <div style={{ padding: '2px 12px 10px 14px' }}>
+                <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', fontSize: 12, color: 'var(--text-dim)', display: 'grid', gap: 3, fontFamily: 'var(--mono)' }} data-testid="process-diff">
+                  {v.diff.map((l, i) => { const add = l.startsWith('+') || / \+ /.test(l) || / \+$/.test(l); const del = l.startsWith('-') || / − /.test(l); return <li key={i} style={{ color: add ? 'var(--ok-text)' : del ? 'var(--red-text)' : undefined, overflowWrap: 'anywhere' }}>{l}</li>; })}
                 </ul>
-                {decider && v.status === 'superseded' && <button className="co-btn small" style={{ marginTop: 8 }} onClick={() => void rollback(v.version)}>Roll back to v{v.version}</button>}
+                {v.status === 'pending' && <div className="co-faint" style={{ marginTop: 6 }}>It applies once approved in the Inbox.</div>}
+                {decider && v.status === 'superseded' && (ask === v.version
+                  ? <ReasonForm question={`Roll back to v${v.version}? This writes a new version with v${v.version}'s definition, at once.`} confirm={`Roll back to v${v.version}`} danger
+                      onConfirm={async (reason) => { onChanged(await api.rollbackOrgProcess(wsId, d.process.id, { version: v.version, reason })); app.showToast(`Rolled back to v${v.version}`); setAsk(null); }} onCancel={() => setAsk(null)} />
+                  : <button className="co-btn small" style={{ marginTop: 8 }} onClick={() => setAsk(v.version)}>Roll back to v{v.version}</button>)}
               </div>
             )}
           </div>
