@@ -82,5 +82,50 @@ export function threadWords(e: { action: string; due?: string; reason?: string; 
     requested: 'requested', accepted: 'accepted', declined: 'declined', negotiate: 'proposed instead', countered: 'countered', agreed: 'agreed', withdrawn: 'withdrew',
     routed: 'routed', accept_breached: 'missed the accept SLA', resolve_breached: 'missed the delivery date', held_to_answer: 'held the provider to an answer',
   };
-  return [verb[e.action] ?? e.action.replace(/_/g, ' '), e.due ? `by ${e.due.slice(0, 10)}` : '', e.scope ? `scope: ${e.scope}` : '', e.reason ?? '', e.note ?? ''].filter(Boolean).join(' · ');
+  return [verb[e.action] ?? e.action.replace(/_/g, ' '), e.due ? `by ${shortDate(e.due)}` : '', e.scope ? `scope: ${e.scope}` : '', e.reason ?? '', e.note ?? ''].filter(Boolean).join(' · ');
 }
+
+/** Who did a thread entry: "you", a member's name, or "the system". */
+export function threadActor(by: string, nameOf: (agentId: string) => string | undefined): string {
+  if (by.startsWith('agent:')) return nameOf(by.slice(6)) ?? 'a member';
+  if (by === 'system' || by === 'tick') return 'the system';
+  return 'You';
+}
+
+/** An SLA in plain words: 4 → "4 hours", 48 → "2 days", 36 → "36 hours", 0.5 → "30 minutes". */
+export function slaWords(h: number): string {
+  if (!Number.isFinite(h) || h <= 0) return '—';
+  if (h < 1) { const m = Math.round(h * 60); return `${m} minute${m === 1 ? '' : 's'}`; }
+  if (h >= 24 && h % 24 === 0) { const d = h / 24; return `${d} day${d === 1 ? '' : 's'}`; }
+  const r = Math.round(h * 10) / 10;
+  return `${r} hour${r === 1 ? '' : 's'}`;
+}
+
+/** A date as "Nov 13" (with the year when it is not this year's). */
+export function shortDate(iso: string | null | undefined, now: Date = new Date()): string {
+  if (!iso) return '';
+  // Due dates are days: read the calendar date as written, never shifted by the viewer's zone.
+  const d = /^\d{4}-\d{2}-\d{2}/.test(iso) ? new Date(`${iso.slice(0, 10)}T12:00:00`) : new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' as const } : {}) });
+}
+
+/** Whether a request waits on the CEO: a counter-proposal on its own request, or an ask nobody routed. */
+export function needsCeo(r: Pick<OrgServiceRequestRow, 'status' | 'requesterAgentId'>): boolean {
+  return (r.status === 'negotiating' && !r.requesterAgentId) || r.status === 'triage';
+}
+
+/** Open requests in reading order: what waits on the CEO, then breached, then the nearest due time. */
+export function sortOpenRequests<T extends Pick<OrgServiceRequestRow, 'status' | 'requesterAgentId' | 'clock' | 'acceptDueAt' | 'resolveDueAt' | 'committedDue' | 'createdAt'>>(rows: T[]): T[] {
+  const due = (r: T) => Date.parse((r.status === 'accepted' ? r.committedDue ?? r.resolveDueAt : r.acceptDueAt) ?? '') || Number.MAX_SAFE_INTEGER;
+  const rank = (r: T) => (needsCeo(r) ? 0 : r.clock?.breached ? 1 : 2);
+  return [...rows].sort((a, b) => rank(a) - rank(b) || due(a) - due(b) || (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+/** Who answers a service, in words, when no member holds the role yet. */
+export function answererWords(s: Pick<OrgServiceEntry, 'ownerRole' | 'unitName'>): string {
+  return s.ownerRole === 'head' ? `The head of ${s.unitName}` : `${/^[aeiou]/i.test(s.ownerRole) ? 'An' : 'A'} ${s.ownerRole} in ${s.unitName}`;
+}
+
+/** A field's type in words for the service detail. */
+export const FIELD_TYPE_WORD: Record<ServiceField['type'], string> = { text: 'text', number: 'number', date: 'date', url: 'link', choice: 'one of a list', boolean: 'yes / no' };

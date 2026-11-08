@@ -29,7 +29,7 @@ describe('services lib', () => {
     expect(formProblems(fields, { link: 'nope' }, { title: '', why: 'x' })).toEqual(['Say what you need in one line.', 'Steps is required.', 'Link must be a link (https://…).', 'Severity is required.']);
     expect(formProblems(fields, { repro: 'a', severity: 'low' }, { title: 't', why: 'w' })).toEqual([]);
     expect(fields.map(inputKind)).toEqual(['textarea', 'url', 'select']);
-    expect(threadWords({ action: 'negotiate', due: '2026-12-05T23:59:59.000Z', scope: 'Safari only' })).toBe('proposed instead · by 2026-12-05 · scope: Safari only');
+    expect(threadWords({ action: 'negotiate', due: '2026-12-05T23:59:59.000Z', scope: 'Safari only' })).toMatch(/^proposed instead · by Dec 5(, 2026)? · scope: Safari only$/);
   });
 
   it('groups the catalog by department, the company last', () => {

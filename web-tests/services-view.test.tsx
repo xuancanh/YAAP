@@ -4,7 +4,7 @@
  *  refused with what is missing before anything is sent. */
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { OrgDetail, OrgServiceEntry, OrgServiceRequestRow } from '../src/lib/api';
+import type { OrgDetail, OrgServiceEntry, OrgServiceRequestRow, ServiceTemplate } from '../src/lib/api';
 
 afterEach(cleanup);
 
@@ -29,7 +29,7 @@ const open: OrgServiceRequestRow = { ...req, id: 'r2', key: 'SR-4', title: 'Expo
 const apiMock = {
   orgHumans: vi.fn(async () => ({ me: { role: 'ceo' } })),
   orgServices: vi.fn(async () => ({ services: [svc], requests: [req, open] })),
-  orgServiceTemplates: vi.fn(async () => []),
+  orgServiceTemplates: vi.fn(async (): Promise<ServiceTemplate[]> => []),
   respondOrgServiceRequest: vi.fn(async () => ({ request: { ...req, status: 'accepted' }, note: 'SR-3 accepted, due 2026-12-05.' })),
   requestOrgService: vi.fn(async () => ({ request: req, note: 'SR-5 → Engineering' })),
 };
@@ -49,29 +49,39 @@ beforeEach(() => {
 });
 
 describe('the Services pane', () => {
-  it('shows the catalog by department with who answers, the SLAs, the fields and the metrics', async () => {
+  it('shows the catalog by department with who answers, the SLAs and the metrics; Details opens the fields and the process', async () => {
     render(<ServicesPane org={org} />);
     await waitFor(() => expect(screen.getByTestId('catalog-u1')).toHaveTextContent('Bug fix'));
     const row = screen.getByTestId('service-row');
-    expect(row).toHaveTextContent('answered by Writer · answer within 8h · deliver within 72h · standard intake');
-    expect(row).toHaveTextContent('needs: What is broken, Severity');
+    const sla = within(row).getByTestId('service-sla');
+    expect(sla).toHaveTextContent(/Writer\s+answers/);
+    expect(sla).toHaveTextContent('replies within 8 hours');
+    expect(sla).toHaveTextContent('delivers within 3 days');
     expect(within(row).getByTestId('service-metrics')).toHaveTextContent('5 requests');
     expect(within(row).getByTestId('service-metrics')).toHaveTextContent('40% SLA breached');
+    expect(within(row).queryByTestId('service-detail')).toBeNull();
+    fireEvent.click(within(row).getByRole('button', { name: /Bug fix/ }));
+    const detail = within(row).getByTestId('service-detail');
+    expect(detail).toHaveTextContent('What is broken');
+    expect(detail).toHaveTextContent('low / high');
+    expect(detail).toHaveTextContent('The standard intake: accept, do, deliver');
     expect(screen.getByTestId('service-counts')).toHaveTextContent('2open requests');
+    expect(screen.getByTestId('service-counts')).toHaveTextContent('1wait on you');
   });
 
   it('lists the open requests with their clock; the CEO agrees to a counter-proposal on its own request', async () => {
     render(<ServicesPane org={org} />);
     await waitFor(() => expect(screen.getAllByTestId('request-row')).toHaveLength(2));
     const [mine, theirs] = screen.getAllByTestId('request-row');
-    expect(mine).toHaveTextContent('Counter-proposal: by 2026-12-05 · Safari only');
-    expect(within(mine).getByTestId('sla-clock')).toHaveTextContent('waiting on the requester');
+    expect(within(mine).getByTestId('request-counter')).toHaveTextContent(/Engineering proposes: by Dec 5(, 2026)? · Safari only/);
+    expect(within(mine).queryByTestId('sla-clock')).toBeNull();
+    expect(mine).toHaveTextContent('counter-proposal');
     expect(within(theirs).getByTestId('sla-clock')).toHaveTextContent(/answer due in \d/);
     expect(within(theirs).queryByText('Agree')).toBeNull();
     fireEvent.click(within(mine).getByText('Agree'));
     await waitFor(() => expect(apiMock.respondOrgServiceRequest).toHaveBeenCalledWith('ws1', 'r1', { answer: 'agree' }));
-    fireEvent.click(within(mine).getByText('SR-3 · Signup crash'));
-    expect(within(mine).getByTestId('request-thread')).toHaveTextContent('proposed instead · by 2026-12-05 · scope: Safari only');
+    fireEvent.click(within(mine).getByRole('button', { name: /Signup crash/ }));
+    expect(within(mine).getByTestId('request-thread')).toHaveTextContent(/proposed instead · by Dec 5(, 2026)? · scope: Safari only/);
   });
 
   it('the request form refuses an incomplete request before sending, then sends the service and its fields', async () => {
@@ -88,5 +98,58 @@ describe('the Services pane', () => {
     fireEvent.change(within(form).getByLabelText('Severity'), { target: { value: 'high' } });
     fireEvent.click(within(form).getByText('Send the request'));
     await waitFor(() => expect(apiMock.requestOrgService).toHaveBeenCalledWith('ws1', { service: 'bug-fix', title: 'Signup crash', why: 'launch', fields: { summary: 'crash on Safari', severity: 'high' } }));
+  });
+
+  it('puts an ask nobody routed on top and routes it to a department or a service', async () => {
+    const triage: OrgServiceRequestRow = { ...open, id: 'r3', key: 'SR-9', title: 'Privacy wording', serviceId: null, providerUnitId: null, status: 'triage' };
+    apiMock.orgServices.mockResolvedValueOnce({ services: [svc], requests: [open, triage] });
+    render(<ServicesPane org={org} />);
+    await waitFor(() => expect(screen.getAllByTestId('request-row')).toHaveLength(2));
+    const first = screen.getAllByTestId('request-row')[0];
+    expect(first).toHaveTextContent('Privacy wording');
+    const route = within(first).getByTestId('request-route');
+    fireEvent.change(within(route).getByLabelText('Route SR-9 to'), { target: { value: 'svc:bug-fix' } });
+    fireEvent.click(within(route).getByText('Route'));
+    await waitFor(() => expect(apiMock.respondOrgServiceRequest).toHaveBeenCalledWith('ws1', 'r3', { answer: 'route', service: 'bug-fix' }));
+  });
+
+  it('withdraws the CEO\'s own request only after a confirm', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    render(<ServicesPane org={org} />);
+    await waitFor(() => expect(screen.getAllByTestId('request-row')).toHaveLength(2));
+    const mine = screen.getAllByTestId('request-row')[0];
+    fireEvent.click(within(mine).getByText('Withdraw'));
+    expect(apiMock.respondOrgServiceRequest).not.toHaveBeenCalled();
+    fireEvent.click(within(mine).getByText('Withdraw'));
+    await waitFor(() => expect(apiMock.respondOrgServiceRequest).toHaveBeenCalledWith('ws1', 'r1', { answer: 'withdraw', reason: 'withdrawn by the CEO' }));
+    confirm.mockRestore();
+  });
+
+  it('an empty catalog teaches what a service is and shows the starters to add in place', async () => {
+    apiMock.orgServices.mockResolvedValueOnce({ services: [], requests: [] });
+    apiMock.orgServiceTemplates.mockResolvedValueOnce([{ id: 'bug-fix', title: 'Bug fix', summary: 'Fix a defect', unitHint: [], effort: 1, fields: svc.fieldList, unitId: 'u1', unitName: 'Engineering', adopted: false }]);
+    render(<ServicesPane org={org} />);
+    await waitFor(() => expect(screen.getByTestId('services-empty')).toHaveTextContent('No services yet'));
+    const item = await screen.findByTestId('library-item');
+    expect(item).toHaveTextContent('For Engineering');
+    expect(item).toHaveTextContent('What is broken');
+    expect(screen.queryByText('Add from library')).toBeNull();
+  });
+});
+
+describe('services helpers', () => {
+  it('words SLAs and due dates, and orders open requests by what waits on the CEO', async () => {
+    const { slaWords, shortDate, sortOpenRequests, needsCeo, answererWords } = await import('../src/lib/services');
+    expect(slaWords(4)).toBe('4 hours');
+    expect(slaWords(48)).toBe('2 days');
+    expect(slaWords(36)).toBe('36 hours');
+    expect(slaWords(0.5)).toBe('30 minutes');
+    expect(shortDate('2026-12-05T23:59:59.000Z', new Date('2026-11-08'))).toBe('Dec 5');
+    expect(shortDate('2027-01-02', new Date('2026-11-08'))).toBe('Jan 2, 2027');
+    expect(needsCeo({ status: 'negotiating', requesterAgentId: null })).toBe(true);
+    expect(needsCeo({ status: 'negotiating', requesterAgentId: 'a1' })).toBe(false);
+    const late = { ...open, id: 'late', clock: { ...open.clock, breached: true } };
+    expect(sortOpenRequests([open, late, req]).map((r) => r.id)).toEqual(['r1', 'late', 'r2']);
+    expect(answererWords({ ownerRole: 'engineer', unitName: 'Engineering' })).toBe('An engineer in Engineering');
   });
 });

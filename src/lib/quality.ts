@@ -88,3 +88,42 @@ export function makersByYield(q: QualityOverview): Array<{ agentId: string; firs
   return Object.entries(q.metrics.byAgent).map(([agentId, f]) => ({ agentId, firstPassYield: f.firstPassYield, reworkRate: f.reworkRate, escapes: f.escapes, tasks: f.tasks }))
     .sort((a, b) => (a.firstPassYield ?? 1) - (b.firstPassYield ?? 1) || b.escapes - a.escapes);
 }
+
+/** What a standard or policy covers, in plain words: "All work", "Research deliverables (in Marketing)", "Work in Product". */
+export function scopeWords(s: { scopeKind: string; scopeRef: string; unitId?: string | null }, unitName?: (id: string) => string | undefined): string {
+  const unit = (id: string) => unitName?.(id) ?? 'one department';
+  const ref = s.scopeRef;
+  const head = s.scopeKind === 'company' ? 'All work'
+    : s.scopeKind === 'unit' ? `Work in ${unit(ref)}`
+    : s.scopeKind === 'deliverable' ? `${ref.replace(/[-_]/g, ' ').replace(/^./, (c) => c.toUpperCase())} deliverables`
+    : s.scopeKind === 'role' ? `Work by a ${ref}`
+    : s.scopeKind === 'action_class' ? `${ref.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())} actions`
+    : s.scopeKind === 'process_step' ? `Process step ${ref}`
+    : `${s.scopeKind.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())} ${ref}`.trim();
+  return s.unitId && s.scopeKind !== 'unit' ? `${head} (in ${unit(s.unitId)})` : head;
+}
+
+/** A policy's enforcement as what happens to a call that breaks it. */
+export const ENFORCEMENT_WORD: Record<OrgPolicy['enforcement'], string> = { block: 'blocks', warn: 'warns', log: 'logs only' };
+
+/** A violation's state after the fact. */
+export const VIOLATION_STATUS_WORD: Record<PolicyViolation['status'], string> = { open: '', exception_requested: 'exception requested', waived: 'exception granted', upheld: 'upheld', used: 'exception used' };
+
+/** Evidence kinds in words, for a criterion. */
+export function evidenceWords(kinds: string[] | undefined): string {
+  if (!kinds?.length) return '';
+  if (kinds.includes('none')) return 'judged, no evidence';
+  const word: Record<string, string> = { file: 'a file', url: 'a page read', tool: 'a tool result', action: 'an action', check: 'a check', task: 'a task' };
+  return `evidence: ${kinds.map((k) => word[k] ?? k).join(', ')}`;
+}
+
+/** What waits on the CEO on the Quality page: proposals to decide and exceptions asked for. */
+export function qualityAttention(q: QualityOverview): Array<{ id: string; kind: 'standard' | 'policy' | 'exception' | 'escape'; title: string; why: string; taskId?: string }> {
+  const out: Array<{ id: string; kind: 'standard' | 'policy' | 'exception' | 'escape'; title: string; why: string; taskId?: string }> = [];
+  for (const s of q.standards) if (s.status === 'proposed' || s.pending) out.push({ id: `s-${s.id}`, kind: 'standard', title: s.status === 'proposed' ? `New standard proposed: ${s.name}` : `Revision proposed: ${s.name}`, why: 'A card in the Inbox waits on your decision.' });
+  for (const p of q.policies) if (p.status === 'proposed' || p.pending) out.push({ id: `p-${p.id}`, kind: 'policy', title: p.status === 'proposed' ? `New rule proposed: ${p.statement}` : `Change proposed: ${p.statement}`, why: 'A card in the Inbox waits on your decision.' });
+  const byId = new Map(q.policies.map((p) => [p.id, p]));
+  for (const v of q.violations) if (v.status === 'exception_requested') out.push({ id: `v-${v.id}`, kind: 'exception', title: `Exception asked: ${byId.get(v.policyId)?.statement ?? 'a policy'}`, why: v.detail.slice(0, 160) });
+  for (const r of q.recent) if (r.escapedAt) out.push({ id: `e-${r.id}`, kind: 'escape', title: `Came back: ${r.taskKey ? `${r.taskKey} ` : ''}${r.taskTitle}`, why: r.escapeReason || 'Accepted work that was reopened or failed a spot check.', taskId: r.taskId });
+  return out;
+}
