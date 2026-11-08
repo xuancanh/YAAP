@@ -37,7 +37,7 @@ export type Section = 'home' | 'overview' | 'agents' | 'inbox' | CompanySection 
 /** The organization pages (docs/group-chat.md §5: the workspace is the
  *  company). Each lives in exactly one company section, or in the Inbox. */
 export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'plans' | 'replay' | 'capital' | 'mytasks'
-  | 'incidents' | 'roadmap' | 'teams' | 'quality' | 'alignment' | 'processes';
+  | 'incidents' | 'roadmap' | 'teams' | 'quality' | 'alignment' | 'processes' | 'services';
 export { ORG_PANES, ORG_PANES_IN_ARTIFACTS } from './lib/company-nav';
 /** The section a section id opens: the legacy Company id opens Operations. */
 export const resolveSection = (s: Section): Exclude<Section, 'workspace'> => (s === 'workspace' ? LEGACY_COMPANY_SECTION : s);

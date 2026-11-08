@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useApp, type OrgFocus, type OrgPane } from '../store';
 import {
   api, type OrgAllocation, type OrgAuditRow, type OrgAuditRun, type OrgBrief, type OrgCapacity, type OrgDetail, type OrgForecast,
-  type OrgIncident, type OrgProcess, type OrgProcessRunRow, type OrgPulse, type OrgSpend, type OrgTask, type TrustOverview, type OrgUnitNode, type QualityOverview,
+  type OrgIncident, type OrgProcess, type OrgServiceEntry, type OrgProcessRunRow, type OrgPulse, type OrgSpend, type OrgTask, type TrustOverview, type OrgUnitNode, type QualityOverview,
 } from '../lib/api';
 import { pct, qualityLede } from '../lib/quality';
 import { type CompanySection } from '../lib/company-nav';
@@ -284,12 +284,14 @@ function PeopleDashboard({ org }: { org: OrgDetail }) {
   );
 }
 
-/** People › Teams: every department as a card — lead, members, what is open, at risk and on today, and its channel, board and goals; the CEO renames one in place. */
+/** People › Teams: every department as a card — lead, members, what is open, at risk and on today, and its channel, board, goals and service catalog; the CEO renames one in place. */
 export function TeamsPane({ org }: { org: OrgDetail }) {
   const app = useApp();
   const open = useOpen();
   const names = useAgentNames();
   const mayRename = useMayRenameDepartments(org.workspaceId);
+  // Services (docs/services.md): each department's card opens its catalog.
+  const services = useData<{ services: OrgServiceEntry[] }>((w) => api.orgServices(w), org.workspaceId);
   const units = flatUnits(app.wsOrg?.units ?? []);
   const atRisk = useMemo(() => atRiskByUnit(app.orgIntent ?? []), [app.orgIntent]);
   const depthOf = useMemo(() => {
@@ -331,6 +333,7 @@ export function TeamsPane({ org }: { org: OrgDetail }) {
                 <button style={linkBtn} onClick={() => app.openChannel(channel?.slug ?? u.slug)}>#{channel?.slug ?? u.slug}</button>
                 <button style={linkBtn} onClick={() => open('board', null, unitId)}>Board</button>
                 <button style={linkBtn} onClick={() => open('goals', null, unitId)}>Goals</button>
+                {!isRoot && <button style={linkBtn} onClick={() => open('services', null, unitId)}>Services{services ? ` (${services.services.filter((x) => x.status === 'active' && x.unitId === u.id).length})` : ''}</button>}
               </div>
             </section>
           );

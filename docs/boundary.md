@@ -231,3 +231,16 @@ waits). `process:beyond` (`propose`): a process the agent does not own is a
 CEO-reserved card. The `process.*` tunables themselves are `propose`
 (`tunable:process.`): how hard a standard binds and who approves changes to
 it are the owner's.
+
+## Services (added 8 November 2026)
+
+A department's service (docs/services.md) is a self-change of kind
+`service`. `service:own` (`alone`): the chief changes any service, a head its
+unit's — every change bumps the version with its author, reason and diff;
+within it the company's `service.editApproval` tunable decides whether the
+change applies at once or waits for a `service_change` card routed to the
+editor's manager (0 every change applies, 1 a change that loosens the
+promise waits, 2 every change waits). `service:beyond` (`propose`): another
+department's service is a CEO-reserved card. The `service.*` tunables are
+`propose` (`tunable:service.`): how fast a department must answer and what
+silence does are the owner's promise to the company.

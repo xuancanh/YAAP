@@ -1880,6 +1880,29 @@ export interface OrgIncident {
   agentId: string | null; actionClass: string | null; refType: string; refId: string; detectedBy: 'system' | 'auditor' | 'owner' | 'member' | string;
   containment: ContainmentStep[]; postmortemMeetingId: string | null; openedAt: string; containedAt: string | null; resolvedAt: string | null; resolution: string;
 }
+/** Services (docs/services.md): a department's catalog entry and the requests made of it. */
+export interface ServiceField { name: string; label: string; type: 'text' | 'number' | 'date' | 'url' | 'choice' | 'boolean'; required: boolean; options?: string[]; description?: string }
+export interface ServiceMetrics {
+  requests: number; open: number; accepted: number; declined: number; delivered: number; cancelled: number;
+  acceptHoursP50: number | null; resolveHoursP50: number | null; breachRate: number | null; acceptBreachRate: number | null; declineRate: number | null;
+}
+export interface OrgServiceEntry {
+  id: string; name: string; title: string; description: string; unitId: string | null; unitName: string; ownerRole: string; ownerAgentId: string | null;
+  processId: string | null; processName: string; acceptSlaHours: number; resolveSlaHours: number; status: 'draft' | 'active' | 'retired'; version: number;
+  templateId: string; source: string; fieldList: ServiceField[]; metrics: ServiceMetrics; pendingChange: boolean; createdAt: string; updatedAt: string;
+}
+export type ServiceRequestStatus = 'triage' | 'open' | 'negotiating' | 'accepted' | 'declined' | 'delivered' | 'cancelled' | 'failed';
+export interface ServiceThreadEntry { at: string; by: string; action: string; due?: string; reason?: string; scope?: string; note?: string }
+export interface OrgServiceRequestRow {
+  id: string; key: string; serviceId: string | null; serviceVersion: number | null; title: string; fields: Record<string, string>; why: string; neededBy: string | null;
+  servesKind: string; servesLabel: string; requester: string; requesterAgentId: string | null; providerUnitId: string | null; status: ServiceRequestStatus;
+  runId: string | null; acceptTaskId: string | null; acceptSlaHours: number; resolveSlaHours: number; acceptDueAt: string | null; resolveDueAt: string | null;
+  committedDue: string | null; counter: { due?: string; scope?: string; note?: string } | null; declineReason: string; thread: ServiceThreadEntry[];
+  answeredAt: string | null; acceptedAt: string | null; resolvedAt: string | null; acceptBreachedAt: string | null; resolveBreachedAt: string | null; breaches: number; createdAt: string;
+  clock: { phase: 'accept' | 'resolve' | null; dueAt: string | null; hoursLeft: number | null; breached: boolean };
+}
+export interface ServiceTemplate { id: string; title: string; summary: string; unitHint: string[]; effort: number; fields: ServiceField[]; unitId: string | null; unitName: string | null; adopted: boolean }
+
 /** GET …/org/health (docs/incidents.md §4). */
 export interface OrgHealth {
   status: 'ok' | 'degraded' | 'incident'; orgStatus: string; mode: string | null;
@@ -2728,6 +2751,14 @@ export const api = {
   retireOrgProcess: (wsId: string, processId: string, body: { reason: string; restore?: boolean }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}/retire`, 'POST', body),
   startOrgProcessRun: (wsId: string, processId: string, body: { title?: string; vars?: Record<string, string> }) => send<OrgProcessRunRow>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}/runs`, 'POST', body),
   cancelOrgProcessRun: (wsId: string, runId: string, reason: string) => send<OrgProcessRunRow>(`/api/workspaces/${wsId}/org/processes/runs/${enc(runId)}/cancel`, 'POST', { reason }),
+  // services (docs/services.md)
+  orgServices: (wsId: string) => get<{ services: OrgServiceEntry[]; requests: OrgServiceRequestRow[] }>(`/api/workspaces/${wsId}/org/services`),
+  orgServiceTemplates: (wsId: string) => get<ServiceTemplate[]>(`/api/workspaces/${wsId}/org/services/templates`),
+  createOrgService: (wsId: string, body: { template?: string; title?: string; fields?: ServiceField[]; unitId?: string | null; reason: string }) => send<{ service: OrgServiceEntry }>(`/api/workspaces/${wsId}/org/services`, 'POST', body),
+  editOrgService: (wsId: string, serviceId: string, body: { acceptSlaHours?: number; resolveSlaHours?: number; title?: string; description?: string; reason: string }) => send<{ service: OrgServiceEntry }>(`/api/workspaces/${wsId}/org/services/${enc(serviceId)}`, 'PUT', body),
+  retireOrgService: (wsId: string, serviceId: string, body: { reason: string; restore?: boolean }) => send<{ service: OrgServiceEntry }>(`/api/workspaces/${wsId}/org/services/${enc(serviceId)}/retire`, 'POST', body),
+  requestOrgService: (wsId: string, body: { service?: string; unitId?: string; title: string; fields?: Record<string, string>; why: string; neededBy?: string; serves?: string }) => send<{ request: OrgServiceRequestRow; note: string }>(`/api/workspaces/${wsId}/org/services/requests`, 'POST', body),
+  respondOrgServiceRequest: (wsId: string, requestId: string, body: { answer: string; due?: string; reason?: string; alternative?: string; scope?: string; note?: string; unitId?: string; service?: string }) => send<{ request: OrgServiceRequestRow; note: string }>(`/api/workspaces/${wsId}/org/services/requests/${enc(requestId)}/respond`, 'POST', body),
   answerSpotCheck: (wsId: string, auditId: string, itemId: string, body: { agree: boolean; note?: string }) => send<{ card: SpotCard; quality: AuditorQuality; incident: OrgIncident | null }>(`/api/workspaces/${wsId}/org/audits/${enc(auditId)}/spotcheck/${enc(itemId)}`, 'POST', body),
   runOrgRedTeam: (wsId: string, agentId?: string) => send<RedTeamResult>(`/api/workspaces/${wsId}/org/redteam/run`, 'POST', agentId ? { agentId } : {}),
   // experiments, predictions, reconciliation (item 30, docs/experiments.md §6)

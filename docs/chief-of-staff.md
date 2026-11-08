@@ -152,7 +152,7 @@ keeps them. `/org/README.md` indexes the folder.
 | `/org/decisions.md` | question, one decider, recommender, inputs/veto, door, decision, rationale, dissent, follow-ups, revisit condition |
 | `/org/calendar.md` | every forum: unit, when (in words), purpose, owner (never the chief), output, last held, empty cycles — generated from the cadences and the minutes, not seeded; the chief's notes go below its Notes marker and are kept |
 | `/org/risks.md` | owner, likelihood, impact, mitigation, status, review dates |
-| `/org/handoffs.md` | the handoff SLA registry, seeded with the function owners |
+| `/org/handoffs.md` | the handoff SLA registry for handoffs no service covers yet, seeded with the function owners (services: docs/services.md) |
 | `/org/values.md` | values → mechanism map; a value with none is a drift candidate |
 
 The goal registry is the intent tree (`org_intent`), mirrored to
@@ -195,7 +195,10 @@ the chief only and model-free.
 - **Breached handoffs**: a task a member of one unit asked for that sits on
   another unit's board (backlog, todo, blocked, waiting, in review) and has
   not moved for `chief.handoffSlaHours`. Tasks the chief created are routing,
-  not handoffs.
+  not handoffs. Requests for a department's **service** (docs/services.md)
+  carry their own accept and resolve SLAs and climb the provider's line as
+  `service_breach` cards; the chief routes only the asks that name no
+  service and decides the breach cards that reach it.
 - **Function owners** to route to (unit leads, "Head of …" and "… manager"
   titles), with a pointer to their reports under `/org/<function>/reports/`.
 - **Requests from function heads**: backlog tasks a head filed for the

@@ -53,7 +53,9 @@ Steps (`nodes`):
 A step's **lane** is a role, never an agent: `owner` (the process owner —
 the owning unit's head, or the chief for company processes), `chief`,
 `head`, `initiator`, or a title matched against the members (in the owning
-unit first). Processes survive hires, terminations and reorgs.
+unit first), or `provider` — the department and role a service request names
+in the run's variables (docs/services.md). Processes survive hires,
+terminations and reorgs.
 
 **Categories.** `operating` processes run the company itself (incident
 response, the chief's sweep, request intake, the review pack); their tasks
@@ -131,8 +133,10 @@ way and the checkpoints left.
 
 Processes start from the **library** (`process-templates.ts`): the chief's
 daily sweep (`chief-daily-ops`, started by the chief's weekday sweep loop),
-incident response (on a major incident), the cross-function request (with
-a `service_request` trigger for the service catalog to come), the weekly
+incident response (on a major incident), the cross-function request (the
+chief's triage of an ask that names no service), the service-request intake
+(accept → do → deliver, the default process of a catalog service;
+docs/services.md), the weekly
 review pack (`weekly-review-pack`, started by the chief's weekly pack loop),
 release checklist, content publishing (with a bounded review loop), hiring
 loop and customer onboarding. A company gets them at **onboarding** (the
@@ -173,7 +177,7 @@ items, an edge across stages, an unknown subprocess, a bad cron, …).
 | `event: incident_opened` | an incident at or above `severity` (TriggerBus), once per incident |
 | `event: project_now` | a project active in Now since the version's activation, once per project (its tasks go under it) |
 | `event: task_created` | a task of `class` created since the version's activation (not a process task), once per task |
-| `service_request` | `OrgProcessesService.startServiceRequest` — the hook a service catalog will call |
+| `service_request` | `OrgProcessesService.startServiceRequest` — called by the service catalog (docs/services.md) with the service's linked process; uncapped by `process.maxActiveRuns` (the service admits its requests) |
 
 `process.maxActiveRuns` caps open runs per process; a trigger beyond it is
 skipped and logged.
@@ -257,6 +261,6 @@ a Processes card.
 
 ## 10. Not built yet
 
-Meeting steps, compensation steps, ramped rollout of a new version, process
-discovery from recurring free-form tasks, and the service catalog (the
-`service_request` trigger is the hook) — the report's later phases.
+Meeting steps, compensation steps, ramped rollout of a new version and
+process discovery from recurring free-form tasks — the report's later
+phases. The service catalog is built: docs/services.md.

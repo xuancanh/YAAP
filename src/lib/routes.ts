@@ -136,6 +136,8 @@ function parsePlace(head: string | undefined, rest: string[], search: string): P
     case 'projects': return a ? { kind: 'project', key: a } : { kind: 'section', section: 'direction', pane: 'roadmap' };
     case 'processes': return a && ID_RE.test(a) ? { kind: 'process', id: a } : { kind: 'section', section: 'operations', pane: 'processes' };
     case 'meetings': return a && ID_RE.test(a) ? { kind: 'meeting', id: a } : { kind: 'section', section: 'operations', pane: 'meetings' };
+    // The service catalog (docs/services.md) lives under People.
+    case 'services': return { kind: 'section', section: 'people', pane: 'services' };
     case 'artifacts': case 'files': return rest.length ? { kind: 'artifacts', path: rest.join('/') } : { kind: 'artifacts' };
     case 'apps': return { kind: 'apps' };
     case 'foundry': case 'market': {

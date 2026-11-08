@@ -408,6 +408,16 @@ blocker and lets a person move the task to another project.
 change batches, `org_plans`) is now **Pending changes** in the UI, so
 "plan" and "roadmap" mean the model above. API names are unchanged.
 
+### Asking another department: services (2026-11-08)
+
+Cross-function work is requested, not created on another unit's board:
+`org_request_service` names a department's service (its fields checked
+against the service's schema) and runs it as a process whose steps are
+ordinary tasks on the provider's board — the accept step, then the delivery
+— with accept and resolve SLAs; a need no service covers names only the
+department. The old "Request for <function>: …" backlog task is gone from
+the member workflow. See docs/services.md.
+
 ### Project teams (cross-functional, 2026-11-04)
 
 A project is staffed as a **matrix**: one owner (a Program Manager by

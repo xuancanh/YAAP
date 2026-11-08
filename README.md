@@ -119,6 +119,12 @@ Settings › Company.
   health updates and cross-functional project teams; tasks carry Jira-style
   keys (`ENG-12`, [docs/tasks-keys.md](docs/tasks-keys.md)) and can @mention
   agents and people.
+- **Services** ([docs/services.md](docs/services.md)): each department's
+  catalog of what it offers the others — the fields a request needs, who
+  answers, accept and resolve SLAs derived from the company's culture. A
+  request naming a service is routed with no model and run as a process;
+  the provider accepts with a date, declines or negotiates, and silence
+  climbs the provider's line to its head, the chief, then your Inbox.
 - **Processes** ([docs/processes.md](docs/processes.md)): the company's
   standing procedures (release checklist, incident response, request
   intake, the chief's daily sweep, …) as versioned graphs. A model-free
