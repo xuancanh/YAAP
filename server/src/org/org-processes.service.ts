@@ -619,7 +619,15 @@ export class OrgProcessesService {
   private async materialize(orgId: string, run: OrgProcessRun, def: ProcessDef, node: ProcessNode, attempt: number, chosenBy: string, opts: { spec?: string; assignee?: string | null } = {}): Promise<OrgProcessStep | null> {
     const step = await this.insertStep(orgId, run, { nodeId: node.id, kind: node.kind, stage: node.stage ?? def.stages[0].id, status: 'active', attempt, spec: opts.spec, chosenBy });
     if (!step) return null;
-    await this.fillStep(orgId, run, def, node, step, opts.assignee);
+    try {
+      await this.fillStep(orgId, run, def, node, step, opts.assignee);
+    } catch (err) {
+      // A refusal on the normal creation path (a gate, a limit) fails the step
+      // with its reason instead of leaving a row the sweep retries forever.
+      await this.log(orgId, run.processId, run.id, node.id, 'materialize_failed', chosenBy, { error: err instanceof Error ? err.message.slice(0, 400) : String(err) });
+      await this.failStep(orgId, run, step, `it could not be created: ${err instanceof Error ? err.message : String(err)}`.slice(0, 500));
+      return step;
+    }
     await this.log(orgId, run.processId, run.id, node.id, 'materialized', chosenBy, { kind: node.kind, attempt });
     return step;
   }
@@ -727,7 +735,10 @@ export class OrgProcessesService {
   }
 
   /** A step finished: outputs into the run's variables, loop edges, then advance (caller holds the run). */
-  private async completeStep(orgId: string, run: OrgProcessRun, step: OrgProcessStep, outcome: string, extraVars: Record<string, string> = {}): Promise<void> {
+  private async completeStep(orgId: string, run0: OrgProcessRun, step0: OrgProcessStep, outcome: string, extraVars: Record<string, string> = {}): Promise<void> {
+    // Re-read both: a sweep settles several steps of one run in a row.
+    const run = await this.run(orgId, run0.id);
+    const step = (await this.steps(orgId, run.id)).find((s) => s.id === step0.id) ?? step0;
     await this.db.update(orgProcessSteps).set({ status: 'done', outcome: outcome.slice(0, 40), endedAt: nowIso() }).where(eq(orgProcessSteps.id, step.id));
     const vars = { ...parse<Record<string, string>>(run.vars, {}), ...extraVars, ...parse<Record<string, string>>(step.outputs, {}) };
     // The step's outcome under its id (approved, rejected, done), unless an output of the same name carries the value.

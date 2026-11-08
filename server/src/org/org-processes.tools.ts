@@ -128,7 +128,7 @@ export class OrgProcessesTools implements ToolProviderHook {
     if (!ctx?.taskId) return null;
     const { deny, label } = await this.processes.deniedTools(ctx.orgId, ctx.taskId);
     if (!deny.includes(call.name)) return null;
-    return `Refused: ${call.name} is not used in ${label} (a MUST rule of the step). Do the step without it; if it cannot be done without it, ask to waive the rule with org_process_deviate {level: "must", item: "${call.name}", reason}.`;
+    return `Refused: ${call.name} is not used in ${label} (a MUST rule of the step). Do the step without it; if it cannot be done without it, say so on the task and escalate it (org_escalate) so the process owner decides — the rule changes only with the process.`;
   }
 
   private async resolveOrg(agentId: string, hint: unknown): Promise<Organization> {

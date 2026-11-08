@@ -369,18 +369,51 @@ test('deviations: a SHOULD skip is logged; a MUST waiver is a card for the perfo
   assert.match(health.why, /ci deviates in 100% of runs/);
 });
 
-// ---- 7. denied tools, restarts, triggers, seeding ----
+// ---- 7. the normal creation path: gates see the category; a refusal fails the step with its reason ----
+
+test('process tasks go through the normal creation path: a gate sees source process and the category; a refusal fails the step and the run says why', async () => {
+  const s = await setup();
+  const orgId = await company(s);
+  const { processes } = wire(s);
+  const seen: Array<{ source: unknown; category: unknown }> = [];
+  const create = s.tasks.create.bind(s.tasks);
+  s.tasks.create = (async (o: string, input: Parameters<typeof create>[1]) => {
+    seen.push({ source: input.source, category: input.process?.category });
+    if (input.source === 'process' && input.process?.category === 'delivery') throw new Error('refused: the project is not aligned with the CEO yet');
+    return create(o, input);
+  }) as typeof s.tasks.create;
+  const ir = await processes.instantiate(orgId, 'incident-response');
+  const r1 = await processes.start(orgId, ir.name, { initiator: 'user', vars: { incident: 'Checkout down' } });
+  await processes.settle();
+  assert.equal((await processes.run(orgId, r1.id)).status, 'running', 'an operating process passes');
+  const rel = await processes.instantiate(orgId, 'release-checklist', { unitId: (await s.units.ledBy(orgId, s.writer.id))!.id });
+  const r2 = await processes.start(orgId, rel.name, { initiator: 'user' });
+  await processes.settle();
+  const failed = await processes.run(orgId, r2.id);
+  assert.equal(failed.status, 'failed');
+  assert.match(failed.note, /could not be created: refused: the project is not aligned with the CEO yet/);
+  assert.deepEqual(seen.map((x) => x.category), ['operating', 'delivery']);
+  assert.ok(seen.every((x) => x.source === 'process'));
+});
+
+// ---- 8. denied tools, restarts, triggers, seeding ----
 
 test('a step\'s denied tools are refused; the sweep repairs a step a restart left without its task; incidents and cadences trigger once; onboarding seeds the library', async () => {
   const s = await setup();
   const orgId = await company(s);
-  const { processes } = wire(s);
+  const { processes, tools } = wire(s);
   const def = normalizeProcess({ title: 'No merging', category: 'operating', nodes: [{ id: 'look', title: 'Look only', deny: ['scm_merge'], lane: 'chief' }, { id: 'after', title: 'After', lane: 'chief' }], edges: [{ from: 'look', to: 'after' }], triggers: [{ kind: 'cadence', cron: '0 9 * * *' }] });
   const proc = (await processes.author(orgId, { name: 'no-merging', def, reason: 'test' }, 'user')).process;
   const run = await processes.start(orgId, proc.name, { initiator: 'user' });
   await processes.settle();
   let st = await stepsOf(s, processes, orgId, run.id);
   assert.deepEqual((await processes.deniedTools(orgId, st.look.taskId!)).deny, ['scm_merge']);
+  const runSession = await sessionOf(s, s.chief.id);
+  s.runtime.beginAuxRun({ orgId, taskId: st.look.taskId!, agentId: s.chief.id, runId: 'r-1', sessionId: runSession.id, isChief: true, reviewer: false, progress: false, calls: new Map(), loopDetected: false });
+  assert.match((await tools.refuseCall(runSession, { id: 'c1', name: 'scm_merge', input: {} }))!, /^Refused: scm_merge is not used in step "Look only"/);
+  assert.equal(await tools.refuseCall(runSession, { id: 'c2', name: 'fs_read', input: {} }), null);
+  assert.match((await tools.contextFor(runSession))!, /## Process step — No merging v1/, 'the step card is the run\'s context');
+  s.runtime.endAuxRun(runSession.id);
   // a restart between the step row and its task: the sweep finds the orphan task, never a second one
   await s.db.update(orgProcessSteps).set({ taskId: null }).where(eq(orgProcessSteps.id, st.look.id));
   const repaired = await processes.sweep(orgId);
