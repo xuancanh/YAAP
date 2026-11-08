@@ -143,6 +143,29 @@ As the verifier (org_review, or org_qc_grade on a spot check):
 4. Judged policies appear as criteria named policy-<key>: score them like the rest.
 Done when every criterion carries a score, a note and the evidence behind it.`,
   },
+  // Processes (docs/processes.md): the company's standing procedures, whose
+  // steps are tasks; how to perform a step, choose in a dynamic stage, and —
+  // for the heads and the chief — author, review and improve them.
+  {
+    name: 'org-processes',
+    description: 'For members of a company of agents (org_process_* tools present): perform a process step from its step card, choose the steps of a dynamic stage, deviate honestly, and — as a head or the chief — author, run, review and improve the processes you own from what their runs show',
+    instructions: `Processes are the company's standing procedures (org_processes lists them). Each run is pinned to a version; each step an agent performs is an ordinary task with a step card in your context. Outside a company (no org_* tools) this skill does not apply.
+
+Performing a step (any member):
+1. Read the step card first: the process and version, why the step exists, the inputs earlier steps produced, the MUST / SHOULD / MAY items and the exit. Do the step, not the whole process; later steps reach their own performers.
+2. MUST items are the task's checklist: tick each with org_task_steps done=<id> only when it is true. A required output is recorded with org_step_output {name, value}; later steps and the process's branches read it.
+3. An item that does not fit this run is never skipped silently: org_process_deviate level=should with the reason and what you did instead (logged, the run goes on); a MUST item that cannot be met is a waiver your manager decides (org_process_deviate level=must) — work on what you can meanwhile.
+4. Finish with org_request_review and evidence for each MUST item in the note. A refusal says what is missing and how to satisfy it: do that, do not retry blind. A tool the step denies is refused when called; do the step without it.
+
+Performing a dynamic stage (its coordinator task is yours):
+5. org_process_next shows the steps available now, the ones under way and the checkpoints left. Choose with org_step_choose (assign someone else's lane with assignee), skip optional steps the run does not need, and add an ad-hoc step only when no defined one fits (it is logged as a deviation, with your reason). Close the stage with org_process_next finish=true once every checkpoint is done.
+
+Owning processes (a head for its unit, the chief for the company):
+6. Use a process for work that recurs, hands off between functions or carries risk — never for one-off work. Instantiate a template before writing one (org_processes library=true, then org_process_author template=<id> with the reason); start a run by hand with org_process_start when no trigger does.
+7. Review each process you own on its cadence: org_process_metrics (completion rate, cycle time, deviation rate and rework per step, SLA breaches). A step most runs deviate from is the standard's problem, not the performers': change the step. A step that keeps failing or bouncing in review is too big: split it.
+8. Improve one thing per version: read the definition (org_process), edit it, and pass it back with org_process_author {process, def, reason} — the reason names the evidence (the runs, the deviations, the failures). The company's settings decide whether the edit applies at once or waits for your manager's approval; the result says which. A version that made things worse is rolled back (org_process_rollback); a process whose work no longer recurs is retired (org_process_retire). Another unit's process is its head's: propose, do not edit.
+9. Waivers of a MUST item your reports ask for reach you as decision cards (org_decision_queue): approve when the alternative meets the item's intent, reject with how to meet it; the same item waived again and again is a revision, not a habit.`,
+  },
   // The role's curated reference (docs/knowledge-base.md): every agent with a
   // knowledge base gets kb_search / kb_read / kb_list and this playbook.
   {

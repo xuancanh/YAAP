@@ -1167,7 +1167,7 @@ export interface OrgProject {
   health?: '' | 'on_track' | 'at_risk' | 'off_track' | string; healthReason?: string; healthAsk?: string; healthAt?: string | null;
   hill?: number | null; updateCadenceDays?: number | null; breakerAt?: string | null; updatedAt?: string | null;
 }
-export type TaskSource = 'plan' | 'meeting' | 'retro' | 'incident' | 'escalation' | 'agent' | 'ceo' | 'chat';
+export type TaskSource = 'plan' | 'meeting' | 'retro' | 'incident' | 'escalation' | 'agent' | 'ceo' | 'chat' | 'process';
 export type BlockedKind = 'task' | 'person' | 'agent' | 'manager' | 'ceo' | 'external' | 'decision';
 /** The one structured blocker (org_tasks.blockedOn, stored as JSON). */
 export interface BlockedOn { kind: BlockedKind; ref: string; reason: string; since: string; by?: string }
@@ -1822,6 +1822,58 @@ export interface QualityOverview {
   recent: Array<QcResult & { taskKey: string | null; taskTitle: string }>;
   violations: PolicyViolation[];
 }
+// ---- processes (docs/processes.md) ----
+
+export type ProcessMode = 'strict' | 'dynamic';
+export type ProcessStepKind = 'task' | 'approval' | 'wait' | 'subprocess';
+export interface ProcessNodeDef {
+  id: string; title: string; kind: ProcessStepKind; stage?: string; why?: string; lane?: string;
+  outcome?: string; context?: string; doneWhen?: string; class?: string;
+  must?: string[]; should?: string[]; may?: string[]; deny?: string[];
+  outputs?: Array<{ name: string; required?: boolean; description?: string }>;
+  checks?: unknown[]; playbook?: string; required?: boolean;
+  availableWhen?: { after?: string[]; vars?: string[]; equals?: Record<string, string> };
+  approver?: 'manager' | 'ceo'; question?: string; waitHours?: number; process?: string; slaHours?: number; maxAttempts?: number;
+}
+export type ProcessTriggerDef =
+  | { kind: 'manual' } | { kind: 'cadence'; cron: string; enabled?: boolean }
+  | { kind: 'event'; event: string; severity?: string; class?: string; enabled?: boolean }
+  | { kind: 'service_request'; service?: string; enabled?: boolean };
+export interface ProcessDef {
+  title: string; description?: string; category: 'operating' | 'delivery'; owner?: 'head' | 'chief';
+  triggers: ProcessTriggerDef[]; stages: Array<{ id: string; title: string; mode: ProcessMode }>;
+  nodes: ProcessNodeDef[]; edges: Array<{ from: string; to: string; when?: string; loopMax?: number }>;
+}
+export interface ProcessMetrics {
+  runs: number; active: number; done: number; failed: number; cancelled: number;
+  completionRate: number | null; cycleHoursP50: number | null; deviationRate: number | null; reworkRate: number | null; slaBreaches: number;
+  steps: Array<{ nodeId: string; executions: number; deviations: number; deviationRate: number; rework: number; failures: number; hoursP50: number | null }>;
+  health: 'new' | 'healthy' | 'watch' | 'revise'; why: string;
+}
+export interface OrgProcess {
+  id: string; name: string; title: string; description: string; category: 'operating' | 'delivery'; unitId: string | null;
+  status: 'active' | 'retired' | 'draft'; version: number; versionId: string | null; templateId: string; source: string;
+  reviewedAt: string | null; createdBy: string; createdAt: string; updatedAt: string;
+  mode: ProcessMode | 'mixed'; ownerAgentId: string | null; ownerName: string; unitName: string; triggers: ProcessTriggerDef[];
+  metrics: ProcessMetrics; reviewDue: boolean; pendingVersion: number | null;
+}
+export interface OrgProcessRunRow {
+  id: string; processId: string; key: string; title: string; status: 'running' | 'blocked' | 'done' | 'failed' | 'cancelled'; stage: string;
+  version: number; ownerAgentId: string | null; initiator: string; note: string; startedAt: string; endedAt: string | null;
+}
+export interface OrgProcessStepRow {
+  id: string; nodeId: string; attempt: number; kind: string; stage: string; status: string; current: number; outcome: string;
+  taskId: string | null; approvalId: string | null; childRunId: string | null; taskKey: string | null; taskStatus: string | null; assigneeAgentId: string | null;
+  title: string; outputs: Record<string, string>; deviations: Array<{ level: string; item: string; reason: string; alternative: string; status: string; by: string; at: string }>;
+  slaAt: string | null; slaBreachedAt: string | null; startedAt: string; endedAt: string | null;
+}
+export interface OrgProcessVersionRow { id: string; version: number; status: 'active' | 'superseded' | 'pending' | 'rejected'; author: string; reason: string; diff: string[]; def: ProcessDef; basedOn: number | null; approvalId: string | null; createdAt: string; activatedAt: string | null }
+export interface OrgProcessDetail {
+  process: OrgProcess; def: ProcessDef | null; versions: OrgProcessVersionRow[];
+  runs: Array<OrgProcessRunRow & { vars: Record<string, string>; trigger: { kind?: string; event?: string; ref?: string }; steps: OrgProcessStepRow[] }>;
+  events: Array<{ id: string; runId: string; nodeId: string; activity: string; actor: string; detail: Record<string, unknown>; at: string }>;
+}
+export interface ProcessTemplate { id: string; title: string; summary: string; category: string; mode: string; triggers: string; steps: number }
 
 export interface OrgIncident {
   id: string; orgId: string; workspaceId: string; kind: string; severity: IncidentSeverity; status: IncidentStatus; title: string; detail: string;
@@ -2666,6 +2718,16 @@ export const api = {
   containOrgIncident: (wsId: string, incidentId: string, body: { action: ManualContainment; agentId?: string; actionClass?: string }) => send<OrgIncident>(`/api/workspaces/${wsId}/org/incidents/${enc(incidentId)}/contain`, 'POST', body),
   resolveOrgIncident: (wsId: string, incidentId: string, body: { resolution: string; undo?: boolean }) => send<OrgIncident>(`/api/workspaces/${wsId}/org/incidents/${enc(incidentId)}/resolve`, 'POST', body),
   orgHealth: (wsId: string) => get<OrgHealth>(`/api/workspaces/${wsId}/org/health`),
+  // processes (docs/processes.md)
+  orgProcesses: (wsId: string) => get<{ processes: OrgProcess[]; runs: OrgProcessRunRow[] }>(`/api/workspaces/${wsId}/org/processes`),
+  orgProcessTemplates: (wsId: string) => get<ProcessTemplate[]>(`/api/workspaces/${wsId}/org/processes/templates`),
+  orgProcess: (wsId: string, processId: string) => get<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}`),
+  createOrgProcess: (wsId: string, body: { template?: string; def?: ProcessDef; name?: string; unitId?: string | null; reason: string }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes`, 'POST', body),
+  editOrgProcess: (wsId: string, processId: string, body: { def: ProcessDef; reason: string }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}`, 'PUT', body),
+  rollbackOrgProcess: (wsId: string, processId: string, body: { version: number; reason: string }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}/rollback`, 'POST', body),
+  retireOrgProcess: (wsId: string, processId: string, body: { reason: string; restore?: boolean }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}/retire`, 'POST', body),
+  startOrgProcessRun: (wsId: string, processId: string, body: { title?: string; vars?: Record<string, string> }) => send<OrgProcessRunRow>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}/runs`, 'POST', body),
+  cancelOrgProcessRun: (wsId: string, runId: string, reason: string) => send<OrgProcessRunRow>(`/api/workspaces/${wsId}/org/processes/runs/${enc(runId)}/cancel`, 'POST', { reason }),
   answerSpotCheck: (wsId: string, auditId: string, itemId: string, body: { agree: boolean; note?: string }) => send<{ card: SpotCard; quality: AuditorQuality; incident: OrgIncident | null }>(`/api/workspaces/${wsId}/org/audits/${enc(auditId)}/spotcheck/${enc(itemId)}`, 'POST', body),
   runOrgRedTeam: (wsId: string, agentId?: string) => send<RedTeamResult>(`/api/workspaces/${wsId}/org/redteam/run`, 'POST', agentId ? { agentId } : {}),
   // experiments, predictions, reconciliation (item 30, docs/experiments.md §6)

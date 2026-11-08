@@ -27,10 +27,10 @@ export interface ProcessTemplate {
 
 export const PROCESS_TEMPLATES: ProcessTemplate[] = [
   {
-    id: 'chief-daily-sweep', summary: 'The chief of staff\'s weekday operating-system sweep: intake, portfolio and blockers, handoffs, the CEO brief.', unitHint: [], seed: 'always',
+    id: 'chief-daily-ops', summary: 'The chief of staff\'s weekday operating-system sweep: intake, portfolio and blockers, handoffs, the CEO brief.', unitHint: [], seed: 'always',
     def: {
       title: 'Chief\'s daily sweep', category: 'operating', owner: 'chief',
-      description: 'The weekday sweep that keeps the ledger true and leaves the CEO a five-line brief. Started by the chief\'s 07:30 loop.',
+      description: 'The weekday sweep that keeps the ledger true and leaves the CEO a five-line brief. Started by the chief\'s weekday operating-system sweep loop.',
       triggers: [{ kind: 'manual' }],
       stages: [{ id: 'sweep', title: 'Sweep', mode: 'strict' }],
       nodes: [
@@ -95,11 +95,11 @@ export const PROCESS_TEMPLATES: ProcessTemplate[] = [
     },
   },
   {
-    id: 'weekly-business-review-prep', summary: 'Assemble the weekly business review pack: owners\' commentary, exceptions only, last week\'s open items first.', unitHint: [], seed: 'always',
+    id: 'weekly-review-pack', summary: 'Assemble the weekly business review pack: owners\' commentary, exceptions only, last week\'s open items first.', unitHint: [], seed: 'always',
     def: {
       title: 'Weekly business review prep', category: 'operating', owner: 'chief',
-      description: 'The pack for the weekly review: the scorecard, each owner\'s commentary on its exceptions, and last week\'s open items.',
-      triggers: [{ kind: 'cadence', cron: '0 14 * * 4' }, { kind: 'manual' }],
+      description: 'The pack for the weekly review: the scorecard, each owner\'s commentary on its exceptions, and last week\'s open items. Started by the chief\'s weekly pack loop, a pre-read ahead of the review.',
+      triggers: [{ kind: 'manual' }],
       stages: [{ id: 'collect', title: 'Collect', mode: 'dynamic' }, { id: 'compile', title: 'Compile', mode: 'strict' }],
       nodes: [
         { id: 'scorecard', title: 'Refresh the scorecard', kind: 'task', stage: 'collect', lane: 'chief', class: 'synthesis', required: true, why: 'the review starts from numbers, not stories',
@@ -212,7 +212,7 @@ export function templatesForRhythm(lines: string[]): string[] {
     if (/\bonboard/.test(l)) out.add('customer-onboarding');
     if (/\b(content|campaign|publish)/.test(l)) out.add('content-publishing');
     if (/\b(request|triage)\b/.test(l) && !/\bqueue\b/.test(l)) out.add('cross-function-request');
-    if (/\bweekly\b.*\breview\b/.test(l)) out.add('weekly-business-review-prep');
+    if (/\bweekly\b.*\breview\b/.test(l)) out.add('weekly-review-pack');
   }
   return [...out];
 }

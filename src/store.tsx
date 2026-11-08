@@ -37,7 +37,7 @@ export type Section = 'home' | 'overview' | 'agents' | 'inbox' | CompanySection 
 /** The organization pages (docs/group-chat.md §5: the workspace is the
  *  company). Each lives in exactly one company section, or in the Inbox. */
 export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'plans' | 'replay' | 'capital' | 'mytasks'
-  | 'incidents' | 'roadmap' | 'teams' | 'quality' | 'alignment';
+  | 'incidents' | 'roadmap' | 'teams' | 'quality' | 'alignment' | 'processes';
 export { ORG_PANES, ORG_PANES_IN_ARTIFACTS } from './lib/company-nav';
 /** The section a section id opens: the legacy Company id opens Operations. */
 export const resolveSection = (s: Section): Exclude<Section, 'workspace'> => (s === 'workspace' ? LEGACY_COMPANY_SECTION : s);
@@ -264,6 +264,8 @@ interface Store {
   routeTask: string | null; setRouteTask: (key: string | null, opts?: { replace?: boolean }) => void;
   /** The same for a project page on the Roadmap (`/<company>/projects/<key>`). */
   routeProject: string | null; setRouteProject: (key: string | null, opts?: { replace?: boolean }) => void;
+  /** The process open on Operations › Processes (`/<company>/processes/<id>`, docs/processes.md). */
+  routeProcess: string | null; setRouteProcess: (id: string | null, opts?: { replace?: boolean }) => void;
   /** The agent page's tab in the address (`/<company>/agents/<id>/<tab>`); AgentHome reports it. */
   setAgentTab: (slug: string | null) => void;
   /** The full-screen meeting room on screen (`/<company>/meetings/<id>`),
@@ -441,6 +443,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setInboxFilter = useCallback((f: InboxFilter) => { setInboxFilterRaw(f); setInboxItemRaw(null); }, []);
   const [routeTask, setRouteTaskRaw] = useState<string | null>(boot.nav.routeTask ?? null);
   const [routeProject, setRouteProjectRaw] = useState<string | null>(boot.nav.routeProject ?? null);
+  const [routeProcess, setRouteProcessRaw] = useState<string | null>(boot.nav.routeProcess ?? null);
   const [meetingId, setMeetingId] = useState<string | null>(boot.nav.meetingId ?? null);
   const [foundry, setFoundry] = useState<FoundryPlace>(boot.nav.foundry ?? {});
 
@@ -466,6 +469,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     markPush();
     setRouteTaskRaw(null);
     setRouteProjectRaw(null);
+    setRouteProcessRaw(null);
     if (v === null) { setOrgPaneRaw(null); return; }
     const home = paneHome(v);
     if (home.section === 'inbox') { setSection('inbox'); setInboxFilterRaw(home.filter); setInboxItemRaw(null); return; }
@@ -957,6 +961,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSelectedAgent(null);
     setRouteTaskRaw(null);
     setRouteProjectRaw(null);
+    setRouteProcessRaw(null);
     setOrgFocus(null);
     setFileTarget({ kind: 'workspace', id });
     setCurrentFile(null);
@@ -974,6 +979,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setOrgPaneRaw('board');
     setRouteTaskRaw(taskId);
     setRouteProjectRaw(null);
+    setRouteProcessRaw(null);
     setMobileDetail(true);
   }, [workspaceId, markPush]);
   const setRouteTask = useCallback((key: string | null, opts: { replace?: boolean } = {}) => {
@@ -983,6 +989,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setRouteProject = useCallback((key: string | null, opts: { replace?: boolean } = {}) => {
     if (!opts.replace) markPush();
     setRouteProjectRaw(key);
+  }, [markPush]);
+  const setRouteProcess = useCallback((id: string | null, opts: { replace?: boolean } = {}) => {
+    if (!opts.replace) markPush();
+    setRouteProcessRaw(id);
   }, [markPush]);
   const setAgentTab = useCallback((slug: string | null) => setAgentTabRaw(slug), []);
 
@@ -1035,6 +1045,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (n.settingsPane) setSettingsPaneRaw(n.settingsPane);
     if (n.routeTask !== undefined) setRouteTaskRaw(n.routeTask);
     if (n.routeProject !== undefined) setRouteProjectRaw(n.routeProject);
+    if (n.routeProcess !== undefined) setRouteProcessRaw(n.routeProcess);
     if (n.orgFocus) setOrgFocus(n.orgFocus);
     if (n.orgUnitId === null) setOrgUnitId(null);
     if (n.foundry) setFoundry(n.foundry);
@@ -1461,6 +1472,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (isCompanySection(to)) setOrgPaneRaw(null);
     setRouteTaskRaw(null);
     setRouteProjectRaw(null);
+    setRouteProcessRaw(null);
     setMobileChatOpen(false);
     setMobileDetail(false);
     setArtifact(null);
@@ -1486,9 +1498,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     company,
     place: placeOf({
       section, homeView, currentId, currentChannel, selectedAgent, agentTab, fileTarget, currentFile, orgPane, inboxFilter, inboxItem, settingsPane,
-      routeTask, routeProject, meetingId, foundry, stacked, mobileChatOpen, mobileDetail,
+      routeTask, routeProject, routeProcess, meetingId, foundry, stacked, mobileChatOpen, mobileDetail,
     }),
-  }) : null), [company, section, homeView, currentId, currentChannel, selectedAgent, agentTab, fileTarget, currentFile, orgPane, inboxFilter, inboxItem, settingsPane, routeTask, routeProject, meetingId, foundry, stacked, mobileChatOpen, mobileDetail]);
+  }) : null), [company, section, homeView, currentId, currentChannel, selectedAgent, agentTab, fileTarget, currentFile, orgPane, inboxFilter, inboxItem, settingsPane, routeTask, routeProject, routeProcess, meetingId, foundry, stacked, mobileChatOpen, mobileDetail]);
   useEffect(() => {
     const mode = navMode.current;
     navMode.current = null;
@@ -1588,11 +1600,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
     companiesEnabled, wsOrg, refreshWsOrg, wsOrgLoading, orgPane, setOrgPane, settingsPane, setSettingsPane, openSettings, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, inboxItem, setInboxItem, orgFocus, setOrgFocus,
-    routeTask, setRouteTask, routeProject, setRouteProject, setAgentTab, meetingId,
+    routeTask, setRouteTask, routeProject, setRouteProject, routeProcess, setRouteProcess, setAgentTab, meetingId,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
     setHomeViewNav, setCurrentFileNav, setSelectedAgentNav, setSettingsPane,
-    routeTask, setRouteTask, routeProject, setRouteProject, setAgentTab, meetingId,
+    routeTask, setRouteTask, routeProject, setRouteProject, routeProcess, setRouteProcess, setAgentTab, meetingId,
     width, stacked, mediumDock, theme, toggleTheme, section, go, homeView,
     mobileChatOpen, mobileDetail, toast, showToast,
     workspaces, workspaceId, pickWorkspace, refreshWorkspaces, me, refreshMe, nameOf,

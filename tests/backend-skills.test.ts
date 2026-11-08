@@ -16,7 +16,7 @@ test('built-ins seed once and survive re-seeding; user edits stick', async () =>
   await skills.seedBuiltins();
   const all = await skills.list();
   const names = all.map((s) => s.name).sort();
-  assert.deepEqual(names, ['create-slides', 'deep-research', 'design-polish', 'make-spreadsheet', 'org-member-onboarding', 'org-member-workflow', 'org-unit-retro', 'use-the-knowledge-base', 'verify-and-cite', 'write-document']);
+  assert.deepEqual(names, ['create-slides', 'deep-research', 'design-polish', 'make-spreadsheet', 'org-member-onboarding', 'org-member-workflow', 'org-processes', 'org-unit-retro', 'use-the-knowledge-base', 'verify-and-cite', 'write-document']);
 
   const edited = await skills.update(all[0].id, { instructions: 'my custom version' });
   await skills.seedBuiltins();

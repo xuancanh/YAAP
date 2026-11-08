@@ -93,7 +93,7 @@ the roadmap's project rows (the roadmap lists them separately).
 | Field | Meaning |
 |---|---|
 | `projectId` | Required in practice: the placement rule (`OrgProjectsService.place`, bound into `OrgTasksService.create`) gives every task one — the one named, else its parent's, else its unit's Unsorted (retro work: Operating improvements). |
-| `source` | `plan` · `meeting` · `retro` · `incident` · `escalation` · `agent` · `ceo` · `chat`, shown as a badge. Callers name it (meetings: `retro` for a retro, else `meeting`; the strategy card: `plan`); otherwise it is derived from `createdBy` (`deriveSource`, `work-model.ts`): a person → `ceo` (or `chat` from a channel message), the chief → `plan`, an `Escalation:` child → `escalation`, anything else an agent noticed → `agent`. |
+| `source` | `plan` · `meeting` · `retro` · `incident` · `escalation` · `agent` · `ceo` · `chat` · `process` (a step of a process run, with `processRunId` / `processNodeId`; docs/processes.md), shown as a badge. Callers name it (meetings: `retro` for a retro, else `meeting`; the strategy card: `plan`); otherwise it is derived from `createdBy` (`deriveSource`, `work-model.ts`): a person → `ceo` (or `chat` from a channel message), the chief → `plan`, an `Escalation:` child → `escalation`, anything else an agent noticed → `agent`. |
 | `blockedOn` | The one structured blocker (§3). |
 | `steps` | The checklist: `[{ id, text, done, doneAt, dropped?, from? }]`. Steps have no status of their own, no key and no heartbeat. |
 | `startedAt`, `doneAt`, `blockedSeconds` | The clocks (§2). |

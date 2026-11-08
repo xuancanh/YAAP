@@ -45,6 +45,7 @@ localStorage), else the first, on Home.
 | `/:company/direction\|operations\|people\|money\|oversight[/:pane]` | A company section's dashboard, or one of its pages (`src/lib/company-nav.ts`) |
 | `/:company/tasks/:key` | Operations › Board with the task's drawer open (a key, an id or its prefix) |
 | `/:company/projects/:key` | Direction › Roadmap on the project's page |
+| `/:company/processes/:id` | Operations › Processes on the process's page (docs/processes.md); `/:company/processes` is the list |
 | `/:company/meetings/:id` | The full-screen meeting room, over whatever was open |
 | `/:company/artifacts[/<path…>]` | Artifacts, a file open |
 | `/:company/apps` | The apps gallery |

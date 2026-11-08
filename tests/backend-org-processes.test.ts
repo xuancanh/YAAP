@@ -75,7 +75,7 @@ test('model: validation refuses with remediation; the walk skips dead branches a
   assert.equal(touchesControls(def, v2), true, 'a new MUST item changes what a run must do');
   assert.equal(touchesControls(def, normalizeProcess({ ...def, description: 'wording' })), false);
   assert.ok(diffProcess(def, v2).some((l) => /step b \+ MUST: new rule/.test(l)));
-  assert.deepEqual(templatesForRhythm(['release checklist before each release', 'postmortem after every major incident', 'weekly delivery review']).sort(), ['incident-response', 'release-checklist', 'weekly-business-review-prep']);
+  assert.deepEqual(templatesForRhythm(['release checklist before each release', 'postmortem after every major incident', 'weekly delivery review']).sort(), ['incident-response', 'release-checklist', 'weekly-review-pack']);
 });
 
 test('tunables: derived from the profile within bounds; a hierarchy approves edits and blocks, an adhocracy edits freely; the boundary reserves the tunables', () => {
@@ -270,7 +270,7 @@ test('edits are new versions with author and reason; the tunable decides apply-o
   const { processes } = wire(s);
   const eng = (await s.units.ledBy(orgId, s.writer.id))!;
   const rel = await processes.instantiate(orgId, 'release-checklist', { unitId: eng.id });
-  const wbr = await processes.instantiate(orgId, 'weekly-business-review-prep');
+  const wbr = await processes.instantiate(orgId, 'weekly-review-pack');
   const strictRun = await processes.start(orgId, rel.name, { initiator: 'user', vars: { release: 'v1' } });
   const def1 = (await processes.activeDef(orgId, rel))!;
   // the head edits its own process: wording applies at once (editApproval 1)
@@ -418,10 +418,9 @@ test('a step\'s denied tools are refused; the sweep repairs a step a restart lef
   const w2 = wire(s2);
   await w2.processes.tick(await s2.org.get(org2), new Date());
   const names = (await w2.processes.list(org2)).map((p) => p.name).sort();
-  assert.ok(names.includes('chief-daily-sweep') && names.includes('incident-response') && names.includes('release-checklist'), names.join(','));
+  assert.ok(names.includes('chief-daily-ops') && names.includes('incident-response') && names.includes('release-checklist'), names.join(','));
   assert.ok(!names.includes('hiring-loop'), 'no People function, no hiring loop');
-  const wbr = (await w2.processes.list(org2)).find((p) => p.name === 'weekly-business-review-prep')!;
-  assert.equal((await w2.processes.activeDef(org2, wbr))!.triggers.find((t) => t.kind === 'cadence')!.enabled, false, 'a company from before processes gets its cadences off');
+  assert.ok((await w2.processes.events(org2)).some((e) => e.activity === 'version_activated'), 'each seeded process has its first version');
   await w2.processes.tick(await s2.org.get(org2), new Date());
   assert.equal((await w2.processes.list(org2)).length, names.length, 'seeded once');
 });

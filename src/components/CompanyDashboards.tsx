@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useApp, type OrgFocus, type OrgPane } from '../store';
 import {
   api, type OrgAllocation, type OrgAuditRow, type OrgAuditRun, type OrgBrief, type OrgCapacity, type OrgDetail, type OrgForecast,
-  type OrgIncident, type OrgPulse, type OrgSpend, type OrgTask, type TrustOverview, type OrgUnitNode, type QualityOverview,
+  type OrgIncident, type OrgProcess, type OrgProcessRunRow, type OrgPulse, type OrgSpend, type OrgTask, type TrustOverview, type OrgUnitNode, type QualityOverview,
 } from '../lib/api';
 import { pct, qualityLede } from '../lib/quality';
 import { type CompanySection } from '../lib/company-nav';
@@ -126,6 +126,7 @@ function OperationsDashboard({ org }: { org: OrgDetail }) {
   const tasks = useData<OrgTask[]>((w) => api.orgTasks(w), ws);
   const pulse = useData<OrgPulse>(api.orgPulse, ws);
   const brief = useData<OrgBrief | null>(api.orgBrief, ws);
+  const procs = useData<{ processes: OrgProcess[]; runs: OrgProcessRunRow[] }>((w) => api.orgProcesses(w), ws);
   const names = useAgentNames();
   const board = tasks ? boardCounts(tasks) : null;
   const health = app.orgHealth;
@@ -182,6 +183,14 @@ function OperationsDashboard({ org }: { org: OrgDetail }) {
               <span style={{ ...ellipsis, flex: 1 }}>{MEETING_KIND_TITLES[m.kind] ?? m.kind} <span style={faint}>· {m.unitName}</span></span>
               <span style={{ ...faint, ...num }}>{whenNext(m.at)}</span>
             </div>
+          ))}
+        </Card>
+        <Card id="processes" title="Processes" open={() => open('processes')} openLabel="All processes" aside={procs ? <span style={faint}>{procs.runs.length} open run{procs.runs.length === 1 ? '' : 's'}</span> : undefined}>
+          {procs === undefined ? <Loading /> : !procs || procs.processes.length === 0 ? <Empty>No processes yet.</Empty> : [...procs.processes].filter((p) => p.status === 'active').sort((a, b) => (b.metrics.health === 'revise' ? 1 : 0) - (a.metrics.health === 'revise' ? 1 : 0) || b.metrics.active - a.metrics.active).slice(0, 4).map((p) => (
+            <button key={p.id} style={rowBtn} onClick={() => { open('processes'); app.setRouteProcess(p.id); }}>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: p.metrics.health === 'revise' ? 'var(--red)' : p.metrics.health === 'watch' ? 'var(--amber)' : 'var(--text-faint)', flex: 'none' }}>{p.metrics.health === 'revise' ? 'revise' : p.metrics.active ? `${p.metrics.active} open` : p.mode}</span>
+              <span style={{ ...ellipsis, flex: 1 }}>{p.title} <span style={faint}>· v{p.version}</span></span>
+            </button>
           ))}
         </Card>
         <Card id="incidents" title="Incidents" open={() => open('incidents')} aside={word ? <span data-testid="incidents-health" style={{ fontSize: 11, fontWeight: 600, color: `var(--${word.tone})` }}>{word.text}</span> : undefined}>

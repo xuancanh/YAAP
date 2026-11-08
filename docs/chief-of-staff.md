@@ -278,8 +278,9 @@ breakers watched, and the betting table of shaped projects prepared for the
 CEO — it never moves a project to Now, extends an appetite or kills a bet.
 
 Its loops: the weekday **operating-system sweep** (intake, projects, blocks, brief, handoffs)
-an hour before the brief,
-the **weekly business review pack** at the pre-read deadline before the root
+an hour before the brief — it starts a run of the `chief-daily-ops` process, whose
+steps are the sweep's playbooks as tasks with step cards (docs/processes.md) —
+the **weekly business review pack** (a run of the `weekly-review-pack` process) at the pre-read deadline before the root
 unit's weekly review (moved off the weekend), the **monthly operating
 review** and the **quarterly planning kickoff** three weeks before the
 quarter. Onboarding computes their times from the workspace (`chiefLoops`);

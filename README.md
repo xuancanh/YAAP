@@ -119,6 +119,14 @@ Settings › Company.
   health updates and cross-functional project teams; tasks carry Jira-style
   keys (`ENG-12`, [docs/tasks-keys.md](docs/tasks-keys.md)) and can @mention
   agents and people.
+- **Processes** ([docs/processes.md](docs/processes.md)): the company's
+  standing procedures (release checklist, incident response, request
+  intake, the chief's daily sweep, …) as versioned graphs. A model-free
+  engine turns each step into an ordinary task with a step card; strict
+  stages follow the graph, dynamic ones let the performer choose; MUST items
+  gate the review, deviations are logged or waived. The chief and the heads
+  change them from what the runs show, every edit a new version you can roll
+  back.
 - **Goals and OKRs**: vision → objectives → key results with metric, target,
   owner and due date. A model-free sweep flags key results at risk, and any
   task can show its *why* chain. Key results can be **measured** from metric

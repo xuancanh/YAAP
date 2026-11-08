@@ -165,7 +165,7 @@ export function updateWord(u: ProjectSummary['update']): string {
   return '';
 }
 
-export const SOURCE_WORD: Record<TaskSource, string> = { plan: 'plan', meeting: 'meeting', retro: 'retro', incident: 'incident', escalation: 'escalation', agent: 'agent', ceo: 'from you', chat: 'chat' };
+export const SOURCE_WORD: Record<TaskSource, string> = { plan: 'plan', meeting: 'meeting', retro: 'retro', incident: 'incident', escalation: 'escalation', agent: 'agent', ceo: 'from you', chat: 'chat', process: 'process' };
 /** Quiet badges; the work about work (retro, meeting) and the CEO's own are told apart by tone. */
 export const SOURCE_TONE: Record<TaskSource, { bg: string; fg: string }> = {
   plan: { bg: 'var(--panel-2)', fg: 'var(--text-dim)' },
@@ -176,6 +176,7 @@ export const SOURCE_TONE: Record<TaskSource, { bg: string; fg: string }> = {
   agent: { bg: 'var(--panel-2)', fg: 'var(--text-faint)' },
   ceo: { bg: 'color-mix(in srgb, var(--accent) 16%, transparent)', fg: 'var(--accent-hi)' },
   chat: { bg: 'var(--panel-2)', fg: 'var(--text-dim)' },
+  process: { bg: 'color-mix(in srgb, var(--green) 12%, transparent)', fg: 'var(--green)' },
 };
 
 /** The stored blocker (JSON) as an object, or null. */

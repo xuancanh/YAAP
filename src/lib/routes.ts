@@ -25,6 +25,8 @@ export type Place =
   | { kind: 'section'; section: CompanySection; pane?: OrgPane }
   | { kind: 'task'; key: string }
   | { kind: 'project'; key: string }
+  /** A process's page on Operations › Processes (docs/processes.md). */
+  | { kind: 'process'; id: string }
   | { kind: 'meeting'; id: string }
   | { kind: 'artifacts'; path?: string }
   | { kind: 'apps' }
@@ -132,6 +134,7 @@ function parsePlace(head: string | undefined, rest: string[], search: string): P
     case 'workspace': case 'company': return a ? placeOfPane(a, LEGACY_COMPANY_SECTION) : { kind: 'section', section: LEGACY_COMPANY_SECTION };
     case 'tasks': return a ? { kind: 'task', key: a } : { kind: 'section', section: 'operations', pane: 'board' };
     case 'projects': return a ? { kind: 'project', key: a } : { kind: 'section', section: 'direction', pane: 'roadmap' };
+    case 'processes': return a && ID_RE.test(a) ? { kind: 'process', id: a } : { kind: 'section', section: 'operations', pane: 'processes' };
     case 'meetings': return a && ID_RE.test(a) ? { kind: 'meeting', id: a } : { kind: 'section', section: 'operations', pane: 'meetings' };
     case 'artifacts': case 'files': return rest.length ? { kind: 'artifacts', path: rest.join('/') } : { kind: 'artifacts' };
     case 'apps': return { kind: 'apps' };
@@ -163,6 +166,7 @@ export function routeHref(route: Route): string {
     case 'section': return `${c}/${p.section}${p.pane ? `/${p.pane}` : ''}`;
     case 'task': return `${c}/tasks/${enc(p.key)}`;
     case 'project': return `${c}/projects/${enc(p.key)}`;
+    case 'process': return `${c}/processes/${enc(p.id)}`;
     case 'meeting': return `${c}/meetings/${enc(p.id)}`;
     case 'artifacts': return `${c}/artifacts${p.path ? `/${encPath(p.path)}` : ''}`;
     case 'apps': return `${c}/apps`;
@@ -276,6 +280,8 @@ export interface NavState {
   /** The Inbox row open in the reading pane (null: none). */
   inboxItem?: string | null;
   routeTask: string | null; routeProject: string | null; meetingId: string | null;
+  /** The open process (Operations › Processes); absent in older callers. */
+  routeProcess?: string | null;
   foundry: FoundryPlace;
   /** Phone layout: the list is on screen, not the detail (no item in the address). */
   stacked: boolean; mobileChatOpen: boolean; mobileDetail: boolean;
@@ -309,6 +315,7 @@ export function placeOf(s: NavState): Place {
     default:
       if (sec === 'operations' && s.orgPane === 'board' && s.routeTask) return { kind: 'task', key: s.routeTask };
       if (sec === 'direction' && s.orgPane === 'roadmap' && s.routeProject) return { kind: 'project', key: s.routeProject };
+      if (sec === 'operations' && s.orgPane === 'processes' && s.routeProcess) return { kind: 'process', id: s.routeProcess };
       return s.orgPane ? { kind: 'section', section: sec, pane: s.orgPane } : { kind: 'section', section: sec };
   }
 }
@@ -324,7 +331,7 @@ export interface NavPatch extends Partial<Omit<NavState, 'stacked' | 'fileTarget
 }
 export function navOf(place: Place): NavPatch {
   if (place.kind === 'meeting') return { meetingId: place.id };
-  const base: NavPatch = { meetingId: null, routeTask: null, routeProject: null };
+  const base: NavPatch = { meetingId: null, routeTask: null, routeProject: null, routeProcess: null };
   switch (place.kind) {
     case 'home': return { ...base, section: 'overview' };
     case 'inbox': return { ...base, section: 'inbox', inboxFilter: place.filter ?? 'all', inboxItem: place.item ?? null };
@@ -337,6 +344,7 @@ export function navOf(place: Place): NavPatch {
     case 'section': return { ...base, section: place.section, orgPane: place.pane ?? null, mobileDetail: Boolean(place.pane) };
     case 'task': return { ...base, section: 'operations', orgPane: 'board', routeTask: place.key, orgFocus: { kind: 'task', id: place.key }, orgUnitId: null, mobileDetail: true };
     case 'project': return { ...base, section: 'direction', orgPane: 'roadmap', routeProject: place.key, orgFocus: { kind: 'project', id: place.key }, orgUnitId: null, mobileDetail: true };
+    case 'process': return { ...base, section: 'operations', orgPane: 'processes', routeProcess: place.id, mobileDetail: true };
     case 'artifacts': return { ...base, section: 'artifacts', fileTarget: 'workspace', currentFile: place.path ?? null, mobileChatOpen: Boolean(place.path) };
     case 'apps': return { ...base, section: 'apps' };
     case 'foundry': return { ...base, section: 'market', foundry: { ...(place.shelf ? { shelf: place.shelf } : {}), ...(place.item ? { item: place.item } : {}), ...(place.query ? { query: place.query } : {}) } };
@@ -351,6 +359,7 @@ export const agentTabSlug = (tab: string): string => tab.trim().toLowerCase().re
 
 export const taskHref = (workspaceId: string, key: string): string => routeHref({ company: companyRef(workspaceId), place: { kind: 'task', key } });
 export const meetingHref = (workspaceId: string, id: string): string => routeHref({ company: companyRef(workspaceId), place: { kind: 'meeting', id } });
+export const processHref = (workspaceId: string, id: string): string => routeHref({ company: companyRef(workspaceId), place: { kind: 'process', id } });
 export const channelHref = (workspaceId: string, slug: string, messageId?: string | null): string =>
   routeHref({ company: companyRef(workspaceId), place: { kind: 'channel', slug, ...(messageId ? { messageId } : {}) } });
 

@@ -217,3 +217,17 @@ task for the playbook the lesson names. The existing `charter` row
 (`experiment`) still governs an agent changing a charter directly; a card
 is the CEO's change, so it passes. `lesson_audience` is `never`: only the
 owner's route widens a private lesson.
+
+## Processes (added 8 November 2026)
+
+A process definition (docs/processes.md) is a self-change of kind
+`process`. `process:own` (`alone`): the chief changes any process, a head
+its unit's — every change is an immutable version with its author and
+reason, and a rollback is one call; within it the company's
+`process.editApproval` tunable decides whether the edit applies at once or
+waits for a `process_change` card routed to the editor's manager (0 every
+edit applies, 1 edits that change what a run must do wait, 2 every edit
+waits). `process:beyond` (`propose`): a process the agent does not own is a
+CEO-reserved card. The `process.*` tunables themselves are `propose`
+(`tunable:process.`): how hard a standard binds and who approves changes to
+it are the owner's.
