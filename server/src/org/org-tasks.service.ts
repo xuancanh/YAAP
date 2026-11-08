@@ -141,6 +141,12 @@ export type BoardAnnotator = (orgId: string, rows: OrgTask[]) => Promise<Map<str
  *  unassigned proposal in its backlog), the unit's Unsorted otherwise. */
 export type TaskPlacer = (orgId: string, input: { projectId: string | null; parentTaskId: string | null; unitId: string | null; source: TaskSource; assigneeAgentId: string | null }) => Promise<{ projectId: string | null; demote?: string }>;
 
+/** CEO alignment (docs/alignment.md): may this task be created (or moved)
+ *  under the project it landed in? Throws the refusal; `demote` keeps it as
+ *  an unassigned backlog proposal. OrgAlignmentService binds it. The input
+ *  carries every field the creator passed (process fields included). */
+export type CreateGate = (orgId: string, input: Record<string, unknown> & { title: string; createdBy: string; source: string; class: string; projectId: string | null; move?: boolean }) => Promise<{ demote?: string } | void>;
+
 /** Why a member may not claim a task in its project now (a tripped appetite
  *  breaker), or null. OrgProjectsService binds it. */
 export type ClaimGate = (orgId: string, task: OrgTask) => Promise<string | null>;
@@ -188,6 +194,10 @@ export class OrgTasksService {
   private placer?: TaskPlacer;
   private claimGate?: ClaimGate;
   private managerResolver?: ManagerResolver;
+  private createGate?: CreateGate;
+
+  /** OrgAlignmentService binds the alignment gate on task creation (docs/alignment.md). */
+  setCreateGate(fn: CreateGate | undefined): void { this.createGate = fn; }
 
   /** OrgProjectsService binds the placement rule (every task has a project). */
   setPlacer(fn: TaskPlacer | undefined): void { this.placer = fn; }
@@ -486,6 +496,12 @@ export class OrgTasksService {
       projectId = placed.projectId ?? projectId;
       if ('demote' in placed && placed.demote) { assigneeAgentId = null; status = 'backlog'; }
     }
+    const taskClass = normalizeTaskClass(input.class) ?? deriveTaskClass({ title, brief });
+    // CEO alignment (docs/alignment.md): work under an item that is not aligned is refused (or waits as a proposal).
+    if (this.createGate) {
+      const g = await this.createGate(orgId, { ...(input as Record<string, unknown>), title, brief, createdBy: input.createdBy ?? 'user', source, class: taskClass, projectId });
+      if (g && g.demote) { assigneeAgentId = null; status = 'backlog'; }
+    }
     const steps: TaskStep[] = [];
     for (const line of (input.steps ?? []).map(String).map((x) => x.trim()).filter(Boolean).slice(0, STEPS_CAP)) steps.push({ id: nextStepId(steps), text: line.slice(0, 300), done: false });
     // The key (docs/tasks-keys.md): the next number of the board's prefix.
@@ -500,7 +516,7 @@ export class OrgTasksService {
       noProgressCount: 0, lastRunAt: null, createdBy: input.createdBy ?? 'user',
       channelId: input.channelId ?? null, messageId: input.messageId ?? null,
       unitId, unitExplicit,
-      class: normalizeTaskClass(input.class) ?? deriveTaskClass({ title, brief }),
+      class: taskClass,
       checks: JSON.stringify(checks), acceptedBy: '',
       dependsOn: JSON.stringify(dependsOn), dueAt,
       source, blockedOn: '', steps: JSON.stringify(steps), startedAt: null, doneAt: status === 'done' ? now : null, blockedSeconds: 0,
@@ -590,7 +606,12 @@ export class OrgTasksService {
       if (['todo', 'backlog', 'done', 'cancelled', 'blocked'].includes(patch.status)) { set.claimedBy = null; set.claimedAt = null; }
     }
     if (patch.blockers !== undefined) set.blockers = JSON.stringify(patch.blockers.map(String).slice(0, 20));
-    if (patch.projectId !== undefined) { if (patch.projectId) await this.org.project(orgId, patch.projectId); set.projectId = patch.projectId; }
+    if (patch.projectId !== undefined) {
+      if (patch.projectId) await this.org.project(orgId, patch.projectId);
+      // Moving a task under another project is gated like creating it there (docs/alignment.md).
+      if (patch.projectId && patch.projectId !== t.projectId && this.createGate) await this.createGate(orgId, { ...t, title: t.title, brief: t.brief, createdBy: actor, source: t.source, class: t.class, projectId: patch.projectId, move: true });
+      set.projectId = patch.projectId;
+    }
     if (patch.reviewerAgentId !== undefined) set.reviewerAgentId = patch.reviewerAgentId;
     if (patch.fileScope !== undefined) set.fileScope = JSON.stringify(patch.fileScope.map(String).slice(0, 20));
     if (patch.noProgressCount !== undefined) set.noProgressCount = patch.noProgressCount;

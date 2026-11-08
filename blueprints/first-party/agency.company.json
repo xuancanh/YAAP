@@ -206,7 +206,14 @@
     "quality.escapeIncident": 1,
     "policy.repeatForIncident": 2,
     "policy.repeatWindowHours": 336,
-    "policy.signalSeverity": 2
+    "policy.signalSeverity": 2,
+    "alignment.required.direction": 2,
+    "alignment.required.strategy": 2,
+    "alignment.required.okr": 1,
+    "alignment.floor.budget": 1,
+    "alignment.costShare": 0.1,
+    "alignment.tolerance.targetShare": 0.05,
+    "alignment.tolerance.textShare": 0.35
   },
   "playbooks": [],
   "budget": {

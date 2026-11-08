@@ -112,7 +112,9 @@ export type StructureChangeHook = (orgId: string) => Promise<void>;
 /** Runs after a goal was created or changed (docs/company-vision.md §2: the
  *  cascade listens for an objective handed to a unit). `before` is null on
  *  creation. Awaited; a throwing hook never breaks the change. */
-export type GoalChangeHook = (goal: OrgGoal, before: OrgGoal | null) => Promise<void> | void;
+export type GoalChangeHook = (goal: OrgGoal, before: OrgGoal | null, actor?: string) => Promise<void> | void;
+/** Told after a project row is written (CEO alignment, docs/alignment.md). */
+export type ProjectChangeHook = (project: OrgProject, before: OrgProject | null, actor: string) => Promise<void> | void;
 
 /** The self-modification boundary (docs/boundary.md, item 31): the decision
  *  for one self-change by one actor, with its side effects (a `never` by an
@@ -123,6 +125,7 @@ export type BoundaryPort = (orgId: string, change: SelfChange, actor: string) =>
 export class OrgService {
   private readonly structureHooks: StructureChangeHook[] = [];
   private readonly goalHooks: GoalChangeHook[] = [];
+  private readonly projectHooks: ProjectChangeHook[] = [];
   private boundary?: BoundaryPort;
 
   constructor(
@@ -167,8 +170,18 @@ export class OrgService {
     return () => { const i = this.goalHooks.indexOf(hook); if (i >= 0) this.goalHooks.splice(i, 1); };
   }
 
-  private async goalChanged(goal: OrgGoal, before: OrgGoal | null): Promise<void> {
-    for (const h of this.goalHooks) { try { await h(goal, before); } catch { /* the hook logs its own failures */ } }
+  private async goalChanged(goal: OrgGoal, before: OrgGoal | null, actor?: string): Promise<void> {
+    for (const h of this.goalHooks) { try { await h(goal, before, actor); } catch { /* the hook logs its own failures */ } }
+  }
+
+  /** OrgAlignmentService registers here (docs/alignment.md): a new or changed project. */
+  onProjectChange(hook: ProjectChangeHook): () => void {
+    this.projectHooks.push(hook);
+    return () => { const i = this.projectHooks.indexOf(hook); if (i >= 0) this.projectHooks.splice(i, 1); };
+  }
+
+  private async projectChanged(project: OrgProject, before: OrgProject | null, actor: string): Promise<void> {
+    for (const h of this.projectHooks) { try { await h(project, before, actor); } catch { /* the hook logs its own failures */ } }
   }
 
   // ---- humans (phase D) ----
@@ -787,7 +800,7 @@ export class OrgService {
     await this.db.insert(orgGoals).values(row);
     await this.audit.append(orgId, { actor, action: 'goal_create', refType: 'goal', refId: row.id, payload: { title, kind, unitId: row.unitId, parentGoalId: row.parentGoalId, metric: row.metric || undefined, targetValue: row.targetValue ?? undefined, dueAt: row.dueAt ?? undefined } });
     if (actor === 'user' || actor.startsWith('human:')) this.bus?.emitOrgBoard({ orgId, kind: 'goal', refId: row.id, detail: `new ${kind.replace('_', ' ')} "${title}"` });
-    await this.goalChanged(row, null);
+    await this.goalChanged(row, null, actor);
     return row;
   }
 
@@ -838,7 +851,7 @@ export class OrgService {
       await this.audit.append(orgId, { actor, action: 'goal_update', refType: 'goal', refId: id, payload: set });
     }
     const after = await this.goal(orgId, id);
-    if (Object.keys(set).length > 0) await this.goalChanged(after, before);
+    if (Object.keys(set).length > 0) await this.goalChanged(after, before, actor);
     return after;
   }
 
@@ -874,6 +887,7 @@ export class OrgService {
     };
     await this.db.insert(orgProjects).values(row);
     await this.audit.append(orgId, { actor, action: 'project_create', refType: 'project', refId: row.id, payload: { key: row.key, title, goalId: row.goalId, goalIds, kind: row.kind, lane: row.lane, status: row.status, ownerAgentId: row.ownerAgentId, leadHumanId: row.leadHumanId, unitId: row.unitId } });
+    await this.projectChanged(row, null, actor);
     return row;
   }
 
@@ -906,6 +920,9 @@ export class OrgService {
       await this.db.update(orgProjects).set(set).where(eq(orgProjects.id, id));
       const { updatedAt: _u, ...logged } = set; void _u;
       await this.audit.append(orgId, { actor, action: 'project_update', refType: 'project', refId: id, payload: logged });
+      const after = await this.project(orgId, id);
+      await this.projectChanged(after, before, actor);
+      return after;
     }
     return this.project(orgId, id);
   }

@@ -3,7 +3,9 @@
  *  or with a check-in due, unowned goals and projects, projects over their
  *  appetite or missing an update, resource requests waiting); the objectives
  *  with health and owner; the projects in Now with their next milestone; the
- *  latest decisions as one-liners; the program matrix's health. Every row
+ *  latest decisions as one-liners; the program matrix's health; what waits
+ *  on the CEO's alignment (docs/alignment.md) and each item's alignment
+ *  badge. Every row
  *  opens the page it summarises. */
 import { useEffect, useMemo, useState } from 'react';
 import { useApp, type OrgFocus, type OrgPane } from '../store';
@@ -14,6 +16,8 @@ import { decisionSource } from '../lib/org';
 import { ago, useAgentNames } from './org-ui';
 import { AttentionList, Bar, Card, Empty, Owner, Pill, Skeleton, SkeletonRows } from './CompanyKit';
 import { ProgramHealthCard, useProgram } from './ProgramMatrixView';
+import { AlignmentBadge, useAlignments } from './AlignmentView';
+import { alignmentGroups } from '../lib/alignment';
 
 function useLoad<T>(load: (wsId: string) => Promise<T>, wsId: string): T | null | undefined {
   const [state, setState] = useState<{ k: string; v: T | null } | null>(null);
@@ -34,6 +38,9 @@ export function DirectionOverview({ org }: { org: OrgDetail }) {
   const roadmap = useLoad<RoadmapData>(api.orgRoadmap, ws);
   const decisions = useLoad<OrgDecision[]>((w) => api.orgDecisions(w), ws);
   const matrix = useProgram(ws);
+  const { items: alignments } = useAlignments(ws);
+  const alignOf = useMemo(() => new Map((alignments ?? []).map((a) => [a.itemId, a])), [alignments]);
+  const needsAlign = useMemo(() => alignmentGroups(alignments ?? []).needsYou, [alignments]);
   const intent = useMemo(() => app.orgIntent ?? [], [app.orgIntent]);
   const objectives = useMemo(() => objectivesOfTree(intent).filter((o) => o.kind === 'objective' && o.status !== 'abandoned'), [intent]);
   const lanes = roadmap ? laneCounts(roadmap.projects) : null;
@@ -81,6 +88,30 @@ export function DirectionOverview({ org }: { org: OrgDetail }) {
         </button>
       )}
 
+      {needsAlign.length > 0 && (
+        <section className="co-card" data-testid="dash-card-alignment" style={{ marginBottom: 14, borderColor: 'var(--accent)' }} aria-label="Awaiting your alignment">
+          <div className="co-card-head">
+            <h3 className="co-card-title"><button onClick={() => open('alignment')}>Awaiting your alignment</button></h3>
+            <span className="co-card-aside">{needsAlign.length}</span>
+            <span style={{ flex: 1 }} />
+            <button className="co-link" onClick={() => open('alignment')}>Open alignment</button>
+          </div>
+          <div className="co-card-body">
+            <div className="co-rows" style={{ margin: '0 -10px' }}>
+              {needsAlign.slice(0, 4).map((a) => (
+                <button key={a.id} className="co-row" onClick={() => open('alignment', { kind: 'alignment', id: a.id })} data-testid="align-row">
+                  <span className="co-row-main">
+                    <span className="co-row-title wrap">{a.title}</span>
+                    <span className="co-row-meta">{[a.label, a.brief.what].filter(Boolean).join(' · ')}</span>
+                  </span>
+                  <span className="co-row-end"><AlignmentBadge a={a} /></span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
       <div className="co-split">
         <div className="co-stack">
           <Card id="attention" title="Needs attention" aside={attention && attention.length ? attention.length : undefined}>
@@ -106,6 +137,7 @@ export function DirectionOverview({ org }: { org: OrgDetail }) {
                       </span>
                       <span className="co-row-end" style={{ flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
                         <Pill tone={HEALTH_TONE[h]}>{HEALTH_LABEL[h]}</Pill>
+                        {alignOf.get(o.id) && alignOf.get(o.id)!.state !== 'aligned' && <AlignmentBadge a={alignOf.get(o.id)} />}
                         {owner && owner.role !== 'none' ? <Owner agent={owner.agentId ? names.get(owner.agentId) : undefined} name={owner.name} role={owner.role === 'acting_chief' ? 'acting PM' : owner.role === 'pm' ? 'PM' : undefined} /> : <Owner agent={o.ownerAgentId ? names.get(o.ownerAgentId) : undefined} name={o.ownerName} />}
                       </span>
                     </button>
@@ -130,6 +162,7 @@ export function DirectionOverview({ org }: { org: OrgDetail }) {
                       </span>
                       <span className="co-row-end" style={{ flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
                         <Pill tone={HEALTH_TONE[h]}>{h === 'unknown' ? 'No update' : HEALTH_LABEL[h]}</Pill>
+                        {alignOf.get(p.id) && alignOf.get(p.id)!.state !== 'aligned' && <AlignmentBadge a={alignOf.get(p.id)} />}
                         <span className="co-num">{p.progress.pct}%</span>
                       </span>
                     </button>

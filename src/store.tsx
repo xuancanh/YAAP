@@ -37,7 +37,7 @@ export type Section = 'home' | 'overview' | 'agents' | 'inbox' | CompanySection 
 /** The organization pages (docs/group-chat.md §5: the workspace is the
  *  company). Each lives in exactly one company section, or in the Inbox. */
 export type OrgPane = 'board' | 'goals' | 'chart' | 'approvals' | 'spend' | 'brief' | 'audit' | 'vision' | 'pulse' | 'meetings' | 'decisions' | 'plans' | 'replay' | 'capital' | 'mytasks'
-  | 'incidents' | 'roadmap' | 'teams' | 'quality';
+  | 'incidents' | 'roadmap' | 'teams' | 'quality' | 'alignment';
 export { ORG_PANES, ORG_PANES_IN_ARTIFACTS } from './lib/company-nav';
 /** The section a section id opens: the legacy Company id opens Operations. */
 export const resolveSection = (s: Section): Exclude<Section, 'workspace'> => (s === 'workspace' ? LEGACY_COMPANY_SECTION : s);
@@ -47,7 +47,7 @@ export const resolveSection = (s: Section): Exclude<Section, 'workspace'> => (s 
  *  YYYY-MM-DD); mission control opened on a filter (`mission`, the id a
  *  MissionOnly such as `error`, from the top bar's failing count). Consumed
  *  by the pane. */
-export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'replay' | 'incident' | 'action' | 'project' | 'mission'; id: string }
+export interface OrgFocus { kind: 'task' | 'goal' | 'meeting' | 'decision' | 'plan' | 'replay' | 'incident' | 'action' | 'project' | 'mission' | 'alignment'; id: string }
 /** What the main pane shows while in the Home section: a conversation, a
  *  group-chat channel, an agent's home page (or the directory when no agent
  *  is selected), or a file preview — all reachable from the one combined

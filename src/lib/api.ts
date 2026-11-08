@@ -1446,6 +1446,24 @@ export interface OrgIntentNode extends OrgGoal {
   children: OrgIntentNode[];
 }
 export interface OrgVisionInfo { vision: OrgGoal | null; rules: string; values: string; culture: string }
+
+/** CEO alignment (docs/alignment.md): one gated item and its state. */
+export type OrgAlignmentState = 'draft' | 'in_alignment' | 'aligned' | 'realign' | 'rejected' | 'not_required';
+export interface OrgAlignmentBrief { what: string; why: string; options: string[]; tradeoffs: string; measures: string; cost: string; unlocks: string }
+export interface OrgAlignmentThreadEntry { at: string; by: string; kind: 'request' | 'comment' | 'aligned' | 'send_back' | 'rejected' | 'reopened' | 'system' | 'acknowledged' | 'classified' | 'pulled_in' | 'not_needed'; text: string; version?: number }
+export interface OrgAlignmentClassification { needs: boolean; class: string; reasoning: string; criteria: Record<string, unknown>; assessed: { needs: boolean; reasons: string[]; suggestedClass: string | null }; by: string; at: string }
+export interface OrgAlignment {
+  id: string; itemType: 'vision' | 'strategy' | 'objective' | 'key_result' | 'project'; itemId: string; itemClass: string; label: string; title: string;
+  state: OrgAlignmentState; version: number; alignedVersion: number | null; alignedBy: string; alignedVia: string; alignedAt: string | null; conditions: string;
+  ownerAgentId: string | null; brief: OrgAlignmentBrief; thread: OrgAlignmentThreadEntry[]; approvalId: string | null; bundleOf: string | null;
+  requestedBy: string; requestedAt: string | null; reopenReasons: string[]; reviewDueAt: string | null; reviewDue: boolean;
+  aligner: 'ceo' | 'chief' | 'auto'; awaitingCeo: boolean; needsCeoReview: boolean; parentId: string | null;
+  needsAlignment: boolean | null; classification: OrgAlignmentClassification | null; floor: boolean; pulledInAt: string | null; updatedAt: string;
+}
+export interface OrgAlignmentClass { id: string; label: string; covers: string; examples: string[]; criteria: string[]; rationale: string; sources: string[]; aligner: 'ceo' | 'chief' | 'auto'; floor: boolean }
+export interface OrgAlignmentClasses { mode: string; classes: OrgAlignmentClass[]; criteria: Array<{ id: string; question: string; values: string; needsWhen: string }>; sources: Record<string, { title: string; url: string }> }
+export interface OrgEscalationFinding { alignmentId: string; kind: 'under' | 'over'; title: string; label: string; owner: string | null; why: string }
+export type OrgAlignmentDecision = 'approve' | 'approve_with_changes' | 'send_back' | 'reject' | 'pull_in' | 'not_needed';
 export interface OrgProfile { values: string; culture: string; rules: string; mission: string }
 export type TunableArea = 'intent' | 'planning' | 'rituals' | 'assurance' | 'heartbeat' | 'brief' | 'chat';
 /** GET …/org/tunables — every tunable with its default, bound, area and the org's effective/stored value. */
@@ -2481,6 +2499,11 @@ export const api = {
   wakeOrgTask: (wsId: string, taskId: string, now = false) => send<{ queued?: boolean; result?: string }>(`/api/workspaces/${wsId}/org/tasks/${taskId}/wake`, 'POST', { now }),
   orgTaskRuns: (wsId: string, taskId: string) => get<OrgRun[]>(`/api/workspaces/${wsId}/org/tasks/${taskId}/runs`),
   orgRuns: (wsId: string, limit = 100) => get<OrgRun[]>(`/api/workspaces/${wsId}/org/runs?limit=${limit}`),
+  orgAlignments: (wsId: string) => get<OrgAlignment[]>(`/api/workspaces/${wsId}/org/alignments`),
+  orgAlignmentClasses: (wsId: string) => get<OrgAlignmentClasses>(`/api/workspaces/${wsId}/org/alignments/classes`),
+  orgAlignmentSpotCheck: (wsId: string) => get<OrgEscalationFinding[]>(`/api/workspaces/${wsId}/org/alignments/spot-check`),
+  commentOrgAlignment: (wsId: string, id: string, text: string) => send<OrgAlignment>(`/api/workspaces/${wsId}/org/alignments/${id}/comment`, 'POST', { text }),
+  decideOrgAlignment: (wsId: string, id: string, decision: OrgAlignmentDecision, note?: string) => send<OrgAlignment>(`/api/workspaces/${wsId}/org/alignments/${id}/decide`, 'POST', { decision, note }),
   orgApprovals: (wsId: string, status?: string) => get<OrgApproval[]>(`/api/workspaces/${wsId}/org/approvals${status ? `?status=${enc(status)}` : ''}`),
   decideOrgApproval: (wsId: string, approvalId: string, decision: 'approve' | 'reject' | 'revise', note?: string) =>
     send<{ approval: OrgApproval; result?: Record<string, unknown> }>(`/api/workspaces/${wsId}/org/approvals/${approvalId}/decide`, 'POST', { decision, note }),

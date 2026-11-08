@@ -63,7 +63,9 @@ const GoalsPane = lazy(() => import('./OrgGoalsView').then((m) => ({ default: m.
 /** Quality control (docs/quality.md): the Oversight › Quality page and the task's QC panel. */
 const QualityPane = lazy(() => import('./OrgQualityView').then((m) => ({ default: m.QualityPane })));
 const TaskQcPanel = lazy(() => import('./OrgQualityView').then((m) => ({ default: m.TaskQcPanel })));
-const LAZY_PANES = new Set(['goals', 'vision', 'pulse', 'meetings', 'decisions', 'replay', 'capital', 'incidents', 'roadmap', 'teams', 'quality']);
+const LAZY_PANES = new Set(['goals', 'vision', 'pulse', 'meetings', 'decisions', 'replay', 'capital', 'incidents', 'roadmap', 'teams', 'quality', 'alignment']);
+/** CEO alignment (docs/alignment.md): what needs the CEO's alignment, briefs, threads and decisions. */
+const AlignmentPane = lazy(() => import('./AlignmentView').then((m) => ({ default: m.AlignmentPane })));
 
 const STATUS_COLOR: Record<OrgTaskStatus, string> = {
   backlog: 'var(--text-faint)', waiting: 'var(--text-dim)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
@@ -134,6 +136,7 @@ export function OrganizationView({ section }: { section: CompanySection }) {
             {view === 'roadmap' && <RoadmapPane org={org} />}
             {view === 'teams' && <TeamsPane org={org} />}
             {view === 'quality' && <QualityPane org={org} />}
+            {view === 'alignment' && <AlignmentPane org={org} />}
           </Suspense>
         )}
       </div>

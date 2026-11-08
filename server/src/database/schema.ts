@@ -2863,3 +2863,58 @@ export const orgQualityLinks = pgTable('org_quality_links', {
   createdBy: text('createdBy').notNull().default('user'),
   createdAt: text('createdAt').notNull(),
 });
+/** CEO alignment (docs/alignment.md): one row per alignment-gated item —
+ *  the vision (product direction), the strategy memo, an objective or key
+ *  result, a project bet. `state` is draft | in_alignment | aligned |
+ *  realign | rejected; `version` counts material revisions and
+ *  `alignedVersion` is the one aligned, with its snapshot, who aligned it
+ *  (`alignedVia` ceo | chief | auto | delegate | human), when and on what
+ *  conditions. `brief` is the owner's alignment brief (JSON), `thread` the
+ *  discussion with the CEO (JSON array), `approvalId` the pending card.
+ *  An item with no row predates the gate and is not gated. */
+export const orgAlignments = pgTable('org_alignments', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  /** vision | strategy | objective | key_result | project. */
+  itemType: text('itemType').notNull(),
+  /** The goal or project id; the org id for the strategy. */
+  itemId: text('itemId').notNull(),
+  /** direction | strategy | okr | projectBet. */
+  itemClass: text('itemClass').notNull(),
+  state: text('state').notNull().default('draft'),
+  version: integer('version').notNull().default(1),
+  alignedVersion: integer('alignedVersion'),
+  alignedSnapshot: text('alignedSnapshot').notNull().default('{}'),
+  alignedBy: text('alignedBy').notNull().default(''),
+  alignedVia: text('alignedVia').notNull().default(''),
+  alignedAt: text('alignedAt'),
+  conditions: text('conditions').notNull().default(''),
+  /** The bundle this item was aligned with (the parent's alignment id), when it was aligned as part of one. */
+  bundleOf: text('bundleOf'),
+  ownerAgentId: text('ownerAgentId'),
+  brief: text('brief').notNull().default('{}'),
+  thread: text('thread').notNull().default('[]'),
+  approvalId: text('approvalId'),
+  requestedBy: text('requestedBy').notNull().default(''),
+  requestedAt: text('requestedAt'),
+  /** Why the last material change re-opened it (JSON array of reasons). */
+  reopenReasons: text('reopenReasons').notNull().default('[]'),
+  /** When the re-alignment cadence says it is due again (null = never). */
+  reviewDueAt: text('reviewDueAt'),
+  /** When the CEO reviewed an alignment granted without them (auto / chief). */
+  ceoReviewedAt: text('ceoReviewedAt'),
+  /** The owning agent's call (docs/alignment.md "Who decides it needs the
+   *  CEO"): 1 needs alignment, 0 does not (state not_required), null not
+   *  classified yet. `classification` is JSON { needs, class, reasoning,
+   *  criteria, assessed, by, at }; `pulledInAt` when the CEO pulled in an
+   *  item the agent did not escalate; `feedback` JSON of the spot-checks'
+   *  findings (under- or over-escalation) already fed back. */
+  needsAlignment: integer('needsAlignment'),
+  classification: text('classification').notNull().default('{}'),
+  pulledInAt: text('pulledInAt'),
+  feedback: text('feedback').notNull().default('[]'),
+  createdBy: text('createdBy').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_alignments_item').on(t.orgId, t.itemType, t.itemId)]);

@@ -2601,6 +2601,50 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_quality_links_target ON org_quality_links ("orgId", "targetKind", "targetId")`);
     },
   },
+  {
+    id: '0096-ceo-alignment',
+    up: async (db) => {
+      // CEO alignment gates (docs/alignment.md): one row per alignment-gated
+      // item (vision, strategy, objective, key result, project bet) with its
+      // state, the version aligned and its snapshot, who aligned it and the
+      // conditions, the owner's brief and the discussion thread. No backfill:
+      // an item with no row predates the gate and is not gated. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_alignments (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "itemType" TEXT NOT NULL,
+        "itemId" TEXT NOT NULL,
+        "itemClass" TEXT NOT NULL,
+        "state" TEXT NOT NULL DEFAULT 'draft',
+        "version" INTEGER NOT NULL DEFAULT 1,
+        "alignedVersion" INTEGER,
+        "alignedSnapshot" TEXT NOT NULL DEFAULT '{}',
+        "alignedBy" TEXT NOT NULL DEFAULT '',
+        "alignedVia" TEXT NOT NULL DEFAULT '',
+        "alignedAt" TEXT,
+        "conditions" TEXT NOT NULL DEFAULT '',
+        "bundleOf" TEXT,
+        "ownerAgentId" TEXT,
+        "brief" TEXT NOT NULL DEFAULT '{}',
+        "thread" TEXT NOT NULL DEFAULT '[]',
+        "approvalId" TEXT,
+        "requestedBy" TEXT NOT NULL DEFAULT '',
+        "requestedAt" TEXT,
+        "reopenReasons" TEXT NOT NULL DEFAULT '[]',
+        "reviewDueAt" TEXT,
+        "ceoReviewedAt" TEXT,
+        "needsAlignment" INTEGER,
+        "classification" TEXT NOT NULL DEFAULT '{}',
+        "pulledInAt" TEXT,
+        "feedback" TEXT NOT NULL DEFAULT '[]',
+        "createdBy" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_alignments_item ON org_alignments ("orgId", "itemType", "itemId")`);
+    },
+  },
 ];
 
 /**

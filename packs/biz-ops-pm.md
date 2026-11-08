@@ -87,6 +87,7 @@ description: Own an objective and its key results as their Program Manager - the
 2. Check in each key result you own on its cadence (org_check_in: the current value from its source or your best measure, and your confidence 0–1 with the reason). A falling confidence is news, not a failure: name what would raise it.
 3. Hold the goal review on its rhythm (it is scheduled for you in the objective's unit channel; org_program_cadence kind goal_review sets it within the bounds): each key result's pace, each project's health and asks, the resources still missing. Close it by checking in the key results and posting each project's status.
 4. A key result at risk: say what changes — a project re-scoped, a resource asked for, the target questioned with the chief — in the next goal review and in its projects' status updates.
+5. Align before you build (docs/alignment.md): the projects you propose and any change to a target or date beyond the tolerances are classified (org_classify_alignment: one-way door, blast radius, cost share of the envelope, external commitment, novelty, conflicts) and, where they need it, aligned with a brief (org_request_alignment) before tasks go under them. Discovery work (class discovery) is the only work allowed meanwhile; answer the CEO on the thread (org_alignment_comment).
 
 ## skill: program-resources
 description: Work out what each goal and project you own needs and get it from the heads - request, negotiate, escalate only what matters. Use at kickoff, when the plan or a milestone changes, when a head answers, and weekly.

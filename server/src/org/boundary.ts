@@ -41,7 +41,9 @@ export type ChangeKind =
   // Learning as they work (docs/agent-memory.md §12).
   | 'self_guidance' | 'guidance_proposal' | 'lesson_audience'
   // Quality control (docs/quality.md): policies as data, quality standards.
-  | 'policy' | 'quality_standard';
+  | 'policy' | 'quality_standard'
+  // CEO alignment (docs/alignment.md): aligning direction, strategy, OKRs, bets.
+  | 'alignment';
 
 /** A proposed self-change, described enough for the table to place it. */
 export interface SelfChange {
@@ -89,6 +91,7 @@ const TUNABLE_ROWS: Array<{ prefix: string; verdict: BoundaryVerdict; reason: st
   { prefix: 'capital.vetoWindowMinutes', verdict: 'propose', reason: 'the veto window is the owner\'s oversight of autonomous plans', delegable: true },
   { prefix: 'evals.', verdict: 'propose', reason: 'eval settings decide whether a change that regresses can roll out', delegable: true },
   { prefix: 'seat.', verdict: 'propose', reason: 'deadlines and default actions decide what silence from the owner means', delegable: false },
+  { prefix: 'alignment.', verdict: 'propose', reason: 'who aligns direction, strategy, OKRs and bets — and how much may change before it is asked again — is the CEO\'s oversight of the company\'s intent (docs/alignment.md)', delegable: false },
   { prefix: 'chief.proxyLevel', verdict: 'propose', reason: 'the archetype dial widens what the chief does on the CEO\'s behalf; proxy scope is earned one class at a time, never self-granted (docs/chief-of-staff.md)', delegable: false },
   { prefix: '', verdict: 'alone', reason: 'a tunable within its bound: the bound is the safety floor and lives in code', delegable: true },
 ];
@@ -121,6 +124,8 @@ export const BOUNDARY: BoundaryRule[] = [
   { id: 'project_appetite:within', kind: 'project_appetite', match: 'extend a tripped project\'s appetite within the manager\'s share (work.extendShare)', verdict: 'alone', reason: 'the lead\'s manager decides within a bounded extension; the circuit breaker already stopped new work', delegable: true },
   { id: 'project_appetite:beyond', kind: 'project_appetite', match: 'raise a project\'s appetite beyond the manager\'s share, or a project the chief leads', verdict: 'propose', reason: 'more time or money on a bet than the manager may grant is the CEO\'s', delegable: true },
   { id: 'project_kill', kind: 'project_kill', match: 'cancel (kill) a project in Now', verdict: 'propose', reason: 'stopping a bet the CEO made is the CEO\'s call', delegable: true },
+  { id: 'alignment:ceo', kind: 'alignment', match: 'align direction, strategy, an OKR or a project bet the company reserves for the CEO (a supervised company, or alignment.required.<class> = 2)', verdict: 'propose', reason: 'what the company builds toward is agreed with the CEO before tasks are created under it; agents prepare the brief, the CEO aligns', delegable: true },
+  { id: 'alignment:delegated', kind: 'alignment', match: 'align an item the company delegates to the chief of staff or auto-grants (alignment.required.<class> = 1 or 0, autonomous mode)', verdict: 'alone', reason: 'the CEO chose to run this class without review: the grant is logged and the CEO can review and override it after the fact', delegable: true },
   { id: 'budget:within', kind: 'budget', match: 'agent or project envelope within the company envelope', verdict: 'alone', reason: 'allocation inside the envelope the owner set', delegable: true },
   { id: 'budget:above', kind: 'budget', match: 'the company envelope, or above it', verdict: 'propose', reason: 'money beyond the envelope is the owner\'s', delegable: true },
   { id: 'constitution', kind: 'constitution', match: 'the constitution (the CEO\'s standing rules)', verdict: 'propose', reason: 'the legislature is the owner; the chief may only propose amendments', delegable: false },
@@ -156,6 +161,7 @@ export function ruleFor(change: SelfChange): BoundaryRule {
   if (change.kind === 'terminate') return BOUNDARY.find((b) => b.id === (change.withinUnit === false ? 'terminate:beyond' : 'terminate:unit'))!;
   if (change.kind === 'budget') return BOUNDARY.find((b) => b.id === (change.withinEnvelope === false ? 'budget:above' : 'budget:within'))!;
   if (change.kind === 'policy' || change.kind === 'quality_standard') return BOUNDARY.find((b) => b.id === `${change.kind}:${change.loosens ? 'loosen' : 'tighten'}`)!;
+  if (change.kind === 'alignment') return BOUNDARY.find((b) => b.id === (change.key === 'ceo' ? 'alignment:ceo' : 'alignment:delegated'))!;
   if (change.kind === 'project_appetite') return BOUNDARY.find((b) => b.id === (change.withinEnvelope === false ? 'project_appetite:beyond' : 'project_appetite:within'))!;
   const row = BOUNDARY.find((b) => b.kind === change.kind);
   if (!row) throw new Error(`no boundary row for "${change.kind}"`);

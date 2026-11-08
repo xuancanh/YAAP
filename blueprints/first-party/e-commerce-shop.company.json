@@ -287,7 +287,20 @@
     "quality.spotChecksPerDay": 2,
     "quality.escapeIncident": 3,
     "policy.authoringApproval": 0,
-    "policy.repeatForIncident": 5
+    "policy.repeatForIncident": 5,
+    "alignment.required.direction": 0,
+    "alignment.required.strategy": 0,
+    "alignment.required.okr": 1,
+    "alignment.required.externalCommitment": 2,
+    "alignment.required.oneWayDoor": 1,
+    "alignment.costShare": 0.3,
+    "alignment.discoveryCap": 3,
+    "alignment.unsortedCap": 8,
+    "alignment.tolerance.targetShare": 0.2,
+    "alignment.tolerance.days": 21,
+    "alignment.cadenceDays.direction": 180,
+    "alignment.cadenceDays.strategy": 90,
+    "alignment.cadenceDays.okr": 60
   },
   "playbooks": [],
   "budget": {

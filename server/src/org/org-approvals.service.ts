@@ -36,8 +36,8 @@ import { govTunable } from './governance-tunables';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict' | 'kit_change' | 'plugin_change' | 'quality_change' | 'policy_exception';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill', 'project_allocation', 'resource_conflict', 'kit_change', 'plugin_change', 'quality_change', 'policy_exception'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict' | 'kit_change' | 'plugin_change' | 'quality_change' | 'policy_exception' | 'alignment';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill', 'project_allocation', 'resource_conflict', 'kit_change', 'plugin_change', 'quality_change', 'policy_exception', 'alignment'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19; `blueprint` is OrgBlueprintsService's,
@@ -459,6 +459,12 @@ export class OrgApprovalsService {
         const t = await this.tasks.review(orgId, taskId, { verdict: 'accept', note: note || undefined, byAgentId: null });
         return { taskId, status: t.status };
       }
+      case 'alignment': {
+        // CEO alignment (docs/alignment.md): OrgAlignmentService grants it; the note is the CEO's conditions.
+        const applier = this.appliers.get('alignment');
+        if (!applier) throw new BadRequestException('alignment is not available on this server');
+        return applier(orgId, payload, approval, note);
+      }
       case 'blueprint': {
         const applier = this.appliers.get('blueprint');
         if (!applier) throw new BadRequestException('blueprint imports are not available on this server');
@@ -627,6 +633,7 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'project_allocation': return `allocate ${String(payload.agentName ?? 'a member')} to ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}" at ${Number(payload.allocation ?? 0)}%${payload.role ? ` as ${String(payload.role)}` : ''}`.slice(0, 200);
     case 'resource_conflict': return `resources for ${String(payload.projectKey ?? '')}: ${String(payload.pmName ?? 'the PM')} asks ${String(payload.headName ?? 'a head')} for ${String(payload.role || 'a member')} at ${Number(payload.allocation ?? 0)}%${payload.headAnswer ? ` — ${String(payload.headAnswer)}` : ''}`.slice(0, 200);
     case 'project_kill': return `kill ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}"`.slice(0, 200);
+    case 'alignment': return `align ${String(payload.label ?? 'an item')} "${String(payload.title ?? '')}"${Number(payload.version ?? 1) > 1 ? ` (v${String(payload.version)})` : ''}${Array.isArray(payload.bundle) && payload.bundle.length ? ` with ${payload.bundle.length} child item(s)` : ''}`.slice(0, 200);
     case 'kit_change':
     case 'plugin_change': return `${String(payload.action ?? 'install')} the ${kind === 'kit_change' ? 'kit' : 'plugin'} ${String(payload.name ?? payload.id ?? '')}${payload.version ? ` ${String(payload.version)}` : ''}: ${String(payload.why ?? '')}`.slice(0, 200);
     case 'quality_change': return `${String(payload.action ?? 'set')} ${payload.target === 'policy' ? 'policy' : 'quality standard'} "${String(payload.name ?? payload.key ?? '')}"${payload.summary ? `: ${String(payload.summary)}` : ''}`.slice(0, 200);

@@ -429,12 +429,21 @@ export class OrgIntentService {
 
   // ---- the strategy memo ----
 
+  private readonly strategyListeners: Array<(ev: { orgId: string; before: string; after: string; actor: string }) => Promise<void> | void> = [];
+
+  /** Be told after the strategy memo is written (CEO alignment, docs/alignment.md). */
+  onStrategyMemo(fn: (ev: { orgId: string; before: string; after: string; actor: string }) => Promise<void> | void): () => void {
+    this.strategyListeners.push(fn);
+    return () => { const i = this.strategyListeners.indexOf(fn); if (i >= 0) this.strategyListeners.splice(i, 1); };
+  }
+
   async setStrategyMemo(orgId: string, text: string, actor = 'chief'): Promise<Organization> {
     const memo = (text ?? '').trim().slice(0, 8_000);
     if (!memo) throw new BadRequestException('the memo needs text');
-    await this.org.get(orgId);
+    const before = (await this.org.get(orgId)).strategyMemo;
     await this.db.update(organizations).set({ strategyMemo: memo, strategyMemoAt: nowIso() }).where(eq(organizations.id, orgId));
     await this.audit.append(orgId, { actor, action: 'strategy_memo', refType: 'org', refId: orgId, payload: { chars: memo.length, head: memo.slice(0, 200) } });
+    for (const fn of this.strategyListeners) await Promise.resolve(fn({ orgId, before, after: memo, actor })).catch(() => undefined);
     return this.org.get(orgId);
   }
 

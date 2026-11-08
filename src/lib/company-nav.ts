@@ -22,8 +22,8 @@ export interface CompanySectionDef {
  *  comes first in each rail. */
 export const COMPANY_SECTIONS: CompanySectionDef[] = [
   {
-    id: 'direction', label: 'Direction', blurb: 'Where the company is going: the vision, goals and key results, the roadmap and what was decided.',
-    pages: [{ pane: 'vision', label: 'Vision' }, { pane: 'goals', label: 'Goals' }, { pane: 'roadmap', label: 'Roadmap' }, { pane: 'decisions', label: 'Decisions' }],
+    id: 'direction', label: 'Direction', blurb: 'Where the company is going: the vision, what is aligned with you, goals and key results, the roadmap and what was decided.',
+    pages: [{ pane: 'vision', label: 'Vision' }, { pane: 'alignment', label: 'Alignment' }, { pane: 'goals', label: 'Goals' }, { pane: 'roadmap', label: 'Roadmap' }, { pane: 'decisions', label: 'Decisions' }],
   },
   {
     id: 'operations', label: 'Operations', blurb: 'How the work runs day to day: the board, the pulse and the brief, the meeting rhythm and incidents.',
@@ -49,7 +49,7 @@ const INBOX_PANES: Partial<Record<OrgPane, InboxFilter>> = { approvals: 'approva
 export const isCompanySection = (s: string | null | undefined): s is CompanySection => (COMPANY_SECTION_IDS as string[]).includes(s ?? '');
 
 /** Every organization page id (the store re-exports it; the router reads it). */
-export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents', 'roadmap', 'teams', 'quality'];
+export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents', 'roadmap', 'teams', 'quality', 'alignment'];
 export const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
 /** Panes folded into Artifacts (playbooks, experiments, evals, outcomes and
  *  metrics are mirrored as files under /org/; docs/filesystem.md): a link to

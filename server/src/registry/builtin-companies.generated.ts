@@ -289,7 +289,19 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "quality.spotChecksPerDay": 2,
     "quality.escapeIncident": 3,
     "policy.authoringApproval": 0,
-    "policy.repeatForIncident": 5
+    "policy.repeatForIncident": 5,
+    "alignment.required.direction": 0,
+    "alignment.required.strategy": 0,
+    "alignment.required.externalCommitment": 2,
+    "alignment.required.oneWayDoor": 1,
+    "alignment.costShare": 0.3,
+    "alignment.discoveryCap": 3,
+    "alignment.unsortedCap": 8,
+    "alignment.tolerance.targetShare": 0.2,
+    "alignment.tolerance.days": 21,
+    "alignment.cadenceDays.direction": 180,
+    "alignment.cadenceDays.strategy": 90,
+    "alignment.cadenceDays.okr": 60
    },
    "playbooks": [],
    "budget": {
@@ -571,7 +583,14 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "quality.escapeIncident": 1,
     "policy.repeatForIncident": 2,
     "policy.repeatWindowHours": 336,
-    "policy.signalSeverity": 2
+    "policy.signalSeverity": 2,
+    "alignment.required.direction": 2,
+    "alignment.required.strategy": 2,
+    "alignment.required.okr": 1,
+    "alignment.floor.budget": 1,
+    "alignment.costShare": 0.1,
+    "alignment.tolerance.targetShare": 0.05,
+    "alignment.tolerance.textShare": 0.35
    },
    "playbooks": [],
    "budget": {
@@ -889,7 +908,20 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "quality.spotChecksPerDay": 2,
     "quality.escapeIncident": 3,
     "policy.authoringApproval": 0,
-    "policy.repeatForIncident": 5
+    "policy.repeatForIncident": 5,
+    "alignment.required.direction": 0,
+    "alignment.required.strategy": 0,
+    "alignment.required.okr": 1,
+    "alignment.required.externalCommitment": 2,
+    "alignment.required.oneWayDoor": 1,
+    "alignment.costShare": 0.3,
+    "alignment.discoveryCap": 3,
+    "alignment.unsortedCap": 8,
+    "alignment.tolerance.targetShare": 0.2,
+    "alignment.tolerance.days": 21,
+    "alignment.cadenceDays.direction": 180,
+    "alignment.cadenceDays.strategy": 90,
+    "alignment.cadenceDays.okr": 60
    },
    "playbooks": [],
    "budget": {
@@ -1160,7 +1192,23 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "quality.escapeIncident": 1,
     "policy.repeatForIncident": 2,
     "policy.repeatWindowHours": 336,
-    "policy.signalSeverity": 2
+    "policy.signalSeverity": 2,
+    "alignment.required.direction": 2,
+    "alignment.required.strategy": 2,
+    "alignment.required.okr": 1,
+    "alignment.floor.budget": 1,
+    "alignment.required.externalCommitment": 2,
+    "alignment.required.orgDesign": 2,
+    "alignment.required.oneWayDoor": 1,
+    "alignment.costShare": 0.1,
+    "alignment.discoveryCap": 3,
+    "alignment.unsortedCap": 8,
+    "alignment.tolerance.targetShare": 0.05,
+    "alignment.tolerance.days": 21,
+    "alignment.tolerance.textShare": 0.35,
+    "alignment.cadenceDays.direction": 180,
+    "alignment.cadenceDays.strategy": 90,
+    "alignment.cadenceDays.okr": 60
    },
    "playbooks": [],
    "budget": {
@@ -1368,7 +1416,19 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "quality.escapeIncident": 1,
     "policy.repeatForIncident": 2,
     "policy.repeatWindowHours": 336,
-    "policy.signalSeverity": 2
+    "policy.signalSeverity": 2,
+    "alignment.required.direction": 2,
+    "alignment.required.strategy": 2,
+    "alignment.required.okr": 1,
+    "alignment.floor.budget": 1,
+    "alignment.required.externalCommitment": 2,
+    "alignment.costShare": 0.1,
+    "alignment.discoveryCap": 3,
+    "alignment.unsortedCap": 8,
+    "alignment.tolerance.targetShare": 0.05,
+    "alignment.tolerance.textShare": 0.35,
+    "alignment.cadenceDays.direction": 180,
+    "alignment.cadenceDays.strategy": 90
    },
    "playbooks": [],
    "budget": {
@@ -1535,7 +1595,11 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "discussion.agentDailyCap": 2,
     "memory.lessonStaleDays": 30,
     "quality.verifierIndependence": 0,
-    "quality.spotChecksPerDay": 2
+    "quality.spotChecksPerDay": 2,
+    "alignment.required.externalCommitment": 2,
+    "alignment.required.orgDesign": 2,
+    "alignment.cadenceDays.direction": 180,
+    "alignment.cadenceDays.strategy": 90
    },
    "playbooks": [],
    "budget": {
@@ -1832,7 +1896,21 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "policy.authoringApproval": 2,
     "policy.repeatForIncident": 2,
     "policy.repeatWindowHours": 336,
-    "policy.signalSeverity": 2
+    "policy.signalSeverity": 2,
+    "alignment.required.direction": 2,
+    "alignment.required.strategy": 2,
+    "alignment.required.okr": 2,
+    "alignment.required.projectBet": 1,
+    "alignment.floor.budget": 1,
+    "alignment.required.orgDesign": 2,
+    "alignment.costShare": 0.1,
+    "alignment.discoveryCap": 1,
+    "alignment.unsortedCap": 3,
+    "alignment.tolerance.targetShare": 0.05,
+    "alignment.tolerance.days": 7,
+    "alignment.tolerance.textShare": 0.35,
+    "alignment.cadenceDays.strategy": 90,
+    "alignment.cadenceDays.projectBet": 90
    },
    "playbooks": [],
    "budget": {

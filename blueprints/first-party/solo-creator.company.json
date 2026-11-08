@@ -138,7 +138,11 @@
     "discussion.agentDailyCap": 2,
     "memory.lessonStaleDays": 30,
     "quality.verifierIndependence": 0,
-    "quality.spotChecksPerDay": 2
+    "quality.spotChecksPerDay": 2,
+    "alignment.required.externalCommitment": 2,
+    "alignment.required.orgDesign": 2,
+    "alignment.cadenceDays.direction": 180,
+    "alignment.cadenceDays.strategy": 90
   },
   "playbooks": [],
   "budget": {

@@ -42,6 +42,8 @@ import { OrgQualityTools } from '../server/src/org/org-quality.tools';
 import { KitsService } from '../server/src/foundry/kits.service';
 import { PluginsService } from '../server/src/plugins/plugins.service';
 import { PluginAuditService } from '../server/src/plugins/plugin-audit';
+import { OrgAlignmentService } from '../server/src/org/org-alignment.service';
+import { OrgAlignmentTools } from '../server/src/org/org-alignment.tools';
 
 /** The work-tracking tools (docs/work-tracking.md) as the org module wires them. */
 function projectTools(s: Awaited<ReturnType<typeof setup>>): OrgProjectsTools {
@@ -60,6 +62,9 @@ function programTools(s: Awaited<ReturnType<typeof setup>>): OrgProgramTools {
 function qualityTools(s: Awaited<ReturnType<typeof setup>>): OrgQualityTools {
   const quality = new OrgQualityService(s.db, s.org, s.tasks, s.audit, s.approvals, s.agents, s.config, s.units, s.signals, s.incidents);
   return new OrgQualityTools(s.org, quality, s.tasks, s.config, s.units, s.runtime);
+/** The CEO-alignment tools (docs/alignment.md) as the org module wires them. */
+function alignmentTools(s: Awaited<ReturnType<typeof setup>>): OrgAlignmentTools {
+  return new OrgAlignmentTools(s.org, new OrgAlignmentService(s.db, s.org, s.tasks, s.approvals, s.audit, s.agents, s.workspaces, s.intent, s.runtime, s.units), s.config, s.runtime, s.turns);
 }
 /** The company data tools (docs/agent-data-access.md) as the org module wires them. */
 function dataTools(s: Awaited<ReturnType<typeof setup>>): OrgDataTools {
@@ -179,6 +184,7 @@ test('the Chief of Staff pack: Business category, deep skills that name only org
   for (const spec of await dataTools(s).specsFor(await sessionOf(s, s.chief.id))) offered.add(spec.name);
   for (const spec of await programTools(s).specsFor(await sessionOf(s, s.chief.id))) offered.add(spec.name);
   for (const spec of await qualityTools(s).specsFor(await sessionOf(s, s.chief.id))) offered.add(spec.name);
+  for (const spec of await alignmentTools(s).specsFor(await sessionOf(s, s.chief.id))) offered.add(spec.name);
   const known = new Set([...offered, 'org_set_cadence', 'org_decisions', 'org_recall', 'org_playbooks', 'org_write_playbook', 'org_capacity', 'org_eval_role', 'org_metric_sources', 'org_metric_read', 'org_incidents', 'org_propose_experiment', 'org_experiments', 'org_run_checks', 'org_calibration', 'org_eval_cases', 'org_report_incident', 'org_foundry_search', 'org_foundry_detail', 'org_foundry_installed', 'org_foundry_propose']);
   const named = new Set(pack.skills!.flatMap((x) => (x.instructions ?? '').match(/\borg_[a-z_]+\b/g) ?? []));
   for (const n of named) assert.ok(known.has(n), `${n} exists`);
@@ -278,7 +284,7 @@ test('every tool a business skill names exists and is offered to the role that r
   const pluginAudit = new PluginAuditService(s.db);
   const pluginsSvc = new PluginsService(s.db, pluginAudit);
   const foundry = new OrgFoundryTools(s.db, s.org, s.runtime, s.approvals, pluginsSvc, new KitsService(s.db, pluginsSvc, pluginAudit), s.agents, s.config);
-  const providers = [s.runtime, s.memory, s.sensing, s.incidents, s.tools, predictions, experiments, meetingRuntime, projectTools(s), programTools(s), dataTools(s), foundry, qualityTools(s)];
+  const providers = [s.runtime, s.memory, s.sensing, s.incidents, s.tools, predictions, experiments, meetingRuntime, projectTools(s), programTools(s), dataTools(s), foundry, qualityTools(s), alignmentTools(s)];
   const fsTools = new ToolsService(memStorage().stub).specs().map((t) => t.name).filter((n) => n.startsWith('fs_'));
   const offered = async (session: Awaited<ReturnType<typeof sessionOf>>): Promise<Set<string>> => {
     const names = new Set<string>(fsTools);

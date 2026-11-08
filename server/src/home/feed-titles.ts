@@ -115,6 +115,7 @@ function approvalTitle(kind: string, who: string, facts: Facts | undefined, fall
       return by('wants to', `${verb} ${what} "${name}"`);
     }
     case 'policy_exception': return `${upperFirst(f(facts, 'agentName') || 'A member')} asks to break policy "${clipWords(f(facts, 'policyKey') || 'a policy', 50)}" once${f(facts, 'tool') ? ` for ${f(facts, 'tool')}` : ''}`;
+    case 'alignment': return `Align on the ${f(facts, 'label') || 'plan'}: ${clipWords(f(facts, 'title') || 'untitled', 70)}`;
     default: return clipWords(upperFirst(fallback), 110);
   }
 }
@@ -128,6 +129,7 @@ function approvalBody(kind: string, facts: Facts | undefined): string {
       return charter || (name && name !== f(facts, 'title') ? `Named ${name}.` : '');
     }
     case 'budget_raise': return f(facts, 'buys') ? `It buys: ${firstSentence(f(facts, 'buys'), 200)}` : '';
+    case 'alignment': return f(facts, 'why') ? firstSentence(f(facts, 'why'), 200) : '';
     case 'scope_widen': return fl(facts, 'widened').join(', ');
     case 'charter_change': return firstSentence(f(facts, 'lesson') || f(facts, 'summary'), 200);
     case 'project_appetite': {

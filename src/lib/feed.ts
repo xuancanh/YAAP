@@ -306,6 +306,19 @@ export function feedFacts(i: FeedItem): Array<{ label: string; value: string }> 
       add('Setting', s('key'));
       add('Change', `${s('from') ? `${s('from')} → ` : ''}${s('value')}`);
       break;
+    case 'alignment':
+      add('Item', [s('label'), s('title')].filter(Boolean).join(': '));
+      add('Class', s('classLabel'));
+      add('Why', s('why'));
+      add('Options', l('options').join(' · '));
+      add('Trade-offs', s('tradeoffs'));
+      add('Measures', s('measures'));
+      add('Cost', s('cost'));
+      add('Unlocks', s('unlocks'));
+      add('With it', l('bundleTitles').join(', '));
+      add('Owner\'s reasoning', s('classifiedReasoning'));
+      add('Latest reply', s('lastReply'));
+      break;
     case 'two_key':
       add('Tool', s('tool'));
       add('Class', s('class').replace(/_/g, ' '));
@@ -319,6 +332,7 @@ export function feedLongText(i: FeedItem): { label: string; text: string } | nul
   const f = i.need?.facts;
   const charter = typeof f?.charter === 'string' ? f.charter : '';
   if (i.need?.subkind === 'hire' && charter) return { label: 'What they would do', text: charter };
+  if (i.need?.subkind === 'alignment' && typeof f?.what === 'string' && f.what) return { label: 'What to align on', text: f.what };
   return null;
 }
 
