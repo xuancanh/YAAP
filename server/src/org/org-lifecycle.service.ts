@@ -63,6 +63,7 @@ export const ORG_TABLE_PLAN: ReadonlyArray<{ table: string; mode: 'delete' | 'de
   { table: 'org_service_requests', mode: 'delete' },
   { table: 'org_services', mode: 'delete' },
   { table: 'org_improvements', mode: 'delete' },
+  { table: 'org_process_suggestions', mode: 'delete' },
   { table: 'org_process_events', mode: 'delete' },
   { table: 'org_process_steps', mode: 'delete' },
   { table: 'org_process_runs', mode: 'delete' },

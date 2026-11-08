@@ -5,18 +5,23 @@
  *  readable graph (strict: columns in the order the engine walks them, with
  *  loops as "back to"; dynamic: each step with when it is available), every
  *  version with its author, reason and diff (roll back to one), the runs
- *  with each step's state, and the CEO's edit, start and retire. Lib:
- *  src/lib/processes.ts. */
+ *  with each step's state, and the CEO's edit, start and retire. Meeting
+ *  steps say what they hold and who comes; compensations are listed as what
+ *  a failed run undoes; a ramped version shows its comparison with the
+ *  stable one (promote or roll back); outcomes and conformance are two tabs;
+ *  the list carries the processes the engine suggests from repeated work.
+ *  Lib: src/lib/processes.ts. */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
-import { api, type OrgDetail, type OrgProcess, type OrgProcessDetail, type OrgProcessRunRow, type ProcessDef, type ProcessNodeDef, type ProcessTemplate } from '../lib/api';
+import { api, type OrgDetail, type OrgProcess, type OrgProcessDetail, type OrgProcessRunRow, type ProcessConformance, type ProcessDef, type ProcessNodeDef, type ProcessRollout, type ProcessSuggestion, type ProcessTemplate } from '../lib/api';
 import {
-  HEALTH_TONE, HEALTH_WORD, KIND_WORD, MODE_HINT, MODE_WORD, authorWords, availabilityWords, edgeWords, hrs, layoutStage, pct, processSummary, runTone, stepTone, triggerWords,
+  CONFORMANCE_TONE, CONFORMANCE_WORD, HEALTH_TONE, HEALTH_WORD, KIND_WORD, MODE_HINT, MODE_WORD, RAMP_TONE, RAMP_WORD, SUGGESTION_WORD, authorWords, availabilityWords, cohortRows,
+  compensationsOf, edgeWords, hrs, layoutStage, meetingWords, pct, processSummary, runTone, stageNodes, stepTone, triggerWords,
 } from '../lib/processes';
 import { I, P } from '../lib/icons';
 import { ago, useAgentNames, useUnits } from './org-ui';
 import { useOrgRole } from './OrgSensingView';
-import { Card, Empty, Metric, Owner, PageHeader, Pill, SkeletonRows } from './CompanyKit';
+import { Card, Empty, Metric, Owner, PageHeader, Pill, Segmented, SkeletonRows } from './CompanyKit';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message.replace(/^\d{3} /, '').slice(0, 600) : 'failed');
 
@@ -26,7 +31,7 @@ export function ProcessesPane({ org }: { org: OrgDetail }) {
   const role = useOrgRole(wsId);
   const decider = role === 'ceo' || role === 'board';
   const names = useAgentNames();
-  const [data, setData] = useState<{ processes: OrgProcess[]; runs: OrgProcessRunRow[] } | null>(null);
+  const [data, setData] = useState<{ processes: OrgProcess[]; runs: OrgProcessRunRow[]; suggestions?: ProcessSuggestion[] } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [library, setLibrary] = useState(false);
   const [showRetired, setShowRetired] = useState(false);
@@ -64,6 +69,7 @@ export function ProcessesPane({ org }: { org: OrgDetail }) {
           </div>
         </Card>
       )}
+      {data && (data.suggestions?.length ?? 0) > 0 && <Suggestions wsId={wsId} list={data.suggestions!} decider={decider} onChanged={load} />}
       {data && data.runs.length > 0 && (
         <div style={{ marginTop: 14 }}>
           <Card title="Open runs" aside={`${data.runs.length}`} flush>
@@ -91,6 +97,48 @@ export function ProcessesPane({ org }: { org: OrgDetail }) {
   );
 }
 
+/** What the engine suggests from repeated work: a drafted process for its owner, or a revision. */
+function Suggestions({ wsId, list, decider, onChanged }: { wsId: string; list: ProcessSuggestion[]; decider: boolean; onChanged: () => Promise<void> }) {
+  const app = useApp();
+  const names = useAgentNames();
+  const [open, setOpen] = useState<string | null>(null);
+  const decide = async (sg: ProcessSuggestion, action: 'accept' | 'dismiss') => {
+    const reason = action === 'dismiss' ? prompt('Why not? The owner\'s draft task is cancelled with it.') : 'created from the draft by the CEO';
+    if (reason === null) return;
+    try { await api.decideProcessSuggestion(wsId, sg.id, { action, reason }); app.showToast(action === 'accept' ? 'Process created from the draft' : 'Suggestion dismissed'); await onChanged(); } catch (e) { app.showToast(errText(e)); }
+  };
+  return (
+    <div style={{ marginTop: 14 }}>
+      <Card title="Suggested from repeated work" aside={`${list.length}`} flush>
+        <div className="co-rows" data-testid="process-suggestions">
+          {list.map((sg) => (
+            <div key={sg.id}>
+              <button className="co-row" onClick={() => setOpen(open === sg.id ? null : sg.id)} aria-expanded={open === sg.id}>
+                <span className="co-row-main">
+                  <span className="co-row-title">{sg.title}</span>
+                  <span className="co-row-meta" style={{ whiteSpace: 'normal' }}>{SUGGESTION_WORD[sg.kind] ?? sg.kind} · seen {sg.count}× · for {sg.ownerAgentId ? names.get(sg.ownerAgentId)?.name ?? 'a member' : 'the chief'} · {sg.summary}</span>
+                </span>
+                <span className="co-row-end"><Pill tone={sg.kind === 'revise' ? 'warn' : 'accent'} plain>{sg.kind === 'revise' || sg.kind === 'adhoc_step' ? 'revision' : 'new process'}</Pill><I d={open === sg.id ? P.chevD : P.chevR} size={12} /></span>
+              </button>
+              {open === sg.id && (
+                <div style={{ padding: '2px 12px 10px 22px', display: 'grid', gap: 6, fontSize: 12, color: 'var(--text-dim)' }}>
+                  {sg.evidence.length > 0 && <div><b>Evidence:</b> {sg.evidence.map((e) => `${e.ref} “${e.title}”`).join(' · ')}</div>}
+                  {sg.draft && <div><b>Drafted steps:</b> {sg.draft.nodes.map((n) => `${n.title} (${n.lane ?? 'owner'})`).join(' → ')}</div>}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {sg.taskId && <button className="co-btn small" onClick={() => app.openOrgTask(sg.taskId!)}>Open the owner's task</button>}
+                    {decider && sg.draft && <button className="co-btn small primary" onClick={() => void decide(sg, 'accept')}>Create from the draft</button>}
+                    {decider && <button className="co-btn small ghost" onClick={() => void decide(sg, 'dismiss')}>Dismiss</button>}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 function ProcessRow({ p, owner, onOpen }: { p: OrgProcess; owner?: ReturnType<ReturnType<typeof useAgentNames>['get']>; onOpen: () => void }) {
   const m = p.metrics;
   return (
@@ -104,6 +152,8 @@ function ProcessRow({ p, owner, onOpen }: { p: OrgProcess; owner?: ReturnType<Re
       </span>
       <span className="co-row-end">
         {p.pendingVersion && <Pill tone="warn" title="A change waits for approval">v{p.pendingVersion} pending</Pill>}
+        {p.rollout && <Pill tone={RAMP_TONE[p.rollout.verdict as ProcessRollout['verdict']] ?? 'info'} plain title={RAMP_WORD[p.rollout.verdict as ProcessRollout['verdict']]}>v{p.rollout.candidateVersion} on {p.rollout.percent}%</Pill>}
+        {p.conformance?.verdict === 'drifting' && <Pill tone="warn" plain title={p.conformance.why}>drifting</Pill>}
         {p.reviewDue && <Pill tone="warn" plain>review due</Pill>}
         {p.status !== 'active' ? <Pill tone="muted">{p.status}</Pill> : <Pill tone={HEALTH_TONE[m.health]} title={m.why}>{HEALTH_WORD[m.health]}</Pill>}
       </span>
@@ -155,6 +205,7 @@ function ProcessPage({ wsId, processId, decider, onBack }: { wsId: string; proce
   const [err, setErr] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [tab, setTab] = useState<'outcomes' | 'conformance'>('outcomes');
   const load = useCallback(async () => {
     try { setD(await api.orgProcess(wsId, processId)); setErr(null); } catch (e) { setErr(errText(e)); }
   }, [wsId, processId]);
@@ -188,15 +239,24 @@ function ProcessPage({ wsId, processId, decider, onBack }: { wsId: string; proce
         <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>· starts {triggerWords(p.triggers)}</span>
         {p.pendingVersion && <Pill tone="warn">v{p.pendingVersion} waits for approval (Inbox)</Pill>}
       </div>
-      {m.health !== 'healthy' && m.health !== 'new' && <div className="co-alert" role="status" style={{ marginBottom: 12 }}>{m.why}</div>}
-      <div className="co-metrics" style={{ margin: '0 0 14px' }} data-testid="process-metrics">
-        <Metric n={m.runs} label="runs" />
-        <Metric n={pct(m.completionRate)} label="completed" tone={m.completionRate !== null && m.completionRate < 0.5 ? 'bad' : undefined} />
-        <Metric n={hrs(m.cycleHoursP50)} label="cycle time (median)" />
-        <Metric n={pct(m.deviationRate)} label="steps deviated" tone={m.health === 'revise' ? 'bad' : undefined} />
-        <Metric n={pct(m.reworkRate)} label="rework" />
-        <Metric n={m.slaBreaches} label="SLA breaches" tone={m.slaBreaches ? 'warn' : undefined} />
-      </div>
+      <div style={{ marginBottom: 10 }}><Segmented label="Measures" value={tab} onChange={setTab} options={[{ id: 'outcomes', label: 'Outcomes' }, { id: 'conformance', label: 'Conformance' }]} /></div>
+      {tab === 'outcomes' ? <>
+        {m.health !== 'healthy' && m.health !== 'new' && <div className="co-alert" role="status" style={{ marginBottom: 12 }}>{m.why}</div>}
+        <div className="co-metrics" style={{ margin: '0 0 14px' }} data-testid="process-metrics">
+          <Metric n={m.runs} label="runs" />
+          <Metric n={pct(m.completionRate)} label="completed" tone={m.completionRate !== null && m.completionRate < 0.5 ? 'bad' : undefined} />
+          <Metric n={hrs(m.cycleHoursP50)} label="cycle time (median)" />
+          <Metric n={pct(m.deviationRate)} label="steps deviated" tone={m.health === 'revise' ? 'bad' : undefined} />
+          <Metric n={pct(m.reworkRate)} label="rework" />
+          <Metric n={m.slaBreaches} label="SLA breaches" tone={m.slaBreaches ? 'warn' : undefined} />
+        </div>
+      </> : <Conformance c={p.conformance} def={d.def} />}
+      {(d.suggestions ?? []).filter((x) => x.status === 'open').map((sg) => (
+        <div key={sg.id} className="co-alert" role="status" style={{ marginBottom: 12 }} data-testid="process-suggestion">
+          <b>{sg.title}.</b> {sg.summary} {sg.taskId && <button className="co-link" onClick={() => app.openOrgTask(sg.taskId!)}>The owner's task</button>}
+        </div>
+      ))}
+      {d.rollout && <Rollout wsId={wsId} processId={p.id} r={d.rollout} decider={decider} onChanged={(x) => setD(x)} />}
       {starting && <StartForm wsId={wsId} p={p} onDone={async () => { setStarting(false); await load(); }} />}
       {editing && d.def && <Editor wsId={wsId} p={p} def={d.def} onDone={async (next) => { setEditing(false); if (next) setD(next); else await load(); }} />}
       <div className="co-stack">
@@ -204,6 +264,74 @@ function ProcessPage({ wsId, processId, decider, onBack }: { wsId: string; proce
         <Runs wsId={wsId} d={d} decider={decider} onChanged={load} />
         <Versions wsId={wsId} d={d} decider={decider} nameOf={nameOf} onChanged={(x) => setD(x)} />
       </div>
+    </div>
+  );
+}
+
+/** Did the runs follow the definition — apart from whether they got there. */
+function Conformance({ c, def }: { c?: ProcessConformance; def: ProcessDef | null }) {
+  if (!c) return <div className="co-card" style={{ marginBottom: 14 }}><Empty compact title="No conformance yet">It is computed from the runs' steps.</Empty></div>;
+  const title = (id: string) => (id === 'ad-hoc' ? 'Ad-hoc steps' : def?.nodes.find((n) => n.id === id)?.title ?? id);
+  return (
+    <div data-testid="process-conformance" style={{ marginBottom: 14 }}>
+      {c.verdict === 'drifting' && <div className="co-alert" role="status" style={{ marginBottom: 12 }}>{c.why}</div>}
+      <div className="co-metrics" style={{ margin: '0 0 10px' }}>
+        <Metric n={<Pill tone={CONFORMANCE_TONE[c.verdict]}>{CONFORMANCE_WORD[c.verdict]}</Pill>} label="the definition" title={c.why} />
+        <Metric n={pct(c.rate)} label="steps followed" tone={c.verdict === 'drifting' ? 'warn' : undefined} />
+        <Metric n={`${c.conformantRuns}/${c.runs}`} label="runs fully followed" />
+        <Metric n={c.mustOpen} label="MUST items left open" tone={c.mustOpen ? 'bad' : undefined} />
+        <Metric n={c.waivers} label="MUST waivers" title={c.waiversPending ? `${c.waiversPending} waiting for a decision` : 'Sanctioned exceptions, not drift'} />
+        <Metric n={c.shouldSkips} label="SHOULD skips" />
+        <Metric n={c.adHoc} label="ad-hoc steps" />
+        <Metric n={c.outOfOrder} label="out of order" tone={c.outOfOrder ? 'bad' : undefined} />
+      </div>
+      {c.steps.length > 0 && (
+        <Card title="By step" flush>
+          <div className="co-rows">
+            {c.steps.map((s) => (
+              <div key={s.nodeId} className="co-row static">
+                <span className="co-row-main">
+                  <span className="co-row-title">{title(s.nodeId)}</span>
+                  <span className="co-row-meta">{s.checked} run{s.checked === 1 ? '' : 's'}{s.mustOpen ? ` · ${s.mustOpen} MUST open` : ''}{s.waivers ? ` · ${s.waivers} waived` : ''}{s.shouldSkips ? ` · ${s.shouldSkips} SHOULD skipped` : ''}{s.adHoc ? ` · ${s.adHoc} ad hoc` : ''}{s.outOfOrder ? ` · ${s.outOfOrder} out of order` : ''}</span>
+                </span>
+                <span className="co-row-end"><Pill tone={s.rate < 0.7 ? 'warn' : 'ok'} plain>{pct(s.rate)} followed</Pill></span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/** A ramped version beside the stable one: the comparison, the verdict, and the owner's promote or roll back. */
+function Rollout({ wsId, processId, r, decider, onChanged }: { wsId: string; processId: string; r: ProcessRollout; decider: boolean; onChanged: (d: OrgProcessDetail) => void }) {
+  const app = useApp();
+  const act = async (action: 'promote' | 'rollback') => {
+    const reason = prompt(action === 'promote' ? `Promote v${r.candidateVersion}? Every new run then starts on it. Why?` : `Roll back v${r.candidateVersion}? It takes no more runs (open ones finish on it). Why?`);
+    if (!reason) return;
+    try { onChanged(await api.rolloutOrgProcess(wsId, processId, { action, reason })); app.showToast(action === 'promote' ? 'Promoted' : 'Rolled back'); } catch (e) { app.showToast(errText(e)); }
+  };
+  return (
+    <div style={{ marginBottom: 14 }} data-testid="process-rollout">
+      <Card title={`Ramp: v${r.candidateVersion} on ${r.percent}% of new runs`} aside={<Pill tone={RAMP_TONE[r.verdict]}>{RAMP_WORD[r.verdict]}</Pill>}>
+        <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginBottom: 8 }}>{r.why}.{r.auto ? ' The engine applies the verdict (process.rampAuto).' : ' The owner decides.'}</div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+          <thead><tr style={{ color: 'var(--text-faint)', textAlign: 'left' }}><th style={{ fontWeight: 600, padding: '4px 0' }}>Measure</th><th style={{ fontWeight: 600 }}>v{r.stableVersion} (stable, {r.stableFinished} finished)</th><th style={{ fontWeight: 600 }}>v{r.candidateVersion} (ramped, {r.candidateFinished} finished)</th></tr></thead>
+          <tbody>
+            {cohortRows(r).map((x) => (
+              <tr key={x.label} style={{ borderTop: '1px solid var(--border-soft)' }}>
+                <td style={{ padding: '4px 0' }}>{x.label}</td><td>{x.stable}</td>
+                <td style={{ color: x.worse ? 'var(--red-text)' : undefined, fontWeight: x.worse ? 600 : undefined }}>{x.candidate}{x.worse ? ' · worse' : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {decider && <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+          <button className="co-btn small primary" onClick={() => void act('promote')}>Promote v{r.candidateVersion}</button>
+          <button className="co-btn small ghost" onClick={() => void act('rollback')}>Roll back</button>
+        </div>}
+      </Card>
     </div>
   );
 }
@@ -234,20 +362,29 @@ function Editor({ wsId, p, def, onDone }: { wsId: string; p: OrgProcess; def: Pr
   const app = useApp();
   const [text, setText] = useState(() => JSON.stringify(def, null, 2));
   const [reason, setReason] = useState('');
+  const [ramp, setRamp] = useState('');
   const [problem, setProblem] = useState<string | null>(null);
   const save = async () => {
     let parsed: ProcessDef;
     try { parsed = JSON.parse(text) as ProcessDef; } catch (e) { setProblem(`Not valid JSON: ${errText(e)}`); return; }
-    try { const d = await api.editOrgProcess(wsId, p.id, { def: parsed, reason: reason.trim() }); app.showToast(`${p.title} v${d.process.version} is active`); await onDone(d); } catch (e) { setProblem(errText(e)); }
+    const pctRamp = ramp.trim() === '' ? undefined : Math.max(0, Math.min(90, Math.round(Number(ramp))));
+    try {
+      const d = await api.editOrgProcess(wsId, p.id, { def: parsed, reason: reason.trim(), ...(pctRamp !== undefined && Number.isFinite(pctRamp) ? { ramp: pctRamp } : {}) });
+      app.showToast(d.rollout ? `v${d.rollout.candidateVersion} ramps on ${d.rollout.percent}% of new runs` : `${p.title} v${d.process.version} is active`);
+      await onDone(d);
+    } catch (e) { setProblem(errText(e)); }
   };
   return (
     <div className="co-card" style={{ padding: 14, marginBottom: 14 }} role="form" aria-label={`Edit ${p.title}`}>
       <div className="co-form">
         <label className="co-field"><span>Definition</span>
           <textarea className="co-input" rows={18} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} style={{ fontFamily: 'var(--mono, ui-monospace, monospace)', fontSize: 12 }} />
-          <small>Stages (strict or dynamic), steps (task, approval, wait, subprocess) with MUST / SHOULD / MAY items (at most nine), and edges in strict stages; an edge that closes a loop needs loopMax. Saving makes a new version; the old one stays and can be rolled back to.</small>
+          <small>Stages (strict or dynamic), steps (task, approval, wait, subprocess, meeting) with MUST / SHOULD / MAY items (at most nine), and edges in strict stages; an edge that closes a loop needs loopMax; a step with side effects may name a compensation step (compensate) that undoes it if a run fails. Saving makes a new version (ramped on a share of runs when the process has a track record); the old one stays and can be rolled back to.</small>
         </label>
-        <label className="co-field"><span>Why (what the runs showed)</span><input className="co-input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="the security scan was skipped in two runs" /></label>
+        <div className="co-form-row">
+          <label className="co-field"><span>Why (what the runs showed)</span><input className="co-input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="the security scan was skipped in two runs" /></label>
+          <label className="co-field" style={{ maxWidth: 220 }}><span>Ramp (% of new runs)</span><input className="co-input" inputMode="numeric" value={ramp} onChange={(e) => setRamp(e.target.value)} placeholder="company default" aria-label="Ramp percent" /><small>0 = every new run at once.</small></label>
+        </div>
         {problem && <div className="co-alert" role="alert" style={{ whiteSpace: 'pre-wrap' }}>{problem}</div>}
         <div className="co-form-foot">
           <button className="co-btn ghost" onClick={() => void onDone(null)}>Cancel</button>
@@ -263,8 +400,9 @@ function Editor({ wsId, p, def, onDone }: { wsId: string; p: OrgProcess; def: Pr
 function Graph({ def, metrics }: { def: ProcessDef; metrics: OrgProcess['metrics'] }) {
   const [open, setOpen] = useState<string | null>(null);
   const dev = new Map(metrics.steps.map((s) => [s.nodeId, s]));
+  const comps = compensationsOf(def);
   return (
-    <Card title="How it runs" aside={`${def.stages.length} stage${def.stages.length === 1 ? '' : 's'} · ${def.nodes.length} steps`}>
+    <Card title="How it runs" aside={`${def.stages.length} stage${def.stages.length === 1 ? '' : 's'} · ${def.nodes.length - comps.length} steps`}>
       <div style={{ display: 'grid', gap: 14 }} data-testid="process-graph">
         {def.stages.map((st, i) => (
           <section key={st.id} aria-label={`Stage ${st.title}`}>
@@ -282,10 +420,26 @@ function Graph({ def, metrics }: { def: ProcessDef; metrics: OrgProcess['metrics
                   ))}
                 </div>
               : <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 240px), 1fr))' }}>
-                  {def.nodes.filter((n) => (n.stage ?? def.stages[0].id) === st.id).map((n) => <StepBox key={n.id} def={def} n={n} open={open === n.id} onToggle={() => setOpen(open === n.id ? null : n.id)} stat={dev.get(n.id)} />)}
+                  {stageNodes(def, st.id).map((n) => <StepBox key={n.id} def={def} n={n} open={open === n.id} onToggle={() => setOpen(open === n.id ? null : n.id)} stat={dev.get(n.id)} />)}
                 </div>}
           </section>
         ))}
+        {comps.length > 0 && (
+          <section aria-label="If a run fails or is cancelled" data-testid="process-compensations">
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 650, color: 'var(--text-dim)' }}>If a run fails or is cancelled</span>
+              <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>The done steps are undone, latest first, each by its own task.</span>
+            </div>
+            <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 240px), 1fr))' }}>
+              {comps.map(({ comp, undoes }) => (
+                <div key={comp.id} style={{ border: '1px dashed var(--border)', borderRadius: 10, padding: '8px 10px' }} data-testid="process-compensation">
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}><span style={{ fontSize: 13, fontWeight: 600 }}>{comp.title}</span><Pill plain tone="warn">{KIND_WORD.compensation}</Pill></div>
+                  <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2 }}>undoes {undoes.map((u) => u.title).join(', ') || '—'} · lane: {comp.lane ?? 'owner'}{comp.must?.length ? ` · ${comp.must.length} MUST` : ''}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
     </Card>
   );
@@ -303,17 +457,19 @@ function StepBox({ def, n, strict, open, onToggle, stat }: { def: ProcessDef; n:
           {n.required && <Pill tone="warn" plain title="The stage cannot finish without it">checkpoint</Pill>}
         </div>
         <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 2 }}>
-          {n.kind === 'approval' ? `asks ${n.approver === 'ceo' ? 'the CEO' : 'the manager'}` : n.kind === 'wait' ? `waits ${n.waitHours}h` : n.kind === 'subprocess' ? `runs ${n.process}` : `lane: ${n.lane ?? 'owner'}`}
+          {n.kind === 'approval' ? `asks ${n.approver === 'ceo' ? 'the CEO' : 'the manager'}` : n.kind === 'wait' ? `waits ${n.waitHours}h` : n.kind === 'subprocess' ? `runs ${n.process}` : n.kind === 'meeting' ? meetingWords(n) : `lane: ${n.lane ?? 'owner'}`}
           {n.must?.length ? ` · ${n.must.length} MUST` : ''}{items > (n.must?.length ?? 0) ? ` · ${items - (n.must?.length ?? 0)} more` : ''}{n.slaHours ? ` · SLA ${n.slaHours}h` : ''}
           {stat && stat.deviations > 0 ? <span style={{ color: 'var(--warn-text)' }}> · deviated {Math.round(stat.deviationRate * 100)}%</span> : null}
         </div>
         {e && (e.after.length > 0 || e.loops.length > 0) && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>{e.after.length ? `after ${e.after.join(', ')}` : ''}{e.loops.length ? `${e.after.length ? ' · ' : ''}↺ ${e.loops.join('; ')}` : ''}</div>}
         {!strict && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>{availabilityWords(def, n)}</div>}
+        {n.compensate && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>↩ undone by {def.nodes.find((x) => x.id === n.compensate)?.title ?? n.compensate} if the run fails</div>}
       </button>
       {open && (
         <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8, display: 'grid', gap: 6 }}>
           {n.why && <div><b>Why:</b> {n.why}</div>}
           {n.question && <div><b>Question:</b> {n.question}</div>}
+          {n.agenda && <div><b>Agenda:</b> {n.agenda} (plus what earlier steps produced; the minutes' decisions and actions become its outputs)</div>}
           {n.doneWhen && <div><b>Exit:</b> {n.doneWhen}</div>}
           {(['must', 'should', 'may'] as const).map((lvl) => (n[lvl]?.length ? <div key={lvl}><b>{lvl.toUpperCase()}</b><ul style={{ margin: '2px 0 0 16px', padding: 0 }}>{n[lvl]!.map((x, i) => <li key={i}>{x}</li>)}</ul></div> : null))}
           {n.outputs?.length ? <div><b>Outputs:</b> {n.outputs.map((o) => `${o.name}${o.required ? ' (required)' : ''}`).join(', ')}</div> : null}
@@ -348,7 +504,10 @@ function Runs({ wsId, d, decider, onChanged }: { wsId: string; d: OrgProcessDeta
                 <span className="co-row-title">{r.key}{r.title ? ` · ${r.title}` : ''}</span>
                 <span className="co-row-meta">v{r.version} · {r.trigger.kind ?? 'manual'}{r.trigger.event ? ` (${r.trigger.event.replace(/_/g, ' ')})` : ''} · started {ago(r.startedAt)}{r.endedAt ? ` · ended ${ago(r.endedAt)}` : ` · stage ${r.stage}`}{r.note ? ` · ${r.note}` : ''}</span>
               </span>
-              <span className="co-row-end"><Pill tone={runTone(r.status)}>{r.status}</Pill><I d={open === r.id ? P.chevD : P.chevR} size={12} /></span>
+              <span className="co-row-end">
+                {r.compensation && <Pill tone={r.compensation === 'partial' ? 'bad' : r.compensation === 'running' ? 'warn' : 'muted'} plain title="The done steps' compensations (a saga)">{r.compensation === 'running' ? 'undoing' : r.compensation === 'partial' ? 'partly undone' : 'undone'}</Pill>}
+                <Pill tone={runTone(r.status)}>{r.status}</Pill><I d={open === r.id ? P.chevD : P.chevR} size={12} />
+              </span>
             </button>
             {open === r.id && (
               <div style={{ padding: '2px 12px 10px 22px', display: 'grid', gap: 4 }}>
@@ -383,7 +542,7 @@ function Versions({ wsId, d, decider, nameOf, onChanged }: { wsId: string; d: Or
     if (!reason) return;
     try { onChanged(await api.rollbackOrgProcess(wsId, d.process.id, { version, reason })); app.showToast('Rolled back'); } catch (e) { app.showToast(errText(e)); }
   };
-  const tone = useMemo(() => ({ active: 'ok', superseded: 'muted', pending: 'warn', rejected: 'bad' } as const), []);
+  const tone = useMemo(() => ({ active: 'ok', superseded: 'muted', pending: 'warn', rejected: 'bad', candidate: 'info', rolled_back: 'bad' } as const), []);
   return (
     <Card title="Versions" aside={`${d.versions.length}`} flush>
       <div className="co-rows" data-testid="process-versions">

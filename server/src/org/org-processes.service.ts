@@ -32,6 +32,19 @@
  * resumes where the record says. Work triggered by a task transition or a
  * decision runs per run in order (`withRun`), off the caller's path.
  *
+ * Later phases: a `meeting` step holds a meeting (kind, attendees by lane,
+ * the agenda from the step's inputs) and completes when it ends, its
+ * minutes' decisions and actions becoming outputs; a done step with a
+ * `compensate` step is undone in reverse order when its run fails or is
+ * cancelled (a saga the sweep drives, keyed like every step); a new version
+ * of a process with a track record ramps on a share of new runs while the
+ * two cohorts are compared (promote or roll back: the owner, or the engine
+ * by `process.rampAuto`); repeated work without a process, a step a process
+ * keeps adding ad hoc and a step most runs deviate from become suggestions
+ * for the owner (`submitSuggestion`, the one place a suggestion turns into
+ * the owner's work); conformance (did the runs follow the definition) is
+ * computed apart from outcomes.
+ *
  * Gates: handing a step to review with a MUST item open is refused with
  * what is missing and how to satisfy it (`process.mustEnforcement`); a step's
  * denied tools are refused when called; `deviate` logs a SHOULD deviation or
@@ -42,7 +55,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException, Optional } 
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
-import { orgIncidents, orgProcesses, orgProcessEvents, orgProcessRuns, orgProcessSteps, orgProcessVersions, orgTasks } from '../database/schema';
+import { orgIncidents, orgMeetings, orgProcesses, orgProcessEvents, orgProcessRuns, orgProcessSteps, orgProcessSuggestions, orgProcessVersions, orgTasks } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
 import { TriggerBus } from '../chats/trigger-bus';
@@ -56,29 +69,41 @@ import { OrgUnitsService } from './org-units.service';
 import { OrgRuntimeService } from './org-runtime.service';
 import { OrgBootstrapService } from './org-bootstrap.service';
 import { KitsService } from '../foundry/kits.service';
-import { isValidCron } from './org-meetings.service';
+import { OrgMeetingsService, isValidCron, parseMinutes, type Attendee } from './org-meetings.service';
+import { OrgMeetingRuntime } from './org-meeting-runtime.service';
 import { parseSteps, type TaskStep } from './work-model';
-import { claimTag } from './claims-model';
+import { claimTag, type ClaimStatus } from './claims-model';
 import { taskRef } from '../common/task-keys';
 import { processTunable } from './process-tunables';
 import { PROCESS_TEMPLATES, templateById, templatesForRhythm } from './process-templates';
 import {
-  SLUG_RE, backEdges, canAdopt, computeMetrics, describeProblems, diffProcess, downstream, dynamicAvailable, fill, holds, missingCheckpoints, modeOf,
-  nodesOf, normalizeProcess, processHash, stepCard, strictStageDone, strictWalk, touchesControls, validateProcess,
-  type CardItem, type ProcessDef, type ProcessMetrics, type ProcessNode, type ProcessStage, type StepState,
+  SLUG_RE, backEdges, canAdopt, compareCohorts, compensationPlan, computeConformance, computeMetrics, describeProblems, diffProcess, downstream, dynamicAvailable, fill, holds,
+  missingCheckpoints, modeOf, nodesOf, normalizeProcess, processHash, rampBucket, stepCard, strictStageDone, strictWalk, touchesControls, validateProcess,
+  type CardItem, type CohortComparison, type ConformanceFacts, type ProcessConformance, type ProcessDef, type ProcessMetrics, type ProcessNode, type ProcessStage, type StepState,
 } from './process-model';
+import { draftProcess, minePatterns, titleWords, type AdHocFact, type DiscoveredPattern, type TaskFact } from './process-discovery';
 
 export type OrgProcess = typeof orgProcesses.$inferSelect;
 export type OrgProcessVersion = typeof orgProcessVersions.$inferSelect;
 export type OrgProcessRun = typeof orgProcessRuns.$inferSelect;
 export type OrgProcessStep = typeof orgProcessSteps.$inferSelect;
 export type OrgProcessEvent = typeof orgProcessEvents.$inferSelect;
+export type OrgProcessSuggestion = typeof orgProcessSuggestions.$inferSelect;
 
 /** The prefix a dynamic stage's coordinator step id carries. */
 const STAGE_NODE = '@';
 const isCoordinator = (nodeId: string) => nodeId.startsWith(STAGE_NODE);
 const ADHOC = 'adhoc-';
+/** A compensation step's node id: `undo:<the step it undoes>`. */
+const UNDO = 'undo:';
+const isUndo = (nodeId: string) => nodeId.startsWith(UNDO);
 const OPEN_RUN = ['running', 'blocked'];
+/** The fewest finished runs a version needs before it is a baseline a ramp compares with. */
+const RAMP_BASELINE_RUNS = 3;
+/** Open suggestions per company at a time: an owner's queue is not a firehose. */
+const MAX_OPEN_SUGGESTIONS = 6;
+/** How often discovery and revision suggestions are recomputed per company. */
+const DISCOVERY_EVERY_MS = 6 * 3_600_000;
 
 export interface Deviation { level: 'should' | 'must' | 'ad_hoc'; item: string; reason: string; alternative: string; status: 'logged' | 'pending' | 'approved' | 'rejected'; approvalId?: string; by: string; at: string }
 
@@ -89,6 +114,12 @@ export interface StartInput {
 }
 
 export interface AuthorResult { process: OrgProcess; version: OrgProcessVersion; applied: boolean; approvalId: string | null; note: string }
+
+/** A ramped version against the stable one (docs/processes.md "Ramped rollout"). */
+export interface ProcessRollout extends CohortComparison {
+  stableVersion: number; candidateVersion: number; candidateVersionId: string; percent: number; startedAt: string | null; auto: boolean;
+  stable: ProcessMetrics; candidate: ProcessMetrics;
+}
 
 const parse = <T>(raw: string | null | undefined, fallback: T): T => { try { const v = JSON.parse(raw || '') as T; return v ?? fallback; } catch { return fallback; } };
 const strVars = (v: Record<string, unknown> | undefined): Record<string, string> => Object.fromEntries(Object.entries(v ?? {}).filter(([k]) => /^[a-z][a-z0-9_]{0,39}$/i.test(k)).slice(0, 40).map(([k, x]) => [k, String(x ?? '').slice(0, 2_000)]));
@@ -108,6 +139,9 @@ export class OrgProcessesService {
     @Optional() private readonly bus?: TriggerBus,
     @Optional() bootstrap?: OrgBootstrapService,
     @Optional() private readonly kits?: KitsService,
+    /** Meeting steps: the meeting rows, and the runtime that holds them (without it a meeting step's meeting is only scheduled). */
+    @Optional() private readonly meetings?: OrgMeetingsService,
+    @Optional() private readonly meetingRuntime?: OrgMeetingRuntime,
   ) {
     tasks.addSubmitGate((orgId, task) => this.submitGate(orgId, task));
     tasks.onTransition((ev) => {
@@ -125,7 +159,7 @@ export class OrgProcessesService {
     });
     bus?.onOrgIncident((ev) => { this.defer(() => this.onIncident(ev.orgId, ev.incidentId, ev.severity)); });
     runtime?.addTicker({ name: 'processes', everyMinutes: 1, fn: (org, now) => this.tick(org, now) });
-    runtime?.addTicker({ name: 'processes-sweep', everyMinutes: 5, fn: (org) => this.sweep(org.id).then(() => undefined) });
+    runtime?.addTicker({ name: 'processes-sweep', everyMinutes: 5, fn: (org, now) => this.sweep(org.id).then(() => this.periodic(org.id, now)) });
     bootstrap?.onBootstrapped((orgId) => this.seed(orgId, { source: 'bootstrap', cadences: true }).then((r) => r.map((p) => `process ${p.name}`)));
     kits?.onChange((workspaceId) => { this.defer(() => this.onKitsChanged(workspaceId)); });
   }
@@ -232,7 +266,7 @@ export class OrgProcessesService {
    * company's `process.editApproval` decides whether this edit waits for a
    * `process_change` card routed to the editor's manager.
    */
-  async author(orgId: string, input: { process?: string; name?: string; template?: string; def?: unknown; unitId?: string | null; reason: string; action?: 'create' | 'edit' | 'rollback' | 'restore' }, actor: string): Promise<AuthorResult> {
+  async author(orgId: string, input: { process?: string; name?: string; template?: string; def?: unknown; unitId?: string | null; reason: string; action?: 'create' | 'edit' | 'rollback' | 'restore'; ramp?: number }, actor: string): Promise<AuthorResult> {
     const reason = (input.reason ?? '').trim().slice(0, 600);
     if (!reason) throw new BadRequestException('reason is required: say what the runs showed (deviations, failures, cycle time) or why the change is needed');
     const existing = input.process ? await this.get(orgId, input.process) : null;
@@ -256,7 +290,7 @@ export class OrgProcessesService {
       proc = {
         accountId: currentAccountId(), id: newId(), orgId, name, title: def.title, description: def.description ?? '', category: def.category, unitId,
         status: 'draft', version: 0, versionId: null, templateId: tpl?.id ?? '', source: tpl ? 'template' : 'authored', lastCadenceAt: null, reviewedAt: null,
-        createdBy: actor.slice(0, 80), createdAt: now, updatedAt: now,
+        createdBy: actor.slice(0, 80), createdAt: now, updatedAt: now, candidateVersionId: null, rampPct: 0, rampStartedAt: null, rampVerdict: '',
       };
       await this.db.insert(orgProcesses).values(proc);
     }
@@ -267,13 +301,15 @@ export class OrgProcessesService {
     };
     await this.db.insert(orgProcessVersions).values(version);
     await this.log(orgId, proc.id, '', '', 'version_written', actor, { version: version.version, action, reason });
+    const ramp = action === 'rollback' ? 0 : input.ramp;
     if (decision.apply) {
-      await this.activate(orgId, version.id, actor);
-      return { process: await this.get(orgId, proc.id), version: await this.version(orgId, version.id), applied: true, approvalId: null, note: `${def.title} v${version.version} is active (${action}): ${reason}` };
+      const after = await this.activate(orgId, version.id, actor, { ramp });
+      const ramping = after.candidateVersionId === version.id;
+      return { process: after, version: await this.version(orgId, version.id), applied: true, approvalId: null, note: ramping ? `${def.title} v${version.version} is ramping (${action}): ${after.rampPct}% of new runs start on it while its runs are compared with v${after.version}'s — promote or roll back on the comparison (org_process_metrics): ${reason}` : `${def.title} v${version.version} is active (${action}): ${reason}` };
     }
     const card = await this.approvals.create(orgId, {
       kind: 'process_change', requestedBy: actor,
-      payload: { processId: proc.id, versionId: version.id, version: version.version, processTitle: def.title, name, action, reason, diff: diffProcess(prevDef, def).slice(0, 30), agentId: actor.startsWith('agent:') ? actor.slice(6) : undefined, ...(decision.boundary ? { boundary: decision.boundary } : {}) },
+      payload: { processId: proc.id, versionId: version.id, version: version.version, processTitle: def.title, name, action, reason, diff: diffProcess(prevDef, def).slice(0, 30), agentId: actor.startsWith('agent:') ? actor.slice(6) : undefined, ...(ramp !== undefined ? { ramp } : {}), ...(decision.boundary ? { boundary: decision.boundary } : {}) },
       recommendation: reason, card: { recommendedAction: 'approve' },
     });
     await this.db.update(orgProcessVersions).set({ approvalId: card.id }).where(eq(orgProcessVersions.id, version.id));
@@ -293,17 +329,42 @@ export class OrgProcessesService {
     return { apply: true, why: 'within the editor\'s own processes' };
   }
 
-  /** Make a version the active one (the previous one becomes superseded). */
-  async activate(orgId: string, versionId: string, actor: string): Promise<OrgProcess> {
+  /**
+   * Make a version the active one (the previous one becomes superseded) —
+   * or, for a process whose active version has a track record, a ramped
+   * candidate: `ramp`% of new runs (default `process.rampPercent`; 0 = at
+   * once) start on it while its runs are compared with the stable version's.
+   */
+  async activate(orgId: string, versionId: string, actor: string, opts: { ramp?: number } = {}): Promise<OrgProcess> {
     const v = await this.version(orgId, versionId);
     const def = this.defOf(v);
     const now = nowIso();
+    const p = await this.get(orgId, v.processId);
+    const stable = p.versionId && p.versionId !== v.id ? p.versionId : null;
+    const pct = stable && p.status === 'active' ? Math.min(90, Math.round(opts.ramp ?? await this.defaultRamp(orgId, p))) : 0;
+    if (pct > 0) {
+      if (p.candidateVersionId && p.candidateVersionId !== v.id) await this.db.update(orgProcessVersions).set({ status: 'superseded' }).where(and(eq(orgProcessVersions.id, p.candidateVersionId), eq(orgProcessVersions.status, 'candidate')));
+      await this.db.update(orgProcessVersions).set({ status: 'candidate', activatedAt: now }).where(eq(orgProcessVersions.id, v.id));
+      await this.db.update(orgProcesses).set({ candidateVersionId: v.id, rampPct: pct, rampStartedAt: now, rampVerdict: '', updatedAt: now }).where(eq(orgProcesses.id, p.id));
+      await this.log(orgId, p.id, '', '', 'ramp_started', actor, { version: v.version, stable: p.version, percent: pct });
+      await this.audit.append(orgId, { actor, action: 'process_ramp', refType: 'process', refId: p.id, payload: { version: v.version, percent: pct, reason: v.reason.slice(0, 200) } });
+      return this.get(orgId, p.id);
+    }
+    if (p.candidateVersionId && p.candidateVersionId !== v.id) await this.db.update(orgProcessVersions).set({ status: 'superseded' }).where(and(eq(orgProcessVersions.id, p.candidateVersionId), eq(orgProcessVersions.status, 'candidate')));
     await this.db.update(orgProcessVersions).set({ status: 'superseded' }).where(and(eq(orgProcessVersions.processId, v.processId), eq(orgProcessVersions.status, 'active')));
     await this.db.update(orgProcessVersions).set({ status: 'active', activatedAt: now }).where(eq(orgProcessVersions.id, v.id));
-    await this.db.update(orgProcesses).set({ title: def.title, description: def.description ?? '', category: def.category, version: v.version, versionId: v.id, status: 'active', updatedAt: now }).where(eq(orgProcesses.id, v.processId));
+    await this.db.update(orgProcesses).set({ title: def.title, description: def.description ?? '', category: def.category, version: v.version, versionId: v.id, status: 'active', candidateVersionId: null, rampPct: 0, rampStartedAt: null, rampVerdict: '', updatedAt: now }).where(eq(orgProcesses.id, v.processId));
     await this.log(orgId, v.processId, '', '', 'version_activated', actor, { version: v.version });
     await this.audit.append(orgId, { actor, action: 'process_version', refType: 'process', refId: v.processId, payload: { version: v.version, reason: v.reason.slice(0, 200) } });
     return this.get(orgId, v.processId);
+  }
+
+  /** The ramp a new version gets: the company's share, when the stable version has runs to compare with. */
+  private async defaultRamp(orgId: string, p: OrgProcess): Promise<number> {
+    const pct = processTunable(await this.org.get(orgId), 'process.rampPercent');
+    if (pct <= 0 || !p.versionId) return 0;
+    const finished = (await this.runs(orgId, { processId: p.id })).filter((r) => r.versionId === p.versionId && ['done', 'failed', 'cancelled'].includes(r.status)).length;
+    return finished >= RAMP_BASELINE_RUNS ? pct : 0;
   }
 
   /** Retire a process: no new runs; running ones finish on their version. */
@@ -351,8 +412,8 @@ export class OrgProcessesService {
         await this.log(orgId, processId, '', '', 'retired', by, { reason: payload.reason });
         return { processId, retired: true };
       }
-      const p = await this.activate(orgId, versionId, by);
-      return { processId, version: p.version };
+      const p = await this.activate(orgId, versionId, by, { ramp: typeof payload.ramp === 'number' ? payload.ramp : undefined });
+      return { processId, version: p.version, ...(p.candidateVersionId === versionId ? { ramp: p.rampPct } : {}) };
     }
     if (versionId) await this.db.update(orgProcessVersions).set({ status: 'rejected' }).where(and(eq(orgProcessVersions.id, versionId), eq(orgProcessVersions.status, 'pending')));
     const p = (await this.db.select().from(orgProcesses).where(eq(orgProcesses.id, processId)).limit(1)).at(0);
@@ -529,7 +590,9 @@ export class OrgProcessesService {
       await this.log(orgId, p.id, '', '', 'start_skipped', input.initiator, { reason: `max active runs (${cap})`, triggerRef });
       throw new BadRequestException(`refused: ${p.title} already has ${open} open run(s), the company's limit (process.maxActiveRuns ${cap}) — finish or cancel one first`);
     }
-    const v = await this.version(orgId, p.versionId);
+    // A ramped candidate takes its share of new runs (deterministic per trigger).
+    const ramped = Boolean(p.candidateVersionId && p.rampPct > 0 && rampBucket(`${p.candidateVersionId}:${triggerRef}`) < p.rampPct);
+    const v = await this.version(orgId, ramped ? p.candidateVersionId! : p.versionId);
     const def = this.defOf(v);
     const now = nowIso();
     const vars = strVars(input.vars);
@@ -541,7 +604,7 @@ export class OrgProcessesService {
         title: (input.title ?? '').trim().slice(0, 160) || fill(def.title, vars), status: 'running', stage: def.stages[0]?.id ?? '',
         ownerAgentId: null, initiator: input.initiator.slice(0, 80), trigger: JSON.stringify(input.trigger ?? { kind: 'manual' }), triggerRef,
         projectId: input.projectId ?? null, unitId: p.unitId, vars: JSON.stringify(vars), loops: '{}',
-        parentRunId: input.parentRunId ?? null, parentStepId: input.parentStepId ?? null, note: '', startedAt: now, endedAt: null, updatedAt: now,
+        parentRunId: input.parentRunId ?? null, parentStepId: input.parentStepId ?? null, note: '', startedAt: now, endedAt: null, updatedAt: now, compensation: '',
       };
       row.ownerAgentId = await this.ownerFor(org, p, def);
       if (!row.projectId && def.category === 'operating') row.projectId = await this.operatingProject(orgId, p.unitId);
@@ -553,7 +616,7 @@ export class OrgProcessesService {
       }
     }
     if (!run) throw new BadRequestException('could not allocate a run key — try again');
-    await this.log(orgId, p.id, run.id, '', 'started', input.initiator, { trigger: input.trigger ?? { kind: 'manual' }, version: v.version });
+    await this.log(orgId, p.id, run.id, '', 'started', input.initiator, { trigger: input.trigger ?? { kind: 'manual' }, version: v.version, ...(ramped ? { ramp: true } : {}) });
     await this.audit.append(orgId, { actor: input.initiator, action: 'process_run_start', refType: 'process_run', refId: run.id, payload: { process: p.name, key: run.key, version: v.version } });
     await this.withRun(run.id, () => this.advance(orgId, run!.id));
     return this.run(orgId, run.id);
@@ -566,7 +629,7 @@ export class OrgProcessesService {
     return p?.id ?? null;
   }
 
-  /** Cancel a run and its open step tasks. */
+  /** Cancel a run and its open step tasks; the done steps' compensations then run (a saga). */
   async cancel(orgId: string, ref: string, reason: string, actor: string): Promise<OrgProcessRun> {
     const run = await this.run(orgId, ref);
     if (!OPEN_RUN.includes(run.status)) return run;
@@ -576,8 +639,10 @@ export class OrgProcessesService {
         await this.db.update(orgProcessSteps).set({ status: 'cancelled', endedAt: nowIso() }).where(eq(orgProcessSteps.id, s.id));
         if (s.taskId) { const t = await this.tasks.get(orgId, s.taskId).catch(() => null); if (t && !['done', 'cancelled'].includes(t.status)) await this.tasks.update(orgId, t.id, { status: 'cancelled' }, actor).catch(() => undefined); }
         if (s.childRunId) this.defer(() => this.cancel(orgId, s.childRunId!, `parent run cancelled: ${reason}`, actor));
+        if (s.meetingId && this.meetings) { const m = await this.meetings.get(orgId, s.meetingId).catch(() => null); if (m && (m.status === 'scheduled' || m.status === 'postponed')) await this.meetings.cancel(orgId, m.id, actor, `process run ${run.key} cancelled`).catch(() => undefined); }
       }
       await this.log(orgId, run.processId, run.id, '', 'cancelled', actor, { reason });
+      await this.startCompensation(orgId, run.id);
     });
     return this.run(orgId, run.id);
   }
@@ -637,7 +702,7 @@ export class OrgProcessesService {
     const row: OrgProcessStep = {
       accountId: currentAccountId(), id: newId(), orgId, runId: run.id, nodeId: s.nodeId, attempt: s.attempt, kind: s.kind, stage: s.stage, status: s.status, current: 1,
       taskId: null, approvalId: null, childRunId: null, dueAt: null, slaAt: null, slaBreachedAt: null, outputs: '{}', deviations: '[]', spec: s.spec ?? '', chosenBy: s.chosenBy ?? '', outcome: s.status === 'skipped' ? 'skipped' : '',
-      startedAt: now, endedAt: s.status === 'active' ? null : now,
+      startedAt: now, endedAt: s.status === 'active' ? null : now, meetingId: null,
     };
     const inserted = await this.db.insert(orgProcessSteps).values(row).onConflictDoNothing().returning();
     return inserted[0] ?? null;
@@ -686,7 +751,70 @@ export class OrgProcessesService {
       const child = await this.start(orgId, node.process ?? '', { initiator: `process:${run.id}`, trigger: { kind: 'subprocess', ref: run.id }, triggerRef: `parent:${step.id}`, parentRunId: run.id, parentStepId: step.id, vars, projectId: run.projectId })
         .catch(async (err: unknown) => { await this.failStep(orgId, run, step, `the subprocess could not start: ${err instanceof Error ? err.message : String(err)}`); return null; });
       if (child) await this.db.update(orgProcessSteps).set({ childRunId: child.id }).where(eq(orgProcessSteps.id, step.id));
+    } else if (node.kind === 'meeting') {
+      await this.fillMeeting(orgId, org, run, def, p, node, step, vars);
     }
+  }
+
+  /**
+   * A meeting step's meeting: of its kind, in the owning unit's channel (the
+   * company's for a company process), facilitated by its lane, attended by
+   * its lanes (`unit` = the owning unit), its agenda the step's own plus the
+   * inputs earlier steps produced. Keyed by the step (`createdBy
+   * process:<stepId>`), so a restart adopts the meeting it already made.
+   */
+  private async fillMeeting(orgId: string, org: Organization, run: OrgProcessRun, def: ProcessDef, p: OrgProcess, node: ProcessNode, step: OrgProcessStep, vars: Record<string, string>): Promise<void> {
+    const key = `process:${step.id}`;
+    const existing = (await this.db.select().from(orgMeetings).where(and(eq(orgMeetings.orgId, orgId), eq(orgMeetings.createdBy, key))).limit(1)).at(0);
+    let meetingId = existing?.id ?? null;
+    if (!meetingId) {
+      if (!this.meetings) throw new BadRequestException('meetings are not available on this server');
+      const unit = this.units ? (p.unitId ? await this.units.get(orgId, p.unitId).catch(() => null) : await this.units.rootUnit(orgId).catch(() => null)) : null;
+      const facilitator = await this.laneAgent(org, p, run, node.lane);
+      const attendees: Attendee[] = [];
+      for (const lane of node.attendees?.length ? node.attendees : ['unit']) {
+        if (lane.trim().toLowerCase() === 'unit') { if (unit) attendees.push(...await this.meetings.unitAttendees(orgId, unit).catch(() => [] as Attendee[])); continue; }
+        const a = await this.laneAgent(org, p, run, lane);
+        if (a) attendees.push({ kind: 'agent', id: a });
+      }
+      const seen = new Set<string>();
+      const list = attendees.filter((a) => { const k = `${a.kind}:${a.id}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 12);
+      const inputs = this.inputsOf(def, await this.steps(orgId, run.id), vars, step.id);
+      const agenda = [fill(node.agenda, vars) || fill(node.outcome, vars) || fill(node.title, vars), inputs.length ? `From earlier steps of ${p.title} (${run.key}):\n${inputs.slice(0, 12).map((x) => `- ${x.name}: ${x.value.slice(0, 300)} (from "${x.from}")`).join('\n')}` : ''].filter(Boolean).join('\n\n').slice(0, 4_000);
+      const kind = (node.meetingKind ?? 'adhoc') as Parameters<OrgMeetingsService['create']>[1]['kind'];
+      const input = { kind, unitId: unit?.id ?? null, agenda, title: `${fill(node.title, vars)} · ${run.key}`.slice(0, 120), attendees: list, facilitatorAgentId: facilitator, createdBy: key };
+      const m = this.meetingRuntime ? await this.meetingRuntime.start(orgId, input) : await this.meetings.create(orgId, { ...input, scheduledFor: nowIso() });
+      meetingId = m.id;
+    }
+    await this.db.update(orgProcessSteps).set({ meetingId }).where(eq(orgProcessSteps.id, step.id));
+  }
+
+  /** A meeting step whose meeting ended: done with the minutes as outputs (`<step>_decisions`, `_actions`, `_summary`); a cancelled meeting fails it. Caller holds the run. */
+  private async settleMeeting(orgId: string, run: OrgProcessRun, step: OrgProcessStep): Promise<boolean> {
+    if (!step.meetingId) return false;
+    const m = (await this.db.select().from(orgMeetings).where(and(eq(orgMeetings.orgId, orgId), eq(orgMeetings.id, step.meetingId))).limit(1)).at(0);
+    if (!m || m.status === 'cancelled') { await this.failStep(orgId, run, step, m ? 'its meeting was cancelled' : 'its meeting is gone'); return true; }
+    if (m.status !== 'done' && m.status !== 'skipped') return false;
+    const minutes = parseMinutes(m.minutes);
+    const k = step.nodeId.replace(/-/g, '_');
+    const decisions = minutes.decisions.filter((d) => d.verdict !== 'rejected').map((d) => `${d.title}: ${d.decision}`);
+    const actions = minutes.actions.filter((a) => a.verdict !== 'rejected').map((a) => `${a.title} — ${a.owner}${a.taskKey ? ` (${a.taskKey})` : ''}`);
+    const outputs = { ...parse<Record<string, string>>(step.outputs, {}), [`${k}_summary`]: (minutes.summary || m.summary || '').slice(0, 2_000), [`${k}_decisions`]: decisions.join('\n').slice(0, 2_000), [`${k}_actions`]: actions.join('\n').slice(0, 2_000) };
+    await this.db.update(orgProcessSteps).set({ outputs: JSON.stringify(outputs) }).where(eq(orgProcessSteps.id, step.id));
+    await this.log(orgId, run.processId, run.id, step.nodeId, 'meeting_ended', 'engine', { meetingId: m.id, decisions: decisions.length, actions: actions.length, status: m.status });
+    await this.completeStep(orgId, run, { ...step, outputs: JSON.stringify(outputs) }, m.status === 'skipped' ? 'skipped' : 'done');
+    return true;
+  }
+
+  /** The outputs earlier steps produced, and the run's start inputs, for a step's card or a meeting's agenda. */
+  private inputsOf(def: ProcessDef, steps: OrgProcessStep[], vars: Record<string, string>, exceptStepId: string, flags?: Map<string, ClaimStatus> | null): Array<{ name: string; value: string; from: string }> {
+    const inputs: Array<{ name: string; value: string; from: string }> = [];
+    for (const s of steps.filter((x) => x.current && x.status === 'done' && x.id !== exceptStepId)) {
+      const n = this.nodeOf(def, s);
+      for (const [k, v] of Object.entries(parse<Record<string, string>>(s.outputs, {}))) inputs.push({ name: k, value: flags?.has(`${s.id}:${k}`) ? `${v} ${claimTag(flags.get(`${s.id}:${k}`))}` : v, from: n?.title ?? s.nodeId });
+    }
+    for (const [k, v] of Object.entries(vars)) if (!inputs.some((x) => x.name === k) && !def.nodes.some((n) => n.id.replace(/-/g, '_') === k)) inputs.push({ name: k, value: v, from: 'the run\'s start' });
+    return inputs;
   }
 
   private async createStepTask(orgId: string, run: OrgProcessRun, def: ProcessDef, p: OrgProcess, node: ProcessNode, agentId: string | null, vars: Record<string, string>, attempt: number): Promise<OrgTask> {
@@ -747,6 +875,7 @@ export class OrgProcessesService {
       const p = await this.get(orgId, run.processId).catch(() => null);
       await this.agents.addEvent(run.ownerAgentId, { kind: 'info', title: `Process run ${run.key} (${p?.title ?? 'process'}) failed`.slice(0, 200), body: note, payload: JSON.stringify({ orgId, runId: run.id }), origin: 'loop' }).catch(() => undefined);
     }
+    if (status === 'failed') await this.startCompensation(orgId, run.id);
     // A child run settles its parent's subprocess step.
     if (run.parentRunId && run.parentStepId) {
       const parentId = run.parentRunId;
@@ -833,15 +962,106 @@ export class OrgProcessesService {
 
   private nodeOf(def: ProcessDef, step: Pick<OrgProcessStep, 'nodeId' | 'spec'>): ProcessNode | null {
     if (step.nodeId.startsWith(ADHOC)) return parse<ProcessNode | null>(step.spec, null);
+    if (isUndo(step.nodeId)) {
+      const fwd = def.nodes.find((n) => n.id === step.nodeId.slice(UNDO.length));
+      return (fwd?.compensate ? def.nodes.find((n) => n.id === fwd.compensate) : null) ?? null;
+    }
     return def.nodes.find((n) => n.id === step.nodeId) ?? null;
+  }
+
+  // ---- compensation: a failed or cancelled run undoes its done steps (a saga) ----
+
+  /** Each node's latest done attempt (the forward steps a saga may undo). */
+  private doneForward(steps: OrgProcessStep[]): OrgProcessStep[] {
+    const m = new Map<string, OrgProcessStep>();
+    for (const s of steps) {
+      if (s.status !== 'done' || isCoordinator(s.nodeId) || isUndo(s.nodeId) || s.nodeId.startsWith(ADHOC)) continue;
+      const prev = m.get(s.nodeId);
+      if (!prev || s.attempt > prev.attempt) m.set(s.nodeId, s);
+    }
+    return [...m.values()];
+  }
+
+  /** A run just failed or was cancelled: when a done step names a compensation, the saga starts. Caller holds the run. */
+  private async startCompensation(orgId: string, runId: string): Promise<void> {
+    const run = await this.run(orgId, runId);
+    if (run.compensation) return;
+    const def = await this.runDef(orgId, run);
+    const plan = compensationPlan(def, this.doneForward(await this.steps(orgId, run.id)));
+    if (!plan.length) return;
+    await this.db.update(orgProcessRuns).set({ compensation: 'running', updatedAt: nowIso() }).where(eq(orgProcessRuns.id, run.id));
+    await this.log(orgId, run.processId, run.id, '', 'compensation_started', 'engine', { steps: plan.map((x) => x.forward) });
+    await this.driveCompensation(orgId, run.id);
+  }
+
+  /**
+   * Run the saga one compensation at a time, latest completion first: the
+   * first unsettled one is materialised (its row first, keyed
+   * `undo:<step>`, then its task) or waited on; a done task settles it, a
+   * cancelled one fails it and the next goes on. When all are settled the
+   * run's compensation is done (or partial, and the owner is told). Model-free
+   * and repeatable: the sweep calls it for every run still compensating.
+   * Caller holds the run.
+   */
+  private async driveCompensation(orgId: string, runId: string): Promise<void> {
+    const run = await this.run(orgId, runId);
+    if (run.compensation !== 'running') return;
+    const def = await this.runDef(orgId, run);
+    const steps = await this.steps(orgId, run.id);
+    const plan = compensationPlan(def, this.doneForward(steps));
+    const settle = async (row: OrgProcessStep, status: 'done' | 'failed', why: string) => {
+      await this.db.update(orgProcessSteps).set({ status, outcome: status === 'done' ? 'compensated' : 'failed', endedAt: nowIso() }).where(eq(orgProcessSteps.id, row.id));
+      await this.log(orgId, run.processId, run.id, row.nodeId, status === 'done' ? 'compensated' : 'compensation_failed', 'engine', why ? { reason: why } : {});
+      row.status = status;
+    };
+    for (const c of plan) {
+      const id = `${UNDO}${c.forward}`;
+      const row = steps.find((s) => s.nodeId === id);
+      if (!row) {
+        const step = await this.insertStep(orgId, run, { nodeId: id, kind: 'compensation', stage: c.comp.stage ?? def.stages[0]?.id ?? '', status: 'active', attempt: 1, chosenBy: 'engine' });
+        if (!step) return;
+        try { await this.fillCompensation(orgId, run, def, c.forward, step); } catch (err) { await settle(step, 'failed', `it could not be created: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400)); steps.push(step); continue; }
+        await this.log(orgId, run.processId, run.id, id, 'materialized', 'engine', { kind: 'compensation' });
+        return;
+      }
+      if (row.status !== 'active') continue;
+      if (!row.taskId) { await this.fillCompensation(orgId, run, def, c.forward, row).catch(() => undefined); return; }
+      const t = await this.tasks.get(orgId, row.taskId).catch(() => null);
+      if (t?.status === 'done') { await settle(row, 'done', ''); continue; }
+      if (!t || t.status === 'cancelled') { await settle(row, 'failed', 'its task was cancelled'); continue; }
+      return;
+    }
+    const failed = plan.filter((c) => steps.find((s) => s.nodeId === `${UNDO}${c.forward}`)?.status === 'failed');
+    await this.db.update(orgProcessRuns).set({ compensation: failed.length ? 'partial' : 'done', updatedAt: nowIso() }).where(eq(orgProcessRuns.id, run.id));
+    await this.log(orgId, run.processId, run.id, '', 'compensation_done', 'engine', { undone: plan.length - failed.length, failed: failed.map((c) => c.forward) });
+    if (failed.length && run.ownerAgentId) {
+      const p = await this.get(orgId, run.processId).catch(() => null);
+      await this.agents.addEvent(run.ownerAgentId, { kind: 'info', title: `Run ${run.key} (${p?.title ?? 'process'}): ${failed.length} compensation(s) not done`.slice(0, 200), body: `Undo by hand: ${failed.map((c) => c.comp.title).join('; ')}`.slice(0, 1_000), payload: JSON.stringify({ orgId, runId: run.id }), origin: 'loop' }).catch(() => undefined);
+    }
+  }
+
+  /** A compensation step's task (the orphan a restart left, or a new one). */
+  private async fillCompensation(orgId: string, run: OrgProcessRun, def: ProcessDef, forward: string, step: OrgProcessStep): Promise<void> {
+    const org = await this.org.get(orgId);
+    const p = await this.get(orgId, run.processId);
+    const comp = this.nodeOf(def, step);
+    if (!comp) throw new BadRequestException(`no compensation for step ${forward}`);
+    const fwd = def.nodes.find((n) => n.id === forward);
+    const orphan = (await this.db.select().from(orgTasks).where(and(eq(orgTasks.orgId, orgId), eq(orgTasks.processRunId, run.id), eq(orgTasks.processNodeId, step.nodeId)))).at(0);
+    const vars = parse<Record<string, string>>(run.vars, {});
+    const node: ProcessNode = { ...comp, id: step.nodeId, stage: undefined, context: [`The run ${run.status}${run.note ? ` (${run.note})` : ''}: undo what step "${fwd?.title ?? forward}" did.`, comp.context ?? ''].filter(Boolean).join(' ') };
+    const task = orphan ?? await this.createStepTask(orgId, run, def, p, node, await this.laneAgent(org, p, run, comp.lane), vars, 1);
+    await this.db.update(orgProcessSteps).set({ taskId: task.id }).where(eq(orgProcessSteps.id, step.id));
   }
 
   // ---- events that move runs ----
 
   /** A step's task reached done or cancelled. */
   private async onTaskSettled(orgId: string, taskId: string, to: 'done' | 'cancelled'): Promise<void> {
+    await this.suggestionSettled(orgId, taskId, to);
     const step = await this.stepOfTask(orgId, taskId);
     if (!step || step.status !== 'active' || !step.current) return;
+    if (step.kind === 'compensation') { await this.withRun(step.runId, () => this.driveCompensation(orgId, step.runId)); return; }
     await this.withRun(step.runId, async () => {
       const run = await this.run(orgId, step.runId);
       const fresh = (await this.steps(orgId, run.id)).find((s) => s.id === step.id);
@@ -947,6 +1167,9 @@ export class OrgProcessesService {
       if (s.kind === 'wait' && s.dueAt && s.dueAt <= now.toISOString()) {
         await this.withRun(run.id, async () => { const r = await this.run(orgId, run.id); const f = (await this.steps(orgId, run.id)).find((x) => x.id === s.id); if (f?.status === 'active') { await this.completeStep(orgId, r, f, 'done'); await this.advance(orgId, run.id); } });
       }
+      if (s.kind === 'meeting' && s.meetingId) {
+        await this.withRun(run.id, async () => { const r = await this.run(orgId, run.id); const f = (await this.steps(orgId, run.id)).find((x) => x.id === s.id); if (f?.status === 'active' && OPEN_RUN.includes(r.status) && await this.settleMeeting(orgId, r, f)) await this.advance(orgId, run.id); });
+      }
       if (s.slaAt && !s.slaBreachedAt && s.slaAt <= now.toISOString() && s.taskId) await this.slaBreached(org, run, s);
     }
   }
@@ -988,6 +1211,8 @@ export class OrgProcessesService {
           if ((s.kind === 'task' || s.kind === 'stage') && !s.taskId && node) { await this.fillStep(orgId, fresh, def, node, s); repaired++; continue; }
           if (s.kind === 'approval' && !s.approvalId && node) { await this.fillStep(orgId, fresh, def, node, s); repaired++; continue; }
           if (s.kind === 'subprocess' && !s.childRunId && node) { await this.fillStep(orgId, fresh, def, node, s); repaired++; continue; }
+          if (s.kind === 'meeting' && !s.meetingId && node) { await this.fillStep(orgId, fresh, def, node, s); repaired++; continue; }
+          if (s.kind === 'meeting') { if (await this.settleMeeting(orgId, await this.run(orgId, run.id), s)) settled++; continue; }
           if (s.taskId) {
             const t = await this.tasks.get(orgId, s.taskId).catch(() => null);
             if (t?.status === 'done') { await this.completeStep(orgId, fresh, s, 'done'); settled++; }
@@ -1003,6 +1228,10 @@ export class OrgProcessesService {
         }
         await this.advance(orgId, run.id);
       }).catch(() => undefined);
+    }
+    // Sagas still under way (a restart, a compensation task that finished meanwhile).
+    for (const run of (await this.runs(orgId)).filter((r) => r.compensation === 'running')) {
+      await this.withRun(run.id, () => this.driveCompensation(orgId, run.id)).catch(() => undefined);
     }
     return { repaired, settled };
   }
@@ -1065,7 +1294,7 @@ export class OrgProcessesService {
       // A dynamic run adopts the newest version at its next choice.
       let adopted: number | null = null;
       const p = await this.get(orgId, run.processId);
-      if (p.versionId && p.versionId !== run.versionId) {
+      if (p.versionId && p.versionId !== run.versionId && p.version > run.version) {
         const next = this.defOf(await this.version(orgId, p.versionId));
         const ids = (await this.steps(orgId, run.id)).filter((s) => s.current).map((s) => s.nodeId);
         if (canAdopt(next, run.stage, ids)) {
@@ -1287,15 +1516,10 @@ export class OrgProcessesService {
     if (!node) return null;
     const steps = await this.steps(orgId, run.id);
     const vars = parse<Record<string, string>>(run.vars, {});
-    const inputs: Array<{ name: string; value: string; from: string }> = [];
     const done = steps.filter((x) => x.current && x.status === 'done' && x.id !== step.id);
     // Evidence-gated claims (docs/evidence.md): an output nothing verified reaches later steps flagged.
     const flags = await this.tasks.evidence?.flags(orgId, 'step_output', done.flatMap((s) => Object.keys(parse<Record<string, string>>(s.outputs, {})).map((k) => `${s.id}:${k}`))).catch(() => null);
-    for (const s of done) {
-      const n = this.nodeOf(def, s);
-      for (const [k, v] of Object.entries(parse<Record<string, string>>(s.outputs, {}))) inputs.push({ name: k, value: flags?.has(`${s.id}:${k}`) ? `${v} ${claimTag(flags.get(`${s.id}:${k}`))}` : v, from: n?.title ?? s.nodeId });
-    }
-    for (const [k, v] of Object.entries(vars)) if (!inputs.some((x) => x.name === k) && !def.nodes.some((n) => n.id.replace(/-/g, '_') === k)) inputs.push({ name: k, value: v, from: 'the run\'s start' });
+    const inputs = this.inputsOf(def, steps, vars, step.id, flags);
     const waived = new Set(parse<Deviation[]>(step.deviations, []).filter((d) => d.status === 'approved').map((d) => d.item));
     const items: CardItem[] = parseSteps(task.steps).filter((x) => x.from?.startsWith('process:')).map((x) => ({ id: x.id, text: x.text, level: x.from!.slice(8) as CardItem['level'], done: x.done && !x.dropped, waived: waived.has(x.id) || (x.dropped && x.from !== 'process:must') }));
     const outputs = parse<Record<string, string>>(step.outputs, {});
@@ -1309,20 +1533,51 @@ export class OrgProcessesService {
     });
   }
 
-  // ---- metrics ----
+  // ---- metrics and conformance ----
 
-  async metrics(orgId: string, processId: string, opts: { markReviewed?: string } = {}): Promise<ProcessMetrics> {
+  /** Outcome metrics and conformance over a set of runs (one read of their steps). */
+  private async stats(orgId: string, runs: OrgProcessRun[]): Promise<{ metrics: ProcessMetrics; conformance: ProcessConformance; steps: OrgProcessStep[] }> {
     const org = await this.org.get(orgId);
-    const window = processTunable(org, 'process.metricsWindowRuns');
-    const runs = (await this.runs(orgId, { processId, limit: window }));
     const steps = runs.length ? await this.db.select().from(orgProcessSteps).where(and(eq(orgProcessSteps.orgId, orgId), inArray(orgProcessSteps.runId, runs.map((r) => r.id)))) : [];
-    const taskIds = steps.map((s) => s.taskId).filter((x): x is string => Boolean(x));
+    const forward = steps.filter((s) => !isCoordinator(s.nodeId) && !isUndo(s.nodeId));
+    const taskIds = forward.map((s) => s.taskId).filter((x): x is string => Boolean(x));
     const rounds = new Map<string, number>();
     if (taskIds.length) for (const t of await this.db.select({ id: orgTasks.id, reviewRounds: orgTasks.reviewRounds }).from(orgTasks).where(inArray(orgTasks.id, taskIds))) rounds.set(t.id, t.reviewRounds);
-    const m = computeMetrics(runs, steps.filter((s) => !isCoordinator(s.nodeId)).map((s) => ({
+    const metrics = computeMetrics(runs, forward.map((s) => ({
       nodeId: s.nodeId.startsWith(ADHOC) ? 'ad-hoc' : s.nodeId, status: s.status, attempt: s.attempt, deviations: parse<Deviation[]>(s.deviations, []).length,
       reviewRounds: s.taskId ? rounds.get(s.taskId) ?? 0 : 0, slaBreached: Boolean(s.slaBreachedAt), startedAt: s.startedAt, endedAt: s.endedAt,
     })), { reviseDeviationRate: processTunable(org, 'process.reviseDeviationRate') });
+    const defs = new Map<string, ProcessDef | null>();
+    for (const r of runs) if (!defs.has(r.versionId)) defs.set(r.versionId, await this.version(orgId, r.versionId).then((v) => this.defOf(v)).catch(() => null));
+    const versionOf = new Map(runs.map((r) => [r.id, r.versionId]));
+    const byRun = new Map<string, OrgProcessStep[]>();
+    for (const s of forward) byRun.set(s.runId, [...(byRun.get(s.runId) ?? []), s]);
+    const facts: ConformanceFacts[] = forward.map((s) => {
+      const def = defs.get(versionOf.get(s.runId) ?? '') ?? null;
+      const strict = def?.stages.find((x) => x.id === s.stage)?.mode === 'strict';
+      return {
+        runId: s.runId, nodeId: s.nodeId, strict, adHoc: s.nodeId.startsWith(ADHOC), status: s.status,
+        deviations: parse<Deviation[]>(s.deviations, []).map((d) => ({ level: d.level, status: d.status })),
+        outOfOrder: Boolean(strict && def && this.outOfOrder(def, s, byRun.get(s.runId) ?? [])),
+      };
+    });
+    return { metrics, conformance: computeConformance(facts, { alertBelow: processTunable(org, 'process.conformanceAlert') }), steps };
+  }
+
+  /** A strict step that started while a step it waits on (a forward edge) had not finished. */
+  private outOfOrder(def: ProcessDef, s: OrgProcessStep, runSteps: OrgProcessStep[]): boolean {
+    if (s.status === 'skipped') return false;
+    const back = backEdges(def, s.stage);
+    const preds = def.edges.filter((e) => e.to === s.nodeId && !back.some((b) => b.from === e.from && b.to === e.to)).map((e) => e.from);
+    return preds.some((p) => !runSteps.some((x) => x.nodeId === p && (x.status === 'done' || x.status === 'skipped') && x.endedAt !== null && x.endedAt <= s.startedAt));
+  }
+
+  private async windowRuns(orgId: string, processId: string): Promise<OrgProcessRun[]> {
+    return this.runs(orgId, { processId, limit: processTunable(await this.org.get(orgId), 'process.metricsWindowRuns') });
+  }
+
+  async metrics(orgId: string, processId: string, opts: { markReviewed?: string } = {}): Promise<ProcessMetrics> {
+    const m = (await this.stats(orgId, await this.windowRuns(orgId, processId))).metrics;
     if (opts.markReviewed) {
       await this.db.update(orgProcesses).set({ reviewedAt: nowIso() }).where(eq(orgProcesses.id, processId));
       await this.log(orgId, processId, '', '', 'reviewed', opts.markReviewed, { health: m.health });
@@ -1330,25 +1585,35 @@ export class OrgProcessesService {
     return m;
   }
 
-  /** Every process with its owner, mode, version and metrics (the list and the tools). */
-  async overview(orgId: string, opts: { includeRetired?: boolean } = {}): Promise<Array<OrgProcess & { mode: string; ownerAgentId: string | null; ownerName: string; unitName: string; triggers: ProcessDef['triggers']; metrics: ProcessMetrics; reviewDue: boolean; pendingVersion: number | null }>> {
+  /** Did the recent runs follow the definition (docs/processes.md "Conformance"). */
+  async conformance(orgId: string, processId: string): Promise<ProcessConformance> {
+    return (await this.stats(orgId, await this.windowRuns(orgId, processId))).conformance;
+  }
+
+  /** Every process with its owner, mode, version, metrics, conformance and ramp (the list and the tools). */
+  async overview(orgId: string, opts: { includeRetired?: boolean } = {}): Promise<Array<OrgProcess & { mode: string; ownerAgentId: string | null; ownerName: string; unitName: string; triggers: ProcessDef['triggers']; metrics: ProcessMetrics; conformance: ProcessConformance; reviewDue: boolean; pendingVersion: number | null; rollout: { candidateVersion: number; percent: number; verdict: string } | null }>> {
     const org = await this.org.get(orgId);
     const names = new Map((await this.agents.list()).map((a) => [a.id, a.name]));
     const days = processTunable(org, 'process.reviewCadenceDays');
     const out = [];
     for (const p of await this.list(orgId, opts)) {
       const def = await this.activeDef(orgId, p).catch(() => null);
-      const pendingRow = (await this.versions(orgId, p.id)).find((v) => v.status === 'pending');
+      const versions = await this.versions(orgId, p.id);
+      const pendingRow = versions.find((v) => v.status === 'pending');
+      const cand = p.candidateVersionId ? versions.find((v) => v.id === p.candidateVersionId) : undefined;
       const owner = def ? await this.ownerFor(org, p, def) : org.chiefOfStaffAgentId;
       const unit = p.unitId && this.units ? await this.units.get(orgId, p.unitId).catch(() => null) : null;
-      const metrics = await this.metrics(orgId, p.id);
+      const { metrics, conformance } = await this.stats(orgId, await this.windowRuns(orgId, p.id));
       const reviewDue = p.status === 'active' && metrics.runs > 0 && (!p.reviewedAt || Date.now() - Date.parse(p.reviewedAt) > days * 86_400_000);
-      out.push({ ...p, mode: def ? modeOf(def) : 'strict', ownerAgentId: owner, ownerName: owner ? names.get(owner) ?? 'member' : 'the CEO', unitName: unit?.name ?? 'Company', triggers: def?.triggers ?? [], metrics, reviewDue, pendingVersion: pendingRow?.version ?? null });
+      out.push({
+        ...p, mode: def ? modeOf(def) : 'strict', ownerAgentId: owner, ownerName: owner ? names.get(owner) ?? 'member' : 'the CEO', unitName: unit?.name ?? 'Company', triggers: def?.triggers ?? [],
+        metrics, conformance, reviewDue, pendingVersion: pendingRow?.version ?? null, rollout: cand ? { candidateVersion: cand.version, percent: p.rampPct, verdict: p.rampVerdict || 'collecting' } : null,
+      });
     }
     return out;
   }
 
-  /** One process for the detail page: definition, versions with diffs, runs with their steps. */
+  /** One process for the detail page: definition, versions with diffs, runs with their steps, the ramp, its suggestions. */
   async detail(orgId: string, ref: string): Promise<Record<string, unknown>> {
     const p = await this.get(orgId, ref);
     const all = await this.overview(orgId, { includeRetired: true });
@@ -1363,26 +1628,336 @@ export class OrgProcessesService {
       const stepRows = [];
       for (const s of steps) {
         const t = s.taskId ? await this.tasks.get(orgId, s.taskId).catch(() => null) : null;
-        stepRows.push({ ...s, title: isCoordinator(s.nodeId) ? `Stage ${s.stage}: choose the steps` : (rdef ? this.nodeOf(rdef, s)?.title : null) ?? s.nodeId, taskKey: t ? taskRef(t) : null, taskStatus: t?.status ?? null, assigneeAgentId: t?.assigneeAgentId ?? null, outputs: parse(s.outputs, {}), deviations: parse(s.deviations, []) });
+        const title = isCoordinator(s.nodeId) ? `Stage ${s.stage}: choose the steps` : (rdef ? this.nodeOf(rdef, s)?.title : null) ?? s.nodeId;
+        stepRows.push({ ...s, title, taskKey: t ? taskRef(t) : null, taskStatus: t?.status ?? null, assigneeAgentId: t?.assigneeAgentId ?? null, outputs: parse(s.outputs, {}), deviations: parse(s.deviations, []) });
       }
       runRows.push({ ...r, vars: parse(r.vars, {}), trigger: parse(r.trigger, {}), steps: stepRows });
     }
     return {
       process: head, def, versions: versions.map((v) => ({ ...v, def: parse(v.def, {}), diff: parse<string[]>(v.diff, []) })), runs: runRows,
       events: (await this.events(orgId, { processId: p.id, limit: 80 })).map((e) => ({ ...e, detail: parse(e.detail, {}) })),
+      rollout: await this.rollout(orgId, p.id).catch(() => null),
+      suggestions: (await this.suggestions(orgId)).filter((x) => x.processId === p.id).map((x) => this.suggestionView(x)),
     };
   }
 
-  /** Lines for the chief's and the heads' context: processes to revise or review. */
+  /** Lines for the chief's and the heads' context: outcomes and conformance apart, ramps to decide, suggestions. */
   async attentionFor(orgId: string, agentId: string): Promise<string[]> {
     const org = await this.org.get(orgId);
-    const mine = (await this.overview(orgId)).filter((p) => p.ownerAgentId === agentId || agentId === org.chiefOfStaffAgentId);
+    const chief = agentId === org.chiefOfStaffAgentId;
+    const mine = (await this.overview(orgId)).filter((p) => p.ownerAgentId === agentId || chief);
+    const auto = processTunable(org, 'process.rampAuto') >= 1;
     const out: string[] = [];
     for (const p of mine) {
       if (p.metrics.health === 'revise') out.push(`${p.name} (${p.title}) needs revising: ${p.metrics.why}`);
       else if (p.reviewDue) out.push(`${p.name} (${p.title}): review due — ${p.metrics.runs} run(s), ${p.metrics.completionRate === null ? 'none finished' : `${Math.round(p.metrics.completionRate * 100)}% completed`} (org_process_metrics)`);
+      if (p.conformance.verdict === 'drifting') out.push(`${p.name} conformance (apart from outcomes): ${p.conformance.why}`);
       if (p.pendingVersion) out.push(`${p.name}: v${p.pendingVersion} waits for approval`);
+      if (p.rollout && !auto && (p.rollout.verdict === 'promote' || p.rollout.verdict === 'rollback')) out.push(`${p.name}: the v${p.rollout.candidateVersion} ramp says ${p.rollout.verdict} — org_process_rollout {process: "${p.name}", action: "${p.rollout.verdict}"}`);
     }
-    return out.slice(0, 6);
+    for (const sg of (await this.suggestions(orgId)).filter((x) => x.status === 'open' && (x.ownerAgentId === agentId || (chief && !x.ownerAgentId))).slice(0, 2)) {
+      const t = sg.taskId ? await this.tasks.get(orgId, sg.taskId).catch(() => null) : null;
+      out.push(`suggested: ${sg.title}${t ? ` (${taskRef(t)})` : ''}`);
+    }
+    return out.slice(0, 8);
+  }
+
+  // ---- ramped rollout ----
+
+  /** The ramped version against the stable one, or null when nothing ramps. */
+  async rollout(orgId: string, ref: string): Promise<ProcessRollout | null> {
+    const p = await this.get(orgId, ref);
+    if (!p.candidateVersionId || !p.versionId) return null;
+    const org = await this.org.get(orgId);
+    const cand = await this.version(orgId, p.candidateVersionId).catch(() => null);
+    if (!cand) return null;
+    const all = await this.runs(orgId, { processId: p.id });
+    const stable = (await this.stats(orgId, all.filter((r) => r.versionId === p.versionId).slice(0, processTunable(org, 'process.metricsWindowRuns')))).metrics;
+    const candidate = (await this.stats(orgId, all.filter((r) => r.versionId === cand.id))).metrics;
+    const cmp = compareCohorts(stable, candidate, { minRuns: processTunable(org, 'process.rampMinRuns'), tolerance: processTunable(org, 'process.rampTolerance') });
+    return { ...cmp, stableVersion: p.version, candidateVersion: cand.version, candidateVersionId: cand.id, percent: p.rampPct, startedAt: p.rampStartedAt, auto: processTunable(org, 'process.rampAuto') >= 1, stable, candidate };
+  }
+
+  private async mayRamp(orgId: string, p: OrgProcess, actor: string): Promise<void> {
+    if (!(await this.owns(orgId, actor, p.unitId))) throw new BadRequestException(`refused: the ramp of ${p.title} is its owner's to decide (the chief, or the head of its department) — tell them what the comparison shows`);
+  }
+
+  /** Promote the ramped version: it takes every new run; runs on the old one finish there. */
+  async promote(orgId: string, ref: string, reason: string, actor: string): Promise<OrgProcess> {
+    const p = await this.get(orgId, ref);
+    if (!p.candidateVersionId) throw new BadRequestException(`${p.title} has no version ramping`);
+    await this.mayRamp(orgId, p, actor);
+    const cand = await this.version(orgId, p.candidateVersionId);
+    await this.log(orgId, p.id, '', '', 'ramp_promoted', actor, { version: cand.version, reason: reason.slice(0, 300) });
+    return this.activate(orgId, cand.id, actor, { ramp: 0 });
+  }
+
+  /** Roll the ramp back: the candidate takes no more runs (its open runs finish on it). */
+  async rollbackRamp(orgId: string, ref: string, reason: string, actor: string): Promise<OrgProcess> {
+    const p = await this.get(orgId, ref);
+    if (!p.candidateVersionId) throw new BadRequestException(`${p.title} has no version ramping`);
+    await this.mayRamp(orgId, p, actor);
+    const cand = await this.version(orgId, p.candidateVersionId);
+    await this.db.update(orgProcessVersions).set({ status: 'rolled_back' }).where(eq(orgProcessVersions.id, cand.id));
+    await this.db.update(orgProcesses).set({ candidateVersionId: null, rampPct: 0, rampStartedAt: null, rampVerdict: '', updatedAt: nowIso() }).where(eq(orgProcesses.id, p.id));
+    await this.log(orgId, p.id, '', '', 'ramp_rolled_back', actor, { version: cand.version, reason: reason.slice(0, 300) });
+    await this.audit.append(orgId, { actor, action: 'process_ramp_rollback', refType: 'process', refId: p.id, payload: { version: cand.version, reason: reason.slice(0, 200) } });
+    return this.get(orgId, p.id);
+  }
+
+  /** Change the share of new runs the ramped version takes (1–90). */
+  async setRamp(orgId: string, ref: string, percent: number, actor: string): Promise<OrgProcess> {
+    const p = await this.get(orgId, ref);
+    if (!p.candidateVersionId) throw new BadRequestException(`${p.title} has no version ramping`);
+    await this.mayRamp(orgId, p, actor);
+    const pct = Math.round(Number(percent));
+    if (!(pct >= 1 && pct <= 90)) throw new BadRequestException('percent is 1–90 (promote it to give it every run)');
+    await this.db.update(orgProcesses).set({ rampPct: pct, updatedAt: nowIso() }).where(eq(orgProcesses.id, p.id));
+    await this.log(orgId, p.id, '', '', 'ramp_changed', actor, { percent: pct });
+    return this.get(orgId, p.id);
+  }
+
+  /** A ramp's verdict changed: the owner is told — or, by `process.rampAuto`, the engine promotes or rolls back. */
+  private async rolloutCheck(orgId: string): Promise<void> {
+    const org = await this.org.get(orgId);
+    for (const p of (await this.list(orgId)).filter((x) => x.candidateVersionId)) {
+      const r = await this.rollout(orgId, p.id).catch(() => null);
+      if (!r || r.verdict === p.rampVerdict) continue;
+      await this.db.update(orgProcesses).set({ rampVerdict: r.verdict }).where(eq(orgProcesses.id, p.id));
+      await this.log(orgId, p.id, '', '', 'ramp_verdict', 'engine', { verdict: r.verdict, why: r.why, candidate: r.candidateVersion });
+      if (r.verdict === 'collecting') continue;
+      if (r.auto) {
+        if (r.verdict === 'promote') await this.promote(orgId, p.id, `ramp verdict: ${r.why}`, 'engine');
+        else await this.rollbackRamp(orgId, p.id, `ramp verdict: ${r.why}`, 'engine');
+        continue;
+      }
+      const def = await this.activeDef(orgId, p).catch(() => null);
+      const owner = def ? await this.ownerFor(org, p, def) : org.chiefOfStaffAgentId;
+      if (owner) await this.agents.addEvent(owner, { kind: 'info', title: `${p.title} v${r.candidateVersion} ramp: ${r.verdict === 'promote' ? 'ready to promote' : `worse than v${r.stableVersion}`}`.slice(0, 200), body: `${r.why}. org_process_rollout {process: "${p.name}", action: "${r.verdict}"}`.slice(0, 1_000), payload: JSON.stringify({ orgId, processId: p.id }), origin: 'loop' }).catch(() => undefined);
+    }
+  }
+
+  // ---- suggestions: discovery and revisions ----
+
+  private readonly lastDiscovery = new Map<string, number>();
+
+  /** The five-minute pass after the sweep: ramp verdicts; discovery and revisions every few hours. */
+  async periodic(orgId: string, now: Date = new Date()): Promise<void> {
+    await this.rolloutCheck(orgId).catch(() => undefined);
+    if (now.getTime() - (this.lastDiscovery.get(orgId) ?? 0) < DISCOVERY_EVERY_MS) return;
+    this.lastDiscovery.set(orgId, now.getTime());
+    await this.suggestRevisions(orgId).catch(() => undefined);
+    await this.discover(orgId, now).catch(() => undefined);
+  }
+
+  async suggestions(orgId: string, opts: { status?: string } = {}): Promise<OrgProcessSuggestion[]> {
+    const rows = await this.db.select().from(orgProcessSuggestions).where(eq(orgProcessSuggestions.orgId, orgId)).orderBy(desc(orgProcessSuggestions.createdAt));
+    return rows.filter((r) => !opts.status || r.status === opts.status);
+  }
+
+  suggestionView(s: OrgProcessSuggestion): Record<string, unknown> {
+    return { ...s, evidence: parse(s.evidence, []), draft: s.draft ? parse(s.draft, null) : null };
+  }
+
+  /** The unit's head for a department's pattern, else the chief (the company's). */
+  private async ownerOfUnit(org: Organization, unitId: string | null): Promise<{ unitId: string | null; ownerAgentId: string | null; unitName: string }> {
+    if (unitId && this.units) {
+      const u = await this.units.get(org.id, unitId).catch(() => null);
+      const m = u?.parentUnitId ? await this.org.member(org.id, u.leadAgentId).catch(() => null) : null;
+      if (u && m?.status === 'active') return { unitId: u.id, ownerAgentId: u.leadAgentId, unitName: u.name };
+    }
+    return { unitId: null, ownerAgentId: org.chiefOfStaffAgentId, unitName: 'the company' };
+  }
+
+  /**
+   * A step most recent runs deviate from (`process.reviseDeviationRate`,
+   * over at least three executions) becomes a revision suggestion for the
+   * process owner, once per version and step, with the deviations recorded
+   * on it as the evidence.
+   */
+  async suggestRevisions(orgId: string): Promise<OrgProcessSuggestion[]> {
+    const org = await this.org.get(orgId);
+    const rate = processTunable(org, 'process.reviseDeviationRate');
+    const out: OrgProcessSuggestion[] = [];
+    for (const p of (await this.list(orgId)).filter((x) => x.status === 'active' && x.versionId)) {
+      const runs = await this.windowRuns(orgId, p.id);
+      const { metrics, steps } = await this.stats(orgId, runs);
+      const hot = metrics.steps.filter((x) => x.nodeId !== 'ad-hoc' && x.executions >= 3 && x.deviationRate >= rate);
+      if (!hot.length) continue;
+      const def = await this.activeDef(orgId, p);
+      const owner = def ? await this.ownerFor(org, p, def) : org.chiefOfStaffAgentId;
+      const keyOf = new Map(runs.map((r) => [r.id, r.key]));
+      for (const st of hot) {
+        const title = def?.nodes.find((n) => n.id === st.nodeId)?.title ?? st.nodeId;
+        const evidence = steps.filter((s) => s.nodeId === st.nodeId).flatMap((s) => parse<Deviation[]>(s.deviations, []).map((d) => ({ ref: keyOf.get(s.runId) ?? s.runId, title: `${d.level.toUpperCase()} ${d.item}: ${d.reason}`.slice(0, 120), at: d.at }))).slice(0, 8);
+        const row = await this.submitSuggestion(orgId, {
+          kind: 'revise', key: `revise:${p.id}:v${p.version}:${st.nodeId}`, title: `Revise process: ${p.title} — step "${title}"`.slice(0, 200),
+          summary: `Step "${title}" deviated in ${Math.round(st.deviationRate * 100)}% of its last ${st.executions} runs (this company flags ${Math.round(rate * 100)}%): a standard nobody follows is the standard's problem. Change the step, split it or drop the item, with this evidence as the reason.`,
+          count: st.deviations, evidence: JSON.stringify(evidence), draft: '', unitId: p.unitId, ownerAgentId: owner, processId: p.id,
+        });
+        if (row) out.push(row);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Discover processes from experience (model-free; docs/processes.md
+   * "Discovery"): the task history of the last `process.discoveryWindowDays`
+   * days and the ad-hoc steps of process runs are mined
+   * (process-discovery.ts); a pattern seen `process.discoveryRepeats` times
+   * that no process covers becomes a suggestion for its owner — the head of
+   * the department the work lands in, else the chief — with a drafted
+   * definition. Each pattern is suggested once (its key); a dismissed one
+   * stays dismissed.
+   */
+  async discover(orgId: string, now: Date = new Date()): Promise<OrgProcessSuggestion[]> {
+    const org = await this.org.get(orgId);
+    const minRepeats = processTunable(org, 'process.discoveryRepeats');
+    if (minRepeats <= 0) return [];
+    const existing = await this.suggestions(orgId);
+    for (const r of existing.filter((x) => x.status === 'open' && !x.taskId)) await this.workSuggestion(orgId, r);
+    const since = new Date(now.getTime() - processTunable(org, 'process.discoveryWindowDays') * 86_400_000).toISOString();
+    const titleOf = new Map((await this.org.members(orgId)).map((m) => [m.agentId, m.title ?? '']));
+    // A member's own department: the one it leads, else the one it works in.
+    const unitOf = new Map<string, string | null>();
+    const unitFor = async (agentId: string): Promise<string | null> => {
+      if (!unitOf.has(agentId)) unitOf.set(agentId, this.units ? ((await this.units.ledBy(orgId, agentId).catch(() => null)) ?? (await this.units.unitForAssignee(orgId, agentId).catch(() => null)))?.id ?? null : null);
+      return unitOf.get(agentId) ?? null;
+    };
+    // Work handed down the line (the chief, a head to its sub-units) is delegation, not a request.
+    const parentOf = new Map((this.units ? await this.units.units(orgId).catch(() => []) : []).map((u) => [u.id, u.parentUnitId]));
+    const above = (a: string, b: string | null): boolean => { for (let u = b ? parentOf.get(b) ?? null : null, i = 0; u && i < 20; u = parentOf.get(u) ?? null, i++) if (u === a) return true; return false; };
+    const facts: TaskFact[] = [];
+    for (const t of (await this.tasks.list(orgId)).filter((x) => x.source !== 'process' && x.status !== 'cancelled' && x.createdAt >= since)) {
+      const creator = t.createdBy.startsWith('agent:') ? t.createdBy.slice(6) : null;
+      const creatorUnit = creator ? await unitFor(creator) : null;
+      facts.push({
+        id: t.id, ref: taskRef(t), title: t.title, createdAt: t.createdAt, class: t.class && t.class !== 'general' ? t.class : null, unitId: t.unitId ?? null, parentTaskId: t.parentTaskId ?? null,
+        dependsOn: parse<string[]>(t.dependsOn, []), creatorUnitId: creatorUnit && !above(creatorUnit, t.unitId ?? null) ? creatorUnit : null,
+        assigneeTitle: t.assigneeAgentId ? titleOf.get(t.assigneeAgentId) || null : null, doneWhen: String(parse<Record<string, unknown>>(t.brief, {}).done_when ?? '').slice(0, 300),
+      });
+    }
+    const runs = (await this.runs(orgId, { limit: 500 })).filter((r) => r.startedAt >= since);
+    const runById = new Map(runs.map((r) => [r.id, r]));
+    const adHoc: AdHocFact[] = (runs.length ? await this.db.select().from(orgProcessSteps).where(and(eq(orgProcessSteps.orgId, orgId), inArray(orgProcessSteps.runId, runs.map((r) => r.id)))) : [])
+      .filter((s) => s.nodeId.startsWith(ADHOC))
+      .map((s) => ({ processId: runById.get(s.runId)!.processId, runId: s.runId, stage: s.stage, title: parse<ProcessNode | null>(s.spec, null)?.title ?? s.nodeId, at: s.startedAt }));
+    const procs = await this.list(orgId);
+    const words: string[][] = [];
+    const intake = new Set<string>();
+    for (const p of procs) {
+      words.push(titleWords(p.title));
+      const def = await this.activeDef(orgId, p).catch(() => null);
+      for (const n of def?.nodes ?? []) words.push(titleWords(n.title));
+      if (p.unitId && def?.triggers.some((t) => t.kind === 'service_request')) intake.add(p.unitId);
+    }
+    const covered = (stem: string) => { const w = stem.split(' '); return words.some((t) => w.every((x) => t.includes(x))); };
+    const keys = new Map(existing.map((x) => [x.key, x]));
+    const out: OrgProcessSuggestion[] = [];
+    for (const pat of minePatterns(facts, adHoc, { minRepeats, covered, intakeUnits: intake })) {
+      const had = keys.get(pat.key);
+      if (had) {
+        if (had.status === 'open' && pat.count > had.count) await this.db.update(orgProcessSuggestions).set({ count: pat.count, evidence: JSON.stringify(pat.evidence), updatedAt: nowIso() }).where(eq(orgProcessSuggestions.id, had.id));
+        continue;
+      }
+      const row = await this.submitSuggestion(orgId, await this.suggestionFor(org, pat));
+      if (row) out.push(row);
+    }
+    return out;
+  }
+
+  /** A pattern as a suggestion: its owner, words and draft. */
+  private async suggestionFor(org: Organization, pat: DiscoveredPattern): Promise<Omit<OrgProcessSuggestion, 'accountId' | 'id' | 'orgId' | 'status' | 'taskId' | 'proposalRef' | 'createdAt' | 'updatedAt'>> {
+    const base = { kind: pat.kind, key: pat.key, count: pat.count, evidence: JSON.stringify(pat.evidence) };
+    if (pat.kind === 'adhoc_step') {
+      const p = await this.get(org.id, pat.processId!).catch(() => null);
+      const def = p ? await this.activeDef(org.id, p).catch(() => null) : null;
+      const owner = p && def ? await this.ownerFor(org, p, def) : org.chiefOfStaffAgentId;
+      const stage = def?.stages.find((x) => x.id === pat.stage);
+      return { ...base, title: `Add a step to ${p?.title ?? 'a process'}: ${pat.label}`.slice(0, 200), summary: `Runs of ${p?.title ?? 'the process'} added "${pat.label}" as an ad-hoc step ${pat.count} times${stage ? ` in stage "${stage.title}"` : ''}: the definition is missing it. Add it as a defined step (with when it is available), or say why it stays ad hoc.`, draft: '', unitId: p?.unitId ?? null, ownerAgentId: owner, processId: p?.id ?? null };
+    }
+    const o = await this.ownerOfUnit(org, pat.unitId);
+    const draft = draftProcess({ ...pat, unitId: o.unitId });
+    const title = pat.kind === 'cross_function' ? `Draft an intake process: ${pat.label}` : `Draft process: ${pat.label}`;
+    const summary = pat.kind === 'recurring' ? `"${pat.label}" was done ${pat.count} times by hand with no process.`
+      : pat.kind === 'sequence' ? `The same ${pat.steps.length} steps followed each other in ${pat.count} chains of tasks: ${pat.label}.`
+        : `Other departments asked ${o.unitName} for "${pat.label}" ${pat.count} times: an intake process (triage, the work, a hand-back) would take these requests.`;
+    return { ...base, title: title.slice(0, 200), summary, draft: draft ? JSON.stringify(draft) : '', unitId: o.unitId, ownerAgentId: o.ownerAgentId, processId: null };
+  }
+
+  /**
+   * THE place a suggestion becomes the owner's work (switch here to
+   * improvement proposals): the row, once per pattern key, then the owner's
+   * work item. Today that is an ordinary task — "Draft process: …", "Revise
+   * process: …" — with the evidence and the engine's draft; the owner (an
+   * agent) refines the body and authors it, or cancels the task with why, so
+   * the engine itself stays model-free. When improvement proposals
+   * (org_improvements, `createProposal`) are present, create the proposal in
+   * `workSuggestion` instead and record it in `proposalRef`. At most
+   * MAX_OPEN_SUGGESTIONS are open at once.
+   */
+  private async submitSuggestion(orgId: string, input: Omit<OrgProcessSuggestion, 'accountId' | 'id' | 'orgId' | 'status' | 'taskId' | 'proposalRef' | 'createdAt' | 'updatedAt'>): Promise<OrgProcessSuggestion | null> {
+    const open = (await this.db.select({ id: orgProcessSuggestions.id }).from(orgProcessSuggestions).where(and(eq(orgProcessSuggestions.orgId, orgId), eq(orgProcessSuggestions.status, 'open')))).length;
+    if (open >= MAX_OPEN_SUGGESTIONS) return null;
+    const now = nowIso();
+    const inserted = await this.db.insert(orgProcessSuggestions).values({ accountId: currentAccountId(), id: newId(), orgId, ...input, status: 'open', taskId: null, proposalRef: '', createdAt: now, updatedAt: now }).onConflictDoNothing().returning();
+    if (!inserted.length) return null;
+    await this.workSuggestion(orgId, inserted[0]);
+    return (await this.db.select().from(orgProcessSuggestions).where(eq(orgProcessSuggestions.id, inserted[0].id)).limit(1)).at(0) ?? null;
+  }
+
+  /** The owner's work item for a suggestion (a task today; see submitSuggestion). */
+  private async workSuggestion(orgId: string, row: OrgProcessSuggestion): Promise<void> {
+    const evidence = parse<Array<{ ref: string; title: string }>>(row.evidence, []);
+    const p = row.processId ? await this.get(orgId, row.processId).catch(() => null) : null;
+    const revision = row.kind === 'revise' || row.kind === 'adhoc_step';
+    const brief = {
+      outcome: revision ? `"${p?.title ?? 'the process'}" is revised from what its runs show — or this task is cancelled with why it stays as it is.` : `A decision on whether this work becomes a process: if yes, it exists (refine the draft, then org_process_author {name, def, reason} with the evidence as the reason); if no, this task is cancelled with why.`,
+      context: [row.summary, evidence.length ? `Evidence: ${evidence.map((e) => `${e.ref} "${e.title}"`).join('; ')}.` : '', row.draft ? `The engine's draft (org_processes suggestions=true shows it whole): ${row.draft}` : (p ? `Read it with org_process {process: "${p.name}"}.` : '')].filter(Boolean).join(' ').slice(0, 2_000),
+      constraints: 'A process is for work that recurs, hands off or carries risk: keep the steps few, the lanes roles, the MUST items checkable.',
+      done_when: revision ? 'a new version is written with the evidence as its reason (org_process_author), or the task is cancelled with why' : 'the process exists (org_process_author), or the task is cancelled with why it should not',
+    };
+    try {
+      const task = await this.tasks.create(orgId, {
+        title: row.title.slice(0, 200), brief, projectId: await this.operatingProject(orgId, row.unitId), unitId: row.unitId ?? undefined,
+        assigneeAgentId: row.ownerAgentId, status: row.ownerAgentId ? 'todo' : 'backlog', createdBy: 'process:suggestion', source: 'process',
+      });
+      await this.db.update(orgProcessSuggestions).set({ taskId: task.id, proposalRef: `task:${task.id}`, updatedAt: nowIso() }).where(eq(orgProcessSuggestions.id, row.id));
+      await this.log(orgId, row.processId ?? '', '', '', 'suggested', 'engine', { kind: row.kind, key: row.key, taskId: task.id });
+    } catch (err) {
+      await this.log(orgId, row.processId ?? '', '', '', 'suggest_failed', 'engine', { key: row.key, error: err instanceof Error ? err.message.slice(0, 300) : String(err) });
+    }
+  }
+
+  /** The owner finished or cancelled a suggestion's task. */
+  private async suggestionSettled(orgId: string, taskId: string, to: 'done' | 'cancelled'): Promise<void> {
+    const row = (await this.db.select().from(orgProcessSuggestions).where(and(eq(orgProcessSuggestions.orgId, orgId), eq(orgProcessSuggestions.taskId, taskId))).limit(1)).at(0);
+    if (!row || row.status !== 'open') return;
+    await this.db.update(orgProcessSuggestions).set({ status: to === 'done' ? 'accepted' : 'dismissed', updatedAt: nowIso() }).where(eq(orgProcessSuggestions.id, row.id));
+    await this.log(orgId, row.processId ?? '', '', '', to === 'done' ? 'suggestion_accepted' : 'suggestion_dismissed', 'engine', { key: row.key, taskId });
+  }
+
+  /** A person accepts (a drafted process is created from the draft) or dismisses a suggestion. */
+  async decideSuggestion(orgId: string, id: string, action: 'accept' | 'dismiss', reason: string, actor: string): Promise<OrgProcessSuggestion> {
+    const row = (await this.db.select().from(orgProcessSuggestions).where(and(eq(orgProcessSuggestions.orgId, orgId), eq(orgProcessSuggestions.id, id))).limit(1)).at(0);
+    if (!row) throw new NotFoundException(`no suggestion ${id}`);
+    if (row.status !== 'open') return row;
+    let processId = row.processId;
+    if (action === 'accept' && row.draft) {
+      const r = await this.author(orgId, { def: parse(row.draft, {}), unitId: row.unitId, reason: `${reason || 'accepted'} — from the suggestion: ${row.summary}`.slice(0, 600) }, actor);
+      processId = r.process.id;
+    }
+    await this.db.update(orgProcessSuggestions).set({ status: action === 'accept' ? 'accepted' : 'dismissed', processId, updatedAt: nowIso() }).where(eq(orgProcessSuggestions.id, row.id));
+    await this.log(orgId, processId ?? '', '', '', action === 'accept' ? 'suggestion_accepted' : 'suggestion_dismissed', actor, { key: row.key, reason: reason.slice(0, 300) });
+    // A drafted process now exists, or the suggestion is dismissed: the owner's task is moot. A revision stays the owner's to write.
+    if (row.taskId && (action === 'dismiss' || row.draft)) {
+      const t = await this.tasks.get(orgId, row.taskId).catch(() => null);
+      if (t && !['done', 'cancelled'].includes(t.status)) {
+        await this.tasks.comment(orgId, t.id, { text: action === 'accept' ? 'The CEO created the process from the draft; nothing left to do here.' : `The CEO dismissed this suggestion${reason ? `: ${reason}` : ''}.`, fromAgentId: null, wake: false, system: true }).catch(() => undefined);
+        await this.tasks.update(orgId, t.id, { status: 'cancelled' }, actor).catch(() => undefined);
+      }
+    }
+    return (await this.db.select().from(orgProcessSuggestions).where(eq(orgProcessSuggestions.id, row.id)).limit(1)).at(0)!;
   }
 }

@@ -2,8 +2,10 @@
  *  for health, run and step states, the strict graph laid out in columns
  *  (each step one column right of the steps it waits on; loop edges drawn
  *  as "back to"), a dynamic step's availability as a sentence, trigger
- *  words and the author of a version. The page is OrgProcessesView.tsx. */
-import type { OrgProcess, ProcessDef, ProcessMetrics, ProcessNodeDef, ProcessTriggerDef } from './api';
+ *  words and the author of a version; a meeting step and the compensations
+ *  in words, a ramp's comparison as rows, conformance and suggestion words.
+ *  The page is OrgProcessesView.tsx. */
+import type { OrgProcess, ProcessConformance, ProcessDef, ProcessMetrics, ProcessNodeDef, ProcessRollout, ProcessSuggestion, ProcessTriggerDef } from './api';
 import type { Tone } from './direction';
 
 export const HEALTH_WORD: Record<ProcessMetrics['health'], string> = { new: 'No runs yet', healthy: 'Healthy', watch: 'Watch', revise: 'Needs revising' };
@@ -46,9 +48,12 @@ export function authorWords(author: string, nameOf: (agentId: string) => string 
   return 'a person';
 }
 
+/** The steps a stage walks (compensation steps stand outside every stage). */
+export const stageNodes = (def: ProcessDef, stageId: string): ProcessNodeDef[] => def.nodes.filter((n) => !n.compensation && (n.stage ?? def.stages[0]?.id) === stageId);
+
 /** Edges that close a loop (the same DFS the engine uses). */
 export function loopEdges(def: ProcessDef, stageId: string): Array<{ from: string; to: string }> {
-  const ids = new Set(def.nodes.filter((n) => (n.stage ?? def.stages[0]?.id) === stageId).map((n) => n.id));
+  const ids = new Set(stageNodes(def, stageId).map((n) => n.id));
   const edges = def.edges.filter((e) => ids.has(e.from) && ids.has(e.to));
   const out: Array<{ from: string; to: string }> = [];
   const state = new Map<string, number>();
@@ -69,7 +74,7 @@ export function loopEdges(def: ProcessDef, stageId: string): Array<{ from: strin
 
 /** A strict stage in columns: each step one column right of the latest step it waits on. */
 export function layoutStage(def: ProcessDef, stageId: string): ProcessNodeDef[][] {
-  const nodes = def.nodes.filter((n) => (n.stage ?? def.stages[0]?.id) === stageId);
+  const nodes = stageNodes(def, stageId);
   const back = loopEdges(def, stageId);
   const fwd = def.edges.filter((e) => nodes.some((n) => n.id === e.from) && nodes.some((n) => n.id === e.to) && !back.some((b) => b.from === e.from && b.to === e.to));
   const level = new Map<string, number>();
@@ -113,7 +118,33 @@ export function availabilityWords(def: ProcessDef, n: ProcessNodeDef): string {
   return parts.length ? `Available when ${parts.join(' and ')}` : 'Available from the start of the stage';
 }
 
-export const KIND_WORD: Record<string, string> = { task: 'Task', approval: 'Approval', wait: 'Wait', subprocess: 'Sub-process', stage: 'Stage' };
+export const KIND_WORD: Record<string, string> = { task: 'Task', approval: 'Approval', wait: 'Wait', subprocess: 'Sub-process', stage: 'Stage', meeting: 'Meeting', compensation: 'Undo' };
+
+const MEETING_KIND_WORD: Record<string, string> = { planning: 'planning meeting', standup: 'standup', weekly_review: 'weekly review', retro: 'retro', board: 'board meeting', adhoc: 'meeting' };
+const laneWord = (l: string) => (l === 'unit' ? 'the department' : l === 'owner' ? 'the owner' : l === 'chief' ? 'the chief' : l === 'head' ? 'the head' : l === 'initiator' ? 'the initiator' : l);
+
+/** A meeting step in words: what it holds and who comes. */
+export function meetingWords(n: ProcessNodeDef): string {
+  const who = (n.attendees?.length ? n.attendees : ['unit']).map(laneWord);
+  return `holds a ${MEETING_KIND_WORD[n.meetingKind ?? 'adhoc'] ?? 'meeting'} with ${who.join(', ')}`;
+}
+
+/** The compensation steps and the steps each undoes, for "if a run fails". */
+export function compensationsOf(def: ProcessDef): Array<{ comp: ProcessNodeDef; undoes: ProcessNodeDef[] }> {
+  return def.nodes.filter((n) => n.compensation).map((comp) => ({ comp, undoes: def.nodes.filter((x) => x.compensate === comp.id) }));
+}
+
+export const RAMP_WORD: Record<ProcessRollout['verdict'], string> = { collecting: 'Collecting runs', promote: 'Ready to promote', rollback: 'Worse — roll back' };
+export const RAMP_TONE: Record<ProcessRollout['verdict'], Tone> = { collecting: 'info', promote: 'ok', rollback: 'bad' };
+export const CONFORMANCE_WORD: Record<ProcessConformance['verdict'], string> = { new: 'Too few runs', conforms: 'Followed', drifting: 'Drifting' };
+export const CONFORMANCE_TONE: Record<ProcessConformance['verdict'], Tone> = { new: 'muted', conforms: 'ok', drifting: 'warn' };
+export const SUGGESTION_WORD: Record<ProcessSuggestion['kind'], string> = { recurring: 'Recurring work', sequence: 'Repeated sequence', cross_function: 'Repeated requests', adhoc_step: 'Missing step', revise: 'Revise a step' };
+
+/** A ramp's comparison as rows: the measure, both values in words, and whether the candidate is worse. */
+export function cohortRows(r: ProcessRollout): Array<{ label: string; stable: string; candidate: string; worse: boolean }> {
+  const label: Record<ProcessRollout['rows'][number]['metric'], string> = { completion: 'Completed', cycle: 'Cycle time (median)', deviation: 'Steps deviated', rework: 'Rework' };
+  return r.rows.map((x) => ({ label: label[x.metric], stable: x.metric === 'cycle' ? hrs(x.stable) : pct(x.stable), candidate: x.metric === 'cycle' ? hrs(x.candidate) : pct(x.candidate), worse: x.worse }));
+}
 
 /** The list's summary figures. */
 export function processSummary(list: OrgProcess[]): { active: number; open: number; revise: number; due: number } {

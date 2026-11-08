@@ -2952,6 +2952,13 @@ export const orgProcesses = pgTable('org_processes', {
   createdBy: text('createdBy').notNull().default(''),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
+  /** A ramped rollout (migration 0098): the candidate version new runs
+   *  start on `rampPct`% of the time, since when, and the last verdict of
+   *  the cohort comparison (collecting | promote | rollback). */
+  candidateVersionId: text('candidateVersionId'),
+  rampPct: integer('rampPct').notNull().default(0),
+  rampStartedAt: text('rampStartedAt'),
+  rampVerdict: text('rampVerdict').notNull().default(''),
 }, (t) => [uniqueIndex('idx_org_processes_name').on(t.orgId, t.name)]);
 
 /** Every version of a process, immutable once written: the definition JSON
@@ -3012,6 +3019,9 @@ export const orgProcessRuns = pgTable('org_process_runs', {
   startedAt: text('startedAt').notNull(),
   endedAt: text('endedAt'),
   updatedAt: text('updatedAt').notNull(),
+  /** The saga after a failed or cancelled run (migration 0098): '' none |
+   *  running | done | partial (a compensation failed). */
+  compensation: text('compensation').notNull().default(''),
 }, (t) => [uniqueIndex('idx_org_process_runs_key').on(t.orgId, t.key), uniqueIndex('idx_org_process_runs_ref').on(t.processId, t.triggerRef)]);
 
 /** One step of a run (an attempt of a node). UNIQUE (run, node, attempt)
@@ -3049,6 +3059,8 @@ export const orgProcessSteps = pgTable('org_process_steps', {
   outcome: text('outcome').notNull().default(''),
   startedAt: text('startedAt').notNull(),
   endedAt: text('endedAt'),
+  /** A meeting step's meeting (migration 0098). */
+  meetingId: text('meetingId'),
 }, (t) => [uniqueIndex('idx_org_process_steps_attempt').on(t.runId, t.nodeId, t.attempt)]);
 
 /** The append-only process event log (case = run, activity, time, actor):
@@ -3261,3 +3273,35 @@ export const orgImprovements = pgTable('org_improvements', {
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 }, (t) => [uniqueIndex('idx_org_improvements_key').on(t.orgId, t.key)]);
+/** Suggestions the engine makes to a process owner (migration 0098): a
+ *  process discovered from repeated work (recurring tasks, a repeated
+ *  sequence, repeated cross-department requests), a step a process keeps
+ *  adding ad hoc, or a revision of a step most runs deviate from. One per
+ *  pattern (`key`); evidence and the drafted definition are JSON; the owner
+ *  works it through `taskId` (or, later, an improvement proposal). */
+export const orgProcessSuggestions = pgTable('org_process_suggestions', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  /** recurring | sequence | cross_function | adhoc_step | revise. */
+  kind: text('kind').notNull(),
+  key: text('key').notNull(),
+  title: text('title').notNull(),
+  summary: text('summary').notNull().default(''),
+  count: integer('count').notNull().default(0),
+  /** JSON Array<{ ref, title, at }>. */
+  evidence: text('evidence').notNull().default('[]'),
+  /** JSON ProcessDef ('' for a revision). */
+  draft: text('draft').notNull().default(''),
+  unitId: text('unitId'),
+  ownerAgentId: text('ownerAgentId'),
+  /** The process a revision or an ad-hoc step concerns; the process an accepted suggestion became. */
+  processId: text('processId'),
+  /** open | accepted | dismissed. */
+  status: text('status').notNull().default('open'),
+  taskId: text('taskId'),
+  /** Where the suggestion went: task:<id> today (an improvement proposal later). */
+  proposalRef: text('proposalRef').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_process_suggestions_key').on(t.orgId, t.key)]);

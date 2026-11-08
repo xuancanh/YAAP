@@ -2908,6 +2908,41 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_improvements_status ON org_improvements ("orgId", "status")`);
     },
   },
+  {
+    id: '0101-process-ramps-sagas-discovery',
+    up: async (db) => {
+      // Processes, the later phases (docs/processes.md): a ramped rollout of
+      // a new version on the header, the saga state of a run, a meeting
+      // step's meeting, and the suggestions the engine makes to an owner
+      // (discovered processes, revisions). Idempotent.
+      for (const [col, ddl] of [['candidateVersionId', 'TEXT'], ['rampPct', 'INTEGER NOT NULL DEFAULT 0'], ['rampStartedAt', 'TEXT'], ['rampVerdict', "TEXT NOT NULL DEFAULT ''"]] as const) {
+        if (!(await hasColumn(db, 'org_processes', col))) await db.query(`ALTER TABLE org_processes ADD COLUMN "${col}" ${ddl}`);
+      }
+      if (!(await hasColumn(db, 'org_process_runs', 'compensation'))) await db.query(`ALTER TABLE org_process_runs ADD COLUMN "compensation" TEXT NOT NULL DEFAULT ''`);
+      if (!(await hasColumn(db, 'org_process_steps', 'meetingId'))) await db.query(`ALTER TABLE org_process_steps ADD COLUMN "meetingId" TEXT`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_process_suggestions (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "kind" TEXT NOT NULL,
+        "key" TEXT NOT NULL,
+        "title" TEXT NOT NULL,
+        "summary" TEXT NOT NULL DEFAULT '',
+        "count" INTEGER NOT NULL DEFAULT 0,
+        "evidence" TEXT NOT NULL DEFAULT '[]',
+        "draft" TEXT NOT NULL DEFAULT '',
+        "unitId" TEXT,
+        "ownerAgentId" TEXT,
+        "processId" TEXT,
+        "status" TEXT NOT NULL DEFAULT 'open',
+        "taskId" TEXT,
+        "proposalRef" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_process_suggestions_key ON org_process_suggestions ("orgId", "key")`);
+    },
+  },
 ];
 
 /**

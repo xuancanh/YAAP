@@ -1866,7 +1866,7 @@ export interface WorkSources {
 // ---- processes (docs/processes.md) ----
 
 export type ProcessMode = 'strict' | 'dynamic';
-export type ProcessStepKind = 'task' | 'approval' | 'wait' | 'subprocess';
+export type ProcessStepKind = 'task' | 'approval' | 'wait' | 'subprocess' | 'meeting';
 export interface ProcessNodeDef {
   id: string; title: string; kind: ProcessStepKind; stage?: string; why?: string; lane?: string;
   outcome?: string; context?: string; doneWhen?: string; class?: string;
@@ -1875,6 +1875,10 @@ export interface ProcessNodeDef {
   checks?: unknown[]; playbook?: string; required?: boolean;
   availableWhen?: { after?: string[]; vars?: string[]; equals?: Record<string, string> };
   approver?: 'manager' | 'ceo'; question?: string; waitHours?: number; process?: string; slaHours?: number; maxAttempts?: number;
+  /** A meeting step: its kind, the lanes it invites (`unit` = the owning unit) and its agenda. */
+  meetingKind?: string; attendees?: string[]; agenda?: string;
+  /** The compensation step that undoes this one if the run fails or is cancelled; a step that only runs to undo. */
+  compensate?: string; compensation?: boolean;
 }
 export type ProcessTriggerDef =
   | { kind: 'manual' } | { kind: 'cadence'; cron: string; enabled?: boolean }
@@ -1891,28 +1895,53 @@ export interface ProcessMetrics {
   steps: Array<{ nodeId: string; executions: number; deviations: number; deviationRate: number; rework: number; failures: number; hoursP50: number | null }>;
   health: 'new' | 'healthy' | 'watch' | 'revise'; why: string;
 }
+/** Did the runs follow the definition (docs/processes.md "Conformance"), apart from outcomes. */
+export interface ProcessConformance {
+  runs: number; conformantRuns: number; fitness: number | null; checked: number; conformant: number; rate: number | null;
+  mustOpen: number; waivers: number; waiversPending: number; shouldSkips: number; adHoc: number; outOfOrder: number;
+  steps: Array<{ nodeId: string; checked: number; mustOpen: number; waivers: number; shouldSkips: number; adHoc: number; outOfOrder: number; rate: number }>;
+  verdict: 'new' | 'conforms' | 'drifting'; why: string;
+}
+/** A ramped version against the stable one (docs/processes.md "Ramped rollout"). */
+export interface ProcessRollout {
+  verdict: 'collecting' | 'promote' | 'rollback'; why: string; stableFinished: number; candidateFinished: number;
+  rows: Array<{ metric: 'completion' | 'cycle' | 'deviation' | 'rework'; stable: number | null; candidate: number | null; worse: boolean }>;
+  stableVersion: number; candidateVersion: number; candidateVersionId: string; percent: number; startedAt: string | null; auto: boolean;
+  stable: ProcessMetrics; candidate: ProcessMetrics;
+}
+/** A process the engine suggests from repeated work, or a revision of one (docs/processes.md "Discovery"). */
+export interface ProcessSuggestion {
+  id: string; kind: 'recurring' | 'sequence' | 'cross_function' | 'adhoc_step' | 'revise'; key: string; title: string; summary: string; count: number;
+  evidence: Array<{ ref: string; title: string; at: string }>; draft: ProcessDef | null; unitId: string | null; ownerAgentId: string | null; processId: string | null;
+  status: 'open' | 'accepted' | 'dismissed'; taskId: string | null; createdAt: string; updatedAt: string;
+}
 export interface OrgProcess {
   id: string; name: string; title: string; description: string; category: 'operating' | 'delivery'; unitId: string | null;
   status: 'active' | 'retired' | 'draft'; version: number; versionId: string | null; templateId: string; source: string;
   reviewedAt: string | null; createdBy: string; createdAt: string; updatedAt: string;
   mode: ProcessMode | 'mixed'; ownerAgentId: string | null; ownerName: string; unitName: string; triggers: ProcessTriggerDef[];
   metrics: ProcessMetrics; reviewDue: boolean; pendingVersion: number | null;
+  conformance?: ProcessConformance; candidateVersionId?: string | null; rampPct?: number;
+  rollout?: { candidateVersion: number; percent: number; verdict: string } | null;
 }
 export interface OrgProcessRunRow {
   id: string; processId: string; key: string; title: string; status: 'running' | 'blocked' | 'done' | 'failed' | 'cancelled'; stage: string;
   version: number; ownerAgentId: string | null; initiator: string; note: string; startedAt: string; endedAt: string | null;
+  /** The saga after a failed or cancelled run: '' | running | done | partial. */
+  compensation?: string;
 }
 export interface OrgProcessStepRow {
   id: string; nodeId: string; attempt: number; kind: string; stage: string; status: string; current: number; outcome: string;
   taskId: string | null; approvalId: string | null; childRunId: string | null; taskKey: string | null; taskStatus: string | null; assigneeAgentId: string | null;
   title: string; outputs: Record<string, string>; deviations: Array<{ level: string; item: string; reason: string; alternative: string; status: string; by: string; at: string }>;
-  slaAt: string | null; slaBreachedAt: string | null; startedAt: string; endedAt: string | null;
+  slaAt: string | null; slaBreachedAt: string | null; startedAt: string; endedAt: string | null; meetingId?: string | null;
 }
-export interface OrgProcessVersionRow { id: string; version: number; status: 'active' | 'superseded' | 'pending' | 'rejected'; author: string; reason: string; diff: string[]; def: ProcessDef; basedOn: number | null; approvalId: string | null; createdAt: string; activatedAt: string | null }
+export interface OrgProcessVersionRow { id: string; version: number; status: 'active' | 'superseded' | 'pending' | 'rejected' | 'candidate' | 'rolled_back'; author: string; reason: string; diff: string[]; def: ProcessDef; basedOn: number | null; approvalId: string | null; createdAt: string; activatedAt: string | null }
 export interface OrgProcessDetail {
   process: OrgProcess; def: ProcessDef | null; versions: OrgProcessVersionRow[];
   runs: Array<OrgProcessRunRow & { vars: Record<string, string>; trigger: { kind?: string; event?: string; ref?: string }; steps: OrgProcessStepRow[] }>;
   events: Array<{ id: string; runId: string; nodeId: string; activity: string; actor: string; detail: Record<string, unknown>; at: string }>;
+  rollout?: ProcessRollout | null; suggestions?: ProcessSuggestion[];
 }
 export interface ProcessTemplate { id: string; title: string; summary: string; category: string; mode: string; triggers: string; steps: number }
 
@@ -2793,11 +2822,13 @@ export const api = {
   rejectOrgImprovement: (wsId: string, ref: string, note?: string) => send<OrgImprovement>(`/api/workspaces/${wsId}/org/improvements/${enc(ref)}/reject`, 'POST', { note }),
   verifyOrgImprovement: (wsId: string, ref: string) => send<OrgImprovement>(`/api/workspaces/${wsId}/org/improvements/${enc(ref)}/verify`, 'POST'),
   // processes (docs/processes.md)
-  orgProcesses: (wsId: string) => get<{ processes: OrgProcess[]; runs: OrgProcessRunRow[] }>(`/api/workspaces/${wsId}/org/processes`),
+  orgProcesses: (wsId: string) => get<{ processes: OrgProcess[]; runs: OrgProcessRunRow[]; suggestions?: ProcessSuggestion[] }>(`/api/workspaces/${wsId}/org/processes`),
   orgProcessTemplates: (wsId: string) => get<ProcessTemplate[]>(`/api/workspaces/${wsId}/org/processes/templates`),
   orgProcess: (wsId: string, processId: string) => get<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}`),
   createOrgProcess: (wsId: string, body: { template?: string; def?: ProcessDef; name?: string; unitId?: string | null; reason: string }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes`, 'POST', body),
-  editOrgProcess: (wsId: string, processId: string, body: { def: ProcessDef; reason: string }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}`, 'PUT', body),
+  editOrgProcess: (wsId: string, processId: string, body: { def: ProcessDef; reason: string; ramp?: number }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}`, 'PUT', body),
+  rolloutOrgProcess: (wsId: string, processId: string, body: { action: 'promote' | 'rollback' | 'percent'; percent?: number; reason?: string }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}/rollout`, 'POST', body),
+  decideProcessSuggestion: (wsId: string, suggestionId: string, body: { action: 'accept' | 'dismiss'; reason?: string }) => send<ProcessSuggestion>(`/api/workspaces/${wsId}/org/processes/suggestions/${enc(suggestionId)}`, 'POST', body),
   rollbackOrgProcess: (wsId: string, processId: string, body: { version: number; reason: string }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}/rollback`, 'POST', body),
   retireOrgProcess: (wsId: string, processId: string, body: { reason: string; restore?: boolean }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}/retire`, 'POST', body),
   startOrgProcessRun: (wsId: string, processId: string, body: { title?: string; vars?: Record<string, string> }) => send<OrgProcessRunRow>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}/runs`, 'POST', body),

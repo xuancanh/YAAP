@@ -10,6 +10,8 @@
  *  POST   /api/workspaces/:id/org/processes/:pid/retire           { reason, restore? }
  *  POST   /api/workspaces/:id/org/processes/:pid/runs             { title?, vars? } — start a run by hand
  *  POST   /api/workspaces/:id/org/processes/runs/:runId/cancel    { reason }
+ *  POST   /api/workspaces/:id/org/processes/:pid/rollout          { action: promote | rollback | percent, percent?, reason? }
+ *  POST   /api/workspaces/:id/org/processes/suggestions/:sid      { action: accept | dismiss, reason? }
  *
  * Reads are everyone's in the company; writes are the CEO's or a board
  * member's (a person's edit applies at once — the boundary binds agents,
@@ -17,7 +19,7 @@
  */
 import { Body, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Put } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { IsBoolean, IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
 import { actorId } from '../accounts/account-context';
 import { OrgModeService } from './org-mode.service';
 import { OrgController } from './org.controller';
@@ -36,6 +38,17 @@ export class ProcessCreateDto {
 export class ProcessEditDto {
   @IsObject() def!: Record<string, unknown>;
   @IsString() reason!: string;
+  /** % of new runs on the new version while it is compared (0 = at once; default: process.rampPercent). */
+  @IsOptional() @IsNumber() ramp?: number;
+}
+export class ProcessRolloutDto {
+  @IsIn(['promote', 'rollback', 'percent']) action!: 'promote' | 'rollback' | 'percent';
+  @IsOptional() @IsNumber() percent?: number;
+  @IsOptional() @IsString() reason?: string;
+}
+export class ProcessSuggestionDto {
+  @IsIn(['accept', 'dismiss']) action!: 'accept' | 'dismiss';
+  @IsOptional() @IsString() reason?: string;
 }
 export class ProcessRollbackDto {
   @IsNumber() version!: number;
@@ -77,7 +90,10 @@ export class ProcessesController {
 
   @Get() async list(@Param('id') id: string) {
     const orgId = await this.oid(id);
-    return { processes: await this.processes.overview(orgId, { includeRetired: true }), runs: (await this.processes.runs(orgId, { limit: 50 })).filter((r) => r.status === 'running' || r.status === 'blocked') };
+    return {
+      processes: await this.processes.overview(orgId, { includeRetired: true }), runs: (await this.processes.runs(orgId, { limit: 50 })).filter((r) => r.status === 'running' || r.status === 'blocked'),
+      suggestions: (await this.processes.suggestions(orgId, { status: 'open' })).map((x) => this.processes.suggestionView(x)),
+    };
   }
 
   @Get('templates') async templates(@Param('id') id: string) {
@@ -97,8 +113,23 @@ export class ProcessesController {
 
   @Put(':pid') async edit(@Param('id') id: string, @Param('pid') pid: string, @Body() dto: ProcessEditDto) {
     const orgId = await this.oid(id);
-    const r = await this.processes.author(orgId, { process: pid, def: dto.def, reason: dto.reason }, await this.writer(orgId));
+    const r = await this.processes.author(orgId, { process: pid, def: dto.def, reason: dto.reason, ramp: dto.ramp }, await this.writer(orgId));
     return this.processes.detail(orgId, r.process.id);
+  }
+
+  @Post(':pid/rollout') async rollout(@Param('id') id: string, @Param('pid') pid: string, @Body() dto: ProcessRolloutDto) {
+    const orgId = await this.oid(id);
+    const actor = await this.writer(orgId);
+    const reason = dto.reason || 'decided by the CEO';
+    if (dto.action === 'promote') await this.processes.promote(orgId, pid, reason, actor);
+    else if (dto.action === 'rollback') await this.processes.rollbackRamp(orgId, pid, reason, actor);
+    else await this.processes.setRamp(orgId, pid, Number(dto.percent), actor);
+    return this.processes.detail(orgId, pid);
+  }
+
+  @Post('suggestions/:sid') async suggestion(@Param('id') id: string, @Param('sid') sid: string, @Body() dto: ProcessSuggestionDto) {
+    const orgId = await this.oid(id);
+    return this.processes.suggestionView(await this.processes.decideSuggestion(orgId, sid, dto.action, dto.reason ?? '', await this.writer(orgId)));
   }
 
   @Post(':pid/rollback') async rollback(@Param('id') id: string, @Param('pid') pid: string, @Body() dto: ProcessRollbackDto) {

@@ -13,11 +13,17 @@
  * the path the run takes; a dynamic stage cannot finish while a `required`
  * step is undone.
  *
- * Steps (`nodes`) are of four kinds: `task` (materialised as an ordinary
+ * Steps (`nodes`) are of five kinds: `task` (materialised as an ordinary
  * org task), `approval` (an org_approvals card routed by decision routing),
- * `wait` (a timer) and `subprocess` (a child run pinned to that process's
- * active version). A task step carries its step card — why, MUST / SHOULD /
- * MAY items (at most nine), denied tools, outputs and exit checks.
+ * `wait` (a timer), `subprocess` (a child run pinned to that process's
+ * active version) and `meeting` (a meeting of a kind, its attendees by lane,
+ * its agenda from the step's inputs; it completes when the meeting ends and
+ * the minutes' decisions and actions become the step's outputs). A task step
+ * carries its step card — why, MUST / SHOULD / MAY items (at most nine),
+ * denied tools, outputs and exit checks. A side-effecting step may name a
+ * `compensate` step (a node marked `compensation`, outside the walk): when a
+ * run fails or is cancelled the engine runs the compensations of its done
+ * steps in reverse order (a saga).
  *
  * Everything here is model-free and I/O-free: validation (with the
  * remediation each error needs), the edge expressions, the readiness walk
@@ -29,8 +35,10 @@ import { createHash } from 'node:crypto';
 
 export type ProcessMode = 'strict' | 'dynamic';
 export const PROCESS_MODES: readonly ProcessMode[] = ['strict', 'dynamic'];
-export type StepKind = 'task' | 'approval' | 'wait' | 'subprocess';
-export const STEP_KINDS: readonly StepKind[] = ['task', 'approval', 'wait', 'subprocess'];
+export type StepKind = 'task' | 'approval' | 'wait' | 'subprocess' | 'meeting';
+export const STEP_KINDS: readonly StepKind[] = ['task', 'approval', 'wait', 'subprocess', 'meeting'];
+/** The meeting kinds a meeting step may hold (org-meetings.service.ts MEETING_KINDS). */
+export const MEETING_STEP_KINDS: readonly string[] = ['planning', 'standup', 'weekly_review', 'retro', 'board', 'adhoc'];
 /** `operating`: the company running itself (incidents, the chief's sweep,
  *  request intake, review prep) — not gated on goal alignment; `delivery`:
  *  work that serves a goal or project (releases, content, hiring, onboarding). */
@@ -85,6 +93,18 @@ export interface ProcessNode {
   waitHours?: number;
   // subprocess
   process?: string;
+  // meeting
+  /** planning | standup | weekly_review | retro | board | adhoc (default). */
+  meetingKind?: string;
+  /** Lanes to invite (owner, chief, head, initiator, a title) or `unit` (the owning unit). */
+  attendees?: string[];
+  /** The agenda (`${vars}` filled); the inputs of earlier steps are appended. */
+  agenda?: string;
+  // compensation (saga)
+  /** The id of the `compensation` step that undoes this one if the run fails or is cancelled. */
+  compensate?: string;
+  /** This step only runs to undo another (outside the stage walk). */
+  compensation?: boolean;
   // control
   slaHours?: number;
   maxAttempts?: number;
@@ -131,7 +151,9 @@ export function normalizeProcess(raw: unknown): ProcessDef {
     const r = (x ?? {}) as Record<string, unknown>;
     const kind = (STEP_KINDS as readonly string[]).includes(String(r.kind)) ? r.kind as StepKind : 'task';
     const n: ProcessNode = { id: s(r.id, 32), title: s(r.title, 120), kind, stage: s(r.stage, 32) || stages[0].id };
-    for (const k of ['why', 'lane', 'outcome', 'context', 'doneWhen', 'class', 'playbook', 'question', 'process'] as const) { const v = s(r[k], k === 'context' || k === 'outcome' || k === 'doneWhen' ? 1_500 : 300); if (v) (n as unknown as Record<string, unknown>)[k] = v; }
+    for (const k of ['why', 'lane', 'outcome', 'context', 'doneWhen', 'class', 'playbook', 'question', 'process', 'meetingKind', 'agenda', 'compensate'] as const) { const v = s(r[k], k === 'context' || k === 'outcome' || k === 'doneWhen' || k === 'agenda' ? 1_500 : 300); if (v) (n as unknown as Record<string, unknown>)[k] = v; }
+    const attendees = list(r.attendees, 12, 40); if (attendees.length) n.attendees = attendees;
+    if (r.compensation) n.compensation = true;
     for (const k of ['must', 'should', 'may'] as const) { const v = list(r[k], MAX_ITEMS + 1); if (v.length) n[k] = v; }
     const deny = list(r.deny, 20, 80); if (deny.length) n.deny = deny;
     if (Array.isArray(r.outputs)) {
@@ -199,7 +221,7 @@ export function validateProcess(def: ProcessDef, opts: ValidateOpts = {}): Proce
     if (stageIds.has(st.id)) add(`stage ${st.id}`, 'two stages share an id', 'give every stage its own id');
     stageIds.add(st.id);
   }
-  if (def.nodes.length === 0) add('nodes', 'the process has no steps', 'add at least one step (kind task, approval, wait or subprocess)');
+  if (def.nodes.length === 0) add('nodes', 'the process has no steps', 'add at least one step (kind task, approval, wait, subprocess or meeting)');
   if (def.nodes.length > MAX_NODES) add('nodes', `more than ${MAX_NODES} steps`, 'split it into a parent process with subprocess steps');
   const ids = new Set<string>();
   for (const n of def.nodes) {
@@ -218,23 +240,37 @@ export function validateProcess(def: ProcessDef, opts: ValidateOpts = {}): Proce
       else if (opts.selfName && n.process === opts.selfName) add(w, 'a process may not start itself', 'start another process, or loop with an edge and loopMax');
       else if (opts.processNames && !opts.processNames.has(n.process)) add(w, `no process "${n.process}"`, `use one of: ${[...opts.processNames].slice(0, 12).join(', ') || '(none yet)'}`);
     }
+    if (n.kind === 'meeting' && n.meetingKind && !MEETING_STEP_KINDS.includes(n.meetingKind)) add(w, `no meeting kind "${n.meetingKind}"`, `use one of: ${MEETING_STEP_KINDS.join(', ')}`);
+    if (n.compensate) {
+      const c = def.nodes.find((x) => x.id === n.compensate);
+      if (!c || c.id === n.id) add(w, `compensate names "${n.compensate}", which is not another step`, 'name a step marked compensation: true that undoes this one');
+      else if (!c.compensation) add(w, `compensate names "${c.id}", which is not marked compensation`, `mark step ${c.id} compensation: true (it then runs only to undo)`);
+      if (n.compensation) add(w, 'a compensation step cannot itself be compensated', 'drop compensate from it');
+    }
+    if (n.compensation) {
+      if (n.kind !== 'task') add(w, 'a compensation step is a task', 'make it kind task: someone undoes the side effect');
+      if (n.required) add(w, 'a compensation step is not a checkpoint', 'drop required from it');
+      if (!def.nodes.some((x) => x.compensate === n.id)) add(w, 'no step names this compensation step', `set compensate: "${n.id}" on the step it undoes, or remove it`);
+    }
     if (n.slaHours !== undefined && !(n.slaHours > 0 && n.slaHours <= 24 * 60)) add(w, 'slaHours must be between 0 and 1440', 'give the hours the step may take before it escalates, or leave it out');
     if (n.maxAttempts !== undefined && !(n.maxAttempts >= 1 && n.maxAttempts <= 5)) add(w, 'maxAttempts must be 1–5', 'leave it out for one attempt');
     if (opts.toolNames && n.deny) for (const t of n.deny) if (!opts.toolNames.has(t)) add(w, `deny names an unknown tool "${t}"`, 'name a tool the performer is offered, or drop it');
     for (const o of n.outputs ?? []) if (!/^[a-z][a-z0-9_]{0,39}$/.test(o.name)) add(w, `output "${o.name}" is not a variable name`, 'use snake_case names like "release_notes"');
   }
+  const compIds = new Set(def.nodes.filter((n) => n.compensation).map((n) => n.id));
   const stageOf = new Map(def.nodes.map((n) => [n.id, n.stage ?? def.stages[0]?.id]));
   const modeOf = new Map(def.stages.map((st) => [st.id, st.mode]));
   for (const e of def.edges) {
     const w = `edge ${e.from}→${e.to}`;
     if (!ids.has(e.from) || !ids.has(e.to)) { add(w, 'an edge names a step that does not exist', 'connect existing step ids'); continue; }
+    if (compIds.has(e.from) || compIds.has(e.to)) { add(w, 'an edge touches a compensation step', 'a compensation step runs only when the run fails or is cancelled: remove the edge'); continue; }
     if (stageOf.get(e.from) !== stageOf.get(e.to)) add(w, 'an edge crosses stages', 'stages run in order: connect steps within one stage');
     else if (modeOf.get(stageOf.get(e.from)!) === 'dynamic') add(w, 'a dynamic stage has no edges', 'say when the step is available instead (availableWhen.after)');
     if (e.when && parseCondition(e.when) === null) add(w, `cannot read the condition "${e.when}"`, 'write `var == "value"`, `var != "value"`, `var` or `!var`');
     if (e.loopMax !== undefined && !(e.loopMax >= 1 && e.loopMax <= (opts.loopMaxCeiling ?? 10))) add(w, `loopMax must be 1–${opts.loopMaxCeiling ?? 10}`, 'bound the loop: how many times may it go round before it escalates?');
   }
   for (const st of def.stages) {
-    const inStage = def.nodes.filter((n) => (n.stage ?? def.stages[0].id) === st.id);
+    const inStage = def.nodes.filter((n) => !n.compensation && (n.stage ?? def.stages[0].id) === st.id);
     if (inStage.length === 0) { add(`stage ${st.id}`, 'the stage has no steps', 'add steps to it or remove it'); continue; }
     if (st.mode === 'strict') {
       const back = backEdges(def, st.id);
@@ -265,8 +301,22 @@ export function processHash(def: ProcessDef): string {
 
 // ---- graph helpers ----
 
+/** The steps a stage walks (compensation steps stand outside every stage). */
 export function nodesOf(def: ProcessDef, stageId: string): ProcessNode[] {
-  return def.nodes.filter((n) => (n.stage ?? def.stages[0]?.id) === stageId);
+  return def.nodes.filter((n) => !n.compensation && (n.stage ?? def.stages[0]?.id) === stageId);
+}
+
+/** The compensations a failed or cancelled run owes: for each done step
+ *  with a `compensate` step, latest completion first (reverse order, a
+ *  saga). `done` is each node's latest done attempt. Pure. */
+export function compensationPlan(def: ProcessDef, done: Array<{ nodeId: string; startedAt: string; endedAt: string | null }>): Array<{ forward: string; comp: ProcessNode }> {
+  const out: Array<{ forward: string; comp: ProcessNode; at: string }> = [];
+  for (const d of done) {
+    const n = def.nodes.find((x) => x.id === d.nodeId);
+    const comp = n?.compensate ? def.nodes.find((x) => x.id === n.compensate && x.compensation) : undefined;
+    if (comp) out.push({ forward: d.nodeId, comp, at: d.endedAt ?? d.startedAt });
+  }
+  return out.sort((a, b) => b.at.localeCompare(a.at) || b.forward.localeCompare(a.forward)).map(({ forward, comp }) => ({ forward, comp }));
 }
 
 /** The edges that close a loop in a strict stage: back edges of a DFS from
@@ -422,7 +472,7 @@ export function touchesControls(prev: ProcessDef | null, next: ProcessDef): bool
   if (!prev) return true;
   const sig = (d: ProcessDef) => JSON.stringify({
     stages: d.stages.map((x) => [x.id, x.mode]),
-    nodes: d.nodes.map((n) => [n.id, n.kind, n.stage, n.must ?? [], n.required ?? false, n.deny ?? [], n.approver ?? '', (n.outputs ?? []).filter((o) => o.required).map((o) => o.name)]).sort(),
+    nodes: d.nodes.map((n) => [n.id, n.kind, n.stage, n.must ?? [], n.required ?? false, n.deny ?? [], n.approver ?? '', (n.outputs ?? []).filter((o) => o.required).map((o) => o.name), n.compensate ?? '', n.compensation ?? false]).sort(),
     edges: d.edges.map((e) => [e.from, e.to, e.when ?? '', e.loopMax ?? 0]).sort(),
   });
   return sig(prev) !== sig(next);
@@ -442,7 +492,7 @@ export function diffProcess(prev: ProcessDef | null, next: ProcessDef): string[]
   for (const n of next.nodes) {
     const p = prev.nodes.find((x) => x.id === n.id);
     if (!p) { out.push(`+ step ${n.id} "${n.title}" (${n.kind})`); continue; }
-    const fields: Array<keyof ProcessNode> = ['title', 'kind', 'stage', 'lane', 'why', 'outcome', 'doneWhen', 'must', 'should', 'may', 'deny', 'outputs', 'required', 'availableWhen', 'approver', 'question', 'waitHours', 'process', 'slaHours', 'maxAttempts', 'checks', 'playbook', 'class'];
+    const fields: Array<keyof ProcessNode> = ['title', 'kind', 'stage', 'lane', 'why', 'outcome', 'doneWhen', 'must', 'should', 'may', 'deny', 'outputs', 'required', 'availableWhen', 'approver', 'question', 'waitHours', 'process', 'meetingKind', 'attendees', 'agenda', 'compensate', 'compensation', 'slaHours', 'maxAttempts', 'checks', 'playbook', 'class'];
     const changed = fields.filter((f) => JSON.stringify(p[f] ?? null) !== JSON.stringify(n[f] ?? null));
     for (const f of changed) {
       if (f === 'must' || f === 'should' || f === 'may') {
@@ -580,4 +630,104 @@ export function computeMetrics(runs: RunFacts[], steps: StepFacts[], opts: { rev
     completionRate, cycleHoursP50: median(done.map((r) => hours(r.startedAt, r.endedAt)).filter(Number.isFinite)), deviationRate, reworkRate, slaBreaches,
     steps: perStep.sort((a, b) => b.deviationRate - a.deviationRate), health, why,
   };
+}
+
+// ---- ramped rollout: two cohorts compared ----
+
+/** A run's bucket 0–99 for a ramp (deterministic per key). Pure. */
+export function rampBucket(key: string): number {
+  return parseInt(createHash('sha256').update(key).digest('hex').slice(0, 8), 16) % 100;
+}
+
+export type RampVerdict = 'collecting' | 'promote' | 'rollback';
+export interface CohortRow { metric: 'completion' | 'cycle' | 'deviation' | 'rework'; stable: number | null; candidate: number | null; worse: boolean }
+export interface CohortComparison { verdict: RampVerdict; why: string; rows: CohortRow[]; stableFinished: number; candidateFinished: number }
+
+const finishedOf = (m: ProcessMetrics) => m.done + m.failed + m.cancelled;
+
+/**
+ * Compare a candidate version's runs with the stable version's: completion
+ * rate, median cycle time, deviation rate and rework. `collecting` until the
+ * candidate has `minRuns` finished runs; then `rollback` when any measure is
+ * worse than the stable one by more than `tolerance` (a share for the rates,
+ * a fraction of the stable cycle time), else `promote`. Pure.
+ */
+export function compareCohorts(stable: ProcessMetrics, candidate: ProcessMetrics, opts: { minRuns: number; tolerance: number }): CohortComparison {
+  const tol = opts.tolerance;
+  const both = (a: number | null, b: number | null) => a !== null && b !== null;
+  const rows: CohortRow[] = [
+    { metric: 'completion', stable: stable.completionRate, candidate: candidate.completionRate, worse: both(stable.completionRate, candidate.completionRate) && candidate.completionRate! < stable.completionRate! - tol },
+    { metric: 'cycle', stable: stable.cycleHoursP50, candidate: candidate.cycleHoursP50, worse: both(stable.cycleHoursP50, candidate.cycleHoursP50) && candidate.cycleHoursP50! > stable.cycleHoursP50! * (1 + tol) },
+    { metric: 'deviation', stable: stable.deviationRate, candidate: candidate.deviationRate, worse: both(stable.deviationRate, candidate.deviationRate) && candidate.deviationRate! > stable.deviationRate! + tol },
+    { metric: 'rework', stable: stable.reworkRate, candidate: candidate.reworkRate, worse: both(stable.reworkRate, candidate.reworkRate) && candidate.reworkRate! > stable.reworkRate! + tol },
+  ];
+  const sf = finishedOf(stable); const cf = finishedOf(candidate);
+  const base = { rows, stableFinished: sf, candidateFinished: cf };
+  if (cf < opts.minRuns) return { ...base, verdict: 'collecting', why: `${cf} of ${opts.minRuns} candidate run(s) finished` };
+  // Nothing to compare against: judge the candidate on its own.
+  if (sf === 0) {
+    const ok = (candidate.completionRate ?? 0) >= 0.5 && candidate.health !== 'revise';
+    return { ...base, verdict: ok ? 'promote' : 'rollback', why: ok ? 'the stable version has no finished runs; the candidate completes' : `the candidate ${candidate.health === 'revise' ? candidate.why : 'completes under half its runs'}` };
+  }
+  const label: Record<CohortRow['metric'], string> = { completion: 'completion', cycle: 'cycle time', deviation: 'deviation', rework: 'rework' };
+  const worse = rows.filter((r) => r.worse);
+  if (worse.length) return { ...base, verdict: 'rollback', why: `the candidate is worse on ${worse.map((r) => label[r.metric]).join(', ')}` };
+  return { ...base, verdict: 'promote', why: `the candidate is no worse on completion, cycle time, deviation or rework (tolerance ${Math.round(tol * 100)}%)` };
+}
+
+// ---- conformance: did runs follow the definition ----
+
+export interface ConformanceFacts {
+  runId: string; nodeId: string; strict: boolean; adHoc: boolean; status: string;
+  deviations: Array<{ level: string; status: string }>;
+  /** A strict step that started before a step it waits on finished. */
+  outOfOrder: boolean;
+}
+
+export interface ProcessConformance {
+  runs: number; conformantRuns: number; fitness: number | null;
+  checked: number; conformant: number; rate: number | null;
+  mustOpen: number; waivers: number; waiversPending: number; shouldSkips: number; adHoc: number; outOfOrder: number;
+  steps: Array<{ nodeId: string; checked: number; mustOpen: number; waivers: number; shouldSkips: number; adHoc: number; outOfOrder: number; rate: number }>;
+  verdict: 'new' | 'conforms' | 'drifting';
+  why: string;
+}
+
+/**
+ * Conformance, separate from outcomes: of the steps the runs executed, how
+ * many followed the definition. Against it count MUST items handed to review
+ * open (logged where `process.mustEnforcement` is 0), SHOULD skips, ad-hoc
+ * steps in dynamic stages and out-of-order steps in strict stages; MUST
+ * waivers are sanctioned exceptions, counted but not against it. A run
+ * conforms when every step it executed did. Pure.
+ */
+export function computeConformance(facts: ConformanceFacts[], opts: { alertBelow: number; minSample?: number }): ProcessConformance {
+  const executed = facts.filter((f) => f.status === 'done' || f.status === 'failed' || f.status === 'active');
+  const off = (f: ConformanceFacts) => f.adHoc || f.outOfOrder || f.deviations.some((d) => (d.level === 'must' && d.status === 'logged') || d.level === 'should');
+  const count = (xs: ConformanceFacts[]) => ({
+    mustOpen: xs.reduce((n, f) => n + f.deviations.filter((d) => d.level === 'must' && d.status === 'logged').length, 0),
+    waivers: xs.reduce((n, f) => n + f.deviations.filter((d) => d.level === 'must' && d.status === 'approved').length, 0),
+    waiversPending: xs.reduce((n, f) => n + f.deviations.filter((d) => d.level === 'must' && d.status === 'pending').length, 0),
+    shouldSkips: xs.reduce((n, f) => n + f.deviations.filter((d) => d.level === 'should').length, 0),
+    adHoc: xs.filter((f) => f.adHoc).length,
+    outOfOrder: xs.filter((f) => f.outOfOrder).length,
+  });
+  const byNode = new Map<string, ConformanceFacts[]>();
+  for (const f of executed) { const k = f.adHoc ? 'ad-hoc' : f.nodeId; byNode.set(k, [...(byNode.get(k) ?? []), f]); }
+  const steps = [...byNode.entries()].map(([nodeId, xs]) => { const c = count(xs); return { nodeId, checked: xs.length, mustOpen: c.mustOpen, waivers: c.waivers, shouldSkips: c.shouldSkips, adHoc: c.adHoc, outOfOrder: c.outOfOrder, rate: xs.filter((f) => !off(f)).length / xs.length }; })
+    .sort((a, b) => a.rate - b.rate || b.checked - a.checked);
+  const runIds = [...new Set(executed.map((f) => f.runId))];
+  const conformantRuns = runIds.filter((r) => executed.filter((f) => f.runId === r).every((f) => !off(f))).length;
+  const conformant = executed.filter((f) => !off(f)).length;
+  const rate = executed.length ? conformant / executed.length : null;
+  const c = count(executed);
+  let verdict: ProcessConformance['verdict'] = 'conforms';
+  let why = 'runs follow the definition';
+  if (executed.length < (opts.minSample ?? 3)) { verdict = 'new'; why = 'too few steps executed to judge'; }
+  else if (rate !== null && rate < opts.alertBelow) {
+    verdict = 'drifting';
+    const worst = steps.filter((x) => x.rate < opts.alertBelow).slice(0, 3);
+    why = `${Math.round(rate * 100)}% of steps followed the definition (alert below ${Math.round(opts.alertBelow * 100)}%)${worst.length ? ` — ${worst.map((x) => `${x.nodeId} ${Math.round(x.rate * 100)}%`).join(', ')}` : ''}`;
+  }
+  return { runs: runIds.length, conformantRuns, fitness: runIds.length ? conformantRuns / runIds.length : null, checked: executed.length, conformant, rate, ...c, steps, verdict, why };
 }

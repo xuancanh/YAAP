@@ -6,8 +6,8 @@
 import { describe, expect, it } from 'vitest';
 import { navOf, parseRoute, placeOf, routeHref, type NavState } from '../src/lib/routes';
 import { sectionDef, sectionOfPane } from '../src/lib/company-nav';
-import { authorWords, availabilityWords, edgeWords, hrs, layoutStage, pct, processSummary, triggerWords } from '../src/lib/processes';
-import type { OrgProcess, ProcessDef } from '../src/lib/api';
+import { authorWords, availabilityWords, cohortRows, compensationsOf, edgeWords, hrs, layoutStage, meetingWords, pct, processSummary, triggerWords } from '../src/lib/processes';
+import type { OrgProcess, ProcessDef, ProcessRollout } from '../src/lib/api';
 
 const def: ProcessDef = {
   title: 'Content', category: 'delivery', triggers: [{ kind: 'manual' }, { kind: 'event', event: 'incident_opened', severity: 'major' }, { kind: 'cadence', cron: '0 9 * * 1', enabled: false }],
@@ -65,5 +65,17 @@ describe('the graph in words', () => {
     expect(hrs(72)).toBe('3.0d');
     const p = (health: OrgProcess['metrics']['health'], active: number, reviewDue = false) => ({ status: 'active', reviewDue, metrics: { health, active } }) as unknown as OrgProcess;
     expect(processSummary([p('revise', 2, true), p('healthy', 1), { ...p('healthy', 3), status: 'retired' } as OrgProcess])).toEqual({ active: 2, open: 3, revise: 1, due: 1 });
+  });
+  it('a meeting step, the compensations outside the layout, and a ramp\'s comparison as rows', () => {
+    const saga: ProcessDef = { ...def, stages: [def.stages[0]], nodes: [
+      { id: 'draft', title: 'Draft', kind: 'task', stage: 'make', compensate: 'undo-draft' },
+      { id: 'sync', title: 'Sync', kind: 'meeting', stage: 'make', meetingKind: 'weekly_review', attendees: ['owner', 'unit'] },
+      { id: 'undo-draft', title: 'Delete the draft', kind: 'task', stage: 'make', compensation: true },
+    ], edges: [{ from: 'draft', to: 'sync' }] };
+    expect(layoutStage(saga, 'make').map((c) => c.map((n) => n.id))).toEqual([['draft'], ['sync']]);
+    expect(meetingWords(saga.nodes[1])).toBe('holds a weekly review with the owner, the department');
+    expect(compensationsOf(saga).map((x) => `${x.comp.title} ← ${x.undoes.map((u) => u.title).join(',')}`)).toEqual(['Delete the draft ← Draft']);
+    const r = { rows: [{ metric: 'completion', stable: 1, candidate: 0.5, worse: true }, { metric: 'cycle', stable: 2, candidate: 3, worse: false }] } as unknown as ProcessRollout;
+    expect(cohortRows(r)).toEqual([{ label: 'Completed', stable: '100%', candidate: '50%', worse: true }, { label: 'Cycle time (median)', stable: '2.0h', candidate: '3.0h', worse: false }]);
   });
 });
