@@ -215,7 +215,8 @@ export function validateBlueprint(raw: unknown): Blueprint {
   if (o.tunables !== undefined) {
     if (!o.tunables || typeof o.tunables !== 'object' || Array.isArray(o.tunables)) fail('tunables must be an object');
     const entries = Object.entries(o.tunables as Record<string, unknown>);
-    if (entries.length > 100) fail('tunables has more than 100 keys');
+    // A structural cap, not a policy: every derived key a starter can carry fits (the registry is past 200 keys).
+    if (entries.length > 400) fail('tunables has more than 400 keys');
     for (const [k, v] of entries) {
       if (!/^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/.test(k)) fail(`tunables key "${k}" is not a key`);
       if (typeof v !== 'number' || !Number.isFinite(v)) return fail(`tunables.${k} must be a number`);

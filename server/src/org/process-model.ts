@@ -652,12 +652,15 @@ const finishedOf = (m: ProcessMetrics) => m.done + m.failed + m.cancelled;
  * worse than the stable one by more than `tolerance` (a share for the rates,
  * a fraction of the stable cycle time), else `promote`. Pure.
  */
+/** Cycle-time gaps under this are noise, not a worse version (a minute). */
+const CYCLE_NOISE_HOURS = 1 / 60;
+
 export function compareCohorts(stable: ProcessMetrics, candidate: ProcessMetrics, opts: { minRuns: number; tolerance: number }): CohortComparison {
   const tol = opts.tolerance;
   const both = (a: number | null, b: number | null) => a !== null && b !== null;
   const rows: CohortRow[] = [
     { metric: 'completion', stable: stable.completionRate, candidate: candidate.completionRate, worse: both(stable.completionRate, candidate.completionRate) && candidate.completionRate! < stable.completionRate! - tol },
-    { metric: 'cycle', stable: stable.cycleHoursP50, candidate: candidate.cycleHoursP50, worse: both(stable.cycleHoursP50, candidate.cycleHoursP50) && candidate.cycleHoursP50! > stable.cycleHoursP50! * (1 + tol) },
+    { metric: 'cycle', stable: stable.cycleHoursP50, candidate: candidate.cycleHoursP50, worse: both(stable.cycleHoursP50, candidate.cycleHoursP50) && candidate.cycleHoursP50! > stable.cycleHoursP50! * (1 + tol) && candidate.cycleHoursP50! - stable.cycleHoursP50! >= CYCLE_NOISE_HOURS },
     { metric: 'deviation', stable: stable.deviationRate, candidate: candidate.deviationRate, worse: both(stable.deviationRate, candidate.deviationRate) && candidate.deviationRate! > stable.deviationRate! + tol },
     { metric: 'rework', stable: stable.reworkRate, candidate: candidate.reworkRate, worse: both(stable.reworkRate, candidate.reworkRate) && candidate.reworkRate! > stable.reworkRate! + tol },
   ];
