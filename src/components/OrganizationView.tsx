@@ -65,6 +65,7 @@ const GoalsPane = lazy(() => import('./OrgGoalsView').then((m) => ({ default: m.
 /** Quality control (docs/quality.md): the Oversight › Quality page and the task's QC panel. */
 const QualityPane = lazy(() => import('./OrgQualityView').then((m) => ({ default: m.QualityPane })));
 const TaskQcPanel = lazy(() => import('./OrgQualityView').then((m) => ({ default: m.TaskQcPanel })));
+const TaskPlanPanel = lazy(() => import('./TaskPlanPanel').then((m) => ({ default: m.TaskPlanPanel })));
 const LAZY_PANES = new Set(['goals', 'vision', 'pulse', 'meetings', 'decisions', 'replay', 'capital', 'incidents', 'roadmap', 'teams', 'quality', 'alignment', 'processes', 'services', 'improvements']);
 /** CEO alignment (docs/alignment.md): what needs the CEO's alignment, briefs, threads and decisions. */
 const AlignmentPane = lazy(() => import('./AlignmentView').then((m) => ({ default: m.AlignmentPane })));
@@ -700,6 +701,8 @@ function TaskDrawer({ org, task, members, onClose, reload, board }: { org: OrgDe
         </div>
         <Suspense fallback={null}><TaskChecksPanel wsId={org.workspaceId} task={task} onRan={() => void refresh()} /></Suspense>
         <Suspense fallback={null}><TaskQcPanel wsId={org.workspaceId} task={task} /></Suspense>
+        {/* The task's own plan when its owner split it (docs/task-execution.md). */}
+        <Suspense fallback={null}><TaskPlanPanel source={{ kind: 'task', wsId: org.workspaceId, taskId: task.id }} /></Suspense>
         {/* Extension point: panels plugins add to a task (docs/plugins.md §3.8). */}
         <PluginPanels placement="task" context={{ taskKey: task.key ?? '', taskTitle: task.title }} />
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

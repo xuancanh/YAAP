@@ -23,6 +23,7 @@ import { fmtTokens } from '../lib/util';
 import { applyWatchEvent, liveSteps } from '../lib/work-live';
 import { Thinking, ToolCard } from './ChatView';
 import { interruptedLabel } from '../lib/interrupted';
+import { TaskPlanPanel } from './TaskPlanPanel';
 
 const PAGE = 30;
 /** How often a hot log (a run in progress, a message waiting) refreshes. */
@@ -436,6 +437,8 @@ function RunRow({ r, first, open, onToggle, detail, agentId, readOnly, agentName
               <div style={{ fontSize: 12.5, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{r.input}</div>
             </div>
           )}
+          {/* The run's task plan, when its session takes part in one (docs/task-execution.md). */}
+          <TaskPlanPanel source={{ kind: 'session', sessionId: r.sessionId }} collapsed />
           {running && live.mode !== 'poll' ? (
             <LiveRunView r={r} items={live.items} mode={live.mode} readOnly={readOnly} agentId={agentId} onDecide={decide} />
           ) : detail === 'loading' || detail === undefined ? <div style={faint}>Loading the run…</div>

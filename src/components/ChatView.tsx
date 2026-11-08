@@ -18,6 +18,8 @@ import { interruptedLabel, retryable } from '../lib/interrupted';
 
 /** The owner's key inline on a held tool card (item 28, SPA item 32). */
 const HeldInline = lazy(() => import('./OrgTrustView').then((m) => ({ default: m.HeldInline })));
+// A big request split into steps (docs/task-execution.md): the chat's plan, if it has one.
+const TaskPlanPanel = lazy(() => import('./TaskPlanPanel').then((m) => ({ default: m.TaskPlanPanel })));
 
 const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', padding: 5, borderRadius: 6, display: 'flex' };
 const mono: React.CSSProperties = { fontFamily: 'var(--mono)' };
@@ -816,6 +818,7 @@ export function ChatView() {
       <div ref={scrollRef} onScroll={(e) => { const el = e.currentTarget; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} style={{ flex: 1, overflowY: 'auto', padding: '22px 0 8px' }}>
         <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 20px' }}>
           {rows}
+          {s.agentId && <Suspense fallback={null}><TaskPlanPanel key={`${s.id}:${app.streaming ? 1 : 0}`} source={{ kind: 'session', sessionId: s.id }} collapsed /></Suspense>}
           {!app.streaming && app.transcript.turns.at(-1)?.status === 'interrupted' && (
             <InterruptedNote turn={app.transcript.turns.at(-1)!} onRetry={s.kind === 'work' ? undefined : () => app.retry()} />
           )}

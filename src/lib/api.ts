@@ -1353,6 +1353,25 @@ export interface OrgTask {
   source?: TaskSource | string; blockedOn?: string; steps?: string;
   startedAt?: string | null; doneAt?: string | null; blockedSeconds?: number; wakesPausedAt?: string | null;
 }
+/** A task's own plan (docs/task-execution.md): steps run in one session, in handed-off sessions, or by a master's worker sessions. */
+export interface TaskPlanStepView {
+  id: string; title: string; goal: string; inputs: string[]; exit: string[]; dependsOn: string[]; parallel: boolean;
+  tier?: 'cheap' | 'standard' | 'strong'; effort?: string; optional?: boolean;
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'interrupted'; attempts: number; sessionId: string | null;
+  output: string; criteria: Array<{ criterion: string; met: boolean; evidence: string }>; questions: string[]; artifacts: string[]; note: string;
+  model: string; tokensIn: number; tokensOut: number; usd: number; startedAt: string | null; endedAt: string | null; ready: boolean;
+}
+export interface TaskPlanSessionView { sessionId: string; role: 'master' | 'lead' | 'worker'; stepId: string | null; parentSessionId: string | null; depth: number; status: string; model: string; tokensIn: number; tokensOut: number; usd: number; error: string; startedAt: string; endedAt: string | null }
+export interface TaskPlanHandoffView { state: string; decisions: string[]; artifacts: string[]; questions: string[]; next: string; stepId: string | null; fromSessionId: string | null; toSessionId: string | null; createdAt: string }
+export interface TaskPlanView {
+  plan: { id: string; title: string; mode: 'single' | 'sequential' | 'orchestrated'; dynamic: boolean; status: string; version: number; sessions: number; usd: number; tokensIn: number; tokensOut: number; taskId: string | null; orgId: string | null; rootSessionId: string; leadSessionId: string | null; note: string; caps: { maxSessions: number; maxParallel: number; maxDepth: number; planUsdCap: number; planTokenCap: number }; createdAt: string; updatedAt: string };
+  steps: TaskPlanStepView[];
+  sessions: TaskPlanSessionView[];
+  decisions: Array<{ text: string; stepId: string | null; sessionId: string | null; proposed: boolean; createdAt: string }>;
+  handoffs: TaskPlanHandoffView[];
+  versions: Array<{ version: number; reason: string; diff: string[]; createdAt: string }>;
+}
+
 export interface OrgRun {
   id: string; orgId: string; taskId: string; agentId: string; sessionId: string | null; wakeReason: string;
   status: string; outcome: string; tokensIn: number; tokensOut: number; usd: number; startedAt: string; endedAt: string | null;
@@ -2686,6 +2705,9 @@ export const api = {
   reviewOrgTask: (wsId: string, taskId: string, verdict: 'accept' | 'request_changes' | 'escalate', note?: string) => send<OrgTask>(`/api/workspaces/${wsId}/org/tasks/${taskId}/review`, 'POST', { verdict, note }),
   wakeOrgTask: (wsId: string, taskId: string, now = false) => send<{ queued?: boolean; result?: string }>(`/api/workspaces/${wsId}/org/tasks/${taskId}/wake`, 'POST', { now }),
   orgTaskRuns: (wsId: string, taskId: string) => get<OrgRun[]>(`/api/workspaces/${wsId}/org/tasks/${taskId}/runs`),
+  /** Task execution (docs/task-execution.md): a company task's plan, or the plan a session takes part in. */
+  orgTaskPlan: (wsId: string, taskId: string) => get<TaskPlanView | { plan: null }>(`/api/workspaces/${wsId}/org/tasks/${enc(taskId)}/plan`),
+  sessionTaskPlan: (sessionId: string) => get<TaskPlanView | { plan: null }>(`/api/chats/${enc(sessionId)}/task-plan`),
   orgRuns: (wsId: string, limit = 100) => get<OrgRun[]>(`/api/workspaces/${wsId}/org/runs?limit=${limit}`),
   orgAlignments: (wsId: string) => get<OrgAlignment[]>(`/api/workspaces/${wsId}/org/alignments`),
   orgAlignmentClasses: (wsId: string) => get<OrgAlignmentClasses>(`/api/workspaces/${wsId}/org/alignments/classes`),

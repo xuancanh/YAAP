@@ -24,6 +24,11 @@ conformance), `process-discovery.ts` (pure: mining repeated work, drafts),
 tools), `processes.controller.ts` (routes); the page is
 `src/components/OrgProcessesView.tsx` with `src/lib/processes.ts`.
 
+A process spans tasks across the company. Inside **one** task, the agent
+performing it may split its own work into a plan run across several
+sessions — the same graph model with one stage, never on the board: see
+[task execution](task-execution.md).
+
 ## 1. The model
 
 ```

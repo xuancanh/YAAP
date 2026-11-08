@@ -414,8 +414,8 @@ export class TaskPlanService {
 
   /** The session a company task's next owner run continues in (null = its own). */
   async leadSessionFor(taskId: string): Promise<string | null> {
-    const plan = await this.forTask(taskId);
-    return plan && plan.status !== 'done' && plan.status !== 'abandoned' ? plan.leadSessionId : null;
+    // Once handed off, the task stays in its newest session (a review round after the plan closed included).
+    return (await this.forTask(taskId))?.leadSessionId ?? null;
   }
 
   /** After a task run: a handoff written in it wakes the next run at once. */

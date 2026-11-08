@@ -14,6 +14,10 @@ retro-generated work about work, and "done" had no timestamp. This page
 describes the model that replaced it, the mechanisms that keep it honest,
 and the views built on it.
 
+A task too big for one session is split by its owner into a plan of steps
+run in handed-off or parallel worker sessions — still one task on the board,
+one WIP slot, one review: see [task execution](task-execution.md).
+
 ## 1. The model: one work graph with three levels
 
 What the graph builds toward is aligned first: an agent's vision, strategy,
