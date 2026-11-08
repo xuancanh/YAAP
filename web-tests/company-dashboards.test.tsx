@@ -44,6 +44,10 @@ const apiMock = {
   workspaceTrust: vi.fn(async () => ({ workspaceId: 'ws1', orgMode: 'supervised', ceilings: {}, matrix: [], agents: [{ agentId: 'a2', name: 'Writer', classes: [{ effective: 0 }] }] })),
   orgProgram: vi.fn(async () => ({ pms: [], chiefActing: true, chiefName: 'Atlas', items: [], members: [], requests: [], health: { items: 2, unowned: 0, acting: 2, nonPm: 0, stretched: 0, staleCadences: 1, openRequests: 0, overdueRequests: 0 }, bounds: { syncMinDays: 1, syncMaxDays: 7, reviewMinDays: 7, reviewMaxDays: 31, allocationWarnPct: 85, requestAnswerHours: 24 } })),
   orgIncidents: vi.fn(async (): Promise<OrgIncident[]> => [{ id: 'i9', title: 'Provider outage', status: 'resolved', openedAt: day(3), resolvedAt: day(2), containedAt: day(3) } as OrgIncident]),
+  orgQuality: vi.fn(async () => ({
+    standards: [], policies: [], templates: [], recent: [], violations: [],
+    metrics: { days: 30, overall: { tasks: 4, graded: 5, firstPassYield: 0.75, reworkRate: 0.25, escapes: 1, escapeRate: 0.25, spotChecks: 0, spotCheckFails: 0, sameFamilyShare: 0 }, byAgent: {}, byUnit: {}, byStandard: {}, policies: { violations: 0, byPolicy: {}, resultConformance: null } },
+  })),
 };
 vi.mock('../src/lib/api', async (orig) => ({ ...(await orig<typeof import('../src/lib/api')>()), api: apiMock }));
 
@@ -173,6 +177,7 @@ describe('the section dashboards', () => {
     expect(screen.getByTestId('dash-card-audit')).toHaveTextContent('chief acting on its own');
     await waitFor(() => expect(screen.getByTestId('dash-card-trust')).toHaveTextContent('at level 0'));
     await waitFor(() => expect(screen.getByTestId('dash-card-incident-history')).toHaveTextContent('Provider outage'));
+    await waitFor(() => expect(screen.getByTestId('dash-card-quality')).toHaveTextContent('75% of work passed review first time, 1 accepted result came back'));
     fireEvent.click(within(screen.getByTestId('dash-card-replay')).getByText('Replay yesterday'));
     expect(fake.setOrgFocus).toHaveBeenCalledWith({ kind: 'replay', id: yesterdayKey() });
     expect(fake.setOrgPane).toHaveBeenCalledWith('replay');

@@ -130,6 +130,17 @@ export const HEAD_PLAYBOOKS: ReadonlyArray<{ name: string; description: string; 
       '6. A new function, a hire into another unit, a termination, a scope widening or more envelope stay the chief\'s: bring them as a backlog task (org_create_task) with the case.',
     ].join('\n'),
   },
+  {
+    name: 'unit-quality-standards',
+    description: 'Hold your unit\'s work to a written standard: author quality standards and unit policies, read first-pass yield, rework and escapes per member, and fix the cause instead of re-reviewing forever. Use when you take a head\'s seat, after a retro or an escape, and monthly.',
+    instructions: [
+      '1. Read the record first: org_quality shows the standards and policies in force and the figures (first-pass yield, rework, escapes, violations) per member, unit and standard. A deliverable your unit makes often, with rework above a third or any escape, needs a standard.',
+      '2. Write it with org_quality_standard: start from a template where one fits (research, report, ops-change, outreach), scope it to your unit (scopeKind deliverable with unitId your unit, or scopeKind unit), 3–6 criteria each with the evidence that proves it (file, url, tool, action, check) and a min only where a miss is unacceptable, and a pass bar from the company\'s operating profile (quality.defaultPassScore). Fewer, checkable criteria beat many vague ones.',
+      '3. A rule that must hold on every call or deliverable (a price floor, a discount cap, a required disclaimer, no external send without a draft) is a unit policy (org_policy): a predicate when it can be checked from the call\'s arguments or the text, judged when it needs reading; always with remediation that says what to do instead. Blocking ones and anything that loosens a rule go to the CEO as a card.',
+      '4. Review the figures monthly: a member with low first-pass yield needs a clearer brief or coaching (org_task_comment, memory_note), a standard every task fails is wrong (revise it), and an escape gets a written cause in your report. Never lower a bar to make the numbers look better: that is the CEO\'s call.',
+      '5. When you review, grade against the rubric with evidence (verify-and-cite); when you cannot verify, say so and request changes.',
+    ].join('\n'),
+  },
 ];
 
 /** Work a head keeps for itself: planning, reporting, reviews, staffing,

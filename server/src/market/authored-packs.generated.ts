@@ -5055,7 +5055,7 @@ export const AUTHORED_PACKS = [
   "caps": [
    "org",
    "fs",
-   "22 skills"
+   "23 skills"
   ],
   "capsFull": [
    {
@@ -5069,7 +5069,7 @@ export const AUTHORED_PACKS = [
     "icon": "file"
    },
    {
-    "name": "22 skills",
+    "name": "23 skills",
     "desc": "Installed private to this agent; review them in Skills & tools",
     "icon": "board"
    }
@@ -5088,7 +5088,7 @@ export const AUTHORED_PACKS = [
    {
     "name": "Monthly operating review",
     "cron": "0 10 1 * *",
-    "prompt": "Run your decision-log-hygiene, risk-register and ritual-retirement-review playbooks, then values-mechanism-audit, member-lifecycle-review, delegate-org-design (each head's mandate, envelope and team design), learning-loop-review and org-files-hygiene. Propose changes; change nothing the CEO or a ritual owner owns."
+    "prompt": "Run your decision-log-hygiene, risk-register and ritual-retirement-review playbooks, then values-mechanism-audit, member-lifecycle-review, delegate-org-design (each head's mandate, envelope and team design), learning-loop-review, quality-and-policy-control and org-files-hygiene. Propose changes; change nothing the CEO or a ritual owner owns."
    },
    {
     "name": "Quarterly planning kickoff",
@@ -5207,6 +5207,11 @@ export const AUTHORED_PACKS = [
     "name": "capability-gap-review",
     "description": "Find goals the company cannot reach with what it is built from, and recommend the kit or plugin that closes the gap - as a proposal the CEO approves, never an install. Use during planning (annual, quarterly, a new objective), monthly (the monthly loop runs it), when a head's report says \"we have no tool for X\", and when the installed line in your briefing shows a kit partial or a plugin suspended.",
     "instructions": "1. Read what the company is built from: org_foundry_installed lists the kits (active, partial and why, health per interface, updates waiting) and the plugins (active, suspended and why). A suspended interface or a partial kit is a gap that already has a fix: name the missing provider or binding, and put it in the CEO brief as a decision instead of proposing something new.\n2. Read what the goals need: org_intent for the objectives and key results, each head's latest report under /org/<function>/reports/, and /org/issues.md. For each key result ask what system of record it moves in (a sales pipeline needs a CRM, a support SLA needs a helpdesk, invoices due need accounting, deploy frequency needs scm and ci) and whether an installed interface carries it. A key result measured by hand every week is a gap too.\n3. Search, then read before recommending: org_foundry_search with the capability or the function (crm, helpdesk, invoices; sales, finance) shows kits and plugins and what is installed; org_foundry_detail shows what one brings — the operations and the class yaam treats each as (two-key ones need the CEO's second key every time), the skills, guidance and dashboard cards, and for a kit the seats it would hire with their monthly cost. Prefer the smallest thing that closes the gap: one plugin over a kit when the people already exist; a kit when the use case needs its seats, playbooks and policies together; nothing when the gap is a process, not a tool.\n4. Propose, do not install: org_foundry_propose with kind, id, action (install, upgrade or remove), the providers per interface (a trial provider such as a mock is a fine start: it shows the dashboard cards and lets the team rehearse the playbooks without a vendor account; say so) and the seats to fill, a why that names the key result it serves and the expected effect, recommend, alternatives (always including doing nothing) and a confidence. The card carries the plan the CEO will see; nothing changes until it is approved. A head may propose for its own function the same way; review such a card against the goal before it reaches the CEO.\n5. Remove what does not earn its place: a kit or plugin whose interfaces nobody used in a month (org_costs, the plugin audit) or whose goal is retired is a removal proposal (action remove), never a silent uninstall. Upgrades waiting on the owner go into the brief with what changes.\n6. Record each gap, the proposal and its outcome in /org/issues.md and the decision in /org/decisions.md when the CEO decides. Done when every key result maps to an installed capability, a proposal, or a written \"manual on purpose\"."
+   },
+   {
+    "name": "quality-and-policy-control",
+    "description": "Keep the company's quality standards and policies true and enforced as data - adopt standards for the deliverables that matter, turn standing rules into policies with remediation, and read first-pass yield, rework, escapes and violations to fix causes. Use at onboarding (after operating-system-setup), monthly (the monthly loop runs it), after an escape or a repeated violation, and when the CEO states a new rule.",
+    "instructions": "1. Read the record: org_quality (standards, policies, the 30-day figures) and org_quality violations=true. The thresholds (evidence, verifier independence, pass bar, spot checks, approvals) are tunables derived from the profile (org_company view tunables, quality.* and policy.*); changing them is a proposal.\n2. Standards: every deliverable kind the company makes often has one. Adopt a template (org_quality_standard action create template research | report | ops-change | outreach | general) and fit it to the company's values; a function's own standard is its head's to write (unit-quality-standards), yours to review. Few checkable criteria, each naming the evidence that proves it.\n3. Policies: a rule the CEO states in prose (the constitution, a decision, a postmortem action) becomes a policy with org_policy: a predicate when it can be checked from a call's arguments or a result's text (a price floor, a discount cap, a required disclaimer, no send from a tool without a draft), judged when it needs reading, always with remediation. Blocking policies, and anything that retires or weakens one, are the CEO's cards: say what it prevents and what it costs.\n4. Watch the loop: low first-pass yield in a unit goes to its head as a coaching or brief-quality issue; an escape or a spot-check failure gets a cause in /org/issues.md; repeated violations of one policy mean the policy, the brief or the member is wrong — find which before you tighten anything; a policy nobody trips in a quarter is reviewed for retirement.\n5. Exceptions: policy_exception cards reach the CEO with your recommendation; a policy that needs exceptions often should be revised, not waived again. Done when every frequent deliverable has a standard, every standing rule is a policy, and the brief names this month's quality figures."
    }
   ]
  },

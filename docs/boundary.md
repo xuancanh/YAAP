@@ -39,7 +39,7 @@ the actor `experiment`. That actor passes everything except a `never` row.
 |---|---|---|---|
 | tunable | `audit.*`, `redteam.*`, `boundary.*` | never | the auditor's independence; the test of the org; the boundary's own settings |
 | tunable | `actions.*`, `trust.*`, `seat.*`, `chief.proxyLevel` | propose (not delegable) | the external-action floor; what silence from the owner means; how far the chief acts on the CEO's behalf (`docs/chief-of-staff.md`) |
-| tunable | `incidents.*`, `acceptance.*`, `signals.*`, `pulse.*`, `slo.*`, `evals.*`, `capital.vetoWindowMinutes` | propose | safety floors, what counts as verified, what the owner sees, the eval gate, the veto window |
+| tunable | `incidents.*`, `acceptance.*`, `quality.*`, `policy.*`, `signals.*`, `pulse.*`, `slo.*`, `evals.*`, `capital.vetoWindowMinutes` | propose | safety floors, what counts as verified, what the owner sees, the eval gate, the veto window |
 | tunable | any other key | alone | the bound is the safety floor and lives in code |
 | cadence | meeting cadences | alone | bounded by the ritual tunables |
 | routing | model routing by task class | alone | the eval gate replays the golden set first (`docs/evals.md` §3) |
@@ -66,6 +66,10 @@ the actor `experiment`. That actor passes everything except a `never` row.
 | self_guidance | a member's own "How I work" notes and its own lessons | alone | working notes within its charter; every change names its lessons, and a person can edit or undo it |
 | guidance_proposal | a charter or playbook change raised by a repeated lesson | propose | the CEO decides the charter card; the playbook's owner and reviewer the revision |
 | lesson_audience | who reads a member's private lesson | never | widening one person's private lesson to everyone is the owner's call |
+| policy | a new or stricter policy | alone | it only narrows what members may do; the mode and `policy.authoringApproval` still decide whether it is a card (`docs/quality.md` §6) |
+| policy | retiring a policy or weakening its enforcement | propose | loosening a rule widens what members may do unattended |
+| quality_standard | a new or stricter quality standard | alone | it only raises the bar; the mode and `policy.authoringApproval` decide as above |
+| quality_standard | retiring a standard or lowering its bar | propose | it changes what counts as done |
 
 `delegable` on each row says whether a card for that change may be decided
 by a delegate (`docs/owners-seat.md` §2).

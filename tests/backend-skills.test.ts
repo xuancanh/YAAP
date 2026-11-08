@@ -16,7 +16,7 @@ test('built-ins seed once and survive re-seeding; user edits stick', async () =>
   await skills.seedBuiltins();
   const all = await skills.list();
   const names = all.map((s) => s.name).sort();
-  assert.deepEqual(names, ['create-slides', 'deep-research', 'design-polish', 'make-spreadsheet', 'org-member-onboarding', 'org-member-workflow', 'org-unit-retro', 'use-the-knowledge-base', 'write-document']);
+  assert.deepEqual(names, ['create-slides', 'deep-research', 'design-polish', 'make-spreadsheet', 'org-member-onboarding', 'org-member-workflow', 'org-unit-retro', 'use-the-knowledge-base', 'verify-and-cite', 'write-document']);
 
   const edited = await skills.update(all[0].id, { instructions: 'my custom version' });
   await skills.seedBuiltins();
@@ -28,8 +28,8 @@ test('workspace scoping: global skills everywhere, workspace skills only at home
   await skills.seedBuiltins();
   await skills.create({ name: 'ws-only', instructions: 'do the thing', workspaceId: 'ws1' });
 
-  assert.equal((await skills.list('ws1')).length, 10); // 9 builtins + ws-only
-  assert.equal((await skills.list('ws2')).length, 9);
+  assert.equal((await skills.list('ws1')).length, 11); // 10 builtins + ws-only
+  assert.equal((await skills.list('ws2')).length, 10);
 
   const specs = await skills.toolSpecs('ws1');
   assert.ok(specs.some((s) => s.name === 'skill_ws_only'));

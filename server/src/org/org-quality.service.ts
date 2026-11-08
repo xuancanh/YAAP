@@ -100,6 +100,8 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
   /** agentId → recent tool calls (in-process; the persisted record is the transcript). */
   private readonly ledger = new Map<string, Array<{ tool: string; urls: string[]; at: number }>>();
   private readonly lastSweep = new Map<string, number>();
+  /** orgId → its active policies, briefly: the guard runs on every mutating call. */
+  private readonly activeCache = new Map<string, { at: number; rows: OrgPolicy[] }>();
   now: () => Date = () => new Date();
 
   constructor(
@@ -322,6 +324,15 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
     return opts.status ? rows.filter((r) => r.status === opts.status) : rows;
   }
 
+  /** The active policies, cached for a few seconds (every write here clears it). */
+  private async activePolicies(orgId: string): Promise<OrgPolicy[]> {
+    const hit = this.activeCache.get(orgId);
+    if (hit && Date.now() - hit.at < 5_000) return hit.rows;
+    const rows = await this.listPolicies(orgId, { status: 'active' });
+    this.activeCache.set(orgId, { at: Date.now(), rows });
+    return rows;
+  }
+
   async policy(orgId: string, ref: string): Promise<OrgPolicy> {
     const q = (ref ?? '').trim().toLowerCase();
     const rows = await this.listPolicies(orgId);
@@ -346,6 +357,7 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
       source: isAgentActor(actor) ? actor : 'user', createdBy: actor, approvalId: null, pending: '', createdAt: now, updatedAt: now,
     };
     await this.db.insert(orgPolicies).values(row);
+    this.activeCache.delete(orgId);
     let approvalId: string | undefined;
     if (how === 'card') {
       const a = await this.card(orgId, actor, { target: 'policy', id: row.id, action: 'create', key: row.key, name: row.key, summary: `${row.enforcement} (${row.severity}): ${row.statement}`.slice(0, 300) }, why || row.rationale);
@@ -376,6 +388,7 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
     if (how === 'apply') {
       const next = { ...fields, version: retire ? p.version : p.version + 1, updatedAt: nowIso() };
       await this.db.update(orgPolicies).set(next).where(eq(orgPolicies.id, p.id));
+      this.activeCache.delete(orgId);
       await this.audit.append(orgId, { actor, action: retire ? 'policy_retired' : 'policy_set', refType: 'policy', refId: p.id, payload: { key: p.key, version: next.version, loosens, why: why.slice(0, 300) } });
       return { policy: { ...p, ...next }, applied: true };
     }
@@ -393,6 +406,7 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
     const row = (await this.db.select().from(table).where(and(eq(table.orgId, orgId), eq(table.id, id)))).at(0) as (QualityStandard | OrgPolicy) | undefined;
     if (!row) throw new BadRequestException('the standard or policy of this card no longer exists');
     const now = nowIso();
+    this.activeCache.delete(orgId);
     if (action === 'create') await this.db.update(table).set({ status: 'active', approvalId: null, updatedAt: now }).where(eq(table.id, id));
     else {
       const fields = parse<Record<string, unknown>>(row.pending, {});
@@ -412,7 +426,7 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
 
   /** Policies that apply to a member (company, its unit and above, its role, an action class). */
   private async policiesFor(orgId: string, agentId: string | null, opts: { stage: 'action' | 'result'; deliverable?: string; unitId?: string | null }): Promise<OrgPolicy[]> {
-    const active = (await this.listPolicies(orgId, { status: 'active' })).filter((p) => p.appliesAt === 'both' || p.appliesAt === opts.stage);
+    const active = (await this.activePolicies(orgId)).filter((p) => p.appliesAt === 'both' || p.appliesAt === opts.stage);
     if (!active.length) return [];
     const member = agentId ? await this.org.member(orgId, agentId) : null;
     const title = (member?.title ?? '').toLowerCase();
@@ -434,7 +448,7 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
   async guard(workspaceId: string, call: { agentId: string | null; sessionId: string; tool: string; input: Record<string, unknown>; cls: ActionClass }): Promise<{ outcome: 'block' | 'warn' | 'cosign'; text: string; rules?: string } | null> {
     if (!call.agentId || call.cls === 'read') return null;
     const org = await this.org.byWorkspace(workspaceId).catch(() => null);
-    if (!org) return null;
+    if (!org || !(await this.activePolicies(org.id)).some((p) => p.appliesAt !== 'result')) return null;
     const m = await this.org.member(org.id, call.agentId);
     if (!m || m.status === 'terminated') return null;
     const policies = (await this.policiesFor(org.id, call.agentId, { stage: 'action' })).filter((p) => ruleCoversAction(parseRule(p.rule), call.tool, call.cls));

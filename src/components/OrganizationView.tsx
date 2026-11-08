@@ -60,7 +60,10 @@ const RoadmapPane = lazy(() => import('./OrgRoadmapView').then((m) => ({ default
 const TeamsPane = lazy(() => import('./CompanyDashboards').then((m) => ({ default: m.TeamsPane })));
 const SectionDashboard = lazy(() => import('./CompanyDashboards').then((m) => ({ default: m.SectionDashboard })));
 const GoalsPane = lazy(() => import('./OrgGoalsView').then((m) => ({ default: m.GoalsPane })));
-const LAZY_PANES = new Set(['goals', 'vision', 'pulse', 'meetings', 'decisions', 'replay', 'capital', 'incidents', 'roadmap', 'teams']);
+/** Quality control (docs/quality.md): the Oversight › Quality page and the task's QC panel. */
+const QualityPane = lazy(() => import('./OrgQualityView').then((m) => ({ default: m.QualityPane })));
+const TaskQcPanel = lazy(() => import('./OrgQualityView').then((m) => ({ default: m.TaskQcPanel })));
+const LAZY_PANES = new Set(['goals', 'vision', 'pulse', 'meetings', 'decisions', 'replay', 'capital', 'incidents', 'roadmap', 'teams', 'quality']);
 
 const STATUS_COLOR: Record<OrgTaskStatus, string> = {
   backlog: 'var(--text-faint)', waiting: 'var(--text-dim)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
@@ -130,6 +133,7 @@ export function OrganizationView({ section }: { section: CompanySection }) {
             {view === 'incidents' && <IncidentsPane org={org} />}
             {view === 'roadmap' && <RoadmapPane org={org} />}
             {view === 'teams' && <TeamsPane org={org} />}
+            {view === 'quality' && <QualityPane org={org} />}
           </Suspense>
         )}
       </div>
@@ -679,6 +683,7 @@ function TaskDrawer({ org, task, members, onClose, reload, board }: { org: OrgDe
           </div>
         </div>
         <Suspense fallback={null}><TaskChecksPanel wsId={org.workspaceId} task={task} onRan={() => void refresh()} /></Suspense>
+        <Suspense fallback={null}><TaskQcPanel wsId={org.workspaceId} task={task} /></Suspense>
         {/* Extension point: panels plugins add to a task (docs/plugins.md §3.8). */}
         <PluginPanels placement="task" context={{ taskKey: task.key ?? '', taskTitle: task.title }} />
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

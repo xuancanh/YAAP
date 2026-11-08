@@ -131,6 +131,13 @@ chief.
 
 ## 5. Two keys and the policy matrix
 
+Before the matrix, the organization's **policies as data** run on every
+non-read call (`ActionsService.guard`, bound by OrgQualityService;
+`docs/quality.md` §5): a violated blocking predicate refuses the call with
+its remediation (action log `refused`, decision `policy`), a warning rides on
+the result, and a judged policy makes the call a `cosign` with the policy
+text in the co-signer's rules.
+
 The trust level that governs a call is
 `min(earned level, the owner's ceiling, the organization preset)`.
 `decide()` in `server/src/actions/trust-policy.ts` turns it into one

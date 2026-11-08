@@ -70,8 +70,13 @@ export class QualityController {
   @Get() async overview(@Param('id') id: string, @Query('days') days?: string) {
     const orgId = await this.oid(id);
     await this.standing(orgId);
-    const [standards, policies, metrics] = await Promise.all([this.quality.listStandards(orgId), this.quality.listPolicies(orgId), this.quality.metrics(orgId, { days: Number(days) || 30 })]);
-    return { standards: standards.map((s) => this.standardView(s)), policies: policies.map((p) => this.policyView(p)), metrics, templates: QUALITY_TEMPLATES };
+    const [standards, policies, metrics, results, violations, tasks] = await Promise.all([
+      this.quality.listStandards(orgId), this.quality.listPolicies(orgId), this.quality.metrics(orgId, { days: Number(days) || 30 }),
+      this.quality.results(orgId, { limit: 40 }), this.quality.violations(orgId, { limit: 100 }), this.tasks.list(orgId),
+    ]);
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    const recent = results.filter((r) => r.outcome !== 'pending').slice(0, 20).map((r) => ({ ...this.resultView(r), taskKey: byId.get(r.taskId)?.key ?? null, taskTitle: byId.get(r.taskId)?.title ?? '' }));
+    return { standards: standards.map((s) => this.standardView(s)), policies: policies.map((p) => this.policyView(p)), metrics, templates: QUALITY_TEMPLATES, recent, violations };
   }
 
   @Get('results') async results(@Param('id') id: string, @Query('taskId') taskId?: string, @Query('limit') limit?: string) {

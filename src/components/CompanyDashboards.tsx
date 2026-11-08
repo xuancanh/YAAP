@@ -9,8 +9,9 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useApp, type OrgFocus, type OrgPane } from '../store';
 import {
   api, type OrgAllocation, type OrgAuditRow, type OrgAuditRun, type OrgBrief, type OrgCapacity, type OrgDetail, type OrgForecast,
-  type OrgIncident, type OrgPulse, type OrgSpend, type OrgTask, type TrustOverview, type OrgUnitNode,
+  type OrgIncident, type OrgPulse, type OrgSpend, type OrgTask, type TrustOverview, type OrgUnitNode, type QualityOverview,
 } from '../lib/api';
+import { pct, qualityLede } from '../lib/quality';
 import { type CompanySection } from '../lib/company-nav';
 import {
   boardCounts, budgetLines, capitalByGoal, spendWindowLabel, findingsCount, flatUnits, incidentHistory, moneyLede, nextRituals, 
@@ -421,6 +422,7 @@ function OversightDashboard({ org }: { org: OrgDetail }) {
   const runs = useData<OrgAuditRun[]>((w) => api.orgAudits(w, 5), ws);
   const trust = useData<TrustOverview>(api.workspaceTrust, ws);
   const incidents = useData<OrgIncident[]>((w) => api.orgIncidents(w), ws);
+  const quality = useData<QualityOverview>((w) => api.orgQuality(w), ws);
   const lastRun = (runs ?? []).find((r) => r.status === 'done') ?? null;
   const findings = lastRun ? findingsCount(lastRun.findings) : null;
   const history = incidents ? incidentHistory(incidents) : null;
@@ -474,6 +476,18 @@ function OversightDashboard({ org }: { org: OrgDetail }) {
                 </button>
               ))}
             </>
+          )}
+        </Card>
+        <Card id="quality" title="Quality" open={() => open('quality')} openLabel="Open quality">
+          {quality === undefined ? <Loading /> : !quality ? <Empty>Quality is not available.</Empty> : (
+            <div style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+              <div className="co-metrics" style={{ marginBottom: 8 }}>
+                <Fig n={pct(quality.metrics.overall.firstPassYield)} label="first-pass yield" />
+                <Fig n={quality.metrics.overall.escapes} label="escapes" tone={quality.metrics.overall.escapes ? 'var(--red)' : undefined} />
+                <Fig n={quality.metrics.policies.violations} label="violations" tone={quality.metrics.policies.violations ? 'var(--amber)' : undefined} />
+              </div>
+              {qualityLede(quality)}
+            </div>
           )}
         </Card>
         <Card id="replay" title="Replay" open={() => open('replay')} openLabel="Pick a day">

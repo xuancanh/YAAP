@@ -1331,7 +1331,8 @@ export interface OrgMessage {
 /** Who may be tagged on a company's tasks (the comment box's @ list). */
 export interface OrgMentionable { kind: 'agent' | 'human'; id: string; name: string; status?: string }
 export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review'
-  | 'two_key' | 'metric_source' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict' | 'kit_change' | 'plugin_change';
+  | 'two_key' | 'metric_source' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict' | 'kit_change' | 'plugin_change'
+  | 'quality_change' | 'policy_exception';
 export interface OrgApproval {
   id: string; orgId: string; kind: OrgApprovalKind; payload: string; requestedBy: string; recommendation: string;
   status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired'; decidedAt: string | null; decidedBy?: string; decisionNote: string; expiresAt: string | null; createdAt: string;
@@ -1766,6 +1767,44 @@ export type IncidentSeverity = 'minor' | 'major' | 'critical';
 export type IncidentStatus = 'open' | 'contained' | 'resolved';
 export type ManualContainment = 'pause_member' | 'freeze_class' | 'supervised' | 'pause_org';
 export interface ContainmentStep { action: 'note' | 'pause_member' | 'cancel_wakes' | 'freeze_class' | 'supervised' | 'pause_org' | string; at: string; result: string; reversible: boolean; undone?: boolean; data?: Record<string, string> }
+// ---- quality control (docs/quality.md) ----
+export type EvidenceKind = 'action' | 'tool' | 'file' | 'url' | 'check' | 'task';
+export interface QualityCriterion { id: string; text: string; weight: number; min?: number; evidence?: Array<EvidenceKind | 'none'> }
+export type QualityStatus = 'proposed' | 'active' | 'retired' | 'rejected';
+export interface QualityStandard {
+  id: string; orgId: string; slug: string; name: string; scopeKind: string; scopeRef: string; unitId: string | null; summary: string;
+  criteria: QualityCriterion[]; passScore: number; requireEvidence: number; verifier: 'default' | 'agent' | 'family'; version: number; status: QualityStatus;
+  source: string; ownerAgentId: string | null; createdBy: string; approvalId: string | null; pending: Record<string, unknown> | null; createdAt: string; updatedAt: string;
+}
+export interface PolicyCondition { field: string; op: string; value?: unknown }
+export interface OrgPolicy {
+  id: string; orgId: string; key: string; statement: string; rationale: string; scopeKind: string; scopeRef: string; kind: 'predicate' | 'judged';
+  rule: { tools?: string[]; classes?: string[]; when?: PolicyCondition[]; require?: PolicyCondition[]; forbid?: PolicyCondition[] };
+  appliesAt: 'action' | 'result' | 'both'; severity: 'low' | 'medium' | 'high' | 'critical'; enforcement: 'block' | 'warn' | 'log'; remediation: string;
+  ownerAgentId: string | null; version: number; status: QualityStatus; source: string; createdBy: string; approvalId: string | null; pending: Record<string, unknown> | null; createdAt: string; updatedAt: string;
+}
+export interface PolicyViolation {
+  id: string; orgId: string; policyId: string; policyVersion: number; agentId: string; stage: 'action' | 'result'; tool: string; actionId: string | null; taskId: string | null;
+  detail: string; outcome: 'blocked' | 'warned' | 'logged'; status: 'open' | 'exception_requested' | 'waived' | 'upheld' | 'used'; approvalId: string | null; createdAt: string; decidedAt: string | null;
+}
+export interface QcEvidenceRef { raw: string; kind: string; ok: boolean; detail: string }
+export interface QcResult {
+  id: string; taskId: string; kind: 'review' | 'spot_check'; standardId: string | null; standardVersion: number; rubric: QualityCriterion[]; passScore: number;
+  makerAgentId: string | null; unitId: string | null; verifier: string; independence: string; round: number; outcome: 'pending' | 'pass' | 'rework' | 'fail'; score: number | null;
+  scores: Array<{ criterion: string; score: number; note: string; refs: string[] }>; evidence: Array<{ criterion: string; refs: QcEvidenceRef[] }>; checks: Array<{ name: string; ok: boolean; detail: string }>;
+  note: string; spotTaskId: string | null; escapedAt: string | null; escapeReason: string; createdAt: string; decidedAt: string | null;
+}
+export interface QualityFigures { tasks: number; graded: number; firstPassYield: number | null; reworkRate: number | null; escapes: number; escapeRate: number | null; spotChecks: number; spotCheckFails: number; sameFamilyShare: number | null }
+export interface QualityOverview {
+  standards: QualityStandard[]; policies: OrgPolicy[];
+  metrics: { days: number; overall: QualityFigures; byAgent: Record<string, QualityFigures>; byUnit: Record<string, QualityFigures>; byStandard: Record<string, QualityFigures>;
+    policies: { violations: number; byPolicy: Record<string, { key: string; violations: number; blocked: number; warned: number; waived: number }>; resultConformance: number | null } };
+  templates: Array<{ id: string; name: string; deliverable: string; summary: string; criteria: QualityCriterion[] }>;
+  /** The last decided QC results with their task, and the recent policy violations. */
+  recent: Array<QcResult & { taskKey: string | null; taskTitle: string }>;
+  violations: PolicyViolation[];
+}
+
 export interface OrgIncident {
   id: string; orgId: string; workspaceId: string; kind: string; severity: IncidentSeverity; status: IncidentStatus; title: string; detail: string;
   agentId: string | null; actionClass: string | null; refType: string; refId: string; detectedBy: 'system' | 'auditor' | 'owner' | 'member' | string;
@@ -2587,6 +2626,16 @@ export const api = {
   reportActionRevert: (wsId: string, actionId: string, note: string) => send<ActionLogRow>(`/api/workspaces/${wsId}/actions/${enc(actionId)}/revert-report`, 'POST', { note }),
   workspaceAction: (wsId: string, actionId: string) => get<ActionLogRow>(`/api/workspaces/${wsId}/actions/${enc(actionId)}`),
   giveActionKey: (wsId: string, actionId: string, approve: boolean, note?: string) => send<{ status: ActionStatus; result: string }>(`/api/workspaces/${wsId}/actions/${enc(actionId)}/keys`, 'POST', { approve, note }),
+  // quality control (docs/quality.md §9)
+  orgQuality: (wsId: string, days = 30) => get<QualityOverview>(`/api/workspaces/${wsId}/org/quality?days=${days}`),
+  orgQcResults: (wsId: string, taskId?: string) => get<QcResult[]>(`/api/workspaces/${wsId}/org/quality/results${taskId ? `?taskId=${enc(taskId)}` : ''}`),
+  orgTaskQuality: (wsId: string, taskRef: string) => get<{ taskId: string; standard: QualityStandard | null; results: QcResult[] }>(`/api/workspaces/${wsId}/org/quality/tasks/${enc(taskRef)}`),
+  orgPolicyViolations: (wsId: string, policyId?: string) => get<PolicyViolation[]>(`/api/workspaces/${wsId}/org/quality/violations${policyId ? `?policyId=${enc(policyId)}` : ''}`),
+  createQualityStandard: (wsId: string, body: Record<string, unknown>) => send<{ standard: QualityStandard; applied: boolean }>(`/api/workspaces/${wsId}/org/quality/standards`, 'POST', body),
+  reviseQualityStandard: (wsId: string, ref: string, body: Record<string, unknown>) => send<{ standard: QualityStandard; applied: boolean }>(`/api/workspaces/${wsId}/org/quality/standards/${enc(ref)}`, 'POST', body),
+  createOrgPolicy: (wsId: string, body: Record<string, unknown>) => send<{ policy: OrgPolicy; applied: boolean }>(`/api/workspaces/${wsId}/org/quality/policies`, 'POST', body),
+  reviseOrgPolicy: (wsId: string, ref: string, body: Record<string, unknown>) => send<{ policy: OrgPolicy; applied: boolean }>(`/api/workspaces/${wsId}/org/quality/policies/${enc(ref)}`, 'POST', body),
+  runQualitySpotCheck: (wsId: string) => send<{ sampled: number; reverified: number; tasks: number; escapes: number }>(`/api/workspaces/${wsId}/org/quality/spot-check`, 'POST', {}),
   // incidents, health, audit independence (item 29, docs/incidents.md §6)
   orgIncidents: (wsId: string, status?: IncidentStatus) => get<OrgIncident[]>(`/api/workspaces/${wsId}/org/incidents${status ? `?status=${status}` : ''}`),
   orgIncident: (wsId: string, incidentId: string) => get<OrgIncident>(`/api/workspaces/${wsId}/org/incidents/${enc(incidentId)}`),
