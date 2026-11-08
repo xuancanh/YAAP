@@ -244,6 +244,12 @@ added to it.
 - **Model routing as a lever.** Task classes (triage, research, synthesis,
   review) map to model tiers; the chief can trade quality for cost per
   class inside its caps, and the pulse shows the effect.
+- **Model selection by complexity.** An agent in `auto` model mode gets its
+  tier per run from the work itself — class, brief, criteria, risk,
+  attempts, its record, the envelope — and may run on Claude or OpenAI
+  within the owner's order; the routing pins above still override, and the
+  thresholds are culture-derived tunables (docs/agent-types.md "Model
+  selection").
 - **Forecasts.** Burn rate projects the month-end against the envelope;
   the projection, not the balance, is what warns.
 
@@ -650,7 +656,12 @@ against the row before it. Departures from §7–§8: a run's class is the
 task's, not re-judged per call; `strong` resolves through a small per-provider
 table rather than a priced lookup; the preview is one row per run, not a diff
 view (the SPA will draw it); the CEO pins models through the agent's
-`model`, not through the routing table.
+`model`, not through the routing table. Item 23's routing is joined by automatic
+selection (migration `0098-model-selection`, docs/agent-types.md "Model
+selection"): an auto agent's `runTask` scores the task, picks the tier and
+the provider, records `org_runs.tier` / `modelDecision` and passes the
+choice to the turn instead of pinning the session; `routing.classes` and
+`routing.models` still pin the tier and the tier model.
 
 *Phase D, Memory (item 22) — shipped 1 November 2026.* §6 is built, backend
 only: migration `0037-org-memory` (`org_playbooks`). **Playbooks** are skills

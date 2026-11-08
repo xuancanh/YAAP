@@ -29,6 +29,8 @@ import { effectivePersonality, type Personality } from '../agents/personalities'
 type AgentType = typeof agentTypes.$inferSelect;
 import { currentAccountId } from '../accounts/account-context';
 import { ChatSession } from './chats.repository';
+import { ModelSelectionService, type ModelChoice } from './model-selection.service';
+import type { ModelDecision } from '../agent-types/model-selection';
 
 /**
  * When and how an agent uses its memory (docs/agent-memory.md §12), in the
@@ -64,6 +66,9 @@ export interface TurnContext {
   /** The agent type the turn runs on (null on Echo-without-type), for the
    *  model self-heal (docs/agent-types.md "Self-heal"). */
   agentTypeId?: string | null;
+  /** Automatic model selection (docs/agent-types.md "Model selection"): the
+   *  decision this turn's type and model came from; absent on a fixed turn. */
+  modelDecision?: ModelDecision;
 }
 
 /** What a model self-heal did: the model the turn retries on, and the notice. */
@@ -92,6 +97,8 @@ export class TurnContextService {
     @Optional() private readonly settings?: SettingsService,
     /** Optional: provider degradation (docs/incidents.md §4, item 29). */
     @Optional() private readonly health?: ProviderHealthService,
+    /** Optional: automatic model selection; without it every turn is fixed. */
+    @Optional() private readonly selection?: ModelSelectionService,
   ) {}
 
   /** The agent type a session runs on. Sessions the UI opens carry one;
@@ -184,8 +191,15 @@ export class TurnContextService {
 
   /** `turnText` — the message this turn answers (a person's message, a task
    *  wake, a heartbeat): the lessons relevant to it join the always-on core. */
-  async build(session: ChatSession, opts: { turnText?: string } = {}): Promise<TurnContext> {
-    const type = await this.typeFor(session);
+  async build(session: ChatSession, opts: { turnText?: string; choice?: ModelChoice | null } = {}): Promise<TurnContext> {
+    // Automatic model selection (docs/agent-types.md "Model selection"): an
+    // org run brings its decision (null = it decided the run is fixed); any
+    // other turn of an auto agent decides here from the message — the same
+    // resolution in a private chat, a channel, a loop or a heartbeat.
+    const choice = opts.choice !== undefined ? opts.choice : this.selection ? await this.selection.decideForTurn(session, opts.turnText ?? '').catch(() => null) : null;
+    const chosen = choice ? await this.agentTypes.resolve(choice.agentTypeId).catch(() => undefined) : undefined;
+    const auto = choice && chosen && chosen.enabled ? choice : null;
+    const type = auto ? chosen : await this.typeFor(session);
     // Parity rule (docs/incidents.md §4): a fallback changes the provider and
     // the model only — the persona, charter, memory and tools stay the agent's.
     const fallback = type ? await this.fallbackFor(session, type) : null;
@@ -194,7 +208,10 @@ export class TurnContextService {
     const key = fallback ? fallback.key : this.accounts ? await this.accounts.resolveProviderKey(providerName, type?.apiKey) : { apiKey: type?.apiKey ?? undefined, hosted: false };
 
     const parts: string[] = [];
-    if (type?.persona) parts.push(type.persona);
+    // The persona stays the agent's own type's when auto selection moved the
+    // turn to another type: only the provider and the model change.
+    const personaType = auto && chosen && session.agentId ? (await this.typeFor(session)) ?? type : type;
+    if (personaType?.persona) parts.push(personaType.persona);
 
     let agentModel = '';
     let personality: Personality | null = null;
@@ -280,7 +297,7 @@ export class TurnContextService {
     // Quick replies (FR-5.3): a provider-neutral text protocol the UI parses.
     parts.push('When a short list of likely user responses would genuinely help, end your reply with exactly one final line of the form QUICK_REPLIES: ["option one","option two"] (2-4 options, each under 40 characters). Omit the line otherwise. Never mention this mechanism.');
 
-    const ownModel = session.model || agentModel || type?.model || '';
+    const ownModel = auto ? auto.model : session.model || agentModel || type?.model || '';
     return {
       provider,
       model: fallback ? fallback.type.model : ownModel,
@@ -292,6 +309,7 @@ export class TurnContextService {
       providerName,
       agentTypeId: fallback ? fallback.type.id : type?.id ?? null,
       ...(fallback && type ? { degraded: { from: `${type.provider}:${ownModel}`, to: `${fallback.type.provider}:${fallback.type.model}` } } : {}),
+      ...(auto ? { modelDecision: fallback ? { ...auto.decision, model: fallback.type.model, agentTypeId: fallback.type.id, provider: fallback.type.provider, reasons: [...auto.decision.reasons, `${auto.decision.provider} degraded: ran on ${fallback.type.name}`] } : auto.decision } : {}),
     };
   }
 }

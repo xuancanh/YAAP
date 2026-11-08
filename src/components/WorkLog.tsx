@@ -13,6 +13,7 @@
  * one runs); Continue in chat opens the session in the chat view; a failed
  * or stopped run can Rerun. Viewers read only.
  */
+import { decisionLabel } from '../lib/model-selection';
 import { rerunRefusal } from '../lib/rerun';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, type LiveItem } from '../store';
@@ -413,6 +414,14 @@ function RunRow({ r, first, open, onToggle, detail, agentId, readOnly, agentName
             {r.rerunOf && <button onClick={() => focusRun(r.rerunOf!)} style={linkBtn}>rerun of an earlier run →</button>}
             {r.archived && <span>archived session</span>}
           </div>
+          {r.modelDecision && (
+            <details data-testid="run-model-decision" style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+              <summary style={{ cursor: 'pointer' }}>{decisionLabel(r.modelDecision)} <span style={faint}>· why this model</span></summary>
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18, ...faint }}>
+                {[`score ${r.modelDecision.score}`, ...r.modelDecision.reasons].map((x, i) => <li key={i}>{x}</li>)}
+              </ul>
+            </details>
+          )}
           {r.outcome === 'error' && r.error && <div style={{ fontSize: 12, color: 'var(--red)' }}>{r.error}</div>}
           {r.outcome === 'interrupted' && (
             <div data-testid="run-interrupted-note" style={{ fontSize: 12, color: 'var(--text-dim)' }}>

@@ -13,7 +13,7 @@
 import { INTERRUPTED_NOTE } from '../common/lifecycle';
 import { backfillTaskKeys } from '../common/task-keys';
 import { backfillWorkTracking } from './work-tracking-backfill';
-import { repairAgentModels } from './model-repair';
+import { repairAgentModels, repairTypeDefaults } from './model-repair';
 import { personalityForId } from '../agents/personalities';
 import { departmentName, departmentSlug, freeSlug, isTeamPattern, uniqueDepartmentName } from '../org/unit-names';
 
@@ -2943,6 +2943,23 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_process_suggestions_key ON org_process_suggestions ("orgId", "key")`);
     },
   },
+  {
+    id: '0102-model-selection',
+    up: async (db) => {
+      // Automatic model selection by task complexity (docs/agent-types.md
+      // "Model selection"): the agent's and the type's mode ('' inherits),
+      // the workspace's default mode / provider order, a declared tier on a
+      // task, and the decision each run and turn kept. Idempotent.
+      if (!(await hasColumn(db, 'agents', 'modelMode'))) await db.query(`ALTER TABLE agents ADD COLUMN "modelMode" TEXT NOT NULL DEFAULT ''`);
+      if (!(await hasColumn(db, 'agent_types', 'modelMode'))) await db.query(`ALTER TABLE agent_types ADD COLUMN "modelMode" TEXT NOT NULL DEFAULT ''`);
+      if (!(await hasColumn(db, 'workspaces', 'modelSelection'))) await db.query(`ALTER TABLE workspaces ADD COLUMN "modelSelection" TEXT NOT NULL DEFAULT '{}'`);
+      if (!(await hasColumn(db, 'chat_turns', 'modelDecision'))) await db.query(`ALTER TABLE chat_turns ADD COLUMN "modelDecision" TEXT NOT NULL DEFAULT ''`);
+      if (!(await hasColumn(db, 'org_tasks', 'modelTier'))) await db.query(`ALTER TABLE org_tasks ADD COLUMN "modelTier" TEXT NOT NULL DEFAULT ''`);
+      if (!(await hasColumn(db, 'org_runs', 'tier'))) await db.query(`ALTER TABLE org_runs ADD COLUMN "tier" TEXT NOT NULL DEFAULT ''`);
+      if (!(await hasColumn(db, 'org_runs', 'modelDecision'))) await db.query(`ALTER TABLE org_runs ADD COLUMN "modelDecision" TEXT NOT NULL DEFAULT ''`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_runs_tier ON org_runs ("orgId", "tier")`);
+    },
+  },
 ];
 
 /**
@@ -3175,6 +3192,10 @@ export async function runPgMigrations(db: Queryable, logger: { log: (msg: string
     // Model repair on every boot (docs/agent-types.md "Backfill"): agents
     // and pinned chat sessions on a model their agent type does not serve
     // (e.g. claude-* on a DeepSeek type) move to the type's default.
+    // A type whose default model is another vendor's (a DeepSeek type left on
+    // claude-sonnet-4-5 by the old add form) moves to its provider's default.
+    const types = await repairTypeDefaults(db);
+    if (types > 0) logger.log(`repaired ${types} agent type default model(s) of another provider's family`);
     const repaired = await repairAgentModels(db);
     if (repaired.agents + repaired.sessions > 0) logger.log(`repaired models: ${repaired.agents} agent(s), ${repaired.sessions} chat session(s) moved to their agent type's default model`);
   } finally {

@@ -7,7 +7,7 @@ import { useAuth } from '../auth';
 import { ImportSkillMdButton, RevisionCard, ScanFlags, SkillStats } from './SkillBits';
 import { PublishButton } from './RegistryBits';
 import { NewWorkspaceWizard } from './NewWorkspaceWizard';
-import { api, PROVIDER_COLORS, type AgentType, type ModelTierName, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type FlowKind, type FlowRule, type MemberGrant, type MemberRole, type OrgCaps, type OrgMode, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceInvite, type WorkspaceMember, type WorkspaceUsage, type OrgTunable } from '../lib/api';
+import { api, PROVIDER_COLORS, type AgentType, type ModelTierName, type AccountDetail, type BrowserStatus, type ComputerAction, type ComputerStatus, type Connection, type ConnectionProvider, type EmailStatus, type FlowKind, type FlowRule, type MemberGrant, type MemberRole, type OrgCaps, type OrgMode, type PricingInfo, type ProfileProposal, type QuietHours, type QuietPolicy, type RegistryList, type RegistryStatus, type RunnerStatus, type SecurityPolicy, type Workspace, type WorkspaceInvite, type WorkspaceMember, type WorkspaceUsage, type OrgTunable, type ModelOutcomes, type ModelSelectionView, type ProviderPreset } from '../lib/api';
 import { AREA_LABEL, groupTunables, SLO_TARGET_OF, tunableError } from '../lib/org';
 import { KIND_LABEL } from '../lib/registry';
 import { PLAN_LABEL, capLine, ceilingPct, usageLine } from '../lib/account';
@@ -16,6 +16,7 @@ import { currentSubscription, disablePush, enablePush, pushSupported } from '../
 import { fmtUsd } from '../lib/pricing';
 import { UsageBars, UsageRows } from './UsageChart';
 import { MODEL_TIERS, fetchedLabel, typeModelList, typeTierModels } from '../lib/agent-models';
+import { MODEL_MODE_LABEL } from '../lib/model-selection';
 
 const PANE_META: Record<string, [string, string]> = {
   account: ['Account', 'Who you are signed in as, your plan, this month in dollars against its ceiling, and the provider keys your agents run on.'],
@@ -60,7 +61,7 @@ export function TypeModels({ t, onChanged, toast }: { t: AgentType; onChanged: (
   const list = typeModelList(t);
   const tiers = typeTierModels(t);
   const sel: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '5px 8px', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--mono)', outline: 'none', maxWidth: '100%' };
-  const save = async (patch: { model?: string; tierModels?: Partial<Record<ModelTierName, string | null>> }, msg: string) => {
+  const save = async (patch: { model?: string; tierModels?: Partial<Record<ModelTierName, string | null>>; modelMode?: string }, msg: string) => {
     try { await api.updateAgentType(t.id, patch); await onChanged(); toast(msg); } catch (err) { toast(err instanceof Error ? err.message.slice(0, 160) : 'could not save'); }
   };
   const refresh = async () => {
@@ -83,6 +84,14 @@ export function TypeModels({ t, onChanged, toast }: { t: AgentType; onChanged: (
         {list.map((m) => <span key={m} style={{ fontSize: 11, fontFamily: 'var(--mono)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 6px', color: m === t.model ? 'var(--green)' : 'var(--text-dim)' }}>{m}</span>)}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
+        <label style={{ display: 'grid', gap: 3, fontSize: 11, color: 'var(--text-faint)' }}>
+          Model mode
+          <select aria-label={`${t.name} model mode`} value={t.modelMode ?? ''} onChange={(e) => { void save({ modelMode: e.target.value }, `${t.name}: ${MODEL_MODE_LABEL[e.target.value] ?? e.target.value} for its agents that set none`); }} style={{ ...sel, fontFamily: 'inherit' }}>
+            <option value="">the workspace&apos;s</option>
+            <option value="auto">{MODEL_MODE_LABEL.auto}</option>
+            <option value="fixed">{MODEL_MODE_LABEL.fixed}</option>
+          </select>
+        </label>
         <label style={{ display: 'grid', gap: 3, fontSize: 11, color: 'var(--text-faint)' }}>
           Default model
           <select aria-label={`${t.name} default model`} value={t.model} onChange={(e) => { void save({ model: e.target.value }, `${t.name} now defaults to ${e.target.value}`); }} style={sel}>
@@ -110,10 +119,31 @@ function ProvidersPane() {
    *  preset form here then has no key field (docs/accounts.md §6). */
   const keysInAccount = auth.mode === 'accounts' && !auth.account?.isAdmin;
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ name: '', provider: 'anthropic', model: 'claude-sonnet-4-5', apiKey: '', baseUrl: '', persona: '' });
+  const [presets, setPresets] = useState<ProviderPreset[]>([]);
+  useEffect(() => { api.providerPresets().then(setPresets).catch(() => setPresets([])); }, [app.agentTypes.length]);
+  // The add form starts on the picked provider's preset default — a DeepSeek
+  // type must not start on a Claude model (docs/agent-types.md "Default providers").
+  const presetModel = (provider: string) => presets.find((p) => p.provider === provider)?.model ?? '';
+  const [form, setForm] = useState({ name: '', provider: 'anthropic', model: 'claude-sonnet-5-5', apiKey: '', baseUrl: '', persona: '' });
   const defaultId = app.settings.defaultAgentTypeId;
+  const quickAdd = async (p: ProviderPreset) => {
+    try {
+      await api.createAgentTypeFromPreset(p.provider);
+      await app.refreshAgentTypes();
+      app.showToast(`Added ${p.name} with its tier map (${MODEL_TIERS.map((t) => p.tierModels[t]).join(' / ')})${keysInAccount ? '' : ' — set its API key below'}`);
+    } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'could not add'); }
+  };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {app.workspaceId && <ModelSelectionCard workspaceId={app.workspaceId} />}
+      {presets.some((p) => p.default && p.existing.length === 0) && (
+        <div data-testid="provider-quick-add" style={{ ...card, display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12.5, color: 'var(--text-dim)', flex: 1, minWidth: 200 }}>Claude and OpenAI are supported by default: add one with its current models and tier map.</span>
+          {presets.filter((p) => p.default && p.existing.length === 0).map((p) => (
+            <button key={p.provider} onClick={() => { void quickAdd(p); }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Add {p.name}</button>
+          ))}
+        </div>
+      )}
       {app.agentTypes.map((t) => (
         <div key={t.id} style={card}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
@@ -142,7 +172,7 @@ function ProvidersPane() {
               style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 11px', color: 'var(--text)', fontSize: 13, outline: 'none' }} />
           ))}
           <div style={{ display: 'flex', gap: 8 }}>
-            <select value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 11px', color: 'var(--text)', fontSize: 13, outline: 'none' }}>
+            <select value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value, model: presetModel(e.target.value) || (e.target.value === 'echo' ? 'echo' : '') })} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 11px', color: 'var(--text)', fontSize: 13, outline: 'none' }}>
               <option value="anthropic">Anthropic</option>
               <option value="openai">OpenAI</option>
               <option value="deepseek">DeepSeek</option>
@@ -155,7 +185,8 @@ function ProvidersPane() {
             </select>
             <button onClick={async () => {
               if (!form.name || !form.model) return;
-              await api.createAgentType({ name: form.name, provider: form.provider, model: form.model, apiKey: form.apiKey || undefined, baseUrl: form.baseUrl || undefined, persona: form.persona || undefined });
+              const preset = presets.find((p) => p.provider === form.provider && p.model === form.model);
+              await api.createAgentType({ name: form.name, provider: form.provider, model: form.model, apiKey: form.apiKey || undefined, baseUrl: form.baseUrl || undefined, persona: form.persona || undefined, ...(preset ? { models: preset.models, tierModels: preset.tierModels } : {}) });
               await app.refreshAgentTypes();
               setAdding(false);
               app.showToast(`Added ${form.name}`);
@@ -167,6 +198,85 @@ function ProvidersPane() {
         <button onClick={() => setAdding(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center', background: 'var(--panel-2)', border: '1px dashed var(--border)', color: 'var(--text-dim)', borderRadius: 13, padding: 13, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
           <I d={P.plus} size={14} />Add agent type
         </button>
+      )}
+    </div>
+  );
+}
+
+/** Automatic model selection for the workspace (docs/agent-types.md "Model
+ *  selection"): the default mode, whether an auto agent may run on another
+ *  configured provider, the preference order, the tier map each type
+ *  resolves to, the company's thresholds, and how each tier did. */
+export function ModelSelectionCard({ workspaceId }: { workspaceId: string }) {
+  const app = useApp();
+  const [view, setView] = useState<ModelSelectionView | null>(null);
+  const [outcomes, setOutcomes] = useState<ModelOutcomes | null>(null);
+  useEffect(() => {
+    api.modelSelection(workspaceId).then(setView).catch(() => setView(null));
+    api.modelOutcomes(workspaceId).then(setOutcomes).catch(() => setOutcomes(null));
+  }, [workspaceId, app.agentTypes]);
+  if (!view) return null;
+  const save = async (body: { mode?: string; order?: string[]; crossProvider?: boolean }, msg: string) => {
+    try { setView(await api.setModelSelection(workspaceId, body)); app.showToast(msg); } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'could not save'); }
+  };
+  const order = [...view.selection.order.filter((id) => view.types.some((t) => t.id === id)), ...view.types.map((t) => t.id).filter((id) => !view.selection.order.includes(id))];
+  const move = (id: string, d: -1 | 1) => {
+    const i = order.indexOf(id); const j = i + d;
+    if (j < 0 || j >= order.length) return;
+    const next = [...order]; [next[i], next[j]] = [next[j], next[i]];
+    void save({ order: next }, 'Provider preference saved');
+  };
+  const p = view.policy;
+  const tierName = (n: number) => MODEL_TIERS[Math.max(0, Math.min(2, Math.round(n)))];
+  const sel: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '5px 8px', color: 'var(--text)', fontSize: 12, outline: 'none' };
+  return (
+    <div data-testid="model-selection-card" style={{ ...card, display: 'grid', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>Model selection</span>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-dim)' }}>
+          Workspace default
+          <select aria-label="Workspace model mode" value={view.selection.mode ?? ''} onChange={(e) => { void save({ mode: e.target.value }, e.target.value === 'auto' ? 'Agents that set no mode now pick their model by task complexity' : 'Agents that set no mode run on their own model'); }} style={sel}>
+            <option value="">{MODEL_MODE_LABEL.fixed}</option>
+            <option value="auto">{MODEL_MODE_LABEL.auto}</option>
+          </select>
+        </label>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+        In auto mode each task run and chat turn scores the work (class, brief, criteria and checks, risk, dependencies, attempts, the agent&apos;s record, the envelope) and picks cheap, standard or strong; the run&apos;s work log says why. An agent or a type can set its own mode. The company&apos;s routing pins still win, and the thresholds are its tunables (model.*), derived from its values.
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--text-dim)', cursor: 'pointer' }}>
+        <input type="checkbox" aria-label="Allow other providers" checked={view.selection.crossProvider} onChange={(e) => { void save({ crossProvider: e.target.checked }, e.target.checked ? 'Auto agents may run on another configured provider' : 'Auto agents stay on their own agent type'); }} style={{ accentColor: 'var(--accent)' }} />
+        An auto agent may run on another configured provider (by the order below, health, price; a reviewer prefers another model family than the maker&apos;s)
+      </label>
+      {view.types.length > 0 && (
+        <div style={{ display: 'grid', gap: 5 }}>
+          {order.map((id, i) => {
+            const t = view.types.find((x) => x.id === id)!;
+            return (
+              <div key={id} data-testid={`model-order-${id}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, border: '1px solid var(--border-soft)', borderRadius: 8, padding: '5px 9px', background: 'var(--panel-2)' }}>
+                <span style={{ ...mono, color: 'var(--text-faint)', width: 16 }}>{i + 1}</span>
+                <span style={{ fontWeight: 600, minWidth: 90 }}>{t.name}</span>
+                <span style={{ ...mono, color: 'var(--text-dim)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{MODEL_TIERS.map((tier) => `${tier}: ${t.tiers[tier]}`).join(' · ')}</span>
+                {!t.hasApiKey && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>no key</span>}
+                <button aria-label={`Prefer ${t.name}`} disabled={i === 0} onClick={() => move(id, -1)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', cursor: 'pointer', padding: '1px 7px' }}>↑</button>
+                <button aria-label={`Prefer ${t.name} less`} disabled={i === order.length - 1} onClick={() => move(id, 1)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', cursor: 'pointer', padding: '1px 7px' }}>↓</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ fontSize: 11.5, color: 'var(--text-faint)', ...mono }}>
+        cheap ≤ {p.cheapMaxScore} · strong ≥ {p.strongMinScore} · floor {tierName(p.floorTier)} · ceiling {tierName(p.ceilingTier)} · risky ≥ {tierName(p.riskFloorTier)} · escalate after {p.retryEscalateAfter} retry · tight budget &lt; {p.budgetTightPct}% · agent requests ±{p.requestCap}
+      </div>
+      {outcomes && outcomes.tiers.some((t) => t.runs + t.turns > 0) && (
+        <table data-testid="model-outcomes" style={{ fontSize: 11.5, borderCollapse: 'collapse', width: '100%' }}>
+          <thead><tr style={{ color: 'var(--text-faint)', textAlign: 'left' }}><th>Tier ({outcomes.days} days)</th><th>Runs</th><th>Success</th><th>Failed</th><th>Escalated retries</th><th>Avg cost</th><th>Chat turns</th></tr></thead>
+          <tbody>
+            {outcomes.tiers.map((t) => (
+              <tr key={t.tier}><td>{t.tier}</td><td>{t.runs}</td><td>{t.successRate === null ? '—' : `${Math.round(t.successRate * 100)}%`}</td><td>{t.failed}</td><td>{t.reworked}</td><td>{fmtUsd(t.avgUsd)}</td><td>{t.turns}</td></tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );

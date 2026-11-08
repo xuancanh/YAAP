@@ -5,7 +5,8 @@
  * from every response (FR-13.3); clients only learn whether a key is set.
  * resolve() hands consumers the opened plaintext, as before.
  */
-import { Injectable, Inject, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException, Logger, OnApplicationBootstrap, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { eq } from 'drizzle-orm';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
@@ -13,6 +14,7 @@ import { agentTypes, appSettings } from '../database/schema';
 import { OPENAI_COMPAT_BASE_URLS } from '../ai/openai-ai.provider';
 import { configuredModels, isTierName, tierModelsOf, typeModels, vendorTierModel, typeFamily, TIERS, type Tier } from './model-resolution';
 import { newId, nowIso } from '../common/ids.util';
+import { DEFAULT_PROVIDERS, PROVIDER_PRESETS } from './provider-presets';
 import { seal, open } from '../common/secretbox';
 import { currentAccountId } from '../accounts/account-context';
 
@@ -48,19 +50,27 @@ export function parseModelList(body: unknown): string[] {
 }
 
 @Injectable()
-export class AgentTypesService {
+export class AgentTypesService implements OnApplicationBootstrap {
   private readonly logger = new Logger('AgentTypes');
   /** The fetch discovery uses; tests swap it for a stub. */
   fetchFn: typeof fetch = (...args) => fetch(...args);
 
-  constructor(@Inject(DRIZZLE_DB) private readonly db: DrizzleDb) {}
+  constructor(@Inject(DRIZZLE_DB) private readonly db: DrizzleDb, @Optional() private readonly config?: ConfigService) {}
+
+  /** Seed the default providers from the environment (single-user mode only). */
+  async onApplicationBootstrap(): Promise<void> {
+    if (!this.config || this.config.get<string>('authMode') !== 'single' || this.config.get<boolean>('seedProviderTypes') === false) return;
+    const keys = this.config.get<Record<string, string>>('providerSeedKeys') ?? {};
+    if (!Object.values(keys).some(Boolean)) return;
+    await this.seedDefaults(keys).catch((err: unknown) => this.logger.warn(`seeding default agent types failed: ${err instanceof Error ? err.message : String(err)}`));
+  }
 
   async list() {
     const rows = await this.db.select().from(agentTypes);
     return rows.map(redact);
   }
 
-  async create(input: { name: string; provider: string; model: string; models?: string[]; baseUrl?: string; apiKey?: string; persona?: string; tierModels?: Partial<Record<Tier, string | null>> }) {
+  async create(input: { name: string; provider: string; model: string; models?: string[]; baseUrl?: string; apiKey?: string; persona?: string; tierModels?: Partial<Record<Tier, string | null>>; modelMode?: string }) {
     const row = {
       accountId: currentAccountId(),
       id: newId(),
@@ -70,6 +80,7 @@ export class AgentTypesService {
       models: JSON.stringify(input.models ?? []),
       modelsFetchedAt: null as string | null,
       tierModels: '{}',
+      modelMode: checkMode(input.modelMode),
       baseUrl: input.baseUrl ?? null,
       // No key given: inherit the account's existing key for this provider,
       // so the Account pane's one key per provider covers later presets too.
@@ -83,7 +94,7 @@ export class AgentTypesService {
     return redact(row);
   }
 
-  async update(id: string, patch: Partial<{ name: string; provider: string; model: string; models: string[]; baseUrl: string; apiKey: string; persona: string; enabled: boolean; tierModels: Partial<Record<Tier, string | null>> }>) {
+  async update(id: string, patch: Partial<{ name: string; provider: string; model: string; models: string[]; baseUrl: string; apiKey: string; persona: string; enabled: boolean; tierModels: Partial<Record<Tier, string | null>>; modelMode: string }>) {
     const found = await this.resolve(id);
     if (!found) throw new NotFoundException(`agent type ${id}`);
     const { tierModels: tierPatch, ...rest } = patch;
@@ -98,12 +109,48 @@ export class AgentTypesService {
     const next = { ...found, ...(set.models !== undefined ? { models: set.models as string } : {}), ...(set.model !== undefined ? { model: set.model as string } : {}) };
     if (tierPatch) set.tierModels = JSON.stringify(checkTierModels(next, tierPatch, tierModelsOf(found)));
     if (patch.enabled !== undefined) set.enabled = patch.enabled ? 1 : 0;
+    if (patch.modelMode !== undefined) set.modelMode = checkMode(patch.modelMode);
     // Seal keys at rest; re-sealing the (opened) existing key on any update
     // lazily upgrades legacy plaintext/plain: rows.
     if (patch.apiKey !== undefined) set.apiKey = patch.apiKey ? seal(patch.apiKey) : null;
     else if (found.apiKey) set.apiKey = seal(found.apiKey);
     await this.db.update(agentTypes).set(set).where(eq(agentTypes.id, id));
     return redact((await this.resolve(id))!);
+  }
+
+  /** The provider presets (docs/agent-types.md "Default providers"): what
+   *  quick add creates, and which of them the account already has. */
+  async presets() {
+    const mine = await this.list();
+    return Object.values(PROVIDER_PRESETS).map((p) => ({ ...p, env: undefined, existing: mine.filter((t) => t.provider === p.provider).map((t) => t.id), default: (DEFAULT_PROVIDERS as readonly string[]).includes(p.provider) }));
+  }
+
+  /** Quick add: a type from a provider preset — its default, list and tier
+   *  map — with the key given, else the account's existing key for it. */
+  async createFromPreset(provider: string, opts: { apiKey?: string; name?: string; modelMode?: string } = {}) {
+    const p = PROVIDER_PRESETS[provider];
+    if (!p) throw new BadRequestException(`no preset for provider "${provider}" — known: ${Object.keys(PROVIDER_PRESETS).join(', ')}`);
+    return this.create({ name: opts.name?.trim() || p.name, provider: p.provider, model: p.model, models: p.models, tierModels: p.tierModels, apiKey: opts.apiKey || undefined, modelMode: opts.modelMode });
+  }
+
+  /**
+   * Default providers at boot (single-user mode): for Claude and OpenAI —
+   * and DeepSeek — whose key is in the environment (ANTHROPIC_API_KEY,
+   * OPENAI_API_KEY, DEEPSEEK_API_KEY) and that the account has no type of
+   * yet, create the preset type with that key (sealed). Existing types are
+   * never touched. Returns the providers seeded.
+   */
+  async seedDefaults(env: Record<string, string | undefined> = process.env): Promise<string[]> {
+    const mine = await this.list();
+    const seeded: string[] = [];
+    for (const p of Object.values(PROVIDER_PRESETS)) {
+      const key = p.env ? (env[p.env] ?? '').trim() : '';
+      if (!key || mine.some((t) => t.provider === p.provider)) continue;
+      await this.createFromPreset(p.provider, { apiKey: key });
+      seeded.push(p.provider);
+    }
+    if (seeded.length) this.logger.log(`seeded default agent types from the environment: ${seeded.join(', ')}`);
+    return seeded;
   }
 
   async remove(id: string) {
@@ -212,6 +259,13 @@ export class AgentTypesService {
     const row = rows[0];
     return row ? { ...row, apiKey: row.apiKey ? open(row.apiKey) : null } : undefined;
   }
+}
+
+/** A type's model mode: '' (the workspace's) | auto | fixed. */
+function checkMode(v: string | undefined | null): string {
+  if (v === undefined || v === null || v === '') return '';
+  if (v !== 'auto' && v !== 'fixed') throw new BadRequestException('modelMode must be auto, fixed or \'\' (inherit the workspace\'s)');
+  return v;
 }
 
 /** Validate per-tier picks against the type's known models; null/'' unpins. */

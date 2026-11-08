@@ -484,6 +484,8 @@ export class OrgTasksService {
      *  chief's sweep, request intake) run the company itself, so creation
      *  gates keyed on goal alignment can let them through. */
     process?: { runId: string; nodeId: string; category?: string } | null;
+    /** Automatic model selection (docs/agent-types.md "Model selection"): a tier the creator or the step declares. */
+    modelTier?: string | null;
   }): Promise<OrgTask> {
     const org = await this.org.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 200);
@@ -553,6 +555,7 @@ export class OrgTasksService {
       source, blockedOn: '', steps: JSON.stringify(steps), startedAt: null, doneAt: status === 'done' ? now : null, blockedSeconds: 0,
       wakeSig: '', wakeCount: 0, nextWakeAt: null, failSig: '', failRepeats: 0, wakesPausedAt: null,
       processRunId: input.process?.runId ?? null, processNodeId: input.process?.nodeId ?? null,
+      modelTier: ['cheap', 'standard', 'strong'].includes(input.modelTier ?? '') ? input.modelTier! : '',
       createdAt: now, updatedAt: now,
     };
     await this.db.insert(orgTasks).values(row);
@@ -1233,10 +1236,16 @@ export class OrgTasksService {
     const row: OrgRun = {
       id: newId(), accountId: currentAccountId(), orgId, taskId: input.taskId, agentId: input.agentId, sessionId: input.sessionId ?? null,
       wakeReason: input.wakeReason, status: 'running', outcome: '', tokensIn: 0, tokensOut: 0, usd: 0, reservedUsd: input.reservedUsd ?? 0,
+      tier: '', modelDecision: '',
       startedAt: nowIso(), endedAt: null,
     };
     await this.db.insert(orgRuns).values(row);
     return row;
+  }
+
+  /** Automatic model selection: the tier and decision the run's model came from. */
+  async setRunModel(runId: string, tier: string, decision: unknown): Promise<void> {
+    await this.db.update(orgRuns).set({ tier, modelDecision: JSON.stringify(decision) }).where(eq(orgRuns.id, runId));
   }
 
   async endRun(runId: string, patch: Partial<Pick<OrgRun, 'status' | 'outcome' | 'tokensIn' | 'tokensOut' | 'usd' | 'sessionId'>>): Promise<void> {

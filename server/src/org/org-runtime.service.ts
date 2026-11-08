@@ -73,6 +73,9 @@ import { deliveryFor } from '../workspaces/quiet-hours';
 import { ChatsRepository, ChatSession } from '../chats/chats.repository';
 import { TurnLoopService, OrgToolsHook, RESTRICT_OWN_SKILLS } from '../chats/turn-loop.service';
 import { TurnContextService } from '../chats/turn-context.service';
+import { ModelSelectionService, type ModelChoice } from '../chats/model-selection.service';
+import { taskSignals } from '../agent-types/model-selection';
+import { qualityTunable } from './quality-tunables';
 import { HeartbeatService } from '../chats/heartbeat.service';
 import { TriggerBus, OrgWakeEvent, OrgWakeReason, OrgBoardEvent } from '../chats/trigger-bus';
 import { AiProviderFactory } from '../ai/providers.factory';
@@ -92,7 +95,7 @@ import { OrgSloService } from './org-slo.service';
 import { OrgIntentService, paceOf, type IntentEvent } from './org-intent.service';
 import { OrgCapitalService, type PlanAction, type PlanCapture } from './org-capital.service';
 import { describeRouting, isTier, MODEL_TIERS, parseRouting, resolveRoute, tierModel } from './org-routing';
-import { isKnownModel, unknownModelMessage } from '../agent-types/model-resolution';
+import { isKnownModel, modelFamily, providerFamilyOf, unknownModelMessage } from '../agent-types/model-resolution';
 import { TASK_CLASSES } from './org-tasks.service';
 import { checkTunable, describeTunables, tunable } from './org-tunables';
 import { parseScopes, widenedScopes } from './scopes';
@@ -298,6 +301,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     @Optional() private readonly heartbeat?: HeartbeatService,
     /** Optional: capital (docs/company-vision.md §7–§8) — routing, costs, forecasts, plan previews. */
     @Optional() private readonly capital?: OrgCapitalService,
+    /** Optional: automatic model selection by task complexity (docs/agent-types.md "Model selection"). */
+    @Optional() private readonly selection?: ModelSelectionService,
   ) {
     bus?.onOrgWake((ev) => this.wake(ev));
     capital?.bindApplier((orgId, action) => this.applyPlanAction(orgId, action));
@@ -1025,9 +1030,13 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     // Capital (docs/company-vision.md §7): the model follows the task class
     // through the org's routing unless the CEO pinned one on the agent.
     const sessionModel = await this.sessionModelFor(agentId, org.workspaceId);
-    const route = agent.model ? null : resolveRoute(parseRouting(org.routing), task.class, { provider: agent.provider, model: agent.model }, sessionModel, undefined, await this.agents.typeOf(agent));
+    // Automatic model selection (docs/agent-types.md "Model selection"): an
+    // agent in auto mode gets its tier from the task's complexity, its
+    // attempts, its record and the envelope; the CEO's routing still pins.
+    const choice = await this.modelChoiceFor(org, task, agent, { reviewer, projectId: task.projectId });
+    const route = choice !== undefined || agent.model ? null : resolveRoute(parseRouting(org.routing), task.class, { provider: agent.provider, model: agent.model }, sessionModel, undefined, await this.agents.typeOf(agent));
     // Budget before the call (§4.2): reserve against agent → project → company.
-    const model = agent.model || route?.model || sessionModel;
+    const model = choice?.model || agent.model || route?.model || sessionModel;
     const estimate = await this.estimateUsd(model);
     const reservation = await this.reserve(orgId, { agentId, projectId: task.projectId }, estimate);
     if (!reservation.ok) {
@@ -1055,11 +1064,12 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     }
     await this.tasks.update(orgId, taskId, { lastRunAt: nowIso() }, 'system').catch(() => {});
     // The per-task session carries the routed model (or none, so the agent type's default applies); the CEO's pin on the agent wins.
-    if (!agent.model && (session.model ?? '') !== (route?.model ?? '')) await this.repo.updateSession(session.id, { model: route?.model ?? '' }).catch(() => undefined);
+    if (choice === undefined && !agent.model && (session.model ?? '') !== (route?.model ?? '')) await this.repo.updateSession(session.id, { model: route?.model ?? '' }).catch(() => undefined);
+    if (choice) await this.tasks.setRunModel(run.id, choice.decision.tier, choice.decision).catch(() => undefined);
 
     const ctx: RunCtx = { orgId, taskId, agentId, runId: run.id, sessionId: session.id, isChief: org.chiefOfStaffAgentId === agentId, reviewer, progress: false, calls: new Map(), loopDetected: false, consulted };
     this.running.set(session.id, ctx);
-    await this.audit.append(orgId, { actor: `agent:${agentId}`, action: 'run_start', refType: 'run', refId: run.id, payload: { taskId, reason, reviewer, estimateUsd: estimate, class: task.class, model: model || null, routed: route?.tier ?? null, pinned: Boolean(agent.model) } });
+    await this.audit.append(orgId, { actor: `agent:${agentId}`, action: 'run_start', refType: 'run', refId: run.id, payload: { taskId, reason, reviewer, estimateUsd: estimate, class: task.class, model: model || null, routed: route?.tier ?? null, pinned: choice === undefined && Boolean(agent.model), ...(choice ? { auto: { tier: choice.decision.tier, score: choice.decision.score, reasons: choice.decision.reasons } } : {}) } });
 
     const prompt = await this.wakePrompt(org, task, agent.name, reason, reviewer, consulted ? agentId : null);
     let tokensIn = 0; let tokensOut = 0; let answer = ''; let error: string | null = null;
@@ -1068,7 +1078,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     // signature; the boot after re-queues it once.
     let interrupted = false;
     try {
-      for await (const ev of this.turns.run(session.id, { text: prompt, origin: 'loop' })) {
+      for await (const ev of this.turns.run(session.id, { text: prompt, origin: 'loop', ...(choice !== undefined ? { modelChoice: choice } : {}) })) {
         if (ev.type === 'answer') answer += ev.text;
         if (ev.type === 'usage') { tokensIn += ev.inputTokens; tokensOut += ev.outputTokens; }
         if (ev.type === 'interrupted') interrupted = true;
@@ -1174,6 +1184,59 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   private async ownerEvent(org: Organization, agentId: string, title: string, body: string, sessionId: string, ws: { quietHours: string } | null): Promise<void> {
     const target = org.chiefOfStaffAgentId ?? agentId;
     await this.agents.addEvent(target, { kind: 'loop_error', title, body, sessionId, payload: JSON.stringify({ orgId: org.id }), origin: 'loop', channel: true, ...deliveryFor(ws, 'loop_error') }).catch(() => {});
+  }
+
+  /**
+   * The model decision of an auto agent's run (docs/agent-types.md "Model
+   * selection"); undefined when the agent is fixed (routing applies as
+   * before), null when auto but nothing usable was found (the turn runs on
+   * the agent's own type). Signals: the task's own (class, brief, criteria,
+   * checks, dependencies, attempts, rework, declared tier, risk), the
+   * quality bar, cross-unit dependencies, the agent's record at the class,
+   * the tightest envelope; a verifier avoids the maker's model family.
+   */
+  private async modelChoiceFor(org: Organization, task: OrgTask, agent: { id: string; provider: string; model: string; agentTypeId?: string | null; modelMode?: string | null; workspaceId?: string }, opts: { reviewer: boolean; projectId: string | null }): Promise<ModelChoice | null | undefined> {
+    if (!this.selection) return undefined;
+    if ((await this.selection.modeFor(agent, org.workspaceId).catch(() => 'fixed' as const)) !== 'auto') return undefined;
+    try {
+      const routing = parseRouting(org.routing);
+      const deps = (() => { try { const v = JSON.parse(task.dependsOn || '[]') as unknown; return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []; } catch { return []; } })();
+      let crossUnit = false;
+      for (const id of deps.slice(0, 10)) { const d = await this.tasks.get(org.id, id).catch(() => null); if (d && d.unitId && task.unitId && d.unitId !== task.unitId) { crossUnit = true; break; } }
+      const history = await this.selection.history(org.id, agent.id, task.class).catch(() => null);
+      const strict = qualityTunable(org, 'quality.defaultPassScore') >= 4 || qualityTunable(org, 'quality.evidenceRequired') >= 2;
+      // A verifier avoids the maker's model family (docs/quality.md) when independence asks for it.
+      let avoidFamily: string | null = null;
+      if (opts.reviewer && task.assigneeAgentId && qualityTunable(org, 'quality.verifierIndependence') >= 1) {
+        const maker = (await this.selection.lastRunModels([task.assigneeAgentId]).catch(() => new Map<string, { provider: string; model: string }>())).get(task.assigneeAgentId)
+          ?? await this.agents.get(task.assigneeAgentId).then((a) => ({ provider: a.provider, model: a.model })).catch(() => null);
+        avoidFamily = maker ? (modelFamily(maker.model) ?? providerFamilyOf(maker.provider)) : null;
+      }
+      const signals = taskSignals(task, { crossUnit, history, strictStandard: strict, reviewer: opts.reviewer, budgetLeft: await this.budgetLeft(org.id, { agentId: agent.id, projectId: opts.projectId }) });
+      return await this.selection.decide({ workspaceId: org.workspaceId, agent, signals, sessionId: await this.taskSessionId(org, task, agent.id), avoidFamily, routing: { tier: routing.classes[task.class] ?? null, pinnedModel: routing.models } });
+    } catch (err) {
+      this.logger.warn(`model selection for ${taskRef(task)} failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  /** The per-task session's id when it exists (where a request_model_tier waits). */
+  private async taskSessionId(org: Organization, task: OrgTask, agentId: string): Promise<string | null> {
+    const name = `${SESSION_PREFIX}${org.name} · ${task.title.slice(0, 48)}`;
+    return (await this.repo.listSessions(org.workspaceId)).find((s) => s.agentId === agentId && s.name === name)?.id ?? null;
+  }
+
+  /** The share left (0–1) of the tightest capped envelope over agent → project → company; null = none capped. */
+  private async budgetLeft(orgId: string, scopeIds: { agentId: string; projectId: string | null }): Promise<number | null> {
+    const month = nowIso().slice(0, 7);
+    let min: number | null = null;
+    for (const b of await this.envelopes(orgId, scopeIds)) {
+      if (!(b.monthlyUsd > 0)) continue;
+      const used = b.month === month ? b.spentUsd + b.reservedUsd : 0;
+      const left = Math.max(0, (b.monthlyUsd - used) / b.monthlyUsd);
+      min = min === null ? left : Math.min(min, left);
+    }
+    return min;
   }
 
   // ---- budgets ----
@@ -1882,7 +1945,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         const t = await this.tasks.create(org.id, {
           title: str('title'), brief, projectId, parentTaskId: ctx?.taskId ?? null, assigneeAgentId: assignee,
           status: assignee ? 'todo' : 'backlog', createdBy: actor, class: str('class') || null,
-          checks: input.checks, dependsOn: input.dependsOn, dueAt: str('dueAt') || null,
+          checks: input.checks, dependsOn: input.dependsOn, dueAt: str('dueAt') || null, modelTier: str('model_tier') || null,
         }).catch((err: unknown) => { const m = err instanceof Error ? err.message : String(err); throw new Error(m.startsWith('refused') ? m : `refused: ${m}`); });
         if (ctx) ctx.progress = true;
         const nChecks = this.tasks.checksOf(t).length;
@@ -2607,7 +2670,12 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
   }
 
   private async agentModels(): Promise<Map<string, { provider: string; model: string }>> {
-    return new Map((await this.agents.list()).map((a) => [a.id, { provider: a.provider, model: a.model }]));
+    const all = await this.agents.list();
+    const out = new Map(all.map((a) => [a.id, { provider: a.provider, model: a.model }]));
+    // An auto agent's family is what it last ran on (docs/agent-types.md "Model selection").
+    const ran = this.selection ? await this.selection.lastRunModels(all.filter((a) => (a as { modelMode?: string }).modelMode === 'auto').map((a) => a.id)).catch(() => new Map()) : new Map();
+    for (const [id, m] of ran) out.set(id, m);
+    return out;
   }
 
   /** A tool-free judgment by the independent reviewer on a model family
@@ -2689,7 +2757,7 @@ const COMMON_TOOLS: AiToolSpec[] = [
   { name: 'org_read_board', description: 'Read the organisation\'s shared task board: id, status, title, owner. Pass mine=true for only your tasks.', inputSchema: { type: 'object', properties: { mine: { type: 'boolean' }, org: { type: 'string', description: 'Organisation name when you belong to several.' } } } },
   { name: 'org_read_goal', description: 'Read the organisation\'s goals and their projects.', inputSchema: { type: 'object', properties: { org: { type: 'string' } } } },
   { name: 'org_message', description: 'Post a short attributed message to the organisation\'s group log. It wakes nobody and carries no authority; use it for summaries, not for asking someone to act.', inputSchema: { type: 'object', properties: { text: { type: 'string' }, org: { type: 'string' } }, required: ['text'] } },
-  { name: 'org_create_task', description: 'Create a task on the shared board with the four-field brief. As a member it lands in the backlog (a subtask of your current task) for the chief of staff to triage; the chief, or a unit lead or function head for its own reports, may assign it directly (a head splitting its task: one briefed subtask per report). `class` (triage | research | synthesis | review | ops | general) drives cost roll-ups and model routing; derived from the brief when omitted.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, ...brief4, class: { type: 'string', description: 'triage | research | synthesis | review | ops | general' }, checks: CHECKS_PARAM, projectId: { type: 'string', description: 'The project it serves (its key, e.g. P-3; org_projects lists them). Default: your current task\'s project, else your unit\'s Unsorted project for the head to place.' }, assignee: { type: 'string', description: 'Chief, unit lead or head only: member name to assign to (a lead or head: itself or a direct report).' }, org: { type: 'string' } }, required: ['title', 'outcome', 'done_when'] } },
+  { name: 'org_create_task', description: 'Create a task on the shared board with the four-field brief. As a member it lands in the backlog (a subtask of your current task) for the chief of staff to triage; the chief, or a unit lead or function head for its own reports, may assign it directly (a head splitting its task: one briefed subtask per report). `class` (triage | research | synthesis | review | ops | general) drives cost roll-ups and model routing; derived from the brief when omitted.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, ...brief4, class: { type: 'string', description: 'triage | research | synthesis | review | ops | general' }, checks: CHECKS_PARAM, model_tier: { type: 'string', enum: ['cheap', 'standard', 'strong'], description: 'Optional tier hint for auto-model members.' }, projectId: { type: 'string', description: 'The project it serves (its key, e.g. P-3; org_projects lists them). Default: your current task\'s project, else your unit\'s Unsorted project for the head to place.' }, assignee: { type: 'string', description: 'Chief, unit lead or head only: member name to assign to (a lead or head: itself or a direct report).' }, org: { type: 'string' } }, required: ['title', 'outcome', 'done_when'] } },
   { name: 'org_signals', description: 'Open signals (docs/company-vision.md §5): stale or blocked tasks, ageing reviews, burn rate, breaker trips, org debt, SLO breaches, audit findings. You see the ones addressed to you; a unit lead its unit\'s; the chief all. Filter by severity (info|warn|critical) or unit.', inputSchema: { type: 'object', properties: { severity: { type: 'string', enum: ['info', 'warn', 'critical'] }, unit: { type: 'string' }, org: { type: 'string' } } } },
   { name: 'org_ack_signal', description: 'Acknowledge a signal addressed to you (the chief: any) with an optional note. It stays visible as acked and resolves itself when the condition clears.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, note: { type: 'string' }, org: { type: 'string' } }, required: ['id'] } },
   // Intent (docs/company-vision.md §2): read the tree, ask why, check in.

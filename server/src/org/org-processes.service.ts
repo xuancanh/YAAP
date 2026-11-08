@@ -829,7 +829,7 @@ export class OrgProcessesService {
       },
       projectId: run.projectId, parentTaskId: coord?.taskId ?? null, unitId: p.unitId ?? undefined,
       assigneeAgentId: agentId, status: agentId ? 'todo' : 'backlog', createdBy: `process:${run.id}`.slice(0, 80), source: 'process',
-      class: node.class ?? null, checks: node.checks ?? undefined,
+      class: node.class ?? null, checks: node.checks ?? undefined, modelTier: node.tier ?? null,
       process: { runId: run.id, nodeId: node.id, category: def.category },
     });
     const items: TaskStep[] = [

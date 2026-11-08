@@ -1,5 +1,5 @@
 /**
- * Per-model USD prices — list prices, Oct 2026, override in Settings → Usage
+ * Per-model USD prices — list prices, Nov 2026, override in Settings → Usage
  * (`pricingOverrides`, JSON { "<model id>": { input, output } }).
  *
  * Both numbers are dollars per million tokens, input (prompt) and output
@@ -26,7 +26,20 @@ export type PriceTable = Record<string, ModelPrice>;
 const p = (input: number, output: number): ModelPrice => ({ input, output });
 
 export const LIST_PRICES: PriceTable = {
-  // --- Anthropic ---
+  // --- Anthropic (Claude 5: platform.claude.com pricing, Nov 2026) ---
+  'claude-fable-5-1': p(10, 50),
+  'claude-fable-5': p(10, 50),
+  'claude-mythos-5-1': p(10, 50),
+  'claude-opus-5-5': p(4, 20),
+  'claude-opus-5': p(5, 25),
+  'claude-sonnet-5-5': p(2, 10),
+  'claude-sonnet-5': p(2, 10),
+  // Haiku 5.5: prompts up to 100K tokens; $0.50 / $2.50 beyond (not modelled).
+  'claude-haiku-5-5': p(0.1, 0.5),
+  'claude-opus-4-8': p(5, 25),
+  'claude-opus-4-7': p(5, 25),
+  'claude-opus-4-6': p(5, 25),
+  'claude-sonnet-4-6': p(3, 15),
   'claude-opus-4-5': p(5, 25),
   'claude-opus-4-1': p(15, 75),
   'claude-opus-4': p(15, 75),
@@ -37,7 +50,23 @@ export const LIST_PRICES: PriceTable = {
   'claude-3-5-sonnet': p(3, 15),
   'claude-3-5-haiku': p(0.8, 4),
   'claude-3-haiku': p(0.25, 1.25),
-  // --- OpenAI ---
+  // --- OpenAI (developers.openai.com/api/docs/pricing, Nov 2026; short-context rates) ---
+  'gpt-6-astra': p(10, 50),
+  'gpt-6.1-sol': p(2, 10),
+  'gpt-6.1-terra': p(1, 5),
+  'gpt-6-sol': p(2, 10),
+  'gpt-6-luna': p(0.1, 0.5),
+  'gpt-5.6-sol': p(4, 20),
+  'gpt-5.6-terra': p(2, 12),
+  'gpt-5.6-luna': p(0.2, 1.2),
+  'gpt-5.5': p(5, 30),
+  'gpt-5.5-pro': p(30, 180),
+  'gpt-5.4': p(2.5, 15),
+  'gpt-5.4-pro': p(30, 180),
+  'gpt-5.4-mini': p(0.75, 4.5),
+  'gpt-5.4-nano': p(0.2, 1.25),
+  'gpt-5.2': p(1.75, 14),
+  'gpt-5-pro': p(15, 120),
   'gpt-5.1': p(1.25, 10),
   'gpt-5': p(1.25, 10),
   'gpt-5-mini': p(0.25, 2),
@@ -53,6 +82,7 @@ export const LIST_PRICES: PriceTable = {
   // --- DeepSeek ---
   'deepseek-chat': p(0.28, 0.42),
   'deepseek-reasoner': p(0.28, 0.42),
+  'deepseek-flash': p(0.28, 0.42),
   // --- Kimi (Moonshot) ---
   'kimi-k2-thinking': p(0.6, 2.5),
   'kimi-k2-turbo-preview': p(1.15, 8),
@@ -78,9 +108,14 @@ export const LIST_PRICES: PriceTable = {
 /** Family fallbacks for ids the table does not list (a new dated release,
  *  a gateway alias). Checked after exact and prefix matches, in this order. */
 const FAMILY_PRICES: Array<[RegExp, ModelPrice]> = [
+  [/^claude-(fable|mythos)/, p(10, 50)],
   [/^claude-opus/, p(5, 25)],
   [/^claude-sonnet|^claude-3-\d-sonnet/, p(3, 15)],
   [/^claude-haiku|^claude-3-\d-haiku/, p(1, 5)],
+  [/^gpt-6.*-astra/, p(10, 50)],
+  [/^gpt-6.*-luna/, p(0.1, 0.5)],
+  [/^gpt-6.*-terra/, p(1, 5)],
+  [/^gpt-6/, p(2, 10)],
   [/^gpt-5.*-nano/, p(0.05, 0.4)],
   [/^gpt-5.*-mini/, p(0.25, 2)],
   [/^gpt-5/, p(1.25, 10)],

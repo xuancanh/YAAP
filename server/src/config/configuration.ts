@@ -110,6 +110,16 @@ export default () => ({
   /** Empty = borrow the stored key of the OpenAI agent type (sealed at rest). */
   transcriptionApiKey: process.env.TRANSCRIPTION_API_KEY || '',
   ttsModel: process.env.TTS_MODEL || 'gpt-4o-mini-tts',
+  /** Default providers (docs/agent-types.md "Default providers"): in
+   *  AUTH_MODE=single a Claude / OpenAI / DeepSeek agent type is created at
+   *  boot from these keys when the account has none of that provider yet.
+   *  SEED_PROVIDER_TYPES=off turns it off. Never logged or returned. */
+  providerSeedKeys: {
+    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY || '',
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+    DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY || '',
+  } as Record<string, string>,
+  seedProviderTypes: (process.env.SEED_PROVIDER_TYPES || 'on') !== 'off',
   /** Desktop computer control kill switch (docs/computer-control.md §6):
    *  false hides every computer_* tool and refuses pairing and companion
    *  traffic, whatever is paired. */

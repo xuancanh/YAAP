@@ -44,12 +44,13 @@
  */
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, desc, eq, gte, inArray, like } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, like, ne } from 'drizzle-orm';
+import { parseDecision } from '../agent-types/model-selection';
 import { DRIZZLE_DB } from '../database/database.constants';
 import type { DrizzleDb } from '../database/database.module';
 import {
   actionLog, agents as agentsTable, chatMessages, chatSessions, chatTurns, orgIncidents, orgPolicies, orgPolicyViolations, orgQcResults,
-  orgQualityLinks, orgQualityStandards, orgTaskChecks, taskTransitions,
+  orgQualityLinks, orgQualityStandards, orgRuns, orgTaskChecks, taskTransitions,
 } from '../database/schema';
 import { newId, nowIso } from '../common/ids.util';
 import { currentAccountId } from '../accounts/account-context';
@@ -697,8 +698,22 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async familiesOf(ids: string[]): Promise<Map<string, string>> {
-    const rows = ids.length ? await this.db.select({ id: agentsTable.id, provider: agentsTable.provider, model: agentsTable.model }).from(agentsTable).where(inArray(agentsTable.id, ids)) : [];
-    return new Map(rows.map((r) => [r.id, familyOf({ provider: r.provider ?? '', model: r.model ?? '' })]));
+    const rows = ids.length ? await this.db.select({ id: agentsTable.id, provider: agentsTable.provider, model: agentsTable.model, modelMode: agentsTable.modelMode }).from(agentsTable).where(inArray(agentsTable.id, ids)) : [];
+    const out = new Map(rows.map((r) => [r.id, familyOf({ provider: r.provider ?? '', model: r.model ?? '' })]));
+    // An agent in auto model mode (docs/agent-types.md "Model selection") is
+    // judged by what its latest run actually ran on, not its row's model.
+    const auto = rows.filter((r) => r.modelMode === 'auto').map((r) => r.id);
+    if (auto.length) {
+      const runs = await this.db.select({ agentId: orgRuns.agentId, modelDecision: orgRuns.modelDecision }).from(orgRuns).where(and(inArray(orgRuns.agentId, auto), ne(orgRuns.modelDecision, ''))).orderBy(desc(orgRuns.startedAt)).limit(200).catch(() => []);
+      const seen = new Set<string>();
+      for (const r of runs) {
+        if (seen.has(r.agentId)) continue;
+        seen.add(r.agentId);
+        const d = parseDecision(r.modelDecision);
+        if (d) out.set(r.agentId, familyOf({ provider: d.provider, model: d.model }));
+      }
+    }
+    return out;
   }
 
   /** Does this task need a verifier on another model family? */

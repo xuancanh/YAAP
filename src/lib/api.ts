@@ -118,6 +118,8 @@ export interface Agent {
   model: string;
   /** The agent type it runs on (provider, key, base URL); null = by provider. */
   agentTypeId?: string | null;
+  /** Model mode (docs/agent-types.md "Model selection"): '' inherit | auto (by task complexity) | fixed. */
+  modelMode?: string;
   homeDir: string | null;
   /** Assigned workspace folder, mounted into its chats as shared/. */
   workspaceFolder: string;
@@ -284,10 +286,42 @@ export interface AgentType {
   modelsFetchedAt?: string | null;
   /** JSON { cheap?, standard?, strong? }: designated models per tier. */
   tierModels?: string;
+  /** '' (the workspace's) | auto | fixed — for agents on this type that set none. */
+  modelMode?: string;
   baseUrl: string | null;
   persona: string;
   enabled: number;
   hasApiKey: boolean;
+}
+
+/** A provider preset (docs/agent-types.md "Default providers"). */
+export interface ProviderPreset {
+  provider: string; name: string; model: string; models: string[];
+  tierModels: Record<ModelTierName, string>;
+  /** The account's types of this provider. */
+  existing: string[];
+  /** Claude and OpenAI: supported by default. */
+  default: boolean;
+}
+
+/** One automatic model decision (docs/agent-types.md "Model selection"). */
+export interface ModelDecision {
+  mode: 'auto'; kind: 'task' | 'chat'; tier: ModelTierName; score: number; model: string;
+  agentTypeId: string | null; provider: string; family: string | null; reasons: string[];
+  requested?: { tier: ModelTierName; reason: string } | null; at: string;
+}
+
+/** GET /api/workspaces/:id/model-selection. */
+export interface ModelSelectionView {
+  selection: { mode?: 'auto' | 'fixed'; order: string[]; crossProvider: boolean };
+  policy: Record<string, number>;
+  types: Array<{ id: string; name: string; provider: string; family: string | null; hasApiKey: boolean; modelMode: string; tiers: Record<ModelTierName, string> }>;
+}
+
+/** GET /api/workspaces/:id/model-selection/outcomes. */
+export interface ModelOutcomes {
+  days: number;
+  tiers: Array<{ tier: ModelTierName; runs: number; succeeded: number; failed: number; reworked: number; usd: number; avgUsd: number; turns: number; successRate: number | null }>;
 }
 
 export type ModelTierName = 'cheap' | 'standard' | 'strong';
@@ -382,6 +416,8 @@ export interface WorkRun {
   outcome: WorkOutcome; status: string; error: string | null;
   input: string; answer: string;
   tokensIn: number; tokensOut: number; usd: number | null; model: string;
+  /** Automatic model selection: why this model; null on a fixed run. */
+  modelDecision?: ModelDecision | null;
   steps: number; toolCount: number; thinkingCount: number; tools: string[];
   files: Array<{ path: string; op: string }>;
   task: { kind: 'org' | 'agent'; id: string; key: string | null; title: string } | null;
@@ -1320,6 +1356,8 @@ export interface OrgTask {
 export interface OrgRun {
   id: string; orgId: string; taskId: string; agentId: string; sessionId: string | null; wakeReason: string;
   status: string; outcome: string; tokensIn: number; tokensOut: number; usd: number; startedAt: string; endedAt: string | null;
+  /** Automatic model selection: the tier and JSON ModelDecision; '' on a fixed run. */
+  tier?: string; modelDecision?: string;
 }
 export interface OrgMessage {
   id: string; orgId: string; taskId: string | null; fromAgentId: string | null; runId: string | null; text: string; createdAt: string;
@@ -2421,9 +2459,14 @@ export const api = {
 
   // agent types / providers
   agentTypes: () => get<AgentType[]>('/api/agent-types'),
-  createAgentType: (input: { name: string; provider: string; model: string; apiKey?: string; baseUrl?: string; persona?: string }) =>
+  createAgentType: (input: { name: string; provider: string; model: string; apiKey?: string; baseUrl?: string; persona?: string; models?: string[]; tierModels?: Partial<Record<ModelTierName, string>> }) =>
     send<AgentType>('/api/agent-types', 'POST', input),
-  updateAgentType: (id: string, patch: { model?: string; models?: string[]; tierModels?: Partial<Record<ModelTierName, string | null>>; enabled?: boolean; name?: string }) =>
+  providerPresets: () => get<ProviderPreset[]>('/api/agent-types/presets'),
+  createAgentTypeFromPreset: (provider: string, body: { apiKey?: string; name?: string } = {}) => send<AgentType>(`/api/agent-types/presets/${enc(provider)}`, 'POST', body),
+  modelSelection: (wsId: string) => get<ModelSelectionView>(`/api/workspaces/${enc(wsId)}/model-selection`),
+  setModelSelection: (wsId: string, body: { mode?: string; order?: string[]; crossProvider?: boolean }) => send<ModelSelectionView>(`/api/workspaces/${enc(wsId)}/model-selection`, 'PUT', body),
+  modelOutcomes: (wsId: string, days = 30) => get<ModelOutcomes>(`/api/workspaces/${enc(wsId)}/model-selection/outcomes?days=${days}`),
+  updateAgentType: (id: string, patch: { model?: string; models?: string[]; tierModels?: Partial<Record<ModelTierName, string | null>>; enabled?: boolean; name?: string; modelMode?: string }) =>
     send<AgentType>(`/api/agent-types/${enc(id)}`, 'PATCH', patch),
   agentTypeModels: (id: string) => get<AgentTypeModels>(`/api/agent-types/${enc(id)}/models`),
   refreshAgentTypeModels: (id: string) => send<AgentTypeModels>(`/api/agent-types/${enc(id)}/models/refresh`, 'POST', {}),

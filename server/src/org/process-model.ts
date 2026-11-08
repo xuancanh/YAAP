@@ -72,6 +72,8 @@ export interface ProcessNode {
   doneWhen?: string;
   /** Task class (model routing, cost roll-ups). */
   class?: string;
+  /** A model tier the step declares for automatic selection (docs/agent-types.md "Model selection"). */
+  tier?: 'cheap' | 'standard' | 'strong';
   must?: string[];
   should?: string[];
   may?: string[];
@@ -168,6 +170,7 @@ export function normalizeProcess(raw: unknown): ProcessDef {
       n.availableWhen = { ...(list(a.after, 12, 32).length ? { after: list(a.after, 12, 32) } : {}), ...(list(a.vars, 12, 40).length ? { vars: list(a.vars, 12, 40) } : {}), ...(equals && Object.keys(equals).length ? { equals } : {}) };
     }
     if (r.approver === 'ceo' || r.approver === 'manager') n.approver = r.approver;
+    if (r.tier === 'cheap' || r.tier === 'standard' || r.tier === 'strong') n.tier = r.tier;
     for (const k of ['waitHours', 'slaHours', 'maxAttempts'] as const) { const v = Number(r[k]); if (r[k] !== undefined && r[k] !== null && Number.isFinite(v)) n[k] = v; }
     return n;
   });
@@ -492,7 +495,7 @@ export function diffProcess(prev: ProcessDef | null, next: ProcessDef): string[]
   for (const n of next.nodes) {
     const p = prev.nodes.find((x) => x.id === n.id);
     if (!p) { out.push(`+ step ${n.id} "${n.title}" (${n.kind})`); continue; }
-    const fields: Array<keyof ProcessNode> = ['title', 'kind', 'stage', 'lane', 'why', 'outcome', 'doneWhen', 'must', 'should', 'may', 'deny', 'outputs', 'required', 'availableWhen', 'approver', 'question', 'waitHours', 'process', 'meetingKind', 'attendees', 'agenda', 'compensate', 'compensation', 'slaHours', 'maxAttempts', 'checks', 'playbook', 'class'];
+    const fields: Array<keyof ProcessNode> = ['title', 'kind', 'stage', 'lane', 'why', 'outcome', 'doneWhen', 'must', 'should', 'may', 'deny', 'outputs', 'required', 'availableWhen', 'approver', 'question', 'waitHours', 'process', 'meetingKind', 'attendees', 'agenda', 'compensate', 'compensation', 'slaHours', 'maxAttempts', 'checks', 'playbook', 'class', 'tier'];
     const changed = fields.filter((f) => JSON.stringify(p[f] ?? null) !== JSON.stringify(n[f] ?? null));
     for (const f of changed) {
       if (f === 'must' || f === 'should' || f === 'may') {

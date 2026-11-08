@@ -52,6 +52,7 @@ import { CONNECTION_TOOLS } from '../connections/connections.tools';
 import { AiImagePart, AiMessage, AiStreamEvent, AiToolCall, AiToolSpec } from '../ai/ai-provider.interface';
 import { ProviderHealthService } from '../ai/provider-health';
 import { isModelRejection } from '../agent-types/model-resolution';
+import type { ModelChoice } from './model-selection.service';
 import { contentTypeFor, previewKindFor } from '../storage/preview.util';
 import { liveTurns, turnWatch, type WatchedEvent } from './live-turns';
 import { taskRef } from '../common/task-keys';
@@ -68,7 +69,12 @@ export type TurnOrigin = 'user' | 'loop' | 'channel';
  *  turn (docs/work-log.md): 'person' for a person typing (POST /turns),
  *  else the origin ('user' | 'loop' | 'channel') or 'app' for a confined
  *  mini-app ask. */
-export interface TurnInput { text: string; attachments?: unknown[]; origin?: TurnOrigin; confined?: boolean; source?: TurnSource }
+export interface TurnInput {
+  text: string; attachments?: unknown[]; origin?: TurnOrigin; confined?: boolean; source?: TurnSource;
+  /** Automatic model selection (docs/agent-types.md "Model selection"): an
+   *  org run's decision; null = the run is fixed; absent = decide per turn. */
+  modelChoice?: ModelChoice | null;
+}
 export type TurnSource = 'person' | 'user' | 'loop' | 'channel' | 'app';
 export function sourceOf(input: Pick<TurnInput, 'origin' | 'confined'>): TurnSource {
   return input.confined ? 'app' : input.origin ?? 'user';
@@ -794,11 +800,13 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
     // Live status (docs/mission-control.md): this agent is mid-turn; each tool call updates it.
     liveTurns.begin({ sessionId, turnId: turn.id, agentId: session.agentId ?? null, workspaceId: session.workspaceId, origin: input.origin ?? 'user', sessionName: session.name || session.autoTitle || '' });
     try {
-      const ctx = await this.context.build(session, { turnText: input.text });
+      const ctx = await this.context.build(session, { turnText: input.text, ...(input.modelChoice !== undefined ? { choice: input.modelChoice } : {}) });
       hosted = ctx.hosted ?? false;
       turnModel = ctx.model || turnModel;
       // Degradation (docs/incidents.md §4): the turn says which fallback it ran on.
       if (ctx.degraded) await this.repo.updateTurn(turn.id, { degraded: JSON.stringify(ctx.degraded), model: ctx.model }).catch(() => undefined);
+      // Automatic model selection: the turn keeps the decision (tier, model, reasons).
+      if (ctx.modelDecision) await this.repo.updateTurn(turn.id, { modelDecision: JSON.stringify(ctx.modelDecision), model: ctx.model }).catch(() => undefined);
       let providerOk = false;
       const history = await this.buildHistory(session.id, session.compactSummary, session.compactCutoff,
         hasMembers && session.shared === 1 ? { names, ownerActor } : undefined);

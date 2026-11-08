@@ -157,7 +157,14 @@
     "improve.maxOpenPerUnit": 3,
     "improve.perMeeting": 3,
     "admission.selfWip": 4,
-    "admission.overCap": 1
+    "admission.overCap": 1,
+    "model.cheapMaxScore": 2,
+    "model.strongMinScore": 8,
+    "model.retryEscalateAfter": 2,
+    "model.budgetTightPct": 35,
+    "model.historyDowngradeRate": 0.8,
+    "model.historyEscalateRate": 0.4,
+    "model.historyMinRuns": 4
   },
   "playbooks": [],
   "budget": {

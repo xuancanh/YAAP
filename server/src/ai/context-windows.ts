@@ -6,6 +6,11 @@
  */
 const WINDOWS: Array<[RegExp, number]> = [
   [/gpt-4\.1|gemini-(1\.5|2|2\.5)|gemini/, 1_000_000],
+  // GPT-6 (1.05M) and the Claude 5 family (1M). Claude 4.x keeps the
+  // conservative 200k it always had here; Settings → compactionThresholdTokens
+  // caps any of them lower.
+  [/gpt-6/, 1_000_000],
+  [/claude-(fable|mythos)|claude-(opus|sonnet|haiku)-5/, 1_000_000],
   [/gpt-5/, 400_000],
   [/claude|opus|sonnet|haiku|fable|mythos/, 200_000],
   [/o[134](-mini)?\b|gpt-4o|gpt-4-turbo/, 128_000],

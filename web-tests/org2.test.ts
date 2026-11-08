@@ -106,7 +106,7 @@ describe('routing (§7)', () => {
     const agent = { provider: 'openai', model: 'gpt-5-mini' };
     expect(tierModelLabel(routing, 'strong', agent)).toEqual({ model: 'claude-opus-4-5-pinned', pinned: true });
     expect(tierModelLabel(routing, 'standard', agent)).toEqual({ model: 'gpt-5-mini', pinned: false });
-    expect(tierModelLabel({ classes: {}, models: {} }, 'strong', agent)).toEqual({ model: 'gpt-5.1', pinned: false });
+    expect(tierModelLabel({ classes: {}, models: {} }, 'strong', agent)).toEqual({ model: 'gpt-6-astra', pinned: false });
     expect(tierModelLabel({ classes: {}, models: {} }, 'cheap', agent)).toEqual({ model: 'cheapest openai model', pinned: false });
     expect(tierModelLabel({ classes: {}, models: {} }, 'strong', null).model).toBe("the provider's strong model");
     const rows = routingRows({ ...routing, classes: { ...routing.classes, custom: 'standard' } }, ['triage', 'research', 'review']);

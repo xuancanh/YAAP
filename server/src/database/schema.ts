@@ -77,6 +77,10 @@ export const workspaces = pgTable('workspaces', {
    *  §5.1): JSON { allowCommunityInterfaces?: boolean }; owner-only, never
    *  an agent's to change. */
   pluginSettings: text('pluginSettings').notNull().default('{}'),
+  /** Automatic model selection (migration 0098, docs/agent-types.md "Model
+   *  selection"): JSON { mode?: auto | fixed, order?: [agentTypeId],
+   *  crossProvider?: boolean }; '{}' = fixed, the agent's own type. */
+  modelSelection: text('modelSelection').notNull().default('{}'),
   createdAt: text('createdAt').notNull(),
 });
 
@@ -100,6 +104,10 @@ export const agents = pgTable('agents', {
   /** The agent type (provider, key, base URL) the agent runs on; its model
    *  field picks the model within it. Null = resolve by provider. */
   agentTypeId: text('agentTypeId'),
+  /** Model mode (migration 0098): '' inherit (type, then workspace) |
+   *  auto (by task complexity, docs/agent-types.md "Model selection") |
+   *  fixed (always `model`). */
+  modelMode: text('modelMode').notNull().default(''),
   /** The agent's home in its workspace's tree (docs/filesystem.md):
    *  `agents/<handle>`, workspace-relative. The handle is the name slugified
    *  and made unique within the workspace at creation, kept on rename. A
@@ -265,6 +273,9 @@ export const agentTypes = pgTable('agent_types', {
   /** JSON { cheap?, standard?, strong? }: the owner's designated model per
    *  tier on this type, picked from `models` (docs/agent-types.md). */
   tierModels: text('tierModels').notNull().default('{}'),
+  /** Model mode for agents on this type that set none (migration 0098):
+   *  '' (the workspace's) | auto | fixed. */
+  modelMode: text('modelMode').notNull().default(''),
   baseUrl: text('baseUrl'),
   /** Provider API key. Resolved at request time, never echoed to clients or
    *  embedded in transcripts (FR-13.3). */
@@ -375,6 +386,10 @@ export const chatTurns = pgTable('chat_turns', {
   /** Degradation (execution-plan item 29): JSON { from, to } when the turn
    *  ran on a fallback provider because its own was degraded; null otherwise. */
   degraded: text('degraded'),
+  /** Automatic model selection (migration 0098): JSON ModelDecision
+   *  { tier, model, agentTypeId, reasons, … } when the turn's model was
+   *  chosen by complexity; '' otherwise. */
+  modelDecision: text('modelDecision').notNull().default(''),
   /** Who sent it (docs/work-log.md): 'person' (a person typed it — the chat
    *  or the Work log composer), 'user' | 'loop' | 'channel' (the turn's
    *  origin), 'app' (a mini-app ask); '' for turns from before migration 0081. */
@@ -1436,6 +1451,9 @@ export const orgTasks = pgTable('org_tasks', {
   /** Processes (docs/processes.md): the run and step this task performs; null otherwise. */
   processRunId: text('processRunId'),
   processNodeId: text('processNodeId'),
+  /** A model tier the creator or the process step declares (migration
+   *  0098): '' | cheap | standard | strong — a hint to automatic selection. */
+  modelTier: text('modelTier').notNull().default(''),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });
@@ -1475,6 +1493,10 @@ export const orgRuns = pgTable('org_runs', {
   tokensOut: integer('tokensOut').notNull().default(0),
   usd: real('usd').notNull().default(0),
   reservedUsd: real('reservedUsd').notNull().default(0),
+  /** Automatic model selection (migration 0098): the tier and the JSON
+   *  decision the run's model came from; '' for a fixed-model run. */
+  tier: text('tier').notNull().default(''),
+  modelDecision: text('modelDecision').notNull().default(''),
   startedAt: text('startedAt').notNull(),
   endedAt: text('endedAt'),
 });

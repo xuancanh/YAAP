@@ -336,7 +336,15 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "admission.selfWip": 4,
     "admission.selfPerDay": 6,
     "admission.overCap": 1,
-    "attention.agentWakesPerHour": 20
+    "attention.agentWakesPerHour": 20,
+    "model.cheapMaxScore": 2,
+    "model.strongMinScore": 8,
+    "model.retryEscalateAfter": 2,
+    "model.budgetTightPct": 35,
+    "model.historyDowngradeRate": 0.8,
+    "model.historyEscalateRate": 0.4,
+    "model.historyMinRuns": 4,
+    "model.requestCap": 2
    },
    "playbooks": [],
    "budget": {
@@ -647,7 +655,15 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "service.suggestAfterRepeats": 2,
     "service.metricsWindowDays": 60,
     "improve.standardScope": 0,
-    "improve.verifyDays": 21
+    "improve.verifyDays": 21,
+    "model.cheapMaxScore": 0,
+    "model.strongMinScore": 5,
+    "model.floorTier": 1,
+    "model.riskFloorTier": 2,
+    "model.budgetTightPct": 10,
+    "model.historyDowngradeRate": 0.97,
+    "model.historyEscalateRate": 0.7,
+    "model.historyMinRuns": 6
    },
    "playbooks": [],
    "budget": {
@@ -1005,7 +1021,14 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "admission.selfWip": 4,
     "admission.selfPerDay": 6,
     "admission.overCap": 1,
-    "attention.agentWakesPerHour": 20
+    "attention.agentWakesPerHour": 20,
+    "model.cheapMaxScore": 2,
+    "model.strongMinScore": 8,
+    "model.retryEscalateAfter": 2,
+    "model.budgetTightPct": 35,
+    "model.historyDowngradeRate": 0.8,
+    "model.historyEscalateRate": 0.4,
+    "model.historyMinRuns": 4
    },
    "playbooks": [],
    "budget": {
@@ -1327,7 +1350,15 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "admission.selfWip": 4,
     "admission.selfPerDay": 6,
     "admission.overCap": 1,
-    "attention.agentWakesPerHour": 20
+    "attention.agentWakesPerHour": 20,
+    "model.cheapMaxScore": 0,
+    "model.strongMinScore": 5,
+    "model.floorTier": 1,
+    "model.riskFloorTier": 2,
+    "model.budgetTightPct": 10,
+    "model.historyDowngradeRate": 0.97,
+    "model.historyEscalateRate": 0.7,
+    "model.historyMinRuns": 4
    },
    "playbooks": [],
    "budget": {
@@ -1582,7 +1613,16 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "improve.verifyDays": 21,
     "admission.selfWip": 4,
     "admission.selfPerDay": 6,
-    "admission.overCap": 1
+    "admission.overCap": 1,
+    "model.cheapMaxScore": 0,
+    "model.strongMinScore": 5,
+    "model.floorTier": 1,
+    "model.riskFloorTier": 2,
+    "model.budgetTightPct": 10,
+    "model.historyDowngradeRate": 0.97,
+    "model.historyEscalateRate": 0.7,
+    "model.historyMinRuns": 4,
+    "model.requestCap": 2
    },
    "playbooks": [],
    "budget": {
@@ -1768,7 +1808,14 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "improve.maxOpenPerUnit": 3,
     "improve.perMeeting": 3,
     "admission.selfWip": 4,
-    "admission.overCap": 1
+    "admission.overCap": 1,
+    "model.cheapMaxScore": 2,
+    "model.strongMinScore": 8,
+    "model.retryEscalateAfter": 2,
+    "model.budgetTightPct": 35,
+    "model.historyDowngradeRate": 0.8,
+    "model.historyEscalateRate": 0.4,
+    "model.historyMinRuns": 4
    },
    "playbooks": [],
    "budget": {
@@ -2115,7 +2162,16 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "improve.repairTasks": 0,
     "admission.selfWip": 3,
     "admission.selfPerDay": 2,
-    "attention.agentWakesPerHour": 6
+    "attention.agentWakesPerHour": 6,
+    "model.cheapMaxScore": 0,
+    "model.strongMinScore": 5,
+    "model.floorTier": 1,
+    "model.riskFloorTier": 2,
+    "model.budgetTightPct": 10,
+    "model.historyDowngradeRate": 0.97,
+    "model.historyEscalateRate": 0.7,
+    "model.historyMinRuns": 6,
+    "model.requestCap": 0
    },
    "playbooks": [],
    "budget": {

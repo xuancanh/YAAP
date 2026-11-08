@@ -10,7 +10,7 @@ import { effectiveType, fetchedLabel, typeModelList, typeTierModels } from '../s
 const fake: Record<string, unknown> = {};
 vi.mock('../src/store', () => ({ useApp: () => fake, grad: () => '', gradPair: () => ['#000', '#fff'] }));
 
-const { TypeModels } = await import('../src/components/SettingsView');
+const { TypeModels, ModelSelectionCard } = await import('../src/components/SettingsView');
 const { ModelCard } = await import('../src/components/AgentsView');
 
 const ds: AgentType = {
@@ -95,9 +95,45 @@ describe('agent Settings › Model', () => {
     await waitFor(() => expect(upd).toHaveBeenCalledWith('a1', { agentTypeId: 'tDS', model: 'ds-preview-0601', applyToChats: true, customModel: true }));
   });
 
+  it('the model mode: Auto (by task complexity) saves modelMode, and says what it does', async () => {
+    const upd = vi.spyOn(api, 'updateAgent').mockResolvedValue(agent);
+    render(<ModelCard a={agent} />);
+    const mode = screen.getByLabelText('Model mode') as HTMLSelectElement;
+    expect(mode.value).toBe('');
+    fireEvent.change(mode, { target: { value: 'auto' } });
+    expect(screen.getByText(/picks cheap, standard or strong/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(upd).toHaveBeenCalledWith('a1', { agentTypeId: 'tDS', model: 'deepseek-flash', applyToChats: true, modelMode: 'auto' }));
+  });
+
   it('an agent already on an unlisted model opens in custom mode', () => {
     render(<ModelCard a={{ ...agent, model: 'claude-opus-4-5' } as Agent} />);
     expect((screen.getByLabelText('Model') as HTMLSelectElement).value).toBe('__custom');
     expect((screen.getByLabelText('Custom model id') as HTMLInputElement).value).toBe('claude-opus-4-5');
+  });
+});
+
+describe('Settings › Model selection', () => {
+  const view = {
+    selection: { order: [], crossProvider: true },
+    policy: { cheapMaxScore: 1, strongMinScore: 6, floorTier: 0, ceilingTier: 2, riskFloorTier: 1, retryEscalateAfter: 1, budgetTightPct: 20, historyDowngradeRate: 0.9, historyEscalateRate: 0.5, historyMinRuns: 5, requestCap: 1 },
+    types: [
+      { id: 'tC', name: 'Claude', provider: 'anthropic', family: 'anthropic', hasApiKey: true, modelMode: '', tiers: { cheap: 'claude-haiku-5-5', standard: 'claude-sonnet-5-5', strong: 'claude-opus-5-5' } },
+      { id: 'tO', name: 'OpenAI', provider: 'openai', family: 'openai', hasApiKey: true, modelMode: '', tiers: { cheap: 'gpt-6-luna', standard: 'gpt-6.1-sol', strong: 'gpt-6-astra' } },
+    ],
+  };
+
+  it('shows the tier map per provider, saves the workspace mode and the preference order, and the outcomes per tier', async () => {
+    vi.spyOn(api, 'modelSelection').mockResolvedValue(view);
+    vi.spyOn(api, 'modelOutcomes').mockResolvedValue({ days: 30, tiers: [{ tier: 'cheap', runs: 4, succeeded: 3, failed: 1, reworked: 0, usd: 0.04, avgUsd: 0.01, turns: 2, successRate: 0.75 }, { tier: 'standard', runs: 0, succeeded: 0, failed: 0, reworked: 0, usd: 0, avgUsd: 0, turns: 0, successRate: null }, { tier: 'strong', runs: 0, succeeded: 0, failed: 0, reworked: 0, usd: 0, avgUsd: 0, turns: 0, successRate: null }] });
+    const put = vi.spyOn(api, 'setModelSelection').mockResolvedValue(view);
+    render(<ModelSelectionCard workspaceId="w1" />);
+    await waitFor(() => expect(screen.getByTestId('model-selection-card')).toBeTruthy());
+    expect(screen.getByTestId('model-order-tO').textContent).toMatch(/gpt-6-astra/);
+    fireEvent.change(screen.getByLabelText('Workspace model mode'), { target: { value: 'auto' } });
+    await waitFor(() => expect(put).toHaveBeenCalledWith('w1', { mode: 'auto' }));
+    fireEvent.click(screen.getByLabelText('Prefer OpenAI'));
+    await waitFor(() => expect(put).toHaveBeenCalledWith('w1', { order: ['tO', 'tC'] }));
+    await waitFor(() => expect(screen.getByTestId('model-outcomes').textContent).toMatch(/75%/));
   });
 });

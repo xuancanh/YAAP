@@ -227,7 +227,16 @@
     "improve.verifyDays": 21,
     "admission.selfWip": 4,
     "admission.selfPerDay": 6,
-    "admission.overCap": 1
+    "admission.overCap": 1,
+    "model.cheapMaxScore": 0,
+    "model.strongMinScore": 5,
+    "model.floorTier": 1,
+    "model.riskFloorTier": 2,
+    "model.budgetTightPct": 10,
+    "model.historyDowngradeRate": 0.97,
+    "model.historyEscalateRate": 0.7,
+    "model.historyMinRuns": 4,
+    "model.requestCap": 2
   },
   "playbooks": [],
   "budget": {

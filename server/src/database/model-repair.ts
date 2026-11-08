@@ -11,7 +11,8 @@
  * every account; idempotent (a repaired row is known on the next boot).
  */
 import type { Queryable } from './migrator';
-import { isKnownModel } from '../agent-types/model-resolution';
+import { declaredFamily, isKnownModel, modelFamily } from '../agent-types/model-resolution';
+import { presetForFamily } from '../agent-types/provider-presets';
 
 interface TypeRow { id: string; accountId: string; name: string; provider: string; model: string; models: string; baseUrl: string | null; tierModels: string | null; enabled: number; createdAt: string }
 interface AgentRow { id: string; accountId: string; provider: string; model: string; agentTypeId: string | null }
@@ -64,4 +65,34 @@ export async function repairAgentModels(db: Queryable): Promise<{ agents: number
     }
   }
   return { agents: agentsFixed, sessions: sessionsFixed };
+}
+
+/**
+ * A type's own default of another vendor's family (docs/agent-types.md
+ * "Backfill"): the Settings add form used to start every new type on
+ * claude-sonnet-4-5 whatever provider was picked, so a DeepSeek type could
+ * default to a model DeepSeek cannot serve. Such a type moves to its
+ * family's preset default (a listed model of that family when the preset's
+ * is not on its list). A type nobody can place (custom gateway) and one of
+ * no recognisable default are left alone. Returns how many moved;
+ * idempotent. Runs before repairAgentModels so agents follow the fixed default.
+ */
+export async function repairTypeDefaults(db: Queryable): Promise<number> {
+  if (!(await hasTable(db, 'agent_types'))) return 0;
+  const types = (await db.query(`SELECT "id", "provider", "model", "models", "baseUrl" FROM agent_types`)).rows as Array<{ id: string; provider: string; model: string; models: string; baseUrl: string | null }>;
+  let fixed = 0;
+  for (const t of types) {
+    const fam = declaredFamily(t);
+    const mf = modelFamily(t.model || '');
+    if (!fam || !mf || fam === mf) continue;
+    const list = (() => { try { const v = JSON.parse(t.models || '[]') as unknown; return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []; } catch { return []; } })();
+    const preset = presetForFamily(fam);
+    const to = list.length > 0
+      ? (preset && list.includes(preset.model) ? preset.model : list.find((m) => modelFamily(m) === fam))
+      : preset?.model;
+    if (!to || to === t.model) continue;
+    await db.query(`UPDATE agent_types SET "model" = $1 WHERE "id" = $2`, [to, t.id]);
+    fixed++;
+  }
+  return fixed;
 }

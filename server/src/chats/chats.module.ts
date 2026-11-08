@@ -18,6 +18,9 @@ import { LoopsController } from './loops.controller';
 import { HooksController } from './hooks.controller';
 import { HeartbeatService } from './heartbeat.service';
 import { MemoryToolsService } from './memory-tools.service';
+import { ModelSelectionService } from './model-selection.service';
+import { ModelTierTools } from './model-tier.tools';
+import { ModelSelectionController } from './model-selection.controller';
 import { ChatArchiveService } from './chat-archive.service';
 import { OwnerMessagesService } from './owner-messages.service';
 import { HeartbeatController } from './heartbeat.controller';
@@ -43,8 +46,8 @@ import { ActionsModule } from '../actions/actions.module';
 
 @Module({
   imports: [SettingsModule, AiModule, AgentTypesModule, AgentsModule, WorkspacesModule, SkillsModule, McpModule, ConnectionsModule, RunnerModule, BrowserModule, ActionReviewModule, ComputerModule, RegistryModule, ActionsModule],
-  controllers: [ChatsController, LoopsController, HooksController, AgentApprovalsController, HeartbeatController, WorkLogController],
-  providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService, HeartbeatService, ChatArchiveService, WorkLogService, WorkRerunService, RestartRecoveryService, OwnerMessagesService, MemoryToolsService],
-  exports: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, HeartbeatService, ChatArchiveService, WorkLogService, WorkRerunService, RestartRecoveryService, OwnerMessagesService, MemoryToolsService],
+  controllers: [ChatsController, LoopsController, HooksController, AgentApprovalsController, HeartbeatController, WorkLogController, ModelSelectionController],
+  providers: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, ToolsService, ChatLocks, CompactionService, LoopsService, DistillService, HeartbeatService, ChatArchiveService, WorkLogService, WorkRerunService, RestartRecoveryService, OwnerMessagesService, MemoryToolsService, ModelSelectionService, ModelTierTools],
+  exports: [ChatsService, ChatsRepository, TurnLoopService, TurnContextService, HeartbeatService, ChatArchiveService, WorkLogService, WorkRerunService, RestartRecoveryService, OwnerMessagesService, MemoryToolsService, ModelSelectionService],
 })
 export class ChatsModule {}

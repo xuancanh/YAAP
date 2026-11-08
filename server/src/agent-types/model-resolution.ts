@@ -16,6 +16,8 @@
  * on the list — a vendor-name guess for the tier, else the type's default.
  */
 
+import { PROVIDER_PRESETS } from './provider-presets';
+
 export const TIERS = ['cheap', 'standard', 'strong'] as const;
 export type Tier = typeof TIERS[number];
 
@@ -85,10 +87,17 @@ function hostFamily(baseUrl: string | null | undefined): string | null {
  *  host, then its own default model's name. Null for a gateway nobody can
  *  place (custom endpoint, default of no known family). */
 export function typeFamily(t: ModelTypeLike): string | null {
+  return declaredFamily(t) ?? modelFamily(t.model);
+}
+
+/** The family a type is configured for — its endpoint's host, else its
+ *  provider name — never its own default model's name. Null for a custom
+ *  or compatible gateway nobody can place. */
+export function declaredFamily(t: Pick<ModelTypeLike, 'provider' | 'baseUrl'>): string | null {
   const byProvider: Record<string, string> = { anthropic: 'anthropic', openai: 'openai', deepseek: 'deepseek', gemini: 'gemini', kimi: 'kimi', glm: 'glm' };
   // A named provider with a custom base URL is still judged by the URL first:
   // "openai" pointed at api.deepseek.com serves DeepSeek models.
-  return hostFamily(t.baseUrl) ?? byProvider[t.provider] ?? modelFamily(t.model);
+  return hostFamily(t.baseUrl) ?? byProvider[t.provider] ?? null;
 }
 
 /** Whether the type serves `model` as far as anyone can tell. */
@@ -105,13 +114,11 @@ export function isKnownModel(t: ModelTypeLike, model: string): boolean {
 }
 
 /** Current vendor model names per family and tier — the last-resort guess
- *  when a type has no list of its own (and the no-type legacy path). */
-const VENDOR_TIER_MODELS: Record<string, Partial<Record<Tier, string>>> = {
-  anthropic: { cheap: 'claude-haiku-5-5', standard: 'claude-sonnet-5-5', strong: 'claude-opus-5-5' },
-  openai: { cheap: 'gpt-5-mini', strong: 'gpt-5.1' },
-  deepseek: { cheap: 'deepseek-flash', strong: 'deepseek-v4-pro' },
-  gemini: { cheap: 'gemini-2.5-flash', strong: 'gemini-2.5-pro' },
-};
+ *  when a type has no list of its own (and the no-type legacy path). One
+ *  table with the provider presets (provider-presets.ts). */
+const VENDOR_TIER_MODELS: Record<string, Partial<Record<Tier, string>>> = Object.fromEntries(
+  Object.entries(PROVIDER_PRESETS).filter(([k]) => ['anthropic', 'openai', 'deepseek', 'gemini'].includes(k)).map(([k, p]) => [k, { ...p.tierModels }]),
+);
 
 export function vendorTierModel(family: string | null | undefined, tier: Tier): string | undefined {
   return family ? VENDOR_TIER_MODELS[family]?.[tier] : undefined;

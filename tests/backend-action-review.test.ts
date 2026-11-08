@@ -72,7 +72,7 @@ test('prompt: the message carries scope, content and the pre-check; the reviewer
 
 test('model selection: cheapest sibling per provider family, session model otherwise', () => {
   assert.equal(cheapestModelFor('anthropic', undefined, 'claude-opus-5'), 'claude-haiku-5-5');
-  assert.equal(cheapestModelFor('openai-compatible', 'https://api.openai.com/v1', 'gpt-5'), 'gpt-5-mini');
+  assert.equal(cheapestModelFor('openai-compatible', 'https://api.openai.com/v1', 'gpt-5'), 'gpt-6-luna');
   assert.equal(cheapestModelFor('openai-compatible', 'https://api.deepseek.com', 'deepseek-reasoner'), 'deepseek-flash');
   assert.equal(cheapestModelFor('openai-compatible', 'https://my.proxy.local/v1', 'local-70b'), 'local-70b');
   assert.equal(cheapestModelFor('echo', undefined, 'test-model'), 'test-model');

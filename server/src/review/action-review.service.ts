@@ -56,7 +56,7 @@ export function cheapestModelFor(providerName: string, baseUrl: string | undefin
   if (providerName === 'anthropic') return 'claude-haiku-5-5';
   if (providerName === 'openai-compatible') {
     const host = (() => { try { return new URL(baseUrl ?? '').hostname; } catch { return ''; } })();
-    if (host === 'api.openai.com') return 'gpt-5-mini';
+    if (host === 'api.openai.com') return 'gpt-6-luna';
     if (host.endsWith('deepseek.com')) return 'deepseek-flash';
     if (host.endsWith('googleapis.com')) return 'gemini-2.5-flash';
   }

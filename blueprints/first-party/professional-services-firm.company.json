@@ -319,7 +319,16 @@
     "improve.repairTasks": 0,
     "admission.selfWip": 3,
     "admission.selfPerDay": 2,
-    "attention.agentWakesPerHour": 6
+    "attention.agentWakesPerHour": 6,
+    "model.cheapMaxScore": 0,
+    "model.strongMinScore": 5,
+    "model.floorTier": 1,
+    "model.riskFloorTier": 2,
+    "model.budgetTightPct": 10,
+    "model.historyDowngradeRate": 0.97,
+    "model.historyEscalateRate": 0.7,
+    "model.historyMinRuns": 6,
+    "model.requestCap": 0
   },
   "playbooks": [],
   "budget": {

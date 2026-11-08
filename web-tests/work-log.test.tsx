@@ -122,6 +122,17 @@ describe('the Work log tab', () => {
     expect(fake.openOrgTask).toHaveBeenCalledWith('t1');
   });
 
+  it('an auto-selected run says which tier and model, and why', async () => {
+    const decided = run('r-auto', { trigger: 'task', label: 'ENG-13 Price it', model: 'claude-opus-5-5', modelDecision: { mode: 'auto', kind: 'task', tier: 'strong', score: 7, model: 'claude-opus-5-5', agentTypeId: 'tC', provider: 'anthropic', family: 'anthropic', reasons: ['+3 class synthesis', 'risk floor standard'], at: '' } });
+    page = () => ({ runs: [decided], nextCursor: null, groups: GROUPS });
+    render(<WorkLogTab agentId="a1" />);
+    const row = await waitFor(() => screen.getByTestId('work-run'));
+    fireEvent.click(within(row).getByRole('button', { expanded: false }));
+    const d = await waitFor(() => within(row).getByTestId('run-model-decision'));
+    expect(d).toHaveTextContent('Auto · strong · claude-opus-5-5');
+    expect(d).toHaveTextContent('+3 class synthesis');
+  });
+
   it('a link to a work session filters to it and opens its newest run', async () => {
     fake.workLogFocus = { agentId: 'a1', sessionId: 's-beat', at: 1 };
     page = () => ({ runs: RUNS.slice(1, 2), nextCursor: null, groups: GROUPS.slice(1) });

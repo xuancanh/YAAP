@@ -18,6 +18,7 @@ import { IsOptional, IsString } from 'class-validator';
 import { AccountsService } from './accounts.service';
 import { AgentTypesService } from '../agent-types/agent-types.service';
 import type { AuthenticatedRequest } from '../common/auth.guard';
+import { PROVIDER_PRESETS } from '../agent-types/provider-presets';
 
 class PutKeyDto {
   @IsString() provider!: string;
@@ -31,14 +32,7 @@ class PatchAccountDto {
 }
 
 /** Default model when a key arrives for a provider with no agent type yet. */
-const DEFAULT_MODEL: Record<string, string> = {
-  anthropic: 'claude-sonnet-4-5',
-  openai: 'gpt-5',
-  gemini: 'gemini-2.5-pro',
-  deepseek: 'deepseek-chat',
-  kimi: 'kimi-k2',
-  glm: 'glm-4.5',
-};
+const DEFAULT_MODEL: Record<string, string> = Object.fromEntries(Object.values(PROVIDER_PRESETS).map((p) => [p.provider, p.model]));
 const PROVIDER_RE = /^[a-z][a-z0-9-]{1,30}$/;
 
 @Controller()
@@ -66,7 +60,8 @@ export class AccountController {
     const mine = (await this.types.list()).filter((t) => t.provider === dto.provider);
     if (mine.length === 0) {
       if (!dto.apiKey) return this.account();
-      await this.types.create({ name: dto.provider[0].toUpperCase() + dto.provider.slice(1), provider: dto.provider, model: DEFAULT_MODEL[dto.provider] ?? '', apiKey: dto.apiKey });
+      const preset = PROVIDER_PRESETS[dto.provider];
+      await this.types.create({ name: preset?.name ?? dto.provider[0].toUpperCase() + dto.provider.slice(1), provider: dto.provider, model: DEFAULT_MODEL[dto.provider] ?? '', apiKey: dto.apiKey, ...(preset ? { models: preset.models, tierModels: preset.tierModels } : {}) });
     } else {
       for (const t of mine) await this.types.update(t.id, { apiKey: dto.apiKey });
     }

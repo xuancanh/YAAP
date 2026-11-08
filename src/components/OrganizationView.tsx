@@ -7,6 +7,7 @@
  *  log)… The approvals queue (full artifact, never a summary) renders in the
  *  Inbox. Enabling, the mode, the chief and the caps live in Settings ›
  *  Company; the group log moved to the `#company` channel. */
+import { decisionLabel, decisionReasons, parseDecisionJson } from '../lib/model-selection';
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useApp, type OrgPane } from '../store';
 import { sectionDef, sectionOfPane, type CompanySection } from '../lib/company-nav';
@@ -747,13 +748,14 @@ function RunRow({ r, names, title }: { r: OrgRun; names: Map<string, Agent>; tit
   const app = useApp();
   const a = names.get(r.agentId);
   const color = r.status === 'done' ? 'var(--green)' : r.status === 'running' ? 'var(--amber)' : r.status === 'refused' ? 'var(--text-faint)' : 'var(--red)';
+  const decision = parseDecisionJson(r.modelDecision);
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--border-soft)' }}>
       <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, flex: 'none' }} />
       <Avatar a={a} size={18} />
       <div style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
         <span style={{ fontWeight: 600 }}>{a?.name ?? '?'}</span> {r.wakeReason} → {r.outcome || r.status}{title ? <span style={faint}> · {title}</span> : null}
-        <div style={faint}>{ago(r.startedAt)} · {r.tokensIn + r.tokensOut} tokens · {fmtUsd(r.usd)}</div>
+        <div style={faint}>{ago(r.startedAt)} · {r.tokensIn + r.tokensOut} tokens · {fmtUsd(r.usd)}{decision ? <span data-testid="run-tier" title={decisionReasons(decision)}> · {decisionLabel(decision)}</span> : null}</div>
       </div>
       {r.sessionId && <button style={btn()} onClick={() => app.openSession(r.sessionId!)}>Open session</button>}
     </div>

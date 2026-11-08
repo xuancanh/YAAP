@@ -17,6 +17,7 @@ import { currentAccountId, currentViewer } from '../accounts/account-context';
 import { AgentsService } from '../agents/agents.service';
 import { parsePriceOverrides, usdFor, type PriceTable } from '../ai/pricing';
 import { SettingsService } from '../settings/settings.module';
+import { parseDecision, type ModelDecision } from '../agent-types/model-selection';
 
 export const WORK_TRIGGERS = ['heartbeat', 'loop', 'task', 'meeting', 'channel', 'org', 'app', 'other'] as const;
 export type WorkTrigger = (typeof WORK_TRIGGERS)[number];
@@ -59,6 +60,9 @@ export interface WorkRun {
    *  when the model is unknown to the price table. */
   usd: number | null;
   model: string;
+  /** Automatic model selection (docs/agent-types.md "Model selection"): the
+   *  tier, model and reasons the run's model came from; null on a fixed run. */
+  modelDecision: ModelDecision | null;
   /** Tool calls + thinking blocks. */
   steps: number;
   toolCount: number;
@@ -105,6 +109,7 @@ interface Row {
   answer: string | null; thinkingCount: number;
   source: string | null; rerunOf: string | null; by: string | null;
   recovery?: string | null; resumedBy?: string | null;
+  modelDecision?: string | null;
 }
 
 const rowsOf = (res: unknown): unknown[] => ((res as { rows?: unknown[] }).rows ?? (Array.isArray(res) ? res : []));
@@ -212,7 +217,7 @@ export class WorkLogService {
       FROM (
         SELECT t."id", t."sessionId", t."seq", LEFT(t."input", 2000) AS "input", t."status", t."error",
           t."tokensIn", t."tokensOut", t."model", s."model" AS "sessionModel", t."toolCalls", t."createdAt",
-          t."source", t."rerunOf", t."recovery",
+          t."source", t."rerunOf", t."recovery", t."modelDecision",
           (SELECT t2."id" FROM chat_turns t2 WHERE t2."rerunOf" = t."id" ORDER BY t2."seq" ASC LIMIT 1) AS "resumedBy",
           (SELECT m."authorAccountId" FROM chat_messages m WHERE m."turnId" = t."id" AND m."role" = 'user' ORDER BY m."seq" ASC LIMIT 1) AS "by",
           s."name" AS "sessionName", s."archivedAt",
@@ -307,7 +312,7 @@ export class WorkLogService {
       trigger: r.trigger, triggerKey: r.triggerKey ?? '', label: labelOf(r.trigger, r.triggerKey ?? '', r.taskKey, r.taskTitle),
       outcome: r.outcome, status: r.status, error: r.error ?? null,
       input: (r.input ?? '').slice(0, 2000), answer: (r.answer ?? '').slice(0, 400),
-      tokensIn, tokensOut, usd, model,
+      tokensIn, tokensOut, usd, model, modelDecision: parseDecision(r.modelDecision),
       steps: calls.length + thinkingCount, toolCount: calls.length, thinkingCount, tools, files, task,
       archived: !!r.archivedAt,
       source: r.source ?? '', by: r.source === 'person' ? (r.by ?? '') : '', rerunOf: r.rerunOf ?? null,

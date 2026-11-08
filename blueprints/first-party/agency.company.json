@@ -235,7 +235,15 @@
     "service.suggestAfterRepeats": 2,
     "service.metricsWindowDays": 60,
     "improve.standardScope": 0,
-    "improve.verifyDays": 21
+    "improve.verifyDays": 21,
+    "model.cheapMaxScore": 0,
+    "model.strongMinScore": 5,
+    "model.floorTier": 1,
+    "model.riskFloorTier": 2,
+    "model.budgetTightPct": 10,
+    "model.historyDowngradeRate": 0.97,
+    "model.historyEscalateRate": 0.7,
+    "model.historyMinRuns": 6
   },
   "playbooks": [],
   "budget": {

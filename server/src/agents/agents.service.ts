@@ -338,7 +338,7 @@ export class AgentsService {
     return ensureAgentHome(this.db, this.storage, row);
   }
 
-  async update(id: string, input: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string; agentTypeId: string | null; applyToChats: boolean; chatAutoArchiveDays: number | null; customModel: boolean; personality: string }>) {
+  async update(id: string, input: Partial<{ name: string; charter: string; provider: string; model: string; homeDir: string; dashboard: string; emoji: string; colors: string; role: string; loops: string; workspaceFolder: string; agentTypeId: string | null; applyToChats: boolean; chatAutoArchiveDays: number | null; customModel: boolean; personality: string; modelMode: string }>) {
     const before = await this.get(id);
     // homeDir is allocated at creation and moves only with the agent
     // (docs/filesystem.md): never set through an update.
@@ -357,6 +357,8 @@ export class AgentsService {
       if (!ok) throw new BadRequestException('colors must be a JSON pair of hex colours, e.g. ["#8b8cf0","#5cc2f2"]');
     }
     if (patch.model !== undefined) patch.model = patch.model.trim().slice(0, 120);
+    // Model mode (docs/agent-types.md "Model selection"): '' inherits the type's, then the workspace's.
+    if (patch.modelMode !== undefined && !['', 'auto', 'fixed'].includes(patch.modelMode)) throw new BadRequestException('modelMode must be auto (by task complexity), fixed, or \'\' to inherit');
     if (patch.personality !== undefined && !isPersonalityId(patch.personality)) throw new BadRequestException(`personality must be one of: ${[...PERSONALITIES.map((p) => p.id), NO_PERSONALITY].join(', ')}`);
     if (patch.chatAutoArchiveDays !== undefined && patch.chatAutoArchiveDays !== null) {
       const d = Number(patch.chatAutoArchiveDays);

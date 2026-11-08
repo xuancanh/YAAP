@@ -59,6 +59,8 @@ class UpdateAgentDto {
   @IsOptional() @ValidateIf((_o, v) => v !== null) @IsInt() @Min(0) @Max(365) chatAutoArchiveDays?: number | null;
   /** Personality (docs/agent-writing.md): a catalog id or 'none' (neutral). */
   @IsOptional() @IsString() personality?: string;
+  /** Model mode (docs/agent-types.md "Model selection"): '' inherit | auto | fixed. */
+  @IsOptional() @IsString() modelMode?: string;
 }
 
 class MoveAgentDto {

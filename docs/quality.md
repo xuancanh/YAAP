@@ -79,6 +79,10 @@ The verifier is never the maker (as before). `quality.verifierIndependence`:
 pick), 2 — or a standard with `verifier: family` — require one whenever the
 roster has one: the reviewer is re-picked, and a same-family accept is
 refused naming who may accept.
+With automatic model selection (docs/agent-types.md "Model selection") a
+member in auto mode is judged by the model its latest run actually used, and
+an auto reviewer's run prefers a provider of another family than the
+maker's — with Claude and OpenAI both configured, reviews cross families.
 
 **Deterministic first**: evidence, task checks (`docs/sensing.md` §3) and
 result predicates run before any reviewer is woken. **Then the rubric**: an

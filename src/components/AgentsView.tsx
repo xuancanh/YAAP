@@ -4,6 +4,7 @@
  *  (Tasks, Schedule), Chats, Artifacts, Memory (file brain) and Settings
  *  (General, Skills & tools, Mini apps, Trust). Old tab names still resolve
  *  (src/lib/agent-tabs.ts). */
+import { MODEL_MODE_LABEL } from '../lib/model-selection';
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
@@ -1184,24 +1185,25 @@ export function ModelCard({ a }: { a: Agent }) {
   const current = types.find((t) => t.id === a.agentTypeId) ?? null;
   const [typeId, setTypeId] = useState<string>(a.agentTypeId ?? '');
   const [model, setModel] = useState(a.model);
+  const [mode, setMode] = useState(a.modelMode ?? '');
   const [applyToChats, setApplyToChats] = useState(true);
   // The type the agent will run on: the one picked, else the server's automatic choice.
   const picked = types.find((t) => t.id === typeId) ?? effectiveType(types, { agentTypeId: null, provider: a.provider }, app.settings.defaultAgentTypeId);
   const list = typeModelList(picked);
   const [custom, setCustom] = useState(() => !!a.model && !list.includes(a.model));
   useEffect(() => {
-    setTypeId(a.agentTypeId ?? ''); setModel(a.model);
+    setTypeId(a.agentTypeId ?? ''); setModel(a.model); setMode(a.modelMode ?? '');
     const t = types.find((x) => x.id === a.agentTypeId) ?? effectiveType(types, { agentTypeId: null, provider: a.provider }, app.settings.defaultAgentTypeId);
     setCustom(!!a.model && !typeModelList(t).includes(a.model));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [a.id, a.agentTypeId, a.model]);
-  const dirty = typeId !== (a.agentTypeId ?? '') || model !== a.model;
+  }, [a.id, a.agentTypeId, a.model, a.modelMode]);
+  const dirty = typeId !== (a.agentTypeId ?? '') || model !== a.model || mode !== (a.modelMode ?? '');
   const save = async () => {
     try {
-      await api.updateAgent(a.id, { agentTypeId: typeId || null, model: model.trim(), applyToChats, ...(custom && model.trim() ? { customModel: true } : {}) });
+      await api.updateAgent(a.id, { agentTypeId: typeId || null, model: model.trim(), applyToChats, ...(mode !== (a.modelMode ?? '') ? { modelMode: mode } : {}), ...(custom && model.trim() ? { customModel: true } : {}) });
       await app.refreshAgents();
       await app.refreshSessions();
-      app.showToast(`${a.name} now runs on ${model.trim() || picked?.model || 'the type default'}${applyToChats ? ', including its existing chats' : ' in new chats'}`);
+      app.showToast(mode === 'auto' ? `${a.name} now picks its model by task complexity` : `${a.name} now runs on ${model.trim() || picked?.model || 'the type default'}${applyToChats ? ', including its existing chats' : ' in new chats'}`);
     } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'could not save'); }
   };
   return (
@@ -1218,6 +1220,15 @@ export function ModelCard({ a }: { a: Agent }) {
         <div style={{ fontSize: 12.5, color: 'var(--amber)' }}>No enabled agent types. Add one with an API key in Settings → Models first.</div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>
+            Model mode
+            <select aria-label="Model mode" value={mode} onChange={(e) => setMode(e.target.value)} style={{ ...fieldInput, cursor: 'pointer' }}>
+              <option value="">Inherit (the type&apos;s, then the workspace&apos;s)</option>
+              <option value="auto">{MODEL_MODE_LABEL.auto}</option>
+              <option value="fixed">{MODEL_MODE_LABEL.fixed}</option>
+            </select>
+            {mode === 'auto' && <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Each task run and chat turn picks cheap, standard or strong from the work&apos;s complexity, attempts and budget — possibly on another configured provider (Settings › Models › Model selection). The model below is the fallback.</span>}
+          </label>
           <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>
             Agent type
             <select value={typeId} onChange={(e) => { const t = types.find((x) => x.id === e.target.value); setTypeId(e.target.value); if (t) { setModel(t.model); setCustom(false); } }} style={{ ...fieldInput, cursor: 'pointer' }}>

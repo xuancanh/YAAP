@@ -618,7 +618,7 @@ export function roleCharter(role: Role, orgName: string): string {
  *  ones, standard otherwise. Pure so the blueprint test can pin it. */
 export function tierOfModel(model: string | null | undefined): ModelTier {
   const m = (model ?? '').toLowerCase();
-  if (/haiku|mini|nano|flash|deepseek-chat|lite/.test(m)) return 'cheap';
-  if (/opus|pro\b|gpt-5(?!-mini|-nano)|o[13]\b|sonnet-4-5|deepseek-reasoner/.test(m)) return 'strong';
+  if (/haiku|mini|nano|flash|deepseek-chat|lite|luna/.test(m)) return 'cheap';
+  if (/opus|fable|astra|pro\b|gpt-5(?!-mini|-nano|\.\d+-(?:luna|terra|sol))|o[13]\b|sonnet-4-5|deepseek-reasoner/.test(m)) return 'strong';
   return 'standard';
 }
