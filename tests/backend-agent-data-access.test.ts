@@ -27,8 +27,8 @@ import { TaskPlanTools } from '../server/src/org/task-plan.tools';
 
 /** Measured before this change with the same harness (docs/agent-data-access.md §6). */
 const CHIEF_SPEC_BYTES_BEFORE = 59_543;
-/** The chief's whole tool list stays under this many bytes of JSON (raised from 66_000 when the process, quality and alignment tools joined it; to 70_000 with the four task-execution tools, measured here). */
-const CHIEF_SPEC_BUDGET = 70_000;
+/** The chief's whole tool list stays under this many bytes of JSON (raised from 66_000 when the process, quality and alignment tools joined it; to 70_000 with the four task-execution tools; to 72_000 with the model-tier tool and the evidence params). */
+const CHIEF_SPEC_BUDGET = 72_000;
 
 async function setup(opts: { withData?: boolean } = {}) {
   const s = await harness();
