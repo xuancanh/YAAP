@@ -182,6 +182,11 @@ input { font-family: inherit; }
 .ibx-fact dt, .ibx-fact dd { padding: 8px 0; border-bottom: 1px solid var(--border-soft); font-size: 13px; line-height: 1.5; }
 .ibx-fact dt { color: var(--text-dim); padding-right: 24px; }
 .ibx-fact dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+/* Multi-line facts (an alignment's numbered options) and an improvement's diff. */
+.ibx-fact dd { white-space: pre-line; }
+.ibx-diff { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--border-soft); font-family: var(--mono); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; color: var(--text-dim); }
+.ibx-diff .add { color: var(--ok-text, var(--green)); }
+.ibx-diff .del { color: var(--red-text, var(--red)); }
 .ibx-route { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 13px; }
 .ibx-route li { display: inline-flex; align-items: center; gap: 4px; }
 .ibx-route .step { padding: 3px 9px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border-soft); color: var(--text-dim); }

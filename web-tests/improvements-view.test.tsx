@@ -5,7 +5,9 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrgDetail, OrgImprovement, WorkSources } from '../src/lib/api';
-import { countByFilter, filterOf, sourceBars, verificationWords } from '../src/lib/improvements';
+import { capTone, countByFilter, filterOf, sourceBars, sourceSplit, verificationWords } from '../src/lib/improvements';
+import { feedDiff, feedFacts, feedLongText, feedOpen } from '../src/lib/feed';
+import type { FeedItem } from '../src/lib/api';
 import { sectionDef, paneHome } from '../src/lib/company-nav';
 
 afterEach(cleanup);
@@ -44,6 +46,7 @@ beforeEach(() => {
   for (const k of Object.keys(fake)) delete fake[k];
   Object.assign(fake, { agents: [{ id: 'a1', name: 'Writer', colors: ['#000', '#111'], emoji: 'W' }, { id: 'a2', name: 'Editor', colors: ['#000', '#111'], emoji: 'E' }], wsOrg: { units: [] }, showToast: vi.fn() });
   apiMock.acceptOrgImprovement.mockClear();
+  apiMock.rejectOrgImprovement.mockClear();
 });
 
 describe('the lib', () => {
@@ -60,29 +63,67 @@ describe('the lib', () => {
     expect(sectionDef('operations').pages.map((p) => p.pane)).toContain('improvements');
     expect(paneHome('improvements')).toEqual({ section: 'operations', pane: 'improvements' });
   });
+  it('splits work into directed and self-started on one scale, and tones each unit against its cap', () => {
+    const split = sourceSplit(sources);
+    expect([split.directed, split.self]).toEqual([3, 7]);
+    expect(split.groups.map((g) => [g.id, g.rows.map((r) => r.origin)])).toEqual([['directed', ['plan', 'process']], ['self', ['retro', 'agent']]]);
+    expect(split.groups[1].rows[0]).toMatchObject({ n: 5, share: 0.5, scale: 1 });
+    expect(split.groups[0].rows[0].scale).toBe(0.4);
+    expect([capTone(6, 6), capTone(5, 6), capTone(2, 6), capTone(0, 0)]).toEqual(['bad', 'warn', 'ok', 'muted']);
+  });
+  it('the Inbox shows an improvement card with why, the facts and the diff, and opens Improvements', () => {
+    const item = { type: 'decision', section: 'needs', actions: ['approve', 'reject'], context: {}, target: { kind: 'need', need: { kind: 'approval', ref: { approvalId: 'c1' } } },
+      need: { kind: 'approval', subkind: 'improvement', ref: { approvalId: 'c1' }, facts: { key: 'IM-1', targetLabel: 'process "Content publishing" v2', changeClass: 'normal', category: 'prevent', expected: 'rework rate ↓', hypothesis: 'A check catches it.', diff: ['+ MUST: cite'] } } } as unknown as FeedItem;
+    expect(feedFacts(item)).toEqual([{ label: 'Changes', value: 'process "Content publishing" v2' }, { label: 'Kind', value: 'Normal change · prevent' }, { label: 'Expected', value: 'rework rate ↓' }]);
+    expect(feedLongText(item)).toEqual({ label: 'Why it should help', text: 'A check catches it.', lead: true });
+    expect(feedDiff(item)).toEqual(['+ MUST: cite']);
+    expect(feedOpen(item)).toEqual({ to: 'pane', pane: 'improvements' });
+  });
 });
 
 describe('the Improvements pane', () => {
   it('lists what needs a decision with evidence and diff, accepts it, and shows work sources against the caps', async () => {
     render(<ImprovementsPane org={org} />);
-    await waitFor(() => expect(screen.getByTestId('improvement-list')).toHaveTextContent('IM-1 · Add a fact-check step'));
+    await waitFor(() => expect(screen.getByTestId('improvement-list')).toHaveTextContent('IM-1 Add a fact-check step'));
     const row = screen.getByTestId('improvement-row');
-    expect(row).toHaveTextContent('Prevent · process "Content publishing" v2 · Normal change · owner Writer · raised by Editor (retro)');
+    expect(row).toHaveTextContent('Prevent · process "Content publishing" v2 · raised by Editor in a retro');
     expect(row).toHaveTextContent('Awaiting a decision');
-    fireEvent.click(within(row).getByRole('button', { name: /IM-1/ }));
+    expect(row).toHaveTextContent('Normal change');
+    // The first proposal that needs a decision is open on arrival.
     const detail = screen.getByTestId('improvement-detail');
+    expect(detail).toHaveTextContent('Decided by');
+    expect(detail).toHaveTextContent('Writer');
     expect(detail).toHaveTextContent('ENG-7 shipped a wrong figure');
     expect(screen.getByTestId('improvement-diff')).toHaveTextContent('step check + MUST: every figure has a source');
     fireEvent.click(within(detail).getByRole('button', { name: 'Accept' }));
     await waitFor(() => expect(apiMock.acceptOrgImprovement).toHaveBeenCalledWith('ws1', 'IM-1'));
     // work sources
     const ws = screen.getByTestId('work-sources');
-    expect(ws).toHaveTextContent('Self-started 70% · in Operating/Unsorted projects 80% · from retros 50%');
+    expect(ws).toHaveTextContent('Directed 3 (30%)');
+    expect(ws).toHaveTextContent('Self-started 7 (70%)');
+    expect(ws).toHaveTextContent('80% filed in Operating/Unsorted');
     expect(ws).toHaveTextContent('3 refused');
-    expect(screen.getByTestId('unit-caps')).toHaveTextContent('Engineering 6/6');
-    expect(screen.getAllByTestId('source-bar')[0]).toHaveTextContent('Retros · self-started');
+    expect(screen.getByTestId('unit-caps')).toHaveTextContent('Engineering6/6');
+    expect(screen.getAllByTestId('source-bar')[0]).toHaveTextContent('Plans and goals');
+    expect(screen.getAllByTestId('source-bar')[2]).toHaveTextContent('Retros · self-started');
+    // collapse and re-open by the head
+    fireEvent.click(within(row).getByRole('button', { name: /IM-1/ }));
+    expect(screen.queryByTestId('improvement-detail')).toBeNull();
     // the verified tab
     fireEvent.click(screen.getByRole('tab', { name: /Verified \(1\)/ }));
-    await waitFor(() => expect(screen.getByTestId('improvement-list')).toHaveTextContent('IM-2 · Shorter standups'));
+    await waitFor(() => expect(screen.getByTestId('improvement-list')).toHaveTextContent('IM-2 Shorter standups'));
+  });
+});
+
+describe('rejecting a proposal', () => {
+  it('asks why and confirms before rejecting', async () => {
+    render(<ImprovementsPane org={org} />);
+    await waitFor(() => screen.getByTestId('improvement-detail'));
+    const detail = screen.getByTestId('improvement-detail');
+    fireEvent.click(within(detail).getByRole('button', { name: 'Reject…' }));
+    expect(apiMock.rejectOrgImprovement).not.toHaveBeenCalled();
+    fireEvent.change(within(detail).getByLabelText('Reason'), { target: { value: 'Too broad' } });
+    fireEvent.click(within(detail).getByRole('button', { name: 'Confirm: reject IM-1' }));
+    await waitFor(() => expect(apiMock.rejectOrgImprovement).toHaveBeenCalledWith('ws1', 'IM-1', 'Too broad'));
   });
 });

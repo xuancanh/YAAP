@@ -104,7 +104,8 @@ export function feedOpen(i: FeedItem): FeedOpen {
   const t = i.target;
   switch (t.kind) {
     case 'need': {
-      const n = t.need as HomeNeed;
+      // The row's own need carries the subkind and facts; the target's copy only the kind and refs.
+      const n = (i.need ?? t.need) as HomeNeed;
       const home = needTarget(n);
       // A card decided in the Inbox: its full queue (the whole card, with notes).
       if (!home || home.to === 'inbox') return { to: 'queue', filter: n.kind === 'escalation' ? 'escalations' : n.kind === 'held_action' || n.kind === 'queued_action' ? 'keys' : 'approvals' };
@@ -206,6 +207,10 @@ export function askOf(i: FeedItem): string {
   const who = i.actor && i.actor.kind !== 'system' ? i.actor.name : '';
   switch (i.type) {
     case 'decision':
+      if (i.need?.subkind === 'alignment') return `${who || 'The owner'} asks you to align on this before work is built on it. Approve it here, or open the brief to discuss it, approve with changes or send it back.`;
+      if (i.need?.subkind === 'improvement') return i.need.facts?.review
+        ? 'This emergency change is already applied. Approve keeps it; reject reverts it.'
+        : `${who || 'An agent'} proposes a change to how the company works. Approve applies it and checks it against its metric later; reject drops it.`;
       if (i.need?.subkind === 'hire') return `${who || 'Someone'} needs your yes before the hire goes ahead.`;
       return `${who ? `${who} needs your decision` : 'This needs your decision'}: approve it or reject it.`;
     case 'escalation': return `${who || 'The team'} can't go on without you. Answer the question to unblock the task, or cancel the task.`;
@@ -307,10 +312,9 @@ export function feedFacts(i: FeedItem): Array<{ label: string; value: string }> 
       add('Change', `${s('from') ? `${s('from')} → ` : ''}${s('value')}`);
       break;
     case 'alignment':
-      add('Item', [s('label'), s('title')].filter(Boolean).join(': '));
       add('Class', s('classLabel'));
       add('Why', s('why'));
-      add('Options', l('options').join(' · '));
+      add('Options', l('options').map((o, n) => `${n + 1}. ${o}`).join('\n'));
       add('Trade-offs', s('tradeoffs'));
       add('Measures', s('measures'));
       add('Cost', s('cost'));
@@ -318,6 +322,11 @@ export function feedFacts(i: FeedItem): Array<{ label: string; value: string }> 
       add('With it', l('bundleTitles').join(', '));
       add('Owner\'s reasoning', s('classifiedReasoning'));
       add('Latest reply', s('lastReply'));
+      break;
+    case 'improvement':
+      add('Changes', s('targetLabel') || 'the company');
+      add('Kind', [CHANGE_KIND[s('changeClass')] ?? '', CATEGORY_KIND[s('category')] ?? ''].filter(Boolean).join(' · '));
+      add('Expected', s('expected'));
       break;
     case 'two_key':
       add('Tool', s('tool'));
@@ -327,13 +336,25 @@ export function feedFacts(i: FeedItem): Array<{ label: string; value: string }> 
   return out;
 }
 
-/** The longer text worth reading in the pane: a hire's charter ('' when none). */
-export function feedLongText(i: FeedItem): { label: string; text: string } | null {
+const CHANGE_KIND: Record<string, string> = { standard: 'Standard change', normal: 'Normal change', emergency: 'Emergency change (already applied)' };
+const CATEGORY_KIND: Record<string, string> = { investigate: 'investigate', mitigate: 'mitigate', repair: 'repair', detect: 'detect', prevent: 'prevent' };
+
+/** The longer text worth reading in the pane: a hire's charter, what an
+ *  alignment asks, an improvement's hypothesis (null when none). `lead`
+ *  puts it first, before the facts: it is the point of the card. */
+export function feedLongText(i: FeedItem): { label: string; text: string; lead?: boolean } | null {
   const f = i.need?.facts;
   const charter = typeof f?.charter === 'string' ? f.charter : '';
   if (i.need?.subkind === 'hire' && charter) return { label: 'What they would do', text: charter };
-  if (i.need?.subkind === 'alignment' && typeof f?.what === 'string' && f.what) return { label: 'What to align on', text: f.what };
+  if (i.need?.subkind === 'alignment' && typeof f?.what === 'string' && f.what) return { label: 'What to align on', text: f.what, lead: true };
+  if (i.need?.subkind === 'improvement' && typeof f?.hypothesis === 'string' && f.hypothesis) return { label: 'Why it should help', text: f.hypothesis, lead: true };
   return null;
+}
+
+/** An improvement card's diff, line by line ('+' added, '-' removed), [] when none. */
+export function feedDiff(i: FeedItem): string[] {
+  const d = i.need?.subkind === 'improvement' ? i.need.facts?.diff : undefined;
+  return Array.isArray(d) ? d.filter((x): x is string => typeof x === 'string') : [];
 }
 
 /** The button that opens a row where it lives ("Open task", "Open #launch"…). */
@@ -344,7 +365,7 @@ export function openLabel(i: FeedItem): string {
     case 'chat': return i.type === 'message' ? 'Reply in chat' : 'Open chat';
     case 'channel': return `Open #${t.slug}`;
     case 'agent': return i.actor?.kind === 'agent' && i.actor.id === t.agentId ? `Open ${i.actor.name}` : 'Open agent';
-    case 'pane': return t.pane === 'meetings' ? 'Open meeting' : t.pane === 'roadmap' ? 'Open project' : 'Open page';
+    case 'pane': return t.pane === 'meetings' ? 'Open meeting' : t.pane === 'roadmap' ? 'Open project' : t.pane === 'alignment' ? 'Open the brief' : t.pane === 'improvements' ? 'Open in Improvements' : 'Open page';
     case 'plugin': return 'Open in Foundry';
     case 'queue': return 'Open the full card';
     case 'history': return 'Open in Done';

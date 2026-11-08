@@ -52,6 +52,39 @@ export function sourceBars(w: WorkSources): Array<{ origin: string; label: strin
     .map(([origin, n]) => ({ origin, label: ORIGIN_WORD[origin] ?? origin, n, share: n / total, self: w.selfOrigins.includes(origin) }));
 }
 
+/** Where a proposal came from, as "raised by X in a retro". */
+export const ORIGIN_PHRASE: Record<string, string> = {
+  retro: 'in a retro', postmortem: 'in a postmortem', process_review: 'in a process review', discovery: 'from process discovery', incident: 'during an incident',
+  verification: 'after a failed check', meeting: 'in a meeting', agent: '', ceo: '',
+};
+
+/** The Work sources panel's split: directed vs self-started work, each origin's tasks as
+ *  rows on one scale (the largest origin fills the track), labelled with the count and
+ *  its share of all new work so the bars never stand alone. */
+export function sourceSplit(w: WorkSources): {
+  total: number; directed: number; self: number;
+  groups: Array<{ id: 'directed' | 'self'; label: string; n: number; rows: Array<{ origin: string; label: string; n: number; share: number; scale: number }> }>;
+} {
+  const bars = sourceBars(w);
+  const max = Math.max(1, ...bars.map((b) => b.n));
+  const rows = (self: boolean) => bars.filter((b) => b.self === self).map((b) => ({ origin: b.origin, label: b.label, n: b.n, share: b.share, scale: b.n / max }));
+  const sum = (r: Array<{ n: number }>) => r.reduce((a, b) => a + b.n, 0);
+  const directedRows = rows(false);
+  const selfRows = rows(true);
+  const groups: ReturnType<typeof sourceSplit>['groups'] = [
+    { id: 'directed', label: 'Directed', n: sum(directedRows), rows: directedRows },
+    { id: 'self', label: 'Self-started', n: sum(selfRows), rows: selfRows },
+  ];
+  return { total: w.total, directed: sum(directedRows), self: sum(selfRows), groups: groups.filter((g) => g.rows.length > 0) };
+}
+
+/** A unit's open self-started work against its cap: the tone its bar takes. */
+export function capTone(open: number, cap: number): Tone {
+  if (cap <= 0) return 'muted';
+  if (open >= cap) return 'bad';
+  return open >= cap - 1 ? 'warn' : 'ok';
+}
+
 /** One line on what the verification found. */
 export function verificationWords(p: Pick<OrgImprovement, 'verification' | 'status' | 'verifyAt' | 'expectedText'>): string {
   if (p.verification) return `${p.verification.outcome === 'pass' ? 'Met' : p.verification.outcome === 'fail' ? 'Missed' : 'Not measurable'} — ${p.verification.detail}`;

@@ -116,6 +116,12 @@ function approvalTitle(kind: string, who: string, facts: Facts | undefined, fall
     }
     case 'policy_exception': return `${upperFirst(f(facts, 'agentName') || 'A member')} asks to break policy "${clipWords(f(facts, 'policyKey') || 'a policy', 50)}" once${f(facts, 'tool') ? ` for ${f(facts, 'tool')}` : ''}`;
     case 'alignment': return `Align on the ${f(facts, 'label') || 'plan'}: ${clipWords(f(facts, 'title') || 'untitled', 70)}`;
+    // An improvement proposal (docs/improvements.md): a normal change to approve, or an emergency change to review.
+    case 'improvement': {
+      const key = f(facts, 'key') || 'an improvement';
+      const what = clipWords(f(facts, 'title') || 'untitled', 70);
+      return facts?.review ? `Review the emergency change ${key}: ${what}` : `${who ? `${who} proposes` : 'Approve'} ${key}: ${what}`;
+    }
     default: return clipWords(upperFirst(fallback), 110);
   }
 }
@@ -130,6 +136,7 @@ function approvalBody(kind: string, facts: Facts | undefined): string {
     }
     case 'budget_raise': return f(facts, 'buys') ? `It buys: ${firstSentence(f(facts, 'buys'), 200)}` : '';
     case 'alignment': return f(facts, 'why') ? firstSentence(f(facts, 'why'), 200) : '';
+    case 'improvement': return firstSentence(f(facts, 'hypothesis'), 200);
     case 'scope_widen': return fl(facts, 'widened').join(', ');
     case 'charter_change': return firstSentence(f(facts, 'lesson') || f(facts, 'summary'), 200);
     case 'project_appetite': {

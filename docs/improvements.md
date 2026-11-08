@@ -221,10 +221,16 @@ that wait on what they own; the UI shows it as the Work sources panel.
   proposals by *Needs a decision / In flight / Verified / Closed* with
   target, evidence, hypothesis, the diff, the class and why, the metric and
   what verification found, the history; Accept / Reject (Keep / Revert for an
-  emergency change's review) and *Check the metric now*. Below, the Work
-  sources panel.
+  emergency change's review; Reject and Revert take a note and a confirm) and
+  *Check the metric now*. The first proposal that needs a decision is open on
+  arrival. Below, the Work sources panel: directed against self-started work
+  as one split bar, each origin on one shared scale with its count and share,
+  and each unit's open self-started work against its cap; the cap rules sit
+  behind "How the caps work".
 - **Inbox**: a normal change that reaches the CEO (or is CEO-reserved) is an
-  `improvement` card with the diff and the expected metric.
+  `improvement` card ("Cả Mẹo proposes IM-7: …", or "Review the emergency
+  change IM-8: …") with why it should help, what it changes, the kind, the
+  expected metric and the diff; "Open in Improvements" goes to the page.
 
 ## 8. For other features
 

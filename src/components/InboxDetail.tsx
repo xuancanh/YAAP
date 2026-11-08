@@ -14,7 +14,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import type { FeedAction, FeedItem } from '../lib/api';
-import { askOf, contextChips, defaultLine, FEED_LABEL, feedActionLabel, feedFacts, feedLongText, feedOpen, feedTone, openLabel, relLabel, whenLabel, yesNo } from '../lib/feed';
+import { askOf, contextChips, defaultLine, FEED_LABEL, feedActionLabel, feedDiff, feedFacts, feedLongText, feedOpen, feedTone, openLabel, relLabel, whenLabel, yesNo } from '../lib/feed';
 import { I, P } from '../lib/icons';
 import { FeedAvatar } from './FeedRow';
 
@@ -51,6 +51,11 @@ export function InboxDetail({ item: i, now, stacked, busy, onBack, onAct, onGo, 
   const deadline = defaultLine(i, now);
   const facts = feedFacts(i);
   const long = feedLongText(i);
+  const diff = feedDiff(i);
+  // The body is often the first sentence of a fact shown in full below: say it once.
+  const lede = i.body.replace(/…$/, '').trim();
+  const recRepeats = Boolean(long?.lead && i.need?.recommendation && i.need.recommendation.includes(long.text.slice(0, 80)));
+  const bodyRepeats = Boolean(lede) && i.section === 'needs' && (facts.some((f) => f.value.startsWith(lede)) || Boolean(long?.text.startsWith(lede)));
   const go = openLabel(i);
   const need = i.need;
   const { yes, no } = yesNo(i);
@@ -118,7 +123,14 @@ export function InboxDetail({ item: i, now, stacked, busy, onBack, onAct, onGo, 
             </div>
           )}
 
-          {i.body && (
+          {long?.lead && (
+            <section className="ibx-sec" aria-label={long.label} data-testid="inbox-detail-lead">
+              <h2 className="ibx-h">{long.label}</h2>
+              <p className="ibx-prose">{long.text}</p>
+            </section>
+          )}
+
+          {i.body && !bodyRepeats && (
             <section className="ibx-sec" aria-label={i.section === 'mentions' ? 'Message' : 'Why'}>
               <h2 className="ibx-h">{i.section === 'mentions' ? 'Message' : i.section === 'needs' ? 'Why' : 'What happened'}</h2>
               <p className="ibx-prose" data-testid="inbox-detail-body">{i.body}</p>
@@ -136,10 +148,17 @@ export function InboxDetail({ item: i, now, stacked, busy, onBack, onAct, onGo, 
             </section>
           )}
 
-          {long && (
+          {long && !long.lead && (
             <section className="ibx-sec" aria-label={long.label}>
               <h2 className="ibx-h">{long.label}</h2>
               <p className="ibx-prose dim">{long.text}</p>
+            </section>
+          )}
+
+          {diff.length > 0 && (
+            <section className="ibx-sec" aria-label="The change">
+              <h2 className="ibx-h">The change</h2>
+              <pre className="ibx-diff" data-testid="inbox-detail-diff">{diff.map((l, n) => <span key={n} className={l.startsWith('+') ? 'add' : l.startsWith('-') ? 'del' : undefined}>{l}{'\n'}</span>)}</pre>
             </section>
           )}
 
@@ -160,10 +179,10 @@ export function InboxDetail({ item: i, now, stacked, busy, onBack, onAct, onGo, 
             </section>
           )}
 
-          {need && (need.recommendation || need.reversibility) && (
+          {need && ((need.recommendation && !recRepeats) || need.reversibility) && (
             <section className="ibx-sec" aria-label="Recommendation">
               <h2 className="ibx-h">Recommendation</h2>
-              {need.recommendation && <p className="ibx-prose">{need.recommendation}</p>}
+              {need.recommendation && !recRepeats && <p className="ibx-prose">{need.recommendation}</p>}
               <p className="ibx-hop dim">
                 {[need.recommendedAction ? `Suggests: ${need.recommendedAction}` : '', need.confidence !== null ? `${Math.round(need.confidence * 100)}% confident` : '', need.reversibility ? `Reversibility: ${need.reversibility.replace(/_/g, ' ')}` : ''].filter(Boolean).join(' · ')}
               </p>

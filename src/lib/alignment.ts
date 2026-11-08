@@ -82,3 +82,31 @@ export function criteriaLines(c: Record<string, unknown> | undefined): string[] 
   if (c.conflicts !== undefined) out.push(c.conflicts ? 'Conflicts with a rule' : 'No conflicts');
   return out;
 }
+
+/** What a decision that takes a note asks for, and its confirm button. */
+export interface NotePrompt { label: string; placeholder: string; confirm: string; required: string }
+export function notePrompt(id: OrgAlignmentDecision, state: OrgAlignmentState): NotePrompt | null {
+  if (id === 'approve_with_changes') return state === 'aligned'
+    ? { label: 'Your conditions', placeholder: 'e.g. Publish no claim until 200 essays are re-marked.', confirm: 'Add these conditions', required: 'Write the conditions first.' }
+    : { label: 'Your changes or conditions', placeholder: 'e.g. Cap paid acquisition at $20 until the scorer is calibrated.', confirm: 'Approve with these changes', required: 'Write the changes or conditions first.' };
+  if (id === 'send_back') return state === 'aligned'
+    ? { label: 'Why re-open it?', placeholder: 'What changed, or what the owner should revisit.', confirm: 'Re-open', required: 'Say why before re-opening it.' }
+    : { label: 'What should change?', placeholder: 'What the owner should rework before asking again.', confirm: 'Send back', required: 'Say what to change before sending it back.' };
+  return null;
+}
+
+/** Who aligns a class here, in the CEO's words, as the group it lists under. */
+export type ClassGroup = 'always' | 'owner' | 'chief' | 'auto';
+export const CLASS_GROUP_LABEL: Record<ClassGroup, string> = {
+  always: 'Always yours', owner: 'Yours when the owner says it needs you', chief: 'The chief of staff aligns', auto: 'Aligned automatically, logged for you',
+};
+export function classGroupOf(c: { aligner: 'ceo' | 'chief' | 'auto'; floor: boolean }, mode: string): ClassGroup {
+  if (c.aligner === 'chief') return 'chief';
+  if (c.aligner === 'auto') return 'auto';
+  return mode === 'supervised' && !c.floor ? 'owner' : 'always';
+}
+/** The classes grouped by who aligns them, in a fixed order, empty groups left out. */
+export function classGroups<T extends { aligner: 'ceo' | 'chief' | 'auto'; floor: boolean }>(classes: T[], mode: string): Array<{ group: ClassGroup; label: string; classes: T[] }> {
+  const order: ClassGroup[] = ['always', 'owner', 'chief', 'auto'];
+  return order.map((group) => ({ group, label: CLASS_GROUP_LABEL[group], classes: classes.filter((c) => classGroupOf(c, mode) === group) })).filter((g) => g.classes.length > 0);
+}

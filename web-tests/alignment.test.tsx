@@ -8,8 +8,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrgAlignment, OrgDetail } from '../src/lib/api';
-import { alignmentActions, alignmentBadge, alignmentGroups, criteriaLines, threadWho } from '../src/lib/alignment';
-import { feedFacts, feedLongText } from '../src/lib/feed';
+import { alignmentActions, alignmentBadge, alignmentGroups, classGroups, criteriaLines, notePrompt, threadWho } from '../src/lib/alignment';
+import { feedFacts, feedLongText, feedOpen, openLabel } from '../src/lib/feed';
 import type { FeedItem } from '../src/lib/api';
 
 afterEach(cleanup);
@@ -85,12 +85,27 @@ describe('alignment on screen: the pure parts', () => {
     expect(criteriaLines({ reversibility: 'one_way', costShare: 0.25, externalCommitment: true })).toEqual(['One-way door', '25% of the envelope', 'External commitment']);
     expect(threadWho({ by: 'user' }, () => undefined)).toBe('You');
     expect(threadWho({ by: 'agent:a2' }, () => 'Writer')).toBe('Writer');
+    // A decision that needs words asks for them in its own terms; re-opening an aligned item is a send-back.
+    expect(notePrompt('send_back', 'in_alignment')!.confirm).toBe('Send back');
+    expect(notePrompt('send_back', 'aligned')!.confirm).toBe('Re-open');
+    expect(notePrompt('approve', 'in_alignment')).toBeNull();
+  });
+  it('groups the classes by who aligns them here', () => {
+    const cls = [{ id: 'a', aligner: 'ceo' as const, floor: true }, { id: 'b', aligner: 'ceo' as const, floor: false }, { id: 'c', aligner: 'chief' as const, floor: false }, { id: 'd', aligner: 'auto' as const, floor: false }];
+    expect(classGroups(cls, 'supervised').map((g) => [g.group, g.classes.map((c) => c.id)])).toEqual([['always', ['a']], ['owner', ['b']], ['chief', ['c']], ['auto', ['d']]]);
+    expect(classGroups(cls, 'autonomous').map((g) => g.group)).toEqual(['always', 'chief', 'auto']);
   });
   it('the Inbox reading pane shows the brief of an alignment card', () => {
     const item = { need: { subkind: 'alignment', facts: { label: 'objective', title: 'Grow the readership', classLabel: 'OKRs and the plan', why: brief.why, options: brief.options, measures: brief.measures, cost: brief.cost, unlocks: brief.unlocks, what: brief.what, classifiedReasoning: 'A company objective.' } } } as unknown as FeedItem;
     const facts = feedFacts(item);
-    expect(facts.map((f) => f.label)).toEqual(['Item', 'Class', 'Why', 'Options', 'Measures', 'Cost', 'Unlocks', 'Owner\'s reasoning']);
-    expect(feedLongText(item)).toEqual({ label: 'What to align on', text: brief.what });
+    expect(facts.map((f) => f.label)).toEqual(['Class', 'Why', 'Options', 'Measures', 'Cost', 'Unlocks', 'Owner\'s reasoning']);
+    expect(facts.find((f) => f.label === 'Options')!.value).toBe('1. Do nothing\n2. Paid acquisition');
+    expect(feedLongText(item)).toEqual({ label: 'What to align on', text: brief.what, lead: true });
+  });
+  it('an alignment card opens its brief on the Alignment page, not the generic queue', () => {
+    const item = { type: 'decision', actions: ['approve', 'reject'], context: {}, target: { kind: 'need', need: { kind: 'approval', ref: { approvalId: 'c1' } } }, need: { kind: 'approval', subkind: 'alignment', ref: { approvalId: 'c1' }, facts: { alignmentId: 'al-1' } } } as unknown as FeedItem;
+    expect(feedOpen(item)).toEqual({ to: 'pane', pane: 'alignment', focus: { kind: 'alignment', id: 'al-1' } });
+    expect(openLabel(item)).toBe('Open the brief');
   });
 });
 
@@ -106,28 +121,58 @@ describe('the Alignment page', () => {
     expect(screen.getByTestId('brief-fields')).toHaveTextContent('Options considered');
     expect(screen.getByTestId('brief-fields')).toHaveTextContent('Paid acquisition');
     expect(screen.getByTestId('brief-fields')).toHaveTextContent('The referral project');
-    expect(screen.getByTestId('brief-classification')).toHaveTextContent('Why it needs you (this class always needs you here): A company objective for the quarter.');
+    expect(screen.getByTestId('brief-classification')).toHaveTextContent('Why it needs you');
+    expect(screen.getByTestId('brief-classification')).toHaveTextContent('Always yours here');
+    expect(screen.getByTestId('brief-classification')).toHaveTextContent('A company objective for the quarter.');
     expect(briefCard).toHaveTextContent('Aligned with it');
-    expect(briefCard).toHaveTextContent('key result: Weekly readers to 2000');
+    expect(briefCard).toHaveTextContent('Key result Weekly readers to 2000');
+    // the counts at the top, and the classes grouped by who aligns them
+    expect(screen.getByTestId('alignment-counts')).toHaveTextContent('2need you');
+    expect(screen.getByTestId('alignment-classes')).toHaveTextContent('Always yours');
+    expect(screen.getByTestId('alignment-classes')).toHaveTextContent('Yours when the owner says it needs you');
     expect(screen.getByTestId('alignment-thread')).toHaveTextContent('Why not paid first?');
     expect(screen.getByTestId('alignment-thread')).toHaveTextContent('Writer');
     expect(screen.getByTestId('dash-card-alignment-classes')).toHaveTextContent('Product direction');
     expect(screen.getByTestId('alignment-history')).toHaveTextContent('Q3 objectives');
   });
 
-  it('asks for a note where one is needed, then decides; comments reach the owner', async () => {
+  it('asks for a note where one is needed, confirms a rejection, then decides; comments reach the owner', async () => {
     render(<AlignmentPane org={org} />);
     await waitFor(() => screen.getByTestId('alignment-actions'));
     const actions = screen.getByTestId('alignment-actions');
-    fireEvent.click(within(actions).getByText('Send back'));
+    // Send back opens a note with its own confirm; an empty note is refused.
+    fireEvent.click(within(actions).getByText('Send back…'));
+    fireEvent.click(within(actions).getByRole('button', { name: 'Send back' }));
     expect(within(actions).getByRole('alert')).toHaveTextContent('Say what to change');
+    fireEvent.click(within(actions).getByText('Cancel'));
+    // Reject asks once more.
+    fireEvent.click(within(actions).getByText('Reject'));
     expect(apiMock.decideOrgAlignment).not.toHaveBeenCalled();
+    fireEvent.click(within(actions).getByText('Keep it'));
+    fireEvent.click(within(actions).getByText('Approve with changes…'));
     fireEvent.change(within(actions).getByLabelText('Your note'), { target: { value: 'Cap paid at $20' } });
-    fireEvent.click(within(actions).getByText('Approve with changes'));
+    fireEvent.click(within(actions).getByText('Approve with these changes'));
     await waitFor(() => expect(apiMock.decideOrgAlignment).toHaveBeenCalledWith('ws1', '1', 'approve_with_changes', 'Cap paid at $20'));
     fireEvent.change(screen.getByLabelText('Comment to the owner'), { target: { value: 'What does paid cost per reader?' } });
     fireEvent.click(screen.getByText('Comment'));
     await waitFor(() => expect(apiMock.commentOrgAlignment).toHaveBeenCalledWith('ws1', '1', 'What does paid cost per reader?'));
+  });
+
+  it('rejects only after the confirm', async () => {
+    render(<AlignmentPane org={org} />);
+    await waitFor(() => screen.getByTestId('alignment-actions'));
+    const actions = screen.getByTestId('alignment-actions');
+    fireEvent.click(within(actions).getByText('Reject'));
+    fireEvent.click(within(actions).getByText('Confirm: reject it'));
+    await waitFor(() => expect(apiMock.decideOrgAlignment).toHaveBeenCalledWith('ws1', '1', 'reject', undefined));
+  });
+
+  it('with nothing to align, one empty state explains the flow', async () => {
+    apiMock.orgAlignments.mockResolvedValueOnce([]);
+    render(<AlignmentPane org={org} />);
+    await waitFor(() => expect(screen.getByTestId('alignment-clear')).toHaveTextContent('Nothing to align yet'));
+    expect(screen.queryByTestId('dash-card-needs-alignment')).toBeNull();
+    await waitFor(() => expect(screen.getByTestId('alignment-classes')).toBeInTheDocument());
   });
 
   it('shows what agents did not escalate, with the reasoning and the spot-check, and pulls one in', async () => {

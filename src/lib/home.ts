@@ -144,6 +144,9 @@ export function needTarget(n: HomeNeed): HomeTarget | null {
   if (n.kind === 'held_action' && !n.ref.approvalId && n.ref.sessionId) return { to: 'chat', sessionId: n.ref.sessionId };
   // An escalation is about one task: the task is the context (the card decides it here).
   if (n.kind === 'escalation' && n.ref.taskId) return { to: 'task', taskId: n.ref.taskId };
+  // An alignment card opens its brief and thread on Direction › Alignment; an improvement its proposal (docs/alignment.md, docs/improvements.md).
+  if (n.subkind === 'alignment' && typeof n.facts?.alignmentId === 'string') return { to: 'pane', pane: 'alignment', focus: { kind: 'alignment', id: n.facts.alignmentId } };
+  if (n.subkind === 'improvement') return { to: 'pane', pane: 'improvements' };
   if (n.ref.approvalId || n.ref.actionId) return { to: 'inbox' };
   if (n.ref.signalId) return { to: 'pane', pane: 'pulse' };
   return null;

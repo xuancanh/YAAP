@@ -358,10 +358,20 @@ Routes, all under `/api/workspaces/:id/org/alignments`:
   - **What needs you here**: the classes with who aligns each and whether it
     is on the floor, and the rationale and sources behind "Show why".
 
+Above the cards, four counts (need you, not escalated, with the owners,
+aligned) jump to their card. The decision bar stays at the bottom of the
+screen while the brief is read; "with changes", "send back" and "re-open"
+open a note with their own confirm, and Reject asks once more. "What needs
+you here" groups the classes by who aligns them (always yours, yours when the
+owner says so, the chief, automatic). With no items at all, one empty state
+explains the flow beside the classes.
+
 The Direction overview opens with an **Awaiting your alignment** card, and
 objectives and Now projects that are not aligned carry their badge. The Inbox
 and Home show the `alignment` card ("Align on the objective: …") with the
-brief in the reading pane.
+brief in the reading pane: what to align on first, then the class, why, the
+numbered options and the rest; "Open the brief" goes to the item on this
+page for the thread and the other decisions.
 
 ## 11. Open edges
 

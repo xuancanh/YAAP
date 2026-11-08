@@ -102,7 +102,7 @@ export function DirectionOverview({ org }: { org: OrgDetail }) {
                 <button key={a.id} className="co-row" onClick={() => open('alignment', { kind: 'alignment', id: a.id })} data-testid="align-row">
                   <span className="co-row-main">
                     <span className="co-row-title wrap">{a.title}</span>
-                    <span className="co-row-meta">{[a.label, a.brief.what].filter(Boolean).join(' · ')}</span>
+                    <span className="co-row-meta">{[a.label[0].toUpperCase() + a.label.slice(1), a.ownerAgentId ? names.get(a.ownerAgentId)?.name : null, a.state === 'in_alignment' && a.requestedAt ? `asked ${ago(a.requestedAt)}` : a.alignedAt ? `aligned ${ago(a.alignedAt)}, review it` : null, a.brief.what].filter(Boolean).join(' · ')}</span>
                   </span>
                   <span className="co-row-end"><AlignmentBadge a={a} /></span>
                 </button>

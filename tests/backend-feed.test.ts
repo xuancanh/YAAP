@@ -331,5 +331,9 @@ test('titles: signals, groups and clipping never cut a word', () => {
   assert.equal(needPresentation({ ...base, subkind: 'hire', requestedBy: 'System', facts: { title: 'Engineer' } }).title, 'Hire an Engineer');
   assert.equal(needPresentation({ ...base, kind: 'signal', subkind: 'burn_rate', requestedBy: 'Assurance', title: 'Burn rate projects $10.00 by month-end against a $5.00 envelope (200%)' }).title, 'Spending is on track to reach $10 against a $5 budget');
   assert.equal(needPresentation({ ...base, kind: 'queued_action', subkind: 'gmail_send', requestedBy: 'Writer', title: 'Needs your approval: gmail_send' }).title, 'Writer wants to run gmail_send');
+  // An improvement proposal reads as who proposes what, with the hypothesis as the body; an emergency change's review says so.
+  const imp = needPresentation({ ...base, subkind: 'improvement', requestedBy: 'Cả Mẹo', facts: { key: 'IM-7', title: 'Add a fact-check step', hypothesis: 'A check stops wrong figures. More detail follows.' } });
+  assert.deepEqual(imp, { title: 'Cả Mẹo proposes IM-7: Add a fact-check step', body: 'A check stops wrong figures.' });
+  assert.equal(needPresentation({ ...base, subkind: 'improvement', requestedBy: 'System', facts: { key: 'IM-8', title: 'Raise retries', review: true } }).title, 'Review the emergency change IM-8: Raise retries');
   assert.equal(needPresentation({ ...base, subkind: 'some_new_kind', requestedBy: 'Chief', title: 'something new' }).title, 'Something new', 'an unknown kind keeps its own title');
 });
