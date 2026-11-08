@@ -99,6 +99,9 @@ const TUNABLE_ROWS: Array<{ prefix: string; verdict: BoundaryVerdict; reason: st
   { prefix: 'alignment.', verdict: 'propose', reason: 'who aligns direction, strategy, OKRs and bets — and how much may change before it is asked again — is the CEO\'s oversight of the company\'s intent (docs/alignment.md)', delegable: false },
   { prefix: 'process.', verdict: 'propose', reason: 'how hard a standard binds and who approves changes to it are the owner\'s (docs/processes.md)', delegable: true },
   { prefix: 'service.', verdict: 'propose', reason: 'how fast a department must answer and what silence does are the owner\'s promise to the company (docs/services.md)', delegable: true },
+  { prefix: 'improve.', verdict: 'propose', reason: 'which changes are pre-authorised and how many may be open decides how fast the company rewrites its own standards (docs/improvements.md)', delegable: true },
+  { prefix: 'admission.', verdict: 'propose', reason: 'how much self-started work may enter is the owner\'s check on agents generating work about themselves (docs/improvements.md)', delegable: true },
+  { prefix: 'attention.', verdict: 'propose', reason: 'how often agents may interrupt each other is the attention budget the owner sets (docs/improvements.md)', delegable: true },
   { prefix: 'chief.proxyLevel', verdict: 'propose', reason: 'the archetype dial widens what the chief does on the CEO\'s behalf; proxy scope is earned one class at a time, never self-granted (docs/chief-of-staff.md)', delegable: false },
   { prefix: '', verdict: 'alone', reason: 'a tunable within its bound: the bound is the safety floor and lives in code', delegable: true },
 ];

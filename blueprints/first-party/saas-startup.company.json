@@ -309,7 +309,18 @@
     "service.suggestAfterRepeats": 4,
     "service.repeatWindowDays": 14,
     "service.editApproval": 0,
-    "service.metricsWindowDays": 14
+    "service.metricsWindowDays": 14,
+    "improve.maxOpenPerTarget": 2,
+    "improve.maxOpenPerUnit": 3,
+    "improve.perMeeting": 3,
+    "improve.standardScope": 2,
+    "improve.verifyDays": 7,
+    "improve.expireDays": 7,
+    "improve.autoRevert": 1,
+    "admission.selfWip": 4,
+    "admission.selfPerDay": 6,
+    "admission.overCap": 1,
+    "attention.agentWakesPerHour": 20
   },
   "playbooks": [],
   "budget": {

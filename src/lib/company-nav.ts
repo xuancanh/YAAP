@@ -26,8 +26,8 @@ export const COMPANY_SECTIONS: CompanySectionDef[] = [
     pages: [{ pane: 'vision', label: 'Vision' }, { pane: 'alignment', label: 'Alignment' }, { pane: 'goals', label: 'Goals' }, { pane: 'roadmap', label: 'Roadmap' }, { pane: 'decisions', label: 'Decisions' }],
   },
   {
-    id: 'operations', label: 'Operations', blurb: 'How the work runs day to day: the board, the pulse and the brief, the meeting rhythm, the standing processes and incidents.',
-    pages: [{ pane: 'board', label: 'Board' }, { pane: 'pulse', label: 'Pulse' }, { pane: 'brief', label: 'Brief' }, { pane: 'meetings', label: 'Meetings' }, { pane: 'processes', label: 'Processes' }, { pane: 'incidents', label: 'Incidents' }],
+    id: 'operations', label: 'Operations', blurb: 'How the work runs day to day: the board, the pulse and the brief, the meeting rhythm, the standing processes, how they improve and where work comes from, and incidents.',
+    pages: [{ pane: 'board', label: 'Board' }, { pane: 'pulse', label: 'Pulse' }, { pane: 'brief', label: 'Brief' }, { pane: 'meetings', label: 'Meetings' }, { pane: 'processes', label: 'Processes' }, { pane: 'improvements', label: 'Improvements' }, { pane: 'incidents', label: 'Incidents' }],
   },
   {
     id: 'people', label: 'People', blurb: 'Who does the work: the org chart, the teams with their channels, boards and goals, what each department offers the others, and how loaded everyone is.',
@@ -49,7 +49,7 @@ const INBOX_PANES: Partial<Record<OrgPane, InboxFilter>> = { approvals: 'approva
 export const isCompanySection = (s: string | null | undefined): s is CompanySection => (COMPANY_SECTION_IDS as string[]).includes(s ?? '');
 
 /** Every organization page id (the store re-exports it; the router reads it). */
-export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents', 'roadmap', 'teams', 'quality', 'alignment', 'processes', 'services'];
+export const ORG_PANES: OrgPane[] = ['board', 'goals', 'chart', 'approvals', 'spend', 'brief', 'audit', 'vision', 'pulse', 'meetings', 'decisions', 'plans', 'replay', 'capital', 'mytasks', 'incidents', 'roadmap', 'teams', 'quality', 'alignment', 'processes', 'services', 'improvements'];
 export const isOrgPane = (v: string | null | undefined): v is OrgPane => Boolean(v) && (ORG_PANES as string[]).includes(v as string);
 /** Panes folded into Artifacts (playbooks, experiments, evals, outcomes and
  *  metrics are mirrored as files under /org/; docs/filesystem.md): a link to

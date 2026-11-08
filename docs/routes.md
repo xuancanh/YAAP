@@ -47,6 +47,7 @@ localStorage), else the first, on Home.
 | `/:company/projects/:key` | Direction › Roadmap on the project's page |
 | `/:company/people/services` | People › Services, the service catalog and its requests (docs/services.md); `/:company/services` is a shortcut |
 | `/:company/processes/:id` | Operations › Processes on the process's page (docs/processes.md); `/:company/processes` is the list |
+| `/:company/operations/improvements` | Operations › Improvements: proposals by status and the Work sources panel (docs/improvements.md) |
 | `/:company/meetings/:id` | The full-screen meeting room, over whatever was open |
 | `/:company/artifacts[/<path…>]` | Artifacts, a file open |
 | `/:company/apps` | The apps gallery |

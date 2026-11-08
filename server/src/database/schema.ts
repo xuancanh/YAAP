@@ -3196,3 +3196,68 @@ export const orgClaims = pgTable('org_claims', {
   verifiedAt: text('verifiedAt'),
   createdAt: text('createdAt').notNull(),
 });
+/** Improvement proposals (docs/improvements.md): a capped, evidenced change
+ *  to a target — a process, a policy, a quality standard, a playbook, a
+ *  charter, a cadence or a tunable — that a retro, a postmortem, a process
+ *  review, process discovery or a member raised. The change-record pattern:
+ *  a transition table, every move in `history`, deadlines on the row (the
+ *  sweep resumes after a restart). Applied through the target's own
+ *  versioning; verified against the metric it promised after a window. */
+export const orgImprovements = pgTable('org_improvements', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  /** IM-n, unique in the org. */
+  key: text('key').notNull(),
+  unitId: text('unitId'),
+  title: text('title').notNull(),
+  /** process | policy | quality_standard | playbook | charter | cadence | tunable | '' (named on acceptance). */
+  targetKind: text('targetKind').notNull().default(''),
+  /** The target's id or key (process name, policy key, standard slug, playbook id, agent id, cadence id, tunable key). */
+  targetRef: text('targetRef').notNull().default(''),
+  targetLabel: text('targetLabel').notNull().default(''),
+  /** JSON Evidence[]: { kind, ref, summary }. */
+  evidence: text('evidence').notNull().default('[]'),
+  hypothesis: text('hypothesis').notNull().default(''),
+  /** JSON: the target-specific change ({def} | {fields} | {body} | {text, mode} | {cron} | {value}); '{}' = prose only. */
+  change: text('change').notNull().default('{}'),
+  /** JSON string[]: the human-readable diff. */
+  diff: text('diff').notNull().default('[]'),
+  /** JSON ExpectedChange | null. */
+  expected: text('expected').notNull().default('null'),
+  /** investigate | mitigate | repair | detect | prevent. */
+  category: text('category').notNull().default('investigate'),
+  /** standard | normal | emergency, and why. */
+  changeClass: text('changeClass').notNull().default('normal'),
+  classWhy: text('classWhy').notNull().default(''),
+  /** The target's owner: 'ceo' | 'agent:<id>'. */
+  owner: text('owner').notNull().default('ceo'),
+  proposedBy: text('proposedBy').notNull().default(''),
+  /** retro | postmortem | process_review | discovery | incident | verification | agent | ceo. */
+  origin: text('origin').notNull().default('agent'),
+  /** What raised it: meeting:<id>, incident:<id>, process:<id>, improvement:<id>. */
+  originRef: text('originRef').notNull().default(''),
+  incidentId: text('incidentId'),
+  /** proposed | accepted | applied | verified | reverted | rejected | expired. */
+  status: text('status').notNull().default('proposed'),
+  approvalId: text('approvalId'),
+  /** Emergency changes: 1 while the owner's after-the-fact review is open. */
+  reviewPending: integer('reviewPending').notNull().default(0),
+  /** What applying produced (a version id, a task id) and what reverting needs. */
+  appliedRef: text('appliedRef').notNull().default(''),
+  revertData: text('revertData').notNull().default('{}'),
+  baseline: real('baseline'),
+  verifyAt: text('verifyAt'),
+  /** JSON Verification | null. */
+  verification: text('verification').notNull().default('null'),
+  /** The proposal this one reverts (a failed verification's revert). */
+  revertOf: text('revertOf'),
+  lastError: text('lastError').notNull().default(''),
+  /** JSON HistoryEntry[]. */
+  history: text('history').notNull().default('[]'),
+  expiresAt: text('expiresAt'),
+  decidedBy: text('decidedBy').notNull().default(''),
+  decidedAt: text('decidedAt'),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_improvements_key').on(t.orgId, t.key)]);

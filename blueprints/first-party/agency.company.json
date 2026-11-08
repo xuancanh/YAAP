@@ -229,7 +229,9 @@
     "process.loopMaxCeiling": 3,
     "service.resolveSlaHours": 120,
     "service.suggestAfterRepeats": 2,
-    "service.metricsWindowDays": 60
+    "service.metricsWindowDays": 60,
+    "improve.standardScope": 0,
+    "improve.verifyDays": 21
   },
   "playbooks": [],
   "budget": {

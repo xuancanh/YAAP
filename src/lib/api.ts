@@ -1167,7 +1167,7 @@ export interface OrgProject {
   health?: '' | 'on_track' | 'at_risk' | 'off_track' | string; healthReason?: string; healthAsk?: string; healthAt?: string | null;
   hill?: number | null; updateCadenceDays?: number | null; breakerAt?: string | null; updatedAt?: string | null;
 }
-export type TaskSource = 'plan' | 'meeting' | 'retro' | 'incident' | 'escalation' | 'agent' | 'ceo' | 'chat' | 'process';
+export type TaskSource = 'plan' | 'meeting' | 'retro' | 'incident' | 'escalation' | 'agent' | 'ceo' | 'chat' | 'process' | 'proposal' | 'service';
 export type BlockedKind = 'task' | 'person' | 'agent' | 'manager' | 'ceo' | 'external' | 'decision';
 /** The one structured blocker (org_tasks.blockedOn, stored as JSON). */
 export interface BlockedOn { kind: BlockedKind; ref: string; reason: string; since: string; by?: string }
@@ -1332,7 +1332,7 @@ export interface OrgMessage {
 export interface OrgMentionable { kind: 'agent' | 'human'; id: string; name: string; status?: string }
 export type OrgApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review'
   | 'two_key' | 'metric_source' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict' | 'kit_change' | 'plugin_change'
-  | 'quality_change' | 'policy_exception';
+  | 'quality_change' | 'policy_exception' | 'improvement';
 export interface OrgApproval {
   id: string; orgId: string; kind: OrgApprovalKind; payload: string; requestedBy: string; recommendation: string;
   status: 'pending' | 'approved' | 'rejected' | 'revision_requested' | 'expired'; decidedAt: string | null; decidedBy?: string; decisionNote: string; expiresAt: string | null; createdAt: string;
@@ -1835,6 +1835,34 @@ export interface OrgClaim {
 export interface ClaimTally { verified: number; unverified: number; mismatch: number; fabricated: number; total: number }
 export interface ClaimsSummary { days: number; totals: ClaimTally; byAgent: Record<string, ClaimTally>; recent: OrgClaim[] }
 
+// ---- improvements (docs/improvements.md) ----
+export type ImprovementStatus = 'proposed' | 'accepted' | 'applied' | 'verified' | 'reverted' | 'rejected' | 'expired';
+export type ImprovementCategory = 'investigate' | 'mitigate' | 'repair' | 'detect' | 'prevent';
+export type ChangeClass = 'standard' | 'normal' | 'emergency';
+export interface OrgImprovement {
+  id: string; orgId: string; key: string; unitId: string | null; title: string;
+  targetKind: string; targetRef: string; targetLabel: string;
+  evidence: Array<{ kind: string; ref: string; summary: string }>; hypothesis: string;
+  change: Record<string, unknown>; diff: string[];
+  expected: { metric: string; direction: 'up' | 'down'; by: number } | null; expectedText: string;
+  category: ImprovementCategory; changeClass: ChangeClass; classWhy: string;
+  owner: string; proposedBy: string; origin: string; originRef: string; incidentId: string | null;
+  status: ImprovementStatus; approvalId: string | null; reviewPending: number; appliedRef: string;
+  baseline: number | null; verifyAt: string | null;
+  verification: { outcome: 'pass' | 'fail' | 'unverifiable'; baseline: number | null; value: number | null; detail: string; at: string } | null;
+  revertOf: string | null; lastError: string;
+  history: Array<{ from: string; to: string; by: string; why: string; at: string }>;
+  expiresAt: string | null; decidedBy: string; decidedAt: string | null; createdAt: string; updatedAt: string;
+}
+/** Where a company's work comes from (docs/improvements.md "Measure"). */
+export interface WorkSources {
+  days: number; total: number; byOrigin: Record<string, number>; origins: string[]; selfOrigins: string[];
+  selfShare: number | null; systemShare: number | null; retroShare: number | null;
+  perUnit: Array<{ unitId: string; name: string; selfOpen: number; cap: number }>;
+  caps: { selfWip: number; selfPerDay: number; overCap: 'park' | 'refuse'; agentWakesPerHour: number; maxOpenPerTarget: number; maxOpenPerUnit: number; perMeeting: number };
+  admission: { refused: number; parked: number; deferredWakes: number };
+  proposals: { opened: number; accepted: number; applied: number; verified: number; reverted: number; rejected: number; expired: number; open: number; waiting: number; verifying: number };
+}
 // ---- processes (docs/processes.md) ----
 
 export type ProcessMode = 'strict' | 'dynamic';
@@ -2758,6 +2786,12 @@ export const api = {
   containOrgIncident: (wsId: string, incidentId: string, body: { action: ManualContainment; agentId?: string; actionClass?: string }) => send<OrgIncident>(`/api/workspaces/${wsId}/org/incidents/${enc(incidentId)}/contain`, 'POST', body),
   resolveOrgIncident: (wsId: string, incidentId: string, body: { resolution: string; undo?: boolean }) => send<OrgIncident>(`/api/workspaces/${wsId}/org/incidents/${enc(incidentId)}/resolve`, 'POST', body),
   orgHealth: (wsId: string) => get<OrgHealth>(`/api/workspaces/${wsId}/org/health`),
+  // improvements and work sources (docs/improvements.md)
+  orgImprovements: (wsId: string) => get<{ improvements: OrgImprovement[]; sources: WorkSources }>(`/api/workspaces/${wsId}/org/improvements`),
+  orgWorkSources: (wsId: string, days = 14) => get<WorkSources>(`/api/workspaces/${wsId}/org/improvements/sources?days=${days}`),
+  acceptOrgImprovement: (wsId: string, ref: string, note?: string) => send<OrgImprovement>(`/api/workspaces/${wsId}/org/improvements/${enc(ref)}/accept`, 'POST', { note }),
+  rejectOrgImprovement: (wsId: string, ref: string, note?: string) => send<OrgImprovement>(`/api/workspaces/${wsId}/org/improvements/${enc(ref)}/reject`, 'POST', { note }),
+  verifyOrgImprovement: (wsId: string, ref: string) => send<OrgImprovement>(`/api/workspaces/${wsId}/org/improvements/${enc(ref)}/verify`, 'POST'),
   // processes (docs/processes.md)
   orgProcesses: (wsId: string) => get<{ processes: OrgProcess[]; runs: OrgProcessRunRow[] }>(`/api/workspaces/${wsId}/org/processes`),
   orgProcessTemplates: (wsId: string) => get<ProcessTemplate[]>(`/api/workspaces/${wsId}/org/processes/templates`),

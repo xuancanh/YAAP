@@ -133,6 +133,14 @@ Settings › Company.
   gate the review, deviations are logged or waived. The chief and the heads
   change them from what the runs show, every edit a new version you can roll
   back.
+- **Improvements** ([docs/improvements.md](docs/improvements.md)): retros,
+  postmortems and process reviews raise capped, evidenced proposals on a
+  process, policy, standard, playbook, cadence, charter or tunable instead
+  of tasks; standard changes apply at once, normal ones go to the owner,
+  emergency ones are reviewed after; every change is verified against its
+  metric and reverted when it misses. Admission control caps self-started
+  work and agent-to-agent wakes, and Work sources shows where work comes
+  from.
 - **Goals and OKRs**: vision → objectives → key results with metric, target,
   owner and due date. A model-free sweep flags key results at risk, and any
   task can show its *why* chain. Key results can be **measured** from metric

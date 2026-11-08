@@ -77,11 +77,13 @@ the migration):
 
 - **Unsorted** — where a task without a project lands. Its unit head (then
   the chief) is asked to place it after `work.orphanGraceHours`.
-- **Operating improvements** — where retro and postmortem actions land
-  (`source = retro`). Its open tasks are capped by `work.operatingWipCap`:
-  over the cap a new retro action is created unassigned in the backlog — a
-  proposal, not a task anybody works. A seventeen-action retro becomes a
-  short list of proposals with the top few in work.
+- **Operating improvements** — where the retro and postmortem tasks that
+  remain land (`source = retro`): since improvement proposals
+  (docs/improvements.md) a retro raises its top few changes as proposals and
+  only a concrete repair is a task. Its open tasks are capped by
+  `work.operatingWipCap`: over the cap a new one is created unassigned in the
+  backlog. Self-started work is also capped per unit and per member by
+  admission control (`admission.*`, docs/improvements.md §5).
 
 System projects are always Now, owe no health updates and do not appear on
 the roadmap's project rows (the roadmap lists them separately).
@@ -93,7 +95,7 @@ the roadmap's project rows (the roadmap lists them separately).
 | Field | Meaning |
 |---|---|
 | `projectId` | Required in practice: the placement rule (`OrgProjectsService.place`, bound into `OrgTasksService.create`) gives every task one — the one named, else its parent's, else its unit's Unsorted (retro work: Operating improvements). |
-| `source` | `plan` · `meeting` · `retro` · `incident` · `escalation` · `agent` · `ceo` · `chat` · `process` (a step of a process run, with `processRunId` / `processNodeId`; docs/processes.md), shown as a badge. Callers name it (meetings: `retro` for a retro, else `meeting`; the strategy card: `plan`); otherwise it is derived from `createdBy` (`deriveSource`, `work-model.ts`): a person → `ceo` (or `chat` from a channel message), the chief → `plan`, an `Escalation:` child → `escalation`, anything else an agent noticed → `agent`. |
+| `source` | `plan` · `meeting` · `retro` · `incident` · `escalation` · `agent` · `ceo` · `chat` · `process` (a step of a process run, with `processRunId` / `processNodeId`; docs/processes.md) · `proposal` (an accepted improvement carried out) · `service` (a service request; docs/improvements.md), shown as a badge. Admission control reads it as the task's origin (`originOf`). Callers name it (meetings: `retro` for a retro, else `meeting`; the strategy card: `plan`); otherwise it is derived from `createdBy` (`deriveSource`, `work-model.ts`): a person → `ceo` (or `chat` from a channel message), the chief → `plan`, an `Escalation:` child → `escalation`, anything else an agent noticed → `agent`. |
 | `blockedOn` | The one structured blocker (§3). |
 | `steps` | The checklist: `[{ id, text, done, doneAt, dropped?, from? }]`. Steps have no status of their own, no key and no heartbeat. |
 | `startedAt`, `doneAt`, `blockedSeconds` | The clocks (§2). |

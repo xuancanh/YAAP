@@ -9,8 +9,10 @@
 // ---- task source ----
 
 /** Where a task came from; the board shows it as a badge. `process`: a step
- *  of a process run materialised it (docs/processes.md). */
-export const TASK_SOURCES = ['plan', 'meeting', 'retro', 'incident', 'escalation', 'agent', 'ceo', 'chat', 'process'] as const;
+ *  of a process run materialised it (docs/processes.md). `proposal`: an
+ *  accepted improvement proposal carried out (docs/improvements.md);
+ *  `service`: a request to another function's service. */
+export const TASK_SOURCES = ['plan', 'meeting', 'retro', 'incident', 'escalation', 'agent', 'ceo', 'chat', 'process', 'proposal', 'service'] as const;
 export type TaskSource = typeof TASK_SOURCES[number];
 
 export function isTaskSource(v: unknown): v is TaskSource {

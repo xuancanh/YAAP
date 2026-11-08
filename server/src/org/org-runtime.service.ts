@@ -910,11 +910,21 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     return [...this.rewakes.entries()].map(([taskId, r]) => ({ taskId, agentId: r.agentId, dueAt: r.dueAt }));
   }
 
+  /** The attention budget (docs/improvements.md, OrgImprovementsService):
+   *  how long a wake caused by another agent must wait (0 = run now). A
+   *  deferred wake is queued again after the wait — never dropped. */
+  private attentionGate?: (ev: OrgWakeEvent) => Promise<number>;
+  setAttentionGate(fn: ((ev: OrgWakeEvent) => Promise<number>) | undefined): void { this.attentionGate = fn; }
+
   async flushWake(key: string): Promise<RunResult | undefined> {
     const p = this.pendingWakes.get(key);
     if (!p) return undefined;
     this.pendingWakes.delete(key);
     clearTimeout(p.timer);
+    if (this.attentionGate) {
+      const waitMs = await this.attentionGate(p.ev).catch(() => 0);
+      if (waitMs > 0) { const t = setTimeout(() => this.wake(p.ev), waitMs); t.unref?.(); return 'skipped:attention'; }
+    }
     return this.runTask(p.ev.orgId, p.ev.taskId, p.ev.agentId, p.ev.reason).catch((err) => {
       this.logger.warn(`org run for task ${p.ev.taskId} failed: ${err instanceof Error ? err.message : err}`);
       return 'refused' as RunResult;

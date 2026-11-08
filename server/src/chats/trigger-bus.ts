@@ -27,6 +27,9 @@ export interface OrgWakeEvent {
   /** The one member this wake is for. A channel mention never produces one; a task mention does (reason `mention`). */
   agentId: string;
   reason: OrgWakeReason;
+  /** Who caused it ('agent:<id>', 'user', …) when known: the attention
+   *  budget counts wakes from other agents (docs/improvements.md). */
+  by?: string;
 }
 
 /** A board-level event the autonomous chief of staff reviews

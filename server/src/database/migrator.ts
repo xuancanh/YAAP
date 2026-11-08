@@ -2858,6 +2858,56 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_claims_agent ON org_claims ("orgId", "agentId", "createdAt")`);
     },
   },
+  {
+    id: '0100-improvements',
+    up: async (db) => {
+      // Improvement proposals (docs/improvements.md): capped, evidenced
+      // changes to a process, policy, standard, playbook, charter, cadence
+      // or tunable, with the change-record lifecycle on the row. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_improvements (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "key" TEXT NOT NULL,
+        "unitId" TEXT,
+        "title" TEXT NOT NULL,
+        "targetKind" TEXT NOT NULL DEFAULT '',
+        "targetRef" TEXT NOT NULL DEFAULT '',
+        "targetLabel" TEXT NOT NULL DEFAULT '',
+        "evidence" TEXT NOT NULL DEFAULT '[]',
+        "hypothesis" TEXT NOT NULL DEFAULT '',
+        "change" TEXT NOT NULL DEFAULT '{}',
+        "diff" TEXT NOT NULL DEFAULT '[]',
+        "expected" TEXT NOT NULL DEFAULT 'null',
+        "category" TEXT NOT NULL DEFAULT 'investigate',
+        "changeClass" TEXT NOT NULL DEFAULT 'normal',
+        "classWhy" TEXT NOT NULL DEFAULT '',
+        "owner" TEXT NOT NULL DEFAULT 'ceo',
+        "proposedBy" TEXT NOT NULL DEFAULT '',
+        "origin" TEXT NOT NULL DEFAULT 'agent',
+        "originRef" TEXT NOT NULL DEFAULT '',
+        "incidentId" TEXT,
+        "status" TEXT NOT NULL DEFAULT 'proposed',
+        "approvalId" TEXT,
+        "reviewPending" INTEGER NOT NULL DEFAULT 0,
+        "appliedRef" TEXT NOT NULL DEFAULT '',
+        "revertData" TEXT NOT NULL DEFAULT '{}',
+        "baseline" REAL,
+        "verifyAt" TEXT,
+        "verification" TEXT NOT NULL DEFAULT 'null',
+        "revertOf" TEXT,
+        "lastError" TEXT NOT NULL DEFAULT '',
+        "history" TEXT NOT NULL DEFAULT '[]',
+        "expiresAt" TEXT,
+        "decidedBy" TEXT NOT NULL DEFAULT '',
+        "decidedAt" TEXT,
+        "createdAt" TEXT NOT NULL,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_improvements_key ON org_improvements ("orgId", "key")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_improvements_status ON org_improvements ("orgId", "status")`);
+    },
+  },
 ];
 
 /**

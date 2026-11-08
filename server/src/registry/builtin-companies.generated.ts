@@ -318,7 +318,18 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "service.suggestAfterRepeats": 4,
     "service.repeatWindowDays": 14,
     "service.editApproval": 0,
-    "service.metricsWindowDays": 14
+    "service.metricsWindowDays": 14,
+    "improve.maxOpenPerTarget": 2,
+    "improve.maxOpenPerUnit": 3,
+    "improve.perMeeting": 3,
+    "improve.standardScope": 2,
+    "improve.verifyDays": 7,
+    "improve.expireDays": 7,
+    "improve.autoRevert": 1,
+    "admission.selfWip": 4,
+    "admission.selfPerDay": 6,
+    "admission.overCap": 1,
+    "attention.agentWakesPerHour": 20
    },
    "playbooks": [],
    "budget": {
@@ -623,7 +634,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "process.loopMaxCeiling": 3,
     "service.resolveSlaHours": 120,
     "service.suggestAfterRepeats": 2,
-    "service.metricsWindowDays": 60
+    "service.metricsWindowDays": 60,
+    "improve.standardScope": 0,
+    "improve.verifyDays": 21
    },
    "playbooks": [],
    "budget": {
@@ -968,7 +981,16 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "service.resolveSlaHours": 48,
     "service.repeatWindowDays": 14,
     "service.editApproval": 0,
-    "service.metricsWindowDays": 14
+    "service.metricsWindowDays": 14,
+    "improve.maxOpenPerUnit": 3,
+    "improve.standardScope": 2,
+    "improve.verifyDays": 7,
+    "improve.expireDays": 7,
+    "improve.autoRevert": 1,
+    "admission.selfWip": 4,
+    "admission.selfPerDay": 6,
+    "admission.overCap": 1,
+    "attention.agentWakesPerHour": 20
    },
    "playbooks": [],
    "budget": {
@@ -1275,7 +1297,16 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "service.suggestAfterRepeats": 2,
     "service.repeatWindowDays": 14,
     "service.editApproval": 0,
-    "service.metricsWindowDays": 60
+    "service.metricsWindowDays": 60,
+    "improve.maxOpenPerUnit": 3,
+    "improve.perMeeting": 3,
+    "improve.standardScope": 0,
+    "improve.verifyDays": 7,
+    "improve.expireDays": 7,
+    "admission.selfWip": 4,
+    "admission.selfPerDay": 6,
+    "admission.overCap": 1,
+    "attention.agentWakesPerHour": 20
    },
    "playbooks": [],
    "budget": {
@@ -1515,7 +1546,15 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "service.suggestAfterRepeats": 2,
     "service.repeatWindowDays": 14,
     "service.editApproval": 0,
-    "service.metricsWindowDays": 60
+    "service.metricsWindowDays": 60,
+    "improve.maxOpenPerTarget": 2,
+    "improve.maxOpenPerUnit": 3,
+    "improve.perMeeting": 3,
+    "improve.standardScope": 0,
+    "improve.verifyDays": 21,
+    "admission.selfWip": 4,
+    "admission.selfPerDay": 6,
+    "admission.overCap": 1
    },
    "playbooks": [],
    "budget": {
@@ -1694,7 +1733,11 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "service.acceptSlaHours": 4,
     "service.breachAction": 0,
     "service.repeatWindowDays": 14,
-    "service.metricsWindowDays": 14
+    "service.metricsWindowDays": 14,
+    "improve.maxOpenPerUnit": 3,
+    "improve.perMeeting": 3,
+    "admission.selfWip": 4,
+    "admission.overCap": 1
    },
    "playbooks": [],
    "budget": {
@@ -2027,7 +2070,16 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "service.resolveSlaHours": 120,
     "service.suggestAfterRepeats": 2,
     "service.editApproval": 2,
-    "service.metricsWindowDays": 60
+    "service.metricsWindowDays": 60,
+    "improve.maxOpenPerUnit": 3,
+    "improve.standardScope": 0,
+    "improve.emergency": 0,
+    "improve.verifyDays": 21,
+    "improve.expireDays": 21,
+    "improve.repairTasks": 0,
+    "admission.selfWip": 3,
+    "admission.selfPerDay": 2,
+    "attention.agentWakesPerHour": 6
    },
    "playbooks": [],
    "budget": {

@@ -35,6 +35,7 @@ import { deriveQualityTunables } from './quality-tunables';
 import { deriveClaimTunables } from './claims-tunables';
 import { deriveProcessTunables } from './process-tunables';
 import { deriveServiceTunables } from './service-tunables';
+import { deriveImprovementTunables } from './improvement-tunables';
 import { deriveDiscussionTunables } from '../groupchat/discussion-tunables';
 import { deriveAlignmentTunables } from './alignment';
 // The assurance keys (audit.assuranceDebounceHours) join the registry at import.
@@ -174,6 +175,8 @@ export function deriveOperatingSystem(p: ProfileInput): OperatingSystemPlan {
   for (const t of deriveProcessTunables(d)) set(t.key, t.value, t.why);
   // Services (docs/services.md): accept and resolve SLAs, breach action, repeat threshold, edit approval.
   for (const t of deriveServiceTunables(d)) set(t.key, t.value, t.why);
+  // Improvements and admission (docs/improvements.md): proposal caps, standard-change scope, verification, self-started work caps, the attention budget.
+  for (const t of deriveImprovementTunables(d)) set(t.key, t.value, t.why);
 
   const decisionProtocol = {
     clan: 'Consensus-seeking with one named final decider; dissent is recorded, then the decider decides.',

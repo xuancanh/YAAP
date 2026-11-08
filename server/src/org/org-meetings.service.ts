@@ -67,7 +67,25 @@ export interface Attendee { kind: 'agent' | 'human'; id: string }
  *  a rejected proposal is kept in the minutes but not executed. */
 export interface ProposalVerdict { verdict?: 'approved' | 'rejected'; verdictBy?: string; verdictName?: string }
 /** `due`: an ISO deadline when the proposer gave one; set on the board task. */
-export interface MinutesAction extends ProposalVerdict { title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string; /** The task's key (docs/tasks-keys.md). */ taskKey?: string | null; messageId?: string; due?: string | null }
+export interface MinutesAction extends ProposalVerdict {
+  title: string; owner: string; done_when: string; outcome: string; by: string; taskId?: string; /** The task's key (docs/tasks-keys.md). */ taskKey?: string | null; messageId?: string; due?: string | null;
+  /** Improvement proposals (docs/improvements.md): what a retro's action proposes — its action class, target, hypothesis, evidence and expected metric. */
+  category?: string; target?: string; hypothesis?: string; evidence?: string; expected?: string;
+  /** What the minutes executor made of it: the proposal it became, or why it is neither a task nor a proposal. */
+  proposalId?: string; proposalKey?: string; disposition?: 'task' | 'proposal' | 'over_cap' | 'refused'; note?: string;
+}
+
+/** Where a retro's actions go (docs/improvements.md): OrgImprovementsService
+ *  binds it. `route` marks each action a task (a concrete repair) or makes
+ *  it a capped proposal (setting proposalId / disposition / note); `park`
+ *  turns a task the admission gate refused into a proposal (or notes why
+ *  not); `playbookChange` makes a lesson's playbook change a proposal
+ *  (null: fall back to the revise task). */
+export interface ImprovementSink {
+  route(orgId: string, meeting: OrgMeeting, actions: MinutesAction[], context: string): Promise<void>;
+  park(orgId: string, meeting: OrgMeeting, action: MinutesAction, reason: string, context: string): Promise<void>;
+  playbookChange?(orgId: string, meeting: OrgMeeting, input: { playbookId: string; note: string; lesson: string; by: string }): Promise<string | null>;
+}
 export interface MinutesDecision extends ProposalVerdict { title: string; decision: string; alternatives: string; rationale: string; by: string; decisionId?: string; messageId?: string }
 export interface MinutesRisk { text: string; by: string }
 export interface MinutesQuestion { question: string; by: string; messageId?: string; answer?: string; answeredBy?: string }
@@ -82,7 +100,7 @@ export interface MinutesLesson {
   audience: 'member' | 'unit' | 'company';
   by: string;
   proposedCharterChange?: { agent: string; text: string; mode?: 'append' | 'replace'; approvalId?: string };
-  proposedPlaybookChange?: { playbookId: string; note: string; taskId?: string };
+  proposedPlaybookChange?: { playbookId: string; note: string; taskId?: string; /** The improvement proposal it became (docs/improvements.md). */ proposalId?: string };
   lessonIds?: string[];
 }
 export interface Minutes {
@@ -176,6 +194,10 @@ export class OrgMeetingsService {
     this.org.onStructureChange((orgId) => this.ensureCadenceDefaults(orgId).then(() => undefined));
     this.approvals?.onApply('cadence', (orgId, payload, approval) => this.applyCadenceApproval(orgId, payload, approval.id));
   }
+
+  /** Retro actions → improvement proposals (docs/improvements.md). */
+  improvementSink?: ImprovementSink;
+  setImprovementSink(sink: ImprovementSink | undefined): void { this.improvementSink = sink; }
 
   /** Another module's step in `materialise` (lessons → the lessons store,
    *  charter cards, playbook revisions: OrgMemoryService, item 22). Runs
@@ -460,8 +482,12 @@ export class OrgMeetingsService {
     };
     const unitName = meeting.unitId ? (await this.units.get(orgId, meeting.unitId).catch(() => null))?.name : null;
     const context = `From the ${KIND_TITLES[meeting.kind as MeetingKind] ?? 'meeting'} "${meeting.title}"${unitName ? ` of ${unitName}` : ''} on ${(meeting.startedAt ?? meeting.createdAt).slice(0, 10)}${meeting.agenda ? `. Agenda: ${meeting.agenda.slice(0, 600)}` : ''}`;
+    // A retro's (and a postmortem's) actions become capped improvement
+    // proposals; only a concrete repair stays a task (docs/improvements.md).
+    const improving = meeting.kind === 'retro' && this.improvementSink;
+    if (improving) await this.improvementSink!.route(orgId, meeting, minutes.actions.filter((a) => !a.taskId && !a.proposalId && !a.disposition && a.verdict !== 'rejected'), context).catch(() => undefined);
     for (const a of minutes.actions) {
-      if (a.taskId || a.verdict === 'rejected') continue;
+      if (a.taskId || a.verdict === 'rejected' || a.proposalId || (a.disposition && a.disposition !== 'task')) continue;
       const owner = resolve(a.owner);
       const assignee = owner && mayAssign(owner) ? owner.agentId : null;
       const t = await this.tasks.create(orgId, {
@@ -470,8 +496,16 @@ export class OrgMeetingsService {
         unitId: meeting.unitId ?? undefined, channelId: meeting.channelId, messageId: opts.threadRootId ?? meeting.threadRootId,
         // Work tracking (docs/work-tracking.md): a retro's actions go to the unit's capped Operating improvements project.
         source: meeting.kind === 'retro' ? 'retro' : 'meeting',
-      }).catch(() => null);
-      if (t) { a.taskId = t.id; a.taskKey = t.key; if (!assignee && a.owner) a.owner = `${a.owner} (backlog for the chief)`; }
+      }).catch((err: unknown) => { a.note = (err instanceof Error ? err.message : String(err)).slice(0, 400); return null; });
+      if (t) { a.taskId = t.id; a.taskKey = t.key; a.note = undefined; if (!assignee && a.owner) a.owner = `${a.owner} (backlog for the chief)`; }
+      else if (a.note) {
+        // Refused (admission control, alignment): a retro parks it as a proposal; elsewhere the minutes say why.
+        const reason = a.note;
+        a.disposition = 'refused';
+        if (improving) await this.improvementSink!.park(orgId, meeting, a, reason, context).catch(() => undefined);
+        if (!a.proposalId && !a.note) a.note = reason;
+        await this.audit.append(orgId, { actor: 'system', action: 'meeting_action_refused', refType: 'meeting', refId: meeting.id, payload: { title: a.title.slice(0, 200), reason: reason.slice(0, 300), proposalId: a.proposalId ?? null } });
+      }
     }
     for (const d of minutes.decisions) {
       if (d.decisionId || d.verdict === 'rejected') continue;
@@ -508,7 +542,7 @@ export class OrgMeetingsService {
     const lines = [`**Minutes — ${meeting.title}** (${minutes.endedBy === 'stopped' ? 'ended early' : `${meeting.rounds} round${meeting.rounds === 1 ? '' : 's'}`}, $${meeting.usd.toFixed(2)}${tokens ? `, ${tokens.toLocaleString('en-US')} tokens` : ''})`];
     if (minutes.summary) lines.push('', minutes.summary.slice(0, 2_000));
     lines.push('', `Decisions (${minutes.decisions.length})`, ...(minutes.decisions.length ? minutes.decisions.map((d) => `- ${d.title}: ${d.decision}${d.decisionId ? ` · #decision:${d.decisionId.slice(0, 8)}` : ''}${verdict(d)}`) : ['- none']));
-    lines.push('', `Actions (${minutes.actions.length})`, ...(minutes.actions.length ? minutes.actions.map((a) => `- ${a.title} — ${a.owner || 'unowned'}${a.taskId ? ` · task ${a.taskKey || `[${a.taskId.slice(0, 8)}]`}` : ''}${verdict(a)}`) : ['- none']));
+    lines.push('', `Actions (${minutes.actions.length})`, ...(minutes.actions.length ? minutes.actions.map((a) => `- ${a.title} — ${a.owner || 'unowned'}${a.taskId ? ` · task ${a.taskKey || `[${a.taskId.slice(0, 8)}]`}` : ''}${a.proposalId ? ` · proposal ${a.proposalKey || `[${a.proposalId.slice(0, 8)}]`}` : ''}${!a.taskId && !a.proposalId && a.note ? ` · not raised: ${a.note}` : ''}${verdict(a)}`) : ['- none']));
     lines.push('', `Risks (${minutes.risks.length})`, ...(minutes.risks.length ? minutes.risks.map((r) => `- ${r.text} (${nm(r.by)})`) : ['- none']));
     lines.push('', `Questions for the CEO (${minutes.questions.length})`, ...(minutes.questions.length ? minutes.questions.map((q) => `- ${q.question} (${nm(q.by)})${q.answer ? ` — answered: ${q.answer}` : ''}`) : ['- none']));
     const parked = minutes.parked ?? [];

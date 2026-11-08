@@ -36,8 +36,8 @@ import { govTunable } from './governance-tunables';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict' | 'kit_change' | 'plugin_change' | 'quality_change' | 'policy_exception' | 'alignment' | 'process_gate' | 'process_deviation' | 'process_change' | 'service_breach' | 'service_change';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill', 'project_allocation', 'resource_conflict', 'kit_change', 'plugin_change', 'quality_change', 'policy_exception', 'alignment', 'process_gate', 'process_deviation', 'process_change', 'service_breach', 'service_change'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict' | 'kit_change' | 'plugin_change' | 'quality_change' | 'policy_exception' | 'alignment' | 'process_gate' | 'process_deviation' | 'process_change' | 'service_breach' | 'service_change' | 'improvement';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill', 'project_allocation', 'resource_conflict', 'kit_change', 'plugin_change', 'quality_change', 'policy_exception', 'alignment', 'process_gate', 'process_deviation', 'process_change', 'service_breach', 'service_change', 'improvement'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19; `blueprint` is OrgBlueprintsService's,
@@ -425,7 +425,8 @@ export class OrgApprovalsService {
       // the program matrix's escalated resource request (docs/work-tracking.md);
       // a policy or standard change and a one-time policy exception (OrgQualityService, docs/quality.md);
       // a process's approval step, MUST waiver or edit (OrgProcessesService, docs/processes.md);
-      // a breached service request or a service change (OrgServicesService, docs/services.md).
+      // a breached service request or a service change (OrgServicesService, docs/services.md);
+      // an improvement proposal's normal change or an emergency change's review (OrgImprovementsService, docs/improvements.md).
       case 'cadence':
       case 'charter_change':
       case 'metric_source':
@@ -445,6 +446,7 @@ export class OrgApprovalsService {
       case 'process_change':
       case 'service_breach':
       case 'service_change':
+      case 'improvement':
       case 'experiment': {
         // Kinds another module owns (the meetings module's cadence, the memory module's charter change).
         const fn = this.appliers.get(kind);
@@ -650,6 +652,7 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'process_change': return `${String(payload.action ?? 'edit')} process "${String(payload.processTitle ?? payload.name ?? '')}"${payload.version ? ` → v${String(payload.version)}` : ''}: ${String(payload.reason ?? '')}`.slice(0, 200);
     case 'service_breach': return `${String(payload.serviceTitle ?? 'request')} ${String(payload.key ?? '')}: no answer to "${String(payload.title ?? '')}" from ${String(payload.providerName ?? 'the provider')}, ${String(payload.hoursLate ?? '?')}h past the accept SLA`.slice(0, 200);
     case 'service_change': return `${String(payload.action ?? 'edit')} service "${String(payload.serviceTitle ?? payload.name ?? '')}"${payload.version ? ` → v${String(payload.version)}` : ''}: ${String(payload.reason ?? '')}`.slice(0, 200);
+    case 'improvement': return `${payload.review ? 'review emergency change' : 'improvement'} ${String(payload.key ?? '')} on ${String(payload.targetLabel || 'the company')}: ${String(payload.title ?? '')}${payload.expected ? ` — expects ${String(payload.expected)}` : ''}`.slice(0, 200);
     case 'two_key': return `${payload.staged ? 'send staged' : 'run held'} ${String(payload.tool ?? 'action')} (${String(payload.class ?? '').replace(/_/g, ' ')}): ${String(payload.summary ?? '')}`.slice(0, 160);
     default: return kind;
   }

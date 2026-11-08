@@ -285,7 +285,14 @@ while running — `OrgMeetingRuntime` hands the record to
 3. **Execution** (no model): actions become briefed tasks on the unit board
    (with their due date), decisions decision-log rows, parked points backlog
    tasks, risks audit rows, unanswered questions go to the CEO's brief;
-   rejected proposals are skipped. A cancelled meeting executes nothing.
+   rejected proposals are skipped. A cancelled meeting executes nothing. A
+   **retro's** (and a postmortem's) actions are different: they become capped
+   improvement proposals — the top `improve.perMeeting`, each with its
+   category, target, evidence and expected metric — and only a concrete
+   repair of one defect stays a task, inside the admission caps; the rest
+   stay in the minutes as *not raised* with the reason (docs/improvements.md
+   §3). An action task the admission gate refuses is noted on the minutes
+   (and, in a retro, parked as a proposal).
 4. **Document.** Markdown written through `WorkspaceFs`, authored by the
    facilitator agent (`system` when there is none):
    - a unit's meeting → `/org/meetings/<unit-slug>/<yyyy>/<yyyy-mm-dd>-<kind>.md`
@@ -323,7 +330,7 @@ while running — `OrgMeetingRuntime` hands the record to
 ## Summary
 ## Discussion            (key points, one line each)
 ## Decisions             (title — decision; decided by; `#decision:<id8>`; why; alternatives)
-## Action items          (| Action | Owner | Due | Done when | Task |, the task linked to the board; approved / rejected noted)
+## Action items          (| Action | Owner | Due | Done when | Task |, the task linked to the board — or the proposal it became, or why it was not raised; approved / rejected noted)
 ## Open questions and risks  (answers given in the room included)
 ## Parking lot           (when something was parked; each with its backlog task)
 ## Lessons               (retros only)

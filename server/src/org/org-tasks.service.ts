@@ -204,6 +204,9 @@ export class OrgTasksService {
 
   /** OrgAlignmentService binds the alignment gate on task creation (docs/alignment.md). */
   setCreateGate(fn: CreateGate | undefined): void { this.createGate = fn; }
+  private admissionGate?: CreateGate;
+  /** OrgImprovementsService binds admission control on self-started work (docs/improvements.md). */
+  setAdmissionGate(fn: CreateGate | undefined): void { this.admissionGate = fn; }
 
   /** OrgProjectsService binds the placement rule (every task has a project). */
   setPlacer(fn: TaskPlacer | undefined): void { this.placer = fn; }
@@ -525,6 +528,11 @@ export class OrgTasksService {
       const g = await this.createGate(orgId, { ...(input as Record<string, unknown>), title, brief, createdBy: input.createdBy ?? 'user', source, class: taskClass, projectId });
       if (g && g.demote) { assigneeAgentId = null; status = 'backlog'; }
     }
+    // Admission control (docs/improvements.md): self-started work enters through a trigger, a service, an accepted proposal or a small cap.
+    if (this.admissionGate) {
+      const g = await this.admissionGate(orgId, { ...(input as Record<string, unknown>), title, brief, createdBy: input.createdBy ?? 'user', source, class: taskClass, projectId, unitId });
+      if (g && g.demote) { assigneeAgentId = null; status = 'backlog'; }
+    }
     const steps: TaskStep[] = [];
     for (const line of (input.steps ?? []).map(String).map((x) => x.trim()).filter(Boolean).slice(0, STEPS_CAP)) steps.push({ id: nextStepId(steps), text: line.slice(0, 300), done: false });
     // The key (docs/tasks-keys.md): the next number of the board's prefix.
@@ -550,7 +558,7 @@ export class OrgTasksService {
     await this.db.insert(orgTasks).values(row);
     await this.db.insert(taskTransitions).values({ id: newId(), accountId: currentAccountId(), orgId, taskId: row.id, fromStatus: '', toStatus: status, actor: row.createdBy.slice(0, 80), reason: 'created', backfilled: 0, at: now }).catch(() => undefined);
     await this.audit.append(orgId, { actor: row.createdBy, action: 'task_create', refType: 'task', refId: row.id, payload: { key, title, status, source, assigneeAgentId: row.assigneeAgentId, projectId: row.projectId, parentTaskId: row.parentTaskId, unitId, class: row.class, ...(checks.length ? { checks: checks.length } : {}), ...(dependsOn.length ? { dependsOn } : {}), ...(dueAt ? { dueAt } : {}) } });
-    if (row.assigneeAgentId && status === 'todo' && org.status === 'active') this.emitWake(orgId, row.id, row.assigneeAgentId, 'assignment');
+    if (row.assigneeAgentId && status === 'todo' && org.status === 'active') this.emitWake(orgId, row.id, row.assigneeAgentId, 'assignment', row.createdBy);
     await this.autoFollow(orgId, row, followerFromActor(row.createdBy, actorId()), 'started');
     if (row.assigneeAgentId) await this.autoFollow(orgId, row, { kind: 'agent', id: row.assigneeAgentId }, 'assignee');
     if (row.reviewerAgentId) await this.autoFollow(orgId, row, { kind: 'agent', id: row.reviewerAgentId }, 'reviewer');
@@ -834,7 +842,7 @@ export class OrgTasksService {
     await this.db.update(orgTasks).set({ assigneeAgentId: agentId, assigneeHumanId: null, status: waiting ? 'waiting' : 'todo', claimedBy: null, claimedAt: null, noProgressCount: 0, unitId, wakesPausedAt: null, failSig: '', failRepeats: 0, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
     await this.recordTransition(orgId, t, waiting ? 'waiting' : 'todo', actor, 'assigned');
     await this.audit.append(orgId, { actor, action: 'task_assign', refType: 'task', refId: taskId, payload: { agentId, previous: t.assigneeAgentId ?? t.assigneeHumanId, unitId, ...(waiting ? { waiting: true } : {}) } });
-    if (!waiting && await this.org.isActive(orgId)) this.emitWake(orgId, taskId, agentId, 'assignment');
+    if (!waiting && await this.org.isActive(orgId)) this.emitWake(orgId, taskId, agentId, 'assignment', actor);
     await this.autoFollow(orgId, t, { kind: 'agent', id: agentId }, 'assignee');
     if (agentId !== t.assigneeAgentId) await this.track(orgId, t, { actor: followerFromActor(actor, actorId()), summary: `assigned to ${(await this.agents?.get(agentId).catch(() => null))?.name ?? 'an agent'}`, alreadyWoken: [agentId] });
     return this.get(orgId, taskId);
@@ -940,7 +948,7 @@ export class OrgTasksService {
     // circular-behaviour pause lifts (docs/work-tracking.md).
     if (t.wakesPausedAt && !input.system && (input.fromAgentId ?? null) !== owner) await this.db.update(orgTasks).set({ wakesPausedAt: null, failSig: '', failRepeats: 0 }).where(eq(orgTasks.id, taskId));
     if (wake && owner && owner !== (input.fromAgentId ?? null) && !['done', 'cancelled'].includes(t.status) && await this.org.isActive(orgId)) {
-      this.emitWake(orgId, taskId, owner, 'comment');
+      this.emitWake(orgId, taskId, owner, 'comment', input.fromAgentId ? `agent:${input.fromAgentId}` : 'user');
       woke = true;
     }
     // Follows: the commenter follows (a person's comment is one that wakes;
@@ -1277,8 +1285,8 @@ export class OrgTasksService {
       .join('\n');
   }
 
-  private emitWake(orgId: string, taskId: string, agentId: string, reason: OrgWakeReason): void {
-    this.bus?.emitOrgWake({ orgId, taskId, agentId, reason });
+  private emitWake(orgId: string, taskId: string, agentId: string, reason: OrgWakeReason, by?: string): void {
+    this.bus?.emitOrgWake({ orgId, taskId, agentId, reason, ...(by ? { by } : {}) });
   }
 }
 

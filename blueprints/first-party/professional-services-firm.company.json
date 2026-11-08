@@ -305,7 +305,16 @@
     "service.resolveSlaHours": 120,
     "service.suggestAfterRepeats": 2,
     "service.editApproval": 2,
-    "service.metricsWindowDays": 60
+    "service.metricsWindowDays": 60,
+    "improve.maxOpenPerUnit": 3,
+    "improve.standardScope": 0,
+    "improve.emergency": 0,
+    "improve.verifyDays": 21,
+    "improve.expireDays": 21,
+    "improve.repairTasks": 0,
+    "admission.selfWip": 3,
+    "admission.selfPerDay": 2,
+    "attention.agentWakesPerHour": 6
   },
   "playbooks": [],
   "budget": {

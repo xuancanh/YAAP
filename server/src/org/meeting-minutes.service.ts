@@ -139,7 +139,8 @@ export function renderMinutesMarkdown(doc: MinutesDoc): string {
   else {
     lines.push('| Action | Owner | Due | Done when | Task |', '|---|---|---|---|---|');
     for (const a of minutes.actions) {
-      const task = a.taskId ? `[${a.taskKey || a.taskId.slice(0, 8)}](${spaPath.task(doc.workspaceId, a.taskKey || a.taskId)})` : '—';
+      // A retro's action is an improvement proposal (docs/improvements.md), or says why it was not raised.
+      const task = a.taskId ? `[${a.taskKey || a.taskId.slice(0, 8)}](${spaPath.task(doc.workspaceId, a.taskKey || a.taskId)})` : a.proposalId ? `proposal ${a.proposalKey || a.proposalId.slice(0, 8)}` : a.note ? `not raised: ${a.note}` : '—';
       const title = a.verdict === 'rejected' ? `${a.title} (rejected by ${a.verdictName || 'a person'})` : a.verdict === 'approved' ? `${a.title} (approved by ${a.verdictName || 'a person'})` : a.title;
       lines.push(`| ${cell(title)} | ${cell(a.owner || 'unowned')} | ${a.due ? cell(a.due.slice(0, 10)) : '—'} | ${cell(a.done_when || '—')} | ${task} |`);
     }

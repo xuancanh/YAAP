@@ -150,7 +150,11 @@
     "service.acceptSlaHours": 4,
     "service.breachAction": 0,
     "service.repeatWindowDays": 14,
-    "service.metricsWindowDays": 14
+    "service.metricsWindowDays": 14,
+    "improve.maxOpenPerUnit": 3,
+    "improve.perMeeting": 3,
+    "admission.selfWip": 4,
+    "admission.overCap": 1
   },
   "playbooks": [],
   "budget": {

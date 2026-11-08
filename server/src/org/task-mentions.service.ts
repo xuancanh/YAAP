@@ -180,7 +180,7 @@ export class TaskMentionsService implements TaskMentionHook, OnModuleInit {
         const why = closed ? `${taskRef(task)} is ${task.status}` : !active ? 'the company is paused'
           : !member || member.status !== 'active' ? 'the member is paused' : out.capped ? 'the agent chain on this task reached its cap — a person\'s comment resets it' : '';
         if (why) { out.notWoken.push({ id, why }); continue; }
-        this.bus?.emitOrgWake({ orgId, taskId: task.id, agentId: id, reason: 'mention' });
+        this.bus?.emitOrgWake({ orgId, taskId: task.id, agentId: id, reason: 'mention', ...(opts.authorAgentId ? { by: `agent:${opts.authorAgentId}` } : {}) });
         out.woken.push(id);
       }
       const people = mentions.filter((m) => m.kind === 'human' && m.id !== opts.authorUserId).map((m) => m.id);

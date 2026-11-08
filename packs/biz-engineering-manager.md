@@ -66,8 +66,8 @@ description: Run the sprint retro - what shipped versus committed, what slowed u
 
 1. Gather facts before opinions: say/do ratio, carry-over items, review turnaround, CI failures, incidents and escaped defects in the sprint, from the sprint file, org_unit_report and org_incidents.
 2. Ask each member for one thing that helped and one that hurt, in writing on the retro task (org_task_comment), so quiet members are heard.
-3. Group the causes (unclear briefs, review bottleneck, flaky tests, interrupts, dependencies on other units) and pick at most two changes with an owner and a check date; more than two never happen.
-4. Turn each change into a briefed task or, when it is a repeatable procedure, a company playbook with org_write_playbook. A change that should move a metric (for example review turnaround) is proposed as an experiment with org_propose_experiment.
+3. Group the causes (unclear briefs, review bottleneck, flaky tests, interrupts, dependencies on other units) and pick the top changes (the company caps them, improve.perMeeting); more never happen.
+4. Raise each change as an improvement proposal, not a task: org_improvement_propose (or meeting_propose_action in the meeting) with a target (process, playbook, policy, cadence), evidence, a hypothesis and the metric it should move (for example process.cycleHours down). Only a concrete fix of one defect is a briefed task.
 5. Save /org/engineering/retros/<sprint>.md and check last retro's changes: done, working, or dropped with the reason.
 
 ## skill: engineering-incident-review
@@ -77,7 +77,7 @@ description: Run a blameless postmortem for an incident - timeline, impact, caus
 2. Write the timeline in UTC: detection, acknowledgement, mitigation, resolution, with who did what and from which evidence. Compute time to detect and time to restore.
 3. State the impact in numbers: users or customers affected, duration, data lost or exposed, error budget consumed.
 4. Find contributing causes, not a culprit: the change, the missing test or alert, the runbook gap, the process that allowed it. Ask "why" until you reach something the team controls.
-5. Choose actions in three kinds: prevent (tests, guards), detect (alerts, SLOs), mitigate (runbooks, rollbacks). Each becomes a briefed task with an owner and dueAt; at least one must land within the next sprint.
+5. Choose actions in three kinds: prevent (tests, guards), detect (alerts, SLOs), mitigate (runbooks, rollbacks). Each is an improvement proposal (org_improvement_propose with category, target, evidence and expected metric; pass the incident while it is open); only the repair of a specific defect is a briefed task with an owner and dueAt.
 6. Save /org/engineering/postmortems/<date>-<slug>.md and post the summary with org_message. Track action completion in the weekly review; an action open past its date is a risk in the report.
 
 ## skill: engineering-release-readiness

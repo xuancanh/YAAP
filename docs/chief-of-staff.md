@@ -275,7 +275,7 @@ and termination),
 golden sets) and `org-files-hygiene` (the ledger and the function folders
 complete, linked, archived, free of secrets). `project-portfolio`
 (docs/work-tracking.md) keeps the project layer true: orphans placed out of
-Unsorted, retro actions held to the Operating improvements cap, health
+Unsorted, retros raising capped improvement proposals instead of tasks and the self-started share in its context (docs/improvements.md), health
 updates chased with a drafted diff (the lead owns the call), appetite
 breakers watched, and the betting table of shaped projects prepared for the
 CEO — it never moves a project to Now, extends an appetite or kills a bet.

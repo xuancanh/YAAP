@@ -386,7 +386,12 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
           await this.audit.append(orgId, { actor: `agent:${l.by}`, action: 'charter_change_proposed', refType: 'agent', refId: target.id, payload: { approvalId: a.id, meetingId: meeting.id, mode: l.proposedCharterChange.mode ?? 'append' } });
         }
       }
-      if (l.proposedPlaybookChange && !l.proposedPlaybookChange.taskId) {
+      // A playbook change is an improvement proposal targeting the playbook (docs/improvements.md); the revise task is the fallback.
+      if (l.proposedPlaybookChange && !l.proposedPlaybookChange.taskId && !l.proposedPlaybookChange.proposalId && this.meetings.improvementSink?.playbookChange) {
+        const id = await this.meetings.improvementSink.playbookChange(orgId, meeting, { playbookId: l.proposedPlaybookChange.playbookId, note: l.proposedPlaybookChange.note, lesson: l.text, by: l.by }).catch(() => null);
+        if (id) { l.proposedPlaybookChange.proposalId = id; continue; }
+      }
+      if (l.proposedPlaybookChange && !l.proposedPlaybookChange.taskId && !l.proposedPlaybookChange.proposalId) {
         const r = await this.playbooks.reviseTask(orgId, l.proposedPlaybookChange.playbookId, { note: `${l.text} — ${l.proposedPlaybookChange.note}`, by: l.by, meetingId: meeting.id }).catch(() => null);
         if (r) l.proposedPlaybookChange.taskId = r.taskId;
       }

@@ -40,6 +40,7 @@ the actor `experiment`. That actor passes everything except a `never` row.
 | tunable | `audit.*`, `redteam.*`, `boundary.*` | never | the auditor's independence; the test of the org; the boundary's own settings |
 | tunable | `actions.*`, `trust.*`, `seat.*`, `alignment.*`, `chief.proxyLevel` | propose (not delegable) | the external-action floor; what silence from the owner means; who aligns the company's intent and how much may change before it is asked again (`docs/alignment.md`); how far the chief acts on the CEO's behalf (`docs/chief-of-staff.md`) |
 | tunable | `incidents.*`, `acceptance.*`, `quality.*`, `policy.*`, `claims.*`, `signals.*`, `pulse.*`, `slo.*`, `evals.*`, `capital.vetoWindowMinutes` | propose | safety floors, what counts as verified, what the owner sees, the eval gate, the veto window |
+| tunable | `improve.*`, `admission.*`, `attention.*` | propose | which changes are pre-authorised and how many may be open; how much self-started work may enter; how often agents may interrupt each other (`docs/improvements.md`) |
 | tunable | any other key | alone | the bound is the safety floor and lives in code |
 | cadence | meeting cadences | alone | bounded by the ritual tunables |
 | routing | model routing by task class | alone | the eval gate replays the golden set first (`docs/evals.md` §3) |

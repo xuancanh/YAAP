@@ -64,13 +64,15 @@ const GoalsPane = lazy(() => import('./OrgGoalsView').then((m) => ({ default: m.
 /** Quality control (docs/quality.md): the Oversight › Quality page and the task's QC panel. */
 const QualityPane = lazy(() => import('./OrgQualityView').then((m) => ({ default: m.QualityPane })));
 const TaskQcPanel = lazy(() => import('./OrgQualityView').then((m) => ({ default: m.TaskQcPanel })));
-const LAZY_PANES = new Set(['goals', 'vision', 'pulse', 'meetings', 'decisions', 'replay', 'capital', 'incidents', 'roadmap', 'teams', 'quality', 'alignment', 'processes', 'services']);
+const LAZY_PANES = new Set(['goals', 'vision', 'pulse', 'meetings', 'decisions', 'replay', 'capital', 'incidents', 'roadmap', 'teams', 'quality', 'alignment', 'processes', 'services', 'improvements']);
 /** CEO alignment (docs/alignment.md): what needs the CEO's alignment, briefs, threads and decisions. */
 const AlignmentPane = lazy(() => import('./AlignmentView').then((m) => ({ default: m.AlignmentPane })));
 /** Processes (docs/processes.md): the standing procedures, their versions and runs. */
 const ProcessesPane = lazy(() => import('./OrgProcessesView').then((m) => ({ default: m.ProcessesPane })));
 /** Services (docs/services.md): each department's catalog with SLAs, the requests and their clocks. */
 const ServicesPane = lazy(() => import('./OrgServicesView').then((m) => ({ default: m.ServicesPane })));
+/** Improvements (docs/improvements.md): capped proposals, their verification, and where work comes from. */
+const ImprovementsPane = lazy(() => import('./OrgImprovementsView').then((m) => ({ default: m.ImprovementsPane })));
 
 const STATUS_COLOR: Record<OrgTaskStatus, string> = {
   backlog: 'var(--text-faint)', waiting: 'var(--text-dim)', todo: 'var(--blue)', claimed: 'var(--amber)', in_progress: 'var(--amber)', in_review: 'var(--accent)', blocked: 'var(--red)', done: 'var(--green)', cancelled: 'var(--text-faint)',
@@ -144,6 +146,7 @@ export function OrganizationView({ section }: { section: CompanySection }) {
             {view === 'alignment' && <AlignmentPane org={org} />}
             {view === 'processes' && <ProcessesPane org={org} />}
             {view === 'services' && <ServicesPane org={org} />}
+            {view === 'improvements' && <ImprovementsPane org={org} />}
           </Suspense>
         )}
       </div>
@@ -941,6 +944,15 @@ function ApprovalArtifact({ kind, p, nm, wsId }: { kind: string; p: Record<strin
       <div>Review of task <b>{String(p.title ?? '')}</b>{p.assigneeAgentId ? <> by {nm(p.assigneeAgentId)}</> : null} — requested of <b>🧑 {String(p.reviewerName ?? p.reviewerHumanId ?? 'a human employee')}</b>.</div>
       {p.note ? <div style={faint}>Note: {String(p.note)}</div> : null}
       <div style={faint}>Approve accepts the task (done); reject requests changes with your note and wakes the owner. <RefButton kind="task" id={String(p.taskId ?? '')} label="Open the task" /></div>
+    </div>
+  );
+  // An improvement proposal's normal change, or the review of an emergency change (docs/improvements.md).
+  if (kind === 'improvement') return (
+    <div style={{ fontSize: 12.5, display: 'grid', gap: 4 }}>
+      <div>{p.review ? 'Review the emergency change ' : 'Improvement '}<b>{String(p.key ?? '')}</b> on {String(p.targetLabel || 'the company')}: {String(p.title ?? '')} <span style={faint}>({String(p.category ?? '')}, {String(p.changeClass ?? '')} change)</span></div>
+      {p.hypothesis ? <div><i>{String(p.hypothesis)}</i></div> : null}
+      {list(p.diff).length > 0 && <pre style={{ ...mono, whiteSpace: 'pre-wrap', background: 'var(--panel-2)', padding: 8, borderRadius: 8, maxHeight: 220, overflow: 'auto' }}>{list(p.diff).map((l, i) => <div key={i} style={{ color: l.startsWith('+') ? 'var(--green)' : l.startsWith('-') ? 'var(--red)' : undefined }}>{l}</div>)}</pre>}
+      <div style={faint}>Expected: {String(p.expected ?? 'no metric named')}. {p.review ? 'Approve keeps it; reject reverts it.' : 'Approve applies it through the target\'s own versioning; it is verified against the metric after the window.'} Operations › Improvements has the evidence and history.</div>
     </div>
   );
   if (kind === 'charter_change') return (
