@@ -12,6 +12,15 @@ what happened while you were away and whether the company is on track. You
 decide through one-line **decision cards** that say what happens if you stay
 silent.
 
+The company runs on explicit mechanisms rather than prompt text alone:
+**processes** (versioned procedures, strict or agent-chosen, whose steps are
+tasks), **services** between departments with SLAs, **CEO alignment** before
+direction, strategy and OKRs turn into work, **quality standards and
+policies** checked as data, **evidence-gated claims**, capped **improvement
+proposals** instead of retro task floods, and limits on work agents start
+for themselves. Agents can pick their model per task by complexity and split
+a big task across several sessions.
+
 It is a NestJS API and a React SPA over Postgres and S3-compatible storage,
 provider-neutral (Anthropic, OpenAI and the OpenAI-compatible family), and
 built so that the owner can look away: actions are classed by reversibility,
@@ -26,9 +35,10 @@ use case and **blueprints** for a whole company, all from **Foundry**.
 | | |
 |---|---|
 | ![Inbox](docs/images/inbox.jpg) **Inbox**: one feed with the bell; a list and a reading pane | ![Direction](docs/images/direction.jpg) **Direction**: vision, goals, the roadmap and the program matrix |
-| ![Operations](docs/images/operations.jpg) **Operations**: the board, pulse, brief, meetings and incidents | ![People](docs/images/people.jpg) **People**: the org chart, named departments and who serves which project |
+| ![Operations](docs/images/operations.jpg) **Operations**: the board, pulse, brief, meetings, processes, improvements and incidents | ![People](docs/images/people.jpg) **People**: the org chart, named departments and who serves which project |
 | ![Channel](docs/images/channel.jpg) **Channels**: `#company`, its meetings, and a file opened from chat in the side panel | ![Meeting](docs/images/meeting.jpg) **Meeting room**: an ended retro as a record: agenda, decisions, actions, attendance |
 | ![Agent](docs/images/agent.jpg) **Agent page**: what it is doing, its decisions, queue, activity and team | ![Artifacts](docs/images/artifacts.jpg) **Artifacts**: the workspace filesystem with versions and history |
+| ![Alignment](docs/images/alignment.jpg) **Alignment**: what needs your sign-off, with the owner's brief and reasoning | ![Improvements](docs/images/improvements.jpg) **Improvements**: capped proposals and where the company's work comes from |
 | ![Foundry](docs/images/foundry-kits.jpg) **Foundry**: blueprints, kits, agents and plugins | |
 
 ## Contents
@@ -84,10 +94,11 @@ use case and **blueprints** for a whole company, all from **Foundry**.
 Switch a workspace into organization mode (`supervised` or `autonomous`) and
 it becomes a company ([docs/group-chat.md](docs/group-chat.md) §5,
 [docs/company-vision.md](docs/company-vision.md)), and **Inbox** and the
-company's five sections join the main menu: **Direction** (vision, goals,
-roadmap, decisions), **Operations** (board, pulse, brief, meetings,
-incidents), **People** (org chart, teams), **Money** (spend, capital) and
-**Oversight** (audit, replay). Each opens on a dashboard that summarises its
+company's five sections join the main menu: **Direction** (vision,
+alignment, goals, roadmap, decisions), **Operations** (board, pulse, brief,
+meetings, processes, improvements, incidents), **People** (org chart, teams,
+services), **Money** (spend, capital) and **Oversight** (audit, quality,
+replay). Each opens on a dashboard that summarises its
 pages; what waits on you stays in the Inbox, and company settings in
 Settings › Company.
 
@@ -130,9 +141,14 @@ Settings › Company.
   intake, the chief's daily sweep, …) as versioned graphs. A model-free
   engine turns each step into an ordinary task with a step card; strict
   stages follow the graph, dynamic ones let the performer choose; MUST items
-  gate the review, deviations are logged or waived. The chief and the heads
-  change them from what the runs show, every edit a new version you can roll
-  back.
+  gate the review, deviations are logged or waived. Steps can be tasks,
+  approvals, timers, sub-processes or meetings, and a step with a side
+  effect can name an undo step that runs if the run fails. The chief and the
+  heads change them from what the runs show, every edit a new version you
+  can roll back; a new version can ramp on a share of runs and is compared
+  with the old one before it is promoted. Conformance (were the steps
+  followed) is measured apart from outcomes, and work the company keeps
+  doing by hand is suggested as a new process.
 - **Improvements** ([docs/improvements.md](docs/improvements.md)): retros,
   postmortems and process reviews raise capped, evidenced proposals on a
   process, policy, standard, playbook, cadence, charter or tunable instead
@@ -141,6 +157,19 @@ Settings › Company.
   metric and reverted when it misses. Admission control caps self-started
   work and agent-to-agent wakes, and Work sources shows where work comes
   from.
+- **CEO alignment** ([docs/alignment.md](docs/alignment.md)): what needs
+  you before work starts — direction, strategy, OKRs, bets, money beyond the
+  plan, external commitments, organisation design, values and policy,
+  one-way doors — is data, not a fixed list. The owning agent decides
+  whether an item needs you against six criteria (reversibility, blast
+  radius, cost, external commitment, novelty, conflicts) and records why;
+  a supervised company keeps a floor of classes that always do. You get a
+  brief (why, options, trade-offs, measures, cost, what it unlocks) with a
+  thread to the owner and approve, approve with changes, send back or
+  reject; no task is created under an item until it is aligned. What agents
+  chose not to escalate is listed so you can pull it in, and the chief
+  spot-checks both misses and noise. Autonomous companies align
+  automatically or through the chief, logged for you to review.
 - **Goals and OKRs**: vision → objectives → key results with metric, target,
   owner and due date. A model-free sweep flags key results at risk, and any
   task can show its *why* chain. Key results can be **measured** from metric
@@ -164,6 +193,23 @@ Settings › Company.
   audit findings are contained by severity (note, pause the member, freeze an
   action class, drop to supervised) and major ones get a postmortem
   ([docs/incidents.md](docs/incidents.md)).
+- **Quality and policies** ([docs/quality.md](docs/quality.md)): quality
+  standards give each kind of deliverable criteria and a pass bar; handing
+  work to review needs evidence per criterion (tool calls, files, fetched
+  pages, checks), verified without a model, and the reviewer is never the
+  maker (another model family when the company asks). First-pass yield,
+  rework and escapes are tracked per member, and accepted work is
+  spot-checked. Policies are enforceable data — checked before every
+  outward or mutating action and again at review, blocking, warning or
+  logging with the fix to make; an agent can ask you for a one-time
+  exception.
+- **Evidence-gated claims** ([docs/evidence.md](docs/evidence.md)): a
+  claim written into shared state — a key-result check-in, a project
+  update, "sent 40 emails", a decision, a step output, a lesson — must cite
+  evidence that exists; counts are checked against the record. Depending on
+  the company's setting an unproven claim is refused, or lands marked
+  unverified and does not move progress; invented evidence is a fabrication
+  signal and, repeated, an incident. Badges show what is verified.
 - **Audit**: an append-only, hash-chained log of every change, an auditor
   role whose own precision is spot-checked, and any day can be replayed.
 - **Spend**: USD envelopes reserved before every run (80% warning, 100% hard
@@ -177,6 +223,28 @@ Settings › Company.
 
 ### Agents
 
+- **Model selection** ([docs/agent-types.md](docs/agent-types.md)): Claude
+  and OpenAI are supported out of the box (a type is created from
+  `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, or with *Add Claude* / *Add
+  OpenAI* in Settings), each with a cheap / standard / strong tier map. An
+  agent set to **Auto** gets a tier per task run and chat turn from the
+  work's complexity and risk (class, brief, criteria, quality bar, risky
+  actions, scope, process-step hints), escalates after a failed attempt,
+  steps down when the envelope is tight but never below a floor for risky
+  work, and may ask for a stronger or cheaper model within limits. It can
+  run on either provider by your preference order and provider health, and
+  a reviewer prefers another model family. Every decision and its reasons
+  show in the Work log; outcomes per tier tune the thresholds.
+- **Big tasks across sessions** ([docs/task-execution.md](docs/task-execution.md)):
+  an agent can split a task into a plan of steps with dependencies and run
+  it in one session, as a relay of fresh sessions joined by handoff
+  packets, or with a master session that runs steps in clean worker
+  sessions — parallel for research, one at a time for writes — checks
+  each result against its exit criteria and integrates them under a shared
+  decision log. Caps on sessions, workers, depth and spend come from the
+  company's settings, simple work is not allowed to fan out, and a restart
+  resumes the plan. The plan, the session tree and folded worker
+  transcripts show on the task, in the Work log and in chat.
 - **Durable identities**: each agent has its own provider and model, charter,
   sessions, memory (LESSONS, JOURNAL, profile entries it reads back each
   turn; [docs/agent-memory.md](docs/agent-memory.md)), home folder and tools,
@@ -386,6 +454,13 @@ for why.
 - [group-chat.md](docs/group-chat.md): channels, threads, sub-channels, organization mode, departments.
 - [meetings.md](docs/meetings.md): meeting lifecycle, the room, minutes and the calendar.
 - [work-tracking.md](docs/work-tracking.md): bets, projects, the program matrix and resource requests.
+- [alignment.md](docs/alignment.md): what needs the CEO's alignment, the owner's classification, briefs and the task gate.
+- [processes.md](docs/processes.md): versioned processes, strict and dynamic stages, step cards, ramps, sagas, discovery.
+- [services.md](docs/services.md): each department's service catalog, requests and SLAs.
+- [improvements.md](docs/improvements.md): improvement proposals, change classes, verification and admission control.
+- [quality.md](docs/quality.md): quality standards, evidence-gated review, verifiers and policies.
+- [evidence.md](docs/evidence.md): evidence-gated claims on the write path of shared state.
+- [task-execution.md](docs/task-execution.md): task plans run in one session, as handoffs, or by a master with workers.
 - [tasks-keys.md](docs/tasks-keys.md): Jira-style task keys.
 - [follows.md](docs/follows.md): following threads and tasks.
 - [boundary.md](docs/boundary.md): the self-modification boundary.
