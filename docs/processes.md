@@ -1,6 +1,6 @@
 # Processes: standing procedures whose steps are tasks
 
-*Status: built (migration `0095-processes`). Design source:
+*Status: built (migrations `0097-processes`, `0098-process-ramps-sagas-discovery`). Design source:
 `reports/Process abstractions for agent companies.md` ("Process should be a
 pinned graph whose nodes are ordinary tasks", "Inside a turn the agent sees
 one step card", "Every threshold is a tunable"); the audit it rests on is
@@ -16,8 +16,10 @@ budgets, next work and any task-creation gate apply to process steps
 unchanged, because they *are* tasks.
 
 Code: `server/src/org/process-model.ts` (pure: validation, the walk,
-availability, the step card, metrics), `process-templates.ts` (the
-library), `process-tunables.ts`, `org-processes.service.ts` (the engine),
+availability, the step card, metrics, the saga plan, the cohort comparison,
+conformance), `process-discovery.ts` (pure: mining repeated work, drafts),
+`process-templates.ts` (the library), `process-tunables.ts`,
+`org-processes.service.ts` (the engine),
 `org-processes.tools.ts` (agent tools, the step card in context, denied
 tools), `processes.controller.ts` (routes); the page is
 `src/components/OrgProcessesView.tsx` with `src/lib/processes.ts`.
@@ -25,11 +27,12 @@ tools), `processes.controller.ts` (routes); the page is
 ## 1. The model
 
 ```
-org_processes          header: name (slug), title, category, owning unit, status, the active version
-org_process_versions   immutable: the definition JSON, author, reason, diff, status active|superseded|pending|rejected
-org_process_runs       PR-n, pinned versionId, stage, owner, trigger + triggerRef (dedupe), vars, loop counters
-org_process_steps      (run, node, attempt) UNIQUE — task | approval | wait | subprocess | stage (a dynamic stage's coordinator)
-org_process_events     append-only: started, materialized, step_done, skipped, looped, deviated, version_adopted, …
+org_processes          header: name (slug), title, category, owning unit, status, the active version; a ramp (candidate, %, verdict)
+org_process_versions   immutable: the definition JSON, author, reason, diff, status active|superseded|pending|rejected|candidate|rolled_back
+org_process_runs       PR-n, pinned versionId, stage, owner, trigger + triggerRef (dedupe), vars, loop counters, compensation
+org_process_steps      (run, node, attempt) UNIQUE — task | approval | wait | subprocess | meeting | stage (a dynamic stage's coordinator) | compensation
+org_process_events     append-only: started, materialized, step_done, skipped, looped, deviated, version_adopted, compensated, ramp_*, …
+org_process_suggestions one per pattern key: discovered processes, missing steps, revisions — evidence, draft, owner, its task
 org_tasks              + processRunId, processNodeId; source 'process'
 ```
 
@@ -49,6 +52,7 @@ Steps (`nodes`):
 | `approval` | creates a `process_gate` card routed by decision routing (the run owner's manager; `approver: ceo` is CEO-reserved); the outcome (approved / rejected) becomes a variable |
 | `wait` | a timer (`waitHours`) the minute tick resolves |
 | `subprocess` | a child run of another process, pinned to its own active version; the child's variables flow back |
+| `meeting` | a meeting of `meetingKind` (planning, standup, weekly_review, retro, board, adhoc) through the meeting runtime, in the owning unit's channel, facilitated by its lane, attended by `attendees` (lanes; `unit` = the owning unit), its agenda `agenda` plus the outputs of earlier steps; done when the meeting ends, its minutes' accepted decisions and actions becoming `<step>_decisions`, `<step>_actions`, `<step>_summary`; a cancelled meeting fails the step |
 
 A step's **lane** is a role, never an agent: `owner` (the process owner —
 the owning unit's head, or the chief for company processes), `chief`,
@@ -94,14 +98,25 @@ gate keyed on goal alignment can let operating processes through.
 - **Failure.** A cancelled step task fails the step; `maxAttempts` retries
   it; an optional step of a dynamic stage may fail without failing the run;
   otherwise the run fails and its owner is told.
+- **Compensation (a saga).** A step with an outside side effect names a
+  `compensate` step — a node marked `compensation: true`, outside every
+  stage's walk, never on an edge. When a run fails or is cancelled, the
+  compensations of its done steps run one at a time, the latest completion
+  first, each an ordinary task (`undo:<step>`, its lane, its MUST items as
+  the checklist, the brief saying what to undo). The run keeps its status;
+  `compensation` reads running → done, or partial when one could not be done
+  (its task cancelled), and the owner is told what to undo by hand.
+  Model-free and keyed like every step; the sweep resumes a saga after a
+  restart.
 - **Idempotency and restarts.** Materialising inserts the step row first
   (`ON CONFLICT DO NOTHING` on run/node/attempt), then creates the task, card,
   timer or child. The sweep (every five minutes, and so on the first ticks
   after boot) reconciles every open run: a row a restart left without its
   task finds the orphan task (`processRunId`/`processNodeId`) or creates it,
   a task that finished while the server was down settles its step, and the
-  run advances. Work triggered by a transition or a decision runs per run in
-  order, off the caller's path.
+  run advances. A meeting step's meeting is keyed `createdBy process:<step>`,
+  so a restart adopts it. Work triggered by a transition or a decision runs
+  per run in order, off the caller's path.
 
 ## 3. The step card and the gates
 
@@ -168,6 +183,24 @@ checkpoints, approval steps, strict edges, denied tools —
 definition with each problem and its fix (an unbounded loop, more than nine
 items, an edge across stages, an unknown subprocess, a bad cron, …).
 
+### Ramped rollout
+
+A new version of a process whose active version has a track record (at
+least three finished runs) does not take every run at once: it becomes the
+**candidate** and `process.rampPercent`% of new runs start on it (by a
+deterministic bucket of the trigger), the rest on the stable version. The
+author may choose the share (`ramp`; 0 = at once); a rollback always applies
+at once. Every five minutes the two cohorts are compared
+(`compareCohorts`): completion rate, median cycle time, deviation rate and
+rework. Until the candidate has `process.rampMinRuns` finished runs the
+verdict is *collecting*; then *rollback* when any measure is worse than the
+stable one by more than `process.rampTolerance`, else *promote*. On a new
+verdict the owner is told (`org_process_rollout`, the page's Promote / Roll
+back) — or, with `process.rampAuto` 1, the engine applies it. Promoting
+makes the candidate the active version; rolling back marks it
+`rolled_back`. Runs stay pinned either way; a dynamic run adopts only a
+newer active version.
+
 ## 5. Triggers
 
 | trigger | fires |
@@ -195,6 +228,43 @@ owner's `org_process_metrics` records a review; past
 `process.reviewCadenceDays` the chief's and the head's context lists the
 process as due, and a process to revise or a pending version as attention.
 
+**Conformance** is a separate question from outcomes — did the runs follow
+the definition (`computeConformance`)? Of the steps the window's runs
+executed, a step conforms unless it was handed to review with a MUST item
+open (logged where `process.mustEnforcement` is 0), skipped a SHOULD item,
+was an ad-hoc step of a dynamic stage, or started in a strict stage before a
+step it waits on had finished. MUST waivers are sanctioned exceptions:
+counted, not against it. The verdict is *drifting* below
+`process.conformanceAlert`; the owner's context then says so on its own
+line, and the page has a Conformance tab beside Outcomes. A step that
+deviates in `process.reviseDeviationRate` of at least three runs becomes a
+**revision suggestion** for the owner (a "Revise process: …" task with the
+deviations as evidence), once per version and step.
+
+## 6b. Discovery from experience
+
+Model-free, every few hours (`discover`; `process-discovery.ts`): the last
+`process.discoveryWindowDays` days of tasks (not process tasks) and the
+ad-hoc steps of process runs are mined for work that repeats without a
+process — the same title stem on at least two days (*recurring*), the same
+sequence of tasks by dependency or next sibling across chains
+(*sequence*), the same request made of one department by members of
+others, not handed down the line (*cross_function*), and the same ad-hoc
+step in run after run of one process (*adhoc_step*). A pattern seen
+`process.discoveryRepeats` times that no process covers becomes one
+suggestion (`org_process_suggestions`, keyed by the pattern; a dismissed one
+stays dismissed; at most six open) for its owner — the head of the
+department the work lands in, else the chief — with the evidence and a
+drafted definition (a strict chain of the steps seen, in the lanes the work
+went to; a cross-function pattern drafts an intake with triage, the work and
+a hand-back, started by a service request). The owner gets an ordinary
+"Draft process: …" task: an agent refines the draft and authors it, or
+cancels the task with why — the engine never calls a model.
+`submitSuggestion` is the one place a suggestion becomes the owner's work;
+when improvement proposals (`createProposal`) exist, it routes there
+instead. The CEO may also create the process from the draft, or dismiss it,
+on the page.
+
 ## 7. Tunables (per company, derived from its profile)
 
 | key | default | what |
@@ -209,13 +279,23 @@ process as due, and a process to revise or a pending version as attention.
 | `process.loopMaxCeiling` | 5 | the highest loopMax |
 | `process.adHocSteps` | 1 | whether a dynamic stage may add an ad-hoc step |
 | `process.reviewCadenceDays` | 14 | days between an owner's process reviews |
+| `process.rampPercent` | 25 | % of new runs a new version starts on while compared; 0 = at once |
+| `process.rampMinRuns` | 5 | finished candidate runs before a ramp verdict |
+| `process.rampTolerance` | 0.1 | how much worse a candidate may be before the verdict is roll back |
+| `process.rampAuto` | 0 | 1 the engine applies a ramp verdict; 0 the owner does |
+| `process.discoveryRepeats` | 4 | repeats before repeated work is suggested as a process; 0 = off |
+| `process.discoveryWindowDays` | 30 | the task history discovery reads |
+| `process.conformanceAlert` | 0.7 | share of steps that must follow the definition before the owner is alerted |
 
 None is a fixed rule: onboarding derives them from the company's values and
 culture (`deriveProcessTunables`, through `deriveOperatingSystem`; the
 starter blueprints carry the derived values). A hierarchy approves every edit,
 blocks on MUST items, runs only defined steps and reviews monthly; an
 adhocracy that values speed logs open MUST items, edits freely and allows
-more loop rounds; rigour widens the metrics window and tightens loops.
+more loop rounds and ramps fast (the engine applying the verdict); rigour
+widens the metrics window, tightens loops, ramps on a fifth of runs and
+alerts on small drift; a young company activates new versions at once (too
+few runs to compare).
 Changing a `process.*` tunable is itself a proposal (boundary row
 `tunable:process.`).
 
@@ -223,12 +303,13 @@ Changing a `process.*` tunable is itself a proposal (boundary row
 
 | tool | who |
 |---|---|
-| `org_processes` (library=true: the templates), `org_process`, `org_process_run`, `org_process_metrics` | every member (read) |
+| `org_processes` (library=true: the templates; suggestions=true: the suggestions with drafts), `org_process`, `org_process_run`, `org_process_metrics` (outcomes, conformance, a ramp's comparison) | every member (read) |
 | `org_process_start` | every member |
 | `org_process_next` (finish=true), `org_step_choose` | the performer of a dynamic stage, the owner, the chief |
 | `org_step_output`, `org_process_deviate` | the step's owner |
 | `org_process_author`, `org_process_rollback`, `org_process_retire` (restore) | the chief (any), a head (its unit's); others propose |
-| `org_process_cancel` | the process owner, the chief |
+| `org_process_cancel` (then the saga) | the process owner, the chief |
+| `org_process_rollout` (promote, rollback, percent) | the process owner |
 
 The chief's pack has a `processes` skill (author, run, review, improve);
 every member carries the built-in `org-processes` skill (perform a step,
@@ -246,6 +327,8 @@ POST   /api/workspaces/:id/org/processes/:pid/rollback        { version, reason 
 POST   /api/workspaces/:id/org/processes/:pid/retire          { reason, restore? }
 POST   /api/workspaces/:id/org/processes/:pid/runs            { title?, vars? }
 POST   /api/workspaces/:id/org/processes/runs/:runId/cancel   { reason }
+POST   /api/workspaces/:id/org/processes/:pid/rollout         { action: promote | rollback | percent, percent?, reason? }
+POST   /api/workspaces/:id/org/processes/suggestions/:sid     { action: accept | dismiss, reason? }
 ```
 
 Writes are the CEO's or a board member's. On screen: **Operations ›
@@ -256,11 +339,18 @@ a graph (strict: columns in the order the engine walks them, loops as
 "back to"; dynamic: each step with when it is available and its
 checkpoints), the metrics, the runs with each step's state and task, and
 the versions with their diffs and "Roll back"; the CEO edits the
-definition, starts a run and retires it there. The Operations dashboard has
-a Processes card.
+definition (with a ramp share), starts a run and retires it there. Meeting
+steps say what they hold and who comes; the compensations are listed as
+"If a run fails or is cancelled"; a run being undone says so. Outcomes and
+Conformance are two tabs; a ramp shows both cohorts side by side with the
+verdict and Promote / Roll back; a revision suggestion shows on its
+process. The list carries "Suggested from repeated work" (evidence, the
+drafted steps, the owner's task, Create from the draft, Dismiss). The
+Operations dashboard has a Processes card.
 
 ## 10. Not built yet
 
-Meeting steps, compensation steps, ramped rollout of a new version and
-process discovery from recurring free-form tasks — the report's later
-phases. The service catalog is built: docs/services.md.
+The service catalog is built (docs/services.md). Still open: routing
+suggestions through improvement proposals (docs/improvements.md;
+`submitSuggestion` is the switch to `createProposal`); an LLM-free merge of
+a suggested missing step into the definition (the owner writes it today).
